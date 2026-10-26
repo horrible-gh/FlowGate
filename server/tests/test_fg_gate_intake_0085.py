@@ -531,7 +531,10 @@ def test_the_confirm_checks_refuse_before_anything_is_accepted(product, monkeypa
     before = _marks(product)
     nogit = _decide(product, run_id, g, {"decision": "confirm", "request_id": "pf-1"}, 409)  # the real slot: none
     assert (nogit["error"]["code"], nogit["error"]["params"]["reason"]) == ("gate_git_unavailable", "git_disabled")
-    setting(product, FA, g, "push", True)                                  # push with no remote chosen
+    # flowgate.v02.0098 T#1 (D0004 §3.5): push true now saves the origin remote with it; an old client's single
+    # remote write still leaves push on with no remote chosen, which the confirm keeps refusing (fail closed)
+    setting(product, FA, g, "push", True)
+    setting(product, FA, g, "merge_target", None)                          # push with no remote chosen
     pushed = _decide(product, run_id, g, {"decision": "confirm", "request_id": "pf-2"}, 409)
     assert (pushed["error"]["code"], pushed["error"]["params"]["reason"]) == ("gate_settings_invalid",
                                                                              "push_requires_origin")

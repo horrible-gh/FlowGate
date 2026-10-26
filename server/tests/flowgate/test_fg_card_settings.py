@@ -277,7 +277,8 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
         f.TEST: ["instruction", "run_ai", "review_ai", "review_count", "result_cause", "follow_scope"],
         f.REQUIREMENT: ["delegation", "scope", "team", "limit_max_nodes", "limit_total_reviews",
                         "limit_retries_per_card", "limit_replans"],
-        f.CHECK: ["archive", "merge_mode", "merge_target", "push", "keep_branch"],       # 0085 T#1: no usage
+        # 0085 T#1: no usage; flowgate.v02.0098 T#1: the local merge branch next to the remote
+        f.CHECK: ["archive", "merge_mode", "merge_target", "merge_target_branch", "push", "keep_branch"],
         f.PLAN: ["pre_instruction_auto", "run_ai", "restart", "review_ai", "review_count", "time_limit",
                  "review_basis"],
     }
@@ -369,8 +370,8 @@ def test_each_card_kind_keeps_its_own_settings(env):
                          ("push", True), ("keep_branch", False)):
         gate = setting(env, FB, km["tmp_g"], field, value)
     assert gate["card_kind"] == "check" and shown(gate) == {
-        "archive": True, "merge_mode": "merge", "merge_target": "origin", "push": True, "keep_branch": False,
-        "hold": False}
+        "archive": True, "merge_mode": "merge", "merge_target": "origin", "merge_target_branch": None, "push": True,
+        "keep_branch": False, "hold": False}
     setting(env, FB, km["tmp_g"], "usage", "end", expect=422)
     # flowgate.v02.0072 T#3: a work plan card keeps the plan settings; a run card's instruction is not one of them.
     plan = setting(env, FB, km["tmp_wp"], "restart", 1)
@@ -725,3 +726,326 @@ def test_test_card_confirmation_settings_round_trip_and_stay_out_of_ai_plan(env)
         setting(env, FB, task_key, name, value, expect=422)
     assert f.run_plan(f.TEST, {"run_ai": "aip_card", "result_cause": "human", "follow_scope": "full"}) == {
         "settings": {"run_ai": "aip_card"}, "provider_id": "aip_card"}
+
+
+# ── flowgate.v02.0098 T#1: the check card's local merge target branch (D0004 §3.1 / §3.3 / §3.5) ─────────────────
+
+import base64  # noqa: E402
+import json  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+_GIT = shutil.which("git") is not None
+
+
+def _gate_key(env, flow=FB):
+    return put_draft(env, flow, 0, [node("tmp_g", None, "gate")])["key_map"]["tmp_g"]
+
+
+def _put_raw(env, flow, key, field, value_json):
+    """A stored row as an old server (or migration 158's leftovers) left it."""
+    _sql(env["db"], "DELETE FROM graph_node_settings WHERE group_id = ? AND node_key = ? AND field = ?",
+         (flow, key, field))
+    _sql(env["db"], "INSERT INTO graph_node_settings (group_id, node_key, field, value_json, updated_at) "
+                    "VALUES (?, ?, ?, ?, 't')", (flow, key, field, value_json))
+
+
+def _get_refreshed(env, flow, key):
+    res = env["client"].get(f"/api/v1/flows/{flow}/nodes/{key}/settings?refresh_merge_targets=true", headers=_h())
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_local_branch_checks_the_value_alone_and_never_rewrites_it():
+    from flowgate.card_settings import fields as f
+
+    field = f.field_of(f.CHECK, "merge_target_branch")
+    assert (field.kind, field.default, f.choices_of(field, ())) == (f.LOCAL_BRANCH, None, None)
+    assert f.field_of(f.CHECK, "merge_target").choices == ("origin",)          # the remote keeps its meaning
+    assert f.field_of(f.RUN, "merge_target_branch") is None                    # a check card setting only
+    kw = {"repeat_choices": (), "team_exists": lambda _: False, "ai_exists": lambda _: False}
+    # Git's own name rules and the branch itself are the save's repository check, not the value check
+    for name in ("main", "feature/v0.2.0", "a..b", "release/v0.2", "한글", "x" * 300):
+        assert f.check_value(field, name, **kw) == name
+    for bad, reason in (("", "not_a_text"), (1, "not_a_text"), (True, "not_a_text"), (["main"], "not_a_text"),
+                        (" main", "surrounding_whitespace"), ("main\n", "surrounding_whitespace"),
+                        ("   ", "surrounding_whitespace"), ("a\tb", "control_character"),
+                        ("a\x7fb", "control_character")):
+        with pytest.raises(f.InvalidValue) as caught:
+            f.check_value(field, bad, **kw)
+        assert caught.value.reason == reason, bad
+
+
+def test_a_check_card_without_git_answers_its_target_state_and_refuses_a_branch(env):
+    g = _gate_key(env)
+    body = get_settings(env, FB, g)
+    assert body["fields"]["merge_target_branch"] == {"value": None, "stored": False, "default": None, "choices": None}
+    assert (body["merge_target_options"], body["default_target_branch"], body["push_remote_check_required"]) == (
+        [], None, False)
+    state = body["merge_target_state"]
+    assert (state["status"], state["code"], state["reason"]) == ("git_unavailable", "gate_git_unavailable",
+                                                                 "git_disabled")
+    assert state["current"]["inherited"] is True and state["current"]["branch"] is None
+    for mode in (None, "hold", "commit"):                     # every merge mode checks a new branch the same way
+        if mode:
+            setting(env, FB, g, "merge_mode", mode)
+        version = get_settings(env, FB, g)["settings_version"]
+        refused = setting(env, FB, g, "merge_target_branch", "main", expect=409)
+        assert refused["error"]["code"] == "gate_git_unavailable"
+        assert refused["error"]["params"]["reason"] == "git_disabled"
+        assert (refused["error"]["params"]["field"], refused["error"]["params"]["target_branch"]) == (
+            "merge_target_branch", "main")
+        assert (g, "merge_target_branch") not in stored_rows(env, FB, g)
+        assert get_settings(env, FB, g)["settings_version"] == version
+    bad = setting(env, FB, g, "merge_target_branch", " main", expect=422)      # the value itself: no Git asked
+    assert bad["error"]["params"]["errors"] == [{"field": "value", "reason": "surrounding_whitespace"}]
+    # a stored target is shown with its state, and null clears it with no Git read
+    _put_raw(env, FB, g, "merge_target_branch", '"feature/gone"')
+    held = get_settings(env, FB, g)
+    assert held["fields"]["merge_target_branch"]["value"] == "feature/gone"
+    assert held["merge_target_state"]["current"] == {
+        "branch": "feature/gone", "inherited": False, "checked": True, "error": "gate_git_unavailable",
+        "unmerge_supported": None, "warnings": []}
+    version = held["settings_version"]
+    cleared = patch(env, FB, g, {"field": "merge_target_branch", "value": None, "expected_settings_version": version})
+    assert cleared["fields"]["merge_target_branch"]["stored"] is False and cleared["settings_version"] == version + 1
+    # the repository is the authenticated flow's own project: a client cannot name another one
+    other = patch(env, FB, g, {"field": "merge_target_branch", "value": "main", "project_id": "other"}, expect=422)
+    assert other["error"]["params"]["errors"] == [{"field": "project_id", "reason": "unknown_field"}]
+
+
+def test_push_on_saves_the_origin_remote_with_it_in_one_change(env):
+    g = _gate_key(env)
+    on = setting(env, FB, g, "push", True)
+    assert (shown(on)["push"], shown(on)["merge_target"], on["settings_version"]) == (True, "origin", 1)
+    assert on["push_remote_check_required"] is False and on["legacy"] == {}
+    assert stored_rows(env, FB, g) == {(g, "merge_target"): '"origin"', (g, "push"): "true"}
+    assert setting(env, FB, g, "push", True)["settings_version"] == 1           # both already so: no change
+    off = setting(env, FB, g, "push", False)                                    # off keeps the chosen remote
+    assert (shown(off)["push"], shown(off)["merge_target"], off["settings_version"]) == (False, "origin", 2)
+    assert shown(setting(env, FB, g, "push", None))["merge_target"] == "origin"
+    # an old client's single write of the remote keeps its allowed values
+    assert shown(setting(env, FB, g, "merge_target", None))["merge_target"] is None
+    assert shown(setting(env, FB, g, "merge_target", "origin"))["merge_target"] == "origin"
+    setting(env, FB, g, "merge_target", "main", expect=422)
+
+
+def test_push_on_with_no_remote_is_shown_and_corrected_by_saving_push_again(env):
+    g = _gate_key(env)
+    _put_raw(env, FB, g, "push", "true")                                         # an old push=true with no remote
+    before = get_settings(env, FB, g)
+    assert (before["push_remote_check_required"], before["settings_version"]) == (True, 0)
+    assert get_settings(env, FB, g)["push_remote_check_required"] is True        # a GET corrects nothing
+    assert stored_rows(env, FB, g) == {(g, "push"): "true"}
+    fixed = patch(env, FB, g, {"field": "push", "value": True, "expected_settings_version": 0})
+    assert (shown(fixed)["merge_target"], fixed["settings_version"], fixed["push_remote_check_required"]) == (
+        "origin", 1, False)
+
+
+def test_push_on_keeps_the_legacy_branch_and_refuses_a_conflicting_one(env):
+    g = _gate_key(env)
+    _put_raw(env, FB, g, "legacy_merge_target", '"release/old"')
+    kept = setting(env, FB, g, "push", True)
+    assert kept["legacy"] == {"legacy_merge_target": "release/old"} and shown(kept)["merge_target"] == "origin"
+    assert shown(kept)["merge_target_branch"] is None                           # never moved into the new field
+    keys = put_draft(env, FA, 0, [node("tmp_a", None, "gate"), node("tmp_b", None, "gate")])["key_map"]
+    a, b = keys["tmp_a"], keys["tmp_b"]
+    # an old branch name migration 158 has not moved yet: kept as the legacy value in the same change
+    _put_raw(env, FA, a, "merge_target", '"release/v0.2"')
+    moved = setting(env, FA, a, "push", True)
+    assert moved["legacy"] == {"legacy_merge_target": "release/v0.2"} and moved["settings_version"] == 1
+    assert stored_rows(env, FA, a) == {(a, "legacy_merge_target"): '"release/v0.2"',
+                                       (a, "merge_target"): '"origin"', (a, "push"): "true"}
+    # a different legacy value already kept: the whole change is refused and nothing is written
+    _put_raw(env, FA, b, "merge_target", '"release/v0.2"')
+    _put_raw(env, FA, b, "legacy_merge_target", '"older"')
+    rows = stored_rows(env, FA, b)
+    refused = setting(env, FA, b, "push", True, expect=409)
+    assert refused["error"]["code"] == "gate_settings_invalid"
+    assert refused["error"]["params"]["reason"] == "legacy_merge_target_conflict"
+    assert stored_rows(env, FA, b) == rows and get_settings(env, FA, b)["settings_version"] == 0
+
+
+def test_push_on_writes_both_or_nothing_and_a_stale_version_writes_neither(env, monkeypatch):
+    from flowgate.card_settings import repository
+
+    g = _gate_key(env)
+    real = repository.put
+
+    def failing(flow_id, node_key, field, value, by):
+        if field == "push":
+            raise RuntimeError("write failed")
+        return real(flow_id, node_key, field, value, by)
+
+    monkeypatch.setattr(repository, "put", failing)
+    res = env["client"].patch(f"/api/v1/flows/{FB}/nodes/{g}/settings", json={"field": "push", "value": True},
+                              headers=_h())
+    assert res.status_code == 500
+    monkeypatch.setattr(repository, "put", real)
+    assert stored_rows(env, FB, g) == {} and get_settings(env, FB, g)["settings_version"] == 0   # remote rolled back
+    # two screens drawn from version 0: the first change wins, the other writes neither push nor the remote
+    assert patch(env, FB, g, {"field": "archive", "value": True, "expected_settings_version": 0})["settings_version"] == 1
+    stale = patch(env, FB, g, {"field": "push", "value": True, "expected_settings_version": 0}, expect=409)
+    assert stale["error"]["code"] == "gate_context_changed"
+    assert stored_rows(env, FB, g) == {(g, "archive"): "true"} and get_settings(env, FB, g)["settings_version"] == 1
+
+
+@pytest.mark.parametrize("status, code, details", [
+    (422, "merge_target_invalid", {}),
+    (409, "merge_target_remote_only", {}),
+    (409, "merge_target_internal_slot", {"connected_group_id": "flowgate.v02.0091"}),
+    (404, "merge_target_not_found", {}),
+    (409, "merge_target_same_branch", {}),
+    (409, "merge_target_incoming_work_base", {"incoming_work_base_commits": 3, "work_base_ref": "feature/v0.2.0"}),
+    (409, "merge_target_preview_unavailable", {"work_base_ref": "feature/v0.2.0"}),
+    (409, "merge_target_busy", {"merge_id": 7, "blocking_group_id": "flowgate.v02.0091",
+                                "route": "/api/v1/groups/x/git/merge/7", "project_id": "flowgate"}),
+    (409, "merge_target_owner_mismatch", {"reason": "owner_marker_mismatch"}),
+    (409, "base_checkout_branch_mismatch", {"base_branch": "main", "checked_out_branch": None,
+                                            "base_root": "C:/secret/storage/src/flowgate/main"}),
+    (409, "base_dirty", {"files": ["a.txt"]}),
+    (409, "merge_conflict_open", {"merge_id": 3}),
+])
+def test_a_refused_target_keeps_its_code_and_shows_no_path_or_diagnostic(env, monkeypatch, status, code, details):
+    from flowgate.card_settings import legacy_adapter as legacy
+    from modules.flow_gate.services.git.credentials import GitServiceError
+
+    def judge(group, branch):
+        assert (group["group_id"], group["project_id"]) == (FB, "flowgate")      # the authenticated flow's own
+        raise GitServiceError(status, code, "fatal: C:/secret/storage/src", details={"target_branch": branch, **details},
+                              diagnostic="fatal: C:/secret/storage/src")
+
+    monkeypatch.setattr(legacy, "judge_merge_target", judge)
+    g = _gate_key(env)
+    body = setting(env, FB, g, "merge_target_branch", "feature/x", expect=status)
+    error = body["error"]
+    assert (error["code"], error["params"]["reason"]) == (code, code)
+    assert (error["params"]["field"], error["params"]["target_branch"]) == ("merge_target_branch", "feature/x")
+    for key in ("incoming_work_base_commits", "merge_id", "connected_group_id", "base_branch"):
+        if key in details:
+            assert error["params"][key] == details[key]
+    assert "secret" not in json.dumps(body) and "route" not in error["params"]
+    assert stored_rows(env, FB) == {} and get_settings(env, FB, g)["settings_version"] == 0
+
+
+def test_a_git_failure_of_the_save_is_git_unavailable_never_invalid_request(env, monkeypatch):
+    from flowgate.card_settings import legacy_adapter as legacy
+    from modules.flow_gate.services.git.credentials import GitServiceError
+
+    g = _gate_key(env)
+    for raised, reason in ((GitServiceError(409, "gate_git_unavailable", "x", details={"reason": "ledger_unavailable"}),
+                            "ledger_unavailable"),
+                           (GitServiceError(500, "git_error", "fatal: C:/secret"), "git_failed")):
+        monkeypatch.setattr(legacy, "judge_merge_target", lambda group, branch, exc=raised: (_ for _ in ()).throw(exc))
+        body = setting(env, FB, g, "merge_target_branch", "main", expect=409)
+        assert (body["error"]["code"], body["error"]["params"]["reason"]) == ("gate_git_unavailable", reason)
+        assert "secret" not in json.dumps(body)
+    assert stored_rows(env, FB) == {}
+
+
+def _git_cmd(args, cwd):
+    env = {**os.environ, "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@t"}
+    proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, env=env)
+    assert proc.returncode == 0, f"git {args}: {proc.stderr}"
+    return proc.stdout.strip()
+
+
+@pytest.fixture()
+def git_flow(env, tmp_path, monkeypatch):
+    """The project on a temporary bare origin: main (2 commits), feature/v0.2.0 (main + 1), old (main~1: lacks the
+    groups' work base history), remote-only; base checkout provisioned with the local release/local (= main, never
+    pushed); FB and FA have their worktrees."""
+    if not _GIT:
+        pytest.skip("git binary unavailable")
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.services.git import merge_target as mt
+    from modules.flow_gate.storage.paths import src_root
+
+    monkeypatch.setenv("FLOWGATE_GIT_ENCRYPT_KEY", base64.b64encode(b"K" * 32).decode())
+    monkeypatch.setattr(svc, "_sweep_daemon_started", True)
+    # What is judged, not how fast this host spawns Git: the 3 s budget itself is tested with the merge target suite.
+    monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
+    bare, seed = tmp_path / "origin.git", tmp_path / "seed"
+    _git_cmd(["init", "--bare", "-b", "main", str(bare)], tmp_path)
+    _git_cmd(["init", "-b", "main", str(seed)], tmp_path)
+    for n in (1, 2):
+        (seed / f"f{n}.txt").write_text(f"{n}\n", encoding="utf-8")
+        _git_cmd(["add", "-A"], seed)
+        _git_cmd(["commit", "-m", f"c{n}"], seed)
+    _git_cmd(["remote", "add", "origin", str(bare)], seed)
+    _git_cmd(["push", "origin", "main", "main~1:refs/heads/old", "main:refs/heads/remote-only"], seed)
+    _git_cmd(["checkout", "-b", "feature/v0.2.0"], seed)
+    (seed / "v02.txt").write_text("v02\n", encoding="utf-8")
+    _git_cmd(["add", "-A"], seed)
+    _git_cmd(["commit", "-m", "v02"], seed)
+    _git_cmd(["push", "origin", "feature/v0.2.0"], seed)
+    svc.save_config("flowgate", {"repo_url": bare.as_uri(), "provider": "generic", "base_branch": "main",
+                                 "default_finalize_action": "merge", "enabled": True,
+                                 "author_name": "T", "author_email": "t@t"})
+    assert svc.ensure_worktree("flowgate", "v02", FB) == "ok"
+    assert svc.ensure_worktree("flowgate", "v02", FA) == "ok"
+    base = src_root("flowgate", "main")
+    _git_cmd(["branch", "feature/v0.2.0", "origin/feature/v0.2.0"], base)
+    _git_cmd(["branch", "old", "origin/old"], base)
+    _git_cmd(["branch", "release/local", "main"], base)
+    mt.invalidate_check_targets()
+    yield {"base": base, "own": db_git.get_state(FB)["branch"], "other": db_git.get_state(FA)["branch"]}
+    mt.invalidate_check_targets()
+    svc.delete_config("flowgate")
+
+
+def test_the_merge_target_branch_is_saved_only_for_a_target_the_judgement_allows(env, git_flow):
+    from modules.flow_gate.db import groups as db_groups
+
+    work_base_before = db_groups.get_by_id(FB).get("work_base_ref")
+    g = _gate_key(env)
+    body = get_settings(env, FB, g)
+    # only the names the judgement passes: not the groups' own slots, not a remote, not a branch lacking history
+    assert body["merge_target_options"] == ["feature/v0.2.0", "main", "release/local"], body["merge_target_state"]
+    assert body["default_target_branch"] == "main"
+    state = body["merge_target_state"]
+    assert (state["status"], state["code"], state["reason"]) == ("ok", None, None)
+    assert state["current"] == {"branch": "main", "inherited": True, "checked": True, "error": None,
+                                "unmerge_supported": True, "warnings": []}
+    assert state["default"]["branch"] == "main" and state["default"]["error"] is None
+    for name, status, code in (("nope", 404, "merge_target_not_found"),
+                               ("remote-only", 409, "merge_target_remote_only"),
+                               (git_flow["other"], 409, "merge_target_internal_slot"),
+                               (git_flow["own"], 409, "merge_target_same_branch"),
+                               ("a..b", 422, "merge_target_invalid"), ("-x", 422, "merge_target_invalid"),
+                               ("HEAD", 422, "merge_target_invalid"),
+                               ("old", 409, "merge_target_incoming_work_base")):
+        refused = setting(env, FB, g, "merge_target_branch", name, expect=status)
+        assert refused["error"]["code"] == code, (name, refused["error"])
+        assert "\\" not in json.dumps(refused["error"]["params"])                # no worktree path
+    assert stored_rows(env, FB, g) == {} and get_settings(env, FB, g)["settings_version"] == 0
+    # every candidate is a target the save allows (one judgement), whatever the merge mode
+    setting(env, FB, g, "merge_mode", "commit")
+    for name in reversed(body["merge_target_options"]):
+        saved = setting(env, FB, g, "merge_target_branch", name)
+        assert saved["fields"]["merge_target_branch"] == {"value": name, "stored": True, "default": None,
+                                                          "choices": None}
+        assert (saved["merge_target_state"]["current"]["branch"], saved["merge_target_state"]["current"]["inherited"]) \
+            == (name, False)
+    picked = get_settings(env, FB, g)["merge_target_state"]["current"]
+    assert (picked["error"], picked["unmerge_supported"]) == (None, False)          # a non-base target: no unmerge
+    assert picked["warnings"] == ["target_differs_from_work_base", "unmerge_unsupported_for_non_base_target"]
+    # saving the target touched neither push nor the remote; the group's work base never moves
+    assert {field for (_key, field) in stored_rows(env, FB, g)} == {"merge_mode", "merge_target_branch"}
+    assert db_groups.get_by_id(FB).get("work_base_ref") == work_base_before
+    # the stored target disappears: its name stays, it is no candidate and the state says why (the refresh read
+    # option skips the at most 5 s old cache); the save judges the name again, never from the cache
+    for name, status, code in (("release/local", 404, "merge_target_not_found"),
+                               ("feature/v0.2.0", 409, "merge_target_remote_only")):   # its origin copy is left
+        setting(env, FB, g, "merge_target_branch", name)
+        _git_cmd(["branch", "-D", name], git_flow["base"])
+        gone = _get_refreshed(env, FB, g)
+        assert gone["fields"]["merge_target_branch"]["value"] == name
+        assert name not in gone["merge_target_options"] and "main" in gone["merge_target_options"]
+        assert gone["merge_target_state"]["current"]["error"] == code
+        assert setting(env, FB, g, "merge_target_branch", name, expect=status)["error"]["code"] == code
+    cleared = setting(env, FB, g, "merge_target_branch", None)                   # null: back to the work base
+    assert cleared["merge_target_state"]["current"]["inherited"] is True
+    assert cleared["merge_target_state"]["current"]["branch"] == "main"

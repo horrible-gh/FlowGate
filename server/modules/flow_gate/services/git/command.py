@@ -5,17 +5,50 @@ Extracted from git_service.py (flowgate.default.0550 T0009, D0006 §3.2/부록 A
 """
 from __future__ import annotations
 
+import contextvars
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from .credentials import GitServiceError, _scrub
 
 GIT_LOCAL_TIMEOUT_SEC = 30
+
+
+class GitBudget:
+    """flowgate.v02.0098 T#1 (D0004 §3.2): one wall-clock budget shared by every git call made inside
+    ``git_budget``. Each call gets at most the time left (``subprocess.run`` kills a call that outlives it); once the
+    budget is spent no further git process starts and ``expired`` stays true, so the caller discards what it read."""
+
+    def __init__(self, seconds: float):
+        self.deadline = time.monotonic() + max(float(seconds), 0.0)
+        self.expired = False
+
+    def remaining(self) -> float:
+        left = self.deadline - time.monotonic()
+        if left <= 0:
+            self.expired = True
+        return left
+
+
+_BUDGET: contextvars.ContextVar[Optional[GitBudget]] = contextvars.ContextVar("flowgate_git_budget", default=None)
+
+
+@contextmanager
+def git_budget(seconds: float) -> Iterator[GitBudget]:
+    """Bound every ``_run_git`` of this context (thread) to one shared budget. Nested: the inner one only."""
+    budget = GitBudget(seconds)
+    token = _BUDGET.set(budget)
+    try:
+        yield budget
+    finally:
+        _BUDGET.reset(token)
 
 # flowgate.default.0607 T0004 §3.1 (NR0003 §5/§9.6): git commands that write objects
 # (merge, commit, fetch) end by running auto maintenance. Git for Windows cannot
@@ -99,6 +132,12 @@ def _run_git(
     ``GIT_INDEX_FILE``, which `_apply_write_plan_locked`'s isolated scratch-index helpers use
     to build/inspect a tree without ever touching this checkout's real index.
     """
+    budget = _BUDGET.get()
+    if budget is not None:
+        left = budget.remaining()
+        if left <= 0:
+            return subprocess.CompletedProcess(["git", *args], returncode=-1, stdout="", stderr="timeout_expired")
+        timeout = min(timeout, left)
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
     env.pop("GIT_ASKPASS", None)
@@ -131,6 +170,8 @@ def _run_git(
                 env=env,
             )
         except subprocess.TimeoutExpired:
+            if budget is not None and budget.remaining() <= 0:
+                budget.expired = True
             return subprocess.CompletedProcess(
                 ["git", *args], returncode=-1, stdout="", stderr="timeout_expired"
             )

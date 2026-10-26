@@ -252,16 +252,21 @@ def resolve_scope_floor(
     state: Optional[dict] = None,
     config: Optional[dict] = None,
     head: str = "HEAD",
+    recover: bool = True,
 ) -> dict:
     """``{floor_sha, work_base_sha, work_base_sync_sha, work_base_ref, work_base_state}``.
 
     Raises ``GitServiceError(409, group_work_base_unverified | group_work_base_diverged)``.
     Never substitutes the project base or a branch tip for a missing record.
+
+    ``recover=False`` (flowgate.v02.0098 T#1, a read-only caller) never runs the legacy
+    auto-recovery, which records a floor, an audit row and possibly ``groups.work_base_ref``:
+    a group without a record stays ``group_work_base_unverified``.
     """
     from modules.flow_gate.services import git_service as _gs
     state = _state_of(group_id, state)
     recovery = None
-    if not state.get("work_base_state"):
+    if not state.get("work_base_state") and recover:
         state, recovery = _recover_legacy_floor(project_id, group_id, config)
     work_base_ref = _gs.resolve_group_work_base_ref(project_id, group_id, config=config)
     wb_state = state.get("work_base_state") or None

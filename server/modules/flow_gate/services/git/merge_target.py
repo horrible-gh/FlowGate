@@ -26,7 +26,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import contextvars
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
@@ -621,8 +625,11 @@ def raise_if_base_checkout_off_branch(project_id: str, base_branch: str) -> None
         return
     if _gs._judge_base_slot(base_root, base_branch) != "checkout":
         return
-    proc = _gs._run_git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=base_root)
-    checked_out = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+    # The full refname less its exact ``refs/heads/`` prefix (flowgate.v02.0098 T#1): ``--short``
+    # answers ``heads/main`` once a tag ``main`` exists.
+    proc = _gs._run_git(["symbolic-ref", "--quiet", "HEAD"], cwd=base_root)
+    head_ref = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+    checked_out = head_ref[len("refs/heads/"):] if head_ref.startswith("refs/heads/") else ""
     if checked_out == base_branch:
         return
     shown = f"'{checked_out}'" if checked_out else "a detached HEAD"
@@ -732,18 +739,26 @@ def default_target_of_group(project_id: str, group_id: str, cfg: Optional[dict])
     )
 
 
-def preview_target(group_id: str, requested: Optional[str] = None) -> dict:
+def preview_target(
+    group_id: str, requested: Optional[str] = None, *,
+    work_base_ref: Optional[str] = None, floor_sha: Optional[str] = None,
+) -> dict:
     """What merging this group into ``requested`` (or its default) would mean.
 
     Read-only.  ``incoming_work_base_commits`` counts work-base commits the target
     does not contain yet -- history that would flow into the target alongside the
     group's own change when the target is not the group's work base.
+
+    flowgate.v02.0098 T#1: ``work_base_ref`` / ``floor_sha`` stand in for the group's
+    current work base and its scope floor (a check card's execution re-checks against
+    what its confirm recorded); ``scope_floor`` is the commit-ish the count used
+    (None when nothing was counted).
     """
     from modules.flow_gate.services import git_service as _gs
     project_id = _gs._project_of_group(group_id)
     cfg = _gs.db_git.get_config(project_id) or {}
     base_branch = project_base_branch(cfg)
-    work_base_ref = default_target_of_group(project_id, group_id, cfg)
+    work_base_ref = work_base_ref or default_target_of_group(project_id, group_id, cfg)
     target = normalize_requested_target(requested) or work_base_ref
     is_work_base = target == work_base_ref
     preview = {
@@ -754,15 +769,44 @@ def preview_target(group_id: str, requested: Optional[str] = None) -> dict:
         "is_project_base": target == base_branch,
         "unmerge_supported": target == base_branch,
         "incoming_work_base_commits": None,
+        "scope_floor": None,
         "warnings": [],
     }
-    if not is_work_base:
-        preview["warnings"].append("target_differs_from_work_base")
-    if target != base_branch:
-        preview["warnings"].append("unmerge_unsupported_for_non_base_target")
+    preview["warnings"] = _preview_warnings(target, work_base_ref, base_branch)
     base_root = _gs._base_root_of(project_id)
     if is_work_base or base_root is None or not (base_root / ".git").exists():
         return preview
+    upper = floor_sha or work_base_floor(project_id, group_id, base_root, cfg, work_base_ref)
+    if not _gs._ref_exists(base_root, f"refs/heads/{target}"):
+        return preview
+    preview["scope_floor"] = upper
+    proc = _gs._run_git(["rev-list", "--count", f"refs/heads/{target}..{upper}"], cwd=base_root)
+    if proc.returncode == 0:
+        try:
+            preview["incoming_work_base_commits"] = int((proc.stdout or "0").strip())
+        except ValueError:
+            pass
+    return preview
+
+
+def _preview_warnings(target: str, work_base_ref: str, base_branch: str) -> list:
+    warnings = []
+    if target != work_base_ref:
+        warnings.append("target_differs_from_work_base")
+    if target != base_branch:
+        warnings.append("unmerge_unsupported_for_non_base_target")
+    return warnings
+
+
+def work_base_floor(project_id: str, group_id: str, base_root: Path, cfg: Optional[dict],
+                    work_base_ref: str) -> str:
+    """The upper end of :func:`preview_target`'s incoming count: the group's verified
+    scope floor, else where a new group branch would fork from its work base.
+
+    The preview's own (display) floor, unchanged; the check card judgement never uses it --
+    it passes a floor read without a write and refuses when there is none
+    (:func:`check_scope_floor`)."""
+    from modules.flow_gate.services import git_service as _gs
     state = _gs.db_git.get_state(group_id) or {}
     upper = None
     try:
@@ -776,15 +820,579 @@ def preview_target(group_id: str, requested: Optional[str] = None) -> dict:
         upper = None
     if upper is None:
         upper = _gs._worktree_start_point(base_root, work_base_ref)
-    if not _gs._ref_exists(base_root, f"refs/heads/{target}"):
-        return preview
-    proc = _gs._run_git(["rev-list", "--count", f"refs/heads/{target}..{upper}"], cwd=base_root)
-    if proc.returncode == 0:
+    return upper
+
+
+# ── Check card merge target (flowgate.v02.0098 T#1, D0004 §3.2 / §3.3) ───────
+#
+# One read-only judgement of "may this group's confirm merge into this local branch",
+# used alike by the check card's candidate list, its ``merge_target_branch`` save, the
+# confirm's preflight and the run right before the merge (T#2). It reuses
+# ``validate_target_branch``, ``inspect_workspace``, ``preview_target`` and the base
+# checkout checks, and never changes a setting, a ref, a workspace or a ledger row,
+# never records a floor (no legacy auto-recovery), never reclaims a stale owner and
+# never runs a merge. A read it cannot complete refuses; it never stands in for "allowed".
+
+CHECK_GIT_UNAVAILABLE = "gate_git_unavailable"
+CHECK_OPTIONS_TIMEOUT = "merge_target_options_timeout"
+CHECK_OPTIONS_UNAVAILABLE = "merge_target_options_unavailable"
+CHECK_TARGET_CACHE_SEC = 5.0
+CHECK_TARGET_BUDGET_SEC = 3.0
+# The candidate list's lookup status.
+CHECK_STATUS_OK = "ok"
+CHECK_STATUS_EMPTY = "empty"
+CHECK_STATUS_GIT_UNAVAILABLE = "git_unavailable"
+CHECK_STATUS_FAILED = "failed"
+CHECK_STATUS_TIMEOUT = "timeout"
+# A name failing on one of these is no candidate (left out of the list) and is refused when saved, confirmed or run.
+# Any other failure is the judgement's own basis failing (Git, the ledger): never read as "allowed".
+CHECK_TARGET_UNFIT = frozenset({
+    "merge_target_invalid", "merge_target_remote_only", "merge_target_internal_slot", "merge_target_not_found",
+    "merge_target_same_branch", "merge_target_incoming_work_base", "merge_target_preview_unavailable",
+    "merge_target_busy", "merge_target_owner_mismatch", "base_dirty", "merge_conflict_open",
+})
+
+
+@dataclass(frozen=True)
+class CheckTargetBasis:
+    """What every judgement of one group's check card target reads first: the authenticated group's project Git, its
+    base checkout, its own branch and the work base (the group's, or the one a confirm recorded)."""
+
+    project_id: str
+    group_id: str
+    cfg: dict
+    base_root: Path
+    base_branch: str
+    work_base_ref: str
+    source_branch: str
+    floor_sha: Optional[str] = None
+    floor_known: bool = False                  # floor_sha was read (None then: the group has no verified floor)
+    base_checked: bool = False
+    base_dirty: Optional[bool] = None          # read once for the candidate list; None: read when judged
+
+
+def _git_unavailable(reason: str) -> GitServiceError:
+    return GitServiceError(409, CHECK_GIT_UNAVAILABLE, "Git is not available for this merge target",
+                           details={"reason": reason})
+
+
+def check_target_basis(project_id: Optional[str], group_id: str, *,
+                       work_base_ref: Optional[str] = None) -> CheckTargetBasis:
+    """The basis of a check card target judgement, or 409 ``gate_git_unavailable`` with ``details.reason``:
+    ``no_project`` / ``project_mismatch`` / ``git_disabled`` / ``git_unavailable`` / ``checkout_unavailable`` /
+    ``group_slot_missing`` / ``probe_failed``. ``project_id`` is the authenticated group's own project."""
+    from modules.flow_gate.services import git_service as _gs
+    if not project_id:
+        raise _git_unavailable("no_project")
+    if _gs._project_of_group(group_id) != project_id:
+        raise _git_unavailable("project_mismatch")
+    try:
+        cfg = _gs.db_git.get_config(project_id)
+        if cfg is None or not cfg.get("enabled"):
+            raise _git_unavailable("git_disabled")
+        if not _gs.git_available():
+            raise _git_unavailable("git_unavailable")
+        base_root = _gs._base_root_of(project_id)
+        if base_root is None or not (base_root / ".git").exists():
+            raise _git_unavailable("checkout_unavailable")
+        state = _gs.db_git.get_state(group_id)
+        branch = ((state or {}).get("branch") or "").strip()
+        if not state or not branch or not int(state.get("worktree_registered") or 0):
+            raise _git_unavailable("group_slot_missing")
+        work_base = work_base_ref or default_target_of_group(project_id, group_id, cfg)
+    except GitServiceError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — a basis that cannot be read is no basis (fail closed)
+        _log.warning("check target basis failed for %s", group_id, exc_info=True)
+        raise _git_unavailable("probe_failed") from exc
+    return CheckTargetBasis(
+        project_id=project_id, group_id=group_id, cfg=cfg, base_root=base_root,
+        base_branch=project_base_branch(cfg), work_base_ref=work_base, source_branch=branch,
+    )
+
+
+def _commit_of(root: Path, ref: str) -> Optional[str]:
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd=root)
+    sha = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+    return sha or None
+
+
+def check_scope_floor(basis: CheckTargetBasis) -> Optional[str]:
+    """The group's verified scope floor (the upper end of the incoming count), read without any write.
+
+    ``resolve_scope_floor`` with ``recover=False``: a legacy group without a floor record is never recorded here
+    (no floor, no audit row, no ``groups.work_base_ref`` pin). None when there is no verified floor -- no usable
+    record, or one failing an integrity rule: a target other than the work base then cannot be told
+    (``merge_target_preview_unavailable``) and is never measured from a branch tip instead. A ledger or Git read
+    failure is the judgement's own basis failing: 409 ``gate_git_unavailable``."""
+    from modules.flow_gate.services import git_service as _gs
+    from .scope_base import REASON_LEDGER_UNAVAILABLE
+    try:
+        state = _gs.db_git.get_state(basis.group_id) or {}
+        return _gs.resolve_scope_floor(basis.project_id, basis.group_id, basis.base_root, state=state,
+                                       config=basis.cfg, head=f"refs/heads/{basis.source_branch}",
+                                       recover=False)["floor_sha"]
+    except GitServiceError as exc:
+        reason = (exc.details or {}).get("reason")
+        if reason == REASON_LEDGER_UNAVAILABLE:
+            raise _git_unavailable("ledger_unavailable") from exc
+        if reason == "git_error":
+            raise _git_unavailable("probe_failed") from exc
+        return None
+    except Exception as exc:  # noqa: BLE001 — an unreadable record is no floor and no "allowed"
+        _log.warning("check target scope floor read failed for %s", basis.group_id, exc_info=True)
+        raise _git_unavailable("probe_failed") from exc
+
+
+def _base_dirty(root: Path) -> bool:
+    """``refs._dirty``'s tracked-change question (``--untracked-files=no``), except that a failed or timed-out
+    ``git status`` stays a failure (409 ``gate_git_unavailable``) instead of reading as a clean checkout."""
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["status", "--porcelain", "--untracked-files=no"], cwd=root)
+    if proc.returncode != 0:
+        raise _git_unavailable("probe_failed")
+    return bool((proc.stdout or "").strip())
+
+
+def _raise_if_base_slot_unavailable(basis: CheckTargetBasis, own_merge_id: Optional[int]) -> None:
+    """The project base target's existing slot checks: an open conflict / stopped merge, tracked local changes, and
+    another open attempt into the base (in use). ``own_merge_id`` is the caller's own attempt, never "another".
+    The tracked-change read happens only when nothing is stopped; it failing refuses (``gate_git_unavailable``)."""
+    from .lock import base_merge_in_progress, guard_base_free
+
+    own = str(own_merge_id) if own_merge_id is not None else None
+    try:
+        guard_base_free(basis.project_id)
+    except GitServiceError as exc:
+        if own is None or str((exc.details or {}).get("merge_id")) != own:
+            raise
+    stopped = base_merge_in_progress(basis.project_id)
+    if stopped is not None and (own is None or str(stopped.get("merge_id")) != own):
+        raise GitServiceError(409, "merge_conflict_open", "a merge is stopped in the base checkout",
+                              details={"merge_id": stopped.get("merge_id"),
+                                       "blocking_group_id": stopped.get("group_id")})
+    if stopped is None and (basis.base_dirty if basis.base_dirty is not None else _base_dirty(basis.base_root)):
+        raise GitServiceError(409, "base_dirty", "base checkout has local modifications")
+    for session in open_merge_attempts(basis.project_id):
+        rec = target_record(session)
+        if rec and rec.get("is_project_base") and str(session.get("merge_id")) != own:
+            raise _target_error(409, "merge_target_busy", "another merge attempt uses the project base",
+                                basis.base_branch, merge_id=session.get("merge_id"),
+                                blocking_group_id=session.get("group_id"))
+
+
+def judge_check_target(
+    project_id: Optional[str], group_id: str, target: str, *,
+    work_base_ref: Optional[str] = None, scope_floor_sha: Optional[str] = None,
+    own_merge_id: Optional[int] = None, basis: Optional[CheckTargetBasis] = None,
+) -> dict:
+    """THE judgement of one exact local branch name as the check card merge target of ``group_id``.
+
+    Raises ``GitServiceError`` with the D0004 §3.3 codes: 409 ``gate_git_unavailable`` (``details.reason``), 422
+    ``merge_target_invalid``, 409 ``merge_target_remote_only`` / ``merge_target_internal_slot`` /
+    ``merge_target_same_branch`` / ``base_checkout_branch_mismatch`` / ``base_dirty`` / ``merge_conflict_open`` /
+    ``merge_target_busy`` / ``merge_target_owner_mismatch`` / ``merge_target_preview_unavailable`` /
+    ``merge_target_incoming_work_base``, 404 ``merge_target_not_found``. Otherwise returns::
+
+        {target_branch, target_sha, project_base_branch, work_base_ref, source_branch, is_project_base,
+         is_work_base, unmerge_supported, incoming_work_base_commits, scope_floor_sha, warnings}
+
+    ``incoming_work_base_commits`` / ``scope_floor_sha`` are None for the work base itself (no count needed).
+    ``work_base_ref`` / ``scope_floor_sha`` are what a confirm recorded (T#2 re-checks a run against them instead of
+    the group's current work base and floor); ``own_merge_id`` is the caller's own open attempt, never "busy" (an owner
+    mismatch on its workspace is still refused). Without a recorded floor the group's verified floor is read without
+    any write (:func:`check_scope_floor`); a group with none cannot have a target other than its work base told.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    if basis is None:
+        basis = check_target_basis(project_id, group_id, work_base_ref=work_base_ref)
+    root = basis.base_root
+    name = target
+    if not _plain_branch_name(name):
+        raise _target_error(422, "merge_target_invalid", "invalid target branch", str(name))
+    checked = _gs._run_git(["check-ref-format", "--branch", name], cwd=root)
+    if checked.returncode != 0 or (checked.stdout or "").strip() != name:
+        raise _target_error(422, "merge_target_invalid", "target is not a valid Git branch name", name)
+    try:
+        validate_target_branch(basis.project_id, root, name)
+    except GitServiceError as exc:
+        if exc.code == "merge_target_internal_slot" and name == basis.source_branch:
+            raise _slot_error(basis, name) from exc
+        if exc.code == "invalid_state":
+            raise _git_unavailable("checkout_unavailable") from exc
+        raise
+    except Exception as exc:  # noqa: BLE001 — the ledger could not be read: never an allowed target
+        _log.warning("check target ledger read failed for %s", group_id, exc_info=True)
+        raise _git_unavailable("ledger_unavailable") from exc
+    sha = _commit_of(root, f"refs/heads/{name}")
+    if sha is None:
+        raise _target_error(422, "merge_target_invalid", "target branch does not resolve to a commit", name)
+
+    def incoming_of(branch: str) -> tuple[Optional[int], Optional[str]]:
+        # The floor is a recorded one or the group's verified floor, read without a write; with none there is
+        # nothing to count from (never a branch tip): "cannot be told".
+        floor_sha = scope_floor_sha or (basis.floor_sha if basis.floor_known else check_scope_floor(basis))
+        if not floor_sha:
+            return None, None
+        preview = preview_target(basis.group_id, branch, work_base_ref=basis.work_base_ref, floor_sha=floor_sha)
+        floor = preview.get("scope_floor")
+        return preview.get("incoming_work_base_commits"), (_commit_of(root, floor) if floor else None)
+
+    return _judge_local_target(basis, name, sha, incoming_of, own_merge_id)
+
+
+def _plain_branch_name(name) -> bool:
+    return (isinstance(name, str) and bool(name) and name == name.strip() and name != "HEAD"
+            and not name.startswith("-") and not any(ord(c) < 32 or ord(c) == 127 for c in name))
+
+
+def _slot_error(basis: CheckTargetBasis, name: str, owner_group_id: Optional[str] = None) -> GitServiceError:
+    """``validate_target_branch``'s ledger verdict; the group's own slot is named as the same branch."""
+    if name == basis.source_branch:
+        return _target_error(409, "merge_target_same_branch", "the group's own branch cannot be its merge target", name)
+    return _target_error(409, "merge_target_internal_slot",
+                         "a registered group worktree branch cannot be a finalize target", name,
+                         connected_group_id=owner_group_id)
+
+
+def _judge_local_target(basis: CheckTargetBasis, name: str, sha: str, incoming_of,
+                        own_merge_id: Optional[int]) -> dict:
+    """The part of the judgement after the name resolved to a local, non-slot commit — shared by the single
+    judgement and the candidate list (which only gathers the same facts in batch). ``incoming_of(name)`` answers
+    ``(incoming_work_base_commits | None when it cannot be told, scope floor sha)`` for a name other than the work
+    base."""
+    if name == basis.source_branch:
+        raise _target_error(409, "merge_target_same_branch", "the group's own branch cannot be its merge target", name)
+    if not basis.base_checked:
+        raise_if_base_checkout_off_branch(basis.project_id, basis.base_branch)
+    is_base = name == basis.base_branch
+    if is_base:
+        _raise_if_base_slot_unavailable(basis, own_merge_id)
+    else:
+        verdict, details = inspect_workspace(basis.project_id, name)
+        # Only a ``busy`` workspace (one claim, its marker naming the same attempt and owner) can be the caller's
+        # own resumed attempt; a mismatch -- another owner's marker, several claims -- stays refused whatever id.
+        own = verdict == "busy" and own_merge_id is not None and str(details.get("merge_id")) == str(own_merge_id)
+        if verdict == "busy" and not own:
+            raise _target_error(409, "merge_target_busy", _busy_message(name, details), name, **details)
+        if verdict == "mismatch":
+            raise _target_error(409, "merge_target_owner_mismatch",
+                                "the target workspace owner does not match any open attempt", name, **details)
+    incoming, floor = None, None
+    if name != basis.work_base_ref:
+        incoming, floor = incoming_of(name)
+        if incoming is None:
+            raise _target_error(409, "merge_target_preview_unavailable",
+                                "whether the target lacks work base history could not be told", name,
+                                work_base_ref=basis.work_base_ref)
+        if incoming > 0:
+            raise _target_error(409, "merge_target_incoming_work_base",
+                                "the target lacks work base history that would flow into it", name,
+                                work_base_ref=basis.work_base_ref, incoming_work_base_commits=incoming)
+    return {
+        "target_branch": name, "target_sha": sha,
+        "project_base_branch": basis.base_branch, "work_base_ref": basis.work_base_ref,
+        "source_branch": basis.source_branch,
+        "is_project_base": is_base, "is_work_base": name == basis.work_base_ref,
+        "unmerge_supported": is_base,
+        "incoming_work_base_commits": incoming,
+        "scope_floor_sha": floor,
+        "warnings": _preview_warnings(name, basis.work_base_ref, basis.base_branch),
+    }
+# The candidate cache: (project, group) -> snapshot, at most CHECK_TARGET_CACHE_SEC old. Concurrent misses of one key
+# share one computation; ``invalidate_check_targets`` moves the epoch, so a computation that began before it is
+# neither cached nor joined afterwards.
+_check_cache: dict[tuple, dict] = {}
+_check_inflight: dict[tuple, "_CheckFlight"] = {}
+_check_lock = threading.Lock()
+_check_epoch = 0
+
+
+class _CheckFlight:
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.result: Optional[dict] = None
+
+
+def invalidate_check_targets(project_id: Optional[str] = None, group_id: Optional[str] = None) -> None:
+    """Drop the cached check card candidates of one group, of a whole project (``group_id`` None) or of all.
+
+    Called when a card's target, a work base or a project's Git settings change, and by every server path that
+    changes refs, the internal slot ledger, a merge attempt or a target workspace (T#2's run paths)."""
+    global _check_epoch
+    with _check_lock:
+        _check_epoch += 1
+        for key in list(_check_cache):
+            if (project_id is None or key[0] == project_id) and (group_id is None or key[1] == group_id):
+                del _check_cache[key]
+
+
+def _entry(branch: Optional[str], *, checked: bool, error: Optional[str] = None,
+           unmerge_supported: Optional[bool] = None, warnings: Optional[list] = None) -> dict:
+    return {"branch": branch, "checked": checked, "error": error, "unmerge_supported": unmerge_supported,
+            "warnings": list(warnings or [])}
+
+
+def _verdict(basis: CheckTargetBasis, name: str) -> dict:
+    """One name's entry; a basis failure (not ``CHECK_TARGET_UNFIT``) is raised."""
+    try:
+        judged = judge_check_target(basis.project_id, basis.group_id, name, basis=basis)
+    except GitServiceError as exc:
+        if exc.code not in CHECK_TARGET_UNFIT:
+            raise
+        return _entry(name, checked=True, error=exc.code, unmerge_supported=name == basis.base_branch,
+                      warnings=_preview_warnings(name, basis.work_base_ref, basis.base_branch))
+    return _entry(name, checked=True, unmerge_supported=judged["unmerge_supported"], warnings=judged["warnings"])
+
+
+def _failed_snapshot(status: str, code: str, reason: Optional[str] = None, **extra) -> dict:
+    return {"status": status, "code": code, "reason": reason, "options": [], "verdicts": {}, **extra}
+
+
+def _branches_containing(root: Path, commitish: str) -> set:
+    """The local branches whose tip contains ``commitish`` (``target..commitish`` is empty for exactly these). A Git
+    failure is the list's own basis failing (409 ``gate_git_unavailable``), never "no branch contains it". Names are
+    the full refname less its exact ``refs/heads/`` prefix, as :func:`group_work_base.local_branch_refs` lists them."""
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["for-each-ref", "--contains", commitish, "--format=%(refname)", "refs/heads"], cwd=root)
+    if proc.returncode != 0:
+        raise _git_unavailable("probe_failed")
+    names = (line.strip() for line in (proc.stdout or "").splitlines())
+    return {ref[len("refs/heads/"):] for ref in names if ref.startswith("refs/heads/") and ref != "refs/heads/"}
+
+
+def _listed_verdict(basis: CheckTargetBasis, name: str, ref: tuple, slots: dict, incoming_of) -> dict:
+    """One listed local branch's entry from the batch facts — the judgement's own steps: the ledger verdict of
+    ``validate_target_branch`` (the listed name exists locally), a commit tip, then ``_judge_local_target``. A tip
+    that is no plain commit takes the single judgement."""
+    sha, kind = ref
+    try:
+        if name in slots:
+            raise _slot_error(basis, name, slots[name])
+        if not _plain_branch_name(name):
+            raise _target_error(422, "merge_target_invalid", "invalid target branch", name)
+        if kind != "commit":
+            return _verdict(basis, name)
+        judged = _judge_local_target(basis, name, sha, incoming_of, None)
+    except GitServiceError as exc:
+        if exc.code not in CHECK_TARGET_UNFIT:
+            raise
+        return _entry(name, checked=True, error=exc.code, unmerge_supported=name == basis.base_branch,
+                      warnings=_preview_warnings(name, basis.work_base_ref, basis.base_branch))
+    return _entry(name, checked=True, unmerge_supported=judged["unmerge_supported"], warnings=judged["warnings"])
+
+
+def _spent(budget) -> bool:
+    return budget.expired or time.monotonic() > budget.deadline
+
+
+class _BudgetSpent(Exception):
+    """The view's one CHECK_TARGET_BUDGET_SEC budget ran out after its snapshot (judging a name it did not hold)."""
+
+
+def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dict:
+    """Judge every local branch name, the work base and ``extra`` (the stored target) under ``budget`` — the view's
+    one CHECK_TARGET_BUDGET_SEC budget, started before the basis was read and bounding every Git call of this context.
+    The facts every name shares are read once (the base checkout's branch, the names and tips, the slot ledger, the
+    verified scope floor and which tips contain it, the base checkout's tracked changes); each name then takes the
+    judgement's own decision. Nothing partial survives: a basis failure is ``merge_target_options_unavailable`` and a
+    spent budget ``merge_target_options_timeout``."""
+    from modules.flow_gate.services import git_service as _gs
+    from .group_work_base import local_branch_refs
+
+    common = {"default_branch": basis.work_base_ref, "basis": basis}
+
+    def floor_and_containing() -> tuple:
+        floor = check_scope_floor(basis)          # read only; None: no verified floor (no tip stands in)
+        return floor, (_branches_containing(basis.base_root, floor) if floor else None)
+
+    try:
+        if _spent(budget):
+            return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
+        # The shared reads run side by side under the one budget (each thread carries it) and are all joined
+        # here: nothing outlives this call.
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="check-target") as pool:
+            def run(fn, *args):
+                return pool.submit(contextvars.copy_context().run, fn, *args)
+            checkout = run(raise_if_base_checkout_off_branch, basis.project_id, basis.base_branch)
+            listed = run(local_branch_refs, basis.base_root)
+            history = run(floor_and_containing)
+            dirty = run(_base_dirty, basis.base_root)
+            # The ledger ``branches.internal_slot_owner`` reads (registered group worktrees), read once.
+            slots = {row.get("branch"): row.get("group_id")
+                     for row in _gs.db_git.list_states_of_project(basis.project_id)}
+            checkout.result()
+            refs = listed.result()
+            floor, contained = history.result()
+            base_dirty = dirty.result()
+        judged = replace(basis, base_checked=True, floor_sha=floor, floor_known=True, base_dirty=base_dirty)
+
+        def incoming_of(name: str) -> tuple[Optional[int], Optional[str]]:
+            # ``preview_target``'s count is ``target..floor``: 0 exactly when the tip contains the floor (the
+            # list needs no more than "none" / "some": 1 stands for at least one). No verified floor: cannot tell.
+            if contained is None:
+                return None, None
+            return (0 if name in contained else 1), None
+
+        verdicts: dict[str, dict] = {}
+        for name in sorted(refs):
+            verdicts[name] = _listed_verdict(judged, name, refs[name], slots, incoming_of)
+            if _spent(budget):
+                return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
+        for name in (basis.work_base_ref, *extra):   # a work base / stored target that is no listed local branch
+            if name and name not in verdicts:
+                verdicts[name] = _verdict(judged, name)
+        if _spent(budget):
+            return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
+    except GitServiceError as exc:
+        if _spent(budget):
+            return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
+        if exc.code == "base_checkout_branch_mismatch":
+            return _failed_snapshot(CHECK_STATUS_GIT_UNAVAILABLE, exc.code, **common)
+        reason = (exc.details or {}).get("reason") if exc.code == CHECK_GIT_UNAVAILABLE else exc.code
+        return _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, reason, **common)
+    except Exception:  # noqa: BLE001 — a basis read failed: no partial list
+        _log.warning("check target candidates failed for %s", basis.group_id, exc_info=True)
+        if _spent(budget):
+            return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
+        return _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, "probe_failed", **common)
+    options = sorted(name for name in refs if verdicts[name]["error"] is None)
+    return {"status": CHECK_STATUS_OK if options else CHECK_STATUS_EMPTY, "code": None, "reason": None,
+            "options": options, "verdicts": verdicts, "default_branch": basis.work_base_ref, "basis": judged}
+
+
+def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, budget,
+                    selected: Optional[str] = None) -> dict:
+    """The (cached) snapshot of one group's candidates, read under the view's ``budget``: the basis, the shared
+    computation and the wait for another request's computation all spend the same deadline."""
+    try:
+        basis = check_target_basis(project_id, group_id)
+    except GitServiceError as exc:
+        default = None
         try:
-            preview["incoming_work_base_commits"] = int((proc.stdout or "0").strip())
-        except ValueError:
-            pass
-    return preview
+            from modules.flow_gate.services import git_service as _gs
+            default = _gs.resolve_group_work_base_ref(project_id, group_id) if project_id else None
+        except Exception:  # noqa: BLE001 — the default is display only
+            default = None
+        if _spent(budget):
+            return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, default_branch=default, basis=None)
+        return _failed_snapshot(CHECK_STATUS_GIT_UNAVAILABLE, exc.code, (exc.details or {}).get("reason"),
+                                default_branch=default, basis=None)
+    key = (project_id, group_id)
+    fingerprint = (basis.base_branch, basis.work_base_ref, basis.source_branch, str(basis.base_root))
+    with _check_lock:
+        epoch = _check_epoch
+        hit = _check_cache.get(key)
+        if (not refresh and hit is not None and hit["fingerprint"] == fingerprint
+                and time.monotonic() - hit["at"] < CHECK_TARGET_CACHE_SEC):
+            return hit
+        flight_key = (key, epoch, fingerprint)
+        flight = None if refresh else _check_inflight.get(flight_key)
+        owner = flight is None
+        if owner:
+            flight = _CheckFlight()
+            _check_inflight[flight_key] = flight
+    if not owner:
+        # Joining another request's computation spends this request's own deadline; one that does not end inside
+        # it is this request's timeout (never a second computation past the budget).
+        flight.done.wait(max(budget.remaining(), 0.0))
+        if flight.result is not None:
+            return flight.result
+        return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT,
+                                default_branch=basis.work_base_ref, basis=None)
+    snapshot: Optional[dict] = None
+    try:
+        snapshot = _compute_snapshot(basis, budget, (selected,) if selected else ())
+    except Exception:  # noqa: BLE001
+        _log.warning("check target snapshot failed for %s", group_id, exc_info=True)
+        snapshot = _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, "probe_failed",
+                                    default_branch=basis.work_base_ref, basis=None)
+    finally:
+        if snapshot is None:
+            snapshot = _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, "probe_failed",
+                                        default_branch=basis.work_base_ref, basis=None)
+        snapshot.update(fingerprint=fingerprint, at=time.monotonic())
+        with _check_lock:
+            if _check_inflight.get(flight_key) is flight:
+                del _check_inflight[flight_key]
+            if snapshot["status"] in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY) and epoch == _check_epoch:
+                _check_cache[key] = snapshot
+        flight.result = snapshot
+        flight.done.set()
+    return snapshot
+
+
+def _entry_of(snapshot: dict, name: Optional[str], budget) -> dict:
+    """A name's entry from the snapshot. A name the snapshot did not judge (a cached snapshot read for another
+    stored target) is judged on its own under what is left of the view's ``budget`` and kept; running out of it
+    raises ``_BudgetSpent`` (the view then times out as a whole)."""
+    if name is None:
+        return _entry(None, checked=True)
+    status = snapshot["status"]
+    if status == CHECK_STATUS_GIT_UNAVAILABLE:
+        return _entry(name, checked=True, error=snapshot["code"])
+    if status not in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY) or snapshot.get("basis") is None:
+        return _entry(name, checked=False)
+    with _check_lock:
+        found = snapshot["verdicts"].get(name)
+    if found is not None:
+        return {**found, "warnings": list(found["warnings"])}
+    if _spent(budget):
+        raise _BudgetSpent()
+    try:
+        found = _verdict(snapshot["basis"], name)
+    except Exception:  # noqa: BLE001 — could not be judged now; the list keeps its own status
+        if _spent(budget):
+            raise _BudgetSpent() from None
+        _log.warning("check target judgement of %r failed", name, exc_info=True)
+        return _entry(name, checked=False)
+    if _spent(budget):
+        raise _BudgetSpent()
+    with _check_lock:
+        snapshot["verdicts"][name] = found
+    return {**found, "warnings": list(found["warnings"])}
+
+
+def check_target_view(project_id: Optional[str], group_id: str, selected: Optional[str], *,
+                      refresh: bool = False) -> dict:
+    """The read-only merge target outputs of a check card's settings response (D0004 §3.1 / §5)::
+
+        {"merge_target_options": [branch, ...],          # names passing judge_check_target, sorted
+         "default_target_branch": work base | None,
+         "merge_target_state": {
+             "status": ok | empty | git_unavailable | failed | timeout,
+             "code": None | gate_git_unavailable | base_checkout_branch_mismatch
+                     | merge_target_options_unavailable | merge_target_options_timeout,
+             "reason": None | <why>,
+             "current": {branch, inherited, checked, error, unmerge_supported, warnings},
+             "default": {branch, checked, error, unmerge_supported, warnings}}}
+
+    ``selected`` is the stored ``merge_target_branch`` (None: the work base is inherited). ``refresh`` skips the
+    cache. One CHECK_TARGET_BUDGET_SEC budget covers the whole view -- the basis, the candidates and the current /
+    default states; when it runs out the view is ``timeout`` with no candidates and unchecked states, and that is
+    never cached. Never raises for a Git / ledger read: the status says what failed. Saving, confirming and running
+    never read this (they call ``judge_check_target``)."""
+    from .command import git_budget
+
+    with git_budget(CHECK_TARGET_BUDGET_SEC) as budget:
+        snapshot = _check_snapshot(project_id, group_id, refresh, budget, selected)
+        default_branch = snapshot.get("default_branch")
+        try:
+            default = _entry_of(snapshot, default_branch, budget) if default_branch else _entry(None, checked=True)
+            current = dict(default) if selected is None else _entry_of(snapshot, selected, budget)
+        except _BudgetSpent:
+            snapshot = _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT,
+                                        default_branch=default_branch, basis=None)
+            default = _entry(default_branch, checked=False) if default_branch else _entry(None, checked=True)
+            current = dict(default) if selected is None else _entry(selected, checked=False)
+    current["inherited"] = selected is None
+    return {
+        "merge_target_options": list(snapshot["options"]),
+        "default_target_branch": default_branch,
+        "merge_target_state": {"status": snapshot["status"], "code": snapshot["code"], "reason": snapshot["reason"],
+                               "current": current, "default": default},
+    }
 
 
 # ── Attempt lifecycle ────────────────────────────────────────────────────────

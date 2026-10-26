@@ -1597,3 +1597,524 @@ def test_0086_open_attempt_keeps_its_pinned_target_off_branch(proj):
     cfg = db_git.get_config(proj.pid)
     fixed = mt.plan_finalize_target(gid, proj.pid, cfg, None)
     assert fixed.target_branch == "develop" and fixed.merge_id == merge_id
+
+
+# ── flowgate.v02.0098 T#1: the check card's common merge target judgement (D0004 §3.2 / §7) ──────────────────────
+
+def _check_view(p: Proj, gid: str, selected=None, refresh=True) -> dict:
+    from modules.flow_gate.services.git import merge_target as mt
+    return mt.check_target_view(p.pid, gid, selected, refresh=refresh)
+
+
+def _judge(p: Proj, gid: str, name: str, **kw) -> dict:
+    from modules.flow_gate.services.git import merge_target as mt
+    return mt.judge_check_target(p.pid, gid, name, **kw)
+
+
+def _refused(p: Proj, gid: str, name: str, **kw):
+    from modules.flow_gate.services import git_service as svc
+    with pytest.raises(svc.GitServiceError) as caught:
+        _judge(p, gid, name, **kw)
+    return caught.value
+
+
+@pytest.fixture
+def check_budget(monkeypatch):
+    """What is judged, not how fast this host spawns Git (the 3 s budget has its own test below)."""
+    from modules.flow_gate.services.git import merge_target as mt
+    monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
+    mt.invalidate_check_targets()
+    yield
+    mt.invalidate_check_targets()
+
+
+def _feature_group(p: Proj, seq: int, name: str = "feature/v0.2.0") -> str:
+    """origin and the base checkout get ``name`` = main + 1 commit (main lacks it); a new group pins it as work base."""
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.services import git_service as svc
+
+    if not (p.base / ".git").exists():
+        assert svc.provision_base(p.pid, "test")["status"] != "failed"
+    _git(["fetch", "origin"], cwd=p.seed)
+    _git(["checkout", "-B", name, "origin/main"], cwd=p.seed)
+    (p.seed / "v02.txt").write_text("v02\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=p.seed)
+    _git(["commit", "-m", "v02"], cwd=p.seed)
+    _git(["push", "origin", name], cwd=p.seed)
+    _git(["checkout", "main"], cwd=p.seed)
+    _git(["fetch", "origin"], cwd=p.base)
+    _git(["branch", name, f"origin/{name}"], cwd=p.base)
+    gid = f"{p.pid}.default.{seq:04d}"
+    db_groups.create({"group_id": gid, "project_id": p.pid, "module": "default", "title": "t0098",
+                      "work_base_ref": name})
+    assert svc.ensure_worktree(p.pid, "default", gid) == "ok"
+    return gid
+
+
+@needs_git
+def test_0098_candidates_are_exactly_the_targets_the_judgement_allows(proj, check_budget, monkeypatch):
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services.git import merge_target as mt
+
+    gid, other = proj.group(1), proj.group(2)
+    proj.local_branch("develop")
+    proj.local_branch("release")
+    own_branch, other_branch = db_git.get_state(gid)["branch"], db_git.get_state(other)["branch"]
+    view = _check_view(proj, gid)
+    assert view["merge_target_options"] == ["develop", "main", "release"]          # never a slot, never a remote
+    assert view["default_target_branch"] == "main"
+    assert view["merge_target_state"]["status"] == "ok"
+    for name in view["merge_target_options"]:                                      # a candidate is a saveable target
+        judged = _judge(proj, gid, name)
+        assert judged["target_branch"] == name and judged["target_sha"] == _git(
+            ["rev-parse", f"refs/heads/{name}"], cwd=proj.base).strip()
+        assert (judged["is_project_base"], judged["unmerge_supported"]) == (name == "main", name == "main")
+    assert _refused(proj, gid, own_branch).code == "merge_target_same_branch"
+    slot = _refused(proj, gid, other_branch)
+    assert (slot.code, slot.details["connected_group_id"]) == ("merge_target_internal_slot", other)
+    for name, code in (("nope", "merge_target_not_found"), ("a..b", "merge_target_invalid"),
+                       ("-x", "merge_target_invalid"), (" main", "merge_target_invalid")):
+        assert _refused(proj, gid, name).code == code
+    _git(["push", "origin", "main:remote-only"], cwd=proj.seed)
+    _git(["fetch", "origin"], cwd=proj.base)
+    assert _refused(proj, gid, "remote-only").code == "merge_target_remote_only"
+    # the ledger decides a slot: a row left by an unregistered worktree does not exclude its branch by itself
+    db_git.unregister_worktree(other)
+    assert db_git.get_state_by_branch(proj.pid, other_branch) is not None
+    assert _judge(proj, gid, other_branch)["target_branch"] == other_branch
+    assert other_branch in _check_view(proj, gid)["merge_target_options"]
+    # a ledger that cannot be read is no "allowed": the judgement and the whole list fail
+    monkeypatch.setattr(db_git, "list_states_of_project",
+                        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("db down")))
+    failed = _refused(proj, gid, "develop")
+    assert (failed.code, failed.details["reason"]) == ("gate_git_unavailable", "ledger_unavailable")
+    broken = _check_view(proj, gid)
+    assert broken["merge_target_options"] == []
+    assert (broken["merge_target_state"]["status"], broken["merge_target_state"]["code"]) == (
+        "failed", mt.CHECK_OPTIONS_UNAVAILABLE)
+
+
+@needs_git
+def test_0098_main_is_a_target_only_when_it_holds_the_work_base_history(proj, check_budget, monkeypatch):
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.services.git import merge_target as mt
+
+    gid = _feature_group(proj, 3)
+    view = _check_view(proj, gid)
+    assert view["merge_target_options"] == ["feature/v0.2.0"]                     # main lacks the v0.2 commit
+    assert view["default_target_branch"] == "feature/v0.2.0"
+    inherited = view["merge_target_state"]["current"]
+    assert (inherited["branch"], inherited["inherited"], inherited["unmerge_supported"], inherited["warnings"]) == (
+        "feature/v0.2.0", True, False, ["unmerge_unsupported_for_non_base_target"])
+    refused = _refused(proj, gid, "main")
+    assert (refused.code, refused.details["incoming_work_base_commits"]) == ("merge_target_incoming_work_base", 1)
+    main_state = _check_view(proj, gid, "main")["merge_target_state"]["current"]
+    assert (main_state["branch"], main_state["inherited"], main_state["error"]) == (
+        "main", False, "merge_target_incoming_work_base")
+    work_base = _judge(proj, gid, "feature/v0.2.0")
+    assert (work_base["is_work_base"], work_base["is_project_base"], work_base["unmerge_supported"],
+            work_base["incoming_work_base_commits"]) == (True, False, False, None)
+    # an incoming count that cannot be told refuses, never allows
+    real_preview = mt.preview_target
+    monkeypatch.setattr(mt, "preview_target", lambda *a, **k: {**real_preview(*a, **k),
+                                                                "incoming_work_base_commits": None})
+    assert _refused(proj, gid, "main").code == "merge_target_preview_unavailable"
+    monkeypatch.setattr(mt, "preview_target", real_preview)
+    # Git failing to tell which tips hold the floor is the list's own basis failing: no partial list (the work base
+    # is not left in it), and nothing cached -- the next read computes again
+    from modules.flow_gate.services import git_service as svc
+    real_run = svc._run_git
+    monkeypatch.setattr(svc, "_run_git", lambda args, **kw: (
+        subprocess.CompletedProcess(["git", *args], 128, "", "fatal: broken")
+        if args[:2] == ["for-each-ref", "--contains"] else real_run(args, **kw)))
+    mt.invalidate_check_targets()
+    broken = _check_view(proj, gid, refresh=False)
+    assert broken["merge_target_options"] == []
+    assert (broken["merge_target_state"]["status"], broken["merge_target_state"]["code"],
+            broken["merge_target_state"]["reason"]) == ("failed", mt.CHECK_OPTIONS_UNAVAILABLE, "probe_failed")
+    assert broken["merge_target_state"]["current"]["checked"] is False
+    monkeypatch.setattr(svc, "_run_git", real_run)
+    assert _check_view(proj, gid, refresh=False)["merge_target_options"] == ["feature/v0.2.0"]
+    # main holds the whole work base history (incoming 0): a candidate and an allowed target
+    _git(["merge", "--ff-only", "feature/v0.2.0"], cwd=proj.base)
+    judged = _judge(proj, gid, "main")
+    assert (judged["incoming_work_base_commits"], judged["is_project_base"], judged["unmerge_supported"]) == (
+        0, True, True)
+    assert judged["scope_floor_sha"] == _git(["rev-parse", "feature/v0.2.0"], cwd=proj.base).strip()
+    assert judged["warnings"] == ["target_differs_from_work_base"]
+    assert _check_view(proj, gid)["merge_target_options"] == ["feature/v0.2.0", "main"]
+    # a confirm's recorded work base / floor are judged instead of the group's current ones
+    first = _git(["rev-list", "--max-parents=0", "main"], cwd=proj.base).strip()
+    _git(["branch", "old", first], cwd=proj.base)
+    assert _refused(proj, gid, "old").code == "merge_target_incoming_work_base"
+    assert _judge(proj, gid, "old", scope_floor_sha=first)["incoming_work_base_commits"] == 0
+    assert db_groups.get_by_id(gid)["work_base_ref"] == "feature/v0.2.0"           # never changed
+
+
+@needs_git
+def test_0098_base_and_non_base_targets_take_their_own_slot_checks(proj, check_budget):
+    from modules.flow_gate.db import groups as db_groups
+
+    gid = _feature_group(proj, 4)
+    _git(["merge", "--ff-only", "feature/v0.2.0"], cwd=proj.base)
+    assert {_judge(proj, gid, n)["target_branch"] for n in ("main", "feature/v0.2.0")} == {"main", "feature/v0.2.0"}
+    # the project base checkout off its branch (or detached) refuses every target, the inherited one too
+    for off in (["checkout", "feature/v0.2.0"], ["checkout", "--detach", "main"]):
+        _git(off, cwd=proj.base)
+        for name in ("main", "feature/v0.2.0"):
+            assert _refused(proj, gid, name).code == "base_checkout_branch_mismatch"
+        view = _check_view(proj, gid)
+        assert view["merge_target_options"] == []
+        assert (view["merge_target_state"]["status"], view["merge_target_state"]["code"]) == (
+            "git_unavailable", "base_checkout_branch_mismatch")
+        assert view["merge_target_state"]["current"]["error"] == "base_checkout_branch_mismatch"
+        _git(["checkout", "main"], cwd=proj.base)
+    # tracked local changes in the base checkout refuse the project base only
+    (proj.base / "README.md").write_text("dirty\n", encoding="utf-8")
+    assert _refused(proj, gid, "main").code == "base_dirty"
+    assert _judge(proj, gid, "feature/v0.2.0")["is_project_base"] is False
+    assert _check_view(proj, gid)["merge_target_options"] == ["feature/v0.2.0"]
+    _git(["checkout", "--", "README.md"], cwd=proj.base)
+    assert db_groups.get_by_id(gid)["work_base_ref"] == "feature/v0.2.0"
+
+
+@needs_git
+def test_0098_an_occupied_target_is_refused_and_never_reclaimed(proj, check_budget):
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services.git import merge_target as mt
+
+    gid_a, gid_b, gid_c = proj.group(5), proj.group(6), proj.group(7)
+    proj.local_branch("develop")
+    attempt = _open_attempt(proj, gid_a, "develop", "op:crashed")            # interrupted: recovery's to reclaim
+    busy = _refused(proj, gid_b, "develop")
+    assert (busy.code, busy.details["merge_id"]) == ("merge_target_busy", attempt.merge_id)
+    assert "develop" not in _check_view(proj, gid_b)["merge_target_options"]
+    assert _session(attempt.merge_id)["status"] == "open"                       # judged, not reclaimed
+    assert proj.workspace("develop").exists()
+    # the caller's own attempt is not "another"
+    assert _judge(proj, gid_a, "develop", own_merge_id=attempt.merge_id)["target_branch"] == "develop"
+    marker_path = proj.workspace("develop") / "owner.json"
+    original = marker_path.read_text(encoding="utf-8")
+    marker = json.loads(original)
+    marker["owner"] = "someone-else"
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    assert _refused(proj, gid_b, "develop").code == "merge_target_owner_mismatch"
+    state = _check_view(proj, gid_b, "develop")["merge_target_state"]["current"]
+    assert (state["branch"], state["error"]) == ("develop", "merge_target_owner_mismatch")
+    # another owner's marker on the caller's own merge id is still a mismatch, never the caller's resume
+    assert mt.inspect_workspace(proj.pid, "develop")[0] == "mismatch"
+    own_but_foreign = _refused(proj, gid_a, "develop", own_merge_id=attempt.merge_id)
+    assert (own_but_foreign.code, own_but_foreign.details["merge_id"]) == (
+        "merge_target_owner_mismatch", attempt.merge_id)
+    marker_path.write_text(original, encoding="utf-8")
+    assert _judge(proj, gid_a, "develop", own_merge_id=attempt.merge_id)["target_branch"] == "develop"
+    # a second open claim on the same workspace: the first claim being the caller's own does not hide it
+    gid_d = proj.group(57)
+    second = mt.open_attempt(gid_d, attempt, "merge", "op:third", "third")
+    verdict, details = mt.inspect_workspace(proj.pid, "develop")
+    assert verdict == "mismatch" and details["merge_id"] in (attempt.merge_id, second.merge_id)
+    assert _refused(proj, gid_a, "develop", own_merge_id=attempt.merge_id).code == "merge_target_owner_mismatch"
+    assert _refused(proj, gid_d, "develop", own_merge_id=second.merge_id).code == "merge_target_owner_mismatch"
+    assert _session(attempt.merge_id)["status"] == _session(second.merge_id)["status"] == "open"
+    # another attempt into the project base: the base is in use
+    cfg = db_git.get_config(proj.pid)
+    mt.open_attempt(gid_c, mt.plan_finalize_target(gid_c, proj.pid, cfg, None), "merge", "op:other", "other")
+    assert _refused(proj, gid_b, "main").code == "merge_target_busy"
+    assert _check_view(proj, gid_b)["merge_target_options"] == []
+
+
+@needs_git
+def test_0098_the_candidate_cache_is_shared_short_and_invalidated(proj, check_budget, monkeypatch):
+    import threading
+    import time as _time
+
+    from modules.flow_gate.services.git import merge_target as mt
+
+    gid = proj.group(8)
+    computed = []
+    real = mt._compute_snapshot
+
+    def counted(basis, *args):
+        computed.append(basis.group_id)
+        _time.sleep(0.3)
+        return real(basis, *args)
+
+    monkeypatch.setattr(mt, "_compute_snapshot", counted)
+    first = _check_view(proj, gid, refresh=False)
+    assert _check_view(proj, gid, refresh=False) == first and len(computed) == 1     # within 5 s: the cache
+    mt.invalidate_check_targets(proj.pid, gid)                                        # a server change: dropped
+    _check_view(proj, gid, refresh=False)
+    assert len(computed) == 2
+    _check_view(proj, gid, refresh=True)                                              # the refresh option skips it
+    assert len(computed) == 3
+    monkeypatch.setattr(mt, "CHECK_TARGET_CACHE_SEC", 0.0)                            # older than the cache time
+    _check_view(proj, gid, refresh=False)
+    assert len(computed) == 4
+    monkeypatch.setattr(mt, "CHECK_TARGET_CACHE_SEC", 5.0)
+    # concurrent misses of one key share one computation (the basis is read once up front: this harness shares a
+    # single SQLite connection, which the real stores never do)
+    basis = mt.check_target_basis(proj.pid, gid)
+    monkeypatch.setattr(mt, "check_target_basis", lambda *_a, **_k: basis)
+    mt.invalidate_check_targets()
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(_check_view(proj, gid, refresh=False)))
+               for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    assert len(computed) == 5 and len(results) == 4
+    assert all(r["merge_target_options"] == first["merge_target_options"] for r in results), json.dumps(
+        [r["merge_target_state"] for r in results])
+    # a failed computation is never cached: the next read tries again
+    monkeypatch.setattr(mt, "_compute_snapshot",
+                        lambda basis, *_a: computed.append("x") or mt._failed_snapshot(
+                            mt.CHECK_STATUS_FAILED, mt.CHECK_OPTIONS_UNAVAILABLE, "probe_failed",
+                            default_branch=basis.work_base_ref, basis=None))
+    mt.invalidate_check_targets()
+    _check_view(proj, gid, refresh=False)
+    _check_view(proj, gid, refresh=False)
+    assert computed.count("x") == 2
+
+
+@needs_git
+def test_0098_the_candidate_budget_ends_git_and_discards_a_partial_list(proj, monkeypatch):
+    import time as _time
+
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.services.git import merge_target as mt
+    from modules.flow_gate.services.git.command import git_budget
+
+    gid = proj.group(9)
+    proj.local_branch("develop")
+    mt.invalidate_check_targets()
+    monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.01)
+    view = _check_view(proj, gid)
+    assert view["merge_target_options"] == []
+    assert (view["merge_target_state"]["status"], view["merge_target_state"]["code"]) == (
+        "timeout", mt.CHECK_OPTIONS_TIMEOUT)
+    assert view["merge_target_state"]["current"]["checked"] is False
+    monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
+    assert _check_view(proj, gid, refresh=False)["merge_target_options"] == ["develop", "main"]   # not cached
+    # one name's judgement failing for a reason of its own basis drops the whole list, never a partial one
+    real = mt.inspect_workspace
+    monkeypatch.setattr(mt, "inspect_workspace", lambda project_id, branch: (
+        (_ for _ in ()).throw(RuntimeError("disk")) if branch == "develop" else real(project_id, branch)))
+    broken = _check_view(proj, gid)
+    assert broken["merge_target_options"] == []
+    assert (broken["merge_target_state"]["status"], broken["merge_target_state"]["code"]) == (
+        "failed", mt.CHECK_OPTIONS_UNAVAILABLE)
+    # each Git call gets at most the time left (``subprocess.run`` kills the call it outlives); once spent, no
+    # further Git call starts
+    from modules.flow_gate.services.git import command
+    timeouts = []
+
+    def outlived(args, **kw):
+        timeouts.append(kw["timeout"])
+        _time.sleep(kw["timeout"])
+        raise command.subprocess.TimeoutExpired(args, kw["timeout"])
+
+    with monkeypatch.context() as m:
+        m.setattr(command.subprocess, "run", outlived)
+        with git_budget(0.3) as budget:
+            assert svc._run_git(["status"], cwd=proj.base).returncode == -1
+            assert len(timeouts) == 1 and 0 < timeouts[0] <= 0.3 and budget.expired
+            assert svc._run_git(["status"], cwd=proj.base).stderr == "timeout_expired" and len(timeouts) == 1
+    with monkeypatch.context() as m:                     # outside a budget: the call's own limit, as before
+        m.setattr(command.subprocess, "run", lambda args, **kw: timeouts.append(kw["timeout"]) or
+                  command.subprocess.CompletedProcess(args, 0, "", ""))
+        assert svc._run_git(["status"], cwd=proj.base).returncode == 0
+    assert timeouts[-1] == command.GIT_LOCAL_TIMEOUT_SEC
+
+
+def _legacy_group(p: Proj, seq: int) -> str:
+    """A group from before the work base records: ``groups.work_base_ref`` NULL and no floor record."""
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.services import git_service as svc
+
+    gid = f"{p.pid}.default.{seq:04d}"
+    db_groups.create({"group_id": gid, "project_id": p.pid, "module": "default", "title": "t0098"})
+    assert svc.ensure_worktree(p.pid, "default", gid) == "ok"
+    get_store()._execute("UPDATE groups SET work_base_ref = NULL WHERE group_id = ?", [gid])
+    get_store()._execute(
+        "UPDATE group_git_state SET work_base_sha = NULL, work_base_sync_sha = NULL, work_base_state = NULL, "
+        "work_base_evidence = NULL, work_base_recorded_at = NULL WHERE group_id = ?", [gid])
+    return gid
+
+
+@needs_git
+def test_0098_the_judgement_reads_a_legacy_group_without_recording_anything(proj, check_budget):
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.services import git_service as svc
+
+    gid = _legacy_group(proj, 58)
+    proj.local_branch("develop")
+
+    def rows():
+        return db_groups.get_by_id(gid), db_git.get_state(gid), db_git.list_work_base_log(gid)
+
+    before = rows()
+    assert before[0]["work_base_ref"] is None and before[1]["work_base_state"] is None
+    view = _check_view(proj, gid, "develop", refresh=False)
+    assert view["merge_target_options"] == ["main"]                    # the inherited work base needs no floor
+    assert view["default_target_branch"] == "main"
+    assert view["merge_target_state"]["current"]["error"] == "merge_target_preview_unavailable"
+    assert _judge(proj, gid, "main")["is_work_base"] is True
+    assert _refused(proj, gid, "develop").code == "merge_target_preview_unavailable"   # no floor: cannot be told
+    assert rows() == before                                  # no floor, no audit row, no work base pin
+    # an ordinary scope reader's legacy recovery is what records it (a floor, an audit row, the work base pin) ...
+    svc.resolve_scope_floor(proj.pid, gid, proj.wt(gid))
+    assert db_groups.get_by_id(gid)["work_base_ref"] == "main"
+    assert len(db_git.list_work_base_log(gid)) == len(before[2]) + 1
+    # ... and only with a verified floor is a target other than the work base told
+    assert _judge(proj, gid, "develop")["incoming_work_base_commits"] == 0
+    assert _check_view(proj, gid)["merge_target_options"] == ["develop", "main"]
+
+
+@needs_git
+def test_0098_without_a_verified_floor_no_target_beyond_the_work_base_is_allowed(proj, check_budget, monkeypatch):
+    from modules.flow_gate.db import tr_commit_ledger as db_tr_ledger
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.services.git import merge_target as mt
+
+    gid = _feature_group(proj, 59)
+    a = _git(["rev-parse", "main"], cwd=proj.base).strip()
+    b = _git(["rev-parse", "feature/v0.2.0"], cwd=proj.base).strip()
+    # the work base rewound to main's commit A (local and origin): the group's floor B left its history
+    _git(["branch", "-f", "feature/v0.2.0", a], cwd=proj.base)
+    _git(["update-ref", "refs/remotes/origin/feature/v0.2.0", a], cwd=proj.base)
+    assert mt.preview_target(gid, "main")["incoming_work_base_commits"] == 0      # the preview's tip fallback
+    assert _refused(proj, gid, "main").code == "merge_target_preview_unavailable"
+    view = _check_view(proj, gid, "main")
+    assert view["merge_target_options"] == ["feature/v0.2.0"]
+    assert view["merge_target_state"]["current"]["error"] == "merge_target_preview_unavailable"
+    assert _refused(proj, gid, "main", scope_floor_sha=b).code == "merge_target_incoming_work_base"
+    _git(["branch", "-f", "feature/v0.2.0", b], cwd=proj.base)
+    _git(["update-ref", "refs/remotes/origin/feature/v0.2.0", b], cwd=proj.base)
+    _git(["merge", "--ff-only", "feature/v0.2.0"], cwd=proj.base)
+    assert _judge(proj, gid, "main")["incoming_work_base_commits"] == 0
+    # the ledger the floor check reads, or Git answering it, failing: the judgement's basis fails and the list too
+    real_run = svc._run_git
+    for patch_failure, reason in (
+        (lambda m: m.setattr(db_tr_ledger, "group_commit_evidence",
+                             lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("db down"))), "ledger_unavailable"),
+        (lambda m: m.setattr(svc, "_run_git", lambda args, **kw: (
+            subprocess.CompletedProcess(["git", *args], 128, "", "fatal: broken")
+            if args[:2] == ["merge-base", "--is-ancestor"] else real_run(args, **kw))), "probe_failed"),
+    ):
+        with monkeypatch.context() as m:
+            patch_failure(m)
+            failed = _refused(proj, gid, "main")
+            assert (failed.code, failed.details["reason"]) == ("gate_git_unavailable", reason)
+            broken = _check_view(proj, gid)
+            assert broken["merge_target_options"] == []
+            assert (broken["merge_target_state"]["status"], broken["merge_target_state"]["code"],
+                    broken["merge_target_state"]["reason"]) == ("failed", mt.CHECK_OPTIONS_UNAVAILABLE, reason)
+            assert _judge(proj, gid, "feature/v0.2.0")["is_work_base"] is True     # the work base reads no floor
+    assert _check_view(proj, gid)["merge_target_options"] == ["feature/v0.2.0", "main"]
+
+
+@needs_git
+def test_0098_a_base_status_that_cannot_be_read_is_no_clean_base(proj, check_budget, monkeypatch):
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.services.git import command
+    from modules.flow_gate.services.git import merge_target as mt
+
+    gid = proj.group(61)
+    proj.local_branch("develop")
+    real_run, real_subprocess_run = svc._run_git, command.subprocess.run
+
+    def status_fails(args, **kw):                      # e.g. an unreadable index: exit 128
+        if args[:1] == ["status"]:
+            return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: index file corrupt")
+        return real_run(args, **kw)
+
+    def status_outlived(argv, **kw):                   # the call's own timeout
+        if argv[1:2] == ["status"]:
+            raise command.subprocess.TimeoutExpired(argv, kw.get("timeout"))
+        return real_subprocess_run(argv, **kw)
+
+    for owner, name, fake in ((svc, "_run_git", status_fails), (command.subprocess, "run", status_outlived)):
+        with monkeypatch.context() as m:
+            m.setattr(owner, name, fake)
+            failed = _refused(proj, gid, "main")
+            assert (failed.code, failed.details["reason"]) == ("gate_git_unavailable", "probe_failed")
+            assert _judge(proj, gid, "develop")["is_project_base"] is False      # a non-base target never reads it
+            view = _check_view(proj, gid)
+            assert view["merge_target_options"] == []
+            assert (view["merge_target_state"]["status"], view["merge_target_state"]["code"]) == (
+                "failed", mt.CHECK_OPTIONS_UNAVAILABLE)
+    assert _check_view(proj, gid)["merge_target_options"] == ["develop", "main"]
+
+
+@needs_git
+def test_0098_a_same_name_tag_never_renames_a_candidate(proj, check_budget):
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services.git import group_work_base as gwb
+
+    gid, other = proj.group(62), proj.group(63)
+    proj.local_branch("develop")
+    other_branch = db_git.get_state(other)["branch"]
+    for tag in ("main", "develop", other_branch):
+        _git(["tag", tag, "main"], cwd=proj.base)
+    assert _git(["for-each-ref", "--format=%(refname:short)", "refs/heads/main"], cwd=proj.base).strip() == (
+        "heads/main")                                                     # what a short name answers now
+    view = _check_view(proj, gid)
+    assert view["merge_target_options"] == ["develop", "main"]           # the branch names; the slot left out
+    assert view["merge_target_state"]["status"] == "ok"
+    for name in view["merge_target_options"]:
+        assert _judge(proj, gid, name)["target_branch"] == name
+    assert _judge(proj, gid, "main")["is_project_base"] is True          # the base checkout still reads as on main
+    slot = _refused(proj, gid, other_branch)
+    assert (slot.code, slot.details["connected_group_id"]) == ("merge_target_internal_slot", other)
+    refs = gwb.local_branch_refs(proj.base)
+    assert {"develop", "main", other_branch} <= set(refs) and not any(n.startswith("heads/") for n in refs)
+    options = gwb.list_group_work_base_options(proj.pid)["branches"]
+    assert {"name": "main", "is_project_base": True} in options
+    assert not any(o["name"].startswith("heads/") or o["name"] == other_branch for o in options)
+
+
+@needs_git
+def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(proj, monkeypatch):
+    import time as _time
+
+    from modules.flow_gate.services.git import merge_target as mt
+
+    gid = proj.group(64)
+    proj.local_branch("develop")
+    monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
+    mt.invalidate_check_targets()
+    assert _check_view(proj, gid, refresh=False)["merge_target_options"] == ["develop", "main"]      # cached
+    real_basis, real_verdict, real_compute = mt.check_target_basis, mt._verdict, mt._compute_snapshot
+    with monkeypatch.context() as m:
+        # each step alone stays inside the 1 s budget; the basis and the stored target's judgement together do not
+        m.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 1.0)
+        m.setattr(mt, "check_target_basis", lambda *a, **k: _time.sleep(0.6) or real_basis(*a, **k))
+        m.setattr(mt, "_verdict", lambda *a, **k: _time.sleep(0.6) or real_verdict(*a, **k))
+        view = _check_view(proj, gid, "gone", refresh=False)
+    state = view["merge_target_state"]
+    assert view["merge_target_options"] == []
+    assert (state["status"], state["code"]) == ("timeout", mt.CHECK_OPTIONS_TIMEOUT)
+    assert (state["current"]["branch"], state["current"]["checked"], state["default"]["checked"]) == (
+        "gone", False, False)
+    # the cached list stays as it was; the unfinished judgement was not kept
+    again = _check_view(proj, gid, "gone", refresh=False)
+    assert again["merge_target_options"] == ["develop", "main"]
+    assert (again["merge_target_state"]["current"]["checked"], again["merge_target_state"]["current"]["error"]) == (
+        True, "merge_target_not_found")
+    # a miss: the basis read spends the budget the computation then runs under; the timeout is not cached
+    computed = []
+    monkeypatch.setattr(mt, "_compute_snapshot", lambda *a: computed.append(1) or real_compute(*a))
+    mt.invalidate_check_targets()
+    with monkeypatch.context() as m:
+        m.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.5)
+        m.setattr(mt, "check_target_basis", lambda *a, **k: _time.sleep(0.6) or real_basis(*a, **k))
+        missed = _check_view(proj, gid, "gone", refresh=False)
+    assert missed["merge_target_options"] == []
+    assert (missed["merge_target_state"]["status"], missed["merge_target_state"]["current"]["checked"]) == (
+        "timeout", False)
+    assert _check_view(proj, gid, refresh=False)["merge_target_options"] == ["develop", "main"]
+    assert len(computed) == 2
+    mt.invalidate_check_targets()
