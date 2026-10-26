@@ -206,3 +206,202 @@ def test_approve_asks_for_the_merge_rule_not_the_write_plan_rule(monkeypatch, gr
     assert result["result"]["status"] == "pre_commit_validation_failed"
     # An ordinary parser failure keeps its own code, not the unsupported one.
     assert context["last_error"]["code"] == "syntax_validation_failed"
+
+
+
+# 0096 T0004 — frozen-parent inheritance and BOM regressions.
+_BALANCED = 'fixture = """\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> group/branch\n"""\n'
+_ASYMMETRIC = 'fixture = """<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> group/branch\n"""\n'
+_PREFIX = ''.join(f'# before {i}\n' for i in range(25))
+_SUFFIX = ''.join(f'# after {i}\n' for i in range(25))
+
+
+def _validate_blobs(monkeypatch, root, candidate, parents=(), *, ext='py', status='M', mode='skip'):
+    """Use exact blob bytes; mock only the Git object transport."""
+    path = 'new.' + ext
+    old = 'old.' + ext
+    blobs = {'candidate': candidate.encode('utf-8')}
+    entries = {}
+    for i, text in enumerate(parents):
+        if text is not None:
+            oid = f'parent-{i}'
+            blobs[oid] = text.encode('utf-8')
+            entries[(f'ref-{i}', old if i == 0 and status == 'R' else path)] = ('blob', oid)
+    monkeypatch.setattr(git_service, '_cat_file_size', lambda _r, oid: len(blobs[oid]))
+    monkeypatch.setattr(git_service, '_cat_file_blob_head', lambda _r, oid, size: blobs[oid][:size])
+    monkeypatch.setattr(git_service, '_ls_tree_entry', lambda _r, ref, p: entries.get((ref, p)))
+    context = {
+        'base_head': 'ref-0' if parents else None,
+        'merge_head': 'ref-1' if len(parents) > 1 else None,
+        'snapshot_manifest': [{'path': path, 'kind': 'blob', 'oid': 'candidate'}],
+        'changes': [{'path': path, 'status': status, 'old_path': old if status == 'R' else None}],
+    }
+    return git_service._validate_review_changed_paths(root, context, unregistered_extension=mode)
+
+
+@pytest.mark.parametrize('bom', ['', '\ufeff'])
+@pytest.mark.parametrize('source,valid', [('answer = 42\n', True), ('def broken(:\n', False), ('return 1\n', False)])
+def test_python_bytes_keep_bom_and_compile_validation(monkeypatch, tmp_path, bom, source, valid):
+    errors = _validate_blobs(monkeypatch, tmp_path, bom + source)
+    assert (errors == []) is valid
+    if errors:
+        assert errors[0]['validator'] == 'python'
+
+
+@pytest.mark.parametrize('status', ['M', 'R'])
+@pytest.mark.parametrize('fixture', [_BALANCED, _ASYMMETRIC, _ASYMMETRIC * 2])
+def test_preserved_fixtures_align_after_unrelated_edits(monkeypatch, tmp_path, status, fixture):
+    parent = _PREFIX + fixture + _SUFFIX
+    candidate = '# inserted\n' + parent.replace('# after 12', '# edited after 12')
+    assert _validate_blobs(monkeypatch, tmp_path, candidate, [parent], status=status) == []
+
+
+@pytest.mark.parametrize('status', ['M', 'R', 'A'])
+@pytest.mark.parametrize('ext', ['py', 'md', 'txt'])
+@pytest.mark.parametrize('mutation', ['duplicate', 'relocate', 'other', 'open', 'close'])
+def test_new_or_relocated_markers_are_refused(monkeypatch, tmp_path, status, ext, mutation):
+    parent = _PREFIX + _BALANCED + _SUFFIX
+    candidate = {
+        'duplicate': parent + _BALANCED,
+        'relocate': _PREFIX + _SUFFIX + _BALANCED,
+        'other': parent + _BALANCED.replace('group/branch', 'other'),
+        'open': parent + '<<<<<<< HEAD\n',
+        'close': parent + '>>>>>>> group/branch\n',
+    }[mutation]
+    parents = [] if status == 'A' else [parent, parent]
+    errors = _validate_blobs(monkeypatch, tmp_path, candidate, parents, ext=ext, status=status)
+    assert [e['validator'] for e in errors] == ['conflict_marker']
+
+
+@pytest.mark.parametrize('removed', ['<<<<<<< HEAD\n', '>>>>>>> group/branch\n'])
+def test_deleting_half_of_balanced_block_increases_orphans(monkeypatch, tmp_path, removed):
+    parent = _PREFIX + _BALANCED + _SUFFIX
+    errors = _validate_blobs(monkeypatch, tmp_path, parent.replace(removed, ''), [parent, parent])
+    assert [e['validator'] for e in errors] == ['conflict_marker']
+
+
+def test_deleting_whole_block_or_reducing_inherited_asymmetry_is_allowed(monkeypatch, tmp_path):
+    parent = _PREFIX + _BALANCED + _SUFFIX
+    assert _validate_blobs(monkeypatch, tmp_path, _PREFIX + _SUFFIX, [parent]) == []
+    parent = _PREFIX + _ASYMMETRIC * 2 + _SUFFIX
+    assert _validate_blobs(monkeypatch, tmp_path, _PREFIX + _ASYMMETRIC + _SUFFIX, [parent]) == []
+
+
+@pytest.mark.parametrize('failure', ['absent', 'lookup', 'size', 'read', 'truncated', 'encoding'])
+def test_unavailable_parent_never_exempts_markers(monkeypatch, tmp_path, failure):
+    def fail(*_a):
+        raise git_service.GitServiceError(500, 'git_error', 'unavailable')
+    # Install transport mocks, then inject the failure at the chosen boundary.
+    original = git_service._validate_review_changed_paths
+    def validate(root, context, **kwargs):
+        if failure == 'absent':
+            monkeypatch.setattr(git_service, '_ls_tree_entry', lambda *_a: None)
+        elif failure == 'lookup':
+            monkeypatch.setattr(git_service, '_ls_tree_entry', fail)
+        elif failure == 'size':
+            saved = git_service._cat_file_size
+            monkeypatch.setattr(git_service, '_cat_file_size', lambda r, oid: fail() if oid.startswith('parent') else saved(r, oid))
+        else:
+            saved = git_service._cat_file_blob_head
+            def read(r, oid, size):
+                if not oid.startswith('parent'):
+                    return saved(r, oid, size)
+                if failure == 'read':
+                    return fail()
+                if failure == 'truncated':
+                    return b''
+                return b'\xff' * size
+            monkeypatch.setattr(git_service, '_cat_file_blob_head', read)
+        return original(root, context, **kwargs)
+    monkeypatch.setattr(git_service, '_validate_review_changed_paths', validate)
+    errors = _validate_blobs(monkeypatch, tmp_path, _ASYMMETRIC, [_ASYMMETRIC])
+    assert [e['validator'] for e in errors] == ['conflict_marker']
+
+
+@pytest.mark.parametrize('balanced', [True, False])
+def test_each_parent_can_contribute_its_own_fixture(monkeypatch, tmp_path, balanced):
+    a = _BALANCED if balanced else _ASYMMETRIC
+    b = a.replace('fixture', 'second').replace('group/branch', 'group/second')
+    middle = ''.join(f'# middle {i}\n' for i in range(25))
+    left = _PREFIX + a + middle + _SUFFIX
+    right = _PREFIX + middle + b + _SUFFIX
+    candidate = _PREFIX + a + middle + b + _SUFFIX
+    assert _validate_blobs(monkeypatch, tmp_path, candidate, [left, right]) == []
+    errors = _validate_blobs(monkeypatch, tmp_path, candidate + '>>>>>>> unknown\n', [left, right])
+    assert [e['validator'] for e in errors] == ['conflict_marker']
+
+
+def test_write_plan_does_not_gain_an_inheritance_exemption(monkeypatch, tmp_path):
+    errors = _validate_blobs(monkeypatch, tmp_path, _ASYMMETRIC, [_ASYMMETRIC], mode='reject')
+    assert [e['validator'] for e in errors] == ['conflict_marker']
+
+
+def test_json_bom_policy_is_unchanged(monkeypatch, tmp_path):
+    errors = _validate_blobs(monkeypatch, tmp_path, '\ufeff{"ok": true}\n', ext='json')
+    assert [e['validator'] for e in errors] == ['json']
+
+
+@pytest.mark.parametrize('name,lines', [
+    ('test_conflict_prompt_size_guard.py', [64]),
+    ('test_zdiff3_conflict_mention_0478.py', [39, 72]),
+])
+@pytest.mark.parametrize('mutation', ['unchanged', 'unrelated', 'reduce', 'duplicate', 'newblock'])
+def test_frozen_session_296_actual_marker_blobs(monkeypatch, tmp_path, name, lines, mutation):
+    import json
+    data = json.loads((Path(__file__).parent / 'fixtures/merge_review_0096_blobs.json').read_text(encoding='utf-8'))[name]
+    candidate = data['a3e2c64d']
+    assert [i for i, line in enumerate(candidate.splitlines(), 1) if git_service.has_conflict_markers(line)] == lines
+    assert git_service._marker_orphans(candidate.splitlines()) == (0, len(lines))
+    if mutation == 'unrelated':
+        candidate += '\n# unrelated edit\n'
+    elif mutation == 'reduce':
+        parts = candidate.splitlines(keepends=True)
+        # Preserve Python triple-quote closure while removing the marker itself.
+        parts[lines[-1] - 1] = parts[lines[-1] - 1].replace('>>>>>>> group/branch', '')
+        candidate = ''.join(parts)
+    elif mutation == 'duplicate':
+        candidate += '\n>>>>>>> group/branch\n'
+    elif mutation == 'newblock':
+        candidate += '\n' + _BALANCED
+    errors = _validate_blobs(monkeypatch, tmp_path, candidate, [data['fb128ad1'], data['b489fc92']], status='R')
+    assert [e['validator'] for e in errors] == (['conflict_marker'] if mutation in ('duplicate', 'newblock') else [])
+
+
+@pytest.mark.parametrize('name', ['test_ts021_r015_r0_integration.py', 'test_process_service_next_actions.py'])
+def test_frozen_session_296_actual_bom_blobs(monkeypatch, tmp_path, name):
+    import json
+    data = json.loads((Path(__file__).parent / 'fixtures/merge_review_0096_blobs.json').read_text(encoding='utf-8'))[name]['a3e2c64d']
+    assert data.startswith('\ufeff')
+    assert _validate_blobs(monkeypatch, tmp_path, data, status='R') == []
+
+
+@needs_git
+def test_real_git_rename_reads_both_frozen_parent_paths(repo):
+    parent = _PREFIX + _ASYMMETRIC + _SUFFIX
+    _commit(repo, {'old.py': parent})
+    base = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
+    (repo / 'old.py').unlink()
+    _commit(repo, {'new.py': '# moved\n' + parent})
+    merged = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
+    context = _context(repo, ['new.py'])
+    context.update(base_head=base, merge_head=merged)
+    context['changes'] = [{'path': 'new.py', 'old_path': 'old.py', 'status': 'R'}]
+    assert git_service._validate_review_changed_paths(repo, context, unregistered_extension='skip') == []
+
+
+
+@pytest.mark.parametrize('status', ['M', 'R'])
+@pytest.mark.parametrize('ext', ['py', 'md', 'txt'])
+def test_long_relocated_fixture_cannot_be_the_diff_anchor(monkeypatch, tmp_path, status, ext):
+    long_block = _BALANCED.replace('ours\n', ''.join(f'payload {i}\n' for i in range(60)))
+    parent = '# before\n' + long_block + '# after\n'
+    candidate = '# before\n# after\n' + long_block
+    errors = _validate_blobs(monkeypatch, tmp_path, candidate, [parent, parent], status=status, ext=ext)
+    assert [e['validator'] for e in errors] == ['conflict_marker']
+
+
+@pytest.mark.parametrize('status', ['M', 'R', 'A'])
+@pytest.mark.parametrize('ext', ['py', 'md', 'txt'])
+def test_identical_block_duplication_without_parents_is_refused(monkeypatch, tmp_path, status, ext):
+    errors = _validate_blobs(monkeypatch, tmp_path, _BALANCED * 2, [], status=status, ext=ext)
+    assert [e['validator'] for e in errors] == ['conflict_marker']

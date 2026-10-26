@@ -2097,6 +2097,92 @@ def _check_html_syntax(text: str) -> Optional[str]:
     return None
 
 
+def _marker_orphans(lines: list[str]) -> tuple[int, int]:
+    """Count unmatched opening/closing lines using the existing marker grammar."""
+    opened = closed = 0
+    for line in lines:
+        if _CONFLICT_OPEN_RE.match(line):
+            opened += 1
+        elif _CONFLICT_CLOSE_RE.match(line):
+            if opened:
+                opened -= 1
+            else:
+                closed += 1
+    return opened, closed
+
+
+def _review_markers_are_inherited(
+    base_root: Path, context: dict, change: dict, text: str,
+) -> bool:
+    """0096 T0004: exempt only unchanged marker lines from the frozen parents.
+
+    Assign each candidate line to its first aligned parent (base first). Compare
+    orphan counts per parent, so inherited asymmetric fixtures remain legal but
+    removing one half of a balanced block cannot create a new orphan.
+    Missing, unreadable, truncated or non-text parents provide no exemption.
+    """
+    from difflib import SequenceMatcher
+
+    candidate = text.splitlines()
+    markers = {i for i, line in enumerate(candidate) if has_conflict_markers(line)}
+    remaining = set(markers)
+    path = change.get("path") or ""
+    parent_paths = (
+        (context.get("base_head"), change.get("old_path") or path),
+        (context.get("merge_head"), path),
+    )
+    total_parent_markers = 0
+    for ref, parent_path in parent_paths:
+        if not ref:
+            continue
+        try:
+            entry = _ls_tree_entry(base_root, ref, parent_path)
+            if not entry or entry[0] != "blob":
+                continue
+            size = _cat_file_size(base_root, entry[1])
+            if size > BLOB_MAX_RETURN_BYTES:
+                continue
+            blob = _cat_file_blob_head(base_root, entry[1], size)
+            if len(blob) != size or b"\x00" in blob:
+                continue
+            parent = blob.decode("utf-8").splitlines()
+        except (GitServiceError, OSError, UnicodeError, subprocess.SubprocessError):
+            continue
+        parent_markers = [line for line in parent if has_conflict_markers(line)]
+        total_parent_markers += len(parent_markers)
+        # A long relocated fixture can itself become the diff's longest equal
+        # block. Require its ordering relative to shared unique context lines
+        # too; inserting/removing unrelated lines still preserves that ordering.
+        from collections import Counter
+
+        parent_counts, candidate_counts = Counter(parent), Counter(candidate)
+        positions = {line: i for i, line in enumerate(candidate) if candidate_counts[line] == 1}
+        anchors = [
+            positions.get(line) if parent_counts[line] == 1 else None
+            for line in parent
+        ]
+        before = [-1]
+        for anchor in anchors:
+            before.append(max(before[-1], anchor if anchor is not None else -1))
+        after = [len(candidate)] * (len(parent) + 1)
+        for i in range(len(parent) - 1, -1, -1):
+            after[i] = min(after[i + 1], anchors[i] if anchors[i] is not None else len(candidate))
+        inherited = set()
+        for block in SequenceMatcher(None, parent, candidate, autojunk=False).get_matching_blocks():
+            for i in remaining:
+                if block.b <= i < block.b + block.size:
+                    parent_i = block.a + i - block.b
+                    if before[parent_i] < i < after[parent_i + 1]:
+                        inherited.add(i)
+        assigned = [candidate[i] for i in sorted(inherited)]
+        if len(assigned) > len(parent_markers):
+            return False
+        if any(c > p for c, p in zip(_marker_orphans(assigned), _marker_orphans(parent_markers))):
+            return False
+        remaining.difference_update(inherited)
+    return not remaining and len(markers) <= total_parent_markers
+
+
 def _validate_review_changed_paths(
     base_root: Path, context: dict, *, unregistered_extension: str = "reject",
 ) -> list[dict]:
@@ -2105,7 +2191,7 @@ def _validate_review_changed_paths(
     carry no leftover conflict marker. Extension selects the validator per
     L0007 §2.7's table:
 
-    `*.py` parses AND `py_compile`s; `*.json` and `*.yaml`/`*.yml` get a real
+    `*.py` parses bytes AND compiles in memory; `*.json` and `*.yaml`/`*.yml` get a real
     strict parser (the stdlib's / PyYAML, already a dependency); `*.html`/`*.htm`
     get `_check_html_syntax`; the JS/TS family, `*.vue`, and `*.css`/`*.scss` get
     a real compiler/parser via `_run_node_syntax_check` (see its docstring).
@@ -2139,8 +2225,6 @@ def _validate_review_changed_paths(
         raise ValueError(f"unregistered_extension must be 'reject' or 'skip', got {unregistered_extension!r}")
     import ast
     import json as _json
-    import py_compile
-    import tempfile
 
     import yaml as _yaml
 
@@ -2164,7 +2248,10 @@ def _validate_review_changed_paths(
         except UnicodeDecodeError as exc:
             errors.append({"path": path, "validator": "utf8", "line": None, "message": str(exc)})
             continue
-        if has_conflict_markers(text):
+        if has_conflict_markers(text) and not (
+            unregistered_extension == "skip"
+            and _review_markers_are_inherited(base_root, context, change, text)
+        ):
             errors.append({
                 "path": path, "validator": "conflict_marker", "line": None,
                 "message": "conflict markers remain in the frozen candidate",
@@ -2173,28 +2260,13 @@ def _validate_review_changed_paths(
         ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
         if ext == "py":
             try:
-                ast.parse(text, filename=path)
-                tmp_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".py", delete=False, dir=str(base_root),
-                    ) as handle:
-                        handle.write(blob)
-                        tmp_path = handle.name
-                    py_compile.compile(tmp_path, doraise=True)
-                finally:
-                    if tmp_path:
-                        try:
-                            os.unlink(tmp_path)
-                        except OSError:
-                            pass
+                parsed = ast.parse(blob, filename=path)
+                compile(parsed, path, "exec", dont_inherit=True)
             except SyntaxError as exc:
                 errors.append({
                     "path": path, "validator": "python",
                     "line": getattr(exc, "lineno", None), "message": str(exc),
                 })
-            except py_compile.PyCompileError as exc:
-                errors.append({"path": path, "validator": "py_compile", "line": None, "message": str(exc)})
         elif ext == "json":
             try:
                 _json.loads(text)
