@@ -75,6 +75,29 @@ describe('final approval timeout (0607 T0004 §3.5)', () => {
     }
   })
 
+  // flowgate.v02.0096 CH: the merge-review [승인] publishes inside the request (validate
+  // every changed path, commit, push ≤120s, AC approval) — 130s abandoned the 0079 approval
+  // while the server went on to merge and push it.
+  it('gives the merge-review approve (group and project routes) the Git-finalize ceiling', async () => {
+    for (const url of [
+      '/api/v1/groups/flowgate.v02.0079/git/merge/27/approve',
+      '/api/v1/projects/flowgate/git/merge/27/approve',
+    ]) {
+      expect(await appliedTimeout(url, { attempt_id: 'a', review_fingerprint: 'fp' }), url).toBe(
+        GIT_APPROVAL_TIMEOUT_MS,
+      )
+    }
+  })
+
+  it('keeps the other merge-review routes on the 130s Git ceiling', async () => {
+    for (const path of [
+      '/api/v1/groups/flowgate.v02.0079/git/merge/27/reject',
+      '/api/v1/groups/flowgate.v02.0079/git/merge/27/approve-preview',
+    ]) {
+      expect(await appliedTimeout(path, {}), path).toBe(130_000)
+    }
+  })
+
   it('lets an explicit per-call timeout win', async () => {
     expect(
       await appliedTimeout(APPROVE_URL, { doc_id: 'x', git_action: 'merge' }, { timeout: 5_000 }),
