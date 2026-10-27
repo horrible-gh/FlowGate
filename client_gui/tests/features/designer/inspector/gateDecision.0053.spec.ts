@@ -28,7 +28,7 @@ let id = 0
 let target: ReturnType<typeof targetOf>
 let current: any
 let saved: any
-const field = (value: unknown) => ({ value, stored: value, default: null, choices: null })
+const field = (value: unknown) => ({ value, stored: value !== null, default: null, choices: null })
 const deferred = <T,>() => { let resolve!: (v: T) => void; let reject!: (e: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b }); return { promise, resolve, reject } }
 const error = (code: string, status = 409) => ({ isAxiosError: true, response: { status, data: { ok: false, error: { code } } } })
 function gate(status = 'open', runStatus = 'idle', extra = {}) {
@@ -47,7 +47,8 @@ async function show(component: any = GateSlots, props: any = { target }) {
 beforeEach(() => {
   Object.values(mocks).forEach(m => m.mockReset())
   target = { ...targetOf(SELECTIONS.graphGate), nodeId: `gate_${++id}`, readOnly: null }
-  saved = { cardKind: 'check', locked: false, settingsVersion: 3, fields: { archive: field(false), merge_mode: field(null), merge_target: field(null), push: field(false), keep_branch: field(false) } }
+  saved = { cardKind: 'check', locked: false, settingsVersion: 3, fields: { archive: field(false), merge_mode: field(null), merge_target: field(null), merge_target_branch: field(null), push: field(false), keep_branch: field(false) }, mergeTargetOptions: ['main', 'release'], defaultTargetBranch: 'main',
+    mergeTargetState: { status: 'ok', current: { branch: 'main', checked: true, error: null, unmerge_supported: true, warnings: [] }, default: { branch: 'main', checked: true, error: null, unmerge_supported: true, warnings: [] } } }
   current = gate()
   mocks.run.mockImplementation(async () => current)
   mocks.settings.mockImplementation(async () => saved)
@@ -115,8 +116,8 @@ describe('gate Inspector — D §8-10', () => {
   })
   it('shows only the mockup settings, saves archive immediately and restores confirmed values after failure', async () => {
     const w = await show(CheckSettings)
-    expect(w.findAll('[data-test="check-settings-target"] option').map(x => x.text())).toEqual(['—', 'origin'])
-    expect(w.text()).toContain('아카이브'); expect(w.text()).toContain('Git 반영'); expect(w.text()).toContain('원격 병합')
+    expect(w.findAll('[data-test="check-settings-target"] option').map(x => x.text())).toEqual(['main', 'release'])
+    expect(w.text()).toContain('아카이브'); expect(w.text()).toContain('Git 반영'); expect(w.text()).toContain('원격 반영')
     for (const name of ['usage', 'summary', 'hold-block']) expect(w.find(`[data-test="check-settings-${name}"]`).exists()).toBe(false)
     await w.get('[data-test="check-settings-archive-value"]').trigger('click'); await flushPromises()
     expect(mocks.write).toHaveBeenCalledWith(target.flowId, target.nodeId, 'archive', true, 3)
@@ -167,14 +168,14 @@ describe('gate Inspector — D §8-10', () => {
     expect(mocks.settings).toHaveBeenCalledTimes(2)
     expect(mocks.run).toHaveBeenCalledTimes(2)
     expect(w.get('[data-test="check-settings-archive-value"]').attributes('aria-checked')).toBe('false')
-    expect((w.get('[data-test="check-settings-target"]').element as HTMLSelectElement).value).toBe('origin')
+    expect((w.get('[data-test="check-settings-target"]').element as HTMLSelectElement).value).toBe('main')
     expect(w.find('[data-field="archive"]').exists()).toBe(true)
     await w.get('[data-test="check-settings-archive-value"]').trigger('click'); await flushPromises()
     expect(mocks.write).toHaveBeenLastCalledWith(target.flowId, target.nodeId, 'archive', true, 4)
     expect(w.get('[data-test="check-settings-archive-value"]').attributes('aria-checked')).toBe('true')
   })
   it.each([
-    ['gate_settings_invalid', '설정 탭에서 병합 대상 원격으로 origin을 선택해 주세요'],
+    ['gate_settings_invalid', '설정 탭에서 반영 설정을 확인해 주세요'],
     ['gate_git_unavailable', '사용 가능한 Git 작업 슬롯이 없어 확인하지 못했습니다'],
     ['gate_context_changed', '설정 또는 확인 회차가 변경되었습니다. 최신 값을 확인한 뒤 다시 시도해 주세요'],
     ['gate_decision_in_progress', '다른 확인 요청을 처리 중입니다. 처리가 끝난 뒤 다시 시도해 주세요'],

@@ -372,6 +372,8 @@ def _apply_unmerge(ctx: store.JobContext, op: _Op) -> None:
             raise _recovery("base_moved_during_unmerge")
         _phase(ctx, "applied")
     finally:
+        from .merge_target import invalidate_check_targets
+        invalidate_check_targets(op.project_id)
         _release(ctx, b)
 
 

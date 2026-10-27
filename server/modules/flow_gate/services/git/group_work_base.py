@@ -112,6 +112,39 @@ def default_work_base_ref_for_new_group(project_id: str) -> Optional[str]:
     return (cfg.get("base_branch") or "main").strip() or "main"
 
 
+def local_branch_refs(base_root) -> dict:
+    """``{name: (tip object id, tip object type)}`` of every local branch (``refs/heads``), unfiltered.
+
+    flowgate.v02.0098 T#1 (D0004 §3.2): the name listing of
+    :func:`list_group_work_base_options`, shared with the check card's merge
+    target candidates (``merge_target.check_target_view``), which judge every
+    name themselves (the tip and its type spare one Git call per name). Raises
+    ``group_work_base_options_failed`` when Git cannot list them.
+
+    The name is the full refname less its exact ``refs/heads/`` prefix: ``%(refname:short)``
+    answers ``heads/main`` once a tag ``main`` exists, which is no branch name."""
+    from modules.flow_gate.services import git_service as _gs
+
+    proc = _gs._run_git(
+        ["for-each-ref", "--format=%(objectname)%09%(objecttype)%09%(refname)", "refs/heads"],
+        cwd=base_root,
+    )
+    if proc.returncode != 0:
+        raise GitServiceError(
+            500,
+            "group_work_base_options_failed",
+            "Git could not list branches",
+            diagnostic=" ".join((proc.stderr or "").split()),
+        )
+    refs = {}
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split("	", 2)
+        refname = parts[2].strip() if len(parts) == 3 else ""
+        if refname.startswith("refs/heads/") and refname != "refs/heads/":
+            refs[refname[len("refs/heads/"):]] = (parts[0].strip(), parts[1].strip())
+    return refs
+
+
 def list_group_work_base_options(project_id: str) -> dict:
     """Return only what a requirement author needs to pick a group work base.
 
@@ -136,17 +169,7 @@ def list_group_work_base_options(project_id: str) -> dict:
             "group_work_base_checkout_unavailable",
             "project Git checkout is not available for group work-base validation",
         )
-    proc = _gs._run_git(
-        ["for-each-ref", "--format=%(refname:short)", "refs/heads"], cwd=base_root
-    )
-    if proc.returncode != 0:
-        raise GitServiceError(
-            500,
-            "group_work_base_options_failed",
-            "Git could not list branches",
-            diagnostic=" ".join((proc.stderr or "").split()),
-        )
-    names = sorted({line.strip() for line in (proc.stdout or "").splitlines() if line.strip()})
+    names = sorted(local_branch_refs(base_root))
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     branches = [
         {"name": name, "is_project_base": name == base_branch}

@@ -1209,7 +1209,7 @@ export default {
         recovered_pushed: 'Recorded and pushed the earlier merge ({target}).',
         merge_conflict: 'Conflict — resolve it in the card above.',
         judgment_changed: 'The judgment changed. Check again.',
-        merge_push_rejected: 'The remote rejected the push. The current state was read again.',
+        merge_push_rejected: "Remote update rejected",
         nothing_to_merge: 'There are no commits to merge.',
         target_synced_contains: 'The remote target already contains it (the local target was moved to the remote position).',
         already_recorded: 'Already merged — publish it with Push below.',
@@ -1228,7 +1228,7 @@ export default {
         already_published: 'Already on the remote ({target}).',
         push_changed: 'The record to push changed. Check again.',
         record_changed: 'The record changed and was read again. Check, then push.',
-        push_rejected_kept: 'The remote rejected the push. The merge result stays as it is.',
+        push_rejected_kept: "Remote update rejected · local changes preserved",
       },
     },
     reason: {
@@ -1316,7 +1316,6 @@ export default {
       checking: 'Checking…',
       warning: {
         target_differs_from_work_base: 'This target differs from the work base.',
-        unmerge_unsupported_for_non_base_target: 'A merge into this target cannot be undone.',
       },
       merge_confirm: 'Merge {n} commits into {target}. Uncommitted files are not included.',
       merge_push_confirm: 'Merge {n} commits into {target} and push to the remote. Uncommitted files are not included.',

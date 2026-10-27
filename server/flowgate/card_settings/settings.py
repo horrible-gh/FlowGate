@@ -44,6 +44,16 @@ answer what a node's AI start takes from its card.
   instruction line's document, and whether that document is written (``card_documents.lines.has_body``: its
   body, not its existence, decides whether the instruction AI runs). While a node is in that stage its
   tokens write the instruction, so ``token_step_type`` judges them by the instruction type.
+- flowgate.v02.0098 T#1 (D0004 §3.1 / §3.3 / §3.5): a check card's ``merge_target_branch`` (an exact local branch, null:
+  the group's work base) is saved only after the Git merge target judgement of the authenticated group's project passes
+  (``legacy.judge_merge_target``, in the same Flow guard, after the lock and version checks, in every merge mode); a
+  refusal changes neither the value nor the version and keeps its own code (``_merge_target_refusal``). Null is removed
+  with no Git read. A check card's ``push`` true is one change of ``push`` and ``merge_target`` = origin in the guard's
+  one transaction (``_push_on``): the version moves once when either changes, an old branch value still in
+  ``merge_target`` is kept as ``legacy_merge_target`` first, and a different legacy value already kept refuses the
+  whole change (409 ``gate_settings_invalid``, reason ``legacy_merge_target_conflict``). A check card's GET / PATCH
+  answer also carries the merge target outputs (``_with_merge_targets``), read after the write committed and never
+  failing the response.
 """
 from __future__ import annotations
 
@@ -58,6 +68,24 @@ from flowgate.gate_decisions import settings_lock as gate_lock
 from flowgate.graph_run import editing, hold
 
 DELEGATION_FIELD = "delegation"
+MERGE_TARGET_FIELD = "merge_target"
+PUSH_FIELD = "push"
+LEGACY_MERGE_TARGET = "legacy_merge_target"
+ORIGIN = fields.MERGE_TARGET_REMOTES[0]
+# The detail keys a merge target refusal may carry to the screen: names and counts, never a path, URL or diagnostic.
+_MERGE_TARGET_DETAILS = ("base_branch", "checked_out_branch", "work_base_ref", "incoming_work_base_commits",
+                         "merge_id", "blocking_group_id", "connected_group_id")
+_MERGE_TARGET_MESSAGES = {
+    "merge_target_invalid": "The merge target is not a valid local branch.",
+    "merge_target_remote_only": "The merge target exists only on the remote.",
+    "merge_target_internal_slot": "The merge target is a FlowGate group branch.",
+    "merge_target_not_found": "The merge target branch does not exist.",
+    "merge_target_same_branch": "The group's own branch cannot be its merge target.",
+    "merge_target_incoming_work_base": "The merge target lacks history of the group's work base.",
+    "merge_target_preview_unavailable": "Whether the merge target lacks work base history could not be checked.",
+    "merge_target_busy": "Another merge uses the merge target.",
+    "merge_target_owner_mismatch": "The merge target's workspace needs checking.",
+}
 
 
 def _card(flow_id: str, node_key: str) -> dict:
@@ -87,11 +115,34 @@ def _payload(flow_id: str, node: dict, stored: dict) -> dict:
     return payload
 
 
-def read(group: dict, node_key: str) -> dict:
-    """``GET /flows/{flow_id}/nodes/{node_key}/settings``."""
+def _with_merge_targets(group: dict, payload: dict, refresh: bool = False) -> dict:
+    """flowgate.v02.0098 T#1 (D0004 §3.1 / §5): a check card's answer + the merge target outputs -
+    ``merge_target_options``, ``default_target_branch``, ``merge_target_state`` (``merge_target.check_target_view``) and
+    ``push_remote_check_required`` (push on with no remote chosen). Read-only: nothing stored changes, and a Git read
+    failure is a state, never a failed response."""
+    if payload.get("card_kind") != fields.CHECK:
+        return payload
+    shown = payload["fields"]
+    branch = shown.get(fields.MERGE_TARGET_BRANCH.name) or {}
+    selected = branch.get("value") if branch.get("stored") else None
+    try:
+        view = legacy.merge_target_view(group, selected if isinstance(selected, str) else None, refresh)
+    except Exception:  # noqa: BLE001 - the settings answer stands without the candidates
+        view = {"merge_target_options": [], "default_target_branch": None,
+                "merge_target_state": {"status": "failed", "code": "merge_target_options_unavailable",
+                                       "reason": "probe_failed", "current": None, "default": None}}
+    push = (shown.get(PUSH_FIELD) or {}).get("value") is True
+    return {**payload, **view,
+            "push_remote_check_required": push and (shown.get(MERGE_TARGET_FIELD) or {}).get("value") != ORIGIN}
+
+
+def read(group: dict, node_key: str, refresh_merge_targets: bool = False) -> dict:
+    """``GET /flows/{flow_id}/nodes/{node_key}/settings``. ``refresh_merge_targets``: a check card's candidates are
+    judged again instead of read from their cache (nothing else changes)."""
     flow_id = group["group_id"]
     node = _card(flow_id, node_key)
-    return _payload(flow_id, node, repository.values(flow_id, node_key))
+    return _with_merge_targets(group, _payload(flow_id, node, repository.values(flow_id, node_key)),
+                               refresh_merge_targets)
 
 
 def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[str],
@@ -139,16 +190,73 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             except fields.InvalidValue as exc:
                 raise legacy.GraphApiError(422, "invalid_request", {"errors": [
                     {"field": "value", "reason": exc.reason}]}, message="The value does not fit this setting.")
-            changed = repository.put(flow_id, node_key, name, checked, user_id)
+            if field.kind == fields.LOCAL_BRANCH:
+                _check_merge_target(group, node_key, checked)
+            if kind == fields.CHECK and name == PUSH_FIELD and checked is True:
+                changed = _push_on(flow_id, node_key, user_id)
+            else:
+                changed = repository.put(flow_id, node_key, name, checked, user_id)
         if changed:
             repository.bump_version(flow_id, node_key)
         stored = repository.values(flow_id, node_key)
         if name == DELEGATION_FIELD:
             card_lines.set_delegation(group, node, stored.get(DELEGATION_FIELD) == "on", user_id, registered,
                                       locale)
+        if changed and name == fields.MERGE_TARGET_BRANCH.name:
+            legacy.invalidate_merge_targets(group)
         return _payload(flow_id, node, stored)
 
-    return legacy.with_flow_guard(flow_id, body)
+    return _with_merge_targets(group, legacy.with_flow_guard(flow_id, body))
+
+
+def _check_merge_target(group: dict, node_key: str, branch: str) -> None:
+    """The repository check of a new ``merge_target_branch`` (D0004 §3.1): the authenticated group's own project,
+    judged now (never the candidate cache). A refusal is raised as its own API error, nothing written."""
+    try:
+        legacy.judge_merge_target(group, branch)
+    except legacy.GitServiceError as exc:
+        raise _merge_target_refusal(group["group_id"], node_key, branch, exc) from exc
+
+
+def _merge_target_refusal(flow_id: str, node_key: str, branch: str, exc: Exception) -> legacy.GraphApiError:
+    """``GitServiceError`` -> the D0004 §3.3 PATCH answer: the judgement's own status and code, the field and the target
+    named, only name / count details (never a Git diagnostic, a remote URL or a worktree path). Git missing or
+    unusable is 409 ``gate_git_unavailable`` with its reason; any other Git error is a Git failure, never
+    ``invalid_request``."""
+    code = getattr(exc, "code", None)
+    details = getattr(exc, "details", None) or {}
+    params = {"flow_id": flow_id, "node_key": node_key, "field": fields.MERGE_TARGET_BRANCH.name,
+              "target_branch": branch}
+    if code == legacy.MERGE_TARGET_GIT_UNAVAILABLE:
+        return legacy.GraphApiError(409, code, {**params, "reason": details.get("reason") or "unavailable"})
+    if code in legacy.MERGE_TARGET_UNFIT or code == "base_checkout_branch_mismatch":
+        params.update({key: details[key] for key in _MERGE_TARGET_DETAILS if details.get(key) is not None})
+        return legacy.GraphApiError(int(getattr(exc, "status", 409)), code, {**params, "reason": code},
+                                    message=_MERGE_TARGET_MESSAGES.get(code))
+    return legacy.GraphApiError(409, legacy.MERGE_TARGET_GIT_UNAVAILABLE,
+                                {**params, "reason": "git_failed", "cause": code})
+
+
+def _push_on(flow_id: str, node_key: str, user_id: Optional[str]) -> bool:
+    """D0004 §3.5: a check card's ``push`` true together with its remote ``merge_target`` = origin, inside the caller's
+    Flow guard transaction (a refusal rolls back both). An old branch name still in ``merge_target`` (not moved by
+    migration 158) is kept as ``legacy_merge_target`` first, unless a different legacy value is already kept: then the
+    whole change is refused. An existing ``legacy_merge_target`` is never removed or overwritten. True when anything
+    changed (the caller moves the version once)."""
+    stored = repository.values(flow_id, node_key)
+    changed = False
+    remote = stored.get(MERGE_TARGET_FIELD)
+    if remote != ORIGIN:
+        if remote is not None:
+            if LEGACY_MERGE_TARGET not in stored:
+                changed = repository.put(flow_id, node_key, LEGACY_MERGE_TARGET, remote, user_id) or changed
+            elif stored[LEGACY_MERGE_TARGET] != remote:
+                raise legacy.GraphApiError(409, "gate_settings_invalid", {
+                    "flow_id": flow_id, "node_key": node_key, "field": PUSH_FIELD,
+                    "reason": "legacy_merge_target_conflict"})
+        changed = repository.put(flow_id, node_key, MERGE_TARGET_FIELD, ORIGIN, user_id) or changed
+    changed = repository.put(flow_id, node_key, PUSH_FIELD, True, user_id) or changed
+    return changed
 
 
 def _write_hold(group: dict, node_key: str, value: Any, user_id: Optional[str]) -> dict:

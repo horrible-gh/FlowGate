@@ -13,6 +13,8 @@
         !
       </button>
     </div>
+    <GateSettingsSummary v-if="operation" :decision="operation.gate.decision" :error-code="gateJobs?.notice.value ?? operation.gate.recovery?.error_code" />
+    <p v-else-if="session.state.pushFailure?.code === 'push_rejected'" class="gx-notice" data-test="git-push-rejected">{{ t('gui.inspector.checkSettings.target.push_rejected') }}</p>
     <div class="gx-actions">
       <button type="button" class="gx-btn primary" :disabled="operation ? !operation.gate.recovery?.retryable || gateJobs?.busy.value || gateJobs?.readOnly() : !session.canAct.value" data-test="git-push-retry" @click="retry">
         {{ t('gui.git.push.retry') }}
@@ -28,6 +30,8 @@
 // stderr, no long text, no cause guessed on the client.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { checkOperationErrorKey } from '../designer/inspector/features/checkSettings/checkSettingsModel'
+import GateSettingsSummary from '../designer/inspector/features/gateCard/GateSettingsSummary.vue'
 import { useGitGateOperations, type GateOperation } from './gateOperations'
 import { useGitPanel } from './gitSession'
 
@@ -37,7 +41,11 @@ const { t } = useI18n()
 const session = useGitPanel().session
 
 const noticeText = computed(() => {
-  if (props.operation) return gateJobs?.notice.value ?? null
+  if (props.operation) {
+    const code = gateJobs?.notice.value
+    const key = checkOperationErrorKey(code, props.operation.gate.decision)
+    return key ? t(`gui.inspector.checkSettings.${key}`) : code ?? null
+  }
   const notice = session.state.notices.push
   return notice ? t(`gui.git.notice.${notice.code}`, { ...(notice.params ?? {}) }) : null
 })

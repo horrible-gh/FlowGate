@@ -23,18 +23,30 @@
           <InspectorFailureIcon v-if="failureOf('merge_mode')" :name="t(k('failed'))" :reason="failureOf('merge_mode')!" data-field="merge_mode" />
         </InspectorControlRow>
         <InspectorControlRow :label="t(k('git.target'))" :hint="reasonText" wrap>
-          <Select
-            class="inspector-check-settings-target"
+          <div class="inspector-check-settings-target-wrap">
+            <Select
+              class="inspector-check-settings-target"
+            :class="{ 'has-missing-target': missingTarget }"
             :model-value="shown.target ?? ''"
             :options="targetOptions"
-            :disabled="off"
+            :disabled="off || !shown.targetEnabled"
+            :invalid="!!targetFailure"
+            :aria-label="t(k('git.target'))"
+            :aria-invalid="!!targetFailure"
             data-test="check-settings-target"
-            @update:model-value="(value: string) => onChange('merge_target', value === '' ? null : value)"
+            @update:model-value="(value: string) => onTarget(value)"
           />
+          <span v-if="missingTarget && shown.target" class="inspector-check-settings-missing" data-test="check-settings-target-display">{{ shown.target }}</span>
+          </div>
+          <span v-if="targetFailure" role="alert" data-test="check-settings-target-error">{{ targetFailure }}</span>
+          <span v-else-if="shown.lookupError" role="status" data-test="check-settings-target-state">{{ t(k(shown.lookupError)) }}</span>
+          <Button size="sm" variant="ghost" v-if="shown.canRefreshTargets" type="button" :disabled="off" data-test="check-settings-refresh" @click="reload">{{ t(k('target.refresh')) }}</Button>
           <label class="inspector-check-settings-toggle">
             <span>{{ t(k('git.push')) }}</span>
             <Toggle :model-value="shown.push ?? false" :disabled="off" :aria-label="t(k('git.push'))" data-test="check-settings-push" @update:model-value="(value: boolean) => onChange('push', value)" />
           </label>
+          <span v-if="shown.pushCheckRequired || shown.failures?.push === 'target.push_check'" data-test="check-settings-push-check">{{ t(k('target.push_check')) }}</span>
+          <Button size="sm" variant="ghost" v-if="shown.pushCheckRequired || shown.failures?.push === 'target.push_check'" type="button" :disabled="off" data-test="check-settings-push-recheck" @click="onChange('push', true)">{{ t(k('target.check_settings')) }}</Button>
           <label class="inspector-check-settings-toggle">
             <span>{{ t(k('git.keep_branch')) }}</span>
             <Toggle
@@ -55,6 +67,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Button from '../../../../../components/ui/Button.vue'
 import Select from '../../../../../components/ui/Select.vue'
 import Toggle from '../../../../../components/ui/Toggle.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
@@ -86,7 +99,7 @@ const { t } = useI18n()
 const k = (key: string) => `gui.inspector.checkSettings.${key}`
 
 /** The fields of the 병합 대상 · 원격 row (their refusal icons sit at its end). */
-const GIT_FIELDS = ['merge_target', 'push', 'keep_branch'] as const
+const GIT_FIELDS = ['push', 'keep_branch'] as const
 
 const card = useCheckSettings(() => (props.view ? null : props.target))
 
@@ -116,8 +129,14 @@ const off = computed(() => props.view ? !props.view.connected : (shown.value.rea
 
 const reasonText = computed(() => (off.value && shown.value.reason ? t(k(shown.value.reason)) : null))
 
-/** Only the supported remote origin; no branch names. */
-const targetOptions = computed(() => [{ value: '', label: '—' }, { value: 'origin', label: 'origin' }])
+const targetOptions = computed(() => shown.value.targetOptions.map(value => ({ value, label: value })))
+/** The shown name is no option (unavailable, or nothing to show): it is drawn over the control, never added to it. */
+const missingTarget = computed(() => !shown.value.targetOptions.includes(shown.value.target ?? ''))
+const targetFailure = computed(() => failureOf('merge_target_branch') ?? (shown.value.targetError ? t(k(shown.value.targetError)) : null))
+function onTarget(value: string) {
+  if (shown.value.scope !== 'merge' || !shown.value.targetOptions.includes(value)) return
+  onChange('merge_target_branch', value)
+}
 
 function scopeLabel(scope: CheckScope): string { return t(k(`git.${scope}`)) }
 
@@ -145,9 +164,10 @@ function reload() {
   font-size: 12px;
 }
 
-.inspector-check-settings-target {
-  width: 150px;
-}
+.inspector-check-settings-target-wrap { position: relative; width: 150px; }
+.inspector-check-settings-target { width: 150px; }
+.inspector-check-settings-target.has-missing-target { color: transparent; }
+.inspector-check-settings-missing { position: absolute; left: 10px; right: 28px; top: 50%; transform: translateY(-50%); pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .inspector-check-settings-toggle {
   display: inline-flex;

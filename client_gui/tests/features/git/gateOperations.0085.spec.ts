@@ -61,6 +61,18 @@ describe('existing Git operation details — D §8-10', () => {
       request_id: expect.any(String), expected_decision_version: 7, resolution, reason: 'remote result reviewed', evidence_version: 4, evidence_refs: ['d1/push@2'],
     })
   })
+  it('uses recorded target restrictions and local effects in recovery without disabling the existing retry', async () => {
+    current.nodes[0].gate.decision.settings = { shown: { merge_target_branch: 'release/local' }, effective: { merge_mode: 'merge', push: true }, target_basis: { target_branch: 'release/local', unmerge_supported: false, warnings: ['unmerge_unsupported_for_non_base_target'] } }
+    current.nodes[0].gate.decision.effects.unshift({ phase: 'merge', status: 'done', sha_after: 'local-merge' })
+    current.nodes[0].gate.recovery.error_code = 'push_rejected'
+    const w = await show()
+    expect(w.get('[data-test="gate-summary-target"]').text()).toBe('release/local')
+    expect(w.find('[data-test="gate-summary-unmerge"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('병합 취소 미지원')
+    expect(w.get('[data-test="gate-summary-error"]').text()).toBe('원격 갱신 거절 · 로컬 반영 보존')
+    expect(w.get('[data-test="git-job-retry"]').attributes('disabled')).toBeUndefined()
+    expect(mocks.recover).not.toHaveBeenCalled()
+  })
   it('does not offer no-effect cancellation for partial/unknown effects', async () => {
     const w = await show()
     expect(w.get('[data-test="git-job-cancel"]').attributes('disabled')).toBeDefined()

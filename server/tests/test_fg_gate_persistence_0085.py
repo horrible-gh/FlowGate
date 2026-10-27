@@ -439,9 +439,11 @@ def _gate(env, flow=FB):
 def test_the_check_card_settings_are_archive_a_remote_and_false_switches(env):
     g = _gate(env)
     body = get_settings(env, FB, g)
-    assert list(body["fields"]) == ["archive", "merge_mode", "merge_target", "push", "keep_branch", "hold"]
-    assert shown(body) == {"archive": False, "merge_mode": None, "merge_target": None, "push": False,
-                           "keep_branch": False, "hold": False}
+    # flowgate.v02.0098 T#1: the local merge branch (null: the work base) sits next to the remote
+    assert list(body["fields"]) == ["archive", "merge_mode", "merge_target", "merge_target_branch", "push",
+                                    "keep_branch", "hold"]
+    assert shown(body) == {"archive": False, "merge_mode": None, "merge_target": None, "merge_target_branch": None,
+                           "push": False, "keep_branch": False, "hold": False}
     assert (body["card_kind"], body["locked"], body["lock_reason"], body["settings_version"], body["legacy"]) == (
         "check", False, None, 0, {})
     assert body["fields"]["merge_target"]["choices"] == ["origin"]
@@ -457,9 +459,13 @@ def test_the_check_card_settings_are_archive_a_remote_and_false_switches(env):
         assert shown(setting(env, FB, g, name, True))[name] is True
         back = setting(env, FB, g, name, None)                                # null: stored nothing, false
         assert (back["fields"][name]["value"], back["fields"][name]["stored"]) == (False, False)
+    # flowgate.v02.0098 T#1 (D0004 §3.5): push true saved the remote with it; push null left the remote as history
+    assert shown(get_settings(env, FB, g))["merge_target"] == "origin"
     assert shown(setting(env, FB, g, "merge_mode", "hold"))["merge_mode"] == "hold"
     # A stored null reads as false, and a branch name an old row still holds is not shown as the remote.
     for field, value in (("push", "null"), ("merge_target", '"release/v0.2"')):
+        _sql(env["db"], "DELETE FROM graph_node_settings WHERE group_id = ? AND node_key = ? AND field = ?",
+             (FB, g, field))
         _sql(env["db"], "INSERT INTO graph_node_settings (group_id, node_key, field, value_json, updated_at) "
                         "VALUES (?, ?, ?, ?, 't')", (FB, g, field, value))
     odd = get_settings(env, FB, g)

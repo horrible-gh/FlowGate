@@ -34,6 +34,11 @@ it, the node's active attempt and the node an attempt is of, the run's issuer, w
 document's current submission (and whether it passed it), and the span of an explicit review request
 (``graph_execution_hooks.explicit_request``, Q439). Its steps run under the Stop gate's shared hold (``person_hold``: the
 run-end stage's ``attempt_hold`` taking an idle run too, those conditions judged again under the hold).
+
+flowgate.v02.0098 T#1 (D0004 §3.1 / §3.2): the check card's merge target branch takes the Git merge target judgement
+(``merge_target.judge_check_target``: one exact name, read-only, never cached) for a save, and the cached candidate
+view (``merge_target.check_target_view``) and its invalidation for the settings response. Both are scoped by the
+authenticated group alone: its ``group_id`` and its own ``project_id``.
 """
 from __future__ import annotations
 
@@ -57,9 +62,12 @@ from modules.flow_gate.graph_workflow.services.engine_router import read_ownersh
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
+from modules.flow_gate.services.git import merge_target as git_merge_target
+from modules.flow_gate.services.git.credentials import GitServiceError
 from modules.flow_gate.settings import ai_execution_policy_service
 
-__all__ = ["GraphApiError", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid",
+__all__ = ["GraphApiError", "GitServiceError", "judge_merge_target", "merge_target_view", "invalidate_merge_targets",
+           "MERGE_TARGET_UNFIT", "MERGE_TARGET_GIT_UNAVAILABLE", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid",
            "locale_of", "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
            "node_running", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
            "run_doc_type",
@@ -126,6 +134,28 @@ def ai_exists(provider_id: str) -> bool:
 
 def team_exists(ai_group_id: str) -> bool:
     return db_ai_groups.get(ai_group_id) is not None
+
+
+# ── the check card's merge target (flowgate.v02.0098 T#1) ────────────────────
+
+MERGE_TARGET_UNFIT = git_merge_target.CHECK_TARGET_UNFIT
+MERGE_TARGET_GIT_UNAVAILABLE = git_merge_target.CHECK_GIT_UNAVAILABLE
+
+
+def judge_merge_target(group: dict, branch: str) -> dict:
+    """Judge ``branch`` as the group's check card merge target now (no cache); ``GitServiceError`` when it is not.
+    A group whose worktree is not provisioned yet is judged as the candidate list judges it (T0012)."""
+    return git_merge_target.judge_check_target(group.get("project_id"), group["group_id"], branch,
+                                               require_slot=False)
+
+
+def merge_target_view(group: dict, selected: Optional[str], refresh: bool = False) -> dict:
+    """The candidate list, default target and their states for the settings response (never raises for Git)."""
+    return git_merge_target.check_target_view(group.get("project_id"), group["group_id"], selected, refresh=refresh)
+
+
+def invalidate_merge_targets(group: dict) -> None:
+    git_merge_target.invalidate_check_targets(group.get("project_id"), group["group_id"])
 
 
 def node_running(flow_id: str, node_key: str) -> bool:

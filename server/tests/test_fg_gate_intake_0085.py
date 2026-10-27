@@ -56,6 +56,16 @@ def slot(monkeypatch):
     from flowgate.gate_decisions import legacy_adapter
 
     state = dict(SLOT)
+    from modules.flow_gate.services.git import merge_target as mt
+    from modules.flow_gate.services.git.credentials import GitServiceError
+    def judge(project_id, group_id, branch, **kw):
+        if branch == state["group_branch"]:
+            raise GitServiceError(409, "merge_target_same_branch", "same branch")
+        return {"target_branch": branch, "target_sha": state["work_base_sha"], "project_base_branch": "main",
+                "work_base_ref": state["work_base"], "source_branch": state["group_branch"],
+                "is_project_base": branch == "main", "unmerge_supported": branch == "main",
+                "scope_floor_sha": None, "incoming_work_base_commits": None, "warnings": []}
+    monkeypatch.setattr(mt, "judge_check_target", judge)
     monkeypatch.setattr(legacy_adapter, "git_slot", lambda project_id, group_id: dict(state))
     return state
 
@@ -521,17 +531,22 @@ def test_a_new_round_is_not_touched_by_an_old_requests_resend(product, slot):
 
 # ── D0007 §7.1: the confirm's checks before anything is accepted ─────────────
 
-def test_the_confirm_checks_refuse_before_anything_is_accepted(product, monkeypatch):
+def test_the_confirm_checks_refuse_before_anything_is_accepted(product, monkeypatch, slot):
     from flowgate.gate_decisions import legacy_adapter
+
+    monkeypatch.setattr(legacy_adapter, "git_slot", lambda p, f: {"ok": False, "reason": "git_disabled"})
 
     g, _t = _linear(product)
     run_id = _start(product)["run_id"]
     before = _marks(product)
     setting(product, FA, g, "merge_mode", "commit")
     before = _marks(product)
-    nogit = _decide(product, run_id, g, {"decision": "confirm", "request_id": "pf-1"}, 409)  # the real slot: none
+    nogit = _decide(product, run_id, g, {"decision": "confirm", "request_id": "pf-1"}, 409)  # an unavailable slot
     assert (nogit["error"]["code"], nogit["error"]["params"]["reason"]) == ("gate_git_unavailable", "git_disabled")
-    setting(product, FA, g, "push", True)                                  # push with no remote chosen
+    # flowgate.v02.0098 T#1 (D0004 §3.5): push true now saves the origin remote with it; an old client's single
+    # remote write still leaves push on with no remote chosen, which the confirm keeps refusing (fail closed)
+    setting(product, FA, g, "push", True)
+    setting(product, FA, g, "merge_target", None)                          # push with no remote chosen
     pushed = _decide(product, run_id, g, {"decision": "confirm", "request_id": "pf-2"}, 409)
     assert (pushed["error"]["code"], pushed["error"]["params"]["reason"]) == ("gate_settings_invalid",
                                                                              "push_requires_origin")
@@ -544,7 +559,7 @@ def test_the_confirm_checks_refuse_before_anything_is_accepted(product, monkeypa
     setting(product, FA, g, "merge_mode", "merge")
     slot.update(work_base=SLOT["group_branch"])
     own = _decide(product, run_id, g, {"decision": "confirm", "request_id": "pf-4"}, 409)
-    assert own["error"]["params"]["reason"] == "target_branch_invalid"
+    assert own["error"]["params"]["reason"] == "merge_target_same_branch"
     assert (len(_decisions(product)), len(_jobs(product))) == before[:2] and _states(product)[g] == "open"
     slot.update(work_base="main")
     merged = _decide(product, run_id, g, {"decision": "confirm", "request_id": "pf-5"}, 202)
@@ -553,7 +568,7 @@ def test_the_confirm_checks_refuse_before_anything_is_accepted(product, monkeypa
     stored = _decisions(product)[0]
     snapshot = json.loads(stored["settings_json"])
     assert snapshot["effective"] == {"merge_mode": "merge", "git_apply": True, "archive": False,
-                                     "merge_target": "origin", "push": False, "keep_branch": False}
+                                     "merge_target": "origin", "merge_target_branch": None, "push": False, "keep_branch": False}
 
 
 def test_hold_without_archive_needs_no_git_and_ignores_the_stored_git_options(product):
@@ -913,3 +928,42 @@ def test_two_gates_confirmed_at_once_store_one_decision_and_one_job_each(product
     assert order == ["one", "two"] and _gate_events(product, g1) == _gate_events(product, g2) == []
     wires = _nodes(_current(product))
     assert wires[g1]["gate"]["decision_in_progress"] and wires[g2]["gate"]["decision_in_progress"]
+
+
+# flowgate.v02.0098 T#2: the shown intent and the interpreted target are independent.
+@pytest.mark.parametrize("mode", ["merge", "commit", "hold", None])
+def test_0098_effective_preserves_branch_intent_only_for_merge(mode):
+    from flowgate.gate_decisions import preflight
+    assert preflight.effective({"merge_mode": mode, "merge_target_branch": "review/x"})["merge_target_branch"] == (
+        "review/x" if mode == "merge" else None)
+
+
+@pytest.mark.parametrize("decision", ["confirm", "reject"])
+def test_0098_immediate_decisions_store_the_new_shown_and_effective_key(product, decision):
+    g, _ = _linear(product)
+    run_id = _start(product)["run_id"]
+    _decide(product, run_id, g, {"decision": decision, "request_id": "snapshot-0098"})
+    snapshot = json.loads(_decisions(product)[0]["settings_json"])
+    assert snapshot["shown"]["merge_target_branch"] is None
+    assert snapshot["effective"]["merge_target_branch"] is None
+    assert snapshot["settings_version"] == 0
+
+
+@pytest.mark.parametrize("reason", ["merge_target_not_found", "merge_target_remote_only", "merge_target_internal_slot",
+    "merge_target_same_branch", "merge_target_invalid", "merge_target_busy", "merge_target_owner_mismatch",
+    "merge_target_incoming_work_base", "merge_target_preview_unavailable", "base_checkout_branch_mismatch", "base_dirty"])
+def test_0098_preflight_preserves_the_common_target_rejection(product, slot, monkeypatch, reason):
+    from flowgate.gate_decisions import preflight
+    from modules.flow_gate.services.git import merge_target as mt
+    from modules.flow_gate.services.git.credentials import GitServiceError
+    g, _ = _linear(product)
+    run_id = _start(product)["run_id"]
+    setting(product, FA, g, "merge_mode", "merge")
+    def fail(*a, **kw):
+        raise GitServiceError(409, reason, "private diagnostic", details={"path": "private/path"})
+    monkeypatch.setattr(mt, "judge_check_target", fail)
+    response = _decide(product, run_id, g, {"decision": "confirm", "request_id": "unfit-0098"}, 409)
+    assert response["error"]["code"] == "gate_settings_invalid"
+    assert response["error"]["params"]["reason"] == reason
+    assert "private" not in json.dumps(response)
+    assert not _decisions(product) and not _jobs(product)

@@ -108,6 +108,7 @@ const FIELDS: Record<string, readonly FieldDef[]> = {
     ['archive', false, [true, false]],
     ['merge_mode', null, ['merge', 'commit', 'hold']],
     ['merge_target', null, null],
+    ['merge_target_branch', null, null],
     ['push', null, [true, false]],
     ['keep_branch', null, [true, false]],
   ],
@@ -139,7 +140,10 @@ function answer(nodeKey: string) {
   const fields = Object.fromEntries(
     FIELDS[card.kind].map(([name, def, choices]) => [name, { value: name in card.stored ? card.stored[name] : def, stored: name in card.stored, default: def, choices }]),
   )
-  return toSettingsNode({ ok: true, flow_id: FLOW, node_key: nodeKey, card_kind: card.kind, locked: card.locked, settings_version: writes.length, fields })
+  return toSettingsNode({ ok: true, flow_id: FLOW, node_key: nodeKey, card_kind: card.kind, locked: card.locked, settings_version: writes.length, fields,
+    ...(card.kind === 'check' ? { merge_target_options: ['main', 'release/local'], default_target_branch: 'main', push_remote_check_required: card.stored.push === true && card.stored.merge_target !== 'origin',
+      merge_target_state: { status: 'ok', current: { branch: card.stored.merge_target_branch ?? 'main', checked: true, error: null, unmerge_supported: true, warnings: [] }, default: { branch: 'main', checked: true, error: null, unmerge_supported: true, warnings: [] } } } : {}),
+  })
 }
 
 function serve() {
@@ -162,6 +166,7 @@ function serve() {
     if (field.startsWith('limit_') && value !== null && !(Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 999)) throw axiosError(422, 'invalid_request')
     if (value === null) delete card.stored[field]
     else card.stored[field] = value
+    if (card.kind === 'check' && field === 'push' && value === true) card.stored.merge_target = 'origin'
     return answer(nodeKey)
   })
   choicesRead.mockImplementation(async () =>
@@ -842,17 +847,17 @@ describe('a requirement card’s settings — v7 reqSettings (values only, no de
 // --- Check cards ------------------------------------------------------------------------------------------
 
 describe('a check card’s settings — D0007 §8-10', () => {
-  it('saves the supported remote and Git controls immediately, and hold has no group-ending block', async () => {
+  it('saves the server branch and Git controls immediately, and hold has no group-ending block', async () => {
     const w = await mountPart(CheckSettings, targetFor(GATE))
-    expect(rowLabels(w)).toEqual(['아카이브', '반영 방식', '병합 대상 원격'])
+    expect(rowLabels(w)).toEqual(['아카이브', '반영 방식', '병합 대상'])
     expect(gitRead).not.toHaveBeenCalled()
     await segmentPick(w, 'check-settings-scope', 'merge')
-    await w.get('[data-test="check-settings-target"]').setValue('origin'); await flushPromises()
+    await w.get('[data-test="check-settings-target"]').setValue('release/local'); await flushPromises()
     await w.get('[data-test="check-settings-push"]').trigger('click'); await flushPromises()
     await w.get('[data-test="check-settings-keep-branch"]').trigger('click'); await flushPromises()
     await segmentPick(w, 'check-settings-scope', 'hold')
     expect(writes.map(([, , name, value]) => [name, value])).toEqual([
-      ['merge_mode', 'merge'], ['merge_target', 'origin'], ['push', true], ['keep_branch', true], ['merge_mode', 'hold'],
+      ['merge_mode', 'merge'], ['merge_target_branch', 'release/local'], ['push', true], ['keep_branch', true], ['merge_mode', 'hold'],
     ])
     expect(w.get('[data-test="check-settings-scope"] [data-value="hold"]').text()).toBe('보류')
     expect(w.find('[data-test="check-settings-hold-block"]').exists()).toBe(false)
@@ -876,7 +881,7 @@ describe('the settings tab of a card just placed and of a done card, in the real
     [CUSTOM, ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
     [TEST, ['settings', 'testRunSettings'], ['지시서', '작성 AI', '검수 AI', '검수 횟수', '원인 판정', '후속 전달']],
     [REQ, ['requirementSettings'], []],
-    [GATE, ['checkSettings'], ['아카이브', '반영 방식', '병합 대상 원격']],
+    [GATE, ['checkSettings'], ['아카이브', '반영 방식', '병합 대상']],
   ] as const)('a %s card: its settings form, no "v0.1 단계" line', async (card, parts, labels) => {
     const w = await mountFrame(card)
     expect(sections(w)).toEqual(parts)

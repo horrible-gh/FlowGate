@@ -10,6 +10,7 @@
   >
     <div class="gx-window" data-test="git-push-window">
       <template v-if="operation">
+        <GateSettingsSummary :decision="operation.gate.decision" :error-code="gateJobs?.notice.value ?? operation.gate.recovery?.error_code" />
         <dl class="gx-tech" data-test="git-job-evidence">
           <dt>{{ t('gui.git.window.code') }}</dt><dd>{{ operation.gate.recovery?.error_code ?? '—' }}</dd>
           <dt>{{ t('gui.git.gate_job.job') }}</dt><dd>{{ operation.gate.job?.job_id ?? '—' }}</dd>
@@ -31,7 +32,7 @@
             <button class="gx-btn danger" :disabled="locked || !reviewed || !reason.trim()" data-test="git-job-abandon" @click="recover('resolve', 'abandon')">{{ t('gui.git.gate_job.abandon') }}</button>
           </div>
         </template>
-        <p v-if="gateJobs?.notice.value" class="gx-notice" role="alert">{{ gateJobs.notice.value }}</p>
+        <p v-if="gateJobs?.notice.value" class="gx-notice" role="alert">{{ gateNoticeText }}</p>
       </template>
       <dl v-else-if="failure" class="gx-tech">
         <dt>{{ t('gui.git.window.code') }}</dt>
@@ -55,6 +56,8 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModelessShell from '../../components/ui/ModelessShell.vue'
+import { checkOperationErrorKey } from '../designer/inspector/features/checkSettings/checkSettingsModel'
+import GateSettingsSummary from '../designer/inspector/features/gateCard/GateSettingsSummary.vue'
 import { useGitGateOperations, type GateOperation } from './gateOperations'
 import { useGitPanel } from './gitSession'
 import type { GitWindowDescriptor } from './types'
@@ -64,6 +67,11 @@ const { t, locale } = useI18n()
 const session = useGitPanel().session
 
 const gateJobs = useGitGateOperations()
+const gateNoticeText = computed(() => {
+  const code = gateJobs?.notice.value
+  const key = checkOperationErrorKey(code, props.operation?.gate.decision)
+  return key ? t(`gui.inspector.checkSettings.${key}`) : code ?? null
+})
 const reason = ref('')
 const reviewed = ref(false)
 const locked = computed(() => !!gateJobs?.busy.value || gateJobs?.readOnly() !== false)

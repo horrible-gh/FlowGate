@@ -1,7 +1,7 @@
 // Gate jobs use the existing Git error/detail screen and its common actions (D0007 §6/7.3).
 import { randomUuid } from '@shared/utils/uuid'
 import { computed, inject, ref, shallowRef, watch, type InjectionKey } from 'vue'
-import { documentErrorOf, runCurrentRead, runGateRecover, type RunCurrent, type RunGateState, type RunGateRecoveryRequest } from '@/features/document'
+import { documentErrorOf, runCurrentRead, runGateReceiptsRead, runGateRecover, type RunCurrent, type RunGateState, type RunGateRecoveryRequest } from '@/features/document'
 import { useInspectorEvents } from '../designer/inspector/useInspectorResource'
 export interface GateOperation { runId: string; nodeKey: string; gate: RunGateState }
 export function useGateOperations(project: () => string | null, flow: () => string | null, readOnly: () => boolean) {
@@ -21,7 +21,7 @@ export function useGateOperations(project: () => string | null, flow: () => stri
     const seq = ++sequence
     if (!group) { run.value = null; return false }
     try {
-      const current = await runCurrentRead(group)
+      const current = await runGateReceiptsRead(await runCurrentRead(group))
       if (seq === sequence && group === flow()) run.value = current
       return true
     } catch (cause) {

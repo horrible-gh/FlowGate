@@ -268,11 +268,11 @@ describe('settings views of a Node without a card', () => {
     expect(requirementSettingsView({ ...NONE, teams: [] })).toMatchObject({ delegation: 'off', connected: false, locked: false, reason: 'delegation.unconnected' })
     expect(requirementSettingsView({ ...NONE, teams: [] }).limits.map((limit) => limit.key)).toEqual(['max_nodes', 'total_reviews', 'retries_per_card', 'replans'])
     expect(testRunSettingsView(null)).toEqual({ modes: { automated: null, manual: null, external: null } })
-    expect(checkSettingsView({ ...NONE, branches: [] })).toEqual({
+    expect(checkSettingsView({ ...NONE, branches: [] })).toMatchObject({
       usage: null,
       scope: null,
       target: null,
-      targetOptions: ['origin'],
+      targetOptions: [],
       archive: false,
       push: null,
       keepBranch: null,
@@ -458,13 +458,13 @@ describe('card settings parts', () => {
     }
   })
 
-  it('CheckSettings: archive and Git only, with the supported remote choices', () => {
+  it('CheckSettings: archive and Git only, with no invented candidates before a read', () => {
     const w = mount(CheckSettings, { props: { target: GATE }, global })
     expect(w.find('[data-test="check-settings-usage"]').exists()).toBe(false)
     expect(w.find('[data-test="check-settings-summary"]').exists()).toBe(false)
     expect(w.find('[data-test="check-settings-hold-block"]').exists()).toBe(false)
     expect(w.get('[data-test="check-settings-archive-value"]').attributes('disabled')).toBeDefined()
-    expect(w.findAll('[data-test="check-settings-target"] option').map(option => option.text())).toEqual(['—', 'origin'])
+    expect(w.findAll('[data-test="check-settings-target"] option').map(option => option.text())).toEqual([])
   })
 
   it('follows the locale', () => {

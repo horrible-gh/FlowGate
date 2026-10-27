@@ -36,7 +36,7 @@ def settings_of(flow_id: str, node_key: str) -> tuple[dict, int]:
 
     stored = repository.values(flow_id, node_key)
     view = fields.view(fields.CHECK, stored, ())
-    shown = {name: view[name]["value"] for name in ("merge_mode", "merge_target", "push", "keep_branch", "archive")
+    shown = {name: view[name]["value"] for name in ("merge_mode", "merge_target", "merge_target_branch", "push", "keep_branch", "archive")
              if name in view}
     return shown, repository.settings_version(flow_id, node_key)
 
@@ -47,6 +47,7 @@ def effective(shown: dict) -> dict:
     git = mode in GIT_MODES
     return {"merge_mode": mode if git else (mode or None), "git_apply": git, "archive": bool(shown.get("archive")),
             "merge_target": shown.get("merge_target") if git else None,
+            "merge_target_branch": shown.get("merge_target_branch") if mode == "merge" else None,
             "push": bool(shown.get("push")) if git else False,
             "keep_branch": bool(shown.get("keep_branch")) if git else False}
 
@@ -78,10 +79,20 @@ def plan(project_id: Optional[str], flow_id: str, node_key: str) -> dict:
     if eff["push"] and not slot.get("origin"):
         raise _refuse(SETTINGS_INVALID, flow_id, node_key, ORIGIN_NOT_CONFIGURED)
     if eff["merge_mode"] == "merge":
-        base = slot.get("work_base")
-        if not base or base == slot["group_branch"] or not slot.get("work_base_sha"):
-            raise _refuse(SETTINGS_INVALID, flow_id, node_key, TARGET_BRANCH_INVALID, target_branch=base)
-        out.update(target_branch=base, target_sha=slot["work_base_sha"])
+        from modules.flow_gate.services.git import merge_target as mt
+        from modules.flow_gate.services.git.credentials import GitServiceError
+        branch = eff.get("merge_target_branch")
+        if branch is None:
+            branch = slot.get("work_base")
+        try:
+            basis = mt.judge_check_target(project_id, flow_id, branch)
+        except GitServiceError as exc:
+            if exc.code == GIT_UNAVAILABLE:
+                raise _refuse(GIT_UNAVAILABLE, flow_id, node_key,
+                              (exc.details or {}).get("reason") or "probe_failed") from exc
+            raise _refuse(SETTINGS_INVALID, flow_id, node_key, exc.code, target_branch=branch) from exc
+        basis = {**basis, "accepted_target_sha": basis["target_sha"]}
+        out.update(target_branch=basis["target_branch"], target_sha=basis["target_sha"], target_basis=basis)
     elif eff["merge_mode"] == "commit":
         out.update(target_branch=slot["group_branch"], target_sha=slot["group_head"])
     out["target_remote"] = ORIGIN if eff["git_apply"] and eff["merge_target"] == ORIGIN else None

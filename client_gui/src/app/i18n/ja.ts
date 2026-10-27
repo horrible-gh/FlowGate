@@ -1209,7 +1209,7 @@ export default {
         recovered_pushed: '先にマージされた結果を記録して Push しました({target})。',
         merge_conflict: '競合 — 上のカードで解決してください。',
         judgment_changed: '判定が変わりました。もう一度確認してください。',
-        merge_push_rejected: 'リモートが Push を拒否しました。現在の状態を再読み込みしました。',
+        merge_push_rejected: "リモート更新拒否",
         nothing_to_merge: 'マージするコミットがありません。',
         target_synced_contains: 'リモートの対象にすでに含まれています(ローカルの対象をリモートの位置に合わせました)。',
         already_recorded: 'すでにマージ済みの結果です — 下の Push で反映してください。',
@@ -1228,7 +1228,7 @@ export default {
         already_published: 'すでにリモートにあります({target})。',
         push_changed: 'Push 対象の記録が変わりました。もう一度確認してください。',
         record_changed: '記録が変わったため再読み込みしました。確認してから Push してください。',
-        push_rejected_kept: 'リモートが Push を拒否しました。マージ結果はそのまま残っています。',
+        push_rejected_kept: "リモート更新拒否 · ローカル反映を保持",
       },
     },
     reason: {
@@ -1316,7 +1316,6 @@ export default {
       checking: '確認中…',
       warning: {
         target_differs_from_work_base: '作業基準とは異なる対象です。',
-        unmerge_unsupported_for_non_base_target: 'この対象へのマージは取り消しに対応していません。',
       },
       merge_confirm: '{n} 件のコミットを {target} にマージします。未コミットのファイルは含まれません。',
       merge_push_confirm: '{n} 件のコミットを {target} にマージしてリモートに Push します。未コミットのファイルは含まれません。',

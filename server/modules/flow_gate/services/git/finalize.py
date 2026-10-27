@@ -2104,6 +2104,7 @@ def unmerge(group_id: str, merge_commit: str) -> dict:
     project_id = _gs._project_of_group(group_id)
     cfg = _gs._require_enabled_config(project_id)
     state = _gs.db_git.get_state(group_id)
+    recorded = merge_target.check_unmerge_target(group_id, state, req_sha)
     ledger_sha = str((state or {}).get("merge_commit") or "").lower()
     if (
         state is None
@@ -2132,7 +2133,7 @@ def unmerge(group_id: str, merge_commit: str) -> dict:
             details=details,
         )
 
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    base_branch = (recorded or {}).get("target_branch") or (cfg.get("base_branch") or "main").strip() or "main"
     project_name = _gs._project_name(project_id)
     if not project_name:
         raise GitServiceError(404, "not_found", f"project '{project_id}' not found")

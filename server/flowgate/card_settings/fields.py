@@ -11,7 +11,11 @@ Pure. The 0053 CH agreement (§4 "settings as drawn") and the v7 settings blocks
   values only, no delegation engine (0053 CH: out of this scope);
 - check cards (gate, flowgate.v02.0085 T#1, D0007 §7.1): the archive flag, Git apply mode, the merge target remote
   (null | origin), push and keep branch. ``usage`` is no setting any more (no UI, no new write; a stored value is
-  kept as history only) and an old ``merge_target`` branch name lives on as ``legacy_merge_target`` (migration 158);
+  kept as history only) and an old ``merge_target`` branch name lives on as ``legacy_merge_target`` (migration 158).
+  flowgate.v02.0098 T#1 (D0004 §3.1): ``merge_target_branch`` is the local branch the card merges into (null: the
+  group's work base is inherited). Its kind ``LOCAL_BRANCH`` checks the value alone (a string, no surrounding blanks,
+  no control character, never rewritten); whether that branch may be the target is the save's repository check
+  (``settings.write`` -> ``merge_target.judge_check_target``). ``merge_target`` keeps its remote meaning;
 - work plan cards (WP, flowgate.v02.0072 T#3): the AI pre-instruction writing switch, and the run block the
   v7 plan settings draw (work AI, restart, review AI, review count, the advanced time limit and review basis).
   flowgate.v02.0083 T#1 — 0072 T#3 개정 (revised): the run block is no longer values only. A plan card whose writer is
@@ -78,6 +82,8 @@ CARD_KINDS = (RUN, TEST, REQUIREMENT, CHECK, PLAN)
 # Value kinds.
 CHOICE, AI, REPEAT, MINUTES, LIMIT, TEAM, BRANCH, FLAG = (
     "choice", "ai", "repeat", "minutes", "limit", "team", "branch", "flag")
+# flowgate.v02.0098 T#1: an exact local branch name with no repository context (no BRANCH pattern, no choices).
+LOCAL_BRANCH = "local_branch"
 
 # The run time limit choices (minutes): the AI invoke dialogs' list, inside the engine's
 # STEP_TIMEOUT_MIN_SEC..STEP_TIMEOUT_MAX_SEC (checked by the tests against the engine).
@@ -121,6 +127,8 @@ class Field:
     choices: tuple = ()
 
 
+# flowgate.v02.0098 T#1 (D0004 §3.1): the check card's local merge branch (null: the group's work base).
+MERGE_TARGET_BRANCH = Field("merge_target_branch", LOCAL_BRANCH)
 _INSTRUCTION = Field("instruction", CHOICE, "use", ("use", "omit"))
 _INSTRUCTION_AI = Field("instruction_ai", AI)    # None: the run AI, else the node's assignee AI
 _RUN_AI = Field("run_ai", AI)                    # None: the node's assignee AI
@@ -157,6 +165,7 @@ _FIELDS = {
         Field("archive", FLAG, False),
         Field("merge_mode", CHOICE, None, ("merge", "commit", "hold")),
         Field("merge_target", CHOICE, None, MERGE_TARGET_REMOTES),
+        MERGE_TARGET_BRANCH,
         Field("push", FLAG, False),
         Field("keep_branch", FLAG, False),
     ),
@@ -235,6 +244,8 @@ def check_value(field: Field, value: Any, *, repeat_choices: Iterable[int],
         if not isinstance(value, bool):
             raise InvalidValue("not_a_boolean")
         return value
+    if field.kind == LOCAL_BRANCH:
+        return _local_branch(value)
     text = _text(value)
     if field.kind == AI and not ai_exists(text):
         raise InvalidValue("unknown_ai")          # the node token names it (tokens.provider_id FK)
@@ -252,6 +263,18 @@ def _text(value: Any) -> str:
     if len(text) > TEXT_MAX_LEN or any(ord(c) < 32 for c in text):
         raise InvalidValue("invalid_text")
     return text
+
+
+def _local_branch(value: Any) -> str:
+    """flowgate.v02.0098 T#1: the exact name, unchanged — a non-empty string with no surrounding whitespace and no
+    control character. Git's own name rules and the branch's existence are the save's repository check."""
+    if not isinstance(value, str) or not value:
+        raise InvalidValue("not_a_text")
+    if value != value.strip():
+        raise InvalidValue("surrounding_whitespace")
+    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise InvalidValue("control_character")
+    return value
 
 
 def choices_of(field: Field, repeat_choices: Iterable[int]) -> Optional[list]:

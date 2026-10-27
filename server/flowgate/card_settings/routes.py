@@ -6,6 +6,8 @@ context like the Graph routes; same envelope (P0008 §1.2 / §1.3), user JWT onl
 
 A PATCH changes exactly one value and answers the card's settings as they are now (null = default).
 0061 T#11: ``{"field": "hold", "value": true | false | null}`` sets / releases the card's Hold (``settings.write``).
+flowgate.v02.0098 T#1: ``GET ...?refresh_merge_targets=true`` judges a check card's merge target candidates again instead
+of reading their cache (a read option only: nothing is written).
 """
 from __future__ import annotations
 
@@ -19,6 +21,12 @@ from flowgate.card_settings import settings
 router = APIRouter(prefix="/api/v1", tags=["CardSettings"])
 
 _BODY_KEYS = {"field", "value", "expected_settings_version"}
+_TRUE = {"1", "true", "yes"}
+
+
+def refresh_requested(request: Request) -> bool:
+    """flowgate.v02.0098 T#1: the GET's ``refresh_merge_targets`` read option (true / 1 / yes; anything else: off)."""
+    return str(request.query_params.get("refresh_merge_targets") or "").strip().lower() in _TRUE
 
 
 def parse_change(body: Any) -> tuple[str, Any, list[dict]]:
@@ -51,7 +59,7 @@ def get_card_settings(flow_id: str, node_key: str, request: Request):
         user_id = legacy.authenticate(request)
         group = legacy.load_flow(flow_id)
         legacy.authorize(user_id, group, "read")
-        return settings.read(group, node_key)
+        return settings.read(group, node_key, refresh_merge_targets=refresh_requested(request))
 
     return legacy.run(request, handle)
 

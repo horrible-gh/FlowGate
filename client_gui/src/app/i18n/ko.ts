@@ -1219,7 +1219,7 @@ export default {
         recovered_pushed: '앞서 머지된 결과를 기록하고 Push했습니다({target}).',
         merge_conflict: '충돌 — 위 카드에서 해결하세요.',
         judgment_changed: '판정이 바뀌었습니다. 다시 확인하세요.',
-        merge_push_rejected: '원격이 Push를 거절했습니다. 현재 상태를 다시 읽었습니다.',
+        merge_push_rejected: "원격 갱신 거절",
         nothing_to_merge: '머지할 커밋이 없습니다.',
         target_synced_contains: '원격 대상에 이미 들어 있습니다(로컬 대상을 원격 위치로 맞췄습니다).',
         already_recorded: '이미 머지된 결과입니다 — 아래 Push로 반영하세요.',
@@ -1238,7 +1238,7 @@ export default {
         already_published: '이미 원격에 있습니다({target}).',
         push_changed: 'Push 대상 기록이 바뀌었습니다. 다시 확인하세요.',
         record_changed: '기록이 바뀌어 다시 읽었습니다. 다시 확인 후 Push하세요.',
-        push_rejected_kept: '원격이 Push를 거절했습니다. 머지 결과는 그대로 남아 있습니다.',
+        push_rejected_kept: "원격 갱신 거절 · 로컬 반영 보존",
       },
     },
     reason: {
@@ -1326,7 +1326,6 @@ export default {
       checking: '확인 중…',
       warning: {
         target_differs_from_work_base: '작업 기준과 다른 대상입니다.',
-        unmerge_unsupported_for_non_base_target: '이 대상의 머지는 되돌리기를 지원하지 않습니다.',
       },
       merge_confirm: '{n}개 커밋을 {target}에 머지합니다. 미커밋 파일은 포함되지 않습니다.',
       merge_push_confirm: '{n}개 커밋을 {target}에 머지하고 원격에 Push합니다. 미커밋 파일은 포함되지 않습니다.',
