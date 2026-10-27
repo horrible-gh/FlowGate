@@ -58,19 +58,21 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); i18n.global.locale.value = 'ko' })
 
 describe('check card target and push controls — 0098', () => {
-  it('reads inherited names without PATCH; explicit selection survives GET; default sends null with latest version', async () => {
+  it('reads inherited names without PATCH; explicit selection survives GET; the default branch is picked from the list like any branch', async () => {
     const w = await show()
     expect(optionNames(w)).toEqual(raw.merge_target_options)
     expect(optionNames(w)).not.toContain('origin'); expect(optionNames(w)).not.toContain('—')
     expect(selected(w)).toBe('feature/v0.2.0'); expect(http.patch).not.toHaveBeenCalled()
-    expect(w.get('[data-test="check-settings-default"]').attributes('disabled')).toBeDefined()
+    // T0012 rework: no default button and no text about it.
+    expect(w.find('[data-test="check-settings-default"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('기본값 사용')
     await w.get('[data-test="check-settings-target"]').setValue('release/local'); await flushPromises()
     expect(http.patch).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { field: 'merge_target_branch', value: 'release/local', expected_settings_version: 6 })
     raw.default_target_branch = 'main'; targets('release/local'); await context.value!.reload(); await flushPromises()
     expect(selected(w)).toBe('release/local')
-    await w.get('[data-test="check-settings-default"]').trigger('click'); await flushPromises()
-    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'merge_target_branch', value: null, expected_settings_version: 7 })
-    expect(selected(w)).toBe('main'); expect(raw.fields.merge_target_branch.stored).toBe(false)
+    await w.get('[data-test="check-settings-target"]').setValue('main'); await flushPromises()
+    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'merge_target_branch', value: 'main', expected_settings_version: 7 })
+    expect(selected(w)).toBe('main')
     expect(http.patch).toHaveBeenCalledTimes(2)
   })
   it('choosing the work base explicitly stores its name and keeps it after the default changes', async () => {
@@ -78,15 +80,13 @@ describe('check card target and push controls — 0098', () => {
     await w.get('[data-test="check-settings-target"]').setValue('feature/v0.2.0'); await flushPromises()
     expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'merge_target_branch', value: 'feature/v0.2.0', expected_settings_version: 6 })
     raw.default_target_branch = 'main'; targets('feature/v0.2.0'); await context.value!.reload(); await flushPromises()
-    expect(selected(w)).toBe('feature/v0.2.0'); expect(w.get('[data-test="check-settings-default"]').attributes('disabled')).toBeUndefined()
+    expect(selected(w)).toBe('feature/v0.2.0')
   })
-  it.each(['commit', 'hold'])('keeps target settings untouched and disables selection/default in %s', async mode => {
+  it.each(['commit', 'hold'])('keeps target settings untouched and disables selection in %s', async mode => {
     raw.fields.merge_mode = field(mode, true); raw.fields.merge_target_branch = field('release/local', true); targets('release/local')
     const w = await show()
     expect(selected(w)).toBe('release/local')
     expect(w.get('[data-test="check-settings-target"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="check-settings-default"]').attributes('disabled')).toBeDefined()
-    expect(w.find('[data-test="check-settings-unmerge-warning"]').exists()).toBe(false)
     expect(http.patch).not.toHaveBeenCalled()
   })
   it('restores the saved selection on refusal, shows the control error and refreshes target state', async () => {
@@ -98,22 +98,34 @@ describe('check card target and push controls — 0098', () => {
     expect(w.get('[data-test="check-settings-target-error"]').text()).toBe('대상 사용 중')
     expect(http.get.mock.calls.filter(([url]) => url.endsWith('/settings')).length).toBe(2)
   })
-  it('retains an unavailable stored name as a control display without adding an option, and permits null reset even with no candidates', async () => {
+  it('retains an unavailable stored name as a control display without adding an option', async () => {
     raw.fields.merge_target_branch = field('gone', true); raw.merge_target_options = []; targets('gone'); raw.merge_target_state.current.error = 'merge_target_not_found'
     const w = await show()
     expect(optionNames(w)).toEqual([])
     expect(w.get('[data-test="check-settings-target-display"]').text()).toBe('gone')
     expect(w.get('[data-test="check-settings-target-error"]').text()).toBe('대상 없음')
-    expect(w.get('[data-test="check-settings-default"]').attributes('disabled')).toBeUndefined()
-    await w.get('[data-test="check-settings-default"]').trigger('click'); await flushPromises()
-    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'merge_target_branch', value: null, expected_settings_version: 6 })
-  })
-  it('leaves an unavailable default unselected while valid candidates remain selectable', async () => {
-    targets(null); raw.merge_target_state.default.error = 'merge_target_busy'
-    const w = await show()
-    expect(selected(w)).toBe(''); expect(w.get('[data-test="check-settings-target"]').attributes('disabled')).toBeUndefined()
-    expect(w.get('[data-test="check-settings-target-display"]').text()).toBe('대상 사용 불가')
+    expect(w.find('[data-test="check-settings-default"]').exists()).toBe(false)
     expect(http.patch).not.toHaveBeenCalled()
+  })
+  it('T0012: shows an unavailable default by its branch name with its own short error while valid candidates remain selectable', async () => {
+    raw.merge_target_options = ['main', 'release/local']; targets(null); raw.merge_target_state.default.error = 'merge_target_busy'
+    const w = await show()
+    expect(optionNames(w)).toEqual(['main', 'release/local']); expect(w.get('[data-test="check-settings-target"]').attributes('disabled')).toBeUndefined()
+    expect(w.get('[data-test="check-settings-target-display"]').text()).toBe('feature/v0.2.0')
+    expect(w.get('[data-test="check-settings-target-error"]').text()).toBe('대상 사용 중')
+    expect(w.find('[data-test="check-settings-target-state"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('대상 사용 불가')
+    expect(http.patch).not.toHaveBeenCalled()
+  })
+  it('T0012: a Git refusal of the whole lookup keeps the default name and shows one short line', async () => {
+    raw.default_target_branch = 'main'; raw.merge_target_options = []
+    const refused = entry('main', { error: 'gate_git_unavailable', unmerge_supported: null, warnings: [] })
+    raw.merge_target_state = { status: 'git_unavailable', code: 'gate_git_unavailable', reason: 'git_disabled', current: refused, default: refused }
+    const w = await show()
+    expect(w.get('[data-test="check-settings-target-display"]').text()).toBe('main')
+    expect(w.find('[data-test="check-settings-default"]').exists()).toBe(false)
+    expect(w.findAll('[role="status"], [role="alert"]').map(e => e.text())).toEqual(['Git 사용 불가'])
+    expect(w.text()).not.toContain('대상 사용 불가')
   })
   it('distinguishes an empty candidate list from a lookup failure', async () => {
     raw.merge_target_options = []; targets(null)
@@ -138,7 +150,6 @@ describe('check card target and push controls — 0098', () => {
     expect(control.classes()).not.toContain('is-invalid')
     expect(w.get('[data-test="check-settings-target-display"]').text()).toBe(name)
     expect(w.find('[data-test="check-settings-target-error"]').exists()).toBe(false)
-    expect(w.find('[data-test="check-settings-unmerge-warning"]').exists()).toBe(false)
     expect(optionNames(w)).toEqual([])
     if (status === 'failed' || status === 'timeout') {
       await w.get('[data-test="check-settings-refresh"]').trigger('click'); await flushPromises()
@@ -150,14 +161,15 @@ describe('check card target and push controls — 0098', () => {
     expect(raw.settings_version).toBe(6)
     expect(http.patch).not.toHaveBeenCalled()
   })
-  it('shows unsupported-undo and push-create notices outside branch options, and hides push notice when OFF', async () => {
+  it('shows no unsupported-undo notice, no default button and no standing push explanation (T0012 rework)', async () => {
     raw.fields.push = field(true, true)
     const w = await show()
-    expect(w.get('[data-test="check-settings-unmerge-warning"]').text()).toBe('이 대상은 병합 취소 미지원')
-    expect(w.get('[data-test="check-settings-push-create"]').text()).toBe('없는 원격 브랜치는 새로 생성')
-    expect(optionNames(w)).toEqual(raw.merge_target_options)
-    await w.get('[data-test="check-settings-push"]').trigger('click'); await flushPromises()
+    expect(raw.merge_target_state.current.unmerge_supported).toBe(false)
+    expect(w.text()).not.toContain('병합 취소')
+    expect(w.text()).not.toContain('기본값 사용')
     expect(w.find('[data-test="check-settings-push-create"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('없는 원격 브랜치는 새로 생성')
+    expect(optionNames(w)).toEqual(raw.merge_target_options)
   })
   it('re-saves push=true with the current version and replaces all fields only after the full response', async () => {
     raw.fields.push = field(true, true); raw.push_remote_check_required = true
@@ -210,15 +222,15 @@ describe('check card target and push controls — 0098', () => {
     await settingsNodeRead(target.flowId, target.nodeId, true)
     expect(http.get).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { refresh_merge_targets: true })
   })
-  it.each(['ko', 'en', 'ja'] as const)('disables undo for an unknown receipt target and translates direct refusals in %s', async locale => {
+  it.each(['ko', 'en', 'ja'] as const)('disables undo for an unknown receipt target and prints no unsupported-undo text in %s', async locale => {
     i18n.global.locale.value = locale
     const decision: any = { settings: { shown: { merge_target_branch: null }, effective: { merge_mode: 'merge' }, target_basis: null }, target_branch: 'release/local' }
     const w = mount(GateSettingsSummary, { props: { decision, errorCode: 'unmerge_target_unknown' }, global: { plugins: [i18n] } }); wrappers.push(w)
     expect(w.get('[data-test="gate-summary-unmerge-unknown"]').text()).toBe(i18n.global.t('gui.inspector.checkSettings.target.unmerge_unknown'))
     expect(w.get('[data-test="gate-unmerge"]').attributes('disabled')).toBeDefined()
     await w.setProps({ errorCode: 'unmerge_unsupported_target' })
-    expect(w.get('[data-test="gate-summary-error"]').text()).toBe(i18n.global.t('gui.inspector.checkSettings.target.unmerge_unsupported'))
-    expect(w.get('[data-test="gate-unmerge"]').attributes('disabled')).toBeDefined()
+    expect(w.find('[data-test="gate-summary-error"]').exists()).toBe(false)
+    expect(w.html()).not.toMatch(/병합 취소 미지원|Undo merge is unsupported|マージ取り消し未対応/)
   })
   it.each(['ko', 'en', 'ja'] as const)('hides rejected merge receipts even with push enabled in %s', async locale => {
     i18n.global.locale.value = locale
@@ -233,17 +245,29 @@ describe('check card target and push controls — 0098', () => {
     await w.setProps({ decision: { ...receipt, settings: null, settingsUnavailable: true }, errorCode: 'unmerge_target_unknown' })
     expect(w.find('[data-test="gate-settings-summary"]').exists()).toBe(false)
   })
-  it('renders receipt warnings and target after acceptance/completion despite changed live settings', async () => {
+  it('renders the receipt target without the unsupported-undo notice; the document tab hides the target line', async () => {
     const receipt: any = { decision_id: 'd1', attempt_id: 'attempt0098', result: 'confirmed', status: 'succeeded', archived: false, effects: [{ phase: 'merge', status: 'done', sha_after: 'abc' }],
       settings: { shown: { merge_target_branch: 'release/local' }, effective: { merge_mode: 'merge', push: true }, target_basis: { target_branch: 'release/local', unmerge_supported: false, warnings: ['unmerge_unsupported_for_non_base_target'] } } }
     const w = mount(GateSettingsSummary, { props: { node: toSettingsNode(raw), decision: receipt, errorCode: 'push_rejected' }, global: { plugins: [i18n] } }); wrappers.push(w)
     expect(w.get('[data-test="gate-summary-target"]').text()).toBe('release/local')
-    expect(w.get('[data-test="gate-summary-unmerge"]').text()).toBe('이 대상은 병합 취소 미지원')
-    expect(w.get('[data-test="gate-unmerge"]').attributes('disabled')).toBeDefined()
+    expect(w.find('[data-test="gate-summary-unmerge"]').exists()).toBe(false)
+    expect(w.find('[data-test="gate-unmerge"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('병합 취소')
     expect(w.get('[data-test="gate-summary-error"]').text()).toBe('원격 갱신 거절 · 로컬 반영 보존')
     raw.fields.push = field(false); raw.default_target_branch = 'main'; targets(null)
     await w.setProps({ node: toSettingsNode(raw) })
     expect(w.get('[data-test="gate-summary-target"]').text()).toBe('release/local')
     expect(w.find('[data-test="gate-summary-push-create"]').exists()).toBe(true)
+    // The card's document tab (GateSlots) passes hideTarget: neither the target line nor a substitute is drawn.
+    await w.setProps({ hideTarget: true })
+    expect(w.find('[data-test="gate-summary-target"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('병합 대상')
+    expect(w.text()).not.toContain('release/local')
+  })
+  it('the document tab without a decision draws no target line and no unsupported-undo notice', async () => {
+    const w = mount(GateSettingsSummary, { props: { node: toSettingsNode(raw), hideTarget: true }, global: { plugins: [i18n] } }); wrappers.push(w)
+    expect(raw.merge_target_state.current.unmerge_supported).toBe(false)
+    expect(w.find('[data-test="gate-settings-summary"]').exists()).toBe(false)
+    expect(w.text()).toBe('')
   })
 })

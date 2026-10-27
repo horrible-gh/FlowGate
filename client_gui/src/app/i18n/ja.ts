@@ -1316,7 +1316,6 @@ export default {
       checking: '確認中…',
       warning: {
         target_differs_from_work_base: '作業基準とは異なる対象です。',
-        unmerge_unsupported_for_non_base_target: 'この対象へのマージは取り消しに対応していません。',
       },
       merge_confirm: '{n} 件のコミットを {target} にマージします。未コミットのファイルは含まれません。',
       merge_push_confirm: '{n} 件のコミットを {target} にマージしてリモートに Push します。未コミットのファイルは含まれません。',

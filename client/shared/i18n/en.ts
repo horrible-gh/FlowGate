@@ -3660,9 +3660,8 @@ export default {
       // branch management lives in git_branch_manager instead).
       merge_target_label: 'Merge target branch',
       retarget_notice: 'Working base {base} → New merge target {target}',
-      // flowgate.default.0665 T0004 — target differs from the group's work base / unmerge limit
+      // flowgate.default.0665 T0004 — target differs from the group's work base
       incoming_work_base_commits: '{n} commit(s) of {base} that {target} does not have yet will be merged along with this group.',
-      unmerge_unsupported_notice: '{target} is not the project base branch, so this merge (merge_only) cannot be undone with unmerge later. To cancel it you would revert the merge on the target branch or reopen with Time Machine.',
       // 0685 T0006 §4 — shown only when a target other than the work base is chosen.
       target_ack: 'Merge into {target} instead of {base}. I have read the warning above.',
       target_ack_required: 'Tick the box above to enable [Approve].',

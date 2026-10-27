@@ -838,6 +838,8 @@ CHECK_OPTIONS_TIMEOUT = "merge_target_options_timeout"
 CHECK_OPTIONS_UNAVAILABLE = "merge_target_options_unavailable"
 CHECK_TARGET_CACHE_SEC = 5.0
 CHECK_TARGET_BUDGET_SEC = 3.0
+# The Graph attempt worktree branches (``flowgate.graph_run.workspace.location``): internal, never a merge target.
+GRAPH_ATTEMPT_BRANCH_PREFIX = "graph_attempt_"
 # The candidate list's lookup status.
 CHECK_STATUS_OK = "ok"
 CHECK_STATUS_EMPTY = "empty"
@@ -869,6 +871,7 @@ class CheckTargetBasis:
     floor_known: bool = False                  # floor_sha was read (None then: the group has no verified floor)
     base_checked: bool = False
     base_dirty: Optional[bool] = None          # read once for the candidate list; None: read when judged
+    slot_registered: bool = True               # False: the group has no worktree yet (settings reads/saves only)
 
 
 def _git_unavailable(reason: str) -> GitServiceError:
@@ -877,10 +880,14 @@ def _git_unavailable(reason: str) -> GitServiceError:
 
 
 def check_target_basis(project_id: Optional[str], group_id: str, *,
-                       work_base_ref: Optional[str] = None) -> CheckTargetBasis:
+                       work_base_ref: Optional[str] = None, require_slot: bool = True) -> CheckTargetBasis:
     """The basis of a check card target judgement, or 409 ``gate_git_unavailable`` with ``details.reason``:
     ``no_project`` / ``project_mismatch`` / ``git_disabled`` / ``git_unavailable`` / ``checkout_unavailable`` /
-    ``group_slot_missing`` / ``probe_failed``. ``project_id`` is the authenticated group's own project."""
+    ``group_slot_missing`` / ``probe_failed``. ``project_id`` is the authenticated group's own project.
+
+    flowgate.v02.0098 T0012: ``require_slot=False`` (the settings candidate list and a ``merge_target_branch`` save)
+    also takes a group whose worktree is not provisioned yet -- a card is set up before the group's work starts. Its
+    floor is then where its branch will fork (:func:`check_scope_floor`). The confirm and the run keep the slot."""
     from modules.flow_gate.services import git_service as _gs
     if not project_id:
         raise _git_unavailable("no_project")
@@ -897,7 +904,8 @@ def check_target_basis(project_id: Optional[str], group_id: str, *,
             raise _git_unavailable("checkout_unavailable")
         state = _gs.db_git.get_state(group_id)
         branch = ((state or {}).get("branch") or "").strip()
-        if not state or not branch or not int(state.get("worktree_registered") or 0):
+        registered = bool(state) and bool(branch) and bool(int(state.get("worktree_registered") or 0))
+        if not registered and require_slot:
             raise _git_unavailable("group_slot_missing")
         work_base = work_base_ref or default_target_of_group(project_id, group_id, cfg)
     except GitServiceError:
@@ -908,6 +916,7 @@ def check_target_basis(project_id: Optional[str], group_id: str, *,
     return CheckTargetBasis(
         project_id=project_id, group_id=group_id, cfg=cfg, base_root=base_root,
         base_branch=project_base_branch(cfg), work_base_ref=work_base, source_branch=branch,
+        slot_registered=registered,
     )
 
 
@@ -928,6 +937,13 @@ def check_scope_floor(basis: CheckTargetBasis) -> Optional[str]:
     failure is the judgement's own basis failing: 409 ``gate_git_unavailable``."""
     from modules.flow_gate.services import git_service as _gs
     from .scope_base import REASON_LEDGER_UNAVAILABLE
+    if not basis.slot_registered:
+        # No group branch yet: it forks from the work base start point when provisioned (the floor ``record_fork``
+        # records then), so that commit is the floor. A start point that does not resolve cannot be told (None).
+        try:
+            return _commit_of(basis.base_root, _gs._worktree_start_point(basis.base_root, basis.work_base_ref))
+        except Exception as exc:  # noqa: BLE001 — a failed Git read is no floor and no "allowed"
+            raise _git_unavailable("probe_failed") from exc
     try:
         state = _gs.db_git.get_state(basis.group_id) or {}
         return _gs.resolve_scope_floor(basis.project_id, basis.group_id, basis.base_root, state=state,
@@ -985,7 +1001,7 @@ def _raise_if_base_slot_unavailable(basis: CheckTargetBasis, own_merge_id: Optio
 def judge_check_target(
     project_id: Optional[str], group_id: str, target: str, *,
     work_base_ref: Optional[str] = None, scope_floor_sha: Optional[str] = None,
-    own_merge_id: Optional[int] = None, basis: Optional[CheckTargetBasis] = None,
+    own_merge_id: Optional[int] = None, basis: Optional[CheckTargetBasis] = None, require_slot: bool = True,
 ) -> dict:
     """THE judgement of one exact local branch name as the check card merge target of ``group_id``.
 
@@ -1003,10 +1019,11 @@ def judge_check_target(
     the group's current work base and floor); ``own_merge_id`` is the caller's own open attempt, never "busy" (an owner
     mismatch on its workspace is still refused). Without a recorded floor the group's verified floor is read without
     any write (:func:`check_scope_floor`); a group with none cannot have a target other than its work base told.
+    ``require_slot`` is :func:`check_target_basis`'s (False only for a settings save).
     """
     from modules.flow_gate.services import git_service as _gs
     if basis is None:
-        basis = check_target_basis(project_id, group_id, work_base_ref=work_base_ref)
+        basis = check_target_basis(project_id, group_id, work_base_ref=work_base_ref, require_slot=require_slot)
     root = basis.base_root
     name = target
     if not _plain_branch_name(name):
@@ -1064,6 +1081,8 @@ def _judge_local_target(basis: CheckTargetBasis, name: str, sha: str, incoming_o
     base."""
     if name == basis.source_branch:
         raise _target_error(409, "merge_target_same_branch", "the group's own branch cannot be its merge target", name)
+    if name.startswith(GRAPH_ATTEMPT_BRANCH_PREFIX):
+        raise _target_error(409, "merge_target_internal_slot", "a Graph attempt branch cannot be a merge target", name)
     if not basis.base_checked:
         raise_if_base_checkout_off_branch(basis.project_id, basis.base_branch)
     is_base = name == basis.base_branch
@@ -1267,7 +1286,7 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
     """The (cached) snapshot of one group's candidates, read under the view's ``budget``: the basis, the shared
     computation and the wait for another request's computation all spend the same deadline."""
     try:
-        basis = check_target_basis(project_id, group_id)
+        basis = check_target_basis(project_id, group_id, require_slot=False)
     except GitServiceError as exc:
         default = None
         try:
@@ -1280,7 +1299,8 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
         return _failed_snapshot(CHECK_STATUS_GIT_UNAVAILABLE, exc.code, (exc.details or {}).get("reason"),
                                 default_branch=default, basis=None)
     key = (project_id, group_id)
-    fingerprint = (basis.base_branch, basis.work_base_ref, basis.source_branch, str(basis.base_root))
+    fingerprint = (basis.base_branch, basis.work_base_ref, basis.source_branch, basis.slot_registered,
+                   str(basis.base_root))
     with _check_lock:
         epoch = _check_epoch
         hit = _check_cache.get(key)

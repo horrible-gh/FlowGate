@@ -1316,7 +1316,6 @@ export default {
       checking: 'Checking…',
       warning: {
         target_differs_from_work_base: 'This target differs from the work base.',
-        unmerge_unsupported_for_non_base_target: 'A merge into this target cannot be undone.',
       },
       merge_confirm: 'Merge {n} commits into {target}. Uncommitted files are not included.',
       merge_push_confirm: 'Merge {n} commits into {target} and push to the remote. Uncommitted files are not included.',

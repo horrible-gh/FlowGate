@@ -3653,9 +3653,8 @@ export default {
       // git_branch_manager 側)。
       merge_target_label: 'マージ先ブランチ',
       retarget_notice: '基準ブランチ {base} → 新しいマージ先 {target}',
-      // flowgate.default.0665 T0004 — グループの work base と異なる対象 / unmerge 制限
+      // flowgate.default.0665 T0004 — グループの work base と異なる対象
       incoming_work_base_commits: '{target} にまだない {base} のコミット {n} 件がこのグループの変更と一緒に入ります。',
-      unmerge_unsupported_notice: '{target} はプロジェクトの基本ブランチではないため、このマージ(merge_only)は後で unmerge で取り消せません。取り消すには対象ブランチで revert するか Time Machine で再オープンします。',
       // 0685 T0006 §4 — 作業基準と異なる対象を選んだ場合だけ表示する確認チェック。
       target_ack: '{base} ではなく {target} にマージします。上記の警告を確認しました。',
       target_ack_required: '上のチェックを入れると[承認]を押せます。',

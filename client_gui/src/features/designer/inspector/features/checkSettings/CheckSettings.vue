@@ -26,7 +26,7 @@
           <div class="inspector-check-settings-target-wrap">
             <Select
               class="inspector-check-settings-target"
-            :class="{ 'has-missing-target': !shown.targetOptions.includes(shown.target ?? '') }"
+            :class="{ 'has-missing-target': missingTarget }"
             :model-value="shown.target ?? ''"
             :options="targetOptions"
             :disabled="off || !shown.targetEnabled"
@@ -36,17 +36,15 @@
             data-test="check-settings-target"
             @update:model-value="(value: string) => onTarget(value)"
           />
-          <span v-if="!shown.targetOptions.includes(shown.target ?? '')" class="inspector-check-settings-missing" data-test="check-settings-target-display">{{ shown.target ?? t(k('target.unavailable')) }}</span>
+          <span v-if="missingTarget && shown.target" class="inspector-check-settings-missing" data-test="check-settings-target-display">{{ shown.target }}</span>
           </div>
-          <Button size="sm" variant="ghost" :disabled="off || shown.scope !== 'merge' || !shown.targetStored" data-test="check-settings-default" @click="onTarget(null)">{{ t(k('target.use_default')) }}</Button>
           <span v-if="targetFailure" role="alert" data-test="check-settings-target-error">{{ targetFailure }}</span>
-          <span v-if="shown.lookupError" role="status" data-test="check-settings-target-state">{{ t(k(shown.lookupError)) }}</span>
+          <span v-else-if="shown.lookupError" role="status" data-test="check-settings-target-state">{{ t(k(shown.lookupError)) }}</span>
           <Button size="sm" variant="ghost" v-if="shown.canRefreshTargets" type="button" :disabled="off" data-test="check-settings-refresh" @click="reload">{{ t(k('target.refresh')) }}</Button>
           <label class="inspector-check-settings-toggle">
             <span>{{ t(k('git.push')) }}</span>
             <Toggle :model-value="shown.push ?? false" :disabled="off" :aria-label="t(k('git.push'))" data-test="check-settings-push" @update:model-value="(value: boolean) => onChange('push', value)" />
           </label>
-          <span v-if="shown.push" data-test="check-settings-push-create">{{ t(k('target.push_create')) }}</span>
           <span v-if="shown.pushCheckRequired || shown.failures?.push === 'target.push_check'" data-test="check-settings-push-check">{{ t(k('target.push_check')) }}</span>
           <Button size="sm" variant="ghost" v-if="shown.pushCheckRequired || shown.failures?.push === 'target.push_check'" type="button" :disabled="off" data-test="check-settings-push-recheck" @click="onChange('push', true)">{{ t(k('target.check_settings')) }}</Button>
           <label class="inspector-check-settings-toggle">
@@ -61,7 +59,6 @@
           </label>
           <InspectorFailureIcon v-for="field in GIT_FIELDS.filter((name) => failureOf(name))" :key="field" :name="t(k('failed'))" :reason="failureOf(field)!" :data-field="field" />
         </InspectorControlRow>
-        <p v-if="shown.unmergeWarning" data-test="check-settings-unmerge-warning">{{ t(k('target.unmerge_unsupported')) }}</p>
       </InspectorBlock>
     </template>
   </div>
@@ -133,9 +130,11 @@ const off = computed(() => props.view ? !props.view.connected : (shown.value.rea
 const reasonText = computed(() => (off.value && shown.value.reason ? t(k(shown.value.reason)) : null))
 
 const targetOptions = computed(() => shown.value.targetOptions.map(value => ({ value, label: value })))
+/** The shown name is no option (unavailable, or nothing to show): it is drawn over the control, never added to it. */
+const missingTarget = computed(() => !shown.value.targetOptions.includes(shown.value.target ?? ''))
 const targetFailure = computed(() => failureOf('merge_target_branch') ?? (shown.value.targetError ? t(k(shown.value.targetError)) : null))
-function onTarget(value: string | null) {
-  if (shown.value.scope !== 'merge' || (value !== null && !shown.value.targetOptions.includes(value))) return
+function onTarget(value: string) {
+  if (shown.value.scope !== 'merge' || !shown.value.targetOptions.includes(value)) return
   onChange('merge_target_branch', value)
 }
 

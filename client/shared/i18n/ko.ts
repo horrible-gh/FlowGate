@@ -3657,9 +3657,8 @@ export default {
       // 관리는 git_branch_manager 쪽 몫).
       merge_target_label: '머지 대상 브랜치',
       retarget_notice: '기준 브랜치 {base} → 새 머지 대상 {target}',
-      // flowgate.default.0665 T0004 — 그룹 work base와 다른 대상, unmerge 제한 경고
+      // flowgate.default.0665 T0004 — 그룹 work base와 다른 대상 경고
       incoming_work_base_commits: '{target}에 없는 {base} 커밋 {n}개가 이 그룹 변경과 함께 들어갑니다.',
-      unmerge_unsupported_notice: '{target}은(는) 프로젝트 기본 브랜치가 아니어서 이 병합(merge_only)은 나중에 되돌리기(unmerge)로 취소할 수 없습니다. 취소가 필요하면 대상 브랜치에서 revert하거나 Time Machine 재개방을 써야 합니다.',
       // 0685 T0006 §4 — 작업 기준과 다른 대상을 고른 경우에만 표시되는 확인 체크.
       target_ack: '{base}이(가) 아닌 {target}에 병합합니다. 위 경고를 확인했습니다.',
       target_ack_required: '위 확인란을 체크해야 [승인]을 누를 수 있습니다.',

@@ -14,11 +14,12 @@ export interface CheckSettingsView {
   /** Merge target branch, or null. */
   readonly target: string | null
   readonly targetStored?: boolean
+  /** The group's work base, the branch an unset target inherits (shown as the target). */
+  readonly defaultTarget?: string | null
   readonly targetEnabled?: boolean
   readonly targetError?: string | null
   readonly lookupError?: string | null
   readonly canRefreshTargets?: boolean
-  readonly unmergeWarning?: boolean
   readonly pushCheckRequired?: boolean
   /** Only the branch names admitted by the server. */
   readonly targetOptions: readonly string[]
@@ -83,18 +84,16 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
   const targetStored = field?.stored === true && typeof field.value === 'string' && !!field.value
   const state = input.node?.mergeTargetState
   const current = targetStored ? state?.current : state?.default
-  const lookupUnavailable = state?.status === 'failed' || state?.status === 'timeout' || state?.status === 'git_unavailable'
-  // An unchecked lookup result does not invalidate the saved or inherited name.
-  const target = targetStored ? field!.value as string
-    : !current?.error && (current?.checked === true || lookupUnavailable) ? input.node?.defaultTargetBranch ?? null : null
+  const defaultTarget = input.node?.defaultTargetBranch ?? null
+  // T0012: the saved or inherited branch name is always shown; why it cannot be used is its error, never a blank.
+  const target = targetStored ? field!.value as string : defaultTarget
   const targetOptions = input.node?.mergeTargetOptions ?? []
   const scope = oneOf(valueOf('merge_mode'), CHECK_SCOPES)
   const lookupError = state?.status === 'git_unavailable' ? 'target.git_unavailable'
     : state?.status === 'failed' || state?.status === 'timeout' ? 'target.lookup_failed'
     : state?.status === 'empty' ? 'target.empty' : null
-  const targetError = current?.error ? checkTargetErrorKey(current.error)
-    : lookupUnavailable ? null
-    : !target || current?.checked !== true ? 'target.unavailable' : null
+  // A Git lookup failure is already the lookup state: the entry's copy of it is not shown twice.
+  const targetError = current?.error && state?.status !== 'git_unavailable' ? checkTargetErrorKey(current.error) : null
   const failures: Record<string, string> = {}
   if (input.failure) failures[input.failure.field] = input.failure.key ?? `failure.${input.failure.kind}`
   return {
@@ -102,11 +101,11 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
     scope,
     target,
     targetStored,
+    defaultTarget,
     targetEnabled: scope === 'merge' && targetOptions.length > 0,
     targetError: scope === 'merge' ? targetError : null,
     lookupError: scope === 'merge' ? lookupError : null,
     canRefreshTargets: state?.status === 'failed' || state?.status === 'timeout',
-    unmergeWarning: scope === 'merge' && current?.unmerge_supported === false,
     pushCheckRequired: input.node?.pushRemoteCheckRequired === true,
     targetOptions,
     archive: valueOf('archive') === true,
@@ -157,7 +156,7 @@ export function checkSettingsSummary(node: SettingsNode | null, decision?: RunGa
   if (decision) {
     // Rejection records the shown settings without accepting any Git operation.
     if (decision.result === 'rejected' || decision.status === 'rejected') {
-      return { target: null, unmergeWarning: false, unmergeUnknown: false, push: false }
+      return { target: null, unmergeUnknown: false, push: false }
     }
     const saved = decision.settings
     const shown = saved?.shown
@@ -168,20 +167,17 @@ export function checkSettingsSummary(node: SettingsNode | null, decision?: RunGa
     const unavailable = decision.settingsUnavailable === true
     return {
       target: merge || unavailable ? (typeof basis?.target_branch === 'string' ? basis.target_branch : decision.target_branch ?? null) : null,
-      unmergeWarning: merge && (basis?.unmerge_supported === false || (Array.isArray(basis?.warnings) && basis.warnings.includes('unmerge_unsupported_for_non_base_target'))),
       unmergeUnknown: unavailable || (merge && modern && typeof basis?.unmerge_supported !== 'boolean'),
       push: effective?.push === true,
     }
   }
   const merge = node?.fields.merge_mode?.value === 'merge'
   const current = node?.mergeTargetState?.current
-  return { target: merge ? current?.branch ?? null : null,
-    unmergeWarning: merge && current?.unmerge_supported === false, unmergeUnknown: false,
+  return { target: merge ? current?.branch ?? null : null, unmergeUnknown: false,
     push: node?.fields.push?.value === true }
 }
 
 export function checkOperationErrorKey(code: string | null | undefined, decision?: RunGateResult | null): string | null {
-  if (code === 'unmerge_unsupported_target') return 'target.unmerge_unsupported'
   if (code === 'unmerge_target_unknown') return 'target.unmerge_unknown'
   if (code === 'push_rejected') {
     const localApplied = decision?.effects?.some(e => ['merge', 'commit'].includes(String(e.phase)) && e.status === 'done' && typeof e.sha_after === 'string')

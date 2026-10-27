@@ -67,9 +67,9 @@ describe('existing Git operation details — D §8-10', () => {
     current.nodes[0].gate.recovery.error_code = 'push_rejected'
     const w = await show()
     expect(w.get('[data-test="gate-summary-target"]').text()).toBe('release/local')
-    expect(w.get('[data-test="gate-summary-unmerge"]').text()).toBe('이 대상은 병합 취소 미지원')
+    expect(w.find('[data-test="gate-summary-unmerge"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('병합 취소 미지원')
     expect(w.get('[data-test="gate-summary-error"]').text()).toBe('원격 갱신 거절 · 로컬 반영 보존')
-    expect(w.get('[data-test="gate-unmerge"]').attributes('disabled')).toBeDefined()
     expect(w.get('[data-test="git-job-retry"]').attributes('disabled')).toBeUndefined()
     expect(mocks.recover).not.toHaveBeenCalled()
   })

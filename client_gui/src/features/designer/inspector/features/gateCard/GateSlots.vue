@@ -9,7 +9,7 @@
       <span v-if="decision.result.value.archived" class="inspector-gate-archive" data-test="gate-archived">{{ t(k('result.archived')) }}</span>
       <GateActions :target="target" :state="decision" />
     </div>
-    <GateSettingsSummary v-if="shape === 'gate'" :node="decision.settings.value" :decision="decision.receipt.value" :error-code="decision.errorCode.value" />
+    <GateSettingsSummary v-if="shape === 'gate'" :node="decision.settings.value" :decision="decision.receipt.value" :error-code="decision.errorCode.value" hide-target />
     <InspectorSlotList v-if="shape !== 'gate'" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>

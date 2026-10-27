@@ -143,8 +143,10 @@ MERGE_TARGET_GIT_UNAVAILABLE = git_merge_target.CHECK_GIT_UNAVAILABLE
 
 
 def judge_merge_target(group: dict, branch: str) -> dict:
-    """Judge ``branch`` as the group's check card merge target now (no cache); ``GitServiceError`` when it is not."""
-    return git_merge_target.judge_check_target(group.get("project_id"), group["group_id"], branch)
+    """Judge ``branch`` as the group's check card merge target now (no cache); ``GitServiceError`` when it is not.
+    A group whose worktree is not provisioned yet is judged as the candidate list judges it (T0012)."""
+    return git_merge_target.judge_check_target(group.get("project_id"), group["group_id"], branch,
+                                               require_slot=False)
 
 
 def merge_target_view(group: dict, selected: Optional[str], refresh: bool = False) -> dict:

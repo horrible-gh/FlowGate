@@ -1725,9 +1725,9 @@ describe('ReviewActionBar — finalize target selector (T0016 C8)', () => {
     })
   }
 
-  // 0685 T0006 §3: approving into the work base itself never asks for the check again —
-  // the merge_only unmerge limit is still told, but as a notice, not a gate.
-  it('approves the default work-base target with merge_only without a check, keeping the unmerge notice (0665 → 0685)', async () => {
+  // 0685 T0006 §3: approving into the work base itself never asks for the check again.
+  // flowgate.v02.0098 TR0013: the unmerge-unsupported notice is not shown on any screen.
+  it('approves the default work-base target with merge_only without a check or an unmerge notice (0665 → 0685 → 0098)', async () => {
     mockWorkBaseGroup((target) => ({
       work_base_ref: 'v0.2', unmerge_supported: target === 'main', incoming_work_base_commits: target === 'main' ? 3 : null,
     }))
@@ -1738,12 +1738,11 @@ describe('ReviewActionBar — finalize target selector (T0016 C8)', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="finalize-retarget-notice"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="finalize-unmerge-unsupported"]').text()).toBe(
-      i18n.global.t('main.git_finalize.unmerge_unsupported_notice', { target: 'v0.2' }),
-    )
+    expect(wrapper.find('[data-test="finalize-unmerge-unsupported"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="finalize-target-ack"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="finalize-target-ack-reason"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="finalize-target-warn"]').classes()).not.toContain('ab-git-target-warn--ack')
+    expect(wrapper.find('[data-test="finalize-target-warn"]').exists()).toBe(false)
+    expect(i18n.global.te('main.git_finalize.unmerge_unsupported_notice')).toBe(false)
     expect(wrapper.find('[data-test="finalize-work-base"]').text()).toContain('1111111111')
 
     const confirm = wrapper.find('[data-dialog-action-id="confirm"]')

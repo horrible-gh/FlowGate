@@ -54,7 +54,7 @@ def location(row, project_id):
     root = directory / merge_target.WORKSPACE_TREE
     if root.resolve().parent != directory.resolve():
         raise port.GraphSourceError("graph_worktree_unavailable", reason="unsafe_path")
-    return directory, root, "graph_attempt_" + key
+    return directory, root, merge_target.GRAPH_ATTEMPT_BRANCH_PREFIX + key
 
 
 def _owner(row, project_id, branch):

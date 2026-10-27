@@ -218,8 +218,9 @@ describe('Base apply — target choice (C15)', () => {
     await choose('git-apply-target', 'release')
     expect(qa('[data-test="git-apply-warning"]').map((e) => e.textContent?.trim())).toEqual([
       '⚠ 작업 기준과 다른 대상입니다.',
-      '⚠ 이 대상의 머지는 되돌리기를 지원하지 않습니다.',
     ])
+    // flowgate.v02.0098 TR0013: the unmerge-unsupported warning is not shown on any screen.
+    expect(qa('[data-test="git-apply"]')[0].textContent).not.toContain('되돌리기를 지원하지 않습니다')
   })
 
   it('a merge dialog opened for A closes when the target changes and sends nothing (⑤ ⑥)', async () => {

@@ -563,7 +563,7 @@
           <!-- 0665 T0004 / 0685 T0006 §3-4: the target warnings and, only when the target is
                not the group's work base, the required check live in one highlighted box. -->
           <div
-            v-if="gitTargetRetargeted || gitTargetUnmergeNotice"
+            v-if="gitTargetRetargeted"
             class="ab-git-target-warn"
             :class="{ 'ab-git-target-warn--ack': gitTargetNeedsAck }"
             data-test="finalize-target-warn"
@@ -572,14 +572,10 @@
               {{ t('main.git_finalize.retarget_notice', { base: gitWorkBase, target: gitTargetBranch }) }}
             </p>
             <!-- 0665 T0004: work-base commits that would flow into a target other
-                 than the group's work base, and the merge_only unmerge limit. -->
+                 than the group's work base. -->
             <p v-if="gitTargetRetargeted && gitTargetPreview?.incoming_work_base_commits"
                class="ab-git-retarget" role="alert" data-test="finalize-incoming-commits">
               {{ t('main.git_finalize.incoming_work_base_commits', { n: gitTargetPreview.incoming_work_base_commits, base: gitWorkBase, target: gitTargetBranch }) }}
-            </p>
-            <p v-if="gitTargetUnmergeNotice"
-               class="ab-git-retarget" role="alert" data-test="finalize-unmerge-unsupported">
-              {{ t('main.git_finalize.unmerge_unsupported_notice', { target: gitTargetBranch }) }}
             </p>
             <label v-if="gitTargetNeedsAck" class="ab-git-target-ack" data-test="finalize-target-ack">
               <input v-model="gitTargetAck" type="checkbox" data-test="finalize-target-ack-input" />
@@ -848,8 +844,8 @@ const gitArchiveSelected = ref(false)
 const gitTargetBranch = ref('')
 const gitTargetCandidates = ref<string[]>([])
 const gitActionMerges = computed(() => ['merge', 'merge_only'].includes(gitNormalChoice.value))
-// flowgate.default.0665 T0004: a merge target other than the group's work base, or a
-// merge_only the existing unmerge cannot undo, is shown with its consequences.
+// flowgate.default.0665 T0004: a merge target other than the group's work base is shown
+// with its consequences.
 // 0685 T0006 §3: only the target change needs an explicit acknowledgement; approving
 // into the work base itself never asks for the check again.
 interface GitTargetPreview {
@@ -863,18 +859,8 @@ const gitTargetAck = ref(false)
 const gitWorkBase = computed(
   () => gitFin.value?.default_target || gitFin.value?.work_base_ref || gitFin.value?.base_branch || '',
 )
-const gitTargetUnmergeUnsupported = computed(() => {
-  if (!gitTargetBranch.value) return false
-  if (gitTargetPreview.value && gitTargetPreview.value.target_branch === gitTargetBranch.value) {
-    return !gitTargetPreview.value.unmerge_supported
-  }
-  return !!gitFin.value?.base_branch && gitTargetBranch.value !== gitFin.value.base_branch
-})
 const gitTargetRetargeted = computed(
   () => gitActionMerges.value && !!gitWorkBase.value && !!gitTargetBranch.value && gitTargetBranch.value !== gitWorkBase.value,
-)
-const gitTargetUnmergeNotice = computed(
-  () => gitNormalChoice.value === 'merge_only' && gitTargetUnmergeUnsupported.value,
 )
 const gitTargetNeedsAck = computed(
   () =>

@@ -1326,7 +1326,6 @@ export default {
       checking: '확인 중…',
       warning: {
         target_differs_from_work_base: '작업 기준과 다른 대상입니다.',
-        unmerge_unsupported_for_non_base_target: '이 대상의 머지는 되돌리기를 지원하지 않습니다.',
       },
       merge_confirm: '{n}개 커밋을 {target}에 머지합니다. 미커밋 파일은 포함되지 않습니다.',
       merge_push_confirm: '{n}개 커밋을 {target}에 머지하고 원격에 Push합니다. 미커밋 파일은 포함되지 않습니다.',

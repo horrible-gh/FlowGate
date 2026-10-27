@@ -133,7 +133,6 @@ function onTarget(value: string): void {
 
 const WARNING_KEYS: Record<string, string> = {
   target_differs_from_work_base: 'gui.git.apply.warning.target_differs_from_work_base',
-  unmerge_unsupported_for_non_base_target: 'gui.git.apply.warning.unmerge_unsupported_for_non_base_target',
 }
 
 // The E8 preview warnings of a target other than the work base, one line each (§3-4(2)).

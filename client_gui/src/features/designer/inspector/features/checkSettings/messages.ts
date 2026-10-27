@@ -6,7 +6,6 @@ export default {
   ko: {
     target: {
       undo_merge: '병합 취소',
-      use_default: "기본값 사용",
       refresh: "새로 조회",
       empty: "선택 가능한 대상 없음",
       lookup_failed: "대상 조회 실패",
@@ -20,8 +19,6 @@ export default {
       ineligible: "선택 불가",
       same_branch: "같은 작업 브랜치 선택 불가",
       check_failed: "대상 확인 실패",
-      unavailable: "대상 사용 불가",
-      unmerge_unsupported: "이 대상은 병합 취소 미지원",
       unmerge_unknown: "복구 대상 확인 필요",
       push_create: "없는 원격 브랜치는 새로 생성",
       push_check: "원격 반영 설정 확인 필요",
@@ -98,7 +95,6 @@ export default {
   en: {
     target: {
       undo_merge: 'Undo merge',
-      use_default: "Use default",
       refresh: "Refresh",
       empty: "No selectable targets",
       lookup_failed: "Target lookup failed",
@@ -112,8 +108,6 @@ export default {
       ineligible: "Cannot select",
       same_branch: "Cannot select the same work branch",
       check_failed: "Target check failed",
-      unavailable: "Target unavailable",
-      unmerge_unsupported: "Undo merge is unsupported for this target",
       unmerge_unknown: "Recovery target needs checking",
       push_create: "Missing remote branches will be created",
       push_check: "Check remote push settings",
@@ -189,7 +183,6 @@ export default {
   ja: {
     target: {
       undo_merge: 'マージ取り消し',
-      use_default: "既定値を使用",
       refresh: "再読み込み",
       empty: "選択可能な対象なし",
       lookup_failed: "対象の取得に失敗",
@@ -203,8 +196,6 @@ export default {
       ineligible: "選択不可",
       same_branch: "同じ作業ブランチは選択不可",
       check_failed: "対象の確認に失敗",
-      unavailable: "対象を使用できません",
-      unmerge_unsupported: "この対象はマージ取り消し未対応",
       unmerge_unknown: "復旧対象を確認してください",
       push_create: "存在しないリモートブランチを新規作成",
       push_check: "リモート反映設定を確認してください",
