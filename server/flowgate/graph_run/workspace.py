@@ -13,6 +13,11 @@ sharing a commit; the merge uses each commit once. A Join whose results conflict
 which holds them all (``integration_head``, recorded by a run event). An ended attempt whose integration ended
 (``integrated``) loses its tree and branch (``cleanup_ended``; its result stays a parent on the group branch), as an
 invalidated one does; the server start removes both (``cleanup_finished``). An active attempt's tree is never removed.
+
+0111 T#1 (D-1a-0): every removal (``cleanup``, which ``cleanup_ended`` and ``cleanup_finished`` go through) first
+proves, under the Git locks, that the attempt's source is kept elsewhere; an attempt it cannot prove that for keeps its
+tree and branch and is a run event ``cleanup_preserved`` (``dirty`` / ``unpreserved_commits`` / ``unverifiable`` /
+``executing``).
 """
 from __future__ import annotations
 
@@ -480,54 +485,146 @@ def _removable(row):
     return bool(row) and (row["status"] == "invalidated" or _integrated(row))
 
 
-def cleanup(attempt_id):
-    """Only owned attempts that are invalidated or, T#10, ended with their integration done; an active attempt's
-    tree is never removed."""
+PRESERVED = "cleanup_preserved"
+
+
+class _Preserved(Exception):
+    """0111 T#1 (D-1a-0): the attempt's tree and branch stay, told by ``reason`` -- ``dirty`` (an uncommitted or
+    untracked change), ``unpreserved_commits`` (a commit no other lasting ref reaches), ``executing`` (a requested /
+    running execution) or ``unverifiable`` (the check could not be made: a Git error, a broken worktree link, an
+    owner mismatch)."""
+
+    def __init__(self, reason, detail):
+        super().__init__(reason, detail)
+        self.reason, self.detail = reason, detail
+
+
+def _unverifiable(exc):
+    details = getattr(exc, "details", None)
+    return _Preserved("unverifiable", (details.get("reason") if isinstance(details, dict) else None)
+                      or type(exc).__name__)
+
+
+def _unkept_commit(repo, branch):
+    """Under the Git locks: whether the attempt branch holds a commit no lasting ref reaches. Every ref counts
+    (group / user branches, tags, remotes, FlowGate's own refs) except the ``graph_attempt_*`` branches, which go
+    with their attempts; HEADs are not counted (an attempt worktree's HEAD is its own branch)."""
+    listed = git._run_git(["for-each-ref", "--format=%(objectname)", "refs/heads/" + branch], cwd=repo)
+    if listed.returncode:
+        raise _Preserved("unverifiable", "branch_unreadable")
+    tip = listed.stdout.strip()
+    if not tip:
+        return False
+    result = git._run_git(["rev-list", "--max-count=1", tip, "--not",
+                           "--exclude=refs/heads/" + merge_target.GRAPH_ATTEMPT_BRANCH_PREFIX + "*", "--glob=refs/*"],
+                          cwd=repo)
+    if result.returncode:
+        raise _Preserved("unverifiable", "rev_list_failed")
+    return bool(result.stdout.strip())
+
+
+def _kept_elsewhere(row, project_id):
+    """0111 T#1 (D-1a-0), under the Git locks, before anything is removed: the owner marker, repository, registration
+    and branch still match (else ``unverifiable``); the tree has no uncommitted or untracked change (``status
+    --porcelain --untracked-files=all`` prints nothing; ignored files are not judged and go with the tree) and the
+    branch no commit only it holds. Returns what the removal needs; raises ``_Preserved`` otherwise."""
+    try:
+        directory, root, branch, marker = _marker(row, project_id)
+        repo = Path(marker["repository"])
+        if _common_dir(repo) != Path(marker["common_dir"]).resolve():
+            raise _Preserved("unverifiable", "repository_mismatch")
+        registered = branches._registered_worktrees_for_delete(repo)
+        if registered is None:
+            raise _Preserved("unverifiable", "worktree_list_failed")
+        owned = [entry for entry in registered if Path(entry["path"]).resolve() == root.resolve()]
+        if any(entry["branch"] != branch for entry in owned):
+            raise _Preserved("unverifiable", "branch_mismatch")
+        if owned:
+            _validate_tree(root, branch, marker)
+            status = git._run_git(["--no-optional-locks", "status", "--porcelain", "--untracked-files=all"],
+                                  cwd=root)
+            if status.returncode:
+                raise _Preserved("unverifiable", "status_failed")
+            if status.stdout.strip():
+                raise _Preserved("dirty", "status")
+        elif root.exists() and (git._worktree_link_ok(root) or any(root.iterdir())):
+            # A tree Git no longer lists (a lost link, an interrupted add): what it holds cannot be told.
+            raise _Preserved("unverifiable", "worktree_unregistered")
+        if _unkept_commit(repo, branch):
+            raise _Preserved("unpreserved_commits", "rev_list")
+        return directory, root, branch, repo, owned
+    except port.GraphSourceError as exc:
+        raise _unverifiable(exc) from None
+
+
+def _note_preserved(row, kept):
+    """Outside the Git locks: an attempt kept by D-1a-0 is a run event ``cleanup_preserved`` with its reason. Only the
+    same check again (the next cleanup call, the next server start) removes it."""
+    log.warning("Graph attempt workspace preserved: %s reason=%s detail=%s", row["attempt_id"], kept.reason,
+                kept.detail)
+
+    def note():
+        current = attempt(row["attempt_id"])
+        if _removable(current):
+            _event(current, PRESERVED, reason=kept.reason, detail=kept.detail)
+    try:
+        with_flow_guard(row["group_id"], note)
+    except Exception:  # noqa: BLE001 — the record only
+        log.exception("Graph attempt workspace preservation not recorded: %s", row["attempt_id"])
+
+
+def _cleanup(attempt_id):
+    """``removed``, ``preserved`` (kept by D-1a-0 and recorded) or None (not to be removed, or the removal failed)."""
     row = attempt(attempt_id)
     if not _removable(row):
-        return False
+        return None
+    removing = False
     try:
         project_id = _project(row)
         directory, root, branch = location(row, project_id)
         if not directory.exists():
-            return True
+            return "removed"
         with _git_locks(row, project_id, branch):
             current = attempt(attempt_id)
             if not _removable(current):
-                return False
+                return None
             # Never remove a worktree while an execution could still own a process.
             if run_store._one("SELECT exec_id FROM graph_attempt_runs WHERE attempt_id = ? "
                               "AND status IN ('requested', 'running')", [attempt_id]):
-                return False
-            directory, root, branch, marker = _marker(current, project_id)
-            repo = Path(marker["repository"])
-            if _common_dir(repo) != Path(marker["common_dir"]).resolve():
-                return False
-            registered = branches._registered_worktrees_for_delete(repo)
-            if registered is None:
-                return False
-            owned = [entry for entry in registered if Path(entry["path"]).resolve() == root.resolve()]
-            if any(entry["branch"] != branch for entry in owned):
-                return False
+                raise _Preserved("executing", "execution_active")
+            directory, root, branch, repo, owned = _kept_elsewhere(current, project_id)
+            removing = True
             if owned:
-                if root.exists() and git._worktree_link_ok(root):
-                    _validate_tree(root, branch, marker)
                 result = git._run_git(["worktree", "remove", "--force", str(root)], cwd=repo)
                 if result.returncode or root.exists():
-                    return False
-            elif root.exists():
-                # An interrupted add may leave only a partial checkout. Its
-                # exclusive marker owns it, but another repository never does.
-                if (root / ".git").exists() or not _force_rmtree(root):
-                    return False
+                    return None
+            elif root.exists() and not _force_rmtree(root):
+                return None
             if git._ref_exists(repo, "refs/heads/" + branch):
                 result = git._run_git(["branch", "-D", branch], cwd=repo)
                 if result.returncode:
-                    return False
-            return merge_target._remove_workspace(directory, repo)
-    except Exception:
+                    return None
+            return "removed" if merge_target._remove_workspace(directory, repo) else None
+    except _Preserved as kept:
+        _note_preserved(row, kept)
+        return "preserved"
+    except Exception as exc:  # noqa: BLE001
+        if not removing:
+            # The check itself failed (a Git / lock / ownership error): nothing is removed until it can be made.
+            log.exception("Graph attempt workspace cleanup check failed: %s", attempt_id)
+            _note_preserved(row, _unverifiable(exc))
+            return "preserved"
         log.exception("Graph attempt workspace cleanup deferred: %s", attempt_id)
-        return False
+        return None
+
+
+def cleanup(attempt_id):
+    """Only owned attempts that are invalidated or, T#10, ended with their integration done; an active attempt's
+    tree is never removed. 0111 T#1 (D-1a-0): and only once their source is kept elsewhere -- no uncommitted or
+    untracked change, no commit only the attempt branch holds, no requested / running execution, the owner marker,
+    repository, registered worktree and branch matching, all judged under the Git locks. Anything else keeps the tree
+    and branch (False) and records ``cleanup_preserved``; there is no forced removal."""
+    return _cleanup(attempt_id) == "removed"
 
 
 def cleanup_invalidated():
@@ -538,13 +635,19 @@ def cleanup_invalidated():
 def cleanup_ended(attempt_id):
     """T#10, outside every Flow guard, DB transaction and Git lock: an ended attempt whose integration ended (merged,
     or no source change) loses its worktree and branch — its result commit stays a parent on the group branch. A
-    failure is a run event (``cleanup_failed``); the node keeps its state and the server start tries again."""
+    failure is a run event (``cleanup_failed``); the node keeps its state and the server start tries again. 0111 T#1:
+    the same check as ``cleanup``; a kept attempt is ``cleanup_preserved``, not a failure."""
     row = attempt(attempt_id)
     if not _integrated(row):
         return False
     record = _mode(row)
-    if not record or record.get("mode") != "worktree" or cleanup(attempt_id):
+    if not record or record.get("mode") != "worktree":
         return True
+    outcome = _cleanup(attempt_id)
+    if outcome == "removed":
+        return True
+    if outcome == "preserved":
+        return False
     log.warning("Graph attempt workspace cleanup failed: %s", attempt_id)
 
     def note():
@@ -560,7 +663,8 @@ def cleanup_ended(attempt_id):
 
 def cleanup_finished():
     """T#10, server start, outside every guard: each attempt tree whose owner marker names an attempt that is
-    invalidated or ended with its integration done is removed. An active attempt's tree is left as it is."""
+    invalidated or ended with its integration done goes through ``cleanup`` (0111 T#1: removed only when its source is
+    kept elsewhere, else kept and recorded ``cleanup_preserved`` again). An active attempt's tree is left as it is."""
     base = git.get_storage_root() / "graph_attempts"
     if not base.is_dir():
         return
