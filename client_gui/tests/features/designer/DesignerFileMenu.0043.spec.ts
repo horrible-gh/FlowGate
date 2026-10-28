@@ -31,6 +31,7 @@ import { answerFlowCanvas } from './flowCanvasResponse'
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())
 vi.mock('@shared/api', () => ({
+  default: { get: getRequest },
   getRequest,
   postRequest,
   extractApiErrorMessage: (_error: unknown, fallback: string) => fallback,
@@ -103,6 +104,7 @@ beforeEach(() => {
     if (git) {
       return { data: { ok: true, status: { enabled: true, base_branch: 'v0.2', base_branch_configured: true, slots: [] } } }
     }
+    if (url.endsWith('/git/work-base-options')) return { data: { git_enabled: true, base_branch: 'v0.2', branches: [{ name: 'v0.2', is_project_base: true }] } }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
     if (url === '/api/v1/projects') return { data: { projects: [] } }
     // flowgate.v02.0045: the Designer reads Flow Graphs from the server Canvas API.
@@ -507,7 +509,7 @@ describe('Flow commands', () => {
     await typeIn('[data-test="designer-flow-create-title"]', 'Scheduler')
     await clickIn('[data-test="designer-flow-create-submit"]')
     expect(postRequest).toHaveBeenCalledWith('/api/v1/groups', {
-      project_id: 'p', title: 'Scheduler', module: 'core', parent_id: null, priority: null,
+      project_id: 'p', title: 'Scheduler', module: 'core', parent_id: null, priority: null, work_base_ref: 'v0.2',
     })
     expect(document.querySelector('[data-test="designer-flow-create"]')).toBeNull()
     expect(treeRequests().length).toBe(treeReadsBefore + 1)

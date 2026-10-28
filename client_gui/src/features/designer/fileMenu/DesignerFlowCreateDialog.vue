@@ -1,9 +1,5 @@
 <template>
-  <!-- flowgate.v02.0043 — File › 새 Flow: the v0.1 group create (features/project createFlow)
-       under a Group of the current Project, with the two values that contract reads — the Group
-       and the name. The Groups come from the same tree the Project Explorer shows. Emits the
-       created Flow with its Group (id and name: the create has just invalidated the cached tree,
-       so the Shell cannot look the name up); the Shell re-reads the tree and opens the Flow. -->
+  <!-- Group/tree and work-base reads run independently; only server-confirmed options allow creation. -->
   <ModalShell :open="open" size="md" close-on-backdrop :aria-describedby="submitError ? errorId : undefined" @close="emit('close')">
     <template #header="{ titleId }">
       <div class="dfm-head">
@@ -39,13 +35,24 @@
           />
           <p v-if="showTitleError" class="dfm-field-error">{{ t('gui.designer.file_menu.name_required') }}</p>
         </div>
+        <div v-if="baseState !== 'ready-disabled'" class="dfm-field" data-test="designer-flow-create-base-field">
+          <label class="dfm-label" for="dfc-base">{{ t('gui.designer.file_menu.base_branch') }}</label>
+          <Select id="dfc-base" v-model="workBaseRef" :options="branchOptions"
+            :placeholder="t('gui.designer.file_menu.base_branch_required')"
+            :disabled="baseState !== 'ready-enabled' || submitting" data-test="designer-flow-create-base" />
+          <p v-if="baseState === 'unknown' || baseState === 'loading'">{{ t('gui.designer.file_menu.loading') }}</p>
+          <Alert v-if="baseError" tone="danger" data-test="designer-flow-create-base-error">{{ baseErrorText }}</Alert>
+          <p v-if="baseState === 'ready-enabled' && !branchValid" class="dfm-field-error">{{ t('gui.designer.file_menu.base_branch_required') }}</p>
+          <Button variant="secondary" :disabled="baseState === 'loading' || submitting"
+            data-test="designer-flow-create-base-retry" @click="loadOptions(true)">{{ t('gui.designer.file_menu.retry') }}</Button>
+        </div>
       </form>
     </template>
 
     <template #footer>
       <div class="dfm-actions">
         <Button variant="secondary" data-test="designer-flow-create-cancel" @click="emit('close')">{{ t('gui.designer.file_menu.cancel') }}</Button>
-        <Button variant="primary" :disabled="submitting" :loading="submitting" data-test="designer-flow-create-submit" @click="submit">
+        <Button variant="primary" :disabled="submitting || !baseReady" :loading="submitting" data-test="designer-flow-create-submit" @click="submit">
           {{ t('gui.designer.file_menu.create') }}
         </Button>
       </div>
@@ -54,7 +61,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useCurrentUser } from '@/core/auth/currentUser'
 import { useI18n } from 'vue-i18n'
 import Alert from '../../../components/ui/Alert.vue'
 import Button from '../../../components/ui/Button.vue'
@@ -112,6 +120,46 @@ function failureOf(err: unknown, key: string): SubmitError {
   return message ? { raw: message } : { key }
 }
 const attemptedSubmit = ref(false)
+const { user, status: userStatus } = useCurrentUser()
+type BaseState = 'unknown' | 'loading' | 'ready-enabled' | 'ready-disabled' | 'error'
+const baseState = ref<BaseState>('unknown')
+const branchOptions = ref<SelectOption[]>([])
+const workBaseRef = ref('')
+const baseError = ref<SubmitError | null>(null)
+const baseErrorText = computed(() => {
+  const error = baseError.value
+  return error ? ('raw' in error ? error.raw : t(error.key)) : ''
+})
+const branchValid = computed(() => workBaseRef.value !== '' && branchOptions.value.some((o) => o.value === workBaseRef.value))
+const baseReady = computed(() => baseState.value === 'ready-disabled' || (baseState.value === 'ready-enabled' && branchValid.value))
+let selectedOnce = false
+let optionsGeneration = 0
+
+async function loadOptions(retry = false) {
+  const pid = props.projectId
+  if (!props.open || !pid || baseState.value === 'loading') return
+  const session = generation
+  const request = ++optionsGeneration
+  if (retry) projectStore.invalidateWorkBaseOptions(pid)
+  baseState.value = 'loading'
+  baseError.value = null
+  try {
+    const options = await projectStore.loadWorkBaseOptions(pid, { force: true })
+    if (session !== generation || request !== optionsGeneration) return
+    branchOptions.value = options.branches.map((branch) => ({ value: branch.name, label: branch.name }))
+    if (selectedOnce) {
+      if (!branchValid.value) workBaseRef.value = ''
+    } else {
+      workBaseRef.value = options.baseBranch && branchOptions.value.some((b) => b.value === options.baseBranch) ? options.baseBranch : ''
+    }
+    selectedOnce = true
+    baseState.value = options.gitEnabled ? 'ready-enabled' : 'ready-disabled'
+  } catch (error) {
+    if (session !== generation || request !== optionsGeneration) return
+    baseState.value = 'error'
+    baseError.value = failureOf(error, 'gui.designer.file_menu.base_branch_failed')
+  }
+}
 
 const groups = computed<ExplorerGroup[]>(() =>
   props.projectId ? (buildExplorerProject(nodes.value, projectNodeId(props.projectId))?.groups ?? []) : [],
@@ -147,30 +195,49 @@ async function load() {
 }
 
 watch(
-  () => props.open,
-  (isOpen) => {
+  [() => props.open, () => props.projectId, user, userStatus],
+  ([isOpen, pid], previous) => {
     generation += 1
-    if (!isOpen) return
-    nodes.value = []
-    groupId.value = props.groupId ?? ''
-    title.value = ''
+    optionsGeneration += 1
+    baseState.value = 'unknown'
     submitting.value = false
+    if (!isOpen) return
+    const opening = !previous?.[0]
+    nodes.value = []
+    loading.value = false
+    groupId.value = props.groupId ?? (opening ? '' : groupId.value)
+    if (opening) {
+      title.value = ''
+      workBaseRef.value = ''
+      selectedOnce = false
+    }
+    branchOptions.value = []
+    baseError.value = null
     submitError.value = null
     attemptedSubmit.value = false
-    void load()
+    if (pid) {
+      void load()
+      void loadOptions()
+    }
   },
+  { immediate: true, flush: 'sync', deep: true },
 )
+
+onBeforeUnmount(() => { generation += 1 })
 
 async function submit() {
   attemptedSubmit.value = true
   const pid = props.projectId
   const group = selectedGroup.value
-  if (!pid || !group || !titleValid.value || submitting.value) return
+  if (!props.open || !pid || !group || !titleValid.value || !baseReady.value || submitting.value) return
   const myGeneration = generation
   submitting.value = true
   submitError.value = null
   try {
-    const created = await projectStore.createFlow({ projectId: pid, moduleName: group.moduleName, title: title.value.trim() })
+    const created = await projectStore.createFlow({
+      projectId: pid, moduleName: group.moduleName, title: title.value.trim(),
+      ...(baseState.value === 'ready-enabled' ? { workBaseRef: workBaseRef.value } : {}),
+    })
     if (myGeneration !== generation) return
     emit('created', { id: created.id, title: created.title, groupId: group.id, groupName: group.name })
   } catch (err) {

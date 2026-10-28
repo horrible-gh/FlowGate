@@ -31,6 +31,7 @@ import { serverDetailOf } from '../../core/i18n/serverDetail'
 import type {
   BaseFileDiff,
   CreateFlowInput,
+  WorkBaseOptions,
   CreateGroupInput,
   CreateProjectInput,
   CreatedFlow,
@@ -680,6 +681,28 @@ export async function createGroup(projectId: string, input: CreateGroupInput): P
 interface RawCreatedGroup {
   group_id: string
   created_at?: string | null
+  work_base_ref?: string | null
+  effective_work_base_ref?: string | null
+}
+
+/** Uses the shared authenticated transport; store owns deduplication by auth session.
+ * Bypass getRequest's path-only dedupe so invalidation/user changes can start a fresh read. */
+export async function fetchWorkBaseOptions(projectId: string): Promise<WorkBaseOptions> {
+  try {
+    const response = await api.get(`/api/v1/projects/${encodeURIComponent(projectId)}/git/work-base-options`)
+    const raw = response.data
+    if (typeof raw?.git_enabled !== 'boolean' || !Array.isArray(raw.branches)
+      || raw.branches.some((branch: any) => typeof branch?.name !== 'string' || !branch.name)) {
+      throw new Error('Invalid work-base options response')
+    }
+    return {
+      gitEnabled: raw.git_enabled,
+      baseBranch: typeof raw.base_branch === 'string' ? raw.base_branch : null,
+      branches: raw.branches.map((branch: any) => ({ name: branch.name, isProjectBase: branch.is_project_base === true })),
+    }
+  } catch (error) {
+    throw new Error(serverDetailOf(error))
+  }
 }
 
 /** POST /api/v1/groups — creates a Flow (v0.1 group) under a Group; the server reserves the id. */
@@ -691,8 +714,14 @@ export async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
       module: input.moduleName,
       parent_id: null,
       priority: null,
+      ...(input.workBaseRef !== undefined ? { work_base_ref: input.workBaseRef } : {}),
     })
-    return { id: response.data.group_id, title: input.title }
+    return {
+      id: response.data.group_id,
+      title: input.title,
+      workBaseRef: response.data.work_base_ref ?? null,
+      effectiveWorkBaseRef: response.data.effective_work_base_ref ?? null,
+    }
   } catch (error) {
     throw new Error(serverDetailOf(error))
   }

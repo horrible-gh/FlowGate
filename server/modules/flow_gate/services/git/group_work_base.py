@@ -171,10 +171,14 @@ def list_group_work_base_options(project_id: str) -> dict:
         )
     names = sorted(local_branch_refs(base_root))
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    # Include historical/unregistered failure rows, just like get_state_by_branch.
+    owned_branches = {
+        row.get("branch") for row in _gs.db_git.list_states_of_project_any(project_id)
+    }
     branches = [
         {"name": name, "is_project_base": name == base_branch}
         for name in names
-        if _gs.db_git.get_state_by_branch(project_id, name) is None
+        if name not in owned_branches
     ]
     return {
         "ok": True,

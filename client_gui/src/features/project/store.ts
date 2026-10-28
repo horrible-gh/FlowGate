@@ -28,10 +28,12 @@
 // delete. Stateless pass-throughs like the loaders: the dialogs own their own submit / stale guards.
 
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useCurrentUser } from '../../core/auth/currentUser'
 import type {
   BaseFileDiff,
   CreateFlowInput,
+  WorkBaseOptions,
   CreateGroupInput,
   CreateProjectInput,
   CreatedFlow,
@@ -80,6 +82,7 @@ import {
   fetchFlowFileTree,
   fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
+  fetchWorkBaseOptions,
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
   renameFlow as renameFlowApi,
   sourceMutationRefusal,
@@ -123,6 +126,50 @@ export interface OpenDialogOptions {
 }
 
 export const useProjectStore = defineStore('project', () => {
+  const { user: optionsUser, status: optionsUserStatus } = useCurrentUser()
+  const optionCache = new Map<string, WorkBaseOptions>()
+  const optionRequests = new Map<string, Promise<WorkBaseOptions>>()
+  const optionVersions = new Map<string, number>()
+  let optionsSession = 0
+  const optionKey = (projectId: string) => JSON.stringify([optionsUser.value?.username ?? null, projectId])
+
+  /** Call after Git config/base/branch/ownership/work-base changes or permission changes.
+   * No argument drops every project; invalidated in-flight responses cannot refill the cache. */
+  function invalidateWorkBaseOptions(projectId?: string): void {
+    if (projectId === undefined) {
+      optionsSession += 1
+      optionCache.clear()
+      optionRequests.clear()
+      optionVersions.clear()
+    } else {
+      const key = optionKey(projectId)
+      optionVersions.set(key, (optionVersions.get(key) ?? 0) + 1)
+      optionCache.delete(key)
+      optionRequests.delete(key)
+    }
+  }
+
+  watch([optionsUser, optionsUserStatus], () => invalidateWorkBaseOptions(), { deep: true, flush: 'sync' })
+
+  function loadWorkBaseOptions(projectId: string, options: { force?: boolean } = {}): Promise<WorkBaseOptions> {
+    const key = optionKey(projectId)
+    const pending = optionRequests.get(key)
+    if (pending) return pending
+    const cached = optionCache.get(key)
+    if (cached && !options.force) return Promise.resolve(cached)
+    optionCache.delete(key)
+    const session = optionsSession
+    const version = optionVersions.get(key) ?? 0
+    const request = fetchWorkBaseOptions(projectId).then((result) => {
+      if (session !== optionsSession || version !== (optionVersions.get(key) ?? 0)) throw new Error('')
+      optionCache.set(key, result)
+      return result
+    }).finally(() => {
+      if (optionRequests.get(key) === request) optionRequests.delete(key)
+    })
+    optionRequests.set(key, request)
+    return request
+  }
   const projects = ref<Project[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -403,6 +450,7 @@ export const useProjectStore = defineStore('project', () => {
   async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
     const created = await createFlowApi(input)
     invalidateGroupTree(input.projectId)
+    invalidateWorkBaseOptions(input.projectId)
     return created
   }
 
@@ -623,6 +671,8 @@ export const useProjectStore = defineStore('project', () => {
     openDialog,
     takeCreateRequest,
     closeDialog,
+    loadWorkBaseOptions,
+    invalidateWorkBaseOptions,
     getCachedGroupTree,
     fetchGroupTree,
     createGroup,
