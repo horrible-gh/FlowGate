@@ -337,7 +337,7 @@ describe('header actions — AI activity, disposed, read only', () => {
   it('an ownership conflict on a v0.1 Flow: the run disabled with the conflict reason', async () => {
     const w = await mountBar(v01Target({ readOnly: 'conflict' }))
     expect(shown(w)).toEqual(['run'])
-    expect(line(w).text()).toBe('소유 충돌 Flow라 바꿀 수 없습니다.')
+    expect(line(w).text()).toBe('소유 충돌 플로우라 바꿀 수 없습니다.')
   })
 
   it('an approved document shows nothing (no empty place either)', async () => {

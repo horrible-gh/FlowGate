@@ -10,9 +10,11 @@ composition root (``startup.py``) registers the handler.
                         of ``node`` other than its result ``result_doc_id`` that are not approved yet (a
                         line's empty draft is no document); while any is left, the result's approval is no
                         node event and the node stays in review, awaiting the card's approval
+    viewer_can_approve  a run response (flowgate.v02.0105 T#2 B-6): the requesting user may approve a card of the Flow
+                        — the card approval route's own judgement (Flow ``write`` and ``document.approve``)
 
 * With no handler registered ``pending_documents`` answers ``[]``: the result's approval moves the node on,
-  exactly as before the port existed.
+  exactly as before the port existed; ``viewer_can_approve`` answers False.
 * A handler exception propagates: the callers run inside a run step's Flow guard or a run read.
 * One handler per port. Registering again replaces it (startup may run more than once in a process).
 """
@@ -22,7 +24,8 @@ import threading
 from typing import Any, Callable, Optional
 
 PENDING_DOCUMENTS = "pending_documents"
-PORT_NAMES = (PENDING_DOCUMENTS,)
+VIEWER_CAN_APPROVE = "viewer_can_approve"                        # flowgate.v02.0105 T#2 B-6
+PORT_NAMES = (PENDING_DOCUMENTS, VIEWER_CAN_APPROVE)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -58,3 +61,9 @@ def pending_documents(flow_id: str, node: dict, result_doc_id: Optional[str]) ->
     if handler is None:
         return []
     return list(handler(flow_id, node, result_doc_id) or [])
+
+
+def viewer_can_approve(group: dict, user_id: str) -> bool:
+    """``user_id`` may approve a card of the Flow ``group`` now (no handler: False)."""
+    handler = _handler(VIEWER_CAN_APPROVE)
+    return bool(handler(group, user_id)) if handler is not None else False

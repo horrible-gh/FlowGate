@@ -65,7 +65,7 @@ export default {
       gone: '이 질문은 더 이상 목록에 없습니다.',
     },
     reason: {
-      read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
+      read_only_conflict: '플로우 소유가 충돌해 읽기 전용입니다.',
       disposed: '폐기된 그룹이라 답변할 수 없습니다.',
       ai_running: 'AI 실행 중이라 답변할 수 없습니다.',
       busy: '답변을 보내는 중입니다.',
@@ -74,14 +74,14 @@ export default {
       history: '이전 문서의 이력이라 답변할 수 없습니다.',
     },
     ask_reason: {
-      read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
+      read_only_conflict: '플로우 소유가 충돌해 읽기 전용입니다.',
       disposed: '폐기된 그룹이라 질문할 수 없습니다.',
       ai_running: 'AI 실행 중이라 질문할 수 없습니다.',
       asking: '질문을 보내는 중입니다.',
       busy: '답변을 보내는 중입니다.',
     },
     ai_reason: {
-      read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
+      read_only_conflict: '플로우 소유가 충돌해 읽기 전용입니다.',
       disposed: '폐기된 그룹이라 AI 답변을 요청할 수 없습니다.',
       ai_running: 'AI 실행 중이라 AI 답변을 요청할 수 없습니다.',
       requesting: 'AI 답변을 요청하는 중입니다.',

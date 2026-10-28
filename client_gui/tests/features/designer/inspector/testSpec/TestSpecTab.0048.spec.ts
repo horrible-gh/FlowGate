@@ -719,7 +719,7 @@ describe('test section — read-only Flows (flowgate.v02.0048 T#11)', () => {
   it('ownership conflict: the conflict reason', async () => {
     const w = await mountTab(target('conflict'))
     expect(isDisabled(w, 'test-spec-run')).toBe(true)
-    expect(reasonOf(w)).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
+    expect(reasonOf(w)).toBe('플로우 소유가 충돌해 읽기 전용입니다.')
   })
 
   it('unassigned Flow: enabled', async () => {

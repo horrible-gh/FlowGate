@@ -444,7 +444,7 @@ describe('settings tab on a v0.1 step — reading (flowgate.v02.0048 T#9, v7 for
 
   it.each([
     ['403', axiosError(403, { error: 'forbidden' }), '볼 권한이 없습니다.'],
-    ['404', axiosError(404, { error: 'doc_not_found' }), 'Flow나 문서를 찾을 수 없습니다.'],
+    ['404', axiosError(404, { error: 'doc_not_found' }), '플로우나 문서를 찾을 수 없습니다.'],
     ['400 sequence_not_decided', axiosError(400, { error: 'sequence_not_decided' }), '결정된 워크플로가 없습니다.'],
     ['network', networkError(), '서버에 연결하지 못했습니다.'],
     ['500', axiosError(500, { error: 'internal_error' }), '설정을 불러오지 못했습니다.'],
@@ -584,7 +584,7 @@ describe('settings tab on a v0.1 step — a change is saved at once (flowgate.v0
   it.each([
     ['409 sequence_item_stale', axiosError(409, { error: 'sequence_item_stale', item_id: 126 }), '단계 목록이 바뀌어 저장되지 않았습니다', 1],
     ['409 protected_row_modified', axiosError(409, { error: 'protected_row_modified', item_id: 125 }), '단계 목록이 바뀌어 저장되지 않았습니다', 1],
-    ['409 flow_owned_by_graph', axiosError(409, { error: 'flow_owned_by_graph', doc_id: ROOT, group_id: FLOW, graph_revision_no: 1 }), '이 Flow의 단계로는 저장할 수 없습니다', 0],
+    ['409 flow_owned_by_graph', axiosError(409, { error: 'flow_owned_by_graph', doc_id: ROOT, group_id: FLOW, graph_revision_no: 1 }), '이 플로우의 단계로는 저장할 수 없습니다', 0],
     ['400 sequence_not_decided', axiosError(400, { error: 'sequence_not_decided', doc_id: ROOT }), '워크플로가 결정되지 않았습니다', 0],
     ['422 note_too_long', axiosError(422, { error: 'note_too_long', max: 1000, length: 1200, item_index: 2 }), '저장할 수 없는 값입니다', 0],
     ['403', axiosError(403, { error: 'workflow_sequence_edit_token_mismatch' }), '권한이 없습니다', 0],

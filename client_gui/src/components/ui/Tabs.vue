@@ -14,7 +14,7 @@
       @click="select(tab.key)"
       @keydown="onKeydown($event, tab.key)"
     >
-      {{ tab.label }}
+      <slot name="tab" :tab="tab">{{ tab.label }}</slot>
     </button>
   </div>
 </template>

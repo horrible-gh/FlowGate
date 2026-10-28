@@ -130,6 +130,11 @@ export interface FlowRunInfo {
    */
   readonly pendingPropagationCount?: number
   readonly pendingNodeKeys?: readonly string[]
+  /**
+   * flowgate.v02.0105 T#2 (B-6): the server confirmed that the requesting user may approve the run's cards
+   * (`viewer.can_approve`). Absent = not told (an older server, a run the Canvas read alone tells): no [승인].
+   */
+  readonly viewerCanApprove?: boolean
 }
 
 /**

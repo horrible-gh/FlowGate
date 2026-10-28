@@ -21,6 +21,9 @@ root (``startup.py``) calls :func:`register` once at startup.
                      0064 T-B4b)
     person_result    result binding: a person's work plan result takes its card's review or automatic approval
                      (``review_stage``, flowgate.v02.0083 WP-4)
+    approval_wait_reason   a run read: why the automatic approval of a node's result was not made (``legacy_adapter``,
+                     flowgate.v02.0105 T#2 B-2)
+    reconcile_stage  a run read / Resume: a lost run-end stage followed once (``review_stage``, flowgate.v02.0105 T#2 B-3)
     after_registration   the inbox's card title candidate of a registration (``modules.flow_gate.services.
                      node_title_hooks``): the Graph's AI naming applies it (``node_title_ai``, 0064 T-B4d)
 """
@@ -43,6 +46,8 @@ def register() -> None:
     ports.register(ports.REVIEW_INSTRUCTION, review_stage.review_instruction)
     ports.register(ports.NODE_RUNNING, legacy_adapter.node_running)
     ports.register(ports.PERSON_RESULT, review_stage.person_result)          # flowgate.v02.0083 WP-4
+    ports.register(ports.APPROVAL_WAIT_REASON, legacy_adapter.approval_wait_reason)   # flowgate.v02.0105 T#2 B-2
+    ports.register(ports.RECONCILE_STAGE, review_stage.reconcile)            # flowgate.v02.0105 T#2 B-3
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDING, review_stage.on_run_ending)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_QUESTION_ANSWERED, question_wait.on_question_answered)

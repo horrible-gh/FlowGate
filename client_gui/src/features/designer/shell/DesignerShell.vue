@@ -53,11 +53,13 @@
           :explorer-request="explorerRequest"
           :refresh-token="explorerRefreshToken"
           :file-refresh-token="fileRefreshToken"
+          :restore-error="restoreError"
           @update:mode="layout.activeLeftMode = $event"
           @collapse="layout.leftCollapsed = true"
           @expand="layout.leftCollapsed = false"
           @activate-flow="onActivateFlow"
           @update:selection="explorerSelection = $event"
+          @update:expanded="explorerExpanded = $event"
         />
       </template>
       <template #center>
@@ -223,10 +225,13 @@
 // (refreshToken), the recent lists keep the new name (a disposed Flow leaves them), an open tab takes the new name
 // through the Center's open path (the active tab stays), a disposed Flow's tab closes through the Center's close, and
 // the File Explorer re-reads (its refreshToken). A refusal changes nothing; the window shows it.
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+//
+// flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4, Q #510 E-1) — an F5 brings the working screen back. See
+// "F5 restore" below.
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { documentRead, settingsNodeHoldWrite } from '@/features/document'
-import { useProjectStore, type CreatedGroup } from '@/features/project'
+import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
@@ -272,12 +277,16 @@ import DesignerLeftDock from './DesignerLeftDock.vue'
 import DesignerRightDock from './DesignerRightDock.vue'
 import DesignerTop from './DesignerTop.vue'
 import {
+  DESIGNER_LEFT_MODES,
+  DESIGNER_RIGHT_TOOLS,
   clampBottomHeight,
   clampLeftWidth,
   clampRightWidth,
   createDesignerLayout,
   leftColumnWidth,
   rightColumnWidth,
+  type DesignerLeftMode,
+  type DesignerRightTool,
 } from './designerLayout'
 
 const emit = defineEmits<{
@@ -465,10 +474,18 @@ watch(
 
 onMounted(() => {
   projectStore.takeExplicitOpen()
+  // flowgate.v02.0105 T#1: the F5 restore, else the screen is saved from here on.
+  startRestore()
+  if (!restoring) {
+    saving = true
+    save()
+  }
 })
 
 // flowgate.v02.0045: send pending Canvas saves and close the Canvas change stream with the Shell.
+// flowgate.v02.0105 T#1: a waiting restore ends with the Shell; the snapshot stays for the next entry.
 onBeforeUnmount(() => {
+  endRestore()
   center.dispose()
 })
 
@@ -703,6 +720,7 @@ function onTopCommand(command: DesignerTopCommand) {
       return
     case 'project.close':
       projectStore.closeCurrentProject()
+      projectStore.clearDesignerSession()
       return
     case 'group.new':
       dialog.value = 'group-new'
@@ -727,6 +745,11 @@ function onTopCommand(command: DesignerTopCommand) {
       return
     }
     case 'designer.close':
+      // flowgate.v02.0105 T#1: an explicit close is not an F5 — the snapshot goes, and neither a waiting restore nor
+      // a later change of this Shell writes it again.
+      endRestore()
+      closing = true
+      projectStore.clearDesignerSession()
       emit('close-designer')
       return
     // flowgate.v02.0045 TR0020 rev2: 되돌리기 / 검증 act on the open Flow's edited structure, and
@@ -813,6 +836,350 @@ function onTopCommand(command: DesignerTopCommand) {
       top.runPhase = nextRunPhase(top.runPhase, command)
   }
 }
+
+// --- F5 restore (flowgate.v02.0105 T#1, NR flowgate.v02.0101.0003 §5.4) -------------------------------------------
+// The working screen of this browser tab — the Project, its Explorer Group context (the selected row and the open
+// Groups), the Flow tabs in order, the active Flow and the left / right panel tabs — is the store's Designer snapshot.
+// The next entry of this tab (an F5, or the Dashboard and back) brings it back while no other Project is current.
+// The selected card, Inspector, run state and drafts are not part of it; a Canvas Viewport comes back from the
+// server already.
+//   · The restore reads the Project's complete tree (final-approved / discarded Groups included) before it opens
+//     anything; a Flow or Group not in it (deleted, or another Project's) is left out. A tree read refused with
+//     403 / 404 drops the snapshot and leaves the Designer without the Project it set; a passing failure (network,
+//     5xx) keeps the Project and the snapshot as they are and is shown over the Explorer's tree with its retry; the
+//     restore reads again once the Explorer has read the tree again (that retry, or its refresh).
+//   · Flows open as the Explorer's activation opens them, without a default node or a recent entry. A restored tab
+//     whose Graph read is refused with 403 / 404 closes (and so leaves the snapshot); a passing failure stays as an
+//     error tab with its retry. The saved selection is set without unfolding its Group: the open Groups are as saved.
+//   · Every step after an await checks that the restore is still the current one (`restoreSeq`, its Project, its
+//     user): Project 닫기, Designer 닫기, another Project, a logout and leaving the Designer end it, so a late answer
+//     neither changes the screen nor writes or drops a snapshot.
+//   · What the user changed while it waited stays, even when changed back: an item the user touched (the tabs, the
+//     active Flow, the Explorer selection / open Groups, a panel tab) is the user's until the restore ends, a Flow the
+//     user closed is not opened again, and restored tabs go after the tabs the user opened.
+//   · Saving starts when the restore ends, or at the user's first change while it waits; the saved items it has not
+//     confirmed and the user has not changed are kept as `pending`, so the entry state never replaces them.
+
+// The open Groups the Project Explorer reports (update:expanded), next to its selection above.
+const explorerExpanded = ref<readonly string[]>([])
+
+/** The restorable items of the screen, each as one comparable value. */
+interface ScreenItems {
+  readonly tabs: string
+  readonly active: string | null
+  readonly selection: string
+  readonly expanded: string
+  readonly left: DesignerLeftMode
+  readonly right: DesignerRightTool
+}
+
+type ScreenItem = keyof ScreenItems
+
+function screenItems(): ScreenItems {
+  return {
+    tabs: center.state.tabs.map((tab) => tab.flowId).join('\n'),
+    active: center.state.activeFlowId,
+    selection: JSON.stringify(explorerSelection.value),
+    expanded: [...explorerExpanded.value].sort().join('\n'),
+    left: layout.activeLeftMode,
+    right: layout.activeRightTool,
+  }
+}
+
+/** What a snapshot asks to bring back: its fields, with what an earlier restore had not confirmed taken over. */
+interface RestoreTarget {
+  readonly tabs: DesignerSessionTab[]
+  readonly activeFlowId: string | null
+  readonly selection: DesignerSessionSnapshot['explorer']['selection']
+  readonly expandedGroupIds: string[]
+  readonly leftMode: string
+  readonly rightTool: string
+}
+
+function restoreTarget(saved: DesignerSessionSnapshot): RestoreTarget {
+  const pending = saved.pending
+  return {
+    tabs: uniqueTabs([...saved.tabs, ...(pending?.tabs ?? [])]),
+    activeFlowId: pending?.activeFlowId !== undefined ? pending.activeFlowId : saved.activeFlowId,
+    selection: pending?.explorer.selection ?? saved.explorer.selection,
+    expandedGroupIds: [...new Set([...saved.explorer.expandedGroupIds, ...(pending?.explorer.expandedGroupIds ?? [])])],
+    leftMode: pending?.leftMode ?? saved.leftMode,
+    rightTool: pending?.rightTool ?? saved.rightTool,
+  }
+}
+
+interface RestoreRun {
+  readonly seq: number
+  readonly pid: string
+  readonly owner: string | null
+  readonly target: RestoreTarget
+  /** True when the restore made the Project current (a refused tree takes it back). */
+  readonly setProject: boolean
+  /** The screen as last seen while the restore runs (the restore itself changes nothing before it ends). */
+  seen: ScreenItems
+  /** The items the user changed since the restore began — the user's even when changed back. */
+  readonly touched: Set<ScreenItem>
+  /** The Flows the user closed meanwhile (and did not open again): neither restored nor kept as pending. */
+  readonly closed: Set<string>
+  phase: 'reading' | 'pending'
+  /** The Explorer's tree when the read failed; a newer one is the retry. */
+  failedTree?: readonly GroupTreeNode[]
+}
+
+let restoreSeq = 0
+let restoring: RestoreRun | null = null
+let saving = false
+let closing = false
+
+// The failed tree read of a waiting restore ('' = no server message), shown by the Project Explorer with its retry.
+const restoreError = ref<string | null>(null)
+
+function endRestore() {
+  restoreSeq += 1
+  restoring = null
+  restoreError.value = null
+}
+
+function restoreAlive(run: RestoreRun): boolean {
+  return (
+    !closing &&
+    run === restoring &&
+    run.seq === restoreSeq &&
+    run.pid === projectStore.currentProjectId &&
+    run.owner === projectStore.designerSessionOwner
+  )
+}
+
+const tabIdsOf = (items: ScreenItems) => (items.tabs ? items.tabs.split('\n') : [])
+
+// Every change seen while a restore runs is the user's, and stays the user's per item until the restore ends.
+function noteUserChanges(run: RestoreRun) {
+  const now = screenItems()
+  for (const item of Object.keys(now) as ScreenItem[]) if (now[item] !== run.seen[item]) run.touched.add(item)
+  const open = tabIdsOf(now)
+  for (const flowId of tabIdsOf(run.seen)) if (!open.includes(flowId)) run.closed.add(flowId)
+  for (const flowId of open) run.closed.delete(flowId)
+  run.seen = now
+}
+
+function startRestore() {
+  const saved = projectStore.readDesignerSession()
+  const current = projectStore.currentProjectId
+  if (!saved || (current !== null && current !== saved.projectId)) return
+  if (current === null) projectStore.restoreCurrentProject(saved.projectId)
+  // Directly, before the Project watch would: its setProject would clear tabs this restore has opened by then.
+  center.setProject(saved.projectId)
+  restoring = {
+    seq: ++restoreSeq,
+    pid: saved.projectId,
+    owner: projectStore.designerSessionOwner,
+    target: restoreTarget(saved),
+    setProject: current === null,
+    seen: screenItems(),
+    touched: new Set(),
+    closed: new Set(),
+    phase: 'reading',
+  }
+  void readRestoreTree(restoring)
+}
+
+async function readRestoreTree(run: RestoreRun) {
+  run.phase = 'reading'
+  restoreError.value = null
+  let nodes: GroupTreeNode[]
+  try {
+    nodes = await projectStore.fetchGroupTree(run.pid, { includeTerminal: true, force: true })
+  } catch (error) {
+    if (!restoreAlive(run)) return
+    const { status } = projectStore.readFailureOf(error)
+    if (status === 403 || status === 404) refuseRestore(run)
+    else {
+      run.phase = 'pending'
+      run.failedTree = projectStore.getCachedGroupTree(run.pid)
+      restoreError.value = error instanceof Error ? error.message.trim() : ''
+    }
+    return
+  }
+  // The Explorer takes the new Project (which clears its Group context) before that context is asked for.
+  await nextTick()
+  if (restoreAlive(run)) applyRestore(run, nodes)
+}
+
+// The Project itself is refused: its snapshot goes, and the Project this restore set with it.
+function refuseRestore(run: RestoreRun) {
+  endRestore()
+  saving = true
+  projectStore.clearDesignerSession()
+  if (!run.setProject) return
+  projectStore.closeCurrentProject()
+  menuToast(() => t('gui.designer.project_explorer.load_failed'), 'warning')
+}
+
+// A passing failure: the Explorer's next successful tree read (its retry / refresh) is the restore's retry.
+watch(
+  () => projectStore.getCachedGroupTree(restoring?.pid ?? ''),
+  (tree) => {
+    const run = restoring
+    if (run && run.phase === 'pending' && tree && tree !== run.failedTree && restoreAlive(run)) void readRestoreTree(run)
+  },
+)
+
+function uniqueTabs(tabs: readonly DesignerSessionTab[]): DesignerSessionTab[] {
+  const seen = new Set<string>()
+  return tabs.filter((tab) => !seen.has(tab.flowId) && !!seen.add(tab.flowId))
+}
+
+function sameSelection(a: ExplorerSelection, b: ExplorerSelection): boolean {
+  return a === b || (!!a && !!b && a.kind === b.kind && a.id === b.id)
+}
+
+function applyRestore(run: RestoreRun, nodes: GroupTreeNode[]) {
+  noteUserChanges(run)
+  const { target, touched, closed, pid } = run
+  // Ended first, so nothing the restore changes below is taken for the user's.
+  endRestore()
+  const groups = buildExplorerProject(nodes, projectNodeId(pid))?.groups ?? []
+  const flows = new Map(groups.flatMap((group) => group.flows.map((flow) => [flow.id, flow] as const)))
+  const groupIds = new Set(groups.map((group) => group.id))
+  const userActive = center.state.activeFlowId
+  const userLeft = layout.activeLeftMode
+
+  // Flow tabs in their saved order, after the ones the user opened meanwhile; a Flow the user closed stays closed.
+  const tabs = target.tabs.filter((tab) => flows.has(tab.flowId) && !closed.has(tab.flowId))
+  for (const tab of tabs) {
+    if (center.state.tabs.some((open) => open.flowId === tab.flowId)) continue
+    center.openFlow({ projectId: pid, flowId: tab.flowId, flowName: flows.get(tab.flowId)!.name })
+    graphChecks.value = [...graphChecks.value, { flowId: tab.flowId, pid }]
+  }
+  const userTabs = touched.has('tabs') || touched.has('active')
+  const savedActive = tabs.some((tab) => tab.flowId === target.activeFlowId) ? target.activeFlowId : (center.state.tabs[0]?.flowId ?? null)
+  const active = userTabs && userActive !== null ? userActive : savedActive
+  if (active !== null) center.activateFlow(active)
+
+  // The Group context, through the request the File menu uses (openGroup would record a recent Group). The selection
+  // and the open Groups are each as saved, so a Group folded over its selected Flow stays folded.
+  const selected = target.selection
+  const inTree =
+    selected === null
+      ? false
+      : selected.kind === 'project'
+        ? selected.id === projectNodeId(pid)
+        : selected.kind === 'group'
+          ? groupIds.has(selected.id)
+          : flows.has(selected.id)
+  const select = touched.has('selection') ? explorerSelection.value : inTree ? selected : null
+  const expand = touched.has('expanded') ? [] : target.expandedGroupIds.filter((id) => groupIds.has(id))
+  if (expand.length > 0 || !sameSelection(select, explorerSelection.value)) requestExplorer({ select, expand, reveal: false })
+
+  // The panel tabs after that request, which brings the Project Explorer to the front.
+  const savedLeft = DESIGNER_LEFT_MODES.find((mode) => mode === target.leftMode)
+  const savedRight = DESIGNER_RIGHT_TOOLS.find((tool) => tool === target.rightTool)
+  layout.activeLeftMode = touched.has('left') ? userLeft : (savedLeft ?? userLeft)
+  if (!touched.has('right') && savedRight) layout.activeRightTool = savedRight
+
+  saving = true
+  save()
+}
+
+// Restored tabs whose first Graph read has not answered yet. A refused one (403 / 404: no access any more, or removed
+// after the tree read) closes; a passing failure stays with its retry. Only for the Project it was opened in.
+const graphChecks = ref<{ flowId: string; pid: string }[]>([])
+
+watch(
+  () => graphChecks.value.map(({ flowId }) => center.state.graphs[flowId]?.status ?? null),
+  () => {
+    const waiting: { flowId: string; pid: string }[] = []
+    for (const check of graphChecks.value) {
+      const load = center.state.graphs[check.flowId]
+      if (!load || center.state.projectId !== check.pid) continue
+      if (load.status === 'loading') waiting.push(check)
+      else if (load.status === 'error' && (load.httpStatus === 403 || load.httpStatus === 404)) center.closeFlow(check.flowId)
+    }
+    if (waiting.length !== graphChecks.value.length) graphChecks.value = waiting
+  },
+)
+
+// Another Project, or none (Project 닫기): a waiting restore ends there, and what is shown from then on is saved.
+watch(projectId, (id) => {
+  graphChecks.value = graphChecks.value.filter((check) => check.pid === id)
+  if (!restoring || restoring.pid === id) return
+  endRestore()
+  saving = true
+  save()
+})
+
+// A logout (or another user) ends a waiting restore; nothing is kept while nobody is signed in.
+watch(
+  () => projectStore.designerSessionOwner,
+  () => {
+    if (restoring) endRestore()
+  },
+)
+
+/** The Group of each Flow, from the trees of the Project read so far. */
+function flowGroupIds(pid: string): Map<string, string> {
+  const ids = new Map<string, string>()
+  for (const includeTerminal of [true, false]) {
+    const nodes = projectStore.getCachedGroupTree(pid, includeTerminal)
+    for (const group of (nodes && buildExplorerProject(nodes, projectNodeId(pid))?.groups) || []) {
+      for (const flow of group.flows) ids.set(flow.id, group.id)
+    }
+  }
+  return ids
+}
+
+function save() {
+  if (!saving || closing) return
+  const pid = projectId.value
+  if (pid === null) {
+    projectStore.clearDesignerSession()
+    return
+  }
+  const groupOf = flowGroupIds(pid)
+  const selection = explorerSelection.value
+  const snapshot: DesignerSessionSnapshot = {
+    v: 1,
+    projectId: pid,
+    explorer: { selection: selection ? { kind: selection.kind, id: selection.id } : null, expandedGroupIds: [...explorerExpanded.value] },
+    tabs: center.state.tabs.map((tab) => ({ flowId: tab.flowId, name: tab.name, groupId: groupOf.get(tab.flowId) ?? null })),
+    activeFlowId: center.state.activeFlowId,
+    leftMode: layout.activeLeftMode,
+    rightTool: layout.activeRightTool,
+  }
+  // A restore still waiting: what it has not confirmed stays for the next entry, except what the user changed.
+  const run = restoring
+  if (run && run.pid === pid) {
+    noteUserChanges(run)
+    const { target, touched, closed } = run
+    const pending: NonNullable<DesignerSessionSnapshot['pending']> = {
+      tabs: target.tabs.filter((tab) => !closed.has(tab.flowId)),
+      explorer: {
+        selection: touched.has('selection') ? null : target.selection,
+        expandedGroupIds: touched.has('expanded') ? [] : target.expandedGroupIds,
+      },
+    }
+    if (!touched.has('tabs') && !touched.has('active')) pending.activeFlowId = target.activeFlowId
+    if (!touched.has('left')) pending.leftMode = target.leftMode
+    if (!touched.has('right')) pending.rightTool = target.rightTool
+    snapshot.pending = pending
+  }
+  projectStore.writeDesignerSession(snapshot)
+}
+
+// Every change of a restorable item (tab names included) is saved; while a restore waits, only from the user's first
+// change on.
+watch(
+  () => JSON.stringify([projectId.value, screenItems(), center.state.tabs.map((tab) => tab.name)]),
+  () => {
+    const run = restoring
+    if (run && run.pid === projectId.value) {
+      noteUserChanges(run)
+      if (!saving && run.touched.size === 0) return
+      saving = true
+    }
+    save()
+  },
+)
 
 // flowgate.v02.0060 T#2: the Designer context menu and what its commands run through (see the head comment).
 // flowgate.v02.0060 T#1 (WP 0012): its 정렬 · 배치 / 정렬 are this Edit menu's 정렬 / 배치 — the same commands, rule and path.

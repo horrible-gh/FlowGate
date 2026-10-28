@@ -229,6 +229,7 @@ export default {
         writing_result: '結果作成中',
         working: '作業中',
         awaiting_approval: '承認待ち',
+        auto_approval_failed: '自動承認失敗',
         approved: '承認済み',
         rejected: '差し戻し',
         pending: '待機',

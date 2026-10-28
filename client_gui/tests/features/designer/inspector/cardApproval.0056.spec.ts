@@ -12,6 +12,10 @@
  *   it; 403 approval_forbidden → the permission; the server's message shown as sent;
  * - the real registry: the bar sits in a Graph Flow's documents tab (not in the header — no 승인 / 반려 there),
  *   never on a v0.1 Flow; the instruction line says who writes it (지시 AI 또는 사람).
+ *
+ * flowgate.v02.0105 T#2 — expectations revised for NR flowgate.v02.0101.0003 §3.9 B-6: [승인] is shown only when the
+ * server confirmed that the user may approve (the run read's `viewer.can_approve`, carried on the selection as
+ * `canApprove`). The targets here model such a user (`canApprove: true`); without it the bar shows no [승인].
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
@@ -37,6 +41,7 @@ vi.mock('@shared/api', async (importOriginal) => {
 
 import type { FlowGraph, FlowGraphCardDocument, FlowGraphNode, FlowGraphNodeRun } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
+import { CARD_APPROVE_ICON } from '@/features/designer/center/graph/cardStateView'
 import CardApprovalBar from '@/features/designer/inspector/features/cardApproval/CardApprovalBar.vue'
 import { cardApprovalBar, cardApprovalDisabledReason, cardApprovalToasted } from '@/features/designer/inspector/features/cardApproval/cardApprovalModel'
 import registration from '@/features/designer/inspector/features/cardApproval/register'
@@ -83,7 +88,9 @@ function taskCard(run: FlowGraphNodeRun | null, fields: Partial<FlowGraphNode> =
 }
 
 const graphOf = (node: FlowGraphNode, ownership = 'graph'): FlowGraph => ({ flowId: FLOW, nodes: [node], edges: [], ownership, viewMode: 'revision' })
-const targetFor = (node: FlowGraphNode, ownership = 'graph'): InspectorTarget => toInspectorTarget({ projectId: 'flowgate', graph: graphOf(node, ownership), node })!
+// flowgate.v02.0105 T#2 (B-6): a user the server allows to approve (the run read's viewer.can_approve).
+const targetFor = (node: FlowGraphNode, ownership = 'graph'): InspectorTarget =>
+  toInspectorTarget({ projectId: 'flowgate', graph: graphOf(node, ownership), node, canApprove: true })!
 
 const AWAITING = nodeRun('review', { awaitingApproval: true, stage: 'result', resultDocId: TR })
 const RUN = { runId: 'run_r1', status: 'stopped', nodes: [{ nodeKey: 'gn_task', status: 'review', awaitingApproval: true, resultDocId: TR }] }
@@ -139,9 +146,12 @@ describe('cardApprovalModel (flowgate.v02.0056 F2-1)', () => {
   it('shown with a card state; [승인] only while it waits; usable unless an ownership conflict or an approval in flight', () => {
     expect(cardApprovalBar({ state: null, readOnly: null, busy: false })).toEqual({ shown: false, approveVisible: false, enabled: false, reason: null })
     expect(cardApprovalBar({ state: inspectorCardState(targetFor(taskCard(nodeRun('done')))), readOnly: null, busy: false })).toEqual({ shown: true, approveVisible: false, enabled: false, reason: null })
-    expect(cardApprovalBar({ state: awaiting, readOnly: null, busy: false })).toEqual({ shown: true, approveVisible: true, enabled: true, reason: null })
-    expect(cardApprovalBar({ state: awaiting, readOnly: 'conflict', busy: false })).toMatchObject({ enabled: false, reason: 'reason.read_only_conflict' })
-    expect(cardApprovalBar({ state: awaiting, readOnly: null, busy: true })).toMatchObject({ enabled: false, reason: 'reason.busy' })
+    expect(cardApprovalBar({ state: awaiting, readOnly: null, busy: false, canApprove: true })).toEqual({ shown: true, approveVisible: true, enabled: true, reason: null })
+    expect(cardApprovalBar({ state: awaiting, readOnly: 'conflict', busy: false, canApprove: true })).toMatchObject({ enabled: false, reason: 'reason.read_only_conflict' })
+    expect(cardApprovalBar({ state: awaiting, readOnly: null, busy: true, canApprove: true })).toMatchObject({ enabled: false, reason: 'reason.busy' })
+    // flowgate.v02.0105 T#2 (B-6): not confirmed by the server (absent / false): no [승인].
+    expect(cardApprovalBar({ state: awaiting, readOnly: null, busy: false })).toEqual({ shown: true, approveVisible: false, enabled: false, reason: null })
+    expect(cardApprovalBar({ state: awaiting, readOnly: null, busy: false, canApprove: false }).approveVisible).toBe(false)
     // The run view (a confirmed revision) is where a card is approved: not read only for the approval.
     expect(cardApprovalDisabledReason({ state: awaiting, readOnly: 'revision', busy: false })).toBeNull()
   })
@@ -190,6 +200,17 @@ describe('the card approval bar — states', () => {
     expect(approveButton(w).text()).toBe('승인')
     expect(approveButton(w).attributes('disabled')).toBeUndefined()
     expect(approveButton(w).attributes('title')).toBe('이 카드의 지시서와 결과를 승인합니다')
+  })
+
+  // flowgate.v02.0105 T#2 (B-7, 0006-TR rev0 review): the button's slot is an inline-flex that gives an SVG no size, so
+  // the shield sizes itself (14 x 14, never shrunk: the component's style) and sits beside the word.
+  it('[승인] carries the shield, sized, beside its word', async () => {
+    const w = await mountBar(targetFor(taskCard(AWAITING)))
+    const icon = approveButton(w).get('[data-test="card-approval-approve-icon"]')
+    expect([icon.attributes('width'), icon.attributes('height'), icon.attributes('viewBox')]).toEqual(['14', '14', '0 0 24 24'])
+    expect(icon.classes()).toContain('inspector-card-approval-icon')
+    expect(icon.get('path').attributes('d')).toBe(CARD_APPROVE_ICON)
+    expect(icon.element.parentElement?.textContent?.trim()).toBe('승인')
   })
 
   it('nothing on a gate or a Node without a run', async () => {
@@ -333,7 +354,7 @@ describe('the card approval bar — [승인]', () => {
 
 describe('the card approval bar in the Frame (real registry)', () => {
   async function mountFrame(node: FlowGraphNode, ownership = 'graph') {
-    wrapper = mount(DesignerInspector, { props: { selection: { projectId: 'flowgate', graph: graphOf(node, ownership), node } }, global: { plugins: [i18n, createPinia()] }, attachTo: document.body })
+    wrapper = mount(DesignerInspector, { props: { selection: { projectId: 'flowgate', graph: graphOf(node, ownership), node, canApprove: true } }, global: { plugins: [i18n, createPinia()] }, attachTo: document.body })
     await flushPromises()
     return wrapper
   }

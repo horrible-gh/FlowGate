@@ -342,8 +342,8 @@ describe('a switch (D#2 §3.4)', () => {
 
 describe('refusals: a reason, the state read again, the Canvas too when the Flow moved', () => {
   const rows: readonly [string, unknown, string, boolean][] = [
-    ['409 flow_owned_by_graph (the Flow became a Graph Flow)', axiosError(409, { error: 'flow_owned_by_graph', doc_id: ROOT_R, group_id: FLOW, graph_revision_no: 1 }), 'Graph Flow의 시작 문서라 전환이 거절되었습니다. Canvas를 다시 읽었습니다.', true],
-    ['409 flow_ownership_conflict', axiosError(409, { error: 'flow_ownership_conflict', doc_id: ROOT_R, group_id: FLOW, graph_revision_no: 1 }), '소유 충돌 Flow라 전환이 거절되었습니다. Canvas를 다시 읽었습니다.', true],
+    ['409 flow_owned_by_graph (the Flow became a Graph Flow)', axiosError(409, { error: 'flow_owned_by_graph', doc_id: ROOT_R, group_id: FLOW, graph_revision_no: 1 }), 'Graph 플로우의 시작 문서라 전환이 거절되었습니다. Canvas를 다시 읽었습니다.', true],
+    ['409 flow_ownership_conflict', axiosError(409, { error: 'flow_ownership_conflict', doc_id: ROOT_R, group_id: FLOW, graph_revision_no: 1 }), '소유 충돌 플로우라 전환이 거절되었습니다. Canvas를 다시 읽었습니다.', true],
     ['409 decided (a v0.1 sequence now exists)', axiosError(409, { detail: 'Cannot convert root type after the workflow decision was taken.' }), '이미 단계 진행이 정해진 문서라 전환이 거절되었습니다. Canvas를 다시 읽었습니다.', true],
     ['409 child documents', axiosError(409, { detail: 'Cannot convert root type: child documents already reference it.' }), '이 문서를 가리키는 하위 문서가 있어 전환이 거절되었습니다. Canvas를 다시 읽었습니다.', true],
     ['409 target id exists', axiosError(409, { detail: `Target doc_id already exists: ${ROOT_B}.` }), '바꿀 문서 번호가 이미 있어 전환이 거절되었습니다. Canvas를 다시 읽었습니다.', true],

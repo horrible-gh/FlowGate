@@ -5,6 +5,8 @@ root (``startup.py``) calls :func:`register` once at startup.
 
     pending_documents   result binding: the card's documents other than the node's result that are not
                         approved yet (``approval.pending_documents``) — the node is done only when none is left
+    viewer_can_approve  a run response: the requesting user may approve a card of the Flow
+                        (``approval.viewer_can_approve``, flowgate.v02.0105 T#2 B-6)
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from flowgate.card_approval import approval
 
 def register() -> None:
     ports.register(ports.PENDING_DOCUMENTS, approval.pending_documents)
+    ports.register(ports.VIEWER_CAN_APPROVE, approval.viewer_can_approve)
 
 
 def unregister() -> None:

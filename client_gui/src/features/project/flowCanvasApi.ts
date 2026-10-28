@@ -10,6 +10,7 @@
 // flowgate.v02.0064 T#4 (0064 P0006 §4.2 / §6.5): a node's card title state (`title_state`) and its title save.
 
 import { extractApiErrorMessage, getRequest, putRequest } from '@shared/api'
+import { normalizeApiError } from '@shared/apiErrors'
 import type {
   FlowCanvas,
   FlowCanvasCardDocument,
@@ -92,6 +93,7 @@ function toGraphNode(raw: Raw | null | undefined): FlowCanvasGraphNode | null {
 // flowgate.v02.0061 T#14: the attempt's `integration_status` / `integration_reason`, `hold` and the attempt's running /
 // requested execution counts, kept only when sent. T#15: the node's current `attempt_id` too (the Time Machine
 // confirmation's basis), kept only when sent. flowgate.v02.0064 T#4: `node_running` (the card's running lock), kept only when sent.
+// flowgate.v02.0105 T#2 (B-2): `approval_wait_reason`, kept only when sent.
 function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
   if (!raw || typeof raw !== 'object') return null
   const running = count(raw.running_execution_count)
@@ -113,6 +115,7 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
+    ...('approval_wait_reason' in raw ? { approvalWaitReason: str(raw.approval_wait_reason) } : {}),
   }
 }
 
@@ -302,9 +305,14 @@ export function toFlowCanvas(raw: Raw): FlowCanvas {
 }
 
 // Same shape as api.ts: a displayable message, with the transport error kept as `cause`.
+// flowgate.v02.0105 T#1: and its HTTP status / network failure (`status` / `network`), so the Designer tells a
+// refused Flow (403 / 404) apart from a passing failure.
 export function wrapError(error: unknown, fallback: string): Error {
-  const wrapped = new Error(extractApiErrorMessage(error, fallback)) as Error & { cause?: unknown }
+  const { status, network } = normalizeApiError(error)
+  const wrapped = new Error(extractApiErrorMessage(error, fallback)) as Error & { cause?: unknown; status: number | null; network: boolean }
   wrapped.cause = error
+  wrapped.status = status
+  wrapped.network = network
   return wrapped
 }
 

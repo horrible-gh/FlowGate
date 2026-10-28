@@ -27,7 +27,7 @@ def post_flow_run(flow_id: str, request: Request, body: Any = Body(default=None)
             raise envelope.invalid(request, errors)
         group = canvas_service.load_flow(flow_id)
         envelope.authorize(user_id, group, "write")
-        return run_service.start_run(group, user_id, revision_no, mode)
+        return run_service.with_viewer(run_service.start_run(group, user_id, revision_no, mode), group, user_id)
 
     return envelope.run(request, handle, status=201)
 
@@ -39,7 +39,7 @@ def get_flow_current_run(flow_id: str, request: Request):
         envelope.client_id_of(request)
         group = canvas_service.load_flow(flow_id)
         envelope.authorize(user_id, group, "read")
-        return run_service.current_run(group)
+        return run_service.with_viewer(run_service.current_run(group), group, user_id)       # 0105 T#2 B-6
 
     return envelope.run(request, handle)
 
@@ -66,7 +66,7 @@ def get_run(run_id: str, request: Request):
         envelope.client_id_of(request)
         group = canvas_service.load_flow(run_service.run_flow_id(run_id))
         envelope.authorize(user_id, group, "read")
-        return run_service.get_run(run_id)
+        return run_service.with_viewer(run_service.get_run(run_id), group, user_id)
 
     return envelope.run(request, handle)
 
@@ -82,8 +82,8 @@ def _control(request: Request, run_id: str, body: Any, action, with_mode: bool =
     group = canvas_service.load_flow(run_service.run_flow_id(run_id))
     envelope.authorize(user_id, group, "write")
     if with_mode:
-        return action(group, run_id, reason, user_id, mode)
-    return action(group, run_id, reason, user_id)
+        return run_service.with_viewer(action(group, run_id, reason, user_id, mode), group, user_id)
+    return run_service.with_viewer(action(group, run_id, reason, user_id), group, user_id)
 
 
 @router.post("/runs/{run_id}/pause")

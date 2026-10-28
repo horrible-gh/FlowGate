@@ -423,7 +423,7 @@ describe('commit line (C11) and AI draft (C12)', () => {
     const indexToken = t.wt.db.status.indexToken
     const merges = t.wt.source.loadManualMerge.mock.calls.length
     await click('git-commit')
-    expect(confirmText()).toContain('Stage된 1개 파일을 Group Worktree에 커밋합니다. Base 반영과 Push는 하지 않습니다.')
+    expect(confirmText()).toContain('Stage된 1개 파일을 그룹 Worktree에 커밋합니다. Base 반영과 Push는 하지 않습니다.')
     await confirmDialog()
     expect(t.wt.source.commit).toHaveBeenCalledWith(G, 'feat: x', indexToken)
     expect((q('git-commit-message') as HTMLInputElement).value).toBe('')

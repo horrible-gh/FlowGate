@@ -69,6 +69,11 @@ export interface ExplorerStateRequest {
   select: ExplorerSelection
   expand?: readonly string[]
   collapse?: readonly string[]
+  /**
+   * flowgate.v02.0105 T#1: false = the selection is set without opening the rows above it (the F5 restore gives the
+   * open Groups as they were). Omitted = they are opened with it, as a File menu opening does.
+   */
+  reveal?: false
 }
 
 /** Display tree after the search filter, plus the ids a search needs revealed. */

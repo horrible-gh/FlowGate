@@ -276,7 +276,7 @@ describe('연결 테스트 / a failed test stops before anything is saved', () =
   })
 
   it.each([
-    ['403', () => gitError(403, 'forbidden'), '이 Project의 Git 설정을 바꿀 권한이 없습니다.'],
+    ['403', () => gitError(403, 'forbidden'), '이 프로젝트의 Git 설정을 바꿀 권한이 없습니다.'],
     ['422', () => gitError(422, 'invalid_request'), '입력값을 서버가 받아들이지 않았습니다. 입력값을 확인하세요.'],
     ['network', () => networkError(), '서버와 통신하지 못했습니다.'],
     ['500', () => gitError(500, 'git_unavailable'), '연결 테스트에 실패했습니다.'],
@@ -294,7 +294,7 @@ describe('연결 테스트 / a failed test stops before anything is saved', () =
 describe('a failed save', () => {
   it.each([
     ['500', () => gitError(500, 'internal'), 'Git 설정을 저장하지 못했습니다.'],
-    ['403', () => gitError(403, 'forbidden'), '이 Project의 Git 설정을 바꿀 권한이 없습니다.'],
+    ['403', () => gitError(403, 'forbidden'), '이 프로젝트의 Git 설정을 바꿀 권한이 없습니다.'],
     ['422', () => gitError(422, 'invalid_request'), '입력값을 서버가 받아들이지 않았습니다. 입력값을 확인하세요.'],
   ])('%s: no provision, the window stays with the save failure', async (_label, error, words) => {
     const fake = offline()

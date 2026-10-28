@@ -387,7 +387,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       expect(sub.contains(mode)).toBe(false)
       expect(mode.parentElement).toBe(sub.parentElement)
       expect(mode.textContent).toBe('읽기 전용')
-      expect(mode.getAttribute('title')).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
+      expect(mode.getAttribute('title')).toBe('플로우 소유가 충돌해 읽기 전용입니다.')
       // flowgate.v02.0063: a Flow whose answers stay closed shows no answer form in the window.
       expect(win.querySelector('[data-test="qna-window-form"]')).toBeNull()
     })
@@ -404,7 +404,7 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       const w = await mountTab(v01Target({ readOnly: 'conflict' }))
       const win = await open(w, 13)
       expect(document.body.querySelector('[data-test="qna-window-mode"]')?.textContent).toBe('읽기 전용')
-      expect(document.body.querySelector('[data-test="qna-window-mode"]')?.getAttribute('title')).toBe('Flow 소유가 충돌해 읽기 전용입니다.')
+      expect(document.body.querySelector('[data-test="qna-window-mode"]')?.getAttribute('title')).toBe('플로우 소유가 충돌해 읽기 전용입니다.')
       expect(win.querySelector('[data-test="qna-window-form"]')).toBeNull()
       expect(win.querySelector('[data-test="qna-window-ai"]')).toBeNull()
       win.closest('.ui-modeless-panel')!.querySelector<HTMLButtonElement>('[data-modeless-action="close"]')!.click()

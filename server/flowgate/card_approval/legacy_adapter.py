@@ -118,6 +118,11 @@ def run_payload(run_id: str) -> Optional[dict]:
     return run_service.run_payload(run_id, with_nodes=True)
 
 
+def with_viewer(answer: dict, group: dict, user_id: str) -> dict:
+    """flowgate.v02.0105 T#2 B-6: the answered run tells whether the user may approve its cards (``viewer.can_approve``)."""
+    return run_service.with_viewer(answer, group, user_id)
+
+
 def group_ai_run(flow_id: str) -> Optional[str]:
     """The AI run that holds the Flow's group AI lease (the v0.1 approve route refuses then), or None."""
     lease = db_leases.get_active(flow_id)

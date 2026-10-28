@@ -21,7 +21,7 @@ export default {
       locked: '위임 진행 중',
       off_short: '꺼짐 — 직접 구성하거나 작업계획으로 전개',
       unconnected_tag: '미연결',
-      unconnected: '이 Flow에는 카드 설정이 없습니다',
+      unconnected: '이 플로우에는 카드 설정이 없습니다',
     },
     limits: {
       title: '안전 한도',
@@ -35,7 +35,7 @@ export default {
     },
     failed: '저장 실패',
     reason: {
-      read_only_conflict: 'Flow 소유 충돌 · 읽기 전용',
+      read_only_conflict: '플로우 소유 충돌 · 읽기 전용',
       read_only_revision: '확정된 리비전 보기 · 읽기 전용',
       disposed: '폐기된 그룹',
       placing: '카드를 저장하는 중',

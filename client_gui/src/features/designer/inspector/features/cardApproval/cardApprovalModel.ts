@@ -4,7 +4,9 @@
 // (one place for the Canvas and the Inspector); this file only decides what the bar shows and allows.
 //
 //   shown         a Graph card with a run (any state: the bar names it)
-//   [승인]        only while the card waits for its approval — never on 작업 중, 승인됨 or a rejected R/B root
+//   [승인]        only while the card waits for its approval — never on 작업 중, 승인됨 or a rejected R/B root — and
+//                 only when the server confirmed the user may approve (flowgate.v02.0105 T#2 B-6: `canApprove`; not
+//                 told, a failed read or false hides it, the server's 403 stays)
 //   usable        not an ownership conflict, no approval of it being answered
 //
 // A card waiting for its approval may already hold an approved result (only its instruction is left): the bar
@@ -15,6 +17,8 @@ export interface CardApprovalInput {
   readonly state: CardStateView | null
   readonly readOnly: InspectorReadOnly
   readonly busy: boolean
+  /** flowgate.v02.0105 T#2 (B-6): the run read's `viewer.can_approve`; absent / false = no [승인]. */
+  readonly canApprove?: boolean
 }
 
 export interface CardApprovalBarView {
@@ -37,7 +41,7 @@ export function cardApprovalDisabledReason(input: CardApprovalInput): string | n
 
 export function cardApprovalBar(input: CardApprovalInput): CardApprovalBarView {
   if (!input.state) return HIDDEN
-  if (!input.state.approvable) return { shown: true, approveVisible: false, enabled: false, reason: null }
+  if (!input.state.approvable || input.canApprove !== true) return { shown: true, approveVisible: false, enabled: false, reason: null }
   const reason = cardApprovalDisabledReason(input)
   return { shown: true, approveVisible: true, enabled: reason === null, reason }
 }

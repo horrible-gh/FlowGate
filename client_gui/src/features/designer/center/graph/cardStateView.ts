@@ -20,6 +20,13 @@
 // Pure: no Vue, no i18n — the label is a message key under `gui.designer.center.card_states.`; the tone is the
 // Canvas chip tone. The [승인] refusals (O1 4-1 codes) are grouped here too, so the Canvas, the run band toast
 // and the Inspector approval bar handle a code the same way.
+//
+// flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9 B-5): a card awaiting approval tells why its result was not
+// approved automatically (`approval_wait_reason`). An automatic approval that was missed or failed (X: the run issuer
+// lacks the approval, no issuer, the approval was refused, its review never started, a result the server cannot tell)
+// is 자동 승인 실패; a result a person must judge (H: its review did not pass, its AI run did not end on its own) and
+// one with no reason stay 승인 대기. Either may be approved by a person ([승인] only when the server allows the user,
+// B-6). The reason itself is told in the tooltip only (`reason`).
 
 /** The node run facts the state is read from (FlowGraphNodeRun, the Canvas `node_run`). */
 export interface CardRunFacts {
@@ -33,9 +40,11 @@ export interface CardRunFacts {
   readonly requestedExecutionCount?: number
   /** flowgate.v02.0083 T#4: the card's document holds a question still unanswered. */
   readonly question?: boolean
+  /** flowgate.v02.0105 T#2 (B-2): why the result was not approved automatically, or null / absent. */
+  readonly approvalWaitReason?: string | null
 }
 
-export const CARD_STATE_KEYS = ['no_result', 'incomplete', 'waiting_answer', 'waiting_writer', 'writing_instruction', 'writing_result', 'working', 'awaiting_approval', 'approved', 'rejected', 'pending', 'closed'] as const
+export const CARD_STATE_KEYS = ['no_result', 'incomplete', 'waiting_answer', 'waiting_writer', 'writing_instruction', 'writing_result', 'working', 'awaiting_approval', 'auto_approval_failed', 'approved', 'rejected', 'pending', 'closed'] as const
 
 export type CardStateKey = (typeof CARD_STATE_KEYS)[number]
 
@@ -50,17 +59,41 @@ export interface CardStateView {
   readonly tone: CardStateTone
   /** Message key of the label. */
   readonly labelKey: string
-  /** The card may be approved now ([승인] is shown): awaiting approval only. */
+  /** The card may be approved now ([승인] is shown when the server allows the user): awaiting approval only. */
   readonly approvable: boolean
+  /** flowgate.v02.0105 T#2 (B-5): why an awaiting card was not approved automatically (tooltip only), else null. */
+  readonly reason: string | null
 }
 
-const view = (key: CardStateKey, phase: CardStatePhase, tone: CardStateTone): CardStateView => ({
+const view = (key: CardStateKey, phase: CardStatePhase, tone: CardStateTone, reason: string | null = null): CardStateView => ({
   key,
   phase,
   tone,
   labelKey: `gui.designer.center.card_states.${key}`,
-  approvable: key === 'awaiting_approval',
+  approvable: key === 'awaiting_approval' || key === 'auto_approval_failed',
+  reason,
 })
+
+/**
+ * flowgate.v02.0105 T#2 (B-5): the server's reasons (B-1) of a missed or failed automatic approval (X); any other — a
+ * review that did not pass (`review_not_passed:<stop reason>`), an AI run that did not end on its own
+ * (`run_not_clean:<code>`) or one this screen does not know — is a person's judgement (H).
+ */
+export const AUTO_APPROVAL_FAILURES: readonly string[] = [
+  'issuer_lacks_approve',
+  'issuer_missing',
+  'approval_refused',
+  'review_not_started',
+  'review_result_unknown',
+]
+
+/** flowgate.v02.0105 T#2 (B-5): the reason names a missed or failed automatic approval. */
+export function autoApprovalFailed(reason: string | null | undefined): boolean {
+  return !!reason && AUTO_APPROVAL_FAILURES.includes(reason)
+}
+
+/** flowgate.v02.0105 T#2 (B-7): the [승인] glyph of the Canvas card and the Inspector bar — a shield (24x24, stroked). */
+export const CARD_APPROVE_ICON = 'M12 3l7 3v5c0 4.5-3 8.3-7 10c-4-1.7-7-5.5-7-10V6l7-3z M9 12l2 2l4-4'
 
 /** flowgate.v02.0083 T#4: an AI execution of the node runs or is requested; null when the server sent no counts. */
 function executing(run: CardRunFacts): boolean | null {
@@ -74,8 +107,13 @@ export function cardStateView(run: CardRunFacts | null | undefined): CardStateVi
   switch (status) {
     case 'done':
       return view('approved', 'approved', 'success')
-    case 'review':
-      return run?.awaitingApproval === true ? view('awaiting_approval', 'awaiting', 'warning') : view('working', 'working', 'info')
+    case 'review': {
+      if (run?.awaitingApproval !== true) return view('working', 'working', 'info')
+      const reason = run.approvalWaitReason?.trim() || null
+      return autoApprovalFailed(reason)
+        ? view('auto_approval_failed', 'awaiting', 'danger', reason)
+        : view('awaiting_approval', 'awaiting', 'warning', reason)
+    }
     case 'open':
       if (!run?.resultDocId && run?.dispatchErrorCode === 'no_result') return view('no_result', 'other', 'warning')
       if (!run?.resultDocId && run?.dispatchErrorCode) return view('incomplete', 'other', 'warning')

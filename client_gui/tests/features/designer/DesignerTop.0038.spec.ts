@@ -80,6 +80,8 @@ function project(id: string, name: string): Project {
 
 beforeEach(() => {
   localStorage.clear()
+  // flowgate.v02.0105 T#1: a signed-in Shell keeps its F5 snapshot per browser tab; each test is a fresh tab.
+  sessionStorage.clear()
   i18n.global.locale.value = 'ko'
   setCurrentUser({ username: 'test', email: null, isAdmin: false })
   getRequest.mockReset()
@@ -182,7 +184,7 @@ describe('Designer top band — structure', () => {
     expect(header.get('[data-test="designer-header-brand"]').text()).toContain('FlowGate Designer')
     expect(header.get('[data-test="designer-header-notifications"]').attributes('aria-label')).toBe('알림')
     expect(header.get('[data-test="designer-header-ai"]').text()).toContain('AI')
-    expect(header.get('[data-test="designer-search-input"]').attributes('placeholder')).toBe('Project 전체에서 검색...')
+    expect(header.get('[data-test="designer-search-input"]').attributes('placeholder')).toBe('프로젝트 전체에서 검색...')
     expect(header.findAll('[data-test="designer-header-locale"] button').map((b) => b.text())).toEqual(['KO', 'EN', 'JA'])
     expect(header.get('[data-test="designer-header-settings"]').text()).toContain('설정')
     expect(header.get('[data-test="designer-header-user"]').text()).toContain('test')
@@ -201,10 +203,10 @@ describe('Designer top band — Menu Bar', () => {
     const pop = await openMenu(w, 'file')
     const top = pop.findAll('.designer-menu-item').filter((el) => el.element.closest('[role="menu"]') === pop.element)
     expect(top.map((el) => el.text().replace('›', '').trim())).toEqual([
-      '새 Project', 'Project 열기…', '최근 Project', 'Project 닫기',
-      '새 Group', 'Group 열기…', '최근 Group', 'Group 닫기',
-      '새 Flow', 'Flow 열기…', '최근 Flow', 'Flow 닫기',
-      'Designer 닫기',
+      '새 프로젝트', '프로젝트 열기…', '최근 프로젝트', '프로젝트 닫기',
+      '새 그룹', '그룹 열기…', '최근 그룹', '그룹 닫기',
+      '새 플로우', '플로우 열기…', '최근 플로우', '플로우 닫기',
+      '디자이너 닫기',
     ])
     expect(pop.text()).not.toMatch(/저장/)
     expect(pop.findAll('[role="separator"]')).toHaveLength(3)
@@ -225,7 +227,7 @@ describe('Designer top band — Menu Bar', () => {
     expect(itemTexts(await openMenu(w, 'edit')).map((text) => text.replace('›', '').trim())).toEqual([
       '실행 취소', '다시 실행', '잘라내기', '복사', '붙여넣기', '삭제', '정렬 / 배치', '전체 선택',
     ])
-    expect(itemTexts(await openMenu(w, 'run'))).toEqual(['다음 단계 실행', '전체 실행', '실행 중지', '재실행', 'Flow 검증'])
+    expect(itemTexts(await openMenu(w, 'run'))).toEqual(['다음 단계 실행', '전체 실행', '실행 중지', '재실행', '플로우 검증'])
     expect(itemTexts(await openMenu(w, 'view')).map((text) => text.replace('›', '').trim())).toEqual([
       '화면 맞춤', '확대', '축소', '100%', '배치 밀도',
     ])
@@ -499,10 +501,10 @@ describe('Designer top band — search assist', () => {
 
     await get(w, 'designer-search-input').trigger('focus')
     const assist = get(w, 'designer-search-assist')
-    expect(assist.findAll('[data-test="designer-search-scope"]').map((b) => b.text())).toEqual(['전체', 'Flow', 'Node', '파일', '문서'])
+    expect(assist.findAll('[data-test="designer-search-scope"]').map((b) => b.text())).toEqual(['전체', '플로우', 'Node', '파일', '문서'])
     expect(assist.get('[aria-checked="true"]').text()).toBe('전체')
     expect(assist.findAll('[data-test="designer-search-example"]').map((b) => b.text())).toEqual([
-      'Designer', '문서 ID · 0675', '파일 · workflow.py', 'Flow · 인증 오류 조사',
+      'Designer', '문서 ID · 0675', '파일 · workflow.py', '플로우 · 인증 오류 조사',
     ])
 
     await assist.get('[data-scope="node"]').trigger('click')

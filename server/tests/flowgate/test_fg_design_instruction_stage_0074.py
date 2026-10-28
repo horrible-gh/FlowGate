@@ -8,7 +8,9 @@ DB, on the fixtures of ``test_fg_instruction_stage_0056``:
   reference, writing the card's own design type;
 - (b) instruction omitted: no instruction job; the result stage starts with the card's own type and no DS reference;
   the DS line and its document stay (same doc id, same bytes, not approved) — omission never deletes or remakes it;
-- (c) the run's issuer may not approve: the DS is not approved, the result stage still starts with it.
+- (c) the run's issuer may not approve: flowgate.v02.0105 T#2 — expectation revised (NR flowgate.v02.0101.0003 §3.9.1,
+  Q #511 o3): the DS is approved under the server's automatic approval authority and the result stage starts with it
+  (before: the DS stayed unapproved for the card approval).
 """
 from __future__ import annotations
 
@@ -63,7 +65,7 @@ def test_an_omitted_design_instruction_keeps_its_ds_and_runs_the_design_result(e
 
 
 @pytest.mark.parametrize("doc_type", DESIGN_TYPES)
-def test_a_design_instruction_the_issuer_cannot_approve_is_left_to_the_card_approval(
+def test_a_design_instruction_the_issuer_cannot_approve_is_approved_under_the_system_authority(
         env, decided, monkeypatch, doc_type):
     from modules.flow_gate.workflow.routers import workflow
 
@@ -75,4 +77,4 @@ def test_a_design_instruction_the_issuer_cannot_approve_is_left_to_the_card_appr
     _start(env)
     job = _one_job(env)
     assert (job["stage"], job["ref_doc_ids"], job["result_doc_type"]) == ("result", [ds], doc_type)
-    assert _review_status(ds) is None
+    assert _review_status(ds) == "approved"

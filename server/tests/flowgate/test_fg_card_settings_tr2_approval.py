@@ -9,6 +9,11 @@ stops it), the document revision and a TR2 attempt key. Without the approve perm
 attempted and the TR2 waits for a person; a refused approval (validation failure, rolled back, retried
 once with a new key) leaves it waiting too.
 
+flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9.1, Q #511 o3): the issuer path (no ``authority``) is kept as the
+path of a person's work plan result; an AI card's approval passes ``authority="automation"`` — the server's automatic
+approval authority — so the same non-admin issuer's TR2 is approved through its own approval, and a refused TR2 is still
+retried once and left to a person.
+
 The harness's ``store`` is taken over only to apply the migrations as ``test_fg_card_settings`` applies
 them: a statement an earlier migration already made (``idx_chat_cmd_run`` of 136, again in 137) must not
 stop the setup. Its token issue is taken over too (flowgate.v02.0056 T#1, ``token_scratch_in_storage``): the
@@ -107,6 +112,41 @@ def test_follow_leaves_a_tr2_to_a_person_when_the_issuer_cannot_approve(env):
     assert db_docs.get_by_id(tr2)["doc_review_status"] == "pending_review"
     assert db_attempts.list_by_doc(tr2) == [] and git_head(repo) == before
     assert (repo / "src" / "app.txt").read_bytes() == BASE
+
+
+def test_the_automation_authority_approves_the_tr2_of_an_issuer_without_document_approve(env):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import tr2_approval_attempts as db_attempts
+    from modules.flow_gate.db import users
+
+    from flowgate.card_settings import legacy_adapter
+
+    users.create({"user_id": WORKER, "username": "cardworker", "email": "worker@test.com",
+                  "password": "hashed", "is_admin": 0})
+    repo = env["repo"]
+    group, tr2 = _pending_tr2("0204")
+    (repo / "gate.ok").write_bytes(b"ok")
+    before = git_head(repo)
+    assert legacy_adapter.approve(group["group_id"], tr2, WORKER) is False          # the issuer path: unchanged
+    assert legacy_adapter.approve(group["group_id"], tr2, WORKER, legacy_adapter.AUTOMATION) is True
+    assert db_docs.get_by_id(tr2)["doc_review_status"] == "approved"
+    assert git(repo, "rev-parse", "HEAD^").strip() == before                        # the proposal was committed
+    assert (repo / "src" / "app.txt").read_bytes() == b"greeting = 'hi'\ncount = 1\n"
+    attempts = db_attempts.list_by_doc(tr2)
+    assert [(a["state"], a["request_key"].split(":")[0]) for a in attempts] == [("succeeded", "card")]
+
+
+def test_the_automation_authority_with_no_issuer_approves_nothing(env):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import tr2_approval_attempts as db_attempts
+
+    from flowgate.card_settings import legacy_adapter
+
+    repo = env["repo"]
+    group, tr2 = _pending_tr2("0205")
+    (repo / "gate.ok").write_bytes(b"ok")
+    assert legacy_adapter.approve(group["group_id"], tr2, "", legacy_adapter.AUTOMATION) is False
+    assert db_docs.get_by_id(tr2)["doc_review_status"] == "pending_review" and db_attempts.list_by_doc(tr2) == []
 
 
 def test_a_refused_tr2_approval_is_rolled_back_and_left_to_a_person(env):

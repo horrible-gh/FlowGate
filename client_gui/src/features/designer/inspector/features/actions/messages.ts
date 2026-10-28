@@ -10,7 +10,7 @@ export default {
     rework: '↻ 재작업',
     rework_hint: 'v0.1 재작업: AI가 반려 사유를 반영해 다시 작업합니다',
     reason: {
-      read_only_conflict: '소유 충돌 Flow라 바꿀 수 없습니다.',
+      read_only_conflict: '소유 충돌 플로우라 바꿀 수 없습니다.',
       read_only_revision: 'Graph revision 보기에서는 바꿀 수 없습니다. draft 보기로 옮기세요.',
       disposed: '폐기된 그룹이라 바꿀 수 없습니다.',
       ai_running: 'AI 실행 중이라 바꿀 수 없습니다.',

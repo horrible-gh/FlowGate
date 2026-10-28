@@ -226,11 +226,24 @@ export type CanvasViewOperation =
 
 export type CanvasViewRequest = CanvasViewOperation & { readonly flowId: string; readonly seq: number }
 
-/** Graph read state of one open Flow. */
+/**
+ * Graph read state of one open Flow. flowgate.v02.0105 T#1: a failed read keeps the HTTP status (`httpStatus`) and a
+ * network failure (`network`) when its error carried them, so a refused Flow (403 / 404) is told apart from a passing
+ * failure; neither is set for an error without them.
+ */
 export type FlowGraphLoad =
   | { status: 'loading' }
   | { status: 'ready'; graph: FlowGraph }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; httpStatus?: number; network?: true }
+
+/** The `httpStatus` / `network` of a failed read's error (the features/project loaders' `status` / `network`). */
+function readFailure(error: unknown): { httpStatus?: number; network?: true } {
+  const mark = error as { status?: unknown; network?: unknown } | null
+  return {
+    ...(typeof mark?.status === 'number' ? { httpStatus: mark.status } : {}),
+    ...(mark?.network === true ? { network: true as const } : {}),
+  }
+}
 
 /** What the Project Explorer's `activate-flow` carries (ProjectExplorerFlowEvent fits). */
 export interface CenterFlowOpenRequest {
@@ -401,6 +414,11 @@ export interface DesignerCenterSession {
   readonly activeRunStatus: ComputedRef<FlowRunStatus>
   /** flowgate.v02.0056 F2-1: the source can approve a card (the Canvas offers [승인]). */
   readonly canApprove: boolean
+  /**
+   * flowgate.v02.0105 T#2 (B-6): the Flow's cards may be approved by this user now — the source approves and the Flow's
+   * confirmed run read says so (`viewer.can_approve` true). Not told, not read or false: no [승인].
+   */
+  canApproveFlow(flowId: string): boolean
   /**
    * flowgate.v02.0056 F2-1 — a Canvas card's [승인]: approves the card (O1 0005-TR §4-1) with the result its
    * Canvas read shows. Whether it was approved; a refusal is the Flow's run `error` (kind `approval`).
@@ -685,6 +703,12 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   const editLock = (flowId: string): FlowEditLock => runMarks(flowId).lock
 
+  // flowgate.v02.0105 T#2 (B-6): only a confirmed run read (or a command's answer) of the Flow tells it.
+  function canApproveFlow(flowId: string): boolean {
+    const run = state.runs[flowId]
+    return runControl.canApprove && run?.readState === 'read' && run.run?.viewerCanApprove === true
+  }
+
   // ── flowgate.v02.0061 T#15: a card's context menu ─────────────────────────────────────────────────────────
 
   const graphNode = (flowId: string, nodeId: string) => readyGraph(flowId)?.nodes.find((node) => node.id === nodeId) ?? null
@@ -968,7 +992,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           return
         }
         if (keepShown && state.graphs[flowId]?.status === 'ready') return
-        setShownLoad(flowId, { status: 'error', message: error instanceof Error ? error.message : '' })
+        setShownLoad(flowId, { status: 'error', message: error instanceof Error ? error.message : '', ...readFailure(error) })
       },
     )
   }
@@ -1283,7 +1307,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       // flowgate.v02.0061 T#14: the Inspector's card settings follow the run lock as the Canvas does.
       // flowgate.v02.0070 T#1: so does the Inspector's title edit (closed when the source saves no titles).
       const titleEdit = canEditNodeTitles ? nodeTitleEdit(load.graph as FlowGraph, node as FlowGraphNode, runMarks(id).nodeRuns.get(node.id)) : null
-      return { projectId: exposed.projectId, graph: load.graph, node, editLock: editLock(id), titleEdit }
+      return { projectId: exposed.projectId, graph: load.graph, node, editLock: editLock(id), titleEdit, canApprove: canApproveFlow(id) }
     }),
     canvasSize: computed(() => canvasSize.value),
     setProject,
@@ -1373,6 +1397,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       return id === null ? KNOWN_NO_RUN : runStatus(id)
     }),
     canApprove: runControl.canApprove,
+    canApproveFlow,
     approveNode: (flowId, nodeId) => {
       const node = readyGraph(flowId)?.nodes.find((candidate) => candidate.id === nodeId)
       if (!node?.nodeRun) return Promise.resolve(false)

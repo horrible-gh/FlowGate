@@ -79,7 +79,7 @@
           @node-remove="center.removeNode(activeTab.flowId, $event)"
           @edge-remove="center.removeEdge(activeTab.flowId, $event)"
           @undo="center.undoEdit(activeTab.flowId)"
-          :can-approve="center.canApprove"
+          :can-approve="center.canApproveFlow(activeTab.flowId)"
           :approving-node-id="center.activeRun.value?.approving ?? null"
           @node-approve="center.approveNode(activeTab.flowId, $event)"
           @node-conflict="emit('show-tool', 'git')"

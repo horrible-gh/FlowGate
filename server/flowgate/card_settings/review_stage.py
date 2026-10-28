@@ -43,8 +43,8 @@ instruction stage (``node_dispatch``). When the AI run of that stage ends (``_af
 
 ``approve_instruction`` is that automatic approval (also the Graph's ``card_settings_ports.approve_instruction``
 handler, for an instruction found written when the stage starts): the card approval's own document approval
-(``card_approval``: a written, never submitted instruction is submitted first), under the run issuer's
-authority as the Flow's completion context, binding nothing. A refusal leaves the instruction to the card
+(``card_approval``: a written, never submitted instruction is submitted first), under the server's automatic approval
+authority (flowgate.v02.0105 T#2 B-4; the run issuer as its actor) as the Flow's completion context, binding nothing. A refusal leaves the instruction to the card
 approval; the result stage still starts.
 
 flowgate.v02.0056 T#3: the card's review and rework hops open with the card's memos turned on for AI reading, as
@@ -110,6 +110,27 @@ The submissions it follows: the binder's (a result, a new revision, ``mark_revis
 an inbox edit registers — ``inbox_edited``), its reconciliation's (a submission bound after a lost contact), and one made
 while a loop worked on an earlier one: when that loop ends, the node's current submission no verdict answers takes its
 review (``_take_over_submission``; a pass of an older revision of the same document approves nothing).
+
+flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9, Q #511 o3). 0083 T#4 contract revised for the Graph AI cards: an AI
+card's automatic approvals — its result's (review 'none', a passed review) and its instruction's — are made under the server's
+automatic approval authority (``legacy.AUTOMATION_APPROVE_PERMISSIONS``: ``document.approve`` alone), no longer the run
+issuer's ``document.approve``; the issuer stays the approval's actor, an empty issuer approves nothing (``issuer_missing``)
+and every other condition of the approval (workflow head, body / test gate, revision, TR2 validation) stays. A person's
+work plan result keeps the issuer's authority (0083 WP-4), and a person's card approval keeps its own ``document.approve``
+check (403). Where an automatic approval is not made, why is added as a run event (B-1, ``legacy.record_approval_wait``):
+``issuer_lacks_approve`` (a person's work plan only), ``issuer_missing``, ``approval_refused``, ``review_not_started``,
+``review_not_passed:<stop reason>``, ``run_not_clean:<stop code / end reason>``, ``review_result_unknown``.
+
+B-3: a run read reconciles a stage the run end never followed — its ``on_run_ended`` lost (a restart, the hand-off mark
+expired, an end the Graph did not own) — once (``reconcile``): only for an AI node in review with its own result whose
+writer ended on its own, no AI working on it and no B-1 reason recorded yet. It approves automatically only as the run end
+does: the card's review 'none' as stored (no row, or the integer 0) with no review loop of the result, or the result's
+latest loop passed for the node's current attempt and the current revision (``submission_passed``). A card that needs a
+review and has no loop of the result yet takes its review loop once, never an approval. Anything else — a review never
+started, not finished, not passed, or a setting / loop that cannot be told — approves nothing and records its reason once,
+so the next read tries nothing again. The instruction stage follows the same rules on ``instruction_review_count``, on an
+idle run too (``legacy.person_hold``): its review starts as an explicit request, its approval is followed by the result
+stage's start (``start_result_stage`` ``idle_ok``), and an approved instruction whose result stage never started takes it.
 """
 # T0017 supersedes the original no-review instruction policy described above:
 # instruction_review_count/AI gate all configured card-owned instructions (including design),
@@ -263,12 +284,14 @@ def written_instruction(flow_id: str, node: dict, row: dict) -> Optional[str]:
 
 def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: str) -> bool:
     """Approve the card's instruction ``doc_id`` at once, with no review (``card_settings_ports.approve_instruction``):
-    True when it is approved. Without the issuer's ``document.approve``, or on any refusal, it is left to the
-    card approval (False)."""
-    permissions = approvals.permissions_of(actor_user_id)
-    if approvals.APPROVE_PERMISSION not in permissions:
-        _log.info("card instruction left to the card approval flow=%s node=%s doc=%s: the issuer lacks %s",
-                  flow_id, node.get("node_key"), doc_id, approvals.APPROVE_PERMISSION)
+    True when it is approved. flowgate.v02.0105 T#2 (B-4, Q #511 o3 — 0083 T#4 개정): under the server's automatic
+    approval authority (``legacy.AUTOMATION_APPROVE_PERMISSIONS``), the issuer ``actor_user_id`` kept as the approval's
+    actor. With no issuer (``issuer_missing``), or on any refusal (``approval_refused``), it is left to the card approval
+    (False) and why is recorded (B-1)."""
+    key = node.get("node_key")
+    if not actor_user_id:
+        _log.info("card instruction left to the card approval flow=%s node=%s doc=%s: no run issuer", flow_id, key, doc_id)
+        legacy.record_approval_wait(flow_id, key, doc_id, legacy.ISSUER_MISSING, stage=fields.INSTRUCTION_STAGE)
         return False
     doc = approvals.document(doc_id)
     if doc is None:
@@ -276,11 +299,13 @@ def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: st
     if doc.get("doc_review_status") in APPROVED:
         return True
     try:
-        approvals.approve_document(flow_id, doc, actor_user_id, permissions, legacy.LOCALE, system=True)
+        approvals.approve_document(flow_id, doc, actor_user_id, set(legacy.AUTOMATION_APPROVE_PERMISSIONS),
+                                   legacy.LOCALE, system=True)
     except Exception:  # noqa: BLE001 — the instruction waits for the card approval
-        _log.warning("card instruction approval refused flow=%s node=%s doc=%s", flow_id, node.get("node_key"),
-                     doc_id, exc_info=True)
+        _log.warning("card instruction approval refused flow=%s node=%s doc=%s", flow_id, key, doc_id, exc_info=True)
+        legacy.record_approval_wait(flow_id, key, doc_id, legacy.APPROVAL_REFUSED, stage=fields.INSTRUCTION_STAGE)
         return False
+    legacy.record_approval_authority(flow_id, key, doc_id, actor_user_id, stage=fields.INSTRUCTION_STAGE)
     return True
 
 
@@ -291,11 +316,13 @@ def _after_work(flow_id: str, run: dict) -> None:
         question_wait.hold_without_result(flow_id, run)     # 0063: a writer with no result that asked questions
         return                                  # not a node's AI run, or no result of its own bound
     node, doc_id = found
+    attempt_id = legacy.attempt_of_ai_run(run)                                          # 0061 T#7
     if not ended_cleanly(run):
         _log.info("card review stage skipped flow=%s node=%s run=%s: run ended %s/%s, awaiting approval",
                   flow_id, node["node_key"], run.get("run_id"), run.get("end_reason"), run.get("stop_code"))
+        legacy.record_approval_wait(flow_id, node["node_key"], doc_id, run_not_clean(run), attempt_id=attempt_id)
         return                                  # stopped or failed: a person approves the card
-    run_id, attempt_id = legacy.active_run_id(flow_id), legacy.attempt_of_ai_run(run)     # 0061 T#7
+    run_id = legacy.active_run_id(flow_id)
     if run_id is None:
         return
     if question_wait.hold(flow_id, run, node):
@@ -303,24 +330,52 @@ def _after_work(flow_id: str, run: dict) -> None:
     stored = repository.values(flow_id, node["node_key"])
     step = fields.after_result(fields.card_kind(node.get("node_type"), node.get("doc_type")), stored)
     if step == fields.REVIEW:
-        project_id = legacy.project_of(flow_id)
-        reviewer = stored.get("review_ai") or legacy.default_reviewer(project_id)
-        reworker = stored.get("run_ai") or node.get("assignee_provider_id") or run.get("provider_id")
-        if not reviewer or not reworker:
-            _log.warning("card review not started flow=%s node=%s: no reviewer or rework AI",
-                         flow_id, node["node_key"])
-            return
-        loop = fields.review_loop(stored, reviewer=reviewer, reworker=reworker)
-        criteria = loop["review_criteria"]
-        if not legacy.attempt_owns(run_id, node["node_key"], attempt_id, "review_start"):
-            return
-        legacy.start_review_loop(project_id, flow_id, doc_id, run.get("issued_to") or "", loop,
-                                 lambda last: fields.review_basis_note(criteria, last), node["node_key"],
-                                 attempt_id=attempt_id)
+        _start_result_review(flow_id, run_id, node, doc_id, stored, run.get("issued_to") or "", run.get("provider_id"),
+                             attempt_id)
     elif step == fields.APPROVE:
         with legacy.attempt_hold(run_id, node["node_key"], attempt_id, "result_approval") as owned:
             if owned:
-                legacy.approve(flow_id, doc_id, run.get("issued_to") or "")
+                legacy.approve(flow_id, doc_id, run.get("issued_to") or "", legacy.AUTOMATION,
+                               node_key=node["node_key"], attempt_id=attempt_id)
+
+
+def run_not_clean(run: dict) -> str:
+    """B-1 ``run_not_clean:<stop code, else end reason>`` of an AI run that did not end on its own."""
+    return legacy.RUN_NOT_CLEAN + str(run.get("stop_code") or run.get("end_reason") or "unknown")
+
+
+def _start_result_review(flow_id: str, run_id: str, node: dict, doc_id: str, stored: dict, issuer: str,
+                         provider_id: Optional[str], attempt_id: Optional[str], hold=None) -> None:
+    """The card's review loop of its AI result, for ``attempt_id``. With no reviewer or rework AI, or a refused start,
+    nothing reviews it and ``review_not_started`` is recorded (B-1). ``hold``: the context the start is judged in (the
+    B-3 reconciliation's), else ``attempt_owns``."""
+    key = node["node_key"]
+    project_id = legacy.project_of(flow_id)
+    reviewer = stored.get("review_ai") or legacy.default_reviewer(project_id)
+    reworker = stored.get("run_ai") or node.get("assignee_provider_id") or provider_id
+    if not reviewer or not reworker:
+        _log.warning("card review not started flow=%s node=%s: no reviewer or rework AI", flow_id, key)
+        legacy.record_approval_wait(flow_id, key, doc_id, legacy.REVIEW_NOT_STARTED, attempt_id=attempt_id)
+        return
+    loop = fields.review_loop(stored, reviewer=reviewer, reworker=reworker)
+    criteria = loop["review_criteria"]
+
+    def start():
+        return legacy.start_review_loop(project_id, flow_id, doc_id, issuer, loop,
+                                        lambda last: fields.review_basis_note(criteria, last), key, attempt_id=attempt_id)
+
+    if hold is None:
+        if not legacy.attempt_owns(run_id, key, attempt_id, "review_start"):
+            return
+        started = start()
+    else:
+        with hold as owned:
+            if not owned:
+                return
+            with legacy.explicit_request():     # Q439: an idle run (waiting for the approval) takes it back to running
+                started = start()
+    if started is None:
+        legacy.record_approval_wait(flow_id, key, doc_id, legacy.REVIEW_NOT_STARTED, attempt_id=attempt_id)
 
 
 def _after_review(flow_id: str, run: dict) -> None:
@@ -331,6 +386,8 @@ def _after_review(flow_id: str, run: dict) -> None:
         node, row = instruction
         loop = legacy.review_loop_row(run["run_id"]) or run.get("document_review_loop") or {}
         if loop.get("stop_reason") != PASSED:
+            legacy.record_approval_wait(flow_id, node["node_key"], doc_id, not_passed(loop),
+                                        stage=fields.INSTRUCTION_STAGE)
             return
         if question_wait.hold(flow_id, run, node, asked_by_instruction=True):
             return
@@ -349,21 +406,33 @@ def _after_review(flow_id: str, run: dict) -> None:
         _take_over_submission(flow_id, run)     # 0083 WP-4: a person's newer submission made while it worked
         return
     loop = legacy.review_loop_row(run["run_id"]) or run.get("document_review_loop") or {}
+    person = legacy.person_plan_reviewed(flow_id, node)
+    attempt_id = legacy.attempt_of_ai_run(run)
     if loop.get("stop_reason") != PASSED:
+        if not person:                          # B-1: an AI card's review that ended without passing (H1)
+            legacy.record_approval_wait(flow_id, node["node_key"], doc_id, not_passed(loop), attempt_id=attempt_id)
         _take_over_submission(flow_id, run)     # 0083 WP-4: likewise (a person's revision made in place)
         return                                  # hold, count spent, stalled, failure: a person approves
     run_id = legacy.active_run_id(flow_id)
     if run_id is None:
         return
-    if legacy.person_plan_reviewed(flow_id, node) and not legacy.submission_passed(doc_id):
+    if person and not legacy.submission_passed(doc_id):
         _take_over_submission(flow_id, run)     # 0083 WP-4: the pass answers an older revision; the current one waits
         return
     if question_wait.hold(flow_id, run, node):
         return                                  # 0063: its questions are answered first
     # 0061 T#7: the review execution's attempt must still work on the node; the approval commits under the Stop gate.
-    with legacy.attempt_hold(run_id, node["node_key"], legacy.attempt_of_ai_run(run), "review_approval") as owned:
+    # flowgate.v02.0105 T#2 (B-4): an AI card's under the system's authority, a person's work plan under the issuer's.
+    with legacy.attempt_hold(run_id, node["node_key"], attempt_id, "review_approval") as owned:
         if owned:
-            legacy.approve(flow_id, doc_id, run.get("issued_to") or "")
+            legacy.approve(flow_id, doc_id, run.get("issued_to") or "", None if person else legacy.AUTOMATION,
+                           node_key=node["node_key"], attempt_id=attempt_id)
+
+
+def not_passed(loop: dict) -> str:
+    """B-1 ``review_not_passed:<stop reason>`` of an ended loop, or ``review_result_unknown`` when it tells none."""
+    reason = loop.get("stop_reason")
+    return legacy.REVIEW_NOT_PASSED + str(reason) if reason else legacy.REVIEW_RESULT_UNKNOWN
 
 
 def review_running(_flow_id: str, _node_key: str, doc_id: Optional[str]) -> bool:
@@ -469,8 +538,8 @@ def _follow_person_result(flow_id: str, run_id: str, node_key: str, doc_id: str,
         # 0061 T#7: the attempt bound must still work on the node, on a run that may take the stage, judged under the
         # Stop gate's shared hold kept until the approval — its transition, TR hook and Graph contact — is over.
         with legacy.person_hold(flow_id, run_id, node_key, attempt_id, "result_approval") as owned:
-            if owned:
-                legacy.approve(flow_id, doc_id, issuer)     # the issuer's own authority, or nothing is tried
+            if owned:                           # the issuer's own authority, or nothing is tried (issuer_lacks_approve)
+                legacy.approve(flow_id, doc_id, issuer, node_key=node_key, attempt_id=attempt_id)
 
 
 def _start_person_review(flow_id: str, run: dict, node_key: str, doc: dict, stored: dict, issuer: str,
@@ -499,17 +568,21 @@ def _start_person_review(flow_id: str, run: dict, node_key: str, doc: dict, stor
                                      attempt_id=attempt_id)
 
 
-def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id: str, attempt_id=None) -> bool:
+def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id: str, attempt_id=None,
+                       hold=None) -> bool:
     """A configured instruction review gates the result; 0 retains existing automatic approval.
 
     Reuse the durable review/rework loop, with instruction-specific AI/count and rework provider.
     Missing providers, failed admission and a rejected review leave the instruction pending.
+    ``hold`` (flowgate.v02.0105 T#2 B-3): the context the start is judged in — the reconciliation's ``legacy.person_hold``
+    (an idle run taken too, its Stop / Time Machine conditions judged again), the loop then requested as an explicit
+    request (Q439: the idle run goes back to running) — else ``attempt_owns``.
     """
     stored = repository.values(flow_id, node["node_key"])
     count = stored.get("instruction_review_count") or 0
     if count == 0 or (approvals.document(doc_id) or {}).get("doc_review_status") in APPROVED:
         return False
-    if not legacy.attempt_owns(run_id, node["node_key"], attempt_id, "instruction_review_start"):
+    if hold is None and not legacy.attempt_owns(run_id, node["node_key"], attempt_id, "instruction_review_start"):
         return True
     if legacy.review_loop_active(doc_id):
         return True
@@ -518,10 +591,204 @@ def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id
     reworker = fields.instruction_provider(stored) or node.get("assignee_provider_id")
     if not reviewer or not reworker:
         _log.warning("instruction review missing provider flow=%s node=%s", flow_id, node["node_key"])
+        legacy.record_approval_wait(flow_id, node["node_key"], doc_id, legacy.REVIEW_NOT_STARTED,
+                                    stage=fields.INSTRUCTION_STAGE)
         return True
     loop = fields.review_loop({**stored, "review_count": count}, reviewer=reviewer, reworker=reworker)
     criteria = loop["review_criteria"]
-    legacy.start_review_loop(project_id, flow_id, doc_id, actor, loop,
-                             lambda last: fields.review_basis_note(criteria, last), node["node_key"],
-                             attempt_id=attempt_id)
+
+    def start():
+        return legacy.start_review_loop(project_id, flow_id, doc_id, actor, loop,
+                                        lambda last: fields.review_basis_note(criteria, last), node["node_key"],
+                                        attempt_id=attempt_id)
+
+    if hold is None:
+        started = start()
+    else:
+        with hold as owned:
+            if not owned:
+                return True                     # stopped, stopping, a Time Machine operation, another attempt: recorded
+            with legacy.explicit_request():     # Q439: an idle run (waiting for a person) takes it back to running
+                started = start()
+    if started is None:
+        legacy.record_approval_wait(flow_id, node["node_key"], doc_id, legacy.REVIEW_NOT_STARTED,
+                                    stage=fields.INSTRUCTION_STAGE)
     return True
+
+
+# ── a lost run-end stage (flowgate.v02.0105 T#2 B-3, NR flowgate.v02.0101.0003 §3.9.2) ──────────
+
+NO_REVIEW, NEEDS_REVIEW = "none", "review"
+REVIEW_COUNTS = (1, 2, 3, -1)                   # a review loop's own review_count (its table CHECK)
+
+
+def review_setting(flow_id: str, node_key: str, field: str = "review_count") -> Optional[str]:
+    """The card's review setting as stored, not as ``fields.after_result`` reads it (that one takes a value it cannot
+    read for 'none'): ``NO_REVIEW`` (no row, or the integer 0), ``NEEDS_REVIEW`` (the integer 1, 2, 3 or -1), else None —
+    unknown (a row that does not parse, a string, any other number)."""
+    value = repository.stored(flow_id, node_key, field)
+    if value is repository.ABSENT:
+        return NO_REVIEW
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    if value == 0:
+        return NO_REVIEW
+    return NEEDS_REVIEW if value in REVIEW_COUNTS else None
+
+
+def reconcile(flow_id: str) -> None:
+    """``card_settings_ports.reconcile_stage`` handler (B-3), on a run read and a Resume, outside every Flow guard: each AI
+    node whose run-end stage was lost is followed once. Never raises (the read goes on)."""
+    try:
+        if not repository.available() or not legacy.graph_owned(flow_id):
+            return
+        run_row = legacy.active_run(flow_id)
+        if run_row is None or not legacy.person_stage_open(flow_id, run_row):
+            return                              # stopped, stopping, a Time Machine operation: nothing is taken
+        rows = legacy.node_runs(run_row["run_id"])
+    except Exception:  # noqa: BLE001 — a run read is never failed by its reconciliation
+        _log.warning("card stage reconciliation failed flow=%s", flow_id, exc_info=True)
+        return
+    for row in rows:
+        try:
+            if row["status"] == legacy.REVIEW_NODE_STATUS and row.get("result_doc_id"):
+                _reconcile_result(flow_id, run_row["run_id"], row)
+            elif row["status"] == legacy.OPEN_NODE_STATUS and row.get("stage") == fields.INSTRUCTION_STAGE:
+                _reconcile_instruction(flow_id, run_row["run_id"], row)
+        except Exception:  # noqa: BLE001 — nothing taken for this node; the next read judges it again
+            _log.warning("card stage reconciliation failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+
+
+def _ai_card(flow_id: str, node_key: str) -> Optional[dict]:
+    node = legacy.node_of_key(flow_id, node_key)
+    if node is None or not settings.uses_ai(flow_id, node):
+        return None
+    return node
+
+
+def _reconcile_result(flow_id: str, run_id: str, row: dict) -> None:
+    """B-3 for a node in review with a result (3.9.2 ① ~ ④)."""
+    key, doc_id = row["node_key"], row["result_doc_id"]
+    node = _ai_card(flow_id, key)
+    if node is None or fields.after_result(fields.card_kind(node.get("node_type"), node.get("doc_type")), {}) is None:
+        return                                  # a person's card, a gate, R / B: no automatic approval
+    if (approvals.document(doc_id) or {}).get("doc_review_status") in APPROVED or ai_working(flow_id, key, doc_id):
+        return
+    attempt_id = legacy.active_attempt_id(run_id, key)
+    if legacy.approval_waits(run_id, key, doc_id, attempt_id):
+        return                                  # tried once already: never again
+    work = legacy.result_ai_run(flow_id, run_id, key, doc_id)
+    if work is None or not ended_cleanly(work) or legacy.open_questions_of_ai_run(flow_id, work["run_id"]):
+        return                                  # not its own AI result, not ended on its own, its questions wait
+    issuer = work.get("issued_to") or ""
+
+    def unknown() -> None:
+        legacy.record_approval_wait(flow_id, key, doc_id, legacy.REVIEW_RESULT_UNKNOWN, attempt_id=attempt_id)
+
+    try:
+        setting = review_setting(flow_id, key)
+        loops = legacy.review_loops(doc_id)
+        if setting == NO_REVIEW:
+            if loops:
+                return unknown()                # its review started before the card was set to 'none'
+            return _reconciled_approval(flow_id, run_id, key, doc_id, issuer, attempt_id)
+        if setting is None:
+            return unknown()
+        if not loops:                           # ③ the run end was lost before its review started: start it, never approve
+            return _start_result_review(flow_id, run_id, node, doc_id, repository.values(flow_id, key), issuer,
+                                        work.get("provider_id"), attempt_id,
+                                        hold=legacy.person_hold(flow_id, run_id, key, attempt_id, "reconcile_review_start"))
+        latest = loops[0]
+        if latest.get("current_stage") != legacy.STOPPED_LOOP_STAGE:
+            return                              # ④-b not finished
+        if latest.get("stop_reason") != PASSED:
+            return legacy.record_approval_wait(flow_id, key, doc_id, not_passed(latest), attempt_id=attempt_id)
+        if not _loop_of_attempt(latest, attempt_id) or not legacy.submission_passed(doc_id):
+            return unknown()                    # ④-d an earlier attempt's pass, or a pass of an earlier revision
+        return _reconciled_approval(flow_id, run_id, key, doc_id, issuer, attempt_id)     # ② passed
+    except Exception:  # noqa: BLE001 — ④-d a read that failed: nothing is approved, nor tried again
+        _log.warning("card result reconciliation failed flow=%s node=%s", flow_id, key, exc_info=True)
+        unknown()
+
+
+def _loop_of_attempt(loop: dict, attempt_id: Optional[str]) -> bool:
+    """The loop's review run worked for ``attempt_id`` (the node's current attempt)."""
+    return legacy.attempt_of_ai_run(legacy.ai_run_record(loop.get("run_id")) or {}) == attempt_id
+
+
+def _reconciled_approval(flow_id: str, run_id: str, key: str, doc_id: str, issuer: str,
+                         attempt_id: Optional[str]) -> None:
+    """① / ② the automatic approval the lost run end would have made, judged as a person's stage is (an idle run waiting
+    for the approval taken too, the run's Stop / Time Machine conditions judged again under the Stop gate's hold)."""
+    with legacy.person_hold(flow_id, run_id, key, attempt_id, "reconcile_approval") as owned:
+        if owned:
+            legacy.approve(flow_id, doc_id, issuer, legacy.AUTOMATION, node_key=key, attempt_id=attempt_id)
+
+
+def _reconcile_instruction(flow_id: str, run_id: str, row: dict) -> None:
+    """B-3 for a node open in its instruction stage whose instruction AI run ended on its own and was never followed: the
+    same rules on ``instruction_review_count`` (3.9.2, 지시서 단계)."""
+    key = row["node_key"]
+    node = _ai_card(flow_id, key)
+    if node is None or _handoff_pending(flow_id, key) or legacy.node_ai_run_active(flow_id, key):
+        return
+    work = legacy.stage_ai_run(flow_id, run_id, key)
+    attempt_id = legacy.active_attempt_id(run_id, key)
+    if work is None or not ended_cleanly(work) or legacy.attempt_of_ai_run(work) != attempt_id:
+        return                                  # still writing, failed (the stage's own failure), an old attempt's
+    if legacy.open_questions_of_ai_run(flow_id, work["run_id"]):
+        return
+    doc_id = written_instruction(flow_id, node, row)
+    if doc_id is None:
+        return
+    issuer = work.get("issued_to") or ""
+    if (approvals.document(doc_id) or {}).get("doc_review_status") in APPROVED:
+        # approved, and the node still in its instruction stage: the result stage's start after it was lost
+        return _reconciled_result_stage(flow_id, run_id, key, node, doc_id, issuer, attempt_id, approve=False)
+    if legacy.approval_waits(run_id, key, doc_id) or legacy.review_loop_active(doc_id):
+        return
+
+    def unknown() -> None:
+        legacy.record_approval_wait(flow_id, key, doc_id, legacy.REVIEW_RESULT_UNKNOWN, stage=fields.INSTRUCTION_STAGE)
+
+    try:
+        setting = review_setting(flow_id, key, "instruction_review_count")
+        loops = legacy.review_loops(doc_id)
+        if setting is None or (setting == NO_REVIEW and loops):
+            return unknown()
+        if setting == NEEDS_REVIEW and not loops:    # ③ starts it once (an idle run taken too), or records why not
+            review_instruction(flow_id, node, doc_id, issuer, run_id, attempt_id,
+                               hold=legacy.person_hold(flow_id, run_id, key, attempt_id,
+                                                       "reconcile_instruction_review_start"))
+            return
+        if setting == NEEDS_REVIEW:
+            latest = loops[0]
+            if latest.get("current_stage") != legacy.STOPPED_LOOP_STAGE:
+                return
+            if latest.get("stop_reason") != PASSED:
+                return legacy.record_approval_wait(flow_id, key, doc_id, not_passed(latest),
+                                                   stage=fields.INSTRUCTION_STAGE)
+            if not _loop_of_attempt(latest, attempt_id) or not legacy.submission_passed(doc_id):
+                return unknown()
+    except Exception:  # noqa: BLE001
+        _log.warning("card instruction reconciliation failed flow=%s node=%s", flow_id, key, exc_info=True)
+        return unknown()
+    _reconciled_result_stage(flow_id, run_id, key, node, doc_id, issuer, attempt_id)     # ① / ②
+
+
+def _reconciled_result_stage(flow_id: str, run_id: str, key: str, node: dict, doc_id: str, issuer: str,
+                             attempt_id: Optional[str], approve: bool = True) -> None:
+    """① / ② of the instruction stage: the instruction's automatic approval (``approve``; not again for one approved
+    already) and the result stage's start, judged as ``_reconciled_approval`` judges — an idle run waiting for a person
+    taken too, the run's Stop / Time Machine conditions and the current attempt judged again under the Stop gate's hold.
+    The result stage's execution request takes an idle run back to running (``start_result_stage`` ``idle_ok``); its AI
+    start runs after the hold. Once the node is in its result stage, the next read finds nothing to reconcile."""
+    jobs: list = []
+    with legacy.person_hold(flow_id, run_id, key, attempt_id, "reconcile_instruction_approval") as owned:
+        if not owned:
+            return
+        if approve:
+            approve_instruction(flow_id, node, doc_id, issuer)
+        legacy.start_result_stage(flow_id, run_id, key, doc_id, issuer, attempt_id, defer=jobs, idle_ok=True)
+    for job in jobs:                            # the result stage's AI start, after the hold
+        job()
