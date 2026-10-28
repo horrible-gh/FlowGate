@@ -27,6 +27,7 @@ import api, {
   postRequest,
   putRequest,
 } from '@shared/api'
+import { normalizeApiError } from '@shared/apiErrors'
 import { serverDetailOf } from '../../core/i18n/serverDetail'
 import type {
   BaseFileDiff,
@@ -210,7 +211,11 @@ export async function fetchProjectGroupTree(
     const raw = response.data?.data?.nodes ?? []
     return raw.map(toGroupTreeNode).filter((n): n is GroupTreeNode => n !== null)
   } catch (error) {
-    throw new Error(serverDetailOf(error))
+    // flowgate.v02.0105 T#1: the HTTP status and a network failure stay on the error (`status` / `network`, the
+    // transport error as `cause`), so the Designer's F5 restore tells a refused Project (403 / 404) apart from a
+    // passing failure. The message is unchanged.
+    const { status, network } = normalizeApiError(error)
+    throw Object.assign(new Error(serverDetailOf(error)), { status, network, cause: error })
   }
 }
 

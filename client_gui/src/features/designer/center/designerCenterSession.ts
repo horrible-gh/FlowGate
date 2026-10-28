@@ -226,11 +226,24 @@ export type CanvasViewOperation =
 
 export type CanvasViewRequest = CanvasViewOperation & { readonly flowId: string; readonly seq: number }
 
-/** Graph read state of one open Flow. */
+/**
+ * Graph read state of one open Flow. flowgate.v02.0105 T#1: a failed read keeps the HTTP status (`httpStatus`) and a
+ * network failure (`network`) when its error carried them, so a refused Flow (403 / 404) is told apart from a passing
+ * failure; neither is set for an error without them.
+ */
 export type FlowGraphLoad =
   | { status: 'loading' }
   | { status: 'ready'; graph: FlowGraph }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; httpStatus?: number; network?: true }
+
+/** The `httpStatus` / `network` of a failed read's error (the features/project loaders' `status` / `network`). */
+function readFailure(error: unknown): { httpStatus?: number; network?: true } {
+  const mark = error as { status?: unknown; network?: unknown } | null
+  return {
+    ...(typeof mark?.status === 'number' ? { httpStatus: mark.status } : {}),
+    ...(mark?.network === true ? { network: true as const } : {}),
+  }
+}
 
 /** What the Project Explorer's `activate-flow` carries (ProjectExplorerFlowEvent fits). */
 export interface CenterFlowOpenRequest {
@@ -968,7 +981,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           return
         }
         if (keepShown && state.graphs[flowId]?.status === 'ready') return
-        setShownLoad(flowId, { status: 'error', message: error instanceof Error ? error.message : '' })
+        setShownLoad(flowId, { status: 'error', message: error instanceof Error ? error.message : '', ...readFailure(error) })
       },
     )
   }

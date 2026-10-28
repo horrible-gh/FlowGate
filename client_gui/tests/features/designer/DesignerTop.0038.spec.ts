@@ -80,6 +80,8 @@ function project(id: string, name: string): Project {
 
 beforeEach(() => {
   localStorage.clear()
+  // flowgate.v02.0105 T#1: a signed-in Shell keeps its F5 snapshot per browser tab; each test is a fresh tab.
+  sessionStorage.clear()
   i18n.global.locale.value = 'ko'
   setCurrentUser({ username: 'test', email: null, isAdmin: false })
   getRequest.mockReset()

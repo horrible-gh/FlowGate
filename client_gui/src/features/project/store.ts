@@ -26,9 +26,14 @@
 // rename and Flow dispose (each invalidating the Project's cached tree, and keeping the recent lists' names — a
 // disposed Flow leaves the recent Flow list), and the Flow worktree's folder / file create, download, upload and
 // delete. Stateless pass-throughs like the loaders: the dialogs own their own submit / stale guards.
+//
+// flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4) adds the Designer's F5 snapshot of this browser tab
+// (designerSessionStorage.ts, kept per signed-in user), the Project an F5 restore sets without it counting as an
+// opening (no recent entry, no explicit-open signal), and the HTTP status / network failure of a failed read.
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { useCurrentUser } from '../../core/auth/currentUser'
 import type {
   BaseFileDiff,
   CreateFlowInput,
@@ -107,6 +112,12 @@ import {
 import { subscribeFlowCanvasChanges as subscribeFlowCanvasChangesApi, type FlowCanvasChangeHandlers } from './flowCanvasEvents'
 import { subscribeProjectEvents as subscribeProjectEventsApi, type ProjectEventSubscription } from './projectEvents'
 import { clearStoredCurrentProjectId, writeStoredCurrentProjectId } from './currentProjectStorage'
+import {
+  clearDesignerSession as clearStoredDesignerSession,
+  readDesignerSession as readStoredDesignerSession,
+  writeDesignerSession as writeStoredDesignerSession,
+  type DesignerSessionSnapshot,
+} from './designerSessionStorage'
 import {
   pushRecent,
   readRecentFlows,
@@ -308,6 +319,38 @@ export const useProjectStore = defineStore('project', () => {
   // and Center clear); the stored id goes too, as when a current Project leaves the active list.
   function closeCurrentProject(): void {
     applyCurrentProjectId(null)
+  }
+
+  // ── Designer F5 snapshot (flowgate.v02.0105 T#1) ─────────────────────────────────────────
+  // The user the snapshot belongs to; none is kept or read while nobody is signed in.
+  const designerSessionOwner = computed<string | null>(() => useCurrentUser().user.value?.username ?? null)
+
+  function readDesignerSession(): DesignerSessionSnapshot | null {
+    const owner = designerSessionOwner.value
+    return owner ? readStoredDesignerSession(owner) : null
+  }
+
+  function writeDesignerSession(snapshot: DesignerSessionSnapshot): void {
+    const owner = designerSessionOwner.value
+    if (owner) writeStoredDesignerSession(owner, snapshot)
+  }
+
+  function clearDesignerSession(): void {
+    const owner = designerSessionOwner.value
+    if (owner) clearStoredDesignerSession(owner)
+  }
+
+  // An F5 restore gives the Designer back the Project of its snapshot. Not an opening: no recent entry and no
+  // explicit-open signal, so the Explorer starts unselected as on any entry (0039) until the snapshot's own
+  // selection is applied.
+  function restoreCurrentProject(projectId: string): void {
+    applyCurrentProjectId(projectId)
+  }
+
+  // The HTTP status / network failure a failed read kept (api.ts / flowCanvasApi.ts); none for any other error.
+  function readFailureOf(error: unknown): { status: number | null; network: boolean } {
+    const mark = error as { status?: unknown; network?: unknown } | null
+    return { status: typeof mark?.status === 'number' ? mark.status : null, network: mark?.network === true }
   }
 
   // flowgate.v02.0040: one-shot "this Project was explicitly opened" signal for the Designer.
@@ -609,11 +652,17 @@ export const useProjectStore = defineStore('project', () => {
     recentGroups: computed(() => recentGroups.value),
     recentFlows: computed(() => recentFlows.value),
     explicitOpenProjectId: computed(() => explicitOpenProjectId.value),
+    designerSessionOwner,
     fetchProjects,
     createProject,
     setCurrentProject,
     openRecentProject,
     closeCurrentProject,
+    readDesignerSession,
+    writeDesignerSession,
+    clearDesignerSession,
+    restoreCurrentProject,
+    readFailureOf,
     recordRecentGroup,
     recordRecentFlow,
     renameRecent,

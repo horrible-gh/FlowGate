@@ -11,11 +11,14 @@ import { setCurrentUser, useCurrentUser } from './currentUser'
 
 const LOGIN_PATH = '/login'
 
+// flowgate.v02.0105 T#1: the user's keys of this browser tab's sessionStorage go too (the Designer's F5 snapshot).
 export function clearStoredAuth(username: string | null): void {
   if (username) {
-    Object.keys(localStorage).forEach((key) => {
-      if (key.startsWith(`flowgate.user.${username}.`)) localStorage.removeItem(key)
-    })
+    for (const storage of [localStorage, sessionStorage]) {
+      Object.keys(storage).forEach((key) => {
+        if (key.startsWith(`flowgate.user.${username}.`)) storage.removeItem(key)
+      })
+    }
   }
   localStorage.removeItem('flowgate.token')
   localStorage.removeItem('fg_refresh_token')

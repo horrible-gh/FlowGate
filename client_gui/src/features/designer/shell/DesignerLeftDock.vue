@@ -55,8 +55,10 @@
         :tools-disabled="unselected"
         :request="explorerRequest"
         :refresh-token="refreshToken"
+        :restore-error="restoreError"
         @activate-flow="emit('activate-flow', $event)"
         @update:selection="emit('update:selection', $event)"
+        @update:expanded="emit('update:expanded', $event)"
       />
       <DesignerFileExplorer
         v-if="mountedModes.file"
@@ -94,8 +96,10 @@ const props = withDefaults(
     refreshToken?: number
     /** Bumped to make the File Explorer re-read the open Flow's worktree (0060 T#2). */
     fileRefreshToken?: number
+    /** flowgate.v02.0105 T#1: the F5 restore's failed tree read, shown with the Project Explorer's retry. */
+    restoreError?: string | null
   }>(),
-  { unselected: false, explorerRequest: null, refreshToken: 0, fileRefreshToken: 0 },
+  { unselected: false, explorerRequest: null, refreshToken: 0, fileRefreshToken: 0, restoreError: null },
 )
 
 const emit = defineEmits<{
@@ -104,6 +108,7 @@ const emit = defineEmits<{
   expand: []
   'activate-flow': [payload: ProjectExplorerFlowEvent]
   'update:selection': [selection: ExplorerSelection]
+  'update:expanded': [groupIds: string[]]
 }>()
 
 const { t } = useI18n()

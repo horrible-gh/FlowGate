@@ -37,7 +37,7 @@
         size="sm"
         :label="t('gui.designer.project_explorer.refresh')"
         :title="t('gui.designer.project_explorer.refresh')"
-        :disabled="!projectId || loading || refreshing || toolsDisabled"
+        :disabled="!projectId || loading || refreshing || (toolsDisabled && restoreError === null)"
         data-test="project-explorer-refresh"
         @click="refresh"
       >
@@ -71,13 +71,13 @@
         <!-- Same contract as the Dashboard explorer (0449 T0004 item 1): a failed refresh
              rides ABOVE the tree it could not replace; the last good tree stays usable. -->
         <Alert
-          v-if="refreshError !== null"
+          v-if="shownRefreshError !== null"
           class="project-explorer-refresh-error"
           tone="warning"
           :title="t('gui.designer.project_explorer.refresh_failed')"
           data-test="project-explorer-refresh-error"
         >
-          {{ refreshError }}
+          {{ shownRefreshError }}
           <template #action>
             <Button size="sm" variant="ghost" data-test="project-explorer-refresh-retry" @click="refresh">
               {{ t('gui.designer.project_explorer.retry') }}
@@ -156,6 +156,12 @@ const props = withDefaults(
      * selection it sets is reported upward like a click.
      */
     request?: ExplorerStateRequest | null
+    /**
+     * flowgate.v02.0105 T#1 — the Designer's own read of this Project's tree failed (the F5 restore's complete
+     * tree; '' = no server message). Shown like a failed refresh over the usable tree, and its retry is the refresh,
+     * whose new tree is the Designer's cue to read again. Set by the Designer, not by this part.
+     */
+    restoreError?: string | null
   }>(),
   {
     projectId: undefined,
@@ -164,6 +170,7 @@ const props = withDefaults(
     includeTerminal: false,
     toolsDisabled: false,
     request: null,
+    restoreError: null,
   },
 )
 
@@ -173,6 +180,8 @@ const emit = defineEmits<{
   'activate-flow': [payload: ProjectExplorerFlowEvent]
   /** Every change of the user's selection, including the reset on a Project change. */
   'update:selection': [selection: ExplorerSelection]
+  /** flowgate.v02.0105 T#1: every change of the open Groups (their ids), including the reset on a Project change. */
+  'update:expanded': [groupIds: string[]]
 }>()
 
 const { t } = useI18n()
@@ -194,6 +203,7 @@ const refreshing = ref(false)
 // is already rendered and stays usable (same split as the Dashboard explorer).
 const error = ref<string | null>(null)
 const refreshError = ref<string | null>(null)
+const shownRefreshError = computed(() => refreshError.value ?? props.restoreError)
 
 const query = ref('')
 const isSearching = computed(() => query.value.trim().length > 0)
@@ -230,6 +240,10 @@ const expanded = ref<Record<string, boolean>>({})
 // made during the search is remembered only for that query, so clearing it brings back
 // exactly the tree the user had before searching.
 const searchOverrides = ref<Record<string, boolean>>({})
+
+// flowgate.v02.0105 T#1: reported upward like the selection (only changes), so the Designer keeps the open Groups
+// for an F5. The Project root and a search's per-query overrides are not part of it.
+watch(expanded, (rows) => emit('update:expanded', Object.keys(rows).filter((id) => rows[id] && id !== rootNodeId.value)))
 
 function baseExpanded(id: string): boolean {
   const value = expanded.value[id]
@@ -467,11 +481,12 @@ watch(
 // Flow created a moment ago) shows them selected / open when it lands. The selected row's
 // ancestors are opened with it, and a search hiding it is cleared (clearSearchHiding); when
 // the search stays, its per-query overrides of the requested rows are set the same way.
+// flowgate.v02.0105 T#1: a request with `reveal: false` (the F5 restore) opens only the rows it names.
 watch(
   () => props.request,
   (request) => {
     if (!request) return
-    const open = [...(request.expand ?? []), ...(request.select ? ancestorIdsOf(request.select) : [])]
+    const open = [...(request.expand ?? []), ...(request.select && request.reveal !== false ? ancestorIdsOf(request.select) : [])]
     const close = request.collapse ?? []
     expanded.value = withRows(expanded.value, open, close)
     if (request.select) clearSearchHiding(request.select)
