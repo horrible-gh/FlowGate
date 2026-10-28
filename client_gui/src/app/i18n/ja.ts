@@ -1,4 +1,29 @@
 export default {
+  flow_base: {
+    "title": "ベースブランチ",
+    "current": "現在",
+    "change": "変更",
+    "select": "ブランチを選択",
+    "denied": "変更権限がありません",
+    "disposed": "破棄済みのFlowです",
+    "git_disabled": "Gitは無効です",
+    "checkout_unavailable": "基準チェックアウトを利用できません",
+    "locked": "作業履歴があるため変更できません",
+    "busy": "準備中",
+    "remote_only": "ローカルブランチを選択してください",
+    "internal": "内部ブランチは利用できません",
+    "changed": "基準が変わりました。再取得して選び直してください",
+    "not_found": "ブランチが見つかりません",
+    "group_not_found": "Flowが見つかりません",
+    "invalid": "有効なブランチを選択してください",
+    "not_commit": "コミットを指すブランチを選択してください",
+    "save_failed": "保存できませんでした",
+    "options_denied": "候補の参照権限がありません",
+    "options_failed": "候補を取得できませんでした",
+    "read_denied": "参照権限がありません",
+    "read_failed": "現在の基準を取得できませんでした"
+},
+
   document: {
     bodyState: {
       file_path_missing: "ファイルパス未記録",
@@ -723,6 +748,13 @@ export default {
       flow_open_title: 'フローを開く',
       group_new_title: '新規グループ',
       flow_new_title: '新規フロー',
+      flow_group: 'グループ',
+      base_branch_loading: 'ブランチ一覧を読み込み中',
+      base_branch_retry: 'ブランチ一覧を再読み込み',
+      base_branch_unavailable: '一覧を読み込めません',
+      base_branch: 'ベースブランチ',
+      base_branch_required: 'ベースブランチを選択してください。',
+      base_branch_failed: 'ベースブランチを読み込めませんでした。',
       search_placeholder: '検索',
       close: '閉じる',
       cancel: 'キャンセル',

@@ -32,11 +32,14 @@
 // opening (no recent entry, no explicit-open signal), and the HTTP status / network failure of a failed read.
 
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useCurrentUser } from '../../core/auth/currentUser'
 import type {
   BaseFileDiff,
   CreateFlowInput,
+  WorkBaseOptions,
+  FlowWorkBase,
+  FlowWorkBaseUpdate,
   CreateGroupInput,
   CreateProjectInput,
   CreatedFlow,
@@ -85,6 +88,9 @@ import {
   fetchFlowFileTree,
   fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
+  fetchWorkBaseOptions,
+  fetchFlowWorkBase,
+  updateFlowWorkBase,
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
   renameFlow as renameFlowApi,
   sourceMutationRefusal,
@@ -134,6 +140,59 @@ export interface OpenDialogOptions {
 }
 
 export const useProjectStore = defineStore('project', () => {
+  const { user: optionsUser, status: optionsUserStatus } = useCurrentUser()
+  const knownGitEnabled = ref<Record<string, boolean>>({})
+  const optionCache = new Map<string, WorkBaseOptions>()
+  const optionRequests = new Map<string, Promise<WorkBaseOptions>>()
+  const optionVersions = new Map<string, number>()
+  let optionsSession = 0
+  const optionKey = (projectId: string) => JSON.stringify([optionsUser.value?.username ?? null, projectId])
+
+  /** Call after Git config/base/branch/ownership/work-base changes or permission changes.
+   * No argument drops every project; invalidated in-flight responses cannot refill the cache. */
+  function invalidateWorkBaseOptions(projectId?: string): void {
+    if (projectId === undefined) {
+      knownGitEnabled.value = {}
+      optionsSession += 1
+      optionCache.clear()
+      optionRequests.clear()
+      optionVersions.clear()
+    } else {
+      const known = { ...knownGitEnabled.value }
+      delete known[projectId]
+      knownGitEnabled.value = known
+      const key = optionKey(projectId)
+      optionVersions.set(key, (optionVersions.get(key) ?? 0) + 1)
+      optionCache.delete(key)
+      optionRequests.delete(key)
+    }
+  }
+
+  watch([optionsUser, optionsUserStatus], () => {
+    invalidateWorkBaseOptions()
+    knownGitEnabled.value = {}
+  }, { deep: true, flush: 'sync' })
+
+  function loadWorkBaseOptions(projectId: string, options: { force?: boolean } = {}): Promise<WorkBaseOptions> {
+    const key = optionKey(projectId)
+    const pending = optionRequests.get(key)
+    if (pending) return pending
+    const cached = optionCache.get(key)
+    if (cached && !options.force) return Promise.resolve(cached)
+    optionCache.delete(key)
+    const session = optionsSession
+    const version = optionVersions.get(key) ?? 0
+    const request = fetchWorkBaseOptions(projectId).then((result) => {
+      if (session !== optionsSession || version !== (optionVersions.get(key) ?? 0)) throw new Error('')
+      knownGitEnabled.value = { ...knownGitEnabled.value, [projectId]: result.gitEnabled }
+      optionCache.set(key, result)
+      return result
+    }).finally(() => {
+      if (optionRequests.get(key) === request) optionRequests.delete(key)
+    })
+    optionRequests.set(key, request)
+    return request
+  }
   const projects = ref<Project[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -430,8 +489,31 @@ export const useProjectStore = defineStore('project', () => {
   // already shows the tree re-reads with `force` on its own (the Explorer's refreshToken).
   function invalidateGroupTree(projectId: string): void {
     const next = { ...groupTrees.value }
-    for (const includeTerminal of [false, true]) delete next[groupTreeKey(projectId, includeTerminal)]
+    for (const includeTerminal of [false, true]) {
+      const key = groupTreeKey(projectId, includeTerminal)
+      delete next[key]
+      groupTreeInflight.delete(key)
+      groupTreeCommitted.set(key, ++groupTreeOrder)
+    }
     groupTrees.value = next
+  }
+
+  // Settings are deliberately uncached: opening/retrying always reads server authority.
+  async function loadFlowWorkBase(groupId: string): Promise<FlowWorkBase> {
+    const session = optionsSession
+    const versions = new Map(optionVersions)
+    const result = await fetchFlowWorkBase(groupId)
+    const key = optionKey(result.projectId)
+    if (session === optionsSession && (versions.get(key) ?? 0) === (optionVersions.get(key) ?? 0)) {
+      knownGitEnabled.value = { ...knownGitEnabled.value, [result.projectId]: result.gitEnabled }
+    }
+    return result
+  }
+
+  async function saveFlowWorkBase(projectId: string, groupId: string, input: FlowWorkBaseUpdate): Promise<void> {
+    await updateFlowWorkBase(groupId, input)
+    invalidateGroupTree(projectId)
+    invalidateWorkBaseOptions(projectId)
   }
 
   // ── Group / Flow creation (flowgate.v02.0043) ──────────────────────────────────────
@@ -446,6 +528,7 @@ export const useProjectStore = defineStore('project', () => {
   async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
     const created = await createFlowApi(input)
     invalidateGroupTree(input.projectId)
+    invalidateWorkBaseOptions(input.projectId)
     return created
   }
 
@@ -672,6 +755,11 @@ export const useProjectStore = defineStore('project', () => {
     openDialog,
     takeCreateRequest,
     closeDialog,
+    loadWorkBaseOptions,
+    knownGitEnabled,
+    loadFlowWorkBase,
+    saveFlowWorkBase,
+    invalidateWorkBaseOptions,
     getCachedGroupTree,
     fetchGroupTree,
     createGroup,

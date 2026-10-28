@@ -34,6 +34,9 @@ export type { ProjectEventFrame, ProjectEventSubscription } from './projectEvent
 export type {
   BaseFileDiff,
   CreateFlowInput,
+  WorkBaseOptions,
+  FlowWorkBase,
+  FlowWorkBaseUpdate,
   CreateGroupInput,
   CreateProjectInput,
   CreatedFlow,

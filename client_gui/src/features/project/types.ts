@@ -320,12 +320,39 @@ export interface CreateFlowInput {
   projectId: string
   moduleName: string
   title: string
+  /** Explicit selection for Git-enabled creation; omitted only for non-Git/legacy callers. */
+  workBaseRef?: string
+}
+
+export interface FlowWorkBase {
+  groupId: string
+  projectId: string
+  gitEnabled: boolean
+  workBaseRef: string | null
+  effectiveWorkBaseRef: string | null
+  workBaseLocked: boolean
+  lockEvidence: string[]
+  workBaseEditable: boolean
+  reason: string | null
+  canEdit: boolean
+}
+export interface FlowWorkBaseUpdate {
+  workBaseRef: string
+  expectedWorkBaseRef: string | null
+}
+
+export interface WorkBaseOptions {
+  gitEnabled: boolean
+  baseBranch: string | null
+  branches: Array<{ name: string; isProjectBase: boolean }>
 }
 
 /** The created Flow: `id` is the v0.1 group id the server reserved. */
 export interface CreatedFlow {
   id: string
   title: string
+  workBaseRef: string | null
+  effectiveWorkBaseRef: string | null
 }
 
 // ── Group / Flow / source file commands (flowgate.v02.0060 T#2, 0006-D rev2 §4.3 2-B) ──────────────

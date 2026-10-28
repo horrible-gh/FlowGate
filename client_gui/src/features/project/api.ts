@@ -32,6 +32,9 @@ import { serverDetailOf } from '../../core/i18n/serverDetail'
 import type {
   BaseFileDiff,
   CreateFlowInput,
+  WorkBaseOptions,
+  FlowWorkBase,
+  FlowWorkBaseUpdate,
   CreateGroupInput,
   CreateProjectInput,
   CreatedFlow,
@@ -685,6 +688,61 @@ export async function createGroup(projectId: string, input: CreateGroupInput): P
 interface RawCreatedGroup {
   group_id: string
   created_at?: string | null
+  work_base_ref?: string | null
+  effective_work_base_ref?: string | null
+}
+
+/** Uses the shared authenticated transport; store owns deduplication by auth session.
+ * Bypass getRequest's path-only dedupe so invalidation/user changes can start a fresh read. */
+export async function fetchWorkBaseOptions(projectId: string): Promise<WorkBaseOptions> {
+  try {
+    const response = await api.get(`/api/v1/projects/${encodeURIComponent(projectId)}/git/work-base-options`)
+    const raw = response.data
+    if (typeof raw?.git_enabled !== 'boolean' || !Array.isArray(raw.branches)
+      || raw.branches.some((branch: any) => typeof branch?.name !== 'string' || !branch.name)) {
+      throw new Error('Invalid work-base options response')
+    }
+    return {
+      gitEnabled: raw.git_enabled,
+      baseBranch: typeof raw.base_branch === 'string' ? raw.base_branch : null,
+      branches: raw.branches.map((branch: any) => ({ name: branch.name, isProjectBase: branch.is_project_base === true })),
+    }
+  } catch (error) {
+    throw workBaseFailure(error)
+  }
+}
+
+/** Keep HTTP status/code even for string 403 responses; each screen owns its localized message. */
+function workBaseFailure(error: unknown): Error & { status: number | null; code: string | null } {
+  const { status, code } = refusalParts(error)
+  return Object.assign(new Error(serverDetailOf(error)), { status, code })
+}
+
+/** Always a new GET, independent of shared path-only request coalescing. */
+export async function fetchFlowWorkBase(groupId: string): Promise<FlowWorkBase> {
+  try {
+    const { data: r } = await api.get(`/api/v1/groups/${encodeURIComponent(groupId)}/work-base`)
+    if (r?.group_id !== groupId || typeof r.project_id !== 'string'
+      || typeof r.git_enabled !== 'boolean' || typeof r.work_base_editable !== 'boolean'
+      || typeof r.can_edit !== 'boolean' || !(r.work_base_ref === null || typeof r.work_base_ref === 'string')
+      || !(r.effective_work_base_ref === null || typeof r.effective_work_base_ref === 'string')) {
+      throw new Error('Invalid work-base response')
+    }
+    return {
+      groupId: r.group_id, projectId: r.project_id, gitEnabled: r.git_enabled,
+      workBaseRef: r.work_base_ref, effectiveWorkBaseRef: r.effective_work_base_ref,
+      workBaseLocked: r.work_base_locked === true, lockEvidence: r.lock_evidence ?? [],
+      workBaseEditable: r.work_base_editable, reason: r.reason ?? null, canEdit: r.can_edit,
+    }
+  } catch (error) { throw workBaseFailure(error) }
+}
+
+export async function updateFlowWorkBase(groupId: string, input: FlowWorkBaseUpdate): Promise<void> {
+  try {
+    await patchRequest(`/api/v1/groups/${encodeURIComponent(groupId)}/work-base`, {
+      work_base_ref: input.workBaseRef, expected_work_base_ref: input.expectedWorkBaseRef,
+    })
+  } catch (error) { throw workBaseFailure(error) }
 }
 
 /** POST /api/v1/groups — creates a Flow (v0.1 group) under a Group; the server reserves the id. */
@@ -696,8 +754,14 @@ export async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
       module: input.moduleName,
       parent_id: null,
       priority: null,
+      ...(input.workBaseRef !== undefined ? { work_base_ref: input.workBaseRef } : {}),
     })
-    return { id: response.data.group_id, title: input.title }
+    return {
+      id: response.data.group_id,
+      title: input.title,
+      workBaseRef: response.data.work_base_ref ?? null,
+      effectiveWorkBaseRef: response.data.effective_work_base_ref ?? null,
+    }
   } catch (error) {
     throw new Error(serverDetailOf(error))
   }

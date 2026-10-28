@@ -41,6 +41,7 @@ describe('NewRequirementModal — active AI run on the target group (0424)', () 
     getRequest.mockReset()
     postUrlEncoded.mockReset()
     getRequest.mockImplementation((url: string) => {
+      if (url.endsWith('/git/work-base-options')) return Promise.resolve({ data: { git_enabled: false, branches: [] } })
       if (url === '/api/v1/projects') {
         return Promise.resolve({ data: [{ project: 'flowgate', modules: ['default'] }] })
       }

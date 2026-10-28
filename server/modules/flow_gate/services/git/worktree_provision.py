@@ -9,6 +9,9 @@ until then. Phases (L 2.28):
 
     start -> intent_recorded (G) -> fetched (R) -> registered (M) -> populated (G) -> done
 
+* start recheck (flowgate.v02.0104 D0004 §3.3.3): before G and any Git effect, the
+  effective work base is read again under the group row lock; one that is no longer the
+  payload's ends the job PERMANENT ``work_base_changed`` with no Git effect.
 * intent_recorded: path P and branch b, checked under G (ledger not ready, P free).
 * fetched: ``fetch origin`` under R, then the plan is resolved from F reads and written
   with the phase: how b comes to be (existing local branch / origin branch / fork) and
@@ -320,11 +323,44 @@ def _phase(ctx: store.JobContext, phase: str, **evidence) -> None:
     store.job_write(ctx, **changes)
 
 
+def _recheck_work_base(s: _Slot) -> None:
+    """D0004 §3.3.3: the payload's work base must still be the group's effective one.
+
+    A short group row lock transaction reads the stored ref (and the project base it
+    falls back to) and closes; nothing is written. A change committed after this job
+    read its payload is waited for by the lock and seen here, so the job ends PERMANENT
+    ``work_base_changed`` before G and before any Git or file effect; ``_report`` then
+    records only the failure ledger, which does not lock the group. A change after this
+    point meets the active job and is refused ``group_work_base_busy``.
+    A group without a row resolves like ``resolve_group_work_base_ref`` (project base):
+    no change can exist for it.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    from .group_work_base import lock_group_row
+    try:
+        with get_store().transaction():
+            row = lock_group_row(s.group_id)
+            cfg = _gs.db_git.get_config(s.project_id) or {}
+    except Exception:
+        _log.warning("work base recheck failed for %s", s.group_id, exc_info=True)
+        raise _transient("work_base_recheck_failed")
+    project_base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    current = (_gs.resolve_group_work_base_ref(s.project_id, s.group_id, group=row, config=cfg)
+               or project_base_branch)
+    if current != s.work_base_ref:
+        _log.warning("provision for %s stopped: work base %s is now %s", s.group_id,
+                     s.work_base_ref, current)
+        raise _permanent("work_base_changed")
+
+
 def _intent(ctx: store.JobContext, s: _Slot) -> None:
-    """start -> intent_recorded, under G: the slot is not ready yet and P is free."""
+    """start -> intent_recorded, under G: the slot is not ready yet and P is free.
+    Every run of this step rechecks the work base first (D0004 §3.3.3); a job past
+    ``start`` passed it already and the group's change is refused busy meanwhile."""
     from modules.flow_gate.services import git_service as _gs
     from .refs import _commits_present
     from .worktree import _record_reopen_floor
+    _recheck_work_base(s)
     g = _acquire(ctx, "G", s)
     try:
         try:

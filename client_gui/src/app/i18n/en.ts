@@ -1,4 +1,29 @@
 export default {
+  flow_base: {
+    "title": "Base branch",
+    "current": "Current",
+    "change": "Change",
+    "select": "Select a branch",
+    "denied": "You cannot edit this setting",
+    "disposed": "This flow is disposed",
+    "git_disabled": "Git is disabled",
+    "checkout_unavailable": "Base checkout is unavailable",
+    "locked": "Work history prevents changes",
+    "busy": "Preparing",
+    "remote_only": "Select a local branch",
+    "internal": "Internal branches are unavailable",
+    "changed": "The base changed. Refresh and select again",
+    "not_found": "Branch not found",
+    "group_not_found": "Flow not found",
+    "invalid": "Select a valid branch",
+    "not_commit": "Select a branch pointing to a commit",
+    "save_failed": "Could not save",
+    "options_denied": "No permission to read candidates",
+    "options_failed": "Could not load candidates",
+    "read_denied": "No permission to read this setting",
+    "read_failed": "Could not load the current base"
+},
+
   document: {
     bodyState: {
       file_path_missing: "File path is not recorded",
@@ -723,6 +748,13 @@ export default {
       flow_open_title: 'Open Flow',
       group_new_title: 'New Group',
       flow_new_title: 'New Flow',
+      flow_group: 'Group',
+      base_branch_loading: 'Loading branches',
+      base_branch_retry: 'Reload branches',
+      base_branch_unavailable: 'Branches unavailable',
+      base_branch: 'Base branch',
+      base_branch_required: 'Select a base branch.',
+      base_branch_failed: 'Could not load base branches.',
       search_placeholder: 'Search',
       close: 'Close',
       cancel: 'Cancel',

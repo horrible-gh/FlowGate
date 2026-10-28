@@ -24,6 +24,7 @@ describe('NewRequirementModal — use group name as title', () => {
     getRequest.mockReset()
     postUrlEncoded.mockReset()
     getRequest.mockImplementation((url: string) => {
+      if (url.endsWith('/git/work-base-options')) return Promise.resolve({ data: { git_enabled: false, branches: [] } })
       if (url === '/api/v1/projects') {
         return Promise.resolve({ data: [{ project: 'flowgate', modules: ['default'] }] })
       }
@@ -57,7 +58,7 @@ describe('NewRequirementModal — use group name as title', () => {
     // Switch to "existing group" mode and select the seeded group.
     const toggles = wrapper.findAll('.group-toggle-btn')
     await toggles[0].trigger('click')
-    const select = wrapper.find('select.form-ctrl')
+    const select = wrapper.get('[data-test="group-select"]')
     await select.setValue('flowgate.default.0111')
 
     const titleInput = wrapper.find('input#newReqTitle')

@@ -2,6 +2,31 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
+  flow_base: {
+    "title": "베이스 브랜치",
+    "current": "현재",
+    "change": "변경",
+    "select": "브랜치를 선택하세요",
+    "denied": "변경 권한이 없습니다",
+    "disposed": "폐기된 Flow입니다",
+    "git_disabled": "Git을 사용하지 않습니다",
+    "checkout_unavailable": "기준 체크아웃을 사용할 수 없습니다",
+    "locked": "작업 이력이 있어 변경할 수 없습니다",
+    "busy": "준비 중",
+    "remote_only": "로컬 브랜치를 선택하세요",
+    "internal": "내부 브랜치는 사용할 수 없습니다",
+    "changed": "기준이 변경됐습니다. 재조회 후 다시 선택하세요",
+    "not_found": "브랜치를 찾을 수 없습니다",
+    "group_not_found": "Flow를 찾을 수 없습니다",
+    "invalid": "유효한 브랜치를 선택하세요",
+    "not_commit": "커밋을 가리키는 브랜치를 선택하세요",
+    "save_failed": "저장하지 못했습니다",
+    "options_denied": "후보 조회 권한 없음",
+    "options_failed": "후보를 불러오지 못했습니다",
+    "read_denied": "조회 권한이 없습니다",
+    "read_failed": "현재 기준을 불러오지 못했습니다"
+},
+
   document: {
     bodyState: {
       file_path_missing: "파일 경로 미기록",
@@ -734,6 +759,13 @@ export default {
       flow_open_title: '플로우 열기',
       group_new_title: '새 그룹',
       flow_new_title: '새 플로우',
+      flow_group: '그룹',
+      base_branch_loading: '브랜치 목록 불러오는 중',
+      base_branch_retry: '브랜치 목록 다시 불러오기',
+      base_branch_unavailable: '목록을 불러올 수 없음',
+      base_branch: '베이스 브랜치',
+      base_branch_required: '베이스 브랜치를 선택하세요.',
+      base_branch_failed: '베이스 브랜치를 불러오지 못했습니다.',
       search_placeholder: '검색',
       close: '닫기',
       cancel: '취소',

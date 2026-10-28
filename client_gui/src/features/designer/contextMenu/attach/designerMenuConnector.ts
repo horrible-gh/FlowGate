@@ -162,6 +162,8 @@ export interface DesignerContextMenuDeps {
   /** Edit › 전체 선택 on the active Flow (the top menu's path). */
   readonly selectAll: (flowId: string) => void
   /** File › 새 Group (the top menu's dialog and create path). */
+  readonly openFlowBaseBranch?: (projectId: string, flowId: string) => void
+  readonly projectGitEnabled?: (projectId: string) => boolean | undefined
   readonly openGroupCreate: () => void
   /** The 새 Flow dialog with this Group given explicitly (the selection is left as it is). */
   readonly openFlowCreate: (groupId: string) => void
@@ -196,7 +198,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   /** The menu the host shows now, with what it was built from (replaced on every open). */
   const open = shallowRef<OpenMenu | null>(null)
   /** What runs: the 2-B commands only while the Shell lends their server paths. */
-  const connected: readonly MenuCommand[] = deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS
+  const connected: readonly MenuCommand[] = [...(deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS), ...(deps.openFlowBaseBranch ? ['flow.baseBranch' as const] : [])]
   /** T#2: the one 2-B window open now (a new one replaces it). */
   const pending = shallowRef<PendingMenuAction | null>(null)
   let actionSeq = 0
@@ -240,7 +242,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     const live = () => deps.projectId() === projectAt && (alive?.() ?? true)
     const build = () => live() ? projectTreeMenu({
       target,
-      available: { currentProject: deps.projectId() === target.projectId },
+      available: { currentProject: deps.projectId() === target.projectId, gitEnabled: deps.projectGitEnabled?.(target.projectId) },
       connected,
     }) : null
     return show(event, build, live, (request, recheck) => {
@@ -248,6 +250,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
       if (!live() || deps.projectId() !== scope.projectId) return
       if (request.command === 'project.newGroup') deps.openGroupCreate()
       else if (request.command === 'group.newFlow' && scope.kind === 'group') deps.openFlowCreate(scope.groupId)
+      else if (request.command === 'flow.baseBranch' && scope.kind === 'flow') deps.openFlowBaseBranch?.(scope.projectId, scope.flowId)
       else if (!SERVER_SET.has(request.command)) return
       // T#2: 이름 변경 (Group / Flow) and Flow 삭제 (the existing dispose, DC) open their windows on this row.
       else if (request.command === 'group.rename' && scope.kind === 'group') {

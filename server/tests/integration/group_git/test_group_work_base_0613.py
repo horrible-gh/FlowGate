@@ -333,18 +333,14 @@ def test_outbox_create_existing_group_applies_work_base_ref_when_unlocked(
 ):
     """flowgate.default.0613 TR0014 rev2: the rejection removed the blanket
     "existing group = readonly" rule. Before real Git work has locked the group,
-    picking a Base Branch for it is ordinary group setup."""
+    picking a Base Branch for it is ordinary group setup. flowgate.v02.0104 D0004
+    §3.4: it is now the PATCH route's change path (row lock + conditional save) on
+    the real group row, only without the expected comparison."""
+    db_groups.insert_group("p.default.0001", "p", "default", "Existing", None, None)
     storage_file = _stub_outbox_workflow_root_io(monkeypatch, tmp_path, {})
-    monkeypatch.setattr(
-        process_service.db, "get_group",
-        lambda gid: {"group_id": gid, "project_id": "p", "module": "default"},
-    )
+    monkeypatch.setattr(git_service.db_git, "get_config",
+                        lambda _pid: {"enabled": 1, "base_branch": "main"})
     monkeypatch.setattr(git_service.db_git, "get_state", lambda _gid: None)
-    applied = {}
-    monkeypatch.setattr(
-        db_groups, "update_work_base_ref",
-        lambda gid, ref: applied.update(group_id=gid, work_base_ref=ref),
-    )
 
     result = process_service.create_requirement(
         project="p",
@@ -358,23 +354,19 @@ def test_outbox_create_existing_group_applies_work_base_ref_when_unlocked(
     )
 
     assert result["status"] == "success", result
-    assert applied == {"group_id": "p.default.0001", "work_base_ref": "flowgate-v0.2"}
+    assert db_groups.get_by_id("p.default.0001")["work_base_ref"] == "flowgate-v0.2"
     assert storage_file.exists()
 
 
-def test_outbox_create_existing_group_rejects_work_base_ref_once_locked(monkeypatch):
+def test_outbox_create_existing_group_rejects_work_base_ref_once_locked(repo, monkeypatch):
+    db_groups.insert_group("p.default.0001", "p", "default", "Existing", None, "main")
     monkeypatch.setattr(process_service.db, "get_allowed_projects", lambda: [])
-    monkeypatch.setattr(
-        process_service.db, "get_group",
-        lambda gid: {"group_id": gid, "project_id": "p", "module": "default"},
-    )
+    monkeypatch.setattr(process_service.db, "get_documents_by_group_id", lambda _gid: [])
+    monkeypatch.setattr(git_service.db_git, "get_config",
+                        lambda _pid: {"enabled": 1, "base_branch": "main"})
     monkeypatch.setattr(
         git_service.db_git, "get_state",
         lambda _gid: {"worktree_registered": 1},
-    )
-    monkeypatch.setattr(
-        db_groups, "update_work_base_ref",
-        lambda *_a: pytest.fail("a locked group's work base must not be written"),
     )
 
     result = process_service.create_requirement(
@@ -392,7 +384,9 @@ def test_outbox_create_existing_group_rejects_work_base_ref_once_locked(monkeypa
     assert result["errors"] == [{
         "code": "group_work_base_locked",
         "message": "group work base cannot change once its Git worktree has started",
+        "details": {"lock_evidence": ["ledger"]},
     }]
+    assert db_groups.get_by_id("p.default.0001")["work_base_ref"] == "main"
 
 
 @pytest.mark.parametrize(
@@ -818,6 +812,10 @@ def test_work_base_options_list_exactly_what_group_creation_accepts(repo, monkey
         lambda _pid, ref: {"group_id": "p.default.9"} if ref == "slot-owned" else None,
     )
 
+    monkeypatch.setattr(
+        git_service.db_git, "list_states_of_project_any",
+        lambda _pid: [{"group_id": "p.default.9", "branch": "slot-owned", "worktree_registered": 0}],
+    )
     result = git_service.list_group_work_base_options("p")
     assert result == {
         "ok": True,
@@ -986,3 +984,41 @@ def test_seeded_author_role_contract_matches_the_options_permission(migrated_sql
     assert "perm_document_create" in worker
     assert "project.settings.read" not in worker
     assert "perm_project_settings_read" not in worker
+
+
+@pytest.mark.parametrize("branch_count", [0, 1, 60])
+def test_options_batch_ownership_matches_old_filter_once(repo, monkeypatch, branch_count):
+    """D0104 §7.1: one ownership read, including cleaned-up/failed rows, for B branches."""
+    names = [f"feature/{i:03}" for i in range(branch_count)]
+    states = [
+        {"group_id": f"p.default.{i}", "branch": name,
+         "worktree_registered": i % 2, "status": "none" if i % 3 else "closed",
+         "provision_error": "failed" if i % 2 else None}
+        for i, name in enumerate(names) if i % 3 != 1
+    ] + [{"branch": "historical-not-local", "worktree_registered": 0}, {"branch": ""}]
+    from unittest.mock import Mock
+    batch = Mock(return_value=states)
+    # Freeze the old per-branch predicate's accepted set before forbidding its use.
+    expected = sorted(name for name in names if not any(row.get("branch") == name for row in states))
+    monkeypatch.setattr(git_service.db_git, "get_config", lambda _pid: {"enabled": 1, "base_branch": "missing"})
+    monkeypatch.setattr(group_work_base, "local_branch_refs", lambda _root: dict.fromkeys(reversed(names)))
+    monkeypatch.setattr(git_service.db_git, "list_states_of_project_any", batch)
+    monkeypatch.setattr(git_service.db_git, "get_state_by_branch", lambda *a: pytest.fail("per-branch ownership query"))
+    monkeypatch.setattr(git_service, "_run_git", lambda *a, **kw: pytest.fail("no fetch/checkout or extra Git call"))
+    result = git_service.list_group_work_base_options("p")
+    batch.assert_called_once_with("p")
+    assert result == {"ok": True, "git_enabled": True, "base_branch": "missing",
+                      "branches": [{"name": name, "is_project_base": False} for name in expected]}
+
+
+def test_options_keep_checkout_and_listing_errors(repo, monkeypatch):
+    monkeypatch.setattr(git_service.db_git, "get_config", lambda _pid: {"enabled": 1})
+    monkeypatch.setattr(git_service, "_base_root_of", lambda _pid: None)
+    with pytest.raises(GitServiceError) as caught:
+        git_service.list_group_work_base_options("p")
+    assert (caught.value.status, caught.value.code) == (409, "group_work_base_checkout_unavailable")
+    monkeypatch.setattr(git_service, "_base_root_of", lambda _pid: repo)
+    monkeypatch.setattr(git_service, "_run_git", lambda *a, **kw: subprocess.CompletedProcess([], 1, "", "failed"))
+    with pytest.raises(GitServiceError) as caught:
+        git_service.list_group_work_base_options("p")
+    assert (caught.value.status, caught.value.code) == (500, "group_work_base_options_failed")

@@ -4,13 +4,13 @@
 
 import { action as a, makeMenu, separator as s } from './model'
 import type { PartInput, ProjectTarget } from './types'
-export interface ProjectAvailability { readonly currentProject: boolean; readonly disposed?: boolean }
+export interface ProjectAvailability { readonly currentProject: boolean; readonly disposed?: boolean; readonly gitEnabled?: boolean }
 export function projectTreeMenu({ target, available: v, connected }: PartInput<ProjectTarget, ProjectAvailability>) {
   const items = target.kind === 'project'
     ? [a('project.newGroup', 'newGroup', '＋', !v.currentProject), s('project-info'), a('project.info', 'projectInfo', 'ⓘ')]
     : target.kind === 'group'
       ? [a('group.newFlow', 'newFlow', '＋', !v.currentProject), s('group-info'), a('group.rename', 'rename', '✎', !v.currentProject), a('group.info', 'info', 'ⓘ')]
-      : [a('flow.rename', 'rename', '✎', !!v.disposed), s('flow-delete'), a('flow.delete', 'delete', '×', !v.currentProject || !!v.disposed, true)]
+      : [a('flow.rename', 'rename', '✎', !!v.disposed), ...(v.gitEnabled === false ? [] : [a('flow.baseBranch', 'baseBranch', '⑂')]), s('flow-delete'), a('flow.delete', 'delete', '×', !v.currentProject || !!v.disposed, true)]
   // flow.delete requests the existing DC workflow; it never performs permanent deletion.
   return makeMenu(target, items, connected)
 }

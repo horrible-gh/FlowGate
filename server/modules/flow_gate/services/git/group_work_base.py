@@ -7,11 +7,19 @@ are intentionally outside this module.
 """
 from __future__ import annotations
 
+import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
+from modules.flow_gate.db import dialect as db_dialect
 from modules.flow_gate.db import groups as db_groups
+from modules.flow_gate.db import operation_job as db_jobs
+from modules.flow_gate.db.connection import get_store, in_transaction
 
 from .credentials import GitServiceError
+
+_log = logging.getLogger(__name__)
 
 
 def _normalized_ref(value: str) -> str:
@@ -171,10 +179,14 @@ def list_group_work_base_options(project_id: str) -> dict:
         )
     names = sorted(local_branch_refs(base_root))
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    # Include historical/unregistered failure rows, just like get_state_by_branch.
+    owned_branches = {
+        row.get("branch") for row in _gs.db_git.list_states_of_project_any(project_id)
+    }
     branches = [
         {"name": name, "is_project_base": name == base_branch}
         for name in names
-        if _gs.db_git.get_state_by_branch(project_id, name) is None
+        if name not in owned_branches
     ]
     return {
         "ok": True,
@@ -243,25 +255,357 @@ def locked_group_ids(project_id: str) -> set[str]:
     }
 
 
-def apply_group_work_base_ref(project_id: str, group_id: str, value: str) -> str:
-    """Update an already-existing group's stored Base Branch.
+# ── existing-group change boundary (flowgate.v02.0104 D0004 §3.2–§3.4) ────────
+#
+# The extended lock judgment, the group row lock and the one change path that the
+# PATCH /groups/{id}/work-base route and the v0.1 existing-group root document both
+# use. ``group_work_base_locked`` / ``locked_group_ids`` above stay the ledger-only
+# batch judgment of ``GET /groups`` (§3.2.3).
 
-    T0013's "no arbitrary change to an existing group's stored Base Branch"
-    reads, per the rejection that reworked this contract, as: no change once
-    that value has actually started to matter to real Git history (see
-    :func:`group_work_base_locked`). Before that point the group has not
-    forked or synced from it yet, so picking a different ref here is ordinary
-    group setup, not a rewrite of established history.
+PROVISION_KIND = "worktree_provision"
+
+# §3.2.2, in this order wherever a list of them is reported.
+LOCK_EVIDENCE = ("ledger", "work_base_record", "provision_succeeded", "group_branch_exists")
+
+_EXPECTED_UNSET = object()
+_GROUP_ROW_COLUMNS = "group_id, project_id, module, work_base_ref, updated_at"
+
+
+def lock_group_row(group_id: str) -> Optional[dict]:
+    """Lock ``group_id``'s ``groups`` row and read it; None when there is no row (§3.3.1).
+
+    The first statement of the caller's transaction, shared by the change path and the
+    provision start recheck. PostgreSQL / MySQL: ``SELECT … FOR UPDATE`` waits for a
+    writer holding the row and then reads the committed row, so the stored ref is the
+    latest even under repeatable read. SQLite has no row lock: an UPDATE that changes no
+    value (``updated_at`` included) takes the database write lock, then the row is read
+    in the same transaction. Only DB work belongs in that transaction -- no Git, fetch,
+    file work or job registration (``job_store.create_or_get_job``, D 8.4).
     """
-    if group_work_base_locked(project_id, group_id):
-        raise GitServiceError(
-            409,
-            "group_work_base_locked",
-            "group work base cannot change once its Git worktree has started",
+    if not in_transaction():
+        raise RuntimeError("lock_group_row must run inside the transaction it locks for")
+    store = get_store()
+    if getattr(store, "dialect", db_dialect.SQLITE) == db_dialect.SQLITE:
+        locked = store._execute_affected(
+            "UPDATE groups SET work_base_ref = work_base_ref WHERE group_id = ?", [group_id])
+        if locked == 0:
+            return None
+        return store._fetch_one(
+            f"SELECT {_GROUP_ROW_COLUMNS} FROM groups WHERE group_id = ?", [group_id])
+    return store._fetch_one(
+        f"SELECT {_GROUP_ROW_COLUMNS} FROM groups WHERE group_id = ? FOR UPDATE", [group_id])
+
+
+def _active_provision_jobs(group_id: str) -> list[dict]:
+    """Non-terminal ``worktree_provision`` jobs of the group: pending, blocked,
+    retry_wait, running, freezing, recovery_required ... (§3.3.2)."""
+    return db_jobs.active_jobs_of_group(group_id, PROVISION_KIND)
+
+
+def _db_lock_evidence(group_id: str) -> list[str]:
+    """The §3.2.2 evidence a DB read can prove: ``ledger``, ``work_base_record``,
+    ``provision_succeeded``. Not evidence: failed/cancelled provision jobs only, a
+    provision-failure-only ledger row, a backfill row without ``work_base_sha``."""
+    from modules.flow_gate.services import git_service as _gs
+
+    state = _gs.db_git.get_state(group_id)
+    evidence = []
+    if _locked_by_state(state):
+        evidence.append("ledger")
+    if str((state or {}).get("work_base_sha") or "").strip():
+        evidence.append("work_base_record")
+    if db_jobs.jobs_of_group(group_id, PROVISION_KIND, ("succeeded",)):
+        evidence.append("provision_succeeded")
+    return evidence
+
+
+def _group_branch_names(project_id: str, group: dict) -> set[str]:
+    """The group's worktree branch: the ledger's name and the derived one
+    (``worktree_branch_name``, the name provisioning creates)."""
+    from modules.flow_gate.services import git_service as _gs
+
+    group_id = group["group_id"]
+    names = set()
+    recorded = str((_gs.db_git.get_state(group_id) or {}).get("branch") or "").strip()
+    if recorded:
+        names.add(recorded)
+    module = (group.get("module") or "").strip() or _gs._module_of(group_id)
+    try:
+        names.add(_gs.worktree_branch_name(project_id, module, group_id))
+    except GitServiceError:
+        pass
+    return names
+
+
+def _group_branch_exists(project_id: str, group: dict, base_root: Path) -> bool:
+    """``group_branch_exists``: a local or ``origin`` tracking branch of the group's
+    name in the base checkout. Local reads only, no fetch. A failed read fails closed."""
+    from modules.flow_gate.services import git_service as _gs
+
+    for name in sorted(_group_branch_names(project_id, group)):
+        wanted = {f"refs/heads/{name}", f"refs/remotes/origin/{name}"}
+        proc = _gs._run_git(["for-each-ref", "--format=%(refname)", *sorted(wanted)],
+                            cwd=base_root)
+        if proc.returncode != 0:
+            raise GitServiceError(
+                500,
+                "group_work_base_update_failed",
+                "Git could not read the group branches",
+                diagnostic=" ".join((proc.stderr or "").split()),
+            )
+        if wanted & {line.strip() for line in (proc.stdout or "").splitlines()}:
+            return True
+    return False
+
+
+def _lock_evidence(project_id: str, group: dict, base_root: Optional[Path]) -> list[str]:
+    """Every §3.2.2 evidence that applies; the branch is only read with a checkout."""
+    found = set(_db_lock_evidence(group["group_id"]))
+    if base_root is not None and _group_branch_exists(project_id, group, base_root):
+        found.add("group_branch_exists")
+    return [code for code in LOCK_EVIDENCE if code in found]
+
+
+def _checkout_of(project_id: str) -> Optional[Path]:
+    from modules.flow_gate.services import git_service as _gs
+
+    base_root = _gs._base_root_of(project_id)
+    if base_root is None or not (base_root / ".git").exists():
+        return None
+    return base_root
+
+
+def _group_disposed(group_id: str) -> bool:
+    from modules.flow_gate import process_service
+
+    return bool(process_service.is_group_disposed(group_id))
+
+
+def _git_enabled(config: Optional[dict]) -> bool:
+    return bool(config is not None and config.get("enabled"))
+
+
+def _group_not_found(group_id: str) -> GitServiceError:
+    return GitServiceError(404, "group_not_found", "group not found", {"group_id": group_id})
+
+
+def _disposed_error() -> GitServiceError:
+    return GitServiceError(409, "group_disposed", "a disposed group's work base cannot change")
+
+
+def _git_disabled_error() -> GitServiceError:
+    return GitServiceError(409, "group_work_base_git_disabled",
+                           "the project's Git integration is not enabled")
+
+
+def _checkout_error() -> GitServiceError:
+    return GitServiceError(
+        409,
+        "group_work_base_checkout_unavailable",
+        "project Git checkout is not available for group work-base validation",
+    )
+
+
+def _locked_error(evidence: list[str]) -> GitServiceError:
+    return GitServiceError(
+        409,
+        "group_work_base_locked",
+        "group work base cannot change once its Git worktree has started",
+        {"lock_evidence": list(evidence)},
+    )
+
+
+def _changed_error() -> GitServiceError:
+    return GitServiceError(409, "group_work_base_changed",
+                           "group work base changed since it was read")
+
+
+def _busy_error() -> GitServiceError:
+    return GitServiceError(409, "group_work_base_busy",
+                           "group worktree provisioning is in progress")
+
+
+def _save_work_base_ref(group_id: str, stored: Optional[str], ref: str) -> int:
+    """Conditional save: only while the stored value (NULL included) is ``stored``."""
+    now = datetime.now().isoformat()
+    if stored is None:
+        return get_store()._execute_affected(
+            "UPDATE groups SET work_base_ref = ?, updated_at = ? "
+            "WHERE group_id = ? AND work_base_ref IS NULL",
+            [ref, now, group_id],
         )
+    return get_store()._execute_affected(
+        "UPDATE groups SET work_base_ref = ?, updated_at = ? "
+        "WHERE group_id = ? AND work_base_ref = ?",
+        [ref, now, group_id, stored],
+    )
+
+
+def group_work_base_view(group_id: str) -> dict:
+    """The ``GET /groups/{id}/work-base`` read (§5.3) without ``can_edit``.
+
+    Display only: the final judgment is the change path's (§3.4). ``reason`` is the
+    first of disposed / git_disabled / checkout_unavailable / history_locked /
+    provision_busy that applies.
+    """
+    from modules.flow_gate.services import git_service as _gs
+
+    group = db_groups.get_by_id(group_id)
+    if group is None:
+        raise _group_not_found(group_id)
+    project_id = group.get("project_id")
+    config = _gs.db_git.get_config(project_id)
+    git_enabled = _git_enabled(config)
+    base_root = _checkout_of(project_id) if git_enabled else None
+    evidence = _lock_evidence(project_id, group, base_root)
+    reasons = (
+        ("disposed", lambda: _group_disposed(group_id)),
+        ("git_disabled", lambda: not git_enabled),
+        ("checkout_unavailable", lambda: base_root is None),
+        ("history_locked", lambda: bool(evidence)),
+        ("provision_busy", lambda: bool(_active_provision_jobs(group_id))),
+    )
+    reason = next((code for code, applies in reasons if applies()), None)
+    return {
+        "group_id": group_id,
+        "project_id": project_id,
+        "git_enabled": git_enabled,
+        "work_base_ref": group.get("work_base_ref"),
+        "effective_work_base_ref": _gs.resolve_group_work_base_ref(
+            project_id, group_id, group=group, config=config),
+        "work_base_locked": bool(evidence),
+        "lock_evidence": evidence,
+        "work_base_editable": reason is None,
+        "reason": reason,
+    }
+
+
+# A provision job that settles (failed / cancelled) after the change's step-1 group
+# branch read may have created that branch first and left no DB evidence (§3.2.2):
+# the change then rolls back and runs steps 1→2 again, at most this many times.
+_CHANGE_ATTEMPTS = 3
+
+
+class _StaleBranchRead(Exception):
+    """Rolls the change transaction back: a provision job settled after the branch read."""
+
+
+def _settled_provision_jobs(group_id: str) -> frozenset:
+    """Fingerprint of the group's failed / cancelled provision jobs.
+
+    Taken before the step-1 group branch read and again inside the row lock. A job that
+    settled in between -- active before, or registered after, the read -- is a new
+    member, so the branch the read saw no longer proves anything. Active jobs are
+    ``group_work_base_busy`` and succeeded ones ``provision_succeeded`` already."""
+    rows = db_jobs.jobs_of_group(group_id, PROVISION_KIND, ("failed", "cancelled"))
+    return frozenset(
+        (row.get("job_id"), row.get("status"), row.get("touch_seq")) for row in rows)
+
+
+def change_group_work_base_ref(
+    group_id: str,
+    value: str,
+    *,
+    expected=_EXPECTED_UNSET,
+    project_id: Optional[str] = None,
+) -> dict:
+    """The one change path of an existing group's stored work base (§3.4).
+
+    ``expected`` is the PATCH's ``expected_work_base_ref`` (None = stored NULL); the
+    v0.1 root document path leaves it out and skips only that comparison. The order is
+    fixed and is the error order:
+
+    1. outside a transaction, read only: group (and ``project_id`` when given) →
+       disposed → Git enabled → base checkout → §3.2.2 lock (DB evidence + group
+       branch) → ``validate_group_work_base_ref``;
+    2. one group row lock transaction: stored value → expected → DB lock evidence
+       again → no active provision job → no provision job settled since the step-1
+       branch read (else roll back and run 1→2 again; still settling after
+       ``_CHANGE_ATTEMPTS`` runs → busy) → conditional save → commit.
+
+    Any failure changes nothing. No Git, fetch or job registration inside the
+    transaction; the checkout is never switched. A repository error in either step
+    is the 500 ``group_work_base_update_failed``; GitServiceErrors pass unchanged.
+    """
+    try:
+        for _attempt in range(_CHANGE_ATTEMPTS):
+            try:
+                return _change_once(group_id, value, expected, project_id)
+            except _StaleBranchRead:
+                _log.info("provision job settled during the work base change of %s; "
+                          "reading the group branch again", group_id)
+        raise _busy_error()
+    except GitServiceError:
+        raise
+    except Exception as exc:
+        _log.warning("group work base change failed for %s", group_id, exc_info=True)
+        raise GitServiceError(
+            500,
+            "group_work_base_update_failed",
+            "group work base could not be saved; nothing changed",
+            diagnostic=type(exc).__name__,
+        ) from exc
+
+
+def _change_once(group_id: str, value: str, expected, project_id: Optional[str]) -> dict:
+    """Steps 1→2 of :func:`change_group_work_base_ref`, once."""
+    from modules.flow_gate.services import git_service as _gs
+
+    group = db_groups.get_by_id(group_id)
+    if group is None or (project_id is not None and group.get("project_id") != project_id):
+        raise _group_not_found(group_id)
+    project_id = group.get("project_id")
+    if _group_disposed(group_id):
+        raise _disposed_error()
+    if not _git_enabled(_gs.db_git.get_config(project_id)):
+        raise _git_disabled_error()
+    base_root = _checkout_of(project_id)
+    if base_root is None:
+        raise _checkout_error()
+    settled = _settled_provision_jobs(group_id)
+    evidence = _lock_evidence(project_id, group, base_root)
+    if evidence:
+        raise _locked_error(evidence)
     ref = validate_group_work_base_ref(project_id, value)
-    db_groups.update_work_base_ref(group_id, ref)
-    return ref
+
+    with get_store().transaction():
+        row = lock_group_row(group_id)
+        if row is None:
+            raise _group_not_found(group_id)
+        stored = row.get("work_base_ref")
+        if expected is not _EXPECTED_UNSET and expected != stored:
+            raise _changed_error()
+        evidence = _db_lock_evidence(group_id)
+        if evidence:
+            raise _locked_error(evidence)
+        if _active_provision_jobs(group_id):
+            raise _busy_error()
+        if _settled_provision_jobs(group_id) != settled:
+            raise _StaleBranchRead()
+        if _save_work_base_ref(group_id, stored, ref) != 1:
+            raise _changed_error()
+        saved = get_store()._fetch_one(
+            f"SELECT {_GROUP_ROW_COLUMNS} FROM groups WHERE group_id = ?", [group_id])
+    return {
+        "group_id": group_id,
+        "project_id": project_id,
+        "work_base_ref": ref,
+        "effective_work_base_ref": ref,
+        "work_base_locked": False,
+        "work_base_editable": True,
+        "reason": None,
+        "updated_at": (saved or {}).get("updated_at"),
+    }
+
+
+def apply_group_work_base_ref(project_id: str, group_id: str, value: str) -> str:
+    """Change an existing group's stored work base without the expected comparison.
+
+    flowgate.v02.0104 D0004 §3.4: a thin wrapper of :func:`change_group_work_base_ref`
+    -- lock, busy and the conditional save apply as for the PATCH route. There is no
+    unconditional write path any more.
+    """
+    return change_group_work_base_ref(group_id, value, project_id=project_id)["work_base_ref"]
 
 
 def resolve_group_work_base_ref(

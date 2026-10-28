@@ -691,10 +691,10 @@ def create_workflow_root(
     if requested_work_base_ref and not group_id:
         # A new group's work_base_ref is validated up front because insert_group()
         # below needs an already-vetted value. An existing group's ref instead goes
-        # through git_service.apply_group_work_base_ref once that group is confirmed
-        # in the "elif group_id:" branch -- it validates AND checks the group is not
-        # locked by real Git work (flowgate.default.0613 TR0014 rev2; T0013's "no
-        # arbitrary change" reads as "no change once Git history depends on it").
+        # through git_service.change_group_work_base_ref once that group is confirmed
+        # in the "elif group_id:" branch -- the change path the PATCH work-base route
+        # shares (flowgate.v02.0104 D0004 §3.4): extended lock, busy provision and
+        # the conditional save under the group row lock, only the expected compare left out.
         try:
             from .services import git_service
             stored_work_base_ref = git_service.validate_group_work_base_ref(
@@ -746,8 +746,8 @@ def create_workflow_root(
             if requested_work_base_ref:
                 try:
                     from .services import git_service
-                    git_service.apply_group_work_base_ref(
-                        project, group_id, requested_work_base_ref
+                    git_service.change_group_work_base_ref(
+                        group_id, requested_work_base_ref, project_id=project
                     )
                 except GitServiceError as exc:
                     error = {"code": exc.code, "message": exc.message}
