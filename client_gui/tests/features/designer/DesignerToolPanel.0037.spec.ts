@@ -123,6 +123,31 @@ describe('DesignerRightDock — Tool Panel', () => {
     expect(w.find('[data-test="designer-git-panel"]').exists()).toBe(false)
   })
 
+  it('uses colored vector artwork and retains the Git branch through tab selection', async () => {
+    const w = await mountDock()
+    const [palette, conversation, git] = tabs(w).map((tab) => tab.get('svg'))
+    const paintColors = palette.findAll('circle').map((dot) => dot.attributes('fill'))
+    expect(new Set(paintColors).size).toBeGreaterThanOrEqual(4)
+    expect(palette.get('path').attributes('fill')).toMatch(/^#[0-9a-f]{6}$/i)
+    expect(conversation.get('path').attributes('fill')).toMatch(/^#[0-9a-f]{6}$/i)
+    expect(conversation.findAll('circle')).toHaveLength(3)
+    expect(git.get('path').attributes('d')).toBe('M4 5v6m8-6v1a3 3 0 0 1-3 3H7a3 3 0 0 0-3 3')
+    expect(git.findAll('circle').map((dot) => ['cx', 'cy', 'r'].map((attr) => dot.attributes(attr))))
+      .toEqual([['4', '3', '2'], ['12', '3', '2'], ['4', '13', '2']])
+    for (const [index, label] of ['팔레트', '대화', 'Git'].entries()) {
+      await selectTool(w, label)
+      expect(tabs(w).map((tab) => tab.attributes('aria-selected'))).toEqual(
+        [0, 1, 2].map((i) => String(i === index)),
+      )
+      for (const tab of tabs(w)) {
+        const icon = tab.get('svg')
+        expect(icon.attributes('focusable')).toBe('false')
+        expect(icon.find('text, image, foreignObject, use').exists()).toBe(false)
+        expect(icon.text()).toBe('')
+      }
+    }
+  })
+
   it('passes Palette selection to the Shell and reflects placement cancellation', async () => {
     const w = await mountDock()
     const card = w.get('[data-test="designer-palette-item"][data-item-id="task"]')

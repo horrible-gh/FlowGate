@@ -609,7 +609,7 @@ export default {
         flow_open: '플로우 열기…',
         flow_recent: '최근 플로우',
         flow_close: '플로우 닫기',
-        designer_close: 'Designer 닫기',
+        designer_close: '디자이너 닫기',
         recent_empty: '최근 항목 없음',
         undo: '실행 취소',
         redo: '다시 실행',

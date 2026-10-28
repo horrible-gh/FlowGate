@@ -662,6 +662,9 @@ describe('Explorer visibility after a File menu open (review 1841)', () => {
 describe('Designer 닫기', () => {
   it('the Shell hands the close to the App Shell', async () => {
     const w = await mountShell()
+    const file = await openMenu(w, 'file')
+    expect(file.get('[data-command="designer.close"]').text()).toBe('디자이너 닫기')
+    expect(file.findAll('[data-command]').at(-1)?.attributes('data-command')).toBe('designer.close')
     await chooseCommand(w, 'designer.close')
     expect(w.emitted('close-designer')).toEqual([[]])
   })

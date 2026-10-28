@@ -36,14 +36,24 @@
         @update:model-value="onSelect"
       >
         <template #tab="{ tab }">
-          <svg class="designer-right-tab-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
-            <g v-if="tab.key === 'palette'" fill="none" stroke="currentColor" stroke-width="1.3">
-              <rect x="2" y="2" width="4.5" height="4.5" rx="1" />
-              <rect x="9.5" y="2" width="4.5" height="4.5" rx="1" />
-              <rect x="2" y="9.5" width="4.5" height="4.5" rx="1" />
-              <rect x="9.5" y="9.5" width="4.5" height="4.5" rx="1" />
+          <!-- Original vector artwork: palette / chat; the existing Git geometry is retained. -->
+          <svg class="designer-right-tab-icon" :class="'is-' + tab.key" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+            <g v-if="tab.key === 'palette'">
+              <path d="M8 1.25C4.2 1.25 1.25 4 1.25 7.5c0 4 3 7.25 6.5 7.25h1.1c1.2 0 1.9-1.3 1.2-2.3l-.4-.6c-.5-.7 0-1.6.9-1.6H12c1.7 0 2.75-1.2 2.75-2.9 0-3.4-3-6.1-6.75-6.1Z" fill="#ffe0a6" stroke="#d89b58" stroke-width="0.75" />
+              <circle cx="4.3" cy="5.4" r="1.2" fill="#f15b68" />
+              <circle cx="7.6" cy="3.8" r="1.2" fill="#5e9eff" />
+              <circle cx="11.1" cy="5.1" r="1.2" fill="#55c98d" />
+              <circle cx="4.2" cy="9" r="1.2" fill="#b584ef" />
+              <circle cx="7.1" cy="11.9" r="1.1" fill="#efaa38" />
             </g>
-            <path v-else-if="tab.key === 'conversation'" d="M3 2.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7l-4 3v-3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+            <g v-else-if="tab.key === 'conversation'">
+              <path d="M3 2.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7l-4 3v-3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z" fill="#61c6ff" stroke="#b9eaff" stroke-width="0.75" stroke-linejoin="round" />
+              <g fill="#174c78">
+                <circle cx="5" cy="7" r="0.85" />
+                <circle cx="8" cy="7" r="0.85" />
+                <circle cx="11" cy="7" r="0.85" />
+              </g>
+            </g>
             <g v-else fill="none" stroke="currentColor" stroke-width="1.3">
               <path d="M4 5v6m8-6v1a3 3 0 0 1-3 3H7a3 3 0 0 0-3 3" />
               <circle cx="4" cy="3" r="2" />
@@ -209,6 +219,19 @@ const partFlow = computed(() => (props.unselected ? null : props.activeFlow))
   flex: none;
   width: 14px;
   height: 14px;
+}
+
+/* Warm Git accent preserves the branch shape; selection brightens every vector icon. */
+.designer-right-tab-icon.is-git {
+  color: #f7a278;
+}
+
+.designer-right-tabs :deep(.ui-tab.is-active) .designer-right-tab-icon {
+  filter: saturate(1.15) drop-shadow(0 0 2px rgba(87, 167, 255, 0.38));
+}
+
+.designer-right-tabs :deep(.ui-tab.is-active) .designer-right-tab-icon.is-git {
+  color: #ffd0a6;
 }
 
 .designer-right-tab-label {

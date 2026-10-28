@@ -206,7 +206,7 @@ describe('Designer top band — Menu Bar', () => {
       '새 프로젝트', '프로젝트 열기…', '최근 프로젝트', '프로젝트 닫기',
       '새 그룹', '그룹 열기…', '최근 그룹', '그룹 닫기',
       '새 플로우', '플로우 열기…', '최근 플로우', '플로우 닫기',
-      'Designer 닫기',
+      '디자이너 닫기',
     ])
     expect(pop.text()).not.toMatch(/저장/)
     expect(pop.findAll('[role="separator"]')).toHaveLength(3)
