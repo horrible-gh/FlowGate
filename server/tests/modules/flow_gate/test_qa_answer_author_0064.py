@@ -384,3 +384,32 @@ def test_usernames_by_ids_ignores_blanks_and_unknown_ids(store):
     assert db_users.usernames_by_ids([]) == {}
     assert db_users.usernames_by_ids(["", None, "nobody"]) == {}  # type: ignore[list-item]
     assert db_users.usernames_by_ids(["u_hong", "u_hong", "u1"]) == {"u_hong": "홍길동", "u1": "owner"}
+
+
+def test_auto_responder_answer_records_a_provider_distinct_from_asker_0110(store, monkeypatch):
+    """The selected independent responder survives the real Q&A answer storage/read path."""
+    from modules.flow_gate.services import q_service
+    from modules.flow_gate.services.ai_invoke import review
+
+    asker = {"ai_run_id": "worker-run", "actual_provider_id": "worker", "actual_provider_name": "Worker"}
+    item_id = q_service.add_questions(
+        DOC, [{"title": "Scope", "body": "Which scope applies?"}], asker_kind="ai", created_by="u1",
+        asker_provenance=asker,
+    )["added_item_ids"][0]
+    monkeypatch.setattr(review.ai_settings_service, "resolve_effective", lambda pid: {
+        "providers": [{"id": "worker"}, {"id": "codex"}],
+    })
+    monkeypatch.setattr(review, "_stored_review_policy_for_item_seq", lambda *a: (0, None))
+    selected, source = review.resolve_question_responder_with_source(
+        None, 1, "worker", "p064", asker_provider_id=asker["actual_provider_id"],
+    )
+    assert selected == "codex" and source == "default"
+    with patch(_RUNTIME_GET, return_value=None), patch(_DB_GET, return_value=dict(PERSISTED_ROW)):
+        provenance = _routes()._resolve_ai_provenance(PERSISTED_ROW["run_id"])
+    assert provenance["actual_provider_id"] == selected
+    q_service.register_answer(DOC, item_id, "The documented scope applies.", author_kind="ai",
+                              author_provenance=provenance)
+    item = next(it for it in q_service.get_qa_detail(DOC)["items"] if it["id"] == item_id)
+    assert item["asker_provider"]["ai_provider_id"] == "worker"
+    assert item["answers"][0]["author_provider"]["ai_provider_id"] == selected
+    assert item["answers"][0]["author_provider"]["ai_provider_id"] != item["asker_provider"]["ai_provider_id"]

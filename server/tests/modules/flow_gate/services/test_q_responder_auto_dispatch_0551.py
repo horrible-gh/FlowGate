@@ -1,8 +1,8 @@
 """flowgate.default.0551 T#1: auto-dispatch the Q responder for a `question_pending` stop.
 
 NR0003 §11 제안 1/2 found two missing connections and nothing else: a responder-priority
-resolver (reviewer -> header/default selected provider -> the existing provider chain /
-default policy) and the wiring between a `question_pending` park and the existing
+resolver (reviewer -> independent header/default -> independent enabled provider;
+no eligible provider means human wait) and the wiring between a `question_pending` park and the existing
 `q_answer_invoke_service.dispatch_answer_run` — the same dispatch a human's own
 [AI 답변 요청] click already performs. WP0004 T#1 explicitly rules out building a new AI
 execution/dispatch engine, so every test below exercises the real production functions
@@ -62,7 +62,7 @@ CHAIN = [REVIEWER, HEADER]
 class TestResolveQuestionResponder:
     """review.resolve_question_responder — pure priority logic (WP0004 T#1 note):
     1) the step's valid reviewer, 2) the run's header/default selected provider,
-    3) neither -> None, leaving dispatch_answer_run's own default-chain policy to decide.
+    3) the first independent enabled default; None means wait for a human.
     """
 
     @pytest.fixture(autouse=True)
@@ -72,35 +72,35 @@ class TestResolveQuestionResponder:
 
     def test_a_valid_reviewer_outranks_everything(self):
         assert review.resolve_question_responder(
-            {"3": "aip_reviewer"}, 3, "aip_header", "flowgate") == "aip_reviewer"
+            {"3": "aip_reviewer"}, 3, "aip_header", "flowgate", asker_provider_id="aip_worker") == "aip_reviewer"
 
     def test_no_reviewer_entry_falls_to_the_header_pick(self):
         assert review.resolve_question_responder(
-            None, 3, "aip_header", "flowgate") == "aip_header"
+            None, 3, "aip_header", "flowgate", asker_provider_id="aip_worker") == "aip_header"
 
     def test_a_disabled_reviewer_falls_to_the_header_pick_not_the_project_default(self):
         # aip_gone is not in CHAIN. CHAIN[0] (aip_reviewer) must NOT win here -- the header
         # pick sits between step 1 and the project default (unlike resolve_reviewer's own
         # fallback, which would jump straight past the header pick to the project default).
         assert review.resolve_question_responder(
-            {"3": "aip_gone"}, 3, "aip_header", "flowgate") == "aip_header"
+            {"3": "aip_gone"}, 3, "aip_header", "flowgate", asker_provider_id="aip_worker") == "aip_header"
 
-    def test_a_disabled_header_pick_falls_through_to_none(self):
+    def test_a_disabled_header_pick_uses_an_independent_default(self):
         assert review.resolve_question_responder(
-            None, 3, "aip_gone", "flowgate") is None
+            None, 3, "aip_gone", "flowgate", asker_provider_id="aip_worker") == "aip_reviewer"
 
-    def test_neither_reviewer_nor_header_returns_none_for_the_caller_default(self):
-        assert review.resolve_question_responder(None, 3, None, "flowgate") is None
+    def test_neither_reviewer_nor_header_uses_an_independent_default(self):
+        assert review.resolve_question_responder(None, 3, None, "flowgate", asker_provider_id="aip_worker") == "aip_reviewer"
 
     def test_reviewer_keyed_for_a_different_item_seq_does_not_apply(self):
         assert review.resolve_question_responder(
-            {"5": "aip_reviewer"}, 3, "aip_header", "flowgate") == "aip_header"
+            {"5": "aip_reviewer"}, 3, "aip_header", "flowgate", asker_provider_id="aip_worker") == "aip_header"
 
     def test_reviewer_accepts_an_integer_key_too(self):
         # _map_lookup (oracle.py) accepts both string and int keys; the resolver must not
         # narrow that back down to string-only.
         assert review.resolve_question_responder(
-            {3: "aip_reviewer"}, 3, "aip_header", "flowgate") == "aip_reviewer"
+            {3: "aip_reviewer"}, 3, "aip_header", "flowgate", asker_provider_id="aip_worker") == "aip_reviewer"
 
 
 ANCHOR_DOC = "flowgate.default.0551.0001-T"
@@ -115,6 +115,7 @@ def _run(**overrides):
         # 0661 T0004 safety boundary 1: the dispatcher answers only items THIS run raised,
         # so every stubbed open item below names this run as its asker.
         "run_id": "aiv_requester",
+        "provider_id": "aip_worker",
         "group_id": "flowgate.default.0551",
         "doc_ref": "flowgate.default.0551.0002-N",
         "project_id": "flowgate",
@@ -139,6 +140,11 @@ class TestDispatchQuestionResponder:
     @pytest.fixture(autouse=True)
     def _wire(self, monkeypatch):
         self.calls: list[dict] = []
+        self.failed: list[tuple] = []
+        monkeypatch.setattr(review.ai_settings_service, "resolve_effective", lambda pid: {"providers": CHAIN})
+        monkeypatch.setattr(review, "_stored_review_policy_for_item_seq", lambda *a: (0, None))
+        monkeypatch.setattr(q_service, "mark_responder_failed",
+                            lambda item, code, message, **kw: self.failed.append((item, code)))
         monkeypatch.setattr(q_service, "resolve_question_anchor", lambda doc_id: ANCHOR_DOC)
         monkeypatch.setattr(finalize.db_docs, "get_by_id",
                              lambda doc_id: dict(DOC) if doc_id == ANCHOR_DOC else None)
@@ -225,11 +231,12 @@ class TestDispatchQuestionResponder:
         seen: dict = {}
 
         def _resolver(reviewer_overrides, item_seq, base_provider_id, project_id,
-                      doc_ref=None, review_count_overrides=None):
+                      doc_ref=None, review_count_overrides=None, asker_provider_id=None):
             seen.update(reviewer_overrides=reviewer_overrides, item_seq=item_seq,
                         base_provider_id=base_provider_id, project_id=project_id,
-                        doc_ref=doc_ref, review_count_overrides=review_count_overrides)
-            return None, "default"
+                        doc_ref=doc_ref, review_count_overrides=review_count_overrides,
+                        asker_provider_id=asker_provider_id)
+            return "aip_reviewer", "default"
 
         monkeypatch.setattr(review, "resolve_question_responder_with_source", _resolver)
         finalize._dispatch_question_responder(_run(
@@ -244,18 +251,18 @@ class TestDispatchQuestionResponder:
             "base_provider_id": "aip_header", "project_id": "flowgate",
             "doc_ref": "flowgate.default.0551.0002-N",
             "review_count_overrides": {"3": 1},
+            "asker_provider_id": "aip_worker",
         }
 
-    def test_no_resolved_provider_still_dispatches_with_none(self, monkeypatch):
-        # Priority 3 (T#1 WP note): dispatch_answer_run's own provider chain / default
-        # policy decides, exactly as a manual [AI 답변 요청] click with nothing selected.
-        monkeypatch.setattr(db_questions, "get_container_by_doc",
-                             lambda doc_id: {"id": 1, "status": "pending"})
-        monkeypatch.setattr(db_question_items, "list_unanswered",
-                             lambda qpk: [{"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}])
-        finalize._dispatch_question_responder(_run())
-        assert len(self.calls) == 1
-        assert self.calls[0]["provider_id"] is None
+    def test_no_independent_provider_marks_failure_without_dispatch(self, monkeypatch):
+        monkeypatch.setattr(review.ai_settings_service, "resolve_effective", lambda pid: {"providers": [HEADER]})
+        monkeypatch.setattr(db_questions, "get_container_by_doc", lambda doc_id: {"id": 1, "status": "pending"})
+        monkeypatch.setattr(db_question_items, "list_unanswered", lambda qpk: [
+            {"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"},
+        ])
+        finalize._dispatch_question_responder(_run(provider_id="aip_header", continuation_base_provider_id="aip_header"))
+        assert self.calls == []
+        assert self.failed == [(201, "no_independent_responder")]
 
     def test_a_dispatch_admission_failure_is_swallowed_not_raised(self, monkeypatch):
         # Stand-in for "responder 실행 불가" (NR0003 §10): no_enabled_provider /
@@ -341,12 +348,10 @@ class TestDispatchQuestionResponderRealExecution:
         monkeypatch.setattr(q_answer_invoke_service.db_groups, "get_by_id",
                              lambda gid: {"title": "그룹"})
 
-    def test_a_real_no_enabled_provider_admission_failure_is_swallowed_and_then_recovers(
+    def test_no_enabled_independent_provider_skips_admission_and_then_recovers(
             self, env, monkeypatch):
-        # "실행불가": a project with providers registered but none enabled is exactly what
-        # the REAL admission path (admission.py's `if not chain:` gate) raises 409
-        # no_enabled_provider for — distinct from the empty-install "no_provider_registered"
-        # case (0292 T0003), and the one that actually matches "provider ... 실행불가".
+        # With no enabled independent provider, automatic routing must stop before
+        # admission. Once one becomes available, the real dispatch path can recover.
         env["chain"]["providers"] = []
         env["chain"]["registered_count"] = 2
         launches = base._scripted_worker(env, monkeypatch, [(None, False)])
@@ -365,11 +370,9 @@ class TestDispatchQuestionResponderRealExecution:
 
         finalize._dispatch_question_responder(_run())  # must not raise
 
-        # The real admission code path was exercised (not some other, unrelated failure):
-        assert len(seen_errors) == 1
-        assert getattr(seen_errors[0], "status_code", None) == 409
-        assert seen_errors[0].detail.get("code") == "no_enabled_provider"
-        # ...and admission refused before any worker was ever launched, so nothing here
+        # T0013: automatic dispatch never delegates an unchecked default to admission.
+        assert seen_errors == []
+        # ...and routing stopped before any worker was ever launched, so nothing here
         # touched the pending question — state preserved.
         assert launches == []
         assert db_question_items.list_unanswered(1) == [{"id": 201, "seq": 1, "asker_kind": "ai", "asker_ai_run_id": "aiv_requester"}]
@@ -473,9 +476,9 @@ class TestFinalizeRunHookPlacement:
         assert run["stop_code"] == "question_pending"
         assert calls[0]["item"]["id"] == 501
         assert calls[0]["lease_active_at_dispatch"] is None
-        # NR0003 §4: no reviewer configured for this step -> T#1 priority 2 (the run's
-        # header/default selected provider) is what the dispatch actually receives.
-        assert calls[0]["provider_id"] == "aip_1"
+        # T0013: the header is the actual asker, so the next independent default answers.
+        assert calls[0]["provider_id"] == "aip_2"
+        assert calls[0]["provider_id"] != run["provider_id"]
 
     def test_a_clean_finish_never_dispatches_a_responder(self, env, monkeypatch):
         calls: list[dict] = []

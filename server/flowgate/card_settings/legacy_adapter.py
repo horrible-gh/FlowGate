@@ -530,6 +530,25 @@ def ask_responder(anchor_doc_id: str, item_id: int, issued_to: str, provider_id:
         provider_id=provider_id, provider_source=provider_source, actor_user_id=issued_to)
 
 
+def independent_question_responder(project_id: Optional[str], asker_provider_id: Optional[str],
+                                  candidates: list[tuple[Optional[str], str]]) -> tuple[Optional[str], str]:
+    """Use the common enabled-provider and actual-asker independence policy."""
+    from modules.flow_gate.services.ai_invoke import review as v01_review  # noqa: PLC0415
+
+    return v01_review.independent_question_responder(project_id, asker_provider_id, candidates)
+
+
+def mark_question_responder_failed(item_id: int, issued_to: Optional[str]) -> bool:
+    """Leave an automatically unassignable question open for a human in the existing Q&A panel."""
+    from modules.flow_gate.services import q_service  # noqa: PLC0415
+
+    return q_service.mark_responder_failed(
+        item_id, "no_independent_responder",
+        "No independent enabled responder could be established; awaiting a human answer.",
+        actor_user_id=issued_to,
+    )
+
+
 def flow_ai_busy(flow_id: str) -> bool:
     """An AI run holds the Flow's group lease, or a Graph execution of the Flow is requested / running: a new ordinary
     AI run (a question's responder) would be refused (``run_in_progress``) now."""
