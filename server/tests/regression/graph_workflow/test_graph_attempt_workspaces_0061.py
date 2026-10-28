@@ -42,12 +42,28 @@ def harness(tmp_path, monkeypatch):
             canvas_state TEXT, actor_user_id TEXT, reason TEXT, payload_json TEXT, created_at TEXT,
             PRIMARY KEY(run_id, event_seq));
     """)
-    for name in ("151_graph_run_state_attempts.sql", "152_graph_attempt_runs.sql"):
+    # 0110 T#2: execution_store.request and workspace.prepare read/write the T#8 result columns
+    # (result_commit, integration_status, input_source, ...) added by 153a, which also alters
+    # tr_commit_ledger (086d) — the same chain test_graph_attempt_results_0061 loads, on the
+    # same parent stubs (086d references groups/documents and alters group_git_state).
+    db.db.executescript("""
+        CREATE TABLE groups(group_id TEXT PRIMARY KEY);
+        CREATE TABLE documents(doc_id TEXT PRIMARY KEY, group_id TEXT, type_code TEXT,
+                               seq INTEGER, commit_message TEXT);
+        CREATE TABLE group_git_state(group_id TEXT PRIMARY KEY);
+    """)
+    for name in ("151_graph_run_state_attempts.sql", "152_graph_attempt_runs.sql",
+                 "086d_tr_commit_ledger.sql", "153a_graph_attempt_results.sql"):
         db.db.executescript((MIGRATIONS / "sqlite" / name).read_text(encoding="utf-8"))
     db._execute("INSERT INTO graph_runs(run_id,group_id,status) VALUES('run',?,'running')", [GROUP])
     monkeypatch.setattr(run_store, "get_store", lambda: db)
     monkeypatch.setattr(port, "get_store", lambda: db)
     monkeypatch.setattr(execution, "get_store", lambda: db)
+    # 0110 T#2: T#10 inputs (definition_store.revision) and 0085 gate reservations (settle) read
+    # these stores; on this DB their tables are absent -> no definition edges, no reservations.
+    from flowgate.gate_decisions import repository as gate_repository
+    monkeypatch.setattr(workspace.definition_store, "get_store", lambda: db)
+    monkeypatch.setattr(gate_repository, "get_store", lambda: db)
     monkeypatch.setattr(run_store, "run_by_id", lambda rid: db._fetch_one(
         "SELECT * FROM graph_runs WHERE run_id=?", [rid]))
     monkeypatch.setattr(run_store, "node_runs", lambda rid: db._fetch_all(
@@ -370,6 +386,98 @@ def test_unmapped_tokens_keep_group_routing(repo, monkeypatch):
     assert port.reject_group_source(token, "self_check") is None
     assert remote._resolve_src_root(grant) == repo.group
     assert chat.worktree_root(PROJECT, GROUP, str(repo.group), token_id="ordinary") == repo.group
+    # 0110 T#2: the TR scope check keeps the group basis for an unmapped token.
+    from modules.flow_gate.services import tr_scope_service as trs
+    assert port.attempt_scope(token) is None
+    assert trs.resolve_attempt_scope(token, PROJECT, GROUP) is None
+    group_measure = Mock(return_value={"available": True, "reason": "worktree", "worktree": str(repo.group),
+                                       "branch": "group", "paths": ["value.txt"], "entries": []})
+    monkeypatch.setattr(trs.git_service, "collect_scope_changes", group_measure)
+    monkeypatch.setattr(trs.git_service, "collect_scope_changes_at",
+                        Mock(side_effect=AssertionError("v0.1 token must not use an attempt basis")))
+    monkeypatch.setattr(trs, "resolve_stage", lambda _project: trs.STAGE_ENFORCE)
+    result = trs.evaluate(PROJECT, GROUP, "## 변경 파일\n\n- value.txt\n",
+                          attempt_scope=trs.resolve_attempt_scope(token, PROJECT, GROUP))
+    group_measure.assert_called_once_with(PROJECT, GROUP)
+    assert result["scope_source"] == "group" and result["attempt_id"] is None
+    assert result["detected"] == ["value.txt"] and result["codes"] == []
+
+
+def _commit_in(root, *args):
+    proc = workspace.git._run_git(
+        ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args], cwd=root)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_mapped_token_tr_scope_measures_attempt_tree_from_input_commit(repo, monkeypatch):
+    """0110 T#2 (NR0003 §2 T-A): a mapped token's TR scope is measured on its attempt tree from its
+    input_commit, so changes that have not reached the group branch are detected (no TRV-003)."""
+    from modules.flow_gate.services import tr_scope_service as trs
+    item = repo.new()
+    root = prepare(item)
+    (root / "value.txt").write_text("attempt edit", encoding="utf-8")
+    _commit_in(root, "commit", "-qam", "attempt result")
+    (root / "added.txt").write_text("new", encoding="utf-8")
+    (root / "value.txt").write_text("attempt edit, then dirty", encoding="utf-8")
+    group_measure = Mock(side_effect=AssertionError("group worktree must not be measured"))
+    monkeypatch.setattr(trs.git_service, "collect_scope_changes", group_measure)
+    monkeypatch.setattr(trs.git_service, "effective_src_root_ex", group_measure)
+    monkeypatch.setattr(trs, "resolve_stage", lambda _project: trs.STAGE_ENFORCE)
+
+    scope = trs.resolve_attempt_scope(item.token, PROJECT, GROUP)
+    input_commit = workspace.attempt(item.attempt)["input_commit"]
+    assert scope == {"attempt_id": item.attempt, "root": root, "input_commit": input_commit,
+                     "input_source": "run_base"}
+    assert input_commit == repo.git("rev-parse", "HEAD")
+
+    result = trs.evaluate(PROJECT, GROUP, "## 변경 파일\n\n- value.txt\n- added.txt\n", attempt_scope=scope)
+    assert result["detected"] == ["added.txt", "value.txt"]
+    assert result["unconfirmed"] == [] and result["unreported"] == [] and result["codes"] == []
+    assert result["scope_source"] == "graph_attempt"
+    assert result["attempt_id"] == item.attempt and result["input_commit"] == input_commit
+    assert result["scope_base_sha"] == input_commit
+    assert result["worktree"] == str(root)
+    assert {row["path"]: row["actual_status"] for row in result["file_manifest"]} == {
+        "added.txt": "A", "value.txt": "M"}
+    group_measure.assert_not_called()
+    assert (repo.group / "value.txt").read_text() == "initial"
+    assert not (repo.group / "added.txt").exists()
+    assert not repo.held
+
+
+@pytest.mark.parametrize("broken,reason", [
+    ("worktree_removed", "worktree_missing"),
+    ("invalidated", "attempt_not_active"),
+    ("marker_input_mismatch", "input_mismatch"),
+])
+def test_mapped_token_unresolvable_attempt_is_trv006_never_group(repo, monkeypatch, broken, reason):
+    from modules.flow_gate.services import tr_scope_service as trs
+    item = repo.new()
+    root = prepare(item)
+    if broken == "worktree_removed":
+        repo.git("worktree", "remove", "--force", str(root))
+    elif broken == "invalidated":
+        repo.db._execute("UPDATE graph_node_attempts SET status='invalidated' WHERE attempt_id=?", [item.attempt])
+    else:
+        marker_path = root.parent / workspace.merge_target.OWNER_MARKER
+        marker = json.loads(marker_path.read_text())
+        marker["input_commit"] = "0" * 40
+        marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    group_measure = Mock(side_effect=AssertionError("group fallback forbidden"))
+    monkeypatch.setattr(trs.git_service, "collect_scope_changes", group_measure)
+    monkeypatch.setattr(trs.git_service, "effective_src_root_ex", group_measure)
+    monkeypatch.setattr(trs.git_service, "collect_scope_changes_at", group_measure)
+    monkeypatch.setattr(trs, "resolve_stage", lambda _project: trs.STAGE_ENFORCE)
+
+    scope = trs.resolve_attempt_scope(item.token, PROJECT, GROUP)
+    assert scope["attempt_id"] == item.attempt and scope["root"] is None
+    assert scope["error"] == {"code": "graph_worktree_unavailable", "reason": reason}
+    result = trs.evaluate(PROJECT, GROUP, "## 변경 파일\n\n- value.txt\n", attempt_scope=scope)
+    assert result["codes"] == [trs.TRV_NO_SCOPE] and result["verdict"] == trs.VERDICT_WARN
+    assert result["unconfirmed"] == [] and result["detected"] == []
+    assert result["scope_source"] == "graph_attempt" and result["attempt_id"] == item.attempt
+    assert result["input_commit"] is None
+    group_measure.assert_not_called()
 
 
 def test_cli_launch_still_uses_run_scratch(repo, tmp_path, monkeypatch):

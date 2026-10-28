@@ -67,6 +67,24 @@ def source_root(token, *, project_id=None, group_id=None):
     return root
 
 
+def attempt_scope(token, *, project_id=None, group_id=None):
+    """0110 T#2 (NR0003 §2 T-A): what a mapped token's work is measured against — the attempt's validated tree and
+    its ``input_commit``. ``source_root`` has already held the marker's ``input_commit`` equal to the attempt row's,
+    so for a Join this is the marker's final input (its merged results or the integration head), not a predecessor's.
+    ``None`` for an unmapped v0.1 token, which keeps the group worktree. Raises ``GraphSourceError``; an attempt that
+    cannot be resolved never falls back to the group worktree."""
+    attempt_id = binding(token)
+    if not attempt_id:
+        return None
+    root = source_root(token, project_id=project_id, group_id=group_id)
+    row = run_store._one(
+        "SELECT input_commit, input_source FROM graph_node_attempts WHERE attempt_id = ?", [attempt_id])
+    if not row or not row.get("input_commit"):
+        raise GraphSourceError("graph_worktree_unavailable", attempt_id=attempt_id, reason="input_missing")
+    return {"attempt_id": attempt_id, "root": root, "input_commit": row["input_commit"],
+            "input_source": row.get("input_source")}
+
+
 def mutation(token):
     attempt_id = binding(token)
     if not attempt_id or _mutation_handler is None:

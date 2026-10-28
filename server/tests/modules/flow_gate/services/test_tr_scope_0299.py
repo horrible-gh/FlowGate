@@ -955,3 +955,184 @@ def test_evaluate_file_manifest_marks_reported_prior_reported_and_unreported_exc
     assert "server/ghost.py" not in manifest
     assert trs.TRV_UNREPORTED in result["codes"]
     assert trs.TRV_UNCONFIRMED in result["codes"]
+
+
+# ── 0110 T#2: Graph attempt basis (NR0003 §2 T-A) ────────────────────────────
+
+def _forbid_group_measurement(monkeypatch):
+    """An attempt basis must never read the group worktree or its recorded floor."""
+    from modules.flow_gate.services import git_service
+
+    def _refuse(*_a, **_k):
+        raise AssertionError("group worktree must not be measured for a Graph attempt")
+
+    monkeypatch.setattr(git_service, "collect_scope_changes", _refuse)
+    monkeypatch.setattr(git_service, "effective_src_root_ex", _refuse)
+    monkeypatch.setattr(git_service, "resolve_scope_floor", _refuse)
+
+
+def _raise(exc):
+    def _call(*_a, **_k):
+        raise exc
+    return _call
+
+
+def test_collect_scope_changes_at_measures_explicit_root_from_explicit_floor(work_repo, monkeypatch):
+    """Modified / new / rename on an explicit tree from an explicit floor, no group lookup."""
+    from modules.flow_gate.services import git_service
+
+    _forbid_group_measurement(monkeypatch)
+    floor = _git(work_repo, "rev-parse", "main").strip()
+
+    result = git_service.collect_scope_changes_at(work_repo, floor)
+    by_path = {entry["path"]: entry for entry in result["entries"]}
+    assert result["available"] is True
+    assert result["reason"] == git_service.SRC_ROOT_WORKTREE
+    assert result["worktree"] == str(work_repo)
+    assert result["branch"] == "work"
+    assert result["scope_base_sha"] == floor
+    assert result["work_base_ref"] is None
+    assert set(by_path) == set(result["paths"])
+    assert by_path["edited.py"]["status"] == "M"
+    assert by_path["untracked.py"]["status"] == "A"
+    assert by_path["committed.py"]["status"] == "A"
+    assert by_path["renamed_to.py"]["status"] == "R"
+    assert by_path["renamed_to.py"]["old_path"] == "renamed_from.py"
+    assert "renamed_from.py" not in by_path and "kept.py" not in by_path
+
+
+def test_collect_scope_changes_at_floor_is_the_given_commit_not_the_group_floor(work_repo, monkeypatch):
+    """A later floor (the attempt's input_commit) leaves the earlier commit out."""
+    from modules.flow_gate.services import git_service
+
+    _forbid_group_measurement(monkeypatch)
+    head = _git(work_repo, "rev-parse", "HEAD").strip()
+    result = git_service.collect_scope_changes_at(work_repo, head)
+    assert result["available"] is True
+    assert "committed.py" not in result["paths"]
+    assert {"staged.py", "edited.py", "untracked.py", "deleted.py", "renamed_to.py"} <= set(result["paths"])
+
+
+@pytest.mark.parametrize("case", ["no_root", "no_floor", "missing_dir", "unknown_floor"])
+def test_collect_scope_changes_at_is_unavailable_never_a_partial_answer(work_repo, tmp_path, monkeypatch, case):
+    from modules.flow_gate.services import git_service
+
+    _forbid_group_measurement(monkeypatch)
+    root, floor = work_repo, _git(work_repo, "rev-parse", "main").strip()
+    if case == "no_root":
+        root = None
+    elif case == "no_floor":
+        floor = None
+    elif case == "missing_dir":
+        root = tmp_path / "gone"
+    else:
+        floor = "0" * 40
+    result = git_service.collect_scope_changes_at(root, floor)
+    assert result["available"] is False
+    assert result["paths"] == [] and result["entries"] == []
+
+
+def test_evaluate_attempt_scope_detects_attempt_changes_without_trv003(work_repo, monkeypatch):
+    """The 0109 deadlock: honest declarations of attempt-tree changes are confirmed, not TRV-003."""
+    _forbid_group_measurement(monkeypatch)
+    monkeypatch.setattr(trs, "resolve_stage", lambda project_id: trs.STAGE_ENFORCE)
+    floor = _git(work_repo, "rev-parse", "main").strip()
+    body = (
+        "## 변경 파일\n\n- committed.py\n- staged.py\n- edited.py\n- untracked.py\n"
+        "- deleted.py\n- renamed_to.py\n"
+    )
+    scope = {"attempt_id": "att_x", "root": work_repo, "input_commit": floor, "input_source": "run_base"}
+
+    result = trs.evaluate("p", "g", body, attempt_scope=scope)
+    assert result["codes"] == []
+    assert result["verdict"] == trs.VERDICT_PASS
+    assert result["unconfirmed"] == [] and result["unreported"] == []
+    assert set(result["detected"]) == {
+        "committed.py", "staged.py", "edited.py", "untracked.py", "deleted.py", "renamed_to.py"}
+    assert result["scope_source"] == trs.SCOPE_SOURCE_GRAPH_ATTEMPT
+    assert result["attempt_id"] == "att_x"
+    assert result["input_commit"] == floor
+    assert result["scope_base_sha"] == floor
+    assert result["branch"] == "work"
+    manifest = {row["path"]: row for row in result["file_manifest"]}
+    assert manifest["renamed_to.py"]["actual_status"] == "R"
+    assert manifest["renamed_to.py"]["old_path"] == "renamed_from.py"
+
+
+@pytest.mark.parametrize("scope", [
+    {"attempt_id": "att_x", "root": None, "input_commit": None,
+     "error": {"code": "graph_worktree_unavailable", "reason": "attempt_not_active"}},
+    {"attempt_id": "att_x", "root": None, "input_commit": "a" * 40},
+    {"attempt_id": "att_x", "root": "C:/attempt/tree", "input_commit": None},
+])
+def test_evaluate_unresolved_attempt_is_trv006_never_group_fallback(monkeypatch, scope):
+    _forbid_group_measurement(monkeypatch)
+    monkeypatch.setattr(trs.git_service, "collect_scope_changes_at",
+                        _raise(AssertionError("an unresolved attempt must not be measured at all")))
+    monkeypatch.setattr(trs, "resolve_stage", lambda project_id: trs.STAGE_ENFORCE)
+
+    result = trs.evaluate("p", "g", "## 변경 파일\n\n- server/a.py\n", attempt_scope=scope)
+    assert result["codes"] == [trs.TRV_NO_SCOPE]
+    assert result["unconfirmed"] == [] and result["detected"] == []
+    assert result["verdict"] == trs.VERDICT_WARN
+    assert result["scope_source"] == trs.SCOPE_SOURCE_GRAPH_ATTEMPT
+    assert result["attempt_id"] == "att_x"
+    assert result["attempt_error"]["code"]
+    assert result["scope_reason"] == result["attempt_error"]["code"]
+
+
+def test_evaluate_without_attempt_scope_keeps_group_basis(monkeypatch):
+    _stub_scope(monkeypatch, trs.STAGE_ENFORCE, ["server/a.py"])
+    result = trs.evaluate("p", "g", "## 변경 파일\n\n- server/a.py\n")
+    assert result["verdict"] == trs.VERDICT_PASS
+    assert result["scope_source"] == trs.SCOPE_SOURCE_GROUP
+    assert result["attempt_id"] is None and result["input_commit"] is None
+    assert "attempt_error" not in result
+
+
+def test_resolve_attempt_scope_unmapped_mapped_and_failures(monkeypatch):
+    from modules.flow_gate.services import graph_source_hooks as hooks
+
+    token = {"token_id": "t", "project": "p", "group_id": "g"}
+    monkeypatch.setattr(hooks, "binding", lambda tok: None)
+    monkeypatch.setattr(hooks, "attempt_scope",
+                        _raise(AssertionError("unmapped token must not resolve an attempt")))
+    assert trs.resolve_attempt_scope(token, "p", "g") is None
+
+    monkeypatch.setattr(hooks, "binding", lambda tok: "att_x")
+    resolved = {"attempt_id": "att_x", "root": "C:/tree", "input_commit": "c" * 40, "input_source": "predecessors"}
+    seen = {}
+
+    def _scope(tok, *, project_id=None, group_id=None):
+        seen.update(project_id=project_id, group_id=group_id)
+        return resolved
+
+    monkeypatch.setattr(hooks, "attempt_scope", _scope)
+    assert trs.resolve_attempt_scope(token, "p", "g") is resolved
+    assert seen == {"project_id": "p", "group_id": "g"}
+
+    monkeypatch.setattr(hooks, "attempt_scope", _raise(
+        hooks.GraphSourceError("graph_worktree_unavailable", reason="input_mismatch")))
+    failed = trs.resolve_attempt_scope(token, "p", "g")
+    assert failed["attempt_id"] == "att_x" and failed["root"] is None
+    assert failed["error"] == {"code": "graph_worktree_unavailable", "reason": "input_mismatch"}
+
+    monkeypatch.setattr(hooks, "attempt_scope", _raise(RuntimeError("db")))
+    assert trs.resolve_attempt_scope(token, "p", "g")["error"]["code"] == trs.ATTEMPT_RESOLUTION_ERROR
+
+    monkeypatch.setattr(hooks, "binding", _raise(RuntimeError("db down")))
+    unknown = trs.resolve_attempt_scope(token, "p", "g")
+    assert unknown["error"] == {"code": trs.ATTEMPT_RESOLUTION_ERROR, "reason": "binding_lookup_failed"}
+
+
+def test_meta_carries_scope_source_attempt_and_input_commit():
+    from modules.flow_gate.api.inbox_routes import _tr_scope_meta
+
+    meta = _tr_scope_meta({
+        "verdict": trs.VERDICT_PASS, "stage": trs.STAGE_OBSERVE, "codes": [],
+        "scope_source": trs.SCOPE_SOURCE_GRAPH_ATTEMPT, "attempt_id": "att_x", "input_commit": "d" * 40,
+    })
+    assert meta["scope_source"] == trs.SCOPE_SOURCE_GRAPH_ATTEMPT
+    assert meta["attempt_id"] == "att_x"
+    assert meta["input_commit"] == "d" * 40
+    assert trs.verdict_from_meta({"tr_scope": meta})["scope_source"] == trs.SCOPE_SOURCE_GRAPH_ATTEMPT

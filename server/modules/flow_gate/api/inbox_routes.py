@@ -2298,6 +2298,11 @@ def _tr_scope_meta(result: dict) -> dict:
         "codes": result.get("codes") or [],
         "branch": result.get("branch"),
         "scope_reason": result.get("scope_reason"),
+        # 0110 T#2: the measurement basis travels with the verdict to the reviewer prompt.
+        "scope_source": result.get("scope_source"),
+        "attempt_id": result.get("attempt_id"),
+        "input_commit": result.get("input_commit"),
+        "attempt_error": result.get("attempt_error"),
         "reported": _slice("reported", tr_scope_service.MAX_ITEMS),
         "detected": _slice("detected"),
         "unconfirmed": _slice("unconfirmed"),
@@ -4689,10 +4694,14 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             scope_body = body_for_guards
             if scope_body is None:
                 scope_body = _submission_text(doc_path, content)
+            # 0110 T#2: a Graph attempt token is measured on its attempt tree (TRV-006 if
+            # unresolvable — never the group worktree); a v0.1 token keeps the group.
             tr_scope_result = tr_scope_service.evaluate(
                 project_id=project, group_id=group["group_id"], body=scope_body or "",
                 locale=_locale,
                 prior_declared=_prior_tr_declared(group["group_id"]),
+                attempt_scope=tr_scope_service.resolve_attempt_scope(
+                    token_rec, project, group["group_id"]),
             )
         except Exception:  # noqa: BLE001 — a validation failure must not block TR intake
             tr_scope_result = None
@@ -4721,6 +4730,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                         "token_id": token_rec.get("token_id"),
                         "dry_run": bool(_truthy(body.get("dry_run"))),
                         "stage": tr_scope_result.get("stage"),
+                        "scope_source": tr_scope_result.get("scope_source"),
+                        "attempt_id": tr_scope_result.get("attempt_id"),
+                        "input_commit": tr_scope_result.get("input_commit"),
                         "codes": tr_scope_result.get("codes"),
                         "branch": tr_scope_result.get("branch"),
                         "out_of_scope": tr_scope_result.get("out_of_scope"),
@@ -5811,6 +5823,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 project_id=project, group_id=group["group_id"], body=scope_body or "",
                 locale=_locale,
                 prior_declared=_prior_tr_declared(group["group_id"], exclude_doc_id=doc_id),
+                attempt_scope=tr_scope_service.resolve_attempt_scope(
+                    token_rec, project, group["group_id"]),
             )
         except Exception:  # noqa: BLE001 — a validation failure must not block resubmission
             edit_tr_scope = None
@@ -5835,6 +5849,9 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                         "stage": edit_tr_scope.get("stage"),
                         "codes": edit_tr_scope.get("codes"),
                         "branch": edit_tr_scope.get("branch"),
+                        "scope_source": edit_tr_scope.get("scope_source"),
+                        "attempt_id": edit_tr_scope.get("attempt_id"),
+                        "input_commit": edit_tr_scope.get("input_commit"),
                         "out_of_scope": edit_tr_scope.get("out_of_scope"),
                         "unconfirmed": edit_tr_scope.get("unconfirmed"),
                         "unreported": edit_tr_scope.get("unreported"),

@@ -275,6 +275,74 @@ def resolve_stage(project_id: str) -> Optional[str]:
     return stage if stage in db_git.TR_SCOPE_STAGE_VALUES else STAGE_OBSERVE
 
 
+# ── Measurement basis: group worktree or Graph attempt (0110 T#2, NR0003 §2 T-A) ──
+#
+# A Graph (v0.2) attempt token's remote CRUD writes into the attempt's own worktree, which
+# reaches the group branch only after the card is approved. Measuring the group worktree
+# before that made every honest declaration TRV-003 (approval blocked → no merge → nothing
+# detected). A mapped token is therefore measured on its attempt tree from its input_commit;
+# an unmapped (v0.1) token keeps the group worktree. An attempt that cannot be resolved is
+# TRV-006 — it is never measured against the group worktree instead.
+
+SCOPE_SOURCE_GROUP = "group"
+SCOPE_SOURCE_GRAPH_ATTEMPT = "graph_attempt"
+ATTEMPT_RESOLUTION_ERROR = "graph_attempt_resolution_error"
+
+
+def resolve_attempt_scope(token: Optional[dict], project_id: str, group_id: str) -> Optional[dict]:
+    """The attempt basis for ``evaluate(attempt_scope=...)``. Never raises.
+
+    ``None`` — the token is not mapped to a Graph attempt (v0.1): measure the group worktree.
+    ``{"attempt_id", "root", "input_commit", "input_source"}`` — measure that tree from that floor.
+    ``{"attempt_id", "root": None, "input_commit": None, "error": {"code", "reason"}}`` — the
+    attempt could not be resolved (or whether the token is mapped could not be told): TRV-006.
+    """
+    from modules.flow_gate.services import graph_source_hooks
+
+    try:
+        attempt_id = graph_source_hooks.binding(token)
+    except Exception:  # noqa: BLE001 — an unknown mapping is not proof of a v0.1 token
+        return _unresolved_attempt(None, ATTEMPT_RESOLUTION_ERROR, "binding_lookup_failed")
+    if not attempt_id:
+        return None
+    try:
+        scope = graph_source_hooks.attempt_scope(token, project_id=project_id, group_id=group_id)
+    except graph_source_hooks.GraphSourceError as exc:
+        return _unresolved_attempt(attempt_id, exc.code, (exc.details or {}).get("reason"))
+    except Exception:  # noqa: BLE001 — a validation helper must never 500 a TR
+        return _unresolved_attempt(attempt_id, ATTEMPT_RESOLUTION_ERROR, None)
+    if not scope:
+        return _unresolved_attempt(attempt_id, ATTEMPT_RESOLUTION_ERROR, "attempt_unbound")
+    return scope
+
+
+def _unresolved_attempt(attempt_id: Optional[str], code: str, reason: Optional[str]) -> dict:
+    return {"attempt_id": attempt_id, "root": None, "input_commit": None,
+            "error": {"code": code, "reason": reason}}
+
+
+def _measure(project_id: str, group_id: str, attempt_scope: Optional[dict]) -> tuple[dict, dict]:
+    """(actual changes, scope fields) for the chosen basis. Group basis is the unchanged 0299 path."""
+    if attempt_scope is None:
+        actual = git_service.collect_scope_changes(project_id, group_id)
+        return actual, {"scope_source": SCOPE_SOURCE_GROUP, "attempt_id": None, "input_commit": None}
+    fields = {
+        "scope_source": SCOPE_SOURCE_GRAPH_ATTEMPT,
+        "attempt_id": attempt_scope.get("attempt_id"),
+        "input_commit": attempt_scope.get("input_commit"),
+    }
+    error = attempt_scope.get("error")
+    if error or not attempt_scope.get("root") or not attempt_scope.get("input_commit"):
+        error = error or {"code": ATTEMPT_RESOLUTION_ERROR, "reason": "attempt_scope_incomplete"}
+        fields["attempt_error"] = error
+        return {
+            "available": False, "reason": error.get("code") or ATTEMPT_RESOLUTION_ERROR,
+            "worktree": None, "branch": None, "paths": [], "entries": [],
+        }, fields
+    actual = git_service.collect_scope_changes_at(attempt_scope["root"], attempt_scope["input_commit"])
+    return actual, fields
+
+
 # ── Comparison verdict (D0004 §3.4 / §3.7) ───────────────────────────────────
 
 def evaluate(
@@ -283,6 +351,7 @@ def evaluate(
     body: str,
     locale: str = "ko",
     prior_declared: Optional[Iterable[str]] = None,
+    attempt_scope: Optional[dict] = None,
 ) -> dict:
     """Judge a TR body. Side-effect free — dry-run and real registration call this same function.
 
@@ -290,7 +359,10 @@ def evaluate(
     metadata. ``locale`` only picks the language of the ``notice`` attached on rejection
     (T2/TR2); the verdict itself is language-independent. ``prior_declared`` holds paths
     already declared by earlier TRs in the same group and is merged only into the undeclared
-    verdict — it does not affect this body's unconfirmed verdict.
+    verdict — it does not affect this body's unconfirmed verdict. ``attempt_scope`` (0110 T#2)
+    is ``resolve_attempt_scope``'s value: None measures the group worktree as before; an
+    attempt measures its root from its ``input_commit``; an unresolved attempt is TRV-006.
+    ``scope_source``/``attempt_id``/``input_commit`` in the result say which basis was used.
     """
     stage = resolve_stage(project_id)
     if stage is None:
@@ -316,7 +388,7 @@ def evaluate(
     if reported.out_of_scope:
         codes.append(TRV_OUT_OF_SCOPE)
 
-    actual = git_service.collect_scope_changes(project_id, group_id)
+    actual, scope_fields = _measure(project_id, group_id, attempt_scope)
     actual_entries = {
         e.get("path"): e for e in (actual.get("entries") or [])
         if e.get("path") and not is_excluded_path(e["path"])
@@ -389,6 +461,8 @@ def evaluate(
         "work_base_ref": actual.get("work_base_ref"),
         "scope_base_sha": actual.get("scope_base_sha"),
         "work_base_error": actual.get("work_base_error"),
+        # 0110 T#2: which tree the manifest was measured on (graph_attempt | group).
+        **scope_fields,
     }
     if verdict == VERDICT_REJECT:
         result["notice"] = build_notice(result, locale)

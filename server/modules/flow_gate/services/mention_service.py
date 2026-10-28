@@ -2876,14 +2876,36 @@ def _scope_context_section(target_doc: dict) -> Optional[str]:
                 if isinstance(verdict.get("file_manifest"), dict)
                 else verdict.get("file_manifest")) or []
     codes = verdict.get("codes") or []
+    # 0110 T#2: a Graph attempt token's work lives in its attempt worktree until approval;
+    # the reviewer must know which tree (and from which commit) the manifest measured.
+    # A verdict stored before scope_source existed was always measured on the group.
+    scope_source = verdict.get("scope_source") or tr_scope_service.SCOPE_SOURCE_GROUP
+    attempt_based = scope_source == tr_scope_service.SCOPE_SOURCE_GRAPH_ATTEMPT
+    measured_on = (
+        "the Graph attempt worktree this TR's token worked in (not yet merged into the "
+        "group branch)" if attempt_based else "the actual group worktree"
+    )
     lines = [
-        "This manifest is computed by the server from the actual group worktree at "
+        f"This manifest is computed by the server from {measured_on} at "
         "submission time -- it replaces the TR body's self-reported changed-files list "
         "as the source of truth for what to review. Do not treat the body's own list as "
         "authoritative.",
         "",
         f"scope verdict: {verdict.get('verdict') or 'n/a'}"
         f"  codes: {', '.join(codes) if codes else '(none)'}",
+        f"scope source: {scope_source}"
+        f"  attempt_id: {verdict.get('attempt_id') or '(none)'}"
+        f"  input_commit: {verdict.get('input_commit') or '(none)'}",
+    ]
+    attempt_error = verdict.get("attempt_error")
+    if attempt_based and attempt_error:
+        lines.append(
+            f"The Graph attempt could not be resolved ({attempt_error.get('code') or 'unknown'}"
+            f"{', ' + attempt_error['reason'] if attempt_error.get('reason') else ''}) -- TRV-006. "
+            "The group worktree was NOT measured in its place, so an empty manifest here "
+            "is no evidence that nothing changed."
+        )
+    lines += [
         "",
         "Actual worktree changes (path [status] [<- renamed from] -- reporting_state):",
     ]
