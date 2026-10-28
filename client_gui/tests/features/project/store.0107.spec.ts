@@ -74,13 +74,21 @@ afterEach(() => {
 
 // The shared state of two projects the display read must leave as it is.
 async function seedShared() {
-  await store.loadWorkBaseOptions('p')
-  await store.loadWorkBaseOptions('q')
+  const pOptions = await store.loadWorkBaseOptions('p')
+  const qOptions = await store.loadWorkBaseOptions('q')
   const tree = await store.fetchGroupTree('p')
+  const trees = await Promise.all([
+    store.fetchGroupTree('p', { includeTerminal: true }),
+    store.fetchGroupTree('q'),
+    store.fetchGroupTree('q', { includeTerminal: true }),
+  ])
   get.mockClear()
   return {
     known: { ...store.knownGitEnabled },
     tree,
+    trees,
+    pOptions,
+    qOptions,
   }
 }
 
@@ -88,16 +96,30 @@ async function expectSharedUnchanged(seed: Awaited<ReturnType<typeof seedShared>
   expect(store.knownGitEnabled).toEqual(seed.known)
   expect(store.knownGitEnabled).toEqual({ p: true, q: false })
   expect(store.getCachedGroupTree('p')).toBe(seed.tree)
+  expect(store.getCachedGroupTree('p', true)).toBe(seed.trees[0])
+  expect(store.getCachedGroupTree('q')).toBe(seed.trees[1])
+  expect(store.getCachedGroupTree('q', true)).toBe(seed.trees[2])
   // The options of both projects still answer from the cache: no session / version was bumped.
   const before = get.mock.calls.length
-  await store.loadWorkBaseOptions('p')
-  await store.loadWorkBaseOptions('q')
+  expect(await store.loadWorkBaseOptions('p')).toBe(seed.pOptions)
+  expect(await store.loadWorkBaseOptions('q')).toBe(seed.qOptions)
   expect(get.mock.calls.length).toBe(before)
   // Only the work-base GET went out: no git/status, options or group tree read.
   expect(urls().every((url) => WORK_BASE_URL.test(url))).toBe(true)
 }
 
 describe('project store — readFlowWorkBaseForDisplay (flowgate.v02.0107 D §3.1)', () => {
+  it('a pending display read and its delayed answer preserve both projects and both tree variants', async () => {
+    const seed = await seedShared()
+    const late = deferred()
+    get.mockReturnValueOnce(late.promise)
+    const read = store.readFlowWorkBaseForDisplay('p.m.1')
+    await expectSharedUnchanged(seed)
+    late.resolve(workBase({ project_id: 'q', git_enabled: true }))
+    await read
+    await expectSharedUnchanged(seed)
+  })
+
   it('returns the existing work-base answer through the same GET, uncached', async () => {
     const seed = await seedShared()
     const first = await store.readFlowWorkBaseForDisplay('p.m.1')
