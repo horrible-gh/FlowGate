@@ -11,7 +11,7 @@
       <div
         ref="surfaceRef"
         class="ui-modal-surface"
-        :class="`ui-modal-surface--${size}`"
+        :class="[`ui-modal-surface--${size}`, surfaceClass]"
         :style="{ zIndex: surfaceZIndex }"
         :data-modal-focus-scope="instanceId"
         :role="role"
@@ -55,6 +55,8 @@ const props = withDefaults(
   defineProps<{
     open: boolean
     size?: ModalSize
+    /** Optional visual scope for a feature dialog; overlay behavior stays shared. */
+    surfaceClass?: string
     closeOnEscape?: boolean
     closeOnBackdrop?: boolean
     /** `alertdialog` for AlertDialog (T0006 §8); every other caller keeps `dialog`. */
@@ -65,6 +67,7 @@ const props = withDefaults(
   }>(),
   {
     size: 'md',
+    surfaceClass: undefined,
     closeOnEscape: true,
     closeOnBackdrop: false,
     role: 'dialog',
