@@ -233,13 +233,13 @@ def build_prompt(
     }
 
 
-def _append_qa_block(lines: list[str], doc_id: str) -> None:
+def _append_qa_block(lines: list[str], doc_id: str, *, include_context: bool = False) -> None:
     """Append the User Q&A block (D0005 §3.5) for the document, if any.
 
-    Answered = question title + answer body; in-progress = (undecided). Human/AI distinction
-    is text-only in the ment. qa_bundle rows: {seq, title, body, asker_kind, options,
-    author_kind, answer_body, answer_selected_options}; a question with
-    multiple answers yields multiple rows (one per answer), so group by seq.
+    Answered items retain stored answers; missing answers are explicitly unanswered.
+    Context mode includes relation/sequence ancestors and labels each source and item id.
+    Human/AI distinction is text-only. Multiple answer rows are grouped by source
+    document and item id (legacy rows fall back to their container-local seq).
 
     An unanswered query with options gets an options line listing them WITH their ids, so a
     worker answering via the ai-request path can echo an id straight back in
@@ -249,44 +249,56 @@ def _append_qa_block(lines: list[str], doc_id: str) -> None:
     """
     try:
         from modules.flow_gate.services import q_service
-        rows = q_service.qa_bundle_by_doc(doc_id)
+        rows = (q_service.qa_bundle_for_context(doc_id) if include_context
+                else q_service.qa_bundle_by_doc(doc_id))
     except Exception:
         return
     if not rows:
         return
 
-    # Group rows by seq (preserve order), collecting answer bodies.
-    grouped: dict[int, dict] = {}
-    order: list[int] = []
+    # Sequence numbers are local to a container; preserve distinct source items.
+    grouped: dict[tuple, dict] = {}
+    order: list[tuple] = []
     for r in rows:
-        seq = r.get("seq")
-        if seq not in grouped:
-            grouped[seq] = {
+        key = (r.get("doc_id") or doc_id, r.get("id") or r.get("seq"))
+        if key not in grouped:
+            grouped[key] = {
+                "seq": r.get("seq"), "id": r.get("id"), "doc_id": key[0],
+                "body": r.get("body") or "",
                 "title": r.get("title") or r.get("body") or "",
                 "options": _parse_ment_options(r.get("options")),
                 "answers": [],
             }
-            order.append(seq)
+            order.append(key)
         ans = r.get("answer_body")
         if ans:
-            grouped[seq]["answers"].append(ans)
+            grouped[key]["answers"].append(ans)
 
     lines.append("")
-    lines.append("## 사용자 질의응답")
-    for seq in order:
-        info = grouped[seq]
+    lines.append("## 기존 질의·답변" if include_context else "## 사용자 질의응답")
+    if include_context:
+        lines.append("미답변은 미답변으로 유지하고 답변을 지어내지 마십시오.")
+    for key in order:
+        info = grouped[key]
+        seq = info["seq"]
         label = info["title"]
+        if include_context:
+            item_label = f"#{info['id']}" if info["id"] is not None else f"Q{seq}"
+            label = f"{item_label} {label} (문서: {info['doc_id']})"
         if info["answers"]:
             lines.append(f"- [답변완료] Q{seq} {label}")
             for ans in info["answers"]:
                 lines.append(f"    답: {ans}")
         else:
-            lines.append(f"- [답변중]   Q{seq} {label}            (미정)")
+            lines.append(f"- [미답변]   Q{seq} {label}")
             if info["options"]:
                 shown = " / ".join(
                     f"[{o.get('id')}] {o.get('label')}" for o in info["options"]
                 )
                 lines.append(f"    보기: {shown}")
+
+        if include_context and info["body"] and info["body"] != info["title"]:
+            lines.append(f"    질문: {info['body']}")
 
 
 def _parse_ment_options(raw: object) -> list[dict]:

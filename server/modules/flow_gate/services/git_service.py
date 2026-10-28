@@ -1363,7 +1363,6 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         # pinned, else the project default), never the project-wide base_branch -- the
         # recorded floor below (0665) is resolved against exactly that work base.
 
-        entries_by_path: dict[str, dict] = {}
         # flowgate.default.0665 T0004 (W1): the floor is the group's RECORDED
         # work-base commit (fork SHA, or the last update's absorbed source SHA).
         # The project base_branch says nothing about where THIS group started, and
@@ -1378,35 +1377,17 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         merge_base = floor["floor_sha"]
         result["work_base_ref"] = floor["work_base_ref"]
         result["scope_base_sha"] = merge_base
-        if merge_base:
-            diff_proc = _run_git(
-                ["diff", "--name-status", "-M", "-z", merge_base, "--"],
-                cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-            )
-            if diff_proc.returncode != 0:
-                result["reason"] = SRC_ROOT_ERROR
-                return result
-            for entry in _parse_name_status_manifest(diff_proc.stdout or ""):
-                entries_by_path[entry["path"]] = entry
-        else:
+        if not merge_base:
             # No merge base (unrelated histories / missing base branch) — the
             # committed half cannot be computed. Working-tree state alone would be
             # a partial answer that reads as "you reported files you never changed",
             # so refuse the whole measurement instead of half of it.
             result["reason"] = SRC_ROOT_ERROR
             return result
-
-        others = _run_git(
-            ["ls-files", "--others", "--exclude-standard", "-z"],
-            cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-        )
-        if others.returncode != 0:
+        entries_by_path = _scope_entries(wt_path, merge_base)
+        if entries_by_path is None:
             result["reason"] = SRC_ROOT_ERROR
             return result
-        for path in (others.stdout or "").split("\0"):
-            if path and path not in entries_by_path:
-                # A never-added file deletes nothing and was never renamed from anywhere.
-                entries_by_path[path] = {"path": path, "status": "A", "old_path": None}
 
         result["available"] = True
         result["reason"] = SRC_ROOT_WORKTREE
@@ -1415,6 +1396,84 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         return result
     except Exception:  # noqa: BLE001 — a verification helper must never 500 a TR
         _log.warning("collect_scope_changes failed for %s", group_id, exc_info=True)
+        result["available"] = False
+        result["reason"] = SRC_ROOT_ERROR
+        return result
+
+
+def _scope_entries(wt_path: Path, merge_base: str) -> Optional[dict]:
+    """``merge_base..worktree`` diff (``-M``, renames to the NEW path) ∪ untracked files, keyed by path.
+
+    The measurement ``collect_scope_changes`` and ``collect_scope_changes_at`` share: ``None`` when
+    either git call fails, so a half-measured tree is never returned as an answer.
+    """
+    entries_by_path: dict[str, dict] = {}
+    diff_proc = _run_git(
+        ["diff", "--name-status", "-M", "-z", merge_base, "--"],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if diff_proc.returncode != 0:
+        return None
+    for entry in _parse_name_status_manifest(diff_proc.stdout or ""):
+        entries_by_path[entry["path"]] = entry
+
+    others = _run_git(
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if others.returncode != 0:
+        return None
+    for path in (others.stdout or "").split("\0"):
+        if path and path not in entries_by_path:
+            # A never-added file deletes nothing and was never renamed from anywhere.
+            entries_by_path[path] = {"path": path, "status": "A", "old_path": None}
+    return entries_by_path
+
+
+def collect_scope_changes_at(root, base_sha: Optional[str]) -> dict:
+    """``collect_scope_changes`` measured on an EXPLICIT tree from an EXPLICIT floor (0110 T#2, NR0003 §2 T-A).
+
+    A Graph attempt token writes into its own attempt worktree, which only reaches the group
+    branch after approval, so measuring the group worktree reported every honest declaration as
+    TRV-003. The caller hands in the attempt's validated root and its ``input_commit``; this does
+    not look up the group, its worktree or its recorded floor, and never substitutes either.
+    Same result shape and the same diff/untracked union as ``collect_scope_changes``
+    (``work_base_ref`` stays None: the floor is the attempt's input, not a group work base).
+    Never raises — a missing tree or floor, or a failing git call, is ``available=False``.
+    """
+    result: dict = {
+        "available": False, "reason": SRC_ROOT_ERROR,
+        "worktree": None, "branch": None, "paths": [], "entries": [],
+        "work_base_ref": None, "scope_base_sha": None, "work_base_error": None,
+    }
+    if not root or not base_sha:
+        return result
+    try:
+        wt_path = Path(root)
+        if not wt_path.is_dir():
+            result["reason"] = SRC_ROOT_DIR_MISSING
+            return result
+        result["worktree"] = str(wt_path)
+        floor = _run_git(
+            ["rev-parse", "--verify", "--quiet", f"{base_sha}^{{commit}}"],
+            cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+        )
+        if floor.returncode != 0:
+            return result
+        branch = _run_git(["symbolic-ref", "--short", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC)
+        if branch.returncode == 0:
+            result["branch"] = (branch.stdout or "").strip() or None
+        result["scope_base_sha"] = base_sha
+        entries_by_path = _scope_entries(wt_path, base_sha)
+        if entries_by_path is None:
+            return result
+        result["available"] = True
+        result["reason"] = SRC_ROOT_WORKTREE
+        result["paths"] = sorted(entries_by_path)
+        result["entries"] = [entries_by_path[path] for path in sorted(entries_by_path)]
+        return result
+    except Exception:  # noqa: BLE001 — a verification helper must never 500 a TR
+        _log.warning("collect_scope_changes_at failed for %s", root, exc_info=True)
         result["available"] = False
         result["reason"] = SRC_ROOT_ERROR
         return result

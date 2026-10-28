@@ -1139,7 +1139,7 @@ def _attach_author_names(answers: list[dict]) -> None:
 def get_answers_for_document(doc_id: str) -> list[dict]:
     """Array of Q&A pairs for document doc_id (legacy document_routes compatibility).
 
-    Returns [{"Q": item_body, "A": latest_answer_body_or_null}, ...] / [] if none.
+    Returns [{"id": item_id, "doc_id": doc_id, "Q": item_body, "A": latest_answer_body_or_null}, ...].
     """
     # 0288 NR0003 finding 5 / recommendation 3: this was 2 + N queries (container, items, then
     # one answers SELECT per item) on the GET /document path, which every worker
@@ -1154,8 +1154,8 @@ def get_answers_for_document(doc_id: str) -> list[dict]:
             # Later row for the same item = later answer (ORDER BY a.created_at).
             result[-1]["A"] = row.get("answer_body")
         else:
-            result.append({"_seq": seq, "Q": row.get("body"), "A": row.get("answer_body")})
-    return [{"Q": r["Q"], "A": r["A"]} for r in result]
+            result.append({"_seq": seq, "id": row.get("id"), "Q": row.get("body"), "A": row.get("answer_body")})
+    return [{"id": r["id"], "doc_id": doc_id, "Q": r["Q"], "A": r["A"]} for r in result]
 
 
 def open_item_snapshot(project_id: Optional[str] = None) -> list[dict]:
@@ -1177,3 +1177,52 @@ def list_open_items(project_id: Optional[str] = None) -> list[dict]:
 def qa_bundle_by_doc(doc_id: str) -> list[dict]:
     """Q&A bundle for ment assembly (L0007 §6)."""
     return db_question_items.qa_bundle_by_doc(doc_id)
+
+
+def qa_context_doc_ids(doc_id: str) -> list[str]:
+    """Target, relation ancestors and preceding sequence results, within its group.
+
+    The target's own slot is the sequence boundary, even when an ancestor is the
+    sequence root. Never pull later results into an older document's context.
+    Cycles and shared ancestors are visited once. This is read-only enrichment;
+    document/token authorization remains with the existing callers.
+    """
+    target = db_documents.get_by_id(doc_id)
+    if not target:
+        return []
+    scope = (target.get("project_id"), target.get("group_id"))
+    pending = [doc_id]
+    seq = db_wfseq.get_sequence_for_member_doc(doc_id)
+    if seq:
+        items = db_wfseq.get_sequence_items(seq["id"])
+        current = next((it for it in items if it.get("result_doc_id") == doc_id), None)
+        pending.append(seq.get("doc_id"))
+        # A root or an unknown slot has no proven sequence predecessors.
+        # In particular, today's effective head is not an older document's boundary.
+        if doc_id != seq.get("doc_id") and current is not None:
+            pending.extend(
+                it.get("result_doc_id")
+                for it in sorted(items, key=lambda it: it.get("sort_order") or 0)
+                if (it.get("sort_order") or 0) < (current.get("sort_order") or 0)
+            )
+    seen: set[str] = set()
+    result: list[str] = []
+    for candidate in pending:
+        if not isinstance(candidate, str) or not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        doc = target if candidate == doc_id else db_documents.get_by_id(candidate)
+        if not doc or (doc.get("project_id"), doc.get("group_id")) != scope:
+            continue
+        result.append(candidate)
+        pending.extend([doc.get("triggered_by"), doc.get("target_id")])
+    return result
+
+
+def qa_bundle_for_context(doc_id: str) -> list[dict]:
+    """Q&A rows with original document and item ids, including unanswered items."""
+    return [
+        {**row, "doc_id": source_id}
+        for source_id in qa_context_doc_ids(doc_id)
+        for row in qa_bundle_by_doc(source_id)
+    ]

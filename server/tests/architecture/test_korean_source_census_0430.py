@@ -182,7 +182,11 @@ FILE_LINE_CAPS: dict[str, int] = {
     # before the change (drift from other merged groups, untracked here like the mention_service.py entry), and
     # T-B1e adds exactly 4 -- the ko meanings of the four ``content_state`` values the help item ``document_access``
     # now serves (P0006 §2.9 ③, the protocol's own sentences; the rules come from mention_service, not from here).
-    "modules/flow_gate/services/help_catalog.py": 104,
+    # 104 -> 120: 0110 T0011 rework, measured with _korean_lines (Hangul +
+    # _korean_allowlist exclusions). HEAD already measured 116 from shared help
+    # changes; ANSWERS_HELP_COPY["ko"] adds four product-copy lines alongside
+    # complete en/ja siblings. No comment or docstring Korean is added.
+    "modules/flow_gate/services/help_catalog.py": 120,
     "modules/flow_gate/services/invoke_mention_service.py": 4,
     # 157 -> 176: this file was already at 175 (pre-existing drift from other merged
     # groups untouched by 0523, same as the tr_commit_ledger.py entry this census still
@@ -233,7 +237,10 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/services/workflow_decision_service.py": 3,
     "modules/flow_gate/template_provision.py": 23,
     "modules/flow_gate/workflow/pipeline_service.py": 2,
-    "modules/flow_gate/workflow/prompt_copy_service.py": 4,
+    # 4 -> 7: 0110 T0011 rework, measured with the same _korean_lines scanner.
+    # The three new literal lines are the no-invented-answer directive, source
+    # document label and full-question label in the existing Korean Q&A renderer.
+    "modules/flow_gate/workflow/prompt_copy_service.py": 7,
     # New file (flowgate.v02.0053 T#1): SLOT_TITLES["ko"], the title suffix of the documents a
     # Designer card creates. Locale-dictionary (A) Korean next to its en table, not a comment.
     "flowgate/card_documents/slots.py": 2,

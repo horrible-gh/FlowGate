@@ -80,7 +80,9 @@ def public(row: dict) -> dict:
             "timeout_seconds", "exit_code", "timed_out", "cancel_requested", "stdout_tail", "stderr_tail",
             "source_head_before", "source_head_after", "source_branch_before", "source_branch_after",
             "source_changed_during_run", "worktree_state_changed", "recovery_state", "error_code",
-            "created_at", "started_at", "finished_at", "updated_at", "linked_at")
+            "created_at", "started_at", "finished_at", "updated_at", "linked_at",
+            # 0110 T#3: a Graph attempt run's basis (None for a group worktree run).
+            "attempt_id", "input_commit")
     result = {key: row.get(key) for key in keep}
     result["stdout_tail"] = _redact(result["stdout_tail"])
     result["stderr_tail"] = _redact(result["stderr_tail"])
@@ -98,7 +100,7 @@ def summary(row: dict) -> dict:
     rid = row["self_check_run_id"]
     draft = row.get("tr_doc_id") is None
     keep = ("project_id", "group_id", "tr_doc_id", "status", "recovery_state", "cancel_requested",
-            "program", "created_at", "started_at", "updated_at", "linked_at")
+            "program", "created_at", "started_at", "updated_at", "linked_at", "attempt_id")
     return {"self_check_run_id": rid, **{key: row.get(key) for key in keep}, "draft": draft,
             "owner_kind": "draft" if draft else "tr", "group_read_path": f"/self-check/group/runs/{rid}"}
 
@@ -153,14 +155,13 @@ def draft_target(token: dict) -> dict:
     project/group and its workflow head must be a pending TR -- the same head lookup that
     decides the token's source tools and help (remote_tool_service). Returns the target
     dict ``_start`` and ``_worktree`` take.
+
+    0110 T#3: a Graph attempt token is admitted the same way; where its run executes is
+    added by ``_start`` (``_attempt_target``, under the Stop gate), so reading or cancelling
+    its own runs does not depend on the attempt still being writable.
     """
     from modules.flow_gate.services import remote_tool_service  # lazy -- import cycle
 
-    from modules.flow_gate.services import graph_source_hooks
-    try:
-        graph_source_hooks.reject_group_source(token, "self_check")
-    except graph_source_hooks.GraphSourceError as exc:
-        raise SelfCheckError(409, exc.code, exc.message) from exc
     token_id, doc_ref = token.get("token_id"), token.get("doc_ref")
     project_id, group_id = token.get("project"), token.get("group_id")
     if token.get("action_scope") != "new" or not (token_id and doc_ref and project_id and group_id):
@@ -178,7 +179,87 @@ def draft_target(token: dict) -> dict:
             "owner_token_id": token_id, "draft_doc_ref": doc_ref}
 
 
+def _attempt_target(token: dict | None, project_id: str, group_id: str) -> dict:
+    """0110 T#3 (NR0003 §3 T-B): the Graph attempt fields of a run target.
+
+    ``{}`` for an unmapped v0.1 token, whose run keeps the group worktree. A token mapped to
+    a Graph attempt runs in that attempt's tree, resolved by the T-A helper
+    ``graph_source_hooks.attempt_scope`` (active attempt, worktree mode, owner marker,
+    ``marker.input_commit == row.input_commit``). A stopping run or an inactive attempt is
+    refused first (``require_writable``, 409 ``graph_attempt_inactive``); an attempt whose
+    tree cannot be resolved is 409 ``graph_worktree_unavailable`` with its reason. The group
+    worktree is never used in its place.
+
+    Called by ``_start`` inside its ``write_session``: the judgement's shared hold of the Stop
+    gate is kept until the run's spawn is over (see ``_start``)."""
+    from modules.flow_gate.services import graph_source_hooks
+    try:
+        bound = graph_source_hooks.binding(token)
+    except Exception as exc:
+        # A failed mapping lookup does not prove a v0.1 token: refuse, never fall back.
+        _log.warning("selfcheck: Graph attempt mapping lookup failed", exc_info=True)
+        raise SelfCheckError(409, "selfcheck_worktree_unavailable",
+                             details={"reason": "binding_lookup_failed"}) from exc
+    if not bound:
+        return {}
+    try:
+        graph_source_hooks.require_writable(token, "self_check")
+        scope = graph_source_hooks.attempt_scope(token, project_id=project_id, group_id=group_id)
+    except graph_source_hooks.GraphSourceError as exc:
+        raise SelfCheckError(409, exc.code, exc.message, details=dict(exc.details)) from exc
+    return {"attempt_id": scope["attempt_id"], "input_commit": scope["input_commit"],
+            "attempt_token": token}
+
+
+def _attempt_worktree(target: dict) -> Path:
+    """The attempt tree of an attempt target, resolved again (after the Group lock) by the
+    same helper. Any failure, or an attempt / input that is no longer the admitted one, is
+    ``selfcheck_worktree_unavailable`` -- no group fallback."""
+    from modules.flow_gate.services import graph_source_hooks
+    details = {"attempt_id": target["attempt_id"]}
+    try:
+        scope = graph_source_hooks.attempt_scope(target["attempt_token"], project_id=target["project_id"],
+                                                 group_id=target["group_id"])
+    except graph_source_hooks.GraphSourceError as exc:
+        raise SelfCheckError(409, "selfcheck_worktree_unavailable",
+                             details={**details, "reason": exc.details.get("reason") or exc.code}) from exc
+    if not scope or (scope["attempt_id"], scope["input_commit"]) != (target["attempt_id"], target["input_commit"]):
+        raise SelfCheckError(409, "selfcheck_worktree_unavailable", details={**details, "reason": "attempt_changed"})
+    try:
+        path = Path(scope["root"]).resolve(strict=True)
+        if not path.is_dir():
+            raise OSError("not a directory")
+        return path
+    except OSError as exc:
+        raise SelfCheckError(409, "selfcheck_worktree_unavailable",
+                             details={**details, "reason": "worktree_missing"}) from exc
+
+
+def _attempt_lock(ctx: lock_manager.ExecutionContext, project_id: str, attempt_id: str) -> str:
+    """0110 T#3: the attempt's W -- the lock its source writes take (graph_run.workspace
+    .mutation, W alone, no G) -- held for the run, so the tree under test is not written
+    meanwhile. It follows the run's G: released with it once the tree is proved empty,
+    protected with it while not (``_hold_unsettled``, ``_finish``), and freed by recovery /
+    the reaper / re-verification with it (``lock_manager.selfcheck_release_recovered``).
+    Stored as ``holder_kind='selfcheck'`` under the run's holder (``scr:<run_id>``), so a
+    stale reclaim passes the Self-check gate (owner and tree proved), never the instance
+    state alone."""
+    from modules.flow_gate.services.git import merge_target
+    branch = merge_target.GRAPH_ATTEMPT_BRANCH_PREFIX + merge_target.workspace_key(attempt_id)
+    try:
+        outcome = lock_manager.acquire("W", project_id, target_key=branch, holder_kind="selfcheck",
+                                       mode="selfcheck_start", ctx=ctx)
+    except lock_manager.LockProgramError as exc:
+        raise SelfCheckError(500, "selfcheck_internal_error") from exc
+    if not outcome.ok:
+        raise SelfCheckError(409, "selfcheck_source_busy",
+                             details={"attempt_id": attempt_id, **lock_manager.outcome_details(outcome)})
+    return outcome.lock_key
+
+
 def _worktree(doc: dict) -> Path:
+    if doc.get("attempt_id"):
+        return _attempt_worktree(doc)
     root, reason = git_service.effective_src_root_ex(doc["project_id"], doc["group_id"])
     if reason != "worktree" or not root:
         raise SelfCheckError(409, "selfcheck_worktree_unavailable")
@@ -514,17 +595,24 @@ LOCK_UNCONFIRMED = "lock_unconfirmed"
 
 
 def _hold_unsettled(ctx: lock_manager.ExecutionContext, lock_key: str, run_id: str,
-                    ownership: dict | None = None, reason: str = proof.TREE_UNPROVEN) -> None:
+                    ownership: dict | None = None, reason: str = proof.TREE_UNPROVEN,
+                    attempt_lock: str | None = None) -> None:
     """No finish_* and no release while the tree is not proved empty (L 2.24.2: the Group's
     G stays as a protected row; only this Group is blocked). What the spawn learnt is
-    stored first: a later reaper proves the tree from the stored row only."""
+    stored first: a later reaper proves the tree from the stored row only.
+
+    0110 T#3: a Graph attempt run's W (``attempt_lock``) is protected the same way -- the
+    attempt's source writes take that W alone, so a protected G does not keep them out of a
+    tree the run's processes may still be in. Recovery, the reaper and re-verification free
+    both once the tree is proved empty (``lock_manager.selfcheck_release_recovered``)."""
     if ownership:
         try:
             _store_ownership(run_id, ownership)
         except Exception:
             _log.warning("selfcheck %s: storing the spawn's process records failed", run_id, exc_info=True)
-    if ctx.find_held(lock_key) is not None:
-        lock_manager.protect(ctx, lock_key, "selfcheck_reap_unconfirmed")
+    for key in (attempt_lock, lock_key):
+        if key is not None and ctx.find_held(key) is not None:
+            lock_manager.protect(ctx, key, "selfcheck_reap_unconfirmed")
     recovering = db_runs.mark_recovering(run_id)
     if recovering:
         db_runs.mark_recovery_incomplete(run_id, reason)
@@ -532,7 +620,11 @@ def _hold_unsettled(ctx: lock_manager.ExecutionContext, lock_key: str, run_id: s
 
 def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root: Path, before: dict,
             runtime: Path, command: policy.ResolvedCommand, args: list[str], cwd: Path,
-            env: dict[str, str], timeout: int, keeper: "_LockKeeper | None" = None) -> None:
+            env: dict[str, str], timeout: int, keeper: "_LockKeeper | None" = None,
+            attempt_lock: str | None = None, spawned: threading.Event | None = None) -> None:
+    """``spawned`` (0110 T#3, a Graph attempt run): set once the spawn is over -- the child
+    exists and the run is marked running, or the spawn failed. ``_start`` keeps the Stop
+    gate's shared hold until then."""
     holder = ctx.ctx_id
     control = None
     ownership = {}
@@ -541,16 +633,20 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
     terminal = None
     watch = None
     try:
-        control, ownership = executor.spawn([command.executable, *command.argv_prefix, *args], cwd, env, timeout,
-                                            run_id, job_name=proof.job_name(run_id), record=_record_spawn(run_id))
-        with _controls_lock:
-            _controls[run_id] = control, cancelled
-        row = db_runs.mark_running(run_id, source_lock_holder=holder,
-            source_head_before=before["head"], source_branch_before=before["branch"],
-            source_refs_hash_before=before["refs_hash"], source_index_hash_before=before["index_hash"],
-            source_status_hash_before=before["status_hash"], index_lock_before=int(before["index_lock"]), **ownership)
-        if row is None:
-            raise SelfCheckError(500, "selfcheck_state_conflict")
+        try:
+            control, ownership = executor.spawn([command.executable, *command.argv_prefix, *args], cwd, env, timeout,
+                                                run_id, job_name=proof.job_name(run_id), record=_record_spawn(run_id))
+            with _controls_lock:
+                _controls[run_id] = control, cancelled
+            row = db_runs.mark_running(run_id, source_lock_holder=holder,
+                source_head_before=before["head"], source_branch_before=before["branch"],
+                source_refs_hash_before=before["refs_hash"], source_index_hash_before=before["index_hash"],
+                source_status_hash_before=before["status_hash"], index_lock_before=int(before["index_lock"]), **ownership)
+            if row is None:
+                raise SelfCheckError(500, "selfcheck_state_conflict")
+        finally:
+            if spawned is not None:
+                spawned.set()
         _emit(row)
         if db_runs.get_run(run_id)["cancel_requested"] or (keeper is not None and keeper.state == _LockKeeper.GONE):
             cancelled.set()
@@ -558,13 +654,13 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
         watch = _watch_cancel(run_id, control, cancelled)
         result = executor.wait(control, timeout, cancelled)
         if not _settle_tree(run_id, row, ownership):
-            _hold_unsettled(ctx, lock_key, run_id, ownership)
+            _hold_unsettled(ctx, lock_key, run_id, ownership, attempt_lock=attempt_lock)
             return
         # The tree is empty. A G loss is judged now, and nothing the keeper learns later
         # changes the decision below.
         lock = _lock_state(keeper)
         if lock == _LockKeeper.UNCONFIRMED:
-            _hold_unsettled(ctx, lock_key, run_id, ownership, LOCK_UNCONFIRMED)
+            _hold_unsettled(ctx, lock_key, run_id, ownership, LOCK_UNCONFIRMED, attempt_lock=attempt_lock)
             return
         after = _probe(root)
         tails = {"stdout_tail": _redact(result.stdout_tail), "stderr_tail": _redact(result.stderr_tail)}
@@ -602,12 +698,12 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
         # empty too, else the failure is not recorded, the run keeps its active_key and G
         # stays protected (recovery_incomplete / tree_unproven).
         if (control is not None and control.proc.poll() is None) or not _settle_tree(run_id, row, ownership):
-            _hold_unsettled(ctx, lock_key, run_id, ownership)
+            _hold_unsettled(ctx, lock_key, run_id, ownership, attempt_lock=attempt_lock)
             return
         # A confirmed G loss outranks the error, with the same code as the normal path.
         lock = _lock_state(keeper)
         if lock == _LockKeeper.UNCONFIRMED:
-            _hold_unsettled(ctx, lock_key, run_id, ownership, LOCK_UNCONFIRMED)
+            _hold_unsettled(ctx, lock_key, run_id, ownership, LOCK_UNCONFIRMED, attempt_lock=attempt_lock)
             return
         if lock == _LockKeeper.GONE:
             code = "selfcheck_lock_lost"
@@ -627,7 +723,12 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
         if ctx.lock_lost:
             _log.warning("selfcheck %s lost its Group lock during the run", run_id)
         # A missing terminal commit keeps the Group lock (protected) for startup recovery.
+        # 0110 T#3: an attempt run's W follows its G -- released only with a terminal write
+        # (made after the tree proof), else protected with it; an unsettled run's W was
+        # protected by _hold_unsettled already.
         if terminal is not None:
+            if attempt_lock is not None and ctx.find_held(attempt_lock) is not None:
+                lock_manager.release(ctx, attempt_lock)
             if ctx.find_held(lock_key) is not None:
                 lock_manager.release(ctx, lock_key)
             if keeper is not None and keeper.state == _LockKeeper.PROTECTED:
@@ -640,23 +741,63 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
                     _log.warning("selfcheck %s: releasing its protected Group lock failed", run_id, exc_info=True)
             _emit(terminal)
             _cleanup_runtime(runtime, run_id)
-        elif ctx.find_held(lock_key) is not None:
-            lock_manager.protect(ctx, lock_key, "selfcheck_terminal_unrecorded")
+        else:
+            for key in (attempt_lock, lock_key):
+                if key is not None and ctx.find_held(key) is not None:
+                    lock_manager.protect(ctx, key, "selfcheck_terminal_unrecorded")
 
 
-def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
+def start(doc_id: str, request: dict, requested_by: str | None = None, token: dict | None = None) -> dict:
+    """``token``: the caller's verified token (0110 T#3) -- a Graph attempt token's run executes
+    in its attempt tree; without one, or for an unmapped token, the group worktree."""
     doc = _document(doc_id)
-    return _start({"project_id": doc["project_id"], "group_id": doc["group_id"], "tr_doc_id": doc_id},
-                  request, requested_by)
+    target = {"project_id": doc["project_id"], "group_id": doc["group_id"], "tr_doc_id": doc_id,
+              "caller_token": token}
+    return _start(target, request, requested_by)
 
 
 def start_draft(token: dict, request: dict) -> dict:
     """Run Self-check for a TR that is not registered yet; the TR(new) token owns the run."""
-    return _start(draft_target(token), request, token.get("issued_to"))
+    target = {**draft_target(token), "caller_token": token}
+    return _start(target, request, token.get("issued_to"))
 
 
 def _start(target: dict, request: dict, requested_by: str | None) -> dict:
-    """One admission/execution path for TR-bound and draft runs (same policy, worktree, G lock)."""
+    """One admission/execution path for TR-bound and draft runs (same policy, worktree, G lock).
+
+    0110 T#3: a Graph attempt token's run (``_attempt_target``) runs in its attempt tree and
+    also holds the attempt's W. Its writability (``require_writable``) is judged under the
+    Stop gate's shared hold inside a ``write_session``, and that hold is kept -- through the
+    Group's G and the attempt's W (the gate, then the Git locks), the run row and the
+    worker's spawn -- until the spawn is over (``_await_spawn``). A Stop's ``stopping`` or
+    the runtime's invalidation of the attempt (both take the gate exclusively) therefore
+    commits either before the judgement, which refuses with nothing created, locked or
+    spawned, or after the child exists. The token judged is the caller's (``caller_token``,
+    set by ``start`` / ``start_draft``); a target that already carries an attempt is judged
+    again with its token. An unmapped token holds nothing and does not wait."""
+    from modules.flow_gate.services import graph_source_hooks
+    token = target.get("caller_token") or target.get("attempt_token")
+    with graph_source_hooks.write_session():
+        judged = _attempt_target(token, target["project_id"], target["group_id"])
+        if target.get("attempt_id") and judged.get("attempt_id") != target["attempt_id"]:
+            raise SelfCheckError(409, "selfcheck_worktree_unavailable",
+                                 details={"attempt_id": target["attempt_id"], "reason": "attempt_changed"})
+        return _admit({**target, **judged}, request, requested_by)
+
+
+def _await_spawn(worker: threading.Thread, spawned: threading.Event) -> None:
+    """0110 T#3: the request thread holds the Stop gate until the worker's spawn is over
+    (``_finish`` sets ``spawned``), or the worker is gone."""
+    while not spawned.wait(0.2):
+        if not worker.is_alive():
+            return
+
+
+def _admit(target: dict, request: dict, requested_by: str | None) -> dict:
+    """``_start`` past the attempt judgement. The active-run slot stays one per Group: the
+    run holds its Group's G for its whole length in either case, so a second run of the same
+    Group -- another attempt's too -- could not start meanwhile anyway, and recovery (G
+    protection, recovery_incomplete) is judged per Group."""
     project_id, group_id = target["project_id"], target["group_id"]
     if not db_projects.tr_self_check_enabled(project_id):
         raise SelfCheckError(403, "selfcheck_disabled")
@@ -691,7 +832,10 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
     lock_key = outcome.lock_key
     row = None
     runtime = None
+    attempt_lock = None
     try:
+        if target.get("attempt_id"):
+            attempt_lock = _attempt_lock(ctx, project_id, target["attempt_id"])
         root = _worktree(target)
         if root != first_root:
             path_value, _ = policy.controlled_path(root, _HOST_PATH)
@@ -711,18 +855,25 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
             policy.POLICY_VERSION, program, args, command.executable, command.name,
             command.origin, relative_cwd, timeout, list(env), run_id=run_id, source_lock_holder=holder,
             owner_token_id=target.get("owner_token_id"), draft_doc_ref=target.get("draft_doc_ref"),
-            owner_instance_id=instance_registry.current_instance_id(), owner_marker=proof.owner_marker(run_id))
+            owner_instance_id=instance_registry.current_instance_id(), owner_marker=proof.owner_marker(run_id),
+            attempt_id=target.get("attempt_id"), input_commit=target.get("input_commit"))
+        spawned = threading.Event() if attempt_lock is not None else None
         worker = threading.Thread(target=_finish, args=(run_id, ctx, lock_key, root, before,
-            runtime, command, args, cwd, env, timeout, keeper), daemon=True, name=f"selfcheck-{run_id}")
+            runtime, command, args, cwd, env, timeout, keeper, attempt_lock, spawned), daemon=True,
+            name=f"selfcheck-{run_id}")
         try:
             worker.start()
         except Exception as exc:
             failed = db_runs.finish_failed(run_id, error_code="selfcheck_internal_error")
             if failed is not None:
+                if attempt_lock is not None:
+                    lock_manager.release(ctx, attempt_lock)
                 lock_manager.release(ctx, lock_key)
                 _emit(failed)
                 _cleanup_runtime(runtime, run_id)
             raise SelfCheckError(500, "selfcheck_internal_error") from exc
+        if spawned is not None:
+            _await_spawn(worker, spawned)
         _emit(row)
         return public(row)
     except db_runs.SelfCheckAlreadyRunningError as exc:
@@ -735,6 +886,8 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
     finally:
         if row is None:
             keeper.stop()
+            if attempt_lock is not None:
+                lock_manager.release(ctx, attempt_lock)
             lock_manager.release(ctx, lock_key)
             if runtime is not None:
                 _cleanup_runtime(runtime, run_id, tracked=False)
@@ -1100,7 +1253,8 @@ def _reprove(row: dict) -> tuple[str, str | None]:
 def _reap_terminal_g(lock: dict) -> bool:
     """A protected Self-check G whose run has ended (the gate protected it while the tree
     was not proved empty): deleted once the tree is proved empty. An ended run spawns
-    nothing more, so no server proof is needed (gate table, terminal rows)."""
+    nothing more, so no server proof is needed (gate table, terminal rows). 0110 T#3: a
+    protected attempt W of such a run is reached the same way and freed with its G."""
     rid = gate.run_id_of(lock)
     run = db_runs.get_run(rid) if rid else None
     if run is None or run["status"] in _ACTIVE or proof.tree_state(run).state != proof.ABSENT:

@@ -368,6 +368,9 @@ def reclaim_stale_row(row: dict) -> bool:
     0080 T#2: the one delete both stale-reclaim callers (``job_sweeper.step_stale_locks``,
     ``_try_acquire_once``) pass. A Self-check-owned G is deleted only when
     ``selfcheck_reclaim_gate`` says RECLAIM; every other holder kind keeps this path as it was.
+    0110 T#3: a Graph attempt run's W is stored as ``holder_kind='selfcheck'`` too, so it
+    passes the same gate (owner and process tree proved) -- an instance judged DEAD alone
+    never frees the attempt's tree while the run's processes may still be in it.
     """
     try:
         if row.get("exec_state") or row.get("exec_pid"):
@@ -428,18 +431,53 @@ def selfcheck_reclaim_gate(row: dict) -> str:
         return "keep"
 
 
+def _selfcheck_w_rows(project_id: str, run_id: str) -> list:
+    """0110 T#3: the W rows a Self-check run holds (a Graph attempt run's attempt W)."""
+    holder = selfcheck_ctx_id(run_id)
+    _request_cache.invalidate()
+    return [row for row in db.list_locks_in_scope(project_id)
+            if row.get("domain") == "W" and row.get("holder_ctx_id") == holder]
+
+
 def selfcheck_release_recovered(project_id: str, group_id: str, run_id: str) -> None:
-    """unprotect_and_release: the run's process is proved gone."""
-    db.recovery_release_lock(lock_key("G", project_id, group_id), selfcheck_ctx_id(run_id))
+    """unprotect_and_release: the run's process is proved gone. 0110 T#3: its attempt W
+    goes with its G (before it: a failure here leaves G, which the reaper retries)."""
+    holder = selfcheck_ctx_id(run_id)
+    for row in _selfcheck_w_rows(project_id, run_id):
+        db.recovery_release_lock(row["lock_key"], holder)
+    db.recovery_release_lock(lock_key("G", project_id, group_id), holder)
+
+
+def _selfcheck_protect_w(project_id: str, run_id: str, now: str) -> bool:
+    """0110 T#3: mark the run's attempt W rows protected (an attempt's source writes take
+    that W alone, so G's protection does not keep them out). False = a row was not marked."""
+    ok = True
+    for row in _selfcheck_w_rows(project_id, run_id):
+        if int(row.get("protected") or 0) == 1:
+            continue
+        if db.protect_lock(row["lock_key"], row["lock_epoch"], "selfcheck_reap_unconfirmed", now) != 1:
+            _log.error("selfcheck recovery: W %s of run %s not protected", row["lock_key"], run_id)
+            ok = False
+    return ok
 
 
 def selfcheck_ensure_protected(project_id: str, group_id: str, run_id: str) -> bool:
-    """ensure_protected_g: keep (or create) this Group's G as a protected row.
+    """ensure_protected_g: keep (or create) this Group's G as a protected row. 0110 T#3:
+    the run's attempt W rows, where it holds one, are marked protected first.
 
-    False = the Group could not be protected here (store error, or G held by someone
-    else). The run stays recovery_incomplete either way, and that alone keeps the
+    False = the Group (or the run's W) could not be protected here (store error, or G held
+    by someone else). The run stays recovery_incomplete either way, and that alone keeps the
     Group's G closed (``group_recovery_check``).
     """
+    try:
+        w_protected = _selfcheck_protect_w(project_id, run_id, now_iso())
+    except Exception:
+        _log.warning("selfcheck recovery: protecting the W of run %s failed", run_id, exc_info=True)
+        w_protected = False
+    return _selfcheck_protect_g(project_id, group_id, run_id) and w_protected
+
+
+def _selfcheck_protect_g(project_id: str, group_id: str, run_id: str) -> bool:
     key = lock_key("G", project_id, group_id)
     holder = selfcheck_ctx_id(run_id)
     now = now_iso()
@@ -520,7 +558,8 @@ SELFCHECK_PROTECTED_PAGE = 100
 def selfcheck_protected_locks() -> list:
     """Every protected Self-check G row (the T#3 reaper re-proves those of ended runs), read
     page by page: rows that stay unprovable at the head never hide the ones after them.
-    There is at most one G row per Group."""
+    There is at most one G row per Group. 0110 T#3: a Graph attempt run's protected W rows
+    (holder_kind selfcheck) are listed too; the reaper frees them with their run's G."""
     rows, after = [], None
     while True:
         page = db.list_protected_locks_of_kind("selfcheck", SELFCHECK_PROTECTED_PAGE, after)

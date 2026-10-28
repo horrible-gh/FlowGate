@@ -5,10 +5,12 @@ follow it until every question it asked has an answer (``finalize.open_questions
 
 - hold (``review_stage``): its instruction stage (the instruction's approval and the result stage), its result (the
   card's review or approval), its passed review loop (the approval) and its result writer that ended with no result
-  (the next write) do not go on. Each of its questions is first put to the card's instruction AI — the AI that directs
-  the card's work — one at a time (``q_answer_invoke_service.dispatch_answer_run``, the [AI 답변 요청] run); the card's
-  review AI when the card has no instruction stage or its instruction AI asked. That responder answers from the
-  documents and the source, and hands to a person only what a person must decide (its escalate signal). A question
+  (the next write) do not go on. Each question goes first to the card's review AI, then an independent enabled
+  default AI, one at a time (``q_answer_invoke_service.dispatch_answer_run``, the [AI 답변 요청] run). Every candidate
+  must differ from the question run's actual provider, including instruction/work runs and startup fallbacks.
+  Without an independent responder (or known asker provider), ``mark_responder_failed`` leaves it open for a
+  person's answer; no unchecked default dispatch occurs. A responder answers from documents and source and
+  hands human decisions to a person through its escalate signal. A question
   is put to an AI at most once (the item's responder state, as v0.1): a failed or handed-on one waits for a person's
   answer in the Q&A panel. The card of the document a question is on shows the [Q] mark (``run_service.question_nodes``).
 - resume: once that run's questions are all answered — a person's answer (``on_question_answered``) or the responder
@@ -25,7 +27,6 @@ import logging
 import threading
 from typing import Optional
 
-from flowgate.card_settings import fields
 from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
 
@@ -33,7 +34,6 @@ _log = logging.getLogger(__name__)
 
 PASSED = "review_passed"
 EXITED = "exited"
-SOURCE_INSTRUCTION_AI = "card_instruction_ai"
 SOURCE_REVIEW_AI = "card_review_ai"
 
 _lock = threading.RLock()
@@ -81,15 +81,19 @@ def hold_without_result(flow_id: str, run: dict) -> None:
         hold(flow_id, run, nodes[0])
 
 
-def _responder(flow_id: str, node: dict, asked_by_instruction: bool) -> tuple[Optional[str], str]:
-    """The card's instruction AI (its instruction stage's AI), else — no instruction stage, or that AI asked — its
-    review AI (the project's default reviewer when it names none)."""
+def _responder(flow_id: str, node: dict, asked_by_instruction: bool,
+               asker_provider_id: Optional[str] = None) -> tuple[Optional[str], str]:
+    """Review AI, then independent enabled defaults, for questions from every card stage.
+
+    An instruction/run/assignee provider is eligible only as an enabled default that
+    differs from the actual asker. Instruction-stage presence never overrides review AI.
+    """
     stored = repository.values(flow_id, node["node_key"])
-    if not asked_by_instruction and fields.instruction_stage(node.get("node_type"), node.get("doc_type"), stored):
-        provider = fields.instruction_provider(stored) or node.get("assignee_provider_id")
-        if provider:
-            return provider, SOURCE_INSTRUCTION_AI
-    return stored.get("review_ai") or legacy.default_reviewer(legacy.project_of(flow_id)), SOURCE_REVIEW_AI
+    project_id = legacy.project_of(flow_id)
+    return legacy.independent_question_responder(project_id, asker_provider_id, [
+        (stored.get("review_ai"), SOURCE_REVIEW_AI),
+        (legacy.default_reviewer(project_id), "default"),
+    ])
 
 
 def _dispatch(flow_id: str, node: dict, run: dict, items: list[dict], asked_by_instruction: bool) -> bool:
@@ -97,8 +101,14 @@ def _dispatch(flow_id: str, node: dict, run: dict, items: list[dict], asked_by_i
     target = next((item for item in items if not item.get("responder_state")), None)
     if target is None or not target.get("anchor_doc_id") or legacy.flow_ai_busy(flow_id):
         return False
-    provider, source = _responder(flow_id, node, asked_by_instruction)
+    provider, source = _responder(
+        flow_id, node, asked_by_instruction,
+        target.get("asker_actual_provider_id") or run.get("provider_id"),
+    )
     try:
+        if provider is None:
+            legacy.mark_question_responder_failed(target["id"], run.get("issued_to"))
+            return False
         started = legacy.ask_responder(target["anchor_doc_id"], target["id"], run.get("issued_to") or "",
                                        provider, source)
     except Exception:  # noqa: BLE001 — a refusal is on the item (dispatch_answer_run); a person answers it

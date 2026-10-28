@@ -685,13 +685,19 @@ class TestInboxNew:
             "branch": "main",
         }
 
+        # 0110 T#2: the gate hands evaluate() the token's attempt basis verbatim.
+        attempt_basis = {"attempt_id": "att_inbox_new", "root": tmp_path, "input_commit": "a" * 40}
+
         with patch(
             "modules.flow_gate.rbac.permission_service.has_permission",
             return_value=True,
         ), patch(
             "modules.flow_gate.api.inbox_routes.tr_scope_service.evaluate",
             return_value=reject_verdict,
-        ):
+        ) as evaluate, patch(
+            "modules.flow_gate.api.inbox_routes.tr_scope_service.resolve_attempt_scope",
+            return_value=attempt_basis,
+        ) as resolve:
             from starlette.testclient import TestClient
             from fastapi import FastAPI
             app = FastAPI()
@@ -714,6 +720,10 @@ class TestInboxNew:
 
         assert resp.status_code == 422
         assert "doc_id" not in resp.json()
+        assert resolve.call_count == 1
+        token_arg, project_arg, group_arg = resolve.call_args.args
+        assert token_arg.get("token_id") and project_arg == "testprj" and group_arg == "testprj-__ALL__-0001"
+        assert evaluate.call_args.kwargs["attempt_scope"] is attempt_basis
 
     def test_tr_scope_gate_skipped_for_non_mutating_new_submission(self, seed_data, tmp_path):
         """Non-mutating types (e.g. NR) must not even invoke tr_scope_service.evaluate —
@@ -1103,13 +1113,19 @@ class TestInboxEdit:
             "branch": "main",
         }
 
+        # 0110 T#2: the edit path passes the attempt basis exactly like the new path.
+        attempt_basis = {"attempt_id": "att_inbox_edit", "root": tmp_path, "input_commit": "b" * 40}
+
         with patch(
             "modules.flow_gate.rbac.permission_service.has_permission",
             return_value=True,
         ), patch(
             "modules.flow_gate.api.inbox_routes.tr_scope_service.evaluate",
             return_value=reject_verdict,
-        ):
+        ) as evaluate, patch(
+            "modules.flow_gate.api.inbox_routes.tr_scope_service.resolve_attempt_scope",
+            return_value=attempt_basis,
+        ) as resolve:
             from starlette.testclient import TestClient
             from fastapi import FastAPI
             app = FastAPI()
@@ -1134,6 +1150,10 @@ class TestInboxEdit:
         # Rejection must not have written the edit through.
         assert stored.read_text() == "# Original TS Content"
         assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+        assert resolve.call_count == 1
+        token_arg, project_arg, group_arg = resolve.call_args.args
+        assert token_arg.get("token_id") and project_arg == "testprj" and group_arg == "testprj-__ALL__-0001"
+        assert evaluate.call_args.kwargs["attempt_scope"] is attempt_basis
 
 
 # ── 5. Access another doc_id with a reissued Phase 3 token -> 403 ──────────

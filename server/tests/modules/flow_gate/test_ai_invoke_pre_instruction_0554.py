@@ -1846,3 +1846,32 @@ class TestConnectedFlowFullEffectiveBundle:
         assert "WorkPlan 사전지시" not in handoff_text
         assert PRE_TEXT not in handoff_text
         assert ATTACHMENT["original_filename"] not in handoff_text
+
+
+def test_rework_preserves_qa_section_when_prepending_pre_instruction_0110(monkeypatch):
+    from modules.flow_gate.api import token_routes
+    from modules.flow_gate.services import q_service, mention_service
+    target = "flowgate.default.0554.9002-TR"
+    origin = "flowgate.default.0554.9001-B"
+    docs = {did: {"doc_id": did, "type_code": tc, "seq": seq, "title": did,
+                  "group_id": GROUP_ID, "project_id": "flowgate", "rejection_history": [],
+                  "triggered_by": origin if did == target else None}
+            for did, tc, seq in [(target, "TR", 9002), (origin, "B", 9001)]}
+    monkeypatch.setattr(token_routes.db_documents, "get_by_id", docs.get)
+    monkeypatch.setattr(token_routes.db_documents, "get_group_max_seq", lambda _: 9002)
+    monkeypatch.setattr(token_routes.db_documents, "fetch_recent_group_docs", lambda **_: [])
+    monkeypatch.setattr(token_routes.db_wfseq, "get_sequence_for_member_doc", lambda _: None)
+    monkeypatch.setattr(token_routes, "_load_current_revision_review", lambda _: None)
+    monkeypatch.setattr(mention_service.document_service, "get_document", docs.get)
+    monkeypatch.setattr(q_service, "qa_bundle_by_doc", lambda did: [{
+        "id": 519, "seq": 1, "body": "retain independent panels", "answer_body": "stored answer",
+    }] if did == origin else [])
+    monkeypatch.setattr(invoke_mention_service, "_resolve_rework_pre_instruction",
+                        lambda _: {"text": PRE_TEXT, "attachment": None})
+    text = invoke_mention_service.build_rework_mention(
+        doc_id=target, group_id=GROUP_ID, project_id="flowgate", scratch_dir="/scratch",
+        raw_token="raw", api_base_url="http://x/api/v1", locale="ko")
+    assert text.count("## WorkPlan 사전지시") == 1
+    assert text.count("## 기존 질의·답변") == 1
+    assert "#519" in text and "stored answer" in text
+    assert PRE_TEXT in text

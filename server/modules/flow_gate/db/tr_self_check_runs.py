@@ -142,6 +142,8 @@ def create_pending(
     draft_doc_ref: str | None = None,
     owner_instance_id: str | None = None,
     owner_marker: str | None = None,
+    attempt_id: str | None = None,
+    input_commit: str | None = None,
 ) -> dict:
     """Atomically insert a pending self-check run row with active_key set.
 
@@ -155,6 +157,10 @@ def create_pending(
     The owner token must still be open when the row commits (:func:`_require_open_owner`);
     otherwise :class:`DraftOwnerClosedError` and nothing is written, so no draft row can
     land after its registration's link and stay unlinked.
+
+    0110 T#3: ``attempt_id`` / ``input_commit`` (migration 162) name the Graph attempt tree a
+    run executes in and the commit that tree started from; both land in the insert's
+    transaction. A group worktree run writes neither column.
     """
     if tr_doc_id is None and not (owner_token_id and draft_doc_ref):
         raise ValueError("a draft self-check run needs owner_token_id and draft_doc_ref")
@@ -204,6 +210,11 @@ def create_pending(
                 store._execute(
                     "UPDATE tr_self_check_runs SET source_lock_holder = ? WHERE self_check_run_id = ?",
                     [source_lock_holder, rid],
+                )
+            if attempt_id is not None:
+                store._execute(
+                    "UPDATE tr_self_check_runs SET attempt_id = ?, input_commit = ? WHERE self_check_run_id = ?",
+                    [attempt_id, input_commit, rid],
                 )
     except Exception as exc:
         if _is_active_key_unique_violation(exc):

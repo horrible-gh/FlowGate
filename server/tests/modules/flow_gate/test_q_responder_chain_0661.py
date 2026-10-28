@@ -204,13 +204,15 @@ def wiring(monkeypatch):
 
     monkeypatch.setattr(q_service, "mark_responder_failed", _mark_failed)
     monkeypatch.setattr(db_paused, "get_by_group", lambda gid: None)
-    monkeypatch.setattr(db_runs, "get", lambda run_id: None)
+    monkeypatch.setattr(db_runs, "get", lambda run_id: {"provider_id": "aip_worker"}
+                        if run_id == REQUESTER else None)
     return {"calls": calls, "failed": failed}
 
 
 def _requester_run(**overrides):
     row = {
         "run_id": REQUESTER, "group_id": GROUP, "doc_ref": SPINE, "project_id": "flowgate",
+        "provider_id": "aip_worker",
         "issued_to": "u-worker", "api_base_url": API, "mode": "continuous",
         "stop_code": "question_pending",
         "continuation_reviewer_overrides": None, "continuation_review_count_overrides": None,
@@ -262,9 +264,9 @@ class TestResolveQuestionResponderBaseline:
         # override) — before 0661 the header pick silently won here.
         self._stored(monkeypatch, 1, "aip_reviewer")
         assert review.resolve_question_responder_with_source(
-            None, 3, "aip_header", "flowgate", doc_ref=SPINE,
+            None, 3, "aip_header", "flowgate", asker_provider_id="aip_worker", doc_ref=SPINE,
         ) == ("aip_reviewer", "sequence_reviewer")
-        assert review.resolve_question_responder(None, 3, "aip_header", "flowgate",
+        assert review.resolve_question_responder(None, 3, "aip_header", "flowgate", asker_provider_id="aip_worker",
                                                  doc_ref=SPINE) == "aip_reviewer"
 
     def test_review_count_zero_step_has_no_reviewer_and_falls_to_header(self, monkeypatch):
@@ -272,7 +274,7 @@ class TestResolveQuestionResponderBaseline:
         # if a stale reviewer id is still on the row — distinct from "reviewer unset".
         self._stored(monkeypatch, 0, "aip_reviewer")
         assert review.resolve_question_responder_with_source(
-            None, 3, "aip_header", "flowgate", doc_ref=SPINE,
+            None, 3, "aip_header", "flowgate", asker_provider_id="aip_worker", doc_ref=SPINE,
         ) == ("aip_header", "header")
 
     def test_reviewer_unset_with_count_falls_to_header_not_project_default(self, monkeypatch):
@@ -280,37 +282,37 @@ class TestResolveQuestionResponderBaseline:
         # question keeps the header pick ahead of that (0551 T#1 tier order).
         self._stored(monkeypatch, 1, None)
         assert review.resolve_question_responder_with_source(
-            None, 3, "aip_header", "flowgate", doc_ref=SPINE,
+            None, 3, "aip_header", "flowgate", asker_provider_id="aip_worker", doc_ref=SPINE,
         ) == ("aip_header", "header")
 
     def test_runtime_count_override_zero_switches_the_stored_reviewer_off(self, monkeypatch):
         self._stored(monkeypatch, 1, "aip_reviewer")
         assert review.resolve_question_responder_with_source(
-            None, 3, "aip_header", "flowgate", doc_ref=SPINE, review_count_overrides={"3": 0},
+            None, 3, "aip_header", "flowgate", asker_provider_id="aip_worker", doc_ref=SPINE, review_count_overrides={"3": 0},
         ) == ("aip_header", "header")
 
     def test_runtime_reviewer_override_wins_even_when_the_step_is_unreviewed(self, monkeypatch):
         self._stored(monkeypatch, 0, None)
         assert review.resolve_question_responder_with_source(
-            {"3": "aip_reviewer"}, 3, "aip_header", "flowgate", doc_ref=SPINE,
+            {"3": "aip_reviewer"}, 3, "aip_header", "flowgate", asker_provider_id="aip_worker", doc_ref=SPINE,
         ) == ("aip_reviewer", "reviewer_override")
 
     def test_a_disabled_stored_reviewer_falls_to_the_header_pick(self, monkeypatch):
         self._stored(monkeypatch, 1, "aip_gone")
         assert review.resolve_question_responder_with_source(
-            None, 3, "aip_header", "flowgate", doc_ref=SPINE,
+            None, 3, "aip_header", "flowgate", asker_provider_id="aip_worker", doc_ref=SPINE,
         ) == ("aip_header", "header")
 
-    def test_nothing_resolves_to_the_default_chain(self, monkeypatch):
+    def test_nothing_explicit_selects_an_independent_default(self, monkeypatch):
         self._stored(monkeypatch, 0, None)
         assert review.resolve_question_responder_with_source(
-            None, 3, None, "flowgate", doc_ref=SPINE,
-        ) == (None, "default")
+            None, 3, None, "flowgate", asker_provider_id="aip_worker", doc_ref=SPINE,
+        ) == ("aip_reviewer", "default")
 
     def test_no_doc_ref_keeps_the_0551_behaviour(self):
         assert review.resolve_question_responder(
-            {"3": "aip_reviewer"}, 3, "aip_header", "flowgate") == "aip_reviewer"
-        assert review.resolve_question_responder(None, 3, "aip_header", "flowgate") == "aip_header"
+            {"3": "aip_reviewer"}, 3, "aip_header", "flowgate", asker_provider_id="aip_worker") == "aip_reviewer"
+        assert review.resolve_question_responder(None, 3, "aip_header", "flowgate", asker_provider_id="aip_worker") == "aip_header"
 
 
 # ═══════════════════════════ non-trigger boundaries ═══════════════════════════
@@ -346,10 +348,11 @@ class TestDispatchBoundaries:
         seen: dict = {}
 
         def _resolver(reviewer_overrides, item_seq, base_provider_id, project_id,
-                      doc_ref=None, review_count_overrides=None):
+                      doc_ref=None, review_count_overrides=None, asker_provider_id=None):
             seen.update(reviewer_overrides=reviewer_overrides, item_seq=item_seq,
                         base_provider_id=base_provider_id, project_id=project_id,
-                        doc_ref=doc_ref, review_count_overrides=review_count_overrides)
+                        doc_ref=doc_ref, review_count_overrides=review_count_overrides,
+                        asker_provider_id=asker_provider_id)
             return "aip_reviewer", "sequence_reviewer"
 
         monkeypatch.setattr(review, "resolve_question_responder_with_source", _resolver)
@@ -360,6 +363,7 @@ class TestDispatchBoundaries:
         assert seen == {
             "reviewer_overrides": {"5": "aip_x"}, "item_seq": 3, "base_provider_id": "aip_header",
             "project_id": "flowgate", "doc_ref": SPINE, "review_count_overrides": {"3": 1},
+            "asker_provider_id": "aip_worker",
         }
         assert wiring["calls"][0]["provider_id"] == "aip_reviewer"
         assert wiring["calls"][0]["provider_source"] == "sequence_reviewer"
@@ -392,9 +396,9 @@ class TestSequentialQuestions:
         seen: dict = {}
 
         def _resolver(reviewer_overrides, item_seq, base_provider_id, project_id,
-                      doc_ref=None, review_count_overrides=None):
+                      doc_ref=None, review_count_overrides=None, asker_provider_id=None):
             seen.update(reviewer_overrides=reviewer_overrides, doc_ref=doc_ref,
-                        base_provider_id=base_provider_id)
+                        base_provider_id=base_provider_id, asker_provider_id=asker_provider_id)
             return "aip_reviewer", "reviewer_override"
 
         monkeypatch.setattr(review, "resolve_question_responder_with_source", _resolver)
@@ -408,7 +412,7 @@ class TestSequentialQuestions:
         # The next dispatch is rebuilt from the parked chain's durable row (JSON maps
         # parsed, spine doc_ref, requester's provider as the header pick).
         assert seen == {"reviewer_overrides": {"3": "aip_reviewer"}, "doc_ref": SPINE,
-                        "base_provider_id": "aip_header"}
+                        "base_provider_id": "aip_header", "asker_provider_id": "aip_header"}
         assert wiring["calls"][0]["provider_source"] == "reviewer_override"
         assert wiring["calls"][0]["issued_to"] == "u-worker"
 
@@ -1436,3 +1440,55 @@ class TestStartupSweep:
         assert failed == [(201, "interrupted", "aiv_dead")]
         assert (202, "answered", None, "aiv_dead2") in fake.states
         assert fake.rows[203]["responder_state"] == "dispatched"
+
+
+@pytest.mark.parametrize("overrides,base,asker,expected", [
+    ({"3": "aip_header"}, "aip_header", "aip_header", ("aip_reviewer", "default")),
+    ({"3": "aip_reviewer"}, "aip_header", "aip_reviewer", ("aip_header", "header")),
+    (None, "aip_header", "aip_header", ("aip_reviewer", "default")),
+    (None, "aip_header", None, (None, "default")),
+])
+def test_independent_responder_skips_actual_asker_0110(monkeypatch, overrides, base, asker, expected):
+    monkeypatch.setattr(review.ai_settings_service, "resolve_effective", lambda pid: {"providers": CHAIN})
+    monkeypatch.setattr(review, "_stored_review_policy_for_item_seq", lambda *a: (0, None))
+    assert review.resolve_question_responder_with_source(
+        overrides, 3, base, "flowgate", asker_provider_id=asker,
+    ) == expected
+
+
+def test_single_provider_waits_for_human_without_dispatch_0110(wiring, monkeypatch):
+    fake = FakeItems([_item(201, 1, asker_actual_provider_id="aip_header")]).install(monkeypatch)
+    monkeypatch.setattr(review.ai_settings_service, "resolve_effective", lambda pid: {"providers": [HEADER]})
+    monkeypatch.setattr(q_service, "mark_responder_failed", _REAL_MARK_RESPONDER_FAILED)
+    monkeypatch.setattr(q_service, "_announce_responder_state", lambda *a, **kw: None)
+    monkeypatch.setattr(db_questions, "get_by_pk", lambda pk: {"doc_id": ANCHOR})
+    finalize._dispatch_question_responder(_requester_run(provider_id="aip_header"))
+    assert wiring["calls"] == []
+    assert fake.rows[201]["responder_state"] == "failed"
+    assert fake.rows[201]["responder_error_code"] == "no_independent_responder"
+    assert fake.rows[201]["answer_count"] == 0
+    assert fake.claims == []
+
+
+def test_sequential_restart_uses_question_snapshot_when_run_is_missing_0110(wiring, monkeypatch):
+    monkeypatch.setattr(db_runs, "get", lambda run_id: None)
+    FakeItems([
+        _item(201, 1, answer_count=1, responder_state="dispatched", responder_run_id=RESPONDER),
+        _item(202, 2, asker_actual_provider_id="aip_header"),
+    ]).install(monkeypatch)
+    monkeypatch.setattr(db_paused, "get_by_group", lambda gid: _paused_row())
+    finalize._continue_question_responder_chain(_responder_run(provider_id="aip_header"))
+    assert wiring["calls"][0]["provider_id"] == "aip_reviewer"
+    assert wiring["calls"][0]["provider_id"] != "aip_header"
+
+
+def test_sequential_restart_without_asker_provenance_waits_for_human_0110(wiring, monkeypatch):
+    monkeypatch.setattr(db_runs, "get", lambda run_id: None)
+    FakeItems([
+        _item(201, 1, answer_count=1, responder_state="dispatched", responder_run_id=RESPONDER),
+        _item(202, 2),
+    ]).install(monkeypatch)
+    monkeypatch.setattr(db_paused, "get_by_group", lambda gid: _paused_row())
+    finalize._continue_question_responder_chain(_responder_run(provider_id="aip_reviewer"))
+    assert wiring["calls"] == []
+    assert wiring["failed"][0][:2] == (202, "no_independent_responder")

@@ -414,7 +414,9 @@ class TestAnswersForDocumentBatching:
         ])
         tmp_db.reads.clear()
 
-        assert get_answers_for_document(doc_id) == [
+        answers = get_answers_for_document(doc_id)
+        assert all(a["id"] is not None and a["doc_id"] == doc_id for a in answers)
+        assert [{"Q": a["Q"], "A": a["A"]} for a in answers] == [
             {"Q": "Q one", "A": "later answer"},
             {"Q": "Q two", "A": None},
             {"Q": "Q three", "A": "only answer"},

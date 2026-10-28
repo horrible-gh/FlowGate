@@ -198,9 +198,10 @@ def responder(monkeypatch):
     real_resolver = review.resolve_question_responder_with_source
 
     def _resolver(reviewer_overrides, item_seq, base_provider_id, project_id,
-                  doc_ref=None, review_count_overrides=None):
+                  doc_ref=None, review_count_overrides=None, asker_provider_id=None):
         picked = real_resolver(reviewer_overrides, item_seq, base_provider_id, project_id,
-                               doc_ref=doc_ref, review_count_overrides=review_count_overrides)
+                               doc_ref=doc_ref, review_count_overrides=review_count_overrides,
+                               asker_provider_id=asker_provider_id)
         state["resolved"].append({"item_seq": item_seq, "doc_ref": doc_ref, "picked": picked})
         return picked
 
@@ -311,6 +312,7 @@ _REAL_RESUME = finalize._auto_resume_answered_question_chain
 def _run(**over):
     run = {
         "run_id": HOP, "group_id": GROUP, "doc_ref": SPINE, "project_id": "flowgate",
+        "provider_id": "aip_worker",
         "issued_to": "usr_admin", "api_base_url": API, "continuation_locale": "ko",
         "mode": "continuous", "hop_kind": None, "status": "finished",
         "end_reason": "exited", "outcome": "complete", "stop_code": "hop_handoff",

@@ -2079,8 +2079,17 @@ def build_mention(
     s3_lines = []
     effective_ref_ids = list(ref_doc_ids or [])
     target_doc_id = parent_canonical_doc_id or parent_doc_id
+    qa_lines: list[str] = []
     if is_edit and target_doc_id:
         effective_ref_ids.insert(0, target_doc_id)
+        from modules.flow_gate.services import q_service
+        from modules.flow_gate.workflow.prompt_copy_service import _append_qa_block
+
+        try:
+            effective_ref_ids.extend(q_service.qa_context_doc_ids(target_doc_id))
+        except Exception:
+            logger.warning("edit Q&A reference lookup failed for %s", target_doc_id, exc_info=True)
+        _append_qa_block(qa_lines, target_doc_id, include_context=True)
     seen_ref_ids: set[str] = set()
     for doc_dot_dash_path in effective_ref_ids:
         if not doc_dot_dash_path or doc_dot_dash_path in seen_ref_ids:
@@ -2388,6 +2397,8 @@ def build_mention(
     if template_section:
         sections.append(template_section)
     sections.append(_section("Reference documents", s3_body))
+    if qa_lines:
+        sections.append("\n".join(qa_lines).strip())
     # MERGE NOTE (branch base 241f00d predates group 0370 on main): main inserts an
     # inline "Efficient document lookup" section right here. Group 0372 absorbed that
     # guidance into the `document_access` help item (D-0003 §3-2, "reference documents: drop the
@@ -2876,14 +2887,36 @@ def _scope_context_section(target_doc: dict) -> Optional[str]:
                 if isinstance(verdict.get("file_manifest"), dict)
                 else verdict.get("file_manifest")) or []
     codes = verdict.get("codes") or []
+    # 0110 T#2: a Graph attempt token's work lives in its attempt worktree until approval;
+    # the reviewer must know which tree (and from which commit) the manifest measured.
+    # A verdict stored before scope_source existed was always measured on the group.
+    scope_source = verdict.get("scope_source") or tr_scope_service.SCOPE_SOURCE_GROUP
+    attempt_based = scope_source == tr_scope_service.SCOPE_SOURCE_GRAPH_ATTEMPT
+    measured_on = (
+        "the Graph attempt worktree this TR's token worked in (not yet merged into the "
+        "group branch)" if attempt_based else "the actual group worktree"
+    )
     lines = [
-        "This manifest is computed by the server from the actual group worktree at "
+        f"This manifest is computed by the server from {measured_on} at "
         "submission time -- it replaces the TR body's self-reported changed-files list "
         "as the source of truth for what to review. Do not treat the body's own list as "
         "authoritative.",
         "",
         f"scope verdict: {verdict.get('verdict') or 'n/a'}"
         f"  codes: {', '.join(codes) if codes else '(none)'}",
+        f"scope source: {scope_source}"
+        f"  attempt_id: {verdict.get('attempt_id') or '(none)'}"
+        f"  input_commit: {verdict.get('input_commit') or '(none)'}",
+    ]
+    attempt_error = verdict.get("attempt_error")
+    if attempt_based and attempt_error:
+        lines.append(
+            f"The Graph attempt could not be resolved ({attempt_error.get('code') or 'unknown'}"
+            f"{', ' + attempt_error['reason'] if attempt_error.get('reason') else ''}) -- TRV-006. "
+            "The group worktree was NOT measured in its place, so an empty manifest here "
+            "is no evidence that nothing changed."
+        )
+    lines += [
         "",
         "Actual worktree changes (path [status] [<- renamed from] -- reporting_state):",
     ]

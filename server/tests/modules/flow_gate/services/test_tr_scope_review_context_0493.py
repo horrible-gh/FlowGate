@@ -157,3 +157,48 @@ def test_scope_context_section_unconfirmed_dict_shape_not_treated_as_two_fake_pa
     assert "  - server/ghost.py" in m2
     assert "  - count" not in m2
     assert "  - items" not in m2
+
+
+def test_scope_context_section_names_graph_attempt_basis():
+    """0110 T#2: the reviewer sees which tree the manifest was measured on and from which commit."""
+    meta = {
+        "tr_scope": {
+            "verdict": "pass", "codes": [], "unconfirmed": {"count": 0, "items": []},
+            "scope_source": "graph_attempt", "attempt_id": "att_review", "input_commit": "e" * 40,
+            "file_manifest": {"total": 1, "truncated": False, "items": [
+                {"path": "client/a.ts", "actual_status": "M", "old_path": None,
+                 "reported_in_current_tr": True, "reported_in_prior_tr": False,
+                 "reporting_state": "reported"},
+            ]},
+        }
+    }
+    m = _build(meta)
+    assert "Graph attempt worktree" in m
+    assert "scope source: graph_attempt" in m
+    assert "attempt_id: att_review" in m
+    assert "input_commit: " + "e" * 40 in m
+    assert "client/a.ts [M]" in m
+
+
+def test_scope_context_section_unresolved_attempt_says_group_was_not_measured():
+    meta = {
+        "tr_scope": {
+            "verdict": "warn", "codes": ["TRV-006"], "unconfirmed": {"count": 0, "items": []},
+            "scope_source": "graph_attempt", "attempt_id": "att_gone", "input_commit": None,
+            "attempt_error": {"code": "graph_worktree_unavailable", "reason": "attempt_not_active"},
+            "file_manifest": {"total": 0, "truncated": False, "items": []},
+        }
+    }
+    m = _build(meta)
+    assert "graph_worktree_unavailable, attempt_not_active" in m
+    assert "group worktree was NOT measured" in m
+    assert "input_commit: (none)" in m
+
+
+def test_scope_context_section_legacy_verdict_reads_as_group_basis():
+    meta = {"tr_scope": {"verdict": "pass", "codes": [], "unconfirmed": [],
+                         "file_manifest": {"total": 0, "truncated": False, "items": []}}}
+    m = _build(meta)
+    assert "the actual group worktree" in m
+    assert "scope source: group" in m
+    assert "attempt_id: (none)" in m

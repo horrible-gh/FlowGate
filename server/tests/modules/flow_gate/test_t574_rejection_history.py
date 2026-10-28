@@ -1863,3 +1863,58 @@ def test_inbox_rejection_id_boundary_and_forwarding(monkeypatch):
     assert inbox_routes._submitted_rejection_id({}) is None
     assert inbox_routes._submitted_rejection_id({"rejection_id": " "}) is None
     assert inbox_routes._submitted_rejection_id({"rejection_id": True}) is not None
+
+
+def test_document_answers_keep_qa_and_add_real_item_id_0110(monkeypatch):
+    from modules.flow_gate.services import q_service
+    from modules.flow_gate.db import question_items
+    query_path = Path(__file__).resolve().parents[3] / "sql" / "queries" / "queries.json"
+    sql = json.loads(query_path.read_text(encoding="utf-8"))["question_items"]["qa_bundle_by_doc"]
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE questions(id INTEGER, doc_id TEXT);
+        CREATE TABLE question_items(id INTEGER, question_id INTEGER, seq INTEGER,
+                                    title TEXT, body TEXT, asker_kind TEXT, options TEXT);
+        CREATE TABLE answers(question_item_id INTEGER, author_kind TEXT, body TEXT,
+                             selected_options TEXT, created_at TEXT);
+        INSERT INTO questions VALUES(1, 'tr');
+        INSERT INTO question_items VALUES(518, 1, 1, 'title', 'question', 'ai', '[]');
+        INSERT INTO question_items VALUES(521, 1, 2, 'pending', 'pending body', 'ai', '[]');
+        INSERT INTO answers VALUES(518, 'human', 'first', '[]', '1');
+        INSERT INTO answers VALUES(518, 'human', 'latest', '[]', '2');
+    """)
+    store = MagicMock()
+    store._sql.return_value = sql
+    store._fetch_all.side_effect = lambda query, params: [dict(r) for r in conn.execute(query, params)]
+    monkeypatch.setattr(question_items, "get_store", lambda: store)
+    try:
+        assert q_service.get_answers_for_document("tr") == [
+            {"id": 518, "doc_id": "tr", "Q": "question", "A": "latest"},
+            {"id": 521, "doc_id": "tr", "Q": "pending body", "A": None},
+        ]
+        assert store._fetch_all.call_count == 1
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("locale, summary, unanswered", [
+    ("ko", "답변 조회 = GET /document/{doc_id}의 answers (id, doc_id, Q, A).", "A=null은 미답변"),
+    ("en", "Read answers from GET /document/{doc_id}: answers (id, doc_id, Q, A).", "A=null means unanswered"),
+    ("ja", "回答の参照 = GET /document/{doc_id} の answers (id, doc_id, Q, A)。", "A=null は未回答"),
+])
+def test_question_and_document_help_advertise_existing_answers_route_0110(locale, summary, unanswered):
+    import re
+    from modules.flow_gate.services import help_catalog
+    ctx = {"base_url": "/flowgate/api/v1", "locale": locale, "project": "flowgate"}
+    for content in [help_catalog._content_document_access(ctx), help_catalog._content_question(ctx)]:
+        answers = content["answers"]
+        assert answers["method"] == "GET"
+        assert answers["url"] == "/flowgate/api/v1/document/{doc_id}"
+        assert answers["field"] == "answers"
+        assert answers["summary"] == summary
+        assert unanswered in answers["note"]
+        assert "triggered_by/target_id" in answers["note"]
+        assert "/q" in answers["note"]
+        if locale != "ko":
+            assert not re.search(r"[ㄱ-ㆎ가-힣]", answers["summary"] + answers["note"])

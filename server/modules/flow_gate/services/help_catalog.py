@@ -278,7 +278,7 @@ QUESTION_HELP_COPY: dict[str, dict] = {
             "R0001 본문이 한 줄이라 DS 설계 대상이 불명확합니다. 구체적 기능 범위와 인수 기준은 무엇입니까?",
             "멘트의 next_type 은 DS 인데 질의가 필요합니다. 질의를 먼저 등록할까요, 모호함을 가정하고 DS 를 작성할까요?",
         ),
-        "continue_note": "질의를 등록해도 지금 하는 작업은 멈추지 않습니다. 무인 연속 작업에서는 가정을 명시하고 이번 단계의 산출물을 제출하세요. 이 실행이 등록한 질의가 열려 있으면 체인은 다음 단계(검수 포함)로 넘어가기 전에 보류되고, 해당 단계의 검수 AI(없으면 기본 AI)가 답한 뒤 자동으로 재개됩니다. 답변을 기다리거나 조회하며 대기하지 마세요.",
+        "continue_note": "질의를 등록해도 지금 하는 작업은 멈추지 않습니다. 무인 연속 작업에서는 가정을 명시하고 이번 단계의 산출물을 제출하세요. 이 실행이 등록한 질의가 열려 있으면 체인은 다음 단계(검수 포함)로 넘어가기 전에 보류되고, 질의자 provider와 다른 활성 검수 AI → 독립 기본 AI 순으로 답변자를 선택하고 답변 후 자동으로 재개됩니다. 독립 응답자가 없거나 질의자 provider를 확인할 수 없으면 자동 답변하지 않고 사람 답변을 기다립니다. 답변을 기다리거나 조회하며 대기하지 마세요.",
         "option_labels": ("<옵션1 — 선택 · 없으면 생략>", "<옵션2>"),
     },
     "en": {
@@ -288,7 +288,7 @@ QUESTION_HELP_COPY: dict[str, dict] = {
             "The R0001 body has only one line, so the DS design scope is unclear. What are the specific feature scope and acceptance criteria?",
             "The mention says next_type is DS, but clarification is needed. Should the query be registered first, or should DS be drafted with explicit assumptions?",
         ),
-        "continue_note": "Registering a query does not pause the work in progress. In an unmanned chain, state your assumption and submit this step's output. While a query this run registered is still open, the chain is held before the next step (review included); the step's reviewer AI (else the default AI) answers it and the chain then resumes on its own. Do not wait or poll for the answer.",
+        "continue_note": "Registering a query does not pause the work in progress. In an unmanned chain, state your assumption and submit this step's output. While a query this run registered is still open, the chain is held before the next step (review included); an enabled reviewer AI, then an independent default AI, is selected only if its provider differs from the actual asker. The chain resumes after an answer. Without an independent responder or known asker provider, automatic answering stops and the question awaits a human answer. Do not wait or poll for the answer.",
         "option_labels": ("<option 1 — optional, omit if not needed>", "<option 2>"),
     },
     "ja": {
@@ -298,7 +298,7 @@ QUESTION_HELP_COPY: dict[str, dict] = {
             "R0001の本文が1行だけなので、DS設計の対象が不明確です。具体的な機能範囲と受入基準は何ですか。",
             "メンションのnext_typeはDSですが、確認が必要です。先に質問を登録するべきですか、それとも前提を明記してDSを作成するべきですか。",
         ),
-        "continue_note": "質問を登録しても進行中の作業は止まりません。無人の連続作業では前提を明記し、この段階の成果物を提出してください。この実行が登録した質問が未回答のままの間、チェーンは次の段階(レビューを含む)へ進む前に保留され、その段階のレビューAI(いなければ既定のAI)が回答した後に自動で再開されます。回答を待ったり照会し続けたりしないでください。",
+        "continue_note": "質問を登録しても進行中の作業は止まりません。無人の連続作業では前提を明記し、この段階の成果物を提出してください。この実行が登録した質問が未回答のままの間、チェーンは次の段階(レビューを含む)へ進む前に保留され、質問者の実際のproviderとは異なる有効なレビューAI、次に独立した既定のAIを選び、回答後に自動で再開されます。独立した回答者がいない場合や質問者のproviderが不明な場合は自動回答せず、人の回答を待ちます。回答を待ったり照会し続けたりしないでください。",
         "option_labels": ("<選択肢1 — 任意・不要なら省略>", "<選択肢2>"),
     },
 }
@@ -567,6 +567,8 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
     if name == "tr_self_check":
         # Same judgment as api_server_tools.definitions_for_run(): a worker token on a TR edit
         # step, or (0638 T#1) on a TR(new) step -- doc_type is then the workflow head's type.
+        # 0110 T#3: a Graph attempt token sees it too -- its run executes in its attempt tree
+        # (content "graph_attempt"); before that it was always refused with 409.
         if ctx.get("principal_kind") == "worker" and ctx.get("action_scope") in AUTHORING_SCOPES and doc_type == "TR":
             return VISIBLE
         return Decision(False, "not_tr_edit")
@@ -785,6 +787,44 @@ def _body_unreadable_rules() -> tuple[str, ...]:
     return mention_service.BODY_UNREADABLE_RULES
 
 
+ANSWERS_HELP_COPY: dict[str, dict[str, str]] = {
+    "ko": {
+        "summary": "답변 조회 = GET /document/{doc_id}의 answers (id, doc_id, Q, A).",
+        "note": (
+            "A=null은 미답변입니다. 답변을 지어내지 마십시오. 해당 문서의 answers만 반환하므로 "
+            "triggered_by/target_id 참조 문서도 같은 경로로 조회하십시오. "
+            "작업 토큰은 기존 문서 조회 권한을 사용하며 /q 아래 GET은 공식 작업자 조회 경로가 아닙니다."
+        ),
+    },
+    "en": {
+        "summary": "Read answers from GET /document/{doc_id}: answers (id, doc_id, Q, A).",
+        "note": (
+            "A=null means unanswered. Do not invent an answer. Only this document's answers are returned; "
+            "read triggered_by/target_id reference documents through the same route. "
+            "Worker tokens use existing document read permissions; GET under /q is not an official worker lookup route."
+        ),
+    },
+    "ja": {
+        "summary": "回答の参照 = GET /document/{doc_id} の answers (id, doc_id, Q, A)。",
+        "note": (
+            "A=null は未回答です。回答を作り上げないでください。この文書の answers のみを返すため、"
+            "triggered_by/target_id の参照文書も同じ経路で取得してください。"
+            "作業トークンは既存の文書閲覧権限を使います。/q 配下の GET は公式の作業者用参照経路ではありません。"
+        ),
+    },
+}
+
+
+def _answers_lookup(ctx: dict) -> dict:
+    copy = ANSWERS_HELP_COPY[normalize_locale(ctx.get("locale"))]
+    return {
+        "method": "GET",
+        "url": f"{ctx['base_url']}/document/{{doc_id}}",
+        "field": "answers",
+        **copy,
+    }
+
+
 def _content_document_access(ctx: dict) -> dict:
     base = ctx["base_url"]
     doc_id = ctx.get("doc_id") or "{doc_id}"
@@ -795,6 +835,7 @@ def _content_document_access(ctx: dict) -> dict:
             "url": f"{base}/document/{{doc_id}}",
             "example": f"{base}/document/{doc_id}",
         },
+        "answers": _answers_lookup(ctx),
         "path": {"method": "GET", "url": f"{base}/document/{{doc_id}}/path"},
         # Bounded reads (group 0370). The full-body GET is the expensive one; these
         # exist so a worker can read only the part it needs.
@@ -951,7 +992,7 @@ def build_question_content(locale: str) -> dict:
 
 
 def _content_question(ctx: dict) -> dict:
-    return build_question_content(ctx["locale"])
+    return {**build_question_content(ctx["locale"]), "answers": _answers_lookup(ctx)}
 
 
 def _prev_doc_id(ctx: dict) -> Optional[str]:
@@ -1385,6 +1426,44 @@ _SELF_CHECK_COPY: dict[str, dict] = {
     },
 }
 
+#: 0110 T#3 (NR0003 §3 T-B): what changes for a token mapped to a Graph attempt.
+_SELF_CHECK_ATTEMPT_COPY: dict[str, dict] = {
+    "ko": {
+        "note": "이 토큰은 Graph attempt 에 매핑되어 있다. Self-check 는 그룹 워크트리가 아니라 이 attempt 의 전용 워크트리(원격 소스 도구가 읽고 쓰는 트리)에서 실행되고, cwd 는 그 트리 기준 상대 경로다. run 응답과 조회 결과의 attempt_id·input_commit 이 실행 기준(attempt 와 그 트리의 시작 커밋)이며 source_head_before/after 는 attempt 트리의 HEAD 다. 실행 중에는 이 attempt 트리에 대한 소스 쓰기가 잠긴다. 실행이 끝났어도 그 프로세스 트리가 비었음이 증명되지 않으면(recovery_incomplete) 이 잠금은 보호된 채 남고, 증명된 뒤에 풀린다. 실행 슬롯은 attempt 가 아니라 Group 에 하나다.",
+        "errors": {
+            "graph_attempt_inactive": "실행이 정지 중이거나 attempt 가 무효화되어 이 attempt 에서는 Self-check 를 시작할 수 없다 → 반복 호출하지 말고 details(reason·attempt_id)를 TR 에 보고한다. 그룹 워크트리나 로컬 실행으로 우회하지 않는다.",
+            "graph_worktree_unavailable": "attempt 의 전용 워크트리를 확인할 수 없다(준비 전, 트리 없음, marker 불일치 등 details.reason) → 사유를 TR 에 보고한다. 그룹 워크트리로 대신 실행하지 않는다.",
+        },
+    },
+    "en": {
+        "note": "This token is mapped to a Graph attempt. Self-check runs in that attempt's own worktree (the tree the remote source tools read and write), not in the group worktree, and cwd is relative to that tree. attempt_id and input_commit in the run and read responses are the run's basis (the attempt and the commit its tree started from); source_head_before/after are the attempt tree's HEAD. Source writes to this attempt tree are locked while the run executes; when the run's process tree is not proved empty at its end (recovery_incomplete), the lock stays protected until that is proved. The run slot is one per Group, not per attempt.",
+        "errors": {
+            "graph_attempt_inactive": "The run is stopping or the attempt was invalidated, so no Self-check can start for this attempt -> do not call again; report details (reason, attempt_id) in the TR. Do not route around it through the group worktree or a local run.",
+            "graph_worktree_unavailable": "The attempt's own worktree cannot be confirmed (not prepared, tree missing, marker mismatch, ... see details.reason) -> report the reason in the TR. The group worktree is never used in its place.",
+        },
+    },
+    "ja": {
+        "note": "このトークンは Graph attempt にマッピングされています。Self-check はグループのワークツリーではなく、この attempt 専用のワークツリー(リモートソースツールが読み書きするツリー)で実行され、cwd はそのツリー基準の相対パスです。run 応答と取得結果の attempt_id・input_commit が実行の基準(attempt とそのツリーの開始コミット)で、source_head_before/after は attempt ツリーの HEAD です。実行中はこの attempt ツリーへのソース書き込みがロックされます。終了時にそのプロセスツリーが空だと証明できない場合(recovery_incomplete)、ロックは保護されたまま残り、証明された後に解除されます。実行スロットは attempt ではなく Group に1つです。",
+        "errors": {
+            "graph_attempt_inactive": "実行の停止中、または attempt が無効化されたため、この attempt では Self-check を開始できない → 繰り返し呼ばず、details(reason・attempt_id)を TR に報告する。グループのワークツリーやローカル実行で回避しない。",
+            "graph_worktree_unavailable": "attempt 専用のワークツリーを確認できない(準備前、ツリーなし、marker 不一致など details.reason) → 理由を TR に報告する。グループのワークツリーで代わりに実行しない。",
+        },
+    },
+}
+
+
+def _self_check_attempt(ctx: dict) -> Optional[str]:
+    """The Graph attempt the caller's worker token is mapped to (0110 T#3), else None."""
+    token_rec = ctx.get("token_rec")
+    if ctx.get("principal_kind") != "worker" or not token_rec:
+        return None
+    from modules.flow_gate.services import graph_source_hooks
+    try:
+        return graph_source_hooks.binding(token_rec)
+    except Exception:
+        _logger.warning("help: Graph attempt mapping lookup failed", exc_info=True)
+        return None
+
 
 def _content_tr_self_check(ctx: dict) -> dict:
     locale = ctx["locale"]
@@ -1395,7 +1474,7 @@ def _content_tr_self_check(ctx: dict) -> dict:
     # 0638 T#1: a TR(new) worker has no TR id yet; its runs go through the token-owned draft routes.
     draft = ctx.get("action_scope") == "new"
     operations = SELF_CHECK_DRAFT_HTTP_OPERATIONS if draft else SELF_CHECK_HTTP_OPERATIONS
-    return {
+    content = {
         "role": copy["role"],
         "stage": "new" if draft else "edit",
         "no_fallback": list(copy["no_fallback"]),
@@ -1444,6 +1523,17 @@ def _content_tr_self_check(ctx: dict) -> dict:
         },
         "errors": [{"code": row[0], "guidance": row[idx]} for row in _SELF_CHECK_ERRORS],
     }
+    attempt_id = _self_check_attempt(ctx)
+    if attempt_id:
+        attempt_copy = _SELF_CHECK_ATTEMPT_COPY.get(locale, _SELF_CHECK_ATTEMPT_COPY[FALLBACK_LOCALE])
+        content["graph_attempt"] = {
+            "attempt_id": attempt_id,
+            "execution_root": "graph_attempt_worktree",
+            "note": attempt_copy["note"],
+            "run_fields": ["attempt_id", "input_commit", "source_head_before", "source_head_after"],
+            "errors": [{"code": code, "guidance": text} for code, text in attempt_copy["errors"].items()],
+        }
+    return content
 
 
 _CONTENT_SUPPLIERS = {

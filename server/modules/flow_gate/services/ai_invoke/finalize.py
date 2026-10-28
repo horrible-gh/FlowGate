@@ -610,6 +610,7 @@ def _responder_context_from_run(run: dict) -> dict:
     return {
         "doc_ref": run.get("doc_ref"),
         "requester_run_id": run.get("run_id"),
+        "asker_provider_id": run.get("provider_id"),
         "reviewer_overrides": run.get("continuation_reviewer_overrides"),
         "review_count_overrides": run.get("continuation_review_count_overrides"),
         "base_provider_id": run.get("continuation_base_provider_id"),
@@ -649,6 +650,7 @@ def _responder_context_from_paused_row(row: dict, responder_run: dict) -> dict:
         # the spine's current hop is the next step, whose reviewer never saw the question.
         "item_seq": _asking_item_seq(requester),
         "requester_run_id": requester_run_id,
+        "asker_provider_id": requester.get("provider_id"),
         "reviewer_overrides": _json_map(row.get("continuation_reviewer_overrides")),
         "review_count_overrides": _json_map(row.get("continuation_review_count_overrides")),
         "base_provider_id": base_provider_id,
@@ -665,7 +667,7 @@ def _dispatch_responder_for_chain(ctx: dict, *, trigger: str) -> Optional[dict]:
 
     Connects the pieces NR0003 (0551) found already built: the responder priority
     `review.resolve_question_responder_with_source` resolves (F1: runtime override →
-    stored sequence reviewer → header pick → default chain) and the same
+    stored sequence reviewer → independent selected/default AI) and the same
     `q_answer_invoke_service.dispatch_answer_run` a human's [AI 답변 요청] click uses.
     No new AI execution engine is built here.
 
@@ -731,7 +733,15 @@ def _dispatch_responder_for_chain(ctx: dict, *, trigger: str) -> Optional[dict]:
         ctx.get("project_id"),
         doc_ref=doc_ref,
         review_count_overrides=ctx.get("review_count_overrides"),
+        asker_provider_id=target.get("asker_actual_provider_id") or ctx.get("asker_provider_id"),
     )
+    if provider_id is None:
+        q_service.mark_responder_failed(
+            target["id"], "no_independent_responder",
+            "No independent enabled responder could be established; awaiting a human answer.",
+            actor_user_id=ctx.get("issued_to"),
+        )
+        return None
     started = q_answer_invoke_service.dispatch_answer_run(
         doc=doc, item=item, issued_to=ctx.get("issued_to"),
         api_base_url=ctx.get("api_base_url"), provider_id=provider_id,
