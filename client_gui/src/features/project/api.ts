@@ -32,6 +32,8 @@ import type {
   BaseFileDiff,
   CreateFlowInput,
   WorkBaseOptions,
+  FlowWorkBase,
+  FlowWorkBaseUpdate,
   CreateGroupInput,
   CreateProjectInput,
   CreatedFlow,
@@ -701,8 +703,41 @@ export async function fetchWorkBaseOptions(projectId: string): Promise<WorkBaseO
       branches: raw.branches.map((branch: any) => ({ name: branch.name, isProjectBase: branch.is_project_base === true })),
     }
   } catch (error) {
-    throw new Error(serverDetailOf(error))
+    throw workBaseFailure(error)
   }
+}
+
+/** Keep HTTP status/code even for string 403 responses; each screen owns its localized message. */
+function workBaseFailure(error: unknown): Error & { status: number | null; code: string | null } {
+  const { status, code } = refusalParts(error)
+  return Object.assign(new Error(serverDetailOf(error)), { status, code })
+}
+
+/** Always a new GET, independent of shared path-only request coalescing. */
+export async function fetchFlowWorkBase(groupId: string): Promise<FlowWorkBase> {
+  try {
+    const { data: r } = await api.get(`/api/v1/groups/${encodeURIComponent(groupId)}/work-base`)
+    if (r?.group_id !== groupId || typeof r.project_id !== 'string'
+      || typeof r.git_enabled !== 'boolean' || typeof r.work_base_editable !== 'boolean'
+      || typeof r.can_edit !== 'boolean' || !(r.work_base_ref === null || typeof r.work_base_ref === 'string')
+      || !(r.effective_work_base_ref === null || typeof r.effective_work_base_ref === 'string')) {
+      throw new Error('Invalid work-base response')
+    }
+    return {
+      groupId: r.group_id, projectId: r.project_id, gitEnabled: r.git_enabled,
+      workBaseRef: r.work_base_ref, effectiveWorkBaseRef: r.effective_work_base_ref,
+      workBaseLocked: r.work_base_locked === true, lockEvidence: r.lock_evidence ?? [],
+      workBaseEditable: r.work_base_editable, reason: r.reason ?? null, canEdit: r.can_edit,
+    }
+  } catch (error) { throw workBaseFailure(error) }
+}
+
+export async function updateFlowWorkBase(groupId: string, input: FlowWorkBaseUpdate): Promise<void> {
+  try {
+    await patchRequest(`/api/v1/groups/${encodeURIComponent(groupId)}/work-base`, {
+      work_base_ref: input.workBaseRef, expected_work_base_ref: input.expectedWorkBaseRef,
+    })
+  } catch (error) { throw workBaseFailure(error) }
 }
 
 /** POST /api/v1/groups — creates a Flow (v0.1 group) under a Group; the server reserves the id. */

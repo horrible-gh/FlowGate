@@ -33,6 +33,8 @@ export type {
   BaseFileDiff,
   CreateFlowInput,
   WorkBaseOptions,
+  FlowWorkBase,
+  FlowWorkBaseUpdate,
   CreateGroupInput,
   CreateProjectInput,
   CreatedFlow,

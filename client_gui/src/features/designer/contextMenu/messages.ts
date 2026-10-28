@@ -6,6 +6,7 @@
 
 export const contextMenuMessages = {
   ko: {
+    baseBranch: '베이스 브랜치',
     menu: '메뉴', newGroup: '새 그룹', projectInfo: '프로젝트 정보', newFlow: '새 플로우',
     rename: '이름 변경', info: '정보', delete: '삭제', open: '열기', newFolder: '새 폴더',
     newFile: '새 파일', download: '다운로드', upload: '업로드', git: 'Git', changes: '수정 확인',
@@ -15,6 +16,7 @@ export const contextMenuMessages = {
     reasons: { unlinked: 'Git 미연동', unavailable: 'Git 상태를 읽을 수 없음', 'no-worktree': '워크트리 없음', denied: 'Git 읽기 권한 없음', planned: '연결 예정', unimplemented: '미구현' },
   },
   en: {
+    baseBranch: 'Base branch',
     menu: 'Menu', newGroup: 'New group', projectInfo: 'Project information', newFlow: 'New flow',
     rename: 'Rename', info: 'Information', delete: 'Delete', open: 'Open', newFolder: 'New folder',
     newFile: 'New file', download: 'Download', upload: 'Upload', git: 'Git', changes: 'View changes',
@@ -24,6 +26,7 @@ export const contextMenuMessages = {
     reasons: { unlinked: 'Git not connected', unavailable: 'Git status unavailable', 'no-worktree': 'Worktree missing', denied: 'Git read permission denied', planned: 'Coming soon', unimplemented: 'Not implemented' },
   },
   ja: {
+    baseBranch: 'ベースブランチ',
     menu: 'メニュー', newGroup: '新規グループ', projectInfo: 'プロジェクト情報', newFlow: '新規フロー',
     rename: '名前を変更', info: '情報', delete: '削除', open: '開く', newFolder: '新規フォルダー',
     newFile: '新規ファイル', download: 'ダウンロード', upload: 'アップロード', git: 'Git', changes: '変更を確認',

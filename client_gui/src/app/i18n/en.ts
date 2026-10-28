@@ -1,4 +1,29 @@
 export default {
+  flow_base: {
+    "title": "Base branch",
+    "current": "Current",
+    "change": "Change",
+    "select": "Select a branch",
+    "denied": "You cannot edit this setting",
+    "disposed": "This flow is disposed",
+    "git_disabled": "Git is disabled",
+    "checkout_unavailable": "Base checkout is unavailable",
+    "locked": "Work history prevents changes",
+    "busy": "Preparing",
+    "remote_only": "Select a local branch",
+    "internal": "Internal branches are unavailable",
+    "changed": "The base changed. Refresh and select again",
+    "not_found": "Branch not found",
+    "group_not_found": "Flow not found",
+    "invalid": "Select a valid branch",
+    "not_commit": "Select a branch pointing to a commit",
+    "save_failed": "Could not save",
+    "options_denied": "No permission to read candidates",
+    "options_failed": "Could not load candidates",
+    "read_denied": "No permission to read this setting",
+    "read_failed": "Could not load the current base"
+},
+
   document: {
     bodyState: {
       file_path_missing: "File path is not recorded",

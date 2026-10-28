@@ -324,6 +324,23 @@ export interface CreateFlowInput {
   workBaseRef?: string
 }
 
+export interface FlowWorkBase {
+  groupId: string
+  projectId: string
+  gitEnabled: boolean
+  workBaseRef: string | null
+  effectiveWorkBaseRef: string | null
+  workBaseLocked: boolean
+  lockEvidence: string[]
+  workBaseEditable: boolean
+  reason: string | null
+  canEdit: boolean
+}
+export interface FlowWorkBaseUpdate {
+  workBaseRef: string
+  expectedWorkBaseRef: string | null
+}
+
 export interface WorkBaseOptions {
   gitEnabled: boolean
   baseBranch: string | null

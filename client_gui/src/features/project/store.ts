@@ -34,6 +34,8 @@ import type {
   BaseFileDiff,
   CreateFlowInput,
   WorkBaseOptions,
+  FlowWorkBase,
+  FlowWorkBaseUpdate,
   CreateGroupInput,
   CreateProjectInput,
   CreatedFlow,
@@ -83,6 +85,8 @@ import {
   fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
   fetchWorkBaseOptions,
+  fetchFlowWorkBase,
+  updateFlowWorkBase,
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
   renameFlow as renameFlowApi,
   sourceMutationRefusal,
@@ -127,6 +131,7 @@ export interface OpenDialogOptions {
 
 export const useProjectStore = defineStore('project', () => {
   const { user: optionsUser, status: optionsUserStatus } = useCurrentUser()
+  const knownGitEnabled = ref<Record<string, boolean>>({})
   const optionCache = new Map<string, WorkBaseOptions>()
   const optionRequests = new Map<string, Promise<WorkBaseOptions>>()
   const optionVersions = new Map<string, number>()
@@ -137,11 +142,15 @@ export const useProjectStore = defineStore('project', () => {
    * No argument drops every project; invalidated in-flight responses cannot refill the cache. */
   function invalidateWorkBaseOptions(projectId?: string): void {
     if (projectId === undefined) {
+      knownGitEnabled.value = {}
       optionsSession += 1
       optionCache.clear()
       optionRequests.clear()
       optionVersions.clear()
     } else {
+      const known = { ...knownGitEnabled.value }
+      delete known[projectId]
+      knownGitEnabled.value = known
       const key = optionKey(projectId)
       optionVersions.set(key, (optionVersions.get(key) ?? 0) + 1)
       optionCache.delete(key)
@@ -149,7 +158,10 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
-  watch([optionsUser, optionsUserStatus], () => invalidateWorkBaseOptions(), { deep: true, flush: 'sync' })
+  watch([optionsUser, optionsUserStatus], () => {
+    invalidateWorkBaseOptions()
+    knownGitEnabled.value = {}
+  }, { deep: true, flush: 'sync' })
 
   function loadWorkBaseOptions(projectId: string, options: { force?: boolean } = {}): Promise<WorkBaseOptions> {
     const key = optionKey(projectId)
@@ -162,6 +174,7 @@ export const useProjectStore = defineStore('project', () => {
     const version = optionVersions.get(key) ?? 0
     const request = fetchWorkBaseOptions(projectId).then((result) => {
       if (session !== optionsSession || version !== (optionVersions.get(key) ?? 0)) throw new Error('')
+      knownGitEnabled.value = { ...knownGitEnabled.value, [projectId]: result.gitEnabled }
       optionCache.set(key, result)
       return result
     }).finally(() => {
@@ -434,8 +447,31 @@ export const useProjectStore = defineStore('project', () => {
   // already shows the tree re-reads with `force` on its own (the Explorer's refreshToken).
   function invalidateGroupTree(projectId: string): void {
     const next = { ...groupTrees.value }
-    for (const includeTerminal of [false, true]) delete next[groupTreeKey(projectId, includeTerminal)]
+    for (const includeTerminal of [false, true]) {
+      const key = groupTreeKey(projectId, includeTerminal)
+      delete next[key]
+      groupTreeInflight.delete(key)
+      groupTreeCommitted.set(key, ++groupTreeOrder)
+    }
     groupTrees.value = next
+  }
+
+  // Settings are deliberately uncached: opening/retrying always reads server authority.
+  async function loadFlowWorkBase(groupId: string): Promise<FlowWorkBase> {
+    const session = optionsSession
+    const versions = new Map(optionVersions)
+    const result = await fetchFlowWorkBase(groupId)
+    const key = optionKey(result.projectId)
+    if (session === optionsSession && (versions.get(key) ?? 0) === (optionVersions.get(key) ?? 0)) {
+      knownGitEnabled.value = { ...knownGitEnabled.value, [result.projectId]: result.gitEnabled }
+    }
+    return result
+  }
+
+  async function saveFlowWorkBase(projectId: string, groupId: string, input: FlowWorkBaseUpdate): Promise<void> {
+    await updateFlowWorkBase(groupId, input)
+    invalidateGroupTree(projectId)
+    invalidateWorkBaseOptions(projectId)
   }
 
   // ── Group / Flow creation (flowgate.v02.0043) ──────────────────────────────────────
@@ -672,6 +708,9 @@ export const useProjectStore = defineStore('project', () => {
     takeCreateRequest,
     closeDialog,
     loadWorkBaseOptions,
+    knownGitEnabled,
+    loadFlowWorkBase,
+    saveFlowWorkBase,
     invalidateWorkBaseOptions,
     getCachedGroupTree,
     fetchGroupTree,

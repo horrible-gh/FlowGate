@@ -111,6 +111,8 @@
       @close="dialog = null"
       @created="onFlowCreated"
     />
+    <FlowBaseBranchDialog :open="flowBaseTarget !== null" :project-id="projectId"
+      :group-id="flowBaseTarget?.flowId ?? null" @close="flowBaseTarget = null" @saved="explorerRefreshToken += 1" />
     <DesignerContextMenu :host="contextMenu.host" @request="contextMenu.run" />
     <component :is="contextMenu.dialogs" v-if="contextMenu.actions" :actions="contextMenu.actions" />
     <ToastHost :toasts="shownToasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
@@ -231,6 +233,7 @@ import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
+import FlowBaseBranchDialog from '../fileMenu/FlowBaseBranchDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
 import DesignerOpenDialog from '../fileMenu/DesignerOpenDialog.vue'
 import { paletteNodeSpec, placedPaletteDefinition, readPaletteDragData, PALETTE_DRAG_MIME, type PaletteItemDefinition } from '../palette/paletteCatalog'
@@ -502,6 +505,8 @@ function onShowTab(tab: DesignerWindowTab) {
 type FileMenuDialog = 'group-open' | 'flow-open' | 'group-new' | 'flow-new' | null
 
 const dialog = ref<FileMenuDialog>(null)
+const flowBaseTarget = ref<{ projectId: string; flowId: string } | null>(null)
+watch(projectId, () => { flowBaseTarget.value = null }, { flush: 'sync' })
 
 // The Project Explorer's current selection, kept for Group 닫기 (which Group to fold) and for the
 // default Group of 새 Flow. It is not a work target (0042): nothing here activates on it.
@@ -928,6 +933,10 @@ const contextMenu = useDesignerContextMenu({
   canSelectAll: () => isMenuCommandEnabled('edit.select-all', runPhase.value, menuTargets.value),
   selectAll: (flowId) => {
     if (center.state.activeFlowId === flowId) onTopCommand('edit.select-all')
+  },
+  projectGitEnabled: (pid) => projectStore.knownGitEnabled?.[pid],
+  openFlowBaseBranch: (pid, flowId) => {
+    if (projectId.value === pid) flowBaseTarget.value = { projectId: pid, flowId }
   },
   openGroupCreate: () => onTopCommand('group.new'),
   openFlowCreate: (groupId) => {
