@@ -39,6 +39,29 @@ BASE = {
 }
 
 
+def _assert_stage_provider_prompt(monkeypatch, run, chain, prompt, stage):
+    """0108: exercise the real provider boundary during actual worker transitions."""
+    import threading
+    from modules.flow_gate.services.ai_invoke import worker
+
+    received = []
+    def cli_execute(provider, actual_prompt, item):
+        received.append(actual_prompt)
+        return "started_ok", None
+
+    with monkeypatch.context() as boundary:
+        boundary.setattr(service, "_cli_execute", cli_execute)
+        assert worker._execute_provider_chain(
+            dict(run, cancel_event=threading.Event()), chain, prompt,
+        ) is True
+    assert len(received) == 1
+    locale = run.get("continuation_locale") or run.get("locale") or "ko"
+    clause = worker._CLI_REVIEW_FILE_FIRST[locale]
+    expected = prompt.rstrip() + "\n\n" + clause if stage == "review" else prompt
+    assert received[0] == expected
+    assert received[0].count(clause) == int(stage == "review")
+
+
 def gate(**updates):
     return service.resolve_document_review_loop_gate({**BASE, **updates})
 
@@ -343,6 +366,7 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
     def execute(_run, _chain, _prompt):
         from modules.flow_gate.services.ai_invoke.provenance import effective_action_scope
         stage = db_loops.get("aiv_e2e_bcast")["current_stage"]
+        _assert_stage_provider_prompt(monkeypatch, _run, _chain, _prompt, stage)
         hops.append(stage)
         stage_snapshots.append({
             "hop_kind": _run.get("hop_kind"),
@@ -593,6 +617,7 @@ def test_real_worker_standalone_loop_starting_with_rework_keeps_stage_provenance
     stage_snapshots = []
     def execute(_run, _chain, _prompt):
         stage = db_loops.get("aiv_e2e_rework_start")["current_stage"]
+        _assert_stage_provider_prompt(monkeypatch, _run, _chain, _prompt, stage)
         hops.append(stage)
         stage_snapshots.append({
             "hop_kind": _run.get("hop_kind"),
