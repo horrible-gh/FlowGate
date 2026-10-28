@@ -1144,6 +1144,7 @@ export default {
       base_branch_loading: 'ブランチ一覧を読み込み中...',
       base_branch_unavailable: '基準ブランチを表示できません',
       base_branch_load_error: 'ブランチ一覧を読み込めませんでした。',
+      groups_load_error: 'グループ情報を読み込めませんでした。',
       base_branch_default_missing: 'プロジェクトの基準ブランチを利用できません。',
       error_select_base_branch: '基準ブランチを選択してください。',
       no_module: '（モジュールなし）',

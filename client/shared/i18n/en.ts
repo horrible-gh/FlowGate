@@ -1144,6 +1144,7 @@ export default {
       base_branch_loading: 'Loading branches...',
       base_branch_unavailable: 'Base branch unavailable',
       base_branch_load_error: 'Could not load branches.',
+      groups_load_error: 'Could not load group details.',
       base_branch_default_missing: 'The project base branch is not available.',
       error_select_base_branch: 'Please select a base branch.',
       no_module: '(no module)',

@@ -1,7 +1,7 @@
 <template>
-  <DialogShell :open="true" variant="form" surface-class="dialog-new-requirement-modal"  @request-close="$emit('close')">
+  <DialogShell :open="true" variant="form" surface-class="dialog-new-requirement-modal"  @request-close="closeModal">
     <template #header>
-      <DialogHeader title="" :closeable="true" @close="$emit('close')">
+      <DialogHeader title="" :closeable="true" @close="closeModal">
         <template #title>
           <span class="doc-tag" :class="`c-${rootType}`" style="font-size:.7rem; padding:2px 6px; margin-right:4px;">{{ rootType }}</span>
           {{ $t(`main.new_requirement_modal.title_${rootType}`) }}
@@ -21,6 +21,7 @@
             type="button"
             role="tab"
             :aria-selected="rootType === type"
+            :disabled="submitting"
             @click="rootType = type"
           >
             <span class="root-tab-icon">
@@ -48,7 +49,7 @@
         <form @submit.prevent="submit">
           <div class="form-group">
             <label class="form-label req">{{ $t('main.new_requirement_modal.project_label') }}</label>
-            <select v-model="form.project" class="form-ctrl" data-test="project-select" @change="onProjectChange">
+            <select v-model="form.project" class="form-ctrl" data-test="project-select" :disabled="submitting" @change="onProjectChange">
               <option value="" disabled>{{ $t('main.new_requirement_modal.select_project') }}</option>
               <option v-for="p in projects" :key="p.project" :value="p.project">
                 {{ p.project }}
@@ -63,7 +64,7 @@
           >
             <div class="form-group project-context-cell" data-test="module-cell">
               <label class="form-label">{{ $t('main.new_requirement_modal.module_label') }}</label>
-              <select v-model="form.module" class="form-ctrl" data-test="module-select">
+              <select v-model="form.module" class="form-ctrl" data-test="module-select" :disabled="submitting">
                 <option v-for="m in currentModules" :key="m.id" :value="m.id">{{ m.label }}</option>
               </select>
             </div>
@@ -82,13 +83,16 @@
                 v-model="activeWorkBaseRef"
                 class="form-ctrl"
                 data-test="base-branch-select"
-                :disabled="branchCatalogLoading || !!branchCatalogError"
+                :disabled="submitting || branchCatalogLoading || !!branchCatalogError"
               >
                 <option v-if="branchCatalogLoading" value="">
                   {{ $t('main.new_requirement_modal.base_branch_loading') }}
                 </option>
                 <option v-else-if="branchCatalogError" value="">
                   {{ $t('main.new_requirement_modal.base_branch_unavailable') }}
+                </option>
+                <option v-else-if="!activeWorkBaseRef" value="" disabled>
+                  {{ $t('main.new_requirement_modal.error_select_base_branch') }}
                 </option>
                 <option v-for="branch in branchOptions" :key="branch.name" :value="branch.name">
                   {{ branch.name }}
@@ -103,8 +107,11 @@
                 :placeholder="$t('main.new_requirement_modal.base_branch_unavailable')"
                 readonly
               />
-              <p v-if="branchCatalogError" class="form-hint base-branch-error" data-test="base-branch-error">
-                {{ branchCatalogError }}
+              <p v-if="baseBranchError" class="form-hint base-branch-error" data-test="base-branch-error">
+                {{ baseBranchError }}
+                <button type="button" class="btn btn-sm" data-test="base-branch-retry" :disabled="submitting" @click="refreshProjectContext(form.project)">
+                  {{ $t('main.overview.retry') }}
+                </button>
               </p>
 
             </div>
@@ -117,6 +124,7 @@
                 class="group-toggle-btn"
                 :class="{ active: groupMode === 'existing' }"
                 type="button"
+                :disabled="submitting"
                 @click="groupMode = 'existing'"
               >
                 {{ $t('main.new_requirement_modal.existing_group') }}
@@ -125,6 +133,7 @@
                 class="group-toggle-btn"
                 :class="{ active: groupMode === 'new' }"
                 type="button"
+                :disabled="submitting"
                 @click="groupMode = 'new'"
               >
                 {{ $t('main.new_requirement_modal.new_group') }}
@@ -132,7 +141,7 @@
             </div>
 
             <div v-if="groupMode === 'existing'">
-              <select v-model="form.groupId" class="form-ctrl" data-test="group-select">
+              <select v-model="form.groupId" class="form-ctrl" data-test="group-select" :disabled="submitting">
                 <option
                   v-for="group in groupOptions"
                   :key="group.id"
@@ -226,7 +235,7 @@
         </div>
     <template #footer>
       <DialogFooter :actions="[
-        { id: 'action-0', role: 'cancel', label: $t('common.cancel'), onSelect: () => { $emit('close') } },
+        { id: 'action-0', role: 'cancel', label: $t('common.cancel'), onSelect: closeModal },
         { id: 'submit-1', role: 'primary', label: $t('main.new_requirement_modal.create_button'), onSelect: () => submit(), disabled: submitting || targetGroupBusy || baseBranchBlocked }
       ]">
         <template #action-action-0>
@@ -255,7 +264,7 @@ import DialogShell from './dialogs/DialogShell.vue'
 import DialogHeader from './dialogs/DialogHeader.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
 import AppIcon from '@shared/AppIcon.vue'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { extractApiErrorMessage, getRequest, postUrlEncoded } from '@shared/api'
 import { useProjectStore } from '../stores/project'
@@ -316,10 +325,14 @@ function isGroupBusy(groupId: string): boolean {
 const projects = ref<ProjectItem[]>([])
 const currentModules = ref<Array<{ id: string; label: string }>>([])
 const branchOptions = ref<BranchItem[]>([])
-const branchCatalogLoading = ref(false)
+// Only an explicit disabled response permits creation without a selected ref.
+const catalogState = ref<'unknown' | 'loading' | 'ready-enabled' | 'ready-disabled' | 'error'>('unknown')
+const branchCatalogLoading = computed(() => catalogState.value === 'unknown' || catalogState.value === 'loading')
 const branchCatalogError = ref('')
 const groupWorkBases = ref<Record<string, GroupWorkBase>>({})
-const projectGitEnabled = ref(false)
+const groupsState = ref<'unknown' | 'loading' | 'ready' | 'error'>('unknown')
+const groupsError = ref('')
+const baseBranchError = computed(() => branchCatalogError.value || (groupMode.value === 'existing' ? groupsError.value : ''))
 const submitting = ref(false)
 const flashMessage = ref('')
 const flashOk = ref(false)
@@ -327,6 +340,22 @@ const groupMode = ref<'existing' | 'new'>('new')
 const rootTypes = ['R', 'B'] as const
 const rootType = ref<(typeof rootTypes)[number]>('R')
 let projectContextGeneration = 0
+let contextProjectId = ''
+let disposed = false
+let newWorkBaseInitialized = false
+let existingSelectionGroupId = ''
+let initialGroupApplied = false
+let contextRequest: { projectId: string; promise: Promise<void> } | null = null
+
+function invalidateContext() {
+  disposed = true
+  ++projectContextGeneration
+}
+function closeModal() {
+  invalidateContext()
+  emit('close')
+}
+onBeforeUnmount(invalidateContext)
 
 const form = ref({
   project: '',
@@ -375,7 +404,7 @@ const targetGroupBusy = computed(() =>
 
 // 0613 TR0014: driven by work-base-options' own git_enabled, not a /projects field
 // that the real server never returns (see refreshProjectContext).
-const selectedProjectGitEnabled = computed(() => projectGitEnabled.value)
+const selectedProjectGitEnabled = computed(() => !!form.value.project && catalogState.value !== 'ready-disabled')
 
 const existingGroupWorkBaseRef = computed(() => {
   if (groupMode.value !== 'existing' || !form.value.groupId) return ''
@@ -410,26 +439,33 @@ const activeWorkBaseRef = computed<string>({
 })
 
 watch(
-  [groupMode, () => form.value.groupId, existingGroupWorkBaseLocked, branchOptions],
+  [groupMode, () => form.value.groupId, groupWorkBases, branchOptions],
   () => {
+    if (disposed) return
     if (groupMode.value !== 'existing' || existingGroupWorkBaseLocked.value) {
       form.value.existingWorkBaseRef = ''
+      existingSelectionGroupId = ''
       return
     }
-    const current = existingGroupWorkBaseRef.value
-    form.value.existingWorkBaseRef = branchOptions.value.some((branch) => branch.name === current)
-      ? current
-      : ''
+    // Metadata/tree completion must not overwrite a choice already made by the user.
+    const sameGroup = existingSelectionGroupId === form.value.groupId
+    const selected = sameGroup ? form.value.existingWorkBaseRef : existingGroupWorkBaseRef.value
+    form.value.existingWorkBaseRef = branchOptions.value.some((branch) => branch.name === selected) ? selected : ''
+    // G may precede C. Initialise from the group's ref once candidates actually arrive.
+    if (!branchCatalogLoading.value) existingSelectionGroupId = form.value.groupId
   },
 )
 
 const baseBranchBlocked = computed(() => {
-  if (!selectedProjectGitEnabled.value) return false
+  if (catalogState.value === 'unknown' || catalogState.value === 'loading' || catalogState.value === 'error') return true
+  if (catalogState.value === 'ready-disabled') return false
+  // A successful G response with no row retains the legacy readonly/ref-omitting path.
+  if (groupMode.value === 'existing' && groupsState.value !== 'ready') return true
   if (groupMode.value === 'new') {
-    return branchCatalogLoading.value || !!branchCatalogError.value || !form.value.workBaseRef
+    return !branchOptions.value.some((branch) => branch.name === form.value.workBaseRef)
   }
   if (existingGroupWorkBaseEditable.value) {
-    return branchCatalogLoading.value || !!branchCatalogError.value || !form.value.existingWorkBaseRef
+    return !branchOptions.value.some((branch) => branch.name === form.value.existingWorkBaseRef)
   }
   return false
 })
@@ -464,8 +500,9 @@ function firstWorkflowRootError(errors: unknown): string | null {
 }
 
 function workflowRootErrorMessage(error: unknown, fallback: string): string {
-  const errors = (error as { response?: { data?: { errors?: unknown } } })?.response?.data?.errors
-  return firstWorkflowRootError(errors) || extractApiErrorMessage(error, fallback)
+  const data = (error as { response?: { data?: { errors?: unknown } } })?.response?.data
+  // The legacy outbox endpoint returns HTTP 400 + errors[]. Other errors use the i18n resolver.
+  return firstWorkflowRootError(data?.errors) || extractApiErrorMessage(error, fallback)
 }
 
 function getGroupModule(group: { id: string; parent_id: string | null }, nodes: Array<{ id: string; label: string }>): string {
@@ -476,79 +513,81 @@ function getGroupModule(group: { id: string; parent_id: string | null }, nodes: 
 }
 
 function applyInitialGroup() {
-  if (!props.initialGroupId) return false
+  if (!props.initialGroupId || initialGroupApplied) return false
   const matched = groupOptions.value.find((group) => group.id === props.initialGroupId)
   if (!matched) return false
+  initialGroupApplied = true
   groupMode.value = 'existing'
   form.value.groupId = matched.id
   form.value.module = matched.module || ''
   return true
 }
 
-async function refreshProjectContext(projectId: string) {
+function refreshProjectContext(projectId: string): Promise<void> {
+  if (disposed || submitting.value) return Promise.resolve()
+  if (contextRequest?.projectId === projectId && branchCatalogLoading.value) return contextRequest.promise
+  const changedProject = contextProjectId !== projectId
+  contextProjectId = projectId
   const generation = ++projectContextGeneration
+  const isCurrent = () => !disposed && generation === projectContextGeneration && form.value.project === projectId
 
-  branchOptions.value = []
   branchCatalogError.value = ''
-  branchCatalogLoading.value = false
-  groupWorkBases.value = {}
-  form.value.workBaseRef = ''
-  projectGitEnabled.value = false
+  groupsError.value = ''
+  groupsState.value = projectId ? 'loading' : 'unknown'
+  catalogState.value = projectId ? 'loading' : 'unknown'
+  if (changedProject) {
+    branchOptions.value = []
+    groupWorkBases.value = {}
+    form.value.workBaseRef = ''
+    form.value.existingWorkBaseRef = ''
+    newWorkBaseInitialized = false
+    existingSelectionGroupId = ''
+    initialGroupApplied = false
+  }
+  if (!projectId) return Promise.resolve()
 
-  if (!projectId) return
-
+  // C, G and T start together, but each applies its result independently.
+  // T already owns a project/branch/full cache with ordering protection in explorer.
   const treeRequest = explorerStore.fetchGroupTree(projectId, false, true).catch(() => [])
-
-  // 0613 TR0014: GET /projects carries no Git config, so work-base-options is queried
-  // for every project and its own git_enabled decides the Base Branch UI. A disabled
-  // or absent integration answers 200 with git_enabled:false (group_work_base.py), so
-  // this call is cheap and permission-safe even for non-Git projects.
-  branchCatalogLoading.value = true
-  const [catalogResult, groupsResult] = await Promise.allSettled([
-    // 0613 T0013 — not the Branch Manager catalog (/git/branches, project.settings.read):
-    // a requirement author holds the document-create permission, which is what this
-    // read-only options boundary checks.
-    getRequest<{ git_enabled?: boolean; base_branch?: string | null; branches?: BranchItem[] }>(
-      `/api/v1/projects/${encodeURIComponent(projectId)}/git/work-base-options`,
-    ),
-    getRequest<{ groups?: GroupWorkBase[] }>(
-      `/api/v1/groups?project_id=${encodeURIComponent(projectId)}`,
-    ),
-  ])
-  await treeRequest
-
-  if (generation !== projectContextGeneration) return
-  branchCatalogLoading.value = false
-
-  if (groupsResult.status === 'fulfilled') {
-    const groups = Array.isArray(groupsResult.value.data.groups) ? groupsResult.value.data.groups : []
+  const catalogRequest = getRequest<{ git_enabled?: boolean; base_branch?: string | null; branches?: BranchItem[] }>(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/git/work-base-options`,
+  ).then(({ data: catalog }) => {
+    if (!isCurrent()) return
+    if (typeof catalog.git_enabled !== 'boolean') throw new Error('invalid_work_base_options')
+    if (catalog.git_enabled === false) {
+      catalogState.value = 'ready-disabled'
+      branchOptions.value = []
+      return
+    }
+    const previous = form.value.workBaseRef
+    branchOptions.value = Array.isArray(catalog.branches) ? catalog.branches : []
+    const candidate = newWorkBaseInitialized ? previous : (catalog.base_branch || '')
+    form.value.workBaseRef = branchOptions.value.some((branch) => branch.name === candidate) ? candidate : ''
+    newWorkBaseInitialized = true
+    catalogState.value = 'ready-enabled'
+  }).catch((error: unknown) => {
+    if (!isCurrent()) return
+    catalogState.value = 'error'
+    branchCatalogError.value = extractApiErrorMessage(error, t('main.new_requirement_modal.base_branch_load_error'))
+  })
+  const groupsRequest = getRequest<{ groups?: GroupWorkBase[] }>(
+    `/api/v1/groups?project_id=${encodeURIComponent(projectId)}`,
+  ).then(({ data }) => {
+    if (!isCurrent()) return
+    const groups = Array.isArray(data.groups) ? data.groups : []
     groupWorkBases.value = Object.fromEntries(groups.map((group) => [group.group_id, group]))
-  }
+    groupsState.value = 'ready'
+  }).catch((error: unknown) => {
+    if (!isCurrent()) return
+    groupsState.value = 'error'
+    groupsError.value = extractApiErrorMessage(error, t('main.new_requirement_modal.groups_load_error'))
+  })
 
-  if (catalogResult.status === 'rejected') {
-    // The disabled path always resolves with 200 (never rejects), so a rejection here
-    // can only mean a Git-enabled project hit a real problem (checkout unavailable,
-    // permission, etc.) — surface it instead of silently hiding the section.
-    projectGitEnabled.value = true
-    branchCatalogError.value = extractApiErrorMessage(
-      catalogResult.reason,
-      t('main.new_requirement_modal.base_branch_load_error'),
-    )
-    return
-  }
-
-  const catalog = catalogResult.value.data
-  projectGitEnabled.value = catalog.git_enabled === true
-  if (!projectGitEnabled.value) return
-
-  branchOptions.value = Array.isArray(catalog.branches) ? catalog.branches : []
-  const defaultBranch = catalog.base_branch || ''
-  form.value.workBaseRef = branchOptions.value.some((branch) => branch.name === defaultBranch)
-    ? defaultBranch
-    : ''
-  if (!form.value.workBaseRef) {
-    branchCatalogError.value = t('main.new_requirement_modal.base_branch_default_missing')
-  }
+  const promise = Promise.allSettled([catalogRequest, groupsRequest, treeRequest]).then(() => undefined)
+  const request = { projectId, promise }
+  contextRequest = request
+  void promise.then(() => { if (contextRequest === request) contextRequest = null })
+  return promise
 }
 
 onMounted(async () => {
@@ -560,8 +599,10 @@ onMounted(async () => {
     }
   }
 
+  if (disposed) return
   try {
     const res = await getRequest<unknown>('/api/v1/projects')
+    if (disposed) return
     const raw = res.data
     const list: unknown[] =
       Array.isArray(raw) ? raw :
@@ -601,6 +642,7 @@ onMounted(async () => {
 })
 
 watch(groupOptions, (groups) => {
+  if (disposed) return
   if (groups.length === 0) {
     form.value.groupId = ''
     if (groupMode.value === 'existing') {
@@ -617,6 +659,11 @@ watch(groupOptions, (groups) => {
 }, { immediate: true })
 
 async function onProjectChange() {
+  if (submitting.value) {
+    form.value.project = contextProjectId
+    return
+  }
+  if (contextProjectId === form.value.project) return refreshProjectContext(form.value.project)
   const found = projects.value.find((p) => p.project === form.value.project)
   currentModules.value = found?.modules ?? []
   form.value.module = currentModules.value[0]?.id ?? ''
@@ -625,6 +672,7 @@ async function onProjectChange() {
 }
 
 async function submit() {
+  if (disposed || submitting.value) return
   if (targetGroupBusy.value) {
     showToast(busyHint.value, 'danger')
     return
@@ -649,7 +697,7 @@ async function submit() {
 
   if (baseBranchBlocked.value) {
     flashOk.value = false
-    flashMessage.value = branchCatalogError.value || t('main.new_requirement_modal.error_select_base_branch')
+    flashMessage.value = baseBranchError.value || t('main.new_requirement_modal.error_select_base_branch')
     return
   }
 
@@ -658,7 +706,7 @@ async function submit() {
         group_id: form.value.groupId,
         // 0613 TR0014 rev2: only sent while the server itself reports this group's
         // Base Branch as still editable -- a locked group never sends the field, so
-        // the server-side lock check in git_service.apply_group_work_base_ref is the
+        // the server-side check in git_service.change_group_work_base_ref is the
         // actual guard, not this client condition.
         ...(existingGroupWorkBaseEditable.value && form.value.existingWorkBaseRef
           ? { work_base_ref: form.value.existingWorkBaseRef }
@@ -671,6 +719,10 @@ async function submit() {
           : {}),
       }
 
+  const generation = projectContextGeneration
+  const isCurrent = () => !disposed && generation === projectContextGeneration
+  const submittedRootType = rootType.value
+  const submittedOpenAfter = form.value.openAfter
   submitting.value = true
   flashMessage.value = ''
   try {
@@ -693,6 +745,7 @@ async function submit() {
         ...groupPayload,
       }
     )
+    if (!isCurrent()) return
     if (!response.data.ok) {
       flashOk.value = false
       flashMessage.value = firstWorkflowRootError(response.data.errors) || t('main.requirement.create.error')
@@ -701,9 +754,10 @@ async function submit() {
     const result = response.data.result as { doc_id?: string } | undefined
     const docId = result?.doc_id ?? ''
     flashOk.value = true
-    flashMessage.value = t(`main.new_requirement_modal.success_${rootType.value}`)
-    emit('created', { docId, openAfter: form.value.openAfter })
+    flashMessage.value = t(`main.new_requirement_modal.success_${submittedRootType}`)
+    emit('created', { docId, openAfter: submittedOpenAfter })
   } catch (error: unknown) {
+    if (!isCurrent()) return
     flashOk.value = false
     const message = workflowRootErrorMessage(error, t('main.requirement.create.error'))
     // surface server error via toast only — no inline .alert-danger in .modal-ft
