@@ -53,6 +53,7 @@ from . import oracle as oracle_module
 from . import provider_api
 from . import terminal
 from . import review
+from .provenance import effective_action_scope
 from .runtime import (
     API_CALL_MAX_TIMEOUT_SEC,
     API_CONFLICT_MAX_TOKENS,
@@ -505,7 +506,8 @@ def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
     # flowgate.v02.0064 T-B4d: a claiming Graph AI start's card title request, worded for THIS provider (P0006
     # §4.2.6); any other token's prompt is returned as it is.
     prompt = node_title_hooks.provider_prompt(prompt, run.get("raw_token"), provider.get("exec_type"))
-    if provider.get("exec_type") == "api" or run.get("action_scope") != "review":
+    # Review loops keep their admission scope while hop_kind tracks the live stage.
+    if provider.get("exec_type") == "api" or effective_action_scope(run) != "review":
         return prompt
     locale = str(run.get("continuation_locale") or run.get("locale") or "ko").lower()
     if locale not in _CLI_REVIEW_FILE_FIRST:
