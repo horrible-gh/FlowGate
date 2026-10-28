@@ -940,7 +940,8 @@ export default {
   git: {
     gate_job: {"job": "작업", "decision": "결정","title": "Git 작업 실패", "phase": "처리 단계", "retry": "재시도", "cancel": "취소", "reviewed": "단계별 증거와 남은 효과를 확인했습니다", "reason": "해결 사유", "confirm_effects": "효과 확정", "abandon": "복구 포기"}, 
     header: {
-      base: 'Base branch',
+      base: '프로젝트 베이스',
+      flow_base: '플로우 베이스',
       none: '—',
       base_unset: '미설정',
       refresh: '새로고침',
@@ -1151,7 +1152,7 @@ export default {
         staged: 'Stage',
         ahead: '미반영 커밋',
         worktree: 'Worktree',
-        base: '기준 브랜치',
+        base: '플로우 베이스',
         target: '머지 대상',
         state: '상태',
       },

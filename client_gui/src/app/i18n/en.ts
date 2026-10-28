@@ -929,7 +929,8 @@ export default {
   git: {
     gate_job: {"job": "Job", "decision": "Decision","title": "Git operation failed", "phase": "Phase", "retry": "Retry", "cancel": "Cancel", "reviewed": "I reviewed the phase evidence and remaining effects", "reason": "Resolution reason", "confirm_effects": "Confirm effects", "abandon": "Abandon recovery"}, 
     header: {
-      base: 'Base branch',
+      base: 'Project base',
+      flow_base: 'Flow base',
       none: '—',
       base_unset: 'Not set',
       refresh: 'Refresh',
@@ -1140,7 +1141,7 @@ export default {
         staged: 'Staged',
         ahead: 'Unmerged commits',
         worktree: 'Worktree',
-        base: 'Base branch',
+        base: 'Flow base',
         target: 'Merge target',
         state: 'State',
       },

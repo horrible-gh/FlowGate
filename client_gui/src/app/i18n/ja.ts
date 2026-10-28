@@ -929,7 +929,8 @@ export default {
   git: {
     gate_job: {"job": "処理", "decision": "判断","title": "Git 処理失敗", "phase": "処理段階", "retry": "再試行", "cancel": "キャンセル", "reviewed": "各段階の証拠と残る影響を確認しました", "reason": "解決理由", "confirm_effects": "効果を確定", "abandon": "復旧を断念"}, 
     header: {
-      base: 'Base branch',
+      base: 'プロジェクトベース',
+      flow_base: 'フローベース',
       none: '—',
       base_unset: '未設定',
       refresh: '再読み込み',
@@ -1140,7 +1141,7 @@ export default {
         staged: 'Stage',
         ahead: '未反映コミット',
         worktree: 'Worktree',
-        base: '基準ブランチ',
+        base: 'フローベース',
         target: 'マージ対象',
         state: '状態',
       },

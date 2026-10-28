@@ -1,5 +1,5 @@
 <template>
-  <section class="gw-panel" data-test="git-worktree" :data-state="areaState">
+  <section v-if="wt.gateOpen.value" class="gw-panel" data-test="git-worktree" :data-state="areaState">
     <p v-if="areaState === 'loading'" class="gw-summary is-muted" data-test="git-worktree-loading">{{ t('gui.git.worktree.loading') }}</p>
     <p v-else-if="areaState === 'failed'" class="gw-line is-error" data-test="git-worktree-error">
       <span>{{ t(`gui.git.worktree.read_${wt.state.statusError ?? 'failed'}`) }}</span>
@@ -40,6 +40,7 @@
       </nav>
     </template>
     <GitWorktreeWindow
+      v-if="wt.gateOpen.value"
       ref="windowRef"
       v-model:tab="tab"
       v-model:minimized="windowMinimized"
@@ -126,6 +127,7 @@ const tab = ref<GitWorktreeTab>('files')
 const windowRef = ref<InstanceType<typeof GitWorktreeWindow> | null>(null)
 
 function openWindow(next: GitWorktreeTab): void {
+  if (!wt.gateOpen.value) return
   const wasOpen = windowOpen.value
   tab.value = next
   windowMinimized.value = false
@@ -136,6 +138,7 @@ function openWindow(next: GitWorktreeTab): void {
 function closeWindow(): void {
   windowOpen.value = false
   windowMinimized.value = false
+  tab.value = 'files'
 }
 
 // Another project / Flow is another worktree: the window closes, as its dialogs do (§3-2-2 ①).
@@ -143,7 +146,8 @@ const context = computed(() => {
   const ticket = wt.ticket()
   return ticket ? `${ticket.projectId}\n${ticket.groupId}` : null
 })
+// Reset synchronously even when a gate closes and reopens within one Vue render batch.
 watch(context, (next, previous) => {
   if (next !== previous) closeWindow()
-})
+}, { flush: 'sync' })
 </script>

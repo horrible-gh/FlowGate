@@ -143,7 +143,7 @@ describe('DesignerGitPanel — 미연동 / 조회 실패 / 연결됨 are exclusi
     const fake = createFakeGitSource({ status: off() })
     await mountPanel(fake)
     expect(q('git-head')?.style.display).toBe('none')
-    expect(text('git-base-branch')).toBe('Base branch · 미설정')
+    expect(text('git-base-branch')).toBe('플로우 베이스 · —')
     fake.db.status = status()
     await (wrapper?.vm as unknown as { refresh: () => Promise<void> }).refresh()
     await flushPromises()

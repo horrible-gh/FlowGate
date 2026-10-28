@@ -510,6 +510,14 @@ export const useProjectStore = defineStore('project', () => {
     return result
   }
 
+  // flowgate.v02.0107 (D §3.1): the Designer Git display read of the same work-base. Only the answer:
+  // unlike loadFlowWorkBase it writes or invalidates no shared state (knownGitEnabled, the options
+  // session / versions, the group trees, the project Git status), so a late, inactive or mismatched
+  // answer changes nothing here. Uncached; the Git worktree session owns its staleness.
+  function readFlowWorkBaseForDisplay(groupId: string): Promise<FlowWorkBase> {
+    return fetchFlowWorkBase(groupId)
+  }
+
   async function saveFlowWorkBase(projectId: string, groupId: string, input: FlowWorkBaseUpdate): Promise<void> {
     await updateFlowWorkBase(groupId, input)
     invalidateGroupTree(projectId)
@@ -758,6 +766,7 @@ export const useProjectStore = defineStore('project', () => {
     loadWorkBaseOptions,
     knownGitEnabled,
     loadFlowWorkBase,
+    readFlowWorkBaseForDisplay,
     saveFlowWorkBase,
     invalidateWorkBaseOptions,
     getCachedGroupTree,
