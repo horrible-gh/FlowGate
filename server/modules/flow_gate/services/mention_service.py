@@ -2079,8 +2079,17 @@ def build_mention(
     s3_lines = []
     effective_ref_ids = list(ref_doc_ids or [])
     target_doc_id = parent_canonical_doc_id or parent_doc_id
+    qa_lines: list[str] = []
     if is_edit and target_doc_id:
         effective_ref_ids.insert(0, target_doc_id)
+        from modules.flow_gate.services import q_service
+        from modules.flow_gate.workflow.prompt_copy_service import _append_qa_block
+
+        try:
+            effective_ref_ids.extend(q_service.qa_context_doc_ids(target_doc_id))
+        except Exception:
+            logger.warning("edit Q&A reference lookup failed for %s", target_doc_id, exc_info=True)
+        _append_qa_block(qa_lines, target_doc_id, include_context=True)
     seen_ref_ids: set[str] = set()
     for doc_dot_dash_path in effective_ref_ids:
         if not doc_dot_dash_path or doc_dot_dash_path in seen_ref_ids:
@@ -2388,6 +2397,8 @@ def build_mention(
     if template_section:
         sections.append(template_section)
     sections.append(_section("Reference documents", s3_body))
+    if qa_lines:
+        sections.append("\n".join(qa_lines).strip())
     # MERGE NOTE (branch base 241f00d predates group 0370 on main): main inserts an
     # inline "Efficient document lookup" section right here. Group 0372 absorbed that
     # guidance into the `document_access` help item (D-0003 §3-2, "reference documents: drop the

@@ -787,6 +787,44 @@ def _body_unreadable_rules() -> tuple[str, ...]:
     return mention_service.BODY_UNREADABLE_RULES
 
 
+ANSWERS_HELP_COPY: dict[str, dict[str, str]] = {
+    "ko": {
+        "summary": "답변 조회 = GET /document/{doc_id}의 answers (id, doc_id, Q, A).",
+        "note": (
+            "A=null은 미답변입니다. 답변을 지어내지 마십시오. 해당 문서의 answers만 반환하므로 "
+            "triggered_by/target_id 참조 문서도 같은 경로로 조회하십시오. "
+            "작업 토큰은 기존 문서 조회 권한을 사용하며 /q 아래 GET은 공식 작업자 조회 경로가 아닙니다."
+        ),
+    },
+    "en": {
+        "summary": "Read answers from GET /document/{doc_id}: answers (id, doc_id, Q, A).",
+        "note": (
+            "A=null means unanswered. Do not invent an answer. Only this document's answers are returned; "
+            "read triggered_by/target_id reference documents through the same route. "
+            "Worker tokens use existing document read permissions; GET under /q is not an official worker lookup route."
+        ),
+    },
+    "ja": {
+        "summary": "回答の参照 = GET /document/{doc_id} の answers (id, doc_id, Q, A)。",
+        "note": (
+            "A=null は未回答です。回答を作り上げないでください。この文書の answers のみを返すため、"
+            "triggered_by/target_id の参照文書も同じ経路で取得してください。"
+            "作業トークンは既存の文書閲覧権限を使います。/q 配下の GET は公式の作業者用参照経路ではありません。"
+        ),
+    },
+}
+
+
+def _answers_lookup(ctx: dict) -> dict:
+    copy = ANSWERS_HELP_COPY[normalize_locale(ctx.get("locale"))]
+    return {
+        "method": "GET",
+        "url": f"{ctx['base_url']}/document/{{doc_id}}",
+        "field": "answers",
+        **copy,
+    }
+
+
 def _content_document_access(ctx: dict) -> dict:
     base = ctx["base_url"]
     doc_id = ctx.get("doc_id") or "{doc_id}"
@@ -797,6 +835,7 @@ def _content_document_access(ctx: dict) -> dict:
             "url": f"{base}/document/{{doc_id}}",
             "example": f"{base}/document/{doc_id}",
         },
+        "answers": _answers_lookup(ctx),
         "path": {"method": "GET", "url": f"{base}/document/{{doc_id}}/path"},
         # Bounded reads (group 0370). The full-body GET is the expensive one; these
         # exist so a worker can read only the part it needs.
@@ -953,7 +992,7 @@ def build_question_content(locale: str) -> dict:
 
 
 def _content_question(ctx: dict) -> dict:
-    return build_question_content(ctx["locale"])
+    return {**build_question_content(ctx["locale"]), "answers": _answers_lookup(ctx)}
 
 
 def _prev_doc_id(ctx: dict) -> Optional[str]:

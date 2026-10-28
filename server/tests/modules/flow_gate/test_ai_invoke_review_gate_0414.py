@@ -4000,3 +4000,45 @@ class TestGateStopReachesEverySurfaceAfterFinalize:
         assert finalize_at < resume_at
         park_source = inspect.getsource(svc._park_handoff)
         assert "_resettle_stop_after_park(run, stop_code)" in park_source
+
+
+@pytest.mark.parametrize("rework", [False, True])
+def test_edit_and_rework_include_no_sequence_trigger_chain_qa_0110(monkeypatch, rework):
+    from modules.flow_gate.api import token_routes
+    from modules.flow_gate.services import mention_service, q_service
+
+    target = "flowgate.v02.0110.9004-TR"
+    origin = "flowgate.v02.0110.9001-B"
+    other = "flowgate.v02.0110.9002-N"
+    docs = {
+        target: {"type_code": "TR", "seq": 9004, "triggered_by": origin, "target_id": other},
+        origin: {"type_code": "B", "seq": 9001},
+        other: {"type_code": "N", "seq": 9002, "target_id": origin},
+    }
+    docs = {did: {"doc_id": did, "project_id": "flowgate", "group_id": "flowgate.v02.0110",
+                  "title": did, "module": "v02", "rejection_history": [], **doc}
+            for did, doc in docs.items()}
+    monkeypatch.setattr(token_routes.db_documents, "get_by_id", docs.get)
+    monkeypatch.setattr(token_routes.db_documents, "get_group_max_seq", lambda _: 9004)
+    monkeypatch.setattr(token_routes.db_documents, "fetch_recent_group_docs", lambda **_: [])
+    monkeypatch.setattr(token_routes.db_wfseq, "get_sequence_for_member_doc", lambda _: None)
+    monkeypatch.setattr(token_routes, "_load_current_revision_review", lambda _: None)
+    monkeypatch.setattr(mention_service.document_service, "get_document", docs.get)
+    monkeypatch.setattr(q_service, "qa_bundle_by_doc", lambda did: [
+        {"id": 518, "seq": 1, "body": "stored scope question", "answer_body": "stored scope answer"}
+    ] if did == origin else ([
+        {"id": 521, "seq": 1, "body": "pending question", "answer_body": None}
+    ] if did == target else []))
+    monkeypatch.setattr(invoke_mention_service, "_resolve_rework_pre_instruction", lambda _: None)
+    kwargs = dict(group_id="flowgate.v02.0110", project_id="flowgate", scratch_dir="/scratch",
+                  raw_token="raw", api_base_url=API_BASE, locale="ko")
+    if rework:
+        text = invoke_mention_service.build_rework_mention(doc_id=target, **kwargs)
+    else:
+        text = token_routes._build_mention_for_token(doc_ref=target, action_scope="edit", **kwargs)
+    assert text.count("## 기존 질의·답변") == 1
+    assert "#518" in text and "stored scope answer" in text
+    assert "#521" in text and "[미답변]" in text
+    refs = text.split("## Reference documents", 1)[1].split("##", 1)[0]
+    for did in [target, origin, other]:
+        assert refs.count(f"{did}: GET") == 1

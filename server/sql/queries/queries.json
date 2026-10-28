@@ -126,7 +126,7 @@
         "increment_answer_count_for_responder": "UPDATE question_items SET answer_count = answer_count + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND answer_count = 0 AND responder_run_id = ? AND (responder_state IS NULL OR responder_state <> 'user_decision')",
         "decrement_answer_count": "UPDATE question_items SET answer_count = MAX(0, answer_count - 1), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
         "list_by_doc": "SELECT qi.* FROM question_items qi JOIN questions q ON qi.question_id = q.id WHERE q.doc_id = ? ORDER BY qi.seq",
-        "qa_bundle_by_doc": "SELECT qi.seq, qi.title, qi.body, qi.asker_kind, qi.options, a.author_kind, a.body AS answer_body, a.selected_options AS answer_selected_options FROM question_items qi JOIN questions q ON qi.question_id = q.id LEFT JOIN answers a ON a.question_item_id = qi.id WHERE q.doc_id = ? ORDER BY qi.seq, a.created_at"
+        "qa_bundle_by_doc": "SELECT qi.id, q.doc_id, qi.seq, qi.title, qi.body, qi.asker_kind, qi.options, a.author_kind, a.body AS answer_body, a.selected_options AS answer_selected_options FROM question_items qi JOIN questions q ON qi.question_id = q.id LEFT JOIN answers a ON a.question_item_id = qi.id WHERE q.doc_id = ? ORDER BY qi.seq, a.created_at"
     },
     "answers": {
         "insert_answer": "INSERT INTO answers (question_item_id, body, author_kind, author_id, selected_options, author_ai_run_id, author_actual_provider_id, author_actual_provider_name, author_requested_provider_id, author_provider_source, author_fallback_used, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
