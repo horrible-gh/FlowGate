@@ -32,7 +32,7 @@
         <dd data-test="git-status-state">{{ stateText }}</dd>
       </div>
     </dl>
-    <p v-if="wt.state.mergeLoad === 'error'" class="gw-line is-error" data-test="git-status-failed">{{ t('gui.git.apply.info_failed') }}</p>
+    <p v-if="wt.state.mergeLoad === 'error' || wt.state.workBaseLoad === 'error'" class="gw-line is-error" data-test="git-status-failed">{{ t('gui.git.apply.info_failed') }}</p>
   </div>
 </template>
 
@@ -41,7 +41,7 @@
 // numbers (changed files, Stage, commits not in the target) and four rows (Worktree, its base,
 // the merge target, the state). Nothing more is added here. Every value is one the session already
 // read for the Base apply `상태` pane (E1 counts / branch, the E8 judgment of the chosen target, the
-// 0033 git/status Base); the state row is that judgment's one word (WorktreeApplySummary). A voided
+// effective Flow work base); the state row is that judgment's one word (WorktreeApplySummary). A voided
 // judgment shows "—", never the old target's values.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -55,7 +55,7 @@ const status = computed(() => wt.state.status)
 const counts = computed(() => (status.value?.worktreeAvailable ? status.value.counts : null))
 const merge = computed(() => (wt.state.mergeLoad === 'ready' ? wt.state.merge : null))
 const ahead = computed(() => (merge.value && wt.state.mergeTarget ? merge.value.aheadOfTarget : null))
-const base = computed(() => wt.projectGit.value?.baseBranch ?? null)
+const base = computed(() => wt.state.workBase)
 
 const targetText = computed(() => {
   const target = wt.state.mergeTarget

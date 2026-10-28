@@ -1,5 +1,6 @@
 <template>
   <ModelessShell
+    v-if="wt.gateOpen.value"
     ref="shellRef"
     :open="open"
     :minimized="minimized"

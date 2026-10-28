@@ -403,6 +403,6 @@ describe('`상태` tab (0067-R §7)', () => {
     expect(text('git-status-worktree')).toBe('flowgate_v02_0042')
     expect(text('git-status-target')).toBe('v0.2 (기본)')
     expect(text('git-status-state')).toBe('반영할 커밋 없음')
-    expect(qa('[data-test="git-status"] dt').map((d) => d.textContent)).toEqual(['Worktree', '기준 브랜치', '머지 대상', '상태'])
+    expect(qa('[data-test="git-status"] dt').map((d) => d.textContent)).toEqual(['Worktree', '플로우 베이스', '머지 대상', '상태'])
   })
 })

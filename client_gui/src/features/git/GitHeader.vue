@@ -4,7 +4,7 @@
     <div class="gx-header-main">
       <div class="gx-header-branch" data-test="git-work-branch">{{ workBranch || t('gui.git.header.none') }}</div>
       <div class="gx-header-base" data-test="git-base-branch">
-        {{ t('gui.git.header.base') }} · {{ baseLabel }}
+        {{ t(hasFlow ? 'gui.git.header.flow_base' : 'gui.git.header.base') }} · {{ baseLabel }}
       </div>
     </div>
     <IconButton
@@ -23,16 +23,18 @@
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0033 — Git Header (0033-D §6.1): the active Flow's work branch, the project
-// Base (only a configured one; otherwise "미설정") and refresh. Nothing else of the repository.
+// flowgate.v02.0107 — the active Flow's work branch and effective Flow base; without a
+// Flow, the project base. Unknown values stay "—". Refresh and status feedback stay here.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import IconButton from '../../components/ui/IconButton.vue'
 
 const props = defineProps<{
   workBranch: string | null
-  // null = not configured (when the status is known).
+  // Project base is used only without an active Flow.
   baseBranch: string | null
+  hasFlow: boolean
+  flowBase: string | null
   statusKnown: boolean
   enabled: boolean
   statusError: 'unreadable' | 'network' | null
@@ -44,8 +46,8 @@ const emit = defineEmits<{ refresh: [] }>()
 const { t } = useI18n()
 
 const baseLabel = computed(() => {
-  if (!props.statusKnown) return t('gui.git.header.none')
-  return props.baseBranch || t('gui.git.header.base_unset')
+  if (!props.statusKnown || !props.enabled) return '—'
+  return (props.hasFlow ? props.flowBase : props.baseBranch) || '—'
 })
 
 const lineError = computed(() => !!props.statusError || !!props.notice)

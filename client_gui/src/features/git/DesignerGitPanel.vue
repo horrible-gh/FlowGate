@@ -4,6 +4,8 @@
       <GitHeader
         :work-branch="session.workBranch.value"
         :base-branch="session.state.status?.baseBranch ?? null"
+        :has-flow="!!session.state.flow?.groupId"
+        :flow-base="worktree.state.workBase"
         :status-known="session.state.statusLoad === 'ready'"
         :enabled="session.state.status?.enabled === true"
         :status-error="session.state.statusError"
@@ -254,7 +256,7 @@ watch(
 function refreshAll(): Promise<void> {
   void gateOperations.reload()
   worktree.refresh()
-  return session.refresh()
+  return Promise.all([worktree.refreshWorkBase(), session.refresh()]).then(() => undefined)
 }
 
 provide(GIT_PANEL_CONTEXT, {
@@ -281,7 +283,8 @@ watch(confirmStale, (stale) => {
 
 const headerNotice = computed(() => {
   const notice = session.state.notices.header
-  return notice ? t(`gui.git.notice.${notice.code}`, { ...(notice.params ?? {}) }) : null
+  if (notice) return t(`gui.git.notice.${notice.code}`, { ...(notice.params ?? {}) })
+  return worktree.state.workBaseLoad === 'error' ? t('gui.git.apply.info_failed') : null
 })
 
 watch(
