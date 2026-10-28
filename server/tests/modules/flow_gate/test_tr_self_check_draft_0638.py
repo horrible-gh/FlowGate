@@ -376,7 +376,10 @@ def test_start_maps_a_closed_owner_to_forbidden_and_releases_the_group_lock(monk
 
 @pytest.fixture
 def admitted(monkeypatch):
-    from modules.flow_gate.services import remote_tool_service
+    from modules.flow_gate.services import graph_source_hooks, remote_tool_service
+    # 0110 T#3: start_draft asks whether the token is mapped to a Graph attempt; this DB-less
+    # fixture's token is an ordinary (unmapped) one -- the group worktree path under test.
+    monkeypatch.setattr(graph_source_hooks, "binding", lambda _token: None)
 
     docs = {SEQ_DOC: {"doc_id": SEQ_DOC, "type_code": "B", "project_id": P, "group_id": G},
             TR_DOC: {"doc_id": TR_DOC, "type_code": "TR", "project_id": P, "group_id": G},

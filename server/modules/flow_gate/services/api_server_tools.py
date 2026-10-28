@@ -527,11 +527,8 @@ def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> t
         token = token_service.verify(raw_token)
     except Exception as exc:
         raise ToolError(401, "selfcheck_token_invalid") from exc
-    from modules.flow_gate.services import graph_source_hooks
-    try:
-        graph_source_hooks.reject_group_source(token, "self_check")
-    except graph_source_hooks.GraphSourceError as exc:
-        raise ToolError(409, exc.code, exc.message) from exc
+    # 0110 T#3: a Graph attempt token is not refused here; tr_self_check_service runs it in its
+    # attempt tree (or answers 409 graph_attempt_inactive / graph_worktree_unavailable).
     doc_id = run.get("doc_ref")
     scope = run.get("action_scope")
     if scope == "new":
@@ -545,7 +542,7 @@ def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> t
         raise ToolError(403, "selfcheck_forbidden")
     try:
         if name == "run_self_check":
-            row = tr_self_check_service.start(doc_id, tool_input, token.get("issued_to"))
+            row = tr_self_check_service.start(doc_id, tool_input, token.get("issued_to"), token)
             return 202, {"ok": True, **row}
         if name == "read_self_check":
             run_id = tool_input.get("self_check_run_id")

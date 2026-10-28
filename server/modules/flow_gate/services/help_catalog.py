@@ -567,6 +567,8 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
     if name == "tr_self_check":
         # Same judgment as api_server_tools.definitions_for_run(): a worker token on a TR edit
         # step, or (0638 T#1) on a TR(new) step -- doc_type is then the workflow head's type.
+        # 0110 T#3: a Graph attempt token sees it too -- its run executes in its attempt tree
+        # (content "graph_attempt"); before that it was always refused with 409.
         if ctx.get("principal_kind") == "worker" and ctx.get("action_scope") in AUTHORING_SCOPES and doc_type == "TR":
             return VISIBLE
         return Decision(False, "not_tr_edit")
@@ -1385,6 +1387,44 @@ _SELF_CHECK_COPY: dict[str, dict] = {
     },
 }
 
+#: 0110 T#3 (NR0003 §3 T-B): what changes for a token mapped to a Graph attempt.
+_SELF_CHECK_ATTEMPT_COPY: dict[str, dict] = {
+    "ko": {
+        "note": "이 토큰은 Graph attempt 에 매핑되어 있다. Self-check 는 그룹 워크트리가 아니라 이 attempt 의 전용 워크트리(원격 소스 도구가 읽고 쓰는 트리)에서 실행되고, cwd 는 그 트리 기준 상대 경로다. run 응답과 조회 결과의 attempt_id·input_commit 이 실행 기준(attempt 와 그 트리의 시작 커밋)이며 source_head_before/after 는 attempt 트리의 HEAD 다. 실행 중에는 이 attempt 트리에 대한 소스 쓰기가 잠긴다. 실행이 끝났어도 그 프로세스 트리가 비었음이 증명되지 않으면(recovery_incomplete) 이 잠금은 보호된 채 남고, 증명된 뒤에 풀린다. 실행 슬롯은 attempt 가 아니라 Group 에 하나다.",
+        "errors": {
+            "graph_attempt_inactive": "실행이 정지 중이거나 attempt 가 무효화되어 이 attempt 에서는 Self-check 를 시작할 수 없다 → 반복 호출하지 말고 details(reason·attempt_id)를 TR 에 보고한다. 그룹 워크트리나 로컬 실행으로 우회하지 않는다.",
+            "graph_worktree_unavailable": "attempt 의 전용 워크트리를 확인할 수 없다(준비 전, 트리 없음, marker 불일치 등 details.reason) → 사유를 TR 에 보고한다. 그룹 워크트리로 대신 실행하지 않는다.",
+        },
+    },
+    "en": {
+        "note": "This token is mapped to a Graph attempt. Self-check runs in that attempt's own worktree (the tree the remote source tools read and write), not in the group worktree, and cwd is relative to that tree. attempt_id and input_commit in the run and read responses are the run's basis (the attempt and the commit its tree started from); source_head_before/after are the attempt tree's HEAD. Source writes to this attempt tree are locked while the run executes; when the run's process tree is not proved empty at its end (recovery_incomplete), the lock stays protected until that is proved. The run slot is one per Group, not per attempt.",
+        "errors": {
+            "graph_attempt_inactive": "The run is stopping or the attempt was invalidated, so no Self-check can start for this attempt -> do not call again; report details (reason, attempt_id) in the TR. Do not route around it through the group worktree or a local run.",
+            "graph_worktree_unavailable": "The attempt's own worktree cannot be confirmed (not prepared, tree missing, marker mismatch, ... see details.reason) -> report the reason in the TR. The group worktree is never used in its place.",
+        },
+    },
+    "ja": {
+        "note": "このトークンは Graph attempt にマッピングされています。Self-check はグループのワークツリーではなく、この attempt 専用のワークツリー(リモートソースツールが読み書きするツリー)で実行され、cwd はそのツリー基準の相対パスです。run 応答と取得結果の attempt_id・input_commit が実行の基準(attempt とそのツリーの開始コミット)で、source_head_before/after は attempt ツリーの HEAD です。実行中はこの attempt ツリーへのソース書き込みがロックされます。終了時にそのプロセスツリーが空だと証明できない場合(recovery_incomplete)、ロックは保護されたまま残り、証明された後に解除されます。実行スロットは attempt ではなく Group に1つです。",
+        "errors": {
+            "graph_attempt_inactive": "実行の停止中、または attempt が無効化されたため、この attempt では Self-check を開始できない → 繰り返し呼ばず、details(reason・attempt_id)を TR に報告する。グループのワークツリーやローカル実行で回避しない。",
+            "graph_worktree_unavailable": "attempt 専用のワークツリーを確認できない(準備前、ツリーなし、marker 不一致など details.reason) → 理由を TR に報告する。グループのワークツリーで代わりに実行しない。",
+        },
+    },
+}
+
+
+def _self_check_attempt(ctx: dict) -> Optional[str]:
+    """The Graph attempt the caller's worker token is mapped to (0110 T#3), else None."""
+    token_rec = ctx.get("token_rec")
+    if ctx.get("principal_kind") != "worker" or not token_rec:
+        return None
+    from modules.flow_gate.services import graph_source_hooks
+    try:
+        return graph_source_hooks.binding(token_rec)
+    except Exception:
+        _logger.warning("help: Graph attempt mapping lookup failed", exc_info=True)
+        return None
+
 
 def _content_tr_self_check(ctx: dict) -> dict:
     locale = ctx["locale"]
@@ -1395,7 +1435,7 @@ def _content_tr_self_check(ctx: dict) -> dict:
     # 0638 T#1: a TR(new) worker has no TR id yet; its runs go through the token-owned draft routes.
     draft = ctx.get("action_scope") == "new"
     operations = SELF_CHECK_DRAFT_HTTP_OPERATIONS if draft else SELF_CHECK_HTTP_OPERATIONS
-    return {
+    content = {
         "role": copy["role"],
         "stage": "new" if draft else "edit",
         "no_fallback": list(copy["no_fallback"]),
@@ -1444,6 +1484,17 @@ def _content_tr_self_check(ctx: dict) -> dict:
         },
         "errors": [{"code": row[0], "guidance": row[idx]} for row in _SELF_CHECK_ERRORS],
     }
+    attempt_id = _self_check_attempt(ctx)
+    if attempt_id:
+        attempt_copy = _SELF_CHECK_ATTEMPT_COPY.get(locale, _SELF_CHECK_ATTEMPT_COPY[FALLBACK_LOCALE])
+        content["graph_attempt"] = {
+            "attempt_id": attempt_id,
+            "execution_root": "graph_attempt_worktree",
+            "note": attempt_copy["note"],
+            "run_fields": ["attempt_id", "input_commit", "source_head_before", "source_head_after"],
+            "errors": [{"code": code, "guidance": text} for code, text in attempt_copy["errors"].items()],
+        }
+    return content
 
 
 _CONTENT_SUPPLIERS = {

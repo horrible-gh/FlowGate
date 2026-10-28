@@ -4,6 +4,7 @@ TR runs py_compile only. These SQLite/Git fixtures and mocked provider/lock
 boundaries are for the separate test WP/TSR; no AI or network is required.
 """
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -355,7 +356,9 @@ def test_document_only_chat_refuses_before_chat_capability(harness, service):
     assert refused.value.code == "graph_git_required"
 
 
-@pytest.mark.parametrize("operation", ["self_check", "test_run", "file_transfer", "attachment_copy", "api_group_source"])
+# 0110 T#3 (contract change, NR0003 §3 T-B item 6): "self_check" left this list -- a bound token's Self-check now runs
+# in its attempt root (test_mapped_token_self_check_runs_in_attempt_root below). The other group-only paths still refuse.
+@pytest.mark.parametrize("operation", ["test_run", "file_transfer", "attachment_copy", "api_group_source"])
 def test_group_only_source_paths_refuse_bound_tokens(repo, operation):
     item = repo.new()
     prepare(item)
@@ -365,16 +368,330 @@ def test_group_only_source_paths_refuse_bound_tokens(repo, operation):
     assert refused.value.details["operation"] == operation
 
 
-def test_selfcheck_service_and_api_tool_do_not_reach_group_lookup(repo):
+def test_api_group_source_tool_still_refuses_bound_tokens(repo):
+    """0110 T#3 replaced the Self-check half of the former
+    test_selfcheck_service_and_api_tool_do_not_reach_group_lookup; the API tool's group root keeps refusing.
+    ``ToolError`` carries the code as ``reason`` (the former test read a ``code`` attribute it does not have)."""
     item = repo.new()
     root = prepare(item)
-    with pytest.raises(tr_self_check_service.SelfCheckError) as refused:
-        tr_self_check_service.draft_target(item.token)
-    assert refused.value.code == "graph_attempt_source_unsupported"
     with pytest.raises(api_server_tools.ToolError) as refused:
         api_server_tools.require_group_root({"project_id": PROJECT, "group_id": GROUP,
             "source_root": str(root), "token_id": item.token["token_id"]})
-    assert refused.value.code == "graph_attempt_source_unsupported"
+    assert refused.value.status == 409 and refused.value.reason == "graph_attempt_source_unsupported"
+
+
+@pytest.fixture
+def selfcheck(repo, monkeypatch):
+    """0110 T#3: tr_self_check_service._start on these attempt fixtures, up to its worker thread. The run store and
+    the worker are recorded instead of executed; the Group / attempt locks are the harness's recording fakes. The
+    worker keeps ``_finish``'s spawn contract: it "spawns" (``before_spawn`` may hold it there, ``order`` records it),
+    then sets ``spawned``. The real ``_finish`` and locks: test_tr_self_check_attempt_w_0110."""
+    sc = tr_self_check_service
+    from modules.flow_gate.services.git import instance_registry
+    state = SimpleNamespace(created=[], finished=[], done=threading.Event(), before_spawn=None, order=[])
+    state.group_lookup = Mock(side_effect=AssertionError("an attempt token's Self-check must not use the group worktree"))
+    monkeypatch.setattr(sc.git_service, "effective_src_root_ex", state.group_lookup)
+    monkeypatch.setattr(sc.db_projects, "tr_self_check_enabled", lambda _p: True)
+    monkeypatch.setattr(sc.db_runs, "has_group_recovery_incomplete", lambda *_: False)
+    monkeypatch.setattr(sc.db_runs, "get_active", lambda *_: None)
+    monkeypatch.setattr(sc.lock_manager, "new_context", lambda kind="req", ident=None, **_: SimpleNamespace(
+        ctx_id=f"{kind}:{ident}", on_lock_lost=None, lock_lost=False, find_held=lambda _key: None))
+    monkeypatch.setattr(sc.policy, "resolve_command", lambda program, *_a, **_kw: SimpleNamespace(
+        executable=program, argv_prefix=[], name=program, origin="path"))
+    monkeypatch.setattr(instance_registry, "current_instance_id", lambda: "inst-0110")
+    monkeypatch.setattr(sc, "_emit", Mock())
+
+    def create_pending(project_id, group_id, tr_doc_id, *_args, **kw):
+        state.created.append({"project_id": project_id, "group_id": group_id, "tr_doc_id": tr_doc_id, **kw})
+        return {"self_check_run_id": kw["run_id"], "project_id": project_id, "group_id": group_id,
+                "tr_doc_id": tr_doc_id, "status": "pending", "attempt_id": kw.get("attempt_id"),
+                "input_commit": kw.get("input_commit")}
+    monkeypatch.setattr(sc.db_runs, "create_pending", create_pending)
+
+    def finish(run_id, ctx, lock_key, root, before, runtime, command, args, cwd, env, timeout, keeper, attempt_lock,
+               spawned=None):
+        if state.before_spawn is not None:
+            state.before_spawn()
+        state.order.append("spawned")
+        if spawned is not None:
+            spawned.set()
+        state.finished.append(SimpleNamespace(root=root, cwd=cwd, before=before, lock_key=lock_key,
+                                              attempt_lock=attempt_lock, spawned=spawned))
+        keeper.stop()
+        sc._cleanup_runtime(runtime, run_id, tracked=False)
+        state.done.set()
+    monkeypatch.setattr(sc, "_finish", finish)
+    monkeypatch.setattr(port, "_fence_handler", Mock())
+    return state
+
+
+def _draft_token(item, monkeypatch):
+    """The attempt's token as a TR(new) worker token, admitted by draft_target."""
+    from modules.flow_gate.services import remote_tool_service
+    sc = tr_self_check_service
+    token = {**item.token, "doc_ref": "seq-doc", "action_scope": "new", "issued_to": "worker"}
+    monkeypatch.setattr(sc.db_documents, "get_by_id", lambda _doc: {"project_id": PROJECT, "group_id": GROUP})
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type_result", lambda _token: ("TR", False))
+    return token
+
+
+@pytest.mark.parametrize("entry", ["edit", "draft"])
+def test_mapped_token_self_check_runs_in_attempt_root(repo, selfcheck, monkeypatch, entry):
+    """0110 T#3 (NR0003 §3 T-B): a mapped token's Self-check is admitted (no graph_attempt_source_unsupported), runs
+    with its attempt root as worktree and cwd, holds the Group's G and the attempt's W, and records attempt_id /
+    input_commit / the attempt tree's HEAD on the run row. The group worktree is never resolved."""
+    sc = tr_self_check_service
+    item = repo.new()
+    root = prepare(item)
+    (root / "value.txt").write_text("attempt edit", encoding="utf-8")
+    calls_before = len(repo.lock_calls)
+    request = {"program": "pytest", "args": ["-q"], "cwd": "."}
+    if entry == "edit":
+        monkeypatch.setattr(sc, "_document", lambda _doc: {"project_id": PROJECT, "group_id": GROUP})
+        row = sc.start("tr-doc", request, "worker", item.token)
+    else:
+        row = sc.start_draft(_draft_token(item, monkeypatch), request)
+    assert selfcheck.done.wait(10)
+
+    input_commit = workspace.attempt(item.attempt)["input_commit"]
+    assert row["attempt_id"] == item.attempt and row["input_commit"] == input_commit
+    created = selfcheck.created[0]
+    assert (created["attempt_id"], created["input_commit"]) == (item.attempt, input_commit)
+    assert created["tr_doc_id"] == ("tr-doc" if entry == "edit" else None)
+    finished = selfcheck.finished[0]
+    assert finished.root == root.resolve() and finished.cwd == root.resolve()
+    assert finished.before["head"] == input_commit
+    assert finished.before["branch"] == workspace.location(workspace.attempt(item.attempt), PROJECT)[2]
+    branch = finished.before["branch"]
+    assert repo.lock_calls[calls_before:] == [("G", None), ("W", branch)]
+    assert finished.attempt_lock == ("W", branch)
+    assert finished.spawned is not None and finished.spawned.is_set()     # the request waited for the spawn
+    port._fence_handler.assert_called_once()
+    assert port._fence_handler.call_args.args[1] == "self_check"
+    assert port._fence_handler.call_args.kwargs["keep"] is not None      # judged inside the write session
+    selfcheck.group_lookup.assert_not_called()
+    assert (repo.group / "value.txt").read_text() == "initial"
+
+
+@pytest.mark.parametrize("broken,code,reason", [
+    ("not_prepared", "graph_worktree_unavailable", "not_prepared"),
+    ("worktree_removed", "graph_worktree_unavailable", "worktree_missing"),
+    ("invalidated", "graph_worktree_unavailable", "attempt_not_active"),
+    ("stopping", "graph_attempt_inactive", "run_stopping"),
+])
+@pytest.mark.parametrize("entry", ["edit", "draft"])
+def test_mapped_token_self_check_refuses_unready_or_inactive_attempt_with_409(
+        repo, selfcheck, monkeypatch, entry, broken, code, reason):
+    """0110 T#3: an attempt that is not prepared, lost its tree, was invalidated or whose run is stopping is 409 --
+    no run row, no lock, no group worktree in its place."""
+    sc = tr_self_check_service
+    item = repo.new()
+    if broken != "not_prepared":
+        root = prepare(item)
+    if broken == "worktree_removed":
+        repo.git("worktree", "remove", "--force", str(root))
+    elif broken == "invalidated":
+        repo.db._execute("UPDATE graph_node_attempts SET status='invalidated' WHERE attempt_id=?", [item.attempt])
+    elif broken == "stopping":
+        port._fence_handler.side_effect = port.GraphAttemptInactive(
+            reason="run_stopping", attempt_id=item.attempt, operation="self_check")
+    calls_before = len(repo.lock_calls)
+    with pytest.raises(sc.SelfCheckError) as refused:
+        if entry == "edit":
+            monkeypatch.setattr(sc, "_document", lambda _doc: {"project_id": PROJECT, "group_id": GROUP})
+            sc.start("tr-doc", {"program": "pytest"}, "worker", item.token)
+        else:
+            sc.start_draft(_draft_token(item, monkeypatch), {"program": "pytest"})
+    assert refused.value.status == 409 and refused.value.code == code
+    assert refused.value.details["reason"] == reason
+    assert refused.value.code != "graph_attempt_source_unsupported"
+    assert selfcheck.created == [] and selfcheck.finished == []
+    assert repo.lock_calls[calls_before:] == []
+    selfcheck.group_lookup.assert_not_called()
+
+
+def test_attempt_tree_lost_after_admission_is_selfcheck_worktree_unavailable(repo, selfcheck):
+    """0110 T#3: ``_worktree(target)`` of an admitted attempt target re-resolves the attempt; a lost tree is
+    selfcheck_worktree_unavailable with its reason, never the group worktree. ``_start`` with that target judges the
+    attempt again with its token (rework: no attempt target runs unjudged) and refuses it the same way."""
+    sc = tr_self_check_service
+    item = repo.new()
+    root = prepare(item)
+    target = {"project_id": PROJECT, "group_id": GROUP, "tr_doc_id": "tr-doc",
+              **sc._attempt_target(item.token, PROJECT, GROUP)}
+    assert target["attempt_id"] == item.attempt
+    assert sc._worktree(target) == root.resolve()
+    repo.git("worktree", "remove", "--force", str(root))
+    with pytest.raises(sc.SelfCheckError) as refused:
+        sc._worktree(target)
+    assert (refused.value.status, refused.value.code) == (409, "selfcheck_worktree_unavailable")
+    assert refused.value.details == {"attempt_id": item.attempt, "reason": "worktree_missing"}
+    calls_before = len(repo.lock_calls)
+    with pytest.raises(sc.SelfCheckError) as refused:
+        sc._start(target, {"program": "pytest"}, "worker")
+    assert (refused.value.status, refused.value.code) == (409, "graph_worktree_unavailable")
+    assert refused.value.details["reason"] == "worktree_missing"
+    assert selfcheck.created == [] and selfcheck.finished == []
+    assert repo.lock_calls[calls_before:] == []
+    selfcheck.group_lookup.assert_not_called()
+
+
+@pytest.fixture
+def fenced_selfcheck(selfcheck, monkeypatch):
+    """0110 T#3 rework: the real Stop gate judgement (``fencing.require_token``) in front of the Self-check start, on
+    the harness's real graph rows; its refusal records are captured."""
+    from flowgate.graph_run import fencing
+    recorded = []
+    monkeypatch.setattr(fencing, "record", lambda row, operation, why, **extra: recorded.append((operation, why)))
+    monkeypatch.setattr(port, "_fence_handler", fencing.require_token)
+    selfcheck.recorded, selfcheck.fencing = recorded, fencing
+    return selfcheck
+
+
+@pytest.mark.parametrize("commit", ["stop", "invalidation"])
+def test_a_stop_or_invalidation_committed_before_the_judgement_spawns_nothing(repo, fenced_selfcheck, monkeypatch,
+                                                                             commit):
+    """0110 T#3 rework: the start is held at a barrier before its judgement (``_document``); meanwhile a Stop commits
+    ``stopping`` under the gate's exclusive hold, or the runtime's invalidation (``workspace._failed``, its exclusive
+    hold) commits. Released, the start is refused 409 graph_attempt_inactive -- no G/W, no run row, no spawn."""
+    sc, fencing, state = tr_self_check_service, fenced_selfcheck.fencing, fenced_selfcheck
+    item = repo.new()
+    prepare(item)
+    other = repo.new("other")                     # keeps the run running once item's attempt is invalidated
+    prepare(other)
+    ledger.acquire(other.execution, "other-ai")
+    paused, resume, outcome = threading.Event(), threading.Event(), {}
+
+    def document(_doc):
+        paused.set()
+        assert resume.wait(10)
+        return {"project_id": PROJECT, "group_id": GROUP}
+
+    def late_start():
+        try:
+            outcome["row"] = sc.start("tr-doc", {"program": "pytest"}, "worker", item.token)
+        except Exception as exc:   # noqa: BLE001 -- asserted below
+            outcome["error"] = exc
+
+    monkeypatch.setattr(sc, "_document", document)
+    starter = threading.Thread(target=late_start)
+    starter.start()
+    assert paused.wait(10)
+    if commit == "stop":
+        with fencing.exclusive(GROUP):
+            repo.db._execute("UPDATE graph_runs SET status='stopping' WHERE run_id='run'")
+        reason = "run_stopping"
+    else:
+        workspace._failed(item.execution, "worktree_failed")
+        assert workspace.attempt(item.attempt)["status"] == "invalidated"
+        reason = "attempt_invalidated"
+    calls_before = len(repo.lock_calls)          # after the invalidation's own worktree cleanup (its Git locks)
+    resume.set()
+    starter.join(10)
+    assert not starter.is_alive()
+
+    error = outcome.get("error")
+    assert isinstance(error, sc.SelfCheckError), outcome
+    assert (error.status, error.code, error.details["reason"]) == (409, "graph_attempt_inactive", reason)
+    assert state.recorded == [("self_check", reason)]
+    assert state.created == [] and state.finished == [] and state.order == []
+    assert repo.lock_calls[calls_before:] == []
+    assert fencing._gate(GROUP).readers == 0
+    state.group_lookup.assert_not_called()
+
+
+def test_a_stop_waits_for_an_admitted_self_check_until_its_spawn(repo, fenced_selfcheck, monkeypatch):
+    """0110 T#3 rework: the start's worker is held at a barrier right before its spawn -- G, W and the run row taken.
+    The request still holds the gate's shared hold, so a Stop cannot commit ``stopping`` in that window: it commits
+    after the spawn. A start after the Stop is judged under the gate and refused; nothing more spawns."""
+    sc, fencing, state = tr_self_check_service, fenced_selfcheck.fencing, fenced_selfcheck
+    item = repo.new()
+    prepare(item)
+    monkeypatch.setattr(sc, "_document", lambda _doc: {"project_id": PROJECT, "group_id": GROUP})
+    at_spawn, resume, outcome = threading.Event(), threading.Event(), {}
+
+    def hold_spawn():
+        at_spawn.set()
+        assert resume.wait(10)
+
+    state.before_spawn = hold_spawn
+    starter = threading.Thread(target=lambda: outcome.setdefault(
+        "row", sc.start("tr-doc", {"program": "pytest"}, "worker", item.token)))
+    starter.start()
+    assert at_spawn.wait(10)
+    assert len(state.created) == 1 and ("W", workspace.location(workspace.attempt(item.attempt), PROJECT)[2]) \
+        in repo.lock_calls
+    assert fencing._gate(GROUP).readers == 1                 # the request keeps the Stop gate until the spawn
+
+    def stopper():
+        with fencing.exclusive(GROUP):
+            repo.db._execute("UPDATE graph_runs SET status='stopping' WHERE run_id='run'")
+            state.order.append("stopping_committed")
+
+    stop_thread = threading.Thread(target=stopper)
+    stop_thread.start()
+    stop_thread.join(0.3)
+    assert stop_thread.is_alive() and state.order == []     # no stopping commit between judgement and spawn
+    resume.set()
+    starter.join(10)
+    stop_thread.join(10)
+    assert not starter.is_alive() and not stop_thread.is_alive()
+    assert state.order == ["spawned", "stopping_committed"]
+    assert outcome["row"]["attempt_id"] == item.attempt
+
+    calls_before, created = len(repo.lock_calls), len(state.created)
+    with pytest.raises(sc.SelfCheckError) as refused:
+        sc.start("tr-doc", {"program": "pytest"}, "worker", item.token)
+    assert (refused.value.status, refused.value.code, refused.value.details["reason"]) == (
+        409, "graph_attempt_inactive", "run_stopping")
+    assert len(state.created) == created and repo.lock_calls[calls_before:] == []
+    assert state.order == ["spawned", "stopping_committed"]
+    assert fencing._gate(GROUP).readers == 0
+
+
+def test_self_check_route_admits_attempt_token_and_passes_it_on(repo, monkeypatch):
+    """0110 T#3: the TR-bound route no longer answers 409 graph_attempt_source_unsupported for a mapped token; the
+    token reaches the service, which picks the attempt root."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from modules.flow_gate.api.v1 import self_check_routes as routes
+    item = repo.new()
+    prepare(item)
+    token = {**item.token, "action_scope": "edit", "doc_ref": "tr-doc", "issued_to": "worker"}
+    monkeypatch.setattr(routes, "verify_bearer", lambda _request: token)
+    monkeypatch.setattr(routes.selfcheck, "_document", lambda _doc: {"project_id": PROJECT, "group_id": GROUP})
+    seen = []
+    monkeypatch.setattr(routes.selfcheck, "start", lambda *args: seen.append(args) or {"self_check_run_id": "scr_1"})
+    app = FastAPI()
+    app.include_router(routes.router)
+    response = TestClient(app).post("/api/v1/documents/tr-doc/self-check/runs", json={"program": "pytest"})
+    assert response.status_code == 202, response.json()
+    assert seen == [("tr-doc", {"program": "pytest"}, "worker", token)]
+
+
+def test_help_describes_attempt_execution_only_for_mapped_tokens(repo, monkeypatch):
+    """0110 T#3: help_catalog's tr_self_check item matches the service -- a mapped token is told its run executes in
+    its attempt tree (and the 409 codes it may get); an unmapped token's content is unchanged."""
+    from modules.flow_gate.services import help_catalog
+    item = repo.new()
+    prepare(item)
+    repo.tokens["ordinary"] = {"token_id": "ordinary", "project": PROJECT, "group_id": GROUP}
+
+    def content(token, locale="en"):
+        ctx = {"principal_kind": "worker", "action_scope": "edit", "doc_type": "TR", "locale": locale,
+               "base_url": "/flowgate/api/v1", "source_mode": "remote", "tool_kind": "read_write",
+               "registry": None, "token_rec": token}
+        assert help_catalog.decide_visibility("tr_self_check", ctx).visible
+        return help_catalog.build_item("tr_self_check", ctx)["content"]
+
+    for locale in ("ko", "en", "ja"):
+        block = content(item.token, locale)["graph_attempt"]
+        assert block["attempt_id"] == item.attempt and block["execution_root"] == "graph_attempt_worktree"
+        assert {row["code"] for row in block["errors"]} == {"graph_attempt_inactive", "graph_worktree_unavailable"}
+        assert {"attempt_id", "input_commit"} <= set(block["run_fields"])
+        assert set(block["run_fields"]) <= set(tr_self_check_service.public({}))
+    assert "graph_attempt_source_unsupported" not in json.dumps(content(item.token), ensure_ascii=False)
+    assert "graph_attempt" not in content(repo.tokens["ordinary"])
 
 
 def test_unmapped_tokens_keep_group_routing(repo, monkeypatch):
@@ -384,6 +701,9 @@ def test_unmapped_tokens_keep_group_routing(repo, monkeypatch):
     monkeypatch.setattr(workspace.git, "effective_src_root_ex", lambda *_: (repo.group, "worktree"))
     assert port.source_root(token) is None
     assert port.reject_group_source(token, "self_check") is None
+    # 0110 T#3: an unmapped token's Self-check keeps the group worktree and adds no attempt fields.
+    assert tr_self_check_service._attempt_target(token, PROJECT, GROUP) == {}
+    assert tr_self_check_service._worktree({"project_id": PROJECT, "group_id": GROUP}) == repo.group.resolve()
     assert remote._resolve_src_root(grant) == repo.group
     assert chat.worktree_root(PROJECT, GROUP, str(repo.group), token_id="ordinary") == repo.group
     # 0110 T#2: the TR scope check keeps the group basis for an unmapped token.
