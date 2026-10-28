@@ -55,7 +55,7 @@ export default {
     reason: {
       writing: "시나리오를 작성하는 중입니다",
       forbidden: "권한이 없습니다",
-      read_only_conflict: 'Flow 소유 충돌 · 읽기 전용',
+      read_only_conflict: '플로우 소유 충돌 · 읽기 전용',
       read_only_revision: '확정된 리비전 보기 · 읽기 전용',
       disposed: '폐기된 그룹',
       ai_running: 'AI 실행 중',
@@ -74,7 +74,7 @@ export default {
     failure: {
       disposed: '폐기된 그룹이라 저장되지 않았습니다',
       running: 'AI 실행 중이라 저장되지 않았습니다',
-      owner: '이 Flow의 단계로는 저장할 수 없습니다',
+      owner: '이 플로우의 단계로는 저장할 수 없습니다',
       stale: '단계 목록이 바뀌어 저장되지 않았습니다',
       not_decided: '워크플로가 결정되지 않았습니다',
       invalid: '저장할 수 없는 값입니다',
@@ -86,7 +86,7 @@ export default {
     error: {
       not_decided: '결정된 워크플로가 없습니다.',
       forbidden: '볼 권한이 없습니다.',
-      not_found: 'Flow나 문서를 찾을 수 없습니다.',
+      not_found: '플로우나 문서를 찾을 수 없습니다.',
       network: '서버에 연결하지 못했습니다.',
       other: '설정을 불러오지 못했습니다.',
     },

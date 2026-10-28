@@ -34,7 +34,26 @@
         :aria-label="t('gui.designer.shell.tool_tabs_label')"
         data-test="designer-right-tool-tabs"
         @update:model-value="onSelect"
-      />
+      >
+        <template #tab="{ tab }">
+          <svg class="designer-right-tab-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+            <g v-if="tab.key === 'palette'" fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="2" y="2" width="4.5" height="4.5" rx="1" />
+              <rect x="9.5" y="2" width="4.5" height="4.5" rx="1" />
+              <rect x="2" y="9.5" width="4.5" height="4.5" rx="1" />
+              <rect x="9.5" y="9.5" width="4.5" height="4.5" rx="1" />
+            </g>
+            <path v-else-if="tab.key === 'conversation'" d="M3 2.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7l-4 3v-3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+            <g v-else fill="none" stroke="currentColor" stroke-width="1.3">
+              <path d="M4 5v6m8-6v1a3 3 0 0 1-3 3H7a3 3 0 0 0-3 3" />
+              <circle cx="4" cy="3" r="2" />
+              <circle cx="12" cy="3" r="2" />
+              <circle cx="4" cy="13" r="2" />
+            </g>
+          </svg>
+          <span class="designer-right-tab-label">{{ tab.label }}</span>
+        </template>
+      </Tabs>
     </header>
 
     <div v-show="!collapsed" class="designer-right-body" data-test="designer-right-body">
@@ -152,11 +171,51 @@ const partFlow = computed(() => (props.unselected ? null : props.activeFlow))
   user-select: none;
 }
 
-/* The header draws the single bottom rule; the tab strip keeps only its active underline. */
+/* NR §4.2: boxed choices; the shared Tabs default remains unchanged elsewhere. */
 .designer-right-tabs {
   flex: 1 1 auto;
   min-width: 0;
   border-bottom: 0;
+  gap: 6px;
+  padding: 6px 0;
+  flex-wrap: nowrap;
+}
+
+.designer-right-tabs :deep(.ui-tab) {
+  flex: 1 1 0;
+  box-sizing: border-box;
+  min-width: 0;
+  height: 32px;
+  padding: 0 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--fg2-control-surface-flat);
+  font-size: 12px;
+}
+
+.designer-right-tabs :deep(.ui-tab.is-active) {
+  background: var(--fg2-status-info-bg);
+  border-color: var(--fg2-blue);
+}
+
+.designer-right-tab-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.designer-right-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .designer-right-body {

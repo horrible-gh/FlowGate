@@ -409,12 +409,12 @@ describe('card settings parts', () => {
     expect(off.attributes('title')).toBe('전체 실행은 AI 위임과 무관 · 각 Node 설정으로 실행')
     for (const option of w.findAll('[data-test="inspector-segment-option"]')) {
       expect(option.attributes('disabled')).toBeDefined()
-      expect(option.attributes('title')).toBe('이 Flow에는 카드 설정이 없습니다')
+      expect(option.attributes('title')).toBe('이 플로우에는 카드 설정이 없습니다')
     }
     // "Not connected" is a tag beside the switch (reason in its tooltip), not a sentence in the body.
     const unconnected = w.get('[data-test="requirement-settings-unconnected"] [data-test="inspector-tbd"]')
     expect(unconnected.text()).toBe('미연결')
-    expect(unconnected.attributes('title')).toBe('이 Flow에는 카드 설정이 없습니다')
+    expect(unconnected.attributes('title')).toBe('이 플로우에는 카드 설정이 없습니다')
     expect(w.get('[data-test="requirement-delegation"] .inspector-block-head').find('[data-test="requirement-settings-unconnected"]').exists()).toBe(true)
     expect(w.text()).not.toContain('0051-R')
     expect(w.find('[data-test="requirement-limits"]').exists()).toBe(false)

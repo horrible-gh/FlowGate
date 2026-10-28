@@ -14,15 +14,15 @@ export default {
     menu_title: '종류 (그룹 첫 실행 전까지)',
     // flowgate.v02.0070 (0015-T T2): a pick switches at once — no confirmation strings (number swap or succession).
     reason: {
-      read_only_conflict: '소유 충돌 Flow라 바꿀 수 없습니다.',
+      read_only_conflict: '소유 충돌 플로우라 바꿀 수 없습니다.',
       read_only_revision: 'Graph revision 보기에서는 바꿀 수 없습니다. draft 보기로 옮기세요.',
       disposed: '폐기된 그룹이라 바꿀 수 없습니다.',
       ai_running: 'AI 실행 중이라 바꿀 수 없습니다.',
       busy: '전환하는 중입니다.',
     },
     failure: {
-      graph: 'Graph Flow의 시작 문서라 전환이 거절되었습니다. Canvas를 다시 읽었습니다.',
-      ownership_conflict: '소유 충돌 Flow라 전환이 거절되었습니다. Canvas를 다시 읽었습니다.',
+      graph: 'Graph 플로우의 시작 문서라 전환이 거절되었습니다. Canvas를 다시 읽었습니다.',
+      ownership_conflict: '소유 충돌 플로우라 전환이 거절되었습니다. Canvas를 다시 읽었습니다.',
       decided: '이미 단계 진행이 정해진 문서라 전환이 거절되었습니다. Canvas를 다시 읽었습니다.',
       children: '이 문서를 가리키는 하위 문서가 있어 전환이 거절되었습니다. Canvas를 다시 읽었습니다.',
       collision: '바꿀 문서 번호가 이미 있어 전환이 거절되었습니다. Canvas를 다시 읽었습니다.',

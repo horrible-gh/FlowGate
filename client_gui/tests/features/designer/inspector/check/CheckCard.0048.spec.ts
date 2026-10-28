@@ -727,7 +727,7 @@ describe('final approval — availability inputs', () => {
 
   it('an ownership conflict: disabled with the conflict reason', async () => {
     const w = await mountPart(CheckAction, acTarget({ ownership: 'conflict', viewMode: 'revision', readOnly: 'conflict' }))
-    expect(line(w).text()).toBe('소유 충돌 Flow라 확인할 수 없습니다.')
+    expect(line(w).text()).toBe('소유 충돌 플로우라 확인할 수 없습니다.')
   })
 
   it('the read status wins over the Canvas one; an approved AC shows nothing (no empty place)', async () => {

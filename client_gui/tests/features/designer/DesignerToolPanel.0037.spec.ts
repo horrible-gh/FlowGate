@@ -11,6 +11,8 @@ import { defineComponent, h } from 'vue'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import DesignerRightDock from '@/features/designer/shell/DesignerRightDock.vue'
+import ExplorerModeTabs from '@/features/designer/shell/ExplorerModeTabs.vue'
+import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
 import {
   createDesignerLayout,
   DESIGNER_RIGHT_TOOLS,
@@ -103,6 +105,14 @@ describe('DesignerRightDock — Tool Panel', () => {
   it('shows one header row [팔레트] [대화] [Git] and the real Palette part, no placeholder', async () => {
     const w = await mountDock()
     expect(tabs(w).map((t) => t.text())).toEqual(['팔레트', '대화', 'Git'])
+    // NR §4.2: decorative SVGs never change the text or accessible tab labels.
+    for (const tab of tabs(w)) {
+      expect(tab.findAll('svg')).toHaveLength(1)
+      expect(tab.get('svg').attributes('aria-hidden')).toBe('true')
+      expect(tab.get('svg').attributes('width')).toBe('14')
+      expect(tab.find('svg path, svg rect, svg circle').exists()).toBe(true)
+      expect(tab.get('.designer-right-tab-label').text()).toBe(tab.text())
+    }
     expect(w.get('[data-test="designer-right-tool-tabs"] [aria-selected="true"]').text()).toBe('팔레트')
     expect(get(w, 'designer-right-dock').attributes('data-tool')).toBe('palette')
     expect(get(w, 'designer-right-pane-palette').find('[data-test="designer-palette"]').exists()).toBe(true)
@@ -173,5 +183,57 @@ describe('DesignerRightDock — Tool Panel', () => {
     await w.setProps({ collapsed: false })
     expect(get(w, 'designer-right-dock').attributes('data-tool')).toBe('git')
     expect(get(w, 'designer-git-panel').attributes('data-active')).toBe('true')
+  })
+})
+
+
+// NR §4.2: adding a content slot must preserve the shared primitive's interaction contract.
+describe('Dock tab labels and backward-compatible Tabs slot (0105 T#3)', () => {
+  it.each([false, true])('default / slotted labels keep click, arrow focus and disabled behavior (slot=%s)', async (slotted) => {
+    const items: TabItem[] = [
+      { key: 'one', label: '첫째' },
+      { key: 'off', label: '비활성', disabled: true },
+      { key: 'two', label: '둘째' },
+    ]
+    wrapper = mount(Tabs, {
+      attachTo: document.body,
+      props: { tabs: items, modelValue: 'one' },
+      slots: slotted ? { tab: ({ tab }: { tab: TabItem }) => h('span', { 'data-key': tab.key }, tab.label) } : {},
+    })
+    const buttons = wrapper.findAll('[role="tab"]')
+    expect(buttons.map((b) => b.text())).toEqual(['첫째', '비활성', '둘째'])
+    if (slotted) expect(buttons[2].get('span').attributes('data-key')).toBe('two')
+    await buttons[1].trigger('click')
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    await buttons[2].trigger('click')
+    expect(wrapper.emitted('update:modelValue')).toEqual([['two']])
+    expect(wrapper.emitted('change')).toEqual([['two']])
+    await wrapper.setProps({ modelValue: 'two' })
+    expect(buttons[2].attributes('aria-selected')).toBe('true')
+    expect(buttons[2].attributes('tabindex')).toBe('0')
+    await buttons[2].trigger('keydown', { key: 'ArrowRight' })
+    await flushPromises()
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['one'])
+    expect(document.activeElement).toBe(buttons[0].element)
+    await wrapper.setProps({ modelValue: 'one' })
+    await buttons[0].trigger('keydown', { key: 'ArrowLeft' })
+    await flushPromises()
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['two'])
+    expect(document.activeElement).toBe(buttons[2].element)
+  })
+
+  it('keeps the exact left labels, header order, selection and collapse event', async () => {
+    wrapper = mount(ExplorerModeTabs, { props: { modelValue: 'project' }, global: { plugins: [i18n] } })
+    expect(wrapper.get('[data-test="designer-explorer-mode-tabs"]').text()).toBe('프로젝트파일')
+    const children = wrapper.get('[data-test="designer-explorer-header"]').element.children
+    expect(children[0].getAttribute('data-test')).toBe('designer-explorer-mode-tabs')
+    expect(children[1].getAttribute('data-test')).toBe('designer-left-collapse')
+    await wrapper.findAll('[role="tab"]')[1].trigger('click')
+    expect(wrapper.emitted('update:modelValue')).toEqual([['file']])
+    await wrapper.get('[data-test="designer-left-collapse"]').trigger('click')
+    expect(wrapper.emitted('collapse')).toHaveLength(1)
+    await wrapper.setProps({ disabled: true })
+    expect(wrapper.findAll('[role="tab"]').every((b) => b.attributes('disabled') !== undefined)).toBe(true)
+    expect(wrapper.get('[data-test="designer-left-collapse"]').attributes('disabled')).toBeDefined()
   })
 })

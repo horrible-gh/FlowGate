@@ -62,11 +62,11 @@ export default {
       summary_none: '반영 방식은 최종 확인 때 고름',
       hold_block: '⛔ 보류 + 그룹 종료는 함께 고를 수 없습니다',
       hold_block_tbd: '확정 아님',
-      unconnected: '이 Flow에는 카드 설정이 없습니다',
+      unconnected: '이 플로우에는 카드 설정이 없습니다',
     },
     failed: '저장 실패',
     reason: {
-      read_only_conflict: 'Flow 소유 충돌 · 읽기 전용',
+      read_only_conflict: '플로우 소유 충돌 · 읽기 전용',
       read_only_revision: '확정된 리비전 보기 · 읽기 전용',
       disposed: '폐기된 그룹',
       placing: '카드를 저장하는 중',

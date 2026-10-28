@@ -69,11 +69,34 @@ function onSelect(key: string) {
   border-bottom: 1px solid var(--fg2-line);
 }
 
-/* The header draws the single bottom rule; the tab strip keeps only its active underline. */
+/* NR §4.2: equal-width choices within the existing header and collapse control. */
 .explorer-mode-tabs {
   flex: 1 1 auto;
   min-width: 0;
   border-bottom: 0;
+  padding: 4px 0;
+  flex-wrap: nowrap;
+}
+
+.explorer-mode-tabs :deep(.ui-tab) {
+  flex: 1 1 0;
+  box-sizing: border-box;
+  min-width: 0;
+  height: var(--fg2-control-h-md);
+  padding: 0 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border: 1px solid var(--fg2-line-strong);
+  border-bottom: 2px solid transparent;
+  border-radius: 6px;
+  background: var(--fg2-control-surface-flat);
+}
+
+.explorer-mode-tabs :deep(.ui-tab.is-active) {
+  background: var(--fg2-status-info-bg);
+  border-color: var(--fg2-status-info-border);
+  border-bottom-color: var(--fg2-blue);
 }
 
 .explorer-mode-collapse {

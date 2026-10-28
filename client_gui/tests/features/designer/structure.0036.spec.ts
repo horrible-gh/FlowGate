@@ -114,3 +114,35 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     expect(messages.designer.shell.minimap_label).toBe('MINIMAP')
   })
 })
+
+
+// NR §4.2: scoped overrides leave other Tabs consumers on their existing theme.
+describe('Designer Dock tab styles (0105 T#3)', () => {
+  it.each([
+    ['ExplorerModeTabs.vue', '.explorer-mode-tabs'],
+    ['DesignerRightDock.vue', '.designer-right-tabs'],
+  ])('%s keeps equal, non-wrapping tabs at the Dock minimum width', (file, selector) => {
+    const source = read(join(SRC, 'features/designer/shell', file))
+    const style = source.split('<style scoped>')[1] ?? ''
+    const rule = (name: string) => {
+      const at = style.indexOf(`${name} {`)
+      expect(at, name).toBeGreaterThanOrEqual(0)
+      return style.slice(at, style.indexOf('}', at))
+    }
+    expect(rule(selector)).toMatch(/flex-wrap:\s*nowrap;/)
+    const tab = rule(`${selector} :deep(.ui-tab)`)
+    expect(tab).toMatch(/flex:\s*1 1 0;/)
+    expect(tab).toMatch(/min-width:\s*0;/)
+    expect(tab).toMatch(/box-sizing:\s*border-box;/)
+    expect(tab).toMatch(/white-space:\s*nowrap;/)
+    expect(tab).toMatch(/overflow:\s*hidden;/)
+    expect(tab).toMatch(/text-overflow:\s*ellipsis;/)
+    expect(tab).toMatch(/border:\s*1px solid var\(--fg2-line-strong\);/)
+    expect(rule(`${selector} :deep(.ui-tab.is-active)`)).toMatch(/background:\s*var\(--fg2-status-info-bg\);/)
+    if (file === 'DesignerRightDock.vue') {
+      expect(rule('.designer-right-tab-icon')).toMatch(/flex:\s*none;/)
+      expect(rule('.designer-right-tab-label')).toMatch(/min-width:\s*0;/)
+      expect(rule('.designer-right-tab-label')).toMatch(/text-overflow:\s*ellipsis;/)
+    }
+  })
+})

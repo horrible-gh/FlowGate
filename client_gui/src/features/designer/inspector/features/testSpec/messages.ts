@@ -70,7 +70,7 @@ export default {
       other: '판정 없음',
     },
     reason: {
-      read_only_conflict: 'Flow 소유가 충돌해 읽기 전용입니다.',
+      read_only_conflict: '플로우 소유가 충돌해 읽기 전용입니다.',
       read_only_revision: '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 테스트를 실행합니다.',
       disposed: '폐기된 그룹이라 테스트를 실행할 수 없습니다.',
       ai_running: 'AI 실행 중이라 테스트를 실행할 수 없습니다.',

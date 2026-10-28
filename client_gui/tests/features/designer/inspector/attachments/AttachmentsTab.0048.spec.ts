@@ -587,7 +587,7 @@ describe('attachments tab — not mutable (409 DOCUMENT_NOT_MUTABLE / 423) and t
 
 describe('attachments tab — read-only Flows (flowgate.v02.0048 T#8)', () => {
   it.each([
-    ['conflict', { readOnly: 'conflict' as const, ownership: 'conflict' }, 'Flow 소유가 충돌해 읽기 전용입니다.'],
+    ['conflict', { readOnly: 'conflict' as const, ownership: 'conflict' }, '플로우 소유가 충돌해 읽기 전용입니다.'],
     ['revision', { readOnly: 'revision' as const, ownership: 'graph', viewMode: 'revision' }, '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 첨부를 바꿉니다.'],
   ])('%s: the list and opening work, adding and deleting are disabled with the reason and send nothing', async (_label, fields, text) => {
     const w = await mountTab(v01Target(fields))
