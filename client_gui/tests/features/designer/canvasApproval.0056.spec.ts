@@ -11,6 +11,10 @@
  * - the Center session approves a card with the result its Canvas read shows, and a Canvas [승인] reaches it;
  * - the run band: "멈춤 · 다음 카드 N개 대기" on a stopped run with cards approved meanwhile (their keys in the
  *   tooltip) — and a card approved while the run is stopped stays 승인됨 on the Canvas, never 승인 대기.
+ *
+ * flowgate.v02.0105 T#2 — expectations revised for NR flowgate.v02.0101.0003 §3.9 B-6: the Canvas card offers [승인] only
+ * when the Flow's confirmed run read says the user may approve (`viewer.can_approve`). The run here is answered for such a
+ * user (`viewerCanApprove: true`); one the server does not allow shows the state and no [승인].
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -213,7 +217,8 @@ function control(source: ApproveSource) {
   return { ctl, runs, refresh }
 }
 
-const STOPPED: FlowRunInfo = { runId: 'run_s', status: 'stopped', openNodeKeys: [], pendingPropagationCount: 0, pendingNodeKeys: [] }
+// flowgate.v02.0105 T#2 (B-6): answered for a user the server allows to approve.
+const STOPPED: FlowRunInfo = { runId: 'run_s', status: 'stopped', openNodeKeys: [], pendingPropagationCount: 0, pendingNodeKeys: [], viewerCanApprove: true }
 
 describe('flowRunControl — a card’s [승인] (O1 4-1)', () => {
   it('reads the run when this tab does not know it, approves with the shown result, keeps the run it answers, reads the Canvas again', async () => {
@@ -342,6 +347,15 @@ describe('the Center session approves a card with the result its Canvas shows', 
     expect(await session.approveNode(F, 'gn_wait')).toBe(true)
     expect(source.calls).toContain(`approve run_s gn_wait ${TR}`)
     expect(await session.approveNode(F, 'gn_missing')).toBe(false)
+  })
+
+  it('a user the server does not allow sees the state and no [승인] (B-6)', async () => {
+    const source = approveSource({ ...STOPPED, viewerCanApprove: false })
+    const session = await open(source)
+    expect(session.canApproveFlow(F)).toBe(false)
+    const waiting = wrapper!.findAll('[data-test="designer-canvas-node"]').find((item) => item.attributes('data-node-id') === 'gn_wait')!
+    expect(waiting.get('[data-test="designer-canvas-node-card-state"]').attributes('data-state')).toBe('awaiting_approval')
+    expect(waiting.find('[data-test="designer-canvas-node-approve"]').exists()).toBe(false)
   })
 
   it('the Canvas card’s [승인] reaches the session; the done card has none', async () => {

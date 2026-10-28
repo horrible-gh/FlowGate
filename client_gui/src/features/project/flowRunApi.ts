@@ -23,7 +23,8 @@
 // flowgate.v02.0061 T#14: a run also carries its command (`mode`), `idle_reason`, the running / requested execution
 // counts with the Flow's `execution_limit`, and each node its attempt's `integration_status` and `hold`. T#15: and
 // each node its current `attempt_id` (kept only when sent). flowgate.v02.0064 T#4: and each node `node_running` (the
-// card's running lock a title save is refused by; kept only when sent).
+// card's running lock a title save is refused by; kept only when sent). flowgate.v02.0105 T#2: and each node
+// `approval_wait_reason` (B-2) and the run `viewer.can_approve` (B-6), kept only when sent.
 //
 // The run events (P0008 §8.2 `graph_run_status_changed` / `graph_node_state_changed`) are refresh
 // signals of the Canvas (flowCanvasEvents.ts), never state.
@@ -50,6 +51,7 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
+    ...('approval_wait_reason' in raw ? { approvalWaitReason: str(raw.approval_wait_reason) } : {}),
     ...(raw.gate && typeof raw.gate === 'object' ? { gateRecoveryResetRequired: (raw.gate as Raw).recovery_reset_required === true } : {}),
   }
 }
@@ -82,6 +84,9 @@ export function toFlowRun(raw: unknown): FlowRun | null {
     lastEventSeq: num(run.last_event_seq) ?? 0,
     pendingPropagationCount: Math.max(0, num(run.pending_propagation_count) ?? 0),
     pendingNodeKeys: strings(run.pending_node_keys),
+    ...(run.viewer && typeof run.viewer === 'object' && typeof (run.viewer as Raw).can_approve === 'boolean'
+      ? { viewerCanApprove: (run.viewer as Raw).can_approve as boolean }
+      : {}),
   }
 }
 

@@ -232,6 +232,8 @@ export default {
         writing_result: '결과 작성 중',
         working: '작업 중',
         awaiting_approval: '승인 대기',
+        // flowgate.v02.0105 T#2 (B-5): an automatic approval that was missed or failed (the reason is in the tooltip).
+        auto_approval_failed: '자동 승인 실패',
         approved: '승인됨',
         rejected: '반려됨',
         pending: '대기',

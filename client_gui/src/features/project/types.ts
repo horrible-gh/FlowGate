@@ -476,6 +476,8 @@ export interface FlowCanvasNodeRun {
   stage?: string | null
   /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): the card run's instruction document; absent when not sent. */
   instructionDocId?: string | null
+  /** flowgate.v02.0105 T#2 (B-2): why the result was not approved automatically while the card awaits its approval (the latest B-1 reason, e.g. `approval_refused`, `review_not_passed:review_count_exhausted`), or null; absent when not sent. */
+  approvalWaitReason?: string | null
   /**
    * flowgate.v02.0061 T#14: the node's attempt result integration (`pending` | `integrating` | `integrated` |
    * `conflict` | `failed`, open key) and why; absent when not sent, null when the attempt has none.
@@ -752,6 +754,8 @@ export interface FlowRunNode {
   requestedExecutionCount?: number
   /** flowgate.v02.0061 T#15: the node's current attempt (active, else last ended), null when none; absent when not sent. */
   attemptId?: string | null
+  /** flowgate.v02.0105 T#2 (B-2): why the result was not approved automatically while the card awaits its approval (the latest B-1 reason, e.g. `approval_refused`, `review_not_passed:review_count_exhausted`), or null; absent when not sent. */
+  approvalWaitReason?: string | null
   /** D0007 §6: abandoned gate recovery waits for the existing Time Machine. */
   gateRecoveryResetRequired?: boolean
 }
@@ -784,6 +788,11 @@ export interface FlowRun {
    */
   pendingPropagationCount: number
   pendingNodeKeys: string[]
+  /**
+   * flowgate.v02.0105 T#2 (B-6): the requesting user may approve the run's cards (`viewer.can_approve`, the card approval
+   * route's own judgement). Absent when not sent (an older server): no [승인].
+   */
+  viewerCanApprove?: boolean
 }
 
 /**

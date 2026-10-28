@@ -52,6 +52,27 @@ def values(flow_id: str, node_key: str) -> dict[str, Any]:
     return out
 
 
+ABSENT = object()                           # no stored row (``stored``)
+UNREADABLE = object()                       # a stored row whose value does not parse (``stored``)
+
+
+def stored(flow_id: str, node_key: str, field: str) -> Any:
+    """flowgate.v02.0105 T#2 (B-3): ``field``'s row of one card as stored — ``ABSENT`` when there is no row, ``UNREADABLE``
+    when its value does not parse (``values`` leaves such a row out), else the parsed value."""
+    if not available():
+        return ABSENT
+    row = get_store()._fetch_one(
+        "SELECT value_json FROM graph_node_settings WHERE group_id = ? AND node_key = ? AND field = ?",
+        [flow_id, node_key, field],
+    )
+    if row is None:
+        return ABSENT
+    try:
+        return json.loads(row["value_json"])
+    except (TypeError, ValueError):
+        return UNREADABLE
+
+
 def keys_with(flow_id: str, field: str, value: Any) -> frozenset:
     """0061 T#11: the node keys of the Flow whose ``field`` is stored as ``value`` (Hold: ``hold`` = true)."""
     if not available():

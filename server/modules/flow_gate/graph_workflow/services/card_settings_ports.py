@@ -28,6 +28,10 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
                      of the node was submitted, revised or put back in review (``mark_revised``); the card answers the
                      step that follows it after the commit (a person's work plan: its AI review or its automatic
                      approval) as a callable the binder runs with its post-commit jobs, or None
+    approval_wait_reason   a run read (flowgate.v02.0105 T#2 B-2): why the automatic approval of the node run's result
+                     was not made (the latest B-1 reason recorded for it), or None
+    reconcile_stage  a run read and a Resume, outside every Flow guard (flowgate.v02.0105 T#2 B-3): the AI cards whose
+                     run-end stage was lost are followed once (an automatic approval only as the run end makes it)
 
 ``run_settings`` answers a dict; every key is optional and an absent key keeps the existing default:
 
@@ -41,7 +45,8 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
 
 * With no handler registered ``run_settings`` answers ``{}``, ``result_type`` None,
   ``ai_working`` False, ``instruction_document`` ``{}``, ``approve_instruction`` False and ``node_running``
-  False, so a node starts and binds exactly as it did before (one stage).
+  False, so a node starts and binds exactly as it did before (one stage); ``approval_wait_reason`` None and
+  ``reconcile_stage`` does nothing.
 * A handler exception propagates: the callers run inside a run step's Flow guard or a run read.
 * One handler per port. Registering again replaces it (startup may run more than once in a process).
 """
@@ -59,8 +64,10 @@ APPROVE_INSTRUCTION = "approve_instruction"
 REVIEW_INSTRUCTION = "review_instruction"
 NODE_RUNNING = "node_running"
 PERSON_RESULT = "person_result"                                  # flowgate.v02.0083 WP-4
+APPROVAL_WAIT_REASON = "approval_wait_reason"                    # flowgate.v02.0105 T#2 B-2
+RECONCILE_STAGE = "reconcile_stage"                              # flowgate.v02.0105 T#2 B-3
 PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING,
-              PERSON_RESULT)
+              PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -160,3 +167,19 @@ def person_result(flow_id: str, node: dict, doc_id: str) -> Optional[Callable[[]
         return None
     job = handler(flow_id, node, doc_id)
     return job if callable(job) else None
+
+
+def approval_wait_reason(flow_id: str, row: dict) -> Optional[str]:
+    """Why the automatic approval of the node run ``row``'s result was not made, or None (no handler: None)."""
+    handler = _handler(APPROVAL_WAIT_REASON)
+    if handler is None:
+        return None
+    reason = handler(flow_id, row)
+    return reason if isinstance(reason, str) and reason else None
+
+
+def reconcile_stage(flow_id: str) -> None:
+    """The Flow's AI cards whose run-end stage was lost are followed once (no handler: nothing)."""
+    handler = _handler(RECONCILE_STAGE)
+    if handler is not None:
+        handler(flow_id)

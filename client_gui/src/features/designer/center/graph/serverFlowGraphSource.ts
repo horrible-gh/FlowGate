@@ -109,6 +109,8 @@ const toRunInfo = (run: FlowRun): FlowRunInfo => ({
   // flowgate.v02.0061 T#15: the run's history as the Time Machine confirmation compares it.
   revisionNo: run.revisionNo ?? null,
   lastEventSeq: run.lastEventSeq ?? 0,
+  // flowgate.v02.0105 T#2 (B-6): only what the server said; absent = not told (no [승인]).
+  ...(typeof run.viewerCanApprove === 'boolean' ? { viewerCanApprove: run.viewerCanApprove } : {}),
 })
 
 /**

@@ -325,7 +325,9 @@ const pill = computed<HeaderPill | null>(() => {
   // The sub: a server state with a display name that says something else than the label.
   const subs: (string | null)[] = []
   if (card) {
-    if (doc) subs.push(docText)
+    // flowgate.v02.0105 T#2 (B-5): the card state alone — a document's review state is no second state beside it
+    // (pending_review / revised / approved stay in the tooltip, the documents tab and data-doc-status); 반려됨 stays.
+    if (doc === REJECTED) subs.push(docText)
   } else if (canvas) {
     if (doc && STATE_BY_REVIEW[doc] !== canvas.key) subs.push(docText)
     if (run && STATE_BY_RUN[run] !== canvas.key) subs.push(runText)
@@ -336,7 +338,9 @@ const pill = computed<HeaderPill | null>(() => {
     .filter((text): text is string => text !== null && text !== label)
     .filter((text, index, all) => all.indexOf(text) === index)
     .join(' · ')
-  const title = t('gui.designer.inspector.header.state_tip', { doc: tipOf(docText, doc), run: tipOf(runText, run) })
+  const tip = t('gui.designer.inspector.header.state_tip', { doc: tipOf(docText, doc), run: tipOf(runText, run) })
+  // flowgate.v02.0105 T#2 (B-5): why the result waits, in the tooltip only.
+  const title = card?.reason ? `${tip}\n${label} (${card.reason})` : tip
   return { label, tone, sub: sub || null, title }
 })
 

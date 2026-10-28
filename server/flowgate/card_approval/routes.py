@@ -44,6 +44,7 @@ def post_card_approval(run_id: str, node_key: str, request: Request, body: Any =
             raise legacy.invalid(request, errors)
         group = legacy.load_flow(legacy.run_flow_id(run_id))
         legacy.authorize(user_id, group, "write")
-        return approval.approve(group, run_id, node_key, expected, user_id, legacy.locale_of(request))
+        answer = approval.approve(group, run_id, node_key, expected, user_id, legacy.locale_of(request))
+        return legacy.with_viewer(answer, group, user_id)       # flowgate.v02.0105 T#2 B-6: the run's viewer.can_approve
 
     return legacy.run(request, handle)

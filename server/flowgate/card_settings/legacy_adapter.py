@@ -39,10 +39,20 @@ flowgate.v02.0098 T#1 (D0004 §3.1 / §3.2): the check card's merge target branc
 (``merge_target.judge_check_target``: one exact name, read-only, never cached) for a save, and the cached candidate
 view (``merge_target.check_target_view``) and its invalidation for the settings response. Both are scoped by the
 authenticated group alone: its ``group_id`` and its own ``project_id``.
+
+flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9 B-1 / B-3 / B-4, Q #511 o3 — 0083 T#4 개정): an AI card's automatic
+approval is made under the server's automatic approval authority (``AUTOMATION_APPROVE_PERMISSIONS``: ``document.approve``
+alone), not the run issuer's permissions; the issuer stays the record's actor (a real user) and an empty issuer approves
+nothing. A person's work plan result keeps the issuer's authority (0083 WP-4). Why an automatic approval was not made
+(``record_approval_wait``) and that the system's authority made one (``record_approval_authority``) are added as run status
+events with the status unchanged, told by their cause (as ``fencing.record``); existing records are never changed. The
+reconciliation of a lost run-end stage reads the node's result AI run (``result_ai_run``), its card's stored review count
+as stored (``repository.stored``) and the result's review loops (``review_loops``).
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -79,7 +89,9 @@ __all__ = ["GraphApiError", "GitServiceError", "judge_merge_target", "merge_targ
            "default_reviewer", "last_rejection", "start_review_loop", "review_loop_row", "review_loop_active",
            "approve", "settle_graph_run",
            "person_plan_reviewed", "active_run", "node_run", "active_attempt_id", "run_issuer", "person_stage_open",
-           "person_hold", "attempt_node", "submission_judged", "submission_passed", "explicit_request"]
+           "person_hold", "attempt_node", "submission_judged", "submission_passed", "explicit_request",
+           "AUTOMATION", "AUTOMATION_APPROVE_PERMISSIONS", "record_approval_wait", "record_approval_authority",
+           "approval_waits", "approval_wait_reason", "node_runs", "result_ai_run", "stage_ai_run", "review_loops"]
 
 _log = logging.getLogger(__name__)
 
@@ -91,6 +103,22 @@ APPROVE_PERMISSION = "document.approve"
 # The TR2 approval attempt key of a card approval (the unmanned chain's own is "auto:").
 TR2_REQUEST_KEY_PREFIX = "card:"
 TR2_REQUEST_KEY_LEN = 48
+# flowgate.v02.0105 T#2 (B-4): an AI card's automatic approval authority — approval alone, no other permission.
+AUTOMATION = "automation"
+AUTOMATION_APPROVE_PERMISSIONS = frozenset({APPROVE_PERMISSION})
+SYSTEM_AUTHORITY = "system"
+# flowgate.v02.0105 T#2 (B-1): why an automatic approval was not made (the run event's reason; ``review_not_passed:`` and
+# ``run_not_clean:`` take the loop's stop reason / the AI run's stop code or end reason after the colon).
+ISSUER_LACKS_APPROVE = "issuer_lacks_approve"           # a person's work plan result only (0083 WP-4)
+ISSUER_MISSING = "issuer_missing"
+APPROVAL_REFUSED = "approval_refused"
+REVIEW_NOT_STARTED = "review_not_started"
+REVIEW_NOT_PASSED = "review_not_passed:"
+RUN_NOT_CLEAN = "run_not_clean:"
+REVIEW_RESULT_UNKNOWN = "review_result_unknown"
+# graph_run_events admits only the run / node status events (migration 144): a run status event, the status unchanged.
+APPROVAL_WAIT_CAUSE = "auto_approval_skipped"
+APPROVAL_AUTHORITY_CAUSE = "auto_approval_authority"
 
 
 def authenticate(request) -> str:
@@ -341,9 +369,11 @@ def registered_instructions(flow_id: str, run_id: str, node_key: str, doc_type: 
 
 
 def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc_id: Optional[str],
-                       issued_to: str, attempt_id: Optional[str] = None, defer: Optional[list] = None) -> None:
+                       issued_to: str, attempt_id: Optional[str] = None, defer: Optional[list] = None,
+                       idle_ok: bool = False) -> None:
+    """``idle_ok`` (flowgate.v02.0105 T#2 B-3): an idle run takes it too — only under ``person_hold``."""
     node_dispatch.start_result_stage(flow_id, run_id, node_key, instruction_doc_id, issued_to, project_of(flow_id),
-                                     attempt_id=attempt_id, defer=defer)
+                                     attempt_id=attempt_id, defer=defer, idle_ok=idle_ok)
 
 
 def instruction_stage_failed(flow_id: str, run_id: str, node_key: str, attempt_id: Optional[str] = None) -> None:
@@ -647,15 +677,21 @@ def _retryable_tr2(exc: Exception) -> bool:
             and exc.code in TR2_ERRORS and bool(TR2_ERRORS[exc.code].retryable))
 
 
-def approve(flow_id: str, doc_id: str, actor_user_id: str) -> bool:
+def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[str] = None, *,
+            node_key: Optional[str] = None, attempt_id: Optional[str] = None) -> bool:
     """The v0.1 approval of ``doc_id`` as the unmanned chain makes it (``inbox_routes.settle_completed_step``),
     then the TR approval hook every approval entry point calls and the Graph contact a person's approval
-    reaches. True when approved; any refusal is logged and the result left to a person (False).
+    reaches. True when approved; any refusal is logged, its reason recorded (B-1, ``record_approval_wait``) and the
+    result left to a person (False).
 
-    - Authority: the run issuer's own permissions, resolved as the approve button resolves them; without
-      ``document.approve`` nothing is attempted.
-    - Principal: the issuer as the Flow's server-owned completion context (``system_principal``, the one
-      the unmanned approval passes), so the group mutation guard admits it as it admits that approval.
+    - Authority: ``authority`` ``AUTOMATION`` (an AI card's result, flowgate.v02.0105 T#2 B-4, Q #511 o3 — 0083 T#4
+      개정): the server's automatic approval authority (``AUTOMATION_APPROVE_PERMISSIONS``), never the issuer's
+      permissions; an empty issuer approves nothing (``issuer_missing``) and the system's authority is recorded beside
+      the approval. None (a person's work plan result, 0083 WP-4): the run issuer's own permissions, resolved as the
+      approve button resolves them; without ``document.approve`` nothing is attempted (``issuer_lacks_approve``).
+    - Actor and principal: the issuer — never the author of the result — as the Flow's server-owned completion context
+      (``system_principal``, the one the unmanned approval passes), so the group mutation guard admits it as it admits
+      that approval.
     - Revision: the document's revision as read here (``expected_revision``).
     - TR2: its own approval (precheck, source lock, apply, validation, commit) under an attempt key of
       the document and revision, retried once with a new key on a retryable TR2 refusal.
@@ -667,12 +703,21 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str) -> bool:
     from modules.flow_gate.workflow.pipeline_service import transition_document_review  # noqa: PLC0415
     from modules.flow_gate.workflow.routers.workflow import _get_user_permissions  # noqa: PLC0415
 
-    actor = db_users.get_by_id(actor_user_id) or {"user_id": actor_user_id, "is_admin": 0}
-    permissions = _get_user_permissions(actor)
-    if APPROVE_PERMISSION not in permissions:
-        _log.info("card approval left to a person flow=%s doc=%s: the issuer lacks %s",
-                  flow_id, doc_id, APPROVE_PERMISSION)
-        return False
+    automation = authority == AUTOMATION
+    if automation:
+        if not actor_user_id:
+            _log.info("card approval left to a person flow=%s doc=%s: no run issuer", flow_id, doc_id)
+            record_approval_wait(flow_id, node_key, doc_id, ISSUER_MISSING, attempt_id=attempt_id)
+            return False
+        permissions = set(AUTOMATION_APPROVE_PERMISSIONS)
+    else:
+        actor = db_users.get_by_id(actor_user_id) or {"user_id": actor_user_id, "is_admin": 0}
+        permissions = _get_user_permissions(actor)
+        if APPROVE_PERMISSION not in permissions:
+            _log.info("card approval left to a person flow=%s doc=%s: the issuer lacks %s",
+                      flow_id, doc_id, APPROVE_PERMISSION)
+            record_approval_wait(flow_id, node_key, doc_id, ISSUER_LACKS_APPROVE, attempt_id=attempt_id)
+            return False
     doc = db_documents.get_by_id(doc_id) or {}
     revision = int(doc.get("revision_no") or 0)
     tr2 = str(doc.get("type_code") or "").upper() == "TR2"
@@ -692,10 +737,157 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str) -> bool:
             if tr2 and attempt == 0 and _retryable_tr2(exc):
                 continue
             _log.warning("card approval refused flow=%s doc=%s", flow_id, doc_id, exc_info=True)
+            record_approval_wait(flow_id, node_key, doc_id, APPROVAL_REFUSED, attempt_id=attempt_id)
             return False
+    if automation:
+        record_approval_authority(flow_id, node_key, doc_id, actor_user_id, attempt_id=attempt_id)
     tr_commit_service.on_document_approved(doc_id, result)
     v01_contact.after_review_decided(flow_id, doc_id, "approve")
     return True
+
+
+# ── why an automatic approval was not made (flowgate.v02.0105 T#2 B-1 / B-4) ──
+
+def _run_event(flow_id: str, cause: str, reason: str, extra: dict) -> None:
+    """A run status event of the Flow's active run with the status unchanged, told by ``cause`` (as ``fencing.record``):
+    no node event, no SSE. Inside the caller's transaction when there is one, else in its own Flow guard. Added only —
+    never raises, and a failed record changes nothing of the step it tells."""
+    from modules.flow_gate.db.connection import in_transaction  # noqa: PLC0415
+    from modules.flow_gate.graph_workflow.services import run_events  # noqa: PLC0415
+
+    def write() -> None:
+        run_row = run_store.active_run(flow_id)
+        if run_row is None:
+            return
+        seq = int(run_row["last_event_seq"]) + 1
+        payload = {"flow_id": flow_id, "run_id": run_row["run_id"], "revision_no": run_row.get("revision_no"),
+                   "event_seq": seq, "from": run_row["status"], "to": run_row["status"], "cause": cause,
+                   "reason": reason, **extra}
+        run_store.append_event(run_row["run_id"], seq, run_events.RUN_STATUS, payload, node_key=None,
+                               from_status=run_row["status"], to_status=run_row["status"], cause=cause,
+                               result_doc_id=None, canvas_state=None, actor_user_id=None, reason=reason)
+
+    try:
+        if in_transaction():
+            write()
+        else:
+            with_flow_guard(flow_id, write)
+    except Exception:  # noqa: BLE001
+        _log.warning("card approval record not written flow=%s cause=%s reason=%s", flow_id, cause, reason,
+                     exc_info=True)
+
+
+def _node_key_of(flow_id: str, node_key: Optional[str], doc_id: Optional[str]) -> Optional[str]:
+    """``node_key``, else the node of the Flow's active run whose result is ``doc_id``."""
+    if node_key or not doc_id or not run_store.available():
+        return node_key
+    run_row = run_store.active_run(flow_id)
+    row = run_store.node_run_by_result(run_row["run_id"], doc_id) if run_row else None
+    return row["node_key"] if row else None
+
+
+def record_approval_wait(flow_id: str, node_key: Optional[str], doc_id: Optional[str], reason: str, *,
+                         attempt_id: Optional[str] = None, stage: str = "result") -> None:
+    """B-1: why the automatic approval of the node's ``doc_id`` (its result, or its instruction: ``stage``) was not made,
+    added to the Flow's active run. Nothing when the document is no node's of that run."""
+    key = _node_key_of(flow_id, node_key, doc_id)
+    if not key or not doc_id:
+        return
+    _run_event(flow_id, APPROVAL_WAIT_CAUSE, reason,
+               {"node_key": key, "doc_id": doc_id, "attempt_id": attempt_id, "stage": stage})
+
+
+def record_approval_authority(flow_id: str, node_key: Optional[str], doc_id: str, issuer: str, *,
+                              attempt_id: Optional[str] = None, stage: str = "result") -> None:
+    """B-4: the automatic approval of the node's ``doc_id`` was made under the system's authority, for ``issuer`` (the
+    approval record's actor)."""
+    key = _node_key_of(flow_id, node_key, doc_id)
+    if not key:
+        return
+    _run_event(flow_id, APPROVAL_AUTHORITY_CAUSE, SYSTEM_AUTHORITY,
+               {"node_key": key, "doc_id": doc_id, "attempt_id": attempt_id, "stage": stage,
+                "auto_approval_authority": SYSTEM_AUTHORITY, "issuer": issuer})
+
+
+def approval_waits(run_id: str, node_key: str, doc_id: Optional[str], attempt_id: Optional[str] = None) -> list[str]:
+    """B-1 reasons recorded on the run for the node's ``doc_id``, oldest first — of ``attempt_id`` (a reason recorded for
+    another attempt of the node is not this one's; one recorded with no attempt counts)."""
+    from modules.flow_gate.graph_workflow.services import run_events  # noqa: PLC0415
+
+    if not doc_id or not run_store.available():
+        return []
+    found = []
+    for row in run_store._all("SELECT payload_json FROM graph_run_events WHERE run_id = ? AND event_type = ? AND cause = ? "
+                              "ORDER BY event_seq", [run_id, run_events.RUN_STATUS, APPROVAL_WAIT_CAUSE]):
+        try:
+            data = json.loads(row["payload_json"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(data, dict) or data.get("node_key") != node_key or data.get("doc_id") != doc_id:
+            continue
+        if attempt_id and data.get("attempt_id") and data["attempt_id"] != attempt_id:
+            continue
+        if isinstance(data.get("reason"), str) and data["reason"]:
+            found.append(data["reason"])
+    return found
+
+
+def approval_wait_reason(flow_id: str, row: dict) -> Optional[str]:
+    """B-2: the latest B-1 reason of the node run ``row``'s result (its current attempt), or None."""
+    doc_id = row.get("result_doc_id")
+    if not doc_id or not row.get("run_id"):
+        return None
+    reasons = approval_waits(row["run_id"], row["node_key"], doc_id, run_store.active_attempt_id(row["run_id"], row["node_key"]))
+    return reasons[-1] if reasons else None
+
+
+# ── a lost run-end stage (flowgate.v02.0105 T#2 B-3) ─────────────────────────
+
+def node_runs(run_id: str) -> list[dict]:
+    return run_store.node_runs(run_id)
+
+
+def _node_ai_runs(flow_id: str, run_id: str, node_key: str) -> list[tuple[str, dict]]:
+    """(token id, ended AI run record) of the node's live tokens that carry an AI run, mapping order."""
+    out = []
+    for token_id in run_store.token_ids(run_id, node_key):
+        found = get_store()._fetch_one("SELECT ai_run_id FROM tokens WHERE token_id = ?", [token_id])
+        record = ai_run_record((found or {}).get("ai_run_id")) if found and found.get("ai_run_id") else None
+        if record is not None and record.get("group_id") == flow_id:
+            out.append((token_id, record))
+    return out
+
+
+def _work_run(record: dict) -> bool:
+    return record.get("mode") == "single" and not record.get("document_review_loop")
+
+
+def result_ai_run(flow_id: str, run_id: str, node_key: str, doc_id: str) -> Optional[dict]:
+    """The latest ``new`` AI run of the node that registered its result ``doc_id`` with its own token (its durable row,
+    ``ai_run_record``), or None — a result a person registered has none."""
+    found = None
+    for token_id, record in _node_ai_runs(flow_id, run_id, node_key):
+        if _work_run(record) and record.get("action_scope") == "new" and _registered_with(flow_id, doc_id, [token_id]):
+            found = record
+    return found
+
+
+def stage_ai_run(flow_id: str, run_id: str, node_key: str) -> Optional[dict]:
+    """The latest single AI run of the node's live tokens that is no review loop (its instruction stage's writer while the
+    node is open in that stage), or None."""
+    found = None
+    for _token_id, record in _node_ai_runs(flow_id, run_id, node_key):
+        if _work_run(record) and record.get("action_scope") in ("new", "edit"):
+            found = record
+    return found
+
+
+def review_loops(doc_id: str) -> list[dict]:
+    """The document review loops of ``doc_id``, the latest first (started, then created)."""
+    if not get_store().table_exists("ai_invoke_document_review_loops"):
+        return []
+    rows = [dict(r) for r in db_review_loops.list_by_document(doc_id) or []]
+    return sorted(rows, key=lambda r: (str(r.get("started_at") or ""), str(r.get("created_at") or "")), reverse=True)
 
 
 def settle_graph_run(flow_id: str) -> None:
@@ -724,8 +916,10 @@ def active_attempt_id(run_id: str, node_key: str) -> Optional[str]:
 
 
 def run_issuer(run_row: dict) -> str:
-    """The Graph run's issuer (its starter): the authority of the run's automatic approvals, as a node dispatch issues
-    an AI card's run to it (``node_dispatch.dispatch_document``) — never the author of the result."""
+    """The Graph run's issuer (its starter), as a node dispatch issues an AI card's run to it
+    (``node_dispatch.dispatch_document``) — never the author of the result: the actor of the run's automatic approvals,
+    and the authority of a person's work plan result's (0083 WP-4). flowgate.v02.0105 T#2 (B-4, Q #511 o3): an AI card's
+    are made under the server's automatic approval authority instead (``approve`` ``AUTOMATION``)."""
     return run_row.get("started_by") or ""
 
 

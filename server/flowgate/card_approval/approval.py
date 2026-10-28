@@ -148,6 +148,18 @@ def targets(node: dict, lines: list[dict], result_doc_id: Optional[str]) -> list
     return out
 
 
+def viewer_can_approve(group: dict, user_id: str) -> bool:
+    """flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9 B-6): the run responses' ``viewer.can_approve`` — ``user_id``
+    may approve a card of the Flow ``group``, by the judgement the approval route itself makes: the Flow's ``write``
+    (``routes.post_card_approval``), then ``document.approve`` (``approve`` step 7, ``legacy.permissions_of``). Any
+    failure to tell is False: the client then shows no [승인], and the route keeps its own 403."""
+    try:
+        legacy.authorize(user_id, group, "write")
+        return legacy.APPROVE_PERMISSION in legacy.permissions_of(user_id)
+    except Exception:  # noqa: BLE001 — no access, or the permissions could not be read
+        return False
+
+
 def pending_documents(flow_id: str, node: dict, result_doc_id: Optional[str]) -> list[str]:
     """``card_approval_ports.pending_documents`` handler: the card's documents other than its result
     ``result_doc_id`` that are not approved yet, in approval order (instruction first)."""

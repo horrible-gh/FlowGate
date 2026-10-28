@@ -38,6 +38,12 @@ then goes on as the start would have — never an ordinary opening of the R / B 
 flowgate.v02.0064 T#4: each node run also tells whether its card is running now (``node_running``): the running lock the
 card settings and a card title save use (``card_settings_ports.node_running`` — open in the active run, or in review while
 the card's AI review works on its result). The Canvas closes a card's title edit by it instead of judging it again.
+
+flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9): a node run awaiting approval also tells why its result was not
+approved automatically (``approval_wait_reason``, B-2; null otherwise — ``awaiting_approval`` and the card approval API's
+409 are judged as before); a run read and a Resume first follow the AI cards whose run-end stage was lost
+(``card_settings_ports.reconcile_stage``, B-3, outside the Flow guard); and a run answered to a user tells whether that user
+may approve its cards (``viewer.can_approve``, B-6: the card approval route's own judgement; ``with_viewer``).
 """
 from __future__ import annotations
 
@@ -55,7 +61,7 @@ from modules.flow_gate.graph_workflow.domain.run_policies import (
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
 from modules.flow_gate.graph_workflow.domain.run_scope_ports import run_scope
 
-from . import card_settings_ports, node_approval, node_dispatch, result_binder, run_state_ports
+from . import card_approval_ports, card_settings_ports, node_approval, node_dispatch, result_binder, run_state_ports
 from .engine_router import Ownership, read_ownership
 from .errors import GraphApiError
 from .flow_guard import with_flow_guard
@@ -199,6 +205,8 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
         ctx.command_pending = True  # this explicit command owns any reconciled approval
         result_binder.reconcile_links(ctx, policies)                             # 5-1 while paused / idle
         ctx.command_pending = False
+        flow_id = run["group_id"]
+        jobs.append(lambda: card_settings_ports.reconcile_stage(flow_id))        # 0105 T#2 B-3, after the guard
         # 0061 T#9: the integrations that wait (pending / integrating / failed) go first. Asked after the commit in
         # attempt order; until the drain has asked each of them the command holds — its re-dispatch, drain and
         # openings follow in ``go_on_command`` from the state of that moment (the Git work stays outside the guard).
@@ -459,15 +467,42 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
     failure = graph_execution_hooks.call("write_failure", row)
     if failure and dispatch is not None:
         dispatch = {**dispatch, "error_code": failure}
+    awaiting = node_approval.awaiting_approval(flow_id, row)
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),
             **(graph_execution_hooks.call("integration_wire", attempt_id) or {}),
             "node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
             "finished_at": row.get("finished_at"), "result_doc_id": row.get("result_doc_id"),
             "root_bound": bool(row.get("root_bound")), "dispatch": dispatch,
-            "awaiting_approval": node_approval.awaiting_approval(flow_id, row),
+            "awaiting_approval": awaiting,
+            "approval_wait_reason": approval_wait_reason(flow_id, row) if awaiting else None,       # 0105 T#2 B-2
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
             "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked,
             "node_running": running_lock(flow_id, row)}
+
+
+def approval_wait_reason(flow_id: str, row: dict) -> Optional[str]:
+    """flowgate.v02.0105 T#2 B-2: why the node run's result was not approved automatically (the latest B-1 reason), or
+    None. A failed read tells none; the run read goes on."""
+    try:
+        return card_settings_ports.approval_wait_reason(flow_id, row)
+    except Exception:  # noqa: BLE001 — the run read goes on
+        _log.warning("graph approval wait reason read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+        return None
+
+
+def with_viewer(answer: dict, group: dict, user_id: str) -> dict:
+    """flowgate.v02.0105 T#2 B-6: the run of ``answer`` (``{"run": …}``) tells whether the requesting user may approve its
+    cards (``viewer.can_approve``) — the card approval route's own judgement (``card_approval_ports``). A failure to tell
+    is false; no run, nothing is added."""
+    run = answer.get("run") if isinstance(answer, dict) else None
+    if isinstance(run, dict):
+        try:
+            can = card_approval_ports.viewer_can_approve(group, user_id)
+        except Exception:  # noqa: BLE001 — not told: no [승인]
+            _log.warning("graph run viewer read failed flow=%s", group.get("group_id"), exc_info=True)
+            can = False
+        run["viewer"] = {"can_approve": bool(can)}
+    return answer
 
 
 def running_lock(flow_id: str, row: dict) -> bool:
@@ -510,6 +545,7 @@ def settle_if_needed(flow_id: str, project_id: Optional[str]) -> None:
 def current_run(group: dict) -> dict:
     flow_id = group["group_id"]
     result_binder.reconcile_if_needed(flow_id, group.get("project_id"))
+    card_settings_ports.reconcile_stage(flow_id)                    # 0105 T#2 B-3: a lost run-end stage, once
     settle_if_needed(flow_id, group.get("project_id"))
     run = run_store.current_run(flow_id)
     return {"run": run_payload(run["run_id"], with_nodes=True) if run else None}

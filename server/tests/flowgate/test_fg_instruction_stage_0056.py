@@ -30,6 +30,7 @@ documents, approvals, tokens, the Graph contacts and the run-end port are the re
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -646,14 +647,17 @@ def test_a_stopped_run_finishes_both_stages_of_a_card_it_opened(env, decided, mo
     assert _resume(env)["status"] == "completed"
 
 
-def test_an_instruction_the_issuer_cannot_approve_is_left_to_the_card_approval(env, decided, monkeypatch):
-    """Without the issuer's ``document.approve`` the instruction is not approved, the result stage still starts,
-    and the card waits for its approval, which approves the instruction first."""
+def test_an_issuer_without_document_approve_still_has_the_instruction_and_result_approved_automatically(
+        env, decided, monkeypatch):
+    """flowgate.v02.0105 T#2 — expectation revised (NR flowgate.v02.0101.0003 §3.9.1, Q #511 o3: 0083 T#4 개정). Before,
+    an issuer without ``document.approve`` left the instruction unapproved and the card waiting for a person's approval.
+    An AI card's automatic approvals now take the server's automatic approval authority: the instruction and the result
+    are approved, the card never awaits approval, the issuer stays the approval's actor and the system's authority is
+    recorded beside each; a person's card approval keeps its own check."""
     from modules.flow_gate.workflow.routers import workflow
 
     _admin_and_reviewer(env)
-    real = workflow._get_user_permissions
-    monkeypatch.setattr(workflow, "_get_user_permissions", lambda u: set())   # the run's issuer
+    monkeypatch.setattr(workflow, "_get_user_permissions", lambda u: set())   # the run's issuer (and everyone)
     key = _card(env, "T")
     _start(env)
     job = _one_job(env)
@@ -661,17 +665,21 @@ def test_an_instruction_the_issuer_cannot_approve_is_left_to_the_card_approval(e
     instruction = job["target_doc_id"]
     _write_written(instruction)
     _run_ended(INSTRUCTION_RUN, action_scope="edit", doc_ref=instruction)
-    assert _review_status(instruction) is None
+    assert _review_status(instruction) == "approved"
     result_job = _one_job(env)
     assert result_job["ref_doc_ids"] == [instruction]
     _mention, _start_kw, issue = _record_start(monkeypatch, result_job, WORK_RUN)
     result = _result(81, "TR")
     _register(env, result, "TR", issue["token_id"])
-    _work_run_ended()                                                    # not approved automatically either
-    assert _node(env, key) == ("review", result) and _node_run(env, key)["awaiting_approval"] is True
-    monkeypatch.setattr(workflow, "_get_user_permissions", real)
-    body = _approve(env, key)
-    assert body["approval"]["approved_doc_ids"] == [instruction, result] and _node(env, key) == ("done", result)
+    _work_run_ended()
+    assert _node(env, key) == ("done", result) and _review_status(result) == "approved"
+    assert _node_run(env, key)["awaiting_approval"] is False
+    rows = _sql(env["db"], "SELECT reason, payload_json FROM graph_run_events WHERE cause = 'auto_approval_authority' "
+                           "ORDER BY event_seq")
+    told = [json.loads(r["payload_json"]) for r in rows]
+    assert [(r["reason"], t["doc_id"], t["stage"], t["issuer"]) for r, t in zip(rows, told)] == [
+        ("system", instruction, "instruction", "u_kim"), ("system", result, "result", "u_kim")]   # the issuer: the actor
+    assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_run_events WHERE cause = 'auto_approval_skipped'")[0]["n"] == 0
 
 
 # ── reads: stage, line author, source tools ─────────────────────────────────

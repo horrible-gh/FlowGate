@@ -286,7 +286,7 @@ def _open_row(run_id: str, node_key: str) -> Optional[dict]:
 
 def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc_id: Optional[str],
                        issued_to: str, project_id: Optional[str] = None, *, attempt_id: Optional[str] = None,
-                       defer: Optional[list] = None) -> None:
+                       defer: Optional[list] = None, idle_ok: bool = False) -> None:
     """flowgate.v02.0056 T#2: the node's instruction stage is over (its instruction written or found written,
     and approved — or left to the card approval); its run AI writes the node's result now, the instruction
     attached as a reference. Only a node still open in its instruction stage moves on (a repeated call is a
@@ -294,18 +294,23 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
     stages). The start is a post-commit job like the dispatch's: a refused start records ``ai_invoke_failed``.
     0061 T#7: ``attempt_id`` is the attempt whose instruction stage ended (the job's, the instruction AI run's); a
     node opened again since (another active attempt) is left alone and the refusal recorded. ``defer``: the caller
-    runs the post-commit AI start itself (after the Stop gate's hold it took, ``attempt_hold``)."""
+    runs the post-commit AI start itself (after the Stop gate's hold it took, ``attempt_hold``).
+    flowgate.v02.0105 T#2 (B-3): ``idle_ok`` — an idle run (waiting for a person) takes the result stage too, for a
+    caller holding ``legacy.person_hold`` (the run read's reconciliation of a lost instruction stage end): its Stop /
+    Time Machine conditions were judged under that hold, and the execution's request takes the run back to running
+    (``request_write``'s settlement), so its AI start can acquire."""
     from . import run_apply                                   # noqa: PLC0415 — run_apply imports this module
     from .flow_guard import with_flow_guard                   # noqa: PLC0415
 
     project = project_id or (db_groups.get_by_id(flow_id) or {}).get("project_id")
     jobs: list = []
+    refusal = {"idle_ok": True} if idle_ok else {}
 
     def body() -> None:
         row = _open_row(run_id, node_key)
         if row is None or row.get("stage") != INSTRUCTION_STAGE:
             return
-        if graph_execution_hooks.call("node_refused", run_id, node_key, "result_stage", attempt_id):
+        if graph_execution_hooks.call("node_refused", run_id, node_key, "result_stage", attempt_id, **refusal):
             return                                          # 0061 T#7: a late instruction end starts nothing
         ctx = run_apply.load_context(run_store.run_by_id(run_id), project, None, [])
         node = ctx.node_rows.get(node_key)

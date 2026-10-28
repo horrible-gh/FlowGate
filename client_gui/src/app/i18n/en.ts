@@ -229,6 +229,7 @@ export default {
         writing_result: 'Writing result',
         working: 'Working',
         awaiting_approval: 'Awaiting approval',
+        auto_approval_failed: 'Auto-approval failed',
         approved: 'Approved',
         rejected: 'Rejected',
         pending: 'Waiting',

@@ -93,6 +93,7 @@ function toGraphNode(raw: Raw | null | undefined): FlowCanvasGraphNode | null {
 // flowgate.v02.0061 T#14: the attempt's `integration_status` / `integration_reason`, `hold` and the attempt's running /
 // requested execution counts, kept only when sent. T#15: the node's current `attempt_id` too (the Time Machine
 // confirmation's basis), kept only when sent. flowgate.v02.0064 T#4: `node_running` (the card's running lock), kept only when sent.
+// flowgate.v02.0105 T#2 (B-2): `approval_wait_reason`, kept only when sent.
 function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
   if (!raw || typeof raw !== 'object') return null
   const running = count(raw.running_execution_count)
@@ -114,6 +115,7 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
+    ...('approval_wait_reason' in raw ? { approvalWaitReason: str(raw.approval_wait_reason) } : {}),
   }
 }
 

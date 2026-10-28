@@ -56,7 +56,7 @@
         :class="[`flow-node-state--${data.cardState.tone}`, { 'is-icon': cardStateIcon }]"
         :role="cardStateIcon ? 'img' : undefined"
         :aria-label="cardStateIcon ? t(data.cardState.labelKey) : undefined"
-        :title="t(data.cardState.labelKey)"
+        :title="cardStateTitle"
         data-test="designer-canvas-node-card-state"
         :data-state="data.cardState.key"
         :data-phase="data.cardState.phase"
@@ -111,7 +111,12 @@
         @pointerdown.stop
         @mousedown.stop
         @click.stop="emit('approve', id)"
-      >{{ t('gui.designer.center.approval.approve') }}</button>
+      >
+        <svg class="flow-node-approve-icon" viewBox="0 0 24 24" aria-hidden="true" data-test="designer-canvas-node-approve-icon">
+          <path :d="CARD_APPROVE_ICON" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        {{ t('gui.designer.center.approval.approve') }}
+      </button>
       <div v-if="data.integration" class="flow-node-flags" data-test="designer-canvas-node-flags">
         <button
           v-if="data.integration === 'conflict'"
@@ -150,6 +155,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
 import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay } from './flowNodeKinds'
+import { CARD_APPROVE_ICON } from '../graph/cardStateView'
 import type { FlowGateNodeData } from './vueFlowMapping'
 
 const props = defineProps<{
@@ -190,6 +196,14 @@ const cardStateIcon = computed(() => {
     default:
       return null
   }
+})
+
+/** flowgate.v02.0105 T#2 (B-5): the state's tooltip — its name, and why the result waits when the server told it. */
+const cardStateTitle = computed(() => {
+  const card = props.data.cardState
+  if (!card) return undefined
+  const label = t(card.labelKey)
+  return card.reason ? `${label} (${card.reason})` : label
 })
 
 /** The title is shown unless it only repeats the kind name of the head row. */
@@ -389,6 +403,18 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   font-size: 10.5px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.flow-node-approve {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.flow-node-approve-icon {
+  width: 11px;
+  height: 11px;
+  flex: none;
 }
 
 .flow-node-approve:hover:not(:disabled) {

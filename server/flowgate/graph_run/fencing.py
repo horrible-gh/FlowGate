@@ -383,13 +383,18 @@ def _node_judgement(run_id: str, node_key: str, attempt_id: Optional[str],
             "run_" + str(run["status"]), {})
 
 
-def node_refused(run_id: str, node_key: str, operation: str, attempt_id: Optional[str] = None) -> bool:
+def node_refused(run_id: str, node_key: str, operation: str, attempt_id: Optional[str] = None, *,
+                 idle_ok: bool = False) -> bool:
     """Before a node step of the engine writes (the result stage, an instruction's record or approval, an AI
     failure's record), inside its guard or not: ``attempt_id`` — the attempt the job or AI run that asks was made
     for — must still be the node's active attempt (an old attempt's late callback never moves a node opened again),
     and that attempt may write (a)(b). A node with no active attempt: its run must be one that may. A node opened
-    before migration 151 with no attempt keeps the engine's own checks."""
-    found = _node_judgement(run_id, node_key, attempt_id)
+    before migration 151 with no attempt keeps the engine's own checks.
+
+    flowgate.v02.0105 T#2 (B-3): ``idle_ok`` takes an idle run too (``IDLE_EXCEPTED``) — only for a step judged under
+    ``node_hold(idle_ok=True)`` with its Stop / Time Machine conditions (the run-end stage a run read reconciles), whose
+    hold keeps a Stop's ``stopping`` and a Time Machine rewind from committing before the step is over."""
+    found = _node_judgement(run_id, node_key, attempt_id, IDLE_EXCEPTED if idle_ok else WRITABLE)
     if found is None:
         return False
     row, why, extra = found

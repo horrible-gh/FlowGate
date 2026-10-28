@@ -88,6 +88,8 @@ export interface InspectorTarget {
    * confirmed (being read, or the read failed). Absent / null = not locked.
    */
   readonly editLock?: 'run' | 'unknown' | null
+  /** flowgate.v02.0105 T#2 (B-6): the server confirmed the user may approve the Flow's cards. Absent = no [승인]. */
+  readonly canApprove?: boolean
   /** flowgate.v02.0070 T#1: the card's own title state as shown (its version), or null / absent (none). */
   readonly titleState?: FlowGraphTitleState | null
   /** flowgate.v02.0070 T#1: the card's title may be edited now (the Canvas's rule, graph/nodeTitle.ts). Absent = no. */
@@ -212,6 +214,7 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     viewMode,
     readOnly: inspectorReadOnly(ownership, viewMode),
     editLock: selection.editLock ?? null,
+    canApprove: selection.canApprove === true,
     titleState: node.titleState ?? null,
     canEditTitle: selection.titleEdit?.editable === true,
     titleLock: selection.titleEdit?.lock ?? null,

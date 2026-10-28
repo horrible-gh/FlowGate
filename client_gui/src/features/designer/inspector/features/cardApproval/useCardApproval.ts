@@ -74,7 +74,9 @@ export function useCardApproval(target: () => InspectorTarget | null): CardAppro
   )
 
   const state = computed(() => inspectorCardState(target()))
-  const bar = computed(() => cardApprovalBar({ state: state.value, readOnly: target()?.readOnly ?? null, busy: busy.value }))
+  const bar = computed(() =>
+    cardApprovalBar({ state: state.value, readOnly: target()?.readOnly ?? null, busy: busy.value, canApprove: target()?.canApprove === true }),
+  )
 
   async function approve(): Promise<boolean> {
     const current = target()

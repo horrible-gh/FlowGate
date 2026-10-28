@@ -178,6 +178,8 @@ export interface FlowGraphNodeRun {
   readonly requestedExecutionCount?: number
   /** flowgate.v02.0061 T#15: the node's current attempt (null: none). Absent = not sent. */
   readonly attemptId?: string | null
+  /** flowgate.v02.0105 T#2 (B-2): why the result was not approved automatically while the card awaits its approval (the latest B-1 reason, e.g. `approval_refused`, `review_not_passed:review_count_exhausted`), or null; absent when not sent. */
+  readonly approvalWaitReason?: string | null
 }
 
 export interface FlowGraphNodeDefinition {
@@ -311,4 +313,9 @@ export interface FlowGraphSelection {
    * may not because the card runs, `lock: 'running'`. Absent / null = not editable (the source saves no titles).
    */
   readonly titleEdit?: { readonly editable: boolean; readonly lock: 'running' | null } | null
+  /**
+   * flowgate.v02.0105 T#2 (B-6): the server confirmed that the user may approve the Flow's cards (its run read's
+   * `viewer.can_approve`). Absent / false = [승인] is not shown.
+   */
+  readonly canApprove?: boolean
 }

@@ -24,7 +24,12 @@
         :title="bar.reason ? t(k(bar.reason)) : t(c('hint'))"
         data-test="card-approval-approve"
         @click="approve"
-      >{{ t(c('approve')) }}</Button>
+      >
+        <svg class="inspector-card-approval-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" data-test="card-approval-approve-icon">
+          <path :d="CARD_APPROVE_ICON" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        {{ t(c('approve')) }}
+      </Button>
     </div>
     <div
       v-if="failure && !toasted"
@@ -56,6 +61,7 @@ import ToastHost, { type ToastHostItem } from '../../../../../components/ui/Toas
 import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import { openDocument } from '../../openDocument'
+import { CARD_APPROVE_ICON } from '../../../center/graph/cardStateView'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { cardApprovalFailureTone, cardApprovalServerMessage, cardApprovalToasted } from './cardApprovalModel'
 import { useCardApproval } from './useCardApproval'
@@ -121,6 +127,13 @@ watch(failureSeq, (seq) => {
 
 .inspector-card-approval-button {
   margin-left: auto;
+}
+
+/* The shield of [승인] (B-7): sized itself — the button's slot is an inline-flex that gives an SVG no size. */
+.inspector-card-approval-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
 }
 
 .inspector-card-approval-failure {
