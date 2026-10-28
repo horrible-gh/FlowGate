@@ -333,18 +333,14 @@ def test_outbox_create_existing_group_applies_work_base_ref_when_unlocked(
 ):
     """flowgate.default.0613 TR0014 rev2: the rejection removed the blanket
     "existing group = readonly" rule. Before real Git work has locked the group,
-    picking a Base Branch for it is ordinary group setup."""
+    picking a Base Branch for it is ordinary group setup. flowgate.v02.0104 D0004
+    §3.4: it is now the PATCH route's change path (row lock + conditional save) on
+    the real group row, only without the expected comparison."""
+    db_groups.insert_group("p.default.0001", "p", "default", "Existing", None, None)
     storage_file = _stub_outbox_workflow_root_io(monkeypatch, tmp_path, {})
-    monkeypatch.setattr(
-        process_service.db, "get_group",
-        lambda gid: {"group_id": gid, "project_id": "p", "module": "default"},
-    )
+    monkeypatch.setattr(git_service.db_git, "get_config",
+                        lambda _pid: {"enabled": 1, "base_branch": "main"})
     monkeypatch.setattr(git_service.db_git, "get_state", lambda _gid: None)
-    applied = {}
-    monkeypatch.setattr(
-        db_groups, "update_work_base_ref",
-        lambda gid, ref: applied.update(group_id=gid, work_base_ref=ref),
-    )
 
     result = process_service.create_requirement(
         project="p",
@@ -358,23 +354,19 @@ def test_outbox_create_existing_group_applies_work_base_ref_when_unlocked(
     )
 
     assert result["status"] == "success", result
-    assert applied == {"group_id": "p.default.0001", "work_base_ref": "flowgate-v0.2"}
+    assert db_groups.get_by_id("p.default.0001")["work_base_ref"] == "flowgate-v0.2"
     assert storage_file.exists()
 
 
-def test_outbox_create_existing_group_rejects_work_base_ref_once_locked(monkeypatch):
+def test_outbox_create_existing_group_rejects_work_base_ref_once_locked(repo, monkeypatch):
+    db_groups.insert_group("p.default.0001", "p", "default", "Existing", None, "main")
     monkeypatch.setattr(process_service.db, "get_allowed_projects", lambda: [])
-    monkeypatch.setattr(
-        process_service.db, "get_group",
-        lambda gid: {"group_id": gid, "project_id": "p", "module": "default"},
-    )
+    monkeypatch.setattr(process_service.db, "get_documents_by_group_id", lambda _gid: [])
+    monkeypatch.setattr(git_service.db_git, "get_config",
+                        lambda _pid: {"enabled": 1, "base_branch": "main"})
     monkeypatch.setattr(
         git_service.db_git, "get_state",
         lambda _gid: {"worktree_registered": 1},
-    )
-    monkeypatch.setattr(
-        db_groups, "update_work_base_ref",
-        lambda *_a: pytest.fail("a locked group's work base must not be written"),
     )
 
     result = process_service.create_requirement(
@@ -392,7 +384,9 @@ def test_outbox_create_existing_group_rejects_work_base_ref_once_locked(monkeypa
     assert result["errors"] == [{
         "code": "group_work_base_locked",
         "message": "group work base cannot change once its Git worktree has started",
+        "details": {"lock_evidence": ["ledger"]},
     }]
+    assert db_groups.get_by_id("p.default.0001")["work_base_ref"] == "main"
 
 
 @pytest.mark.parametrize(

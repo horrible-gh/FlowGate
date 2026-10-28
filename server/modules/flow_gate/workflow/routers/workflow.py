@@ -3,6 +3,8 @@
 Endpoints:
   POST  /api/v1/groups                              create a new group
   PUT   /api/v1/groups/{group_id}                   update a group (T191)
+  GET   /api/v1/groups/{group_id}/work-base         an existing group's work base (0104 D0004 §5.3)
+  PATCH /api/v1/groups/{group_id}/work-base         change it before Git work starts (§5.4)
   POST  /api/v1/groups/{gid}/transitions/{action}  transition a group state
   GET   /api/v1/groups/{gid}/timeline               group event log
   POST  /api/v1/documents/{id}/transitions/{action} transition a document state
@@ -308,6 +310,110 @@ def update_group_endpoint(
         raise HTTPException(status_code=status_code, detail=message)
     return {"group_id": result["group_id"], "updated_at": result["updated_at"],
             "graph_execution_limit": result["graph_execution_limit"]}
+
+
+def _work_base_http_error(exc: GitServiceError) -> HTTPException:
+    """The structured error of the create POST (code / message / details)."""
+    return HTTPException(
+        status_code=exc.status,
+        detail={"code": exc.code, "message": exc.message, "details": exc.details or {}},
+    )
+
+
+def _work_base_input_error(code: str, message: str, field: str) -> HTTPException:
+    return HTTPException(
+        status_code=422, detail={"code": code, "message": message, "details": {"field": field}},
+    )
+
+
+@router.get("/groups/{group_id}/work-base")
+def get_group_work_base_endpoint(
+    group_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """An existing group's stored / effective work base and whether it may change.
+
+    flowgate.v02.0104 D0004 §5.3. Display only; the PATCH judges again.
+    Permission: document.read (``can_edit`` = project.group.manage)
+    """
+    user_permissions = _get_user_permissions(current_user)
+    if "document.read" not in user_permissions:
+        raise HTTPException(status_code=403, detail="document.read permission required.")
+    try:
+        view = git_service.group_work_base_view(group_id)
+    except GitServiceError as exc:
+        raise _work_base_http_error(exc)
+    view["can_edit"] = "project.group.manage" in user_permissions
+    return view
+
+
+def _work_base_update_body(raw: bytes) -> dict:
+    """The PATCH body as a JSON object (D0004 §5.4).
+
+    Read by the route itself, not by a pydantic model: no body, a JSON null, an array
+    or scalar and malformed JSON would otherwise answer the app's RequestValidationError
+    list instead of the structured 422. No body at all leaves ``work_base_ref`` missing.
+    """
+    if not raw.strip():
+        return {}
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        raise _work_base_input_error(
+            "group_work_base_invalid", "request body must be a JSON object", "body",
+        )
+    return body
+
+
+def _update_group_work_base(group_id: str, raw: bytes, current_user: dict) -> dict[str, Any]:
+    user_permissions = _get_user_permissions(current_user)
+    if "project.group.manage" not in user_permissions:
+        raise HTTPException(status_code=403, detail="project.group.manage permission required.")
+    # Both fields are checked here so a missing/blank ref and a missing expected answer
+    # the structured 422 codes; ``expected_work_base_ref`` absent and null differ.
+    body = _work_base_update_body(raw)
+    ref = body.get("work_base_ref")
+    if not isinstance(ref, str) or not ref.strip():
+        raise _work_base_input_error(
+            "group_work_base_invalid", "work_base_ref must be a non-blank branch name",
+            "work_base_ref",
+        )
+    if "expected_work_base_ref" not in body:
+        raise _work_base_input_error(
+            "group_work_base_expected_required", "expected_work_base_ref is required",
+            "expected_work_base_ref",
+        )
+    expected = body["expected_work_base_ref"]
+    if expected is not None and not isinstance(expected, str):
+        raise _work_base_input_error(
+            "group_work_base_invalid", "expected_work_base_ref must be a string or null",
+            "expected_work_base_ref",
+        )
+    try:
+        return git_service.change_group_work_base_ref(group_id, ref, expected=expected)
+    except GitServiceError as exc:
+        raise _work_base_http_error(exc)
+
+
+@router.patch("/groups/{group_id}/work-base")
+async def update_group_work_base_endpoint(
+    group_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Change an existing group's work base while no Git work has started.
+
+    flowgate.v02.0104 D0004 §5.4: ``expected_work_base_ref`` must equal the stored
+    value read before (null for a legacy NULL row). The project is the group row's,
+    never the body's. 403 stays the plain string of the other group APIs; every body
+    error is the structured 422.
+    Permission: project.group.manage
+    """
+    raw = await request.body()
+    return await anyio.to_thread.run_sync(
+        lambda: _update_group_work_base(group_id, raw, current_user))
 
 
 @router.post("/groups/{gid}/transitions/{action}")

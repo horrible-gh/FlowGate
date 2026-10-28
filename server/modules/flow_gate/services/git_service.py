@@ -519,8 +519,10 @@ from .git.base_slot import (
 
 from .git.group_work_base import (
     apply_group_work_base_ref,
+    change_group_work_base_ref,
     default_work_base_ref_for_new_group,
     group_work_base_locked,
+    group_work_base_view,
     list_group_work_base_options,
     locked_group_ids,
     resolve_group_work_base_ref,
