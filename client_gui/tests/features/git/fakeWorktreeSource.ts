@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { FlowChangeSet, FlowFileDiff } from '@/features/project'
+import type { FlowChangeSet, FlowFileDiff, FlowWorkBase } from '@/features/project'
 import type { GitWorktreeSource } from '@/features/git'
 import type {
   ManualMergeView,
@@ -12,7 +12,7 @@ import type {
   WorktreeSelection,
   WorktreeStatus,
 } from '@/features/git/types'
-import { G, gitError } from './fakeGitSource'
+import { G, P, gitError } from './fakeGitSource'
 
 // flowgate.v02.0066 — in-memory GitWorktreeSource (0066 D#2 §5-1). It hands the worktree
 // session (T#6 / T#7) any E1–E12 state through the models only; the HTTP conversions are
@@ -160,6 +160,25 @@ export interface FakeWorktreeState {
   targetChanges: Record<string, FlowChangeSet>
   // flowgate.v02.0067 T#4 — group file diffs by path (the `Diff` tab detail); others get fileDiff().
   fileDiffs: Record<string, FlowFileDiff>
+  // flowgate.v02.0107 — what GET /groups/{gid}/work-base answers over flowWorkBase() (display read).
+  workBase: Partial<FlowWorkBase>
+}
+
+/** flowgate.v02.0107 — a work-base answer of the asked Flow in project P (effective `v0.2`). */
+export function flowWorkBase(groupId: string = G, overrides: Partial<FlowWorkBase> = {}): FlowWorkBase {
+  return {
+    groupId,
+    projectId: P,
+    gitEnabled: true,
+    workBaseRef: 'v0.2',
+    effectiveWorkBaseRef: 'v0.2',
+    workBaseLocked: false,
+    lockEvidence: [],
+    workBaseEditable: true,
+    reason: null,
+    canEdit: true,
+    ...overrides,
+  }
 }
 
 /** A group file diff: one changed line, `old <path>` → `new <path>`. */
@@ -315,6 +334,7 @@ export function createFakeWorktreeSource(init: Partial<FakeWorktreeState> = {}, 
     results: mergeResults(),
     targetChanges: {},
     fileDiffs: {},
+    workBase: {},
     ...init,
   }
   let generation = 1
@@ -503,6 +523,7 @@ export function createFakeWorktreeSource(init: Partial<FakeWorktreeState> = {}, 
     loadFileDiff: vi.fn(async (_pid: string, groupId: string, path: string, compareBase: string | null): Promise<FlowFileDiff> =>
       clone(db.fileDiffs[path] ?? fileDiff(path, { groupId, baseBranch: compareBase ?? db.status.floor.workBaseRef ?? 'v0.2' })),
     ),
+    loadWorkBase: vi.fn(async (groupId: string): Promise<FlowWorkBase> => flowWorkBase(groupId, clone(db.workBase))),
     ...extra,
   } satisfies GitWorktreeSource
   return { db, source }

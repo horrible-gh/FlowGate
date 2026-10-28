@@ -22,6 +22,13 @@
 // judgment it showed and sends nothing once another one is on screen (⑥); E10 keeps its latest
 // answer only (⑨). A merge, follow-up push or Fetch reads git/status and E1 / E8 / E10 again and
 // never repeats itself; after a refused push the re-read judgment decides the hint (§3-4(4-1)).
+//
+// flowgate.v02.0107 T#1 (D §3.2, §3.3) makes it the one owner of the active Flow's work base (the
+// server's `effectiveWorkBaseRef`) the Git header and status tab show, with its read state. It is
+// read through GitWorktreeSource.loadWorkBase when the gate opens for a context and on
+// refreshWorkBase(); never on render, a window / tab change, an E1 / E8 re-read or polling. Its
+// context is watched synchronously (not with the batched context watcher): every project / Flow /
+// gate change voids the value and the running read at once, A → B → A within one turn too.
 import { computed, effectScope, inject, reactive, readonly, ref, watch, type ComputedRef, type DeepReadonly, type InjectionKey } from 'vue'
 import type { FlowChangeEntry, ProjectGitStatus } from '@/features/project'
 import { worktreeErrorOf } from './api'
@@ -171,6 +178,11 @@ export interface WorktreeState {
   highlightMergeId: number | null
   // §3-4(4-1): after a refused merge + push the re-read judgment of the target decides the line.
   rejectHint: 'pending' | 'recovery' | 'rewound' | null
+  // ── Flow work base (flowgate.v02.0107, D §3.2) ──
+  // The server's effective work base of the current Flow; null while unread, reading, failed or
+  // when the server has none (shown as `—`). Never the project base, never an earlier answer.
+  workBase: string | null
+  workBaseLoad: Load
 }
 
 /** The `/changes?base=` list of the `Diff` pane and the target it was read for. */
@@ -293,6 +305,13 @@ export interface GitWorktreeSession {
   pushSnapshot(): WorktreePushSnapshot | null
   pushResult(snapshot: WorktreePushSnapshot): Promise<void>
   fetchRemote(): Promise<void>
+  /**
+   * flowgate.v02.0107 (D §3.3 row 3): the header / Git refresh, an external refresh or the Git tab
+   * activated again read the Flow work base again. The value empties until the answer; a read
+   * already running for the same context and generation is shared. Nothing while the gate is
+   * closed. E1 order, the E8 target and open confirm tickets are left as they are.
+   */
+  refreshWorkBase(): Promise<void>
   dispose(): void
 }
 
@@ -301,6 +320,18 @@ export interface GitWorktreeSessionOptions {
   source?: GitSource
   /** `git-center-diff-refresh`: the panel hands it to its Center Diff — the `Diff` tab detail (§2-4, 0067 T#4). */
   onCenterDiffRefresh?: (request: GitCenterDiffRefresh) => void
+}
+
+/**
+ * flowgate.v02.0107 — the Flow work base read running for one context: project, Flow and the
+ * work-base generation (bumped on every context / gate change, see `wbGen`).
+ */
+interface WorkBaseRequest {
+  projectId: string
+  groupId: string
+  generation: number
+  seq: number
+  promise: Promise<void>
 }
 
 const fingerprint = (status: WorktreeStatus | null) => (status ? `${status.worktreeToken ?? ''}|${status.head ?? ''}` : null)
@@ -347,6 +378,8 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     pushChoice: null,
     highlightMergeId: null,
     rejectHint: null,
+    workBase: null,
+    workBaseLoad: 'idle',
   })
 
   let disposed = false
@@ -374,6 +407,15 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   // ③ Reads asked for while a write runs, sent once afterwards (and coalesced otherwise).
   const pendingReads = { e1: false, e8: false, e10: false, list: false }
   let flushQueued = false
+  // flowgate.v02.0107: the work-base generation — bumped synchronously on every project / Flow /
+  // gate change and on dispose, apart from `gen` (whose context watcher runs batched and may see
+  // A → B → A as no change) — the latest read, the one running (shared in its generation), the
+  // generation a read was already sent for and a gate-opening read waiting for the turn to end.
+  let wbGen = 0
+  let wbSeq = 0
+  let wbRequest: WorkBaseRequest | null = null
+  let wbReadGen = -1
+  let wbQueued = false
 
   const projectId = () => git.state.projectId
   const groupId = () => git.state.flow?.groupId ?? null
@@ -753,6 +795,80 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     if (gateOpen.value) requestReads({ e1: true, e8: true, e10: true, list: state.infoPane === 'diff' })
   }
 
+  // ── Flow work base (flowgate.v02.0107, D §3.2 / §3.3) ─────────────────────────────
+  // A read is tied to its project, Flow, work-base generation and number: only the latest read of
+  // the current context applies, so an answer from before a switch (A → B → A too), a closed gate
+  // or dispose changes no value, failure or loading state. The answer applies only while the
+  // project, Flow and open gate it was asked for are still the current ones, and must name that
+  // project and Flow; a mismatch, a malformed answer and every failure (403 / 404 / network)
+  // empty the value — never the last one, never the project base. Its `gitEnabled` decides
+  // nothing here (the gate keeps the git/status judgment). Nothing retries on its own, and no
+  // E1 / E8 sequence, target or confirm ticket is touched.
+
+  // A context / gate change or dispose: the value, its state and the running read go at once.
+  function voidWorkBase(): void {
+    wbGen += 1
+    wbRequest = null
+    state.workBase = null
+    state.workBaseLoad = 'idle'
+  }
+
+  // The gate opened for a context: one read at the end of the turn, unless one was already sent
+  // in this generation (a refreshWorkBase() right after the switch) — A → B → A in one turn reads
+  // only the last A, and a switch followed by a refresh reads the new Flow once.
+  function queueWorkBaseRead(): void {
+    if (wbQueued) return
+    wbQueued = true
+    void Promise.resolve().then(() => {
+      wbQueued = false
+      if (wbReadGen !== wbGen) void readWorkBase()
+    })
+  }
+
+  function readWorkBase(): Promise<void> {
+    const wt = wsrc()
+    const pid = projectId()
+    const gid = groupId()
+    if (!wt || !pid || !gid || disposed || !gateOpen.value) return Promise.resolve()
+    const running = wbRequest
+    if (running && running.generation === wbGen && running.projectId === pid && running.groupId === gid) {
+      return running.promise
+    }
+    const request: WorkBaseRequest = { projectId: pid, groupId: gid, generation: wbGen, seq: ++wbSeq, promise: Promise.resolve() }
+    const current = () =>
+      request.generation === wbGen &&
+      request.seq === wbSeq &&
+      !disposed &&
+      gateOpen.value &&
+      projectId() === pid &&
+      groupId() === gid
+    wbRequest = request
+    wbReadGen = wbGen
+    state.workBase = null
+    state.workBaseLoad = 'loading'
+    request.promise = (async () => {
+      try {
+        const answer = await wt.loadWorkBase(gid)
+        if (!current()) return
+        const ref = answer?.effectiveWorkBaseRef
+        if (answer?.projectId !== pid || answer.groupId !== gid || !(ref === null || typeof ref === 'string')) {
+          state.workBase = null
+          state.workBaseLoad = 'error'
+          return
+        }
+        state.workBase = ref?.trim() ? ref : null
+        state.workBaseLoad = 'ready'
+      } catch {
+        if (!current()) return
+        state.workBase = null
+        state.workBaseLoad = 'error'
+      } finally {
+        if (wbRequest === request) wbRequest = null
+      }
+    })()
+    return request.promise
+  }
+
   // ── Tickets: the context a dialog was opened in ────────────────────────────────────
 
   function ticket(): WorktreeTicket | null {
@@ -791,6 +907,17 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
         }
       },
       { immediate: true },
+    )
+    // flowgate.v02.0107 (D §3.2 / §3.3): the work base follows every change of its context as it
+    // happens — a batched watcher would miss A → B → A or a closed gate before it runs. Each
+    // change voids the value and the running read; an open gate reads its context once.
+    watch(
+      () => (gateOpen.value ? `${projectId()}\u0000${groupId()}` : null),
+      (key) => {
+        voidWorkBase()
+        if (key !== null) queueWorkBaseRead()
+      },
+      { immediate: true, flush: 'sync' },
     )
     // A 0033 action ended (busy back to null): the workspace may have changed (§3-2-1).
     watch(
@@ -1301,6 +1428,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   function dispose(): void {
     disposed = true
     nextGeneration()
+    voidWorkBase()
     scope.stop()
   }
 
@@ -1355,6 +1483,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     pushSnapshot,
     pushResult,
     fetchRemote,
+    refreshWorkBase: readWorkBase,
     dispose,
   }
 }

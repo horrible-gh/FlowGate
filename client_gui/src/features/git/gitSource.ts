@@ -4,11 +4,23 @@
 // one git/status reader in v0.2) and acts through features/git/api.ts. Tests hand in their own
 // to replay any server state, including the S1 / S2 stage-2 fields.
 //
+// flowgate.v02.0107 adds the display read of the Flow's work base (GitWorktreeSource.loadWorkBase,
+// D §3.1): the HTTP source reads it through the project store's side-effect-free display boundary,
+// never through the 0104 settings loader (loadFlowWorkBase), and a test source hands in the answer.
+//
 // flowgate.v02.0066 adds the Group worktree boundary (GitWorktreeSource) as the optional
 // `worktree` member: the worktree area appears only for a source that has one, so a test
 // source without it keeps the 0033 / 0065 behaviour unchanged (0066 D#2 §2-3, §3-1).
 import { useProjectStore } from '@/features/project'
-import type { BaseFileDiff, FlowAiActivity, FlowChangeSet, FlowFileDiff, MergeReviewFileDiff, ProjectGitStatus } from '@/features/project'
+import type {
+  BaseFileDiff,
+  FlowAiActivity,
+  FlowChangeSet,
+  FlowFileDiff,
+  FlowWorkBase,
+  MergeReviewFileDiff,
+  ProjectGitStatus,
+} from '@/features/project'
 import * as api from './api'
 import type {
   GitApproveResult,
@@ -74,6 +86,12 @@ export interface GitWorktreeSource {
    * Git modeless `Diff` tab shows; `compareBase` null = the work base floor (no `base` sent).
    */
   loadFileDiff(projectId: string, groupId: string, path: string, compareBase: string | null): Promise<FlowFileDiff>
+  /**
+   * flowgate.v02.0107 — the existing GET /groups/{gid}/work-base for display only (D §3.1): its
+   * `effectiveWorkBaseRef` is the Flow base the Git header and status tab show. Never an argument
+   * of E1–E12; it changes no shared project state.
+   */
+  loadWorkBase(groupId: string): Promise<FlowWorkBase>
 }
 
 export interface GitSource {
@@ -165,6 +183,7 @@ export function createHttpGitSource(): GitSource {
       loadTargetChanges: (projectId, groupId, target) => projectStore.loadFlowChanges(projectId, groupId, { base: target }),
       loadFileDiff: (projectId, groupId, path, compareBase) =>
         projectStore.loadFlowFileDiff(projectId, groupId, path, compareBase ? { base: compareBase } : {}),
+      loadWorkBase: (groupId) => projectStore.readFlowWorkBaseForDisplay(groupId),
     },
   }
 }
