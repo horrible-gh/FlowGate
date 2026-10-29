@@ -111,6 +111,11 @@ _BOUND_COLUMNS = (
 )
 _STATUS_INSERT_AT = 5  # after (run_id, group_id, project_id, doc_ref, mode)
 
+# flowgate.v02.0113 T#1 (DB-1 §2.7 W-15, migration 165): the run's invocation origin kind and its Graph ledger
+# execution. Bound only when the row carries a value AND the column exists: before migration 165 an INSERT naming
+# them would fail and the finished run's row would be lost, so a row without them writes exactly as before.
+_LINK_COLUMNS = ("invocation_origin_kind", "graph_exec_id")
+
 _ARRAY_FIELDS = ("reached_doc_ids", "fallback_history", "register_errors",
                  "auto_handled_item_seqs", "source_dirty_files", "api_turn_trace")
 _BOOL_FIELDS = ("resumable", "turn_limit_exhausted", "oracle_mismatch",
@@ -332,19 +337,24 @@ def upsert(row: dict[str, Any]) -> None:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
-    ordered_values = [values[col] for col in _BOUND_COLUMNS]
+    store = get_store()
+    links = tuple(col for col in _LINK_COLUMNS
+                  if row.get(col) is not None and store.column_exists("ai_invoke_runs", col))
+    bound = (*_BOUND_COLUMNS, *links)
+    values.update({col: row[col] for col in links})
+    ordered_values = [values[col] for col in bound]
 
     columns_sql = ", ".join((
-        *_BOUND_COLUMNS[:_STATUS_INSERT_AT], "status", *_BOUND_COLUMNS[_STATUS_INSERT_AT:],
+        *bound[:_STATUS_INSERT_AT], "status", *bound[_STATUS_INSERT_AT:],
     ))
     placeholders_sql = ", ".join((
         *(["?"] * _STATUS_INSERT_AT), "'finished'",
-        *(["?"] * (len(_BOUND_COLUMNS) - _STATUS_INSERT_AT)),
+        *(["?"] * (len(bound) - _STATUS_INSERT_AT)),
     ))
     update_clause = ", ".join(
-        f"{col} = excluded.{col}" for col in _BOUND_COLUMNS if col not in ("run_id", "created_at")
+        f"{col} = excluded.{col}" for col in bound if col not in ("run_id", "created_at")
     )
-    get_store()._execute(
+    store._execute(
         f"INSERT INTO ai_invoke_runs ({columns_sql}) VALUES ({placeholders_sql}) "
         f"ON CONFLICT(run_id) DO UPDATE SET {update_clause}",
         ordered_values,

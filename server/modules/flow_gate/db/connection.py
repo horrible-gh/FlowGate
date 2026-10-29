@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import logging as _logging
 import os
+import re
+import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
@@ -299,6 +301,61 @@ class FlowGateStore:
             )
         return row is not None
 
+    def column_exists(self, table: str, column: str) -> bool:
+        """Dialect-portable check for one column, like :meth:`table_exists` (flowgate.v02.0113 T#1, DB-1 §3.4).
+
+        A write that binds a column a later migration added to an existing table checks it first: before that
+        migration the INSERT would fail and, where the caller swallows the error, the whole row would be lost
+        (the 086b precedent in ``ai_invoke_runs``).
+        """
+        if self.dialect == _dialect.SQLITE:
+            row = self._fetch_one("SELECT 1 AS ok FROM pragma_table_info(?) WHERE name = ?", [table, column])
+        else:
+            row = self._fetch_one(
+                "SELECT 1 AS ok FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
+                [table, column],
+            )
+        return row is not None
+
+    def insert_isolated(self, sql: str, params, savepoint: str) -> bool:
+        """One INSERT that may hit a unique key, isolated by a savepoint (flowgate.v02.0113 T#1, DB-1 §4.3 CI).
+
+        True = inserted (CI-1 ``SAVEPOINT`` → CI-2 INSERT → CI-3 ``RELEASE``). False = a unique violation
+        (CI-4): only this INSERT is undone (``ROLLBACK TO`` + ``RELEASE``), every earlier write of the same
+        transaction stays, and the transaction is usable again — also on PostgreSQL, where one failed statement
+        otherwise aborts the whole transaction. Any other error (CHECK / NOT NULL / FK violation, lock, deadlock,
+        serialization failure) is not a conflict: the savepoint is rolled back when it still can be and the
+        original error is raised (CI-5). The statements are the same on every dialect.
+
+        Only inside an open transaction: a nested :meth:`transaction` frame opens no savepoint of its own, so
+        without an outer one there is nothing to return to. ``ON CONFLICT DO NOTHING`` is not used on purpose —
+        MySQL runs it as ``INSERT IGNORE``, which also turns a CHECK violation into a skipped row (DB-1 DB-D13).
+        """
+        txn = getattr(_tx_local, "txn", None)
+        if txn is None:
+            raise RuntimeError("insert_isolated() needs an open transaction")
+        if not _SAVEPOINT_NAME.fullmatch(savepoint or ""):
+            raise ValueError(f"not a savepoint name: {savepoint!r}")
+        if self.dialect == _dialect.SQLITE:
+            _open_sqlite_transaction(txn)
+        self._execute(f"SAVEPOINT {savepoint}")
+        try:
+            self._execute(sql, params)
+        except Exception as exc:
+            if is_unique_violation(exc):
+                self._execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                self._execute(f"RELEASE SAVEPOINT {savepoint}")
+                return False
+            try:
+                self._execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                self._execute(f"RELEASE SAVEPOINT {savepoint}")
+            except Exception:  # the transaction is already lost; the INSERT's own error is the one to report
+                _logging.getLogger(__name__).warning("savepoint rollback after a failed insert failed",
+                                                     exc_info=True)
+            raise
+        self._execute(f"RELEASE SAVEPOINT {savepoint}")
+        return True
+
     def _sql(self, key: str) -> str:
         sq = getattr(self, "_sq", None)
         if sq is not None:
@@ -340,6 +397,67 @@ class FlowGateStore:
 
 
 STORE: FlowGateStore | None = None
+
+_SAVEPOINT_NAME = re.compile(r"[a-z][a-z0-9_]{0,62}")
+_TRANSIENT_SQLSTATES = frozenset({"40001", "40P01"})     # PostgreSQL serialization failure / deadlock
+_TRANSIENT_MYSQL_ERRORS = frozenset({1205, 1213})        # MySQL/MariaDB lock wait timeout / deadlock
+
+
+def _open_sqlite_transaction(txn) -> None:
+    """Make sure the SQLite transaction connection is inside a transaction before a SAVEPOINT.
+
+    Python's sqlite3 (sqloader and the TESTING bridge both use its default deferred mode) leaves the connection
+    in autocommit until the first INSERT / UPDATE / DELETE. A SAVEPOINT issued before that opens the transaction
+    itself, and its RELEASE would then commit everything up to that point instead of nesting.
+    """
+    conn = getattr(txn, "conn", None) or getattr(txn, "_conn", None)
+    if isinstance(conn, sqlite3.Connection) and not conn.in_transaction:
+        txn.execute("BEGIN")
+
+
+def _error_chain(exc: BaseException):
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def is_unique_violation(exc: BaseException) -> bool:
+    """A duplicate key on any dialect (flowgate.v02.0113 T#1, DB-1 §4.3 CI-4).
+
+    SQLite ``IntegrityError`` naming UNIQUE (a PRIMARY KEY clash reads "UNIQUE constraint failed" too),
+    PostgreSQL SQLSTATE 23505, MySQL/MariaDB error 1062, also when a wrapper re-raised the driver error. The
+    shared form of the copies in ``settings/user_admin_service`` and ``services/conversation_turn_service``.
+    """
+    for current in _error_chain(exc):
+        if isinstance(current, sqlite3.IntegrityError) and "unique" in str(current).lower():
+            return True
+        if (getattr(current, "pgcode", None) or getattr(current, "sqlstate", None)) == "23505":
+            return True
+        args = getattr(current, "args", ())
+        if args and args[0] == 1062:
+            return True
+    return False
+
+
+def is_transient_failure(exc: BaseException) -> bool:
+    """A lock / deadlock / serialization failure: the whole transaction is gone and may run again (DB-1 §4.3).
+
+    SQLite ``database is locked`` / busy, PostgreSQL SQLSTATE 40001 / 40P01, MySQL/MariaDB 1213 / 1205.
+    """
+    for current in _error_chain(exc):
+        if isinstance(current, sqlite3.OperationalError):
+            message = str(current).lower()
+            if "locked" in message or "busy" in message:
+                return True
+        if (getattr(current, "pgcode", None) or getattr(current, "sqlstate", None)) in _TRANSIENT_SQLSTATES:
+            return True
+        args = getattr(current, "args", ())
+        if args and args[0] in _TRANSIENT_MYSQL_ERRORS:
+            return True
+    return False
 
 _FALLBACK_QUERIES: dict | None = None
 
