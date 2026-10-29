@@ -13,8 +13,13 @@ This module is the one place that reads a plan's card order against those rows:
   after the plan block, and whether one sits inside it (``foreign_rows_interleaved``).
 * :func:`assert_plan_order` — O5's post-write check. After a plan-reflecting save the
   plan's rows, read by card id in sort_order, must be ``S + (plan cards without S)``,
-  one instruction row per card with its automatic report right behind it. Anything
-  else is :class:`PlanOrderViolation` and the save is rolled back.
+  each card's rows of its ``row_types`` (:func:`plan_cards`) with its automatic report
+  right behind it. Anything else is :class:`PlanOrderViolation` and the save is rolled
+  back.
+
+A card's rows are the rows ``plan_to_rows`` makes for it: one instruction (or single) row,
+except a paired design card (``card_stage_model: "paired"``), whose design instruction
+step (``DS``) and result step (``L/P/DB``) are two rows of the same card (0112 NR0003).
 
 Nothing here writes.
 """
@@ -25,8 +30,11 @@ from typing import Any, Iterable, Optional
 
 from modules.flow_gate.db.workflow_sequences import is_started_row, protected_row_ids
 from modules.flow_gate.documents.constants import WORK_PLAN_STEP_TYPES
+from modules.flow_gate.services import work_plan_card_stages as card_stages
 
 STARTED_PREFIX_CODES = ("started_card_removed", "card_identity_mismatch", "order_conflicts_started")
+# The row a paired design card's instruction step makes (work_plan_card_stages.is_instruction).
+DESIGN_INSTRUCTION = "DS"
 
 
 class PlanOrderBlocked(Exception):
@@ -84,8 +92,19 @@ def _is_retired(value: Any) -> bool:
 def plan_cards(plan: dict) -> list[dict]:
     """The plan's cards that become sequence rows, in plan order.
 
-    Same filter as ``plan_to_rows``: a result step makes no row of its own (its
-    instruction's automatic report carries it), and TSR is assembled by the server.
+    ``type`` is the card's type (``card_type_of_step``: a paired design card's is its
+    result's, ``L/P/DB``) -- the value card identity and the Graph read. ``row_types`` are
+    the rows ``plan_to_rows`` makes for the card, in order, apart from the automatic report:
+
+    * a step of a report type makes no row of its own (its instruction's automatic report
+      carries it), and TSR is assembled by the server;
+    * a paired design card makes two rows, its design instruction (``DS``) and then its
+      result: ``("DS", type)``. Its result step is not a report type, so ``plan_to_rows``
+      pours it as a row of the same card;
+    * every other card makes one row of its own type: ``(type,)``.
+
+    ``instruction_mode`` changes none of this: ``plan_to_rows`` does not read it and pours an
+    omitted instruction step (N/T or DS) like any other.
     """
     report_types = set(_report_map().values())
     cards: list[dict] = []
@@ -106,10 +125,30 @@ def plan_cards(plan: dict) -> list[dict]:
             "card_id": step.get("card_id"),
             "key": step.get("key"),
             "type": code,
+            "row_types": (DESIGN_INSTRUCTION, code) if card_stages.is_instruction(step) else (code,),
             "step": step,
             "result_step": result_of.get(step.get("key")),
         })
     return cards
+
+
+def _is_design_result(row: dict, following: Optional[dict], card_id: Any) -> bool:
+    """``following`` is the result row of the paired design card whose DS row is ``row``.
+
+    The result row records its card itself (``plan_to_rows`` gives both rows the step's
+    ``card_id``), so its stored id is read: the legacy classification links one row per
+    card and leaves the second row of a paired card without one. A card id is unique only
+    within its plan -- another plan's ``L#1`` is another card -- so both rows must also be
+    rows of the same plan (``source_doc_id``).
+    """
+    plan_doc_id = str(row.get("source_doc_id") or "")
+    return (
+        following is not None and bool(card_id) and bool(plan_doc_id)
+        and _code(row) == DESIGN_INSTRUCTION
+        and _code(following) in card_stages.DESIGN_TYPES
+        and str(following.get("source_doc_id") or "") == plan_doc_id
+        and following.get("source_wp_card_id") == card_id
+    )
 
 
 def started_card_ids(classification: Optional[dict]) -> list[str]:
@@ -159,9 +198,12 @@ def check_started_prefix(
             "code": "started_card_removed",
             "cards": [_card_view(None, card_id, started_row.get(card_id)) for card_id in removed],
         }
+    # A started row is of its card when it is one of the rows the card makes (a paired
+    # design card's started DS row is, although the card's type is L/P/DB).
     mismatched = [
         card_id for card_id in started
-        if card_id in started_row and _code(started_row[card_id]) != by_id[card_id]["type"]
+        if card_id in started_row
+        and _code(started_row[card_id]) not in by_id[card_id]["row_types"]
     ]
     if mismatched:
         return {
@@ -228,9 +270,10 @@ def reorder_layout(
           "started": [card_id, ...],      # S
         }
 
-    A card keeps its first unprotected linked row (and the report right behind it); every
-    other unprotected row of this plan is removed. Protected rows never appear: they stay
-    where they are.
+    A card keeps its first unprotected linked row of its first row type (and, as
+    ``report``, the row right behind it that the card also makes: its automatic report, or
+    a paired design card's result row); every other unprotected row of this plan is
+    removed. Protected rows never appear: they stay where they are.
     """
     ordered = _ordered(items)
     protected = protected_row_ids(ordered)
@@ -249,14 +292,21 @@ def reorder_layout(
             continue
         card_id = _row_card(row, classification)
         card = by_id.get(card_id) if card_id else None
-        if card is None or card_id in started or card_id in chosen or card["type"] != _code(row):
+        if (
+            card is None or card_id in started or card_id in chosen
+            or card["row_types"][0] != _code(row)
+        ):
             continue
         report = None
         following = ordered[index[row["id"]] + 1] if index[row["id"]] + 1 < len(ordered) else None
         if (
             following is not None and following["id"] in block
             and following["id"] not in protected
-            and report_map.get(_code(row)) == _code(following)
+            and (
+                report_map.get(_code(row)) == _code(following)
+                or (card["row_types"][1:] == (_code(following),)
+                    and _is_design_result(row, following, card_id))
+            )
         ):
             report = following
             used.add(following["id"])
@@ -317,7 +367,11 @@ def reorder_layout(
 def started_card_rows(
     items: Iterable[dict], classification: Optional[dict],
 ) -> dict[str, dict]:
-    """The representative started instruction row of each card in S (+ its report)."""
+    """The representative started instruction row of each card in S (+ its report).
+
+    The report is the row right behind it that the card also makes: its automatic report,
+    or -- behind a paired design card's DS row -- that card's result row.
+    """
     started = set(started_card_ids(classification))
     rows_info = (classification or {}).get("rows") or {}
     report_map = _report_map()
@@ -332,7 +386,10 @@ def started_card_rows(
         following = ordered[i + 1] if i + 1 < len(ordered) else None
         report = (
             following
-            if following is not None and report_map.get(_code(row)) == _code(following)
+            if following is not None and (
+                report_map.get(_code(row)) == _code(following)
+                or _is_design_result(row, following, info["card_id"])
+            )
             else None
         )
         found[info["card_id"]] = {"row": row, "report": report}
@@ -376,21 +433,34 @@ def _signature_value(field: str, value: Any) -> Any:
 
 def _card_signatures(
     plan: dict, wp_doc_id: str, revision_no: int, provider_view: Optional[dict],
-) -> dict[str, dict]:
-    """What each card's pour rows carry, built the way the pour candidates build them."""
+) -> dict[tuple[str, str], dict]:
+    """What each card's pour rows carry, built the way the pour candidates build them.
+
+    Keyed by ``(card_id, row type)``: a paired design card's DS row and result row are two
+    rows of one card, each with its own settings. An automatic report belongs to the row
+    right before it.
+    """
     from modules.flow_gate.services import work_plan_sequence_service as _seq
 
     rows, _dropped, _uid = _seq.plan_to_rows(
         plan, wp_doc_id, revision_no, provider_view=provider_view,
     )
     rows, _uid = _seq.attach_auto_rows(rows)
-    signatures: dict[str, dict] = {}
+    signatures: dict[tuple[str, str], dict] = {}
+    parent: Optional[tuple[str, str]] = None
     for row in rows:
         card_id = row.get("source_wp_card_id")
         if not card_id:
+            parent = None
             continue
-        side, fields = ("r", _REPORT_SIGNATURE) if row.get("is_auto") else ("i", _INSTRUCTION_SIGNATURE)
-        signature = signatures.setdefault(card_id, {})
+        if row.get("is_auto"):
+            if parent is None or parent[0] != card_id:
+                continue
+            key, side, fields = parent, "r", _REPORT_SIGNATURE
+        else:
+            key, side, fields = (card_id, _code(row)), "i", _INSTRUCTION_SIGNATURE
+            parent = key
+        signature = signatures.setdefault(key, {})
         for field in fields:
             signature[(side, field)] = _signature_value(field, row.get(field))
     return signatures
@@ -437,20 +507,32 @@ def infer_missing_card_ids(
     raised before anything is written. Report rows are left alone: the report expansion
     copies the instruction's card. Returns how many rows were given an id. Whatever this
     cannot place stays without one, and :func:`assert_plan_order` refuses it.
+
+    The candidates of a row are the cards that make a row of its type (``row_types``): a
+    paired design card is a candidate for a DS row and for a row of its result type, each
+    placed by that row's own settings.
     """
     report_types = set(_report_map().values())
     skip = set(started)
     items = list(new_items or [])
-    named = {
-        str(item.get("source_wp_card_id")) for item in items if item.get("source_wp_card_id")
-    }
+    named: dict[str, set[str]] = {}
+    for item in items:
+        if item.get("source_wp_card_id"):
+            named.setdefault(str(item.get("source_wp_card_id")), set()).add(_code(item))
     queues: dict[str, list[str]] = {}
     keys: dict[str, Any] = {}
     for card in plan_cards(plan):
         keys[card["card_id"]] = card["key"]
-        if card["card_id"] in skip or card["card_id"] in named:
+        if card["card_id"] in skip:
             continue
-        queues.setdefault(card["type"], []).append(card["card_id"])
+        row_types = card["row_types"]
+        for row_type in row_types:
+            # A one-row card named by any row is taken; a paired card only for the row type
+            # a row already names.
+            taken = named.get(card["card_id"])
+            if taken and (len(row_types) == 1 or row_type in taken):
+                continue
+            queues.setdefault(row_type, []).append(card["card_id"])
     waiting: dict[str, list[tuple[dict, Optional[dict]]]] = {}
     for index, item in enumerate(items):
         code = _code(item)
@@ -493,14 +575,17 @@ def infer_missing_card_ids(
             fits = [
                 card_id for card_id in queue
                 if all(
-                    (signatures.get(card_id) or {}).get(key, _MISSING) == value
+                    (signatures.get((card_id, code)) or {}).get(key, _MISSING) == value
                     for key, value in stated.items()
                 )
             ]
             if not fits:
                 left.append(item)
                 continue
-            if any(signatures.get(card_id) != signatures.get(fits[0]) for card_id in fits[1:]):
+            if any(
+                signatures.get((card_id, code)) != signatures.get((fits[0], code))
+                for card_id in fits[1:]
+            ):
                 ambiguous(code, fits, [item])
             item["source_wp_card_id"] = fits[0]
             queue.remove(fits[0])
@@ -531,12 +616,16 @@ def assert_plan_order(
     that holds a retired marker (a deleted card's history, an acknowledged unresolved
     row), or that the classification retired (``history_ids``: a later started duplicate
     of a card), is left out — it belongs to no card. Every other row
-    must name a card of the plan; the instruction rows read in sort_order must be exactly
-    the expected card list; every row must be of its card's type (an instruction row the
-    card's type, a report row the report that type gets -- ``card_type_mismatch`` /
-    ``report_type_mismatch``); each automatic report row must sit right behind its card's
-    instruction row; a card that has not started has exactly one report row when its type
-    has one. Raises :class:`PlanOrderViolation` with the first broken rule.
+    must name a card of the plan; the instruction rows (a card's first row type) read in
+    sort_order must be exactly the expected card list; every row must be one its card makes
+    (a row of one of the card's ``row_types``, a report row the report the card's type gets
+    -- ``card_type_mismatch`` / ``report_type_mismatch``); each automatic report row must
+    sit right behind its card's instruction row, and a paired design card's result row
+    right behind its card's DS row (``result_not_after_instruction``); a card that has not
+    started has exactly one report row when its type has one, and exactly one result row
+    when it is a paired design card (``result_count``); so does a started paired card whose
+    DS row is here, its result row having run or not (``result_count``, ``started``).
+    Raises :class:`PlanOrderViolation` with the first broken rule.
     """
     ordered = _ordered(items_after)
     protected = protected_row_ids(ordered)
@@ -558,6 +647,7 @@ def assert_plan_order(
 
     instruction_cards: list[str] = []
     report_count: dict[str, int] = {}
+    result_count: dict[str, int] = {}
     previous: Optional[dict] = None
     for row in ordered:
         own = str(row.get("source_doc_id") or "") == wp_doc_id
@@ -565,7 +655,14 @@ def assert_plan_order(
         if not own:
             previous = row
             continue
-        if row["id"] in protected and (_is_retired(value) or row["id"] in history):
+        if row["id"] in protected and (_is_retired(value) or row["id"] in history) and not (
+            # The classification links one row per card, so a paired card's started result
+            # row is its "later started duplicate"; right behind the card's DS row it is the
+            # card's result row, not history.
+            row["id"] in history and not _is_retired(value) and value in by_id
+            and previous is not None and previous.get("source_wp_card_id") == value
+            and _is_design_result(previous, row, value)
+        ):
             previous = row
             continue
         if not value or value not in by_id or _is_retired(value):
@@ -573,6 +670,7 @@ def assert_plan_order(
                  source_wp_card_id=value)
         code = _code(row)
         card_type = by_id[value]["type"]
+        row_types = by_id[value]["row_types"]
         if code in report_types:
             # A row runs as its own type: a report must be the one its card's type gets.
             if report_map.get(card_type) != code:
@@ -588,19 +686,44 @@ def assert_plan_order(
                 fail("report_not_after_instruction", item_seq=row.get("item_seq"),
                      type=code, card_id=value)
             report_count[value] = report_count.get(value, 0) + 1
-        else:
-            if code != card_type:
-                fail("card_type_mismatch", item_seq=row.get("item_seq"), type=code,
-                     card_id=value, card_type=card_type)
+        elif code == row_types[0]:
             instruction_cards.append(value)
+        elif code in row_types[1:]:
+            # A paired design card's result row runs right after the card's own DS row.
+            parent_ok = (
+                previous is not None
+                and str(previous.get("source_doc_id") or "") == wp_doc_id
+                and previous.get("source_wp_card_id") == value
+                and _code(previous) == row_types[0]
+            )
+            if not parent_ok:
+                fail("result_not_after_instruction", item_seq=row.get("item_seq"),
+                     type=code, card_id=value, card_type=card_type)
+            result_count[value] = result_count.get(value, 0) + 1
+        else:
+            fail("card_type_mismatch", item_seq=row.get("item_seq"), type=code,
+                 card_id=value, card_type=card_type)
         previous = row
     if instruction_cards != expected:
         fail("order", actual=[
             {"card_id": c, "key": (by_id.get(c) or {}).get("key")} for c in instruction_cards
         ])
     for card in cards:
-        if card["card_id"] in started or card["type"] not in report_map:
+        if card["card_id"] in started:
+            # A started paired card whose DS row ran still owes its result row right behind
+            # it (it may not have run yet). Nothing pours a started card again, so a write
+            # that left the result row out lost that step and its settings: refused, rolled
+            # back. A card whose DS row is not here (a legacy row) is not judged by this.
+            if (
+                len(card["row_types"]) > 1 and card["card_id"] in instruction_cards
+                and result_count.get(card["card_id"], 0) != 1
+            ):
+                fail("result_count", card_id=card["card_id"], key=card["key"],
+                     count=result_count.get(card["card_id"], 0), started=True)
             continue
-        if report_count.get(card["card_id"], 0) != 1:
+        if card["type"] in report_map and report_count.get(card["card_id"], 0) != 1:
             fail("report_count", card_id=card["card_id"], key=card["key"],
                  count=report_count.get(card["card_id"], 0))
+        if len(card["row_types"]) > 1 and result_count.get(card["card_id"], 0) != 1:
+            fail("result_count", card_id=card["card_id"], key=card["key"],
+                 count=result_count.get(card["card_id"], 0))
