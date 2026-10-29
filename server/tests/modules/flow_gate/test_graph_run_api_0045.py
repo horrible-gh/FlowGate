@@ -90,6 +90,18 @@ def env(db_path, monkeypatch, tmp_path):
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "storage"))
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", "s5test")
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_s5test", "s5-test-pepper")
+    # Wire startup's required run ports while preserving the caller's registries.
+    from flowgate.graph_run import integration as graph_run
+    from modules.flow_gate.graph_workflow.services import run_state_ports
+    from modules.flow_gate.services import graph_execution_hooks, graph_source_hooks
+    monkeypatch.setattr(run_state_ports, "_handlers", dict(run_state_ports._handlers))
+    monkeypatch.setattr(graph_execution_hooks, "_handler", graph_execution_hooks._handler)
+    for attr in ("_handler", "_mutation_handler", "_fence_handler"):
+        monkeypatch.setattr(graph_source_hooks, attr, getattr(graph_source_hooks, attr))
+    graph_run.register()
+    from flowgate.graph_validation.run_scope import run_scope
+    from modules.flow_gate.graph_workflow.domain import run_scope_ports
+    monkeypatch.setattr(run_scope_ports, "_handler", run_scope)
     old_starter = node_dispatch.set_ai_starter(None)
     app = FastAPI()
     for module in (canvas_routes, graph_routes, run_routes):
@@ -603,6 +615,19 @@ def test_a_refused_ai_start_marks_the_node_and_keeps_its_token(env, decided, mon
 
 
 # ── Canvas (P0008 S1-3) and reads ────────────────────────────────────────────
+
+def test_canvas_absorbs_root_and_result_documents(env, decided):
+    """Keep projection coverage independent of the legacy run status/event assertions below."""
+    start(env)
+    result = _doc(FG, 2, "D")
+    submit(FG, result, "D", token_of(env))
+    response = env["client"].get(f"/api/v1/flows/{FG}/canvas", headers=_h())
+    assert response.status_code == 200, response.text
+    nodes = {n["node_key"]: n for n in response.json()["nodes"]}
+    assert nodes["gn_r"]["document"]["doc_id"] == f"{FG}.0001-R"
+    assert nodes["gn_d"]["document"]["doc_id"] == result
+    assert f"doc:{result}" not in nodes and f"doc:{FG}.0001-R" not in nodes
+
 
 def test_canvas_shows_the_run(env, decided):
     run_id = start(env).json()["run"]["run_id"]

@@ -155,10 +155,11 @@ def _project(flow_id: str, state: str, snap: FlowSnapshot, row_keys, protected, 
             view.node_runs = {r["node_key"]: {k: v for k, v in r.items() if k not in ("node_key", "root_bound")}
                               for r in run["node_runs"]}
         return project_graph(flow_id, state, snap.documents, view, lookup)
-    hidden = frozenset(d.cards.hidden_doc_ids) if state == "unassigned" and mode == "draft" else frozenset()
+    draft_view = d.view("draft") if state == "unassigned" and mode == "draft" else None
+    hidden = draft_view.hidden_doc_ids if draft_view is not None else frozenset()
     proj = project(flow_id, state, snap.documents, snap.sequence, snap.rows, row_keys, protected, lookup, hidden)
-    if state == "unassigned" and mode == "draft":
-        add_draft(proj, state, snap.documents, d.view("draft"))
+    if draft_view is not None:
+        add_draft(proj, state, snap.documents, draft_view, lookup, flow_id=flow_id)
     return proj
 
 
