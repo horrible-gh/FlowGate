@@ -421,6 +421,7 @@ def recover():
                          "AND r.status <> 'stopping' ORDER BY e.created_at, e.exec_id", [])
     for snapshot in rows:
         jobs = []
+        invalidated = []
         def body():
             row = ledger.get(snapshot["exec_id"])
             if not row or row["status"] not in ("requested", "running"):
@@ -450,6 +451,7 @@ def recover():
             attempt = run_store._one("SELECT * FROM graph_node_attempts WHERE attempt_id = ?", [row["attempt_id"]])
             if not stop.invalidate_attempt(row["attempt_id"], "lease_expired"):
                 return
+            invalidated.append(row["attempt_id"])
             run = run_store.run_by_id(row["run_id"])
             node = next((n for n in run_store.node_runs(row["run_id"]) if n["node_key"] == attempt["node_key"]), None)
             if not node or node["status"] == "done":
@@ -465,6 +467,10 @@ def recover():
         except Exception:
             log.exception("Graph execution recovery failed for %s", snapshot["exec_id"])
             continue  # A failed transaction never dispatches its jobs.
+        # Outside the exclusive fence and Flow transaction, before replaying deferred jobs.
+        # Keep this even when the invalidated attempt has no node (or the node is done).
+        for attempt_id in invalidated:
+            workspace.cleanup(attempt_id)
         for job in jobs:
             try:
                 job()

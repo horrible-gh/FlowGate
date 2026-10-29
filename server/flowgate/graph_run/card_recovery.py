@@ -6,7 +6,7 @@ the next explicit command allocates a fresh attempt through normal dispatch.
 """
 from __future__ import annotations
 
-from flowgate.graph_run import fencing, stop, settle
+from flowgate.graph_run import fencing, stop, settle, workspace
 from flowgate.graph_time_machine import operation
 
 
@@ -85,5 +85,7 @@ def recover_card(group: dict, run_id: str, node_key: str, reason, user_id: str) 
 
     with fencing.exclusive(flow_id):
         with_flow_guard(flow_id, body)
+    # Git locks and the D-1a-0 preservation check must follow the committed invalidation.
+    workspace.cleanup(answer["attempt_id"])
     from modules.flow_gate.graph_workflow.services.run_service import run_payload
     return {"run": run_payload(run_id, with_nodes=True), "recovery": answer}

@@ -110,7 +110,7 @@ export interface GroupBlobData {
 // mode, no untracked channel, no diff support.
 export interface BranchCatalogEntry {
   name: string
-  kind: 'base' | 'local' | 'internal_slot' | 'remote_only'
+  kind: 'base' | 'local' | 'internal_slot' | 'internal_attempt' | 'external_worktree' | 'remote_only'
   oid: string | null
   ahead_of_base: number | null
   behind_base: number | null
@@ -1096,7 +1096,9 @@ export const useExplorerStore = defineStore('explorer', () => {
     return {
       base_branch: data?.base_branch ?? null,
       default_merge_target: data?.default_merge_target ?? null,
-      branches: Array.isArray(data?.branches) ? data.branches : [],
+      branches: Array.isArray(data?.branches)
+        ? data.branches.filter((branch: BranchCatalogEntry) => branch.kind !== 'internal_attempt' && branch.kind !== 'external_worktree')
+        : [],
     }
   }
 

@@ -3962,8 +3962,13 @@ export default {
         base: '基準',
         internal_slot: '内部 · 使用中',
         remote_only: 'リモート専用 · 読み取り専用',
+        internal_attempt: '内部実行試行 · ロック中',
+        external_worktree: '外部ワークツリー · ロック中',
       },
       delete_blocked: {
+        branch_is_internal_attempt: '内部実行試行 ブランチは削除できません。',
+        internal_attempt: '内部実行試行 ブランチは削除できません。',
+        external_worktree: '外部ワークツリーブランチは削除できません。',
         branch_not_found: 'ブランチが見つかりません。',
         branch_is_base: '基準ブランチは削除できません。',
         branch_is_internal_slot: '登録済みのグループワークツリーブランチは削除できません。',
