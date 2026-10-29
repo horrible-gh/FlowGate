@@ -26,6 +26,10 @@ flowgate.v02.0063 (the card's question wait, ``question_wait``): an ended AI run
 whose result writer ended with no result, the card's node row by its key, whether the Flow's AI is busy (the group
 lease or a Graph execution), the Graph's retry of a result writer and the wake of an idle run.
 
+flowgate.v02.0111 T#2 (T-A1): an instruction stage whose AI run asked and was answered is written again on the same attempt
+(``retry_instruction_stage``, ``node_dispatch``), and a result writer that ended asking (``write_failure``
+``question_pending``) is one with no result to the question wait (``no_result_node_of_ai_run``).
+
 flowgate.v02.0083 WP-4 (a person's work plan reviewed by AI): the result of a node in review is also a person's work plan
 card whose card reviews it (``node_of_result``: an AI node, or a person's plan node with a review count — so a passed
 review of it is approved as an AI card's is), and the person's result stage reads the Flow's active run and a node run of
@@ -84,7 +88,8 @@ __all__ = ["GraphApiError", "GitServiceError", "judge_merge_target", "merge_targ
            "node_ai_run_active", "instruction_node_of_ai_run", "registered_instructions", "start_result_stage",
            "instruction_stage_failed", "attempt_of_ai_run", "attempt_owns", "attempt_hold", "active_run_id",
            "invalidated_documents", "ai_run_record", "no_result_node_of_ai_run", "node_of_key", "nodes_of_ai_run",
-           "flow_ai_busy", "retry_result_stage", "wake_graph_run", "open_questions_of_ai_run", "open_ai_questions",
+           "flow_ai_busy", "retry_result_stage", "retry_instruction_stage", "wake_graph_run", "open_questions_of_ai_run",
+           "open_ai_questions",
            "askers_answered_by", "ask_responder",
            "default_reviewer", "last_rejection", "start_review_loop", "review_loop_row", "review_loop_active",
            "approve", "settle_graph_run",
@@ -437,9 +442,13 @@ def ai_run_record(ai_run_id: str) -> Optional[dict]:
             "document_review_loop": review_loop_row(ai_run_id)}
 
 
+RETRYABLE_WRITE_FAILURES = ("no_result", "question_pending")     # 0111 T-A1: an asking writer's end is no failure
+
+
 def no_result_node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[dict, dict]]:
     """(the run revision's node row, its node run) of the AI node of the Flow's active run whose active attempt's
-    latest execution is ``ai_run_id``'s result write and ended with no result (``write_failure`` ``no_result``)."""
+    latest execution is ``ai_run_id``'s result write and ended with no result (``write_failure`` ``no_result``, or
+    0111 T-A1 ``question_pending``: it asked and ended before its result)."""
     from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
 
     run_row = run_store.active_run(flow_id)
@@ -457,7 +466,7 @@ def no_result_node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[dic
     if (latest or {}).get("ai_run_id") != ai_run_id:
         return None
     row = next((r for r in run_store.node_runs(run_row["run_id"]) if r["node_key"] == found["node_key"]), None)
-    if row is None or graph_execution_hooks.call("write_failure", row) != "no_result":
+    if row is None or graph_execution_hooks.call("write_failure", row) not in RETRYABLE_WRITE_FAILURES:
         return None
     node = node_of_key(flow_id, found["node_key"])
     return (node, row) if node is not None else None
@@ -565,6 +574,28 @@ def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
                        attempt_id: Optional[str] = None) -> bool:
     return node_dispatch.retry_result_stage(flow_id, run_id, node_key, issued_to, project_of(flow_id),
                                             attempt_id=attempt_id)
+
+
+def retry_instruction_stage(flow_id: str, run_id: str, node_key: str, issued_to: str, asker_ai_run_id: Optional[str],
+                            target_doc_id: Optional[str], attempt_id: Optional[str] = None,
+                            defer: Optional[list] = None) -> bool:
+    """0111 T-A1: the instruction stage written again on the same attempt after its questions were answered — only under
+    ``person_hold`` (its refusal is judged ``idle_ok``)."""
+    return node_dispatch.retry_instruction_stage(flow_id, run_id, node_key, issued_to, asker_ai_run_id, target_doc_id,
+                                                 project_of(flow_id), attempt_id=attempt_id, defer=defer)
+
+
+def instruction_continuation_due(run_id: str, node_key: str, asker_ai_run_id: Optional[str], *,
+                                 answered: bool = True) -> bool:
+    """0111 T-A1: the node's instruction stage may go on from ``asker_ai_run_id``'s answers — that run's execution is
+    still its active attempt's latest, none requested / running since, and (``answered``) its questions are all answered
+    (the Graph's ``instruction_continuation_due``). False with no Graph handler: nothing goes on unjudged."""
+    from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
+
+    row = next((r for r in run_store.node_runs(run_id) if r["node_key"] == node_key), None)
+    if row is None:
+        return False
+    return bool(graph_execution_hooks.call("instruction_continuation_due", row, asker_ai_run_id, answered=answered))
 
 
 def wake_graph_run(flow_id: str) -> bool:

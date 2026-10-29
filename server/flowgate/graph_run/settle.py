@@ -37,6 +37,11 @@ step that opened no target, or a full command with no run candidate left.
 0083 WP-2 (0061 T#2 개정, idle reason only): ``waiting_approval`` also covers an open card a person writes (its token
 issued, no dispatch failure, not an AI card) — it was ``no_targets`` before. No new idle reason value is added.
 
+flowgate.v02.0111 T#2 (T-A1, idle reason only): an AI card whose writer ended asking (``question_pending``) waits for its
+answers and is not ``error``. No new idle reason value is added either: the run's reason is the one it would have
+without that card (as an instruction stage that ended on its own and waits for its answers), and the card tells its wait
+by its question mark (``run_service.question_nodes``).
+
 flowgate.v02.0085 T#2 (D0007 §3.3): a confirm gate held by its accepted decision (its Git apply / archive job not
 finished: accepted, failed, recovery_required) is unfinished apply work, not a person's wait. It keeps a running /
 paused run working, like an integration in progress, so the run is never idle or completed meanwhile; an idle run with
@@ -105,11 +110,12 @@ def _waits_on_person(ctx, row: dict, reserved: Optional[dict] = None) -> bool:
 
 
 def _failed(ctx, row: dict) -> bool:
-    """An open non-gate with a failed dispatch or a finished writer missing its result."""
-    from flowgate.graph_run.execution import write_failure
+    """An open non-gate with a failed dispatch or a finished writer missing its result. 0111 T#2 (T-A1): a writer that
+    ended asking and waits for its answers (``write_failure`` ``question_pending``) has not failed: no ``error``."""
+    from flowgate.graph_run.execution import QUESTION_PENDING, write_failure
     return row["status"] == "open" and _node_type(ctx, row["node_key"]) != engine.GATE_NODE_TYPE and (
         row.get("dispatch_token_issued") is None or bool(row.get("dispatch_error_code"))
-        or bool(write_failure(row)))
+        or write_failure(row) not in (None, "", QUESTION_PENDING))
 
 
 def working(ctx, rows: list[dict]) -> bool:

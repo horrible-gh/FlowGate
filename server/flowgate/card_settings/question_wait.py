@@ -20,6 +20,15 @@ follow it until every question it asked has an answer (``finalize.open_questions
 Nothing is stored for it: what waits is read from the questions' asker run and the node's state, so a restart loses
 nothing. A responder is never started while the Flow's AI is busy (the group lease, a Graph execution: the admission
 would refuse it); every run end of the Flow looks again (``follow``).
+
+flowgate.v02.0111 T#2 (T-A1, NR flowgate.v02.0111.0003 §2 A-1): a run that registered questions and ended before its
+document was (fully) submitted ends ``exited`` with the stop code ``question_pending`` (``ended_asking``). That is a
+question wait, not a failure: its instruction / work step waits as a clean end does (``_waiting``), its result writer is
+one that ended with no result (``ended_without_result``), and once the questions are answered an instruction stage goes
+on through ``review_stage.continue_instruction_after_answers`` (a written instruction: its approval and the result stage;
+none, or the asking end: the instruction stage again on the same attempt) instead of judging the ended run again. Only
+the run whose execution is still the attempt's latest waits so (``legacy.instruction_continuation_due``): an earlier run
+of the stage whose answers are told again after a later one was requested goes on with nothing.
 """
 from __future__ import annotations
 
@@ -34,6 +43,7 @@ _log = logging.getLogger(__name__)
 
 PASSED = "review_passed"
 EXITED = "exited"
+QUESTION_PENDING = "question_pending"
 SOURCE_REVIEW_AI = "card_review_ai"
 
 _lock = threading.RLock()
@@ -43,9 +53,22 @@ def ended_cleanly(run: dict) -> bool:
     return run.get("end_reason") == EXITED and not run.get("stop_code")
 
 
+def ended_asking(run: dict) -> bool:
+    """0111 T-A1: the run exited with questions it asked still open and its document not (fully) submitted (the stop
+    code ``question_pending``): a question wait, never a failure."""
+    return run.get("end_reason") == EXITED and run.get("stop_code") == QUESTION_PENDING
+
+
+def ended_waiting(run: dict) -> bool:
+    """The run's end leaves its step to wait for its questions: a clean end, or the asking end (0111 T-A1)."""
+    return ended_cleanly(run) or ended_asking(run)
+
+
 def ended_without_result(run: dict) -> bool:
-    """The result writer exited on its own (``write_failure`` ``no_result`` reads the same end)."""
-    return run.get("end_reason") == EXITED and run.get("stop_code") in (None, "", "no_output_exhausted")
+    """The result writer exited on its own (``write_failure`` ``no_result`` / ``question_pending`` reads the same
+    end)."""
+    return run.get("end_reason") == EXITED and run.get("stop_code") in (None, "", "no_output_exhausted",
+                                                                         QUESTION_PENDING)
 
 
 def open_questions(flow_id: str, ai_run_id: Optional[str]) -> Optional[list[dict]]:
@@ -134,13 +157,15 @@ def _waiting(flow_id: str, run: dict) -> Optional[tuple[str, dict, Optional[dict
         return "review", node, None
     stage = legacy.instruction_node_of_ai_run(flow_id, run_id)
     if stage is not None:
-        if not ended_cleanly(run) or legacy.node_ai_run_active(flow_id, stage[0]["node_key"]):
+        if not ended_waiting(run) or legacy.node_ai_run_active(flow_id, stage[0]["node_key"]):
             return None
+        if not legacy.instruction_continuation_due(stage[1]["run_id"], stage[0]["node_key"], run_id, answered=False):
+            return None                         # 0111 T-A1: an earlier run of the stage, a later one requested since
         return "instruction", stage[0], stage[1]
     found = legacy.node_of_ai_run(flow_id, run_id)
     if found is not None:
         node, doc_id = found
-        if not ended_cleanly(run) or legacy.review_loop_active(doc_id) \
+        if not ended_waiting(run) or legacy.review_loop_active(doc_id) \
                 or legacy.node_ai_run_active(flow_id, node["node_key"]):
             return None
         return "work", node, None
@@ -181,7 +206,8 @@ def _answered(flow_id: str, asker_run_id: str) -> None:
         if phase == "review":
             review_stage._after_review(flow_id, run)
         elif phase == "instruction":
-            review_stage._after_instruction(flow_id, run, node, row)
+            # 0111 T-A1: never the ended run judged again (an asking end would fail the stage): the step goes on
+            review_stage.continue_instruction_after_answers(flow_id, run, node, row)
         elif phase == "work":
             review_stage._after_work(flow_id, run)
         else:

@@ -513,6 +513,10 @@ def write_failure(row):
     """0063: a finished result writer with no result stays open, but is no longer working.
     Derive from the current attempt's durable records, also for runs ended before this fix.
     No new node state or persisted failure is needed; a new request hides the old outcome.
+
+    0111 T#2 (T-A1): a writer that exited asking (stop code ``question_pending``) with questions it asked still open is
+    ``question_pending`` — a question wait, no failure (``settle._failed``, ``needs_ai_dispatch``, the node wire's
+    ``error_code``); once they are all answered it reads ``no_result``, retried as one (``retry_result_stage``).
     """
     if row.get("status") != "open" or row.get("result_doc_id") or row.get("stage") != "result":
         return None
@@ -543,10 +547,55 @@ def write_failure(row):
     if result_binder.next_missing_event(ctx, run_apply.read_run_state(ctx), row["node_key"]) is not None:
         return None
     if ended.get("end_reason") == "exited" and ended.get("exit_code") == 0 \
-            and ended.get("stop_code") in (None, "", "no_output_exhausted") \
+            and ended.get("stop_code") in (None, "", "no_output_exhausted", QUESTION_PENDING) \
             and not ended.get("register_errors"):
+        if ended.get("stop_code") == QUESTION_PENDING and _asked_open(graph["group_id"], latest["ai_run_id"]):
+            return QUESTION_PENDING
         return "no_result"
     return "ai_invoke_failed"
+
+
+QUESTION_PENDING = "question_pending"
+
+
+def _asked_open(flow_id, ai_run_id):
+    """0111 T-A1: the questions ``ai_run_id`` asked in the Flow are not all answered (an unreadable read keeps the wait:
+    nothing retries a writer whose questions cannot be told answered)."""
+    from modules.flow_gate.services.ai_invoke.finalize import open_questions_raised_by_run
+    try:
+        return bool(open_questions_raised_by_run(flow_id, ai_run_id))
+    except Exception:  # noqa: BLE001 — unreadable: still waiting, never a failure nor a retry
+        log.warning("graph writer question read failed flow=%s run=%s", flow_id, ai_run_id, exc_info=True)
+        return True
+
+
+def instruction_continuation_due(row, asker_ai_run_id, answered=True):
+    """0111 T-A1: the instruction stage may go on from ``asker_ai_run_id``'s answers — the node's active attempt has no
+    requested / running execution and its latest execution is ``asker_ai_run_id``'s instruction write, and (``answered``)
+    every question it asked is answered. So the same answers told twice (a person's answer and the responder's end)
+    continue once, an attempt opened again since continues nothing, and an earlier run of the stage answered again after
+    a later one was requested (its instruction written again, that one perhaps asking in turn) continues nothing: never
+    its approval, review or retry over the later run's document or questions. Judged inside the continuation's hold
+    (``review_stage._answered_hold``) and the instruction retry's guard (``node_dispatch.retry_instruction_stage``);
+    ``answered`` False: the wait's own read (``question_wait._waiting``)."""
+    if not asker_ai_run_id or not get_store().table_exists("graph_attempt_runs"):
+        return False
+    attempt = run_store.active_attempt_id(row["run_id"], row["node_key"])
+    if not attempt:
+        return False
+    if run_store._one("SELECT 1 AS present FROM graph_attempt_runs WHERE attempt_id = ? "
+                      "AND status IN ('requested', 'running') LIMIT 1", [attempt]):
+        return False
+    latest = run_store._one("SELECT * FROM graph_attempt_runs WHERE attempt_id = ? "
+                            "ORDER BY created_at DESC, exec_id DESC LIMIT 1", [attempt])
+    if not latest or latest["kind"] != "write" or latest.get("ai_run_id") != asker_ai_run_id:
+        return False
+    if (json.loads(latest["request_json"]).get("job") or {}).get("stage") != "instruction":
+        return False
+    if not answered:
+        return True
+    graph = run_store.run_by_id(row["run_id"]) or {}
+    return bool(graph.get("group_id")) and not _asked_open(graph["group_id"], asker_ai_run_id)
 
 
 def settle(flow_id):
@@ -605,6 +654,7 @@ _ACTIONS = {
     "settle": settle, "request_write": request_write, "request_hop": request_hop, "request_loop": request_loop,
     "launch": launch, "finish": finish, "transition": transition, "heartbeat": heartbeat,
     "working": ledger.working, "start_failed": start_failed, "write_failure": write_failure,
+    "instruction_continuation_due": instruction_continuation_due,       # 0111 T-A1
     "report_refused": fencing.report_refused, "node_refused": fencing.node_refused, "result_refused": result_refused,
     "execution_attempt": fencing.execution_attempt, "handoff_end": handoff_end, "node_hold": node_hold,
     # T#9: an approved code node is done once its result is merged into the Flow's branch.
