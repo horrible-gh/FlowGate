@@ -11,7 +11,8 @@ follow it until every question it asked has an answer (``finalize.open_questions
   Without an independent responder (or known asker provider), ``mark_responder_failed`` leaves it open for a
   person's answer; no unchecked default dispatch occurs. A responder answers from documents and source and
   hands human decisions to a person through its escalate signal. A question
-  is put to an AI at most once (the item's responder state, as v0.1): a failed or handed-on one waits for a person's
+  has one claimed responder run; startup failures walk its independent enabled candidates once each (0111 T-A3),
+  bounded by the active chain length. An exhausted, otherwise failed or handed-on question waits for a person's
   answer in the Q&A panel. The card of the document a question is on shows the [Q] mark (``run_service.question_nodes``).
 - resume: once that run's questions are all answered — a person's answer (``on_question_answered``) or the responder
   run's end (``follow``) — the step it left goes on as it would have at the run's end. An idle Graph run is woken
@@ -131,7 +132,12 @@ def _responder(flow_id: str, node: dict, asked_by_instruction: bool,
 
 
 def _dispatch(flow_id: str, node: dict, run: dict, items: list[dict], asked_by_instruction: bool) -> bool:
-    """Put the earliest question never put to an AI to the card's responder. True when its run started."""
+    """Start the earliest unclaimed question's bounded independent responder chain.
+
+    The answer service owns startup reassignment under the same item claim/lease.
+    Exhaustion is marked failed on the question, never a Graph dispatch failure;
+    this card stays in the T-A1 question wait and repeated follow-ups dispatch nothing.
+    """
     target = next((item for item in items if not item.get("responder_state")), None)
     if target is None or not target.get("anchor_doc_id") or legacy.flow_ai_busy(flow_id):
         return False

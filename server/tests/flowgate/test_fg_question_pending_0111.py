@@ -491,3 +491,32 @@ def test_the_continuation_is_the_new_entry_point_never_the_ended_run_judged_agai
     assert question_wait.ended_without_result({"end_reason": "exited", "stop_code": "question_pending"})
     assert question_wait.ended_waiting({"end_reason": "exited", "stop_code": "question_pending"})
     assert not question_wait.ended_waiting({"end_reason": "timeout", "stop_code": "question_pending"})
+
+
+@pytest.mark.parametrize("stage", ["instruction", "result"])
+def test_exhausted_responder_leaves_card_and_run_in_question_wait_without_redispatch(
+        env, decided, monkeypatch, questions, stage):
+    """0111 T-A3: responder exhaustion is an item failure, never a card/run error.
+
+    The Q-answer engine's exhaustion is covered by test_q_responder_startup_0111;
+    here the real Graph run read/settle and repeated end/Resume see its failed item.
+    """
+    from flowgate.card_settings import question_wait
+
+    if stage == "instruction":
+        key, _doc, _exec = _asked_instruction(env, monkeypatch, questions)
+        asker = INSTRUCTION_RUN
+    else:
+        key, _exec = _asked_result(env, monkeypatch, questions)
+        asker = WORK_RUN
+    [item] = questions["asked"][asker]
+    item.update(responder_state="failed", responder_error_code="provider_failed", answer_count=0)
+    attempts, execs = _attempts(env, key), len(_executions(env))
+    for _ in range(3):
+        question_wait.follow({"run_id": RESPONDER_RUN, "group_id": FA})
+        _resume(env)
+        run = _assert_waiting(env, key)
+        assert run["status"] == "idle" and run["idle_reason"] != "error"
+    assert questions["responders"] == [(item["id"], "aip_review")]
+    assert _attempts(env, key) == attempts and len(_executions(env)) == execs
+    assert env["jobs"] == [] and item["answer_count"] == 0

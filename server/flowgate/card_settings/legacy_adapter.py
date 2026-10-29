@@ -524,8 +524,11 @@ def askers_answered_by(responder_run_id: str) -> set[str]:
 
 def ask_responder(anchor_doc_id: str, item_id: int, issued_to: str, provider_id: Optional[str],
                   provider_source: str) -> Optional[dict]:
-    """Start the responder AI run of one question, as the Q&A panel's [AI 답변 요청] does
-    (``q_answer_invoke_service.dispatch_answer_run``; a refusal is recorded on the item and raised)."""
+    """Automatically start one question's responder with bounded startup fallback.
+
+    Uses the shared answer engine; the Q&A panel keeps its explicit-provider policy.
+    A refusal is recorded on the item and raised.
+    """
     from modules.flow_gate.db import documents as db_documents  # noqa: PLC0415
     from modules.flow_gate.graph_workflow.services.ai_node_starter import api_base_url  # noqa: PLC0415
     from modules.flow_gate.services import q_answer_invoke_service  # noqa: PLC0415
@@ -536,7 +539,8 @@ def ask_responder(anchor_doc_id: str, item_id: int, issued_to: str, provider_id:
     item = q_answer_invoke_service.resolve_item(anchor_doc_id, item_id)
     return q_answer_invoke_service.dispatch_answer_run(
         doc={**doc, "doc_id": anchor_doc_id}, item=item, issued_to=issued_to, api_base_url=api_base_url(),
-        provider_id=provider_id, provider_source=provider_source, actor_user_id=issued_to)
+        provider_id=provider_id, provider_source=provider_source, actor_user_id=issued_to,
+        responder_candidates=[])  # automatic question_wait dispatch opts into T-A3
 
 
 def independent_question_responder(project_id: Optional[str], asker_provider_id: Optional[str],
