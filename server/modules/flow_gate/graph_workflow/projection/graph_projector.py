@@ -11,7 +11,8 @@
   showing no document otherwise shows its first line's document (title and state stay the node's).
   The canvas service hands each view the lines of the kind that view gives the node (a retyped draft
   node and its confirmed revision each show their own; ``card_document_ports.card_view``).
-  The documents a card made are never drawn as free document nodes (``hidden_doc_ids``).
+  The documents a card made and the live documents of this view's card lines are never free document nodes
+  (``hidden_doc_ids``, 0111 T#4 / NR §4). Reference edges use the card that shows each such line.
 - flowgate.v02.0053 T#8: a Custom card (``custom`` node) is titled with the name a person gave it (its
   label), also once a run bound a result document to it — that name is all that tells one apart.
 - flowgate.v02.0064 T-B4b (0062 D0005 §3.1, P0006 §4.2.1): every Graph / draft node carries its card's title
@@ -49,8 +50,16 @@ class GraphView:
     bound_doc_id: Optional[str] = None                # the bound root document (live end)
     node_runs: dict = field(default_factory=dict)     # node_key -> P0008 §2.6 ``node_run`` block
     card_docs: dict = field(default_factory=dict)     # node_key -> card lines of the node's kind in this view
-    hidden_doc_ids: frozenset = frozenset()            # documents a card made (never free nodes)
+    hidden_doc_ids: frozenset = frozenset()            # owned documents plus this view's live line documents
     title_states: dict = field(default_factory=dict)  # node_key -> stored title state (0064 T-B4b)
+
+    def __post_init__(self) -> None:
+        # CardView supplies owned-only ids. Add only the lines of nodes in this definition,
+        # already resolved to live documents and filtered by the kind that this view shows.
+        self.hidden_doc_ids = frozenset(self.hidden_doc_ids) | frozenset(
+            line["doc_id"] for row in self.nodes for line in self.card_docs.get(row["node_key"], [])
+            if line.get("doc_id")
+        )
 
 
 def to_graph_node(row: dict) -> GraphNode:
@@ -159,8 +168,14 @@ def _graph_nodes(out: Projection, view: GraphView, ownership: str, by_id: dict, 
         out.nodes.append(node)
         out.graph_nodes.append(node["node_key"])
         if doc is not None:
+            if doc["doc_id"] not in drawn:
+                drawn_docs.append(doc)
             drawn[doc["doc_id"]] = node["node_key"]
-            drawn_docs.append(doc)
+        for line in lines:
+            shown = by_id.get(line.get("doc_id"))
+            if shown is not None and cm.is_alive(shown, shown.get("group_id")) and shown["doc_id"] not in drawn:
+                drawn[shown["doc_id"]] = node["node_key"]
+                drawn_docs.append(shown)
 
 
 def project_graph(flow_id: str, ownership: str, documents: list[dict], view: GraphView,
@@ -186,10 +201,19 @@ def project_graph(flow_id: str, ownership: str, documents: list[dict], view: Gra
     return out
 
 
-def add_draft(proj: Projection, ownership: str, documents: list[dict], view: GraphView) -> Projection:
+def add_draft(proj: Projection, ownership: str, documents: list[dict], view: GraphView,
+              lookup: Callable[[list[str]], dict[str, dict]] = lambda _ids: {}, *, flow_id: str = "") -> Projection:
     """Unassigned Flow: draft nodes and edges next to the document nodes (P0008 S1-4)."""
     supersedes = supersedes_map(documents)
     by_id = {d["doc_id"]: d for d in documents if d.get("doc_id") and cm.is_alive(d, d.get("group_id"))}
-    _graph_nodes(proj, view, ownership, by_id, supersedes, {}, [])
+    drawn = {n["document"]["doc_id"]: n["node_key"] for n in proj.nodes if n.get("document")}
+    drawn_docs = [by_id[doc_id] for doc_id in drawn if doc_id in by_id]
+    _graph_nodes(proj, view, ownership, by_id, supersedes, drawn, drawn_docs)
     _execution_edges(proj, view, cm.editable_for(ownership, VIEW_ORIGIN[view.mode])["structure"])
+    # The document projection ran before the draft existed. Rebuild its reference edges
+    # with the complete drawn map, so hidden line documents point to their visible cards.
+    proj.edges = [e for e in proj.edges if e["edge_class"] != "reference"]
+    proj.external_relations = []
+    all_docs = {d["doc_id"]: d for d in documents if d.get("doc_id")}
+    reference_edges(proj, flow_id, drawn, sorted(drawn_docs, key=doc_order), all_docs, lookup)
     return proj

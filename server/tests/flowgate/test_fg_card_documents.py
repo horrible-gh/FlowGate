@@ -339,7 +339,7 @@ def test_canvas_shows_card_lines_and_keeps_card_documents_inside_the_card(env):
     assert [n["node_key"] for n in other["nodes"]] == [f"doc:{FA}.0001-R"]
     put_draft(env, FA, 0, [node("tmp_r", "R", "요구")])
     fa = {n["node_key"]: n for n in canvas(env, FA)["nodes"]}
-    assert f"doc:{FA}.0001-R" in fa                                # the shown root stays a document node
+    assert f"doc:{FA}.0001-R" not in fa                            # 0111 T#4: the view shows its root on the card
     assert [n["document"]["doc_id"] for n in fa.values() if n["origin"] == "draft_node"] == [f"{FA}.0001-R"]
 
 

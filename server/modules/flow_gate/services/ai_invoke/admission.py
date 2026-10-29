@@ -860,6 +860,9 @@ def start_run(
     issue_builder: Optional[Callable[[], dict]] = None,
     merge_id: Optional[int] = None,
     completion_oracle: Optional[Callable[[], bool]] = None,
+    # Internal Q-answer policy only: bounded independent startup candidates and an
+    # item-owner CAS probe. Ordinary explicit provider choices stay single-provider.
+    responder_startup_policy: Optional[dict] = None,
     # 0317 T0010 rev4: item_seq (as str, JSON-body keys) -> provider_id, chosen in
     # ContinuousWorkDialog's per-step override table. Session-scoped — this run's start
     # request is the only place it lives; never persisted (T0010 Q&A: session-scoped o1).
@@ -1033,7 +1036,14 @@ def start_run(
         and any(provider.get("id") == stored_provider_id for provider in chain)
     )
 
-    if step_override_provider:
+    if responder_startup_policy is not None:
+        if mode != "single" or action_scope != "edit" or completion_oracle is None or issue_builder is None:
+            raise _http_error(422, "invalid_responder_startup_policy", "Q-answer startup policy required.")
+        enabled = {provider.get("id"): provider for provider in chain}
+        provider_ids = list(dict.fromkeys(responder_startup_policy["provider_ids"]))
+        chain = [enabled[pid] for pid in provider_ids if pid in enabled]
+        selected_provider_source = "question_responder"
+    elif step_override_provider:
         selected = next(
             (provider for provider in chain if provider.get("id") == step_override_provider),
             None,
@@ -1897,6 +1907,7 @@ def start_run(
         ),
         "write_plan": None,
         "completion_oracle": completion_oracle,
+        "responder_startup_policy": responder_startup_policy,
         # ── 0359 L0007 §2.9 / §2.6: what the no-output retry loop needs to open attempt 2 ──
         # The token ID (was: only the raw token, so the retry could not ask whether the token
         # was still usable), the mention it was handed, and the builder that can mint a fresh

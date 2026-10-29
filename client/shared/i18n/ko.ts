@@ -3978,8 +3978,13 @@ export default {
         base: '기준',
         internal_slot: '내부 · 사용 중',
         remote_only: '원격 전용 · 읽기 전용',
+        internal_attempt: '내부 실행 시도 · 잠김',
+        external_worktree: '외부 워크트리 · 잠김',
       },
       delete_blocked: {
+        branch_is_internal_attempt: '내부 실행 시도 브랜치는 삭제할 수 없습니다.',
+        internal_attempt: '내부 실행 시도 브랜치는 삭제할 수 없습니다.',
+        external_worktree: '외부 워크트리 브랜치는 삭제할 수 없습니다.',
         branch_not_found: '브랜치를 찾을 수 없습니다.',
         branch_is_base: '기준 브랜치는 삭제할 수 없습니다.',
         branch_is_internal_slot: '등록된 그룹 워크트리 브랜치는 삭제할 수 없습니다.',

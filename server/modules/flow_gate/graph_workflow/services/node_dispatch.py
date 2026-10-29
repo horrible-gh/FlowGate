@@ -52,6 +52,17 @@ binder's evidence) and, for an AI assignee, queues the AI start after the commit
   start, ``ai_node_starter``). A run stopped at the next step does not stop either stage
   of a card it already opened. A node with no instruction stage (instruction omitted, a test card, no card
   handler) runs only the result stage.
+
+- flowgate.v02.0111 T#2 (T-A1, NR flowgate.v02.0111.0003 §2 A-1): an AI run that asked questions and ended before its
+  document was (fully) submitted is a question wait, never a failure. Its instruction stage is written again on the same
+  attempt once the questions are answered (``retry_instruction_stage``: the instruction AI, never the "written: approve
+  without AI" shortcut of ``_instruction_job``); a result writer that ended so (``write_failure`` ``question_pending``)
+  is retried like one with no result (``retry_result_stage``) and, while its questions are open, is no dispatch error and
+  no explicit command's retry (``needs_ai_dispatch``).
+- flowgate.v02.0111 T#3 (T-A2, NR flowgate.v02.0111.0003 §2 A-2): the answers' retry of a result writer is taken under
+  ``legacy.person_hold`` with ``retry_result_stage`` ``idle_ok``, as the result stage's start after the answers is
+  (``start_result_stage`` ``idle_ok``): a run judged idle between the wake and the retry no longer refuses it
+  (``attempt_inactive`` ``result_retry`` / ``run_idle``). Without ``idle_ok`` it still refuses an idle run.
 """
 from __future__ import annotations
 
@@ -71,6 +82,9 @@ from modules.flow_gate.services import graph_execution_hooks
 _log = logging.getLogger(__name__)
 
 INSTRUCTION_STAGE, RESULT_STAGE = "instruction", "result"
+# 0111 T-A1: the result writer's ends ``retry_result_stage`` writes again after its questions are answered.
+RETRYABLE_WRITE_FAILURES = ("no_result", "question_pending")
+QUESTION_PENDING = "question_pending"
 
 
 def _start_with_ai_invoke(job: dict) -> Any:
@@ -116,9 +130,10 @@ def needs_ai_dispatch(ctx, row: dict) -> bool:
     node = ctx.node_rows.get(row["node_key"]) or {}
     # An explicit command may retry a result writer that ended without its result.
     # Hold, live executions and registered results still prevent a new dispatch.
+    # 0111 T-A1: not one whose questions are still open (``question_pending``) — its answers retry it once.
     if card_settings_ports.uses_ai(ctx.flow_id, node) \
             and row["node_key"] not in (graph_execution_hooks.call("held_nodes", ctx.flow_id) or ()) \
-            and graph_execution_hooks.call("write_failure", row):
+            and graph_execution_hooks.call("write_failure", row) not in (None, "", QUESTION_PENDING):
         return True
     return (row["status"] == "open" and row.get("stage") is None and row.get("result_doc_id") is None
             and node.get("assignee_kind") is None
@@ -190,7 +205,7 @@ def start_ai(job: dict) -> None:
     try:
         if _ai_starter is None:
             raise RuntimeError("no AI starter wired for Graph nodes")
-        if job.get("stage") == INSTRUCTION_STAGE:
+        if job.get("stage") == INSTRUCTION_STAGE and not job.get("instruction_retry"):
             started = _instruction_job(job)
             if started is None:
                 return                                      # written already: the result stage took over
@@ -339,25 +354,32 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
 
 
 def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str, project_id: Optional[str] = None, *,
-                       attempt_id: Optional[str] = None) -> bool:
+                       attempt_id: Optional[str] = None, idle_ok: bool = False,
+                       defer: Optional[list] = None) -> bool:
     """flowgate.v02.0063: the node's result writer ended with no result after asking questions, and they are answered
     now: its run AI writes the result again on the same attempt (a new execution, the instruction attached as at the
     result stage's start). Only a node still open in its result stage whose writer ended with no result
-    (``write_failure``) and that is not held moves on; ``attempt_id`` must still be the node's active attempt. True when
-    the AI start was requested (it runs after the guard)."""
+    (``write_failure``; 0111 T-A1: ``no_result`` or ``question_pending``) and that is not held moves on; ``attempt_id``
+    must still be the node's active attempt. True when the AI start was requested (it runs after the guard).
+    flowgate.v02.0111 T#3 (T-A2, NR flowgate.v02.0111.0003 §2 A-2): ``idle_ok`` — an idle run takes it too, for a caller
+    holding ``legacy.person_hold`` (the answers' continuation): a run judged idle between the wake and this retry is no
+    refusal, and the execution's request takes it back to running. ``defer``: the caller runs the AI start after its
+    hold."""
     from . import run_apply                                   # noqa: PLC0415 — run_apply imports this module
     from .flow_guard import with_flow_guard                   # noqa: PLC0415
 
     project = project_id or (db_groups.get_by_id(flow_id) or {}).get("project_id")
     jobs: list = []
+    refusal = {"idle_ok": True} if idle_ok else {}
 
     def body() -> None:
         row = _open_row(run_id, node_key)
         if row is None or row.get("stage") != RESULT_STAGE or row.get("result_doc_id"):
             return
-        if graph_execution_hooks.call("write_failure", row) != "no_result"                 or node_key in (graph_execution_hooks.call("held_nodes", flow_id) or ()):
+        if graph_execution_hooks.call("write_failure", row) not in RETRYABLE_WRITE_FAILURES \
+                or node_key in (graph_execution_hooks.call("held_nodes", flow_id) or ()):
             return
-        if graph_execution_hooks.call("node_refused", run_id, node_key, "result_retry", attempt_id):
+        if graph_execution_hooks.call("node_refused", run_id, node_key, "result_retry", attempt_id, **refusal):
             return
         ctx = run_apply.load_context(run_store.run_by_id(run_id), project, None, [])
         node = ctx.node_rows.get(node_key)
@@ -375,6 +397,71 @@ def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
         jobs.append(lambda: start_ai(job))
 
     with_flow_guard(flow_id, body)
+    if defer is not None:
+        defer.extend(jobs)
+        return bool(jobs)
+    for job in jobs:
+        job()
+    return bool(jobs)
+
+
+def retry_instruction_stage(flow_id: str, run_id: str, node_key: str, issued_to: str, asker_ai_run_id: Optional[str],
+                            target_doc_id: Optional[str] = None, project_id: Optional[str] = None, *,
+                            attempt_id: Optional[str] = None, defer: Optional[list] = None) -> bool:
+    """flowgate.v02.0111 T#2 (T-A1): the instruction stage's AI run ``asker_ai_run_id`` asked questions and they are
+    answered now, but its instruction is not written (or it ended asking, ``question_pending``): the instruction AI
+    writes it again on the same attempt — a new execution, never a new attempt. Inside the Flow guard, only once: the node
+    is still open in its instruction stage with no result; its active attempt has no requested / running execution and
+    its latest execution is the asker's instruction write, its questions all answered (``instruction_continuation_due``:
+    the same answers told twice find the first retry's execution and request nothing, an earlier asker answered again
+    after a later run of the stage finds that run's execution); and ``attempt_id`` may write, an idle run too (``node_refused``
+    ``idle_ok`` — the caller holds ``person_hold``). The job is the instruction AI's (the card's instruction AI, else its
+    run AI, else the assignee), ``action_scope`` edit into ``target_doc_id`` (else the instruction line's document) when
+    there is one, else new; ``_instruction_job``'s "written: approved without AI" shortcut is never taken — what the
+    asking run wrote never read the answers. ``defer``: the caller runs the AI start after its hold. True when it was
+    requested."""
+    from . import run_apply                                   # noqa: PLC0415 — run_apply imports this module
+    from .flow_guard import with_flow_guard                   # noqa: PLC0415
+
+    project = project_id or (db_groups.get_by_id(flow_id) or {}).get("project_id")
+    jobs: list = []
+
+    def body() -> None:
+        row = _open_row(run_id, node_key)
+        if row is None or row.get("stage") != INSTRUCTION_STAGE or row.get("result_doc_id"):
+            return
+        if not graph_execution_hooks.call("instruction_continuation_due", row, asker_ai_run_id):
+            return
+        if graph_execution_hooks.call("node_refused", run_id, node_key, "instruction_retry", attempt_id, idle_ok=True):
+            return
+        ctx = run_apply.load_context(run_store.run_by_id(run_id), project, None, [])
+        node = ctx.node_rows.get(node_key)
+        if node is None:
+            return
+        if node.get("node_type") == "custom":                 # handed out as ``dispatch_custom`` does
+            node = {**node, "doc_type": run_doc_type(node.get("node_type"), node.get("doc_type"))}
+        found = card_settings_ports.instruction_document(flow_id, node)
+        if not found.get("doc_type"):
+            return                                          # the card has no instruction stage any more
+        plan = card_settings_ports.run_settings(flow_id, node)
+        provider = plan.get("provider_id") or node.get("assignee_provider_id")
+        tokens = run_store.token_ids(run_id, node_key)
+        job = _ai_job(ctx, node, plan, provider, issued_to, {"token_id": tokens[0] if tokens else None},
+                      INSTRUCTION_STAGE)
+        target = target_doc_id or found.get("doc_id")
+        if target:
+            run_store.set_stage(run_id, node_key, INSTRUCTION_STAGE, target)
+        stage = job.get("instruction") or {}
+        job.update(provider_id=stage.get("provider_id") or job["provider_id"], result_doc_type=found["doc_type"],
+                   action_scope="edit" if target else "new", target_doc_id=target,
+                   ref_doc_ids=[job["doc_ref"]] if target and job.get("doc_ref") else None, instruction_retry=True)
+        graph_execution_hooks.call("request_write", job)
+        jobs.append(lambda: start_ai(job))
+
+    with_flow_guard(flow_id, body)
+    if defer is not None:
+        defer.extend(jobs)
+        return bool(jobs)
     for job in jobs:
         job()
     return bool(jobs)

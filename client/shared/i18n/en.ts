@@ -3976,8 +3976,13 @@ export default {
         base: 'Base',
         internal_slot: 'Internal · in use',
         remote_only: 'Remote only · read-only',
+        internal_attempt: 'Internal attempt · locked',
+        external_worktree: 'External worktree · locked',
       },
       delete_blocked: {
+        branch_is_internal_attempt: 'An internal attempt branch cannot be deleted.',
+        internal_attempt: 'An internal attempt branch cannot be deleted.',
+        external_worktree: 'An external worktree branch cannot be deleted.',
         branch_not_found: 'Branch was not found.',
         branch_is_base: 'The base branch cannot be deleted.',
         branch_is_internal_slot: 'A registered group worktree branch cannot be deleted.',

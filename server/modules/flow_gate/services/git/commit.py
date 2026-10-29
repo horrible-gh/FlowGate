@@ -479,12 +479,17 @@ def _attempt_skip(reason: str, artifacts=None) -> dict:
 
 
 def create_attempt_commit(project_id: str, wt_path: Path, branch: str, input_commit: str,
-                          attempt_id: str, doc_id: str, subject: str) -> dict:
+                          attempt_id: str, doc_id: str, subject: str, *, ref: Optional[str] = None) -> dict:
     """0061 T#8: only the supplied attempt worktree; W, never the group's G.
 
     The Graph caller freezes execution requests and token writes before entering.
     A commit trailer recovers the Git-before-DB crash window without another commit.
     Unexpected history is refused rather than attributed to this attempt.
+
+    0111 T#8: ``ref`` is a ref-layout attempt's dedicated ref (``branch`` is then only
+    its W key): the tree's HEAD must be detached at the ref or ahead of it, and the
+    verified result (a new or a recovered commit) moves the ref (``update-ref`` from
+    the tip read under W). A ref left behind by a lost update is moved on the retry.
     """
     from modules.flow_gate.services import git_service as _gs
     from . import lock_manager
@@ -501,15 +506,32 @@ def create_attempt_commit(project_id: str, wt_path: Path, branch: str, input_com
         key = outcome.lock_key
         if not wt_path.is_dir() or not _gs._worktree_link_ok(wt_path):
             return _attempt_skip("no_worktree")
-        actual = _gs._run_git(["symbolic-ref", "--short", "HEAD"], cwd=wt_path)
-        if actual.returncode or actual.stdout.strip() != branch:
-            return _attempt_skip("attempt_branch_mismatch")
+        tip = None
+        if ref is None:
+            actual = _gs._run_git(["symbolic-ref", "--short", "HEAD"], cwd=wt_path)
+            if actual.returncode or actual.stdout.strip() != branch:
+                return _attempt_skip("attempt_branch_mismatch")
+        else:
+            detached = _gs._run_git(["symbolic-ref", "-q", "HEAD"], cwd=wt_path)
+            tip = _gs._rev_parse(wt_path, ref + "^{commit}")
+            if detached.returncode != 1 or not tip:
+                return _attempt_skip("attempt_ref_mismatch")
         # Input must be the exact pinned commit, not a caller-supplied moving ref.
         if not re.fullmatch(r"[0-9a-f]{40,64}", input_commit or ""):
             return _attempt_skip("attempt_input_invalid")
         head = _gs._rev_parse(wt_path, "HEAD")
         if not head:
             return _attempt_skip("head_verification_failed")
+        if tip is not None and tip != head and not _gs._is_ancestor(wt_path, tip, head):
+            return _attempt_skip("attempt_ref_mismatch")
+
+        def moved(result: dict) -> dict:
+            # T#8: the ref follows the verified result; a skip keeps it where it was.
+            sha = result.get("commit_sha")
+            if tip is None or not result.get("committed") or not sha or sha == tip:
+                return result
+            proc = _gs._run_git(["update-ref", "-m", "flowgate: attempt commit", ref, sha, tip], cwd=wt_path)
+            return result if proc.returncode == 0 else _attempt_skip("attempt_ref_update_failed")
         trailer = (f"FlowGate-Attempt: {attempt_id}\n"
                    f"FlowGate-Input: {input_commit}\n"
                    f"FlowGate-Document: {doc_id}")
@@ -522,12 +544,12 @@ def create_attempt_commit(project_id: str, wt_path: Path, branch: str, input_com
             listing = _gs._run_git(["diff", "--name-only", "-z", input_commit, head], cwd=wt_path)
             if listing.returncode:
                 return _attempt_skip("head_verification_failed")
-            return {"committed": True, "commit": head[:7], "commit_sha": head,
-                    "subject": message.stdout.splitlines()[0], "skipped_reason": None,
-                    "excluded_artifacts": [], "committed_paths": sorted(filter(None, listing.stdout.split("\0"))),
-                    "recovered": True}
-        return _commit_worktree(wt_path, subject, cfg, attempt_id,
-                                body=trailer, expected_parent=input_commit)
+            return moved({"committed": True, "commit": head[:7], "commit_sha": head,
+                          "subject": message.stdout.splitlines()[0], "skipped_reason": None,
+                          "excluded_artifacts": [], "committed_paths": sorted(filter(None, listing.stdout.split("\0"))),
+                          "recovered": True})
+        return moved(_commit_worktree(wt_path, subject, cfg, attempt_id,
+                                      body=trailer, expected_parent=input_commit))
     except Exception:
         _log.warning("attempt commit failed for %s", attempt_id, exc_info=True)
         return _attempt_skip("commit_failed")

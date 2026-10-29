@@ -952,6 +952,7 @@ async function fetchGitFin() {
   gitTargetBranch.value = fallbackTarget
   try {
     const catalog = await getRequest<any>(`/api/v1/projects/${props.projectId}/git/branches`)
+    // Only ordinary branches are targets; internal_attempt and external_worktree stay locked.
     gitTargetCandidates.value = (catalog.data.branches || [])
       .filter((branch: any) => (branch.kind === 'local' || branch.kind === 'base') && branch.name !== state.branch)
       .map((branch: any) => branch.name)

@@ -465,7 +465,7 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
         asked = question_nodes(row["run_id"], flow_id)
     dispatch = dispatch_block(row)
     failure = graph_execution_hooks.call("write_failure", row)
-    if failure and dispatch is not None:
+    if failure and failure != "question_pending" and dispatch is not None:   # 0111 T-A1: a question wait, no error
         dispatch = {**dispatch, "error_code": failure}
     awaiting = node_approval.awaiting_approval(flow_id, row)
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),

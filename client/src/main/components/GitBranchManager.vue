@@ -321,7 +321,7 @@ import { useAiProviderStore } from '../stores/aiProvider'
 
 interface BranchRow {
   name: string
-  kind: 'local' | 'base' | 'internal_slot' | 'remote_only'
+  kind: 'local' | 'base' | 'internal_slot' | 'internal_attempt' | 'external_worktree' | 'remote_only'
   can_delete: boolean
   delete_blocked_reason?: string | null
   can_be_create_source: boolean
@@ -416,7 +416,7 @@ const deleteResult = ref<{ branch: string; code?: string; message?: string } | n
 const showBranches = computed(() => props.view === 'all' || props.view === 'branches')
 const showManage = computed(() => props.view === 'all' || props.view === 'manage')
 const ordinary = computed(() => (catalog.value.branches || []).filter(b => b.kind === 'local' || b.kind === 'base'))
-const createCandidates = computed(() => (catalog.value.branches || []).filter(b => b.can_be_create_source && b.kind !== 'remote_only'))
+const createCandidates = computed(() => (catalog.value.branches || []).filter(b => b.can_be_create_source && (b.kind === 'local' || b.kind === 'base')))
 // flowgate.default.0635 T0005: Source/Target merge selection includes both ordinary branches
 // and registered group worktrees (kind=internal_slot with connected_group_id).
 const mergeCandidates = computed(() =>
@@ -437,18 +437,18 @@ const mergeSummaryText = computed(() => {
 })
 // Protected branches stay pickable so the zone can say WHY they cannot go; the
 // delete button itself follows the server's can_delete verdict only.
-const deleteCandidates = computed(() => (catalog.value.branches || []).filter(b => b.kind !== 'remote_only'))
+const deleteCandidates = computed(() => (catalog.value.branches || []).filter(b => b.kind === 'local' || b.kind === 'base' || b.kind === 'internal_slot'))
 const selectedDelete = computed(() => deleteCandidates.value.find(b => b.name === deleteTarget.value) || null)
 
 function canBeTarget(branch: BranchRow): boolean {
-  return branch.kind !== 'remote_only' && branch.kind !== 'internal_slot' && branch.name !== catalog.value.default_merge_target
+  return (branch.kind === 'local' || branch.kind === 'base') && branch.name !== catalog.value.default_merge_target
 }
 function kindLabel(branch: BranchRow): string {
   return t(`main.git_branch_manager.kind.${branch.kind}`)
 }
 function kindBadgeClass(branch: BranchRow): string {
   if (branch.kind === 'internal_slot') return 'badge-yellow'
-  if (branch.kind === 'remote_only') return 'badge-muted'
+  if (branch.kind === 'remote_only' || branch.kind === 'internal_attempt' || branch.kind === 'external_worktree') return 'badge-muted'
   if (branch.kind === 'base') return 'badge-blue'
   return ''
 }

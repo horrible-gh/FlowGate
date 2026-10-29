@@ -746,6 +746,9 @@ def _dispatch_responder_for_chain(ctx: dict, *, trigger: str) -> Optional[dict]:
         doc=doc, item=item, issued_to=ctx.get("issued_to"),
         api_base_url=ctx.get("api_base_url"), provider_id=provider_id,
         provider_source=source, actor_user_id=ctx.get("issued_to"),
+        # Keep 0110's reviewer -> selected header -> enabled defaults ordering
+        # for startup fallback too, after the resolved head fails (0111 T-A3).
+        responder_candidates=[(ctx.get("base_provider_id"), review.QUESTION_RESPONDER_SOURCE_HEADER)],
     )
     logger.info(
         "question responder (%s) dispatched run=%s item=%s seq=%s provider=%s (%s) for "

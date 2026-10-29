@@ -249,7 +249,8 @@ def test_delete_blocks_unregistered_linked_worktree_and_prunable_until_pruned(re
     assert added.returncode == 0
 
     rows = {row["name"]: row for row in git_service.list_branches("flowgate")["branches"]}
-    assert rows["linked-worktree"]["kind"] == "local"
+    assert rows["linked-worktree"]["kind"] == "external_worktree"
+    assert rows["linked-worktree"]["can_be_create_source"] is False
     assert rows["linked-worktree"]["can_delete"] is False
     assert rows["linked-worktree"]["delete_blocked_reason"] == "branch_checked_out_in_worktree"
 

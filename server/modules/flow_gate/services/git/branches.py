@@ -54,6 +54,73 @@ def internal_slot_owner(project_id: str, branch_name: str) -> Optional[dict]:
     return None
 
 
+def _attempt_branch_names(project_id: str) -> set[str]:
+    """0111 D-1b: ownership evidence, never a name-prefix heuristic.
+
+    The ledger also covers missing/broken markers and detached attempt branches;
+    valid owner markers cover a Git preparation not yet journaled. No cleanup here.
+    """
+    from modules.flow_gate.graph_workflow.store import run_store
+    from modules.flow_gate.services import git_service as _gs
+    from modules.flow_gate.storage.paths import project_dir_name
+    from . import merge_target
+    names = set()
+    store = run_store.get_store()
+    if store.table_exists("graph_node_attempts"):
+        for row in run_store._all(
+                "SELECT a.attempt_id FROM graph_node_attempts a JOIN graph_runs r ON r.run_id = a.run_id "
+                "JOIN groups g ON g.group_id = r.group_id WHERE g.project_id = ?", [project_id]):
+            names.add(merge_target.GRAPH_ATTEMPT_BRANCH_PREFIX + merge_target.workspace_key(row["attempt_id"]))
+    directory = _gs.get_storage_root() / "graph_attempts" / project_dir_name(project_id)
+    if directory.is_dir():
+        for child in directory.iterdir():
+            if not child.is_dir():
+                continue
+            marker = merge_target.read_owner_marker(child) or {}
+            attempt_id = marker.get("attempt_id")
+            if (marker.get("owner") != "graph_node_attempt" or marker.get("project_id") != project_id
+                    or not isinstance(attempt_id, str) or not attempt_id):
+                continue
+            key = merge_target.workspace_key(attempt_id)
+            expected = merge_target.GRAPH_ATTEMPT_BRANCH_PREFIX + key
+            if child.name == key and marker.get("branch") == expected:
+                names.add(expected)
+    return names
+
+
+_WORKTREE_REGISTRY_UNSET = object()
+
+
+def _resource_branch_kind(project_id: str, base_root: Path, name: str, *,
+                          worktrees=_WORKTREE_REGISTRY_UNSET, attempt_names=None,
+                          base_branch=None) -> Optional[str]:
+    from .merge_target import GRAPH_ATTEMPT_BRANCH_PREFIX
+    if name.startswith(GRAPH_ATTEMPT_BRANCH_PREFIX):
+        owned = _attempt_branch_names(project_id) if attempt_names is None else attempt_names
+        if name in owned:
+            return "internal_attempt"
+    entries = (_registered_worktrees_for_delete(base_root)
+               if worktrees is _WORKTREE_REGISTRY_UNSET else worktrees)
+    if entries is None:
+        # Unknown registration is not evidence that this is an ordinary branch.
+        # Base identity and ledger/marker ownership remain independently known.
+        base_branch = base_branch or _branch_context(project_id)[2]
+        return None if name == base_branch else "worktree_state_unknown"
+    for row in entries:
+        if row.get("branch") != name or Path(row["path"]).resolve() == base_root.resolve():
+            continue
+        # A registered merge-target workspace holds an ordinary user branch, not
+        # an external agent branch. Keep its existing merge/session guards.
+        from . import merge_target
+        managed = merge_target.workspace_dir(project_id, name) / merge_target.WORKSPACE_TREE
+        if Path(row["path"]).resolve() == managed.resolve():
+            verdict, _ = merge_target.inspect_workspace(project_id, name)
+            if verdict in ("busy", "stale"):
+                continue
+        return "external_worktree"
+    return None
+
+
 def validate_new_branch_name(
     project_id: str, base_root: Path, base_branch: str, name: str
 ) -> None:
@@ -92,6 +159,10 @@ def _validate_create_source(project_id: str, base_root: Path, source_branch: str
             {"connected_group_id": owner.get("group_id")},
         )
 
+    kind = _resource_branch_kind(project_id, base_root, source_branch)
+    if kind:
+        raise GitServiceError(409, "branch_source_" + kind, "resource branch cannot be a branch source")
+
 
 def _validate_merge_branch(
     project_id: str, base_root: Path, branch: str, role: str,
@@ -112,6 +183,10 @@ def _validate_merge_branch(
             f"registered group worktree branch cannot be the merge {role}",
             {"connected_group_id": owner.get("group_id")},
         )
+
+    kind = _resource_branch_kind(project_id, base_root, branch)
+    if kind:
+        raise GitServiceError(409, f"branch_merge_{role}_{kind}", "resource branch cannot be merged")
 
 
 @dataclass(frozen=True)
@@ -803,9 +878,6 @@ def create_branch(project_id: str, name: str, source_branch: str) -> dict:
         }
 
 
-_WORKTREE_REGISTRY_UNSET = object()
-
-
 def _registered_worktrees_for_delete(base_root: Path) -> Optional[list[dict]]:
     """Return Git worktree registrations relevant to branch deletion.
 
@@ -872,6 +944,9 @@ def _delete_guard(
     owner = internal_slot_owner(project_id, name)
     if owner is not None:
         return "branch_is_internal_slot", {"connected_group_id": owner.get("group_id")}
+    from .merge_target import GRAPH_ATTEMPT_BRANCH_PREFIX
+    if name.startswith(GRAPH_ATTEMPT_BRANCH_PREFIX) and name in _attempt_branch_names(project_id):
+        return "branch_is_internal_attempt", {}
     # T0016 §6.1: the branch currently pinned as this project's merge-target
     # suggestion cannot be deleted out from under it — it must be retargeted
     # or cleared (mt.set_project_default_target) first, same as base/internal
@@ -931,6 +1006,7 @@ def check_branch_delete(project_id: str, name: str) -> Optional[str]:
 _DELETE_ERRORS = {
     "branch_not_found": (404, "local branch was not found"),
     "branch_is_base": (409, "base branch cannot be deleted"),
+    "branch_is_internal_attempt": (409, "Graph attempt branch cannot be deleted"),
     "branch_is_internal_slot": (409, "registered group worktree branch cannot be deleted"),
     "branch_is_default_merge_target": (
         409, "branch set as the current integration target cannot be deleted",
@@ -1040,6 +1116,10 @@ def resolve_local_branch_ref(project_id: str, branch: str) -> tuple[Path, str]:
         if _gs._ref_exists(base_root, f"refs/remotes/origin/{branch}"):
             raise GitServiceError(409, "branch_read_remote_only", "remote-only branch is read-only")
         raise GitServiceError(404, "branch_not_found", "local branch was not found")
+    if branch != _base_branch and internal_slot_owner(project_id, branch) is None:
+        kind = _resource_branch_kind(project_id, base_root, branch)
+        if kind:
+            raise GitServiceError(409, "branch_read_" + kind, "resource branch is not an explorer branch")
     commit = _gs._rev_parse(base_root, f"refs/heads/{branch}")
     if not commit:
         raise GitServiceError(500, "git_error", "Git could not resolve the branch tip")
@@ -1151,11 +1231,21 @@ def list_branches(project_id: str) -> dict:
     # of spawning `git worktree list` once per row.
     worktrees = _registered_worktrees_for_delete(base_root)
 
+    from .merge_target import GRAPH_ATTEMPT_BRANCH_PREFIX
+    attempt_names = (_attempt_branch_names(project_id)
+                     if any(name.startswith(GRAPH_ATTEMPT_BRANCH_PREFIX) for name in locals_by_name) else set())
     branches = []
     for name in sorted(locals_by_name):
         owner = internal_slot_owner(project_id, name)
-        kind = "base" if name == base_branch else ("internal_slot" if owner else "local")
+        resource_kind = _resource_branch_kind(project_id, base_root, name, worktrees=worktrees,
+                                              attempt_names=attempt_names, base_branch=base_branch)
+        state_unknown = resource_kind == "worktree_state_unknown"
+        kind = "base" if name == base_branch else ("internal_slot" if owner else
+                "local" if state_unknown else resource_kind or "local")
+        can_be_source = kind in ("base", "local") and not state_unknown
         reason, _ = _delete_guard(project_id, name, worktrees=worktrees)
+        if kind in ("internal_attempt", "external_worktree") and reason is None:
+            reason = kind
         if reason is None:
             ahead_hint = _gs._ahead_of_base(base_root, base_branch, name)
             if ahead_hint is not None and ahead_hint > 0:
@@ -1169,10 +1259,9 @@ def list_branches(project_id: str) -> dict:
             "behind_base": behind,
             "can_delete": reason is None,
             "delete_blocked_reason": reason,
-            "can_be_create_source": kind != "internal_slot",
-            "create_source_blocked_reason": (
-                "internal_slot" if kind == "internal_slot" else None
-            ),
+            "can_be_create_source": can_be_source,
+            "create_source_blocked_reason": (None if can_be_source else
+                                             "worktree_state_unknown" if kind == "local" and state_unknown else kind),
             "has_remote_counterpart": name in remote_names,
         }
         if owner is not None:
@@ -1196,7 +1285,8 @@ def list_branches(project_id: str) -> dict:
     # surfaced only while it still names a real local branch (never a dangling
     # suggestion for a branch that was since deleted).
     suggested_target = (cfg or {}).get("default_merge_target")
-    default_merge_target = suggested_target if suggested_target in locals_by_name else None
+    allowed_targets = {row["name"] for row in branches if row["can_be_create_source"]}
+    default_merge_target = suggested_target if suggested_target in allowed_targets else None
     return {
         "ok": True,
         "base_branch": base_branch,

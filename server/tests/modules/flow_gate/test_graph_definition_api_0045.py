@@ -34,6 +34,33 @@ GRAPH_TABLES = ("graph_drafts", "graph_draft_nodes", "graph_draft_edges", "graph
                 "graph_revision_nodes", "graph_revision_edges", "graph_assignments", "graph_root_bindings")
 
 
+@pytest.fixture(autouse=True)
+def registered_card_ports(monkeypatch):
+    """Exercise production card lines without depending on an earlier startup lifespan."""
+    from flowgate.card_documents import integration
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+
+    # Restore any handlers an earlier suite installed when this test finishes.
+    monkeypatch.setattr(card_document_ports, "_handlers", {})
+    # Wire startup's required run ports while preserving the caller's registries.
+    from flowgate.graph_run import integration as graph_run
+    from modules.flow_gate.graph_workflow.services import run_state_ports
+    from modules.flow_gate.services import graph_execution_hooks, graph_source_hooks
+    monkeypatch.setattr(run_state_ports, "_handlers", dict(run_state_ports._handlers))
+    monkeypatch.setattr(graph_execution_hooks, "_handler", graph_execution_hooks._handler)
+    for attr in ("_handler", "_mutation_handler", "_fence_handler"):
+        monkeypatch.setattr(graph_source_hooks, attr, getattr(graph_source_hooks, attr))
+    graph_run.register()
+    from flowgate.graph_validation.run_scope import run_scope
+    from modules.flow_gate.graph_workflow.domain import run_scope_ports
+    monkeypatch.setattr(run_scope_ports, "_handler", run_scope)
+    integration.register()
+    try:
+        yield
+    finally:
+        integration.unregister()
+
+
 @pytest.fixture()
 def db_path():
     from modules.flow_gate.db import _SqliteDbAdapter
@@ -319,8 +346,11 @@ def test_s1_4_unassigned_canvas_shows_documents_and_editable_draft(env):
     assert body["view"] == {"mode": "draft", "revision_no": None, "draft_version": 1}
     assert body["graph"]["draft"]["confirmable"] is True and body["graph"]["latest_revision_no"] is None
     by_key = {n["node_key"]: n for n in body["nodes"]}
-    assert f"doc:{F51}.0001-R" in by_key
+    assert f"doc:{F51}.0001-R" not in by_key
     draft_node = by_key[km["tmp_r"]]
+    assert [(n["node_key"], line["slot"]) for n in body["nodes"]
+            for line in n.get("card_documents", []) if line.get("doc_id") == f"{F51}.0001-R"] == [
+        (km["tmp_r"], "requirement")]
     assert draft_node["origin"] == "draft_node" and draft_node["identity_source"] == "graph_node"
     assert draft_node["editable"] == {"move": True, "structure": True} and draft_node["state"] == "draft"
     assert draft_node["graph_node"]["root_bound"] is False and draft_node["kind"] == "requirement"

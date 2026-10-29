@@ -373,27 +373,40 @@ QUESTION_RESPONDER_SOURCE_HEADER = "header"
 QUESTION_RESPONDER_SOURCE_DEFAULT = "default"
 
 
+def question_responder_candidates(
+    project_id: Optional[str],
+    asker_provider_id: Optional[str],
+    candidates: list[tuple[Optional[str], str]],
+) -> list[tuple[str, str]]:
+    """0111 T-A3: the 0110 independent picks in order, each enabled provider once.
+
+    This is also the bounded startup fallback chain; unknown asker provenance yields
+    no candidates. Reviewer/header precedence and the enabled default order are unchanged.
+    """
+    if not asker_provider_id:
+        return []
+    chain = _enabled_provider_chain(project_id)
+    enabled = {provider.get("id") for provider in chain}
+    seen: set[str] = set()
+    result: list[tuple[str, str]] = []
+    for provider_id, source in [
+        *candidates,
+        *((provider.get("id"), QUESTION_RESPONDER_SOURCE_DEFAULT) for provider in chain),
+    ]:
+        if provider_id and provider_id != asker_provider_id and provider_id in enabled and provider_id not in seen:
+            seen.add(provider_id)
+            result.append((provider_id, source))
+    return result
+
+
 def independent_question_responder(
     project_id: Optional[str],
     asker_provider_id: Optional[str],
     candidates: list[tuple[Optional[str], str]],
 ) -> tuple[Optional[str], str]:
-    """Pick an enabled reviewer/default distinct from the actual asker, else wait for a person.
-
-    Unknown asker provenance cannot establish independence. Never return an unspecified
-    provider for dispatch: admission would otherwise select an unchecked default chain.
-    """
-    if not asker_provider_id:
-        return None, QUESTION_RESPONDER_SOURCE_DEFAULT
-    chain = _enabled_provider_chain(project_id)
-    enabled = {provider.get("id") for provider in chain}
-    for provider_id, source in [
-        *candidates,
-        *((provider.get("id"), QUESTION_RESPONDER_SOURCE_DEFAULT) for provider in chain),
-    ]:
-        if provider_id and provider_id != asker_provider_id and provider_id in enabled:
-            return provider_id, source
-    return None, QUESTION_RESPONDER_SOURCE_DEFAULT
+    """Pick an enabled reviewer/default distinct from the actual asker, else wait for a person."""
+    picks = question_responder_candidates(project_id, asker_provider_id, candidates)
+    return picks[0] if picks else (None, QUESTION_RESPONDER_SOURCE_DEFAULT)
 
 
 def resolve_question_responder_with_source(

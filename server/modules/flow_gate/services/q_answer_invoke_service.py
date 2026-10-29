@@ -413,12 +413,17 @@ def dispatch_answer_run(
     provider_id: Optional[str] = None,
     provider_source: Optional[str] = None,
     actor_user_id: Optional[str] = None,
+    responder_candidates: Optional[list[tuple[Optional[str], str]]] = None,
 ) -> dict:
     """Issue the item-bound edit token and launch the answer run.
 
     Returns the ai_invoke_service.start_run payload (run_id / status / provider …).
     Raises HTTPException for admission failures (no provider, run already in progress),
     which the caller surfaces with the ai-invoke error envelope.
+
+    responder_candidates opts automatic dispatch into bounded independent startup
+    fallback, including when it is empty. None preserves the manual request policy:
+    use the explicit provider unchanged, with no startup fallback tail.
 
     0661 T0004 (F2/F3/F6): one responder per item at a time — an item whose 'dispatched'
     run is still live is refused with `question_responder_in_progress` before admission
@@ -441,6 +446,54 @@ def dispatch_answer_run(
             "message": "An AI responder is already answering this question.",
             "run_id": live_run_id,
         })
+
+    # Only automatic callers supply responder_candidates (an empty list opts in
+    # without extra priority candidates). The Q&A panel's explicit provider keeps
+    # admission's existing single-provider selection and unavailable-provider error.
+    startup_policy = None
+    if responder_candidates is not None:
+        # 0111 T-A3: retain the 0110 pick as the head, then walk only independent
+        # enabled defaults. One claimed run/lease owns this finite startup chain: no new
+        # dispatch at finalization, no event replay can restart a failed question.
+        from modules.flow_gate.services.ai_invoke import review
+
+        row = _item_row(item_id) or item
+        asker_view = item.get("asker_provider") or {}
+        asker_provider_id = row.get("asker_actual_provider_id") or asker_view.get("ai_provider_id")
+        if not asker_provider_id:
+            # Legacy questions may predate the immutable provider snapshot. The actual
+            # asking run (never its requested/header provider) is the same 0110 fallback
+            # used by question_wait and the parked-chain dispatcher.
+            asker_run_id = row.get("asker_ai_run_id") or asker_view.get("ai_run_id")
+            if asker_run_id:
+                try:
+                    from modules.flow_gate.db import ai_invoke_runs
+                    asker_provider_id = (ai_invoke_runs.get(asker_run_id) or {}).get("provider_id")
+                except Exception:
+                    logger.warning("q-answer asker run unreadable for item %s", item_id, exc_info=True)
+        if asker_provider_id:
+            picks = review.question_responder_candidates(
+                project_id, asker_provider_id,
+                [(provider_id, provider_source or "default"), *responder_candidates],
+            )
+            if not picks:
+                exc = HTTPException(status_code=409, detail={
+                    "code": "no_independent_responder",
+                    "message": "No independent enabled responder; awaiting a human answer.",
+                })
+                _record_dispatch_failure(item_id, exc, actor_user_id or issued_to)
+                raise exc
+            provider_id, provider_source = picks[0]
+
+            def may_fallback() -> bool:
+                fresh = _item_row(item_id)
+                return bool(
+                    fresh and not int(fresh.get("answer_count") or 0)
+                    and fresh.get("responder_state") == db_question_items.RESPONDER_DISPATCHED
+                    and fresh.get("responder_run_id") == run_holder["run_id"]
+                )
+
+            startup_policy = {"provider_ids": [pid for pid, _source in picks], "may_fallback": may_fallback}
 
     # Baseline BEFORE the worker starts, so the oracle only credits this run's answer.
     baseline = _ai_answer_count(item_id)
@@ -490,6 +543,7 @@ def dispatch_answer_run(
             provider_id=provider_id,
             issue_builder=_issue,
             completion_oracle=_make_oracle(item_id, baseline, run_holder),
+            responder_startup_policy=startup_policy,
         )
     except HTTPException as exc:
         if run_holder["run_id"] is None:

@@ -414,7 +414,13 @@ def _merge(row: dict) -> tuple[str, object]:
         if git._dirty(root, include_untracked=False):
             return FAILED, "group_worktree_dirty"
         _directory, _root, attempt_branch = workspace.location(row, project_id)
-        subject = f"Merge branch '{attempt_branch}' into {group_branch}"
+        # 0111 T#8: the result commit is merged by its SHA in either layout; a ref-layout attempt has no branch to name.
+        attempt_ref = workspace.attempt_head(row, project_id)
+        if attempt_ref:
+            attempt_branch = attempt_ref
+            subject = f"Merge attempt ref '{attempt_ref}' into {group_branch}"
+        else:
+            subject = f"Merge branch '{attempt_branch}' into {group_branch}"
         try:
             files = branches.merge_no_ff(root, result, subject + "\n\n" + _trailer(row),
                                          attempt_branch, group_branch)

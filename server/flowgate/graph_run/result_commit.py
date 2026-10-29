@@ -72,9 +72,11 @@ def commit_result(attempt_id: str, doc_id: str) -> dict:
                 "integration_reason = 'result_commit' WHERE attempt_id = ? AND status = 'active'",
                 [attempt_id])
         fencing.guarded(flow_id, reserve)
+        # 0111 T#8: a ref-layout attempt commits on its detached tree and moves its dedicated ref.
+        ref = workspace.attempt_head(row, project_id)
         outcome = git_commit.create_attempt_commit(
             project_id, root, branch, row["input_commit"], attempt_id, doc_id,
-            tr_commit_service.commit_subject(doc))
+            tr_commit_service.commit_subject(doc), **({"ref": ref} if ref else {}))
         reason = outcome.get("skipped_reason")
         if not outcome.get("committed") and reason not in ("no_changes", "artifacts_only"):
             def failed():

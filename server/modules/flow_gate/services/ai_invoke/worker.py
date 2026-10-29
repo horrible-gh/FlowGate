@@ -524,7 +524,13 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
     """
     started_ok = False
     last_reason = None
+    policy = run.get("responder_startup_policy")
     for index, provider in enumerate(chain):
+        # 0111 T-A3: one run keeps its item claim and group lease across startup
+        # candidates. An answer, hand-off, lost claim, pause/cancel or deadline ends
+        # the walk; it never schedules a second Graph stage or responder run.
+        if policy and (run.get("timed_out") or run.get("pause_requested") or not policy["may_fallback"]()):
+            break
         # Count the initial launch as attempt 1 as well as later fallback launches.
         run["attempt_no"] = len(run["fallback_history"]) + 1
         if run["cancel_event"].is_set():
@@ -548,6 +554,8 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
                 "hop_item_seq": run.get("hop_item_seq"),
             })
 
+        if policy and index > 0:
+            _reset_attempt_state(run)
         provider_prompt = _provider_prompt(run, provider, prompt)
         if provider.get("exec_type") == "api":
             from modules.flow_gate.services import graph_execution_hooks
@@ -557,6 +565,15 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
         else:
             classification, detail = _svc()._cli_execute(provider, provider_prompt, run)
 
+        if classification == "started_ok" and policy:
+            # Output zero is a startup failure only while this run still owns an
+            # unanswered item. Real text without an answer is a content failure and
+            # retains the existing no_answer_registered policy.
+            if (not run.get("cancel_event").is_set() and not run.get("timed_out")
+                    and not run.get("pause_requested") and policy["may_fallback"]()
+                    and not run.get("last_message_received") and not run.get("last_message")
+                    and not run.get("stdout_tail")):
+                classification, detail = "zero_output", "Responder exited without output or an answer."
         if classification == "started_ok":
             started_ok = True
             break
