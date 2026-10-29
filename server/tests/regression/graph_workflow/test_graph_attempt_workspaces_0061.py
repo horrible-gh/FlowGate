@@ -221,6 +221,8 @@ def test_creation_failure_invalidates_only_its_attempt(repo, monkeypatch, other_
     directory, _root, branch = workspace.location(row, PROJECT)
     assert not directory.exists()
     assert not workspace.git._ref_exists(repo.group, "refs/heads/" + branch)
+    # 0111 T#8: the ref a new attempt took before its failed worktree add goes with it.
+    assert not workspace.git._ref_exists(repo.group, workspace.ATTEMPT_REF_PREFIX + directory.name)
     assert json.loads(run_store.events("run")[-1]["payload_json"])["reason"] == "worktree_add_failed"
 
 
@@ -435,12 +437,15 @@ def _draft_token(item, monkeypatch):
     return token
 
 
+@pytest.mark.parametrize("layout", [workspace.REF_LAYOUT, workspace.BRANCH_LAYOUT])
 @pytest.mark.parametrize("entry", ["edit", "draft"])
-def test_mapped_token_self_check_runs_in_attempt_root(repo, selfcheck, monkeypatch, entry):
+def test_mapped_token_self_check_runs_in_attempt_root(repo, selfcheck, monkeypatch, entry, layout):
     """0110 T#3 (NR0003 §3 T-B): a mapped token's Self-check is admitted (no graph_attempt_source_unsupported), runs
     with its attempt root as worktree and cwd, holds the Group's G and the attempt's W, and records attempt_id /
-    input_commit / the attempt tree's HEAD on the run row. The group worktree is never resolved."""
+    input_commit / the attempt tree's HEAD on the run row. The group worktree is never resolved. 0111 T#8: the same
+    in both layouts; a ref-layout tree's HEAD is detached (no branch), the W key is the attempt's either way."""
     sc = tr_self_check_service
+    monkeypatch.setattr(workspace, "NEW_LAYOUT", layout)
     item = repo.new()
     root = prepare(item)
     (root / "value.txt").write_text("attempt edit", encoding="utf-8")
@@ -461,8 +466,8 @@ def test_mapped_token_self_check_runs_in_attempt_root(repo, selfcheck, monkeypat
     finished = selfcheck.finished[0]
     assert finished.root == root.resolve() and finished.cwd == root.resolve()
     assert finished.before["head"] == input_commit
-    assert finished.before["branch"] == workspace.location(workspace.attempt(item.attempt), PROJECT)[2]
-    branch = finished.before["branch"]
+    branch = workspace.location(workspace.attempt(item.attempt), PROJECT)[2]
+    assert finished.before["branch"] == (None if layout == workspace.REF_LAYOUT else branch)
     assert repo.lock_calls[calls_before:] == [("G", None), ("W", branch)]
     assert finished.attempt_lock == ("W", branch)
     assert finished.spawned is not None and finished.spawned.is_set()     # the request waited for the spawn

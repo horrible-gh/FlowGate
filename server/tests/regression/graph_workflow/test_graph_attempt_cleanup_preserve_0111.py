@@ -5,6 +5,10 @@ guard). Kept: ⓐ a modified tracked file, ⓑ an untracked file only, ⓒ a com
 running execution, ⓔ a failed status / rev-list (or a broken tree / owner marker) -- by the immediate cleanup and by
 ⓕ two server starts (``cleanup_finished``), each a ``cleanup_preserved`` event. Removed: ⓖ a clean tree with no
 commit of its own, ⓗ an integrated clean attempt, its result commit kept on the group branch.
+
+0111 T#8: every case runs in both attempt layouts (``layout``) -- the ``graph_attempt_*`` branch an attempt prepared
+before keeps, and the dedicated ``refs/flowgate/attempts/<key>`` ref with a detached tree a new one takes. ``item.head``
+is the ref the attempt's commits are on: a removal deletes it, a preservation keeps it.
 """
 import json
 from types import SimpleNamespace
@@ -16,6 +20,12 @@ from modules.flow_gate.graph_workflow.store import run_store
 from test_graph_attempt_workspaces_0061 import harness, repo, prepare, PROJECT  # noqa: F401 — the 0061 fixtures
 
 COMMIT = ("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit")
+
+
+@pytest.fixture(autouse=True, params=[workspace.BRANCH_LAYOUT, workspace.REF_LAYOUT])
+def layout(request, monkeypatch):
+    monkeypatch.setattr(workspace, "NEW_LAYOUT", request.param)
+    return request.param
 
 
 def _git(cwd, *args):
@@ -33,8 +43,14 @@ def _attempt(repo, *, status="invalidated", live=False):
     repo.db._execute("UPDATE graph_node_attempts SET status=?, invalidated_reason=? WHERE attempt_id=?",
                      [status, "card_recovery" if status == "invalidated" else None, item.attempt])
     item.directory, _root, item.branch = workspace.location(workspace.attempt(item.attempt), PROJECT)
+    item.head = _head_of(item)
     item.at = lambda *args: _git(item.root, *args)
     return item
+
+
+def _head_of(item):
+    """T#8: the attempt's own ref, read from its owner marker while it is there."""
+    return workspace.attempt_head(workspace.attempt(item.attempt), PROJECT) or "refs/heads/" + item.branch
 
 
 def _preserved(repo, attempt_id):
@@ -49,7 +65,7 @@ def _modes(repo, attempt_id):
 
 
 def _branch(repo, item):
-    return workspace.git._ref_exists(repo.group, "refs/heads/" + item.branch)
+    return workspace.git._ref_exists(repo.group, item.head)
 
 
 def _kept(repo, item):
@@ -91,6 +107,12 @@ def _commit_on_another_attempt_only(repo, item, mp):
     _git(repo.group, "branch", workspace.merge_target.GRAPH_ATTEMPT_BRANCH_PREFIX + "other", item.at("rev-parse", "HEAD"))
 
 
+def _commit_on_another_attempt_ref_only(repo, item, mp):
+    """T#8: a ref of the new attempt namespace is another attempt's too -- it keeps nothing."""
+    _unique_commit(repo, item, mp)
+    _git(repo.group, "update-ref", workspace.ATTEMPT_REF_PREFIX + "other", item.at("rev-parse", "HEAD"))
+
+
 def _requested(repo, item, _mp):
     repo.db._execute("UPDATE graph_attempt_runs SET status='requested' WHERE exec_id=?", [item.execution])
 
@@ -124,6 +146,8 @@ KEPT = [
     ("b_untracked_only", _untracked_only, ("dirty", "status"), 3),
     ("c_unique_commit", _unique_commit, ("unpreserved_commits", "rev_list"), 3),
     ("c_commit_on_another_attempt_only", _commit_on_another_attempt_only, ("unpreserved_commits", "rev_list"), 3),
+    ("c_commit_on_another_attempt_ref_only", _commit_on_another_attempt_ref_only,
+     ("unpreserved_commits", "rev_list"), 3),
     ("d_requested", _requested, ("executing", "execution_active"), 3),
     ("d_running", _running, ("executing", "execution_active"), 3),
     ("e_status_fails", _status_fails, ("unverifiable", "status_failed"), 3),
@@ -201,7 +225,7 @@ def _integrated(repo, *, dirty=False):
     item.at(*COMMIT, "-m", "attempt result")
     result = item.at("rev-parse", "HEAD")
     repo.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-             "merge", "--no-ff", "-m", "integrate attempt", item.branch)
+             "merge", "--no-ff", "-m", "integrate attempt", result)
     repo.db._execute("UPDATE graph_node_attempts SET integration_status='integrated', result_commit=? "
                      "WHERE attempt_id=?", [result, item.attempt])
     if dirty:

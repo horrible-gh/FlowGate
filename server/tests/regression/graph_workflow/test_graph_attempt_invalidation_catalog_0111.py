@@ -16,16 +16,24 @@ from modules.flow_gate.services.git import branches
 from modules.flow_gate.services.git.credentials import GitServiceError
 from test_graph_attempt_workspaces_0061 import harness, repo, prepare, PROJECT, GROUP  # noqa: F401
 from test_graph_attempt_cleanup_preserve_0111 import (
-    KEPT, _preserved, _kept, _gone, _git, _integrated,
+    KEPT, _preserved, _kept, _gone, _git, _integrated, _head_of,
 )
 
 PATHS = ['card_recovery', 'lease_expired', 'worktree_failed', 'stop']
+
+
+@pytest.fixture(autouse=True)
+def branch_layout(monkeypatch):
+    """0111 T#8: these are the branch-layout (``graph_attempt_*``) catalog regressions -- an attempt prepared before
+    T#8 keeps its branch and stays ``internal_attempt``. The ref layout is test_graph_attempt_ref_namespace_0111."""
+    monkeypatch.setattr(workspace, 'NEW_LAYOUT', workspace.BRANCH_LAYOUT)
 
 
 def _item(repo):
     item = repo.new()
     item.root = prepare(item)
     item.directory, _, item.branch = workspace.location(workspace.attempt(item.attempt), PROJECT)
+    item.head = _head_of(item)
     item.at = lambda *args: _git(item.root, *args)
     return item
 

@@ -18,6 +18,15 @@ invalidated one does; the server start removes both (``cleanup_finished``). An a
 proves, under the Git locks, that the attempt's source is kept elsewhere; an attempt it cannot prove that for keeps its
 tree and branch and is a run event ``cleanup_preserved`` (``dirty`` / ``unpreserved_commits`` / ``unverifiable`` /
 ``executing``).
+
+0111 T#8 (D-1c): an attempt prepared from now on has no branch. Its commits live on the dedicated ref
+``refs/flowgate/attempts/<key>`` and its worktree is added with a detached HEAD (``worktree add --detach``), so no
+``refs/heads`` entry -- the branch catalog, an external Git UI's branch list -- ever shows it. The owner marker names
+that ``ref``; the tree is valid while its HEAD is detached at the ref or ahead of it on the attempt's own commits; the
+attempt commit moves the ref to its result; a removal deletes it (``update-ref -d``) after the same D-1a-0 check, which
+counts neither ``graph_attempt_*`` branches nor ``refs/flowgate/attempts/*`` refs as keeping a commit. An attempt
+prepared before keeps its ``graph_attempt_<key>`` branch (its marker names ``branch``) and is checked, committed and
+removed as it was: nothing is migrated or renamed.
 """
 from __future__ import annotations
 
@@ -42,6 +51,11 @@ EVENT = "graph_attempt_workspace"
 # 0061 T#7: ``graph_run_events.event_type`` admits only the run / node status events (migration 144), so the
 # attempt's workspace record is a run status event with the status unchanged, told by its cause.
 CAUSE = "attempt_workspace"
+# 0111 T#8: the two attempt layouts, told by the owner marker (``ref`` or ``branch``). A new preparation takes
+# ``NEW_LAYOUT``; the branch layout stays for the attempts prepared before (and the tests that rebuild them).
+ATTEMPT_REF_PREFIX = "refs/flowgate/attempts/"
+REF_LAYOUT, BRANCH_LAYOUT = "ref", "branch"
+NEW_LAYOUT = REF_LAYOUT
 
 
 def attempt(attempt_id):
@@ -51,6 +65,8 @@ def attempt(attempt_id):
 
 
 def location(row, project_id):
+    """(directory, tree, name): ``name`` is the attempt's W key in either layout and the branch of a branch-layout
+    attempt only (``attempt_head`` is the ref its commits are on)."""
     key = merge_target.workspace_key(row["attempt_id"])
     base = git.get_storage_root() / "graph_attempts"
     directory = base / project_dir_name(project_id) / key
@@ -62,17 +78,37 @@ def location(row, project_id):
     return directory, root, merge_target.GRAPH_ATTEMPT_BRANCH_PREFIX + key
 
 
-def _owner(row, project_id, branch):
-    return {"owner": "graph_node_attempt", "attempt_id": row["attempt_id"],
-            "project_id": project_id, "group_id": row["group_id"], "branch": branch}
+def _layout(marker):
+    return REF_LAYOUT if marker and "ref" in marker else BRANCH_LAYOUT
+
+
+def _head(marker, name):
+    """The ref the attempt's commits are on: the marker's dedicated ref, else the ``graph_attempt_*`` branch."""
+    return marker["ref"] if _layout(marker) == REF_LAYOUT else "refs/heads/" + name
+
+
+def _owner(row, project_id, name, layout):
+    owner = {"owner": "graph_node_attempt", "attempt_id": row["attempt_id"],
+             "project_id": project_id, "group_id": row["group_id"]}
+    if layout == REF_LAYOUT:
+        owner["ref"] = ATTEMPT_REF_PREFIX + merge_target.workspace_key(row["attempt_id"])
+    else:
+        owner["branch"] = name
+    return owner
 
 
 def _marker(row, project_id):
-    directory, root, branch = location(row, project_id)
+    directory, root, name = location(row, project_id)
     marker = merge_target.read_owner_marker(directory)
-    if not marker or any(marker.get(k) != v for k, v in _owner(row, project_id, branch).items()):
+    if not marker or any(marker.get(k) != v for k, v in _owner(row, project_id, name, _layout(marker)).items()):
         raise port.GraphSourceError("graph_worktree_unavailable", reason="owner_mismatch")
-    return directory, root, branch, marker
+    return directory, root, name, marker
+
+
+def attempt_head(row, project_id):
+    """0111 T#8: the dedicated ref of a ref-layout attempt (its commit moves it), None for a branch-layout one."""
+    marker = merge_target.read_owner_marker(location(row, project_id)[0])
+    return marker["ref"] if _layout(marker) == REF_LAYOUT and isinstance(marker.get("ref"), str) else None
 
 
 def _mode(row):
@@ -131,12 +167,33 @@ def _common_dir(root):
     return (root / result.stdout.strip()).resolve()
 
 
-def _validate_tree(root, branch, marker):
+def _validate_detached(root, ref, *, moving=False):
+    """0111 T#8: a ref-layout tree's HEAD is detached (``symbolic-ref -q`` answers 1, not a branch) at the attempt's
+    ref or ahead of it on commits of its own (made in the tree before the attempt commit records them, as a branch
+    would have followed). ``moving``: the Join is about to reset the tree under the Git locks, so where HEAD stands
+    is not judged, only that the ref exists."""
+    attached = git._run_git(["symbolic-ref", "-q", "HEAD"], cwd=root)
+    if attached.returncode != 1:
+        raise port.GraphSourceError("graph_worktree_unavailable", reason="ref_mismatch")
+    tip = git._rev_parse(root, ref + "^{commit}")
+    if not tip:
+        raise port.GraphSourceError("graph_worktree_unavailable", reason="ref_missing")
+    if moving:
+        return
+    head = git._rev_parse(root, "HEAD")
+    if not head or (head != tip and git._is_ancestor(root, tip, head) is not True):
+        raise port.GraphSourceError("graph_worktree_unavailable", reason="ref_mismatch")
+
+
+def _validate_tree(root, branch, marker, *, moving=False):
     if not root.is_dir() or not git._worktree_link_ok(root):
         raise port.GraphSourceError("graph_worktree_unavailable", reason="worktree_missing")
-    actual = git._run_git(["symbolic-ref", "--short", "HEAD"], cwd=root)
-    if actual.returncode or actual.stdout.strip() != branch:
-        raise port.GraphSourceError("graph_worktree_unavailable", reason="branch_mismatch")
+    if _layout(marker) == REF_LAYOUT:
+        _validate_detached(root, marker["ref"], moving=moving)
+    else:
+        actual = git._run_git(["symbolic-ref", "--short", "HEAD"], cwd=root)
+        if actual.returncode or actual.stdout.strip() != branch:
+            raise port.GraphSourceError("graph_worktree_unavailable", reason="branch_mismatch")
     if _common_dir(root) != Path(marker["common_dir"]).resolve():
         raise port.GraphSourceError("graph_worktree_unavailable", reason="repository_mismatch")
 
@@ -277,10 +334,11 @@ def _join(row, directory, root, branch, marker, group_root):
 
     reset(marker["input_commit"])
     final = {"input_commit": None}
+    into = marker["ref"] if _layout(marker) == REF_LAYOUT else branch
     for sha in marker["join_inputs"]:
-        message = (f"Merge join input {sha} into {branch}\n\n"
+        message = (f"Merge join input {sha} into {into}\n\n"
                    f"FlowGate-Attempt: {row['attempt_id']}\nFlowGate-Join-Input: {sha}")
-        files = branches.merge_no_ff(root, sha, message, sha, branch)
+        files = branches.merge_no_ff(root, sha, message, sha, into)
         if files:
             head = git._rev_parse(group_root, "HEAD^{commit}")
             if not head:
@@ -294,6 +352,10 @@ def _join(row, directory, root, branch, marker, group_root):
         final["input_commit"] = git._rev_parse(root, "HEAD")
         if not final["input_commit"]:
             raise port.GraphSourceError("graph_worktree_unavailable", reason="input_missing")
+    if _layout(marker) == REF_LAYOUT:
+        # T#8: the ref follows the reset / merges as the branch did (before the marker, so a retry starts over).
+        run(["update-ref", "-m", "flowgate: attempt join input", marker["ref"], final["input_commit"]],
+            "join_ref_update_failed")
     marker = {**{k: v for k, v in marker.items() if k != "join_inputs"}, **final}
     _write_marker(directory, marker)
     return marker
@@ -329,9 +391,11 @@ def _materialize(row, project_id):
         group_root = Path(group_root).resolve()
         marker = merge_target.read_owner_marker(directory)
         if marker is None:
-            if directory.exists() or git._ref_exists(group_root, "refs/heads/" + branch):
+            owner = _owner(row, project_id, branch, NEW_LAYOUT)
+            if directory.exists() or git._ref_exists(group_root, "refs/heads/" + branch) \
+                    or git._ref_exists(group_root, ATTEMPT_REF_PREFIX + merge_target.workspace_key(row["attempt_id"])):
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="workspace_occupied")
-            marker = {**_owner(row, project_id, branch), **_start(current, group_root),
+            marker = {**owner, **_start(current, group_root),
                       "repository": str(group_root), "common_dir": str(_common_dir(group_root))}
             if not marker.get("join_inputs"):
                 marker.pop("join_inputs", None)
@@ -345,16 +409,24 @@ def _materialize(row, project_id):
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="repository_mismatch")
         sha = marker["input_commit"]
         if not root.exists():
-            # Recovery can reuse an owned branch left by an interrupted worktree add (or an interrupted join).
-            exists = git._ref_exists(group_root, "refs/heads/" + branch)
-            if exists and not marker.get("join_inputs") and git._rev_parse(group_root, branch + "^{commit}") != sha:
+            # Recovery can reuse an owned branch / ref left by an interrupted worktree add (or an interrupted join).
+            head = _head(marker, branch)
+            exists = git._ref_exists(group_root, head)
+            if exists and not marker.get("join_inputs") and git._rev_parse(group_root, head + "^{commit}") != sha:
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="branch_occupied")
-            args = ["worktree", "add"]
-            args += [str(root), branch] if exists else ["-b", branch, str(root), sha]
+            if _layout(marker) == REF_LAYOUT:
+                # T#8: the ref first (only if absent), then the tree detached at it; no branch is created.
+                if not exists and git._run_git(["update-ref", "-m", "flowgate: attempt input", head, sha, ""],
+                                               cwd=group_root).returncode:
+                    raise port.GraphSourceError("graph_worktree_unavailable", reason="ref_create_failed")
+                args = ["worktree", "add", "--detach", str(root), head]
+            else:
+                args = ["worktree", "add"]
+                args += [str(root), branch] if exists else ["-b", branch, str(root), sha]
             proc = git._run_git(args, cwd=group_root)
             if proc.returncode:
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="worktree_add_failed")
-        _validate_tree(root, branch, marker)
+        _validate_tree(root, branch, marker, moving=bool(marker.get("join_inputs")))
         if marker.get("join_inputs"):
             marker = _join(current, directory, root, branch, marker, group_root)
     return marker["input_commit"]
@@ -505,18 +577,25 @@ def _unverifiable(exc):
                       or type(exc).__name__)
 
 
-def _unkept_commit(repo, branch):
-    """Under the Git locks: whether the attempt branch holds a commit no lasting ref reaches. Every ref counts
-    (group / user branches, tags, remotes, FlowGate's own refs) except the ``graph_attempt_*`` branches, which go
-    with their attempts; HEADs are not counted (an attempt worktree's HEAD is its own branch)."""
-    listed = git._run_git(["for-each-ref", "--format=%(objectname)", "refs/heads/" + branch], cwd=repo)
+def _tip(repo, head):
+    """Under the Git locks: the commit ``head`` (the attempt's branch or ref) points at, "" when it is absent."""
+    listed = git._run_git(["for-each-ref", "--format=%(objectname)", head], cwd=repo)
     if listed.returncode:
         raise _Preserved("unverifiable", "branch_unreadable")
-    tip = listed.stdout.strip()
-    if not tip:
+    return listed.stdout.strip()
+
+
+def _unkept_commit(repo, tips):
+    """Under the Git locks: whether the attempt's tips hold a commit no lasting ref reaches. Every ref counts
+    (group / user branches, tags, remotes, FlowGate's own refs) except the ``graph_attempt_*`` branches and, T#8, the
+    ``refs/flowgate/attempts/*`` refs, which go with their attempts; HEADs are not counted (a branch-layout tree's HEAD
+    is its own branch; a ref-layout tree's detached HEAD is passed in ``tips``)."""
+    tips = [tip for tip in dict.fromkeys(tips) if tip]
+    if not tips:
         return False
-    result = git._run_git(["rev-list", "--max-count=1", tip, "--not",
-                           "--exclude=refs/heads/" + merge_target.GRAPH_ATTEMPT_BRANCH_PREFIX + "*", "--glob=refs/*"],
+    result = git._run_git(["rev-list", "--max-count=1", *tips, "--not",
+                           "--exclude=refs/heads/" + merge_target.GRAPH_ATTEMPT_BRANCH_PREFIX + "*",
+                           "--exclude=" + ATTEMPT_REF_PREFIX + "*", "--glob=refs/*"],
                           cwd=repo)
     if result.returncode:
         raise _Preserved("unverifiable", "rev_list_failed")
@@ -527,9 +606,11 @@ def _kept_elsewhere(row, project_id):
     """0111 T#1 (D-1a-0), under the Git locks, before anything is removed: the owner marker, repository, registration
     and branch still match (else ``unverifiable``); the tree has no uncommitted or untracked change (``status
     --porcelain --untracked-files=all`` prints nothing; ignored files are not judged and go with the tree) and the
-    branch no commit only it holds. Returns what the removal needs; raises ``_Preserved`` otherwise."""
+    branch no commit only it holds. T#8: a ref-layout attempt the same way -- its registered tree detached (no branch),
+    its ref and its tree's HEAD the tips judged. Returns what the removal needs; raises ``_Preserved`` otherwise."""
     try:
         directory, root, branch, marker = _marker(row, project_id)
+        detached = _layout(marker) == REF_LAYOUT
         repo = Path(marker["repository"])
         if _common_dir(repo) != Path(marker["common_dir"]).resolve():
             raise _Preserved("unverifiable", "repository_mismatch")
@@ -537,8 +618,9 @@ def _kept_elsewhere(row, project_id):
         if registered is None:
             raise _Preserved("unverifiable", "worktree_list_failed")
         owned = [entry for entry in registered if Path(entry["path"]).resolve() == root.resolve()]
-        if any(entry["branch"] != branch for entry in owned):
-            raise _Preserved("unverifiable", "branch_mismatch")
+        if any(entry["branch"] != (None if detached else branch) for entry in owned):
+            raise _Preserved("unverifiable", "ref_mismatch" if detached else "branch_mismatch")
+        head, own_head = _head(marker, branch), None
         if owned:
             _validate_tree(root, branch, marker)
             status = git._run_git(["--no-optional-locks", "status", "--porcelain", "--untracked-files=all"],
@@ -547,12 +629,17 @@ def _kept_elsewhere(row, project_id):
                 raise _Preserved("unverifiable", "status_failed")
             if status.stdout.strip():
                 raise _Preserved("dirty", "status")
+            if detached:
+                own_head = git._rev_parse(root, "HEAD")
+                if not own_head:
+                    raise _Preserved("unverifiable", "head_unreadable")
         elif root.exists() and (git._worktree_link_ok(root) or any(root.iterdir())):
             # A tree Git no longer lists (a lost link, an interrupted add): what it holds cannot be told.
             raise _Preserved("unverifiable", "worktree_unregistered")
-        if _unkept_commit(repo, branch):
+        tip = _tip(repo, head)
+        if _unkept_commit(repo, [tip, own_head]):
             raise _Preserved("unpreserved_commits", "rev_list")
-        return directory, root, branch, repo, owned
+        return directory, root, branch, repo, owned, head, tip
     except port.GraphSourceError as exc:
         raise _unverifiable(exc) from None
 
@@ -592,7 +679,7 @@ def _cleanup(attempt_id):
             if run_store._one("SELECT exec_id FROM graph_attempt_runs WHERE attempt_id = ? "
                               "AND status IN ('requested', 'running')", [attempt_id]):
                 raise _Preserved("executing", "execution_active")
-            directory, root, branch, repo, owned = _kept_elsewhere(current, project_id)
+            directory, root, branch, repo, owned, head, tip = _kept_elsewhere(current, project_id)
             removing = True
             if owned:
                 result = git._run_git(["worktree", "remove", "--force", str(root)], cwd=repo)
@@ -600,7 +687,11 @@ def _cleanup(attempt_id):
                     return None
             elif root.exists() and not _force_rmtree(root):
                 return None
-            if git._ref_exists(repo, "refs/heads/" + branch):
+            if head.startswith(ATTEMPT_REF_PREFIX):
+                # T#8: the dedicated ref, only at the tip just judged (W and M are held; nothing else moves it).
+                if tip and git._run_git(["update-ref", "-d", head, tip], cwd=repo).returncode:
+                    return None
+            elif git._ref_exists(repo, head):
                 result = git._run_git(["branch", "-D", branch], cwd=repo)
                 if result.returncode:
                     return None
