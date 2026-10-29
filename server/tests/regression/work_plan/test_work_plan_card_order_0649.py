@@ -26,14 +26,20 @@ rolls back:
     with no deletion links it. A later move of the new card ahead of the started one is
     refused, a move behind it is allowed.
   * O6 — the materializer's step key comes from the row's card in its revision snapshot (G5).
+  * flowgate.v02.0112 — a paired design card (card_stage_model "paired") is poured as its
+    DS row and its result row; WP0005 rev 1 verbatim saves, saves again without duplicates,
+    and rows that break the card (another card's id, another type, reversed, missing) roll
+    back; a started DS row is not mistaken for another card's row.
   * CAS / execution — a stale workflow tag refuses the apply untouched; a change-apply asks
     the live run to re-resolve its run-to-end target; P1 leaves a sequence alone while the
     group's run works on a row that has no document yet.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -77,6 +83,13 @@ class _TxStore(_SqliteStore):
         self._conn.execute(sql, params or [])
         if self._depth == 0:
             self._conn.commit()
+
+    def table_exists(self, name: str) -> bool:
+        # The real store's sqlite answer (connection.table_exists). P1 asks it before it
+        # writes a v0.1 sequence: is the v0.2 Graph definition table there (0074 T#4)?
+        return self._fetch_one(
+            "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=?", [name],
+        ) is not None
 
     @contextmanager
     def transaction(self):
@@ -204,13 +217,18 @@ def _candidates(env: Env, plan: dict, mode: str) -> dict:
     return wpseq.build_candidates(doc=env.doc(), plan=plan, mode=mode)
 
 
-def _save_candidates(env: Env, candidate: dict, mode: str):
-    rows = [{k: row.get(k) for k in (
+def _sent_rows(candidate: dict) -> list[dict]:
+    """The rows the pour dialog sends back for ``candidate`` (card ids included)."""
+    return [{k: row.get(k) for k in (
         "type", "label", "note", "source_doc_id", "source_revision_no", "provider_id",
         "provider_display_name", "review_count", "reviewer_provider_id",
         "reviewer_provider_display_name", "pre_instruction_text", "pre_instruction_attachment",
         "source_wp_card_id", "item_id",
     ) if row.get(k) is not None} for row in candidate["rows"] if not row.get("protected")]
+
+
+def _save_candidates(env: Env, candidate: dict, mode: str):
+    rows = _sent_rows(candidate)
     return wds.edit_workflow_pending(
         _ROOT, rows, expected_workflow_tag=candidate["workflow_tag"],
         expected_plan={"wp_doc_id": _WP, "wp_revision_no": env.revision, "mode": mode},
@@ -772,6 +790,328 @@ def test_row_of_another_cards_type_rolls_the_save_back(env):
     assert raised.value.detail["reason"] == "report_type_mismatch"
     assert raised.value.detail["card_id"] == "c_t" and raised.value.detail["card_type"] == "T"
     order.assert_plan_order(_items(seq_id), plan, _WP, [])  # the untouched rows pass
+
+
+# ══ 0112 — a paired design card is two rows: DS + its result (NR0003 §5.4) ══
+#
+# plan_to_rows pours a paired design card (card_stage_model "paired") as its DS instruction
+# row and its L/P/DB result row, both of the card. The post-write check used to expect one
+# row of the card's type per card, so the first DS row failed card_type_mismatch and the
+# whole save rolled back. The body is flowgate.v02.0102.0005-WP rev 1, stored verbatim.
+
+_PAIRED_FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "work_plan_v02_0102_0005_rev1.json"
+_PAIRED_SHA256 = "13d9d09ca8705f25cf193774af9602ef5d5edac76e2069790e3f55d9f9d3c47a"
+_PAIRED_ROWS = [
+    ("DS", "L#1"), ("L", "L#1"), ("DS", "L#2"), ("L", "L#2"), ("DS", "L#3"), ("L", "L#3"),
+    ("DS", "DB#1"), ("DB", "DB#1"), ("DS", "P#1"), ("P", "P#1"),
+    *[(code, f"T#{n}") for n in range(1, 6) for code in ("T", "TR")],
+]
+
+
+def _paired_body() -> dict:
+    raw = _PAIRED_FIXTURE.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == _PAIRED_SHA256  # neither shortened nor edited
+    return json.loads(raw.decode("utf-8"))
+
+
+def _paired(env: Env, body: dict | None = None):
+    """The paired plan over a sequence whose first rows (another document's T/TR) ran."""
+    seq_id = _seed_rows([
+        {"type": "T", "label": "T", "result": DOC["T1"]},
+        {"type": "TR", "label": "TR", "result": DOC["TR1"]},
+    ])
+    return seq_id, env.plan(1, body or _paired_body())
+
+
+def _paired_saved(env: Env):
+    seq_id, plan = _paired(env)
+    _save_candidates(env, _candidates(env, plan, "replace_after"), "replace_after")
+    return seq_id, plan
+
+
+def _plan_rows(seq_id: int) -> list[dict]:
+    return [r for r in _items(seq_id) if r["source_doc_id"] == _WP]
+
+
+def _pairs(rows: list[dict]) -> list[tuple]:
+    return [(r["type"], r["source_wp_card_id"]) for r in rows]
+
+
+def _row_settings(row: dict) -> tuple:
+    return (row["type"], row["source_wp_card_id"], row["provider_id"], int(row["review_count"] or 0),
+            row["reviewer_provider_id"], row["note"], row["pre_instruction_text"])
+
+
+def _step_settings(step: dict) -> tuple:
+    return (step["type"], step["card_id"], step["provider_id"], int(step["review_count"] or 0),
+            step["reviewer_provider_id"], wpseq.normalize_note(step["note"]),
+            step["pre_instruction_text"])
+
+
+def test_paired_plan_pours_and_saves_ds_and_result_rows_of_each_design_card(env):
+    seq_id, plan = _paired(env)
+    before = _full(seq_id)
+    candidate = _candidates(env, plan, "replace_after")
+    assert candidate["blockers"] == []
+    assert candidate["plan_step_count"] == 15
+    assert _pairs([r for r in candidate["rows"] if r.get("poured")]) == _PAIRED_ROWS
+
+    _save_candidates(env, candidate, "replace_after")
+    after = _items(seq_id)
+    assert [_ident(r) for r in after[:2]] == [_ident(r) for r in before]  # the rows that ran
+    stored = _plan_rows(seq_id)
+    assert _pairs(stored) == _PAIRED_ROWS
+    # Each row keeps its own step's AI, review, note and brief: a DS instruction and its
+    # design result are two steps with two settings (body order is row order).
+    assert [_row_settings(r) for r in stored] == [_step_settings(s) for s in plan["steps"]]
+    assert {r["source_revision_no"] for r in stored} == {1}
+    _monotonic(seq_id)
+    order.assert_plan_order(_items(seq_id), plan, _WP, [])
+
+
+def test_paired_plan_saved_or_poured_again_makes_no_duplicate(env):
+    seq_id, plan = _paired_saved(env)
+    first = [_row_settings(r) for r in _plan_rows(seq_id)]
+
+    again = _candidates(env, plan, "replace_after")
+    assert again["blockers"] == []
+    assert _pairs([r for r in again["rows"] if r.get("poured")]) == _PAIRED_ROWS
+    assert again["row_count_change"]["deleted"] == len(_PAIRED_ROWS)  # the poured rows it replaces
+    _save_candidates(env, again, "replace_after")
+    assert [_row_settings(r) for r in _plan_rows(seq_id)] == first
+    assert len(_items(seq_id)) == 2 + len(_PAIRED_ROWS)
+    # append on top of them stays refused: the plan's rows are still pending (G7).
+    assert _candidates(env, plan, "append")["blockers"] == ["plan_rows_pending"]
+
+
+def test_paired_plan_rows_sent_without_card_ids_find_their_cards(env):
+    """A pre-card client: each DS row and each result row is placed by its own settings."""
+    seq_id, plan = _paired(env)
+    candidate = _candidates(env, plan, "replace_after")
+    _pour(env, _client_rows(candidate["rows"]), candidate["workflow_tag"])
+    assert _pairs(_plan_rows(seq_id)) == _PAIRED_ROWS
+
+    # Rows stating nothing but their type cannot be told apart: refused, not guessed.
+    before = _full(seq_id)
+    candidate = _candidates(env, plan, "replace_after")
+    bare = _client_rows(candidate["rows"], ("type", "label", "source_doc_id", "source_revision_no"))
+    with pytest.raises(order.PlanOrderViolation) as raised:
+        _pour(env, bare, candidate["workflow_tag"])
+    assert raised.value.detail["reason"] == "ambiguous_card"
+    assert _full(seq_id) == before
+
+
+def _ds_of_another_design_card(rows):
+    rows[0]["source_wp_card_id"] = "L#2"
+
+
+def _ds_of_a_t_card(rows):
+    rows[0]["source_wp_card_id"] = "T#1"
+
+
+def _result_type_changed(rows):
+    rows[1]["type"] = "P"
+
+
+def _result_type_changed_in_the_dialog(rows):
+    rows[1]["type"] = "P"  # the dialog drops the card of a row whose type a person changed
+    rows[1].pop("source_wp_card_id")
+
+
+def _ds_and_result_reversed(rows):
+    rows[0], rows[1] = rows[1], rows[0]
+
+
+def _result_missing(rows):
+    del rows[1]
+
+
+@pytest.mark.parametrize("break_rows, reason", [
+    (_ds_of_another_design_card, "result_not_after_instruction"),
+    (_ds_of_a_t_card, "card_type_mismatch"),
+    (_result_type_changed, "card_type_mismatch"),
+    (_result_type_changed_in_the_dialog, "row_without_card"),
+    (_ds_and_result_reversed, "result_not_after_instruction"),
+    (_result_missing, "result_count"),
+])
+def test_paired_rows_that_break_their_card_roll_the_save_back(env, break_rows, reason):
+    seq_id, plan = _paired_saved(env)
+    candidate = _candidates(env, plan, "replace_after")
+    rows = _sent_rows(candidate)
+    assert _pairs(rows[:2]) == [("DS", "L#1"), ("L", "L#1")]
+    before = _full(seq_id)
+    break_rows(rows)
+    with pytest.raises(order.PlanOrderViolation) as raised:
+        _pour(env, rows, candidate["workflow_tag"])
+    assert raised.value.detail["reason"] == reason
+    assert _full(seq_id) == before  # deleted and re-inserted rows rolled back
+
+
+def test_paired_layout_and_started_rows_pair_the_result_row_with_its_ds_row(env):
+    seq_id, plan = _paired_saved(env)
+    stored = _plan_rows(seq_id)
+    expected = {
+        row["source_wp_card_id"]: (row["id"], second["id"])
+        for row, second in zip(stored[0::2], stored[1::2])
+    }
+    items = _items(seq_id)
+    classification = cards.classify_rows(wp_doc=env.doc(), plan=plan, items=items)
+    layout = order.reorder_layout(plan, items, _WP, classification)
+    assert (layout["removed"], layout["interleaved"], layout["order_differs"]) == ([], [], False)
+    assert {
+        card_id: (picked["row"]["id"], (picked["report"] or {}).get("id"))
+        for card_id, picked in layout["cards"].items()
+    } == expected
+
+    db_wfseq.set_item_result_doc_id(stored[0]["id"], DOC["T2"])  # DS of L#1 ran
+    items = _items(seq_id)
+    classification = cards.classify_rows(wp_doc=env.doc(), plan=plan, items=items)
+    found = order.started_card_rows(items, classification)
+    assert {c: (x["row"]["id"], (x["report"] or {}).get("id")) for c, x in found.items()} == {
+        "L#1": expected["L#1"],
+    }
+
+
+@pytest.mark.parametrize("ds_doc", [DOC["T2"], f"{_GROUP}.0007-T"], ids=["done", "in_progress"])
+@pytest.mark.parametrize("result_started", [False, True], ids=["result_pending", "result_started"])
+def test_paired_card_whose_ds_row_started_is_poured_again_without_card_refusal_or_lost_result(
+    env, ds_doc, result_started,
+):
+    """No false card_identity_mismatch / order_conflicts_started for a started DS row. When
+    the card's result ran too, the pour saves and keeps both rows; when it has not, the pour
+    would drop the pending result row (nothing pours a started card again), so the save is
+    refused and rolled back rather than saved without that step."""
+    seq_id, plan = _paired_saved(env)
+    stored = _plan_rows(seq_id)
+    db_wfseq.set_item_result_doc_id(stored[0]["id"], ds_doc)
+    if result_started:
+        db_wfseq.set_item_result_doc_id(stored[1]["id"], DOC["T3"])
+    before = _full(seq_id)
+    started_rows = 2 + (2 if result_started else 1)  # the other document's T/TR + L#1's
+
+    classification = cards.classify_rows(wp_doc=env.doc(), plan=plan, items=_items(seq_id))
+    assert classification["started_card_ids"] == ["L#1"]
+    assert order.check_started_prefix(plan, classification, _items(seq_id)) is None
+    for mode in ("replace_after", "append"):
+        codes = {n["code"] for n in _candidates(env, plan, mode)["notifications"]}
+        assert not {"card_identity_mismatch", "order_conflicts_started"} & codes
+    candidate = _candidates(env, plan, "replace_after")
+    assert candidate["blockers"] == []
+    assert _pairs([r for r in candidate["rows"] if r.get("poured")]) == _PAIRED_ROWS[2:]
+
+    if not result_started:
+        with pytest.raises(order.PlanOrderViolation) as raised:
+            _save_candidates(env, candidate, "replace_after")
+        assert raised.value.detail["reason"] == "result_count"
+        assert (raised.value.detail["card_id"], raised.value.detail["started"]) == ("L#1", True)
+        assert _full(seq_id) == before  # the pending result row and its settings are kept
+        return
+
+    _save_candidates(env, candidate, "replace_after")
+    after = _items(seq_id)
+    assert [_ident(r) for r in after[:started_rows]] == [_ident(r) for r in before[:started_rows]]
+    assert _pairs(after[2:started_rows]) == [("DS", "L#1"), ("L", "L#1")]
+    assert _pairs(after[started_rows:]) == _PAIRED_ROWS[2:]
+    _monotonic(seq_id)
+
+
+@pytest.mark.xfail(strict=True, raises=order.PlanOrderViolation, reason=(
+    "0112 TR0006 Q529 (scope): a pending result row behind a started DS row is not protected "
+    "(db/workflow_sequences.protected_row_ids keeps only an automatic report) and the pour "
+    "skips started cards, so the save would drop it; assert_plan_order refuses that save "
+    "(result_count) until the row is kept -- a fix outside work_plan_card_order.py"
+))
+def test_paired_result_row_behind_a_started_ds_row_survives_a_pour(env):
+    seq_id, plan = _paired_saved(env)
+    stored = _plan_rows(seq_id)
+    db_wfseq.set_item_result_doc_id(stored[0]["id"], DOC["T2"])
+    _save_candidates(env, _candidates(env, plan, "replace_after"), "replace_after")
+    assert _pairs(_plan_rows(seq_id)) == _PAIRED_ROWS
+
+
+# Another plan of the same root. Card ids are per plan: its L#1 is not this plan's L#1.
+_WP_B = f"{_GROUP}.0009-WP"
+_WP_B_SQL = (
+    "INSERT OR IGNORE INTO documents(doc_id, project_id, module, group_id, type_code, seq, "
+    "title, status, doc_review_status, created_at, updated_at) VALUES "
+    f"('{_WP_B}', '{_PROJECT}', 'default', '{_GROUP}', 'WP', 9, 'plan b', 'open', 'approved', "
+    "datetime('now'), datetime('now'))"
+)
+
+
+def _foreign_l1_behind_started_ds(env: Env):
+    """This plan's DS of L#1 ran, and right behind it sits another plan's pending L row that
+    names that plan's own card L#1 (this plan's L#1 result row is not there)."""
+    seq_id, plan = _paired_saved(env)
+    stored = _plan_rows(seq_id)
+    db_wfseq.set_item_result_doc_id(stored[0]["id"], DOC["T2"])
+    env.store._execute(_WP_B_SQL)
+    env.store._execute(
+        "UPDATE workflow_sequence_items SET source_doc_id = ?, source_revision_no = ?, "
+        "note = ?, provider_id = ?, pre_instruction_text = ? WHERE id = ?",
+        [_WP_B, 3, "plan b note", "p2", "plan b brief", stored[1]["id"]],
+    )
+    return seq_id, plan, stored[1]["id"]
+
+
+def _foreign_state(seq_id: int) -> list[tuple]:
+    return [
+        (r["type"], r["source_doc_id"], r["source_revision_no"], r["source_wp_card_id"],
+         r["note"], r["provider_id"], r["pre_instruction_text"], r["result_doc_id"])
+        for r in _items(seq_id) if r["source_doc_id"] == _WP_B
+    ]
+
+
+def test_another_plans_row_with_the_same_card_id_is_not_a_started_ds_rows_result(env):
+    seq_id, plan, foreign_id = _foreign_l1_behind_started_ds(env)
+    items = _items(seq_id)
+    classification = cards.classify_rows(wp_doc=env.doc(), plan=plan, items=items)
+    assert classification["started_card_ids"] == ["L#1"]
+    found = order.started_card_rows(items, classification)
+    assert found["L#1"]["report"] is None
+    layout = order.reorder_layout(plan, items, _WP, classification)
+    linked = {
+        (picked.get(slot) or {}).get("id")
+        for picked in layout["cards"].values() for slot in ("row", "report")
+    }
+    assert foreign_id not in linked
+    assert foreign_id not in {row["id"] for row in layout["removed"]}
+    assert foreign_id in {e["row"]["id"] for e in layout["entries"] if e["kind"] == "foreign"}
+
+
+@pytest.mark.parametrize("change", [False, True], ids=["keep", "change"])
+def test_apply_leaves_another_plans_row_with_the_same_card_id_as_it_was(env, change):
+    """keep / change map a plan step to the rows of its card and write the plan's values
+    onto them: another plan's row must never be one of them, whatever apply answers."""
+    seq_id, plan, _foreign_id = _foreign_l1_behind_started_ds(env)
+    before = _foreign_state(seq_id)
+    assert len(before) == 1
+    try:
+        _apply(env, plan, change=change)
+    except (wpa.ApplyConflict, order.PlanOrderViolation, order.PlanOrderBlocked):
+        pass
+    assert _foreign_state(seq_id) == before
+
+
+@pytest.mark.parametrize("mode", [None, "use", "omit"])
+def test_paired_row_types_are_the_rows_plan_to_rows_makes_whatever_the_instruction_mode(env, mode):
+    """plan_to_rows does not read instruction_mode: an omitted DS (or T) step is poured like
+    any other, so the card's row_types keep it and the pour saves."""
+    body = _paired_body()
+    if mode is not None:
+        for step in body["steps"]:
+            if wp.instruction_mode_allowed(step):
+                step["instruction_mode"] = mode
+    seq_id, plan = _paired(env, body)
+    rows, _dropped, _uid = wpseq.plan_to_rows(plan, _WP, 1)
+    made: dict[str, list[str]] = {}
+    for row in rows:
+        made.setdefault(row["source_wp_card_id"], []).append(row["type"])
+    assert made == {card["card_id"]: list(card["row_types"]) for card in order.plan_cards(plan)}
+    assert {card["card_id"]: card["type"] for card in order.plan_cards(plan)}["L#1"] == "L"
+
+    _save_candidates(env, _candidates(env, plan, "replace_after"), "replace_after")
+    assert _pairs(_plan_rows(seq_id)) == _PAIRED_ROWS
 
 
 # ══ O0 legacy history — G9 delete and re-add ════════════════════════════════
