@@ -571,9 +571,11 @@ def flow_ai_busy(flow_id: str) -> bool:
 
 
 def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
-                       attempt_id: Optional[str] = None) -> bool:
+                       attempt_id: Optional[str] = None, *, idle_ok: bool = False,
+                       defer: Optional[list] = None) -> bool:
+    """``idle_ok`` (flowgate.v02.0111 T#3): an idle run takes it too — only under ``person_hold``."""
     return node_dispatch.retry_result_stage(flow_id, run_id, node_key, issued_to, project_of(flow_id),
-                                            attempt_id=attempt_id)
+                                            attempt_id=attempt_id, idle_ok=idle_ok, defer=defer)
 
 
 def retry_instruction_stage(flow_id: str, run_id: str, node_key: str, issued_to: str, asker_ai_run_id: Optional[str],
@@ -596,6 +598,31 @@ def instruction_continuation_due(run_id: str, node_key: str, asker_ai_run_id: Op
     if row is None:
         return False
     return bool(graph_execution_hooks.call("instruction_continuation_due", row, asker_ai_run_id, answered=answered))
+
+
+def result_continuation_due(run_id: str, node_key: str, asker_ai_run_id: Optional[str]) -> bool:
+    """flowgate.v02.0111 T#3 (review rejection P2): the result writer ``asker_ai_run_id``'s step (the card's review or
+    approval, ``review_stage._after_work``) may still go on from its answers — the node's active attempt has no requested
+    / running execution and its latest execution is still a write (``asker_ai_run_id``'s, or one whose run the ledger
+    never told). Once the review was requested (a loop execution of the attempt, whatever it ended in: passed,
+    ``retry_exhausted``, held, refused) or the result written again, the same answers told again — a person's and the
+    responder's, or late after the review ended without passing — take nothing. Read from the execution ledger: nothing
+    is stored for it, a restart loses nothing."""
+    if not asker_ai_run_id:
+        return False
+    if not get_store().table_exists("graph_attempt_runs"):
+        return True                             # no execution ledger: nothing was requested since (as before)
+    attempt_id = run_store.active_attempt_id(run_id, node_key)
+    if not attempt_id:
+        return False
+    if get_store()._fetch_one("SELECT 1 AS present FROM graph_attempt_runs WHERE attempt_id = ? "
+                              "AND status IN ('requested', 'running') LIMIT 1", [attempt_id]):
+        return False
+    latest = get_store()._fetch_one("SELECT kind, ai_run_id FROM graph_attempt_runs WHERE attempt_id = ? "
+                                    "ORDER BY created_at DESC, exec_id DESC LIMIT 1", [attempt_id])
+    if latest is None:
+        return True
+    return latest["kind"] == "write" and latest.get("ai_run_id") in (None, "", asker_ai_run_id)
 
 
 def wake_graph_run(flow_id: str) -> bool:
@@ -898,13 +925,17 @@ def node_runs(run_id: str) -> list[dict]:
 
 
 def _node_ai_runs(flow_id: str, run_id: str, node_key: str) -> list[tuple[str, dict]]:
-    """(token id, ended AI run record) of the node's live tokens that carry an AI run, mapping order."""
+    """(token id, ended AI run record) of the node's live tokens that carry an AI run, mapping order.
+
+    flowgate.v02.0111 T#3 (NR flowgate.v02.0111.0003 §2 A-4): the durable row (``ai_invoke_runs``) has no
+    ``action_scope``, so the record takes the one of the token the AI start minted for that run — the reconciliation's
+    ``stage_ai_run`` / ``result_ai_run`` read it, and without it they found no run and every reconciliation returned."""
     out = []
     for token_id in run_store.token_ids(run_id, node_key):
-        found = get_store()._fetch_one("SELECT ai_run_id FROM tokens WHERE token_id = ?", [token_id])
+        found = get_store()._fetch_one("SELECT ai_run_id, action_scope FROM tokens WHERE token_id = ?", [token_id])
         record = ai_run_record((found or {}).get("ai_run_id")) if found and found.get("ai_run_id") else None
         if record is not None and record.get("group_id") == flow_id:
-            out.append((token_id, record))
+            out.append((token_id, {**record, "action_scope": record.get("action_scope") or found.get("action_scope")}))
     return out
 
 

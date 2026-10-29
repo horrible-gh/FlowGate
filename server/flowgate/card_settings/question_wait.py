@@ -29,6 +29,17 @@ on through ``review_stage.continue_instruction_after_answers`` (a written instru
 none, or the asking end: the instruction stage again on the same attempt) instead of judging the ended run again. Only
 the run whose execution is still the attempt's latest waits so (``legacy.instruction_continuation_due``): an earlier run
 of the stage whose answers are told again after a later one was requested goes on with nothing.
+
+flowgate.v02.0111 T#3 (T-A2, NR flowgate.v02.0111.0003 §2 A-2): the wake commits the run running and leaves its guard, so a
+settle in between (a run read's) may judge it idle before the step (0084 seq 8~11: the result stage refused ``run_idle``).
+Every phase's step is therefore judged under ``legacy.person_hold`` with ``idle_ok`` — the instruction stage's
+(``continue_instruction_after_answers``, T#2), a passed review's approval and a result writer's review or approval
+(``review_stage._after_review`` / ``_after_work`` ``answered``), a writer with no result written again
+(``_retry_result``) — whose own request takes an idle run back to running. The wake still decides whether the run goes on
+(a paused, stopping or stopped run is not woken). A result writer's step goes on once: only while the writer's execution is
+still its attempt's latest (``legacy.result_continuation_due``, judged here and again under the step's hold) — the same
+answers told again after its review was requested (a person's and the responder's, or late after that review ended
+without passing) request no second review.
 """
 from __future__ import annotations
 
@@ -168,6 +179,9 @@ def _waiting(flow_id: str, run: dict) -> Optional[tuple[str, dict, Optional[dict
         if not ended_waiting(run) or legacy.review_loop_active(doc_id) \
                 or legacy.node_ai_run_active(flow_id, node["node_key"]):
             return None
+        run_row_id = legacy.active_run_id(flow_id)
+        if run_row_id is None or not legacy.result_continuation_due(run_row_id, node["node_key"], run_id):
+            return None                         # 0111 T#3: its review requested since (ended or not), or written again
         return "work", node, None
     found = legacy.no_result_node_of_ai_run(flow_id, run_id)
     if found is not None and ended_without_result(run):
@@ -203,18 +217,33 @@ def _answered(flow_id: str, asker_run_id: str) -> None:
     _log.info("card step resumed after answers flow=%s node=%s run=%s phase=%s", flow_id, node["node_key"],
               asker_run_id, phase)
     try:
+        # 0111 T#3 (T-A2): every phase's step under ``legacy.person_hold`` with ``idle_ok`` — a run judged idle since the
+        # wake (a run read's settle) takes it too, and its request takes the run back to running
         if phase == "review":
-            review_stage._after_review(flow_id, run)
+            review_stage._after_review(flow_id, run, answered=True)
         elif phase == "instruction":
             # 0111 T-A1: never the ended run judged again (an asking end would fail the stage): the step goes on
             review_stage.continue_instruction_after_answers(flow_id, run, node, row)
         elif phase == "work":
-            review_stage._after_work(flow_id, run)
+            review_stage._after_work(flow_id, run, answered=True)
         else:
-            legacy.retry_result_stage(flow_id, row["run_id"], node["node_key"], run.get("issued_to") or "",
-                                      legacy.attempt_of_ai_run(run))
+            _retry_result(flow_id, run, node, row)
     finally:
         legacy.settle_graph_run(flow_id)
+
+
+def _retry_result(flow_id: str, run: dict, node: dict, row: dict) -> None:
+    """0111 T#3 (T-A2): the result writer that ended with no result writes again once its questions are answered, judged
+    under ``legacy.person_hold`` (``retry_result_stage`` ``idle_ok``); its AI start runs after the hold."""
+    attempt_id, key = legacy.attempt_of_ai_run(run), node["node_key"]
+    jobs: list = []
+    with legacy.person_hold(flow_id, row["run_id"], key, attempt_id, "result_retry") as owned:
+        if not owned:
+            return
+        legacy.retry_result_stage(flow_id, row["run_id"], key, run.get("issued_to") or "", attempt_id, idle_ok=True,
+                                  defer=jobs)
+    for job in jobs:
+        job()
 
 
 def _dispatch_waiting(flow_id: str) -> None:

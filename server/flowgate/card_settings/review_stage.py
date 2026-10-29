@@ -90,6 +90,14 @@ answered run's execution is still the attempt's latest (``legacy.instruction_con
 an earlier run's answers told again after the stage was written again do nothing. Any other stop code fails the stage
 as before.
 
+flowgate.v02.0111 T#3 (T-A2, NR flowgate.v02.0111.0003 §2 A-2): every other step that goes on after its run's questions are
+answered — a passed review's approval (``_after_review``: an instruction's approval and the result stage, a result's
+approval), the result writer's review start or approval (``_after_work``) — is judged as the answered instruction stage is:
+under ``legacy.person_hold`` (``_step_hold`` ``answered``), the result stage ``idle_ok``. The answer's wake no longer keeps
+the run running until the step (a run read's settle may judge it idle in between, 0084 seq 8~11), and the step's own
+request takes an idle run back to running. At the run's end the steps keep ``legacy.attempt_hold``: the execution's run-end
+hand-off keeps the run running there.
+
 flowgate.v02.0083 WP-4 (a new path, kept apart from the AI cards' one above): a work plan card a person writes follows its
 result as an AI card does once the result binder bound it (``person_result``, the ``card_settings_ports`` port, inside the
 binder's Flow guard; the step itself is a job after its commit, ``follow_person_result``). Every submission — the result,
@@ -400,8 +408,30 @@ def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: st
     return True
 
 
-def _after_work(flow_id: str, run: dict) -> None:
-    """The node's AI run ended: start the card's review, or approve at once."""
+def _step_hold(flow_id: str, run_id: str, key: str, attempt_id: Optional[str], operation: str, answered: bool):
+    """The hold a run-end step is judged in: at the run's end ``legacy.attempt_hold`` (the execution's run-end hand-off
+    keeps the run running); after its questions were answered (``answered``, flowgate.v02.0111 T#3) ``legacy.person_hold``
+    — an idle run taken too, its Stop / Time Machine conditions judged again under the hold."""
+    if answered:
+        return legacy.person_hold(flow_id, run_id, key, attempt_id, operation)
+    return legacy.attempt_hold(run_id, key, attempt_id, operation)
+
+
+@contextlib.contextmanager
+def _answered_result_hold(flow_id: str, run_id: str, key: str, attempt_id: Optional[str], operation: str,
+                          asker_ai_run_id: str):
+    """flowgate.v02.0111 T#3 (review rejection P2): ``legacy.person_hold`` with the result writer's answered step judged
+    again under it (``legacy.result_continuation_due``: the writer's execution still its attempt's latest, nothing
+    requested since) — so the same answers told twice, or told again after the review it started ended without passing,
+    start no second review and approve nothing. A writer no longer the attempt's latest is no refusal and records
+    nothing."""
+    with legacy.person_hold(flow_id, run_id, key, attempt_id, operation) as owned:
+        yield bool(owned) and legacy.result_continuation_due(run_id, key, asker_ai_run_id)
+
+
+def _after_work(flow_id: str, run: dict, answered: bool = False) -> None:
+    """The node's AI run ended: start the card's review, or approve at once. ``answered``: after the run's questions
+    were answered (``question_wait._answered``), under ``_step_hold``'s ``person_hold``."""
     found = legacy.node_of_ai_run(flow_id, run["run_id"])
     if found is None:
         question_wait.hold_without_result(flow_id, run)     # 0063: a writer with no result that asked questions
@@ -422,9 +452,12 @@ def _after_work(flow_id: str, run: dict) -> None:
     step = fields.after_result(fields.card_kind(node.get("node_type"), node.get("doc_type")), stored)
     if step == fields.REVIEW:
         _start_result_review(flow_id, run_id, node, doc_id, stored, run.get("issued_to") or "", run.get("provider_id"),
-                             attempt_id)
+                             attempt_id, hold=_answered_result_hold(flow_id, run_id, node["node_key"], attempt_id,
+                                                                    "review_start", run["run_id"]) if answered else None)
     elif step == fields.APPROVE:
-        with legacy.attempt_hold(run_id, node["node_key"], attempt_id, "result_approval") as owned:
+        with (_answered_result_hold(flow_id, run_id, node["node_key"], attempt_id, "result_approval", run["run_id"])
+              if answered else _step_hold(flow_id, run_id, node["node_key"], attempt_id, "result_approval",
+                                          False)) as owned:
             if owned:
                 legacy.approve(flow_id, doc_id, run.get("issued_to") or "", legacy.AUTOMATION,
                                node_key=node["node_key"], attempt_id=attempt_id)
@@ -469,8 +502,9 @@ def _start_result_review(flow_id: str, run_id: str, node: dict, doc_id: str, sto
         legacy.record_approval_wait(flow_id, key, doc_id, legacy.REVIEW_NOT_STARTED, attempt_id=attempt_id)
 
 
-def _after_review(flow_id: str, run: dict) -> None:
-    """A review loop on a node's result ended: a passed result is approved."""
+def _after_review(flow_id: str, run: dict, answered: bool = False) -> None:
+    """A review loop on a node's result ended: a passed result is approved. ``answered``: after the loop's questions
+    were answered (``question_wait._answered``), under ``_step_hold``'s ``person_hold`` (the result stage ``idle_ok``)."""
     doc_id = run.get("doc_ref")
     instruction = legacy.instruction_node_of_document(flow_id, doc_id)
     if instruction is not None:
@@ -483,12 +517,14 @@ def _after_review(flow_id: str, run: dict) -> None:
         if question_wait.hold(flow_id, run, node, asked_by_instruction=True):
             return
         jobs: list = []
-        with legacy.attempt_hold(row["run_id"], node["node_key"], legacy.attempt_of_ai_run(run), "instruction_review_approval") as owned:
+        with _step_hold(flow_id, row["run_id"], node["node_key"], legacy.attempt_of_ai_run(run),
+                        "instruction_review_approval", answered) as owned:
             if not owned:
                 return
             approve_instruction(flow_id, node, doc_id, run.get("issued_to") or "")
             legacy.start_result_stage(flow_id, row["run_id"], node["node_key"], doc_id,
-                                      run.get("issued_to") or "", legacy.attempt_of_ai_run(run), defer=jobs)
+                                      run.get("issued_to") or "", legacy.attempt_of_ai_run(run), defer=jobs,
+                                      idle_ok=answered)
         for job in jobs:
             job()
         return
@@ -514,7 +550,7 @@ def _after_review(flow_id: str, run: dict) -> None:
         return                                  # 0063: its questions are answered first
     # 0061 T#7: the review execution's attempt must still work on the node; the approval commits under the Stop gate.
     # flowgate.v02.0105 T#2 (B-4): an AI card's under the system's authority, a person's work plan under the issuer's.
-    with legacy.attempt_hold(run_id, node["node_key"], attempt_id, "review_approval") as owned:
+    with _step_hold(flow_id, run_id, node["node_key"], attempt_id, "review_approval", answered) as owned:
         if owned:
             legacy.approve(flow_id, doc_id, run.get("issued_to") or "", None if person else legacy.AUTOMATION,
                            node_key=node["node_key"], attempt_id=attempt_id)
@@ -796,6 +832,8 @@ def _reconcile_result(flow_id: str, run_id: str, row: dict) -> None:
             return legacy.record_approval_wait(flow_id, key, doc_id, not_passed(latest), attempt_id=attempt_id)
         if not _loop_of_attempt(latest, attempt_id) or not legacy.submission_passed(doc_id):
             return unknown()                    # ④-d an earlier attempt's pass, or a pass of an earlier revision
+        if _review_asks(flow_id, latest):
+            return                              # 0111 T#3: its review's questions wait (``_after_review``'s hold)
         return _reconciled_approval(flow_id, run_id, key, doc_id, issuer, attempt_id)     # ② passed
     except Exception:  # noqa: BLE001 — ④-d a read that failed: nothing is approved, nor tried again
         _log.warning("card result reconciliation failed flow=%s node=%s", flow_id, key, exc_info=True)
@@ -805,6 +843,16 @@ def _reconcile_result(flow_id: str, run_id: str, row: dict) -> None:
 def _loop_of_attempt(loop: dict, attempt_id: Optional[str]) -> bool:
     """The loop's review run worked for ``attempt_id`` (the node's current attempt)."""
     return legacy.attempt_of_ai_run(legacy.ai_run_record(loop.get("run_id")) or {}) == attempt_id
+
+
+def _review_asks(flow_id: str, loop: Optional[dict]) -> bool:
+    """flowgate.v02.0111 T#3 (review rejection P1): the review run of ``loop`` asked questions that are not all answered
+    (an unreadable read counts as asking). Its pass waits for them as ``_after_review`` waits at the loop's end
+    (``question_wait.hold``): the reconciliation approves and starts nothing, and records nothing — no approval wait —
+    so the answers go on once (``question_wait._answered``, the review phase)."""
+    if not loop or not loop.get("run_id"):
+        return False
+    return question_wait.open_questions(flow_id, loop["run_id"]) != []
 
 
 def _reconciled_approval(flow_id: str, run_id: str, key: str, doc_id: str, issuer: str,
@@ -834,7 +882,11 @@ def _reconcile_instruction(flow_id: str, run_id: str, row: dict) -> None:
         return
     issuer = work.get("issued_to") or ""
     if (approvals.document(doc_id) or {}).get("doc_review_status") in APPROVED:
-        # approved, and the node still in its instruction stage: the result stage's start after it was lost
+        # approved, and the node still in its instruction stage: the result stage's start after it was lost — not while
+        # this attempt's latest review of it still waits for its questions (0111 T#3: the answers go on from there)
+        latest = next(iter(legacy.review_loops(doc_id)), None)
+        if latest is not None and _loop_of_attempt(latest, attempt_id) and _review_asks(flow_id, latest):
+            return
         return _reconciled_result_stage(flow_id, run_id, key, node, doc_id, issuer, attempt_id, approve=False)
     if legacy.approval_waits(run_id, key, doc_id) or legacy.review_loop_active(doc_id):
         return
@@ -861,6 +913,8 @@ def _reconcile_instruction(flow_id: str, run_id: str, row: dict) -> None:
                                                    stage=fields.INSTRUCTION_STAGE)
             if not _loop_of_attempt(latest, attempt_id) or not legacy.submission_passed(doc_id):
                 return unknown()
+            if _review_asks(flow_id, latest):
+                return                          # 0111 T#3: its review's questions wait (``_after_review``'s hold)
     except Exception:  # noqa: BLE001
         _log.warning("card instruction reconciliation failed flow=%s node=%s", flow_id, key, exc_info=True)
         return unknown()

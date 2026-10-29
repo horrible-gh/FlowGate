@@ -263,7 +263,8 @@ def test_a_written_instruction_answered_while_the_run_is_judged_idle_still_start
     _answer(questions, INSTRUCTION_RUN, "human")
     job = _after_answers(env, key, execs, attempts)
     assert job["stage"] == "result" and _review_status(line_doc) == "approved"
-    causes = [r["cause"] for r in _sql(env["db"], "SELECT cause FROM graph_run_events WHERE node_key = ?", (key,))]
+    # 0111 T#3: a refusal's run event carries its node only in its payload — read the run's events by cause
+    causes = [r["cause"] for r in _sql(env["db"], "SELECT cause FROM graph_run_events")]
     assert "attempt_inactive" not in causes
 
 

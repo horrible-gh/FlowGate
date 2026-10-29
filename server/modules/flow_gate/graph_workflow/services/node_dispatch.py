@@ -59,6 +59,10 @@ binder's evidence) and, for an AI assignee, queues the AI start after the commit
   without AI" shortcut of ``_instruction_job``); a result writer that ended so (``write_failure`` ``question_pending``)
   is retried like one with no result (``retry_result_stage``) and, while its questions are open, is no dispatch error and
   no explicit command's retry (``needs_ai_dispatch``).
+- flowgate.v02.0111 T#3 (T-A2, NR flowgate.v02.0111.0003 §2 A-2): the answers' retry of a result writer is taken under
+  ``legacy.person_hold`` with ``retry_result_stage`` ``idle_ok``, as the result stage's start after the answers is
+  (``start_result_stage`` ``idle_ok``): a run judged idle between the wake and the retry no longer refuses it
+  (``attempt_inactive`` ``result_retry`` / ``run_idle``). Without ``idle_ok`` it still refuses an idle run.
 """
 from __future__ import annotations
 
@@ -350,17 +354,23 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
 
 
 def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str, project_id: Optional[str] = None, *,
-                       attempt_id: Optional[str] = None) -> bool:
+                       attempt_id: Optional[str] = None, idle_ok: bool = False,
+                       defer: Optional[list] = None) -> bool:
     """flowgate.v02.0063: the node's result writer ended with no result after asking questions, and they are answered
     now: its run AI writes the result again on the same attempt (a new execution, the instruction attached as at the
     result stage's start). Only a node still open in its result stage whose writer ended with no result
     (``write_failure``; 0111 T-A1: ``no_result`` or ``question_pending``) and that is not held moves on; ``attempt_id``
-    must still be the node's active attempt. True when the AI start was requested (it runs after the guard)."""
+    must still be the node's active attempt. True when the AI start was requested (it runs after the guard).
+    flowgate.v02.0111 T#3 (T-A2, NR flowgate.v02.0111.0003 §2 A-2): ``idle_ok`` — an idle run takes it too, for a caller
+    holding ``legacy.person_hold`` (the answers' continuation): a run judged idle between the wake and this retry is no
+    refusal, and the execution's request takes it back to running. ``defer``: the caller runs the AI start after its
+    hold."""
     from . import run_apply                                   # noqa: PLC0415 — run_apply imports this module
     from .flow_guard import with_flow_guard                   # noqa: PLC0415
 
     project = project_id or (db_groups.get_by_id(flow_id) or {}).get("project_id")
     jobs: list = []
+    refusal = {"idle_ok": True} if idle_ok else {}
 
     def body() -> None:
         row = _open_row(run_id, node_key)
@@ -369,7 +379,7 @@ def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
         if graph_execution_hooks.call("write_failure", row) not in RETRYABLE_WRITE_FAILURES \
                 or node_key in (graph_execution_hooks.call("held_nodes", flow_id) or ()):
             return
-        if graph_execution_hooks.call("node_refused", run_id, node_key, "result_retry", attempt_id):
+        if graph_execution_hooks.call("node_refused", run_id, node_key, "result_retry", attempt_id, **refusal):
             return
         ctx = run_apply.load_context(run_store.run_by_id(run_id), project, None, [])
         node = ctx.node_rows.get(node_key)
@@ -387,6 +397,9 @@ def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
         jobs.append(lambda: start_ai(job))
 
     with_flow_guard(flow_id, body)
+    if defer is not None:
+        defer.extend(jobs)
+        return bool(jobs)
     for job in jobs:
         job()
     return bool(jobs)
