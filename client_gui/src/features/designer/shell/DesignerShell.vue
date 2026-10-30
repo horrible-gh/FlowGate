@@ -115,6 +115,7 @@
     />
     <FlowBaseBranchDialog :open="flowBaseTarget !== null" :project-id="projectId"
       :group-id="flowBaseTarget?.flowId ?? null" @close="flowBaseTarget = null" @saved="explorerRefreshToken += 1" />
+    <AiRoleSetupModeless :data="aiSetup.state.data" :saving="aiSetup.state.saving" :error="aiSetup.state.error" @close="aiSetup.cancel" @save="aiSetup.save" />
     <DesignerContextMenu :host="contextMenu.host" @request="contextMenu.run" />
     <component :is="contextMenu.dialogs" v-if="contextMenu.actions" :actions="contextMenu.actions" />
     <ToastHost :toasts="shownToasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
@@ -230,6 +231,8 @@
 //
 // flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4, Q #510 E-1) — an F5 brings the working screen back. See
 // "F5 restore" below.
+import { AiRoleSetupModeless } from '@/features/ai'
+import { createFirstRunAiSetup } from '@/features/ai'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { documentRead, settingsNodeHoldWrite } from '@/features/document'
@@ -311,7 +314,13 @@ const projectId = computed<string | null>(() => projectStore.currentProjectId)
 // flowgate.v02.0045 S3 (D0004 §2.3 "Palette 연결"): a Palette card dropped on the Canvas becomes a
 // node of the Flow's Graph draft. The Shell is the only part that knows both: it tells the Center
 // session which node a drop means, so the Palette and the Canvas never know each other.
+const aiSetup: ReturnType<typeof createFirstRunAiSetup> = createFirstRunAiSetup({
+  context: (): string | null => projectStore.designerSessionOwner && projectId.value && center.state.activeFlowId
+    ? `${projectStore.designerSessionOwner}\n${projectId.value}\n${center.state.activeFlowId}` : null,
+})
 const center = createDesignerCenterSession({
+  beforeRunPrepare: () => aiSetup.request(),
+  runSetupCurrent: () => aiSetup.current(),
   // flowgate.v02.0059 T#2: the document read lets 자동 배치 follow a v0.1 sequence root's supersede chain.
   // flowgate.v02.0061 T#15: the card Hold of the card context menu goes through the card settings.
   source: createServerFlowGraphSource(projectStore, documentRead, { write: settingsNodeHoldWrite }),
@@ -339,6 +348,8 @@ function onCanvasPlace(flowId: string, x: number, y: number) {
 }
 
 watch(() => center.state.activeFlowId, () => { selectedPalette.value = null })
+watch([() => center.state.activeFlowId, projectId, () => projectStore.designerSessionOwner], () => aiSetup.cancel(), { flush: 'sync' })
+onBeforeUnmount(() => aiSetup.cancel())
 
 // flowgate.v02.0053 T#9 / flowgate.v02.0061 T#14: the run buttons follow the server run of the open Flow (the Center
 // session's): its phase decides which two show; while a command is answered every run button waits (`runBusy`).

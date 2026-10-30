@@ -17,7 +17,7 @@ import { createPinia, type Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FlowGraph, FlowGraphCardDocument, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
-import SettingsTab from '@/features/designer/inspector/features/settings/SettingsTab.vue'
+import SettingsTab from '../support/SettingsPanelsFixture.0113'
 import { INSPECTOR_HOST } from '@/features/designer/inspector/inspectorHost'
 import { inspectorSettingsKind, toInspectorTarget, type InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import { prepareInspectorI18n } from '../support/inspectorSupport'
@@ -363,6 +363,10 @@ describe('the WP card’s settings tab in the real Frame and registry (flowgate.
     await flushPromises()
     expect(wrapper.findAll('[data-test="designer-inspector-section"]').map((section) => section.attributes('data-key'))).toEqual(['settings'])
     expect(wrapper.find('[data-test="settings-pre-instruction-switch"]').exists()).toBe(true)
+    expect(rowLabels(wrapper)).toEqual([])
+    await wrapper.findAll('[role="tab"]').find(item => item.text() === 'AI')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="settings-pre-instruction-switch"]').exists()).toBe(false)
     expect(rowLabels(wrapper)).toEqual(['작업 AI', '재시작', '검수 AI', '검수 횟수'])
   })
 })

@@ -29,7 +29,7 @@ import type { FlowGraph, FlowGraphCardDocument, FlowGraphNode } from '@/features
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
 import CheckSettings from '@/features/designer/inspector/features/checkSettings/CheckSettings.vue'
 import RequirementSettings from '@/features/designer/inspector/features/requirementSettings/RequirementSettings.vue'
-import SettingsTab from '@/features/designer/inspector/features/settings/SettingsTab.vue'
+import SettingsTab from '../support/SettingsPanelsFixture.0113'
 import TestRunSettings from '@/features/designer/inspector/features/testRunSettings/TestRunSettings.vue'
 import { INSPECTOR_HOST, type InspectorHostIntent } from '@/features/designer/inspector/inspectorHost'
 import { toInspectorTarget, type InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
@@ -727,7 +727,7 @@ describe('a test card’s settings — v7 testSettings', () => {
     expect(w.get('[data-test="inspector-run-settings"] [data-test="inspector-block-title"]').text()).toBe('시나리오 작성')
     expect(w.find('[data-test="inspector-run-settings"] [data-test="inspector-block-sub"]').exists()).toBe(false)
     expect(w.find('[data-test="inspector-run-settings-advanced"]').exists()).toBe(false)
-    expect(rowLabels(w)).toEqual(['지시서', '작성 AI', '검수 AI', '검수 횟수', '원인 판정', '후속 전달'])
+    expect(rowLabels(w)).toEqual(['지시서', '원인 판정', '후속 전달', '작성 AI', '검수 AI', '검수 횟수'])
     expect(runSelect(w, 'restart').exists()).toBe(false)
     expect(w.find('[data-test="settings-instruction-ai"]').exists()).toBe(false)
     await pick(w, 'run_ai', 'aip_sol')
@@ -877,9 +877,9 @@ describe('the settings tab of a card just placed and of a done card, in the real
   const sections = (w: VueWrapper<any>) => w.findAll('[data-test="designer-inspector-section"]').map((section) => section.attributes('data-key'))
 
   it.each([
-    [TASK, ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
-    [CUSTOM, ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
-    [TEST, ['settings', 'testRunSettings'], ['지시서', '작성 AI', '검수 AI', '검수 횟수', '원인 판정', '후속 전달']],
+    [TASK, ['settings'], ['지시서']],
+    [CUSTOM, ['settings'], ['지시서']],
+    [TEST, ['settings', 'testRunSettings'], ['지시서', '원인 판정', '후속 전달']],
     [REQ, ['requirementSettings'], []],
     [GATE, ['checkSettings'], ['아카이브', '반영 방식', '병합 대상']],
   ] as const)('a %s card: its settings form, no "v0.1 단계" line', async (card, parts, labels) => {
@@ -894,9 +894,9 @@ describe('the settings tab of a card just placed and of a done card, in the real
   // The Canvas hands a done card its run's result as the document (N → NR, T → TR, TS → TSR); the settings
   // stay the card's (T#2 keeps them by the card definition).
   it.each([
-    [DONE_RESEARCH, 'NR', ['settings'], ['지시서', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
-    [DONE_TASK, 'TR', ['settings'], ['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수']],
-    [DONE_TEST, 'TSR', ['settings', 'testRunSettings'], ['지시서', '작성 AI', '검수 AI', '검수 횟수', '원인 판정', '후속 전달']],
+    [DONE_RESEARCH, 'NR', ['settings'], ['지시서']],
+    [DONE_TASK, 'TR', ['settings'], ['지시서']],
+    [DONE_TEST, 'TSR', ['settings', 'testRunSettings'], ['지시서', '원인 판정', '후속 전달']],
   ] as const)('a done card bound to its result (%#) keeps the same form', async (card, result, parts, labels) => {
     expect(targetFor(card)).toMatchObject({ docType: result, cardDocType: card.definition!.docType })
     const w = await mountFrame(card)
@@ -909,11 +909,15 @@ describe('the settings tab of a card just placed and of a done card, in the real
   it('a done card bound to its result shows its stored values and a change is saved', async () => {
     const w = await mountFrame(DONE_RESEARCH)
     expect(w.get('[data-test="settings-instruction-switch"] [aria-checked="true"]').attributes('data-value')).toBe('omit')
+    await w.findAll('[role="tab"]').find(tab => tab.text() === 'AI')!.trigger('click')
+    await flushPromises()
     expect(valueOf(w, 'restart')).toBe('2')
     await pick(w, 'restart', '1')
     expect(writes).toEqual([[FLOW, 'gn_done_n', 'restart', 1]])
     w.unmount()
     const test = await mountFrame(DONE_TEST)
+    await test.findAll('[role="tab"]').find(tab => tab.text() === 'AI')!.trigger('click')
+    await flushPromises()
     expect(valueOf(test, 'review_count')).toBe('1')
   })
 

@@ -155,6 +155,10 @@ export function inspectorSettingsKind(
   return target.cardKind === 'research' || target.cardKind === 'task' || target.cardKind === 'design' ? 'run' : null
 }
 
+export function hasAiTab(target: InspectorTarget | null): boolean {
+  return !!target && target.nodeType !== null && ['run', 'test', 'plan'].includes(inspectorSettingsKind(target) ?? '')
+}
+
 /** The key a placed card keeps until its first draft save answers the stored one (the server knows it not). */
 export const INSPECTOR_CLIENT_KEY_PREFIX = 'tmp_'
 

@@ -26,7 +26,7 @@
     <InspectorReadFailure v-if="errorKey" :reason="t(k(errorKey))" @retry="reload" />
     <template v-else>
       <InspectorLockNote v-if="locked" :text="lockText" />
-      <InspectorBlock v-if="kind === 'plan'" :locked="locked" class="inspector-settings-line" data-test="settings-pre-instruction">
+      <InspectorBlock v-if="panel === 'settings' && kind === 'plan'" :locked="locked" class="inspector-settings-line" data-test="settings-pre-instruction">
         <div class="inspector-settings-switch">
           <Toggle
             :model-value="preInstruction.on"
@@ -44,7 +44,7 @@
           />
         </div>
       </InspectorBlock>
-      <InspectorBlock v-else :locked="locked" class="inspector-settings-line" data-test="settings-instruction">
+      <InspectorBlock v-else-if="panel === 'settings'" :locked="locked" class="inspector-settings-line" data-test="settings-instruction">
         <InspectorControlRow :label="t(k('instruction.label'))" :hint="t(k('instruction.hint'))">
           <template v-if="kind === 'test'">
             <Toggle :model-value="segment('instruction').value === 'use'" :disabled="segment('instruction').disabled" :aria-label="t(k('instruction.label'))" data-test="settings-instruction-switch" @update:model-value="(value: boolean) => onChange('instruction', value ? 'use' : 'omit')" />
@@ -62,7 +62,7 @@
         </InspectorControlRow>
       </InspectorBlock>
       <InspectorBlock
-        v-if="instructionAiShown"
+        v-if="panel === 'ai' && !card.node.value?.aiRoles && instructionAiShown"
         :locked="locked"
         class="inspector-settings-line"
         data-test="settings-instruction-ai"
@@ -80,16 +80,32 @@
           <InspectorFailureIcon v-if="failureOf('instruction_ai')" :name="t(k('failed'))" :reason="failureOf('instruction_ai')!" data-field="instruction_ai" />
         </InspectorControlRow>
       </InspectorBlock>
-      <InspectorRunSettings
+      <template v-if="panel === 'ai' && card.node.value?.aiRoles">
+        <InspectorBlock v-for="item in roleRows" :key="item.role" :locked="locked" :data-role="item.role">
+          <InspectorControlRow :label="roleLabel(item.role)" :hint="item.cause || item.outcome">
+            <AiRoleSelect :model-value="item.selected" :providers="card.node.value.aiRoles.options" :label="roleLabel(item.role)" :display-name="item.displayName" :state="item.state" :cause="item.cause" :disabled="roleDisabled(item.field)" @update:model-value="value => changeRole(item.field, value)" />
+            <small v-if="item.legacyFlag" :title="item.displayName || item.providerId || item.outcome" data-test="ai-legacy">{{ t('gui.aiRoles.legacy') }} · {{ item.displayName || item.providerId || t(`gui.inspector.ai.outcome.${item.outcome}`) }}</small>
+            <InspectorFailureIcon v-if="failureOf(item.field)" :name="t(k('failed'))" :reason="failureOf(item.field)!" />
+          </InspectorControlRow>
+        </InspectorBlock>
+      </template>
+      <InspectorRunSettings v-if="panel === 'ai' || source === 'sequence'"
         :layout="kind === 'test' ? 'scenario' : 'run'"
         :fields="runFields"
+        :hide-missing="!!card.node.value?.aiRoles"
         :labels="runLabels"
         :locked="locked"
         :advanced-open="advancedOpen"
         @update:advanced-open="advancedOpen = $event"
         @update:field="onChange"
       />
-      <InspectorBlock v-if="kind === 'test'" :title="t(k('result_check'))" data-test="settings-result-check">
+      <InspectorBlock v-if="panel === 'ai' && kind === 'run' && card.node.value?.fields.instruction?.value !== 'omit'" data-test="instruction-review">
+        <InspectorControlRow v-for="field in instructionReviewFields" :key="field" :label="t(`gui.inspector.ai.${field}`)">
+          <Select :model-value="views[field].value" :options="views[field].options.map(option => ({ value: option.value, label: labelOf(option) }))" :disabled="views[field].disabled" :data-field="field" @update:model-value="value => onChange(field, value)" />
+          <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
+        </InspectorControlRow>
+      </InspectorBlock>
+      <InspectorBlock v-if="panel === 'settings' && kind === 'test'" :title="t(k('result_check'))" data-test="settings-result-check">
         <InspectorControlRow v-for="field in resultFields" :key="field" :label="t(k(`${field}.label`))" :hint="views[field].reason ? t(k(views[field].reason!)) : undefined">
           <Select :model-value="views[field].value" :options="views[field].options.map((option) => ({ value: option.value, label: labelOf(option) }))" :disabled="views[field].disabled" :aria-label="t(k(`${field}.label`))" :data-test="`settings-${field}`" @update:model-value="(value: string) => onChange(field, value)" />
           <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" :data-field="field" />
@@ -131,14 +147,17 @@ import {
   type CardSettingsField,
 } from './cardSettingsModel'
 import { settingsRowPhase, type SettingsField, type SettingsOption } from './settingsModel'
-import { useCardSettings } from './useCardSettings'
+import { useSharedCardSettings } from './useCardSettings'
+import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
+import type { AiRoleValue } from '@/features/document'
+import { cardRoleRows } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
-const props = defineProps<{
-  target: InspectorTarget
-}>()
+const props = withDefaults(defineProps<{ target: InspectorTarget; panel?: 'settings' | 'ai' }>(), { panel: 'settings' })
 
-const { t } = useI18n()
+const composer = useI18n({ useScope: 'global' })
+installAiRoleMessages(composer)
+const { t } = composer
 
 const k = (key: string) => `gui.inspector.settings.${key}`
 
@@ -150,7 +169,7 @@ const kind = computed<'run' | 'test' | 'plan'>(() => {
 })
 
 const testCard = useTestCard(() => kind.value === 'test' ? props.target : null)
-const ownCard = useCardSettings(() => (source.value === 'card' && kind.value !== 'test' ? props.target : null))
+const ownCard = useSharedCardSettings(() => (source.value === 'card' && kind.value !== 'test' ? props.target : null))
 const card = {
   node: computed(() => kind.value === 'test' ? testCard.value?.settings.node.value ?? null : ownCard.node.value),
   choices: computed(() => kind.value === 'test' ? testCard.value?.settings.choices.value ?? null : ownCard.choices.value),
@@ -164,6 +183,19 @@ const card = {
   reload: () => kind.value === 'test' ? testCard.value?.reload() : ownCard.reload(),
 }
 const resultFields = ['result_cause', 'follow_scope'] as const
+const instructionReviewFields = computed(() => (['instruction_review_ai', 'instruction_review_count'] as const).filter(field => card.node.value?.fields[field]))
+const roleRows = computed(() => cardRoleRows(card.node.value?.aiRoles, cardSettingsValue(card.node.value, card.pending.value, 'instruction'), card.pending.value))
+function roleLabel(role: string): string {
+  if (role === 'execution' && kind.value === 'plan') return t(k('plan.run_ai'))
+  if (role === 'execution' && kind.value === 'test') return t('gui.designer.inspector.run_settings.writer_ai')
+  return t(`gui.aiRoles.${role}`)
+}
+function roleDisabled(field: string): boolean {
+  return cardReason.value !== null || !!card.pending.value[field] || !card.node.value?.aiRoles || card.node.value.aiRoles.optionsState !== 'ok' || card.node.value.settingsVersion === undefined
+}
+function changeRole(field: 'instruction_role' | 'execution_role' | 'review_role', value: AiRoleValue) {
+  if (!roleDisabled(field)) void card.change(field, value)
+}
 const sequence = useSettings(() => (source.value === 'sequence' ? props.target : null))
 
 /** The 0048 sequence fields behind the v7 items; the other items have no place on a sequence row. */
@@ -229,11 +261,15 @@ function cardField(field: CardSettingsField): FieldView {
   const node = card.node.value
   const value = cardSettingsValue(node, card.pending.value, field)
   let options: SettingsOption[]
-  if (cardSettingsIsAiField(field)) options = cardSettingsAiOptions(field, card.choices.value?.providers ?? [], value)
+  if (field === 'instruction_review_ai') {
+    options = [{ value: '', label: t('gui.aiRoles.card_review'), key: null, params: {} }, ...cardSettingsAiOptions('review_ai', node?.aiRoles?.options ?? card.choices.value?.providers ?? [], value).slice(1)]
+  } else if (cardSettingsIsAiField(field)) options = cardSettingsAiOptions(field, card.choices.value?.providers ?? [], value)
   else options = cardSettingsChoiceOptions(field, node?.fields[field]?.choices, value)
   let reason = cardReason.value
   if (!reason && field in card.pending.value) reason = 'reason.busy'
   if (reason === null && field === 'review_ai' && cardSettingsReviewOff(cardSettingsValue(node, card.pending.value, 'review_count'))) reason = 'reason.review_off'
+  const reviewSelected = 'review_role' in card.pending.value ? card.pending.value.review_role as AiRoleValue : node?.aiRoles?.roles.review?.selected
+  if (!reason && (field === 'review_count' || field === 'review_basis') && reviewSelected?.kind === 'not_used') reason = 'reason.review_off'
   return { value: cardSettingsText(value), options, disabled: reason !== null, reason }
 }
 
@@ -250,7 +286,7 @@ function sequenceField(field: CardSettingsField): FieldView {
 
 const views = computed(() => {
   const out = {} as Record<CardSettingsField, FieldView>
-  const fields = kind.value === 'plan' ? CARD_SETTINGS_FIELDS.plan : new Set([...CARD_SETTINGS_FIELDS.run, ...CARD_SETTINGS_FIELDS.test])
+  const fields = new Set<CardSettingsField>([...CARD_SETTINGS_FIELDS.run, ...CARD_SETTINGS_FIELDS.test, ...CARD_SETTINGS_FIELDS.plan, 'instruction_review_ai', 'instruction_review_count'])
   for (const field of fields) out[field] = source.value === 'card' ? cardField(field) : sequenceField(field)
   return out
 })
@@ -308,6 +344,7 @@ const runFields = computed<InspectorRunSettingsFields>(() => {
   const shown = kind.value === 'test' ? CARD_SETTINGS_FIELDS.test : RUN_BLOCK_FIELDS
   for (const name of RUN_BLOCK_FIELDS) {
     if (!shown.includes(name)) continue
+    if (card.node.value?.aiRoles && (name === 'run_ai' || name === 'review_ai')) continue
     const view = views.value[name]
     out[name] = {
       value: view.value,
@@ -328,7 +365,7 @@ function planHint(name: InspectorRunSettingsField): string | null {
 function onChange(field: CardSettingsField, text: string) {
   if (views.value[field].disabled) return
   if (source.value === 'card') {
-    const value = cardSettingsValueOf(field, text)
+    const value = field === 'instruction_review_ai' ? text || null : cardSettingsValueOf(field, text)
     if (value !== undefined) void card.change(field, value)
     return
   }

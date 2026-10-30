@@ -103,6 +103,8 @@ export interface FlowRunState {
 }
 
 export interface FlowRunControlDeps {
+  readonly beforePrepare?: (flowId: string, mode: FlowRunMode) => Promise<boolean>
+  readonly canProceed?: (flowId: string) => boolean
   readonly source: FlowGraphSource
   readonly projectId: () => string | null
   /** Whether the Flow is still open in this project (a late answer for a closed tab is dropped). */
@@ -285,7 +287,10 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     return act(flowId, mode, async (projectId, state) => {
       // A locked run takes no command (its buttons are 일시정지 / 재개 / 중지); the draft is confirmed on an idle Flow only.
       if (isRunLocked(state.run)) return false
+      if (deps.beforePrepare && !(await deps.beforePrepare(flowId, mode))) return false
+      if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
       if (!(await deps.prepare(flowId))) return false
+      if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || deps.canProceed?.(flowId) === false) return false
       // One server call: the step / full command. Nothing is stopped from here after it (T#2 settles the step).
       state.run = await source.startRun!(projectId, flowId, mode === 'next' ? 'step' : 'full')
       state.readState = 'read'

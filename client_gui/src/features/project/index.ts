@@ -28,6 +28,8 @@ export { useProjectStore } from './store'
 // flowgate.v02.0048 T#2 adds the subscription and frame shapes of the store's project event
 // subscription (subscribeProjectEvents, the hub the Canvas subscription also runs on).
 // flowgate.v02.0105 T#1 adds the Designer F5 snapshot shape the Designer Shell saves / restores through the store.
+export type { RoleRunFields, RoleWaitReason } from './types'
+export type { AiInvocation, AiInvocationsPage } from './aiInvocationsApi'
 export type { FlowCanvasChangeHandlers } from './flowCanvasEvents'
 export type { DesignerSessionSnapshot, DesignerSessionTab } from './designerSessionStorage'
 export type { ProjectEventFrame, ProjectEventSubscription } from './projectEvents'

@@ -27,6 +27,9 @@ import type {
   VisibleSystemAi,
 } from './types'
 
+import { AI_ROLES, type AiRoleValues, type MyAiRoles } from './roles/types'
+import { toMyAiRoles, aiRolePayload } from './roles/roleValues'
+
 const project = (projectId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}`
 const API = '/api/v1'
 
@@ -353,4 +356,15 @@ export async function deleteAiGroupRole(groupId: string, roleId: string): Promis
     () => deleteRequest<AiGroup>(`${group(groupId)}/roles/${encodeURIComponent(roleId)}`),
     'gui.ai.request_failed.role_delete',
   )
+}
+
+// Account role values never use provider names or the existing default-AI APIs.
+type RoleRaw = Record<string, any>
+export { toAiRoleValue, toCardAiRoles, aiRolePayload } from './roles/roleValues'
+export async function getMyAiRoles(): Promise<MyAiRoles> {
+  return toMyAiRoles(await call(() => getRequest<RoleRaw>('/api/v1/me/ai-roles'), 'gui.ai.request_failed.my_load'))
+}
+export async function putMyAiRoles(roles: AiRoleValues): Promise<MyAiRoles> {
+  const values = Object.fromEntries(AI_ROLES.map(role => [role, aiRolePayload(roles[role])]))
+  return toMyAiRoles(await call(() => putRequest<RoleRaw>('/api/v1/me/ai-roles', { roles: values }), 'gui.ai.request_failed.my_save'))
 }

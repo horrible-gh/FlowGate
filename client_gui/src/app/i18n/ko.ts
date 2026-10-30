@@ -248,6 +248,9 @@ export default {
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
+        manual_write_wait: '수동 작성 대기',
+        ai_setup_required: 'AI 설정 필요',
+        ai_unavailable: 'AI 사용 불가',
         no_result: '결과 없음',
         incomplete: '실행 미완료',
         // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
@@ -466,6 +469,7 @@ export default {
         qna: 'Q&A',
         attachments: '첨부',
         settings: '설정',
+        ai: 'AI',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: '문서 상태',

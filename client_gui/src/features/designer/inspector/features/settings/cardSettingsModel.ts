@@ -36,6 +36,11 @@ export interface CardSettingsFacts {
 }
 
 export type CardSettingsField =
+  | 'instruction_role'
+  | 'execution_role'
+  | 'review_role'
+  | 'instruction_review_ai'
+  | 'instruction_review_count'
   | 'instruction'
   | 'instruction_ai'
   | 'run_ai'
@@ -61,7 +66,7 @@ export function cardSettingsSwitchOn(value: unknown): boolean {
 }
 
 /** Fields whose value is a number (sent as one). */
-const NUMBER_FIELDS: readonly CardSettingsField[] = ['restart', 'review_count', 'time_limit']
+const NUMBER_FIELDS: readonly CardSettingsField[] = ['instruction_review_count', 'restart', 'review_count', 'time_limit']
 /** Fields whose value is an AI id; none is null (sent as null, the default). */
 const AI_FIELDS: readonly CardSettingsField[] = ['instruction_ai', 'run_ai', 'review_ai']
 
@@ -150,8 +155,8 @@ const integers = (choices: readonly unknown[] | null | undefined): number[] =>
 /** The options of a choice field, in the server's order; a value outside them stays shown, marked. */
 export function cardSettingsChoiceOptions(field: CardSettingsField, choices: readonly unknown[] | null | undefined, current: unknown): SettingsOption[] {
   let options: SettingsOption[]
-  if (field === 'restart' || field === 'review_count') {
-    options = integers(choices).map((count) => ({ value: String(count), key: cardSettingsCountKey(field, count), params: { n: count }, label: null }))
+  if (field === 'restart' || field === 'review_count' || field === 'instruction_review_count') {
+    options = integers(choices).map((count) => ({ value: String(count), key: cardSettingsCountKey(field === 'instruction_review_count' ? 'review_count' : field, count), params: { n: count }, label: null }))
   } else if (field === 'time_limit') {
     options = integers(choices).map((minutes) => ({ value: String(minutes), key: 'option.minutes', params: { n: minutes }, label: null }))
   } else {
@@ -193,7 +198,7 @@ export function cardSettingsReviewOff(reviewCount: unknown): boolean {
 }
 
 /** Kinds of a refused change or a failed read (the `@/features/document` settingsNodeErrorOf kinds). */
-export type CardSettingsFailureKind = 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
+export type CardSettingsFailureKind = 'roles_unavailable' | 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
 
 /** 422 reasons a refused value has its own sentence for (O2 0007-TR §4-1). */
 export const CARD_SETTINGS_INVALID_REASONS: readonly string[] = ['unknown_ai', 'not_a_text', 'invalid_text', 'not_a_setting_of_this_card', 'not_a_boolean']
@@ -222,6 +227,7 @@ export function cardSettingsFailureText(field: string, sentence: string, message
 
 /** Message key of a failed read of the card's settings. */
 export function cardSettingsErrorKey(kind: CardSettingsFailureKind): string {
+  if (kind === 'roles_unavailable') return 'card_failure.roles_unavailable'
   return kind === 'forbidden' || kind === 'not_found' || kind === 'network' || kind === 'unavailable' ? `card_error.${kind}` : 'card_error.other'
 }
 

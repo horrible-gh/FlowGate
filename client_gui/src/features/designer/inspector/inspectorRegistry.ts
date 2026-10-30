@@ -45,6 +45,7 @@ export interface InspectorTabContribution {
 }
 
 export interface InspectorRegistration {
+  readonly graphOnly?: boolean
   /** Feature id = its folder name under features/. */
   readonly key: string
   /** Display order within a place (tab Content, header actions, header meta); unique overall. */
@@ -189,6 +190,7 @@ export const inspectorRegistry: InspectorRegistry = createInspectorRegistry(
 
 /** Whether a registration's declared conditions all hold for the target (D#1 §5.3 rule 1). */
 export function registrationApplies(entry: InspectorRegistration, target: InspectorTarget): boolean {
+  if (entry.graphOnly && target.nodeType === null) return false
   if (entry.requiresDocument && !target.docId) return false
   if (entry.requiresSlot && !target.slot) return false
   if (entry.cardKinds?.length && !entry.cardKinds.includes(target.cardKind)) return false

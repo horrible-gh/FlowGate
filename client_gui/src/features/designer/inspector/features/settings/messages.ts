@@ -92,6 +92,7 @@ export default {
     },
     // A refused change of a Graph card (T#2 card settings).
     card_failure: {
+      roles_unavailable: '카드 AI 역할 설정을 사용할 수 없습니다',
       locked: '실행 중이라 바꿀 수 없습니다',
       disposed: '폐기된 그룹입니다',
       unavailable: '서버에 카드 설정이 없습니다',
@@ -197,6 +198,7 @@ export default {
       other: 'Could not load the settings.',
     },
     card_failure: {
+      roles_unavailable: 'Card AI role settings are unavailable',
       locked: 'Running: it cannot change now',
       disposed: 'The group was disposed',
       unavailable: 'The server has no card settings',
@@ -302,6 +304,7 @@ export default {
       other: '設定を読み込めませんでした。',
     },
     card_failure: {
+      roles_unavailable: 'カードのAI役割設定を利用できません',
       locked: '実行中のため変更できません',
       disposed: '破棄されたグループです',
       unavailable: 'サーバーにカード設定がありません',

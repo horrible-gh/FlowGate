@@ -20,6 +20,7 @@ import { toVueFlowNodes, type FlowGateNodeData } from '@/features/designer/cente
 import { cardStateView, type CardRunFacts } from '@/features/designer/center/graph/cardStateView'
 import type { FlowGraph, FlowGraphNode, FlowGraphNodeRun } from '@/features/designer/center/graph/flowGraph'
 import InspectorHeader from '@/features/designer/inspector/InspectorHeader.vue'
+import CardApprovalBar from '@/features/designer/inspector/features/cardApproval/CardApprovalBar.vue'
 import { runBandTone, runBandView, type DesignerRunFacts } from '@/features/designer/top/designerTop'
 import DesignerToolbar from '@/features/designer/top/DesignerToolbar.vue'
 import { GRAPH_GRAPH, selectionOf, targetOf } from './inspector/support/inspectorSupport'
@@ -106,6 +107,31 @@ describe('the Canvas card (vueFlowMapping, FlowNodeCard)', () => {
     expect(data.gn_ai.cardState?.key).toBe('writing_result')
     expect(data.gn_person.cardState?.key).toBe('waiting_writer')
     expect(data.gn_none.cardState?.key).toBe('no_result')
+  })
+
+  it('0113 P-1 §6.4 scenario C keeps the manual label, approval button and 0105 tooltip', async () => {
+    i18n.global.locale.value = 'ko'
+    const facts = nodeRun('review', { awaitingApproval: true, approvalWaitReason: 'instruction_not_approved',
+      waitReason: { code: 'manual_write_wait', role: 'instruction', stage: 'instruction', seq: 0, detail: null } })
+    const scenario: FlowGraph = { ...graph, nodes: [card('gn_manual', facts)] }
+    const data = toVueFlowNodes(scenario, null, new Map(), { canApprove: true })[0].data
+    expect(data.cardState).toMatchObject({ key: 'manual_write_wait', approvable: true, tone: 'neutral' })
+    wrapper = mount(FlowNodeCard, { props: { id: 'gn_manual', data }, global: { plugins: [i18n], stubs: { Handle: true } } })
+    const chip = wrapper.get('[data-test="designer-canvas-node-card-state"]')
+    expect(chip.attributes('title')).toContain('수동 작성 대기')
+    expect(chip.attributes('title')).toContain('instruction_not_approved')
+    await wrapper.get('[data-test="designer-canvas-node-approve"]').trigger('click')
+    expect(wrapper.emitted('approve')).toEqual([['gn_manual']])
+    const header = mount(InspectorHeader, { props: { target: targetOf(selectionOf(scenario, 'gn_manual')) }, global: { plugins: [i18n] } })
+    try {
+      expect(header.get('[data-test="designer-inspector-pill-label"]').text()).toBe('수동 작성 대기')
+      expect(header.get('[data-test="designer-inspector-pill"]').attributes('title')).toContain('instruction_not_approved')
+    } finally { header.unmount() }
+    const approval = mount(CardApprovalBar, { props: { target: { ...targetOf(selectionOf(scenario, 'gn_manual')), canApprove: true } }, global: { plugins: [i18n] } })
+    try {
+      expect(approval.get('[data-test="card-approval-approve"]').attributes('disabled')).toBeUndefined()
+    } finally { approval.unmount() }
+    expect(toVueFlowNodes(scenario, null, new Map(), { canApprove: false })[0].data.approvable).not.toBe(true)
   })
 
   it('the waiting chip is the clock with its words, never the spinning mark', () => {

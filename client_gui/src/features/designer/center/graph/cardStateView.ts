@@ -30,6 +30,7 @@
 
 /** The node run facts the state is read from (FlowGraphNodeRun, the Canvas `node_run`). */
 export interface CardRunFacts {
+  readonly waitReason?: { code: string; detail?: string | null; role?: string | null } | null
   readonly dispatchErrorCode?: string | null
   readonly resultDocId?: string | null
   readonly status: string | null
@@ -44,7 +45,7 @@ export interface CardRunFacts {
   readonly approvalWaitReason?: string | null
 }
 
-export const CARD_STATE_KEYS = ['no_result', 'incomplete', 'waiting_answer', 'waiting_writer', 'writing_instruction', 'writing_result', 'working', 'awaiting_approval', 'auto_approval_failed', 'approved', 'rejected', 'pending', 'closed'] as const
+export const CARD_STATE_KEYS = ['manual_write_wait', 'ai_setup_required', 'ai_unavailable', 'no_result', 'incomplete', 'waiting_answer', 'waiting_writer', 'writing_instruction', 'writing_result', 'working', 'awaiting_approval', 'auto_approval_failed', 'approved', 'rejected', 'pending', 'closed'] as const
 
 export type CardStateKey = (typeof CARD_STATE_KEYS)[number]
 
@@ -104,6 +105,17 @@ function executing(run: CardRunFacts): boolean | null {
 /** The card state of a node run, or null (no run, or a status this screen does not know). */
 export function cardStateView(run: CardRunFacts | null | undefined): CardStateView | null {
   const status = run?.status?.trim() ?? ''
+  const wait = run?.waitReason
+  // 0113 labels override presentation only. A 0105 approval remains available with its raw reason.
+  // An absent/null/unknown new wait reason takes the unchanged 0083/0105 branches below.
+  if ((status === 'open' || status === 'review') && wait &&
+      ['manual_write_wait', 'ai_setup_required', 'ai_unavailable'].includes(wait.code)) {
+    const key = run?.question === true ? 'waiting_answer' : wait.code as CardStateKey
+    const tone = key === 'ai_unavailable' ? 'danger' : key === 'ai_setup_required' ? 'warning' : 'neutral'
+    const approvable = status === 'review' && run?.awaitingApproval === true
+    const reason = [wait.detail || wait.role, approvable ? run?.approvalWaitReason?.trim() : null].filter(Boolean).join(' · ') || null
+    return { ...view(key, 'awaiting', tone, reason), approvable }
+  }
   switch (status) {
     case 'done':
       return view('approved', 'approved', 'success')
@@ -229,4 +241,10 @@ export function cardApprovalRefusalOf(params: unknown): CardApprovalRefusal {
     approvedDocIds: Array.isArray(raw.approved_doc_ids) ? raw.approved_doc_ids.filter((id): id is string => typeof id === 'string' && !!id) : [],
     resultDocId: paramText(raw.result_doc_id),
   }
+}
+
+/** Both card surfaces use the latest run read, falling back to the Canvas for omitted facts. */
+export function cardNodeRun(canvas: import('./flowGraph').FlowGraphNodeRun | null | undefined, run: import('./flowGraphSource').FlowRunNodeInfo | undefined): import('./flowGraph').FlowGraphNodeRun | null {
+  if (!run) return canvas ?? null
+  return { openedAt: null, finishedAt: null, resultDocId: null, ...canvas, ...run }
 }

@@ -29,7 +29,7 @@
 // The run events (P0008 §8.2 `graph_run_status_changed` / `graph_node_state_changed`) are refresh
 // signals of the Canvas (flowCanvasEvents.ts), never state.
 import { getRequest, postRequest } from '@shared/api'
-import { canvasHeaders, num, str, type Raw } from './flowCanvasApi'
+import { canvasHeaders, num, str, toRoleRunFields, type Raw } from './flowCanvasApi'
 import { toGraphError } from './flowGraphApi'
 import type { FlowRun, FlowRunApproval, FlowRunNode, FlowRunTimeMachine, FlowRunTimeMachineRefusal } from './types'
 
@@ -52,6 +52,7 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
     ...('approval_wait_reason' in raw ? { approvalWaitReason: str(raw.approval_wait_reason) } : {}),
+    ...toRoleRunFields(raw),
     ...(raw.gate && typeof raw.gate === 'object' ? { gateRecoveryResetRequired: (raw.gate as Raw).recovery_reset_required === true } : {}),
   }
 }

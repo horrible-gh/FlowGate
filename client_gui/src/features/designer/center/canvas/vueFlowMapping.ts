@@ -45,7 +45,7 @@
 // flowgate.v02.0070 T#1 (B1): a card no longer edits its title (the Inspector header does), so the card data carries
 // no title edit state.
 import type { Edge, Node } from '@vue-flow/core'
-import { cardStateView, type CardStateView } from '../graph/cardStateView'
+import { cardNodeRun, cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'
 import { lineWarns, type FlowGraph } from '../graph/flowGraph'
 import { NO_RUN_MARKS, isEdgeProtected, type FlowRunMarks } from '../run/flowRunLock'
@@ -149,7 +149,7 @@ export function toVueFlowNodes(
       data.issueText = issues.get(node.id)
     }
     // A gate decides with ✓ 확인 · ✕ 반려 (its own card), never [승인]; its chip keeps the Canvas state.
-    const cardState = node.definition?.nodeType !== 'gate' ? cardStateView(node.nodeRun) : null
+    const cardState = node.definition?.nodeType !== 'gate' ? cardStateView(cardNodeRun(node.nodeRun, marks.nodeRuns.get(node.id))) : null
     if (cardState) {
       data.cardState = cardState
       if (cardState.approvable && options.canApprove && graph.ownership !== 'conflict') data.approvable = true

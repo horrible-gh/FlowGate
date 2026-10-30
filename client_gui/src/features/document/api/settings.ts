@@ -37,6 +37,7 @@
 //             settingsHopOf: what a running continuous hop took from the saved row.
 // Not wrapped (D#2 §2.2): restart, step time limit and review criteria are run-request fields with no
 // row to store them (Q 402), instruction use / after-review are not stored at all.
+import { toCardAiRoles, type CardAiRoles } from './settingsRoleValues'
 import { normalizeApiError } from '@shared/apiErrors'
 import { getRequest, patchRequest } from '@shared/api'
 
@@ -341,6 +342,7 @@ export interface SettingsMergeTargetState {
 
 /** A card's settings (T#2). */
 export interface SettingsNode {
+  readonly aiRoles?: CardAiRoles | null
   readonly mergeTargetOptions?: readonly string[]
   readonly defaultTargetBranch?: string | null
   readonly mergeTargetState?: SettingsMergeTargetState | null
@@ -367,6 +369,7 @@ export function toSettingsNode(raw: unknown): SettingsNode {
     }
   }
   return { cardKind: text(data.card_kind), locked: data.locked === true, fields,
+    ...('ai_roles' in data ? { aiRoles: data.ai_roles === null ? null : toCardAiRoles(record(data.ai_roles)) } : {}),
     ...('merge_target_options' in data ? { mergeTargetOptions: list(data.merge_target_options).filter((v): v is string => typeof v === 'string') } : {}),
     ...('default_target_branch' in data ? { defaultTargetBranch: text(data.default_target_branch) } : {}),
     ...('merge_target_state' in data ? { mergeTargetState: data.merge_target_state && typeof data.merge_target_state === 'object' ? data.merge_target_state as SettingsMergeTargetState : null } : {}),
@@ -439,7 +442,7 @@ export async function settingsNodeHoldWrite(flowId: string, nodeKey: string, on:
  * disposed = the Flow's group was disposed; unavailable = the server has no card settings yet; invalid =
  * 400 / 422 (a value the card does not take); forbidden 401 / 403; not_found 404; network = no answer.
  */
-export type SettingsNodeErrorKind = 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
+export type SettingsNodeErrorKind = 'roles_unavailable' | 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
 
 /** What a failed card settings call threw. Only the code and the status are read. */
 export function settingsNodeErrorOf(error: unknown): SettingsNodeErrorKind {
@@ -449,6 +452,7 @@ export function settingsNodeErrorOf(error: unknown): SettingsNodeErrorKind {
   if (normalized.network) return 'network'
   if (code === 'node_settings_locked' || code === 'gate_settings_locked') return 'locked'
   if (code === 'flow_disposed' || code === 'group_disposed') return 'disposed'
+  if (code === 'card_roles_unavailable') return 'roles_unavailable'
   if (code === 'card_settings_unavailable') return 'unavailable'
   if (status === 400 || status === 422) return 'invalid'
   if (status === 401 || status === 403) return 'forbidden'

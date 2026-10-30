@@ -4,7 +4,7 @@
 // it for the selected Node — no empty tab and no placeholder. The order never changes; which tabs
 // exist comes from the registry, never from a per-Node flag.
 
-export const INSPECTOR_TABS = ['documents', 'qna', 'attachments', 'settings'] as const
+export const INSPECTOR_TABS = ['documents', 'qna', 'attachments', 'settings', 'ai'] as const
 
 export type InspectorTabKey = (typeof INSPECTOR_TABS)[number]
 
