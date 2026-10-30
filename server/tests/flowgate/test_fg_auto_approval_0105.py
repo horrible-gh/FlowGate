@@ -416,7 +416,7 @@ def _instruction_lost(env, monkeypatch, settings=(), *, current_attempt=True):
     _admin_and_reviewer(env)
     key = _run_one_card(env, AI)
     for field, value in settings:
-        setting(env, FA, key, field, value)
+        legacy_setting(env, FA, key, field, value)
     _start(env)
     [job] = env["jobs"]
     assert (job["stage"], job["action_scope"]) == ("instruction", "edit")
@@ -587,3 +587,7 @@ def test_the_run_tells_the_viewer_whether_the_approval_route_would_take_its_appr
     monkeypatch.setattr(approvals, "permissions_of", real)
     body = _approve(env, key)
     assert body["run"]["viewer"] == {"can_approve": True} and _node(env, key)[0] == "done"
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting

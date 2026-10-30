@@ -58,7 +58,7 @@ def _flow(env, kind, assignee, settings=()):
     assert confirmed.status_code == 201, confirmed.text
     key = body["key_map"]["tmp_c"]
     for field, value in settings:
-        setting(env, FA, key, field, value)
+        legacy_setting(env, FA, key, field, value)
     return key
 
 
@@ -323,3 +323,7 @@ def test_a_wp_card_token_reads_the_wp_template_and_its_help_context_is_wp(env, d
     assert "design_template" in [item["name"] for item in index.json()["items"]]
     template = client.get("/api/v1/help/items/design_template/WP")
     assert template.status_code == 200, template.text
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting

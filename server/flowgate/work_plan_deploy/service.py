@@ -42,6 +42,7 @@ from flowgate.card_documents import lines as card_lines
 from flowgate.card_documents import repository as card_lines_store
 from flowgate.card_documents import slots as cs
 from flowgate.card_documents import legacy_adapter as card_docs_legacy
+from flowgate.ai_roles import card_init
 from flowgate.card_settings import fields as setting_fields
 from flowgate.card_settings import legacy_adapter as settings_legacy
 from flowgate.card_settings import repository as card_settings
@@ -231,6 +232,7 @@ class Work:
     creates: list = field(default_factory=list)        # targets to make, plan order
     fills: list = field(default_factory=list)          # instruction writes on existing cards
     settings: list = field(default_factory=list)       # explicit instruction modes on existing cards
+    role_redeploys: list = field(default_factory=list)  # (key, kind, plan_roles), 0113 T#2
     removes: list = field(default_factory=list)        # node keys to remove (cleanup)
     blockers: list = field(default_factory=list)
     chain: Optional[deploy_chain.Chain] = None
@@ -240,7 +242,7 @@ class Work:
 
     @property
     def writes(self) -> bool:
-        return bool(self.creates or self.fills or self.removes or self.settings)
+        return bool(self.creates or self.fills or self.removes or self.settings or self.role_redeploys)
 
 
 def _instruction_slot(node: dict) -> Optional[cs.CardSlot]:
@@ -367,6 +369,12 @@ def _plan_work(state: State, mode: str, instructions: dict[str, dict], registere
                     work.blockers.append({"code": "card_stage_settings_locked", "node_key": key, "field": name})
                 elif value is None or _setting_problem(setting_fields.card_kind(deploy_plan.NODE_TYPE, target.doc_type), name, value) is None:
                     work.settings.append((key, name, value))
+            stage_settings = deploy_plan.stage_settings(target)
+            if stage_settings and started(key) is False:
+                kind = setting_fields.card_kind(node.get("node_type"), node.get("doc_type"))
+                plan_roles = card_init.wp_plan_roles(stage_settings)
+                if card_init.redeploy_role_changes(state.flow_id, key, kind, plan_roles):
+                    work.role_redeploys.append((key, kind, plan_roles))
         instruction_of(entry, key, node, target)
         work.cards.append(entry)
 
@@ -705,6 +713,8 @@ def _write(state: State, work: Work, instructions: dict, registered: set[str], u
                                                      team_exists=settings_legacy.team_exists,
                                                      ai_exists=settings_legacy.ai_exists)
                 card_settings.put(state.flow_id, key, name, checked, user_id)
+        card_init.initialize_wp_card(state.flow_id, key, kind, user_id,
+                                     card_init.wp_plan_roles(deploy_plan.initial_settings(target)))
         if target.card_id in instructions:
             instruction_line(key, target)
     for key, name, value in work.settings:
@@ -712,6 +722,8 @@ def _write(state: State, work: Work, instructions: dict, registered: set[str], u
             card_settings.remove(state.flow_id, key, name)
         else:
             card_settings.put(state.flow_id, key, name, value, user_id)
+    for key, kind, plan_roles in work.role_redeploys:
+        card_init.apply_wp_redeploy_roles(state.flow_id, key, kind, user_id, plan_roles)
     for fill in work.fills:
         if fill.verdict is None:                   # the line had no document when judged
             instruction_line(fill.node_key, fill.target)

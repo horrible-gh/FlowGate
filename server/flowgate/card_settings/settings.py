@@ -61,6 +61,8 @@ from typing import Any, Optional
 
 from flowgate.card_documents import lines as card_lines
 from flowgate.card_documents import slots as card_slots
+from flowgate.ai_roles import card_roles, role_store
+from flowgate.ai_roles.resolve import applicable_roles
 from flowgate.card_settings import fields
 from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
@@ -96,7 +98,7 @@ def _card(flow_id: str, node_key: str) -> dict:
     return node
 
 
-def _payload(flow_id: str, node: dict, stored: dict) -> dict:
+def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=None) -> dict:
     kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
     reason = gate_lock.lock_reason(flow_id, node["node_key"]) if kind == fields.CHECK else None
     # A gate is open while it waits for the person, so "open in the active run" (``legacy.node_running``) is not a
@@ -112,6 +114,8 @@ def _payload(flow_id: str, node: dict, stored: dict) -> dict:
     if kind == fields.CHECK:
         payload["lock_reason"] = reason
         payload["legacy"] = fields.legacy_view(kind, stored)      # history only: usage, the old merge target branch
+    if applicable_roles(kind):
+        payload["ai_roles"] = card_roles.card_role_view(flow_id, node, kind, viewer, project_id, stored)
     return payload
 
 
@@ -136,12 +140,12 @@ def _with_merge_targets(group: dict, payload: dict, refresh: bool = False) -> di
             "push_remote_check_required": push and (shown.get(MERGE_TARGET_FIELD) or {}).get("value") != ORIGIN}
 
 
-def read(group: dict, node_key: str, refresh_merge_targets: bool = False) -> dict:
+def read(group: dict, node_key: str, refresh_merge_targets: bool = False, *, viewer=None) -> dict:
     """``GET /flows/{flow_id}/nodes/{node_key}/settings``. ``refresh_merge_targets``: a check card's candidates are
     judged again instead of read from their cache (nothing else changes)."""
     flow_id = group["group_id"]
     node = _card(flow_id, node_key)
-    return _with_merge_targets(group, _payload(flow_id, node, repository.values(flow_id, node_key)),
+    return _with_merge_targets(group, _payload(flow_id, node, repository.values(flow_id, node_key), viewer, group.get("project_id")),
                                refresh_merge_targets)
 
 
@@ -167,8 +171,14 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             editing.require_editable(flow_id, node_key)
         node = _card(flow_id, node_key)
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
+        role_write = name in card_roles.ROLE_FIELDS and role_store.available()
+        if name in card_roles.NEW_FIELDS and not role_write:
+            raise legacy.GraphApiError(409, "card_roles_unavailable", {"flow_id": flow_id, "node_key": node_key},
+                                       message="Card AI roles are not available on this server yet.")
         field = fields.field_of(kind, name)
-        if field is None:
+        applicable = (card_roles.ROLE_FIELDS.get(name) in applicable_roles(kind)
+                      if name in card_roles.NEW_FIELDS else field is not None)
+        if not applicable:
             raise legacy.GraphApiError(422, "invalid_request", {"errors": [
                 {"field": "field", "reason": "not_a_setting_of_this_card", "card_kind": kind}]},
                 message="This card has no such setting.")
@@ -181,7 +191,9 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
                 raise legacy.GraphApiError(409, "gate_context_changed", {
                     "flow_id": flow_id, "node_key": node_key, "reason": "settings_version",
                     "expected_settings_version": expected_version, "settings_version": current})
-        if value is None:
+        if role_write:
+            changed = card_roles.apply_role_write(flow_id, node_key, kind, name, value, user_id)
+        elif value is None:
             changed = repository.remove(flow_id, node_key, name)
         else:
             try:
@@ -204,7 +216,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
                                       locale)
         if changed and name == fields.MERGE_TARGET_BRANCH.name:
             legacy.invalidate_merge_targets(group)
-        return _payload(flow_id, node, stored)
+        return _payload(flow_id, node, stored, user_id, group.get("project_id"))
 
     return _with_merge_targets(group, legacy.with_flow_guard(flow_id, body))
 
@@ -276,7 +288,7 @@ def _write_hold(group: dict, node_key: str, value: Any, user_id: Optional[str]) 
         repository.remove(flow_id, node_key, fields.HOLD.name)
     if on != before:
         hold.changed(flow_id, group.get("project_id"), node_key, on, user_id)
-    return _payload(flow_id, node, repository.values(flow_id, node_key))
+    return _payload(flow_id, node, repository.values(flow_id, node_key), user_id, group.get("project_id"))
 
 
 def uses_ai(flow_id: str, node: dict) -> bool:

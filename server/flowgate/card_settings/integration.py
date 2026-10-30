@@ -37,6 +37,8 @@ from flowgate.card_settings import legacy_adapter, question_wait, review_stage, 
 
 
 def register() -> None:
+    from flowgate.ai_roles import card_init
+    ports.register(ports.CARDS_CREATED, card_init.cards_created)
     ports.register(ports.USES_AI, settings.uses_ai)
     ports.register(ports.RUN_SETTINGS, settings.run_settings)
     ports.register(ports.RESULT_TYPE, settings.result_type)

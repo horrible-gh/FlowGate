@@ -22,7 +22,7 @@ from modules.flow_gate.db.connection import get_store
 
 SETTINGS_TABLE = "graph_node_settings"
 VERSION_TABLE = "graph_node_settings_version"
-_NODE_COLUMNS = "node_key, node_type, doc_type, label"
+_NODE_COLUMNS = "node_key, node_type, doc_type, label, assignee_kind, assignee_provider_id"
 
 
 def _now() -> str:

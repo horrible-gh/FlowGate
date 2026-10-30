@@ -55,6 +55,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Optional
 
+CARDS_CREATED = "cards_created"                              # 0113 T#2: draft creation only
 USES_AI = "uses_ai"
 RUN_SETTINGS = "run_settings"
 RESULT_TYPE = "result_type"
@@ -67,7 +68,7 @@ PERSON_RESULT = "person_result"                                  # flowgate.v02.
 APPROVAL_WAIT_REASON = "approval_wait_reason"                    # flowgate.v02.0105 T#2 B-2
 RECONCILE_STAGE = "reconcile_stage"                              # flowgate.v02.0105 T#2 B-3
 PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING,
-              PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE)
+              PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE, CARDS_CREATED)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -95,6 +96,13 @@ def registered(name: str) -> bool:
 def _handler(name: str) -> Optional[Callable[..., Any]]:
     with _lock:
         return _handlers.get(name)
+
+
+def cards_created(group: dict, user_id: str, nodes: list[dict]) -> None:
+    """Newly issued draft node keys, in the draft's guard. Unregistered: no action."""
+    handler = _handler(CARDS_CREATED)
+    if handler is not None:
+        handler(group, user_id, nodes)
 
 
 def uses_ai(flow_id: str, node: dict) -> bool:

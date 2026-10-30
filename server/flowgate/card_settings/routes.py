@@ -59,7 +59,7 @@ def get_card_settings(flow_id: str, node_key: str, request: Request):
         user_id = legacy.authenticate(request)
         group = legacy.load_flow(flow_id)
         legacy.authorize(user_id, group, "read")
-        return settings.read(group, node_key, refresh_merge_targets=refresh_requested(request))
+        return settings.read(group, node_key, refresh_merge_targets=refresh_requested(request), viewer=user_id)
 
     return legacy.run(request, handle)
 

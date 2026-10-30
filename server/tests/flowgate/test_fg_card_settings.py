@@ -243,6 +243,20 @@ def setting(env, flow, key, field, value, expect=200):
     return patch(env, flow, key, {"field": field, "value": value}, expect)
 
 
+def legacy_setting(env, flow, key, field, value):
+    """0113 T#2: seed a legacy role field for tests of the unchanged execution path.
+
+    PATCH itself uses slots now. These callers exercise run/approval/token behavior
+    until T#3; their fixture must still represent an old card's stored fields.
+    """
+    if field not in ("instruction_ai", "run_ai", "review_ai"):
+        return setting(env, flow, key, field, value)
+    from flowgate.card_settings import repository
+    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+    with_flow_guard(flow, lambda: repository.put(flow, key, field, value, "u_kim"))
+    return get_settings(env, flow, key)
+
+
 def stored_rows(env, flow, key=None):
     sql = "SELECT node_key, field, value_json FROM graph_node_settings WHERE group_id = ?"
     rows = _sql(env["db"], sql + (" AND node_key = ?" if key else "") + " ORDER BY field",
@@ -356,7 +370,8 @@ def test_each_card_kind_keeps_its_own_settings(env):
     km = first["key_map"]
     setting(env, FB, km["tmp_ts"], "review_count", -1)
     ts = setting(env, FB, km["tmp_ts"], "review_ai", "aip_card")
-    assert ts["card_kind"] == "test" and (shown(ts)["review_count"], shown(ts)["review_ai"]) == (-1, "aip_card")
+    assert ts["card_kind"] == "test" and (shown(ts)["review_count"], shown(ts)["review_ai"]) == (-1, None)
+    assert ts["ai_roles"]["roles"]["review"]["selected"] == {"kind": "assigned", "provider_id": "aip_card"}
     setting(env, FB, km["tmp_ts"], "time_limit", 60, expect=422)          # not a test card setting
     for field, value in (("scope", "confirm"), ("team", "team_auth"), ("limit_max_nodes", 12),
                          ("limit_total_reviews", 30)):
@@ -394,7 +409,13 @@ def test_values_outside_a_run_setting_are_refused(env, field, value, reason):
         return
     body = setting(env, FB, key, field, value, expect=422)
     assert body["error"]["code"] == "invalid_request"
-    assert body["error"]["params"]["errors"] == [{"field": "value", "reason": reason}]
+    if field in ("run_ai", "review_ai"):
+        error = ({"field": "value", "reason": "role_value_malformed", "detail":
+                  "provider_id_required" if value == "" else "not_an_object"} if not isinstance(value, str) or value == ""
+                 else {"field": "value", "reason": "ai_not_selectable", "cause": "deleted"})
+    else:
+        error = {"field": "value", "reason": reason}
+    assert body["error"]["params"]["errors"] == [error]
     assert stored_rows(env, FB) == {}
 
 
@@ -495,7 +516,7 @@ def test_an_ai_node_starts_with_its_card_run_ai_time_limit_and_restarts(env, dec
     key = _run_one_card(env, AI)
     for field, value in (("run_ai", "aip_card"), ("time_limit", 120), ("restart", 2), ("review_basis", "last"),
                          ("instruction", "omit")):
-        setting(env, FA, key, field, value)
+        legacy_setting(env, FA, key, field, value)
     _start(env)
     [job] = env["jobs"]
     assert (job["node_key"], job["provider_id"], job["step_timeout_sec"], job["restart_max"]) == (
@@ -526,7 +547,7 @@ def test_without_the_port_handler_a_node_ignores_its_card(env, decided):
     from flowgate.card_settings import integration
 
     key = _run_one_card(env, AI)
-    setting(env, FA, key, "run_ai", "aip_card")
+    legacy_setting(env, FA, key, "run_ai", "aip_card")
     integration.unregister()
     _start(env)
     [job] = env["jobs"]
@@ -535,7 +556,7 @@ def test_without_the_port_handler_a_node_ignores_its_card(env, decided):
 
 def test_a_human_node_does_not_read_its_card(env, decided):
     key = _run_one_card(env, {"kind": "human", "user_id": "u_lee", "provider_id": None})
-    setting(env, FA, key, "run_ai", "aip_card")
+    legacy_setting(env, FA, key, "run_ai", "aip_card")
     _start(env)
     assert env["jobs"] == []
     token = _sql(env["db"], "SELECT t.provider_id, t.issued_to FROM tokens t JOIN graph_run_token_map m "

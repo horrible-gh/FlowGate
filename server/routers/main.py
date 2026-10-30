@@ -52,6 +52,7 @@ from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settin
 from flowgate.conversation.routes import router as _conversation_router
 # flowgate.v02.0053 T#2: the v0.2 card (Node) run settings (server/flowgate/card_settings).
 from flowgate.card_settings.routes import router as _card_settings_router
+from flowgate.ai_roles.routes import router as _ai_roles_router
 # flowgate.v02.0056 T#1: the v0.2 card approval (server/flowgate/card_approval).
 from flowgate.card_approval.routes import router as _card_approval_router
 # flowgate.v02.0056 T#3: a card line's write and the v0.2 card memos (server/flowgate/card_documents, card_memos).
@@ -260,6 +261,7 @@ app.include_router(_graph_canvas_router, prefix=f"{CONTEXT}", tags=["GraphCanvas
 app.include_router(_graph_definition_router, prefix=f"{CONTEXT}", tags=["GraphDefinition"])
 app.include_router(_graph_run_router, prefix=f"{CONTEXT}", tags=["GraphRun"])
 app.include_router(_card_settings_router, prefix=f"{CONTEXT}", tags=["CardSettings"])
+app.include_router(_ai_roles_router, prefix=f"{CONTEXT}", tags=["AiSettings"])
 app.include_router(_card_approval_router, prefix=f"{CONTEXT}", tags=["CardApproval"])
 app.include_router(_card_documents_router, prefix=f"{CONTEXT}", tags=["CardDocuments"])
 app.include_router(_card_memos_router, prefix=f"{CONTEXT}", tags=["CardMemos"])

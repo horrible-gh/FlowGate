@@ -166,8 +166,8 @@ def test_next_step_opens_one_step_at_a_time(env, decided):
 def test_the_run_hands_out_with_the_card_settings_and_binds_into_the_placed_card_document(env, decided):
     (t1,), body = _confirmed(env, [("T", AI)])
     instruction = next(line["doc_id"] for line in body["card_documents"][t1] if line["slot"] == "instruction")
-    setting(env, FA, t1, "run_ai", "aip_card")                     # T#2: the card's own run AI
-    setting(env, FA, t1, "restart", 2)
+    legacy_setting(env, FA, t1, "run_ai", "aip_card")                     # T#2: the card's own run AI
+    legacy_setting(env, FA, t1, "restart", 2)
 
     run = _all(env)
     dispatch = {n["node_key"]: n["dispatch"] for n in run["node_runs"]}[t1]
@@ -222,3 +222,7 @@ def test_a_gate_is_decided_while_its_run_runs_and_not_while_it_is_stopped(env, g
     decided_run = _post(env, f"/runs/{run['run_id']}/nodes/{gate}/gate-decision", body={"decision": "confirm", "comment": "확인"})["run"]
     assert {n["node_key"]: n["status"] for n in decided_run["node_runs"]}[gate] == "done"
     assert decided_run["status"] == "completed"
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting

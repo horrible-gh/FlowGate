@@ -171,7 +171,7 @@ def _ai_card(env, settings=()):
                       [edge("tmp_e", "tmp_r", "tmp_c")])
     key = first["key_map"]["tmp_c"]
     for field, value in settings:
-        setting(env, FA, key, field, value)
+        legacy_setting(env, FA, key, field, value)
     assert env["client"].post(f"/api/v1/flows/{FA}/graph/revisions", json={"draft_version": 1},
                               headers=_h()).status_code == 201
     return key
@@ -1216,3 +1216,7 @@ def test_a_person_s_result_is_titled_in_the_language_of_its_own_request(env, dec
     assert made["line"]["title"] == row["title"] == f"T · {name}" and f"\ntitle: T · {name}\n" in front + "\n"
     assert _canvas_lines(env, FA, key)["instruction"]["title"] == f"T · {name}"
     assert _doc_row(placeholder)["title"] == before == "T · 지시서"            # placed in ko, never retitled
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting

@@ -89,7 +89,7 @@ def _card(env, doc_type="T", settings=(), node_type="document"):
                       [edge("tmp_e", "tmp_r", "tmp_c")])
     key = first["key_map"]["tmp_c"]
     for field, value in settings:
-        setting(env, FA, key, field, value)
+        legacy_setting(env, FA, key, field, value)
     assert env["client"].post(f"/api/v1/flows/{FA}/graph/revisions", json={"draft_version": 1},
                               headers=_h()).status_code == 201
     return key
@@ -196,15 +196,16 @@ def test_the_instruction_ai_is_read_and_written_like_any_card_setting(env):
         body = get_settings(env, FA, km[ref])
         assert body["fields"]["instruction_ai"] == {"value": None, "stored": False, "default": None, "choices": None}
     saved = setting(env, FA, km["tmp_t"], "instruction_ai", "aip_instr")
-    assert saved["fields"]["instruction_ai"]["value"] == "aip_instr" and saved["fields"]["instruction_ai"]["stored"]
+    assert not saved["fields"]["instruction_ai"]["stored"]
+    assert saved["ai_roles"]["roles"]["instruction"]["selected"] == {"kind": "assigned", "provider_id": "aip_instr"}
     refused = setting(env, FA, km["tmp_t"], "instruction_ai", "aip_nobody", expect=422)
-    assert refused["error"]["params"]["errors"] == [{"field": "value", "reason": "unknown_ai"}]
+    assert refused["error"]["params"]["errors"] == [{"field": "value", "reason": "ai_not_selectable", "cause": "deleted"}]
     ts = setting(env, FA, km["tmp_s"], "instruction_ai", "aip_instr", expect=422)
     assert ts["error"]["params"]["errors"] == [
         {"field": "field", "reason": "not_a_setting_of_this_card", "card_kind": "test"}]
     assert "instruction_ai" not in get_settings(env, FA, km["tmp_s"])["fields"]
-    back = setting(env, FA, km["tmp_t"], "instruction_ai", None)
-    assert back["fields"]["instruction_ai"] == {"value": None, "stored": False, "default": None, "choices": None}
+    back = setting(env, FA, km["tmp_t"], "instruction_ai", None, expect=422)
+    assert back["error"]["params"]["errors"] == [{"field": "value", "reason": "role_unset_not_allowed"}]
 
 
 @pytest.mark.parametrize("settings, instruction_ai, run_ai", [
@@ -793,3 +794,7 @@ def test_migration_148_adds_the_stage_columns_in_every_dialect():
         assert "ALTER TABLE graph_node_runs ADD COLUMN instruction_doc_id" in sql
         assert "ALTER TABLE graph_node_runs ADD COLUMN result_event_floor" in sql
         assert "ALTER TABLE graph_run_token_map ADD COLUMN stage" in sql
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting

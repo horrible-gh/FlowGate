@@ -152,7 +152,7 @@ def _in_review(env, monkeypatch, settings=(), written="TR"):
     _admin_and_reviewer(env)
     key = _run_one_card(env, AI)
     for field, value in settings:
-        setting(env, FA, key, field, value)
+        legacy_setting(env, FA, key, field, value)
     _start(env)
     if dict(settings).get("instruction") != "omit":
         _through_instruction(env, monkeypatch)
@@ -553,3 +553,7 @@ def test_integration_registers_every_port_and_the_run_end_hook():
         integration.unregister()
     ai_run_end_hooks.run_ended({"run_id": "x"})                           # nothing registered: a no-op
     assert worker_step_type_hooks.token_step_type({"token_id": "x", "group_id": FA}) is None
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting

@@ -61,7 +61,7 @@ def _cards(env, cards, settings=None):
     keys = _chain(env, cards)
     for index, values in (settings or {}).items():
         for field, value in values:
-            setting(env, FA, keys[index], field, value)
+            legacy_setting(env, FA, keys[index], field, value)
     return keys
 
 
@@ -481,3 +481,7 @@ def test_r_a_step_command_keeps_the_next_card_pending_after_the_wp_is_approved(e
     assert _node(env, t2)[0] == "pending"                                # the step is over: the next one waits
     assert [j["node_key"] for j in env["jobs"]] == [wp]                  # no AI start for it
     assert _sql(env["db"], "SELECT status FROM graph_propagations WHERE node_key = ?", (wp,)) == [{"status": "pending"}]
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting
