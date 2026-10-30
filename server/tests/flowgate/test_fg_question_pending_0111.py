@@ -61,7 +61,7 @@ def questions(monkeypatch):
     monkeypatch.setattr(legacy, "independent_question_responder",
                         lambda project_id, asker, candidates: ("aip_review", "card_review_ai"))
     monkeypatch.setattr(legacy, "ask_responder",
-                        lambda doc_id, item_id, issued_to, provider, source:
+                        lambda doc_id, item_id, issued_to, provider, source, **kw:
                         state["responders"].append((item_id, provider)) or {"run_id": RESPONDER_RUN})
     monkeypatch.setattr(legacy, "askers_answered_by", lambda run_id: set(state["answered_by"].get(run_id, ())))
     return state

@@ -200,6 +200,17 @@ def for_node(group_id: str, node_key: str, limit: int) -> list[dict]:
         "ORDER BY create_seq DESC, inv_id DESC LIMIT ?", [group_id, node_key, int(limit)]) or [])
 
 
+def page_for_node(group_id: str, node_key: str, limit: int, before_seq=None, before_inv_id=None) -> list[dict]:
+    """P-1 §8 keyset page, including records of removed nodes."""
+    params = [group_id, node_key]
+    sql = "SELECT * FROM ai_role_invocations WHERE target_group_id = ? AND target_node_key = ?"
+    if before_seq is not None:
+        sql += " AND (create_seq < ? OR (create_seq = ? AND inv_id < ?))"
+        params += [before_seq, before_seq, before_inv_id]
+    sql += " ORDER BY create_seq DESC, inv_id DESC LIMIT ?"
+    return list(get_store()._fetch_all(sql, [*params, int(limit)]) or [])
+
+
 def run_link_columns_available() -> bool:
     """``ai_invoke_runs`` has the two link columns (migration 165)."""
     store = get_store()

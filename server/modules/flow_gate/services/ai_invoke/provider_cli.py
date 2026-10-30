@@ -549,6 +549,8 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         blocked = _blocked_cli_launch(run, provider, reason)
         _audit_cli_launch(blocked)
         return "spawn_failed", f"CLI launch blocked: {reason}"
+    from flowgate.ai_roles import invocations as role_invocations
+    role_invocations.cli_prepared(run, provider, decision.get("shell_kind"))
     eff_cmd = decision.pop("effective_command")
     watchdog_stop = watchdog_thread = None
     def started(proc):
@@ -590,6 +592,9 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         run["timed_out"] = True
 
     cancelled = run["cancel_event"].is_set()
+    role_invocations.cli_outcome(run, stdout_full=out_text,
+        exit_code=proc.returncode if not timed_out and not cancelled else None, timed_out=timed_out,
+        process_exited_itself=not timed_out and not cancelled and not run.get("user_paused"))
     # Fast-fail: startup failure ⇒ fallback candidate. A user cancel or timeout is
     # never a provider startup failure (L0006 §2.2 / §4.3).
     if (

@@ -435,6 +435,7 @@ def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
         instruction_doc_id = row.get("instruction_doc_id")
         job = _ai_job(ctx, node, plan, provider, issued_to, {"token_id": tokens[0] if tokens else None},
                       RESULT_STAGE, [instruction_doc_id] if instruction_doc_id else None)
+        job["result_retry"] = True  # L-3: the legacy origin names a stage retry too.
         if assigned:
             job.update(assignment_ref=assigned["assignment_ref"], invocation_origin=assigned["invocation_origin"])
         graph_execution_hooks.call("request_write", job)

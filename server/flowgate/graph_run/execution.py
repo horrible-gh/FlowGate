@@ -43,6 +43,8 @@ def request_write(job):
     # of the request (and in the ledger's assignment columns); a pre-feature attempt's card call names no assignment.
     ref = job.get("assignment_ref")
     origin = job.get("invocation_origin") or _legacy_origin(job, attempt)
+    job["invocation_origin"] = origin
+    payload["invocation_origin"] = origin
     old = run_store._one("SELECT * FROM graph_attempt_runs WHERE attempt_id = ? "
                          "AND status IN ('requested', 'running')", [attempt])
     if old:
@@ -70,12 +72,16 @@ def _legacy_origin(job, attempt):
     purpose = "instruction_write" if job.get("stage") == "instruction" else "result_write"
     if job.get("instruction_retry"):
         purpose = "instruction_write_retry"
+    elif job.get("result_retry"):
+        purpose = "result_write_retry"
+    from modules.flow_gate.db import documents
+    doc = documents.get_by_id(job.get("target_doc_id")) if job.get("target_doc_id") else None
     return {"origin_kind": "card_legacy_attempt", "purpose": purpose,
             "role": "instruction" if job.get("stage") == "instruction" else "execution",
             "role_source": "legacy_attempt", "requested_ai_id": job.get("provider_id"),
             "target": {"flow_id": job.get("flow_id"), "graph_run_id": job.get("run_id"), "node_key": job.get("node_key"),
-                       "attempt_id": attempt, "stage": job.get("stage"), "seq": 0, "doc_id": None,
-                       "doc_revision_no": None},
+                       "attempt_id": attempt, "stage": job.get("stage"), "seq": None, "doc_id": (doc or {}).get("doc_id"),
+                       "doc_revision_no": int(doc.get("revision_no") or 0) if doc else None},
             "round_no": None}
 
 
@@ -116,6 +122,20 @@ def _guarded_request(flow_id, doc_id, kind, payload, existing, attempt_id, opera
             if (prior.get("job", {}).get("stage") == "instruction" and row.get("stage") == "instruction"
                     and row.get("instruction_doc_id") == doc_id):
                 ledger.cancel(pending["exec_id"], None, "requested")
+    if not payload.get("invocation_origin"):
+        from modules.flow_gate.db import documents
+        doc = documents.get_by_id(doc_id) or {}
+        row = run_store._one("SELECT stage FROM graph_node_runs WHERE run_id = ? AND node_key = ?",
+                            [attempt["run_id"], attempt["node_key"]]) or {}
+        base = "instruction" if row.get("stage") == "instruction" else "result"
+        purpose = base + ("_rework" if kind == "rework" else "_review_round")
+        loop = payload.get("loop") or {}
+        payload["invocation_origin"] = {
+            "origin_kind": "card_legacy_attempt", "purpose": purpose, "role_source": "legacy_attempt",
+            "requested_ai_id": loop.get("rework_provider_id" if kind == "rework" else "reviewer_provider_id"),
+            "target": {"flow_id": flow_id, "graph_run_id": attempt["run_id"], "node_key": attempt["node_key"],
+                       "attempt_id": attempt["attempt_id"], "stage": base + "_review", "seq": None,
+                       "doc_id": doc_id, "doc_revision_no": int(doc.get("revision_no") or 0)}}
     result = ledger.request(attempt["attempt_id"], attempt["run_id"], kind, payload, assignment=assignment)
     # An explicit review may start while its card was idle awaiting a person.
     run = run_store.run_by_id(attempt["run_id"])

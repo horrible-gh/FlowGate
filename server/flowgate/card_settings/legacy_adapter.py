@@ -553,7 +553,8 @@ def askers_answered_by(responder_run_id: str) -> set[str]:
 
 
 def ask_responder(anchor_doc_id: str, item_id: int, issued_to: str, provider_id: Optional[str],
-                  provider_source: str) -> Optional[dict]:
+                  provider_source: str, *, default_tail: bool = True,
+                  invocation_origin: Optional[dict] = None) -> Optional[dict]:
     """Automatically start one question's responder with bounded startup fallback.
 
     Uses the shared answer engine; the Q&A panel keeps its explicit-provider policy.
@@ -570,7 +571,7 @@ def ask_responder(anchor_doc_id: str, item_id: int, issued_to: str, provider_id:
     return q_answer_invoke_service.dispatch_answer_run(
         doc={**doc, "doc_id": anchor_doc_id}, item=item, issued_to=issued_to, api_base_url=api_base_url(),
         provider_id=provider_id, provider_source=provider_source, actor_user_id=issued_to,
-        responder_candidates=[])  # automatic question_wait dispatch opts into T-A3
+        responder_candidates=[], default_tail=default_tail, invocation_origin=invocation_origin)
 
 
 def independent_question_responder(project_id: Optional[str], asker_provider_id: Optional[str],
@@ -581,12 +582,12 @@ def independent_question_responder(project_id: Optional[str], asker_provider_id:
     return v01_review.independent_question_responder(project_id, asker_provider_id, candidates)
 
 
-def mark_question_responder_failed(item_id: int, issued_to: Optional[str]) -> bool:
+def mark_question_responder_failed(item_id: int, issued_to: Optional[str], reason: str = "no_independent_responder") -> bool:
     """Leave an automatically unassignable question open for a human in the existing Q&A panel."""
     from modules.flow_gate.services import q_service  # noqa: PLC0415
 
     return q_service.mark_responder_failed(
-        item_id, "no_independent_responder",
+        item_id, reason,
         "No independent enabled responder could be established; awaiting a human answer.",
         actor_user_id=issued_to,
     )

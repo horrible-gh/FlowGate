@@ -396,6 +396,9 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     run_id = str(lease_row.get("run_id") or "")
     if not run_id:
         return
+    if end_reason == "orphaned_by_restart":
+        from flowgate.ai_roles import invocations
+        invocations.orphan(run_id)
     existing = db_runs.get(run_id)
     if existing is not None:
         # A replay may follow a partial recovery that persisted the orphan run before
@@ -836,6 +839,10 @@ def _refuse_frozen_group(group_id: str) -> None:
                           retryable=False)
 
 
+from flowgate.ai_roles import invocations as role_invocations
+
+
+@role_invocations.admission
 @graph_execution_hooks.admission
 def start_run(
     *,

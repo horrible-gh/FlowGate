@@ -18,6 +18,8 @@ from modules.flow_gate.services.ai_invoke import review
 
 @pytest.fixture
 def routing(monkeypatch):
+    from flowgate.ai_roles import role_store
+    monkeypatch.setattr(role_store, "available", lambda: False)  # explicit legacy/no-role-store fixture
     stored = {"instruction": True, "run_ai": "worker", "instruction_ai": "worker", "review_ai": "reviewer"}
     chain = [{"id": "worker"}, {"id": "reviewer"}, {"id": "third"}]
     item = {"id": 518, "anchor_doc_id": "flowgate.v02.0110.0001-B", "answer_count": 0}
@@ -27,7 +29,7 @@ def routing(monkeypatch):
     monkeypatch.setattr(wait.legacy, "default_reviewer", lambda pid: "worker")
     monkeypatch.setattr(wait.legacy, "flow_ai_busy", lambda fid: False)
     monkeypatch.setattr(review.ai_settings_service, "resolve_effective", lambda pid: {"providers": chain})
-    monkeypatch.setattr(wait.legacy, "ask_responder", lambda *a: calls.append(a) or {"run_id": "answer-run"})
+    monkeypatch.setattr(wait.legacy, "ask_responder", lambda *a, **kw: calls.append(a) or {"run_id": "answer-run"})
     monkeypatch.setattr(wait, "open_questions", lambda *a: [item])
 
     def fail(item_id, code, message, **kw):

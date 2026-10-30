@@ -515,6 +515,9 @@ def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
     return prompt.rstrip() + "\n\n" + _CLI_REVIEW_FILE_FIRST[locale]
 
 
+from flowgate.ai_roles import invocations as role_invocations
+
+
 def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
     """One attempt: walk the provider chain until one actually STARTS (L0006 §2.2).
 
@@ -557,13 +560,19 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
         if policy and index > 0:
             _reset_attempt_state(run)
         provider_prompt = _provider_prompt(run, provider, prompt)
-        if provider.get("exec_type") == "api":
-            from modules.flow_gate.services import graph_execution_hooks
-            if graph_execution_hooks.call("launch", run) is False:
-                return False
-            classification, detail = _svc()._api_execute(provider, provider_prompt, run)
-        else:
-            classification, detail = _svc()._cli_execute(provider, provider_prompt, run)
+        role_invocations.begin(run, provider)
+        try:
+            if provider.get("exec_type") == "api":
+                from modules.flow_gate.services import graph_execution_hooks
+                if graph_execution_hooks.call("launch", run) is False:
+                    role_invocations.finish(run, "spawn_failed", "launch_refused")
+                    return False
+                classification, detail = _svc()._api_execute(provider, provider_prompt, run)
+            else:
+                classification, detail = _svc()._cli_execute(provider, provider_prompt, run)
+        except BaseException:
+            role_invocations.finish(run, "launch_outcome_missing")
+            raise
 
         if classification == "started_ok" and policy:
             # Output zero is a startup failure only while this run still owns an
@@ -574,6 +583,7 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
                     and not run.get("last_message_received") and not run.get("last_message")
                     and not run.get("stdout_tail")):
                 classification, detail = "zero_output", "Responder exited without output or an answer."
+        role_invocations.finish(run, classification, detail)
         if classification == "started_ok":
             started_ok = True
             break
@@ -1470,16 +1480,18 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             run["model_http_calls"] = run.get("model_http_calls", 0) + 1
             try:
                 if kind == "claude":
-                    reply_text, tool_call, assistant_msg = _svc()._call_anthropic(
+                    model_response = _svc()._call_anthropic(
                         base_url, model, key, conversation, call_timeout,
                         tool_name, tool_desc, tool_schema, True,
                         **({"max_tokens": API_CONFLICT_MAX_TOKENS} if conflict_pending else {}),
                     )
                 else:
-                    reply_text, tool_call, assistant_msg = _svc()._call_openai(
+                    model_response = _svc()._call_openai(
                         base_url, model, key, conversation, call_timeout,
                         tool_name, tool_desc, tool_schema, True,
                     )
+                reply_text, tool_call, assistant_msg = model_response
+                role_invocations.api_response(run, model_response)
                 model_call_failed = False
                 run["model_last_http_status"] = 200
                 trace = _api_trace_turn(
@@ -1490,6 +1502,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     trace["startup_result"] = "started"
                 break
             except urllib.error.HTTPError as exc:
+                role_invocations.api_response(run, exc=exc)
                 model_call_failed = True
                 run["model_last_http_status"] = exc.code
                 trace = _api_trace_turn(run, turn, model_status=exc.code)
@@ -1502,6 +1515,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 logger.warning("ai-invoke %s: api error after first turn: %s", run["run_id"], exc)
                 break
             except Exception as exc:
+                role_invocations.api_response(run, exc=exc)
                 model_call_failed = True
                 run["model_last_http_status"] = 0
                 trace = _api_trace_turn(run, turn, model_status=0)
