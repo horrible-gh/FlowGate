@@ -50,11 +50,28 @@ def register() -> None:
     ports.register(ports.PERSON_RESULT, review_stage.person_result)          # flowgate.v02.0083 WP-4
     ports.register(ports.APPROVAL_WAIT_REASON, legacy_adapter.approval_wait_reason)   # flowgate.v02.0105 T#2 B-2
     ports.register(ports.RECONCILE_STAGE, review_stage.reconcile)            # flowgate.v02.0105 T#2 B-3
+    from flowgate.card_settings import manual_stage, stage_assignment, stage_view  # flowgate.v02.0113 T#3 (L-2)
+    ports.register(ports.STAGE_DISPATCH, stage_assignment.dispatch_role_card)
+    ports.register(ports.STAGE_RESULT_START, stage_assignment.result_stage_start)
+    ports.register(ports.STAGE_NEEDS_DISPATCH, _needs_dispatch)
+    ports.register(ports.STAGE_RETRY, stage_assignment.retry_target)
+    ports.register(ports.STAGE_VIEW, stage_view.wire)
+    ports.register(ports.STAGE_WAITS, stage_view.waits_on_person)
+    ports.register(ports.INSTRUCTION_SAVED, manual_stage.instruction_saved)
+    ports.register(ports.STAGE_FAILED, stage_assignment.start_failed)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDING, review_stage.on_run_ending)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_QUESTION_ANSWERED, question_wait.on_question_answered)
     worker_step_type_hooks.register(worker_step_type_hooks.TOKEN_STEP_TYPE, settings.token_step_type)
     node_title_hooks.register(node_title_hooks.AFTER_REGISTRATION, node_title_ai.after_registration_title)
+
+
+def _needs_dispatch(ctx, row):
+    """``stage_needs_dispatch``: None for a pre-feature attempt (the current judgement)."""
+    from flowgate.card_settings import stage_assignment  # noqa: PLC0415
+
+    verdict = stage_assignment.needs_dispatch(ctx, row)
+    return None if verdict == stage_assignment.LEGACY else verdict
 
 
 def unregister() -> None:

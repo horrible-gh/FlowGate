@@ -272,6 +272,7 @@ def _after_instruction(flow_id: str, run: dict, node: dict, row: dict) -> None:
         _log.info("card instruction stage failed flow=%s node=%s run=%s: run ended %s/%s",
                   flow_id, key, run.get("run_id"), run.get("end_reason"), run.get("stop_code"))
         legacy.instruction_stage_failed(flow_id, row["run_id"], key, attempt_id)
+        _assigned_instruction_failed(flow_id, attempt_id, row["run_id"], key)   # 0113 T#3: its assignment failed
         return
     if question_wait.hold(flow_id, run, node, asked_by_instruction=True):
         return                                  # 0063: its questions are answered first
@@ -280,8 +281,9 @@ def _after_instruction(flow_id: str, run: dict, node: dict, row: dict) -> None:
         _log.info("card instruction stage failed flow=%s node=%s run=%s: no instruction written",
                   flow_id, key, run.get("run_id"))
         legacy.instruction_stage_failed(flow_id, row["run_id"], key, attempt_id)
+        _assigned_instruction_failed(flow_id, attempt_id, row["run_id"], key)
         return
-    if review_instruction(flow_id, node, doc_id, issuer, row["run_id"], attempt_id):
+    if review_instruction(flow_id, node, doc_id, issuer, row["run_id"], attempt_id, run=run):
         return
     jobs: list = []
     with legacy.attempt_hold(row["run_id"], key, attempt_id, "instruction_approval") as owned:
@@ -381,16 +383,36 @@ def written_instruction(flow_id: str, node: dict, row: dict) -> Optional[str]:
     return None
 
 
-def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: str) -> bool:
+def _assigned_attempt(attempt_id: Optional[str]) -> bool:
+    """flowgate.v02.0113 T#3: the attempt is an assigned one (L-2 §2.13); its steps are ``assigned_review``'s."""
+    from flowgate.card_settings import stage_assignment as sa  # noqa: PLC0415
+
+    return bool(attempt_id) and not sa.is_legacy_attempt(attempt_id)
+
+
+def _assigned_instruction_failed(flow_id: str, attempt_id: Optional[str], run_id: Optional[str] = None,
+                                 key: Optional[str] = None) -> None:
+    attempt_id = attempt_id or (legacy.active_attempt_id(run_id, key) if run_id and key else None)
+    if _assigned_attempt(attempt_id):
+        from flowgate.card_settings import assigned_review  # noqa: PLC0415
+
+        assigned_review.instruction_failed(flow_id, attempt_id)
+
+
+def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: str, *, mark: Optional[dict] = None,
+                        attempt_id: Optional[str] = None, expected_revision: Optional[int] = None):
     """Approve the card's instruction ``doc_id`` at once, with no review (``card_settings_ports.approve_instruction``):
     True when it is approved. flowgate.v02.0105 T#2 (B-4, Q #511 o3 — 0083 T#4 개정): under the server's automatic
     approval authority (``legacy.AUTOMATION_APPROVE_PERMISSIONS``), the issuer ``actor_user_id`` kept as the approval's
     actor. With no issuer (``issuer_missing``), or on any refusal (``approval_refused``), it is left to the card approval
-    (False) and why is recorded (B-1)."""
+    (False) and why is recorded (B-1). flowgate.v02.0113 T#3 (K-6): ``expected_revision`` (the revision an assigned review
+    passed) is the revision approved or none; a revision moved meanwhile approves and records nothing
+    (``legacy.REVISION_MOVED``: the caller hands the newer submission to its own review)."""
     key = node.get("node_key")
     if not actor_user_id:
         _log.info("card instruction left to the card approval flow=%s node=%s doc=%s: no run issuer", flow_id, key, doc_id)
-        legacy.record_approval_wait(flow_id, key, doc_id, legacy.ISSUER_MISSING, stage=fields.INSTRUCTION_STAGE)
+        legacy.record_approval_wait(flow_id, key, doc_id, legacy.ISSUER_MISSING, stage=fields.INSTRUCTION_STAGE,
+                                    mark=mark, attempt_id=attempt_id)
         return False
     doc = approvals.document(doc_id)
     if doc is None:
@@ -399,10 +421,14 @@ def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: st
         return True
     try:
         approvals.approve_document(flow_id, doc, actor_user_id, set(legacy.AUTOMATION_APPROVE_PERMISSIONS),
-                                   legacy.LOCALE, system=True)
+                                   legacy.LOCALE, system=True, expected_revision=expected_revision)
+    except approvals.RevisionMoved:
+        _log.info("card instruction not approved flow=%s node=%s doc=%s: its revision moved", flow_id, key, doc_id)
+        return legacy.REVISION_MOVED
     except Exception:  # noqa: BLE001 — the instruction waits for the card approval
         _log.warning("card instruction approval refused flow=%s node=%s doc=%s", flow_id, key, doc_id, exc_info=True)
-        legacy.record_approval_wait(flow_id, key, doc_id, legacy.APPROVAL_REFUSED, stage=fields.INSTRUCTION_STAGE)
+        legacy.record_approval_wait(flow_id, key, doc_id, legacy.APPROVAL_REFUSED, stage=fields.INSTRUCTION_STAGE,
+                                    mark=mark, attempt_id=attempt_id)
         return False
     legacy.record_approval_authority(flow_id, key, doc_id, actor_user_id, stage=fields.INSTRUCTION_STAGE)
     return True
@@ -438,9 +464,20 @@ def _after_work(flow_id: str, run: dict, answered: bool = False) -> None:
         return                                  # not a node's AI run, or no result of its own bound
     node, doc_id = found
     attempt_id = legacy.attempt_of_ai_run(run)                                          # 0061 T#7
+    run_now = legacy.active_run_id(flow_id)
+    resolved = attempt_id or (legacy.active_attempt_id(run_now, node["node_key"]) if run_now else None)
+    assigned = _assigned_attempt(resolved)              # 0113 T#3: not known -> the node's active attempt judges
+    if assigned:
+        attempt_id = resolved
     if not ended_cleanly(run):
         _log.info("card review stage skipped flow=%s node=%s run=%s: run ended %s/%s, awaiting approval",
                   flow_id, node["node_key"], run.get("run_id"), run.get("end_reason"), run.get("stop_code"))
+        if assigned:                            # 0113 T#3: the result assignment failed, its B-1 with its mark
+            from flowgate.card_settings import assigned_review  # noqa: PLC0415
+
+            assigned_review.result_run_not_clean(flow_id, legacy.active_run_id(flow_id) or "", node["node_key"],
+                                                 attempt_id, doc_id, run_not_clean(run))
+            return
         legacy.record_approval_wait(flow_id, node["node_key"], doc_id, run_not_clean(run), attempt_id=attempt_id)
         return                                  # stopped or failed: a person approves the card
     run_id = legacy.active_run_id(flow_id)
@@ -448,6 +485,13 @@ def _after_work(flow_id: str, run: dict, answered: bool = False) -> None:
         return
     if question_wait.hold(flow_id, run, node):
         return                                  # 0063: its questions are answered first
+    if assigned:                                # 0113 T#3 (L-2 §2.9): the result's review assignment
+        from flowgate.card_settings import assigned_review  # noqa: PLC0415
+
+        assigned_review.after_result_work(flow_id, run_id, node, doc_id, attempt_id,
+                                          assigned_review._ai_author(run, doc_id),
+                                          assigned_review.HELD if answered else assigned_review.AUTO)
+        return
     stored = repository.values(flow_id, node["node_key"])
     step = fields.after_result(fields.card_kind(node.get("node_type"), node.get("doc_type")), stored)
     if step == fields.REVIEW:
@@ -506,6 +550,12 @@ def _after_review(flow_id: str, run: dict, answered: bool = False) -> None:
     """A review loop on a node's result ended: a passed result is approved. ``answered``: after the loop's questions
     were answered (``question_wait._answered``), under ``_step_hold``'s ``person_hold`` (the result stage ``idle_ok``)."""
     doc_id = run.get("doc_ref")
+    ref = legacy.assignment_of_exec(run.get("graph_exec_id"))
+    if ref is not None and ref[1] in ("result_review", "instruction_review") and _assigned_attempt(ref[0]):
+        from flowgate.card_settings import assigned_review  # noqa: PLC0415
+
+        assigned_review.after_loop_end(flow_id, run, ref, answered)      # 0113 T#3 (L-2 §2.8.4, §2.9)
+        return
     instruction = legacy.instruction_node_of_document(flow_id, doc_id)
     if instruction is not None:
         node, row = instruction
@@ -589,6 +639,12 @@ def person_result(flow_id: str, node: dict, doc_id: str):
     key = node.get("node_key")
     if not key or not doc_id or not repository.available():
         return None
+    from flowgate.card_settings import manual_stage, stage_assignment as sa  # noqa: PLC0415
+
+    if sa.enabled() and sa.role_card(node):     # 0113 T#3 (L-2 §2.7.5): every role card's person result stage
+        job = manual_stage.person_result(flow_id, node, doc_id)
+        if job != sa.LEGACY:
+            return job
     if fields.card_kind(node.get("node_type"), node.get("doc_type")) != fields.PLAN or settings.uses_ai(flow_id, node):
         return None
     if fields.after_result(fields.PLAN, repository.values(flow_id, key)) is None:
@@ -696,7 +752,7 @@ def _start_person_review(flow_id: str, run: dict, node_key: str, doc: dict, stor
 
 
 def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id: str, attempt_id=None,
-                       hold=None) -> bool:
+                       hold=None, run: Optional[dict] = None) -> bool:
     """A configured instruction review gates the result; 0 retains existing automatic approval.
 
     Reuse the durable review/rework loop, with instruction-specific AI/count and rework provider.
@@ -705,6 +761,14 @@ def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id
     (an idle run taken too, its Stop / Time Machine conditions judged again), the loop then requested as an explicit
     request (Q439: the idle run goes back to running) — else ``attempt_owns``.
     """
+    attempt = attempt_id or legacy.active_attempt_id(run_id, node["node_key"])
+    if _assigned_attempt(attempt):              # 0113 T#3 (L-2 §2.4.2, §2.9): the written instruction's review stage
+        from flowgate.card_settings import assigned_review, manual_stage  # noqa: PLC0415
+
+        author = assigned_review._ai_author(run, doc_id) if run is not None else legacy.written_by(doc_id)
+        manual_stage.proceed_written_instruction(flow_id, run_id, node["node_key"], attempt, doc_id, author,
+                                                 assigned_review.HELD if hold is not None else assigned_review.AUTO)
+        return True
     stored = repository.values(flow_id, node["node_key"])
     count = stored.get("instruction_review_count") or 0
     if count == 0 or (approvals.document(doc_id) or {}).get("doc_review_status") in APPROVED:
@@ -778,6 +842,11 @@ def reconcile(flow_id: str) -> None:
         return
     for row in rows:
         try:
+            if _assigned_attempt(legacy.active_attempt_id(run_row["run_id"], row["node_key"])):
+                from flowgate.card_settings import assigned_review  # noqa: PLC0415
+
+                assigned_review.reconcile_row(flow_id, run_row, row)       # 0113 T#3 RC-1 ~ RC-8
+                continue
             if row["status"] == legacy.REVIEW_NODE_STATUS and row.get("result_doc_id"):
                 _reconcile_result(flow_id, run_row["run_id"], row)
             elif row["status"] == legacy.OPEN_NODE_STATUS and row.get("stage") == fields.INSTRUCTION_STAGE:

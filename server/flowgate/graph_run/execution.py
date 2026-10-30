@@ -1,6 +1,7 @@
 """Durable start intent and process fencing for Graph AI executions (0061 T#4)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
@@ -38,6 +39,10 @@ def request_write(job):
     payload.pop("graph_exec_id", None)
     # A dispatch token's raw bearer is never persisted in the execution journal.
     payload["token"] = {"token_id": (job.get("token") or {}).get("token_id")}
+    # flowgate.v02.0113 T#3 (P-1 §7.2): the assignment that made the request and the call's origin, at the top level
+    # of the request (and in the ledger's assignment columns); a pre-feature attempt's card call names no assignment.
+    ref = job.get("assignment_ref")
+    origin = job.get("invocation_origin") or _legacy_origin(job, attempt)
     old = run_store._one("SELECT * FROM graph_attempt_runs WHERE attempt_id = ? "
                          "AND status IN ('requested', 'running')", [attempt])
     if old:
@@ -48,12 +53,30 @@ def request_write(job):
             ledger.cancel(old["exec_id"], None, "requested")
         else:
             raise ledger.LeaseLost("attempt already has an execution")
-    job["graph_exec_id"] = ledger.request(attempt, job["run_id"], "write", {"type": "write", "job": payload})
+    request = {"type": "write", "job": payload, "invocation_origin": origin}
+    if ref:
+        request["assignment_ref"] = ref
+    job["graph_exec_id"] = ledger.request(attempt, job["run_id"], "write", request,
+                                          assignment=(ref["stage"], ref["seq"]) if ref else None)
     run = run_store.run_by_id(job["run_id"])
     if run and run["status"] == "idle":
         from modules.flow_gate.graph_workflow.services import run_apply
         run_apply.settle_run(run_apply.load_context(run, job.get("project_id"), None))
     return job["graph_exec_id"]
+
+
+def _legacy_origin(job, attempt):
+    """P-1 §7.2: the origin of a card call of a pre-feature attempt (no assignment reference)."""
+    purpose = "instruction_write" if job.get("stage") == "instruction" else "result_write"
+    if job.get("instruction_retry"):
+        purpose = "instruction_write_retry"
+    return {"origin_kind": "card_legacy_attempt", "purpose": purpose,
+            "role": "instruction" if job.get("stage") == "instruction" else "execution",
+            "role_source": "legacy_attempt", "requested_ai_id": job.get("provider_id"),
+            "target": {"flow_id": job.get("flow_id"), "graph_run_id": job.get("run_id"), "node_key": job.get("node_key"),
+                       "attempt_id": attempt, "stage": job.get("stage"), "seq": 0, "doc_id": None,
+                       "doc_revision_no": None},
+            "round_no": None}
 
 
 def _attempt_for_document(flow_id, doc_id):
@@ -65,6 +88,42 @@ def _attempt_for_document(flow_id, doc_id):
         "WHERE r.group_id = ? AND (n.result_doc_id = ? OR n.instruction_doc_id = ?) "
         "ORDER BY CASE WHEN a.status = 'active' THEN 0 ELSE 1 END, a.created_at DESC, a.attempt_id DESC LIMIT 1",
         [flow_id, doc_id, doc_id])
+
+
+def _guarded_request(flow_id, doc_id, kind, payload, existing, attempt_id, operation, statuses, assignment=None):
+    """The guarded body of a document's hop / loop request (``_request_document``), inside the caller's Flow guard."""
+    attempt = _attempt_for_document(flow_id, doc_id)
+    if not attempt:
+        raise ledger.LeaseLost("document has no Graph attempt")
+    if attempt_id and attempt["attempt_id"] != attempt_id:
+        raise fencing.refuse(attempt_id, operation, "attempt_superseded", active_attempt_id=attempt["attempt_id"])
+    fencing.check(attempt["attempt_id"], operation, statuses=statuses)
+    _refuse_time_machine(flow_id, attempt["attempt_id"], operation)
+    if existing:
+        row = ledger.get(existing)
+        if not row or row["attempt_id"] != attempt["attempt_id"] or row["status"] != "requested":
+            raise ledger.LeaseLost("execution is no longer requested")
+        return existing
+    # A prewritten instruction skips its writer and hands ownership to its review.
+    # Cancel only the still-requested instruction writer of this exact attempt/document.
+    if payload.get("type") == "loop":
+        pending = run_store._one("SELECT * FROM graph_attempt_runs WHERE attempt_id = ? AND status = 'requested'",
+                                 [attempt["attempt_id"]])
+        if pending:
+            prior = json.loads(pending["request_json"])
+            row = run_store._one("SELECT instruction_doc_id, stage FROM graph_node_runs WHERE run_id = ? AND node_key = ?",
+                                 [attempt["run_id"], attempt["node_key"]]) or {}
+            if (prior.get("job", {}).get("stage") == "instruction" and row.get("stage") == "instruction"
+                    and row.get("instruction_doc_id") == doc_id):
+                ledger.cancel(pending["exec_id"], None, "requested")
+    result = ledger.request(attempt["attempt_id"], attempt["run_id"], kind, payload, assignment=assignment)
+    # An explicit review may start while its card was idle awaiting a person.
+    run = run_store.run_by_id(attempt["run_id"])
+    if run and run["status"] == "idle":
+        from modules.flow_gate.graph_workflow.services import run_apply
+        ctx = run_apply.load_context(run, (db_groups.get_by_id(flow_id) or {}).get("project_id"), None)
+        run_apply.settle_run(ctx)
+    return result
 
 
 def _request_document(flow_id, doc_id, kind, payload, existing=None, attempt_id=None):
@@ -83,40 +142,8 @@ def _request_document(flow_id, doc_id, kind, payload, existing=None, attempt_id=
     if attempt_id and attempt["attempt_id"] != attempt_id:
         raise fencing.refuse(attempt_id, operation, "attempt_superseded", active_attempt_id=attempt["attempt_id"])
     fencing.require(attempt["attempt_id"], operation, statuses=statuses)
-    def body():
-        attempt = _attempt_for_document(flow_id, doc_id)
-        if not attempt:
-            raise ledger.LeaseLost("document has no Graph attempt")
-        if attempt_id and attempt["attempt_id"] != attempt_id:
-            raise fencing.refuse(attempt_id, operation, "attempt_superseded", active_attempt_id=attempt["attempt_id"])
-        fencing.check(attempt["attempt_id"], operation, statuses=statuses)
-        _refuse_time_machine(flow_id, attempt["attempt_id"], operation)
-        if existing:
-            row = ledger.get(existing)
-            if not row or row["attempt_id"] != attempt["attempt_id"] or row["status"] != "requested":
-                raise ledger.LeaseLost("execution is no longer requested")
-            return existing
-        # A prewritten instruction skips its writer and hands ownership to its review.
-        # Cancel only the still-requested instruction writer of this exact attempt/document.
-        if payload.get("type") == "loop":
-            pending = run_store._one("SELECT * FROM graph_attempt_runs WHERE attempt_id = ? AND status = 'requested'",
-                                     [attempt["attempt_id"]])
-            if pending:
-                prior = json.loads(pending["request_json"])
-                row = run_store._one("SELECT instruction_doc_id, stage FROM graph_node_runs WHERE run_id = ? AND node_key = ?",
-                                     [attempt["run_id"], attempt["node_key"]]) or {}
-                if (prior.get("job", {}).get("stage") == "instruction" and row.get("stage") == "instruction"
-                        and row.get("instruction_doc_id") == doc_id):
-                    ledger.cancel(pending["exec_id"], None, "requested")
-        result = ledger.request(attempt["attempt_id"], attempt["run_id"], kind, payload)
-        # An explicit review may start while its card was idle awaiting a person.
-        run = run_store.run_by_id(attempt["run_id"])
-        if run and run["status"] == "idle":
-            from modules.flow_gate.graph_workflow.services import run_apply
-            ctx = run_apply.load_context(run, (db_groups.get_by_id(flow_id) or {}).get("project_id"), None)
-            run_apply.settle_run(ctx)
-        return result
-    return fencing.guarded(flow_id, body)
+    return fencing.guarded(flow_id, lambda: _guarded_request(flow_id, doc_id, kind, payload, existing, attempt_id,
+                                                             operation, statuses))
 
 
 def request_hop(flow_id, bundle, gate, kind):
@@ -134,6 +161,148 @@ def request_loop(project_id, flow_id, doc_id, issued_to, loop, basis, node_key, 
         "type": "loop", "project_id": project_id, "flow_id": flow_id, "doc_id": doc_id,
         "issued_to": issued_to, "loop": {**loop, **baseline, "current_stage": kind},
         "basis": basis, "node_key": node_key}, existing, attempt_id)
+
+
+def request_loop_locked(project_id, flow_id, doc_id, issued_to, loop, basis, node_key, *, assignment_ref,
+                        origin=None, statuses="writable", attempt_id=None):
+    """flowgate.v02.0113 T#3 (L-2 §2.2.2): ``request_loop`` inside the caller's Flow guard (the review assignment's own
+    transaction) — no guard of its own, no AI start: the same judgements (``fencing.check``, the Time Machine refusal,
+    the pending instruction writer's cancel, the idle run's settlement) and a ledger request carrying the assignment
+    (its columns, and ``assignment_ref`` / ``invocation_origin`` at the top of the request). ``statuses``:
+    ``writable`` (an AI run's end) or ``idle_excepted`` (a person's held step, Q439). A refusal raises; the caller rolls
+    its savepoint back."""
+    from modules.flow_gate.graph_workflow.services.flow_guard import held_guard
+    if held_guard() != ("flow", flow_id):
+        raise RuntimeError("request_loop_locked runs inside its Flow guard")
+    from modules.flow_gate.services.ai_invoke import review
+    baseline = review.compute_review_baseline(doc_id)
+    kind = "rework" if baseline.get("starts_with_rework") else "review"
+    payload = {"type": "loop", "project_id": project_id, "flow_id": flow_id, "doc_id": doc_id,
+               "issued_to": issued_to, "loop": {**loop, **baseline, "current_stage": kind},
+               "basis": basis, "node_key": node_key, "assignment_ref": dict(assignment_ref)}
+    if origin is not None:
+        payload["invocation_origin"] = dict(origin)
+    chosen = fencing.IDLE_EXCEPTED if statuses == "idle_excepted" else fencing.WRITABLE
+    return _guarded_request(flow_id, doc_id, kind, payload, None, attempt_id, "hop_" + kind, chosen,
+                            assignment=(assignment_ref["stage"], assignment_ref["seq"]))
+
+
+def request_origin(exec_id):
+    """The ``invocation_origin`` / ``assignment_ref`` a ledger request carries (P-1 §7.2), or ``{}``."""
+    row = ledger.get(exec_id) if exec_id else None
+    try:
+        payload = json.loads(row["request_json"]) if row else {}
+    except (TypeError, ValueError):
+        return {}
+    return {k: payload[k] for k in ("invocation_origin", "assignment_ref") if k in payload}
+
+
+def _hop_origin(payload, loop):
+    """The successor hop's origin: the same assignment, the hop's purpose, its provider and its round (P-1 §7.2)."""
+    origin = dict(payload.get("invocation_origin") or {})
+    ref = payload.get("assignment_ref") or {}
+    if not origin or not ref:
+        return origin or None
+    review_stage = "instruction" if ref.get("stage") == "instruction_review" else "result"
+    rework = loop.get("current_stage") == "rework"
+    origin.update(purpose=f"{review_stage}_{'rework' if rework else 'review_round'}",
+                  role="rework" if rework else ("instruction_review" if review_stage == "instruction" else "review"),
+                  requested_ai_id=loop.get("rework_provider_id") if rework else loop.get("reviewer_provider_id"),
+                  round_no=loop.get("round_no"))
+    return origin
+
+
+def reopen_due(flow_id) -> bool:
+    """flowgate.v02.0113 T#3 (L-2 §2.10, T §4.5), outside every guard: an open node of the Flow's paused / idle run would
+    be replaced by an explicit command (``REOPEN_NEW_ATTEMPT``). Only a hint for the command's entry (``command_fence``):
+    the replacement itself is judged again inside the command's guard. A read that fails answers False (no fence: the
+    command then replaces nothing and the next command does)."""
+    from modules.flow_gate.graph_workflow.services import node_dispatch, run_apply
+    try:
+        run = run_store.current_run(flow_id)
+        if run is None:
+            return False
+        rows = [r for r in run_store.node_runs(run["run_id"]) if r["status"] == "open"]
+        if not rows:
+            return False
+        ctx = run_apply.load_context(run, (db_groups.get_by_id(flow_id) or {}).get("project_id"), None, [])
+        return any(node_dispatch.redispatch_kind(ctx, r) == node_dispatch.REOPEN for r in rows)
+    except Exception:  # noqa: BLE001
+        log.warning("reopen probe failed flow=%s", flow_id, exc_info=True)
+        return False
+
+
+@contextlib.contextmanager
+def command_fence(flow_id):
+    """flowgate.v02.0113 T#3 (T §4.5): an explicit command's entry, outside its Flow guard. When the command would
+    replace an attempt (``reopen_due``), the Flow's Stop gate is taken exclusively first — the lock order every
+    attempt replacement keeps (gate, then Flow guard; the Stop, ``card_recovery``): every side effect of the old attempt
+    in flight (under the gate's shared hold) ends before the replacement commits, and none starts across it. A thread
+    already inside a shared hold of the Flow takes no fence (its command replaces nothing). Yields whether it fenced."""
+    if fencing._held().get(flow_id) or not reopen_due(flow_id):
+        yield False
+        return
+    with fencing.exclusive(flow_id):
+        yield True
+
+
+def _reopen_refusal(ctx, row, attempt_id):
+    """Why the node's attempt is not replaced now (judged again inside the command's guard, T §4.5), or None."""
+    from modules.flow_gate.graph_workflow.services import card_settings_ports, node_dispatch, result_binder, run_apply
+    key = row["node_key"]
+    if not fencing.exclusive_held(ctx.flow_id):
+        return "not_fenced"                                    # the command's entry did not fence: the next one does
+    if node_dispatch.redispatch_kind(ctx, row) != node_dispatch.REOPEN:
+        return "assignment"                                    # the current stage assignment (held nodes: NONE)
+    if key in frozenset(hold.held(ctx.flow_id) or ()):
+        return "held"
+    if _time_machine().busy(ctx.flow_id):
+        return "time_machine_in_progress"
+    attempt = run_store._one("SELECT * FROM graph_node_attempts WHERE attempt_id = ?", [attempt_id]) or {}
+    if row.get("result_doc_id") or attempt.get("result_doc_id") or attempt.get("result_commit"):
+        return "result_exists"
+    if run_store._one("SELECT 1 AS present FROM graph_attempt_runs WHERE attempt_id = ? "
+                      "AND status IN ('requested', 'running') LIMIT 1", [attempt_id]):
+        return "execution_active"
+    if card_settings_ports.ai_working(ctx.flow_id, key, None):
+        return "ai_running"
+    if result_binder.next_missing_event(ctx, run_apply.read_run_state(ctx), key) is not None:
+        return "result_exists"                                 # a stored registration whose contact was lost binds
+    return None
+
+
+def reopen_attempt(ctx, row):
+    """flowgate.v02.0113 T#3 (L-2 §2.10 ``REOPEN_NEW_ATTEMPT``), inside the explicit command's Flow guard, entered under
+    the Flow's exclusive Stop gate (``command_fence``): the node's attempt (an assigned one waiting for a setting, an
+    unavailable AI, or failed) is invalidated with its tokens, the node reset and opened again as a new attempt, then
+    dispatched as any opening is (its stages resolved anew). The replacement is judged again here (T §4.5): the fence
+    held, the current stage assignment, Hold, Time Machine, no result (a lost registration binds first), no execution
+    or AI working. A node in review is never reopened (its result stays). Late contacts of the old attempt find it
+    invalidated (``fencing``) and touch nothing of the new one."""
+    from modules.flow_gate.graph_workflow.services import node_dispatch, run_apply
+    current = next((r for r in run_store.node_runs(ctx.run_id) if r["node_key"] == row["node_key"]), None)
+    if current is None or current["status"] != "open":
+        return None
+    attempt_id = run_store.active_attempt_id(ctx.run_id, row["node_key"])
+    if not attempt_id:
+        return None
+    why = _reopen_refusal(ctx, current, attempt_id)
+    if why is not None:
+        log.info("attempt not replaced run=%s node=%s: %s", ctx.run_id, row["node_key"], why)
+        return None
+    if not stop.invalidate_attempt(attempt_id, "stage_reopen"):
+        return None
+    current = next((r for r in run_store.node_runs(ctx.run_id) if r["node_key"] == row["node_key"]), current)
+    if not stop.reset_node(ctx, current, "stage_reopen"):
+        return None
+    run_store.open_attempt(ctx.run_id, row["node_key"], int(ctx.run["revision_no"]))
+    dispatch = node_dispatch.dispatch(ctx, row["node_key"])
+    if run_store.open_node_run(ctx.run_id, row["node_key"], dispatch) != 1:
+        raise AssertionError("graph run write missed its row: reopen " + row["node_key"])
+    run_apply.emit_node_state(ctx, row["node_key"], "pending", "open", "opened", None, dispatch)
+    if attempt_id:
+        ctx.jobs.append(lambda: workspace.cleanup(attempt_id))
+    return dispatch
 
 
 def loop_state(exec_id):
@@ -334,7 +503,14 @@ def transition(run, loop):
             _finish_owned(run)
             payload["loop"] = dict(loop)
             payload["review_run_ids"] = sorted(set(payload.get("review_run_ids") or []) | {run["run_id"]})
-            successor = ledger.request(row["attempt_id"], row["run_id"], loop["current_stage"], payload)
+            ref = payload.get("assignment_ref")          # 0113 T#3: the same assignment on every hop (P-1 §7.2)
+            hop_origin = _hop_origin(payload, loop)
+            if hop_origin is not None:
+                payload["invocation_origin"] = hop_origin
+            successor = ledger.request(row["attempt_id"], row["run_id"], loop["current_stage"], payload,
+                                       assignment=(ref["stage"], ref["seq"]) if ref else None)
+            if hop_origin is not None:
+                run["invocation_origin"] = hop_origin
             run_store._affected("UPDATE graph_attempt_runs SET ai_run_id = ? WHERE exec_id = ?",
                                 [run["run_id"], successor])
             return successor
@@ -658,6 +834,8 @@ _ACTIONS = {
     "prepare_workspace": workspace.prepare,
     "map_token": map_token, "validate_write": validate_write, "loop_state": loop_state,
     "settle": settle, "request_write": request_write, "request_hop": request_hop, "request_loop": request_loop,
+    # flowgate.v02.0113 T#3: the review assignment's locked loop request and the explicit command's new attempt.
+    "request_loop_locked": request_loop_locked, "reopen_attempt": reopen_attempt, "command_fence": command_fence,
     "launch": launch, "finish": finish, "transition": transition, "heartbeat": heartbeat,
     "working": ledger.working, "start_failed": start_failed, "write_failure": write_failure,
     "instruction_continuation_due": instruction_continuation_due,       # 0111 T-A1

@@ -57,6 +57,7 @@ answer what a node's AI start takes from its card.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from flowgate.card_documents import lines as card_lines
@@ -68,6 +69,11 @@ from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
 from flowgate.gate_decisions import settings_lock as gate_lock
 from flowgate.graph_run import editing, hold
+
+_log = logging.getLogger(__name__)
+# flowgate.v02.0113 T#3 (L-2 §2.14, T §4.6): the result type of a node whose stage plan could not be read — a type no
+# document has, so the binder binds nothing (never a type guessed from the card) and its reconciliation waits.
+UNREADABLE_RESULT_TYPE = "?unreadable"
 
 DELEGATION_FIELD = "delegation"
 MERGE_TARGET_FIELD = "merge_target"
@@ -291,7 +297,35 @@ def _write_hold(group: dict, node_key: str, value: Any, user_id: Optional[str]) 
     return _payload(flow_id, node, repository.values(flow_id, node_key), user_id, group.get("project_id"))
 
 
+def _assigned(flow_id: str, node: dict) -> Optional[tuple]:
+    """flowgate.v02.0113 T#3: ``(attempt_id, plan)`` when the node's active attempt in the Flow's active run is an
+    assigned one (L-2 §2.13), else None (the feature off, a pre-feature attempt, no run, not a role card)."""
+    from flowgate.card_settings import stage_assignment as sa  # noqa: PLC0415
+
+    if not node.get("node_key") or not sa.role_card(node) or not sa.enabled():
+        return None
+    run_row = legacy.active_run(flow_id)
+    attempt_id = legacy.active_attempt_id(run_row["run_id"], node["node_key"]) if run_row else None
+    plan = sa.stage_plan(attempt_id) if attempt_id else None
+    return (attempt_id, plan) if plan else None
+
+
 def uses_ai(flow_id: str, node: dict) -> bool:
+    """flowgate.v02.0113 T#3 (L-1 §2.9, T §4.1): the registered ``USES_AI`` handler stays this function; with the stage
+    assignment feature on, the judgement is ``resolve.card_execution_is_ai`` of the node's active attempt (its result
+    assignment first, else the execution role); with it off, the function below as before."""
+    from flowgate.card_settings import stage_assignment as sa  # noqa: PLC0415
+
+    if sa.enabled() and sa.role_card(node) and node.get("node_key"):
+        from flowgate.ai_roles import resolve  # noqa: PLC0415
+
+        run_row = legacy.active_run(flow_id)
+        attempt_id = legacy.active_attempt_id(run_row["run_id"], node["node_key"]) if run_row else None
+        return resolve.card_execution_is_ai(flow_id, node, attempt_id)
+    return legacy_uses_ai(flow_id, node)
+
+
+def legacy_uses_ai(flow_id: str, node: dict) -> bool:
     """0063 B7: Designer cards have no explicit assignee. Runnable cards use their run AI,
     then the invoke service's project default. An explicit human assignment is never overridden;
     requirement delegation, gates and cards without a run plan retain their own contracts.
@@ -329,6 +363,13 @@ def result_type(flow_id: str, node: dict) -> Optional[str]:
     the source tools) is an AI card run opened before migration 148 — its AI was told the one-stage type of that
     time (``fields.result_doc_type`` ``one_stage``), so that type stays its result's.
     """
+    try:
+        assigned = _assigned(flow_id, node)
+    except Exception:  # noqa: BLE001 — L-2 §2.14: the binder binds nothing and warns (never a guessed type)
+        _log.warning("stage plan not read flow=%s node=%s", flow_id, node.get("node_key"), exc_info=True)
+        return UNREADABLE_RESULT_TYPE
+    if assigned is not None:
+        return assigned[1]["result_type"]                   # 0113 T#3: the attempt's plan, whoever writes it
     if not uses_ai(flow_id, node) or not repository.available() or not node.get("node_key"):
         return None
     one_stage = "run_stage" in node and node.get("run_stage") is None
@@ -339,11 +380,16 @@ def result_type(flow_id: str, node: dict) -> Optional[str]:
 def instruction_document(flow_id: str, node: dict) -> dict:
     """``{doc_type, doc_id, written}`` of an AI card's instruction when the card runs an instruction stage
     (``node``: the run's node row), else ``{}``: its instruction type, its instruction line's live document
-    (None when the line has none) and whether that document has a body."""
-    if not uses_ai(flow_id, node) or not repository.available() or not node.get("node_key"):
+    (None when the line has none) and whether that document has a body. flowgate.v02.0113 T#3: an assigned attempt's
+    plan names the type (TEST: TS), whoever writes it."""
+    assigned = _assigned(flow_id, node)
+    if assigned is not None:
+        doc_type = assigned[1].get("instruction_type")
+    elif not uses_ai(flow_id, node) or not repository.available() or not node.get("node_key"):
         return {}
-    doc_type = fields.instruction_stage(node.get("node_type"), node.get("doc_type"),
-                                        repository.values(flow_id, node["node_key"]))
+    else:
+        doc_type = fields.instruction_stage(node.get("node_type"), node.get("doc_type"),
+                                            repository.values(flow_id, node["node_key"]))
     if not doc_type:
         return {}
     line = card_lines.line_document(flow_id, node["node_key"], card_slots.INSTRUCTION, node.get("node_type"),
@@ -372,6 +418,12 @@ def token_step_type(token_rec: dict) -> Optional[str]:
     if not found:
         return None
     flow_id, node = found
+    assigned = _assigned(flow_id, node)
+    if assigned is not None:                                 # 0113 T#3: the attempt's plan (L-2 §2.5.1)
+        plan = assigned[1]
+        if node.get("run_stage") == fields.INSTRUCTION_STAGE and plan.get("instruction_type"):
+            return plan["instruction_type"]
+        return plan["result_type"]
     if node.get("run_stage") == fields.INSTRUCTION_STAGE and uses_ai(flow_id, node):
         written = fields.instruction_stage(node.get("node_type"), node.get("doc_type"),
                                            repository.values(flow_id, node["node_key"]))

@@ -20,11 +20,17 @@ import pytest
 
 from test_fg_card_approval_0056 import _current, _node_run, _resume, _run_id
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, _run_one_card, _sql, _start, db_path, decided, env, setting,
 )
 from test_fg_card_settings_review import (
     INSTRUCTION_RUN, WORK_RUN, _admin_and_reviewer, _review_status, _start_ai, _through_instruction, _write_written,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 ROOT = f"{FA}.0001-R"
 RESPONDER_RUN = "air_card_responder"
@@ -453,7 +459,8 @@ def test_a_clean_instruction_stage_that_wrote_nothing_and_asked_nothing_still_fa
     assert env["jobs"] == []
 
 
-def test_a_result_writer_with_no_result_and_no_question_is_still_an_error_a_resume_retries(env, decided, monkeypatch,
+# 0113 T#3 (T §6.4) pre-feature contract: the retry is told by a new node token; an assigned attempt's RETRY_SAME_ATTEMPT starts the same AI with no new node token (L-2 §2.6/§2.10) — test_fg_ai_roles_l2_reconcile.py::test_an_explicit_command_retries_a_no_result_writer_*
+def test_a_result_writer_with_no_result_and_no_question_is_still_an_error_a_resume_retries(pre_feature_attempts, env, decided, monkeypatch,
                                                                                            questions):
     """The 0063 ``no_result``: idle ``error`` with the wire's ``error_code``, and an explicit command dispatches again."""
     from modules.flow_gate.services import graph_execution_hooks

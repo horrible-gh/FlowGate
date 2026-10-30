@@ -20,7 +20,10 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from test_fg_card_settings import (  # noqa: F401  (pytest fixtures and helpers of the card settings suite)
+    legacy_cards, pre_feature_attempts,
     FB,
     _sql,
     db_path,
@@ -32,6 +35,11 @@ from test_fg_card_settings import (  # noqa: F401  (pytest fixtures and helpers 
     shown,
     stored_rows,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 PLAN_FIELDS = ["pre_instruction_auto", "run_ai", "restart", "review_ai", "review_count", "time_limit",
                "review_basis", "hold"]

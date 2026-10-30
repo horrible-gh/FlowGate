@@ -22,8 +22,15 @@ from __future__ import annotations
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — pytest fixtures and helpers of the card settings tests
+    legacy_cards, pre_feature_attempts,
     FA, TEST_VERSION, _TestPolicy, _doc, _h, _sql, db_path, decided, edge, env, node, put_draft, setting,
 )
+
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 LEE = {"kind": "human", "user_id": "u_lee", "provider_id": None}
 AI = {"kind": "ai", "user_id": None, "provider_id": "aip_assignee"}
@@ -208,7 +215,8 @@ def gate_decided(monkeypatch):
         policies.set_system_default(key, value, version)
 
 
-def test_a_gate_is_decided_while_its_run_runs_and_not_while_it_is_stopped(env, gate_decided):
+# 0113 T#3 (T §6.4) pre-feature contract: its person card's result registered at the opening moves the run to the gate; an assigned person RUN card writes its instruction first (L-2 §2.1/§2.7) — test_fg_ai_roles_l2_assignment.py::test_g2_*
+def test_a_gate_is_decided_while_its_run_runs_and_not_while_it_is_stopped(pre_feature_attempts, env, gate_decided):
     (t1, gate), _body = _confirmed(env, [("T", LEE), ("gate", None)])
     run = _all(env)
     _finish(env, t1, 90)

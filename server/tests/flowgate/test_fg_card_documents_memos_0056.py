@@ -45,12 +45,18 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 
 from test_fg_card_approval_0056 import LEE, _approve, _chain, _events, _lease, _node_run
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, FB, _doc, _h, _sql, _start, db_path, decided, edge, env, node, put_draft, setting,
 )
 from test_fg_card_settings_review import (
     INSTRUCTION_RUN, REVIEW_RUN, WORK_RUN, _admin_and_reviewer, _node, _recorded_start_run, _result, _review_status,
     _run_ended, _start_ai, _work_run_ended, _write_written,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 _SERVER_DIR = Path(__file__).resolve().parents[2]
 ROOT = f"{FA}.0001-R"
@@ -329,7 +335,8 @@ def test_a_line_write_is_refused_outside_the_card_s_lines(env, permissions):
     assert (code, params["required"]) == ("flow_access_denied", "create")
 
 
-def test_a_person_s_result_on_a_running_card_binds_through_its_dispatch_token_and_awaits_approval(env, decided):
+# 0113 T#3 (T §6.4) pre-feature contract: a person's result waited for a person's [승인]; assigned: G-2 (system approval)
+def test_a_person_s_result_on_a_running_card_binds_through_its_dispatch_token_and_awaits_approval(pre_feature_attempts, env, decided):
     """A person's card (the result is its own type, T): the line holds the card's empty draft; the person writes the
     result there — registered with the node's dispatch token, the result binder binds it (the draft is superseded
     by it, as by any run result), and it waits for the card approval."""
@@ -360,7 +367,8 @@ def test_a_person_s_result_on_a_running_card_binds_through_its_dispatch_token_an
     assert _write(env, FA, key, "report", "x", expect=409)["error"]["code"] == "slot_has_document"
 
 
-def test_a_person_s_result_on_an_ai_card_whose_ai_failed_awaits_approval(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: the pre-feature dispatch error ai_invoke_failed; an assigned attempt records ai_unavailable:start_failed (P-1 C-2)
+def test_a_person_s_result_on_an_ai_card_whose_ai_failed_awaits_approval(pre_feature_attempts, env, decided, monkeypatch):
     from modules.flow_gate.graph_workflow.services import node_dispatch
 
     _admin_and_reviewer(env)
@@ -397,7 +405,8 @@ def test_the_result_path_is_refused_while_the_card_is_not_the_person_s_to_write(
     assert _node(env, key) == ("open", None)
 
 
-def test_two_result_writes_at_once_register_one_result_and_spend_the_token_once(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first; T-2 race in test_fg_ai_roles_l2_fixes.py)
+def test_two_result_writes_at_once_register_one_result_and_spend_the_token_once(pre_feature_attempts, env, decided, monkeypatch):
     """Two people write the result of one running card at the same moment. The node is judged, the document made,
     the dispatch token claimed and the line taken under one Flow guard: one write registers, the other is refused
     (409) and leaves nothing — no second document, no second consume of the token, no line change."""
@@ -451,7 +460,8 @@ def test_two_result_writes_at_once_register_one_result_and_spend_the_token_once(
     assert _node_run(env, key)["awaiting_approval"] is True
 
 
-def test_a_lost_token_claim_rolls_the_result_back(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: the report line is the result path at the opening of a person card; assigned: after the instruction stage (T-2 race: test_fg_ai_roles_l2_fixes.py::test_t2_a_lost_token_race_*)
+def test_a_lost_token_claim_rolls_the_result_back(pre_feature_attempts, env, decided, monkeypatch):
     """The token is spent by another writer after the node was judged (another process, the inbox with the raw
     token): the claim fails, the write is refused and its document, file, consume and line change are rolled back."""
     from flowgate.card_documents import legacy_adapter
@@ -485,7 +495,8 @@ def test_a_lost_token_claim_rolls_the_result_back(env, decided, monkeypatch):
     assert _line_doc(env, FA, key, "instruction") == placeholder and _node(env, key) == ("open", None)
 
 
-def test_a_person_s_result_takes_a_line_that_has_no_stored_row(env, decided):
+# 0113 T#3 (T §6.4) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
+def test_a_person_s_result_takes_a_line_that_has_no_stored_row(pre_feature_attempts, env, decided):
     """The result line has no stored row at all (its type was not registered when the card was placed, or the row
     is gone): the result is bound and the line gets its row holding it, as a run result's line."""
     _admin_and_reviewer(env)
@@ -505,7 +516,8 @@ def test_a_person_s_result_takes_a_line_that_has_no_stored_row(env, decided):
     assert _node_run(env, key)["awaiting_approval"] is True and _review_status(result) == "pending_review"
 
 
-def test_a_person_s_result_takes_a_line_whose_document_is_gone(env, decided):
+# 0113 T#3 (T §6.4) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
+def test_a_person_s_result_takes_a_line_whose_document_is_gone(pre_feature_attempts, env, decided):
     """The result line's row holds a cancelled document: the row is replaced by one holding the result."""
     from modules.flow_gate.db import documents as db_documents
 
@@ -646,7 +658,8 @@ def _row_stage(env, key):
     return _sql(env["db"], "SELECT stage FROM graph_node_runs WHERE node_key = ?", (key,))[0]["stage"]
 
 
-def test_a_line_of_another_type_on_a_running_card_is_a_plain_draft(env, decided):
+# 0113 T#3 (T §6.4) pre-feature contract: a person card had no instruction stage; an assigned person RUN card starts with it (L-2 §2.1) — test_fg_ai_roles_l2_fixes.py::test_t2_*
+def test_a_line_of_another_type_on_a_running_card_is_a_plain_draft(pre_feature_attempts, env, decided):
     """A running person's T card: its report line (TR) is no result of the node — the plain path."""
     from modules.flow_gate.db import documents as db_documents
 
@@ -1196,8 +1209,9 @@ def test_startup_registers_the_memo_port_and_the_port_is_stdlib_only():
 
 # ── flowgate.v02.0088 T#1: a person's result is titled in the language of its own POST ───────────────────────────
 
+# 0113 T#3 (T §6.4) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
 @pytest.mark.parametrize("locale, name", [("ko", "지시서"), ("ja", "指示書"), ("en", "Instruction")])
-def test_a_person_s_result_is_titled_in_the_language_of_its_own_request(env, decided, locale, name):
+def test_a_person_s_result_is_titled_in_the_language_of_its_own_request(pre_feature_attempts, env, decided, locale, name):
     """The result path (``_reserve_result``) is the same POST: its X-Locale titles the result; the card's empty draft
     it supersedes keeps the title it was made with."""
     _admin_and_reviewer(env)

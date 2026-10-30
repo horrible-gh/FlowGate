@@ -290,7 +290,12 @@ def running_node(flow_id: str, node_key: str) -> Optional[dict]:
     ``{run_id, result_type, instruction_stage, ai_working, token_id}`` — the type its result must have, whether
     it is in its card's instruction stage, whether its AI (or its card's review) still works, and its dispatch
     token not yet spent (the token a person's result is registered with, L0009 E-23; None when there is none).
-    None when the node is not open in the active run."""
+    None when the node is not open in the active run.
+
+    flowgate.v02.0113 T#3 (L-2 §2.6 T-2): also ``instruction_type`` — the type of its card's instruction (TEST: TS), None
+    without an instruction stage — and ``stage_token_id``: its live instruction stage token (``stage`` instruction, of
+    the active attempt, minted for no AI run, neither spent nor revoked: T-2 of a person's instruction stage), the
+    token a person's instruction line write is registered with; None when there is none (T-2 failed or spent)."""
     from modules.flow_gate.graph_workflow.services import result_binder, run_apply   # noqa: PLC0415
 
     run_row = run_store.active_run(flow_id)
@@ -302,10 +307,14 @@ def running_node(flow_id: str, node_key: str) -> Optional[dict]:
     project_id = (db_groups.get_by_id(flow_id) or {}).get("project_id")
     ctx = run_apply.load_context(run_row, project_id, None, [])
     node = ctx.node_rows.get(node_key) or {"node_key": node_key}
+    in_stage = result_binder.in_instruction_stage(row)
+    instruction = card_settings_ports.instruction_document(flow_id, node) if in_stage else {}
     return {"run_id": run_row["run_id"], "result_type": result_binder.result_type(ctx, node, row),
-            "instruction_stage": result_binder.in_instruction_stage(row),
+            "instruction_stage": in_stage,
             "ai_working": card_settings_ports.ai_working(flow_id, node_key, None),
-            "token_id": _dispatch_token(run_row["run_id"], node_key)}
+            "token_id": _dispatch_token(run_row["run_id"], node_key),
+            "instruction_type": str((instruction or {}).get("doc_type") or "").upper() or None,
+            "stage_token_id": _stage_token(run_row["run_id"], node_key) if in_stage else None}
 
 
 def card_working(flow_id: str, node_key: str) -> bool:
@@ -344,17 +353,31 @@ def node_result(flow_id: str, node_key: str) -> Optional[str]:
 
 def _dispatch_token(run_id: str, node_key: str) -> Optional[str]:
     """The node's dispatch token (mapped with no stage, minted for no AI run), while it is neither spent nor
-    revoked."""
+    revoked. flowgate.v02.0113 T#3 (T §4.3): of the node's active attempt only (an older attempt's token is no
+    evidence of this one, and a live one of this attempt is never issued again: T-3)."""
+    return _live_token(run_id, node_key, None)
+
+
+def _stage_token(run_id: str, node_key: str) -> Optional[str]:
+    """flowgate.v02.0113 T#3 (L-2 §2.6 T-2): the active attempt's live instruction stage token (``running_node``)."""
+    return _live_token(run_id, node_key, "instruction")
+
+
+def _live_token(run_id: str, node_key: str, stage: Optional[str]) -> Optional[str]:
+    attempt_id = run_store.active_attempt_id(run_id, node_key)
+    staged = "m.stage IS NULL" if stage is None else "m.stage = ?"
+    params = [run_id, node_key] + ([] if stage is None else [stage]) + [attempt_id]
     row = get_store()._fetch_one(
         "SELECT m.token_id FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
-        "WHERE m.run_id = ? AND m.node_key = ? AND m.stage IS NULL AND t.ai_run_id IS NULL "
-        "AND t.consumed_at IS NULL AND t.revoked_at IS NULL ORDER BY m.mapped_at, m.token_id LIMIT 1",
-        [run_id, node_key])
+        f"WHERE m.run_id = ? AND m.node_key = ? AND {staged} AND t.ai_run_id IS NULL "
+        "AND t.consumed_at IS NULL AND t.revoked_at IS NULL AND (m.attempt_id IS NULL OR m.attempt_id = ?) "
+        "ORDER BY m.mapped_at, m.token_id LIMIT 1", params)
     return row["token_id"] if row else None
 
 
 def register_result(doc_id: str, token_id: str, user_id: str) -> bool:
-    """Inside the line write's Flow guard: register a person's result made with the node's dispatch token.
+    """Inside the line write's Flow guard: register a person's result made with the node's dispatch token
+    (flowgate.v02.0113 T#3: also a person's instruction made with its instruction stage token, T-2).
 
     The token is claimed first (``token_service.consume(require_claim=True)``: a compare-and-swap, so of two
     writers only one ever sees True, and only the winner records ``token_consumed`` with its document — the

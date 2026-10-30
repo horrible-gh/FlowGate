@@ -34,6 +34,7 @@ from __future__ import annotations
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, _doc, _h, _sql, _start, db_path, decided, env, setting,
 )
 from test_fg_card_settings_review import (
@@ -43,6 +44,11 @@ from test_fg_card_settings_review import (
 from test_fg_card_approval_0056 import (  # noqa: F401 — card_approval_port: registered as startup does
     LEE, _chain, _current, _human_result, _node_run, _run_id, card_approval_port,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 OPUS = "aip_ozi33p"                     # the reported case's work AI (Claude Opus 5.5)
 WP_RUN = "air_wp_work"
@@ -374,7 +380,8 @@ def test_d_the_ai_token_at_a_wrong_stage_is_refused_409_before_anything_is_store
 
 # ── (e) the reported state is reassigned by one resume ───────────────────────
 
-def test_e_the_reported_open_wp_of_a_person_goes_to_its_work_ai_on_one_resume(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: recreates the reported pre-0083 open WP (the old USES_AI judgement) — a pre-feature attempt by construction
+def test_e_the_reported_open_wp_of_a_person_goes_to_its_work_ai_on_one_resume(pre_feature_attempts, env, decided, monkeypatch):
     """The state the reported case left (flowgate.v02.0082 / gn_5kjgdqmwjpq7): the WP opened for a person before this
     fix (0072 T#3: a plan card never used AI) — a person's token, open / active, no job, the work AI stored. With the
     fixed judgement one resume reassigns it (``go_on_command`` -> ``needs_ai_dispatch``), no data repair."""
@@ -431,7 +438,8 @@ def test_r_run_cards_still_approve_by_themselves_and_open_the_next_card(env, dec
     assert _node(env, t2)[0] == "open" and [j["node_key"] for j in env["jobs"]] == [t1, t2]
 
 
-def test_r_run_and_test_cards_keep_their_judgement(env):
+# 0113 T#3 (T §6.4) pre-feature contract: USES_AI of an unassigned RUN/TEST card was AI; with the feature on it is card_execution_is_ai (T §4.1, L-1 §2.9: a legacy card with nothing set needs setup) — test_fg_ai_roles_l1_resolve.py / l2 G-9
+def test_r_run_and_test_cards_keep_their_judgement(pre_feature_attempts, env):
     """RUN / TEST: unassigned -> AI (the project default when the card names none); requirement / check: none."""
     from flowgate.card_settings import fields as f
     from flowgate.card_settings import settings
@@ -449,8 +457,9 @@ def test_r_run_and_test_cards_keep_their_judgement(env):
     assert f.run_plan(f.TEST, {"time_limit": 120, "restart": 1}) == {"settings": {}}     # TEST: as before
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person's RUN result waited for a person's [승인]; assigned: manual judgement and the system's approval (T §6.4, G-2)
 @pytest.mark.parametrize("doc_type, typ", [("T", "T")])
-def test_r_a_person_assigned_run_card_keeps_a_person_s_writing_and_approval_revised_0083_wp4(env, decided, doc_type, typ):
+def test_r_a_person_assigned_run_card_keeps_a_person_s_writing_and_approval_revised_0083_wp4(pre_feature_attempts, env, decided, doc_type, typ):
     """0083 WP-4 개정 (revised): the WP case is gone from here. A work plan a person writes now takes its card's review
     or, review 'none' (this card), its automatic approval (``test_fg_person_wp_review_0083``); a person's run card still
     waits for a person's approval."""

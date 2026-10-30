@@ -217,18 +217,35 @@ def _principal(user_id: str, flow_id: str, system: bool):
     return system_principal(user_id=user_id, group_id=flow_id) if system else human_principal({"user_id": user_id})
 
 
-def _transition(doc: dict, user_id: str, permissions: set[str], locale: str, principal) -> dict:
+class RevisionMoved(RuntimeError):
+    """flowgate.v02.0113 T#3 (K-6): the document's revision is not the one the approval was asked for."""
+
+
+def _revision(doc_id: str) -> Optional[int]:
+    row = get_store()._fetch_one("SELECT revision_no FROM documents WHERE doc_id = ?", [doc_id])
+    return int(row["revision_no"] or 0) if row else None
+
+
+def _transition(doc: dict, user_id: str, permissions: set[str], locale: str, principal,
+                expected_revision: Optional[int] = None) -> dict:
     """The v0.1 review transition to approved. A document the v0.1 rules cannot approve as it is (a
     rejected result, a written line document never submitted) is put back in review first (``_ready``) —
     in the same transaction, except for TR2, whose approval must open its own (``tr2_nested_transaction``):
-    a refused TR2 then stays in review (pending_review), awaiting the next card approval."""
+    a refused TR2 then stays in review (pending_review), awaiting the next card approval.
+
+    flowgate.v02.0113 T#3 (K-6, L-2 §2.8.4): ``expected_revision`` (an assigned review's automatic approval: the
+    revision the review passed) is the revision approved, or none — the TR2 approval's expected revision, and for any
+    other document checked in the transition's own transaction before and after its write; a revision moved meanwhile
+    rolls it back (``RevisionMoved``)."""
     from modules.flow_gate.workflow.pipeline_service import transition_document_review  # noqa: PLC0415
 
     doc_id = doc["doc_id"]
     tr2 = str(doc.get("type_code") or "").upper() == "TR2"
+    if expected_revision is not None and _revision(doc_id) != int(expected_revision):
+        raise RevisionMoved(doc_id)
 
     def approve(current: dict) -> dict:
-        revision = int(current.get("revision_no") or 0)
+        revision = int(current.get("revision_no") or 0) if expected_revision is None else int(expected_revision)
         for attempt in range(2 if tr2 else 1):
             request_key = tr2_request_key(current) if tr2 else None
             try:
@@ -242,6 +259,12 @@ def _transition(doc: dict, user_id: str, permissions: set[str], locale: str, pri
                 current = db_documents.get_by_id(doc_id) or current   # retried once: the server's retry key
         raise AssertionError("unreachable")
 
+    if expected_revision is not None and not tr2:
+        with get_store().transaction():
+            approved = approve(_ready(doc, user_id, permissions) if needs_ready(doc) else doc)
+            if _revision(doc_id) != int(expected_revision):
+                raise RevisionMoved(doc_id)
+            return approved
     if not needs_ready(doc):
         return approve(doc)
     if tr2:
@@ -251,7 +274,7 @@ def _transition(doc: dict, user_id: str, permissions: set[str], locale: str, pri
 
 
 def approve_document(flow_id: str, doc: dict, user_id: str, permissions: set[str], locale: str, *,
-                     system: bool = False) -> None:
+                     system: bool = False, expected_revision: Optional[int] = None) -> None:
     """Approve one document of the card as a person's approval does (``system``: as an automatic approval
     under the Flow's completion context); a refusal raises a GraphApiError (403 ``approval_forbidden``,
     409 ``group_ai_running`` / ``document_approval_refused``)."""
@@ -262,7 +285,9 @@ def approve_document(flow_id: str, doc: dict, user_id: str, permissions: set[str
 
     doc_id = doc["doc_id"]
     try:
-        result = _transition(doc, user_id, permissions, locale, _principal(user_id, flow_id, system))
+        result = _transition(doc, user_id, permissions, locale, _principal(user_id, flow_id, system), expected_revision)
+    except RevisionMoved:
+        raise                                          # 0113 T#3: not a refusal — the caller takes the newer submission
     except pipeline_service.PermissionError as exc:
         raise GraphApiError(403, "approval_forbidden", {"doc_id": doc_id, "detail": str(exc)}) from exc
     except tr2_service.Tr2ValidationError as exc:

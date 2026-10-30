@@ -3418,6 +3418,12 @@ def stage_body_save(doc: dict, *, relative: str, size: int, actor_user_id: str, 
         write_file()
     record_body_saved(doc, source=source, file_path=relative, size=size)
     after_commit(lambda: _broadcast_document_refresh(doc))
+    if doc.get("group_id"):
+        # flowgate.v02.0113 T#3 (L-2 §2.7.1 CONTENT_SAVED): a person's instruction stage holding this document judges it
+        # after the commit (never raises; no handler: nothing).
+        from modules.flow_gate.graph_workflow.services import card_settings_ports
+        flow_id, doc_id = doc["group_id"], doc["doc_id"]
+        after_commit(lambda: card_settings_ports.instruction_saved(flow_id, doc_id))
     if canvas_event and doc.get("group_id"):
         from modules.flow_gate.graph_workflow.services.canvas_events import (
             CANVAS_REASON_DOCUMENTS, publish_canvas_changed,

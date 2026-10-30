@@ -104,8 +104,17 @@ def _waits_on_person(ctx, row: dict, reserved: Optional[dict] = None) -> bool:
         if node_type == engine.GATE_NODE_TYPE:
             return row["node_key"] not in (reserved or {})
         from modules.flow_gate.graph_workflow.services import card_settings_ports
+        judged = card_settings_ports.stage_waits(ctx.flow_id, row)       # 0113 T#3: an assigned attempt's stage
+        if judged == card_settings_ports.STAGE_UNREADABLE:
+            return False                                                  # its error family (``_failed``)
+        if judged is not None:
+            return bool(row.get("dispatch_token_issued")) and not _failed(ctx, row) and bool(judged)
         return (bool(row.get("dispatch_token_issued")) and not _failed(ctx, row)
                 and not card_settings_ports.uses_ai(ctx.flow_id, ctx.node_rows.get(row["node_key"]) or {}))
+    if row["status"] == "review":
+        from modules.flow_gate.graph_workflow.services import card_settings_ports
+        if card_settings_ports.stage_waits(ctx.flow_id, row) is True:
+            return True                                                   # a review assignment waits (L-2 §2.12)
     return row["status"] == "review" and engine.awaiting_approval(ctx.flow_id, row, node_type)
 
 
@@ -115,7 +124,14 @@ def _failed(ctx, row: dict) -> bool:
     from flowgate.graph_run.execution import QUESTION_PENDING, write_failure
     return row["status"] == "open" and _node_type(ctx, row["node_key"]) != engine.GATE_NODE_TYPE and (
         row.get("dispatch_token_issued") is None or bool(row.get("dispatch_error_code"))
-        or write_failure(row) not in (None, "", QUESTION_PENDING))
+        or write_failure(row) not in (None, "", QUESTION_PENDING) or _assignment_unreadable(ctx, row))
+
+
+def _assignment_unreadable(ctx, row: dict) -> bool:
+    """0113 T#3 (L-2 §2.14, T §4.6): the open node's stage assignment could not be read — the node is in the error
+    family (idle reason ``error``), never a person's wait nor a node with nothing to do."""
+    from modules.flow_gate.graph_workflow.services import card_settings_ports
+    return card_settings_ports.stage_waits(ctx.flow_id, row) == card_settings_ports.STAGE_UNREADABLE
 
 
 def working(ctx, rows: list[dict]) -> bool:

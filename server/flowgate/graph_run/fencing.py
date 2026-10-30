@@ -97,6 +97,20 @@ def _held() -> dict:
     return held
 
 
+def _closing() -> dict:
+    closing = getattr(_local, "closing", None)
+    if closing is None:
+        closing = _local.closing = {}
+    return closing
+
+
+def exclusive_held(flow_id: str) -> bool:
+    """flowgate.v02.0113 T#3: this thread holds the Flow's gate exclusively (``exclusive``) — every side effect of the
+    Flow's attempts in flight has ended and none starts until it is released (an explicit command's new attempt,
+    L-2 §2.10, replaces an attempt only under it)."""
+    return bool(_closing().get(flow_id))
+
+
 @contextlib.contextmanager
 def shared(flow_id: str):
     """The shared hold of the Flow's gate: no ``stopping`` commits while it is held. Re-entrant in a thread."""
@@ -154,9 +168,14 @@ def exclusive(flow_id: str, *, own_ok: bool = False):
             gate.closing = False
             gate.cond.notify_all()
             raise
+    closing = _closing()
+    closing[flow_id] = closing.get(flow_id, 0) + 1
     try:
         yield
     finally:
+        closing[flow_id] -= 1
+        if not closing[flow_id]:
+            closing.pop(flow_id, None)
         with gate.cond:
             gate.closing = False
             gate.cond.notify_all()

@@ -63,6 +63,10 @@ binder's evidence) and, for an AI assignee, queues the AI start after the commit
   ``legacy.person_hold`` with ``retry_result_stage`` ``idle_ok``, as the result stage's start after the answers is
   (``start_result_stage`` ``idle_ok``): a run judged idle between the wake and the retry no longer refuses it
   (``attempt_inactive`` ``result_retry`` / ``run_idle``). Without ``idle_ok`` it still refuses an idle run.
+- flowgate.v02.0113 T#3 (L-2 §2.4 / §2.5 / §2.10): a role card's attempt opened while the stage assignment store exists
+  is opened, moved to its result stage and retried by its stage assignments (``card_settings_ports.stage_dispatch`` /
+  ``stage_result_start`` / ``stage_needs_dispatch`` / ``stage_retry``): one assigned AI per call, never the card's run AI
+  or the assignee provider. With no handler, or for a pre-feature attempt, every function here is the one before.
 """
 from __future__ import annotations
 
@@ -123,11 +127,30 @@ def dispatch(ctx, node_key: str) -> Optional[dict]:
     return executor(ctx, row) if executor else None
 
 
+REDISPATCH, REOPEN = "dispatch", "reopen"
+
+
+def redispatch_kind(ctx, row: dict) -> Optional[str]:
+    """flowgate.v02.0113 T#3: what an explicit command does with an open node — ``REDISPATCH`` (the dispatch again,
+    the same attempt), ``REOPEN`` (an assigned attempt's wait / failure: a new attempt, L-2 §2.10) or None."""
+    verdict = card_settings_ports.stage_needs_dispatch(ctx, row)
+    if verdict == "reopen_new_attempt":
+        return REOPEN
+    if verdict in ("dispatch", "retry_same_attempt"):
+        return REDISPATCH
+    if verdict is not None:
+        return None
+    return REDISPATCH if row.get("dispatch_token_issued") == 0 or needs_ai_dispatch(ctx, row) else None
+
+
 def needs_ai_dispatch(ctx, row: dict) -> bool:
     """An explicit command can retry a finished result writer with no result, or recover a
     default Designer card opened without dispatch (0063 B7). Result reconciliation runs first;
     the legacy no-dispatch repair still excludes staged nodes and explicit assignees."""
     node = ctx.node_rows.get(row["node_key"]) or {}
+    verdict = card_settings_ports.stage_needs_dispatch(ctx, row)          # 0113 T#3: an assigned attempt's
+    if verdict is not None:
+        return verdict in ("dispatch", "retry_same_attempt", "reopen_new_attempt")
     # An explicit command may retry a result writer that ended without its result.
     # Hold, live executions and registered results still prevent a new dispatch.
     # 0111 T-A1: not one whose questions are still open (``question_pending``) — its answers retry it once.
@@ -142,6 +165,9 @@ def needs_ai_dispatch(ctx, row: dict) -> bool:
 
 
 def dispatch_document(ctx, row: dict) -> dict:
+    assigned = card_settings_ports.stage_dispatch(ctx, row)                # 0113 T#3 (L-2 §2.4.1)
+    if assigned is not None:
+        return assigned
     ai = card_settings_ports.uses_ai(ctx.flow_id, row)
     plan = card_settings_ports.run_settings(ctx.flow_id, row) if ai else {}
     provider = (plan.get("provider_id") or row.get("assignee_provider_id")) if ai else None
@@ -214,7 +240,15 @@ def start_ai(job: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         _log.warning("graph AI start failed run=%s node=%s: %s", job["run_id"], job["node_key"], exc)
         if not graph_execution_hooks.call("start_failed", job.get("graph_exec_id"), exc):
-            record_ai_failure(job)
+            record_ai_failure({**job, "start_failure": _start_failure(exc)})
+
+
+def _start_failure(exc: BaseException) -> str:
+    """flowgate.v02.0113 T#3 (L-2 §2.10): an admission refusal keeps its own code (``start_refused:<code>``); any other
+    failure of the start is ``start_failed``."""
+    detail = getattr(exc, "detail", None)
+    code = detail.get("code") if isinstance(detail, dict) else getattr(exc, "code", None)
+    return "start_refused:" + str(code) if isinstance(code, str) and code else "start_failed"
 
 
 def _instruction_job(job: dict) -> Optional[dict]:
@@ -327,12 +361,14 @@ def start_result_stage(flow_id: str, run_id: str, node_key: str, instruction_doc
             return
         if graph_execution_hooks.call("node_refused", run_id, node_key, "result_stage", attempt_id, **refusal):
             return                                          # 0061 T#7: a late instruction end starts nothing
-        ctx = run_apply.load_context(run_store.run_by_id(run_id), project, None, [])
+        ctx = run_apply.load_context(run_store.run_by_id(run_id), project, None, jobs)
         node = ctx.node_rows.get(node_key)
         if node is None:
             return
         if node.get("node_type") == "custom":                 # handed out as ``dispatch_custom`` does
             node = {**node, "doc_type": run_doc_type(node.get("node_type"), node.get("doc_type"))}
+        if card_settings_ports.stage_result_start(ctx, node, row, instruction_doc_id, attempt_id):
+            return                                          # 0113 T#3: the assigned attempt's result stage (L-2 §2.5)
         plan = card_settings_ports.run_settings(flow_id, node)
         provider = plan.get("provider_id") or node.get("assignee_provider_id")
         tokens = run_store.token_ids(run_id, node_key)
@@ -389,10 +425,18 @@ def retry_result_stage(flow_id: str, run_id: str, node_key: str, issued_to: str,
             node = {**node, "doc_type": run_doc_type(node.get("node_type"), node.get("doc_type"))}
         plan = card_settings_ports.run_settings(flow_id, node)
         provider = plan.get("provider_id") or node.get("assignee_provider_id")
+        assigned = card_settings_ports.stage_retry(run_id, node_key, attempt_id, RESULT_STAGE)   # 0113 T#3 (L-2 §2.9)
+        if assigned == {}:
+            return                                          # the result stage is no AI's: nothing is written again
+        if assigned:
+            provider = assigned["provider_id"]
+            plan = {**plan, "result_doc_type": assigned.get("result_doc_type") or plan.get("result_doc_type")}
         tokens = run_store.token_ids(run_id, node_key)
         instruction_doc_id = row.get("instruction_doc_id")
         job = _ai_job(ctx, node, plan, provider, issued_to, {"token_id": tokens[0] if tokens else None},
                       RESULT_STAGE, [instruction_doc_id] if instruction_doc_id else None)
+        if assigned:
+            job.update(assignment_ref=assigned["assignment_ref"], invocation_origin=assigned["invocation_origin"])
         graph_execution_hooks.call("request_write", job)
         jobs.append(lambda: start_ai(job))
 
@@ -445,6 +489,9 @@ def retry_instruction_stage(flow_id: str, run_id: str, node_key: str, issued_to:
             return                                          # the card has no instruction stage any more
         plan = card_settings_ports.run_settings(flow_id, node)
         provider = plan.get("provider_id") or node.get("assignee_provider_id")
+        assigned = card_settings_ports.stage_retry(run_id, node_key, attempt_id, INSTRUCTION_STAGE)   # 0113 T#3
+        if assigned == {}:
+            return
         tokens = run_store.token_ids(run_id, node_key)
         job = _ai_job(ctx, node, plan, provider, issued_to, {"token_id": tokens[0] if tokens else None},
                       INSTRUCTION_STAGE)
@@ -455,6 +502,10 @@ def retry_instruction_stage(flow_id: str, run_id: str, node_key: str, issued_to:
         job.update(provider_id=stage.get("provider_id") or job["provider_id"], result_doc_type=found["doc_type"],
                    action_scope="edit" if target else "new", target_doc_id=target,
                    ref_doc_ids=[job["doc_ref"]] if target and job.get("doc_ref") else None, instruction_retry=True)
+        if assigned:
+            job.update(provider_id=assigned["provider_id"], assignment_ref=assigned["assignment_ref"],
+                       invocation_origin=assigned["invocation_origin"],
+                       instruction={**stage, "provider_id": assigned["provider_id"]})
         graph_execution_hooks.call("request_write", job)
         jobs.append(lambda: start_ai(job))
 
@@ -499,7 +550,12 @@ def record_ai_failure(job: dict) -> None:
         if graph_execution_hooks.call("node_refused", run["run_id"], job["node_key"], "ai_failure_record",
                                       job.get("graph_attempt_id")):
             return                                          # 0061 T#7: a stopping run's / an old attempt's failure
-        dispatch = {**(run_apply.dispatch_block(row) or {}), "error_code": "ai_invoke_failed"}
+        # 0113 T#3: an assigned stage's AI failed to start — its assignment fails with the cause (L-2 §2.10) and the node
+        # records ``ai_unavailable:<cause>``; a pre-feature job keeps ``ai_invoke_failed``
+        code = card_settings_ports.stage_failed(job)
+        if code:
+            run = run_store.run_by_id(run["run_id"]) or run     # its stage_failed event moved the run's event seq
+        dispatch = {**(run_apply.dispatch_block(row) or {}), "error_code": code or "ai_invoke_failed"}
         run_store.set_dispatch(run["run_id"], job["node_key"], dispatch)
         if row.get("stage") == INSTRUCTION_STAGE:              # T#2: a person's result binds, not the stage's
             run_store.mark_result_floor(run["run_id"], job["node_key"])

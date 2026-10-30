@@ -45,12 +45,18 @@ from pathlib import Path
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, _doc, _h, _run_one_card, _sql, _start, db_path, decided, edge, env, node, put_draft, setting,
 )
 from test_fg_card_settings_review import (
     REVIEW_RUN, WORK_RUN, _admin_and_reviewer, _in_review, _loop_row, _node, _recorded_start_run, _result,
     _review_status, _work_run_ended,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 _SERVER_DIR = Path(__file__).resolve().parents[2]
 LEE = {"kind": "human", "user_id": "u_lee", "provider_id": None}
@@ -201,7 +207,8 @@ def _resume(env):
 
 # ── awaiting_approval ────────────────────────────────────────────────────────
 
-def test_a_person_s_result_awaits_approval_and_the_card_approval_moves_the_node_on(env, decided):
+# 0113 T#3 (T §6.4) pre-feature contract: a person's RUN result waited for a person's [승인]; assigned: system approval after the manual judgement (T §6.4, G-2)
+def test_a_person_s_result_awaits_approval_and_the_card_approval_moves_the_node_on(pre_feature_attempts, env, decided):
     _admin_and_reviewer(env)
     t1, t2 = _chain(env, [("T", LEE), ("T", LEE)])
     _start(env)
@@ -234,7 +241,8 @@ def test_an_ai_result_awaits_approval_only_when_no_ai_works_on_it(env, decided, 
     assert _node_run(env, key)["awaiting_approval"] is True              # count spent: a person approves
 
 
-def test_another_ai_run_of_the_flow_does_not_hide_the_card_but_refuses_its_approval(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: same person-card scene (no instruction stage before the result)
+def test_another_ai_run_of_the_flow_does_not_hide_the_card_but_refuses_its_approval(pre_feature_attempts, env, decided, monkeypatch):
     _admin_and_reviewer(env)
     (t1,) = _chain(env, [("T", LEE)])
     _start(env)
@@ -469,7 +477,8 @@ def test_the_approval_targets_of_each_card_kind():
 
 # ── 409 / 403 / 404 ──────────────────────────────────────────────────────────
 
-def test_a_card_that_is_not_awaiting_approval_is_refused_with_its_reason_revised_0061_t2(env, decided):
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's dispatch token registers its result directly; an assigned person RUN card writes its instruction first (L-2 §2.1/§2.7) — test_fg_ai_roles_l2_assignment.py::test_g2_*
+def test_a_card_that_is_not_awaiting_approval_is_refused_with_its_reason_revised_0061_t2(pre_feature_attempts, env, decided):
     _admin_and_reviewer(env)
     t1, t2 = _chain(env, [("T", LEE), ("T", LEE)])
     _start(env)
@@ -534,7 +543,8 @@ def gate_decided(monkeypatch):
         policies.set_system_default(key, value, version)
 
 
-def test_a_gate_card_is_not_approved_here(env, gate_decided):
+# 0113 T#3 (T §6.4) pre-feature contract: same person-card scene (no instruction stage before the result)
+def test_a_gate_card_is_not_approved_here(pre_feature_attempts, env, gate_decided):
     _admin_and_reviewer(env)
     t1, gate = _chain(env, [("T", LEE), ("gate", None)])
     _start(env)
@@ -551,7 +561,8 @@ def test_a_gate_card_is_not_approved_here(env, gate_decided):
 
 # ── a rejection is no node event; the card approval approves a rejected result ─
 
-def test_a_person_s_rejection_is_no_node_event(env, decided):
+# 0113 T#3 (T §6.4) pre-feature contract: same person-card scene; an assigned person result is judged and approved by the system (G-2)
+def test_a_person_s_rejection_is_no_node_event(pre_feature_attempts, env, decided):
     from modules.flow_gate.graph_workflow.api import v01_contact
     from modules.flow_gate.workflow.pipeline_service import transition_document_review
 

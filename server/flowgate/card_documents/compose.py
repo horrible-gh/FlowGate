@@ -24,6 +24,16 @@ document, ``doc_created``) with the person's text after its front matter, and li
   (``card_settings.legacy_adapter.node_of_ai_run``).
 - **otherwise**: a draft of the line's type (the person's text in it), linked to the line as the card's own.
 
+flowgate.v02.0113 T#3 (L-2 §2.6, T §4.3): **the node is in a person's instruction stage holding its instruction stage
+token (T-2) and the line is its instruction line** (its instruction's type; a TEST card's TS line): the instruction is
+registered with that token as the result path registers a result — the same guard, the document made with the
+person's text, the token claimed (compare-and-swap consume), the document opened and submitted, the card's untouched
+empty draft superseded (``adopt``) — and after the commit the Graph is told (the binder takes it as the stage's
+instruction, ``_take_instruction`` → the person's instruction judged, REGISTERED). A write that loses the token leaves
+no document, no consume and no file: 409 ``node_token_unavailable``. With no live T-2 (its issue failed, or it was
+spent) the line is written as before (a draft, or ``slot_has_document``), and a save of that draft is judged by its
+save (CONTENT_SAVED).
+
 A line that already shows a written document, or a document that is not the card's untouched draft (outside the
 result path), is refused (409 ``slot_has_document``): that document is opened and edited instead. The scenario
 line of a test card shows its instruction's document and is never written on its own. The write runs inside the
@@ -144,6 +154,8 @@ def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str]
         running = legacy.running_node(flow_id, node_key)       # judged under the guard: one writer at a time
         if running is not None and running["result_type"] == slot.doc_type:
             return _reserve_result(group, node, slot, ordinal, running, content, user_id, locale), None
+        if running is not None and _instruction_line(running, slot):          # 0113 T#3: T-2 (L-2 §2.6)
+            return _reserve_instruction(group, node, slot, ordinal, running, content, user_id, locale), None
         if slot.doc_type == "WP" and legacy.card_working(flow_id, node_key):     # 0083 T#3: e.g. its review loop
             raise _refused(409, "node_ai_working", {"flow_id": flow_id, "node_key": node_key, "slot": slot.slot},
                            "The card's AI is still working on it.")
@@ -191,6 +203,46 @@ def _reserve_result(group: dict, node: dict, slot: cs.CardSlot, ordinal: int, ru
     if doc is None:                                            # no row, or a row whose document is gone
         _link(flow_id, node_key, slot, ordinal, row, doc_id, user_id, owned=False)
     else:                                                      # the card's empty draft: superseded by the result
+        card_lines.adopt_result(flow_id, node_key, doc_id)
+    return doc_id, token_id
+
+
+def _instruction_line(running: dict, slot: cs.CardSlot) -> bool:
+    """flowgate.v02.0113 T#3: the line is the instruction line of a node in its instruction stage holding a live
+    instruction stage token (a person's instruction stage, T-2)."""
+    return bool(running.get("instruction_stage") and running.get("stage_token_id")
+                and slot.slot == cs.INSTRUCTION and running.get("instruction_type") == slot.doc_type)
+
+
+def _reserve_instruction(group: dict, node: dict, slot: cs.CardSlot, ordinal: int, running: dict,
+                         content: Optional[str], user_id: str, locale: Optional[str] = None) -> tuple[str, str]:
+    """flowgate.v02.0113 T#3 (L-2 §2.6, T §4.3), inside the Flow guard: a person's instruction made with their text, its
+    instruction stage token (T-2) claimed, the document submitted and the instruction line holding it — ``(doc_id,
+    token_id)``, as ``_reserve_result`` registers a result. Any refusal raises, so the guard's transaction leaves
+    nothing (and a document made before the refusal leaves no file)."""
+    flow_id, node_key = group["group_id"], node["node_key"]
+    params = {"flow_id": flow_id, "node_key": node_key, "slot": slot.slot}
+    if running["ai_working"]:
+        raise _refused(409, "node_ai_working", params, "The card's AI is still working on it.")
+    if not (content or "").strip():
+        raise _invalid("content", "empty_body")               # an instruction is judged only with a body
+    token_id = running["stage_token_id"]
+    row, doc = _line(flow_id, node, slot)
+    if doc is not None and not _untouched_draft(row, doc):
+        raise _refused(409, "slot_has_document", {**params, "doc_id": doc["doc_id"]},
+                       "This line already has a document.")
+    doc_id = legacy.create_document(group, node, slot, user_id, content, locale=locale)
+    try:
+        registered = legacy.register_result(doc_id, token_id, user_id)   # the token's compare-and-swap consume
+    except BaseException:
+        legacy.discard_file(doc_id)                            # the rollback removes its rows, not its file
+        raise
+    if not registered:                                         # another writer spent the token first
+        legacy.discard_file(doc_id)
+        raise _refused(409, "node_token_unavailable", params, "The card's instruction token is already used.")
+    if doc is None:                                            # no row, or a row whose document is gone
+        _link(flow_id, node_key, slot, ordinal, row, doc_id, user_id, owned=False)
+    else:                                                      # the card's empty draft: superseded by the instruction
         card_lines.adopt_result(flow_id, node_key, doc_id)
     return doc_id, token_id
 

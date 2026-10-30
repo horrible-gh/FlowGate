@@ -38,6 +38,7 @@ import pytest
 
 from test_fg_card_approval_0056 import _approve, _current, _events, _node_run, _resume, _run_id, _stop
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, _doc, _h, _run_one_card, _sql, _start, db_path, decided, edge, env, get_settings, node, put_draft,
     setting,
 )
@@ -45,6 +46,11 @@ from test_fg_card_settings_review import (
     INSTRUCTION_RUN, WORK_RUN, _admin_and_reviewer, _node, _recorded_start_run, _result, _review_status, _run_ended,
     _source_scopes, _start_ai, _through_instruction, _work_run_ended, _write_written,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 _SERVER_DIR = Path(__file__).resolve().parents[2]
 ROOT = f"{FA}.0001-R"
@@ -595,9 +601,10 @@ def _before_migration_148(env):
         conn.close()
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a card run opened before migration 148 (no stage) is a pre-feature attempt by construction (L-2 §2.13, G-14)
 @pytest.mark.parametrize("contact", [True, False])
 @pytest.mark.parametrize("instruction, written, other", [("use", "T", "TR"), ("omit", "TR", "T")])
-def test_a_card_run_opened_before_migration_148_finishes_with_the_type_its_ai_was_told(
+def test_a_card_run_opened_before_migration_148_finishes_with_the_type_its_ai_was_told(pre_feature_attempts, 
         env, decided, monkeypatch, instruction, written, other, contact):
     """A card run whose AI started under the one-stage contract before migration 148 (instruction use: the node's
     own T; omitted: its TR): after 148 its node run has no stage, and the document its AI was told to write is

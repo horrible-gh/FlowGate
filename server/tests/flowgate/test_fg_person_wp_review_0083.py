@@ -58,6 +58,7 @@ from pathlib import Path
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, _h, _sql, _start, db_path, decided, env, setting,
 )
 from test_fg_card_settings_review import _admin_and_reviewer, _node, _review_status
@@ -65,6 +66,11 @@ from test_fg_card_approval_0056 import (  # noqa: F401 — card_approval_port: r
     LEE, _approve, _current, _node_run, _resume, _run_id, _stop, card_approval_port,
 )
 from test_fg_wp_ai_run_0083 import OPUS, _cards, _opus, _run_status, _tokens, _wp_result
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 REVIEWER = "aip_review"
 API = "http://127.0.0.1:8089/flowgate/api/v1"
@@ -580,9 +586,10 @@ def _invalidate(env, monkeypatch, how):
             _sql(env["db"], "UPDATE graph_runs SET idle_reason = 'stopped'")
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: the refusal is recorded under the pre-feature step's hold (result_approval / review_start); an assigned attempt judges the same step under its manual judgement's hold (manual_result, L-2 §2.7.5) — test_fg_ai_roles_l2_manual.py::test_c1_*
 @pytest.mark.parametrize("how", ["time_machine_started", "attempt_invalidated", "run_stopped"])
 @pytest.mark.parametrize("count", [0, 1], ids=["review_none_approval", "review_start"])
-def test_4_what_commits_between_the_job_and_its_step_refuses_the_step_and_records_it(
+def test_4_what_commits_between_the_job_and_its_step_refuses_the_step_and_records_it(pre_feature_attempts, 
         env, decided, reviews, monkeypatch, count, how):
     """The bind's post-commit job has read the idle run and its attempt (its own first checks passed); a Time Machine
     operation, an attempt invalidation or a Stop commits before the step itself. The step is judged again under the Stop
@@ -688,7 +695,8 @@ def test_6_review_none_is_approved_with_the_issuer_s_permission_and_the_next_car
     assert "work_resumed" in _run_causes(env, seq)                       # the idle run went on (0083 WP-3)
 
 
-def test_6_review_none_waits_for_a_person_when_the_issuer_lacks_document_approve(env, decided, reviews, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: a person's WP was approved under the issuer's own authority (issuer_lacks_approve); an assigned attempt's is the system's (AUTOMATION, T §6.4, G-10) — test_fg_ai_roles_l2_manual.py::test_g10_*
+def test_6_review_none_waits_for_a_person_when_the_issuer_lacks_document_approve(pre_feature_attempts, env, decided, reviews, monkeypatch):
     """The issuer (u_kim, the run's starter) lacks ``document.approve``; the author (u_lee) holds it and is never used."""
     from modules.flow_gate.workflow.pipeline_service import transition_document_review as real_transition
     from modules.flow_gate.workflow.routers import workflow
@@ -761,7 +769,8 @@ def test_6_a_stop_waits_for_the_review_none_approval_in_flight_on_an_idle_run(en
     assert (_node(env, wp), _review_status(doc)) == (("done", doc), "approved") and _node(env, t2)[0] == "open"
 
 
-def test_6_a_passed_review_waits_for_a_person_when_the_issuer_lacks_document_approve(env, decided, reviews, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: the issuer's own authority of a person's WP (assigned: AUTOMATION, G-10)
+def test_6_a_passed_review_waits_for_a_person_when_the_issuer_lacks_document_approve(pre_feature_attempts, env, decided, reviews, monkeypatch):
     from modules.flow_gate.workflow.routers import workflow
 
     wp, t2 = _person_wp(env)
@@ -777,7 +786,8 @@ def test_6_a_passed_review_waits_for_a_person_when_the_issuer_lacks_document_app
     assert _node_run(env, wp)["awaiting_approval"] is True and _node(env, t2)[0] == "pending"
 
 
-def test_6_a_person_s_run_card_still_waits_for_a_person_s_approval(env, decided, reviews):
+# 0113 T#3 (T §6.4) pre-feature contract: a person's RUN result waited for a person's [승인]; assigned: manual judgement and the system's approval (T §6.4, G-2)
+def test_6_a_person_s_run_card_still_waits_for_a_person_s_approval(pre_feature_attempts, env, decided, reviews):
     from modules.flow_gate.graph_workflow.api import v01_contact
     from test_fg_card_settings_review import _result
 
@@ -1023,7 +1033,8 @@ def test_8_a_submission_bound_by_the_reconciliation_after_a_lost_contact_takes_i
 
 # ── wiring ───────────────────────────────────────────────────────────────────
 
-def test_the_card_registers_the_person_result_port_and_without_it_the_graph_hands_nothing(env, decided, reviews):
+# 0113 T#3 (T §6.4) pre-feature contract: the scene without the PERSON_RESULT port is the code before 0083 WP-4 (a pre-feature attempt by construction)
+def test_the_card_registers_the_person_result_port_and_without_it_the_graph_hands_nothing(pre_feature_attempts, env, decided, reviews):
     from flowgate.card_settings import review_stage
     from modules.flow_gate.graph_workflow.services import card_settings_ports as ports
 

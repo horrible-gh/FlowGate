@@ -168,4 +168,5 @@ def start_ai_invoke(job: dict) -> dict:
         node_restart_max_attempts=job.get("restart_max"),
         graph_exec_id=job.get("graph_exec_id"),
         graph_attempt_id=job.get("graph_attempt_id"),
+        **({"invocation_origin": job["invocation_origin"]} if job.get("invocation_origin") else {}),
     )

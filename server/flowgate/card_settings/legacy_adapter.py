@@ -117,6 +117,7 @@ SYSTEM_AUTHORITY = "system"
 ISSUER_LACKS_APPROVE = "issuer_lacks_approve"           # a person's work plan result only (0083 WP-4)
 ISSUER_MISSING = "issuer_missing"
 APPROVAL_REFUSED = "approval_refused"
+REVISION_MOVED = "revision_moved"     # 0113 T#3 (K-6): ``approve``'s expected revision is not the document's any more
 REVIEW_NOT_STARTED = "review_not_started"
 REVIEW_NOT_PASSED = "review_not_passed:"
 RUN_NOT_CLEAN = "run_not_clean:"
@@ -312,9 +313,17 @@ def node_of_result(flow_id: str, doc_id: Optional[str]) -> Optional[dict]:
 
 
 def person_plan_reviewed(flow_id: str, node: dict) -> bool:
-    """0083 WP-4: ``node`` is a work plan card a person writes whose card reviews its result (review count not 0)."""
+    """0083 WP-4: ``node`` is a work plan card a person writes whose card reviews its result (review count not 0).
+    flowgate.v02.0113 T#3 (L-2 §2.14): for an assigned attempt, its current result review assignment's author is not an
+    AI (any card kind)."""
     from flowgate.card_settings import fields, repository  # noqa: PLC0415 — the card's own settings
 
+    found = _assigned_attempt_of(flow_id, node)
+    if found is not None:
+        from flowgate.ai_roles import assignment_store  # noqa: PLC0415
+
+        latest = assignment_store.latest(found, "result_review")
+        return latest is not None and latest.get("author") != "ai"
     if not node.get("node_key") or not repository.available() or card_settings_ports.uses_ai(flow_id, node):
         return False
     if fields.card_kind(node.get("node_type"), node.get("doc_type")) != fields.PLAN:
@@ -360,9 +369,30 @@ def instruction_node_of_ai_run(flow_id: str, ai_run_id: str) -> Optional[tuple[d
         if row is None or row["status"] != OPEN_NODE_STATUS or row.get("stage") != node_dispatch.INSTRUCTION_STAGE:
             continue
         node = next((n for n in record.get("nodes") or [] if n["node_key"] == key), None)
-        if node is not None and card_settings_ports.uses_ai(flow_id, node):
+        if node is None:
+            continue
+        attempt_id = _assigned_attempt_of(flow_id, node)
+        if attempt_id is not None:
+            # flowgate.v02.0113 T#3 (L-2 §2.14): an assigned attempt's instruction stage, whoever executes the result
+            from flowgate.ai_roles import assignment_store  # noqa: PLC0415
+
+            if assignment_store.read(attempt_id, "instruction", 0) is not None:
+                return node, row
+            continue
+        if card_settings_ports.uses_ai(flow_id, node):
             return node, row
     return None
+
+
+def _assigned_attempt_of(flow_id: str, node: dict) -> Optional[str]:
+    """flowgate.v02.0113 T#3: the node's active attempt in the Flow's active run when it is an assigned one, else None."""
+    from flowgate.card_settings import stage_assignment  # noqa: PLC0415
+
+    if not node.get("node_key") or not stage_assignment.enabled():
+        return None
+    run_row = run_store.active_run(flow_id)
+    attempt_id = run_store.active_attempt_id(run_row["run_id"], node["node_key"]) if run_row else None
+    return None if stage_assignment.is_legacy_attempt(attempt_id) else attempt_id
 
 
 def registered_instructions(flow_id: str, run_id: str, node_key: str, doc_type: str) -> list[dict]:
@@ -676,7 +706,7 @@ def last_rejection(doc_id: str) -> Optional[str]:
 def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issued_to: str,
                       loop: dict, basis_note: Callable[[Optional[str]], str],
                       node_key: Optional[str] = None, graph_exec_id: Optional[str] = None,
-                      attempt_id: Optional[str] = None) -> Optional[dict]:
+                      attempt_id: Optional[str] = None, failure: Optional[dict] = None) -> Optional[dict]:
     """Start the v0.1 document review loop on ``doc_id`` as the AI invoke route starts it (single
     run, ``action_scope`` review, its stage-aware issuer: a review token, an edit token for a
     rework hop). A refusal is logged and the result left to a person (returns None).
@@ -690,7 +720,11 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
     on for AI reading (``card_memo_hooks``), read when the hop is issued.
 
     flowgate.v02.0061 T#7: ``attempt_id`` — the attempt of the node's run whose end starts the loop — must still be
-    the one the document's node is worked on by (``execution.request_loop`` refuses and records otherwise)."""
+    the one the document's node is worked on by (``execution.request_loop`` refuses and records otherwise).
+
+    flowgate.v02.0113 T#3 (L-2 §2.10, E-13): ``failure`` (an assigned review's caller) is told why a start that returns
+    None failed — ``{"cause": "start_refused:<the admission's code>"}`` for an admission refusal, else
+    ``{"cause": "start_failed"}``; the return value stays None either way (no other AI is asked)."""
     from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, invoke_mention_service  # noqa: PLC0415
     from modules.flow_gate.services import workflow_decision_service  # noqa: PLC0415
     from modules.flow_gate.graph_workflow.services.ai_node_starter import api_base_url  # noqa: PLC0415
@@ -723,7 +757,9 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
         graph_exec_id = execution.request_loop(project_id, flow_id, doc_id, issued_to, loop,
                                                 basis_note(last_rejection(doc_id)), node_key, graph_exec_id,
                                                 attempt_id=attempt_id)
-        return ai_invoke_service.start_run(
+        carried = execution.request_origin(graph_exec_id)     # 0113 T#3 (P-1 §7.2): the run memory's origin
+        extra = {"invocation_origin": carried["invocation_origin"]} if carried.get("invocation_origin") else {}
+        return ai_invoke_service.start_run(**extra,
             graph_exec_id=graph_exec_id,
             project_id=project_id or "", module=_module_of(flow_id), group_id=flow_id, doc_ref=doc_id,
             action_scope="review", mode="single", continuation_target_seq=None, continuation_review_mode=False,
@@ -732,6 +768,8 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
             document_review_loop=dict(loop),
         )
     except Exception as exc:  # noqa: BLE001 -- the result stays in review for a person
+        if failure is not None:
+            failure["cause"] = node_dispatch._start_failure(exc)
         execution.start_failed(graph_exec_id, exc)
         _log.warning("card review loop start failed flow=%s doc=%s", flow_id, doc_id, exc_info=True)
         return None
@@ -759,7 +797,8 @@ def _retryable_tr2(exc: Exception) -> bool:
 
 
 def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[str] = None, *,
-            node_key: Optional[str] = None, attempt_id: Optional[str] = None) -> bool:
+            node_key: Optional[str] = None, attempt_id: Optional[str] = None, mark: Optional[dict] = None,
+            expected_revision: Optional[int] = None):
     """The v0.1 approval of ``doc_id`` as the unmanned chain makes it (``inbox_routes.settle_completed_step``),
     then the TR approval hook every approval entry point calls and the Graph contact a person's approval
     reaches. True when approved; any refusal is logged, its reason recorded (B-1, ``record_approval_wait``) and the
@@ -773,7 +812,11 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[s
     - Actor and principal: the issuer — never the author of the result — as the Flow's server-owned completion context
       (``system_principal``, the one the unmanned approval passes), so the group mutation guard admits it as it admits
       that approval.
-    - Revision: the document's revision as read here (``expected_revision``).
+    - Revision: the document's revision as read here (``expected_revision``). flowgate.v02.0113 T#3 (K-6):
+      ``expected_revision`` — the revision a review passed (an assigned review's) — is the revision approved, or none:
+      it is the TR2 approval's expected revision, and any other approval checks it in its own transaction before and
+      after its write (``pinned``). A document whose revision moved meanwhile is not approved and nothing is recorded:
+      ``REVISION_MOVED`` (the caller hands the newer submission to its own review).
     - TR2: its own approval (precheck, source lock, apply, validation, commit) under an attempt key of
       the document and revision, retried once with a new key on a retryable TR2 refusal.
     """
@@ -788,7 +831,7 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[s
     if automation:
         if not actor_user_id:
             _log.info("card approval left to a person flow=%s doc=%s: no run issuer", flow_id, doc_id)
-            record_approval_wait(flow_id, node_key, doc_id, ISSUER_MISSING, attempt_id=attempt_id)
+            record_approval_wait(flow_id, node_key, doc_id, ISSUER_MISSING, attempt_id=attempt_id, mark=mark)
             return False
         permissions = set(AUTOMATION_APPROVE_PERMISSIONS)
     else:
@@ -801,6 +844,10 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[s
             return False
     doc = db_documents.get_by_id(doc_id) or {}
     revision = int(doc.get("revision_no") or 0)
+    if expected_revision is not None and int(expected_revision) != revision:
+        _log.info("card approval not made flow=%s doc=%s: revision %s moved to %s", flow_id, doc_id,
+                  expected_revision, revision)
+        return REVISION_MOVED
     tr2 = str(doc.get("type_code") or "").upper() == "TR2"
     result = None
     for attempt in range(2 if tr2 else 1):
@@ -809,22 +856,51 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[s
             digest = hashlib.sha256(f"{doc_id}:{revision}:{attempt}".encode("utf-8")).hexdigest()
             request_key = TR2_REQUEST_KEY_PREFIX + digest[:TR2_REQUEST_KEY_LEN]
         try:
-            result = transition_document_review(
-                doc_id=doc_id, action="approve", actor_user_id=actor_user_id, user_permissions=permissions,
-                locale=LOCALE, mutation_principal=system_principal(user_id=actor_user_id, group_id=flow_id),
-                expected_revision=revision, request_key=request_key)
+            def transition(key=request_key):
+                return transition_document_review(
+                    doc_id=doc_id, action="approve", actor_user_id=actor_user_id, user_permissions=permissions,
+                    locale=LOCALE, mutation_principal=system_principal(user_id=actor_user_id, group_id=flow_id),
+                    expected_revision=revision, request_key=key)
+            result = transition() if expected_revision is None or tr2 else pinned(doc_id, revision, transition)
             break
+        except RevisionMoved:
+            _log.info("card approval not made flow=%s doc=%s: revision %s moved", flow_id, doc_id, revision)
+            return REVISION_MOVED
         except Exception as exc:  # noqa: BLE001 — the result stays in review for a person
             if tr2 and attempt == 0 and _retryable_tr2(exc):
                 continue
             _log.warning("card approval refused flow=%s doc=%s", flow_id, doc_id, exc_info=True)
-            record_approval_wait(flow_id, node_key, doc_id, APPROVAL_REFUSED, attempt_id=attempt_id)
+            record_approval_wait(flow_id, node_key, doc_id, APPROVAL_REFUSED, attempt_id=attempt_id, mark=mark)
             return False
     if automation:
         record_approval_authority(flow_id, node_key, doc_id, actor_user_id, attempt_id=attempt_id)
     tr_commit_service.on_document_approved(doc_id, result)
     v01_contact.after_review_decided(flow_id, doc_id, "approve")
     return True
+
+
+class RevisionMoved(RuntimeError):
+    """``pinned``: the document's revision is not the expected one (its transaction is rolled back)."""
+
+
+def pinned(doc_id: str, revision: int, write):
+    """flowgate.v02.0113 T#3 (K-6, L-2 §2.8.4): ``write`` (an approval's transition) in one transaction with the
+    document's revision checked before and after it — an edit committed before the write's end rolls the write back
+    (``RevisionMoved``); one committed after it is a later edit of an approved document. The TR2 approval checks its
+    own ``expected_revision``."""
+    store = get_store()
+
+    def current() -> Optional[int]:
+        row = store._fetch_one("SELECT revision_no FROM documents WHERE doc_id = ?", [doc_id])
+        return int(row["revision_no"] or 0) if row else None
+
+    with store.transaction():
+        if current() != int(revision):
+            raise RevisionMoved(doc_id)
+        result = write()
+        if current() != int(revision):
+            raise RevisionMoved(doc_id)
+        return result
 
 
 # ── why an automatic approval was not made (flowgate.v02.0105 T#2 B-1 / B-4) ──
@@ -868,14 +944,17 @@ def _node_key_of(flow_id: str, node_key: Optional[str], doc_id: Optional[str]) -
 
 
 def record_approval_wait(flow_id: str, node_key: Optional[str], doc_id: Optional[str], reason: str, *,
-                         attempt_id: Optional[str] = None, stage: str = "result") -> None:
+                         attempt_id: Optional[str] = None, stage: str = "result", mark: Optional[dict] = None) -> None:
     """B-1: why the automatic approval of the node's ``doc_id`` (its result, or its instruction: ``stage``) was not made,
-    added to the Flow's active run. Nothing when the document is no node's of that run."""
+    added to the Flow's active run. Nothing when the document is no node's of that run. flowgate.v02.0113 T#3: an
+    assigned attempt's B-1 also carries its submission mark (``mark``, P-1 §7.1)."""
     key = _node_key_of(flow_id, node_key, doc_id)
     if not key or not doc_id:
         return
-    _run_event(flow_id, APPROVAL_WAIT_CAUSE, reason,
-               {"node_key": key, "doc_id": doc_id, "attempt_id": attempt_id, "stage": stage})
+    extra = {"node_key": key, "doc_id": doc_id, "attempt_id": attempt_id, "stage": stage}
+    if mark:
+        extra["submission_mark"] = dict(mark)
+    _run_event(flow_id, APPROVAL_WAIT_CAUSE, reason, extra)
 
 
 def record_approval_authority(flow_id: str, node_key: Optional[str], doc_id: str, issuer: str, *,
@@ -1110,3 +1189,355 @@ def instruction_node_of_document(flow_id: str, doc_id: str) -> Optional[tuple[di
         if node:
             return node, row
     return None
+
+
+# ── stage assignments (flowgate.v02.0113 T#3, L-2) ──────────────────────────────
+# The Graph parts the stage assignment modules (``stage_assignment``, ``manual_stage``, ``assigned_review``,
+# ``stage_view``) reach: the node run rows and their stage, the dispatch token and its mapping, the AI start job and its
+# ledger request, a run status event in the caller's transaction, a savepoint, the written-by evidence of a document's
+# current revision. Called only, never changed.
+
+def require_guard(flow_id: str) -> None:
+    """Stage assignment writes run inside their Flow guard transaction only (L-2 §2.1 invariant 5)."""
+    from modules.flow_gate.db.connection import in_transaction  # noqa: PLC0415
+    from modules.flow_gate.graph_workflow.services.flow_guard import held_guard  # noqa: PLC0415
+
+    if held_guard() != ("flow", flow_id) or not in_transaction():
+        raise RuntimeError("stage assignment writes require their Flow guard transaction")
+
+
+def isolated(read, savepoint: str):
+    """``read`` under a named savepoint of the caller's transaction (none open: plainly). An error rolls it back and is
+    raised on, so a failed statement never aborts the caller's transaction (PostgreSQL)."""
+    from flowgate.ai_roles.legacy_adapter import isolated_read  # noqa: PLC0415
+
+    return isolated_read(read, savepoint)
+
+
+def set_stage(run_id: str, node_key: str, stage: Optional[str], instruction_doc_id: Optional[str] = None) -> int:
+    return run_store.set_stage(run_id, node_key, stage, instruction_doc_id)
+
+
+def mark_result_floor(run_id: str, node_key: str) -> int:
+    return run_store.mark_result_floor(run_id, node_key)
+
+
+def set_dispatch_error(run_id: str, node_key: str, error_code: str) -> None:
+    """The open node run keeps its dispatch and records ``error_code`` (L-2 §2.12: ``ai_unavailable:<cause>`` …)."""
+    from modules.flow_gate.graph_workflow.services import run_apply  # noqa: PLC0415
+
+    row = node_run(run_id, node_key)
+    if row is None or row["status"] != OPEN_NODE_STATUS:
+        return
+    run_store.set_dispatch(run_id, node_key, {**(run_apply.dispatch_block(row) or {"token_issued": True}),
+                                              "error_code": error_code})
+
+
+def fill_line(ctx, node_key: str, doc_id: str) -> None:
+    from modules.flow_gate.graph_workflow.services import run_apply  # noqa: PLC0415
+
+    run_apply.fill_line(ctx, node_key, doc_id)
+
+
+def load_context(run_row: dict, jobs: Optional[list] = None):
+    from modules.flow_gate.graph_workflow.services import run_apply  # noqa: PLC0415
+
+    return run_apply.load_context(run_row, project_of(run_row["group_id"]), None, jobs if jobs is not None else [])
+
+
+def run_by_id(run_id: str) -> Optional[dict]:
+    return run_store.run_by_id(run_id)
+
+
+def open_row(run_id: str, node_key: str) -> Optional[dict]:
+    """The node run while its run goes on and the node is open (``node_dispatch._open_row``)."""
+    return node_dispatch._open_row(run_id, node_key)
+
+
+def run_node_row(flow_id: str, run_row: dict, node_key: str) -> Optional[dict]:
+    """The run revision's node row (a Custom card as its run type, as ``dispatch_custom`` hands it out)."""
+    record = definition_store.revision(flow_id, int(run_row["revision_no"])) or {}
+    node = next((n for n in record.get("nodes") or [] if n["node_key"] == node_key), None)
+    if node is not None and node.get("node_type") == "custom":
+        node = {**node, "doc_type": run_doc_type(node.get("node_type"), node.get("doc_type"))}
+    return node
+
+
+def issue_node_token(flow_id: str, project_id: Optional[str], root_doc_id: Optional[str], issued_to: str,
+                     provider_id: Optional[str]) -> Optional[dict]:
+    """A node token as the dispatch issues it (``action_scope`` new, the root as ``doc_ref``), under a savepoint; None
+    when the issue failed (rolled back to the savepoint, L0009 E-22)."""
+    from modules.flow_gate.services import token_service  # noqa: PLC0415
+
+    try:
+        with node_dispatch._savepoint("graph_stage_token"):
+            return token_service.issue(project=project_id or "", group_id=flow_id, action_scope="new",
+                                       doc_ref=root_doc_id, issued_to=issued_to, provider_id=provider_id,
+                                       continuation_target_seq=None)
+    except Exception:  # noqa: BLE001 — L-2 §2.6: the caller records the failure of its stage
+        _log.warning("graph stage token issue failed flow=%s", flow_id, exc_info=True)
+        return None
+
+
+def map_token(token_id: str, run_id: str, node_key: str, stage: Optional[str] = None) -> None:
+    run_store.map_token(token_id, run_id, node_key, stage, map_kind=run_store.MAP_DISPATCH)
+
+
+def live_dispatch_token(run_id: str, node_key: str) -> Optional[str]:
+    """L-2 §2.6 / T §4.3: the node's live dispatch token of its active attempt (stage none, no AI run, neither spent
+    nor revoked), or None."""
+    attempt_id = run_store.active_attempt_id(run_id, node_key)
+    row = get_store()._fetch_one(
+        "SELECT m.token_id FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
+        "WHERE m.run_id = ? AND m.node_key = ? AND m.stage IS NULL AND t.ai_run_id IS NULL "
+        "AND t.consumed_at IS NULL AND t.revoked_at IS NULL AND (m.attempt_id IS NULL OR m.attempt_id = ?) "
+        "ORDER BY m.mapped_at, m.token_id LIMIT 1", [run_id, node_key, attempt_id])
+    return row["token_id"] if row else None
+
+
+def ai_job(ctx, node: dict, provider_id: Optional[str], issued_to: str, token: dict, stage: str,
+           ref_doc_ids: Optional[list] = None) -> dict:
+    """The AI start job of a node (``node_dispatch._ai_job``) with the card's run plan of its stored settings."""
+    plan = card_settings_ports.run_settings(ctx.flow_id, node)
+    return node_dispatch._ai_job(ctx, node, plan, provider_id, issued_to, token, stage, ref_doc_ids)
+
+
+def request_write(job: dict) -> Optional[str]:
+    from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
+
+    return graph_execution_hooks.call("request_write", job)
+
+
+def start_ai(job: dict) -> None:
+    node_dispatch.start_ai(job)
+
+
+def root_doc_id(ctx) -> Optional[str]:
+    return (ctx.root_document() or {}).get("doc_id")
+
+
+def append_run_event(run_id: str, cause: str, reason: Optional[str], extra: dict, ctx=None) -> None:
+    """P-1 §7.1: a run status event (status unchanged, no node event, no SSE) in the caller's transaction — the
+    ``_run_event`` convention, numbered from the stored run row; ``ctx`` (a guarded step's) is kept current."""
+    from modules.flow_gate.graph_workflow.services import run_events  # noqa: PLC0415
+
+    run_row = run_store.run_by_id(run_id)
+    if run_row is None:
+        return
+    seq = int(run_row["last_event_seq"]) + 1
+    payload = {"flow_id": run_row["group_id"], "run_id": run_id, "revision_no": run_row.get("revision_no"),
+               "event_seq": seq, "from": run_row["status"], "to": run_row["status"], "cause": cause,
+               "reason": reason, **extra}
+    run_store.append_event(run_id, seq, run_events.RUN_STATUS, payload, node_key=None,
+                           from_status=run_row["status"], to_status=run_row["status"], cause=cause,
+                           result_doc_id=None, canvas_state=None, actor_user_id=None, reason=reason)
+    if ctx is not None and ctx.run.get("run_id") == run_id:
+        ctx.run["last_event_seq"] = seq
+
+
+def record_submission_wait(flow_id: str, node_key: str, doc_id: str, reason: str, mark: dict, *,
+                           attempt_id: Optional[str], stage: str = "result") -> None:
+    """B-1 of an assigned attempt: the reason with its submission mark (P-1 §7.1, DB-1 §2.9)."""
+    _run_event(flow_id, APPROVAL_WAIT_CAUSE, reason,
+               {"node_key": node_key, "doc_id": doc_id, "attempt_id": attempt_id, "stage": stage,
+                "submission_mark": dict(mark)})
+
+
+def approval_wait_rows(run_id: str, node_key: str, attempt_id: Optional[str] = None) -> list[dict]:
+    """The B-1 payloads of the node in the run, oldest first (of ``attempt_id`` and those with no attempt)."""
+    from modules.flow_gate.graph_workflow.services import run_events  # noqa: PLC0415
+
+    out = []
+    for row in run_store._all("SELECT payload_json FROM graph_run_events WHERE run_id = ? AND event_type = ? AND cause = ? "
+                              "ORDER BY event_seq", [run_id, run_events.RUN_STATUS, APPROVAL_WAIT_CAUSE]):
+        try:
+            data = json.loads(row["payload_json"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(data, dict) or data.get("node_key") != node_key:
+            continue
+        if attempt_id and data.get("attempt_id") and data["attempt_id"] != attempt_id:
+            continue
+        out.append(data)
+    return out
+
+
+def document_row(doc_id: Optional[str]) -> Optional[dict]:
+    from modules.flow_gate.db import documents as db_documents  # noqa: PLC0415
+
+    return db_documents.get_by_id(doc_id) if doc_id else None
+
+
+def rejection_count(doc: Optional[dict]) -> int:
+    from flowgate.card_documents import legacy_adapter as card_docs  # noqa: PLC0415
+
+    return card_docs.rejection_count(doc)
+
+
+def work_sets(doc: Optional[dict]) -> int:
+    from flowgate.card_documents import legacy_adapter as card_docs  # noqa: PLC0415
+
+    return card_docs.work_sets(doc) if doc else 0
+
+
+def register_result(doc_id: str, token_id: str, user_id: str) -> bool:
+    from flowgate.card_documents import legacy_adapter as card_docs  # noqa: PLC0415
+
+    return card_docs.register_result(doc_id, token_id, user_id)
+
+
+def tell_graph(flow_id: str, doc_id: str, doc_type: str, token_id: str) -> None:
+    v01_contact.after_inbox_registered(flow_id, doc_id, doc_type, token_id)
+
+
+def open_questions(flow_id: str, run_id: str, node_key: str) -> bool:
+    """C4: the node's documents hold a question still unanswered (``run_service.question_nodes``, its read)."""
+    from modules.flow_gate.graph_workflow.services import run_service  # noqa: PLC0415
+
+    return node_key in run_service.question_nodes(run_id, flow_id)
+
+
+def write_failure(row: dict) -> Optional[str]:
+    from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
+
+    return graph_execution_hooks.call("write_failure", row)
+
+
+def held_nodes(flow_id: str) -> frozenset:
+    from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
+
+    return frozenset(graph_execution_hooks.call("held_nodes", flow_id) or ())
+
+
+def loop_of_assignment(attempt_id: str, stage: str, seq: int) -> Optional[dict]:
+    """The review loop the assignment's ledger requests ran as (their ``assignment_stage`` / ``assignment_seq``), the
+    latest first: the loop row of the newest request's AI run, or None (not started yet)."""
+    store = get_store()
+    if not store.column_exists("graph_attempt_runs", "assignment_stage"):
+        return None
+    rows = store._fetch_all(
+        "SELECT ai_run_id FROM graph_attempt_runs WHERE attempt_id = ? AND assignment_stage = ? AND assignment_seq = ? "
+        "ORDER BY created_at DESC, exec_id DESC", [attempt_id, stage, seq]) or []
+    for r in rows:
+        loop = review_loop_row(r["ai_run_id"]) if r.get("ai_run_id") else None
+        if loop:
+            return {**loop, "run_id": r["ai_run_id"]}
+    return None
+
+
+def assignment_of_exec(exec_id: Optional[str]) -> Optional[tuple[str, str, int]]:
+    """(attempt, stage, seq) of the assignment a ledger request was made for (its own columns), or None."""
+    store = get_store()
+    if not exec_id or not store.column_exists("graph_attempt_runs", "assignment_stage"):
+        return None
+    row = store._fetch_one("SELECT attempt_id, assignment_stage, assignment_seq FROM graph_attempt_runs "
+                           "WHERE exec_id = ?", [exec_id])
+    if not row or not row.get("assignment_stage"):
+        return None
+    return row["attempt_id"], row["assignment_stage"], int(row["assignment_seq"])
+
+
+def written_by(doc_id: str, token_id: Optional[str] = None) -> dict:
+    """L-2 §2.4.3 / T §4.2: who wrote the document's current revision, from the existing records only —
+    ``{author: ai, provider_id}`` when an AI start's (or a review loop rework's) token wrote it, ``{author: person}``
+    when a user's write is proven, else ``{author: unknown}``. ``token_id``: the trusted token of an inbox contact that
+    wrote it (before the token is consumed). A failed read is unknown, never this attempt's assigned AI."""
+    unknown = {"author": "unknown", "provider_id": None}
+    try:
+        return isolated(lambda: _written_by(doc_id, token_id), "fg_written_by") or unknown
+    except Exception:  # noqa: BLE001 — E-44
+        _log.warning("written by not read doc=%s", doc_id, exc_info=True)
+        return unknown
+
+
+def _token_author(token_id: Optional[str]) -> Optional[dict]:
+    if not token_id:
+        return None
+    tok = get_store()._fetch_one("SELECT token_id, action_scope, ai_run_id, provider_id, issued_to FROM tokens "
+                                 "WHERE token_id = ?", [token_id])
+    if not tok or tok.get("action_scope") not in ("new", "edit"):
+        return None
+    if tok.get("ai_run_id") and str(tok.get("provider_id") or "").strip():
+        return {"author": "ai", "provider_id": tok["provider_id"]}
+    if not tok.get("ai_run_id") and tok.get("issued_to"):
+        return {"author": "person", "provider_id": None}
+    return {"author": "unknown", "provider_id": None}
+
+
+def _written_by(doc_id: str, token_id: Optional[str]) -> dict:
+    unknown = {"author": "unknown", "provider_id": None}
+    doc = document_row(doc_id)
+    if not doc:
+        return unknown
+    if token_id:
+        return _token_author(token_id) or unknown
+    revision = int(doc.get("revision_no") or 0)
+    store = get_store()
+    # A later console save of the current body is a person's write (it does not move revision_no).
+    saved = store._fetch_one("SELECT note, created_at FROM events WHERE doc_id = ? AND event_type = 'doc_body_saved' "
+                             "ORDER BY event_id DESC LIMIT 1", [doc_id]) if store.table_exists("events") else None
+    rows = store._fetch_all(
+        "SELECT id, event_type, document_id, actor_user_id, metadata, created_at FROM workflow_events "
+        "WHERE group_id = ? AND event_type IN ('doc_created', 'action_taken', 'doc_edited', 'token_consumed') "
+        "ORDER BY id", [doc.get("group_id")]) or []
+    writes: list = []
+    boundary_at = None
+    bounded = revision == 0         # revision 0: every write of the document is its creation's (no revision before)
+    for r in rows:
+        meta = _note(r.get("metadata")) or {}
+        if r["event_type"] == "doc_edited" and meta.get("doc_id") == doc_id:
+            if int(meta.get("revision_no") if meta.get("revision_no") is not None else -1) == revision:
+                writes, boundary_at, bounded = [], r.get("created_at"), True
+        elif revision == 0 and r["event_type"] == "doc_created" and str(r.get("document_id")) == str(doc.get("id")):
+            writes.append({"user": r.get("actor_user_id")})
+            boundary_at = boundary_at or r.get("created_at")
+        elif revision == 0 and r["event_type"] == "action_taken" and meta.get("action_code") == "doc_created" \
+                and meta.get("doc_id") == doc_id:
+            writes.append({"user": r.get("actor_user_id")})
+            boundary_at = boundary_at or r.get("created_at")
+        elif r["event_type"] == "token_consumed" and meta.get("doc_id") == doc_id and meta.get("token_id"):
+            writes.append({"token": meta["token_id"]})
+    if not bounded:
+        # T §4.2: no edit record of the current revision — a write of an earlier revision is never this one's author
+        return unknown
+    if saved and str((_note(saved.get("note")) or {}).get("source") or "") == "console_save":
+        if boundary_at is None or _later(saved.get("created_at"), boundary_at):
+            return {"author": "person", "provider_id": None}
+        if not _comparable(saved.get("created_at"), boundary_at):
+            return unknown
+    tokens = [w["token"] for w in writes if "token" in w]
+    if len(set(tokens)) == 1:
+        return _token_author(tokens[0]) or unknown
+    if tokens:
+        return unknown
+    users = {w["user"] for w in writes if w.get("user")}
+    return {"author": "person", "provider_id": None} if len(users) == 1 else unknown
+
+
+def _note(raw) -> Optional[dict]:
+    if isinstance(raw, dict):
+        return raw
+    try:
+        value = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _instant(value) -> Optional[datetime]:
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return moment
+
+
+def _comparable(a, b) -> bool:
+    """Both instants read and on the same footing (both with a time zone, or both without): a time zone known on one
+    side only, an unreadable value or the same instant tells no order (T §4.2: unknown)."""
+    x, y = _instant(a), _instant(b)
+    return x is not None and y is not None and (x.tzinfo is None) == (y.tzinfo is None) and x != y
+
+
+def _later(a, b) -> bool:
+    return _comparable(a, b) and _instant(a) > _instant(b)

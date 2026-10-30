@@ -4,13 +4,18 @@ Fixtures model stale/abnormal state; production repair never manipulates the DB 
 from __future__ import annotations
 
 import pytest
-from test_fg_card_settings import FA, _h, _sql, _start, db_path, decided, env
+from test_fg_card_settings import FA, _h, _sql, _start, db_path, decided, env, legacy_cards, pre_feature_attempts  # noqa: F401
 from test_fg_card_approval_0056 import LEE, _current, _run_id, card_approval_port
 from test_fg_card_settings_review import _executions_ended, _node
 from test_fg_wp_ai_run_0083 import (
     OPUS, _cards, _opus, _tokens, _attempt, _run_status, _inbox, _wp_json,
     _wp_documents, _grant_document_create, _admin_and_reviewer,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 
 # A result id no other node holds: the root R card is bound to 0001-R (unique per run).
@@ -54,8 +59,11 @@ def _snapshot(env):
         'graph_run_token_map', 'tokens', 'graph_run_events', 'documents', 'graph_node_documents')}
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: wp_work_ai recreates the old PLAN USES_AI judgement (open, no job) — a pre-feature attempt by construction
 @pytest.mark.parametrize('work_ai', [False, True], ids=['human_new_attempt', 'wp_work_ai'])
-def test_recovery_then_resume_reassigns_with_new_attempt_and_tokens(env, decided, monkeypatch, work_ai):
+def test_recovery_then_resume_reassigns_with_new_attempt_and_tokens(request, env, decided, monkeypatch, work_ai):
+    if work_ai:
+        request.getfixturevalue("pre_feature_attempts")
     key, token = _open_person(env, monkeypatch, work_ai=work_ai)
     before = _snapshot(env)
     old_attempt = next(a for a in before['graph_node_attempts'] if a['node_key'] == key)

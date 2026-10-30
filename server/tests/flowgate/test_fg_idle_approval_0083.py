@@ -43,6 +43,7 @@ from types import SimpleNamespace
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, _h, _sql, db_path, decided, env,
 )
 from test_fg_card_settings_review import (
@@ -52,6 +53,11 @@ from test_fg_card_approval_0056 import (  # noqa: F401 — card_approval_port: r
     LEE, _approve, _chain, _current, _human_result, _run_id, _v01_approve, card_approval_port,
 )
 from test_fg_wp_ai_run_0083 import _cards, _register, _run_status, _start_ai_run
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -119,8 +125,9 @@ WAITS = pytest.mark.parametrize("wait", ["command_chain", "reported"])
 
 # ── a person's approval on an idle run moves on (0061 T#2 개정) ───────────────────
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
-def test_a_person_s_approval_on_an_idle_run_opens_the_next_ai_card_and_creates_its_job_revised_0061_t2(
+def test_a_person_s_approval_on_an_idle_run_opens_the_next_ai_card_and_creates_its_job_revised_0061_t2(pre_feature_attempts, 
         env, decided, monkeypatch, wait):
     commands = _no_command(monkeypatch)
     (t1, t2), result = _person_waits(env, [("T", LEE), ("T", AI)], wait=wait)
@@ -135,8 +142,9 @@ def test_a_person_s_approval_on_an_idle_run_opens_the_next_ai_card_and_creates_i
     assert commands == []
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
-def test_a_person_s_approval_on_an_idle_run_opens_the_next_person_s_card_and_the_run_waits_for_it_revised_0061_t2(
+def test_a_person_s_approval_on_an_idle_run_opens_the_next_person_s_card_and_the_run_waits_for_it_revised_0061_t2(pre_feature_attempts, 
         env, decided, monkeypatch, wait):
     commands = _no_command(monkeypatch)
     (t1, t2), result = _person_waits(env, [("T", LEE), ("T", LEE)], wait=wait)
@@ -153,8 +161,9 @@ def test_a_person_s_approval_on_an_idle_run_opens_the_next_person_s_card_and_the
     assert commands == []
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
-def test_a_person_s_v01_approval_on_an_idle_run_moves_on_as_the_card_approval_does_revised_0061_t2(
+def test_a_person_s_v01_approval_on_an_idle_run_moves_on_as_the_card_approval_does_revised_0061_t2(pre_feature_attempts, 
         env, decided, monkeypatch, wait):
     commands = _no_command(monkeypatch)
     (t1, t2), result = _person_waits(env, [("T", LEE), ("T", AI)], wait=wait)
@@ -164,16 +173,18 @@ def test_a_person_s_v01_approval_on_an_idle_run_moves_on_as_the_card_approval_do
     assert commands == []
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
-def test_the_last_card_s_approval_on_an_idle_run_completes_it_revised_0061_t2(env, decided, wait):
+def test_the_last_card_s_approval_on_an_idle_run_completes_it_revised_0061_t2(pre_feature_attempts, env, decided, wait):
     (t1,), result = _person_waits(env, [("T", LEE)], wait=wait)
     _approve(env, t1, body={"result_doc_id": result})
     assert _node(env, t1)[0] == "done" and _propagations(env, t1) == ["done"]
     assert _run_status(env) == ("idle", "completed")
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @pytest.mark.parametrize("wait, before_resume", [("command_chain", "open"), ("reported", "pending")])
-def test_with_the_0061_t2_rule_the_reported_wait_needed_a_resume(env, decided, monkeypatch, wait, before_resume):
+def test_with_the_0061_t2_rule_the_reported_wait_needed_a_resume(pre_feature_attempts, env, decided, monkeypatch, wait, before_resume):
     """What is revised: with the 0061 T#2 ``defers`` (every run not running waits) only a wait whose command its events
     prove went on (``command.resume_approval``, 0083 T#2); the reported wait left the next card pending after the
     approval, and only the next resume opened it — the reported "a person approves, then resumes"."""
@@ -193,8 +204,9 @@ def test_with_the_0061_t2_rule_the_reported_wait_needed_a_resume(env, decided, m
 
 # ── kept: step, paused, stopped, Time Machine ────────────────────────────────
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
-def test_a_step_still_keeps_the_next_card_pending_after_a_person_s_approval(env, decided, monkeypatch, wait):
+def test_a_step_still_keeps_the_next_card_pending_after_a_person_s_approval(pre_feature_attempts, env, decided, monkeypatch, wait):
     (t1, t2), result = _person_waits(env, [("T", LEE), ("T", AI)], mode="step", wait=wait)
     _approve(env, t1, body={"result_doc_id": result})
     assert (_node(env, t1)[0], _node(env, t2)[0], _propagations(env, t1)) == ("done", "pending", ["pending"])
@@ -204,9 +216,10 @@ def test_a_step_still_keeps_the_next_card_pending_after_a_person_s_approval(env,
     assert (_node(env, t2)[0], [j["node_key"] for j in env["jobs"]]) == ("open", [t2])
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
 @pytest.mark.parametrize("state", ["paused", "stopped", "time_machine"])
-def test_a_paused_stopped_or_time_machine_run_does_not_go_on_after_a_person_s_approval(
+def test_a_paused_stopped_or_time_machine_run_does_not_go_on_after_a_person_s_approval(pre_feature_attempts, 
         env, decided, monkeypatch, state, wait):
     from flowgate.graph_time_machine import operation
 
@@ -410,9 +423,10 @@ def _merged(tree, commit):
 HOLD = ("integration_hold", "integration_hold_end")
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
 @pytest.mark.parametrize("approve", ["card", "v01"])
-def test_a_person_s_approval_held_for_its_merge_opens_the_next_ai_card_once_merged_revised_0061_t2(
+def test_a_person_s_approval_held_for_its_merge_opens_the_next_ai_card_once_merged_revised_0061_t2(pre_feature_attempts, 
         env, decided, monkeypatch, group_tree, wait, approve):
     commands = _no_command(monkeypatch)
     (t1, t2), result, attempt_id, commit = _person_waits_on_code(env, group_tree, [("T", LEE), ("T", AI)], wait=wait)
@@ -437,8 +451,9 @@ def test_a_person_s_approval_held_for_its_merge_opens_the_next_ai_card_once_merg
     assert commands == []                                              # no resume, step or full
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
-def test_the_last_card_s_approval_held_for_its_merge_completes_the_run_once_merged_revised_0061_t2(
+def test_the_last_card_s_approval_held_for_its_merge_completes_the_run_once_merged_revised_0061_t2(pre_feature_attempts, 
         env, decided, monkeypatch, group_tree, wait):
     commands = _no_command(monkeypatch)
     (t1,), result, attempt_id, commit = _person_waits_on_code(env, group_tree, [("T", LEE)], wait=wait)
@@ -448,9 +463,10 @@ def test_the_last_card_s_approval_held_for_its_merge_completes_the_run_once_merg
     assert _run_status(env) == ("idle", "completed") and commands == []
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
 @WAITS
 @pytest.mark.parametrize("state", ["step", "paused", "stopped", "time_machine"])
-def test_a_step_paused_stopped_or_time_machine_run_still_waits_after_an_approval_held_for_its_merge(
+def test_a_step_paused_stopped_or_time_machine_run_still_waits_after_an_approval_held_for_its_merge(pre_feature_attempts, 
         env, decided, monkeypatch, group_tree, state, wait):
     from flowgate.graph_time_machine import operation
 

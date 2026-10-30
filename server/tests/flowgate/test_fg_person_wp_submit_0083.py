@@ -28,6 +28,7 @@ import json
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, _h, _sql, _start, db_path, decided, edge, env, node, put_draft,
 )
 from test_fg_card_settings_review import _admin_and_reviewer, _node, _review_status
@@ -36,6 +37,11 @@ from test_fg_wp_ai_run_0083 import _opus, _plan_line, _run_status, _start_ai_run
 from test_fg_person_wp_review_0083 import (  # noqa: F401 — reviews: the recorder fixture
     AUTHOR_STOP, REVIEWER, _admitted, _hop_ends, _loop_ended, _passes, _person_wp, _stage, _verdict, _wp_body, reviews,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 AUTHOR = {"Authorization": "Bearer user:u_lee", "x-canvas-client-id": "tab_wp"}
 

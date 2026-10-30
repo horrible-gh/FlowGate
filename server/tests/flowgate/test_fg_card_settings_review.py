@@ -24,9 +24,16 @@ from pathlib import Path
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, _doc, _h, _run_one_card, _sql, _start, db_path, decided, edge, env, get_settings, node, put_draft,
     setting,
 )
+
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 _SERVER_DIR = Path(__file__).resolve().parents[2]
 WORK_RUN, REVIEW_RUN = "air_card_work", "air_card_review"
@@ -239,7 +246,8 @@ def test_the_result_type_follows_the_card_only_for_instruction_led_ai_cards():
         "settings": {}, "result_doc_type": "TR", "instruction": {"doc_type": "T", "provider_id": None}}
 
 
-def test_a_human_node_binds_its_own_type_whatever_its_card_says(env, decided):
+# 0113 T#3 (T §6.4) pre-feature contract: a person card's result type was its own; an assigned attempt's is its stage plan's (L-2 §2.5.1/§2.14, K-2) — test_fg_ai_roles_l2_manual.py::test_k2_*
+def test_a_human_node_binds_its_own_type_whatever_its_card_says(pre_feature_attempts, env, decided):
     from modules.flow_gate.graph_workflow.api import v01_contact
 
     key = _run_one_card(env, {"kind": "human", "user_id": "u_lee", "provider_id": None})
@@ -359,9 +367,12 @@ def test_a_run_that_is_not_the_node_ai_changes_nothing(env, decided, monkeypatch
 
 # ── the card's AI review ─────────────────────────────────────────────────────
 
+# 0113 T#3 (T §6.4) pre-feature contract: review_ai None asks the project default reviewer (assigned: wait_setup, G-9)
 @pytest.mark.parametrize("review_ai, reviewer", [("aip_review", "aip_review"), (None, "aip_default")])
-def test_a_card_review_starts_the_review_loop_with_its_review_ai_count_and_basis(
+def test_a_card_review_starts_the_review_loop_with_its_review_ai_count_and_basis(request, 
         env, decided, monkeypatch, review_ai, reviewer):
+    if review_ai is None:
+        request.getfixturevalue("pre_feature_attempts")
     from modules.flow_gate.settings import ai_settings_service
 
     monkeypatch.setattr(ai_settings_service, "resolve_effective",

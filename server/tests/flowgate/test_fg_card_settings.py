@@ -38,6 +38,10 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+# flowgate.v02.0113 T#3 (T §6.4): this suite's own cards are cards made before the AI role feature (legacy fields,
+# L-1 §2.4.5); the stage assignment feature stays on (``legacy_cards`` below, defined in this module).
+pytestmark = pytest.mark.usefixtures("legacy_cards")
+
 FA = "flowgate.v02.0091"      # unassigned, live root R (approved)
 FB = "flowgate.v02.0092"      # unassigned, no documents
 TEST_VALUE, TEST_VERSION = "card_settings_test", "1"
@@ -74,7 +78,30 @@ def db_path(tmp_path):
 
 
 @pytest.fixture()
-def env(db_path, monkeypatch, tmp_path):
+def legacy_cards(monkeypatch):
+    """flowgate.v02.0113 T#3 (L-1 §2.4.5, L-2 §2.3): the cards drawn while it is used are cards made before the AI role
+    feature — no role slots, no init row: their stored legacy fields (assignee, ``instruction_ai``, ``run_ai``,
+    ``review_count`` / ``review_ai``) are what L-1 resolves each new attempt's stage assignments from. The suites written
+    before T#2/T#3 describe such cards; their attempts run the assigned path (the feature on) all the same."""
+    from modules.flow_gate.graph_workflow.services import card_settings_ports
+
+    monkeypatch.setattr(card_settings_ports, "cards_created", lambda group, user_id, nodes: None)
+
+
+@pytest.fixture()
+def pre_feature_attempts(monkeypatch):
+    """flowgate.v02.0113 T#3 (L-2 §2.13, T §6.4): the attempts opened while it is used are pre-feature attempts (opened
+    as before the stage assignments: no assignment rows). Call the returned function to switch the feature back on —
+    the attempts opened so far stay pre-feature to their end (K-12, G-14)."""
+    from flowgate.card_settings import stage_assignment
+
+    real = stage_assignment.enabled
+    monkeypatch.setattr(stage_assignment, "enabled", lambda: False)
+    return lambda: monkeypatch.setattr(stage_assignment, "enabled", real)
+
+
+@pytest.fixture()
+def env(db_path, monkeypatch, tmp_path, request):
     from modules.flow_gate.db import _SqliteTxnAdapter
     from modules.flow_gate.graph_workflow.api import canvas_routes, envelope, graph_routes, run_routes
     from modules.flow_gate.graph_workflow.services import canvas_events, node_dispatch, run_events
@@ -112,6 +139,9 @@ def env(db_path, monkeypatch, tmp_path):
     from flowgate.graph_validation.run_scope import run_scope
     from modules.flow_gate.graph_workflow.domain import run_scope_ports
     monkeypatch.setattr(run_scope_ports, "_handler", run_scope)
+    # flowgate.v02.0113 T#3: every migration is applied here, so the stage assignment store exists and every suite runs
+    # its new attempts on the assigned path (L-2), as a deployment with migration 164 does. A pre-feature attempt is made
+    # explicitly by the test that needs one (``pre_feature_attempts``), never by switching a whole suite off.
     def record_job(job):
         # Recovery may redeliver a durable execution until the fake worker starts it.
         # Record each execution once, like a worker's execution lease admission.

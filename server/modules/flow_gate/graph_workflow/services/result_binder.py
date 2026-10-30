@@ -151,6 +151,10 @@ def _hand_to_card(ctx: RunContext, kind: str, payload: dict, found: Optional[Run
         key, doc_id = found.node, found.doc_id
     elif found is None and (kind == EDITED or (kind == "review_decided" and _decision(payload) in _RESUBMISSIONS)):
         row = run_store.node_run_by_result(ctx.run_id, payload.get("doc_id")) if payload.get("doc_id") else None
+        if row is None and kind == EDITED and payload.get("doc_id"):
+            flow_id, doc_id, token_id = ctx.flow_id, payload["doc_id"], payload.get("token_id")
+            # flowgate.v02.0113 T#3 (L-2 §2.7.1 CONTENT_SAVED): an instruction's new revision registered in place
+            ctx.jobs.append(lambda: card_settings_ports.instruction_saved(flow_id, doc_id, None, token_id))
         if row is None or row["status"] != "review":
             return
         key, doc_id = row["node_key"], row["result_doc_id"]
@@ -234,6 +238,9 @@ def _take_instruction(ctx: RunContext, node: dict, row: dict, doc: dict) -> None
         return
     run_store.set_stage(ctx.run_id, row["node_key"], INSTRUCTION_STAGE, doc["doc_id"])
     fill_line(ctx, row["node_key"], doc["doc_id"])              # the card's instruction line
+    flow_id, key, doc_id = ctx.flow_id, row["node_key"], doc["doc_id"]
+    # flowgate.v02.0113 T#3 (L-2 §2.7.1 REGISTERED): a person's instruction stage judges it after the commit
+    ctx.jobs.append(lambda: card_settings_ports.instruction_saved(flow_id, doc_id, key, "registered"))
 
 
 def _decision(payload: dict) -> str:

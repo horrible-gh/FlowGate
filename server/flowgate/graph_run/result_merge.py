@@ -64,6 +64,7 @@ other goes back to ``pending``.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 from contextlib import contextmanager
@@ -730,7 +731,10 @@ def _end_hold(flow_id: str, *, drained: bool) -> None:
                                   settle.CAUSE_COMPLETED if reason == settle.IDLE_COMPLETED else settle.CAUSE_IDLE)
 
     try:
-        with_flow_guard(flow_id, body)
+        # 0113 T#3 (T §4.5): the held command's re-dispatch may replace an attempt — its fence first, as at its entry
+        from flowgate.graph_run import execution
+        with (execution.command_fence(flow_id) if drained else contextlib.nullcontext()):
+            with_flow_guard(flow_id, body)
         run_service.run_jobs(jobs)
     except Exception:  # noqa: BLE001 — rolled back: at the drain's end the hold is released instead
         log.exception("Graph integration hold could not end flow=%s", flow_id)
