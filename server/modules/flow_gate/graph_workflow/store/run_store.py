@@ -492,11 +492,19 @@ def ai_runs_of_node(run_id: str, node_key: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+# flowgate.v02.0113 0038-T T#3 B-6: the invalidation reason of an attempt replaced because its waiting stage's role
+# changed. Its tokens are revoked, but what it registered (an instruction written and approved before the wait) is no
+# stale document: the new attempt and the card approval take it as the card's.
+REINTERPRET_REASON = "stage_reinterpret"
+
+
 def invalidated_token_ids(run_id: str, node_key: str) -> list[str]:
-    """0061 T#7: the node's tokens of its invalidated attempts, mapping order — what an ended old attempt wrote with."""
+    """0061 T#7: the node's tokens of its invalidated attempts, mapping order — what an ended old attempt wrote with.
+    0038-T T#3 B-6: not those of an attempt replaced by a reinterpretation (``REINTERPRET_REASON``)."""
     rows = _all("SELECT m.token_id FROM graph_run_token_map m JOIN graph_node_attempts a ON a.attempt_id = m.attempt_id "
-                "WHERE m.run_id = ? AND m.node_key = ? AND a.status = 'invalidated' ORDER BY m.mapped_at, m.token_id",
-                [run_id, node_key])
+                "WHERE m.run_id = ? AND m.node_key = ? AND a.status = 'invalidated' "
+                "AND COALESCE(a.invalidated_reason, '') <> ? ORDER BY m.mapped_at, m.token_id",
+                [run_id, node_key, REINTERPRET_REASON])
     return [r["token_id"] for r in rows]
 
 

@@ -383,7 +383,9 @@ def register_result(doc_id: str, token_id: str, user_id: str) -> bool:
     writers only one ever sees True, and only the winner records ``token_consumed`` with its document — the
     evidence the run reconciliation binds from); then the document opens and is submitted (pending_review), as the
     inbox registers one (``inbox_routes._handle_new``). False — nothing written — when the token was already spent;
-    the caller then refuses and its guard's transaction rolls the document back."""
+    the caller then refuses and its guard's transaction rolls the document back. flowgate.v02.0113 0038-T T#3 A-3: a
+    document already submitted or judged (a written report a result stage takes) is registered with the token and
+    keeps its review state — it is not submitted again."""
     from modules.flow_gate.db.connection import now_iso   # noqa: PLC0415
     from modules.flow_gate.services import token_service   # noqa: PLC0415
     from modules.flow_gate.workflow.pipeline_service import transition_document_review   # noqa: PLC0415
@@ -393,6 +395,8 @@ def register_result(doc_id: str, token_id: str, user_id: str) -> bool:
     if not token_service.consume(token_id=token_id, project_id=doc.get("project_id") or "", doc_id=doc_id,
                                  require_claim=True):
         return False
+    if doc.get("doc_review_status"):
+        return True
     rule = get_doc_rule(str(doc.get("status") or ""), "submit")
     if rule is not None:
         db_documents.update(doc_id, {"status": rule.next_state, "updated_at": now_iso()})   # draft -> open

@@ -295,11 +295,14 @@ def reopen_attempt(ctx, row):
     """flowgate.v02.0113 T#3 (L-2 §2.10 ``REOPEN_NEW_ATTEMPT``), inside the explicit command's Flow guard, entered under
     the Flow's exclusive Stop gate (``command_fence``): the node's attempt (an assigned one waiting for a setting, an
     unavailable AI, or failed) is invalidated with its tokens, the node reset and opened again as a new attempt, then
-    dispatched as any opening is (its stages resolved anew). The replacement is judged again here (T §4.5): the fence
+    dispatched as any opening is (its stages resolved anew). 0038-T T#3 B-6: also a waiting write stage — a person's
+    manual write, an AI setup or an unavailable AI's wait — whose role changed (``reinterpret_wait``, invalidated as
+    ``stage_reinterpret``: its documents stay the card's); an unchanged wait is never replaced. The
+    replacement is judged again here (T §4.5): the fence
     held, the current stage assignment, Hold, Time Machine, no result (a lost registration binds first), no execution
     or AI working. A node in review is never reopened (its result stays). Late contacts of the old attempt find it
     invalidated (``fencing``) and touch nothing of the new one."""
-    from modules.flow_gate.graph_workflow.services import node_dispatch, run_apply
+    from modules.flow_gate.graph_workflow.services import card_settings_ports, node_dispatch, run_apply
     current = next((r for r in run_store.node_runs(ctx.run_id) if r["node_key"] == row["node_key"]), None)
     if current is None or current["status"] != "open":
         return None
@@ -310,10 +313,15 @@ def reopen_attempt(ctx, row):
     if why is not None:
         log.info("attempt not replaced run=%s node=%s: %s", ctx.run_id, row["node_key"], why)
         return None
-    if not stop.invalidate_attempt(attempt_id, "stage_reopen"):
+    # 0038-T T#3 B-6: a waiting stage whose role changed is resolved again as a new attempt — the old attempt's tokens
+    # are revoked (a person's write permission of the old assignment), its documents stay the card's
+    # (``run_store.REINTERPRET_REASON``)
+    verdict = card_settings_ports.stage_needs_dispatch(ctx, current)
+    reason = run_store.REINTERPRET_REASON if verdict == "reinterpret_wait" else "stage_reopen"
+    if not stop.invalidate_attempt(attempt_id, reason):
         return None
     current = next((r for r in run_store.node_runs(ctx.run_id) if r["node_key"] == row["node_key"]), current)
-    if not stop.reset_node(ctx, current, "stage_reopen"):
+    if not stop.reset_node(ctx, current, reason):
         return None
     run_store.open_attempt(ctx.run_id, row["node_key"], int(ctx.run["revision_no"]))
     dispatch = node_dispatch.dispatch(ctx, row["node_key"])

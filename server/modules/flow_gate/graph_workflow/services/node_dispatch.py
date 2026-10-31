@@ -128,13 +128,16 @@ def dispatch(ctx, node_key: str) -> Optional[dict]:
 
 
 REDISPATCH, REOPEN = "dispatch", "reopen"
+# 0038-T T#3 B-6: a waiting stage whose role changed is opened again as a new attempt too (its reason told apart)
+REOPEN_VERDICTS = ("reopen_new_attempt", "reinterpret_wait")
 
 
 def redispatch_kind(ctx, row: dict) -> Optional[str]:
     """flowgate.v02.0113 T#3: what an explicit command does with an open node — ``REDISPATCH`` (the dispatch again,
-    the same attempt), ``REOPEN`` (an assigned attempt's wait / failure: a new attempt, L-2 §2.10) or None."""
+    the same attempt), ``REOPEN`` (an assigned attempt's wait / failure, or a waiting stage whose role changed: a new
+    attempt, L-2 §2.10, 0038-T B-6) or None."""
     verdict = card_settings_ports.stage_needs_dispatch(ctx, row)
-    if verdict == "reopen_new_attempt":
+    if verdict in REOPEN_VERDICTS:
         return REOPEN
     if verdict in ("dispatch", "retry_same_attempt"):
         return REDISPATCH
@@ -150,7 +153,7 @@ def needs_ai_dispatch(ctx, row: dict) -> bool:
     node = ctx.node_rows.get(row["node_key"]) or {}
     verdict = card_settings_ports.stage_needs_dispatch(ctx, row)          # 0113 T#3: an assigned attempt's
     if verdict is not None:
-        return verdict in ("dispatch", "retry_same_attempt", "reopen_new_attempt")
+        return verdict in ("dispatch", "retry_same_attempt", *REOPEN_VERDICTS)
     # An explicit command may retry a result writer that ended without its result.
     # Hold, live executions and registered results still prevent a new dispatch.
     # 0111 T-A1: not one whose questions are still open (``question_pending``) — its answers retry it once.

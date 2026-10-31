@@ -16,6 +16,22 @@ and every later step reads that record instead of the card settings:
 - ``needs_dispatch`` (§2.10): what an explicit command does with an open node of an assigned attempt.
 - ``stage_plan`` / ``is_legacy_attempt`` / ``current_stage_assignment``: what the other consumers read.
 
+0038-T T#3 (0030-M §3.1, 0002-D 개정 §3.6-0 / §3.5.1-8):
+
+- the next stage follows the card's documents the same way for an AI and a person: a result stage whose report is
+  already written (``written_result``: its line's report with a body, submitted or approved alike, never the attempt's
+  report baseline) asks no writer — no AI, no manual write — and goes to this attempt's result review
+  (``take_written_result``) whatever the report's own review state: a report approved before the attempt took it is
+  reviewed again by the attempt's review assignment (an AI's review, the automatic approval, or its wait) and the
+  binder holds the old approval back until that review passed (``legacy.taken_judged``);
+- an attempt that opens with its instruction not written records the report of that moment as its baseline
+  (``report_baseline``): the result stage takes only a report saved after it; a baseline that cannot be recorded fails
+  the opening, one that cannot be read lets no report be taken;
+- a waiting write stage — a person's manual write wait, an AI setup wait, an unavailable AI's wait — with no document
+  in it is resolved again by the first command after its role resolves to another assignment (``REINTERPRET``: a new
+  attempt, the old one's tokens revoked, its documents kept); unchanged, it keeps waiting with its attempt, assignment
+  and tokens. A failed stage is an explicit retry (``REOPEN_NEW_ATTEMPT``).
+
 The feature is on while ``enabled()`` (the assignment store exists, migration 164); an attempt with no assignment is a
 pre-feature attempt and every consumer keeps its current function for it (§2.13). Codes are P-1 §1.3 C-2 strings.
 """
@@ -29,7 +45,7 @@ from flowgate.ai_roles import assignment_store as _store
 from flowgate.ai_roles import availability, card_init, resolve, role_store
 from flowgate.card_documents import lines as card_lines
 from flowgate.card_documents import slots as card_slots
-from flowgate.card_settings import fields, repository
+from flowgate.card_settings import fields, report_baseline, repository
 from flowgate.card_settings import legacy_adapter as legacy
 
 _log = logging.getLogger(__name__)
@@ -92,8 +108,10 @@ _PURPOSE_ROLE = {INSTRUCTION_WRITE: "instruction", INSTRUCTION_WRITE_RETRY: "ins
 # run event causes and token kinds (P-1 §7.1)
 EV_ASSIGNED, EV_FAILED, EV_TOKEN_FAILED = "stage_assigned", "stage_failed", "stage_token_issue_failed"
 TOKEN_NODE, TOKEN_INSTRUCTION, TOKEN_RESULT = "node", "instruction_stage", "result_supplement"
-# needs_dispatch answers (L-2 §2.10)
+# needs_dispatch answers (L-2 §2.10; 0038-T T#3 B-6: ``REINTERPRET`` is a new attempt for a waiting write stage whose
+# role changed — the old attempt's documents stay the card's, ``execution.reopen_attempt``)
 DISPATCH, RETRY_SAME_ATTEMPT, REOPEN_NEW_ATTEMPT, NONE = "dispatch", "retry_same_attempt", "reopen_new_attempt", "none"
+REINTERPRET = "reinterpret_wait"
 _ZERO, _SOME, _UNKNOWN = "zero", "some", "unknown"
 
 
@@ -555,10 +573,15 @@ def dispatch_role_card(ctx, node: dict) -> Optional[dict]:
                     project_id=ctx.project_id, ctx=ctx)
     if a == LEGACY:
         return None
+    if first == INSTRUCTION:                                          # 0038-T A-2: the report baseline
+        # a baseline that cannot be recorded raises (``BaselineUnavailable``): the step's guard rolls the opening back
+        report_baseline.record_at_opening(attempt_id, ctx.run_id, flow_id, key, bool(reuse),
+                                          report_line(flow_id, node, plan)[1])
+    taken = written_result(flow_id, node, plan, attempt_id) if first == RESULT else None
     legacy.set_stage(ctx.run_id, key, first, reuse)
     if reuse:
         legacy.fill_line(ctx, key, reuse)
-    provider = a["provider_id"] if a["actor"] == AI and not reuse else None
+    provider = a["provider_id"] if a["actor"] == AI and not reuse and taken is None else None
     shown = provider or issued_to
     token = legacy.issue_node_token(flow_id, ctx.project_id, legacy.root_doc_id(ctx), issued_to, provider)   # T-1
     if token is None:
@@ -642,10 +665,80 @@ def result_has_body(kind: Optional[str], doc: Optional[dict]) -> bool:
     return card_lines.has_body(doc)
 
 
+_NOT_WRITTEN_STATES = ("rejected",)                 # judged not to pass: its revision is a new report
+
+
+def written_result(flow_id: str, node: dict, plan: dict, attempt_id: Optional[str]) -> Optional[dict]:
+    """0038-T T#3 A (D 개정 §3.6-0-1 ~ 3): the card's report that satisfies its result stage — the result line's live
+    document of the card with a body ("있음": the saved body, blank is none), whether still a draft, submitted or
+    approved, never a cancelled or rejected one, nor the attempt's report baseline (A-2), nor a result an earlier
+    attempt of the run had bound (a Stop's or a reopening's history, 0061 T#7) — or None. A plan with an instruction
+    whose baseline cannot be read raises ``report_baseline.BaselineUnavailable``: no report is taken on an unknown
+    baseline (a plan without one never records a baseline)."""
+    line, doc = report_line(flow_id, node, plan)
+    if doc is None or not line or not line.get("owned", True):
+        return None
+    if doc.get("status") == "cancelled" or doc.get("doc_review_status") in _NOT_WRITTEN_STATES:
+        return None
+    if not result_has_body(kind_of(node), doc):
+        return None
+    if plan.get("instruction_type") and report_baseline.is_baseline(attempt_id, doc):
+        return None
+    if legacy.earlier_result(attempt_id, node["node_key"], doc["doc_id"]):
+        return None
+    return doc
+
+
+def take_written_result(ctx, node: dict, a: dict, issued_to: str, doc: dict, plan: dict) -> Optional[str]:
+    """0038-T T#3 A-4: the result stage's report is written already — no writer is asked (no AI, no manual write). The
+    report is registered as the node's result with the node token (T-3 when the instruction spent it; a document that
+    was submitted or judged already keeps its review state) and goes to this attempt's result review after the commit:
+    a person's stage through the binder's ``person_result``, any other (an AI, a wait) through the review opening of a
+    finished result (``after_result_work``, its author from the records).
+
+    A report approved before (an earlier attempt's or run's judgement) is no judgement of this attempt: it is recorded
+    as taken judged (``legacy.record_taken_judged``) and reviewed as any other — an AI review, the automatic approval
+    or the review's wait — and the binder completes the node only once this attempt's review passed or approved it
+    automatically. Returns the dispatch error to record, or None."""
+    from flowgate.card_settings import assigned_review  # noqa: PLC0415 — the stages orchestrate on use
+
+    key, flow_id, run_id = node["node_key"], ctx.flow_id, ctx.run_id
+    token_id = legacy.live_dispatch_token(run_id, key)
+    if token_id is None:                                                  # T-3
+        fresh = legacy.issue_node_token(flow_id, ctx.project_id, legacy.root_doc_id(ctx), issued_to, None)
+        if fresh is None:
+            fail(a, TOKEN_ISSUE_FAILED, ctx)
+            token_failed(run_id, key, a["attempt_id"], RESULT, 0, TOKEN_RESULT, issued_to, ctx)
+            return TOKEN_ISSUE_FAILED
+        legacy.map_token(fresh["token_id"], run_id, key)
+        token_id = fresh["token_id"]
+    person = a["actor"] == PERSON
+    if not person and a["stage_state"] in (ACTIVE, WAITING):
+        move(a, DONE)                                                     # nobody writes: the stage is over
+    if not legacy.register_result(doc["doc_id"], token_id, issued_to):
+        return None
+    doc_id, doc_type, attempt_id = doc["doc_id"], plan["result_type"], a["attempt_id"]
+    if doc.get("doc_review_status") in assigned_review.APPROVED:
+        legacy.record_taken_judged(run_id, key, attempt_id, doc, mark(doc), ctx)
+
+    def follow() -> None:
+        legacy.tell_graph(flow_id, doc_id, doc_type, token_id)
+        if not person:
+            assigned_review.after_result_work(flow_id, run_id, node, doc_id, attempt_id, legacy.written_by(doc_id),
+                                              assigned_review.HELD)
+
+    ctx.jobs.append(follow)
+    return None
+
+
 def act_result_stage(ctx, node: dict, a: dict, issued_to: str, instruction_doc_id: Optional[str], plan: dict,
                      token: Optional[dict] = None) -> Optional[str]:
-    """L-2 §2.5 ``act_result_stage``. Returns the dispatch error to record, or None."""
+    """L-2 §2.5 ``act_result_stage``. Returns the dispatch error to record, or None. 0038-T T#3 A: a written report
+    (``written_result``) is taken for every actor, before any writer is asked."""
     key, flow_id, run_id = node["node_key"], ctx.flow_id, ctx.run_id
+    written = written_result(flow_id, node, plan, a["attempt_id"]) if a["stage_state"] != FAILED else None
+    if written is not None:
+        return take_written_result(ctx, node, a, issued_to, written, plan)
     if a["actor"] == AI:
         tokens = legacy.live_dispatch_token(run_id, key)
         job = _write_job(ctx, node, a, RESULT_WRITE, issued_to, token or {"token_id": tokens}, RESULT,
@@ -665,14 +758,7 @@ def act_result_stage(ctx, node: dict, a: dict, issued_to: str, instruction_doc_i
                 token_failed(run_id, key, a["attempt_id"], RESULT, 0, TOKEN_RESULT, issued_to, ctx)
                 return TOKEN_ISSUE_FAILED
             legacy.map_token(fresh["token_id"], run_id, key)
-            token_id = fresh["token_id"]
-        line, doc = report_line(flow_id, node, plan)
-        if doc is not None and line and line.get("owned", True) and card_slots.is_disposable_draft(doc) \
-                and result_has_body(kind_of(node), doc):
-            if legacy.register_result(doc["doc_id"], token_id, issued_to):     # E-34: registered now, judged after
-                doc_id, doc_type = doc["doc_id"], plan["result_type"]
-                ctx.jobs.append(lambda: legacy.tell_graph(flow_id, doc_id, doc_type, token_id))
-        return None
+        return None                                                       # the manual write wait
     if a["actor"] == WAIT_UNAVAILABLE:
         return "ai_unavailable:" + str(a.get("cause"))
     return None
@@ -704,7 +790,12 @@ def result_stage_start(ctx, node: dict, row: dict, instruction_doc_id: Optional[
 # ── an explicit command (L-2 §2.10) ──────────────────────────────────────────
 
 def needs_dispatch(ctx, row: dict) -> str:
-    """``LEGACY`` (the current judgement), or what an explicit command does with the node."""
+    """``LEGACY`` (the current judgement), or what an explicit command does with the node.
+
+    0038-T T#3 B-5 / B-6 (rework): a failed stage is the command's explicit retry (``REOPEN_NEW_ATTEMPT``); a waiting
+    write stage — a person's manual write, an AI setup wait, an unavailable AI's wait — is resolved again only when
+    ``reinterpret_due`` says so (``REINTERPRET``), else it keeps waiting (``NONE``: its attempt, assignment and tokens
+    stay). A review stage's setup / unavailable wait (its document under review) keeps L-2 §2.10's new attempt."""
     key = row["node_key"]
     node = ctx.node_rows.get(key) or {}
     if not role_card(node) or not enabled():
@@ -721,9 +812,64 @@ def needs_dispatch(ctx, row: dict) -> str:
         return NONE
     if a["stage"] == RESULT and a["actor"] == AI and legacy.write_failure(row) == "no_result":
         return RETRY_SAME_ATTEMPT
-    if a["actor"] in (WAIT_SETUP, WAIT_UNAVAILABLE) or a["stage_state"] == FAILED:
+    if a["stage_state"] == FAILED:
+        return REOPEN_NEW_ATTEMPT
+    if a["stage"] in (INSTRUCTION, RESULT) and a["actor"] in WAIT_ACTORS:
+        return REINTERPRET if reinterpret_due(ctx, node, row, a) else NONE
+    if a["actor"] in (WAIT_SETUP, WAIT_UNAVAILABLE):
         return REOPEN_NEW_ATTEMPT
     return NONE
+
+
+WAIT_ACTORS = (PERSON, WAIT_SETUP, WAIT_UNAVAILABLE)                 # the waiting write stages (B-6)
+
+
+def _same_assignment(a: dict, now: dict) -> bool:
+    """The recorded write assignment and the one the role resolves to now are the same (actor and AI)."""
+    if a["actor"] != now["actor"]:
+        return False
+    if a["actor"] in (AI, WAIT_UNAVAILABLE):
+        return a.get("provider_id") == now.get("provider_id")
+    return True
+
+
+def reinterpret_due(ctx, node: dict, row: dict, a: dict) -> bool:
+    """0038-T T#3 B-5 / B-6 (D 개정 §3.5.1-3·4·8): a waiting write stage (the instruction or the result stage, waiting:
+    a person's manual write, an AI setup wait, an unavailable AI's wait) with no document in it is resolved again by
+    the first command after its role changed — True when the stage's role resolves now (the card's values, read only:
+    nothing initialized, nothing written) to another assignment (actor, AI) than the recorded one. A role that did not
+    change keeps the wait (False: the attempt, its assignment and tokens stay); a changed value alone calls nothing
+    (the command does). A stage holding a document keeps its assignment: a registered instruction or a bound result,
+    and for a person's stage a saved one too (its own save judges it). A setup / unavailable wait whose stage got a
+    saved, unregistered document meanwhile goes on by its documents (True: the new attempt reuses the instruction or
+    takes the written report — no writer asked). A report whose baseline cannot be read keeps the wait."""
+    if a["actor"] not in WAIT_ACTORS or a["stage_state"] != WAITING or a["stage"] not in (INSTRUCTION, RESULT):
+        return False
+    if row.get("status") != "open" or row.get("result_doc_id") or row.get("stage") != a["stage"]:
+        return False
+    flow_id = ctx.flow_id
+    plan = stage_plan(a["attempt_id"]) or stage_plan_of(kind_of(node), node, {})
+    if a["stage"] == INSTRUCTION:
+        if row.get("instruction_doc_id"):
+            return False
+        saved = bool(instruction_line_document(flow_id, node, plan).get("written"))
+    else:
+        try:
+            saved = written_result(flow_id, node, plan, a["attempt_id"]) is not None
+        except report_baseline.BaselineUnavailable:
+            _log.warning("report baseline unknown: the wait stays flow=%s node=%s", flow_id, node.get("node_key"),
+                         exc_info=True)
+            return False
+    if saved:
+        return a["actor"] != PERSON
+    try:
+        inputs = resolve.read_card_role_inputs(flow_id, node)
+        r = resolve.resolve_role(flow_id, node, ROLE_OF[a["stage"]], project_id=ctx.project_id, inputs=inputs)
+        now = assignment_from(a["stage"], r, ctx.run.get("started_by"))
+    except Exception:  # noqa: BLE001 — a value that cannot be read now changes nothing: the wait stays
+        _log.warning("stage role not resolved again flow=%s node=%s", flow_id, node.get("node_key"), exc_info=True)
+        return False
+    return not _same_assignment(a, now)
 
 
 def stage_provider(run_id: str, node_key: str, attempt_id: Optional[str], stage: str):

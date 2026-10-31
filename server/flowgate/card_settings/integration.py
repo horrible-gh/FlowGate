@@ -59,6 +59,8 @@ def register() -> None:
     ports.register(ports.STAGE_WAITS, stage_view.waits_on_person)
     ports.register(ports.INSTRUCTION_SAVED, manual_stage.instruction_saved)
     ports.register(ports.STAGE_FAILED, stage_assignment.start_failed)
+    from flowgate.card_settings import assigned_review  # 0038-T T#3 A-4
+    ports.register(ports.RESULT_REVIEW_PENDING, assigned_review.taken_review_pending)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDING, review_stage.on_run_ending)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_QUESTION_ANSWERED, question_wait.on_question_answered)

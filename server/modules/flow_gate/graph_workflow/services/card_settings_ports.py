@@ -59,6 +59,9 @@ flowgate.v02.0113 T#3 (L-2): the stage assignments of a role card's attempt, kep
                      ``CONTENT_SAVED`` / ``REGISTERED``); a person's instruction stage holding it is judged
     stage_failed     an AI start's failure record, inside its guard: the dispatch error of an assigned stage
                      (``ai_unavailable:<cause>``, its assignment failed), or None (the current ``ai_invoke_failed``)
+    result_review_pending   the binder's reconciliation, inside its guard (0038-T T#3 A-4): the node's approved result
+                     is a report approved before the node's attempt took it, and that attempt's own result review has
+                     not passed it yet — the old approval completes nothing (True), else False (no handler: False)
 
 * With no handler registered ``run_settings`` answers ``{}``, ``result_type`` None,
   ``ai_working`` False, ``instruction_document`` ``{}``, ``approve_instruction`` False and ``node_running``
@@ -93,9 +96,11 @@ STAGE_WAITS = "stage_waits"
 STAGE_UNREADABLE = "unreadable"     # ``stage_waits``: the node's assignment could not be read (its error family)
 INSTRUCTION_SAVED = "instruction_saved"
 STAGE_FAILED = "stage_failed"
+RESULT_REVIEW_PENDING = "result_review_pending"                  # 0038-T T#3 A-4
 PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING,
               PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE, CARDS_CREATED, STAGE_DISPATCH, STAGE_RESULT_START,
-              STAGE_NEEDS_DISPATCH, STAGE_RETRY, STAGE_VIEW, STAGE_WAITS, INSTRUCTION_SAVED, STAGE_FAILED)
+              STAGE_NEEDS_DISPATCH, STAGE_RETRY, STAGE_VIEW, STAGE_WAITS, INSTRUCTION_SAVED, STAGE_FAILED,
+              RESULT_REVIEW_PENDING)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -259,6 +264,12 @@ def stage_waits(flow_id: str, row: dict):
 def stage_failed(job: dict) -> Optional[str]:
     handler = _handler(STAGE_FAILED)
     return handler(job) if handler else None
+
+
+def result_review_pending(flow_id: str, run_id: str, node_key: str, doc_id: str) -> bool:
+    """0038-T T#3 A-4: the node's approved result waits for its attempt's own review (no handler: False)."""
+    handler = _handler(RESULT_REVIEW_PENDING)
+    return bool(handler(flow_id, run_id, node_key, doc_id)) if handler else False
 
 
 def instruction_saved(flow_id: Optional[str], doc_id: Optional[str], node_key: Optional[str] = None,

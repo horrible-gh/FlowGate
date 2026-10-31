@@ -1394,6 +1394,62 @@ def tell_graph(flow_id: str, doc_id: str, doc_type: str, token_id: str) -> None:
     v01_contact.after_inbox_registered(flow_id, doc_id, doc_type, token_id)
 
 
+def earlier_result(attempt_id: Optional[str], node_key: str, doc_id: str) -> bool:
+    """0038-T T#3 A: ``doc_id`` was the node's result earlier in the attempt's run (bound by an attempt a Stop, a lost
+    lease or a reopening ended — the node reset since). Kept as the card's history, it is never a later attempt's
+    written report (0061 T#7): that attempt waits for its own submission. A read error raises."""
+    if not attempt_id or not doc_id:
+        return False
+    row = get_store()._fetch_one(
+        "SELECT 1 AS present FROM graph_run_events e JOIN graph_node_attempts a ON a.run_id = e.run_id "
+        "WHERE a.attempt_id = ? AND e.node_key = ? AND e.result_doc_id = ? LIMIT 1", [attempt_id, node_key, doc_id])
+    return row is not None
+
+
+def reconcile_results(flow_id: str) -> None:
+    """0038-T T#3 A-4: the binder's reconciliation once the attempt's own review of a report approved before the attempt
+    took it has passed (or approved it automatically) — the node moves on (``review_approved``); before that the binder
+    holds the old approval back (``taken_judged``). Never raises."""
+    from modules.flow_gate.graph_workflow.services import result_binder  # noqa: PLC0415
+
+    try:
+        result_binder.reconcile_if_needed(flow_id, project_of(flow_id))
+    except Exception:  # noqa: BLE001 — the next run read reconciles it
+        _log.warning("graph result reconciliation after a taken report failed flow=%s", flow_id, exc_info=True)
+
+
+TAKEN_JUDGED_CAUSE = "result_taken_judged"
+
+
+def record_taken_judged(run_id: str, node_key: str, attempt_id: str, doc: dict, mark: dict, ctx=None) -> None:
+    """0038-T T#3 A-4 (rework): the attempt took as its result a report approved before it (an earlier attempt's or an
+    earlier run's judgement). The record tells that old approval apart from this attempt's review: the binder does not
+    complete the node on it until this attempt's result review passed or approved it automatically. In the caller's
+    transaction (a run status event, status unchanged)."""
+    append_run_event(run_id, TAKEN_JUDGED_CAUSE, doc["doc_id"],
+                     {"node_key": node_key, "attempt_id": attempt_id, "doc_id": doc["doc_id"],
+                      "submission_mark": dict(mark)}, ctx)
+
+
+def taken_judged(run_id: str, node_key: str, attempt_id: Optional[str], doc_id: Optional[str]) -> bool:
+    """The attempt took ``doc_id`` as its result while it was approved already (``record_taken_judged``). Read errors
+    raise."""
+    from modules.flow_gate.graph_workflow.services import run_events  # noqa: PLC0415
+
+    if not attempt_id or not doc_id:
+        return False
+    for row in run_store._all("SELECT payload_json FROM graph_run_events WHERE run_id = ? AND event_type = ? "
+                              "AND cause = ? ORDER BY event_seq", [run_id, run_events.RUN_STATUS, TAKEN_JUDGED_CAUSE]):
+        try:
+            data = json.loads(row["payload_json"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("node_key") == node_key and data.get("attempt_id") == attempt_id \
+                and data.get("doc_id") == doc_id:
+            return True
+    return False
+
+
 def open_questions(flow_id: str, run_id: str, node_key: str) -> bool:
     """C4: the node's documents hold a question still unanswered (``run_service.question_nodes``, its read)."""
     from modules.flow_gate.graph_workflow.services import run_service  # noqa: PLC0415

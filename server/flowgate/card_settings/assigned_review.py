@@ -347,7 +347,12 @@ def auto_approve(flow_id: str, a: dict, mode: str, jobs: list) -> None:
 
 def after_approved(flow_id: str, a: dict, doc: Optional[dict], mode: str, jobs: list) -> None:
     """An approved instruction's next step: the result stage (a repeated call does nothing). A result's approval moves
-    the node through the binder's contact."""
+    the node through the binder's contact — 0038-T T#3 A-4: a report approved before the attempt took it makes no new
+    approval (no contact), so once this attempt's review passed it the binder's reconciliation moves the node."""
+    if a["stage"] == sa.RESULT_REVIEW and doc and doc.get("doc_review_status") in APPROVED \
+            and legacy.taken_judged(a["run_id"], a["node_key"], a["attempt_id"], doc["doc_id"]):
+        jobs.append(lambda: legacy.reconcile_results(flow_id))
+        return
     if a["stage"] != sa.INSTRUCTION_REVIEW or not doc:
         return
     row = legacy.node_run(a["run_id"], a["node_key"])
@@ -525,6 +530,9 @@ def reconcile_row(flow_id: str, run_row: dict, row: dict) -> None:
             drive_review_assignment(flow_id, rr, HELD, jobs)                                   # RC-1
         elif rr is not None and review_loop_active(rr):
             return
+        elif ra is not None and ra["actor"] != sa.PERSON and ra["stage_state"] == sa.DONE and rr is None \
+                and not legacy.result_ai_run(flow_id, run_id, key, row["result_doc_id"]):
+            _reconcile_taken_result(flow_id, run_row, row, attempt_id)                         # 0038-T A-4
         elif ra is not None and ra["actor"] == sa.AI:
             _reconcile_lost_result_end(flow_id, run_row, row, attempt_id)                      # RC-2
         elif ra is not None and ra["actor"] == sa.PERSON and ra["stage_state"] != sa.FAILED:
@@ -575,6 +583,43 @@ def _reconcile_lost_result_end(flow_id: str, run_row: dict, row: dict, attempt_i
     if node is None:
         return
     after_result_work(flow_id, run_id, node, doc_id, attempt_id, _ai_author(work, doc_id), HELD, reconcile=True)
+
+
+def _reconcile_taken_result(flow_id: str, run_row: dict, row: dict, attempt_id: str) -> None:
+    """0038-T T#3 A-4: a result stage of an AI or a wait that took its written report (its assignment done, no AI run
+    wrote the bound result) whose review opening after the commit was lost: opened now, as at the taking — a report
+    approved before the attempt took it as well (its old approval is no review of this attempt)."""
+    run_id, key, doc_id = run_row["run_id"], row["node_key"], row["result_doc_id"]
+    doc = _doc(doc_id)
+    if not doc:
+        return
+    if doc.get("doc_review_status") in APPROVED and not legacy.taken_judged(run_id, key, attempt_id, doc_id):
+        return
+    if approval_waits_for(run_id, key, attempt_id, sa.mark(doc), "result"):
+        return
+    node = legacy.run_node_row(flow_id, run_row, key)
+    if node is None:
+        return
+    after_result_work(flow_id, run_id, node, doc_id, attempt_id, legacy.written_by(doc_id), HELD, reconcile=True)
+
+
+def taken_review_pending(flow_id: str, run_id: str, key: str, doc_id: str) -> bool:
+    """``card_settings_ports.result_review_pending`` (the binder, inside its guard): the node's result ``doc_id`` is a
+    report approved before the node's current attempt took it (``legacy.taken_judged``) and this attempt's result
+    review of it has not passed nor approved it automatically yet — its old approval completes nothing. Anything
+    that cannot be read is pending (the node waits; never completed on a judgement that is not this attempt's)."""
+    try:
+        attempt_id = legacy.active_attempt_id(run_id, key)
+        if not attempt_id or sa.is_legacy_attempt(attempt_id) or not legacy.taken_judged(run_id, key, attempt_id,
+                                                                                        doc_id):
+            return False
+        rr = sa.current_review_assignment(attempt_id, sa.RESULT_REVIEW)
+        return not (rr is not None and rr.get("basis_doc_id") == doc_id
+                    and not sa.needs_new_submission(rr, _doc(doc_id))
+                    and rr.get("verdict") in (sa.PASSED, sa.AUTO_APPROVED))
+    except Exception:  # noqa: BLE001 — not known: the old approval completes nothing
+        _log.warning("taken result review not read flow=%s node=%s", flow_id, key, exc_info=True)
+        return True
 
 
 def _reconcile_lost_instruction_end(flow_id: str, run_row: dict, row: dict, attempt_id: str) -> None:

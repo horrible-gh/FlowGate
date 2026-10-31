@@ -21,6 +21,7 @@ from flowgate.card_documents import lines as card_lines
 from flowgate.card_documents import slots as card_slots
 from flowgate.card_settings import assigned_review as ar
 from flowgate.card_settings import legacy_adapter as legacy
+from flowgate.card_settings import report_baseline
 from flowgate.card_settings import stage_assignment as sa
 
 _log = logging.getLogger(__name__)
@@ -41,10 +42,13 @@ APPROVED = ar.APPROVED
 # ── judgement (L-2 §2.7.2 / §2.7.3) ───────────────────────────────────────────
 
 def duplicate(stage: str, attempt_id: str, run_id: str, key: str, doc: Optional[dict]):
-    """C5: (verdict, the review assignment) — ``JUDGED`` / ``EXISTING`` / ``TAKE_OVER_LATER`` / None."""
+    """C5: (verdict, the review assignment) — ``JUDGED`` / ``EXISTING`` / ``TAKE_OVER_LATER`` / None. 0038-T T#3 A-4: a
+    result approved before the attempt took it (``legacy.taken_judged``) is not judged by this attempt — its review
+    is opened once (``EXISTING`` after that), as for any submission."""
     if not doc:
         return None, None
-    if doc.get("doc_review_status") in APPROVED:
+    if doc.get("doc_review_status") in APPROVED and not (
+            stage == sa.RESULT and legacy.taken_judged(run_id, key, attempt_id, doc["doc_id"])):
         return JUDGED, None
     rs = sa.INSTRUCTION_REVIEW if stage == sa.INSTRUCTION else sa.RESULT_REVIEW
     cur = sa.current_review_assignment(attempt_id, rs)
@@ -124,6 +128,9 @@ def required_instruction(flow_id: str, run_row: dict, key: str, row: dict) -> Op
 def required_result(flow_id: str, attempt_id: str, node: dict, row: dict, doc: Optional[dict]) -> str:
     plan = sa.stage_plan(attempt_id) or {}
     if not sa.result_has_body(sa.kind_of(node), doc):
+        return MISSING_REPORT
+    if plan.get("instruction_type") and report_baseline.is_baseline(attempt_id, doc):
+        # 0038-T T#3 A-2: the report of before the instruction is no result (a baseline that cannot be read raises)
         return MISSING_REPORT
     if plan.get("instruction_type"):
         ins = legacy.document_row(row.get("instruction_doc_id"))
@@ -320,6 +327,8 @@ def person_result(flow_id: str, node: dict, doc_id: str):
         _log.warning("result assignment not read flow=%s node=%s", flow_id, key, exc_info=True)
         return lambda: ar.record_once(flow_id, run["run_id"], key, attempt_id, doc_id, ar.ASSIGNMENT_UNREADABLE,
                                       sa.mark(legacy.document_row(doc_id)))
+    if a is not None and a["actor"] != sa.PERSON and a["stage_state"] == sa.DONE:
+        return None                                 # 0038-T T#3 A-4: the stage took its written report; it judges it
     if a is None or a["actor"] != sa.PERSON or a["stage_state"] == sa.FAILED:
         if a is not None and (a["actor"] in (sa.WAIT_SETUP, sa.WAIT_UNAVAILABLE) or a["stage_state"] == sa.FAILED):
             # E-27: a person's result bound on a stage that is no person's — the card's [승인] takes it (B-1 once,
@@ -390,8 +399,11 @@ def follow_person_result(flow_id: str, run_id: str, key: str, doc_id: str, attem
 
 
 def reconcile_saved_report(flow_id: str, run_row: dict, row: dict, attempt_id: str) -> None:
-    """RC-8: a person's result stage whose report was saved in the card's draft (no registration): registered with the
-    live node token once (the token is spent, so the next read finds nothing)."""
+    """RC-8: a person's result stage whose report was saved in the card's line (no registration): registered with the
+    live node token once (the token is spent, so the next read finds nothing). 0038-T T#3 A: the report the stage takes
+    is ``written_result``'s — a saved body, submitted or approved alike, never the attempt's report baseline (one that
+    cannot be read raises: nothing is taken); an approved one is recorded as taken judged and goes to this attempt's
+    review as any other (``person_result`` after the binder binds it)."""
     key = row["node_key"]
     found: dict = {}
 
@@ -404,12 +416,13 @@ def reconcile_saved_report(flow_id: str, run_row: dict, row: dict, attempt_id: s
         token_id = legacy.live_dispatch_token(run_row["run_id"], key)
         if node is None or not token_id or not plan:
             return
-        line, doc = sa.report_line(flow_id, node, plan)
-        if doc is None or not line or not card_slots.is_disposable_draft(doc) \
-                or not sa.result_has_body(sa.kind_of(node), doc):
+        doc = sa.written_result(flow_id, node, plan, attempt_id)
+        if doc is None:
             return
         issuer = sa.issued_to_of(node, run_row)
         if legacy.register_result(doc["doc_id"], token_id, issuer):
+            if doc.get("doc_review_status") in APPROVED:
+                legacy.record_taken_judged(run_row["run_id"], key, attempt_id, doc, sa.mark(doc))
             found.update(doc_id=doc["doc_id"], doc_type=plan["result_type"], token_id=token_id)
 
     with legacy.person_hold(flow_id, run_row["run_id"], key, attempt_id, "reconcile_saved_report") as owned:
