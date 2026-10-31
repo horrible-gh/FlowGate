@@ -67,12 +67,12 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect(hasAiTab({ ...target(type,nodeType), nodeType: null })).toBe(false)
     expect(registrationApplies(aiRegistration,{ ...target(type,nodeType), nodeType: null })).toBe(false)
   })
-  it('the real Frame shows AI after settings and commits fallback on a role-free selection', async () => {
+  it('the real Frame shows AI right after 문서 and commits fallback on a role-free selection', async () => {
     const registry = createInspectorRegistry({ './features/ai/register.ts': { default: aiRegistration }, './features/settings/register.ts': { default: settingsRegistration } })
     const node = { id: 'gn_1', kind: 'task', title: 'card', x: 0, y: 0, docType: 'T', definition: { nodeType: 'document', docType: 'T', paletteItemId: null, label: '', assignee: null, rootBound: false } }
     const graph = { flowId: 'f', nodes: [node], edges: [], ownership: 'graph', viewMode: 'draft' }
     wrapper = mount(DesignerInspector, { props: { selection: { projectId: 'p', graph, node }, registry }, global: { plugins: [i18n] } }); await flushPromises()
-    expect(wrapper.findAll('[role="tab"]').map(item => item.text())).toEqual(['문서','Q&A','첨부','설정','AI'])
+    expect(wrapper.findAll('[role="tab"]').map(item => item.text())).toEqual(['문서','AI','Q&A','첨부','설정'])
     await wrapper.findAll('[role="tab"]').find(item => item.text() === 'AI')!.trigger('click'); await flushPromises()
     expect(wrapper.get('[role="tabpanel"]').attributes('data-tab')).toBe('ai')
     const root = { ...node, definition: { ...node.definition, docType: 'R' } }
@@ -83,14 +83,15 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect(http.get.mock.calls.some(([url]) => url === '/api/v1/me/ai-roles')).toBe(false)
   })
   it('keeps tab order, 52px geometry and fallback when AI disappears', () => {
-    expect(inspectorTabsWith(['ai','settings','attachments','qna','documents'])).toEqual(['documents','qna','attachments','settings','ai'])
+    expect(inspectorTabsWith(['ai','settings','attachments','qna','documents'])).toEqual(['documents','ai','qna','attachments','settings'])
+    expect(aiRegistration.order).toBeGreaterThan(500); expect(aiRegistration.order).toBeLessThan(700)
     expect(inspectorTabStripMinWidth(5)).toBe(292)
     expect(resolveInspectorTab('ai',['documents','qna','attachments','settings'])).toBe('documents')
   })
-  it('uses selected only, never copies outcome/preserved into the control, and hides omitted instruction', () => {
+  it('uses selected only, never copies outcome/preserved into the control, and holds an omitted instruction', () => {
     const roles = cardRoles(); const before = structuredClone(roles)
-    expect(cardRoleRows(roles,'use')[0]).toMatchObject({ role: 'instruction', selected: null, legacyFlag: true, providerId: 'old' })
-    expect(cardRoleRows(roles,'omit').map(row => row.role)).toEqual(['execution','review'])
+    expect(cardRoleRows(roles,'use')[0]).toMatchObject({ role: 'instruction', selected: null, legacyFlag: true, providerId: 'old', held: false })
+    expect(cardRoleRows(roles,'omit').map(row => [row.role, row.held])).toEqual([['instruction',true],['execution',false],['review',false]])
     expect(roles).toEqual(before)
     expect(SETTINGS_FIELDS).toEqual({ run: ['instruction'], test: ['instruction','result_cause','follow_scope'], plan: ['pre_instruction_auto'] })
     expect(AI_FIELDS.test).toEqual(['review_count'])
@@ -104,17 +105,26 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect(w.find('[data-test="settings-pre-instruction-switch"]').exists()).toBe(kind === 'plan')
     expect(http.patch).not.toHaveBeenCalled()
   })
-  it('AI contains new role slots, missing identity, legacy marker and saved disabled review values', async () => {
+  it('AI shows four rows (지시 · 실행 · 검수 AI, 검수 횟수), no notice or warning, and saved disabled review values', async () => {
     const w = await tab('ai')
-    expect(w.findAll('[data-role]')).toHaveLength(3)
-    expect((w.get('[data-role="instruction"] select').element as HTMLSelectElement).value).toBe('')
-    expect(w.get('[data-role="instruction"]').text()).toContain('이전 설정')
-    expect(w.get('[data-role="instruction"]').text()).toContain('Old AI')
+    expect(w.findAll('[data-role]').map(row => row.attributes('data-role'))).toEqual(['instruction','execution','review'])
+    expect(w.findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))).toEqual(['지시 AI','실행 AI','검수 AI','검수 횟수'])
+    const unset = w.get('[data-role="instruction"] select')
+    expect((unset.element as HTMLSelectElement).value).toBe(''); expect(unset.get('option[value=""]').text()).toBe('미설정')
+    expect(w.get('[data-role="execution"] select').findAll('option').map(option => option.text())).toContain('사용하지 않음')
+    expect(w.text()).not.toContain('이전 설정'); expect(w.find('[data-test="ai-legacy"]').exists()).toBe(false)
+    expect(w.find('[role="img"]').exists()).toBe(false); expect(w.find('[data-test="ai-invocations"]').exists()).toBe(false)
     expect((w.get('[data-role="execution"] select').element as HTMLSelectElement).value).toBe('assigned:gone')
     expect(w.get('[data-role="execution"]').text()).toContain('Gone AI')
     const count = w.get('[data-test="inspector-run-settings-review_count"]')
     expect(count.attributes('disabled')).toBeDefined(); expect((count.element as HTMLSelectElement).value).toBe('0')
+    expect(count.findAll('option').map(option => option.text())).toEqual(['안 함','1회','2회','3회'])
+    expect(w.find('[data-test="inspector-ai-advanced"]').exists()).toBe(false)
     await w.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
+    const fold = w.get('[data-test="inspector-ai-advanced"]')
+    expect(fold.findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))).toEqual(['재시작','실행 제한 시간','검수 기준','지시서 검수 AI','지시서 검수 횟수'])
+    expect(fold.text()).toContain('실행 설정'); expect(fold.text()).toContain('지시서 검수')
+    expect(w.find('[data-test="ai-review-count"] [data-test="inspector-run-settings-review_count"]').exists()).toBe(true)
     const basis = w.get('[data-test="inspector-run-settings-review_basis"]')
     expect(basis.attributes('disabled')).toBeDefined(); expect((basis.element as HTMLSelectElement).value).toBe('last')
     expect(w.get('[data-field="instruction_review_ai"] option[value=""]').text()).toBe('카드 검수 역할 값')
@@ -123,21 +133,45 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect(w.find('[data-test="inspector-run-settings-run_ai"]').exists()).toBe(false)
     expect(http.patch).not.toHaveBeenCalled()
   })
+  it('a running card locks the roles and [고급]; a waiting card keeps them', async () => {
+    raw = settingsRaw(); raw.locked = true
+    wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
+    expect(wrapper.findAll('[data-role] select').every(select => select.attributes('disabled') !== undefined)).toBe(true)
+    expect(wrapper.get('[data-test="inspector-run-settings-advanced"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount(); wrapper = null
+    const w = await tab('ai')
+    expect(w.get('[data-role="execution"] select').attributes('disabled')).toBeUndefined()
+    expect(w.get('[data-test="inspector-run-settings-advanced"]').attributes('disabled')).toBeUndefined()
+  })
+  it('a 테스트 card has the four rows and no [고급] (no advanced item)', async () => {
+    const w = await tab('ai','test')
+    expect(w.findAll('[data-role]')).toHaveLength(3)
+    expect(w.find('[data-test="inspector-run-settings-review_count"]').exists()).toBe(true)
+    expect(w.find('[data-test="inspector-run-settings-advanced"]').exists()).toBe(false)
+  })
   it('writes one role with the confirmed version and preserves other roles/legacy/count/basis', async () => {
     const w = await tab('ai'), fields = structuredClone(raw.fields), otherRoles = structuredClone(raw.ai_roles.roles)
     await w.get('[data-role="instruction"] select').setValue('assigned:a'); await flushPromises()
     expect(http.patch).toHaveBeenCalledTimes(1)
     expect(http.patch).toHaveBeenCalledWith('/api/v1/flows/f/nodes/gn_1/settings', { field: 'instruction_role', value: { kind: 'assigned', provider_id: 'a' }, expected_settings_version: 7 })
     expect(raw.fields).toEqual(fields); expect(raw.ai_roles.roles.execution).toEqual(otherRoles.execution); expect(raw.ai_roles.roles.review).toEqual(otherRoles.review)
+    await w.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
     await w.get('[data-test="inspector-run-settings-restart"]').setValue('1'); await flushPromises()
     expect(http.patch.mock.calls[1][1]).toEqual({ field: 'restart', value: 1 })
   })
-  it('PLAN has only execution/review; omitted instruction and its review fields disappear without saving', async () => {
+  it('PLAN has no 지시 AI; an omitted instruction keeps its 지시 AI and 지시서 검수 off with their values, without saving', async () => {
     const w = await tab('ai','plan'); expect(w.findAll('[data-role]').map(row => row.attributes('data-role'))).toEqual(['execution','review'])
+    await w.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
+    expect(w.get('[data-test="inspector-ai-advanced"]').findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))).toEqual(['재시작','실행 제한 시간','검수 기준'])
     w.unmount(); wrapper = null
-    raw = settingsRaw(); raw.fields.instruction.value = 'omit'
+    raw = settingsRaw(); raw.fields.instruction.value = 'omit'; raw.ai_roles.roles.instruction.selected = { kind: 'assigned', provider_id: 'a' }
     wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
-    expect(wrapper.find('[data-role="instruction"]').exists()).toBe(false); expect(wrapper.find('[data-test="instruction-review"]').exists()).toBe(false)
+    const held = wrapper.get('[data-role="instruction"]')
+    expect(held.attributes('data-held')).toBe('true'); expect(held.get('select').attributes('disabled')).toBeDefined()
+    expect((held.get('select').element as HTMLSelectElement).value).toBe('assigned:a')
+    await wrapper.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
+    for (const field of ['instruction_review_ai','instruction_review_count']) expect(wrapper.get(`[data-field="${field}"]`).attributes('disabled')).toBeDefined()
+    expect((wrapper.get('[data-field="instruction_review_count"]').element as HTMLSelectElement).value).toBe('2')
     expect(http.patch).not.toHaveBeenCalled()
   })
   it('card_roles_unavailable is a failure icon and reread, not a successful replacement', async () => {

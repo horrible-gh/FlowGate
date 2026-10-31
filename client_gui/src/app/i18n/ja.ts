@@ -466,10 +466,10 @@ export default {
       tabs_label: 'インスペクタータブ',
       tabs: {
         documents: 'ドキュメント',
+        ai: 'AI',
         qna: 'Q&A',
         attachments: '添付',
         settings: '設定',
-        ai: 'AI',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: 'ドキュメント状態',

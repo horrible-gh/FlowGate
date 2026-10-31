@@ -470,10 +470,10 @@ export default {
       tabs_label: '인스펙터 탭',
       tabs: {
         documents: '문서',
+        ai: 'AI',
         qna: 'Q&A',
         attachments: '첨부',
         settings: '설정',
-        ai: 'AI',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: '문서 상태',

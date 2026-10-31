@@ -1,7 +1,7 @@
 <template>
   <span class="ai-role-select">
     <Select :model-value="selected" :options="options" :placeholder="t('gui.aiRoles.unset')" :disabled="disabled" :aria-label="label" @update:model-value="choose" />
-    <span v-if="unavailable" role="img" :aria-label="t('gui.inspector.settings.option.missing', { name: displayName || providerId })" :title="cause || state || ''">⚠</span>
+    <span v-if="unavailable && !plain" role="img" :aria-label="t('gui.inspector.settings.option.missing', { name: displayName || providerId })" :title="cause || state || ''">⚠</span>
   </span>
 </template>
 <script setup lang="ts">
@@ -10,7 +10,8 @@ import { useI18n } from 'vue-i18n'
 import Select from '@/components/ui/Select.vue'
 import { installAiRoleMessages } from './messages'
 import type { AiRoleValue, AiRoleOption } from './types'
-const props = defineProps<{ modelValue: AiRoleValue | null; providers: readonly AiRoleOption[]; label: string; displayName?: string | null; state?: string; cause?: string | null; disabled?: boolean }>()
+const props = defineProps<{ modelValue: AiRoleValue | null; providers: readonly AiRoleOption[]; label: string; displayName?: string | null; state?: string; cause?: string | null; disabled?: boolean; plain?: boolean }>()
+// flowgate.v02.0113 T#4: `plain` (the Inspector AI tab) draws the select only — no ⚠ beside an unavailable AI.
 const emit = defineEmits<{ 'update:modelValue': [value: AiRoleValue] }>()
 const composer = useI18n({ useScope: 'global' }); installAiRoleMessages(composer)
 const { t } = composer

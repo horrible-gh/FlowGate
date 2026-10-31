@@ -108,8 +108,9 @@ async function clickTab(w: VueWrapper<any>, label: string) {
 }
 
 describe('Inspector tab rules', () => {
-  it('lists 문서 · Q&A · 첨부 · 설정 in a fixed order whatever order the contributions come in', () => {
-    expect(INSPECTOR_TABS).toEqual(['documents', 'qna', 'attachments', 'settings'])
+  // flowgate.v02.0113 T#4: the AI tab sits right after 문서.
+  it('lists 문서 · AI · Q&A · 첨부 · 설정 in a fixed order whatever order the contributions come in', () => {
+    expect(INSPECTOR_TABS).toEqual(['documents', 'ai', 'qna', 'attachments', 'settings'])
     expect(inspectorTabsWith(['settings', 'attachments', 'documents', 'qna'])).toEqual(['documents', 'qna', 'attachments', 'settings'])
     expect(inspectorTabsWith(['qna', 'documents', 'attachments'])).toEqual(['documents', 'qna', 'attachments'])
     expect(inspectorTabsWith(['documents', 'documents', 'unknown'])).toEqual(['documents'])
