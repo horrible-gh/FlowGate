@@ -574,7 +574,9 @@ def with_viewer(answer: dict, group: dict, user_id: str) -> dict:
 
 def running_lock(flow_id: str, row: dict) -> bool:
     """0064 T#4: the card settings' running lock of the node run ``row``'s card (``card_settings_ports.node_running``,
-    the one a title save is refused by). Only an open or review node can be running, so no other is asked."""
+    the one a title save is refused by). Only an open or review node can be running, so no other is asked.
+    flowgate.v02.0113 T#1 (0002-D 개정 §3.13): that lock is the node's *actual running* (an AI execution of it requested
+    or running, or an AI review loop on its result), so an open node a person or a setup waits on is not running."""
     return row.get("status") in ("open", "review") and card_settings_ports.node_running(flow_id, row["node_key"])
 
 

@@ -62,7 +62,8 @@ describe('cardStateView — the three card states (flowgate.v02.0056 F2-1)', () 
     for (const messages of [ko, en, ja]) {
       expect(Object.keys(messages.designer.center.card_states).sort()).toEqual([...CARD_STATE_KEYS].sort())
     }
-    expect(ko.designer.center.card_states).toMatchObject({ writing_instruction: '지시서 작성 중', writing_result: '결과 작성 중', working: '작업 중', awaiting_approval: '승인 대기', approved: '승인됨' })
+    // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): ◌ = actually running, 완료 = done, 준비 = not opened yet.
+    expect(ko.designer.center.card_states).toMatchObject({ writing_instruction: '◌ 지시서 작성 중', writing_result: '◌ 결과 작성 중', working: '◌ 실행 중', awaiting_approval: '승인 대기', approved: '완료', pending: '준비' })
     expect(cardStateView(run('review', { awaitingApproval: true }))!.labelKey).toBe('gui.designer.center.card_states.awaiting_approval')
   })
 })

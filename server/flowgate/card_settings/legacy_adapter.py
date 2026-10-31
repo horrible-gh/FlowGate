@@ -193,19 +193,22 @@ def invalidate_merge_targets(group: dict) -> None:
 
 
 def node_running(flow_id: str, node_key: str) -> bool:
-    """The node is open in the Flow's active run (its start already took the settings), or in review
-    while the card's AI review works on its result (that review follows them)."""
+    """flowgate.v02.0113 T#1 (0030-M §4, 0002-D 개정 §3.13): the node is *actually running* — the one judgement the card
+    settings lock, the title save lock, the run read's ``node_running`` and the screen's 🔒 실행 중 / ◌ follow. True only
+    while an AI works on the node of the Flow's active run (open or in review): an AI execution of it is requested or
+    running (or the stage is about to follow its run that just released the lease), or an AI review loop works on its
+    result — a result the card took as already written and sent straight to review too (``review_stage.ai_working``).
+    A node merely open (a person's or a setup wait, a question, an unavailable AI), one awaiting approval, done or in
+    error, and a running run alone are not running."""
     run_row: Optional[dict] = run_store.active_run(flow_id)
     if run_row is None:
         return False
-    for r in run_store.node_runs(run_row["run_id"]):
-        if r["node_key"] != node_key:
-            continue
-        if r["status"] == OPEN_NODE_STATUS:
-            return True
-        if r["status"] == REVIEW_NODE_STATUS and r.get("result_doc_id"):
-            return review_loop_active(r["result_doc_id"])
-    return False
+    row = next((r for r in run_store.node_runs(run_row["run_id"]) if r["node_key"] == node_key), None)
+    if row is None or row["status"] not in (OPEN_NODE_STATUS, REVIEW_NODE_STATUS):
+        return False
+    from flowgate.card_settings import review_stage  # noqa: PLC0415 — review_stage imports this module
+
+    return bool(review_stage.ai_working(flow_id, node_key, row.get("result_doc_id")))
 
 
 # ── the review stage ─────────────────────────────────────────────────────────

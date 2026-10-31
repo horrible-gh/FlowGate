@@ -490,17 +490,22 @@ def _start(env):
     assert started.status_code == 201, started.text
 
 
-def test_a_running_card_is_locked_and_a_completed_card_reads_and_writes(env, decided):
+def test_a_running_card_is_locked_and_a_completed_card_reads_and_writes(env, decided, monkeypatch):
     from modules.flow_gate.db import documents as db_documents
     from modules.flow_gate.graph_workflow.api import v01_contact
+
+    from flowgate.card_settings import legacy_adapter
 
     key = _run_one_card(env, {"kind": "human", "user_id": "u_lee", "provider_id": None})
     setting(env, FA, key, "review_count", 2)                              # before the run: the confirmed card
     assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_draft_nodes WHERE group_id = ?", (FA,))[0]["n"] == 0
     _start(env)
-    assert get_settings(env, FA, key)["locked"] is True
+    assert get_settings(env, FA, key)["locked"] is False                  # 0113 T#1: a person's open card waits
+    monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: node_key == key)
+    assert get_settings(env, FA, key)["locked"] is True                   # an AI execution of it works: running
     locked = setting(env, FA, key, "restart", 1, expect=409)
     assert locked["error"]["code"] == "node_settings_locked"
+    monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: False)
     token = _sql(env["db"], "SELECT token_id FROM graph_run_token_map WHERE node_key = ?", (key,))[0]["token_id"]
     result = _doc(FA, 90, "T")
     v01_contact.after_inbox_registered(FA, result, "T", token)

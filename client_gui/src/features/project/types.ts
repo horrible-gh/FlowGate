@@ -517,7 +517,8 @@ export interface FlowCanvasNodeRun extends RoleRunFields {
   question?: boolean
   /**
    * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
-   * (`node_running`: open, or in review while its AI review works); absent when not sent.
+   * (`node_running`; flowgate.v02.0113 T#1: actually running — an AI execution of it requested / running, or its AI
+   * review — never merely open); absent when not sent.
    */
   nodeRunning?: boolean
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
@@ -773,7 +774,8 @@ export interface FlowRunNode extends RoleRunFields {
   question?: boolean
   /**
    * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
-   * (`node_running`: open, or in review while its AI review works); absent when not sent.
+   * (`node_running`; flowgate.v02.0113 T#1: actually running — an AI execution of it requested / running, or its AI
+   * review — never merely open); absent when not sent.
    */
   nodeRunning?: boolean
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */

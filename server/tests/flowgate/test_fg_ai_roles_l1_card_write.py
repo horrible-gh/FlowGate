@@ -240,7 +240,9 @@ def test_optional_registry_read_failure_does_not_undo_a_successful_role_write(en
     assert "ROLLBACK TO SAVEPOINT fg_role_avail_read" in statements
     assert "ROLLBACK TO SAVEPOINT fg_role_name_read" in statements
 
-@pytest.mark.parametrize("code",["graph_run_locked","graph_node_protected","node_settings_locked"])
+# flowgate.v02.0113 T#1: a card's settings no longer take the run / protected-node lock; the running lock and an
+# unfinished Time Machine operation (``editing.require_settings_editable``) remain.
+@pytest.mark.parametrize("code",["graph_time_machine_in_progress","node_settings_locked"])
 def test_role_writes_keep_existing_locks_before_value_validation(env,monkeypatch,code):
     from flowgate.card_settings import settings
     key=placed(env,FA); before=snapshot(key)
@@ -248,7 +250,7 @@ def test_role_writes_keep_existing_locks_before_value_validation(env,monkeypatch
         monkeypatch.setattr(settings.legacy,"node_running",lambda *a:True)
     else:
         def refuse(*a): raise settings.legacy.GraphApiError(409,code,{"flow_id":FA,"node_key":key})
-        monkeypatch.setattr(settings.editing,"require_editable",refuse)
+        monkeypatch.setattr(settings.editing,"require_settings_editable",refuse)
     r=setting(env,FA,key,"execution_role",None,409)
     assert r["error"]["code"]==code and snapshot(key)==before
 

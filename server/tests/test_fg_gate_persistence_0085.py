@@ -539,8 +539,9 @@ def test_a_running_flows_gate_settings_change_only_while_nothing_holds_the_gate(
     _start(env)
     run_id = _sql(env["db"], "SELECT run_id FROM graph_runs WHERE group_id = ?", (FA,))[0]["run_id"]
     assert _sql(env["db"], "SELECT status FROM graph_node_runs WHERE node_key = ?", (g,))[0]["status"] == "pending"
-    # The Graph's lock still holds the other cards (and the definition); the pending gate is the exception.
-    assert setting(env, FA, t, "restart", 1, expect=409)["error"]["code"] != "gate_settings_locked"
+    # flowgate.v02.0113 T#1: the other card waits for its person (open, no AI): it takes its settings too; the
+    # definition keeps its structure lock.
+    assert setting(env, FA, t, "restart", 1)["locked"] is False
     body = setting(env, FA, g, "push", True)
     assert (body["locked"], body["lock_reason"], body["settings_version"]) == (False, None, 2)
     # A reserved decision holds the gate: the settings are locked until it is canceled.
@@ -614,7 +615,7 @@ def _gate_in_a_run(env, monkeypatch):
 
 
 @pytest.mark.parametrize("run_status", ["running", "idle"])
-def test_an_open_gate_takes_settings_changes_and_the_other_cards_stay_locked(env, decided, monkeypatch, run_status):
+def test_an_open_gate_takes_settings_changes_and_a_waiting_card_does_too(env, decided, monkeypatch, run_status):
     from flowgate.card_settings import legacy_adapter
     from flowgate.gate_decisions import repository as repo
 
@@ -623,8 +624,8 @@ def test_an_open_gate_takes_settings_changes_and_the_other_cards_stay_locked(env
     _sql(db, "UPDATE graph_runs SET status = ? WHERE run_id = ?", (run_status, run_id))
     for key in (g, t):
         _sql(db, "UPDATE graph_node_runs SET status = 'open' WHERE run_id = ? AND node_key = ?", (run_id, key))
-    # The Graph's own check says the gate is running (an open node of the active run); the gate's lock must win.
-    assert legacy_adapter.node_running(FA, g) is True
+    # flowgate.v02.0113 T#1: an open node no AI works on is not running (the gate included); the gate's lock decides.
+    assert legacy_adapter.node_running(FA, g) is False
     body = get_settings(env, FA, g)
     assert (body["locked"], body["lock_reason"], body["settings_version"]) == (False, None, 0)
     changed = setting(env, FA, g, "archive", True)                         # PATCH succeeds: no node_settings_locked
@@ -632,11 +633,17 @@ def test_an_open_gate_takes_settings_changes_and_the_other_cards_stay_locked(env
     assert changed["fields"]["archive"]["value"] is True and stored_rows(env, FA, g)[(g, "archive")] == "true"
     guarded = patch(env, FA, g, {"field": "push", "value": True, "expected_settings_version": 1})
     assert guarded["settings_version"] == 2 and guarded["locked"] is False
-    # Another card of the same open run keeps the Graph's lock, both in the answer and in the write.
-    assert legacy_adapter.node_running(FA, t) is True
+    # flowgate.v02.0113 T#1: another open card of the same run that no AI works on waits — not running, not locked,
+    # whatever the run's status; once an AI works on it, it is locked (never with the gate's reason).
+    assert legacy_adapter.node_running(FA, t) is False
+    assert get_settings(env, FA, t)["locked"] is False
+    assert setting(env, FA, t, "restart", 1)["locked"] is False and stored_rows(env, FA, t)[(t, "restart")] == "1"
+    monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: node_key == t)
     assert get_settings(env, FA, t)["locked"] is True
-    refused = setting(env, FA, t, "restart", 1, expect=409)
-    assert refused["error"]["code"] != "gate_settings_locked" and (t, "restart") not in stored_rows(env, FA, t)
+    refused = setting(env, FA, t, "restart", 2, expect=409)
+    assert refused["error"]["code"] == "node_settings_locked" and stored_rows(env, FA, t)[(t, "restart")] == "1"
+    assert get_settings(env, FA, g)["locked"] is False                     # the gate keeps its own lock alone
+    monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: False)
     assert setting(env, FA, g, "archive", None)["settings_version"] == 3
     assert setting(env, FA, g, "push", None)["settings_version"] == 4
     # A reserved decision still locks the open gate, with the gate's reason.

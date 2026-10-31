@@ -181,7 +181,8 @@ def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: st
 
 
 def node_running(flow_id: str, node_key: str) -> bool:
-    """The card is running (open, or its AI review works on its result): its title cannot change now."""
+    """The card actually runs (flowgate.v02.0113 T#1: an AI execution of it requested or running, or its AI review works
+    on its result — never merely open): its title and settings cannot change now."""
     handler = _handler(NODE_RUNNING)
     if handler is None:
         return False

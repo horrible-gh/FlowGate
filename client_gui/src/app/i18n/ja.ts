@@ -245,6 +245,10 @@ export default {
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
+        // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): a person's writing wait by its role, a review card that waits, ◌ = actually running.
+        instruction_write_wait: '指示書作成待ち',
+        result_write_wait: '結果作成待ち',
+        waiting: '待機',
         manual_write_wait: '手動作成待ち',
         ai_setup_required: 'AI設定が必要',
         ai_unavailable: 'AI使用不可',
@@ -253,14 +257,14 @@ export default {
         // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
         waiting_answer: '回答待ち',
         waiting_writer: '作成待ち',
-        writing_instruction: '指示書作成中',
-        writing_result: '結果作成中',
-        working: '作業中',
+        writing_instruction: '◌ 指示書作成中',
+        writing_result: '◌ 結果作成中',
+        working: '◌ 実行中',
         awaiting_approval: '承認待ち',
         auto_approval_failed: '自動承認失敗',
-        approved: '承認済み',
+        approved: '完了',
         rejected: '差し戻し',
-        pending: '待機',
+        pending: '準備',
         closed: 'クローズ',
       },
       // flowgate.v02.0056 F2-1 — a card's [승인] (O1 0005-TR §4-1) and why it was refused, by the server's code.
@@ -1500,7 +1504,7 @@ export default {
       editor: '作成する本文',
       placeholder: '本文を Markdown で書きます。空のまま保存すると空の下書きが作られます。',
       contentless: '空の作業計画を作ります。内容は作成後に編集します。',
-      result_note: 'カードは実行中です。この行がカードの結果であれば、保存した文書が結果として登録され、カードは承認待ちになります。結果には本文が必要です。',
+      result_note: 'カードは実行フローで開かれています。この行がカードの結果であれば、保存した文書が結果として登録され、カードは承認待ちになります。結果には本文が必要です。',
       save: '保存',
       create: '作成',
       cancel: 'キャンセル',

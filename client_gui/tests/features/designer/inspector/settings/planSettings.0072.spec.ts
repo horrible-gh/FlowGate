@@ -283,7 +283,9 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     expect(isOn(w)).toBe(false)
   })
 
-  it('a running card, the Flow’s run lock, an unconfirmed run status, a read-only view, a card not saved yet: off, nothing sent', async () => {
+  // flowgate.v02.0113 T#1 (0002-D 개정 §3.13): the Flow's run lock alone no longer locks a card's settings — its node run's
+  // node_running (actual running) does; a waiting card under a running run stays editable.
+  it('a running card (server lock / node_running), an unconfirmed run status, a read-only view, a card not saved yet: off, nothing sent', async () => {
     locked = true
     let w = await mountTab()
     expect(w.get('[data-test="inspector-lock-note"]').text()).toBe('🔒 실행 중')
@@ -291,7 +293,8 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     await flip(w)
     w.unmount()
     locked = false
-    for (const fields of [{ editLock: 'run' as const }, { editLock: 'unknown' as const }, { readOnly: 'revision' as const }, { readOnly: 'conflict' as const }, { nodeId: 'tmp_wp' }]) {
+    const running = { nodeRun: { status: 'open', openedAt: null, finishedAt: null, resultDocId: null, nodeRunning: true } }
+    for (const fields of [running, { editLock: 'unknown' as const }, { readOnly: 'revision' as const }, { readOnly: 'conflict' as const }, { nodeId: 'tmp_wp' }]) {
       w = await mountTab(targetFor(fields))
       expect(toggle(w).attributes('disabled'), JSON.stringify(fields)).toBeDefined()
       expect(select(w, 'run_ai').attributes('disabled'), JSON.stringify(fields)).toBeDefined()

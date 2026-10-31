@@ -55,9 +55,21 @@ def chat_source_refusal(group_id, locale=None) -> None:
                                                  "run_id": run["run_id"], "status": run["status"]})
 
 
+def require_settings_editable(flow_id: str) -> None:
+    """flowgate.v02.0113 T#1 (0030-M §4, 0002-D 개정 §3.13): a card's settings — its AI roles and [고급] included — follow
+    the card's own running lock (``card_settings.legacy_adapter.node_running``: an AI works on it now), not the run's
+    status (``LOCKED``) nor the node's protected state (``PROTECTED``): a card that waits (ready, a person's writing, AI
+    setup needed / unavailable, a question, an approval), is done or in error takes its settings. Only an unfinished
+    Graph Time Machine operation still refuses them here (409 ``graph_time_machine_in_progress``). The structure lock of
+    the definition (``require_editable``, ``protect_definition``) is unchanged."""
+    from flowgate.graph_time_machine.operation import require_no_operation
+    require_no_operation(flow_id)
+
+
 def settings_locked(flow_id: str, node_key: str) -> bool:
+    """The settings refusal of ``require_settings_editable`` (the running lock is the caller's own)."""
     try:
-        require_editable(flow_id, node_key)
+        require_settings_editable(flow_id)
     except GraphApiError:
         return True
     return False

@@ -233,7 +233,7 @@ describe('the Inspector pill leads with the card state (InspectorHeader)', () =>
   }
 
   it.each([
-    ['its AI writes', nodeRun('open', { stage: 'result', runningExecutionCount: 1, requestedExecutionCount: 0 }), '결과 작성 중', 'writing_result', 'info'],
+    ['its AI writes', nodeRun('open', { stage: 'result', runningExecutionCount: 1, requestedExecutionCount: 0 }), '◌ 결과 작성 중', 'writing_result', 'info'],
     ['a person writes', nodeRun('open', { stage: null, runningExecutionCount: 0, requestedExecutionCount: 0 }), '작성 대기', 'waiting_writer', 'neutral'],
     ['the AI ended without a result', nodeRun('open', { stage: 'result', dispatchErrorCode: 'no_result', runningExecutionCount: 0, requestedExecutionCount: 0 }), '결과 없음', 'no_result', 'warning'],
     ['the AI failed', nodeRun('open', { stage: 'result', dispatchErrorCode: 'ai_invoke_failed', runningExecutionCount: 0, requestedExecutionCount: 0 }), '실행 미완료', 'incomplete', 'warning'],

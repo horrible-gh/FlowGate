@@ -151,10 +151,11 @@ describe('FlowNodeCard — the state chip and [승인]', () => {
   })
 
   it.each([
-    [{ status: 'open', stage: 'instruction' }, '지시서 작성 중'],
-    [{ status: 'open', stage: 'result' }, '결과 작성 중'],
-    [{ status: 'review', awaitingApproval: false }, '작업 중'],
-    [{ status: 'done' }, '승인됨'],
+    // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): ◌ marks the running states, done is 완료.
+    [{ status: 'open', stage: 'instruction' }, '◌ 지시서 작성 중'],
+    [{ status: 'open', stage: 'result' }, '◌ 결과 작성 중'],
+    [{ status: 'review', awaitingApproval: false }, '◌ 실행 중'],
+    [{ status: 'done' }, '완료'],
     [{ status: 'rejected' }, '반려됨'],
   ])('%o: the chip says %s and there is no [승인]', (facts, text) => {
     const w = mountCard({ ...base, cardState: cardStateView(facts)! })
@@ -171,7 +172,7 @@ describe('FlowNodeCard — the state chip and [승인]', () => {
     expect(w.get('[data-test="designer-canvas-node-approve"]').text()).toBe('Approve')
     wrapper!.unmount()
     i18n.global.locale.value = 'ja'
-    expect(mountCard({ ...base, cardState: cardStateView({ status: 'done' })! }).get('[data-test="designer-canvas-node-card-state"]').text()).toBe('承認済み')
+    expect(mountCard({ ...base, cardState: cardStateView({ status: 'done' })! }).get('[data-test="designer-canvas-node-card-state"]').text()).toBe('完了')
   })
 })
 
@@ -365,7 +366,7 @@ describe('the Center session approves a card with the result its Canvas shows', 
     const waiting = cards.find((item) => item.attributes('data-node-id') === 'gn_wait')!
     const done = cards.find((item) => item.attributes('data-node-id') === 'gn_done')!
     expect(waiting.get('[data-test="designer-canvas-node-card-state"]').text()).toBe('승인 대기')
-    expect(done.get('[data-test="designer-canvas-node-card-state"]').text()).toBe('승인됨')
+    expect(done.get('[data-test="designer-canvas-node-card-state"]').text()).toBe('완료')
     expect(done.find('[data-test="designer-canvas-node-approve"]').exists()).toBe(false)
     await waiting.get('[data-test="designer-canvas-node-approve"]').trigger('click')
     for (let i = 0; i < 4; i += 1) await flushPromises()

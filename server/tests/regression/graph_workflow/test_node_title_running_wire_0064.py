@@ -59,11 +59,23 @@ def in_review(env, key, number):
     return result
 
 
-def test_an_open_card_is_running_and_its_title_is_refused(env, decided):
+def test_an_open_card_no_ai_works_on_is_not_running_and_its_title_saves(env, decided):
+    """flowgate.v02.0113 T#1 (0002-D 개정 §3.13): open alone is not running — a person's card waits, its title saves."""
     from flowgate.card_settings import legacy_adapter
 
     key = _run_one_card(env, HUMAN)
     _start(env)
+    assert shown(env, key) == ("open", False, False)
+    assert legacy_adapter.node_running(FA, key) is False
+    assert put_title(env, key, "작성 대기", 200)["title_state"]["title"] == "작성 대기"
+
+
+def test_an_open_card_whose_ai_execution_works_is_running_and_its_title_is_refused(env, decided, monkeypatch):
+    from flowgate.card_settings import legacy_adapter
+
+    key = _run_one_card(env, HUMAN)
+    _start(env)
+    monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: node_key == key)
     assert shown(env, key) == ("open", False, True)
     assert legacy_adapter.node_running(FA, key) is True
     assert put_title(env, key, "실행 중", 409)["error"]["code"] == "node_title_locked"

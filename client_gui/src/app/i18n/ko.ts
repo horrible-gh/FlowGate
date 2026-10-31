@@ -248,6 +248,10 @@ export default {
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
+        // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): a person's writing wait by its role, a review card that waits, ◌ = actually running.
+        instruction_write_wait: '지시서 작성 대기',
+        result_write_wait: '결과 작성 대기',
+        waiting: '대기',
         manual_write_wait: '수동 작성 대기',
         ai_setup_required: 'AI 설정 필요',
         ai_unavailable: 'AI 사용 불가',
@@ -256,15 +260,15 @@ export default {
         // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
         waiting_answer: '응답 대기',
         waiting_writer: '작성 대기',
-        writing_instruction: '지시서 작성 중',
-        writing_result: '결과 작성 중',
-        working: '작업 중',
+        writing_instruction: '◌ 지시서 작성 중',
+        writing_result: '◌ 결과 작성 중',
+        working: '◌ 실행 중',
         awaiting_approval: '승인 대기',
         // flowgate.v02.0105 T#2 (B-5): an automatic approval that was missed or failed (the reason is in the tooltip).
         auto_approval_failed: '자동 승인 실패',
-        approved: '승인됨',
+        approved: '완료',
         rejected: '반려됨',
-        pending: '대기',
+        pending: '준비',
         closed: '닫힘',
       },
       // flowgate.v02.0056 F2-1 — a card's [승인] (O1 0005-TR §4-1) and why it was refused, by the server's code.
@@ -1511,7 +1515,7 @@ export default {
       editor: '작성할 본문',
       placeholder: '본문을 Markdown으로 작성합니다. 비워 두고 저장하면 빈 초안이 만들어집니다.',
       contentless: '빈 작업계획을 만듭니다. 내용은 만든 뒤 편집합니다.',
-      result_note: '카드가 실행 중입니다. 이 행이 카드의 결과이면 저장한 문서가 결과로 등록되고 카드는 승인 대기가 됩니다. 결과에는 본문이 필요합니다.',
+      result_note: '카드가 실행 흐름에서 열려 있습니다. 이 행이 카드의 결과이면 저장한 문서가 결과로 등록되고 카드는 승인 대기가 됩니다. 결과에는 본문이 필요합니다.',
       save: '저장',
       create: '만들기',
       cancel: '취소',

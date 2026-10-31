@@ -9,6 +9,11 @@ answer what a node's AI start takes from its card.
 - 0061 T#3: running/paused flows lock every card setting (409 ``graph_run_locked``).
   Done/open/review nodes remain protected while idle (409 ``graph_node_protected``), including
   instruction use and AI settings. The earlier node_settings_locked check remains as a fallback.
+  flowgate.v02.0113 T#1 (0030-M §4, 0002-D 개정 §3.13) replaces both for card settings: a card is locked only while
+  it actually runs (``legacy.node_running``: an AI execution of it requested or running, or an AI review loop on its
+  result; 409 ``node_settings_locked``). Waiting (ready, a person's writing, AI setup needed / unavailable, a question,
+  an approval), done and error cards take their settings whatever the run's status — all three roles ``not_used``
+  too. An unfinished Time Machine operation still refuses (``editing.require_settings_editable``).
 - 0061 T#11: Hold (``hold``: true / false or null) is written through the same PATCH for every card, with the Graph
   run's rules instead of the lock above (``flowgate.graph_run.hold``): refused while a run is running / paused /
   stopping (409 ``graph_run_locked``), setting refused on a node done in the Flow's run (409 ``graph_hold_done_node``),
@@ -107,8 +112,8 @@ def _card(flow_id: str, node_key: str) -> dict:
 def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=None) -> dict:
     kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
     reason = gate_lock.lock_reason(flow_id, node["node_key"]) if kind == fields.CHECK else None
-    # A gate is open while it waits for the person, so "open in the active run" (``legacy.node_running``) is not a
-    # lock for it: only the gate's own lock decides. Every other card keeps the Graph lock and the running check.
+    # A gate is open while it waits for the person: only the gate's own lock decides. Every other card is locked only
+    # while it actually runs (flowgate.v02.0113 T#1: ``legacy.node_running``) or a Time Machine operation is unfinished.
     if kind == fields.CHECK:
         locked = reason is not None
     else:
@@ -174,7 +179,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
         if found is not None and fields.card_kind(found.get("node_type"), found.get("doc_type")) == fields.CHECK:
             gate_lock.require_unlocked(flow_id, node_key)             # D0007 §7.2: the gate's own lock
         else:
-            editing.require_editable(flow_id, node_key)
+            editing.require_settings_editable(flow_id)                # 0113 T#1: the running check below locks
         node = _card(flow_id, node_key)
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
         role_write = name in card_roles.ROLE_FIELDS and role_store.available()

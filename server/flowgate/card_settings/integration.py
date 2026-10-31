@@ -18,7 +18,7 @@ root (``startup.py``) calls :func:`register` once at startup.
                      (``question_wait``, flowgate.v02.0063)
     token_step_type  the source tools' step type of a node token (``settings.token_step_type``)
     node_running     a card title save: the card is running (``legacy_adapter.node_running``, the card settings lock;
-                     0064 T-B4b)
+                     0064 T-B4b; flowgate.v02.0113 T#1: actually running — an AI execution or its AI review, never open alone)
     person_result    result binding: a person's work plan result takes its card's review or automatic approval
                      (``review_stage``, flowgate.v02.0083 WP-4)
     approval_wait_reason   a run read: why the automatic approval of a node's result was not made (``legacy_adapter``,

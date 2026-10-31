@@ -17,6 +17,8 @@
        flowgate.v02.0061 T#14: a Graph card is also locked (the same 🔒 실행 중 line, every control off) while its Flow's
        run is running, paused or stopping (`target.editLock`), without waiting for the settings read to say so.
        TR0031 rev1: also while the run's status is not confirmed (`unknown`; the lock line then says so).
+       flowgate.v02.0113 T#1 (0002-D 개정 §3.13) replaces the run lock here: only an actually running card is locked
+       (the server's `locked` or the node run's `node_running`); a waiting, done or error card takes its settings.
        flowgate.v02.0072 T#3: a Graph work plan (WP) card — the [switch] AI 사전 지시서 작성 line, then the same 실행 설정
        block with its AI named 작업 AI (작업 AI · 재시작 | 검수 AI · 검수 횟수 · 고급 ▾ 실행 제한 시간 · 검수 기준). Each change
        is one card setting saved at once, with the same lock, failure icon and read failure as every card. The switch is
@@ -217,16 +219,26 @@ const errorKey = computed(() => {
   return sequence.errorKey.value && !sequence.row.value ? sequence.errorKey.value : null
 })
 
-/** The 🔒 실행 중 line: a running card (server lock or the Flow's run lock), or a v0.1 step started and not done yet. */
+/**
+ * flowgate.v02.0113 T#1 (0002-D 개정 §3.13): a Graph card is locked only while it actually runs — the server's card lock
+ * (`locked`) or its node run's `node_running` (an AI execution of it requested / running, or its AI review), the same
+ * judgement — never because its Flow's run is running or the node is merely open (a person's or a setup wait). Until
+ * the run status is confirmed (`editLock` `unknown`) it still waits.
+ */
+function cardLocked(): boolean {
+  return card.node.value?.locked === true || props.target.nodeRun?.nodeRunning === true || props.target.editLock === 'unknown'
+}
+
+/** The 🔒 실행 중 line: an actually running card (see `cardLocked`), or a v0.1 step started and not done yet. */
 const locked = computed(() => {
-  if (source.value === 'card') return card.node.value?.locked === true || !!props.target.editLock
+  if (source.value === 'card') return cardLocked()
   const row = sequence.row.value
   return row !== null && settingsRowPhase(row) === 'in_progress'
 })
 
 /** TR0031 rev1: the lock line while only the unconfirmed run status locks the card (else the 🔒 실행 중 line). */
 const lockText = computed(() =>
-  source.value === 'card' && card.node.value?.locked !== true && props.target.editLock === 'unknown'
+  source.value === 'card' && card.node.value?.locked !== true && props.target.nodeRun?.nodeRunning !== true && props.target.editLock === 'unknown'
     ? t('gui.designer.center.run_lock_pending')
     : null,
 )
@@ -242,7 +254,7 @@ const cardReason = computed(() => {
     readOnly: props.target.readOnly,
     placing: card.placing.value,
     read: card.node.value !== null,
-    locked: card.node.value?.locked === true || !!props.target.editLock,
+    locked: cardLocked(),
     blocked: card.blocked.value,
   })
 })
