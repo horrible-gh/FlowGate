@@ -14,7 +14,6 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -26,12 +25,7 @@ os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = "test1"
 os.environ["FLOWGATE_TOKEN_PEPPER_test1"] = "test-pepper-value-123"
 
 _SERVER_DIR = Path(__file__).resolve().parents[3]
-_MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
-
-
-def _migrations() -> list[Path]:
-    return sorted(_MIGRATIONS_DIR.glob("*.sql"))
 
 
 class _MockTxn:
@@ -87,7 +81,7 @@ RAW_TOKEN = "raw-remote-tool-token-abc123"
 
 
 @pytest.fixture
-def env(tmp_path, monkeypatch):
+def env(tmp_path, monkeypatch, migrated_sqlite_db):
     """Build an isolated DB + source tree and inject the store. Returns a context object."""
     # storage root → temp; source root = {storage}/src/{project_name}/main
     storage_root = tmp_path / "storage"
@@ -99,15 +93,8 @@ def env(tmp_path, monkeypatch):
     (src / "app" / "main.py").write_text("import sys\n# TODO: validate\nprint('hi')\n", encoding="utf-8", newline="\n")
     (src / "docs" / "readme.md").write_text("# readme\nTODO later\n", encoding="utf-8", newline="\n")
 
-    # temp DB with all migrations
-    db_fd, db_path = tempfile.mkstemp(suffix=".db")
-    os.close(db_fd)
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-    for f in _migrations():
-        conn.executescript(f.read_text(encoding="utf-8"))
-    conn.commit()
-    conn.close()
+    # Independent DB copy; --fg-db-mode=direct keeps migration replay available.
+    db_path = migrated_sqlite_db("remote-tools.db")
 
     from modules.flow_gate.db import connection as conn_mod
     store = conn_mod.FlowGateStore()

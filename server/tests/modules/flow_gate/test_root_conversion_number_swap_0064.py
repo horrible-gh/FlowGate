@@ -14,7 +14,6 @@ import os
 import re
 import sqlite3
 import sys
-import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -26,7 +25,6 @@ os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 
 _SERVER_DIR = Path(__file__).resolve().parents[3]
-_MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
 
 FLOW = "flowgate.v02.0091"
@@ -41,20 +39,12 @@ SOLO_REL = "documents/flowgate/main/v02/solo/0001-R_requirement.md"
 
 
 @pytest.fixture()
-def env(tmp_path, monkeypatch):
+def env(tmp_path, monkeypatch, migrated_sqlite_db):
     from modules.flow_gate.db import _SqliteDbAdapter, _SqliteTxnAdapter
     from modules.flow_gate.db import connection as conn_mod
     from modules.flow_gate.graph_workflow.services import canvas_events, card_document_ports
 
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        path = f.name
-    conn = sqlite3.connect(path)
-    for mig in sorted(_MIGRATIONS_DIR.glob("*.sql")):
-        try:
-            conn.executescript(mig.read_text(encoding="utf-8"))
-        except sqlite3.OperationalError:
-            pass
-    conn.close()
+    path = migrated_sqlite_db("root-conversion.db")
     original = conn_mod.STORE
     store = conn_mod.FlowGateStore()
     store._db = _SqliteDbAdapter(path)

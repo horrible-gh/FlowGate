@@ -460,12 +460,9 @@ class _MockTxn:
 
 
 @pytest.fixture
-def rp_store(tmp_path, monkeypatch):
-    db_path = tmp_path / "rp0449.db"
-    mock_db = _MockDB(str(db_path))
-    for migration in sorted(_SCHEMA_DIR.glob("*.sql")):
-        mock_db._conn.executescript(migration.read_text(encoding="utf-8"))
-    mock_db._conn.commit()
+def rp_store(tmp_path, monkeypatch, migrated_sqlite_db):
+    db_path = migrated_sqlite_db("rp0449.db")
+    mock_db = _MockDB(db_path)
 
     storage_root = tmp_path / "storage"
     storage_root.mkdir()

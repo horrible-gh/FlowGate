@@ -290,6 +290,11 @@ def _dist_mode_problem(numprocesses, dist) -> "str | None":
 
 def pytest_addoption(parser):
     parser.addoption(
+        "--fg-db-mode", action="store", default="template",
+        choices=("template", "direct"),
+        help="SQLite test preparation: session template copies or direct migration replay.",
+    )
+    parser.addoption(
         "--tier",
         action="store",
         default="full",
@@ -566,47 +571,27 @@ def get_migration_files() -> list[Path]:
 
 
 @pytest.fixture(scope="session")
-def migrated_sqlite_db(tmp_path_factory):
-    """Factory -> path to a fresh sqlite file with EVERY migration applied.
+def migrated_sqlite_db(tmp_path_factory, pytestconfig):
+    """Fresh per-call DBs from one worker-local template, or explicit direct replay.
 
-    flowgate.default.0394 T0004 (NR0003 §13-6 / §7.2).
+    Build before exposing the factory: pytest caches a failed session setup, so
+    every consumer errors if any migration fails. Seeds belong only to copies.
+    Each execution uses a fresh basetemp, so templates are never reused across
+    runs or sessions; pytest may retain recent temporary directories on disk.
 
-    Five suites were each carrying their own `test_db_path` fixture that built a schema
-    by hand. Four of them looped over the whole migration directory; `test_auth.py` had
-    frozen a subset — 001, 002 and 005 out of 87 — so the day `067a_auth_sessions.sql`
-    arrived, seven auth tests died on `no such table: auth_sessions`. The schema was
-    fine; the copy of it in that one file was not, and nothing tied the copies together.
-
-    So there is one builder now, and it always applies everything. A suite that needs
-    rows of its own passes them as `seed_sql`; a suite that needs a different starting
-    schema does not exist.
-
-    Unlike the per-file copies, a failing migration is NOT swallowed here. Those
-    `except sqlite3.OperationalError: pass` clauses were written for the era when the
-    directory could not be replayed cleanly, and they would hide exactly the breakage
-    this fixture exists to catch — the whole set applying in name order is itself
-    asserted by tests/test_migration_numbering.py.
-
-    Session-scoped factory, function-scoped output: each call gets its own file, so two
-    suites never share mutable state.
+    flowgate.default.0394 T0004: test_auth.py once replayed only migrations
+    001/002/005 and missed auth_sessions when 067a arrived. Keep one full-chain
+    builder: never freeze a per-suite subset or swallow migration errors, which
+    would hide the schema drift this fixture exists to detect.
     """
-    def _build(name: str, seed_sql: str = "") -> str:
-        db_path = str(tmp_path_factory.mktemp("db") / name)
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        try:
-            for migration_file in get_migration_files():
-                conn.executescript(migration_file.read_text(encoding="utf-8"))
-            if seed_sql:
-                conn.executescript(seed_sql)
-            conn.commit()
-        finally:
-            conn.close()
-        return db_path
+    from sqlite_db_support import SqliteDbFactory
 
-    return _build
-
+    factory = SqliteDbFactory(
+        tmp_path_factory.mktemp("sqlite-template"), get_migration_files(),
+        mode=pytestconfig.getoption("--fg-db-mode"),
+    )
+    factory.prepare()
+    return factory
 
 @pytest.fixture(scope="session")
 def all_migrations_db():

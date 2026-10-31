@@ -36,7 +36,6 @@ os.environ.setdefault("CONTEXT", "/flowgate")
 os.environ.setdefault("DB_TYPE", "sqlite")
 
 _SERVER_DIR = Path(__file__).resolve().parents[3]
-_SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 if str(_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVER_DIR))
 
@@ -690,11 +689,8 @@ class _MockTxn:
 
 
 @pytest.fixture
-def session_store(tmp_path, monkeypatch):
-    mock_db = _MockDB(str(tmp_path / "review-turns-0578.db"))
-    for sql_file in sorted(_SCHEMA_DIR.glob("*.sql")):
-        mock_db._conn.executescript(sql_file.read_text(encoding="utf-8"))
-    mock_db._conn.commit()
+def session_store(tmp_path, monkeypatch, migrated_sqlite_db):
+    mock_db = _MockDB(migrated_sqlite_db("review-turns-0578.db"))
 
     from modules.flow_gate.db import connection as conn_mod
 

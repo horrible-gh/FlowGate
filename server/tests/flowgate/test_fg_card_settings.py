@@ -17,7 +17,6 @@ import os
 import re
 import sqlite3
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -47,18 +46,11 @@ RUN_FIELDS = ["instruction", "instruction_ai", "run_ai", "restart", "review_ai",
 
 
 @pytest.fixture()
-def db_path(tmp_path):
+def db_path(tmp_path, migrated_sqlite_db):
     from modules.flow_gate.db import _SqliteDbAdapter
     from modules.flow_gate.db import connection as conn_mod
 
-    path = str(tmp_path / "cards.db")
-    conn = sqlite3.connect(path)
-    for mig in sorted(_MIGRATIONS_DIR.glob("*.sql")):
-        try:
-            conn.executescript(mig.read_text(encoding="utf-8"))
-        except sqlite3.OperationalError:
-            pass
-    conn.close()
+    path = migrated_sqlite_db("cards.db")
     original = conn_mod.STORE
     store = conn_mod.FlowGateStore()
     store._db = _SqliteDbAdapter(path)
