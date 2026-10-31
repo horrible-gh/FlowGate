@@ -290,6 +290,11 @@ def _dist_mode_problem(numprocesses, dist) -> "str | None":
 
 def pytest_addoption(parser):
     parser.addoption(
+        "--fg-git-mode", action="store", default="template",
+        choices=("template", "direct"),
+        help="Git seed preparation: worker template copies or original direct commands.",
+    )
+    parser.addoption(
         "--fg-db-mode", action="store", default="template",
         choices=("template", "direct"),
         help="SQLite test preparation: session template copies or direct migration replay.",
@@ -568,6 +573,17 @@ def get_migration_files() -> list[Path]:
     """Get all migration files sorted in order."""
     files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
     return files
+
+
+@pytest.fixture(scope="session")
+def git_repositories(tmp_path_factory, pytestconfig):
+    """Worker/session-local originals; only copies reach product Git operations."""
+    from git_template_support import GitRepositoryFactory
+
+    return GitRepositoryFactory(
+        tmp_path_factory.mktemp("git-templates"),
+        mode=pytestconfig.getoption("--fg-git-mode"),
+    )
 
 
 @pytest.fixture(scope="session")
