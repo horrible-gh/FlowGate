@@ -331,6 +331,19 @@ def pytest_configure(config):
     for name, (_label, probe, _required) in CAPABILITIES.items():
         _capability_state[name] = _safe_probe(probe)
 
+    # flowgate.v02.0114 T#3 (D 0006 7.1): the Self-check result block. Composed at
+    # pytest_terminal_summary like the reports below and printed as the very last output,
+    # with the capability judgement above as its host evidence and the test definition
+    # fingerprints taken when collection finishes (tests/selfcheck_evidence.py). A copy of
+    # this conftest in a synthetic tree without that module (test_repo_scratch_guard_0382)
+    # prints no block, which Self-check reads as "no structured result".
+    try:
+        import selfcheck_evidence
+    except ImportError:
+        selfcheck_evidence = None
+    if selfcheck_evidence is not None:
+        selfcheck_evidence.register(config, capabilities=lambda: dict(_capability_state))
+
     # 컨트롤러에서만 본다. 워커는 자기 몫을 순차 실행하므로 dist 설정이 없다.
     if getattr(config, "workerinput", None) is None:
         problem = _dist_mode_problem(

@@ -303,6 +303,7 @@ def issue(
         raise
 
     token_scratch.sweep_on_issue(project)
+    _record_self_check_anchor(data)
 
     return {
         "raw_token": raw_token,
@@ -324,6 +325,25 @@ def issue(
         "source_access": source_access,
         "one_shot_claimed": one_shot_claimed,
     }
+
+
+def _record_self_check_anchor(data: dict) -> None:
+    """flowgate.v02.0114 T#3 (D 3.3): the Self-check work unit's pre-change basis, written once
+    when the unit's first token is issued, before the token is handed back.
+
+    This is the one point every issue path passes (manual issue, AI run admission, the
+    continuation chain), so no caller carries any of it. It runs after the token row
+    committed and outside that transaction: a failure is logged, and the issue's result,
+    shape and rollback stay exactly as they were.
+    """
+    if data.get("action_scope") not in ("new", "edit") or not data.get("group_id"):
+        return
+    try:
+        from modules.flow_gate.services import tr_self_check_anchor  # lazy -- import cycle
+
+        tr_self_check_anchor.record_on_issue(data)
+    except Exception:
+        _log.warning("self-check anchor not recorded for token %s", data.get("token_id"), exc_info=True)
 
 
 def verify(raw_token: str) -> dict:
@@ -489,6 +509,14 @@ def _link_self_check_drafts(token_rec: dict, doc_id: Optional[str]) -> None:
         tr_self_check_service.link_draft_runs(token_rec, doc_id)
     except Exception:
         _log.warning("self-check draft link failed for token %s -> %s",
+                     token_rec.get("token_id"), doc_id, exc_info=True)
+    # 0114 T#3 (D 3.3-3): the draft's pre-change anchor joins the TR at the same point.
+    try:
+        from modules.flow_gate.services import tr_self_check_anchor  # lazy -- import cycle
+
+        tr_self_check_anchor.link_registration(token_rec, doc_id)
+    except Exception:
+        _log.warning("self-check anchor link failed for token %s -> %s",
                      token_rec.get("token_id"), doc_id, exc_info=True)
 
 

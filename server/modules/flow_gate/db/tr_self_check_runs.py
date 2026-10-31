@@ -144,6 +144,7 @@ def create_pending(
     owner_marker: str | None = None,
     attempt_id: str | None = None,
     input_commit: str | None = None,
+    host_node_key: str | None = None,
 ) -> dict:
     """Atomically insert a pending self-check run row with active_key set.
 
@@ -161,6 +162,10 @@ def create_pending(
     0110 T#3: ``attempt_id`` / ``input_commit`` (migration 162) name the Graph attempt tree a
     run executes in and the commit that tree started from; both land in the insert's
     transaction. A group worktree run writes neither column.
+
+    0114 T#3: ``host_node_key`` (migration 163) is the admitting server's host identifier
+    (``instance_registry.node_key``), copied into the row in the insert's transaction so a
+    baseline comparison never depends on instance registration rows that may be gone.
     """
     if tr_doc_id is None and not (owner_token_id and draft_doc_ref):
         raise ValueError("a draft self-check run needs owner_token_id and draft_doc_ref")
@@ -215,6 +220,11 @@ def create_pending(
                 store._execute(
                     "UPDATE tr_self_check_runs SET attempt_id = ?, input_commit = ? WHERE self_check_run_id = ?",
                     [attempt_id, input_commit, rid],
+                )
+            if host_node_key is not None:
+                store._execute(
+                    "UPDATE tr_self_check_runs SET host_node_key = ? WHERE self_check_run_id = ?",
+                    [host_node_key, rid],
                 )
     except Exception as exc:
         if _is_active_key_unique_violation(exc):
@@ -613,6 +623,23 @@ def finish_cancelled(
     if affected == 0:
         return None
     return get_run(run_id)
+
+def record_result_summary(run_id: str, result_summary: str | None, environment_evidence: str | None) -> dict | None:
+    """0114 T#3 (D 3.2): the result block summary of a run that already completed normally.
+
+    Written after, and apart from, the terminal write: only a ``completed`` row that did not
+    time out and has no summary yet moves, and no status, exit code or source field is
+    touched. None = nothing written."""
+    affected = get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET result_summary = ?, environment_evidence = ?"
+        " WHERE self_check_run_id = ? AND status = 'completed' AND timed_out = 0"
+        " AND recovery_state = 'none' AND result_summary IS NULL",
+        [result_summary, environment_evidence, run_id],
+    )
+    if affected == 0:
+        return None
+    return get_run(run_id)
+
 
 def mark_recovering(run_id: str) -> dict | None:
     """CAS none -> recovering on orphan active run."""

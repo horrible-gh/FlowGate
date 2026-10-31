@@ -1235,6 +1235,8 @@ SELF_CHECK_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
 SELF_CHECK_RESULT_FIELDS = (
     "exit_code", "timed_out", "stdout_tail", "stderr_tail",
     "source_changed_during_run", "worktree_state_changed", "error_code",
+    # 0114 T#3: evidence read from a normally completed run's result block (advisory).
+    "result_summary", "environment_evidence",
 )
 
 #: The REST contract behind run/read/cancel. Owned by
@@ -1452,6 +1454,66 @@ _SELF_CHECK_ATTEMPT_COPY: dict[str, dict] = {
 }
 
 
+#: 0114 T#3 (D 3.2-3.4, 5): what a completed run's result block summary means and how a baseline
+#: run is judged. The keys are the same in every locale; the values are guidance, never a verdict.
+_SELF_CHECK_BASELINE_COPY: dict[str, dict] = {
+    "ko": {
+        "summary": "pytest 실행이 정상 종료되면 출력 맨 끝의 결과 블록이 result_summary(건수·실패 목록·항목별 테스트 정의 증거)와 environment_evidence(도구 버전·호스트 능력·환경 값·설치 의존성·적용 worker)로 저장된다. 판정은 지금처럼 status·exit_code·timed_out·소스 변동이며, 요약은 보강 증거일 뿐 통과의 근거가 아니다.",
+        "status": {
+            "none": "블록이 없다(구조화 결과 없음). 아무것도 추정하지 않는다.",
+            "incomplete": "블록이 깨졌거나 잘렸거나 둘 이상이거나 수집·완료 건수가 다르거나, 블록의 종료 상태가 비정상(0·1 이외)이거나 건수끼리 모순된다. 믿지 않는다.",
+            "mismatch": "실제 종료 코드와 블록의 종료 상태 또는 실패 목록이 어긋난다. 어느 쪽도 성공으로 올리지 않는다.",
+            "complete": "수집 = 완료이고 잘림·불일치가 없다. 기준선 비교에 쓸 수 있다.",
+        },
+        "how": "변경 후 실행을 read_self_check 할 때 baseline_run_id 에 제품 파일을 고치기 전에 돌린 기준선 실행 id 를 함께 주면 baseline_comparison 이 붙는다. reusable=false 이면 reasons 를 TR 에 적고 기준선을 다시 돌린다. 기준선과 변경 후 실행은 같은 명령·같은 호스트·같은 worker 조건으로 돌린다.",
+        "conditions": "재사용 조건: 같은 Group, 기준선이 정상 종료(시간 초과·취소·실패·복구 아님), 요약 complete, 실행 중 소스 변동 없음, 기준선의 실행 전·후 HEAD가 작업 시작 때 기록된 변경 전 기준점과 같고 작업 트리가 깨끗함(기준점은 작업 단위의 첫 발급임이 입증될 때만 기록하며, 앞선 발급이 기준점을 남기지 못한 작업은 계속 없음. 기준점이 없거나 현재 HEAD의 조상이 아니면 불가), 명령(program·args·cwd·정책 버전) 동일, 환경 증거 전 범주(범주마다 필수 하위 항목 전부, env 는 HOST_KEYS 전부)와 호스트 식별자 동일(없거나 빠지면 불가), 실행 수준 테스트 정의(pytest 설정·conftest·세션/자동 fixture·테스트 트리 플러그인과 그것들이 읽는 데이터) 동일.",
+        "comparison": {
+            "new_failures": "변경 후에만 실패한 항목(새 테스트 포함). 이번 변경의 결함 후보다.",
+            "existing_failures": "양쪽 모두 실패했고 테스트 정의 증거가 같은 항목만. 성공으로 바꾸지 않고 따로 표시한다.",
+            "definition_changed_failures": "양쪽 모두 실패했지만 테스트 본문·fixture·모듈 전역 값·보조 함수·데이터가 바뀌었거나 확인할 수 없는 항목. 기존 실패가 아니며 신규 실패 후보와 같은 수준으로 TR에 변경 사유를 적는다.",
+            "resolved_or_gone": "기준선에서만 실패한 항목. 해소인지 삭제·이름 변경인지는 구분하지 않는다.",
+        },
+        "advisory": "비교 결과는 참고 증거다. TR·검수 통과 기준, required gate, 반려 규칙은 바뀌지 않는다. 기존 실패를 xfail 처리하거나 목록에서 빼지 않는다.",
+    },
+    "en": {
+        "summary": "When a pytest run ends normally, the result block at the very end of its output is stored as result_summary (counts, failures, per-item test definition evidence) and environment_evidence (tool versions, host capabilities, environment values, installed dependencies, applied workers). The verdict stays status, exit_code, timed_out and source change; the summary is supporting evidence only, never a reason to pass.",
+        "status": {
+            "none": "No block (no structured result). Nothing is guessed.",
+            "incomplete": "The block is broken, cut, truncated, repeated, collected and completed counts differ, its exit status is abnormal (not 0 or 1), or its counts contradict each other. Not trusted.",
+            "mismatch": "The actual exit code and the block's exit status or failure list disagree. Neither side is promoted to success.",
+            "complete": "Collected = completed, nothing truncated or mismatched. Usable for a baseline comparison.",
+        },
+        "how": "When you read_self_check an after-change run, pass baseline_run_id with the id of the baseline run made before your first product file change; the answer gains baseline_comparison. On reusable=false write the reasons in the TR and run the baseline again. Run the baseline and the after-change run with the same command, on the same host, with the same worker setting.",
+        "conditions": "Reuse needs: the same Group, a baseline that ended normally (not timed out, cancelled, failed or recovered), a complete summary, no source change during the run, the baseline's HEAD before and after equal to the pre-change anchor recorded when the work started with a clean tree (it is recorded only when the issue is proven to be the work unit's first; a unit whose earlier issue left no anchor stays without one. No anchor, or an anchor that is not an ancestor of the current HEAD, means no reuse), the same command (program, args, cwd, policy version), every environment evidence category (with all its required sub-items, env holding every HOST_KEYS variable) and the host identifier equal (missing or partial means no reuse), and the same run-level test definition (pytest settings, conftest, session/autouse fixtures, test-tree plugins and the data they read).",
+        "comparison": {
+            "new_failures": "Failing only after the change (new tests included): candidates for defects of this change.",
+            "existing_failures": "Failing on both sides with equal test definition evidence only. Shown apart, never turned into a pass.",
+            "definition_changed_failures": "Failing on both sides, but the test body, fixtures, module-level values, helpers or data changed or cannot be confirmed. Not existing failures: report the reason for the change in the TR, at the level of a new failure.",
+            "resolved_or_gone": "Failing only in the baseline. Whether resolved, deleted or renamed is not told apart.",
+        },
+        "advisory": "The comparison is advisory evidence. TR / review pass criteria, required gates and rejection rules are unchanged. Do not mark existing failures xfail or drop them from the list.",
+    },
+    "ja": {
+        "summary": "pytest 実行が正常終了すると、出力末尾の結果ブロックが result_summary(件数・失敗一覧・項目別のテスト定義証拠)と environment_evidence(ツールバージョン・ホスト能力・環境値・インストール依存・適用 worker)として保存される。判定は従来どおり status・exit_code・timed_out・ソース変動であり、要約は補強証拠にすぎず合格の根拠にはならない。",
+        "status": {
+            "none": "ブロックがない(構造化結果なし)。何も推定しない。",
+            "incomplete": "ブロックが壊れている・切れている・複数ある、収集件数と完了件数が異なる、ブロックの終了ステータスが異常(0・1 以外)、または件数どうしが矛盾する。信頼しない。",
+            "mismatch": "実際の終了コードとブロックの終了ステータスまたは失敗一覧が食い違う。どちらも成功に格上げしない。",
+            "complete": "収集 = 完了で、切り詰め・不一致がない。基準線比較に使える。",
+        },
+        "how": "変更後の実行を read_self_check するとき、baseline_run_id に製品ファイルを変更する前に実行した基準線の実行 id を渡すと baseline_comparison が付く。reusable=false なら reasons を TR に記載し、基準線を再実行する。基準線と変更後の実行は同じコマンド・同じホスト・同じ worker 条件で実行する。",
+        "conditions": "再利用の条件: 同じ Group、基準線が正常終了(タイムアウト・取消・失敗・復旧ではない)、要約が complete、実行中のソース変動なし、基準線の実行前後の HEAD が作業開始時に記録された変更前基準点と同じで作業ツリーがクリーン(基準点は作業単位の最初の発行と証明できるときだけ記録し、先の発行が基準点を残せなかった作業はずっとなし。基準点がない、または現在の HEAD の祖先でなければ不可)、コマンド(program・args・cwd・ポリシーバージョン)が同じ、環境証拠の全カテゴリ(カテゴリごとの必須下位項目すべて、env は HOST_KEYS すべて)とホスト識別子が同じ(欠ければ不可)、実行レベルのテスト定義(pytest 設定・conftest・セッション/自動 fixture・テストツリーのプラグインとそれらが読むデータ)が同じ。",
+        "comparison": {
+            "new_failures": "変更後にのみ失敗した項目(新しいテストを含む)。今回の変更の欠陥候補。",
+            "existing_failures": "両方で失敗し、テスト定義証拠が同じ項目のみ。成功に変えず別に表示する。",
+            "definition_changed_failures": "両方で失敗したが、テスト本体・fixture・モジュール全域の値・補助関数・データが変わった、または確認できない項目。既存失敗ではなく、新規失敗候補と同じ水準で TR に変更理由を記載する。",
+            "resolved_or_gone": "基準線でのみ失敗した項目。解消か削除・名前変更かは区別しない。",
+        },
+        "advisory": "比較結果は参考証拠である。TR・検収の合格基準、required gate、差し戻し規則は変わらない。既存失敗を xfail にしたり一覧から外したりしない。",
+    },
+}
+
+
 def _self_check_attempt(ctx: dict) -> Optional[str]:
     """The Graph attempt the caller's worker token is mapped to (0110 T#3), else None."""
     token_rec = ctx.get("token_rec")
@@ -1522,6 +1584,18 @@ def _content_tr_self_check(ctx: dict) -> dict:
             "source_changed": copy["changed_note"],
         },
         "errors": [{"code": row[0], "guidance": row[idx]} for row in _SELF_CHECK_ERRORS],
+    }
+    baseline_copy = _SELF_CHECK_BASELINE_COPY.get(locale, _SELF_CHECK_BASELINE_COPY[FALLBACK_LOCALE])
+    content["baseline"] = {
+        "query_param": "baseline_run_id",
+        "tool_field": "read_self_check.baseline_run_id",
+        "response_field": "baseline_comparison",
+        "summary": baseline_copy["summary"],
+        "summary_status": dict(baseline_copy["status"]),
+        "how": baseline_copy["how"],
+        "conditions": baseline_copy["conditions"],
+        "comparison": dict(baseline_copy["comparison"]),
+        "advisory": baseline_copy["advisory"],
     }
     attempt_id = _self_check_attempt(ctx)
     if attempt_id:

@@ -20,6 +20,7 @@ from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_self_check_executor as executor
 from modules.flow_gate.services import tr_self_check_gate as gate
 from modules.flow_gate.services import tr_self_check_proof as proof
+from modules.flow_gate.services import tr_self_check_result as result_block
 from modules.flow_gate.services import tr_self_check_policy as policy
 from modules.flow_gate.services.git import lock_manager
 from modules.flow_gate.storage import filesystem as storage_fs
@@ -86,6 +87,10 @@ def public(row: dict) -> dict:
     result = {key: row.get(key) for key in keep}
     result["stdout_tail"] = _redact(result["stdout_tail"])
     result["stderr_tail"] = _redact(result["stderr_tail"])
+    # 0114 T#3 (D 5): the result block summary and its environment evidence. Evidence only --
+    # status / exit_code / timed_out above stay the run's verdict fields.
+    result["result_summary"] = result_block.loads(row.get("result_summary"))
+    result["environment_evidence"] = result_block.loads(row.get("environment_evidence"))
     return result
 
 
@@ -675,6 +680,8 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
         else:
             terminal = db_runs.finish_completed(run_id, exit_code=result.exit_code,
                                                 timed_out=result.timed_out, **tails, **fields)
+            if terminal is not None and not result.timed_out:
+                _record_result_summary(run_id, terminal)
     except Exception as exc:
         if control is not None:
             control.cancel()
@@ -745,6 +752,17 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
             for key in (attempt_lock, lock_key):
                 if key is not None and ctx.find_held(key) is not None:
                     lock_manager.protect(ctx, key, "selfcheck_terminal_unrecorded")
+
+
+def _record_result_summary(run_id: str, terminal: dict) -> None:
+    """0114 T#3 (D 3.2): summarize the result block of a run that completed normally, from the
+    tail already stored with its terminal record. The terminal record is written first; a
+    summary that cannot be made or stored is logged and never touches it."""
+    try:
+        summary, environment = result_block.summarize(terminal.get("stdout_tail"), terminal.get("exit_code"))
+        db_runs.record_result_summary(run_id, result_block.dumps(summary), result_block.dumps(environment))
+    except Exception:
+        _log.warning("selfcheck %s: result block summary not recorded", run_id, exc_info=True)
 
 
 def start(doc_id: str, request: dict, requested_by: str | None = None, token: dict | None = None) -> dict:
@@ -856,7 +874,8 @@ def _admit(target: dict, request: dict, requested_by: str | None) -> dict:
             command.origin, relative_cwd, timeout, list(env), run_id=run_id, source_lock_holder=holder,
             owner_token_id=target.get("owner_token_id"), draft_doc_ref=target.get("draft_doc_ref"),
             owner_instance_id=instance_registry.current_instance_id(), owner_marker=proof.owner_marker(run_id),
-            attempt_id=target.get("attempt_id"), input_commit=target.get("input_commit"))
+            attempt_id=target.get("attempt_id"), input_commit=target.get("input_commit"),
+            host_node_key=instance_registry.node_key())
         spawned = threading.Event() if attempt_lock is not None else None
         worker = threading.Thread(target=_finish, args=(run_id, ctx, lock_key, root, before,
             runtime, command, args, cwd, env, timeout, keeper, attempt_lock, spawned), daemon=True,
@@ -893,12 +912,31 @@ def _admit(target: dict, request: dict, requested_by: str | None) -> dict:
                 _cleanup_runtime(runtime, run_id, tracked=False)
 
 
-def read(doc_id: str, run_id: str) -> dict:
+def _with_baseline(row: dict, baseline_run_id: str | None) -> dict:
+    """0114 T#3 (D 5): ``public(row)`` plus, when a baseline run id is named, the baseline
+    judgement against it. Read-only and advisory; a judgement that fails is reported as not
+    reusable, never as a pass."""
+    result = public(row)
+    if baseline_run_id is None:
+        return result
+    from modules.flow_gate.services import tr_self_check_baseline as baseline
+    try:
+        result["baseline_comparison"] = baseline.compare(row, baseline_run_id)
+    except Exception:
+        _log.warning("selfcheck %s: baseline comparison failed", row.get("self_check_run_id"), exc_info=True)
+        result["baseline_comparison"] = {"baseline_run_id": baseline_run_id, "run_id": row.get("self_check_run_id"),
+                                         "reusable": False, "reasons": [{"code": "comparison_failed"}],
+                                         "comparison": None, "anchor": None, "advisory": True,
+                                         "note": baseline.ADVISORY_NOTE}
+    return result
+
+
+def read(doc_id: str, run_id: str, baseline_run_id: str | None = None) -> dict:
     _document(doc_id)
     row = db_runs.get_run_for_doc(run_id, doc_id)
     if row is None:
         raise SelfCheckError(404, "selfcheck_run_not_found")
-    return public(row)
+    return _with_baseline(row, baseline_run_id)
 
 
 def list_runs(doc_id: str, limit: int = 20) -> list[dict]:
@@ -1014,12 +1052,12 @@ def _cancel_unowned(row: dict) -> tuple[str, str | None]:
     return "stopped", None
 
 
-def read_draft(token: dict, run_id: str) -> dict:
+def read_draft(token: dict, run_id: str, baseline_run_id: str | None = None) -> dict:
     target = draft_target(token)
     row = db_runs.get_run_for_owner(run_id, target["owner_token_id"])
     if row is None:
         raise SelfCheckError(404, "selfcheck_run_not_found")
-    return public(row)
+    return _with_baseline(row, baseline_run_id)
 
 
 def list_draft_runs(token: dict, limit: int = 20) -> list[dict]:
