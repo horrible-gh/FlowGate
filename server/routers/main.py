@@ -288,6 +288,7 @@ app.add_middleware(
 # entirely in dev (no dist), where Vite serves the client on its own port.
 import os as _os
 from fastapi.staticfiles import StaticFiles
+from .client_fallback import api_aware_fallback
 
 _CLIENT_DIST = _os.path.normpath(
     _os.path.join(_os.path.dirname(__file__), "..", "..", "client", "dist")
@@ -361,7 +362,6 @@ if _client_dist_exists or _client_gui_dist_exists:
     def _html(path: str) -> FileResponse:
         return FileResponse(path, headers={"Cache-Control": "no-cache, max-age=0"})
 
-    @app.get("/{full_path:path}", include_in_schema=False)
     async def _serve_client(full_path: str):
         # Never shadow the API surface; let those 404 as JSON.
         if _CTX and (full_path == _CTX or full_path.startswith(f"{_CTX}/")):
@@ -405,4 +405,9 @@ if _client_dist_exists or _client_gui_dist_exists:
         if full_path == "settings" or full_path.startswith("settings/"):
             return _html(_os.path.join(_CLIENT_DIST, "settings.html"))
         return _html(_os.path.join(_CLIENT_DIST, "index.html"))
+
+    app.router.add_api_route(
+        "/{full_path:path}", _serve_client, methods=["GET"], include_in_schema=False,
+        route_class_override=api_aware_fallback(CONTEXT),
+    )
 

@@ -662,27 +662,6 @@ def test_5_the_old_attempt_s_review_is_refused_and_recorded_and_approves_nothing
     assert (_node(env, wp), _review_status(doc2)) == (("done", doc2), "approved") and _node(env, t2)[0] == "open"
 
 
-def test_5_after_a_t2_card_recovery_the_old_loop_s_result_is_refused(env, decided, reviews):
-    wp, t2 = _person_wp(env)
-    doc1 = _submit(env, wp, 81)
-    run1 = _admitted(reviews[0], 1)
-    old_token = _review_token(reviews[0], 1)
-    _stop(env)
-    _resume(env)                                                         # open again, the person's card, idle
-    assert _node(env, wp) == ("open", None) and _run_status(env)[0] == "idle"
-    recovered = env["client"].post(f"/api/v1/runs/{_run_id(env)}/nodes/{wp}/recover", json={}, headers=_h())
-    assert recovered.status_code == 200, recovered.text                   # 0083 WP-2: back to pending
-    assert _node(env, wp) == ("pending", None)
-    _resume(env)
-    _verdict_refused(env, old_token)                                     # the old loop's verdict: refused
-    _passes(run1)                                                        # its late pass: nothing approved
-    assert _review_status(doc1) != "approved" and _node(env, wp) == ("open", None) and _node(env, t2)[0] == "pending"
-    doc2 = _submit(env, wp, 82)
-    assert len(reviews) == 2
-    _passes(_admitted(reviews[1], 2))
-    assert (_node(env, wp), _review_status(doc2)) == (("done", doc2), "approved") and _node(env, t2)[0] == "open"
-
-
 # ── 6. review 'none': the issuer's authority ─────────────────────────────────
 
 def test_6_review_none_is_approved_with_the_issuer_s_permission_and_the_next_card_opens(env, decided, reviews):

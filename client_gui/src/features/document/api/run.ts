@@ -88,12 +88,6 @@ export async function runCurrentRead(flowId: string): Promise<RunCurrent | null>
   return toRunCurrent(response.data?.run)
 }
 
-/** 0083 WP-2: reset one idle open card; its next explicit resume allocates a new attempt. */
-export async function runCardRecover(runId: string, nodeKey: string): Promise<RunCurrent | null> {
-  const response = await postRequest<Raw>(`${API}/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeKey)}/recover`, {})
-  return toRunCurrent(response.data?.run)
-}
-
 /** Decides an open gate of a running/idle run; preserves legacy comments and the optional versioned intent. */
 export async function runGateDecide(runId: string, nodeKey: string, decision: RunGateDecision, comment?: string, intent?: RunGateIntent): Promise<RunCurrent | null> {
   const text = comment?.trim() ?? ''

@@ -18,10 +18,9 @@ from flowgate.graph_run import command, settle, editing, revision
 
 
 def register() -> None:
-    from flowgate.graph_run import execution, stop, card_recovery
+    from flowgate.graph_run import execution, stop
     execution.register()
     ports.register(ports.STOP, stop.stop_run)
-    ports.register(ports.RECOVER_CARD, card_recovery.recover_card)
     ports.register(ports.REQUIRE_EDITABLE, editing.require_editable)
     ports.register(ports.PROTECT_DEFINITION, editing.protect_definition)
     ports.register(ports.ADOPT_REVISION, revision.adopt_revision)

@@ -256,7 +256,7 @@ def reopen_due(flow_id) -> bool:
 def command_fence(flow_id):
     """flowgate.v02.0113 T#3 (T §4.5): an explicit command's entry, outside its Flow guard. When the command would
     replace an attempt (``reopen_due``), the Flow's Stop gate is taken exclusively first — the lock order every
-    attempt replacement keeps (gate, then Flow guard; the Stop, ``card_recovery``): every side effect of the old attempt
+    attempt replacement keeps (gate, then Flow guard; Stop): every side effect of the old attempt
     in flight (under the gate's shared hold) ends before the replacement commits, and none starts across it. A thread
     already inside a shared hold of the Flow takes no fence (its command replaces nothing). Yields whether it fenced."""
     if fencing._held().get(flow_id) or not reopen_due(flow_id):

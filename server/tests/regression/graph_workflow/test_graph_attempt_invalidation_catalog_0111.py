@@ -3,13 +3,12 @@ import json
 import time
 from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from flowgate.graph_run import card_recovery, execution, fencing, stop, workspace, execution_store as ledger
+from flowgate.graph_run import execution, fencing, stop, workspace, execution_store as ledger
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.graph_workflow.services import run_apply
 from modules.flow_gate.services.git import branches
@@ -19,7 +18,7 @@ from test_graph_attempt_cleanup_preserve_0111 import (
     KEPT, _preserved, _kept, _gone, _git, _integrated, _head_of,
 )
 
-PATHS = ['card_recovery', 'lease_expired', 'worktree_failed', 'stop']
+PATHS = ['lease_expired', 'worktree_failed', 'stop']
 
 
 @pytest.fixture(autouse=True)
@@ -40,8 +39,7 @@ def _item(repo):
 
 def _invalidate(repo, item, mp, path):
     from modules.flow_gate.services import ai_invoke_service
-    from modules.flow_gate.graph_workflow.services import flow_guard, graph_service, card_settings_ports, result_binder, run_service
-    from flowgate.graph_time_machine import operation
+    from modules.flow_gate.graph_workflow.services import flow_guard
     guard = workspace.with_flow_guard
     mp.setattr(flow_guard, 'with_flow_guard', guard)
     mp.setattr(stop, 'with_flow_guard', guard)
@@ -57,19 +55,6 @@ def _invalidate(repo, item, mp, path):
         mp.setattr(ai_invoke_service, 'get_run_record', lambda _: None)
         mp.setattr(execution.ai_invoke_runs, 'get', lambda _: {'status': 'finished'})
         execution.recover()
-    elif path == 'card_recovery':
-        ledger.cancel(item.execution, None, 'requested')
-        repo.db._execute("UPDATE graph_runs SET status='idle'")
-        mp.setattr(run_store, 'active_run', lambda _: run_store.run_by_id('run'))
-        mp.setattr(graph_service, 'require_writable', lambda _: None)
-        mp.setattr(operation, 'require_no_operation', lambda _: None)
-        mp.setattr(card_settings_ports, 'ai_working', lambda *args: False)
-        mp.setattr(card_recovery, '_live_job', lambda *args: False)
-        mp.setattr(result_binder, 'next_missing_event', lambda *args: None)
-        mp.setattr(run_apply, 'read_run_state', lambda _: {})
-        mp.setattr(card_recovery.settle, 'settle_run', lambda _: None)
-        mp.setattr(run_service, 'run_payload', lambda *args, **kw: {})
-        card_recovery.recover_card({'group_id': GROUP, 'project_id': PROJECT}, 'run', 'a', None, 'user')
     else:
         repo.db._execute("UPDATE graph_runs SET status='stopping'")
         mp.setattr(stop, 'unconfirmed', lambda _: [])
@@ -128,20 +113,6 @@ def test_expired_cleanup_is_not_skipped_by_node_early_return(repo, monkeypatch, 
         repo.db._execute('DELETE FROM graph_node_runs')
     _invalidate(repo, item, monkeypatch, 'lease_expired')
     assert workspace.attempt(item.attempt)['status'] == 'invalidated' and _gone(repo, item)
-
-
-def test_failed_recovery_transaction_does_not_cleanup(repo, monkeypatch):
-    item = _item(repo)
-    def fail(*args):
-        raise RuntimeError('rollback invalidation')
-    monkeypatch.setattr(stop, 'reset_node', fail)
-    cleanup = Mock(side_effect=AssertionError('must not clean a rolled back invalidation'))
-    monkeypatch.setattr(workspace, 'cleanup', cleanup)
-    with pytest.raises(RuntimeError, match='rollback'):
-        _invalidate(repo, item, monkeypatch, 'card_recovery')
-    assert workspace.attempt(item.attempt)['status'] == 'active'
-    assert item.root.exists()
-    cleanup.assert_not_called()
 
 
 @pytest.fixture
