@@ -45,6 +45,7 @@ export default {
     failure: {
       locked: '진행 중이라 바꿀 수 없습니다',
       disposed: '폐기된 그룹입니다',
+      roles_unavailable: '카드 AI 역할 설정을 사용할 수 없습니다',
       unavailable: '서버에 카드 설정이 없습니다',
       invalid: '저장할 수 없는 값입니다 (1~999)',
       forbidden: '권한이 없습니다',
@@ -54,6 +55,7 @@ export default {
     },
     // A failed read of the card's settings (the read failure icon's tooltip).
     error: {
+      roles_unavailable: '카드 AI 역할 설정을 사용할 수 없습니다',
       unavailable: '서버에 카드 설정이 없습니다',
       forbidden: '볼 권한이 없습니다',
       not_found: '카드를 찾을 수 없습니다',
@@ -104,6 +106,7 @@ export default {
     failure: {
       locked: 'In progress: it cannot change now',
       disposed: 'The group was disposed',
+      roles_unavailable: 'Card AI role settings are unavailable',
       unavailable: 'The server has no card settings',
       invalid: 'This value cannot be saved (1–999)',
       forbidden: 'No permission',
@@ -112,6 +115,7 @@ export default {
       other: 'Could not save',
     },
     error: {
+      roles_unavailable: 'Card AI role settings are unavailable',
       unavailable: 'The server has no card settings',
       forbidden: 'No permission to view',
       not_found: 'The card was not found',
@@ -162,6 +166,7 @@ export default {
     failure: {
       locked: '進行中のため変更できません',
       disposed: '破棄されたグループです',
+      roles_unavailable: 'カードのAI役割設定を利用できません',
       unavailable: 'サーバーにカード設定がありません',
       invalid: '保存できない値です (1~999)',
       forbidden: '権限がありません',
@@ -170,6 +175,7 @@ export default {
       other: '保存できませんでした',
     },
     error: {
+      roles_unavailable: 'カードのAI役割設定を利用できません',
       unavailable: 'サーバーにカード設定がありません',
       forbidden: '閲覧する権限がありません',
       not_found: 'カードが見つかりません',

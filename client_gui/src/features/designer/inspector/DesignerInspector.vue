@@ -116,7 +116,6 @@ import {
    resolveInspectorTab,
   type InspectorTabKey,
 } from './inspectorTabs'
-import { hasAiTab } from './inspectorTarget'
 import { toInspectorTarget, withWrittenCardLines, type NodeTitleSaveOutcome } from './inspectorTarget'
 import {
   cardLinesWritten,

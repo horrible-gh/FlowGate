@@ -45,7 +45,7 @@ export interface CheckNodeFacts {
   readonly pushRemoteCheckRequired?: boolean
 }
 
-export type CheckSettingsFailureKind = 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
+export type CheckSettingsFailureKind = 'roles_unavailable' | 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
 
 export interface CheckSettingsInput {
   /** The Node is a Graph card the server keeps settings for. */
@@ -119,6 +119,7 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
 
 /** Why the card's settings could not be read (message key, the read failure icon's tooltip). */
 export function checkSettingsErrorKey(kind: CheckSettingsFailureKind): string {
+  if (kind === 'roles_unavailable') return 'error.roles_unavailable'
   return kind === 'forbidden' || kind === 'not_found' || kind === 'network' || kind === 'unavailable' ? `error.${kind}` : 'error.other'
 }
 

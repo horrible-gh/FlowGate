@@ -63,7 +63,7 @@ export interface RequirementTeamFacts {
   readonly supervisorName: string | null
 }
 
-export type RequirementSettingsFailureKind = 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
+export type RequirementSettingsFailureKind = 'roles_unavailable' | 'locked' | 'disposed' | 'unavailable' | 'invalid' | 'forbidden' | 'not_found' | 'network' | 'other'
 
 export interface RequirementSettingsInput {
   /** The Node is a Graph card the server keeps settings for. */
@@ -138,6 +138,7 @@ export function requirementSettingsView(
 
 /** Why the card's settings could not be read (message key, the read failure icon's tooltip). */
 export function requirementSettingsErrorKey(kind: RequirementSettingsFailureKind): string {
+  if (kind === 'roles_unavailable') return 'error.roles_unavailable'
   return kind === 'forbidden' || kind === 'not_found' || kind === 'network' || kind === 'unavailable' ? `error.${kind}` : 'error.other'
 }
 
