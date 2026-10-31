@@ -77,6 +77,17 @@ function aiErrorMessage(error: unknown, fallbackKey: string, fieldErrors: AiFiel
   if (status === 401) return String(i18n.global.t('error.unauthorized'))
   if (status === 403) return String(i18n.global.t('error.forbidden'))
   if (code === 'provider_in_use') return String(i18n.global.t('common.toast.ai_provider_in_use'))
+  // flowgate.v02.0113 T#2 rework: the first AI setup was refused because cards of the Flow run - name them.
+  if (code === 'ai_role_setup_cards_running') {
+    const params = normalizeApiError(error).source.params as { cards?: unknown } | undefined
+    const list = params?.cards
+    const cards = (Array.isArray(list) ? list : [])
+      .map((card) => (card && typeof card === 'object' ? (card as Record<string, unknown>) : {}))
+      .map((card) => String(card.label ?? card.node_key ?? ''))
+      .filter(Boolean)
+      .join(', ')
+    return String(i18n.global.t('gui.ai.errors.ai_role_setup_cards_running', { cards }))
+  }
   if (fieldErrors.length) {
     return fieldErrors.map((error) => {
       const fieldKey = `settings.ai.field.${error.field}`
@@ -367,4 +378,31 @@ export async function getMyAiRoles(): Promise<MyAiRoles> {
 export async function putMyAiRoles(roles: AiRoleValues): Promise<MyAiRoles> {
   const values = Object.fromEntries(AI_ROLES.map(role => [role, aiRolePayload(roles[role])]))
   return toMyAiRoles(await call(() => putRequest<RoleRaw>('/api/v1/me/ai-roles', { roles: values }), 'gui.ai.request_failed.my_save'))
+}
+
+/** flowgate.v02.0113 T#2 rework: the first AI setup's answer - the Flow's cards it applied to and the account as saved
+ *  (null when the server could not read it back; the caller reads it again). */
+export interface FirstAiRoleSetupAnswer {
+  flowId: string
+  requestId: string
+  replayed: boolean
+  cardKeys: string[]
+  account: MyAiRoles | null
+}
+
+/** Save the account's three values and apply them to every AI card of `flowId` at once (one server transaction). The
+ *  same `requestId` sent again is answered once more and applied once. */
+export async function applyFirstAiRoleSetup(flowId: string, requestId: string, roles: AiRoleValues): Promise<FirstAiRoleSetupAnswer> {
+  const values = Object.fromEntries(AI_ROLES.map(role => [role, aiRolePayload(roles[role])]))
+  const raw = await call(
+    () => postRequest<RoleRaw>(`${API}/flows/${encodeURIComponent(flowId)}/ai-roles/first-setup`, { request_id: requestId, roles: values }),
+    'gui.ai.request_failed.my_save',
+  )
+  return {
+    flowId: raw.flow_id,
+    requestId: raw.request_id,
+    replayed: raw.replayed === true,
+    cardKeys: (raw.cards ?? []).map((card: RoleRaw) => card.node_key),
+    account: raw.account ? toMyAiRoles(raw.account) : null,
+  }
 }

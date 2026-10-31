@@ -14,6 +14,10 @@ Migration 163: ``user_ai_role_defaults``, ``graph_node_role_slots``, ``graph_nod
   settings version once (W-6, ``card_settings.repository.bump_version``) in the same transaction.
 - No AI id column references ``ai_providers`` (DB-D4): a deleted AI keeps its original id and name snapshot.
 - Nothing here reads or writes ``graph_node_settings`` (DB-1 I-19).
+- flowgate.v02.0113 T#2 rework (0030-M §2, migration 166): ``first_setup`` is the source of a slot written by the
+  account's first AI setup applied to every AI-settings card of one Flow (``first_setup.apply``). One
+  ``ai_role_setup_requests`` row per applied request (account, request id) keeps its answer: the same request sent again
+  answers it and writes nothing. Its rows are only inserted.
 """
 from __future__ import annotations
 
@@ -27,10 +31,12 @@ from modules.flow_gate.db.dialect import MYSQL
 ACCOUNT_TABLE = "user_ai_role_defaults"
 SLOT_TABLE = "graph_node_role_slots"
 INIT_TABLE = "graph_node_role_init"
+SETUP_REQUEST_TABLE = "ai_role_setup_requests"     # migration 166
 
 ROLES = ("instruction", "execution", "review")
 ASSIGNED, NOT_USED = "assigned", "not_used"
-SLOT_SOURCES = ("creation_copy", "wp_plan", "pending_fill", "card_explicit")
+FIRST_SETUP = "first_setup"     # T#2 rework: the first AI setup's bulk apply (migration 166)
+SLOT_SOURCES = ("creation_copy", "wp_plan", "pending_fill", "card_explicit", FIRST_SETUP)
 PENDING_INIT, INITIALIZED = "pending_init", "initialized"
 NAME_SNAPSHOT_MAX = 100          # DB-D10: the AI name limit (ai_settings_service.NAME_MAX)
 ACCOUNT_SAVE_ATTEMPTS = 3        # DB-1 §4.3 W-1: first attempt included
@@ -256,3 +262,26 @@ def mark_initialized(flow_id: str, node_key: str, now: Optional[str] = None) -> 
     return get_store()._execute_affected(
         "UPDATE graph_node_role_init SET state = 'initialized', initialized_at = ? "
         "WHERE group_id = ? AND node_key = ? AND state = 'pending_init'", [now or _now(), flow_id, node_key]) > 0
+
+
+# ── first setup requests (T#2 rework, migration 166) ─────────────────────────
+
+def setup_requests_available() -> bool:
+    """False until migration 166 is applied: the first setup's bulk apply is off (its slot source is refused too)."""
+    return get_store().table_exists(SETUP_REQUEST_TABLE)
+
+
+def setup_request(user_id: str, request_id: str) -> Optional[dict]:
+    """The recorded answer of the account's first-setup request ``request_id`` (None = never applied)."""
+    row = get_store()._fetch_one(
+        "SELECT flow_id, result_json, created_at FROM ai_role_setup_requests WHERE user_id = ? AND request_id = ?",
+        [user_id, request_id])
+    return dict(row) if row else None
+
+
+def record_setup_request(user_id: str, request_id: str, flow_id: str, result_json: str,
+                         now: Optional[str] = None) -> None:
+    """Insert the applied request's answer inside the caller's transaction; the primary key refuses a second one."""
+    get_store()._execute(
+        "INSERT INTO ai_role_setup_requests (user_id, request_id, flow_id, result_json, created_at) "
+        "VALUES (?, ?, ?, ?, ?)", [user_id, request_id, flow_id, result_json, now or _now()])

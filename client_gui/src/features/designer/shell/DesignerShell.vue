@@ -319,7 +319,8 @@ const aiSetup: ReturnType<typeof createFirstRunAiSetup> = createFirstRunAiSetup(
     ? `${projectStore.designerSessionOwner}\n${projectId.value}\n${center.state.activeFlowId}` : null,
 })
 const center = createDesignerCenterSession({
-  beforeRunPrepare: () => aiSetup.request(),
+  // flowgate.v02.0113 T#2 rework: the first AI setup is applied to the Flow whose command waits for it.
+  beforeRunPrepare: (flowId) => aiSetup.request(flowId),
   runSetupCurrent: () => aiSetup.current(),
   // flowgate.v02.0059 T#2: the document read lets 자동 배치 follow a v0.1 sequence root's supersede chain.
   // flowgate.v02.0061 T#15: the card Hold of the card context menu goes through the card settings.

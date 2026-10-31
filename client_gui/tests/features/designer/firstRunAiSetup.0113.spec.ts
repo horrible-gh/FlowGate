@@ -10,14 +10,17 @@ import { prepareInspectorI18n } from './inspector/support/inspectorSupport'
 const i18n = prepareInspectorI18n()
 let wrapper: VueWrapper<any> | null = null
 afterEach(() => { wrapper?.unmount(); wrapper = null })
+// flowgate.v02.0113 T#2 rework: [저장] is one server request that saves the account and applies it to the Flow's cards.
+const applied = (completed = true) => ({ flowId: 'f', requestId: 'req', replayed: false, cardKeys: ['gn_1'], account: account(completed) })
 function harness() {
   let context: string | null = 'user/p/f'
-  const get = vi.fn().mockResolvedValue(account()), put = vi.fn().mockResolvedValue(account(true))
-  const setup = createFirstRunAiSetup({ context: () => context, get, put })
+  let ids = 0
+  const get = vi.fn().mockResolvedValue(account()), apply = vi.fn().mockResolvedValue(applied())
+  const setup = createFirstRunAiSetup({ context: () => context, get, apply, newRequestId: () => `req-${++ids}` })
   const prepare = vi.fn().mockResolvedValue(true), start = vi.fn().mockResolvedValue({ runId: 'r', status: 'idle', openNodeKeys: [] })
   const runs = reactive<Record<string, FlowRunState>>({})
-  const control = createFlowRunControl({ source: { ...fixtureFlowGraphSource, loadRun: vi.fn().mockResolvedValue(null), startRun: start, stopRun: start, resumeRun: start }, projectId: () => 'p', isOpen: () => true, beforePrepare: () => setup.request(), canProceed: () => setup.current(), prepare, refresh: () => undefined }, runs)
-  return { setup, get, put, control, runs, prepare, start, context: (value: string | null) => { context = value; setup.cancel() } }
+  const control = createFlowRunControl({ source: { ...fixtureFlowGraphSource, loadRun: vi.fn().mockResolvedValue(null), startRun: start, stopRun: start, resumeRun: start }, projectId: () => 'p', isOpen: () => true, beforePrepare: (flowId) => setup.request(flowId), canProceed: () => setup.current(), prepare, refresh: () => undefined }, runs)
+  return { setup, get, apply, control, runs, prepare, start, context: (value: string | null) => { context = value; setup.cancel() } }
 }
 describe('D §8 first modeless and run lifecycle', () => {
   it.each(['next','all'] as const)('%s: saves then resumes exactly once; next click does not reopen', async mode => {
@@ -26,18 +29,31 @@ describe('D §8 first modeless and run lifecycle', () => {
     expect(await h.control.run('f', mode)).toBe(false)
     h.get.mockResolvedValue(account(true))
     await Promise.all([h.setup.save(notUsed), h.setup.save(notUsed)])
-    expect(await result).toBe(true); expect(h.put).toHaveBeenCalledTimes(1); expect(h.start).toHaveBeenCalledTimes(1)
+    expect(await result).toBe(true); expect(h.apply).toHaveBeenCalledTimes(1); expect(h.start).toHaveBeenCalledTimes(1)
     expect(h.start.mock.calls[0][2]).toBe(mode === 'next' ? 'step' : 'full')
-    expect(await h.control.run('f', mode)).toBe(true); expect(h.setup.state.data).toBeNull(); expect(h.put).toHaveBeenCalledTimes(1)
+    expect(await h.control.run('f', mode)).toBe(true); expect(h.setup.state.data).toBeNull(); expect(h.apply).toHaveBeenCalledTimes(1)
+  })
+  it('applies to the Flow of the waiting command with a request id and needs no second account read', async () => {
+    const h = harness(), result = h.control.run('f', 'all'); await flushPromises()
+    expect(h.get).toHaveBeenCalledTimes(1)
+    await h.setup.save(notUsed)
+    expect(h.apply).toHaveBeenCalledWith('f', 'req-1', notUsed)
+    expect(await result).toBe(true); expect(h.get).toHaveBeenCalledTimes(1); expect(h.start).toHaveBeenCalledTimes(1)
+  })
+  it('reads the account again only when the answer could not carry it', async () => {
+    const h = harness(), result = h.control.run('f', 'next'); await flushPromises()
+    h.apply.mockResolvedValue({ ...applied(), account: null }); h.get.mockResolvedValue(account(true))
+    await h.setup.save(notUsed)
+    expect(h.get).toHaveBeenCalledTimes(2); expect(await result).toBe(true); expect(h.start).toHaveBeenCalledTimes(1)
   })
   it.each([[true,0],[true,3],[false,0]] as const)('completed=%s count=%s bypasses using only these flags', async (complete, count) => {
     const h = harness(); h.get.mockResolvedValue({ ...account(complete,count), options: [], roles: account().roles })
-    expect(await h.control.run('f','all')).toBe(true); expect(h.setup.state.data).toBeNull(); expect(h.put).not.toHaveBeenCalled()
+    expect(await h.control.run('f','all')).toBe(true); expect(h.setup.state.data).toBeNull(); expect(h.apply).not.toHaveBeenCalled()
   })
   it('opens when server count>0 even if filtered options are empty', async () => {
     const h = harness(); h.get.mockResolvedValue({ ...account(false,1), options: [] })
     const result = h.control.run('f','next'); await flushPromises(); expect(h.setup.state.data).not.toBeNull()
-    h.setup.cancel(); expect(await result).toBe(false); expect(h.put).not.toHaveBeenCalled(); expect(h.prepare).not.toHaveBeenCalled()
+    h.setup.cancel(); expect(await result).toBe(false); expect(h.apply).not.toHaveBeenCalled(); expect(h.prepare).not.toHaveBeenCalled()
   })
   it('a read failure never prepares or runs and keeps the run failure', async () => {
     const h = harness(); h.get.mockRejectedValue(new Error('read failed'))
@@ -45,19 +61,44 @@ describe('D §8 first modeless and run lifecycle', () => {
   })
   it('incomplete values do not save; save failure keeps the modeless and never runs', async () => {
     const h = harness(), result = h.control.run('f','next'); await flushPromises()
-    await h.setup.save({ ...notUsed, review: null } as any); expect(h.put).not.toHaveBeenCalled()
-    h.put.mockRejectedValue(new Error('save failed')); await h.setup.save(notUsed)
+    await h.setup.save({ ...notUsed, review: null } as any); expect(h.apply).not.toHaveBeenCalled()
+    h.apply.mockRejectedValue(new Error('save failed')); await h.setup.save(notUsed)
     expect(h.setup.state.error).toBe('save failed'); expect(h.start).not.toHaveBeenCalled(); h.setup.cancel(); expect(await result).toBe(false)
+  })
+  it('a refusal (a card running) keeps the modeless with its error; a retry of the same values reuses the request id', async () => {
+    const h = harness(), result = h.control.run('f','all'); await flushPromises()
+    h.apply.mockRejectedValueOnce(new Error('cards running: T'))
+    await h.setup.save(notUsed)
+    expect(h.setup.state.error).toBe('cards running: T'); expect(h.setup.state.data).not.toBeNull()
+    expect(h.prepare).not.toHaveBeenCalled(); expect(h.start).not.toHaveBeenCalled()
+    await h.setup.save(notUsed)
+    expect(h.apply.mock.calls.map(call => call[1])).toEqual(['req-1', 'req-1'])
+    expect(await result).toBe(true); expect(h.start).toHaveBeenCalledTimes(1)
+  })
+  it('other values after a failure are a new request', async () => {
+    const h = harness(), result = h.control.run('f','next'); await flushPromises()
+    h.apply.mockRejectedValueOnce(new Error('failed'))
+    await h.setup.save(notUsed)
+    await h.setup.save({ ...notUsed, execution: { kind: 'assigned', providerId: 'a' } })
+    expect(h.apply.mock.calls.map(call => call[1])).toEqual(['req-1', 'req-2'])
+    expect(await result).toBe(true)
   })
   it.each(['flow switch','account switch','logout','unmount'])('%s discards a waiting command and its late GET', async () => {
     const h = harness(), query = deferred<ReturnType<typeof account>>(); h.get.mockReturnValue(query.promise)
     const result = h.control.run('f','all'); h.context(null); query.resolve(account()); expect(await result).toBe(false)
     expect(h.setup.state.data).toBeNull(); expect(h.prepare).not.toHaveBeenCalled()
   })
-  it('a late successful PUT after a flow change cannot execute the old command', async () => {
-    const h = harness(), saved = deferred<ReturnType<typeof account>>(), result = h.control.run('f','all'); await flushPromises()
-    h.put.mockReturnValue(saved.promise); const save = h.setup.save(notUsed); h.context('user/p/other'); saved.resolve(account(true)); await save
+  it('a late successful save after a flow change cannot execute the old command', async () => {
+    const h = harness(), saved = deferred<ReturnType<typeof applied>>(), result = h.control.run('f','all'); await flushPromises()
+    h.apply.mockReturnValue(saved.promise); const save = h.setup.save(notUsed); h.context('user/p/other'); saved.resolve(applied()); await save
     expect(await result).toBe(false); expect(h.prepare).not.toHaveBeenCalled(); expect(h.start).not.toHaveBeenCalled()
+  })
+  it('cancel saves nothing, changes nothing and asks again on the next click', async () => {
+    const h = harness(), first = h.control.run('f','next'); await flushPromises()
+    h.setup.cancel(); expect(await first).toBe(false)
+    expect(h.apply).not.toHaveBeenCalled(); expect(h.prepare).not.toHaveBeenCalled(); expect(h.start).not.toHaveBeenCalled()
+    const second = h.control.run('f','next'); await flushPromises()
+    expect(h.setup.state.data).not.toBeNull(); h.setup.cancel(); expect(await second).toBe(false)
   })
   it('locked runs skip GET; prepare refusal after setup skips start', async () => {
     const h = harness(); h.runs.f = { run: { runId: 'r', status: 'running', openNodeKeys: [] }, readState: 'read', action: null, approving: null, holding: null, error: null }
@@ -72,7 +113,7 @@ describe('D §8 first modeless and run lifecycle', () => {
   })
   it('rechecks a lock acquired while the setup is open', async () => {
     const h = harness(), result = h.control.run('f','all'); await flushPromises()
-    h.runs.f.run = { runId: 'r', status: 'paused', openNodeKeys: [] }; h.get.mockResolvedValue(account(true)); await h.setup.save(notUsed)
+    h.runs.f.run = { runId: 'r', status: 'paused', openNodeKeys: [] }; await h.setup.save(notUsed)
     expect(await result).toBe(false); expect(h.prepare).not.toHaveBeenCalled(); expect(h.start).not.toHaveBeenCalled()
   })
   it('renders only three selects and footer actions without an overlay, toggle or explanation', async () => {

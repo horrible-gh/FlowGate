@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-const http = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }))
-vi.mock('@shared/api', async original => ({ ...await original<typeof import('@shared/api')>(), getRequest: http.get, putRequest: http.put }))
-import { getMyAiRoles, putMyAiRoles } from '@/features/ai/api'
+const http = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn() }))
+vi.mock('@shared/api', async original => ({ ...await original<typeof import('@shared/api')>(), getRequest: http.get, putRequest: http.put, postRequest: http.post }))
+import { applyFirstAiRoleSetup, getMyAiRoles, putMyAiRoles } from '@/features/ai/api'
 import AiRoleSelect from '@/features/ai/roles/AiRoleSelect.vue'
 import AiRoleDefaultsSection from '@/features/ai/roles/AiRoleDefaultsSection.vue'
 import { setCurrentUser } from '@/core/auth/currentUser'
@@ -25,6 +25,19 @@ describe('P-1 account role API and shared controls', () => {
     expect(http.put).toHaveBeenCalledWith('/api/v1/me/ai-roles', { roles: { instruction: { kind: 'not_used' }, execution: { kind: 'not_used' }, review: { kind: 'not_used' } } })
     await putMyAiRoles({ ...notUsed, execution: { kind: 'assigned', providerId: 'a' } })
     expect(http.put.mock.calls[1][1].roles.execution).toEqual({ kind: 'assigned', provider_id: 'a' })
+  })
+  it('first setup: one POST to the Flow with the request id and three values; its answer carries the account', async () => {
+    http.post.mockResolvedValue({ data: { flow_id: 'f', request_id: 'req', replayed: false, cards: [{ node_key: 'gn_1' }], account: accountRaw(true) } })
+    const answer = await applyFirstAiRoleSetup('f', 'req', { ...notUsed, execution: { kind: 'assigned', providerId: 'a' } })
+    expect(http.post).toHaveBeenCalledWith('/api/v1/flows/f/ai-roles/first-setup', { request_id: 'req', roles: { instruction: { kind: 'not_used' }, execution: { kind: 'assigned', provider_id: 'a' }, review: { kind: 'not_used' } } })
+    expect(answer).toMatchObject({ flowId: 'f', requestId: 'req', replayed: false, cardKeys: ['gn_1'], account: { setupCompleted: true } })
+    expect(http.put).not.toHaveBeenCalled()
+  })
+  it('first setup refused while cards run names the cards and keeps the code', async () => {
+    http.post.mockRejectedValue({ response: { status: 409, data: { ok: false, error: { code: 'ai_role_setup_cards_running', message: 'x', params: { flow_id: 'f', cards: [{ node_key: 'gn_1', label: '작업' }, { node_key: 'gn_2', label: null }] } } } } })
+    const failure = await applyFirstAiRoleSetup('f', 'req', notUsed).catch(error => error)
+    expect(failure.code).toBe('ai_role_setup_cards_running')
+    expect(failure.message).toContain('작업, gn_2')
   })
   it('keeps deleted identity/name and marks it as missing without auto-selection', async () => {
     const raw = accountRaw(true, 0)
