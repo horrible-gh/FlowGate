@@ -41,6 +41,9 @@ class ExecutionResult:
     cancelled: bool
     stdout_tail: str
     stderr_tail: str
+    # flowgate.v02.0114 T#4 (D 0006 3.5 (2)): the POSIX supervisor found a process of the run
+    # running on more processors than the run's limit and ended the tree. Never a success.
+    cpu_limit_violated: bool = False
 
 
 # Four-way process judgement (flowgate.v02.0080 T#1, NR0007 §5-0 ①). start_identity's None
@@ -216,9 +219,15 @@ class ProcessControl:
 
 def spawn(argv: list[str], cwd: Path, env: dict[str, str], timeout_seconds: int,
           run_id: str, *, job_name: str | None = None,
-          record: Callable[[str, dict], None] | None = None) -> tuple[ProcessControl, dict]:
+          record: Callable[[str, dict], None] | None = None,
+          cpu_limit: int | None = None) -> tuple[ProcessControl, dict]:
     """``job_name`` (Windows): create the run's Job under that name so a later server can open
     it and prove it empty (Self-check, 0080 T#1). A name already in use fails the spawn.
+
+    ``cpu_limit`` (0114 T#4): the run's reservation R. The whole tree is limited to R logical
+    processors before the target runs any code -- the Job's affinity (Windows), the
+    supervisor's own processor set inherited by the target (POSIX). A limit that cannot be set
+    fails the spawn like an owner that cannot be set up; no tree runs without it.
 
     ``record(stage, ownership)`` (Self-check, 0080 T#3) persists what is known before it is
     needed: ``"spawning"`` right before the first Popen, ``"spawned"`` right after each Popen
@@ -227,7 +236,7 @@ def spawn(argv: list[str], cwd: Path, env: dict[str, str], timeout_seconds: int,
     On failure the OwnershipError carries the ownership learnt so far (process records are
     taken right after each Popen, before anything can reap the process)."""
     if os.name == "nt":
-        owner = WindowsProcessOwner(run_id, job_name=job_name)
+        owner = WindowsProcessOwner(run_id, job_name=job_name, cpu_limit=cpu_limit)
         if not owner.active:
             raise OwnershipError("selfcheck_process_owner_unavailable", created=False)
         proc = None
@@ -275,7 +284,8 @@ def spawn(argv: list[str], cwd: Path, env: dict[str, str], timeout_seconds: int,
     try:
         _record(record, "spawned", ownership)
         proc.stdin.write((json.dumps({"argv": argv, "cwd": str(cwd), "env": env,
-                                      "timeout_seconds": timeout_seconds}) + "\n").encode("utf-8"))
+                                      "timeout_seconds": timeout_seconds,
+                                      "cpu_limit": cpu_limit}) + "\n").encode("utf-8"))
         proc.stdin.flush()
         started = json.loads(proc.stdout.readline())
         if started.get("event") != "started":
@@ -339,7 +349,8 @@ def wait(control: ProcessControl, timeout_seconds: int, cancelled: threading.Eve
             raise OwnershipError("selfcheck_process_owner_unavailable")
         return ExecutionResult(result.get("exit_code"), bool(result.get("timed_out")),
                                bool(result.get("cancelled")) or cancelled.is_set(),
-                               result.get("stdout_tail", ""), result.get("stderr_tail", ""))
+                               result.get("stdout_tail", ""), result.get("stderr_tail", ""),
+                               bool(result.get("cpu_limit_violated")))
     finally:
         if proc.poll() is None:
             control.cancel()

@@ -29,6 +29,78 @@ class DraftOwnerClosedError(Exception):
     """A draft run's owner token is consumed, revoked or gone, so it can no longer own a run."""
 
 
+class SelfCheckHostCapacityError(Exception):
+    """0114 T#4 (D 0006 3.5 (4)): the host has no processor left to reserve. Raised inside the
+    insert's transaction before the row exists, so nothing is written."""
+
+    def __init__(self, limit: int, reserved_total: int, reserved_protected: int, requested: int,
+                 desired: int):
+        super().__init__(f"host capacity exhausted: {reserved_total}/{limit} reserved")
+        self.limit = limit
+        self.reserved_total = reserved_total
+        self.reserved_protected = reserved_protected
+        self.requested = requested
+        self.desired = desired
+
+
+#: The one row every reserving admission locks first (migration 164).
+CAPACITY_LOCK_ID = "host_capacity"
+
+
+def _lock_host_capacity(store) -> None:
+    """Serialize reserving admissions across every instance sharing the store: the first
+    statement of the insert's transaction. SQLite: a no-op UPDATE takes the database write
+    lock. PostgreSQL / MySQL: a locking read of the row waits for a holder, then reads the
+    committed state. A missing row locks nothing, so the admission fails closed."""
+    if store.dialect == _dialect.SQLITE:
+        locked = store._execute_affected(
+            "UPDATE tr_self_check_capacity_lock SET updated_at = updated_at WHERE lock_id = ?",
+            [CAPACITY_LOCK_ID])
+    else:
+        locked = store._fetch_one(
+            "SELECT lock_id FROM tr_self_check_capacity_lock WHERE lock_id = ? FOR UPDATE",
+            [CAPACITY_LOCK_ID]) is not None
+    if not locked:
+        raise RuntimeError("tr_self_check_capacity_lock row is missing")
+
+
+def host_reservations(host_node_key: str | None, limit: int) -> tuple[int, int]:
+    """``(total, protected)`` of the host's active (pending/running) runs' reservations.
+
+    D 3.5 (5): a run of any project, group or instance counts; a run whose host is unknown
+    counts for the requesting host (and, when the requesting host is unknown itself, every
+    active run counts); a run without a stored reservation counts as the whole ``limit``.
+    ``protected`` is the part held by runs in recovery (recovering / incomplete)."""
+    store = get_store()
+    sql = ("SELECT cpu_reservation, recovery_state FROM tr_self_check_runs"
+           " WHERE status IN ('pending', 'running')")
+    params: list[Any] = []
+    if host_node_key is not None:
+        sql += " AND (host_node_key = ? OR host_node_key IS NULL)"
+        params.append(host_node_key)
+    total = protected = 0
+    for row in store._fetch_all(sql, params) or []:
+        value = row.get("cpu_reservation")
+        reserved = value if isinstance(value, int) and value >= 1 else limit
+        total += reserved
+        if row.get("recovery_state") not in (None, "none"):
+            protected += reserved
+    return total, protected
+
+
+def decide_reservation(limit: int, serial_reserve: int, reserved_total: int, desired: int) -> int | None:
+    """R for a request wishing ``desired`` processors, or None when nothing is free (D 3.5 (4)).
+
+    The first processor is granted whenever one is free; the part above 1 only from what is
+    left after the serial reserve, so serial runs are not easily refused because of parallel
+    ones. The reserve is a rule inside the cap, never a way over it."""
+    free = limit - reserved_total
+    if free < 1:
+        return None
+    extra = max(0, min(desired - 1, free - 1 - serial_reserve))
+    return 1 + extra
+
+
 def _require_open_owner(store, owner_token_id: str) -> None:
     """Fail the draft insert unless its TR(new) owner token is still unconsumed and unrevoked.
 
@@ -145,6 +217,8 @@ def create_pending(
     attempt_id: str | None = None,
     input_commit: str | None = None,
     host_node_key: str | None = None,
+    host_capacity: tuple[int, int] | None = None,
+    cpu_share_requested: int | None = None,
 ) -> dict:
     """Atomically insert a pending self-check run row with active_key set.
 
@@ -166,6 +240,14 @@ def create_pending(
     0114 T#3: ``host_node_key`` (migration 163) is the admitting server's host identifier
     (``instance_registry.node_key``), copied into the row in the insert's transaction so a
     baseline comparison never depends on instance registration rows that may be gone.
+
+    0114 T#4: ``host_capacity=(cap, serial reserve)`` makes the insert reserve processors for
+    the run (D 3.5 (4)-(6)). In the same transaction, after the capacity lock: the Group's
+    active run is checked again (the "already running" refusal stays first and distinct), the
+    host's active and protected reservations are summed (:func:`host_reservations`), R is
+    decided for ``cpu_share_requested`` and stored with the row as ``cpu_reservation``. When
+    nothing is free, :class:`SelfCheckHostCapacityError` and nothing is written. Without
+    ``host_capacity`` the row has no reservation (callers other than the admission path).
     """
     if tr_doc_id is None and not (owner_token_id and draft_doc_ref):
         raise ValueError("a draft self-check run needs owner_token_id and draft_doc_ref")
@@ -189,6 +271,21 @@ def create_pending(
 
     try:
         with store.transaction():
+            reservation = None
+            if host_capacity is not None:
+                limit, serial_reserve = host_capacity
+                desired = min(max(1, int(cpu_share_requested or 1)), limit)
+                _lock_host_capacity(store)
+                existing = get_active(project_id, group_id)
+                if existing:
+                    raise SelfCheckAlreadyRunningError(
+                        f"A self-check run is already active for {project_id}/{group_id}",
+                        existing_run_id=existing["self_check_run_id"],
+                    )
+                total, protected = host_reservations(host_node_key, limit)
+                reservation = decide_reservation(limit, serial_reserve, total, desired)
+                if reservation is None:
+                    raise SelfCheckHostCapacityError(limit, total, protected, 1, desired)
             draft = tr_doc_id is None
             lock_first = store.dialect != _dialect.SQLITE
             if draft and lock_first:
@@ -225,6 +322,12 @@ def create_pending(
                 store._execute(
                     "UPDATE tr_self_check_runs SET host_node_key = ? WHERE self_check_run_id = ?",
                     [host_node_key, rid],
+                )
+            if reservation is not None:
+                store._execute(
+                    "UPDATE tr_self_check_runs SET cpu_reservation = ?, cpu_share_requested = ?"
+                    " WHERE self_check_run_id = ?",
+                    [reservation, cpu_share_requested, rid],
                 )
     except Exception as exc:
         if _is_active_key_unique_violation(exc):

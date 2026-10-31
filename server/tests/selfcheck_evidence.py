@@ -90,15 +90,22 @@ _SKIP_DIRS = {"__pycache__", ".pytest_cache", "node_modules", ".git"}
 _OUTCOMES = ("passed", "failed", "error", "skipped", "xfailed", "xpassed")
 
 
-def register(config, capabilities: Optional[Callable[[], dict]] = None) -> "EvidencePlugin":
+def register(config, capabilities: Optional[Callable[[], dict]] = None,
+             parallel: Optional[Callable[[], Optional[dict]]] = None) -> "EvidencePlugin":
     """Register the plugin once per pytest config. ``capabilities`` returns the host
-    capability judgement (``tests/conftest.py`` ``CAPABILITIES``) -- category (b)."""
+    capability judgement (``tests/conftest.py`` ``CAPABILITIES``) -- category (b).
+    ``parallel`` (0114 T#4) returns the Self-check worker slot pool's account -- requested,
+    applied, slot source, pool size and the run tree's processor limit -- or None outside a
+    pool; the limit becomes ``workers.cpu_limit`` and the account the block's ``parallel``."""
     plugin = config.pluginmanager.get_plugin(PLUGIN_NAME)
     if plugin is None:
-        plugin = EvidencePlugin(config, capabilities)
+        plugin = EvidencePlugin(config, capabilities, parallel)
         config.pluginmanager.register(plugin, PLUGIN_NAME)
-    elif capabilities is not None:
-        plugin.capabilities = capabilities
+    else:
+        if capabilities is not None:
+            plugin.capabilities = capabilities
+        if parallel is not None:
+            plugin.parallel = parallel
     return plugin
 
 
@@ -160,16 +167,18 @@ def _dependencies() -> dict:
     return {"count": len(entries), "sha256": _sha(listing)}
 
 
-def _workers(config) -> dict:
-    """What was applied, not what was asked: xdist resolves ``-n auto`` into ``option.tx``."""
+def _workers(config, cpu_limit: Optional[int] = None) -> dict:
+    """What was applied, not what was asked: xdist resolves ``-n auto`` into ``option.tx`` (and
+    the slot pool may lower it). ``cpu_limit`` (0114 T#4): the run tree's processor limit when
+    the run has a Self-check slot pool, else None."""
     option = config.option
     numprocesses = getattr(option, "numprocesses", None)
     dist = getattr(option, "dist", "no") or "no"
     tx = getattr(option, "tx", None) or []
+    limit = cpu_limit if isinstance(cpu_limit, int) and not isinstance(cpu_limit, bool) and cpu_limit >= 1 else None
     if numprocesses and dist != "no" and tx:
-        # Step 4 adds the run tree's processor limit here (cpu_limit).
-        return {"mode": "xdist", "applied": len(tx), "dist": str(dist), "cpu_limit": None}
-    return {"mode": "serial", "applied": 0, "dist": "no", "cpu_limit": None}
+        return {"mode": "xdist", "applied": len(tx), "dist": str(dist), "cpu_limit": limit}
+    return {"mode": "serial", "applied": 0, "dist": "no", "cpu_limit": limit}
 
 
 # ── definition evidence (D 3.4 condition 8) ──────────────────────────────────
@@ -584,9 +593,11 @@ class _DefinitionCollector:
 # ── the plugin ───────────────────────────────────────────────────────────────
 
 class EvidencePlugin:
-    def __init__(self, config, capabilities: Optional[Callable[[], dict]] = None):
+    def __init__(self, config, capabilities: Optional[Callable[[], dict]] = None,
+                 parallel: Optional[Callable[[], Optional[dict]]] = None):
         self.config = config
         self.capabilities = capabilities
+        self.parallel = parallel
         self.is_worker = getattr(config, "workerinput", None) is not None
         try:
             keys = host_keys()
@@ -684,10 +695,18 @@ class EvidencePlugin:
             sys.stdout.flush()
 
     # composition ----------------------------------------------------------------
+    def parallel_account(self) -> Optional[dict]:
+        try:
+            account = self.parallel() if self.parallel else None
+        except Exception:
+            return None
+        return dict(account) if isinstance(account, dict) and account else None
+
     def environment(self) -> dict:
         env = {}
+        cpu_limit = (self.parallel_account() or {}).get("cpu_limit")
         for name, build in (("tools", _tool_versions), ("dependencies", _dependencies),
-                            ("workers", lambda: _workers(self.config))):
+                            ("workers", lambda: _workers(self.config, cpu_limit))):
             try:
                 env[name] = build()
             except Exception:
@@ -723,6 +742,9 @@ class EvidencePlugin:
             "definitions": {"run": run, "run_status": run_status, "scope": "all",
                             "items": dict(sorted(self.definitions.items()))},
         }
+        account = self.parallel_account()
+        if account is not None:
+            block["parallel"] = account
         text = _canonical(block)
         if len(text.encode("utf-8")) > MAX_BLOCK_BYTES:
             failed = set(self.failures)

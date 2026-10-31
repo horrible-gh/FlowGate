@@ -91,6 +91,10 @@ def public(row: dict) -> dict:
     # status / exit_code / timed_out above stay the run's verdict fields.
     result["result_summary"] = result_block.loads(row.get("result_summary"))
     result["environment_evidence"] = result_block.loads(row.get("environment_evidence"))
+    # 0114 T#4 (D 5): the share asked for and the processors reserved; the run's process tree
+    # is limited to cpu_reservation processors (None: a run admitted before the host cap).
+    result["cpu_share_requested"] = row.get("cpu_share_requested")
+    result["cpu_reservation"] = row.get("cpu_reservation")
     return result
 
 
@@ -358,8 +362,13 @@ def _source_fields(before: dict, after: dict) -> dict:
             "worktree_state_changed": any(before[k] != after[k] for k in ("head", "branch", "refs_hash", "index_hash", "index_lock"))}
 
 
+#: The request fields (help_catalog.SELF_CHECK_REQUEST_FIELDS describes the same set).
+#: 0114 T#4: ``parallel_share`` -- the processors (workers) the run wishes to use, default 1.
+REQUEST_FIELDS = frozenset({"program", "args", "cwd", "timeout_seconds", "parallel_share"})
+
+
 def _validate_request(request: dict) -> tuple[str, list[str], str, int]:
-    if not isinstance(request, dict) or set(request) - {"program", "args", "cwd", "timeout_seconds"}:
+    if not isinstance(request, dict) or set(request) - REQUEST_FIELDS:
         raise SelfCheckError(422, "selfcheck_invalid_request")
     program = request.get("program")
     args = request.get("args", [])
@@ -373,6 +382,42 @@ def _validate_request(request: dict) -> tuple[str, list[str], str, int]:
     except policy.PolicyError as exc:
         raise SelfCheckError(422, exc.code) from exc
     return program, args, cwd, timeout
+
+
+def _requested_share(request: dict) -> int:
+    """0114 T#4: the request's ``parallel_share`` (default 1). The same for every program."""
+    try:
+        return policy.validate_share(request.get("parallel_share"))
+    except policy.PolicyError as exc:
+        raise SelfCheckError(422, "selfcheck_invalid_share") from exc
+
+
+def _host_capacity_exhausted(exc: "db_runs.SelfCheckHostCapacityError") -> SelfCheckError:
+    """0114 T#4 (D 3.5 (4)): 409, distinct from ``selfcheck_already_running``; no run row exists.
+    No queue: the caller asks again a little later, in the foreground."""
+    details = {"limit": exc.limit, "reserved_total": exc.reserved_total,
+               "reserved_protected": exc.reserved_protected, "requested": exc.requested,
+               "desired_share": exc.desired, "retry": "retry_later"}
+    detail = ("host capacity exhausted: limit=%d reserved_total=%d reserved_protected=%d requested=%d"
+              " -- retry the same request shortly" % (exc.limit, exc.reserved_total,
+                                                       exc.reserved_protected, exc.requested))
+    return SelfCheckError(409, "selfcheck_host_capacity_exhausted", detail, details=details)
+
+
+def _reservation(share: int, granted: int | None, capacity: tuple[int, int]) -> dict:
+    """The start response's account of the reservation (D 5): asked, granted, and why lower."""
+    limit, serial_reserve = capacity
+    lowered = None
+    if granted is not None and granted < share:
+        lowered = "host_limit" if granted == limit else "host_capacity"
+    return {"requested": share, "granted": granted, "limit": limit, "serial_reserve": serial_reserve,
+            "cpu_limit": granted, "lowered": lowered}
+
+
+def _reserved_cpus(run_id: str) -> int | None:
+    """The run's reservation as stored with its row; the executor limits the tree to it."""
+    value = (db_runs.get_run(run_id) or {}).get("cpu_reservation")
+    return value if isinstance(value, int) and value >= 1 else None
 
 
 def _settle_tree(run_id: str, row: dict | None, ownership: dict) -> bool:
@@ -639,8 +684,12 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
     watch = None
     try:
         try:
+            # 0114 T#4: the reservation stored with the row limits the whole tree (D 3.5 (2)).
+            cpu_limit = _reserved_cpus(run_id)
+            limit = {"cpu_limit": cpu_limit} if cpu_limit is not None else {}
             control, ownership = executor.spawn([command.executable, *command.argv_prefix, *args], cwd, env, timeout,
-                                                run_id, job_name=proof.job_name(run_id), record=_record_spawn(run_id))
+                                                run_id, job_name=proof.job_name(run_id), record=_record_spawn(run_id),
+                                                **limit)
             with _controls_lock:
                 _controls[run_id] = control, cancelled
             row = db_runs.mark_running(run_id, source_lock_holder=holder,
@@ -675,6 +724,12 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
             # Stopped and its tree proved empty above; recorded as a failure, not a result.
             terminal = db_runs.finish_failed(run_id, error_code="selfcheck_lock_lost", exit_code=result.exit_code,
                                              timed_out=result.timed_out, **tails, **fields)
+        elif getattr(result, "cpu_limit_violated", False):
+            # 0114 T#4 (D 3.5 (2), POSIX): a process widened its processor set; the supervisor
+            # ended the tree. A failure, never a result.
+            terminal = db_runs.finish_failed(run_id, error_code="selfcheck_cpu_limit_violation",
+                                             exit_code=result.exit_code, timed_out=result.timed_out,
+                                             **tails, **fields)
         elif result.cancelled or db_runs.get_run(run_id)["cancel_requested"]:
             terminal = db_runs.finish_cancelled(run_id, exit_code=result.exit_code, **tails, **fields)
         else:
@@ -822,6 +877,7 @@ def _admit(target: dict, request: dict, requested_by: str | None) -> dict:
     if db_runs.has_group_recovery_incomplete(project_id, group_id):
         raise SelfCheckError(409, "selfcheck_recovery_incomplete")
     program, args, relative_cwd, timeout = _validate_request(request)
+    share = _requested_share(request)
     first_root = _worktree(target)
     path_value, _ = policy.controlled_path(first_root, _HOST_PATH)
     try:
@@ -868,23 +924,36 @@ def _admit(target: dict, request: dict, requested_by: str | None) -> dict:
         # 0080 T#1: every process of the run inherits the run marker (Linux marker scan).
         env[proof.MARKER_ENV] = run_id
         from modules.flow_gate.services.git import instance_registry
+        # 0114 T#4 (D 3.5 (4)-(6)): the reservation is decided, checked against the host's sum
+        # and stored in the insert's transaction; a refusal writes no row (finally below frees
+        # G and the runtime folder, as for "already running").
+        capacity = policy.host_capacity()
         # Owner instance + run-unit ownership record land before the spawn (NR0007 §5 item 4).
         row = db_runs.create_pending(project_id, group_id, target["tr_doc_id"], requested_by,
             policy.POLICY_VERSION, program, args, command.executable, command.name,
-            command.origin, relative_cwd, timeout, list(env), run_id=run_id, source_lock_holder=holder,
+            command.origin, relative_cwd, timeout, [*env, *policy.SLOT_ENV_KEYS], run_id=run_id,
+            source_lock_holder=holder,
             owner_token_id=target.get("owner_token_id"), draft_doc_ref=target.get("draft_doc_ref"),
             owner_instance_id=instance_registry.current_instance_id(), owner_marker=proof.owner_marker(run_id),
             attempt_id=target.get("attempt_id"), input_commit=target.get("input_commit"),
-            host_node_key=instance_registry.node_key())
+            host_node_key=instance_registry.node_key(), host_capacity=capacity, cpu_share_requested=share)
         spawned = threading.Event() if attempt_lock is not None else None
-        worker = threading.Thread(target=_finish, args=(run_id, ctx, lock_key, root, before,
-            runtime, command, args, cwd, env, timeout, keeper, attempt_lock, spawned), daemon=True,
-            name=f"selfcheck-{run_id}")
         try:
+            # The run's worker slot pool, R slots in its runtime folder, named to every process of
+            # the run (D 3.5 (3)); the processor limit itself is the executor's (D 3.5 (2)). The
+            # row is committed by now and no worker exists yet to end it, so a pool that cannot
+            # be prepared fails the run here like a worker that cannot start: terminal record
+            # (its reservation leaves the host's sum), keeper, G/W and runtime folder released.
+            if row.get("cpu_reservation"):
+                env.update(policy.slot_pool_env(runtime, row["cpu_reservation"]))
+            worker = threading.Thread(target=_finish, args=(run_id, ctx, lock_key, root, before,
+                runtime, command, args, cwd, env, timeout, keeper, attempt_lock, spawned), daemon=True,
+                name=f"selfcheck-{run_id}")
             worker.start()
         except Exception as exc:
             failed = db_runs.finish_failed(run_id, error_code="selfcheck_internal_error")
             if failed is not None:
+                keeper.stop()
                 if attempt_lock is not None:
                     lock_manager.release(ctx, attempt_lock)
                 lock_manager.release(ctx, lock_key)
@@ -894,9 +963,13 @@ def _admit(target: dict, request: dict, requested_by: str | None) -> dict:
         if spawned is not None:
             _await_spawn(worker, spawned)
         _emit(row)
-        return public(row)
+        result = public(row)
+        result["reservation"] = _reservation(share, row.get("cpu_reservation"), capacity)
+        return result
     except db_runs.SelfCheckAlreadyRunningError as exc:
         raise _already_running(exc.existing_run_id, target) from exc
+    except db_runs.SelfCheckHostCapacityError as exc:
+        raise _host_capacity_exhausted(exc) from exc
     except db_runs.DraftOwnerClosedError as exc:
         # The TR registered (or the token was revoked) after draft_target admitted it.
         raise SelfCheckError(403, "selfcheck_forbidden", "draft owner token is no longer open") from exc

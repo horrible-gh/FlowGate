@@ -288,6 +288,148 @@ def _dist_mode_problem(numprocesses, dist) -> "str | None":
     )
 
 
+# ── 실행 하나의 worker 슬롯 풀 (flowgate.v02.0114 T#4, D 0006 3.5 (3)) ─────────
+#
+# Self-check 는 실행마다 처리기 R개를 예약하고 프로세스 트리 전체를 그 R개에 묶는다(운영체제가
+# 강제한다). 여기 가드는 그 위의 협조 계층이다. R보다 많은 xdist worker 를 만들어 처리기를
+# 나눠 쓰는 낭비를 막는다.
+#
+# Self-check 가 실행 환경으로 슬롯 풀(실행 임시 폴더 안의 slot-0..slot-<R-1>)을 알려 주면:
+# - 테스트를 실행하는 pytest 프로세스(직렬 세션 또는 xdist worker)는 빈 슬롯 하나를 운영체제
+#   파일 잠금으로 잡고 끝날 때까지 쥔다. 비정상 종료하면 운영체제가 놓는다.
+# - 적용 worker 수 = min(요청 수(-n auto 결정 값 포함), 빈 슬롯 수). 조정 프로세스는 테스트를
+#   돌리지 않으므로 슬롯을 쥐지 않고, 센 슬롯을 worker 가 뜰 때 하나씩 넘긴다.
+# - 빈 슬롯이 없으면(중첩 pytest) xdist worker 를 만들지 않고 슬롯 없이 직렬로 돈다. 기다리거나
+#   실패하지 않는다. 넘겨받을 슬롯을 경쟁에서 놓친 worker 는 테스트를 돌리지 않고 실패로 드러난다.
+# 풀 정보가 없으면(Self-check 밖의 로컬 실행) 아무것도 하지 않는다.
+_SLOT_DIR_ENV = "FLOWGATE_SELFCHECK_SLOT_DIR"
+_SLOTS_ENV = "FLOWGATE_SELFCHECK_SLOTS"
+_slot_handles: list = []      # slot files whose lock this process holds for its whole life
+_slot_handoff: list = []      # controller: (index, handle) counted for workers not started yet
+_slot_state: dict = {}        # what the result block reports (requested / applied / source)
+
+
+def _slot_pool() -> "tuple[Path, int] | None":
+    raw_dir, raw_size = os.environ.get(_SLOT_DIR_ENV), os.environ.get(_SLOTS_ENV)
+    if not raw_dir or not raw_size:
+        return None
+    try:
+        size = int(raw_size)
+    except ValueError:
+        return None
+    pool = Path(raw_dir)
+    if size < 1 or not pool.is_dir():
+        return None
+    return pool, size
+
+
+def _lock_slot(path: Path):
+    """An open handle holding ``path``'s exclusive lock, or None when another process holds it."""
+    try:
+        handle = open(path, "a+b")
+    except OSError:
+        return None
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def _take_slots(pool: Path, size: int, wanted: int, first=None) -> list:
+    order = list(range(size))
+    if isinstance(first, int) and 0 <= first < size:
+        order.remove(first)
+        order.insert(0, first)
+    taken = []
+    for index in order:
+        if len(taken) >= wanted:
+            break
+        handle = _lock_slot(pool / f"slot-{index}")
+        if handle is not None:
+            taken.append((index, handle))
+    return taken
+
+
+def _processor_count() -> "int | None":
+    """How many processors this process may run on: the run tree's limit inside Self-check."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.GetProcessAffinityMask.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.c_size_t),
+                                                        ctypes.POINTER(ctypes.c_size_t)]
+            mine, system = ctypes.c_size_t(), ctypes.c_size_t()
+            if not kernel32.GetProcessAffinityMask(kernel32.GetCurrentProcess(), ctypes.byref(mine),
+                                                   ctypes.byref(system)):
+                return None
+            return bin(mine.value).count("1") or None
+        return len(os.sched_getaffinity(0)) or None
+    except Exception:
+        return None
+
+
+def _apply_slot_pool(config) -> None:
+    pool = _slot_pool()
+    if pool is None:
+        return
+    directory, size = pool
+    workerinput = getattr(config, "workerinput", None)
+    if workerinput is not None:
+        taken = _take_slots(directory, size, 1, workerinput.get("flowgate_slot"))
+        if not taken:
+            raise pytest.UsageError(
+                "Self-check worker slot pool: no free slot for this xdist worker (lost a race); "
+                "it runs no test and the run fails rather than exceed the reservation.")
+        _slot_handles.append(taken[0][1])
+        return
+    option = config.option
+    distributed = (getattr(option, "dist", "no") or "no") != "no"
+    requested = len(getattr(option, "tx", None) or []) if distributed else 0
+    if requested:
+        taken = _take_slots(directory, size, requested)
+        if taken:
+            option.numprocesses = len(taken)
+            option.tx = ["popen"] * len(taken)
+            _slot_handoff.extend(taken)
+        else:
+            option.numprocesses = 0
+            option.tx = []
+            option.dist = "no"
+        applied, source = len(taken), ("pool" if taken else "none")
+    else:
+        taken = _take_slots(directory, size, 1)
+        _slot_handles.extend(handle for _index, handle in taken)
+        applied, source = 0, ("pool" if taken else "none")
+    _slot_state.update(requested=requested, applied=applied, slot_source=source, pool_size=size,
+                       cpu_limit=_processor_count())
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_configure_node(node):
+    """Controller, right before an xdist worker starts: hand it one of the counted slots."""
+    if _slot_handoff:
+        index, handle = _slot_handoff.pop(0)
+        node.workerinput["flowgate_slot"] = index
+        handle.close()
+
+
+def pytest_unconfigure(config):
+    while _slot_handoff:
+        _slot_handoff.pop()[1].close()
+    while _slot_handles:
+        _slot_handles.pop().close()
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--fg-git-mode", action="store", default="template",
@@ -343,6 +485,9 @@ def pytest_configure(config):
         selfcheck_evidence = None
     if selfcheck_evidence is not None:
         selfcheck_evidence.register(config, capabilities=lambda: dict(_capability_state))
+        # 0114 T#4: the slot pool's requested / applied / source and the run tree's processor
+        # limit go into the result block as well (read when the block is composed).
+        selfcheck_evidence.register(config, parallel=lambda: dict(_slot_state) or None)
 
     # 컨트롤러에서만 본다. 워커는 자기 몫을 순차 실행하므로 dist 설정이 없다.
     if getattr(config, "workerinput", None) is None:
@@ -352,6 +497,10 @@ def pytest_configure(config):
         )
         if problem:
             raise pytest.UsageError(problem)
+
+    # 0114 T#4: the worker slot pool (above). Runs before xdist's own (trylast) configure, so a
+    # lowered worker count is what xdist starts.
+    _apply_slot_pool(config)
 
 
 def pytest_report_header(config):

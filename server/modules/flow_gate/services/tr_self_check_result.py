@@ -86,6 +86,25 @@ def _failures(raw: Any) -> list[dict]:
     return out
 
 
+def _parallel(raw: Any) -> Optional[dict]:
+    """0114 T#4 (D 5): the worker slot pool's account the block reports -- requested and applied
+    workers, slot source, pool size, the run tree's processor limit. Evidence only; None when
+    absent or malformed, and it never changes the summary's status."""
+    if not isinstance(raw, dict) or set(raw) != {"requested", "applied", "slot_source", "pool_size", "cpu_limit"}:
+        return None
+    try:
+        account = {"requested": _int(raw["requested"], "parallel"), "applied": _int(raw["applied"], "parallel"),
+                   "pool_size": _int(raw["pool_size"], "parallel")}
+        limit = raw["cpu_limit"]
+        account["cpu_limit"] = None if limit is None else _int(limit, "parallel")
+    except _Malformed:
+        return None
+    if raw["slot_source"] not in ("pool", "none") or account["pool_size"] < 1:
+        return None
+    account["slot_source"] = raw["slot_source"]
+    return account
+
+
 def _definitions(raw: Any) -> Optional[dict]:
     """Validated definition evidence, or None when it is missing or malformed (then no item of
     the run has a usable definition -- D 3.2, 9.2-6 (n))."""
@@ -273,7 +292,7 @@ def summarize(stdout_tail: Optional[str], exit_code: Optional[int]) -> tuple[dic
         "completed": completed, "outcomes": outcomes, "failures": failures,
         "failures_total": failures_total, "truncated": truncated, "complete_flag": complete_flag,
         "definitions": _definitions(block.get("definitions")), "block_sha256": digest,
-        "mismatch": False,
+        "mismatch": False, "parallel": _parallel(block.get("parallel")),
     }
     if truncated or failures_total != len(failures):
         summary.update(status=INCOMPLETE, reason="truncated")

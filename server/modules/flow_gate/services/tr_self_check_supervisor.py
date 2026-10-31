@@ -101,8 +101,61 @@ def _terminate(proc: subprocess.Popen, leader_start: str | None) -> None:
     proc.wait()
 
 
+def _limit(cpu_limit) -> frozenset | None:
+    """flowgate.v02.0114 T#4 (D 0006 3.5 (2)): narrow this supervisor to the lowest
+    ``cpu_limit`` processors it may use before the target exists; the target and its
+    descendants inherit the set. None = no limit. Raises when it cannot be set exactly."""
+    if cpu_limit is None:
+        return None
+    current = sorted(os.sched_getaffinity(0))
+    if not isinstance(cpu_limit, int) or isinstance(cpu_limit, bool) or not 1 <= cpu_limit <= len(current):
+        raise OSError(f"cpu limit {cpu_limit!r} cannot be set on {len(current)} processors")
+    allowed = frozenset(current[:cpu_limit])
+    os.sched_setaffinity(0, allowed)
+    if frozenset(os.sched_getaffinity(0)) != allowed:
+        raise OSError("cpu limit not applied")
+    return allowed
+
+
+def _tasks(pid: int) -> list[int]:
+    """Every thread of ``pid``. Linux keeps the processor set per thread (sched_setaffinity(2),
+    NOTES), and ``sched_getaffinity(pid)`` answers for the main thread only, so each task under
+    /proc/<pid>/task is checked. Without that listing (process gone, no /proc) the PID alone."""
+    try:
+        tids = [int(name) for name in os.listdir(f"/proc/{pid}/task") if name.isdigit()]
+    except OSError:
+        tids = []
+    return tids or [pid]
+
+
+def _widened(proc: subprocess.Popen, leader_start: str | None, allowed: frozenset, run_id: str | None) -> bool:
+    """A thread of a process of the run -- the target's group or a carrier of the run marker --
+    runs on a processor outside ``allowed`` (POSIX lets a thread widen its own set). A thread
+    gone or unreadable meanwhile is skipped: the residual limit of the POSIX ownership."""
+    _state, members, _owned = proof.posix_group_members(proc.pid, leader_start)
+    pids = set(members)
+    if run_id:
+        pids.update(proof.marker_scan(run_id)[1])
+    for pid in pids:
+        for tid in _tasks(pid):
+            try:
+                if not frozenset(os.sched_getaffinity(tid)) <= allowed:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
 def main() -> None:
     payload = json.loads(sys.stdin.buffer.readline())
+    try:
+        allowed = _limit(payload.get("cpu_limit"))
+    except Exception:
+        # No tree without its limit: the server reads anything but "started" as an owner failure.
+        sys.stdout.write(json.dumps({"event": "limit_failed"}) + "\n")
+        sys.stdout.flush()
+        return
+    run_id = (payload.get("env") or {}).get(proof.MARKER_ENV)
     proc = subprocess.Popen(payload["argv"], shell=False, cwd=payload["cwd"], env=payload["env"],
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             start_new_session=True)
@@ -125,6 +178,9 @@ def main() -> None:
             if time.monotonic() >= deadline:
                 reason = "timeout"
                 break
+            if allowed is not None and _widened(proc, leader_start, allowed, run_id):
+                reason = "cpu_limit"
+                break
             events = selector.select(min(.2, max(0, deadline - time.monotonic())))
             if events:
                 command = sys.stdin.buffer.readline()
@@ -143,6 +199,7 @@ def main() -> None:
             thread.join(timeout=5)
         result = {"event": "result", "exit_code": proc.returncode,
                   "timed_out": reason == "timeout", "cancelled": reason == "cancel",
+                  "cpu_limit_violated": reason == "cpu_limit",
                   "stdout_tail": bytes(out).decode("utf-8", "ignore"),
                   "stderr_tail": bytes(err).decode("utf-8", "ignore")}
         try:

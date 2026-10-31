@@ -97,7 +97,8 @@ SCHEMAS = {
     "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}}, ["path", "content"]),
     "move_source_file": _obj({"source_path": {"type": "string", "minLength": 1}, "target_path": {"type": "string", "minLength": 1}}, ["source_path", "target_path"]),
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
-    "run_self_check": _obj({"program": {"type": "string", "minLength": 1}, "args": {"type": "array", "items": {"type": "string"}}, "cwd": {"type": "string"}, "timeout_seconds": {"type": "integer", "minimum": 1}}, ["program"]),
+    # 0114 T#4: parallel_share -- the processors (workers) the run wishes to use; default 1.
+    "run_self_check": _obj({"program": {"type": "string", "minLength": 1}, "args": {"type": "array", "items": {"type": "string"}}, "cwd": {"type": "string"}, "timeout_seconds": {"type": "integer", "minimum": 1}, "parallel_share": {"type": "integer", "minimum": 1}}, ["program"]),
     "read_self_check": _obj({
         "self_check_run_id": {"type": "string", "minLength": 1},
         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
@@ -155,7 +156,12 @@ DESCRIPTIONS["run_self_check"] = (
     "run belongs to your work token and is attached to the TR when you register it. "
     "Use the verification command named in the TR, else in the T; "
     "else the minimal check obvious from your change; if none can be determined stop with test_command_missing. "
-    "Never search for another execution backend. If unavailable, report the returned reason and do not fall back."
+    "Never search for another execution backend. If unavailable, report the returned reason and do not fall back. "
+    "Every run reserves parallel_share logical processors (default 1) and its whole process tree runs on the "
+    "processors it was granted only: ask for the worker count your command uses (e.g. pytest -n 2 --dist loadfile "
+    "with parallel_share 2) and never give a tool more workers than that. A 409 selfcheck_host_capacity_exhausted "
+    "means the host's Self-check processors are all reserved: send the same request again a little later, in the "
+    "foreground; do not move it to the background."
 )
 DESCRIPTIONS["read_self_check"] = (
     "Read Self-check evidence for the bound TR (in a TR(new) step: the runs your work token started). "
