@@ -7,7 +7,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-POLICY_VERSION = "tr-selfcheck-v1"
+POLICY_VERSION = "tr-selfcheck-v2"
 OPERATORS = frozenset({"|", "||", "&&", ";", ">", ">>", "<", "&"})
 DENIED = frozenset({
     "cmd", "command", "powershell", "pwsh", "bash", "sh", "zsh", "fish", "wsl",
@@ -28,6 +28,26 @@ INTERPRETERS = {
     "perl": {"-e"}, "ruby": {"-e"}, "php": {"-r"},
 }
 HOST_KEYS = ("SYSTEMROOT", "WINDIR", "PATHEXT", "LANG", "LC_ALL", "LC_CTYPE", "JAVA_HOME", "DOTNET_ROOT", "GOROOT")
+
+# flowgate.v02.0114 T#4 (D 0006 3.5): the host-wide resource cap. Every Self-check run of a host
+# (same instance_registry.node_key) reserves R logical processors (at least 1, whatever the
+# program), the active and protected runs' reservations never sum above the cap, and the run's
+# whole process tree is limited to its R processors by the operating system (executor).
+#   cap            min(HOST_LIMIT_ENV or HOST_LIMIT_DEFAULT, logical processors of this server)
+#   serial reserve what a parallel share (the part above 1) must leave free, inside the cap
+#   share          the request's parallel_share, default 1, at most SHARE_MAX (lowered to the cap)
+HOST_LIMIT_DEFAULT = 4
+SERIAL_RESERVE_DEFAULT = 1
+SHARE_DEFAULT = 1
+SHARE_MAX = 64
+HOST_LIMIT_ENV = "FLOWGATE_SELFCHECK_HOST_LIMIT"
+SERIAL_RESERVE_ENV = "FLOWGATE_SELFCHECK_SERIAL_RESERVE"
+# The run's worker slot pool (D 3.5 (3)): a directory inside the run's own runtime folder holding
+# R slot files, named to every process of the run through its environment. Read by
+# server/tests/conftest.py; any other program ignores them.
+SLOT_DIR_ENV = "FLOWGATE_SELFCHECK_SLOT_DIR"
+SLOTS_ENV = "FLOWGATE_SELFCHECK_SLOTS"
+SLOT_ENV_KEYS = (SLOT_DIR_ENV, SLOTS_ENV)
 
 
 class PolicyError(ValueError):
@@ -171,6 +191,74 @@ def resolve_command(program: str, args: list[str], worktree: Path, path_value: s
     root = worktree.resolve(strict=True)
     origin = "project_local" if root == real or root in real.parents else "host_path"
     return ResolvedCommand(str(real), (), name, origin, path_value)
+
+
+def processor_ids() -> list[int]:
+    """The logical processors this server may run on, lowest first, inside the first processor
+    group on Windows (a Job's affinity is one group's mask). Empty when it cannot be read."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.GetProcessAffinityMask.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.c_size_t),
+                                                        ctypes.POINTER(ctypes.c_size_t)]
+            kernel32.GetProcessAffinityMask.restype = wintypes.BOOL
+            process_mask, system_mask = ctypes.c_size_t(), ctypes.c_size_t()
+            if not kernel32.GetProcessAffinityMask(kernel32.GetCurrentProcess(), ctypes.byref(process_mask),
+                                                   ctypes.byref(system_mask)):
+                return []
+            mask = process_mask.value
+            return [bit for bit in range(ctypes.sizeof(ctypes.c_size_t) * 8) if mask >> bit & 1]
+        except Exception:
+            return []
+    try:
+        return sorted(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        count = os.cpu_count() or 0
+        return list(range(count))
+
+
+def _env_int(name: str, host: dict | None) -> int | None:
+    raw = (os.environ if host is None else host).get(name)
+    try:
+        return int(str(raw).strip()) if raw not in (None, "") else None
+    except ValueError:
+        return None
+
+
+def host_capacity(host: dict[str, str] | None = None) -> tuple[int, int]:
+    """``(cap, serial reserve)`` of this host. A configured cap above the logical processor count
+    is the processor count (D 3.5 (1)); the reserve stays inside the cap."""
+    processors = len(processor_ids()) or 1
+    configured = _env_int(HOST_LIMIT_ENV, host)
+    cap = max(1, min(configured if configured and configured > 0 else HOST_LIMIT_DEFAULT, processors))
+    reserve = _env_int(SERIAL_RESERVE_ENV, host)
+    reserve = SERIAL_RESERVE_DEFAULT if reserve is None else reserve
+    return cap, max(0, min(reserve, cap - 1))
+
+
+def validate_share(value) -> int:
+    """The request's ``parallel_share``: omitted = SHARE_DEFAULT, else an integer 1..SHARE_MAX.
+    Not tied to the program: a pytest run and a type check asking the same share are equal."""
+    if value is None:
+        return SHARE_DEFAULT
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= SHARE_MAX:
+        raise PolicyError("selfcheck_invalid_share")
+    return value
+
+
+def slot_pool_env(run_root: Path, slots: int) -> dict[str, str]:
+    """Create the run's worker slot pool (``slot-0`` .. ``slot-<R-1>``) inside its runtime folder
+    and return the two variables that name it. The files are only lock targets."""
+    if not isinstance(slots, int) or isinstance(slots, bool) or slots < 1:
+        raise PolicyError("selfcheck_invalid_share")
+    pool = run_root / "slots"
+    pool.mkdir(parents=True, exist_ok=True)
+    for index in range(slots):
+        (pool / f"slot-{index}").touch(exist_ok=True)
+    return {SLOT_DIR_ENV: str(pool), SLOTS_ENV: str(slots)}
 
 
 def scrubbed_env(path_value: str, run_root: Path, host: dict[str, str] | None = None) -> dict[str, str]:

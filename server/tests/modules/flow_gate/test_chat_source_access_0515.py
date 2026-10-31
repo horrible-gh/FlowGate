@@ -152,11 +152,6 @@ class LiveSqliteDB:
 
 def _build_db(path: str) -> LiveSqliteDB:
     db = LiveSqliteDB(path)
-    for migration in sorted(_MIGRATIONS_DIR.glob("*.sql")):
-        try:
-            db.conn.executescript(migration.read_text(encoding="utf-8"))
-        except sqlite3.OperationalError:
-            pass
     now = "2026-09-08T00:00:00+09:00"
     db.conn.execute(
         "INSERT INTO projects (project_id, project_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
@@ -185,8 +180,8 @@ def _insert_token(db: LiveSqliteDB, token_id: str, *, source_access=None,
 
 
 @pytest.fixture
-def db_env(monkeypatch, tmp_path):
-    db = _build_db(str(tmp_path / "flowgate.db"))
+def db_env(monkeypatch, tmp_path, migrated_sqlite_db):
+    db = _build_db(migrated_sqlite_db("flowgate.db"))
     store = db_connection.FlowGateStore.__new__(db_connection.FlowGateStore)
     store._db, store._sq = db, None
     monkeypatch.setattr(db_connection, "STORE", store)

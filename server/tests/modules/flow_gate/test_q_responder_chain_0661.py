@@ -30,7 +30,6 @@ import json as _json
 import os
 import sqlite3
 import sys
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -47,7 +46,6 @@ os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = "test1"
 os.environ["FLOWGATE_TOKEN_PEPPER_test1"] = "test-pepper-value-123"
 
 _SERVER_DIR = Path(__file__).resolve().parents[3]
-_SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 _QUERIES_JSON = _SERVER_DIR / "sql" / "queries" / "queries.json"
 sys.path.insert(0, str(_SERVER_DIR))
 
@@ -639,16 +637,9 @@ USER = "u661"
 
 
 @pytest.fixture()
-def store(tmp_path):
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        path = f.name
+def store(tmp_path, migrated_sqlite_db):
+    path = migrated_sqlite_db("q-responder.db")
     mock_db = _MockDB(path)
-    for sql_file in sorted(_SCHEMA_DIR.glob("*.sql")):
-        try:
-            mock_db._conn.executescript(sql_file.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    mock_db._conn.commit()
     # Migration 142 must have applied cleanly — the columns ARE the subject here.
     cols = {r["name"] for r in mock_db._conn.execute("PRAGMA table_info(question_items)")}
     assert {"responder_state", "responder_run_id", "responder_attempts"} <= cols

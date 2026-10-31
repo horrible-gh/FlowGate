@@ -17,7 +17,6 @@ import os
 import re
 import sqlite3
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -47,18 +46,11 @@ RUN_FIELDS = ["instruction", "instruction_ai", "run_ai", "restart", "review_ai",
 
 
 @pytest.fixture()
-def db_path(tmp_path):
+def db_path(tmp_path, migrated_sqlite_db):
     from modules.flow_gate.db import _SqliteDbAdapter
     from modules.flow_gate.db import connection as conn_mod
 
-    path = str(tmp_path / "cards.db")
-    conn = sqlite3.connect(path)
-    for mig in sorted(_MIGRATIONS_DIR.glob("*.sql")):
-        try:
-            conn.executescript(mig.read_text(encoding="utf-8"))
-        except sqlite3.OperationalError:
-            pass
-    conn.close()
+    path = migrated_sqlite_db("cards.db")
     original = conn_mod.STORE
     store = conn_mod.FlowGateStore()
     store._db = _SqliteDbAdapter(path)
@@ -952,7 +944,7 @@ def _git_cmd(args, cwd):
 
 
 @pytest.fixture()
-def git_flow(env, tmp_path, monkeypatch):
+def git_flow(env, tmp_path, monkeypatch, git_repositories):
     """The project on a temporary bare origin: main (2 commits), feature/v0.2.0 (main + 1), old (main~1: lacks the
     groups' work base history), remote-only; base checkout provisioned with the local release/local (= main, never
     pushed); FB and FA have their worktrees."""
@@ -967,20 +959,7 @@ def git_flow(env, tmp_path, monkeypatch):
     monkeypatch.setattr(svc, "_sweep_daemon_started", True)
     # What is judged, not how fast this host spawns Git: the 3 s budget itself is tested with the merge target suite.
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
-    bare, seed = tmp_path / "origin.git", tmp_path / "seed"
-    _git_cmd(["init", "--bare", "-b", "main", str(bare)], tmp_path)
-    _git_cmd(["init", "-b", "main", str(seed)], tmp_path)
-    for n in (1, 2):
-        (seed / f"f{n}.txt").write_text(f"{n}\n", encoding="utf-8")
-        _git_cmd(["add", "-A"], seed)
-        _git_cmd(["commit", "-m", f"c{n}"], seed)
-    _git_cmd(["remote", "add", "origin", str(bare)], seed)
-    _git_cmd(["push", "origin", "main", "main~1:refs/heads/old", "main:refs/heads/remote-only"], seed)
-    _git_cmd(["checkout", "-b", "feature/v0.2.0"], seed)
-    (seed / "v02.txt").write_text("v02\n", encoding="utf-8")
-    _git_cmd(["add", "-A"], seed)
-    _git_cmd(["commit", "-m", "v02"], seed)
-    _git_cmd(["push", "origin", "feature/v0.2.0"], seed)
+    bare, seed = git_repositories("card-settings-v02", tmp_path)
     svc.save_config("flowgate", {"repo_url": bare.as_uri(), "provider": "generic", "base_branch": "main",
                                  "default_finalize_action": "merge", "enabled": True,
                                  "author_name": "T", "author_email": "t@t"})

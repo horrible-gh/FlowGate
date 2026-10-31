@@ -86,7 +86,8 @@ def test_catalog_registration_is_complete():
 def test_request_field_set_matches_the_tool_schema(locale):
     fields = {f["name"] for f in _content(locale)["request"]["fields"]}
     schema = api_server_tools.SCHEMAS["run_self_check"]
-    assert fields == {"program", "args", "cwd", "timeout_seconds"}
+    # 0114 T#4: parallel_share (the wished processor share) joined the request contract.
+    assert fields == {"program", "args", "cwd", "timeout_seconds", "parallel_share"}
     assert fields == set(schema["properties"])
     assert {f["name"] for f in _content(locale)["request"]["fields"] if f["required"]} == set(schema["required"])
     assert tuple(help_catalog.SELF_CHECK_REQUEST_FIELDS) == tuple(schema["properties"])

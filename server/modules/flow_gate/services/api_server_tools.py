@@ -97,10 +97,13 @@ SCHEMAS = {
     "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}}, ["path", "content"]),
     "move_source_file": _obj({"source_path": {"type": "string", "minLength": 1}, "target_path": {"type": "string", "minLength": 1}}, ["source_path", "target_path"]),
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
-    "run_self_check": _obj({"program": {"type": "string", "minLength": 1}, "args": {"type": "array", "items": {"type": "string"}}, "cwd": {"type": "string"}, "timeout_seconds": {"type": "integer", "minimum": 1}}, ["program"]),
+    # 0114 T#4: parallel_share -- the processors (workers) the run wishes to use; default 1.
+    "run_self_check": _obj({"program": {"type": "string", "minLength": 1}, "args": {"type": "array", "items": {"type": "string"}}, "cwd": {"type": "string"}, "timeout_seconds": {"type": "integer", "minimum": 1}, "parallel_share": {"type": "integer", "minimum": 1}}, ["program"]),
     "read_self_check": _obj({
         "self_check_run_id": {"type": "string", "minLength": 1},
         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        # 0114 T#3: with self_check_run_id, also judge that run against this baseline run.
+        "baseline_run_id": {"type": "string", "minLength": 1},
     }),
     "cancel_self_check": _obj({"self_check_run_id": {"type": "string", "minLength": 1}}, ["self_check_run_id"]),
     "read_document": READ_DOCUMENT_SCHEMA,
@@ -153,7 +156,12 @@ DESCRIPTIONS["run_self_check"] = (
     "run belongs to your work token and is attached to the TR when you register it. "
     "Use the verification command named in the TR, else in the T; "
     "else the minimal check obvious from your change; if none can be determined stop with test_command_missing. "
-    "Never search for another execution backend. If unavailable, report the returned reason and do not fall back."
+    "Never search for another execution backend. If unavailable, report the returned reason and do not fall back. "
+    "Every run reserves parallel_share logical processors (default 1) and its whole process tree runs on the "
+    "processors it was granted only: ask for the worker count your command uses (e.g. pytest -n 2 --dist loadfile "
+    "with parallel_share 2) and never give a tool more workers than that. A 409 selfcheck_host_capacity_exhausted "
+    "means the host's Self-check processors are all reserved: send the same request again a little later, in the "
+    "foreground; do not move it to the background."
 )
 DESCRIPTIONS["read_self_check"] = (
     "Read Self-check evidence for the bound TR (in a TR(new) step: the runs your work token started). "
@@ -161,7 +169,12 @@ DESCRIPTIONS["read_self_check"] = (
     "that run in detail. If the selected run is pending/running, repeat read_self_check until it reaches "
     "completed/failed/cancelled. For a TR edit or TR(new) worker, on a non-zero exit read the output, fix the code "
     "within scope, then run_self_check again. TR review workers are read-only and may only inspect the recorded "
-    "evidence; only TR edit and TR(new) workers may run or cancel Self-check."
+    "evidence; only TR edit and TR(new) workers may run or cancel Self-check. "
+    "A completed pytest run carries result_summary (counts, failures, status none/incomplete/mismatch/complete) "
+    "and environment_evidence. Pass baseline_run_id with self_check_run_id to get baseline_comparison: whether that "
+    "earlier run, made before your first product change, may stand in for re-running the baseline, and if so "
+    "new / existing / definition-changed / resolved-or-gone failures. It is advisory evidence only: it never turns "
+    "a failure into a pass, and a reusable=false answer means run the baseline again."
 )
 DESCRIPTIONS["cancel_self_check"] = "Cancel a running run_self_check by self_check_run_id."
 # 0064 T-B4d (P0006 §4.2.5 ①): one tool shares the four scope schemas, so the description names the scopes.
@@ -521,6 +534,12 @@ SELF_CHECK_WORKER_REASONS = {
 }
 
 
+def _baseline_arg(tool_input: dict) -> dict:
+    """0114 T#3: read_self_check's optional baseline run, passed on only when it is named."""
+    baseline_run_id = tool_input.get("baseline_run_id")
+    return {"baseline_run_id": baseline_run_id} if baseline_run_id else {}
+
+
 def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
     """Bind Self-check calls to the current TR; review scope is evidence-read-only."""
     try:
@@ -547,7 +566,7 @@ def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> t
         if name == "read_self_check":
             run_id = tool_input.get("self_check_run_id")
             if run_id:
-                return 200, {"ok": True, **tr_self_check_service.read(doc_id, run_id)}
+                return 200, {"ok": True, **tr_self_check_service.read(doc_id, run_id, **_baseline_arg(tool_input))}
             limit = tool_input.get("limit", 20)
             if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
                 raise ToolError(422, "schema_validation_failed", "input.limit must be between 1 and 100")
@@ -574,7 +593,7 @@ def _draft_self_check_call(run: dict, token: dict, name: str, tool_input: dict) 
         if name == "read_self_check":
             run_id = tool_input.get("self_check_run_id")
             if run_id:
-                return 200, {"ok": True, **tr_self_check_service.read_draft(token, run_id)}
+                return 200, {"ok": True, **tr_self_check_service.read_draft(token, run_id, **_baseline_arg(tool_input))}
             limit = tool_input.get("limit", 20)
             if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
                 raise ToolError(422, "schema_validation_failed", "input.limit must be between 1 and 100")

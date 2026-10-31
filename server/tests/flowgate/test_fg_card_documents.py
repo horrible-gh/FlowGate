@@ -19,7 +19,6 @@ import json
 import os
 import sqlite3
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -28,7 +27,6 @@ os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 
 _SERVER_DIR = Path(__file__).resolve().parents[2]
-_MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
 
 from fastapi import FastAPI  # noqa: E402
@@ -41,18 +39,11 @@ TEST_VALUE, TEST_VERSION = "card_docs_test", "1"
 
 
 @pytest.fixture()
-def db_path(tmp_path):
+def db_path(tmp_path, migrated_sqlite_db):
     from modules.flow_gate.db import _SqliteDbAdapter
     from modules.flow_gate.db import connection as conn_mod
 
-    path = str(tmp_path / "cards.db")
-    conn = sqlite3.connect(path)
-    for mig in sorted(_MIGRATIONS_DIR.glob("*.sql")):
-        try:
-            conn.executescript(mig.read_text(encoding="utf-8"))
-        except sqlite3.OperationalError:
-            pass
-    conn.close()
+    path = migrated_sqlite_db("cards.db")
     original = conn_mod.STORE
     store = conn_mod.FlowGateStore()
     store._db = _SqliteDbAdapter(path)

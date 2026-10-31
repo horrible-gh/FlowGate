@@ -19,6 +19,11 @@ def _error(exc: selfcheck.SelfCheckError) -> JSONResponse:
                   if exc.code == "selfcheck_already_running" else exc.details}})
 
 
+def _baseline_arg(baseline_run_id: str | None) -> dict:
+    """0114 T#3: the optional ``baseline_run_id`` query, passed on only when it is named."""
+    return {"baseline_run_id": baseline_run_id} if baseline_run_id else {}
+
+
 def _forbidden() -> JSONResponse:
     return JSONResponse(status_code=403, content={"ok": False,
         "error": {"code": "forbidden", "message": "forbidden", "details": {}}})
@@ -71,12 +76,14 @@ def list_runs(request: Request, tr_doc_id: str, limit: int = Query(20, ge=1, le=
 
 
 @router.get("/{tr_doc_id}/self-check/runs/{run_id}")
-def read_run(request: Request, tr_doc_id: str, run_id: str):
+def read_run(request: Request, tr_doc_id: str, run_id: str,
+             baseline_run_id: str | None = Query(None, min_length=1, max_length=191)):
+    # 0114 T#3 (D 5): a named baseline run adds its reuse judgement to the read (advisory).
     auth = _auth(request, tr_doc_id, False)
     if isinstance(auth, JSONResponse):
         return auth
     try:
-        return {"ok": True, **selfcheck.read(tr_doc_id, run_id)}
+        return {"ok": True, **selfcheck.read(tr_doc_id, run_id, **_baseline_arg(baseline_run_id))}
     except selfcheck.SelfCheckError as exc:
         return _error(exc)
 
@@ -155,15 +162,20 @@ def list_draft_runs(request: Request, limit: int = Query(20, ge=1, le=100), grou
 
 
 @draft_router.get("/runs/{run_id}")
-def read_draft_run(request: Request, run_id: str):
+def read_draft_run(request: Request, run_id: str,
+                   baseline_run_id: str | None = Query(None, min_length=1, max_length=191)):
     auth = _draft_token(request)
     if isinstance(auth, JSONResponse):
         return auth
     try:
         if not auth.get("_is_user_jwt"):
-            return {"ok": True, **selfcheck.read_draft(auth, run_id)}
+            return {"ok": True, **selfcheck.read_draft(auth, run_id, **_baseline_arg(baseline_run_id))}
         row = _draft_user_row(auth, run_id, False)
-        return row if isinstance(row, JSONResponse) else {"ok": True, **selfcheck.public(row)}
+        if isinstance(row, JSONResponse):
+            return row
+        if baseline_run_id is None:
+            return {"ok": True, **selfcheck.public(row)}
+        return {"ok": True, **selfcheck._with_baseline(row, baseline_run_id)}
     except selfcheck.SelfCheckError as exc:
         return _error(exc)
 

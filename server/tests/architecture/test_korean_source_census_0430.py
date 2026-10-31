@@ -186,7 +186,16 @@ FILE_LINE_CAPS: dict[str, int] = {
     # _korean_allowlist exclusions). HEAD already measured 116 from shared help
     # changes; ANSWERS_HELP_COPY["ko"] adds four product-copy lines alongside
     # complete en/ja siblings. No comment or docstring Korean is added.
-    "modules/flow_gate/services/help_catalog.py": 120,
+    # 120 -> 132: flowgate.v02.0114 T#3, measured with _korean_lines. HEAD measured 120;
+    # _SELF_CHECK_BASELINE_COPY["ko"] (the tr_self_check help item's result summary / baseline
+    # comparison guidance, D 0006 2.2 "help ko/en/ja") adds exactly twelve locale-dictionary
+    # lines with complete en/ja siblings. No comment or docstring Korean is added.
+    # 132 -> 142: flowgate.v02.0114 T#4, measured with the same scanner. HEAD measured 132; the
+    # tr_self_check help item's ko copy for the host processor cap (D 0006 2.3) adds exactly ten
+    # locale-dictionary lines with complete en/ja siblings: three error rows (invalid_share,
+    # host_capacity_exhausted, cpu_limit_violation), the parallel_share field description and six
+    # _SELF_CHECK_PARALLEL_COPY["ko"] entries. No comment or docstring Korean is added.
+    "modules/flow_gate/services/help_catalog.py": 142,
     "modules/flow_gate/services/invoke_mention_service.py": 4,
     # 157 -> 176: this file was already at 175 (pre-existing drift from other merged
     # groups untouched by 0523, same as the tr_commit_ledger.py entry this census still

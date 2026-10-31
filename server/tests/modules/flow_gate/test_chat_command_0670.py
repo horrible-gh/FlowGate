@@ -79,7 +79,10 @@ def _real_store(db_path: str) -> connection.FlowGateStore:
 def store(migrated_sqlite_db, monkeypatch):
     path = migrated_sqlite_db("test_chat_command_0670.db")
     real = _real_store(path)
-    for name in ("modules.flow_gate.db.connection", "modules.flow_gate.db.chat_command_requests",
+    # Keep get_store stable: a lazy import must not retain another test's getter.
+    # The shared getter resolves this scoped store, including graph source hooks.
+    monkeypatch.setattr(connection, "STORE", real)
+    for name in ("modules.flow_gate.db.chat_command_requests",
                  "modules.flow_gate.db.user_chat_command_policy", "modules.flow_gate.db.ai_run_source_changes",
                  "modules.flow_gate.db.user_chat_settings", "modules.flow_gate.db.user_chat_source_access",
                  "modules.flow_gate.db.tokens",

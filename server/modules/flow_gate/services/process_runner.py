@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 # Windows Job Object constants.  Kept here (rather than in provider orchestration)
 # so every lifecycle action uses the same ownership primitive.
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+# flowgate.v02.0114 T#4: the processor limit of a Self-check run's Job (D 0006 3.5 (2)).
+_JOB_OBJECT_LIMIT_AFFINITY = 0x00000010
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _CREATE_SUSPENDED = 0x00000004
 _ERROR_ALREADY_EXISTS = 183
@@ -95,6 +97,22 @@ class _JobBasicProcessIdList:
         return ctypes, wintypes, JOBOBJECT_BASIC_PROCESS_ID_LIST
 
 
+def job_affinity_mask(cpu_limit: int) -> int:
+    """The lowest ``cpu_limit`` processors this process may use, as a Job affinity mask (first
+    processor group). Raises when the limit is not a positive integer or exceeds them."""
+    from modules.flow_gate.services.tr_self_check_policy import processor_ids
+
+    if not isinstance(cpu_limit, int) or isinstance(cpu_limit, bool) or cpu_limit < 1:
+        raise ValueError(f"invalid cpu limit: {cpu_limit!r}")
+    ids = processor_ids()
+    if len(ids) < cpu_limit:
+        raise OSError(f"cpu limit {cpu_limit} exceeds the {len(ids)} usable processors")
+    mask = 0
+    for bit in ids[:cpu_limit]:
+        mask |= 1 << bit
+    return mask
+
+
 class WindowsProcessOwner:
     """Own one Windows subprocess attempt and all descendants via a Job Object.
 
@@ -103,11 +121,17 @@ class WindowsProcessOwner:
     existing taskkill fallback remains available.
     """
 
-    def __init__(self, run_id: Optional[str] = None, *, job_name: Optional[str] = None):
+    def __init__(self, run_id: Optional[str] = None, *, job_name: Optional[str] = None,
+                 cpu_limit: Optional[int] = None):
         self.run_id = run_id
         # A named Job (Self-check, flowgate.v02.0080 T#1) outlives this handle's owner in the
         # object namespace for as long as it has members, so a restarted server can open it.
         self.job_name = job_name
+        # flowgate.v02.0114 T#4: a Self-check run's reservation R. The Job's limit information
+        # then also carries an affinity of R processors, set before any member exists, so the
+        # whole tree runs on those R processors only. None (AI runs) sets no limit, as before.
+        self.cpu_limit = cpu_limit
+        self.affinity_mask: Optional[int] = None
         self._handle_lock = threading.RLock()
         self.handle = None
         self._kernel32 = None
@@ -124,6 +148,9 @@ class WindowsProcessOwner:
 
     def _create(self) -> None:
         try:
+            # The limit's mask is decided before the Job exists: a limit that cannot be computed
+            # fails with no handle (and no named Job) to leak.
+            mask = None if self.cpu_limit is None else job_affinity_mask(self.cpu_limit)
             ctypes, wintypes, info_type = _JobBasicLimitInformation.types()
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
@@ -143,6 +170,9 @@ class WindowsProcessOwner:
                 raise OSError(f"job name already in use: {self.job_name}")
             info = info_type()
             info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if mask is not None:
+                info.BasicLimitInformation.LimitFlags |= _JOB_OBJECT_LIMIT_AFFINITY
+                info.BasicLimitInformation.Affinity = mask
             if not kernel32.SetInformationJobObject(
                 handle, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
                 ctypes.byref(info), ctypes.sizeof(info)
@@ -161,6 +191,7 @@ class WindowsProcessOwner:
             kernel32.ResumeThread.restype = wintypes.DWORD
             self._kernel32 = kernel32
             self.handle = handle
+            self.affinity_mask = mask
         except Exception:
             self.handle = None
             self._kernel32 = None

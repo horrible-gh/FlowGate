@@ -105,13 +105,11 @@ class _TestStore:
 
 
 @pytest.fixture
-def store(tmp_path):
-    db_path = str(tmp_path / "tpl.db")
+def store(migrated_sqlite_db):
+    db_path = migrated_sqlite_db("tpl.db")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    for f in sorted(_MIGRATIONS_DIR.glob("*.sql")):
-        conn.executescript(f.read_text(encoding="utf-8"))
     # 045 seeds global standard bodies for D/P/L/DB. The rank-resolution unit tests
     # below set up their own registry state from an EMPTY baseline, so neutralise the
     # seed here. The seed itself is covered separately by TestSeededGlobalTemplates
@@ -137,16 +135,14 @@ def store(tmp_path):
 
 
 @pytest.fixture
-def seeded_store(tmp_path):
+def seeded_store(migrated_sqlite_db):
     """Like `store` but KEEPS the 045 global-template seed — the as-deployed default
     state. Verifies that a fresh DB resolves real standard bodies out of the box,
     with no manual E4/E5 registration (TR0016 rev3 — 'are you going to keep it from ever showing up' fix)."""
-    db_path = str(tmp_path / "tpl_seeded.db")
+    db_path = migrated_sqlite_db("tpl_seeded.db")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    for f in sorted(_MIGRATIONS_DIR.glob("*.sql")):
-        conn.executescript(f.read_text(encoding="utf-8"))
     conn.executescript(
         """
         INSERT OR IGNORE INTO projects(project_id,project_name,is_active,created_at,updated_at)

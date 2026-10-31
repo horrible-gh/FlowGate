@@ -1219,9 +1219,11 @@ def _content_changed_files_format(ctx: dict) -> dict:
 # The request contract itself is owned by api_server_tools.SCHEMAS["run_self_check"],
 # tr_self_check_service._validate_request and tr_self_check_policy; this item only
 # describes it, and a regression test pins the field set so the two cannot drift.
-SELF_CHECK_REQUEST_FIELDS: tuple[str, ...] = ("program", "args", "cwd", "timeout_seconds")
+#: 0114 T#4: parallel_share (D 0006 5, the wished parallel share) joins the four fields; the pinned test follows.
+SELF_CHECK_REQUEST_FIELDS: tuple[str, ...] = ("program", "args", "cwd", "timeout_seconds", "parallel_share")
 SELF_CHECK_TIMEOUT_DEFAULT = 300
 SELF_CHECK_TIMEOUT_MAX = 1800
+SELF_CHECK_SHARE_DEFAULT = 1
 
 SELF_CHECK_EXAMPLE: dict = {
     "program": "pytest",
@@ -1235,6 +1237,8 @@ SELF_CHECK_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
 SELF_CHECK_RESULT_FIELDS = (
     "exit_code", "timed_out", "stdout_tail", "stderr_tail",
     "source_changed_during_run", "worktree_state_changed", "error_code",
+    # 0114 T#3: evidence read from a normally completed run's result block (advisory).
+    "result_summary", "environment_evidence",
 )
 
 #: The REST contract behind run/read/cancel. Owned by
@@ -1271,9 +1275,21 @@ _LOCALE_INDEX = {"ko": 1, "en": 2, "ja": 3}
 #: (code, ko, en, ja) — meaning and next action, never internal detail.
 _SELF_CHECK_ERRORS: tuple[tuple[str, str, str, str], ...] = (
     ("selfcheck_invalid_request",
-     "요청이 객체가 아니거나 program/args/cwd/timeout_seconds 이외의 필드가 있다 → 네 필드만 보낸다.",
-     "The request is not an object or carries a field other than program/args/cwd/timeout_seconds -> send only those four.",
-     "リクエストがオブジェクトでない、または program/args/cwd/timeout_seconds 以外のフィールドがある → 4つのフィールドだけ送る。"),
+     "요청이 객체가 아니거나 program/args/cwd/timeout_seconds/parallel_share 이외의 필드가 있다 → 이 다섯 필드만 보낸다.",
+     "The request is not an object or carries a field other than program/args/cwd/timeout_seconds/parallel_share -> send only those five.",
+     "リクエストがオブジェクトでない、または program/args/cwd/timeout_seconds/parallel_share 以外のフィールドがある → この5つのフィールドだけ送る。"),
+    ("selfcheck_invalid_share",
+     "parallel_share 가 1 이상의 정수가 아니다(상한 64) → 명령이 쓸 worker 수를 정수로 보내거나 생략한다(생략하면 1).",
+     "parallel_share is not an integer of at least 1 (at most 64) -> send the worker count your command uses as an integer, or omit it (default 1).",
+     "parallel_share が 1 以上の整数ではない(上限 64) → コマンドが使う worker 数を整数で送るか省略する(省略時は 1)。"),
+    ("selfcheck_host_capacity_exhausted",
+     "이 호스트의 Self-check 처리기 예약이 모두 찼다(직렬 실행과 pytest 가 아닌 명령도 1을 예약한다). run 기록은 만들어지지 않았다. details 에 limit·reserved_total·reserved_protected(복구 대기 run 의 예약)·requested 가 있다 → 잠시 뒤 같은 요청을 다시 보낸다. 백그라운드로 넘기지 않는다. 같은 Group 의 실행 중 거절(selfcheck_already_running)과는 다른 코드다.",
+     "Every Self-check processor of this host is reserved (serial runs and non-pytest commands reserve 1 too). No run row was created. details carries limit, reserved_total, reserved_protected (held by runs awaiting recovery) and requested -> send the same request again a little later; do not move it to the background. It is a different code from the same-Group refusal (selfcheck_already_running).",
+     "このホストの Self-check 処理器の予約がすべて埋まっている(直列実行や pytest 以外のコマンドも 1 を予約する)。run 記録は作られていない。details に limit・reserved_total・reserved_protected(復旧待ち run の予約)・requested がある → 少し待って同じ要求を再送する。バックグラウンドに回さない。同じ Group の実行中拒否(selfcheck_already_running)とは別のコードである。"),
+    ("selfcheck_cpu_limit_violation",
+     "failed run 의 error_code 다(POSIX 호스트). run 의 프로세스가 받은 처리기 밖으로 처리기 집합을 넓혀 트리를 끝냈다. 결과를 검증 근거로 쓰지 않는다 → 명령이 처리기 설정을 바꾸지 않게 하고 다시 실행한다.",
+     "The error_code of a failed run (POSIX host): a process of the run widened its processor set beyond the granted processors and the tree was ended. Do not use its result as evidence -> keep the command from changing processor affinity and run it again.",
+     "failed run の error_code(POSIX ホスト)。run のプロセスが割り当てられた処理器の外へ処理器集合を広げたためツリーを終了した。結果を検証の根拠に使わない → コマンドが処理器設定を変えないようにして再実行する。"),
     ("selfcheck_invalid_program",
      "program 이 실행 파일 이름 하나가 아니다(경로·구분자·제어문자 포함) → program 에는 실행 파일 이름만 넣고 옵션과 대상은 args 로 분리한다.",
      "program is not a single executable name (path, separator or control character) -> pass only the executable name in program and move options/targets to args.",
@@ -1372,6 +1388,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
             "args": "옵션과 대상 경로의 문자열 배열. 기본 [].",
             "cwd": "관리 워크트리 기준 상대 경로. 기본 \".\".",
             "timeout_seconds": f"실행 제한 시간(초), 1~{SELF_CHECK_TIMEOUT_MAX} 정수. 기본 {SELF_CHECK_TIMEOUT_DEFAULT}.",
+            "parallel_share": f"이 실행이 쓸 처리기(worker) 수 희망, 1 이상 정수. 기본 {SELF_CHECK_SHARE_DEFAULT}. 실행은 받은 예약 수만큼의 처리기에서만 돈다.",
         },
         "http_note": "tr_doc_id 는 지금 수정 중인 TR 문서 id(토큰에 바인딩된 문서)이고 run_id 는 run 응답의 self_check_run_id 이다. 헤더는 Authorization: Bearer <작업 토큰> 을 그대로 쓴다. 성공 응답은 {ok:true, ...run 필드}, 라우트가 만드는 실패 응답은 {ok:false, error:{code, message, details}} 이며 code 는 아래 오류 표의 selfcheck_* 또는 forbidden 이다. 다른 문서의 토큰이나 edit 가 아닌 토큰은 403 이고 error.code 는 forbidden 이다(message·details 포함). 토큰 자체가 검증에 실패하면(Authorization 헤더 없음 401, 만료·무효 토큰, 권한 없음 403) 라우트가 아니라 인증 계층이 {ok:false, http_status, error_message, help_url} 을 돌려주며 error 객체가 없다. 응답에서 확인할 것: run 은 202 와 self_check_run_id·status, read/cancel 은 200 과 status(아래 statuses 중 하나).",
         "draft_http_note": "TR 작성(new) 단계에서는 TR 문서가 아직 없으므로 문서 id 대신 작업 토큰이 실행의 소유자다. 경로에 문서 id 를 넣지 않고 Authorization: Bearer <작업 토큰> 만 보낸다. run_id 는 run 응답의 self_check_run_id 이다. 목록·조회·취소는 이 토큰이 시작한 실행만 대상으로 한다. 이 토큰으로 TR 을 등록하면 그 실행들은 등록된 TR 에 연결되고(linked_at), 이후에는 TR 문서 경로(/documents/{tr_doc_id}/self-check/runs)로 조회한다. 워크플로 head 가 TR 이 아닌 new 토큰, 다른 그룹·프로젝트의 토큰은 403 이고 error.code 는 forbidden 이다. 성공·실패 응답 형식과 인증 계층 오류 형식은 edit 단계와 같다.",
@@ -1393,6 +1410,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
             "args": "Array of strings: options and target paths. Default [].",
             "cwd": "Path relative to the managed worktree. Default \".\".",
             "timeout_seconds": f"Time limit in seconds, integer 1..{SELF_CHECK_TIMEOUT_MAX}. Default {SELF_CHECK_TIMEOUT_DEFAULT}.",
+            "parallel_share": f"Processors (workers) this run wishes to use, integer of at least 1. Default {SELF_CHECK_SHARE_DEFAULT}. The run executes on its granted processors only.",
         },
         "http_note": "tr_doc_id is the TR document id you are editing (the document bound to the token) and run_id is the self_check_run_id from the run response. Send the same Authorization: Bearer <work token> header. Success is {ok:true, ...run fields}; route failures are {ok:false, error:{code, message, details}} where code is a selfcheck_* value from the error table below or forbidden. A token for another document or a non-edit token gets 403 with error.code forbidden (message and details included). If the token itself fails verification (missing Authorization header 401, expired or invalid token, no permission 403), the authentication layer answers instead of the route with {ok:false, http_status, error_message, help_url} and no error object. Verify in the response: run returns 202 with self_check_run_id and status; read/cancel return 200 with a status from the statuses list below.",
         "draft_http_note": "In a TR new step the TR document does not exist yet, so the work token, not a document id, owns the run. Put no document id in the path; send only Authorization: Bearer <work token>. run_id is the self_check_run_id from the run response. list/read/cancel only see the runs this token started. When this token registers the TR, those runs are linked to it (linked_at) and are read from then on through the TR document paths (/documents/{tr_doc_id}/self-check/runs). A new token whose workflow head is not a TR, or a token of another group/project, gets 403 with error.code forbidden. Success/failure and authentication-layer error shapes are the same as in the edit step.",
@@ -1414,6 +1432,7 @@ _SELF_CHECK_COPY: dict[str, dict] = {
             "args": "オプションと対象パスの文字列配列。既定 []。",
             "cwd": "管理ワークツリー基準の相対パス。既定 \".\"。",
             "timeout_seconds": f"実行制限時間(秒)、1〜{SELF_CHECK_TIMEOUT_MAX} の整数。既定 {SELF_CHECK_TIMEOUT_DEFAULT}。",
+            "parallel_share": f"この実行が使いたい処理器(worker)数、1 以上の整数。既定 {SELF_CHECK_SHARE_DEFAULT}。実行は割り当てられた予約数の処理器だけで動く。",
         },
         "http_note": "tr_doc_id は今修正中の TR 文書 id(トークンに紐づく文書)、run_id は run 応答の self_check_run_id です。ヘッダーは Authorization: Bearer <作業トークン> をそのまま使います。成功は {ok:true, ...run フィールド}、ルートが返す失敗は {ok:false, error:{code, message, details}} で、code は下のエラー表の selfcheck_* または forbidden です。他文書のトークンや edit 以外のトークンは 403 で error.code は forbidden です(message と details を含む)。トークン自体の検証に失敗した場合(Authorization ヘッダーなし 401、期限切れ・無効トークン、権限なし 403)は、ルートではなく認証層が {ok:false, http_status, error_message, help_url} を返し、error オブジェクトはありません。応答で確認すること: run は 202 と self_check_run_id・status、read/cancel は 200 と status(下の statuses のいずれか)。",
         "draft_http_note": "TR作成(new)段階では TR 文書がまだ無いため、文書 id ではなく作業トークンが実行の所有者です。パスに文書 id を入れず、Authorization: Bearer <作業トークン> だけを送ります。run_id は run 応答の self_check_run_id です。一覧・取得・取消はこのトークンが開始した実行だけが対象です。このトークンで TR を登録すると、それらの実行は登録された TR に連結され(linked_at)、以後は TR 文書のパス(/documents/{tr_doc_id}/self-check/runs)で取得します。ワークフロー head が TR でない new トークンや他グループ・他プロジェクトのトークンは 403 で error.code は forbidden です。成功・失敗の応答形式と認証層エラーの形式は edit 段階と同じです。",
@@ -1452,6 +1471,96 @@ _SELF_CHECK_ATTEMPT_COPY: dict[str, dict] = {
 }
 
 
+#: 0114 T#3 (D 3.2-3.4, 5): what a completed run's result block summary means and how a baseline
+#: run is judged. The keys are the same in every locale; the values are guidance, never a verdict.
+_SELF_CHECK_BASELINE_COPY: dict[str, dict] = {
+    "ko": {
+        "summary": "pytest 실행이 정상 종료되면 출력 맨 끝의 결과 블록이 result_summary(건수·실패 목록·항목별 테스트 정의 증거)와 environment_evidence(도구 버전·호스트 능력·환경 값·설치 의존성·적용 worker)로 저장된다. 판정은 지금처럼 status·exit_code·timed_out·소스 변동이며, 요약은 보강 증거일 뿐 통과의 근거가 아니다.",
+        "status": {
+            "none": "블록이 없다(구조화 결과 없음). 아무것도 추정하지 않는다.",
+            "incomplete": "블록이 깨졌거나 잘렸거나 둘 이상이거나 수집·완료 건수가 다르거나, 블록의 종료 상태가 비정상(0·1 이외)이거나 건수끼리 모순된다. 믿지 않는다.",
+            "mismatch": "실제 종료 코드와 블록의 종료 상태 또는 실패 목록이 어긋난다. 어느 쪽도 성공으로 올리지 않는다.",
+            "complete": "수집 = 완료이고 잘림·불일치가 없다. 기준선 비교에 쓸 수 있다.",
+        },
+        "how": "변경 후 실행을 read_self_check 할 때 baseline_run_id 에 제품 파일을 고치기 전에 돌린 기준선 실행 id 를 함께 주면 baseline_comparison 이 붙는다. reusable=false 이면 reasons 를 TR 에 적고 기준선을 다시 돌린다. 기준선과 변경 후 실행은 같은 명령·같은 호스트·같은 worker 조건으로 돌린다.",
+        "conditions": "재사용 조건: 같은 Group, 기준선이 정상 종료(시간 초과·취소·실패·복구 아님), 요약 complete, 실행 중 소스 변동 없음, 기준선의 실행 전·후 HEAD가 작업 시작 때 기록된 변경 전 기준점과 같고 작업 트리가 깨끗함(기준점은 작업 단위의 첫 발급임이 입증될 때만 기록하며, 앞선 발급이 기준점을 남기지 못한 작업은 계속 없음. 기준점이 없거나 현재 HEAD의 조상이 아니면 불가), 명령(program·args·cwd·정책 버전) 동일, 환경 증거 전 범주(범주마다 필수 하위 항목 전부, env 는 HOST_KEYS 전부)와 호스트 식별자 동일(없거나 빠지면 불가), 실행 수준 테스트 정의(pytest 설정·conftest·세션/자동 fixture·테스트 트리 플러그인과 그것들이 읽는 데이터) 동일.",
+        "comparison": {
+            "new_failures": "변경 후에만 실패한 항목(새 테스트 포함). 이번 변경의 결함 후보다.",
+            "existing_failures": "양쪽 모두 실패했고 테스트 정의 증거가 같은 항목만. 성공으로 바꾸지 않고 따로 표시한다.",
+            "definition_changed_failures": "양쪽 모두 실패했지만 테스트 본문·fixture·모듈 전역 값·보조 함수·데이터가 바뀌었거나 확인할 수 없는 항목. 기존 실패가 아니며 신규 실패 후보와 같은 수준으로 TR에 변경 사유를 적는다.",
+            "resolved_or_gone": "기준선에서만 실패한 항목. 해소인지 삭제·이름 변경인지는 구분하지 않는다.",
+        },
+        "advisory": "비교 결과는 참고 증거다. TR·검수 통과 기준, required gate, 반려 규칙은 바뀌지 않는다. 기존 실패를 xfail 처리하거나 목록에서 빼지 않는다.",
+    },
+    "en": {
+        "summary": "When a pytest run ends normally, the result block at the very end of its output is stored as result_summary (counts, failures, per-item test definition evidence) and environment_evidence (tool versions, host capabilities, environment values, installed dependencies, applied workers). The verdict stays status, exit_code, timed_out and source change; the summary is supporting evidence only, never a reason to pass.",
+        "status": {
+            "none": "No block (no structured result). Nothing is guessed.",
+            "incomplete": "The block is broken, cut, truncated, repeated, collected and completed counts differ, its exit status is abnormal (not 0 or 1), or its counts contradict each other. Not trusted.",
+            "mismatch": "The actual exit code and the block's exit status or failure list disagree. Neither side is promoted to success.",
+            "complete": "Collected = completed, nothing truncated or mismatched. Usable for a baseline comparison.",
+        },
+        "how": "When you read_self_check an after-change run, pass baseline_run_id with the id of the baseline run made before your first product file change; the answer gains baseline_comparison. On reusable=false write the reasons in the TR and run the baseline again. Run the baseline and the after-change run with the same command, on the same host, with the same worker setting.",
+        "conditions": "Reuse needs: the same Group, a baseline that ended normally (not timed out, cancelled, failed or recovered), a complete summary, no source change during the run, the baseline's HEAD before and after equal to the pre-change anchor recorded when the work started with a clean tree (it is recorded only when the issue is proven to be the work unit's first; a unit whose earlier issue left no anchor stays without one. No anchor, or an anchor that is not an ancestor of the current HEAD, means no reuse), the same command (program, args, cwd, policy version), every environment evidence category (with all its required sub-items, env holding every HOST_KEYS variable) and the host identifier equal (missing or partial means no reuse), and the same run-level test definition (pytest settings, conftest, session/autouse fixtures, test-tree plugins and the data they read).",
+        "comparison": {
+            "new_failures": "Failing only after the change (new tests included): candidates for defects of this change.",
+            "existing_failures": "Failing on both sides with equal test definition evidence only. Shown apart, never turned into a pass.",
+            "definition_changed_failures": "Failing on both sides, but the test body, fixtures, module-level values, helpers or data changed or cannot be confirmed. Not existing failures: report the reason for the change in the TR, at the level of a new failure.",
+            "resolved_or_gone": "Failing only in the baseline. Whether resolved, deleted or renamed is not told apart.",
+        },
+        "advisory": "The comparison is advisory evidence. TR / review pass criteria, required gates and rejection rules are unchanged. Do not mark existing failures xfail or drop them from the list.",
+    },
+    "ja": {
+        "summary": "pytest 実行が正常終了すると、出力末尾の結果ブロックが result_summary(件数・失敗一覧・項目別のテスト定義証拠)と environment_evidence(ツールバージョン・ホスト能力・環境値・インストール依存・適用 worker)として保存される。判定は従来どおり status・exit_code・timed_out・ソース変動であり、要約は補強証拠にすぎず合格の根拠にはならない。",
+        "status": {
+            "none": "ブロックがない(構造化結果なし)。何も推定しない。",
+            "incomplete": "ブロックが壊れている・切れている・複数ある、収集件数と完了件数が異なる、ブロックの終了ステータスが異常(0・1 以外)、または件数どうしが矛盾する。信頼しない。",
+            "mismatch": "実際の終了コードとブロックの終了ステータスまたは失敗一覧が食い違う。どちらも成功に格上げしない。",
+            "complete": "収集 = 完了で、切り詰め・不一致がない。基準線比較に使える。",
+        },
+        "how": "変更後の実行を read_self_check するとき、baseline_run_id に製品ファイルを変更する前に実行した基準線の実行 id を渡すと baseline_comparison が付く。reusable=false なら reasons を TR に記載し、基準線を再実行する。基準線と変更後の実行は同じコマンド・同じホスト・同じ worker 条件で実行する。",
+        "conditions": "再利用の条件: 同じ Group、基準線が正常終了(タイムアウト・取消・失敗・復旧ではない)、要約が complete、実行中のソース変動なし、基準線の実行前後の HEAD が作業開始時に記録された変更前基準点と同じで作業ツリーがクリーン(基準点は作業単位の最初の発行と証明できるときだけ記録し、先の発行が基準点を残せなかった作業はずっとなし。基準点がない、または現在の HEAD の祖先でなければ不可)、コマンド(program・args・cwd・ポリシーバージョン)が同じ、環境証拠の全カテゴリ(カテゴリごとの必須下位項目すべて、env は HOST_KEYS すべて)とホスト識別子が同じ(欠ければ不可)、実行レベルのテスト定義(pytest 設定・conftest・セッション/自動 fixture・テストツリーのプラグインとそれらが読むデータ)が同じ。",
+        "comparison": {
+            "new_failures": "変更後にのみ失敗した項目(新しいテストを含む)。今回の変更の欠陥候補。",
+            "existing_failures": "両方で失敗し、テスト定義証拠が同じ項目のみ。成功に変えず別に表示する。",
+            "definition_changed_failures": "両方で失敗したが、テスト本体・fixture・モジュール全域の値・補助関数・データが変わった、または確認できない項目。既存失敗ではなく、新規失敗候補と同じ水準で TR に変更理由を記載する。",
+            "resolved_or_gone": "基準線でのみ失敗した項目。解消か削除・名前変更かは区別しない。",
+        },
+        "advisory": "比較結果は参考証拠である。TR・検収の合格基準、required gate、差し戻し規則は変わらない。既存失敗を xfail にしたり一覧から外したりしない。",
+    },
+}
+
+
+#: 0114 T#4 (D 0006 2.3, 3.5, 3.6): the host-wide processor cap, the parallel share and the
+#: verification order. The keys are the same in every locale.
+_SELF_CHECK_PARALLEL_COPY: dict[str, dict] = {
+    "ko": {
+        "reservation": "호스트의 모든 Self-check 실행(직렬·pytest 가 아닌 명령 포함, TS 실행 제외)은 처리기(논리 프로세서)를 예약한다. 희망은 parallel_share(기본 1)이고, 받은 예약 R 은 응답의 cpu_reservation 이다. 예약 합은 호스트 상한을 넘지 않으며, 1을 넘는 몫은 직렬 예비분을 남기는 범위에서만 준다.",
+        "guarantee": "실행의 프로세스 트리 전체는 운영체제가 R개 처리기에만 묶는다(Windows Job 처리기 한정, POSIX supervisor 처리기 집합). 도구의 협조와 무관하게 동시에 실행되는 worker 는 R 을 넘지 못한다. R 보다 많은 worker 를 만드는 도구는 실패하지 않고 느려진다.",
+        "pytest": "pytest 병렬은 큰 선택에서만 -n <몫> --dist loadfile 로 쓰고 parallel_share 를 같은 수로 준다. server/tests 의 pytest 는 실행 하나의 worker 슬롯 풀(크기 R)을 나눠 써서 실제 worker 를 빈 슬롯 수로 낮추고, 중첩 pytest 는 남은 슬롯만 쓰며 없으면 슬롯 없이 직렬로 돈다. 안에서 pytest 를 여러 번 띄우는 스크립트보다 pytest 직접 실행을 쓴다.",
+        "serial_only": "고정 포트 연결 통합 테스트, 같은 소스에 산출물을 쓰는 빌드·타입 검사, 단일·소수 파일 선택은 병렬을 쓰지 않는다.",
+        "refusal": "409 selfcheck_host_capacity_exhausted 를 받으면 잠시 뒤 같은 요청을 다시 보낸다. 백그라운드로 넘기지 않는다.",
+        "verification": "개발 중에는 변경과 직접 관련된 테스트만, 수정 후에는 직전 실패 항목만, 최종 코드에서 회귀를 한 번 돈다. 기준선은 제품 파일을 처음 고치기 전에 한 번만 돌리고, 기준선과 최종 회귀는 같은 호스트·같은 worker 조건(같은 parallel_share 와 -n)으로 돌린다. 같은 -n auto 라도 호스트·몫에 따라 적용 worker 가 달라지며, 달라지면 기준선을 재사용할 수 없다.",
+    },
+    "en": {
+        "reservation": "Every Self-check run of a host (serial runs and non-pytest commands included, TS runs excluded) reserves logical processors. The wish is parallel_share (default 1); the granted reservation R is the response's cpu_reservation. Reservations never sum above the host cap, and a share above 1 is granted only while the serial reserve stays free.",
+        "guarantee": "The operating system limits the run's whole process tree to R processors (Windows Job affinity, POSIX supervisor processor set). Whatever the tool does, no more than R workers execute at once. A tool that starts more workers than R does not fail; it runs slower.",
+        "pytest": "Use pytest parallelism only for large selections, as -n <share> --dist loadfile with parallel_share set to the same number. server/tests pytest shares one worker slot pool of size R per run and lowers its workers to the free slots; a nested pytest uses only the slots left and runs serially without a slot when none is free. Prefer running pytest directly over a script that starts pytest several times.",
+        "serial_only": "Keep fixed-port connection integration tests, builds or type checks writing into the same source, and single- or few-file selections serial.",
+        "refusal": "On 409 selfcheck_host_capacity_exhausted send the same request again a little later. Do not move it to the background.",
+        "verification": "During development run only the tests tied to the change, after a fix only the last failures, and the regression once on the final code. Run the baseline once before the first product file change, and run baseline and final regression on the same host with the same worker setting (same parallel_share and -n). The same -n auto may apply a different worker count on another host or share, and then the baseline cannot be reused.",
+    },
+    "ja": {
+        "reservation": "ホストのすべての Self-check 実行(直列・pytest 以外のコマンドを含み、TS 実行は除く)は処理器(論理プロセッサ)を予約する。希望は parallel_share(既定 1)で、割り当てられた予約 R は応答の cpu_reservation である。予約の合計はホスト上限を超えず、1 を超える分は直列予備分を残せる範囲でだけ与える。",
+        "guarantee": "実行のプロセスツリー全体を OS が R 個の処理器だけに限定する(Windows Job の処理器限定、POSIX supervisor の処理器集合)。ツールの協力に関係なく同時に実行される worker は R を超えない。R より多くの worker を作るツールは失敗せず遅くなる。",
+        "pytest": "pytest の並列は大きな選択でだけ -n <分> --dist loadfile で使い、parallel_share を同じ数にする。server/tests の pytest は実行ごとの worker スロットプール(サイズ R)を分け合い、実際の worker を空きスロット数に下げる。入れ子の pytest は残りのスロットだけを使い、なければスロットなしで直列に動く。内部で pytest を何度も起動するスクリプトより pytest の直接実行を使う。",
+        "serial_only": "固定ポートの接続統合テスト、同じソースに成果物を書くビルド・型検査、単一・少数ファイルの選択は並列にしない。",
+        "refusal": "409 selfcheck_host_capacity_exhausted を受けたら、少し待って同じ要求を再送する。バックグラウンドに回さない。",
+        "verification": "開発中は変更に直接関係するテストだけ、修正後は直前の失敗項目だけ、最終コードで回帰を 1 回実行する。基準線は製品ファイルを最初に変更する前に 1 回だけ実行し、基準線と最終回帰は同じホスト・同じ worker 条件(同じ parallel_share と -n)で実行する。同じ -n auto でもホストや分によって適用 worker が変わり、変われば基準線を再利用できない。",
+    },
+}
+
+
 def _self_check_attempt(ctx: dict) -> Optional[str]:
     """The Graph attempt the caller's worker token is mapped to (0110 T#3), else None."""
     token_rec = ctx.get("token_rec")
@@ -1469,8 +1578,10 @@ def _content_tr_self_check(ctx: dict) -> dict:
     locale = ctx["locale"]
     copy = _SELF_CHECK_COPY.get(locale, _SELF_CHECK_COPY[FALLBACK_LOCALE])
     idx = _LOCALE_INDEX.get(locale, 1)
-    types = {"program": "string", "args": "array<string>", "cwd": "string", "timeout_seconds": "integer"}
-    defaults = {"program": None, "args": [], "cwd": ".", "timeout_seconds": SELF_CHECK_TIMEOUT_DEFAULT}
+    types = {"program": "string", "args": "array<string>", "cwd": "string", "timeout_seconds": "integer",
+             "parallel_share": "integer"}
+    defaults = {"program": None, "args": [], "cwd": ".", "timeout_seconds": SELF_CHECK_TIMEOUT_DEFAULT,
+                "parallel_share": SELF_CHECK_SHARE_DEFAULT}
     # 0638 T#1: a TR(new) worker has no TR id yet; its runs go through the token-owned draft routes.
     draft = ctx.get("action_scope") == "new"
     operations = SELF_CHECK_DRAFT_HTTP_OPERATIONS if draft else SELF_CHECK_HTTP_OPERATIONS
@@ -1522,6 +1633,27 @@ def _content_tr_self_check(ctx: dict) -> dict:
             "source_changed": copy["changed_note"],
         },
         "errors": [{"code": row[0], "guidance": row[idx]} for row in _SELF_CHECK_ERRORS],
+    }
+    baseline_copy = _SELF_CHECK_BASELINE_COPY.get(locale, _SELF_CHECK_BASELINE_COPY[FALLBACK_LOCALE])
+    content["baseline"] = {
+        "query_param": "baseline_run_id",
+        "tool_field": "read_self_check.baseline_run_id",
+        "response_field": "baseline_comparison",
+        "summary": baseline_copy["summary"],
+        "summary_status": dict(baseline_copy["status"]),
+        "how": baseline_copy["how"],
+        "conditions": baseline_copy["conditions"],
+        "comparison": dict(baseline_copy["comparison"]),
+        "advisory": baseline_copy["advisory"],
+    }
+    parallel_copy = _SELF_CHECK_PARALLEL_COPY.get(locale, _SELF_CHECK_PARALLEL_COPY[FALLBACK_LOCALE])
+    content["parallel"] = {
+        "request_field": "parallel_share",
+        "response_fields": ["cpu_share_requested", "cpu_reservation", "reservation"],
+        "refusal_code": "selfcheck_host_capacity_exhausted",
+        "refusal_details": ["limit", "reserved_total", "reserved_protected", "requested"],
+        **{key: parallel_copy[key] for key in ("reservation", "guarantee", "pytest", "serial_only",
+                                               "refusal", "verification")},
     }
     attempt_id = _self_check_attempt(ctx)
     if attempt_id:
