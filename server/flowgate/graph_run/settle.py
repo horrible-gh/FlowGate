@@ -42,6 +42,11 @@ answers and is not ``error``. No new idle reason value is added either: the run'
 without that card (as an instruction stage that ended on its own and waits for its answers), and the card tells its wait
 by its question mark (``run_service.question_nodes``).
 
+flowgate.v02.0113 T#3 rework (0084, idle reason only, no new value): that question wait hid the card's stop as
+``no_targets`` ("실행할 카드 없음") once its responder failed. An open card whose own AI asked a question nobody has answered
+yet (``_asks``) now waits for a person (``waiting_approval``), and its card shows the question mark; a card of a
+pre-feature attempt whose written instruction no AI judges any more is a person's wait too (``stage_view.waits_on_person``).
+
 flowgate.v02.0085 T#2 (D0007 §3.3): a confirm gate held by its accepted decision (its Git apply / archive job not
 finished: accepted, failed, recovery_required) is unfinished apply work, not a person's wait. It keeps a running /
 paused run working, like an integration in progress, so the run is never idle or completed meanwhile; an idle run with
@@ -107,6 +112,8 @@ def _waits_on_person(ctx, row: dict, reserved: Optional[dict] = None) -> bool:
         judged = card_settings_ports.stage_waits(ctx.flow_id, row)       # 0113 T#3: an assigned attempt's stage
         if judged == card_settings_ports.STAGE_UNREADABLE:
             return False                                                  # its error family (``_failed``)
+        if _asks(ctx, row):                                               # 0113 T#3 rework: its AI's question
+            return bool(row.get("dispatch_token_issued")) and not _failed(ctx, row)
         if judged is not None:
             return bool(row.get("dispatch_token_issued")) and not _failed(ctx, row) and bool(judged)
         return (bool(row.get("dispatch_token_issued")) and not _failed(ctx, row)
@@ -116,6 +123,18 @@ def _waits_on_person(ctx, row: dict, reserved: Optional[dict] = None) -> bool:
         if card_settings_ports.stage_waits(ctx.flow_id, row) is True:
             return True                                                   # a review assignment waits (L-2 §2.12)
     return row["status"] == "review" and engine.awaiting_approval(ctx.flow_id, row, node_type)
+
+
+def _asks(ctx, row: dict) -> bool:
+    """flowgate.v02.0113 T#3 rework (0084: an idle run ``no_targets`` whose card's AI asked a question its responder
+    failed to answer): an open card whose own AI asked a question nobody has answered yet waits for that answer — a
+    person's, or its responder's — so the run waits for a person (``waiting_approval``), never "nothing to run". The
+    card tells it by its question mark (``run_service.question_nodes``). A failed read: not asking."""
+    from modules.flow_gate.graph_workflow.services import run_service
+    try:
+        return run_service.node_asks(ctx.flow_id, row)
+    except Exception:  # noqa: BLE001 — the judgement goes on as before
+        return False
 
 
 def _failed(ctx, row: dict) -> bool:

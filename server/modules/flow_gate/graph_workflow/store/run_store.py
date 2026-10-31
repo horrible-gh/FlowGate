@@ -475,6 +475,23 @@ def nodes_of_ai_runs(run_id: str, ai_run_ids: list[str]) -> set[str]:
     return {r["node_key"] for r in rows}
 
 
+def ai_runs_of_node(run_id: str, node_key: str) -> list[str]:
+    """flowgate.v02.0113 T#3 rework: the AI runs that worked for the node's live attempt, oldest first - the runs its
+    mapped tokens carry (never an invalidated attempt's, as ``token_ids``) and its active attempt's executions."""
+    if not available():
+        return []
+    rows = _all("SELECT t.ai_run_id FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
+                "WHERE m.run_id = ? AND m.node_key = ? AND t.ai_run_id IS NOT NULL AND (m.attempt_id IS NULL OR "
+                "m.attempt_id NOT IN (SELECT attempt_id FROM graph_node_attempts WHERE status = 'invalidated')) "
+                "ORDER BY m.mapped_at, m.token_id", [run_id, node_key])
+    found = [r["ai_run_id"] for r in rows]
+    attempt = active_attempt_id(run_id, node_key)
+    if attempt and get_store().table_exists("graph_attempt_runs"):
+        found += [r["ai_run_id"] for r in _all("SELECT ai_run_id FROM graph_attempt_runs WHERE attempt_id = ? "
+                                                "AND ai_run_id IS NOT NULL ORDER BY created_at, exec_id", [attempt])]
+    return list(dict.fromkeys(found))
+
+
 def invalidated_token_ids(run_id: str, node_key: str) -> list[str]:
     """0061 T#7: the node's tokens of its invalidated attempts, mapping order — what an ended old attempt wrote with."""
     rows = _all("SELECT m.token_id FROM graph_run_token_map m JOIN graph_node_attempts a ON a.attempt_id = m.attempt_id "

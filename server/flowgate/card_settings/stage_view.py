@@ -5,7 +5,8 @@
 result → result review, ``seq`` ascending, the current one marked) and ``approval_wait_submission`` (the submission mark
 of the B-1 row ``approval_wait_reason`` showed). No attempt / the feature off / a read error: null; a pre-feature attempt:
 ``[]`` and null. ``waits_on_person`` is the run's idle judgement of a node of an assigned attempt (L-2 §2.12 table).
-Nothing here resolves a role, writes an assignment or restarts a wait.
+Nothing here resolves a role, writes an assignment or restarts a wait. flowgate.v02.0113 T#3 rework: a pre-feature
+attempt's instruction stage whose written instruction nothing judges any more waits for a person (``_unjudged_instruction``).
 """
 from __future__ import annotations
 
@@ -101,6 +102,29 @@ def approval_wait_submission(row: dict, attempt_id: Optional[str]) -> Optional[d
     return dict(mark) if isinstance(mark, dict) else None
 
 
+def _unjudged_instruction(flow_id: str, row: dict) -> bool:
+    """flowgate.v02.0113 T#3 rework (0084: 0004-T ``pending_review`` with no review and no approval, the run idle
+    ``no_targets``): a pre-feature attempt's node open in its instruction stage whose instruction is written and not
+    approved while nothing works on it — no AI run of the node, no review of it, no run-end hand-off
+    (``review_stage.ai_working``). Its run-end step is over or lost and the run read's reconciliation took nothing
+    (``review_stage._reconcile_instruction``: a B-1 recorded, a run that did not end on its own, …): a person judges the
+    instruction, so the run waits for a person, never "nothing to run". Reads only; a failed read: no."""
+    if row.get("stage") != sa.INSTRUCTION or not row.get("instruction_doc_id"):
+        return False
+    try:
+        from flowgate.card_approval import legacy_adapter as approvals  # noqa: PLC0415
+        from flowgate.card_documents import lines as card_lines  # noqa: PLC0415
+        from flowgate.card_settings import review_stage  # noqa: PLC0415 — review_stage imports this package
+
+        doc = approvals.document(row["instruction_doc_id"])
+        if doc is None or doc.get("doc_review_status") in review_stage.APPROVED or not card_lines.has_body(doc):
+            return False
+        return not review_stage.ai_working(flow_id, row["node_key"], row["instruction_doc_id"])
+    except Exception:  # noqa: BLE001 — the run read goes on with the current judgement
+        _log.warning("instruction wait read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+        return False
+
+
 def waits_on_person(flow_id: str, row: dict):
     """L-2 §2.12 run idle judgement of a node of an assigned attempt; None: the current judgement (a pre-feature
     attempt, the feature off, not a role card). A read error is ``UNREADABLE`` — told apart from a plain no: no person's
@@ -114,6 +138,8 @@ def waits_on_person(flow_id: str, row: dict):
     except Exception:  # noqa: BLE001
         _log.warning("stage assignment wait read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
         return UNREADABLE
+    if a == sa.LEGACY and row.get("status") == "open" and _unjudged_instruction(flow_id, row):
+        return True
     if a == sa.LEGACY or a is None:
         return None
     if row.get("status") == "open":

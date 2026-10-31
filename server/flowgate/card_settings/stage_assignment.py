@@ -586,8 +586,18 @@ def act_instruction_stage(ctx, node: dict, a: dict, issued_to: str, token: dict,
         if a["stage_state"] in (ACTIVE, WAITING):
             move(a, DONE)
         doc_id, attempt_id = a["reused_doc_id"], a["attempt_id"]
-        ctx.jobs.append(lambda: manual_stage.proceed_written_instruction(
-            flow_id, run_id, key, attempt_id, doc_id, None, assigned_review.HELD))
+
+        def proceed() -> None:
+            # 0113 T#3 rework: the opening's (or the command's) own settlement judged the node before this post-commit
+            # step made its review assignment, and nothing judged the run again (an idle run stayed ``no_targets``):
+            # the run is settled once the step is over, whatever it did.
+            try:
+                manual_stage.proceed_written_instruction(flow_id, run_id, key, attempt_id, doc_id, None,
+                                                         assigned_review.HELD)
+            finally:
+                legacy.settle_graph_run(flow_id)
+
+        ctx.jobs.append(proceed)
         return None
     if a["actor"] == AI:
         job = _write_job(ctx, node, a, INSTRUCTION_WRITE, issued_to, token, INSTRUCTION, plan["instruction_type"])
