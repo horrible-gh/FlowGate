@@ -1,7 +1,6 @@
 // v8: one live controller per selected card; data and window drafts survive tab/card changes.
 import { computed, effectScope, getCurrentInstance, onScopeDispose, reactive, ref, shallowRef, watch, type ComputedRef } from 'vue'
 import { documentHistoryRead, testSpecSave, testSpecMutationErrorOf, type TestSpecView, type TestSpecCasePayload, type TestSpecResultEntry, type TestSpecFormatError } from '@/features/document'
-import { openDocumentAi } from '../../openDocument'
 import { captureInspectorResourceContext, useInspectorResource } from '../../useInspectorResource'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { cardSettingsDisabledReason, type CardSettingsField } from '../settings/cardSettingsModel'
@@ -10,7 +9,7 @@ import { testCardPresentation, testSpecTargetDocId, type TestCardWriting, type T
 import { useTestSpec } from './useTestSpec'
 
 export type TestCardWindowKind = 'brief' | 'scenario' | 'case' | 'report' | 'follow'
-export type TestCardCommand = 'run' | 'cancel' | 'rerunCase' | 'resultEntry' | 'caseSave' | 'caseAdd' | 'caseDelete' | 'rawSave' | 'briefSave' | 'rewriteAll' | 'rewriteCase' | 'settingChange' | 'decide' | 'follow'
+export type TestCardCommand = 'run' | 'cancel' | 'rerunCase' | 'resultEntry' | 'caseSave' | 'caseAdd' | 'caseDelete' | 'rawSave' | 'briefSave' | 'rewriteCase' | 'settingChange' | 'decide' | 'follow'
 export interface TestCardWindowState {
   open: boolean
   minimized: boolean
@@ -51,7 +50,6 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   }])) as Record<TestCardWindowKind, TestCardWindowState>)
   let front = 0
   let settlingWriting = false
-  let submittedWriting = false
   const reportRecentlyConfirmed = ref(false)
   let confirmationTimer: ReturnType<typeof setTimeout> | undefined
   watch(target, (value) => { if (value) lastTarget.value = value }, { flush: 'sync' })
@@ -86,7 +84,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (!active || !guard) return
     if (tsId && guard.writingDocument === tsId) {
       if (!writing.value) writing.value = presentation.value.hasScenario ? 'rewrite-all' : 'initial'
-    } else if (writing.value && !submittedWriting && !settlingWriting) {
+    } else if (writing.value && !settlingWriting) {
       settlingWriting = true
       try { await reload(); if (test.status.value === 'ready' && test.view.value && test.view.value.details?.complete !== false) lastNormal.value = test.view.value }
       finally { writing.value = null; writingCaseId.value = null; settlingWriting = false }
@@ -130,7 +128,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (operation === 'follow') return item(presentation.value.canFollow ? null : 'guard.no_result')
     if (test.guard.value?.aiRunning) return item('reason.ai_running')
     if (documentCommands.includes(operation) && documentDenied.value) return item('reason.forbidden')
-    if (documentCommands.includes(operation) || operation === 'rewriteAll' || operation === 'rewriteCase') {
+    if (documentCommands.includes(operation) || operation === 'rewriteCase') {
       if (!test.guard.value) return item('reason.busy')
       if (test.guard.value.editable === false) return item('guard.approved')
     }
@@ -144,7 +142,6 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
       if (operation === 'rerunCase' && (found.executionMode !== 'automated' || view.value?.caseCapabilities[caseId!] !== 'case_selectable')) return item('guard.case_unavailable')
       if (operation === 'resultEntry' && found.executionMode === 'automated' && ['case_selectable', 'suite_only'].includes(view.value?.caseCapabilities[caseId!] ?? '')) return item('guard.server_result')
     }
-    if (operation === 'rewriteAll' && test.runState.value.active) return item('reason.run_active')
     if (['caseSave', 'caseDelete'].includes(operation) && !presentation.value.hasScenario
       && !(operation === 'rawSave' && rawRepairAllowed.value)) return item('guard.no_case')
     if (documentCommands.includes(operation) && !view.value?.tsDocId) return item('reason.busy')
@@ -203,31 +200,9 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (!can('settingChange', undefined, field).enabled) return false
     return settings.change(field, value)
   }
-  async function rewriteAll(): Promise<boolean> {
-    if (!can('rewriteAll').enabled || !view.value?.tsDocId) return false
-    // Opening the provider dialog does not write. Its submit hook guards and locks synchronously,
-    // including the request and the interval before the server's first activity event.
-    const current = target()!
-    const settled = () => {
-      void (async () => {
-        try { await reload(); if (test.view.value?.details?.complete !== false && test.view.value) lastNormal.value = test.view.value }
-        finally { submittedWriting = false; writing.value = null; writingCaseId.value = null }
-      })()
-    }
-    openDocumentAi(view.value.tsDocId, current, settled, {
-      submitting: () => {
-        if (!can('rewriteAll').enabled) return false
-        submittedWriting = true
-        writing.value = presentation.value.hasScenario ? 'rewrite-all' : 'initial'
-        return true
-      },
-      rejected: settled,
-    })
-    return true
-  }
   return { target: computed(() => target() ?? lastTarget.value), test, settings, reviewHistory, view, cases, rows, formatErrors,
     lastNormal, presentation, writing, writingCaseId, instructionOmitted, busy, refusal, drafts, windows, reportRecentlyConfirmed,
-    can, canOpen, openReason, openWindow, closeWindow, reload, reject, changeDocument, saveCases, changeSetting, rewriteAll,
+    can, canOpen, openReason, openWindow, closeWindow, reload, reject, changeDocument, saveCases, changeSetting,
     run: () => can('run').enabled ? test.run() : Promise.resolve(false),
     cancel: () => can('cancel').enabled ? test.cancel() : Promise.resolve(false),
     rerunCase: (caseId: string) => can('rerunCase', caseId).enabled ? test.rerunCase(caseId) : Promise.resolve(false),

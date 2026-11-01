@@ -208,7 +208,6 @@ describe('v8 shared test card session (0071 T1)', () => {
     expect(card.can('caseDelete').reason).toBe('reason.ai_running')
     activity = { active: false }; editable = false; await card.reload()
     expect(card.can('caseSave').reason).toBe('guard.approved')
-    expect(await card.rewriteAll()).toBe(false)
     expect(mocks.save).not.toHaveBeenCalled(); expect(mocks.run).not.toHaveBeenCalled(); expect(mocks.enter).not.toHaveBeenCalled()
     views.get(TS_DOC)!.active_run = liveRun('run-live'); disposed = true; activity = { active: true, action_scope: 'edit', status: 'running', doc_ref: OTHER }; await card.reload()
     expect(await card.cancel()).toBe(true)
@@ -238,8 +237,9 @@ describe('v8 shared test card session (0071 T1)', () => {
     expect(mocks.enter).toHaveBeenCalledWith(TS_DOC, { case_id: 'TC-3', status: 'PASS' })
     expect(card.can('caseAdd').reason).toBeNull()
     expect(card.can('decide').reason).toBe('guard.unconnected')
-    expect(await card.rewriteAll()).toBe(true)
-    expect(mocks.ai).toHaveBeenCalledWith(TS_DOC, expect.objectContaining({ nodeId: 'gn_a' }), expect.any(Function), expect.objectContaining({ submitting: expect.any(Function), rejected: expect.any(Function) }))
+    // 0006-TR rev2: the card has no own AI-call path (rewriteAll removed); scenario writing is started only by the menu run.
+    expect((card as unknown as Record<string, unknown>).rewriteAll).toBeUndefined()
+    expect(mocks.ai).not.toHaveBeenCalled()
   })
   it('events refresh the one session, inactive cards unsubscribe and reactivated cards hear events', async () => {
     vi.useFakeTimers(); const stream = installProjectEventStream()
@@ -357,30 +357,10 @@ it.each([true, false])('review AI on a TS preserves stage/chips and leaves setti
   expect(card.can('rawSave').reason).toBe('reason.ai_running')
 })
 
-it('rewrite submission guards immediately, survives stale activity and releases on failure or completion', async () => {
+it('a card has no AI-call entry of its own (0006-TR rev2)', async () => {
   await render(); const card = contexts.one
-  expect(await card.rewriteAll()).toBe(true)
-  expect(card.writing.value).toBeNull()
-  const [, , finished, lifecycle] = mocks.ai.mock.calls[0]
-  target.value = { ...target.value, readOnly: 'revision' }; await flushPromises()
-  expect(lifecycle.submitting()).toBe(false)
-  target.value = { ...target.value, readOnly: null }; await flushPromises()
-  expect(lifecycle.submitting()).toBe(true)
-  expect(card.writing.value).toBe('rewrite-all')
-  expect(card.can('rawSave').reason).toBe('guard.writing')
-  expect(card.can('settingChange').reason).toBe('guard.writing')
-  expect(await card.run()).toBe(false)
-  await card.reload(); await flushPromises() // activity has not received the start event yet
-  expect(card.writing.value).toBe('rewrite-all')
-  lifecycle.rejected(); await flushPromises()
-  expect(card.writing.value).toBeNull()
-  expect(lifecycle.submitting()).toBe(true)
-  const wait = deferred(); const read = mocks.read.getMockImplementation()!
-  mocks.read.mockImplementation(async (...args: unknown[]) => { await wait.promise; return read(...args) })
-  finished(); await flushPromises()
-  expect(card.writing.value).toBe('rewrite-all')
-  wait.resolve(); await flushPromises()
-  expect(card.writing.value).toBeNull()
+  expect((card as unknown as Record<string, unknown>).rewriteAll).toBeUndefined()
+  expect(mocks.ai).not.toHaveBeenCalled()
 })
 
 it.each(['missing_spec_section', 'unsupported_contract', 'invalid'])('zero-case %s errors retain an authoring and raw repair surface', async (code) => {

@@ -198,13 +198,13 @@ describe('the run band (designerTop.runBandTone, DesignerToolbar)', () => {
     expect(w.find('[data-test="designer-run-band-status"], [data-test="designer-run-band-detail"]').exists()).toBe(false)
     const commands = facts.status === 'running' ? ['run.pause', 'run.stop']
       : facts.status === 'paused' ? ['run.resume', 'run.stop']
-      : facts.status === 'stopping' ? ['run.stop'] : ['run.next', 'run.all']
+      : facts.status === 'stopping' ? ['run.stop'] : [] // idle: no start button — the menu is the only start (0006-TR rev1)
     const buttons = w.findAll('[data-test="designer-tool-run"]')
     expect(buttons.map(button => button.attributes('data-command'))).toEqual(commands)
     expect(w.find('[data-command="run.validate"]').exists()).toBe(true)
     if (facts.status === 'stopping') {
       expect(buttons[0].attributes('disabled')).toBeDefined()
-    } else {
+    } else if (commands.length > 0) {
       await buttons[0].trigger('click')
       expect(w.emitted('command')).toEqual([[commands[0]]])
     }

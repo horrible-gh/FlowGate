@@ -20,6 +20,8 @@
        preset, e.g. 115%) and chooses a preset; the zoom is never shown twice. The density radios set the
        step a card drag moves in.
        flowgate.v02.0061 T#14: runPhase controls the run buttons; runBusy disables commands while pending.
+       flowgate.v02test.0001 0006-TR rev1: the idle 다음 단계 / 전체 실행 buttons are removed (the menu is the only
+       start); 일시정지 / 재개 / 중지 stay while a run is on.
        flowgate.v02.0083 T0024 revision: the entire status area beside the run buttons is removed.
        Run state and command handling remain unchanged. -->
   <div
@@ -256,10 +258,8 @@ interface RunButton {
 }
 
 const RUN_BUTTONS: Readonly<Record<DesignerRunPhase, readonly RunButton[]>> = {
-  idle: [
-    { key: 'next', command: 'run.next', label: 'run_next', icon: 'next' },
-    { key: 'all', command: 'run.all', label: 'run_all', icon: 'all' },
-  ],
+  // 0006-TR rev1: no start button — 다음 단계 / 전체 실행 start only from the menu. Idle shows nothing here.
+  idle: [],
   running: [
     { key: 'pause', command: 'run.pause', label: 'pause', icon: 'pause' },
     { key: 'stop', command: 'run.stop', label: 'stop', icon: 'stop' },
