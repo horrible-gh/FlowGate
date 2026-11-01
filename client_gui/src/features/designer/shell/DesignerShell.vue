@@ -239,11 +239,13 @@ import { createFirstRunAiSetup } from '@/features/ai'
 import { RunResultDetailWindow, RunResultWindow, createRunResultWatch, runWaitText } from '@/features/ai'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { documentRead, settingsNodeHoldWrite } from '@/features/document'
+import { documentRead, reviewActivityRead, reviewDocumentRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
+import type { FlowGraph } from '../center/graph/flowGraph'
+import { createV01FlowRun, type V01RunResult } from './v01FlowRun'
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import FlowBaseBranchDialog from '../fileMenu/FlowBaseBranchDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
@@ -474,6 +476,26 @@ watch(
   },
 )
 
+// B0001 T#2: 다음 단계 / 전체 실행 of a v0.1 Flow (v01FlowRun.ts) — the existing v0.1 single run, one document at a time.
+const v01Run = createV01FlowRun({
+  readStatus: async (docId) => (await reviewDocumentRead(docId)).record.docReviewStatus ?? null,
+  readActivity: reviewActivityRead,
+  start: (flowId, docId, scope) => reviewRunStart({ groupId: flowId, docId, scope }),
+})
+
+/** A v0.1 command that did not run through says why once (a refusal only; a run that went on is told by the cards). */
+function tellV01Run(result: V01RunResult) {
+  if (result.ok) return
+  const key =
+    result.reason === 'none' ? 'flow_unassigned'
+    : result.reason === 'ai_running' ? 'run_already_active'
+    : result.reason === 'busy' || result.reason === 'stopped' ? null
+    : 'other'
+  if (!key) return
+  toastSeq += 1
+  toasts.value = [...toasts.value.slice(-2), { id: `v01-${toastSeq}`, text: () => t(`gui.designer.top.run_errors.${key}`), tone: 'danger', duration: 4000 }]
+}
+
 /**
  * flowgate.v02.0117 T#4 (CH0004 turn 3 (5)): a run left waiting for a person says why once, in the same toasts — the
  * run's idle reason and the waiting card's state in their existing words (runWaitText). No band, panel or new display.
@@ -537,6 +559,7 @@ onMounted(() => {
 // flowgate.v02.0045: send pending Canvas saves and close the Canvas change stream with the Shell.
 // flowgate.v02.0105 T#1: a waiting restore ends with the Shell; the snapshot stays for the next entry.
 onBeforeUnmount(() => {
+  for (const flowId of Object.keys(v01Run.busy)) v01Run.cancel(flowId)
   endRestore()
   center.dispose()
 })
@@ -587,7 +610,7 @@ const menuTargets = computed<DesignerMenuTargets>(() => ({
   canUndo: center.activeEdit.value?.canUndo === true && center.activeRunMarks.value.lock === null,
   canRedo: center.activeEdit.value?.canRedo === true && center.activeRunMarks.value.lock === null,
   // flowgate.v02.0061 T#14: a run command of the open Flow is being answered.
-  runBusy: !!center.activeRun.value?.action,
+  runBusy: !!center.activeRun.value?.action || (center.state.activeFlowId !== null && !!v01Run.busy[center.state.activeFlowId]),
   // flowgate.v02.0061 TR0031 rev1: the open Flow's run status is not confirmed yet (being read, or the read failed).
   runUnknown: center.canRun && !center.activeRunStatus.value.known,
   // flowgate.v02.0059 T#2: 정렬 (2+) / 균등 분배 (3+) need that many selected cards.
@@ -861,6 +884,12 @@ function onTopCommand(command: DesignerTopCommand) {
     case 'run.all': {
       const flowId = center.state.activeFlowId
       if (flowId === null) return
+      // B0001 T#2: a v0.1-owned Flow is refused by the Graph engine, so the same two commands start its existing v0.1 run.
+      const load = center.state.graphs[flowId]
+      if (load?.status === 'ready' && load.graph.ownership === 'v01') {
+        void v01Run.run(flowId, load.graph as FlowGraph, command === 'run.next' ? 'next' : 'all').then(tellV01Run)
+        return
+      }
       // flowgate.v02.0061 T#14: one step / full command on the server (the session confirms an idle Flow's draft first).
       if (center.canRun) {
         // flowgate.v02.0113 T#5: a command the server took is watched for its result (the run as known before it).

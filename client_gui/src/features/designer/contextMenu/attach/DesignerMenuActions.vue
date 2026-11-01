@@ -46,14 +46,11 @@
 
         <!-- Flow 삭제 = the existing dispose (DC) -->
         <template v-else-if="shown.kind === 'flow.delete'">
-          <p class="dma-lead">{{ t('dispose.lead') }}</p>
-          <ul class="dma-effects" data-test="dma-dispose-effects">
-            <li v-for="index in 4" :key="index">{{ t(`dispose.effects.${index - 1}`) }}</li>
-          </ul>
+          <p class="dma-lead" data-test="dma-dispose-note">{{ t('dispose.note') }}</p>
           <label class="dma-label" for="dma-reason">{{ t('dispose.reason') }}</label>
           <Textarea id="dma-reason" :model-value="text" :rows="3" :invalid="tried && !text.trim()" data-modal-autofocus
             data-test="dma-reason" @update:model-value="text = $event" />
-          <p v-if="!text.trim()" class="dma-hint" data-test="dma-reason-required">{{ t('dispose.reasonRequired') }}</p>
+          <p v-if="tried && !text.trim()" class="dma-error" data-test="dma-reason-required">{{ t('dispose.reasonRequired') }}</p>
         </template>
 
         <!-- 새 폴더 / 새 파일 -->
@@ -603,7 +600,6 @@ async function submit() {
   color: var(--fg2-status-danger-fg);
 }
 
-.dma-effects,
 .dma-list {
   margin: 0;
   padding-left: 18px;
