@@ -1,10 +1,8 @@
 <template>
-  <!-- flowgate.v02.0061 T#15 — the Graph Time Machine of a done card (WP answer 3: its entry is the card's context menu).
-       Before it runs, the confirmation names the card it starts from and says that the cards below it are the server's
-       to find by the execution history (never the shown Graph or its draft); a confirmation whose basis changed, or a
-       card that cannot be rewound now, says so (`notice`) and asks again. After it, the same dialog shows the server's
-       answer (T#13): the impact and what changed, or — when it was blocked — the server's reasons (nothing changed).
-       The run is never started from here: the next step / full command opens the pending cards again. -->
+  <!-- flowgate.v02.0061 T#15 — the Graph Time Machine of a done card (its entry is the card's context menu). The window
+       holds only a title, the card it starts from, one line, and the buttons: 확인 (여기부터 되돌리기) → 되돌리기 완료 /
+       되돌리기 실패 + the one reason. The server's full answer (impact, merges, attempts, reopened documents) is kept on
+       the session's outcome, not listed here. The run is never started from here. -->
   <ModalShell
     :open="dialog !== null"
     size="md"
@@ -28,48 +26,13 @@
         :aria-busy="running ? 'true' : undefined"
       >
         <template v-if="dialog.phase === 'confirm' || dialog.phase === 'running'">
-          <p class="graph-tm-text">{{ t('gui.designer.center.time_machine.confirm_intro', { card: titleOf(dialog.nodeId) }) }}</p>
-          <p class="graph-tm-label">{{ t('gui.designer.center.time_machine.start') }}</p>
-          <ul class="graph-tm-list" data-test="graph-time-machine-start">
-            <li :data-node-id="dialog.nodeId">{{ titleOf(dialog.nodeId) }}</li>
-          </ul>
-          <p class="graph-tm-note">{{ t('gui.designer.center.time_machine.scope_note') }}</p>
-          <p class="graph-tm-note">{{ t('gui.designer.center.time_machine.confirm_note') }}</p>
+          <p class="graph-tm-card" data-test="graph-time-machine-start" :data-node-id="dialog.nodeId">{{ titleOf(dialog.nodeId) }}</p>
+          <p class="graph-tm-text">{{ t('gui.designer.center.time_machine.note') }}</p>
           <p v-if="dialog.notice" class="graph-tm-text is-notice" role="alert" data-test="graph-time-machine-notice" :data-notice="dialog.notice">
             {{ t(`gui.designer.center.time_machine.notice_${dialog.notice}`) }}
           </p>
-          <p v-if="running" class="graph-tm-text" role="status">{{ t('gui.designer.center.time_machine.running') }}</p>
         </template>
-        <template v-else-if="done">
-          <p class="graph-tm-text" role="status">{{ t('gui.designer.center.time_machine.done_intro', { card: titleOf(done.nodeKey) }) }}</p>
-          <p class="graph-tm-label">{{ t('gui.designer.center.time_machine.impact', { n: done.impactNodeKeys.length }) }}</p>
-          <ul class="graph-tm-list" data-test="graph-time-machine-impact">
-            <li v-for="nodeId in done.impactNodeKeys" :key="nodeId" :data-node-id="nodeId">{{ titleOf(nodeId) }}</li>
-          </ul>
-          <ul class="graph-tm-facts" data-test="graph-time-machine-result">
-            <li>{{ t('gui.designer.center.time_machine.reset', { n: done.resetNodeKeys.length }) }}</li>
-            <li>{{ t('gui.designer.center.time_machine.reverted', { n: done.revertedCommitCount }) }}</li>
-            <li>{{ t('gui.designer.center.time_machine.invalidated', { n: done.invalidatedAttemptCount }) }}</li>
-            <li v-if="done.reopenedDocumentIds.length">
-              {{ t('gui.designer.center.time_machine.reopened', { docs: done.reopenedDocumentIds.join(', ') }) }}
-            </li>
-          </ul>
-          <p class="graph-tm-note">{{ t('gui.designer.center.time_machine.done_note') }}</p>
-        </template>
-        <template v-else-if="blocked">
-          <p class="graph-tm-text" role="alert">{{ t('gui.designer.center.time_machine.blocked_intro') }}</p>
-          <ul class="graph-tm-list is-reasons" data-test="graph-time-machine-reasons">
-            <li v-for="(reason, index) in blocked.reasons" :key="`${reason.code}-${index}`" :data-code="reason.code">
-              {{ reason.message || reason.code }}
-            </li>
-          </ul>
-          <template v-if="blocked.impactNodeKeys.length">
-            <p class="graph-tm-label">{{ t('gui.designer.center.time_machine.impact', { n: blocked.impactNodeKeys.length }) }}</p>
-            <ul class="graph-tm-list" data-test="graph-time-machine-impact">
-              <li v-for="nodeId in blocked.impactNodeKeys" :key="nodeId" :data-node-id="nodeId">{{ titleOf(nodeId) }}</li>
-            </ul>
-          </template>
-        </template>
+        <p v-else-if="done" class="graph-tm-text" role="status" data-test="graph-time-machine-result">{{ t('gui.designer.center.time_machine.done') }}</p>
         <p v-else class="graph-tm-text" role="alert" data-test="graph-time-machine-failure">{{ failureText }}</p>
       </div>
     </template>
@@ -118,7 +81,6 @@ const { t, te } = useI18n()
 const running = computed(() => props.dialog?.phase === 'running')
 const outcome = computed(() => props.dialog?.outcome ?? null)
 const done = computed(() => (outcome.value?.kind === 'done' ? outcome.value.result : null))
-const blocked = computed(() => (outcome.value?.kind === 'blocked' ? outcome.value : null))
 
 const title = computed(() => {
   const phase = props.dialog?.phase ?? 'confirm'
@@ -127,14 +89,18 @@ const title = computed(() => {
 
 /** A card's title (its key when the shown Graph does not have it). */
 function titleOf(nodeId: string): string {
-  const name = props.titles.get(nodeId)
-  return name ? `${name} (${nodeId})` : nodeId
+  return props.titles.get(nodeId) || nodeId
 }
 
 /** Not run: the server's own message (x-locale), else the code's sentence, else the common one. */
 const failureText = computed(() => {
   const ended = outcome.value
   if (!ended || ended.kind === 'skipped') return t('gui.designer.center.time_machine.skipped')
+  // Blocked: the server's first reason is the one line shown (all of them stay on the outcome).
+  if (ended.kind === 'blocked') {
+    const reason = ended.reasons[0]
+    return reason?.message || reason?.code || (ended.message && ended.message !== ended.code ? ended.message : t('gui.designer.center.time_machine.failed'))
+  }
   if (ended.kind !== 'failed') return ''
   if (ended.message && ended.message !== ended.code) return ended.message
   const key = ended.code ? `gui.designer.top.run_errors.${ended.code}` : ''
@@ -162,28 +128,14 @@ const failureText = computed(() => {
 }
 
 .graph-tm-text,
-.graph-tm-label,
-.graph-tm-note {
+.graph-tm-card {
   margin: 0 0 8px;
 }
 
-.graph-tm-label {
+.graph-tm-card {
   font-weight: 650;
 }
 
-.graph-tm-note {
-  color: var(--fg2-muted);
-}
-
-.graph-tm-list,
-.graph-tm-facts {
-  max-height: 180px;
-  margin: 0 0 10px;
-  padding-left: 20px;
-  overflow: auto;
-}
-
-.graph-tm-list.is-reasons,
 .graph-tm-text.is-notice {
   color: var(--fg2-status-danger-fg);
 }

@@ -357,7 +357,7 @@ describe('2-B in the Shell — 플로우 삭제 is the existing dispose (DC) (00
     await choose('flow.delete')
   }
 
-  it('names the right-clicked Flow, explains DC / list / worktree, and never runs without a reason; 취소 calls nothing', async () => {
+  it('names the right-clicked Flow, shows one note line (no bullets), and never runs without a reason; 취소 calls nothing', async () => {
     const w = await mountShell()
     await openFlow(w, 'Canvas')
     await openDispose(w)
@@ -365,8 +365,11 @@ describe('2-B in the Shell — 플로우 삭제 is the existing dispose (DC) (00
     expect(dialog()!.closest('[role]')?.getAttribute('role')).toBe('alertdialog')
     expect(q('dma-fact-target')!.textContent).toContain('Canvas')
     expect(q('dma-fact-id')!.textContent).toContain('p.ui.0002')
-    const effects = q('dma-dispose-effects')!.textContent!
-    for (const words of ['DC 문서', '목록에서 빠집니다', '워크트리와 작업 브랜치', '영구 삭제가 아닙니다']) expect(effects).toContain(words)
+    expect(q('dma-dispose-note')!.textContent).toBe('목록에서 제거됩니다. 기록은 유지됩니다.')
+    expect(q('dma-dispose-effects')).toBeNull()
+    expect(dialog()!.querySelectorAll('li').length).toBe(0)
+    // The required-reason error shows only after a real attempt, never as an always-on help line.
+    expect(q('dma-reason-required')).toBeNull()
     expect(submitButton().disabled).toBe(true)
     submitButton().click()
     type('dma-reason', '   ')
