@@ -204,6 +204,93 @@ def test_a_person_s_report_written_before_the_instruction_never_completes_the_ca
     assert write_jobs(env) == [] and starts == []
 
 
+# ── 0045-TR rework: a report saved while the instruction waits is no report of after it (write order) ──────────
+
+EDITED_REPORT = "## 결과\n\n지시서 대기 중에 고친 레포트\n"
+
+
+def _waits_for_its_report(env, key, report=None):
+    """The card took no report after its instruction: open on its result stage, the manual write wait, no result bound
+    — through run reads and a [다음 단계] — and the report (when given) still unregistered."""
+    assert _review_status(line_doc(env, key, "instruction")) == "approved"
+    for _ in range(2):                                                  # run reads (RC-8) take nothing
+        assert wire(current(env), key)["wait_reason"]["code"] == "manual_write_wait"
+    command(env, "step")
+    assert (status(env, key), node_run(env, key)["stage"], node_run(env, key)["result_doc_id"]) == \
+        ("open", "result", None)
+    assert wire(current(env), key)["wait_reason"]["code"] == "manual_write_wait"
+    if report is not None:
+        assert doc_row(env, report)["doc_review_status"] is None          # kept as saved, never registered
+
+
+def test_a_report_edited_while_the_instruction_waits_never_completes_the_card_after_the_instruction(env, decided,
+                                                                                                     starts):
+    """Row 6 (person), the order of the review's reproduction (test3.test.0040): the run opens on the instruction wait,
+    the existing report is edited and saved while the instruction is still blank, then the instruction is saved. The
+    report was saved before the instruction: the card stays on its result stage's manual write wait, and only a report
+    saved after the instruction completes it."""
+    key, docs = _row_card(env, "6_none_report", ai=False)
+    command(env, "full")
+    assert (status(env, key), node_run(env, key)["stage"]) == ("open", "instruction")
+    _write_written(docs["report"], EDITED_REPORT)                       # saved while the instruction is blank
+    current(env)
+    assert (status(env, key), node_run(env, key)["stage"]) == ("open", "instruction")
+    save_instruction(env, key)
+    _waits_for_its_report(env, key, docs["report"])
+    [row] = baseline_rows(env, key)
+    assert row["doc_id"] == docs["report"]                              # the baseline moved to the instruction's moment
+
+    _write_written(docs["report"], NEW_REPORT)                          # saved after the instruction
+    current(env)
+    assert status(env, key) == "done" and _review_status(docs["report"]) == "approved"
+    assert run_row(env)["idle_reason"] == "completed"
+    assert write_jobs(env) == [] and starts == []
+
+
+def test_a_report_first_written_while_the_instruction_waits_never_completes_the_card_after_the_instruction(
+        env, decided, starts):
+    """Row 3 (person) whose report gets its first body during the instruction wait (a blank report at the opening):
+    the report was written before the instruction and is no report of after it — the card waits for a report saved
+    after it."""
+    key, _docs = _row_card(env, "3_none_none", ai=False)
+    command(env, "full")
+    assert (status(env, key), node_run(env, key)["stage"]) == ("open", "instruction")
+    report = prewrite(env, key, "report", EDITED_REPORT)                # written while the instruction is blank
+    save_instruction(env, key)
+    _waits_for_its_report(env, key, report)
+    assert [r["doc_id"] for r in baseline_rows(env, key)] == [report]
+
+    _write_written(report, NEW_REPORT)
+    current(env)
+    assert status(env, key) == "done" and _review_status(report) == "approved"
+    assert write_jobs(env) == [] and starts == []
+
+
+def test_a_report_edited_while_an_ai_writes_the_instruction_is_written_anew_by_its_execution_ai(env, decided, starts,
+                                                                                               monkeypatch):
+    """Row 6 (AI): a person edits the report while X still writes the instruction; once the instruction is written X
+    is asked for a new report — the edited one, saved before the instruction, is not taken."""
+    key, docs = _row_card(env, "6_none_report", ai=True)
+    start(env)
+    _write_written(docs["report"], EDITED_REPORT)
+    instruction = _ai_writes_instruction(env, monkeypatch, provider=X)
+    assert _review_status(instruction) == "approved"
+    [job] = write_jobs(env)
+    assert (job["stage"], job["provider_id"], job["ref_doc_ids"]) == ("result", X, [instruction])
+    assert status(env, key) == "open" and node_run(env, key)["result_doc_id"] is None
+    assert doc_row(env, docs["report"])["doc_review_status"] is None
+
+
+def test_a_card_written_from_the_start_still_asks_no_writer(env, decided, starts):
+    """Row 5 kept (the review's condition): instruction and report written before the run — no write is asked, no
+    baseline is kept, the card completes at once."""
+    key, docs = _row_card(env, "5_ins_report", ai=False)
+    command(env, "full")
+    assert status(env, key) == "done" and _review_status(docs["report"]) == "approved"
+    assert baseline_rows(env, key) == []
+    assert write_jobs(env) == [] and starts == []
+
+
 @pytest.mark.parametrize("row", sorted(ROWS))
 def test_an_ai_s_card_goes_by_its_documents(env, decided, starts, monkeypatch, row):
     """Instruction and execution AI X: an unwritten stage is X's work (one request), a written one asks nothing."""
@@ -729,6 +816,52 @@ def test_a_setup_or_unavailable_instruction_wait_keeps_its_attempt_until_its_rol
     [job] = write_jobs(env)
     assert (job["stage"], job["provider_id"]) == ("instruction", X)
     assert _active_attempt(env, key) != first["attempt_id"]
+
+
+def _saved(doc_id, body):
+    """A body save as the service records it: the body, and its ``doc_body_saved`` event (the order of the saves)."""
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.db.events import insert_event
+
+    _write_written(doc_id, body)
+    with get_store().transaction():
+        insert_event(doc_id, "doc_body_saved", note='{"source": "test_save"}')
+
+
+@pytest.mark.parametrize("order", ["report_first", "instruction_first"])
+@pytest.mark.parametrize("wait", ["wait_setup", "wait_unavailable"])
+def test_a_wait_reinterpreted_with_its_instruction_written_takes_only_a_report_saved_after_the_instruction(
+        env, decided, starts, wait, order):
+    """0045-TR rework: the instruction stage waits for its setup / an unavailable AI (no person's stage takes a save);
+    the person saves the report and the instruction meanwhile, then the role changes and the next command opens a new
+    attempt that finds the instruction written. A report saved before the instruction is carried as the baseline (the
+    card waits for a report of after it); a report saved after the instruction is the result."""
+    keys = graph(env, {"c": "T"}, [("r", "c")])
+    key = keys["c"]
+    roles(key, _write_wait(env, wait), "not_used", "not_used")
+    report = prewrite(env, key, "report", REPORT_BODY)
+    start(env)
+    first = one(env, key, "instruction")
+    assert first["actor"] == wait
+    instruction = line_doc(env, key, "instruction")
+    saves = [(report, EDITED_REPORT), (instruction, INSTRUCTION_BODY)]
+    for doc_id, body in (saves if order == "report_first" else saves[::-1]):
+        _saved(doc_id, body)
+    to_role(key, "instruction", "not_used")
+    command(env, "step")                                               # reinterpreted: a new attempt, instruction written
+    assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_node_attempts WHERE node_key = ?", (key,))[0]["n"] == 2
+    if order == "instruction_first":                                   # saved after the instruction: the result
+        current(env)
+        assert status(env, key) == "done" and _review_status(report) == "approved"
+        assert write_jobs(env) == [] and starts == []
+        return
+    _waits_for_its_report(env, key, report)
+    assert [(r["doc_id"], r["carried_from"]) for r in baseline_rows(env, key)] == \
+        [(report, None), (report, first["attempt_id"])]
+    _saved(report, NEW_REPORT)                                         # saved after the instruction
+    current(env)
+    assert status(env, key) == "done" and _review_status(report) == "approved"
+    assert write_jobs(env) == [] and starts == []
 
 
 # ── rework #3: a report baseline that cannot be recorded or read never lets the old report through ───────────

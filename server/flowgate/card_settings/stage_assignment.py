@@ -576,7 +576,7 @@ def dispatch_role_card(ctx, node: dict) -> Optional[dict]:
     if first == INSTRUCTION:                                          # 0038-T A-2: the report baseline
         # a baseline that cannot be recorded raises (``BaselineUnavailable``): the step's guard rolls the opening back
         report_baseline.record_at_opening(attempt_id, ctx.run_id, flow_id, key, bool(reuse),
-                                          report_line(flow_id, node, plan)[1])
+                                          report_line(flow_id, node, plan)[1], reuse)
     taken = written_result(flow_id, node, plan, attempt_id) if first == RESULT else None
     legacy.set_stage(ctx.run_id, key, first, reuse)
     if reuse:

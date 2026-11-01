@@ -256,6 +256,13 @@ def proceed_written_instruction_held(flow_id: str, run_id: str, key: str, attemp
             legacy.fill_line(ctx, key, doc_id)
         if ia is not None and ia["stage_state"] in (sa.ACTIVE, sa.WAITING):
             sa.move(ia, sa.DONE)
+        if ia is not None and not ia.get("reused_doc_id"):
+            # 0045-TR rework (0030-M §3.1 ⑥): the attempt's instruction is written now — the report baseline moves to
+            # this moment, so a report saved while the instruction waited never passes as one of after it (raises
+            # ``BaselineUnavailable`` when it cannot be kept: the guard rolls back, the instruction is judged later)
+            plan = sa.stage_plan(attempt_id) or {}
+            report_baseline.advance_at_instruction(attempt_id, run_id, flow_id, key,
+                                                   sa.report_line(flow_id, node, plan)[1])
         return ar.open_review_stage_locked(flow_id, run_row, node, attempt_id, sa.INSTRUCTION_REVIEW,
                                            legacy.document_row(doc_id), author.get("author") or "unknown",
                                            author.get("provider_id"), mode, after, ctx)
