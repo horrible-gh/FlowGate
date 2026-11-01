@@ -149,6 +149,7 @@ import {
   type FlowRunState,
   type FlowTimeMachineOutcome,
 } from './run/flowRunControl'
+import { runV01Flow, type V01RunDeps, type V01RunMode, type V01RunOutcome } from './run/v01RunControl'
 import { flowCardMenu, type FlowCardMenuItem, type FlowCardMenuKey } from './run/flowCardMenu'
 import { NO_RUN_MARKS, flowRunMarks, isEdgeProtected, isRunLocked, type FlowEditLock, type FlowRunMarks } from './run/flowRunLock'
 
@@ -394,6 +395,12 @@ export interface DesignerCenterSession {
   readonly activeRun: ComputedRef<DeepReadonly<FlowRunState> | null>
   /** 다음 단계 (`next`) / 전체 실행 (`all`): confirms the draft (idle only), then one step / full command. */
   runFlow(flowId: string, mode: FlowRunMode): Promise<boolean>
+  /**
+   * flowgate.v02test.0001 B0001 §2: a v0.1 (sequence) Flow has no Graph run — its 다음 단계 / 전체 실행 go to the
+   * existing v0.1 single run of its work documents (run/v01RunControl.ts). Whether the Flow is one, and its command.
+   */
+  isV01Flow(flowId: string): boolean
+  runV01(flowId: string, mode: V01RunMode): Promise<V01RunOutcome>
   /** 중지 (T#7 Stop) of the Flow's running or paused run. Whether the server took it. */
   stopRun(flowId: string): Promise<boolean>
   /** flowgate.v02.0061 T#14: the source can pause a run (일시정지). */
@@ -466,6 +473,8 @@ export interface DesignerCenterSession {
 export interface DesignerCenterSessionOptions {
   readonly beforeRunPrepare?: (flowId: string, mode: FlowRunMode) => Promise<boolean>
   readonly runSetupCurrent?: () => boolean
+  /** The v0.1 single run calls behind 다음 단계 / 전체 실행 of a v0.1 Flow (the Shell hands them in); absent = none. */
+  readonly v01Run?: V01RunDeps
   /** Graph source; the fixture source when omitted. Tests pass a fake one. */
   source?: FlowGraphSource
   /** Quiet time before a batched layout save is sent (layoutSaveQueue.ts default when omitted). */
@@ -631,6 +640,9 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     readDrop: options.readDrop,
     delayMs: options.draftSaveDelayMs,
   }, state.edits)
+
+  // flowgate.v02test.0001 B0001 §2: the v0.1 Flows whose menu command is going (run/v01RunControl.ts).
+  const v01Running = new Set<string>()
 
   const runControl = createFlowRunControl({
     source,
@@ -1405,6 +1417,27 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     // TR0031 rev1: 다음 단계 / 전체 실행 only on a confirmed idle (or no) run; 일시정지 / 재개 / 중지 on a confirmed run.
     runFlow: (flowId, mode) =>
       whenKnown(flowId, (run) => !isRunLocked(run)) ? runControl.run(flowId, mode) : Promise.resolve(false),
+    isV01Flow: (flowId) => !!options.v01Run && readyGraph(flowId)?.ownership === 'v01',
+    runV01: async (flowId, mode) => {
+      const deps = options.v01Run
+      const projectId = state.projectId
+      // One command per Flow: while it goes (a 전체 실행 waits for results) the menu starts nothing else.
+      if (!deps || projectId === null || v01Running.has(flowId)) return { kind: 'busy' }
+      v01Running.add(flowId)
+      try {
+        return await runV01Flow({
+          flowId,
+          mode,
+          deps,
+          graph: () => readyGraph(flowId) ?? null,
+          alive: () => !disposed && state.projectId === projectId && isOpen(projectId, flowId),
+          progressed: () => refreshFlow(flowId),
+        })
+      } finally {
+        v01Running.delete(flowId)
+        if (!disposed && isOpen(projectId, flowId)) refreshFlow(flowId)
+      }
+    },
     stopRun: (flowId) => (whenKnown(flowId, (run) => run !== null) ? runControl.stop(flowId) : Promise.resolve(false)),
     canPause: runControl.canPause,
     pauseRun: (flowId) => (whenKnown(flowId, (run) => run !== null) ? runControl.pause(flowId) : Promise.resolve(false)),

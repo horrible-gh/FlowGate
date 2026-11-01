@@ -152,7 +152,6 @@ const openPop = (w: VueWrapper<any>) => w.find('[data-test="designer-menu-pop"]'
 const itemTexts = (el: VueWrapper<any> | ReturnType<VueWrapper<any>['get']>) =>
   el.findAll('.designer-menu-item').map((item) => item.text().replace(/^[✓●]/, '').trim())
 const toolTexts = (w: VueWrapper<any>) => get(w, 'designer-toolbar').findAll('button.designer-tool').map((b) => b.text())
-const runButton = (w: VueWrapper<any>, mode: string) => w.get(`[data-test="designer-tool-run"][data-run="${mode}"]`)
 
 async function openMenu(w: VueWrapper<any>, key: string) {
   if (openPop(w).exists() && openPop(w).attributes('data-menu') === key) return openPop(w)
@@ -356,7 +355,7 @@ describe('Designer top band — Toolbar', () => {
     const w = await mountShell()
     // flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons. flowgate.v02.0059 T#1:
     // [선택] (multi-selection toggle) is back next to 정렬 / 배치 ▾.
-    expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대'])
+    expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '화면 맞춤', '축소', '확대'])
     expect(get(w, 'designer-toolbar').text()).not.toMatch(/노드 추가|연결/)
     // flowgate.v02.0059 0017-T: the zoom is one control showing the current zoom.
     expect((get(w, 'designer-tool-zoom').element as HTMLSelectElement).selectedOptions[0]?.text).toBe('100%')
@@ -366,19 +365,32 @@ describe('Designer top band — Toolbar', () => {
     ])
   })
 
-  // flowgate.v02.0053 T#9: 전체 실행 starts the server run; the button follows the run read back.
-  it('전체 실행 starts the server run: it turns into ■ 중지 in place, disables 다음 단계, and ■ 중지 stops the run', async () => {
+  // flowgate.v02test.0001 B0001 §2 / T0004 T#2: a run starts from the Run menu only — the toolbar has no start button.
+  // flowgate.v02.0053 T#9: 전체 실행 starts the server run; the toolbar's run buttons then follow the run read back.
+  const menuRun = async (w: VueWrapper<any>, command: string) => {
+    await (await openMenu(w, 'run')).get(`[data-command="${command}"]`).trigger('click')
+    await settle()
+  }
+  const toolStop = (w: VueWrapper<any>) => w.get('[data-test="designer-tool-run"][data-command="run.stop"]')
+
+  it('the toolbar shows no 다음 단계 / 전체 실행 start button while idle; the Run menu has both', async () => {
+    const w = await mountShell()
+    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
+    expect(w.find('[data-command="run.next"][data-test="designer-tool-run"]').exists()).toBe(false)
+    const pop = await openMenu(w, 'run')
+    expect(pop.get('[data-command="run.next"]').attributes('disabled')).toBeUndefined()
+    expect(pop.get('[data-command="run.all"]').attributes('disabled')).toBeUndefined()
+    await clickOutside()
+  })
+
+  it('전체 실행 from the menu starts the server run: the toolbar offers ■ 중지 (no start button), and ■ 중지 stops the run', async () => {
     const w = await mountShell()
     expect(w.find('[data-test="designer-run-status"]').exists()).toBe(false)
-    await runButton(w, 'all').trigger('click')
-    await settle()
+    await menuRun(w, 'run.all')
 
     expect(runServer.calls).toEqual(['GET current p.ui.0001', 'POST start p.ui.0001'])
-    expect(runButton(w, 'all').text()).toBe('중지')
-    expect(runButton(w, 'all').attributes('aria-pressed')).toBe('true')
-    expect(runButton(w, 'all').attributes('disabled')).toBeUndefined()
-    expect(runButton(w, 'next').attributes('disabled')).toBeDefined()
-    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(2)
+    expect(toolStop(w).text()).toBe('중지')
+    expect(toolStop(w).attributes('disabled')).toBeUndefined()
     expect(get(w, 'designer-run-status').attributes('data-status')).toBe('running')
     expect(get(w, 'designer-run-status').attributes('title')).toBe('실행 중')
 
@@ -389,34 +401,27 @@ describe('Designer top band — Toolbar', () => {
     expect(pop.get('[data-command="run.all"]').attributes('disabled')).toBeDefined()
     await clickOutside()
 
-    await runButton(w, 'all').trigger('click')
+    await toolStop(w).trigger('click')
     await settle()
     expect(runServer.calls.slice(2)).toEqual(['POST stop run_1'])
     expect(runServer.runs.get('p.ui.0001')?.status).toBe('stopped')
-    expect(runButton(w, 'all').text()).toBe('전체 실행')
-    expect(runButton(w, 'all').attributes('aria-pressed')).toBe('false')
-    expect(runButton(w, 'next').attributes('disabled')).toBeUndefined()
+    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
     expect(get(w, 'designer-run-status').attributes('data-status')).toBe('stopped')
 
-    // 전체 실행 again resumes the stopped run (never a second run).
-    await runButton(w, 'all').trigger('click')
-    await settle()
+    // 전체 실행 again (menu) resumes the stopped run (never a second run).
+    await menuRun(w, 'run.all')
     expect(runServer.calls.slice(3)).toEqual(['GET current p.ui.0001', 'POST resume run_1'])
-    expect(runButton(w, 'all').text()).toBe('중지')
+    expect(toolStop(w).text()).toBe('중지')
   })
 
-  it('다음 단계 runs one step: the run starts (or resumes) and stops at once, so the buttons come back', async () => {
+  it('다음 단계 from the menu runs one step: the run starts (or resumes) and stops at once', async () => {
     const w = await mountShell()
-    await runButton(w, 'next').trigger('click')
-    await settle()
+    await menuRun(w, 'run.next')
     expect(runServer.calls).toEqual(['GET current p.ui.0001', 'POST start p.ui.0001', 'POST stop run_1'])
-    expect(runButton(w, 'next').text()).toBe('다음 단계')
-    expect(runButton(w, 'next').attributes('aria-pressed')).toBe('false')
-    expect(runButton(w, 'all').attributes('disabled')).toBeUndefined()
+    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
     expect(get(w, 'designer-run-status').attributes('data-status')).toBe('stopped')
 
-    await runButton(w, 'next').trigger('click')
-    await settle()
+    await menuRun(w, 'run.next')
     expect(runServer.calls.slice(3)).toEqual(['GET current p.ui.0001', 'POST resume run_1', 'POST stop run_1'])
     expect(runServer.runs.size).toBe(1)
   })
@@ -426,15 +431,15 @@ describe('Designer top band — Toolbar', () => {
     expect((await openMenu(w, 'run')).get('[data-command="run.stop"]').attributes('disabled')).toBeDefined()
     await openPop(w).get('[data-command="run.all"]').trigger('click')
     await settle()
-    expect(runButton(w, 'all').text()).toBe('중지')
+    expect(toolStop(w).text()).toBe('중지')
 
     await (await openMenu(w, 'run')).get('[data-command="run.stop"]').trigger('click')
     await settle()
-    expect(runButton(w, 'all').text()).toBe('전체 실행')
+    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
     expect(runServer.runs.get('p.ui.0001')?.status).toBe('stopped')
   })
 
-  // The button waiting for the start answer shows ■ 중지 and is enabled: its click is kept, not dropped.
+  // The toolbar's ■ 중지 waiting for the start answer is enabled: its click is kept, not dropped.
   it('■ 중지 clicked while the start is answered stops the run as soon as the start names it', async () => {
     const w = await mountShell()
     let release!: () => void
@@ -443,31 +448,27 @@ describe('Designer top band — Toolbar', () => {
       await held
       return runServer.post(url)
     })
-    await runButton(w, 'all').trigger('click')
-    await settle()
-    expect(runButton(w, 'all').text()).toBe('중지')
-    expect(runButton(w, 'all').attributes('disabled')).toBeUndefined()
+    await menuRun(w, 'run.all')
+    expect(toolStop(w).text()).toBe('중지')
+    expect(toolStop(w).attributes('disabled')).toBeUndefined()
 
-    await runButton(w, 'all').trigger('click')
+    await toolStop(w).trigger('click')
     await settle()
     expect(runServer.calls).toEqual(['GET current p.ui.0001'])
     release()
     await settle()
     expect(runServer.calls).toEqual(['GET current p.ui.0001', 'POST start p.ui.0001', 'POST stop run_1'])
     expect(runServer.runs.get('p.ui.0001')?.status).toBe('stopped')
-    expect(runButton(w, 'all').text()).toBe('전체 실행')
-    expect(runButton(w, 'next').attributes('disabled')).toBeUndefined()
+    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
     expect(get(w, 'designer-run-status').attributes('data-status')).toBe('stopped')
   })
 
-  it('a refused run shows one short toast in plain words and leaves the buttons as they were', async () => {
+  it('a refused run shows one short toast in plain words and leaves the toolbar as it was', async () => {
     const w = await mountShell()
     runServer.refuse('run_policy_undecided')
-    await runButton(w, 'all').trigger('click')
-    await settle()
+    await menuRun(w, 'run.all')
 
-    expect(runButton(w, 'all').text()).toBe('전체 실행')
-    expect(runButton(w, 'all').attributes('aria-pressed')).toBe('false')
+    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
     expect(w.find('[data-test="designer-run-status"]').exists()).toBe(false)
     const toasts = [...document.body.querySelectorAll('.ui-toast-host')].map((host) => host.textContent?.trim() ?? '')
     expect(toasts.join(' ')).toContain('실행 규칙이 아직 정해지지 않아 실행할 수 없습니다.')
