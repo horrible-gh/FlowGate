@@ -167,10 +167,9 @@ describe('the slot rules (parts/slotStateView, flowgate.v02.0056 F2-2)', () => {
     expect(slotLineCard({ id: null, empty: true }, { slot: 'report', docType: 'TR', docId: null }, { ...changeable, changeable: false }).actions).toEqual([])
     expect(
       slotLineCard({ id: 'd', empty: false }, { slot: 'report', docType: 'TR', docId: 'd', hasBody: false, reviewCount: 2, rejectionCount: 1, historyCount: 3 }, changeable),
-    ).toEqual({ cardSlot: 'report', blank: true, historyCount: 3, historyDetail: { reviews: 2, rejections: 1 }, actions: [{ key: 'ai_invoke', state: 'enabled' }] })
-    expect(slotLineCard({ id: 'd', empty: false }, { slot: 'report', docType: 'TR', docId: 'd' }, { changeable: true, running: (id) => id === 'd' }).actions).toEqual([
-      { key: 'ai_invoke', state: 'running' },
-    ])
+    ).toEqual({ cardSlot: 'report', blank: true, historyCount: 3, historyDetail: { reviews: 2, rejections: 1 }, actions: [] })
+    // 0006-TR rev1: a line with a document has no run action, even while an AI run works on it.
+    expect(slotLineCard({ id: 'd', empty: false }, { slot: 'report', docType: 'TR', docId: 'd' }, { changeable: true, running: (id) => id === 'd' }).actions).toEqual([])
     // A row showing another document than the card line's, and a row without a card line, get nothing.
     expect(slotLineCard({ id: 'other', empty: false }, { slot: 'report', docType: 'TR', docId: 'd' }, changeable).actions).toEqual([])
     expect(slotLineCard({ id: 'd', empty: false }, undefined, changeable)).toEqual({ cardSlot: null, blank: false, historyCount: null, historyDetail: null, actions: [] })
@@ -222,7 +221,7 @@ describe('the three states on the documents tab (flowgate.v02.0056 F2-2)', () =>
     await mountFrame(card('gn_t', 'T', [line('instruction', 'T', doc('0011', 'T'), { hasBody: true }), line('report', 'TR', doc('0012', 'TR'), { hasBody: true })]))
     expect(rows().map((item) => item.attributes('data-blank') ?? 'false')).toEqual(['false', 'false'])
     expect(rows().map((item) => item.find('[data-test="inspector-slot-state"]').exists())).toEqual([false, false])
-    expect(actions('report')).toEqual([['ai_invoke', 'AI 호출']])
+    expect(actions('report')).toEqual([])
     frame!.unmount()
     frame = null
     const plan = { ...card('gn_wp', 'WP', [line('plan', 'WP', doc('0003', 'WP'), { hasBody: false }), line('deploy', 'M', doc('0004', 'M'), { hasBody: false })]), kind: 'plan' }
@@ -387,21 +386,18 @@ describe('[작성] (flowgate.v02.0056 F2-2, O3 §4-2)', () => {
   })
 })
 
-describe('[AI 호출] on a document line (flowgate.v02.0056 F2-2, O3 §4-3)', () => {
-  it('opens the document AI call window; nothing is started by opening it', async () => {
+describe('no [AI 호출] on a document line (0006-TR rev1: runs start only from the menu)', () => {
+  it('a document line has no AI call button, so no AI call window can be opened from it; open / history stay', async () => {
     api.getRequest.mockImplementation(async (path: string) => {
       if (path === '/api/v1/ai-invoke/providers') return { data: { providers: [{ id: 'aip_opus', name: 'Opus' }], default_provider_id: 'aip_opus' } }
       if (path === '/api/v1/ai-invoke/active') return { data: { active: false } }
       return offline()
     })
     await mountFrame(card('gn_t', 'T', [line('instruction', 'T', doc('0011', 'T'), { hasBody: true }), line('report', 'TR', null)]))
-    expect(actions('instruction')).toEqual([['ai_invoke', 'AI 호출']])
-    expect(row('instruction').get('[data-action="ai_invoke"]').attributes('data-icon')).toBe('robot')
-    expect(row('instruction').get('[data-action="ai_invoke"]').attributes('aria-label')).toBe('AI 호출')
-    await row('instruction').get('[data-test="inspector-slot-action"][data-action="ai_invoke"]').trigger('click')
-    await flushPromises()
-    expect(documentAiWindowList().map((win) => [win.docId, win.request.groupId, win.request.name])).toEqual([[doc('0011', 'T'), FLOW, '지시서']])
-    expect(body('[data-test="document-ai-window"]')).not.toBeNull()
+    expect(actions('instruction')).toEqual([])
+    expect(row('instruction').find('[data-action="ai_invoke"]').exists()).toBe(false)
+    expect(row('instruction').find('[data-test="inspector-slot-open"]').exists()).toBe(true)
+    expect(documentAiWindowList()).toEqual([])
     expect(api.postRequest).not.toHaveBeenCalled()
   })
 })

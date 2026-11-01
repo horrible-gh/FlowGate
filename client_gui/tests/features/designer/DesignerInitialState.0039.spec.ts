@@ -323,11 +323,14 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
     expect(w.find('[data-test="designer-menu-subpop"][data-sub="recent-project"]').exists()).toBe(true)
   })
 
-  it('the unavailable run buttons do not start a run', async () => {
+  it('the toolbar has no run start button, and the unavailable run menu does not start a run (0006-TR rev1)', async () => {
     const w = await mountShell()
-    await w.get('[data-test="designer-tool-run"][data-run="next"]').trigger('click')
+    expect(w.find('[data-test="designer-tool-run"]').exists()).toBe(false)
+    const run = await openMenu(w, 'run')
+    expect(isDisabled(run.get('[data-command="run.next"]'))).toBe(true)
+    expect(isDisabled(run.get('[data-command="run.all"]'))).toBe(true)
+    await run.get('[data-command="run.all"]').trigger('click')
     await settle()
-    expect(w.get('[data-test="designer-tool-run"][data-run="next"]').attributes('aria-pressed')).toBe('false')
     expect(runServer.calls).toEqual([])
   })
 })
@@ -397,33 +400,32 @@ describe('Designer initial state — only an open Flow continues into the Design
     const w = await mountShell()
     await doubleClick(w, 'UI 개선')
     await doubleClick(w, 'Canvas')
-    await w.get('[data-test="designer-tool-run"][data-run="all"]').trigger('click')
+    // The menu's 전체 실행 is the only start (0006-TR rev1).
+    await (await openMenu(w, 'run')).get('[data-command="run.all"]').trigger('click')
     await settle()
-    expect(w.get('[data-test="designer-tool-run"][data-run="all"]').attributes('aria-pressed')).toBe('true')
 
     await w.get('[data-test="designer-flow-tab"][data-flow-id="p.ui.0002"] [data-test="designer-flow-tab-close"]').trigger('click')
     await settle()
 
     expect(explorerRow(w, 'Canvas').classes()).toContain('is-selected')
     expectUnselectedState(w)
-    // The run state does not outlive its target.
-    expect(w.get('[data-test="designer-tool-run"][data-run="all"]').attributes('aria-pressed')).toBe('false')
+    // The run state does not outlive its target: no run command is available any more.
+    expect(commandStates(await openMenu(w, 'run')).enabled).toEqual([])
   })
 
   it('a Project context change starts the new Project in the initial state again', async () => {
     const w = await mountShell()
     await doubleClick(w, 'UI 개선')
     await doubleClick(w, 'Canvas')
-    await w.get('[data-test="designer-tool-run"][data-run="all"]').trigger('click')
+    await (await openMenu(w, 'run')).get('[data-command="run.all"]').trigger('click')
     await settle()
-    expect(w.get('[data-test="designer-tool-run"][data-run="all"]').attributes('aria-pressed')).toBe('true')
 
     useProjectStore().setCurrentProject(project('q', 'Beta'))
     await settle()
 
     expectUnselectedState(w)
-    // The run state does not outlive its target.
-    expect(w.get('[data-test="designer-tool-run"][data-run="all"]').attributes('aria-pressed')).toBe('false')
+    // The run state does not outlive its target: no run command is available any more.
+    expect(commandStates(await openMenu(w, 'run')).enabled).toEqual([])
   })
 
   it('a Project context change after the Git / Conversation parts were shown reads nothing for the new Project', async () => {

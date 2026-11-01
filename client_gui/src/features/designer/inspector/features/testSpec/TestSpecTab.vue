@@ -15,9 +15,7 @@
           <IconButton :label="t('gui.designer.inspector.slot.edit')" :title="canOpen('brief') ? t('gui.designer.inspector.slot.edit') : openReason('brief')" variant="secondary" size="sm" :disabled="!canOpen('brief')" data-test="test-card-brief" @click="openWindow('brief')">✎</IconButton>
         </template>
         <template v-if="line.key === 'scenario'">
-          <!-- flowgate.v02.0094: the scenario's AI writing is the line's [AI 호출], as on the other cards' lines: it opens
-               the document's AI call window (nothing is written until it runs); the 지시서 window only saves. -->
-          <InspectorAiButton v-if="form !== 'legacy' && line.id" :label="t(aiKey)" :title="aiReason ?? t(aiKey)" :state="writing ? 'running' : 'enabled'" :disabled="!writing && !card?.can('rewriteAll').enabled" data-test="test-card-scenario-ai" @click="card?.rewriteAll()" />
+          <!-- 0006-TR rev2: no AI call button here; the scenario is written only by the menu's 다음 단계 / 전체 실행. -->
           <InspectorHistoryButton v-if="stage.hasScenario && line.id" :count="reviewCount" data-test="test-card-review-history" @click="openDocumentHistory(line.id)" />
         </template>
         <template v-if="line.key === 'report'">
@@ -46,7 +44,6 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Dropdown from '../../../../../components/ui/Dropdown.vue'
 import IconButton from '../../../../../components/ui/IconButton.vue'
-import InspectorAiButton from '../../parts/InspectorAiButton.vue'
 import InspectorHistoryButton from '../../parts/InspectorHistoryButton.vue'
 import InspectorSlotRow from '../../parts/InspectorSlotRow.vue'
 import InspectorStatusChip from '../../parts/InspectorStatusChip.vue'
@@ -68,9 +65,6 @@ const form = computed(() => card.value?.test.form.value ?? 'none')
 const runState = computed(() => card.value?.test.runState.value ?? stage.value.resultState)
 const runAvailability = computed(() => card.value?.can('run') ?? { enabled: false, reason: 'reason.busy' })
 const shownReason = computed(() => card.value?.test.availability.value.cancel.visible ? card.value.test.availability.value.cancel.reason : runAvailability.value.reason)
-const writing = computed(() => card.value?.writing.value === 'initial' || card.value?.writing.value === 'rewrite-all')
-const aiKey = computed(() => `gui.designer.inspector.slot.actions.${writing.value ? 'ai_invoke_running' : 'ai_invoke'}`)
-const aiReason = computed(() => { const reason = writing.value ? null : card.value?.can('rewriteAll').reason; return reason ? t(k(reason)) : null })
 const reviewCount = computed(() => (card.value?.reviewHistory.data.value?.reviews.length ?? 0) + (card.value?.reviewHistory.data.value?.rejections.length ?? 0))
 function canOpen(kind: TestCardWindowKind) {
   return !!card.value && card.value.openReason(kind) === null
