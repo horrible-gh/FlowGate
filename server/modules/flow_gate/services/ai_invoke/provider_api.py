@@ -459,6 +459,9 @@ def _call_anthropic(
         },
         timeout,
     )
+    from flowgate.ai_roles.invocations import ModelResponse
+    body = data
+    # Keep malformed response bodies on the worker's existing exception path.
     content = data.get("content") or []
     text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
     tool_calls = []
@@ -468,7 +471,7 @@ def _call_anthropic(
             name = block.get("name")
             tool_calls.append({"id": block.get("id"), "name": name, "input": block.get("input")})
     assistant_msg = {"role": "assistant", "content": content}
-    return ("\n".join(p for p in text_parts if p) or None), tool_calls, assistant_msg
+    return ModelResponse(("\n".join(p for p in text_parts if p) or None), tool_calls, assistant_msg, body)
 
 
 def _call_openai(
@@ -488,6 +491,9 @@ def _call_openai(
         },
         timeout,
     )
+    from flowgate.ai_roles.invocations import ModelResponse
+    body = data
+    # Keep malformed response bodies on the worker's existing exception path.
     choices = data.get("choices") or []
     message = (choices[0].get("message") if choices else None) or {}
     tool_calls = []
@@ -506,4 +512,4 @@ def _call_openai(
         tool_calls.append({"id": tc.get("id"), "name": fn.get("name"), "input": args})
     # Keep every received call, including unknown names and malformed inputs, so the
     # dispatcher can emit a call-id-specific error instead of misclassifying it as a miss.
-    return message.get("content"), tool_calls, message
+    return ModelResponse(message.get("content"), tool_calls, message, body)

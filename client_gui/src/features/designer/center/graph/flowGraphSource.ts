@@ -5,6 +5,8 @@
 // passes the server source (serverFlowGraphSource.ts, flowgate.v02.0045). A server source goes
 // through the features/project public surface (store loaders), never @shared/api or axios
 // directly (structure.0024).
+import type { CardRunFacts } from './cardStateView'
+import type { RoleRunFields } from '@/features/project'
 import type { FlowGraph, FlowGraphCardDocument, FlowGraphNodeDefinition, FlowGraphTitleState, FlowGraphViewport } from './flowGraph'
 
 /** One batched layout change of a Flow: moved Node positions and / or the Viewport. */
@@ -82,7 +84,9 @@ export interface FlowDraftError extends Error {
  * result integration and Hold, and its attempt's running / requested AI executions. T#15: its current attempt
  * (`attemptId`, null when none; absent when not known), a basis of the Time Machine confirmation.
  */
-export interface FlowRunNodeInfo {
+export interface FlowRunNodeInfo extends CardRunFacts, RoleRunFields {
+  /** The run API owns the complete wait shape; explicitly resolve the inherited display subset. */
+  readonly waitReason?: RoleRunFields['waitReason']
   readonly gateRecoveryResetRequired?: boolean
   readonly nodeKey: string
   readonly status: string

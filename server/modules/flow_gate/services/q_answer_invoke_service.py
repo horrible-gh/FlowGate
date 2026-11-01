@@ -404,6 +404,10 @@ def _record_dispatch_failure(item_id: int, exc: HTTPException, actor_user_id: Op
                        item_id, exc_info=True)
 
 
+from flowgate.ai_roles import invocations as role_invocations
+
+
+@role_invocations.admission
 def dispatch_answer_run(
     *,
     doc: dict,
@@ -414,6 +418,7 @@ def dispatch_answer_run(
     provider_source: Optional[str] = None,
     actor_user_id: Optional[str] = None,
     responder_candidates: Optional[list[tuple[Optional[str], str]]] = None,
+    default_tail: bool = True, invocation_origin: Optional[dict] = None,
 ) -> dict:
     """Issue the item-bound edit token and launch the answer run.
 
@@ -472,13 +477,18 @@ def dispatch_answer_run(
                 except Exception:
                     logger.warning("q-answer asker run unreadable for item %s", item_id, exc_info=True)
         if asker_provider_id:
-            picks = review.question_responder_candidates(
-                project_id, asker_provider_id,
-                [(provider_id, provider_source or "default"), *responder_candidates],
-            )
+            if default_tail:
+                picks = review.question_responder_candidates(
+                    project_id, asker_provider_id,
+                    [(provider_id, provider_source or "default"), *responder_candidates])
+            else:
+                enabled = {p.get("id") for p in review._enabled_provider_chain(project_id)}
+                picks = [(provider_id, provider_source)] if provider_id != asker_provider_id and provider_id in enabled else []
             if not picks:
+                code = "no_independent_responder" if default_tail else (
+                    "designated_is_asker" if provider_id == asker_provider_id else "designated_not_enabled")
                 exc = HTTPException(status_code=409, detail={
-                    "code": "no_independent_responder",
+                    "code": code,
                     "message": "No independent enabled responder; awaiting a human answer.",
                 })
                 _record_dispatch_failure(item_id, exc, actor_user_id or issued_to)
@@ -544,6 +554,7 @@ def dispatch_answer_run(
             issue_builder=_issue,
             completion_oracle=_make_oracle(item_id, baseline, run_holder),
             responder_startup_policy=startup_policy,
+            **({"invocation_origin": invocation_origin} if invocation_origin else {}),
         )
     except HTTPException as exc:
         if run_holder["run_id"] is None:

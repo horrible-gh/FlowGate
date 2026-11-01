@@ -59,7 +59,7 @@
 //   stored file with its frontmatter) is gone — the body copy is the one copy.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Marked } from 'marked'
+import { createMarkdownRenderer } from '@/core/markdown/markdownRenderer'
 import { stripFrontmatter, stripLeadingNextHeader } from '@shared/utils/markdown'
 import { recordMarkdownParse, snapshotRecoverySource } from '@shared/diagnostics/runtimeDiagnostics'
 import type { MarkdownParseCause } from '@shared/diagnostics/runtimeDiagnostics'
@@ -111,25 +111,14 @@ const status = computed<DocumentBodyStatus>(() => ({
   recovering: recovering.value,
 }))
 
-// gfm: GitHub-Flavored Markdown (tables, etc.) — v0.1 R0001 #3.
-const mdRenderer = new Marked({ gfm: true })
-mdRenderer.use({
-  renderer: {
-    code({ text, lang }: { text: string; lang?: string }): string {
-      const escaped = text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-      const langClass = lang ? ` class="language-${lang}"` : ''
-      return `<div class="code-block-wrapper"><button class="code-copy-btn" type="button" aria-label="${t(k('copy_code'))}" title="${t(k('copy_code'))}">⧉</button><pre><code${langClass}>${escaped}</code></pre></div>`
-    },
-  },
-})
+// gfm: GitHub-Flavored Markdown (tables, etc.) — v0.1 R0001 #3. flowgate.v02.0113 T#5: the same renderer is the shared
+// factory (core/markdown) the run result details render AI messages with.
+const mdRenderer = createMarkdownRenderer({ copyLabel: () => t(k('copy_code')) })
 
 function render(source: string, cause: MarkdownParseCause | null): string {
   const stripped = stripLeadingNextHeader(stripFrontmatter(source || ''))
   const start = performance.now()
-  const html = mdRenderer.parse(stripped) as string
+  const html = mdRenderer(stripped)
   recordMarkdownParse(stripped.length, performance.now() - start, cause)
   return html
 }

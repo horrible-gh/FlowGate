@@ -36,6 +36,8 @@
 //
 // flowgate.v02.0064 T#4: a Graph node's card title state (`titleState`), the base of the card's inline title edit.
 
+import type { RoleRunFields } from '@/features/project'
+
 export interface FlowGraphNode {
   /** Unique within the Graph — the server node identity for a server Graph. */
   readonly id: string
@@ -146,7 +148,7 @@ export interface FlowGraphNodeSlot {
   readonly sourceWpCardId: string | null
 }
 
-export interface FlowGraphNodeRun {
+export interface FlowGraphNodeRun extends RoleRunFields {
   readonly dispatchErrorCode?: string | null
   readonly status: string | null
   readonly openedAt: string | null

@@ -43,6 +43,26 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
                         ``{"doc_type": the instruction type, "provider_id": its AI or None (the assignee)}``
     settings            every setting of the card as stored (carried on the job for the record)
 
+flowgate.v02.0113 T#3 (L-2): the stage assignments of a role card's attempt, kept in the v0.2 package:
+
+    stage_dispatch   a node's opening, inside its run step's guard: the dispatch block when the card's attempt is an
+                     assigned one, else None (the current dispatch)
+    stage_result_start   the result stage's start, inside its guard: True when the assigned attempt took it
+    stage_needs_dispatch   an explicit command's re-dispatch of an open node: ``dispatch`` / ``retry_same_attempt`` /
+                     ``reopen_new_attempt`` / ``none``, or None (the current judgement)
+    stage_retry      a same-attempt retry of a stage: None (the current provider), ``{}`` (no AI's stage: nothing is
+                     written again) or ``{provider_id, assignment_ref, invocation_origin}``
+    stage_view       a run read: the node run's ``wait_reason`` / ``stage_assignments`` / ``approval_wait_submission``
+                     (P-1 §6), or ``{}`` (no handler: the keys are not added)
+    stage_waits      the run's idle judgement of a node: True / False, or None (the current judgement)
+    instruction_saved   after a commit: a document was saved, registered or written on its line (L-2 §2.7.1
+                     ``CONTENT_SAVED`` / ``REGISTERED``); a person's instruction stage holding it is judged
+    stage_failed     an AI start's failure record, inside its guard: the dispatch error of an assigned stage
+                     (``ai_unavailable:<cause>``, its assignment failed), or None (the current ``ai_invoke_failed``)
+    result_review_pending   the binder's reconciliation, inside its guard (0038-T T#3 A-4): the node's approved result
+                     is a report approved before the node's attempt took it, and that attempt's own result review has
+                     not passed it yet — the old approval completes nothing (True), else False (no handler: False)
+
 * With no handler registered ``run_settings`` answers ``{}``, ``result_type`` None,
   ``ai_working`` False, ``instruction_document`` ``{}``, ``approve_instruction`` False and ``node_running``
   False, so a node starts and binds exactly as it did before (one stage); ``approval_wait_reason`` None and
@@ -55,6 +75,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Optional
 
+CARDS_CREATED = "cards_created"                              # 0113 T#2: draft creation only
 USES_AI = "uses_ai"
 RUN_SETTINGS = "run_settings"
 RESULT_TYPE = "result_type"
@@ -66,8 +87,20 @@ NODE_RUNNING = "node_running"
 PERSON_RESULT = "person_result"                                  # flowgate.v02.0083 WP-4
 APPROVAL_WAIT_REASON = "approval_wait_reason"                    # flowgate.v02.0105 T#2 B-2
 RECONCILE_STAGE = "reconcile_stage"                              # flowgate.v02.0105 T#2 B-3
+STAGE_DISPATCH = "stage_dispatch"                                # flowgate.v02.0113 T#3 (L-2)
+STAGE_RESULT_START = "stage_result_start"
+STAGE_NEEDS_DISPATCH = "stage_needs_dispatch"
+STAGE_RETRY = "stage_retry"
+STAGE_VIEW = "stage_view"
+STAGE_WAITS = "stage_waits"
+STAGE_UNREADABLE = "unreadable"     # ``stage_waits``: the node's assignment could not be read (its error family)
+INSTRUCTION_SAVED = "instruction_saved"
+STAGE_FAILED = "stage_failed"
+RESULT_REVIEW_PENDING = "result_review_pending"                  # 0038-T T#3 A-4
 PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING,
-              PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE)
+              PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE, CARDS_CREATED, STAGE_DISPATCH, STAGE_RESULT_START,
+              STAGE_NEEDS_DISPATCH, STAGE_RETRY, STAGE_VIEW, STAGE_WAITS, INSTRUCTION_SAVED, STAGE_FAILED,
+              RESULT_REVIEW_PENDING)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -95,6 +128,13 @@ def registered(name: str) -> bool:
 def _handler(name: str) -> Optional[Callable[..., Any]]:
     with _lock:
         return _handlers.get(name)
+
+
+def cards_created(group: dict, user_id: str, nodes: list[dict]) -> None:
+    """Newly issued draft node keys, in the draft's guard. Unregistered: no action."""
+    handler = _handler(CARDS_CREATED)
+    if handler is not None:
+        handler(group, user_id, nodes)
 
 
 def uses_ai(flow_id: str, node: dict) -> bool:
@@ -146,7 +186,8 @@ def approve_instruction(flow_id: str, node: dict, doc_id: str, actor_user_id: st
 
 
 def node_running(flow_id: str, node_key: str) -> bool:
-    """The card is running (open, or its AI review works on its result): its title cannot change now."""
+    """The card actually runs (flowgate.v02.0113 T#1: an AI execution of it requested or running, or its AI review works
+    on its result — never merely open): its title and settings cannot change now."""
     handler = _handler(NODE_RUNNING)
     if handler is None:
         return False
@@ -183,3 +224,63 @@ def reconcile_stage(flow_id: str) -> None:
     handler = _handler(RECONCILE_STAGE)
     if handler is not None:
         handler(flow_id)
+
+
+# ── stage assignments (flowgate.v02.0113 T#3) ────────────────────────────────
+
+def stage_dispatch(ctx, node: dict) -> Optional[dict]:
+    """The opening of ``node`` for an assigned attempt (its dispatch block), or None: the current dispatch."""
+    handler = _handler(STAGE_DISPATCH)
+    return handler(ctx, node) if handler else None
+
+
+def stage_result_start(ctx, node: dict, row: dict, instruction_doc_id: Optional[str], attempt_id: Optional[str]) -> bool:
+    handler = _handler(STAGE_RESULT_START)
+    return bool(handler(ctx, node, row, instruction_doc_id, attempt_id)) if handler else False
+
+
+def stage_needs_dispatch(ctx, row: dict) -> Optional[str]:
+    handler = _handler(STAGE_NEEDS_DISPATCH)
+    return handler(ctx, row) if handler else None
+
+
+def stage_retry(run_id: str, node_key: str, attempt_id: Optional[str], stage: str) -> Optional[dict]:
+    handler = _handler(STAGE_RETRY)
+    return handler(run_id, node_key, attempt_id, stage) if handler else None
+
+
+def stage_view(flow_id: str, row: dict, attempt_id: Optional[str], approval_wait_reason: Optional[str]) -> dict:
+    handler = _handler(STAGE_VIEW)
+    return dict(handler(flow_id, row, attempt_id, approval_wait_reason) or {}) if handler else {}
+
+
+def stage_waits(flow_id: str, row: dict):
+    """L-2 §2.12: True / False (an assigned attempt's person wait or not), ``STAGE_UNREADABLE`` (its assignment could
+    not be read: no person's wait, the node's error family), None (the current judgement)."""
+    handler = _handler(STAGE_WAITS)
+    return handler(flow_id, row) if handler else None
+
+
+def stage_failed(job: dict) -> Optional[str]:
+    handler = _handler(STAGE_FAILED)
+    return handler(job) if handler else None
+
+
+def result_review_pending(flow_id: str, run_id: str, node_key: str, doc_id: str) -> bool:
+    """0038-T T#3 A-4: the node's approved result waits for its attempt's own review (no handler: False)."""
+    handler = _handler(RESULT_REVIEW_PENDING)
+    return bool(handler(flow_id, run_id, node_key, doc_id)) if handler else False
+
+
+def instruction_saved(flow_id: Optional[str], doc_id: Optional[str], node_key: Optional[str] = None,
+                      token_id: Optional[str] = None) -> None:
+    """After a commit; never raises."""
+    handler = _handler(INSTRUCTION_SAVED)
+    if handler is None or not flow_id or not doc_id:
+        return
+    try:
+        handler(flow_id, doc_id, node_key, token_id)
+    except Exception:  # noqa: BLE001 — the save stands; the next run read reconciles
+        import logging  # noqa: PLC0415
+        logging.getLogger(__name__).warning("instruction save contact failed flow=%s doc=%s", flow_id, doc_id,
+                                            exc_info=True)

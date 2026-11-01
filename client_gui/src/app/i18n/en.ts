@@ -245,19 +245,26 @@ export default {
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
+        // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): a person's writing wait by its role, a review card that waits, ◌ = actually running.
+        instruction_write_wait: 'Waiting for instruction writing',
+        result_write_wait: 'Waiting for result writing',
+        waiting: 'Waiting',
+        manual_write_wait: 'Waiting for manual writing',
+        ai_setup_required: 'AI setup required',
+        ai_unavailable: 'AI unavailable',
         no_result: 'No result',
         incomplete: 'Incomplete',
         // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
         waiting_answer: 'Waiting for an answer',
         waiting_writer: 'Waiting for its writer',
-        writing_instruction: 'Writing instruction',
-        writing_result: 'Writing result',
-        working: 'Working',
+        writing_instruction: '◌ Writing instruction',
+        writing_result: '◌ Writing result',
+        working: '◌ Running',
         awaiting_approval: 'Awaiting approval',
         auto_approval_failed: 'Auto-approval failed',
-        approved: 'Approved',
+        approved: 'Done',
         rejected: 'Rejected',
-        pending: 'Waiting',
+        pending: 'Ready',
         closed: 'Closed',
       },
       // flowgate.v02.0056 F2-1 — a card's [승인] (O1 0005-TR §4-1) and why it was refused, by the server's code.
@@ -459,6 +466,7 @@ export default {
       tabs_label: 'Inspector tabs',
       tabs: {
         documents: 'Documents',
+        ai: 'AI',
         qna: 'Q&A',
         attachments: 'Attachments',
         settings: 'Settings',
@@ -1496,7 +1504,7 @@ export default {
       editor: 'Body to write',
       placeholder: 'Write the body in Markdown. Saving it blank makes an empty draft.',
       contentless: 'An empty work plan is made. Edit it once it is made.',
-      result_note: 'The card is running. If this line is the card result, the saved document is registered as the result and the card waits for approval. A result needs a body.',
+      result_note: 'The card is open in the run. If this line is the card result, the saved document is registered as the result and the card waits for approval. A result needs a body.',
       save: 'Save',
       create: 'Create',
       cancel: 'Cancel',
@@ -2027,6 +2035,9 @@ export default {
       invalid_request: 'The request is not valid.',
       internal_error: 'The server hit an internal error. Check the server log.',
       project_not_found: 'Project not found.',
+      ai_role_setup_cards_running: 'Cards are running, so the AI setup was not saved: {cards}',
+      ai_role_setup_unavailable: 'This server cannot save the AI setup yet.',
+      ai_role_setup_busy: 'Another AI setup of this account is being saved. Save again in a moment.',
       provider_not_found: 'AI connection not found.',
       provider_disabled: 'This AI connection is turned off.',
       provider_unavailable: 'This AI connection cannot be used right now. Check whether AI is on and the API key is set.',

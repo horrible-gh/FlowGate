@@ -205,7 +205,17 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
     flow_id = group["group_id"]
     require_writable(flow_id)
     registered = registered_doc_types(group.get("project_id"))
-    return with_flow_guard(flow_id, lambda: write_draft(group, user_id, req, client_id, registered, locale))
+    def save_and_initialize() -> dict:
+        saved = write_draft(group, user_id, req, client_id, registered, locale)
+        issued = {key for key in saved.get("key_map", {}).values() if key.startswith(NODE_KEY_PREFIX)}
+        if issued:
+            from . import card_settings_ports
+            current = definition_store.draft(flow_id)
+            card_settings_ports.cards_created(group, user_id,
+                                             [node for node in current["nodes"] if node["node_key"] in issued])
+        return saved
+
+    return with_flow_guard(flow_id, save_and_initialize)
 
 
 def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, client_id: Optional[str],

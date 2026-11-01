@@ -1,3 +1,5 @@
+export type { AiRole, AiRoleValue, AiRoleOption, AiAccountRole, MyAiRoles, AiRoleValues, CardAiRole, CardAiRoles } from './roles/types'
+
 // AI Settings types (v0.2 flowgate.v02.0015 T0003, product semantics flowgate.v02.0017 T0002)
 
 export type ProviderExecType = 'cli' | 'api'

@@ -27,6 +27,7 @@ from types import SimpleNamespace
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, _h, _sql, _start, db_path, decided, env, edge, node, put_draft, setting,
 )
 from test_fg_card_settings_review import _admin_and_reviewer, _node
@@ -34,6 +35,11 @@ from test_fg_card_approval_0056 import LEE, card_approval_port  # noqa: F401 —
 from test_fg_wp_ai_run_0083 import (
     OPUS, ROOT, _consumed, _grant_document_create, _opus, _plan_line, _start_ai_run, _wp_json,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 OMIT = (("instruction", "omit"),)
 MISMATCH_KO = "이 그룹의 다음 단계는 {expected}입니다. 받은 타입 {submitted}은 받을 수 없습니다."
@@ -58,7 +64,7 @@ def _flow(env, kind, assignee, settings=()):
     assert confirmed.status_code == 201, confirmed.text
     key = body["key_map"]["tmp_c"]
     for field, value in settings:
-        setting(env, FA, key, field, value)
+        legacy_setting(env, FA, key, field, value)
     return key
 
 
@@ -130,10 +136,13 @@ CARDS = [
 ]
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: was_none rows compare with the code before 0083 (person / omitted / pre-148 one-stage cards); an assigned attempt's token type is its plan's (K-2, §2.14) — test_fg_ai_roles_l2_manual.py::test_k2_*
 @pytest.mark.parametrize("kind, assignee, values, stage, expected, was_none", [c[1:] for c in CARDS],
                          ids=[c[0] for c in CARDS])
-def test_a_node_token_writes_what_the_result_binder_binds(env, decided, kind, assignee, values, stage, expected,
+def test_a_node_token_writes_what_the_result_binder_binds(request, env, decided, kind, assignee, values, stage, expected,
                                                           was_none):
+    if was_none:
+        request.getfixturevalue("pre_feature_attempts")
     from flowgate.card_settings import fields, settings
     from modules.flow_gate.services import worker_step_type_hooks
 
@@ -323,3 +332,7 @@ def test_a_wp_card_token_reads_the_wp_template_and_its_help_context_is_wp(env, d
     assert "design_template" in [item["name"] for item in index.json()["items"]]
     template = client.get("/api/v1/help/items/design_template/WP")
     assert template.status_code == 200, template.text
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting

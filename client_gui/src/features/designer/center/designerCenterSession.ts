@@ -106,6 +106,7 @@
 // flowgate.v02.0070 T#1 (B1): the title is edited in the Inspector header, not on the card — `activeSelection` says
 // whether the selected card's title opens now (`titleEdit`, the rule the card had: graph/nodeTitle.ts nodeTitleEdit with
 // the run read's node run of the card) and the header saves through `saveNodeTitle` for the card it opened on.
+import { cardNodeRun } from './graph/cardStateView'
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
 import {
@@ -463,6 +464,8 @@ export interface DesignerCenterSession {
 }
 
 export interface DesignerCenterSessionOptions {
+  readonly beforeRunPrepare?: (flowId: string, mode: FlowRunMode) => Promise<boolean>
+  readonly runSetupCurrent?: () => boolean
   /** Graph source; the fixture source when omitted. Tests pass a fake one. */
   source?: FlowGraphSource
   /** Quiet time before a batched layout save is sent (layoutSaveQueue.ts default when omitted). */
@@ -633,6 +636,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     source,
     projectId: () => state.projectId,
     isOpen,
+    beforePrepare: options.beforeRunPrepare,
+    canProceed: (flowId) => !disposed && (options.runSetupCurrent?.() ?? true) && whenKnown(flowId, run => !isRunLocked(run)),
     prepare: (flowId) => prepareRun(flowId),
     refresh: (flowId) => refreshFlow(flowId),
   }, state.runs)
@@ -1307,7 +1312,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       // flowgate.v02.0061 T#14: the Inspector's card settings follow the run lock as the Canvas does.
       // flowgate.v02.0070 T#1: so does the Inspector's title edit (closed when the source saves no titles).
       const titleEdit = canEditNodeTitles ? nodeTitleEdit(load.graph as FlowGraph, node as FlowGraphNode, runMarks(id).nodeRuns.get(node.id)) : null
-      return { projectId: exposed.projectId, graph: load.graph, node, editLock: editLock(id), titleEdit, canApprove: canApproveFlow(id) }
+      return { projectId: exposed.projectId, graph: load.graph, node: { ...node, nodeRun: cardNodeRun(node.nodeRun, runMarks(id).nodeRuns.get(node.id)) }, editLock: editLock(id), titleEdit, canApprove: canApproveFlow(id) }
     }),
     canvasSize: computed(() => canvasSize.value),
     setProject,

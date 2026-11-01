@@ -15,6 +15,19 @@ from .graph_messages import fill_issue_messages
 router = APIRouter(prefix="/api/v1", tags=["GraphDefinition"])
 
 
+@router.get("/flows/{flow_id}/nodes/{node_key}/ai-invocations")
+def get_ai_invocations(flow_id: str, node_key: str, request: Request):
+    def handle():
+        from flowgate.ai_roles import invocation_view
+        user_id = envelope.authenticate(request)
+        envelope.authorize(user_id, canvas_service.load_flow(flow_id), "read")
+        values, errors = invocation_view.query(request.query_params)
+        if errors:
+            raise envelope.invalid(request, errors)
+        return invocation_view.payload(flow_id, node_key, **values)
+    return envelope.run(request, handle)
+
+
 @router.get("/flows/{flow_id}/graph")
 def get_flow_graph(flow_id: str, request: Request):
     def handle() -> dict:

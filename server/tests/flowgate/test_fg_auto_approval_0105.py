@@ -200,14 +200,16 @@ def test_a_refused_transition_is_recorded_and_the_card_waits(env, decided, monke
     assert _waits(env) == [(result, "approval_refused")] and _authorities(env) == []
 
 
-def test_no_issuer_approves_nothing(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: the AI run's empty issued_to as the approval actor; an assigned attempt's actor is the node token recipient fixed at its opening (L-2 §2.6/§2.7.4) — the assigned path: test_fg_ai_roles_l2_*
+def test_no_issuer_approves_nothing(pre_feature_attempts, env, decided, monkeypatch):
     key, result, _token = _in_review(env, monkeypatch, NO_REVIEW)
     _work_run_ended(issued_to="")
     assert _node_run(env, key)["approval_wait_reason"] == "issuer_missing"
     assert _review_status(result) == "pending_review"
 
 
-def test_a_review_that_cannot_start_is_recorded_and_never_approved(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: review_count without review_ai asks the project default reviewer; an assigned attempt waits for setup instead (G-9, R-6) — test_fg_ai_roles_l2_review.py::test_g9_*
+def test_a_review_that_cannot_start_is_recorded_and_never_approved(pre_feature_attempts, env, decided, monkeypatch):
     from flowgate.card_settings import legacy_adapter
 
     key, result, _token = _in_review(env, monkeypatch, (("review_count", 1), ("instruction", "omit")))
@@ -243,7 +245,8 @@ def test_a_lost_run_end_of_a_review_none_card_is_approved_once_by_a_run_read(env
     assert _authorities(env) == [(result, "system", "u_kim")] and _waits(env) == []
 
 
-def test_a_lost_approval_of_a_passed_review_is_made_once_and_the_loop_is_kept(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: a lost run end modelled by a loop row with no ledger assignment reference; an assigned attempt's loop is found by its assignment (RC-1) — test_fg_ai_roles_l2_fixes.py::test_t46_a_loop_end_*, test_fg_ai_roles_l2_reconcile.py::test_k4_*
+def test_a_lost_approval_of_a_passed_review_is_made_once_and_the_loop_is_kept(pre_feature_attempts, env, decided, monkeypatch):
     key, result, _token = _in_review(env, monkeypatch, REVIEWED)
     _passed_loop(env, result)
     _verdict(monkeypatch, True)
@@ -267,7 +270,8 @@ def test_a_lost_run_end_before_the_review_starts_the_review_once_and_approves_no
     assert _authorities(env) == [] and _waits(env) == []
 
 
-def test_a_lost_run_end_whose_review_cannot_start_is_recorded_once(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: the project default reviewer of the pre-feature review start (G-9) — test_fg_ai_roles_l2_review.py::test_g9_*
+def test_a_lost_run_end_whose_review_cannot_start_is_recorded_once(pre_feature_attempts, env, decided, monkeypatch):
     from flowgate.card_settings import legacy_adapter
 
     key, result, _token = _in_review(env, monkeypatch, (("review_count", 1), ("instruction", "omit")))
@@ -291,9 +295,10 @@ def test_a_review_still_working_is_never_approved_even_when_no_ai_is_told_workin
     assert _review_status(result) == "pending_review" and _waits(env) == [] and _authorities(env) == []
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a lost run end modelled by a loop row with no ledger assignment reference (RC-1 finds an assigned loop by its assignment) — test_fg_ai_roles_l2_fixes.py::test_rc1_a_lost_end_of_a_review_that_did_not_pass_*
 @pytest.mark.parametrize("stop_reason", ["review_count_exhausted", "review_verdict_hold", "retry_exhausted",
                                          "total_timeout", "restart_orphaned", "review_stalled"])
-def test_a_lost_run_end_of_a_review_that_did_not_pass_records_it_once(env, decided, monkeypatch, stop_reason):
+def test_a_lost_run_end_of_a_review_that_did_not_pass_records_it_once(pre_feature_attempts, env, decided, monkeypatch, stop_reason):
     key, result, _token = _in_review(env, monkeypatch, REVIEWED)
     _passed_loop(env, result, stop_reason)
     loops = _loops(env)
@@ -306,8 +311,9 @@ def test_a_lost_run_end_of_a_review_that_did_not_pass_records_it_once(env, decid
     assert calls == [] and _loops(env) == loops and _review_status(result) == "pending_review"
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt resolves an unreadable count as wait_setup(store_error) at the stage start (L-2 §2.3/E-05)
 @pytest.mark.parametrize("raw", ["{bad", '"1"', "5"])
-def test_a_review_count_that_cannot_be_read_approves_nothing(env, decided, monkeypatch, raw):
+def test_a_review_count_that_cannot_be_read_approves_nothing(pre_feature_attempts, env, decided, monkeypatch, raw):
     key, result, _token = _in_review(env, monkeypatch, REVIEWED)
     _stored(env, key, "review_count", raw)
     _lost_run_end(monkeypatch, env, key)
@@ -316,8 +322,9 @@ def test_a_review_count_that_cannot_be_read_approves_nothing(env, decided, monke
     assert _waits(env) == [(result, "review_result_unknown")] and _review_status(result) == "pending_review"
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation (loop rows with no assignment); an assigned attempt: K-6 — test_fg_ai_roles_l2_fixes.py::test_k6_*
 @pytest.mark.parametrize("case", ["earlier_attempt", "earlier_revision"])
-def test_a_pass_that_is_not_the_current_one_approves_nothing(env, decided, monkeypatch, case):
+def test_a_pass_that_is_not_the_current_one_approves_nothing(pre_feature_attempts, env, decided, monkeypatch, case):
     key, result, _token = _in_review(env, monkeypatch, REVIEWED)
     _passed_loop(env, result)
     _verdict(monkeypatch, case != "earlier_revision")
@@ -327,7 +334,8 @@ def test_a_pass_that_is_not_the_current_one_approves_nothing(env, decided, monke
     assert _waits(env) == [(result, "review_result_unknown")] and _review_status(result) == "pending_review"
 
 
-def test_a_review_none_card_whose_result_has_a_loop_approves_nothing(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt's NO_REVIEW assignment decides (K-10)
+def test_a_review_none_card_whose_result_has_a_loop_approves_nothing(pre_feature_attempts, env, decided, monkeypatch):
     key, result, _token = _in_review(env, monkeypatch, REVIEWED)
     _passed_loop(env, result)
     _stored(env, key, "review_count", "0")                               # set to 'none' after its review started
@@ -336,7 +344,8 @@ def test_a_review_none_card_whose_result_has_a_loop_approves_nothing(env, decide
     assert _waits(env) == [(result, "review_result_unknown")] and _review_status(result) == "pending_review"
 
 
-def test_a_read_that_fails_approves_nothing_and_is_not_tried_again(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt: T §4.6 — test_fg_ai_roles_l2_fixes.py::test_t46_*
+def test_a_read_that_fails_approves_nothing_and_is_not_tried_again(pre_feature_attempts, env, decided, monkeypatch):
     from flowgate.card_settings import legacy_adapter
 
     key, result, _token = _in_review(env, monkeypatch, REVIEWED)
@@ -416,7 +425,7 @@ def _instruction_lost(env, monkeypatch, settings=(), *, current_attempt=True):
     _admin_and_reviewer(env)
     key = _run_one_card(env, AI)
     for field, value in settings:
-        setting(env, FA, key, field, value)
+        legacy_setting(env, FA, key, field, value)
     _start(env)
     [job] = env["jobs"]
     assert (job["stage"], job["action_scope"]) == ("instruction", "edit")
@@ -471,7 +480,8 @@ def test_a_lost_instruction_end_on_an_idle_run_is_approved_and_takes_its_result_
     assert _authorities(env) == [(instruction, "system", "u_kim")]
 
 
-def test_a_lost_approval_of_a_passed_instruction_review_on_an_idle_run_takes_its_result_stage_once(env, decided,
+# 0113 T#3 (T §6.4) pre-feature contract: the project default reviewer and a loop row with no assignment reference; assigned: K-4 — test_fg_ai_roles_l2_reconcile.py::test_k4_*
+def test_a_lost_approval_of_a_passed_instruction_review_on_an_idle_run_takes_its_result_stage_once(pre_feature_attempts, env, decided,
                                                                                                    monkeypatch):
     key, instruction = _instruction_lost(env, monkeypatch, (("instruction_review_count", 1),))
     _instruction_passed(env, instruction)
@@ -492,7 +502,8 @@ def test_an_approved_instruction_whose_result_stage_was_lost_takes_it_once_on_an
     assert _authorities(env) == []                                       # approved once, not again
 
 
-def test_a_lost_instruction_end_that_needs_its_review_starts_it_once_on_an_idle_run(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: instruction_review_count without instruction_review_ai asks the project default reviewer; an assigned attempt waits for setup (L-2 §2.8.2, G-9)
+def test_a_lost_instruction_end_that_needs_its_review_starts_it_once_on_an_idle_run(pre_feature_attempts, env, decided, monkeypatch):
     key, instruction = _instruction_lost(env, monkeypatch, (("instruction_review_count", 1),))
     calls = _review_starts(monkeypatch, env, instruction)
     for _ in range(3):
@@ -503,8 +514,9 @@ def test_a_lost_instruction_end_that_needs_its_review_starts_it_once_on_an_idle_
     assert _refusals(env) == [] and _waits(env) == [] and _authorities(env) == [] and _result_jobs(env) == []
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: the project default reviewer of the pre-feature instruction review (L-2 §2.8.2); assigned: E-42 / E-13 — test_fg_ai_roles_l2_fixes.py::test_e13_*
 @pytest.mark.parametrize("failure", ["no_reviewer", "start_refused"])
-def test_a_lost_instruction_review_that_cannot_start_on_an_idle_run_is_recorded_once(env, decided, monkeypatch, failure):
+def test_a_lost_instruction_review_that_cannot_start_on_an_idle_run_is_recorded_once(pre_feature_attempts, env, decided, monkeypatch, failure):
     from flowgate.card_settings import legacy_adapter
     from modules.flow_gate.services import ai_invoke_service
 
@@ -573,7 +585,8 @@ def test_an_instruction_run_of_an_earlier_attempt_is_never_reconciled(env, decid
 
 # ── B-6: viewer.can_approve, the approval route's own judgement ──────────────
 
-def test_the_run_tells_the_viewer_whether_the_approval_route_would_take_its_approval(env, decided, monkeypatch):
+# 0113 T#3 (T §6.4) pre-feature contract: its passed-loop scene is a loop row with no assignment reference (pre-feature reconciliation)
+def test_the_run_tells_the_viewer_whether_the_approval_route_would_take_its_approval(pre_feature_attempts, env, decided, monkeypatch):
     from flowgate.card_approval import legacy_adapter as approvals
 
     key, result, _token = _in_review(env, monkeypatch, REVIEWED)
@@ -587,3 +600,13 @@ def test_the_run_tells_the_viewer_whether_the_approval_route_would_take_its_appr
     monkeypatch.setattr(approvals, "permissions_of", real)
     body = _approve(env, key)
     assert body["run"]["viewer"] == {"can_approve": True} and _node(env, key)[0] == "done"
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting, legacy_cards, pre_feature_attempts  # noqa: F401
+
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")

@@ -120,7 +120,9 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (writing.value) return item('guard.writing')
     if (operation === 'settingChange') {
       const reason = cardSettingsDisabledReason({ readOnly: current.readOnly, placing: settings.placing.value,
-        read: settings.node.value !== null, locked: settings.node.value?.locked === true || !!current.editLock, blocked: settings.blocked.value })
+        read: settings.node.value !== null, blocked: settings.blocked.value,
+        // flowgate.v02.0113 T#1: only an actually running card (server lock / node_running) or an unconfirmed run status
+        locked: settings.node.value?.locked === true || current.nodeRun?.nodeRunning === true || current.editLock === 'unknown' })
       if (reason) return item(reason.startsWith('reason.read_only') || reason === 'reason.disposed' ? reason : 'guard.' + reason.slice(7))
       if (settingsDenied.value) return item('reason.forbidden')
       return item(field && field in settings.pending.value ? 'reason.busy' : null)

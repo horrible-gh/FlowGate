@@ -8,6 +8,8 @@
 //   the Canvas node runs and from the run read, so a draft view (no node runs on its nodes) is protected the same.
 // - Running lines: a line into a node the work is going through now — open or review, or one with a running /
 //   requested AI execution or a pending / integrating result integration — is drawn as running (FlowEdgePath).
+//   flowgate.v02.0113 T#1 (0002-D 개정 §3.13): when the server tells `node_running`, it replaces "open or review": a node
+//   a person or a setup waits on is reached (the green progress line) but not running.
 // - Run status not confirmed (TR0031 rev1): until a read tells the Flow's run status (the run read, or the Canvas read's
 //   `run` block) the structure waits too (`unknown`) — a run being read or whose read failed is never taken as idle. A
 //   run already known to be locked stays locked whatever its Graph's load does (no Graph: no protected / running nodes).
@@ -46,7 +48,7 @@ export function editLockOf(run: Pick<FlowRunInfo, 'status'> | null | undefined, 
   return known ? null : 'unknown'
 }
 
-type NodeRunFacts = Pick<FlowRunNodeInfo, 'status' | 'integrationStatus' | 'runningExecutionCount' | 'requestedExecutionCount'>
+type NodeRunFacts = Pick<FlowRunNodeInfo, 'status' | 'integrationStatus' | 'runningExecutionCount' | 'requestedExecutionCount' | 'nodeRunning'>
 
 /** The run read's node runs of the nodes `graph` shows, by node key (a node added to the draft has none). */
 function runNodesOf(graph: FlowGraph, run: FlowRunInfo | null | undefined): Map<string, FlowRunNodeInfo> {
@@ -83,7 +85,9 @@ export function activeNodeIds(graph: FlowGraph, run?: FlowRunInfo | null): Set<s
   for (const [id, nodeRun] of nodeRunsOf(graph, run)) {
     const executing = (nodeRun.runningExecutionCount ?? 0) > 0 || (nodeRun.requestedExecutionCount ?? 0) > 0
     const integrating = ACTIVE_INTEGRATIONS.includes(nodeRun.integrationStatus ?? '')
-    if (ACTIVE_NODE_STATES.includes(nodeRun.status) || executing || integrating) out.add(id)
+    // flowgate.v02.0113 T#1: the server's `node_running` (actual running) when sent — a waiting open node is no running line
+    const working = typeof nodeRun.nodeRunning === 'boolean' ? nodeRun.nodeRunning : ACTIVE_NODE_STATES.includes(nodeRun.status)
+    if (working || executing || integrating) out.add(id)
   }
   return out
 }

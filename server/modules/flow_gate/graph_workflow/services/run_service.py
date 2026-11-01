@@ -47,6 +47,7 @@ may approve its cards (``viewer.can_approve``, B-6: the card approval route's ow
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Optional
 
@@ -173,9 +174,37 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
             raise _undecided(flow_id, number, [{"policy": exc.key, "rule_ref": RULE_REF[exc.key]}])
         return {"run": run_payload(ctx.run_id, with_nodes=True)}
 
-    result = with_flow_guard(flow_id, body)
+    with _command_fence(flow_id):
+        result = with_flow_guard(flow_id, body)
     run_jobs(jobs)
-    return result
+    return answer_after_jobs(result, project_id, jobs, with_nodes=True)
+
+
+def answer_after_jobs(result: dict, project_id: Optional[str], jobs: list, with_nodes: bool) -> dict:
+    """flowgate.v02.0113 T#3 rework (0026-TR review): a command answers the run as its post-commit jobs left it. The
+    guarded answer is built before those jobs run (a lost stage's reconciliation, a reused instruction's review
+    assignment, ``stage_assignment.proceed``) and before the settlement after them, so it told the reason of the moment
+    before (``no_targets``) and the stage assignments of the attempt the command replaced — and the client puts the
+    answer in its run state at once. With jobs run, the run is settled (``settle_if_needed``, as a run read settles it)
+    and read again; a failed read keeps the guarded answer."""
+    run = result.get("run") if isinstance(result, dict) else None
+    if not jobs or not isinstance(run, dict) or not run.get("run_id"):
+        return result
+    try:
+        settle_if_needed(run["flow_id"], project_id)
+        now = run_payload(run["run_id"], with_nodes)
+    except Exception:  # noqa: BLE001 — the command is done; its guarded answer is told
+        _log.warning("graph run command answer read failed run=%s", run.get("run_id"), exc_info=True)
+        return result
+    return {**result, "run": now} if now is not None else result
+
+
+def _command_fence(flow_id: str):
+    """0113 T#3 (L-2 §2.10, T §4.5): an explicit command that replaces a node's attempt (``REOPEN_NEW_ATTEMPT``) takes
+    the Flow's Stop gate exclusively before its Flow guard (``graph_execution_hooks`` ``command_fence``) — the lock
+    order of every attempt replacement; any other command takes no fence."""
+    from modules.flow_gate.services import graph_execution_hooks
+    return graph_execution_hooks.call("command_fence", flow_id) or contextlib.nullcontext()
 
 
 def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str, reason: Optional[str],
@@ -234,8 +263,15 @@ def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
     run_id = ctx.run_id
     _take_root_binding(ctx, policies)
     for row in run_store.node_runs(run_id):                                      # 5-3 re-dispatch
-        if row["status"] == "open" and (row.get("dispatch_token_issued") == 0
-                                      or node_dispatch.needs_ai_dispatch(ctx, row)):
+        kind = node_dispatch.redispatch_kind(ctx, row) if row["status"] == "open" else None
+        if kind == node_dispatch.REOPEN:
+            # 0113 T#3 (L-2 §2.10 REOPEN_NEW_ATTEMPT): an assigned attempt's wait or failure — the attempt is
+            # invalidated and the node opened again as a new attempt (resolved anew), inside this guard and under the
+            # exclusive Stop gate the command's entry took (``_command_fence``); judged again there.
+            from modules.flow_gate.services import graph_execution_hooks
+            graph_execution_hooks.call("reopen_attempt", ctx, row)
+            continue
+        if kind == node_dispatch.REDISPATCH:
             dispatch = node_dispatch.dispatch(ctx, row["node_key"])
             run_store.set_dispatch(run_id, row["node_key"], dispatch)
             emit_node_state(ctx, row["node_key"], "open", "open", "redispatched",
@@ -310,8 +346,10 @@ def _root_bound_start(ctx: RunContext, root: dict, policies: dict) -> None:
     run_store.insert_propagation(ctx.run_id, seq, key, "approved", "pending")
 
 
-def _guarded_run(run_id: str, body_of) -> dict:
-    """Stop / resume: ``flow_id`` from outside the guard picks the guard only (L0009 §2.1.1)."""
+def _guarded_run(run_id: str, body_of, command: bool = False, project_id: Optional[str] = None) -> dict:
+    """Stop / resume: ``flow_id`` from outside the guard picks the guard only (L0009 §2.1.1). ``command`` (resume):
+    the explicit command's fence first (``_command_fence``), and its answer read once its jobs ran
+    (``answer_after_jobs``)."""
     outside = run_store.run_by_id(run_id)
     if outside is None:
         raise GraphApiError(404, "run_not_found", {"run_id": run_id})
@@ -325,9 +363,10 @@ def _guarded_run(run_id: str, body_of) -> dict:
         assert run["group_id"] == flow_id
         return body_of(run, jobs)
 
-    result = with_flow_guard(flow_id, body)
+    with (_command_fence(flow_id) if command else contextlib.nullcontext()):
+        result = with_flow_guard(flow_id, body)
     run_jobs(jobs)
-    return result
+    return answer_after_jobs(result, project_id, jobs, with_nodes=False) if command else result
 
 
 def pause_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
@@ -377,7 +416,7 @@ def resume_run(group: dict, run_id: str, reason: Optional[str], user_id: str, mo
         _go_on(group, run, user_id, mode, "user_resume", reason, jobs)            # 3~5
         return {"run": run_payload(run_id, with_nodes=False)}
 
-    return _guarded_run(run_id, body_of)
+    return _guarded_run(run_id, body_of, command=True, project_id=group.get("project_id"))
 
 
 # ── Reads (P0008 S5-4) ───────────────────────────────────────────────────────
@@ -427,8 +466,12 @@ def gate_wire(run: dict, rows: list[dict]) -> dict:
 
 def question_nodes(run_id: str, flow_id: str) -> frozenset:
     """flowgate.v02.0063: the nodes whose own document (result document, the root bound one included, or instruction)
-    holds a question (Q&A item) nobody has answered yet — the card of the document the question is on, not the card
-    of the AI that asked it. A failed read marks nothing."""
+    holds a question (Q&A item) nobody has answered yet — the card of the document the question is on. A failed read
+    marks nothing.
+
+    flowgate.v02.0113 T#3 rework (0084: the card stopped with its AI's question on the R document, the run idle
+    ``no_targets``): also the open node whose own AI asked a question nobody has answered yet (``node_asks``) — the card
+    that waits for that answer, wherever the question hangs."""
     from modules.flow_gate.db import questions as db_questions  # noqa: PLC0415
     from modules.flow_gate.graph_workflow.store import assignment_store  # noqa: PLC0415
     try:
@@ -441,12 +484,24 @@ def question_nodes(run_id: str, flow_id: str) -> frozenset:
             docs = {row.get("result_doc_id"), row.get("instruction_doc_id")}
             if row["node_key"] == binding.get("node_key"):
                 docs.add(binding.get("doc_id"))
-            if docs & asked:
+            if docs & asked or node_asks(flow_id, row):
                 nodes.add(row["node_key"])
         return frozenset(nodes)
     except Exception:  # noqa: BLE001 — the run read goes on
         _log.warning("graph question nodes read failed flow=%s", flow_id, exc_info=True)
         return frozenset()
+
+
+def node_asks(flow_id: str, row: dict) -> bool:
+    """flowgate.v02.0113 T#3 rework: the open node run ``row``'s own AI — a run of its live attempt
+    (``run_store.ai_runs_of_node``) — asked a question nobody has answered yet (``finalize.open_questions_raised_by_run``,
+    the question wait's own read): the card waits for that answer. Reads only; raises on a failed read."""
+    if row.get("status") != "open":
+        return False
+    from modules.flow_gate.services.ai_invoke.finalize import open_questions_raised_by_run  # noqa: PLC0415
+
+    return any(open_questions_raised_by_run(flow_id, ai_run_id)
+               for ai_run_id in run_store.ai_runs_of_node(row["run_id"], row["node_key"]))
 
 
 def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, held: Optional[frozenset] = None,
@@ -468,16 +523,28 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
     if failure and failure != "question_pending" and dispatch is not None:   # 0111 T-A1: a question wait, no error
         dispatch = {**dispatch, "error_code": failure}
     awaiting = node_approval.awaiting_approval(flow_id, row)
+    reason = approval_wait_reason(flow_id, row) if awaiting else None
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),
             **(graph_execution_hooks.call("integration_wire", attempt_id) or {}),
             "node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
             "finished_at": row.get("finished_at"), "result_doc_id": row.get("result_doc_id"),
             "root_bound": bool(row.get("root_bound")), "dispatch": dispatch,
             "awaiting_approval": awaiting,
-            "approval_wait_reason": approval_wait_reason(flow_id, row) if awaiting else None,       # 0105 T#2 B-2
+            "approval_wait_reason": reason,                                                         # 0105 T#2 B-2
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
             "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked,
-            "node_running": running_lock(flow_id, row)}
+            "node_running": running_lock(flow_id, row), **stage_view(flow_id, row, attempt_id, reason)}
+
+
+def stage_view(flow_id: str, row: dict, attempt_id: Optional[str], reason: Optional[str]) -> dict:
+    """flowgate.v02.0113 T#3 (P-1 §6.1): ``wait_reason``, ``stage_assignments`` and ``approval_wait_submission`` of the
+    node run (``card_settings_ports.stage_view``; no handler: none of the keys). A failed read is null; the read goes
+    on. A read only: no role is resolved, no assignment written."""
+    try:
+        return card_settings_ports.stage_view(flow_id, row, attempt_id, reason)
+    except Exception:  # noqa: BLE001 — the run read goes on
+        _log.warning("graph stage view read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+        return {"wait_reason": None, "stage_assignments": None, "approval_wait_submission": None}
 
 
 def approval_wait_reason(flow_id: str, row: dict) -> Optional[str]:
@@ -507,7 +574,9 @@ def with_viewer(answer: dict, group: dict, user_id: str) -> dict:
 
 def running_lock(flow_id: str, row: dict) -> bool:
     """0064 T#4: the card settings' running lock of the node run ``row``'s card (``card_settings_ports.node_running``,
-    the one a title save is refused by). Only an open or review node can be running, so no other is asked."""
+    the one a title save is refused by). Only an open or review node can be running, so no other is asked.
+    flowgate.v02.0113 T#1 (0002-D 개정 §3.13): that lock is the node's *actual running* (an AI execution of it requested
+    or running, or an AI review loop on its result), so an open node a person or a setup waits on is not running."""
     return row.get("status") in ("open", "review") and card_settings_ports.node_running(flow_id, row["node_key"])
 
 

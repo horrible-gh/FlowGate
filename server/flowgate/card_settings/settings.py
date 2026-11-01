@@ -9,6 +9,11 @@ answer what a node's AI start takes from its card.
 - 0061 T#3: running/paused flows lock every card setting (409 ``graph_run_locked``).
   Done/open/review nodes remain protected while idle (409 ``graph_node_protected``), including
   instruction use and AI settings. The earlier node_settings_locked check remains as a fallback.
+  flowgate.v02.0113 T#1 (0030-M §4, 0002-D 개정 §3.13) replaces both for card settings: a card is locked only while
+  it actually runs (``legacy.node_running``: an AI execution of it requested or running, or an AI review loop on its
+  result; 409 ``node_settings_locked``). Waiting (ready, a person's writing, AI setup needed / unavailable, a question,
+  an approval), done and error cards take their settings whatever the run's status — all three roles ``not_used``
+  too. An unfinished Time Machine operation still refuses (``editing.require_settings_editable``).
 - 0061 T#11: Hold (``hold``: true / false or null) is written through the same PATCH for every card, with the Graph
   run's rules instead of the lock above (``flowgate.graph_run.hold``): refused while a run is running / paused /
   stopping (409 ``graph_run_locked``), setting refused on a node done in the Flow's run (409 ``graph_hold_done_node``),
@@ -57,15 +62,23 @@ answer what a node's AI start takes from its card.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from flowgate.card_documents import lines as card_lines
 from flowgate.card_documents import slots as card_slots
+from flowgate.ai_roles import card_roles, role_store
+from flowgate.ai_roles.resolve import applicable_roles
 from flowgate.card_settings import fields
 from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
 from flowgate.gate_decisions import settings_lock as gate_lock
 from flowgate.graph_run import editing, hold
+
+_log = logging.getLogger(__name__)
+# flowgate.v02.0113 T#3 (L-2 §2.14, T §4.6): the result type of a node whose stage plan could not be read — a type no
+# document has, so the binder binds nothing (never a type guessed from the card) and its reconciliation waits.
+UNREADABLE_RESULT_TYPE = "?unreadable"
 
 DELEGATION_FIELD = "delegation"
 MERGE_TARGET_FIELD = "merge_target"
@@ -96,11 +109,11 @@ def _card(flow_id: str, node_key: str) -> dict:
     return node
 
 
-def _payload(flow_id: str, node: dict, stored: dict) -> dict:
+def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=None) -> dict:
     kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
     reason = gate_lock.lock_reason(flow_id, node["node_key"]) if kind == fields.CHECK else None
-    # A gate is open while it waits for the person, so "open in the active run" (``legacy.node_running``) is not a
-    # lock for it: only the gate's own lock decides. Every other card keeps the Graph lock and the running check.
+    # A gate is open while it waits for the person: only the gate's own lock decides. Every other card is locked only
+    # while it actually runs (flowgate.v02.0113 T#1: ``legacy.node_running``) or a Time Machine operation is unfinished.
     if kind == fields.CHECK:
         locked = reason is not None
     else:
@@ -112,6 +125,8 @@ def _payload(flow_id: str, node: dict, stored: dict) -> dict:
     if kind == fields.CHECK:
         payload["lock_reason"] = reason
         payload["legacy"] = fields.legacy_view(kind, stored)      # history only: usage, the old merge target branch
+    if applicable_roles(kind):
+        payload["ai_roles"] = card_roles.card_role_view(flow_id, node, kind, viewer, project_id, stored)
     return payload
 
 
@@ -136,12 +151,12 @@ def _with_merge_targets(group: dict, payload: dict, refresh: bool = False) -> di
             "push_remote_check_required": push and (shown.get(MERGE_TARGET_FIELD) or {}).get("value") != ORIGIN}
 
 
-def read(group: dict, node_key: str, refresh_merge_targets: bool = False) -> dict:
+def read(group: dict, node_key: str, refresh_merge_targets: bool = False, *, viewer=None) -> dict:
     """``GET /flows/{flow_id}/nodes/{node_key}/settings``. ``refresh_merge_targets``: a check card's candidates are
     judged again instead of read from their cache (nothing else changes)."""
     flow_id = group["group_id"]
     node = _card(flow_id, node_key)
-    return _with_merge_targets(group, _payload(flow_id, node, repository.values(flow_id, node_key)),
+    return _with_merge_targets(group, _payload(flow_id, node, repository.values(flow_id, node_key), viewer, group.get("project_id")),
                                refresh_merge_targets)
 
 
@@ -164,11 +179,17 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
         if found is not None and fields.card_kind(found.get("node_type"), found.get("doc_type")) == fields.CHECK:
             gate_lock.require_unlocked(flow_id, node_key)             # D0007 §7.2: the gate's own lock
         else:
-            editing.require_editable(flow_id, node_key)
+            editing.require_settings_editable(flow_id)                # 0113 T#1: the running check below locks
         node = _card(flow_id, node_key)
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
+        role_write = name in card_roles.ROLE_FIELDS and role_store.available()
+        if name in card_roles.NEW_FIELDS and not role_write:
+            raise legacy.GraphApiError(409, "card_roles_unavailable", {"flow_id": flow_id, "node_key": node_key},
+                                       message="Card AI roles are not available on this server yet.")
         field = fields.field_of(kind, name)
-        if field is None:
+        applicable = (card_roles.ROLE_FIELDS.get(name) in applicable_roles(kind)
+                      if name in card_roles.NEW_FIELDS else field is not None)
+        if not applicable:
             raise legacy.GraphApiError(422, "invalid_request", {"errors": [
                 {"field": "field", "reason": "not_a_setting_of_this_card", "card_kind": kind}]},
                 message="This card has no such setting.")
@@ -181,7 +202,9 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
                 raise legacy.GraphApiError(409, "gate_context_changed", {
                     "flow_id": flow_id, "node_key": node_key, "reason": "settings_version",
                     "expected_settings_version": expected_version, "settings_version": current})
-        if value is None:
+        if role_write:
+            changed = card_roles.apply_role_write(flow_id, node_key, kind, name, value, user_id)
+        elif value is None:
             changed = repository.remove(flow_id, node_key, name)
         else:
             try:
@@ -204,7 +227,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
                                       locale)
         if changed and name == fields.MERGE_TARGET_BRANCH.name:
             legacy.invalidate_merge_targets(group)
-        return _payload(flow_id, node, stored)
+        return _payload(flow_id, node, stored, user_id, group.get("project_id"))
 
     return _with_merge_targets(group, legacy.with_flow_guard(flow_id, body))
 
@@ -276,10 +299,38 @@ def _write_hold(group: dict, node_key: str, value: Any, user_id: Optional[str]) 
         repository.remove(flow_id, node_key, fields.HOLD.name)
     if on != before:
         hold.changed(flow_id, group.get("project_id"), node_key, on, user_id)
-    return _payload(flow_id, node, repository.values(flow_id, node_key))
+    return _payload(flow_id, node, repository.values(flow_id, node_key), user_id, group.get("project_id"))
+
+
+def _assigned(flow_id: str, node: dict) -> Optional[tuple]:
+    """flowgate.v02.0113 T#3: ``(attempt_id, plan)`` when the node's active attempt in the Flow's active run is an
+    assigned one (L-2 §2.13), else None (the feature off, a pre-feature attempt, no run, not a role card)."""
+    from flowgate.card_settings import stage_assignment as sa  # noqa: PLC0415
+
+    if not node.get("node_key") or not sa.role_card(node) or not sa.enabled():
+        return None
+    run_row = legacy.active_run(flow_id)
+    attempt_id = legacy.active_attempt_id(run_row["run_id"], node["node_key"]) if run_row else None
+    plan = sa.stage_plan(attempt_id) if attempt_id else None
+    return (attempt_id, plan) if plan else None
 
 
 def uses_ai(flow_id: str, node: dict) -> bool:
+    """flowgate.v02.0113 T#3 (L-1 §2.9, T §4.1): the registered ``USES_AI`` handler stays this function; with the stage
+    assignment feature on, the judgement is ``resolve.card_execution_is_ai`` of the node's active attempt (its result
+    assignment first, else the execution role); with it off, the function below as before."""
+    from flowgate.card_settings import stage_assignment as sa  # noqa: PLC0415
+
+    if sa.enabled() and sa.role_card(node) and node.get("node_key"):
+        from flowgate.ai_roles import resolve  # noqa: PLC0415
+
+        run_row = legacy.active_run(flow_id)
+        attempt_id = legacy.active_attempt_id(run_row["run_id"], node["node_key"]) if run_row else None
+        return resolve.card_execution_is_ai(flow_id, node, attempt_id)
+    return legacy_uses_ai(flow_id, node)
+
+
+def legacy_uses_ai(flow_id: str, node: dict) -> bool:
     """0063 B7: Designer cards have no explicit assignee. Runnable cards use their run AI,
     then the invoke service's project default. An explicit human assignment is never overridden;
     requirement delegation, gates and cards without a run plan retain their own contracts.
@@ -317,6 +368,13 @@ def result_type(flow_id: str, node: dict) -> Optional[str]:
     the source tools) is an AI card run opened before migration 148 — its AI was told the one-stage type of that
     time (``fields.result_doc_type`` ``one_stage``), so that type stays its result's.
     """
+    try:
+        assigned = _assigned(flow_id, node)
+    except Exception:  # noqa: BLE001 — L-2 §2.14: the binder binds nothing and warns (never a guessed type)
+        _log.warning("stage plan not read flow=%s node=%s", flow_id, node.get("node_key"), exc_info=True)
+        return UNREADABLE_RESULT_TYPE
+    if assigned is not None:
+        return assigned[1]["result_type"]                   # 0113 T#3: the attempt's plan, whoever writes it
     if not uses_ai(flow_id, node) or not repository.available() or not node.get("node_key"):
         return None
     one_stage = "run_stage" in node and node.get("run_stage") is None
@@ -327,11 +385,16 @@ def result_type(flow_id: str, node: dict) -> Optional[str]:
 def instruction_document(flow_id: str, node: dict) -> dict:
     """``{doc_type, doc_id, written}`` of an AI card's instruction when the card runs an instruction stage
     (``node``: the run's node row), else ``{}``: its instruction type, its instruction line's live document
-    (None when the line has none) and whether that document has a body."""
-    if not uses_ai(flow_id, node) or not repository.available() or not node.get("node_key"):
+    (None when the line has none) and whether that document has a body. flowgate.v02.0113 T#3: an assigned attempt's
+    plan names the type (TEST: TS), whoever writes it."""
+    assigned = _assigned(flow_id, node)
+    if assigned is not None:
+        doc_type = assigned[1].get("instruction_type")
+    elif not uses_ai(flow_id, node) or not repository.available() or not node.get("node_key"):
         return {}
-    doc_type = fields.instruction_stage(node.get("node_type"), node.get("doc_type"),
-                                        repository.values(flow_id, node["node_key"]))
+    else:
+        doc_type = fields.instruction_stage(node.get("node_type"), node.get("doc_type"),
+                                            repository.values(flow_id, node["node_key"]))
     if not doc_type:
         return {}
     line = card_lines.line_document(flow_id, node["node_key"], card_slots.INSTRUCTION, node.get("node_type"),
@@ -360,6 +423,12 @@ def token_step_type(token_rec: dict) -> Optional[str]:
     if not found:
         return None
     flow_id, node = found
+    assigned = _assigned(flow_id, node)
+    if assigned is not None:                                 # 0113 T#3: the attempt's plan (L-2 §2.5.1)
+        plan = assigned[1]
+        if node.get("run_stage") == fields.INSTRUCTION_STAGE and plan.get("instruction_type"):
+            return plan["instruction_type"]
+        return plan["result_type"]
     if node.get("run_stage") == fields.INSTRUCTION_STAGE and uses_ai(flow_id, node):
         written = fields.instruction_stage(node.get("node_type"), node.get("doc_type"),
                                            repository.values(flow_id, node["node_key"]))

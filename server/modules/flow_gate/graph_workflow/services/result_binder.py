@@ -151,6 +151,10 @@ def _hand_to_card(ctx: RunContext, kind: str, payload: dict, found: Optional[Run
         key, doc_id = found.node, found.doc_id
     elif found is None and (kind == EDITED or (kind == "review_decided" and _decision(payload) in _RESUBMISSIONS)):
         row = run_store.node_run_by_result(ctx.run_id, payload.get("doc_id")) if payload.get("doc_id") else None
+        if row is None and kind == EDITED and payload.get("doc_id"):
+            flow_id, doc_id, token_id = ctx.flow_id, payload["doc_id"], payload.get("token_id")
+            # flowgate.v02.0113 T#3 (L-2 §2.7.1 CONTENT_SAVED): an instruction's new revision registered in place
+            ctx.jobs.append(lambda: card_settings_ports.instruction_saved(flow_id, doc_id, None, token_id))
         if row is None or row["status"] != "review":
             return
         key, doc_id = row["node_key"], row["result_doc_id"]
@@ -234,6 +238,9 @@ def _take_instruction(ctx: RunContext, node: dict, row: dict, doc: dict) -> None
         return
     run_store.set_stage(ctx.run_id, row["node_key"], INSTRUCTION_STAGE, doc["doc_id"])
     fill_line(ctx, row["node_key"], doc["doc_id"])              # the card's instruction line
+    flow_id, key, doc_id = ctx.flow_id, row["node_key"], doc["doc_id"]
+    # flowgate.v02.0113 T#3 (L-2 §2.7.1 REGISTERED): a person's instruction stage judges it after the commit
+    ctx.jobs.append(lambda: card_settings_ports.instruction_saved(flow_id, doc_id, key, "registered"))
 
 
 def _decision(payload: dict) -> str:
@@ -325,6 +332,8 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
     if nr.status == "review" and cur.get("doc_review_status") in ("approved", "wf_done"):
         if not card_complete(ctx, key, cur["doc_id"]):
             return None                                           # approved result, card not yet
+        if card_settings_ports.result_review_pending(ctx.flow_id, ctx.run_id, key, cur["doc_id"]):
+            return None                                           # 0038-T T#3 A-4: approved before, its review waits
         from modules.flow_gate.services import graph_execution_hooks
         if graph_execution_hooks.call("integration_waiting", ctx.run_id, key):
             return None                                           # 0061 T#9: approved, its merge decides

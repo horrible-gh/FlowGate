@@ -534,7 +534,7 @@ def test_a_failing_disposal_read_fails_the_save_instead_of_opening_it(env, monke
 
 # ── the running card lock (L0006 V-16, D0005 set 1) ─────────────────────────
 
-def test_a_running_card_refuses_its_title_and_a_done_card_takes_one(env, decided):
+def test_a_running_card_refuses_its_title_and_a_done_card_takes_one(env, decided, monkeypatch):
     from modules.flow_gate.db import documents as db_documents
     from modules.flow_gate.graph_workflow.api import v01_contact
 
@@ -543,7 +543,9 @@ def test_a_running_card_refuses_its_title_and_a_done_card_takes_one(env, decided
     key = _run_one_card(env, HUMAN)
     opened = put_title(env, FA, key, {"title": "입력 연 제목"})            # the edit was opened before the start
     _start(env)
-    assert legacy_adapter.node_running(FA, key) is True
+    assert legacy_adapter.node_running(FA, key) is False                   # 0113 T#1: open alone is not running
+    monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: node_key == key)
+    assert legacy_adapter.node_running(FA, key) is True                    # an AI execution of it works now
     env["events"].clear()
     err = put_title(env, FA, key, {"title": "실행 중 저장"}, expect=409)["error"]
     assert (err["code"], err["params"]) == ("node_title_locked", {"node_key": key})
@@ -554,6 +556,7 @@ def test_a_running_card_refuses_its_title_and_a_done_card_takes_one(env, decided
     # the card settings keep their own lock (no regression: still shown locked and still refused)
     assert get_settings(env, FA, key)["locked"] is True
     setting(env, FA, key, "restart", 1, expect=409)
+    monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: False)
 
     result = _doc(FA, 90, "T")
     v01_contact.after_inbox_registered(FA, result, "T", _token_of(env, key))

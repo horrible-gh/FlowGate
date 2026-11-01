@@ -3391,17 +3391,21 @@ def update_document_content(
                 write_new_file(target, data)
 
         updated = stage_body_save(fresh, relative=relative, size=len(data), actor_user_id=current_user["user_id"],
-                                  source="console_save", write_file=write_file)
+                                  source="console_save", write_file=write_file, after_guard=contacts)
         return {"data": updated, "content": body.content}
 
+    contacts: list = []
     try:
-        return _run_body_save_guard(doc, save)
+        saved = _run_body_save_guard(doc, save)
     except _BodyUnavailable as exc:
         return exc.response()
+    for contact in contacts:                       # the save's committed contacts, its Flow guard left
+        contact()
+    return saved
 
 
 def stage_body_save(doc: dict, *, relative: str, size: int, actor_user_id: str, source: str,
-                    write_file=None, canvas_event: bool = True) -> dict:
+                    write_file=None, canvas_event: bool = True, after_guard: Optional[list] = None) -> dict:
     """The rows of a body save, inside the caller's guard transaction (flowgate.v02.0074 T#4, D0006 §2).
 
     The document row points at ``relative``; ``write_file`` (when given) puts the bytes there; the save evidence
@@ -3418,6 +3422,23 @@ def stage_body_save(doc: dict, *, relative: str, size: int, actor_user_id: str, 
         write_file()
     record_body_saved(doc, source=source, file_path=relative, size=size)
     after_commit(lambda: _broadcast_document_refresh(doc))
+    if doc.get("group_id"):
+        # flowgate.v02.0113 T#3 (L-2 §2.7.1 CONTENT_SAVED): a person's instruction stage holding this document judges it
+        # after the commit (never raises; no handler: nothing).
+        from modules.flow_gate.graph_workflow.services import card_settings_ports
+        flow_id, doc_id = doc["group_id"], doc["doc_id"]
+
+        def contact() -> None:
+            card_settings_ports.instruction_saved(flow_id, doc_id)
+
+        if after_guard is not None:
+            # 0113 T#3 rework: a commit callback still holds the save's Flow guard (its in-process lock is released
+            # after the callbacks) and the contact takes that guard to judge the stage — inside, it waited the whole
+            # lock timeout and judged nothing (FlowLockTimeout). The committed save hands it to its caller, which runs
+            # it once the guard is left; a rolled back save hands nothing.
+            after_commit(lambda: after_guard.append(contact))
+        else:
+            after_commit(contact)
     if canvas_event and doc.get("group_id"):
         from modules.flow_gate.graph_workflow.services.canvas_events import (
             CANVAS_REASON_DOCUMENTS, publish_canvas_changed,

@@ -10,6 +10,8 @@
 // flowgate.v02.0064 T#4 (0064 P0006 §4.2 / §6.5): a node's card title state (`title_state`) and its title save.
 
 import { extractApiErrorMessage, getRequest, putRequest } from '@shared/api'
+import { toAiRoleValue } from '@/features/ai/roles/roleValues'
+import type { RoleRunFields, RoleSubmission } from './types'
 import { normalizeApiError } from '@shared/apiErrors'
 import type {
   FlowCanvas,
@@ -116,6 +118,7 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
     ...('approval_wait_reason' in raw ? { approvalWaitReason: str(raw.approval_wait_reason) } : {}),
+    ...toRoleRunFields(raw),
   }
 }
 
@@ -401,5 +404,25 @@ export async function saveFlowCanvasLayout(flowId: string, input: FlowCanvasLayo
     }
   } catch (error) {
     throw wrapError(error, 'Failed to save the flow canvas layout.')
+  }
+}
+
+function toRoleSubmission(raw: Raw | null | undefined): RoleSubmission | null {
+  return raw ? { docId: str(raw.doc_id), revisionNo: num(raw.revision_no), rejectionCount: num(raw.rejection_count) } : null
+}
+export function toRoleRunFields(raw: Raw): RoleRunFields {
+  return {
+    ...('wait_reason' in raw ? { waitReason: raw.wait_reason ? {
+      code: String(raw.wait_reason.code ?? ''), role: str(raw.wait_reason.role), stage: str(raw.wait_reason.stage), seq: num(raw.wait_reason.seq), detail: str(raw.wait_reason.detail),
+    } : null } : {}),
+    ...('approval_wait_submission' in raw ? { approvalWaitSubmission: toRoleSubmission(raw.approval_wait_submission) } : {}),
+    ...('stage_assignments' in raw ? { stageAssignments: Array.isArray(raw.stage_assignments) ? raw.stage_assignments.map((item: Raw) => ({
+      stage: str(item.stage), seq: num(item.seq), current: item.current === true, role: str(item.role), actor: str(item.actor), actorReason: str(item.actor_reason),
+      providerId: str(item.provider_id), providerName: str(item.provider_name), roleValue: toAiRoleValue(item.role_value), source: str(item.source), cause: str(item.cause),
+      plan: item.plan ? { instructionType: str(item.plan.instruction_type), resultType: str(item.plan.result_type) } : null,
+      reusedDocId: str(item.reused_doc_id), reviewRounds: num(item.review_rounds), reworkProviderId: str(item.rework_provider_id),
+      author: str(item.author), authorProviderId: str(item.author_provider_id), basis: toRoleSubmission(item.basis), decidedAt: str(item.decided_at),
+      stageState: str(item.stage_state), failCause: str(item.fail_cause), verdict: str(item.verdict), intent: item.intent ? { kind: str(item.intent.kind), execId: str(item.intent.exec_id) } : null,
+    })) : null } : {}),
   }
 }

@@ -14,6 +14,7 @@
       </div>
 
       <div class="fgs-panel-body">
+        <AiRoleDefaultsSection />
         <!-- 로그인 정보: GET /auth/me 그대로, 읽기 전용 -->
         <div class="fgs-sec">
           <div class="fgs-sec-head">
@@ -104,6 +105,7 @@
 //   back and says so. A failed GET is an error with a retry, not a default value.
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AiRoleDefaultsSection from '@/features/ai/roles/AiRoleDefaultsSection.vue'
 import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'

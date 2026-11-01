@@ -99,8 +99,9 @@ const props = withDefaults(
     layout?: 'run' | 'scenario'
     /** Item names given by the caller instead of the common ones (absent = the common name). */
     labels?: Partial<Readonly<Record<InspectorRunSettingsField, string>>>
+    hideMissing?: boolean
   }>(),
-  { locked: false, advancedOpen: false, layout: 'run', labels: () => ({}) },
+  { locked: false, advancedOpen: false, layout: 'run', labels: () => ({}), hideMissing: false },
 )
 
 const emit = defineEmits<{ 'update:field': [field: InspectorRunSettingsField, value: string]; 'update:advancedOpen': [open: boolean] }>()
@@ -109,7 +110,7 @@ const { t } = useI18n()
 
 const k = (key: string) => `gui.designer.inspector.run_settings.${key}`
 
-const columns = computed(() => (props.layout === 'scenario' ? SCENARIO_COLUMNS : RUN_COLUMNS))
+const columns = computed(() => (props.layout === 'scenario' ? SCENARIO_COLUMNS : RUN_COLUMNS).map(column => props.hideMissing ? column.filter(name => props.fields[name]) : column))
 
 /** The scenario block's AI writes the scenario (작성 AI); a name the caller gives wins. */
 function labelOf(name: InspectorRunSettingsField): string {

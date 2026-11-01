@@ -265,7 +265,7 @@ const headerMenus = computed(() => contributions.value.filter((entry) => entry.h
 const headerState = computed(() => contributions.value.find((entry) => entry.headerState) ?? null)
 const headerMemo = computed(() => contributions.value.find((entry) => entry.headerMemo) ?? null)
 
-const tabs = computed(() => target.value && !props.unselected ? INSPECTOR_TABS : [])
+const tabs = computed(() => target.value && !props.unselected ? INSPECTOR_TABS.filter(key => key !== 'ai' || contributions.value.some(entry => entry.tab?.key === 'ai')) : [])
 
 // One tab number supplier per registration, set up once; each sees the target only while its
 // registration applies to it (D#1 §5.2: at most one supplier per tab).
@@ -292,6 +292,7 @@ const tabItems = computed<TabItem[]>(() =>
 const selectedTab = ref<InspectorTabKey>(DEFAULT_INSPECTOR_TAB)
 
 const activeTab = computed(() => resolveInspectorTab(selectedTab.value, tabs.value))
+watch(tabs, available => { selectedTab.value = resolveInspectorTab(selectedTab.value, available) })
 
 const tabContent = computed(() => {
   const entries = contributions.value.filter((entry) => entry.tab?.key === activeTab.value)

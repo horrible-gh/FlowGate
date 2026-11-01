@@ -141,16 +141,17 @@ def _dispatch(flow_id: str, node: dict, run: dict, items: list[dict], asked_by_i
     target = next((item for item in items if not item.get("responder_state")), None)
     if target is None or not target.get("anchor_doc_id") or legacy.flow_ai_busy(flow_id):
         return False
-    provider, source = _responder(
-        flow_id, node, asked_by_instruction,
-        target.get("asker_actual_provider_id") or run.get("provider_id"),
-    )
+    from flowgate.ai_roles import qa_adapter
+    provider, source, reason, default_tail, card_class = qa_adapter.choose(
+        flow_id, node, target.get("asker_actual_provider_id") or run.get("provider_id"))
     try:
         if provider is None:
-            legacy.mark_question_responder_failed(target["id"], run.get("issued_to"))
+            legacy.mark_question_responder_failed(target["id"], run.get("issued_to"), reason)
             return False
         started = legacy.ask_responder(target["anchor_doc_id"], target["id"], run.get("issued_to") or "",
-                                       provider, source)
+                                       provider, source, default_tail=default_tail,
+                                       invocation_origin=qa_adapter.origin(flow_id, node, target, run, source,
+                                                                           card_class, provider))
     except Exception:  # noqa: BLE001 — a refusal is on the item (dispatch_answer_run); a person answers it
         _log.warning("card question responder not started flow=%s node=%s item=%s", flow_id, node.get("node_key"),
                      target.get("id"), exc_info=True)

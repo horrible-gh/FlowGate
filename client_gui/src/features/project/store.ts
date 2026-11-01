@@ -115,6 +115,7 @@ import {
   timeMachineFlowRunNode as timeMachineFlowRunNodeApi,
   type FlowRunCommand,
 } from './flowRunApi'
+import { fetchFlowCommandResult, type FlowCommandResult } from './commandResultApi'
 import { subscribeFlowCanvasChanges as subscribeFlowCanvasChangesApi, type FlowCanvasChangeHandlers } from './flowCanvasEvents'
 import { subscribeProjectEvents as subscribeProjectEventsApi, type ProjectEventSubscription } from './projectEvents'
 import { clearStoredCurrentProjectId, writeStoredCurrentProjectId } from './currentProjectStorage'
@@ -682,6 +683,11 @@ export const useProjectStore = defineStore('project', () => {
     return resumeFlowRunApi(runId)
   }
 
+  // flowgate.v02.0113 T#5: what one step / full command did (its latest, or the one starting at `commandSeq`).
+  function loadFlowCommandResult(runId: string, commandSeq?: number): Promise<FlowCommandResult> {
+    return fetchFlowCommandResult(runId, commandSeq)
+  }
+
   // flowgate.v02.0056 F2-1: a card's [승인] on the Canvas (O1 0005-TR §4-1); the run it answers goes to the band.
   function approveFlowRunNode(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun; approval: FlowRunApproval }> {
     return approveFlowRunNodeApi(runId, nodeKey, resultDocId)
@@ -801,6 +807,7 @@ export const useProjectStore = defineStore('project', () => {
     pauseFlowRun,
     stopFlowRun,
     resumeFlowRun,
+    loadFlowCommandResult,
     approveFlowRunNode,
     timeMachineFlowRunNode,
     subscribeFlowCanvasChanges,

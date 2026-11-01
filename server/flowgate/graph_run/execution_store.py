@@ -29,19 +29,38 @@ def get(exec_id):
     return run_store._one("SELECT * FROM graph_attempt_runs WHERE exec_id = ?", [exec_id])
 
 
-def request(attempt_id, run_id, kind, payload):
+def _assignment_columns():
+    from flowgate.ai_roles import assignment_store
+    return assignment_store.ledger_columns_available()
+
+
+def request(attempt_id, run_id, kind, payload, assignment=None):
+    """``assignment`` = ``(stage, seq)`` of the stage assignment making this request (flowgate.v02.0113 T#1, DB-1
+    W-11): stored in ``assignment_stage`` / ``assignment_seq`` once migration 164 added them, so the request is
+    found again by its assignment (R-9). None, or a DB without the columns: the request is written as before.
+    flowgate.v02.0113 T#5: the stored request also carries ``run_event_seq`` (the run event it was made at)."""
     if kind not in ("write", "review", "rework"):
         raise ValueError(kind)
     if run_store._one("SELECT 1 AS present FROM graph_attempt_runs WHERE attempt_id = ? "
                       "AND status IN ('requested', 'running')", [attempt_id]):
         raise LeaseLost("attempt already has an execution")
     exec_id = "exe_" + secrets.token_hex(12)
+    # flowgate.v02.0113 T#5: the run event this request was made at (the run's ``last_event_seq`` inside the guard
+    # making it), so its AI launches are told to the command whose events hold it, never by their time.
+    stored = dict(payload)
+    anchor = run_store._one("SELECT last_event_seq FROM graph_runs WHERE run_id = ?", [run_id])
+    if anchor and anchor.get("last_event_seq") is not None:
+        stored["run_event_seq"] = int(anchor["last_event_seq"])
+    columns, values = "", []
+    if assignment is not None and _assignment_columns():
+        columns, values = ", assignment_stage, assignment_seq", [assignment[0], int(assignment[1])]
     count = run_store._affected(
-        "INSERT INTO graph_attempt_runs (exec_id, attempt_id, run_id, kind, status, created_at, request_json) "
-        "SELECT ?, ?, ?, ?, 'requested', ?, ? WHERE EXISTS "
+        "INSERT INTO graph_attempt_runs (exec_id, attempt_id, run_id, kind, status, created_at, request_json"
+        + columns + ") SELECT ?, ?, ?, ?, 'requested', ?, ?" + ", ?" * len(values) + " WHERE EXISTS "
         "(SELECT 1 FROM graph_node_attempts WHERE attempt_id = ? AND run_id = ? AND status = 'active' "
         "AND COALESCE(result_commit, '') = '' AND COALESCE(integration_status, 'none') IN ('', 'none'))",
-        [exec_id, attempt_id, run_id, kind, now(), json.dumps(payload, ensure_ascii=False), attempt_id, run_id])
+        [exec_id, attempt_id, run_id, kind, now(), json.dumps(stored, ensure_ascii=False), *values,
+         attempt_id, run_id])
     if count != 1:
         raise LeaseLost("attempt is not active")
     return exec_id

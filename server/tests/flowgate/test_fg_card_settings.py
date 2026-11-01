@@ -37,6 +37,10 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+# flowgate.v02.0113 T#3 (T §6.4): this suite's own cards are cards made before the AI role feature (legacy fields,
+# L-1 §2.4.5); the stage assignment feature stays on (``legacy_cards`` below, defined in this module).
+pytestmark = pytest.mark.usefixtures("legacy_cards")
+
 FA = "flowgate.v02.0091"      # unassigned, live root R (approved)
 FB = "flowgate.v02.0092"      # unassigned, no documents
 TEST_VALUE, TEST_VERSION = "card_settings_test", "1"
@@ -66,7 +70,30 @@ def db_path(tmp_path, migrated_sqlite_db):
 
 
 @pytest.fixture()
-def env(db_path, monkeypatch, tmp_path):
+def legacy_cards(monkeypatch):
+    """flowgate.v02.0113 T#3 (L-1 §2.4.5, L-2 §2.3): the cards drawn while it is used are cards made before the AI role
+    feature — no role slots, no init row: their stored legacy fields (assignee, ``instruction_ai``, ``run_ai``,
+    ``review_count`` / ``review_ai``) are what L-1 resolves each new attempt's stage assignments from. The suites written
+    before T#2/T#3 describe such cards; their attempts run the assigned path (the feature on) all the same."""
+    from modules.flow_gate.graph_workflow.services import card_settings_ports
+
+    monkeypatch.setattr(card_settings_ports, "cards_created", lambda group, user_id, nodes: None)
+
+
+@pytest.fixture()
+def pre_feature_attempts(monkeypatch):
+    """flowgate.v02.0113 T#3 (L-2 §2.13, T §6.4): the attempts opened while it is used are pre-feature attempts (opened
+    as before the stage assignments: no assignment rows). Call the returned function to switch the feature back on —
+    the attempts opened so far stay pre-feature to their end (K-12, G-14)."""
+    from flowgate.card_settings import stage_assignment
+
+    real = stage_assignment.enabled
+    monkeypatch.setattr(stage_assignment, "enabled", lambda: False)
+    return lambda: monkeypatch.setattr(stage_assignment, "enabled", real)
+
+
+@pytest.fixture()
+def env(db_path, monkeypatch, tmp_path, request):
     from modules.flow_gate.db import _SqliteTxnAdapter
     from modules.flow_gate.graph_workflow.api import canvas_routes, envelope, graph_routes, run_routes
     from modules.flow_gate.graph_workflow.services import canvas_events, node_dispatch, run_events
@@ -104,6 +131,9 @@ def env(db_path, monkeypatch, tmp_path):
     from flowgate.graph_validation.run_scope import run_scope
     from modules.flow_gate.graph_workflow.domain import run_scope_ports
     monkeypatch.setattr(run_scope_ports, "_handler", run_scope)
+    # flowgate.v02.0113 T#3: every migration is applied here, so the stage assignment store exists and every suite runs
+    # its new attempts on the assigned path (L-2), as a deployment with migration 164 does. A pre-feature attempt is made
+    # explicitly by the test that needs one (``pre_feature_attempts``), never by switching a whole suite off.
     def record_job(job):
         # Recovery may redeliver a durable execution until the fake worker starts it.
         # Record each execution once, like a worker's execution lease admission.
@@ -235,6 +265,20 @@ def setting(env, flow, key, field, value, expect=200):
     return patch(env, flow, key, {"field": field, "value": value}, expect)
 
 
+def legacy_setting(env, flow, key, field, value):
+    """0113 T#2: seed a legacy role field for tests of the unchanged execution path.
+
+    PATCH itself uses slots now. These callers exercise run/approval/token behavior
+    until T#3; their fixture must still represent an old card's stored fields.
+    """
+    if field not in ("instruction_ai", "run_ai", "review_ai"):
+        return setting(env, flow, key, field, value)
+    from flowgate.card_settings import repository
+    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+    with_flow_guard(flow, lambda: repository.put(flow, key, field, value, "u_kim"))
+    return get_settings(env, flow, key)
+
+
 def stored_rows(env, flow, key=None):
     sql = "SELECT node_key, field, value_json FROM graph_node_settings WHERE group_id = ?"
     rows = _sql(env["db"], sql + (" AND node_key = ?" if key else "") + " ORDER BY field",
@@ -348,7 +392,8 @@ def test_each_card_kind_keeps_its_own_settings(env):
     km = first["key_map"]
     setting(env, FB, km["tmp_ts"], "review_count", -1)
     ts = setting(env, FB, km["tmp_ts"], "review_ai", "aip_card")
-    assert ts["card_kind"] == "test" and (shown(ts)["review_count"], shown(ts)["review_ai"]) == (-1, "aip_card")
+    assert ts["card_kind"] == "test" and (shown(ts)["review_count"], shown(ts)["review_ai"]) == (-1, None)
+    assert ts["ai_roles"]["roles"]["review"]["selected"] == {"kind": "assigned", "provider_id": "aip_card"}
     setting(env, FB, km["tmp_ts"], "time_limit", 60, expect=422)          # not a test card setting
     for field, value in (("scope", "confirm"), ("team", "team_auth"), ("limit_max_nodes", 12),
                          ("limit_total_reviews", 30)):
@@ -386,7 +431,13 @@ def test_values_outside_a_run_setting_are_refused(env, field, value, reason):
         return
     body = setting(env, FB, key, field, value, expect=422)
     assert body["error"]["code"] == "invalid_request"
-    assert body["error"]["params"]["errors"] == [{"field": "value", "reason": reason}]
+    if field in ("run_ai", "review_ai"):
+        error = ({"field": "value", "reason": "role_value_malformed", "detail":
+                  "provider_id_required" if value == "" else "not_an_object"} if not isinstance(value, str) or value == ""
+                 else {"field": "value", "reason": "ai_not_selectable", "cause": "deleted"})
+    else:
+        error = {"field": "value", "reason": reason}
+    assert body["error"]["params"]["errors"] == [error]
     assert stored_rows(env, FB) == {}
 
 
@@ -431,17 +482,22 @@ def _start(env):
     assert started.status_code == 201, started.text
 
 
-def test_a_running_card_is_locked_and_a_completed_card_reads_and_writes(env, decided):
+def test_a_running_card_is_locked_and_a_completed_card_reads_and_writes(env, decided, monkeypatch):
     from modules.flow_gate.db import documents as db_documents
     from modules.flow_gate.graph_workflow.api import v01_contact
+
+    from flowgate.card_settings import legacy_adapter
 
     key = _run_one_card(env, {"kind": "human", "user_id": "u_lee", "provider_id": None})
     setting(env, FA, key, "review_count", 2)                              # before the run: the confirmed card
     assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_draft_nodes WHERE group_id = ?", (FA,))[0]["n"] == 0
     _start(env)
-    assert get_settings(env, FA, key)["locked"] is True
+    assert get_settings(env, FA, key)["locked"] is False                  # 0113 T#1: a person's open card waits
+    monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: node_key == key)
+    assert get_settings(env, FA, key)["locked"] is True                   # an AI execution of it works: running
     locked = setting(env, FA, key, "restart", 1, expect=409)
     assert locked["error"]["code"] == "node_settings_locked"
+    monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: False)
     token = _sql(env["db"], "SELECT token_id FROM graph_run_token_map WHERE node_key = ?", (key,))[0]["token_id"]
     result = _doc(FA, 90, "T")
     v01_contact.after_inbox_registered(FA, result, "T", token)
@@ -487,7 +543,7 @@ def test_an_ai_node_starts_with_its_card_run_ai_time_limit_and_restarts(env, dec
     key = _run_one_card(env, AI)
     for field, value in (("run_ai", "aip_card"), ("time_limit", 120), ("restart", 2), ("review_basis", "last"),
                          ("instruction", "omit")):
-        setting(env, FA, key, field, value)
+        legacy_setting(env, FA, key, field, value)
     _start(env)
     [job] = env["jobs"]
     assert (job["node_key"], job["provider_id"], job["step_timeout_sec"], job["restart_max"]) == (
@@ -518,7 +574,7 @@ def test_without_the_port_handler_a_node_ignores_its_card(env, decided):
     from flowgate.card_settings import integration
 
     key = _run_one_card(env, AI)
-    setting(env, FA, key, "run_ai", "aip_card")
+    legacy_setting(env, FA, key, "run_ai", "aip_card")
     integration.unregister()
     _start(env)
     [job] = env["jobs"]
@@ -527,7 +583,7 @@ def test_without_the_port_handler_a_node_ignores_its_card(env, decided):
 
 def test_a_human_node_does_not_read_its_card(env, decided):
     key = _run_one_card(env, {"kind": "human", "user_id": "u_lee", "provider_id": None})
-    setting(env, FA, key, "run_ai", "aip_card")
+    legacy_setting(env, FA, key, "run_ai", "aip_card")
     _start(env)
     assert env["jobs"] == []
     token = _sql(env["db"], "SELECT t.provider_id, t.issued_to FROM tokens t JOIN graph_run_token_map m "

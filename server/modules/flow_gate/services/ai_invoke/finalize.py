@@ -337,6 +337,9 @@ def _finalize_run(run: dict) -> None:
         if run.get("post_process_recovered"):
             break
         terminal.attempt(run, "prepare_" + name, action)
+    # DB-1 S-1~S-3: final prefix save BEFORE any Graph/Q&A successor can be admitted.
+    from flowgate.ai_roles import invocations as role_invocations
+    role_invocations.finalize(run)
     # flowgate.v02.0061 T#2: the run-end port's mark, before the release (see ``run_ended`` below).
     from modules.flow_gate.services import graph_execution_hooks
     # flowgate.v02.0061 T#7: a Graph execution's report reaches the Graph only while that execution is running with the
@@ -675,6 +678,17 @@ def _dispatch_responder_for_chain(ctx: dict, *, trigger: str) -> Optional[dict]:
     refusal is recorded on the item by dispatch_answer_run itself (F3) and re-raised to
     the caller, who logs it: a successful stop must never turn into an unhandled error.
     """
+    requester = ctx.get("requester_run") or {}
+    if not requester and ctx.get("requester_run_id"):
+        try:
+            requester = _svc().get_run_record(ctx["requester_run_id"]) or {}
+            if not requester:
+                from modules.flow_gate.db import ai_invoke_runs
+                requester = ai_invoke_runs.get(ctx["requester_run_id"]) or {}
+        except Exception:
+            requester = {}
+    if requester.get("graph_exec_id"):
+        return None
     doc_ref = ctx.get("doc_ref")
     requester_run_id = ctx.get("requester_run_id")
     if not doc_ref or not requester_run_id:
@@ -767,6 +781,8 @@ def _dispatch_question_responder(run: dict) -> None:
     (`_continue_question_responder_chain`). Every failure is swallowed and logged -- and,
     since 0661, left on the item as a 'failed' state a human can see and re-dispatch.
     """
+    if run.get("graph_exec_id"):
+        return
     doc_ref = run.get("doc_ref")
     if not doc_ref:
         return
@@ -1644,6 +1660,8 @@ def _persist_run_record(run: dict) -> bool:
         stamp = now_iso()
         db_runs.upsert({
             "run_id": run["run_id"],
+            "invocation_origin_kind": (run.get("invocation_origin") or {}).get("origin_kind"),
+            "graph_exec_id": run.get("graph_exec_id"),
             "group_id": run["group_id"],
             "project_id": run["project_id"],
             "requested_ai_group_id": run.get("requested_ai_group_id"),

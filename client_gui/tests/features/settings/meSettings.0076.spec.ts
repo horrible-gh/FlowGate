@@ -42,6 +42,12 @@ vi.mock('@shared/api', async (importOriginal) => {
     const call = `${method} ${path}`
     net.requests.push(call)
     if (body !== undefined) net.bodies.push({ call, body })
+    // D §6.1: mounting account settings also reads AI role defaults; no role write on entry.
+    if (call === 'GET /api/v1/me/ai-roles') {
+      return { data: { setup_completed: false, selectable_count: 0, options: [], roles: {
+        instruction: { state: 'unset', value: null }, execution: { state: 'unset', value: null }, review: { state: 'unset', value: null },
+      } } }
+    }
     if (call === 'GET /api/v1/me/ui-settings') {
       if (net.ui.failGet) throw fail(net.ui.failGet, { detail: 'boom' })
       return envelope()
@@ -177,8 +183,10 @@ describe('V07 개인 정보 / 언어', () => {
     expect(w.get('[data-testid="me-username"]').text()).toBe('member')
     expect(w.get('[data-testid="me-email"]').text()).toBe('member@flowgate.local')
     expect(profile.findAll('input, select, textarea, [contenteditable], button').length).toBe(0)
-    // The only request of the screen is the ui-settings GET (username/email come from bootstrap's /auth/me).
-    expect(net.requests).toEqual(['GET /api/v1/me/ui-settings'])
+    // Profile remains bootstrap-only; UI settings and role defaults are each read once, with no writes.
+    expect(net.requests.slice().sort()).toEqual(['GET /api/v1/me/ai-roles', 'GET /api/v1/me/ui-settings'])
+    expect(net.requests.filter(call => call === 'GET /api/v1/me/ui-settings')).toHaveLength(1)
+    expect(writes()).toEqual([])
   })
 
   it('ko→ja→en: the rendered language, preferred_locale and the next request\'s X-Locale agree; re-entry keeps it', async () => {

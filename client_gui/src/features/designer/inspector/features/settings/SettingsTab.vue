@@ -17,16 +17,24 @@
        flowgate.v02.0061 T#14: a Graph card is also locked (the same 🔒 실행 중 line, every control off) while its Flow's
        run is running, paused or stopping (`target.editLock`), without waiting for the settings read to say so.
        TR0031 rev1: also while the run's status is not confirmed (`unknown`; the lock line then says so).
+       flowgate.v02.0113 T#1 (0002-D 개정 §3.13) replaces the run lock here: only an actually running card is locked
+       (the server's `locked` or the node run's `node_running`); a waiting, done or error card takes its settings.
        flowgate.v02.0072 T#3: a Graph work plan (WP) card — the [switch] AI 사전 지시서 작성 line, then the same 실행 설정
        block with its AI named 작업 AI (작업 AI · 재시작 | 검수 AI · 검수 횟수 · 고급 ▾ 실행 제한 시간 · 검수 기준). Each change
        is one card setting saved at once, with the same lock, failure icon and read failure as every card. The switch is
        a card value: nothing writes a pre-instruction from it yet (its tooltip says so) and off deletes no Step's
-       pre-instruction; the 작업 / 검수 AI are the card's, not the plan's Steps' AI. -->
+       pre-instruction; the 작업 / 검수 AI are the card's, not the plan's Steps' AI.
+       flowgate.v02.0113 T#4 (0030-M §1, 0029-TR 시안, D 개정 §6.3): the AI tab of a card with AI roles shows four rows —
+       지시 AI · 실행 AI · 검수 AI (each its own select with 사용하지 않음; none chosen shows 미설정) and 검수 횟수 (안 함 · 1회 ·
+       2회 · 3회) — then [고급 ▾], which opens 실행 설정 (재시작 · 실행 제한 시간 · 검수 기준) and 지시서 검수 (지시서 검수 AI ·
+       지시서 검수 횟수). A WP card has no 지시 AI; a card that omits its instruction keeps its 지시 AI and 지시서 검수 off with
+       their values kept; 검수 횟수 and 검수 기준 are off while the review AI is 사용하지 않음. No notice, warning or status
+       line is drawn. Values are saved through the same card settings change as before. -->
   <div class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
     <InspectorReadFailure v-if="errorKey" :reason="t(k(errorKey))" @retry="reload" />
     <template v-else>
       <InspectorLockNote v-if="locked" :text="lockText" />
-      <InspectorBlock v-if="kind === 'plan'" :locked="locked" class="inspector-settings-line" data-test="settings-pre-instruction">
+      <InspectorBlock v-if="panel === 'settings' && kind === 'plan'" :locked="locked" class="inspector-settings-line" data-test="settings-pre-instruction">
         <div class="inspector-settings-switch">
           <Toggle
             :model-value="preInstruction.on"
@@ -44,7 +52,7 @@
           />
         </div>
       </InspectorBlock>
-      <InspectorBlock v-else :locked="locked" class="inspector-settings-line" data-test="settings-instruction">
+      <InspectorBlock v-else-if="panel === 'settings'" :locked="locked" class="inspector-settings-line" data-test="settings-instruction">
         <InspectorControlRow :label="t(k('instruction.label'))" :hint="t(k('instruction.hint'))">
           <template v-if="kind === 'test'">
             <Toggle :model-value="segment('instruction').value === 'use'" :disabled="segment('instruction').disabled" :aria-label="t(k('instruction.label'))" data-test="settings-instruction-switch" @update:model-value="(value: boolean) => onChange('instruction', value ? 'use' : 'omit')" />
@@ -62,7 +70,7 @@
         </InspectorControlRow>
       </InspectorBlock>
       <InspectorBlock
-        v-if="instructionAiShown"
+        v-if="panel === 'ai' && !card.node.value?.aiRoles && instructionAiShown"
         :locked="locked"
         class="inspector-settings-line"
         data-test="settings-instruction-ai"
@@ -80,16 +88,84 @@
           <InspectorFailureIcon v-if="failureOf('instruction_ai')" :name="t(k('failed'))" :reason="failureOf('instruction_ai')!" data-field="instruction_ai" />
         </InspectorControlRow>
       </InspectorBlock>
-      <InspectorRunSettings
+      <template v-if="panel === 'ai' && card.node.value?.aiRoles">
+        <InspectorBlock v-for="item in roleRows" :key="item.role" :locked="locked" :data-role="item.role" :data-held="item.held ? 'true' : undefined">
+          <InspectorControlRow :label="roleLabel(item.role)">
+            <AiRoleSelect plain :model-value="item.selected" :providers="card.node.value.aiRoles.options" :label="roleLabel(item.role)" :display-name="item.displayName" :state="item.state" :cause="item.cause" :disabled="item.held || roleDisabled(item.field)" @update:model-value="value => changeRole(item.field, value)" />
+            <InspectorFailureIcon v-if="failureOf(item.field)" :name="t(k('failed'))" :reason="failureOf(item.field)!" />
+          </InspectorControlRow>
+        </InspectorBlock>
+        <InspectorBlock v-if="card.node.value.fields.review_count" :locked="locked" data-test="ai-review-count">
+          <InspectorControlRow :label="t(runKey('review_count'))" :hint="hintOf('review_count')">
+            <Select
+              :model-value="views.review_count.value"
+              :options="optionsOf('review_count')"
+              :disabled="locked || views.review_count.disabled"
+              :aria-label="t(runKey('review_count'))"
+              data-test="inspector-run-settings-review_count"
+              @update:model-value="(value: string) => onAiChange('review_count', value)"
+            />
+            <InspectorFailureIcon v-if="failureOf('review_count')" :name="t(k('failed'))" :reason="failureOf('review_count')!" data-field="review_count" />
+          </InspectorControlRow>
+        </InspectorBlock>
+        <template v-if="advancedRun.length || instructionReviewFields.length">
+          <div class="inspector-ai-advanced-line">
+            <Button size="sm" variant="secondary" :disabled="locked" :aria-expanded="advancedOpen" data-test="inspector-run-settings-advanced" @click="advancedOpen = !advancedOpen">
+              {{ t(runKey('advanced')) }} {{ advancedOpen ? '▴' : '▾' }}
+            </Button>
+          </div>
+          <InspectorBlock v-if="advancedOpen" :locked="locked" data-test="inspector-ai-advanced">
+            <template v-if="advancedRun.length">
+              <div class="inspector-ai-advanced-title" data-test="inspector-ai-advanced-run">{{ t(runKey('title')) }}</div>
+              <div class="inspector-ai-advanced-grid">
+                <InspectorControlRow v-for="field in advancedRun" :key="field" :label="t(runKey(field))" :hint="hintOf(field)">
+                  <Select
+                    :model-value="views[field].value"
+                    :options="optionsOf(field)"
+                    :disabled="locked || views[field].disabled"
+                    :aria-label="t(runKey(field))"
+                    :data-test="`inspector-run-settings-${field}`"
+                    @update:model-value="(value: string) => onAiChange(field, value)"
+                  />
+                  <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" :data-field="field" />
+                </InspectorControlRow>
+              </div>
+            </template>
+            <template v-if="instructionReviewFields.length">
+              <hr v-if="advancedRun.length" class="inspector-ai-advanced-split" />
+              <div class="inspector-ai-advanced-title" data-test="instruction-review">{{ t('gui.inspector.ai.instruction_review') }}</div>
+              <InspectorControlRow v-for="field in instructionReviewFields" :key="field" :label="t(`gui.inspector.ai.${field}`)" :hint="hintOf(field)">
+                <Select
+                  :model-value="views[field].value"
+                  :options="optionsOf(field)"
+                  :disabled="locked || instructionHeld || views[field].disabled"
+                  :aria-label="t(`gui.inspector.ai.${field}`)"
+                  :data-field="field"
+                  @update:model-value="(value: string) => onAiChange(field, value)"
+                />
+                <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
+              </InspectorControlRow>
+            </template>
+          </InspectorBlock>
+        </template>
+      </template>
+      <InspectorRunSettings v-if="(panel === 'ai' && !card.node.value?.aiRoles) || source === 'sequence'"
         :layout="kind === 'test' ? 'scenario' : 'run'"
         :fields="runFields"
+        :hide-missing="!!card.node.value?.aiRoles"
         :labels="runLabels"
         :locked="locked"
         :advanced-open="advancedOpen"
         @update:advanced-open="advancedOpen = $event"
         @update:field="onChange"
       />
-      <InspectorBlock v-if="kind === 'test'" :title="t(k('result_check'))" data-test="settings-result-check">
+      <InspectorBlock v-if="panel === 'ai' && !card.node.value?.aiRoles && kind === 'run' && card.node.value?.fields.instruction?.value !== 'omit'" data-test="instruction-review">
+        <InspectorControlRow v-for="field in instructionReviewFields" :key="field" :label="t(`gui.inspector.ai.${field}`)">
+          <Select :model-value="views[field].value" :options="views[field].options.map(option => ({ value: option.value, label: labelOf(option) }))" :disabled="views[field].disabled" :data-field="field" @update:model-value="value => onChange(field, value)" />
+          <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
+        </InspectorControlRow>
+      </InspectorBlock>
+      <InspectorBlock v-if="panel === 'settings' && kind === 'test'" :title="t(k('result_check'))" data-test="settings-result-check">
         <InspectorControlRow v-for="field in resultFields" :key="field" :label="t(k(`${field}.label`))" :hint="views[field].reason ? t(k(views[field].reason!)) : undefined">
           <Select :model-value="views[field].value" :options="views[field].options.map((option) => ({ value: option.value, label: labelOf(option) }))" :disabled="views[field].disabled" :aria-label="t(k(`${field}.label`))" :data-test="`settings-${field}`" @update:model-value="(value: string) => onChange(field, value)" />
           <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" :data-field="field" />
@@ -103,6 +179,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTestCard } from '../testSpec/useTestCard'
+import Button from '../../../../../components/ui/Button.vue'
 import Select from '../../../../../components/ui/Select.vue'
 import Toggle from '../../../../../components/ui/Toggle.vue'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
@@ -131,14 +208,17 @@ import {
   type CardSettingsField,
 } from './cardSettingsModel'
 import { settingsRowPhase, type SettingsField, type SettingsOption } from './settingsModel'
-import { useCardSettings } from './useCardSettings'
+import { useSharedCardSettings } from './useCardSettings'
+import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
+import type { AiRoleValue } from '@/features/document'
+import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_REVIEW_COUNTS, cardRoleRows } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
-const props = defineProps<{
-  target: InspectorTarget
-}>()
+const props = withDefaults(defineProps<{ target: InspectorTarget; panel?: 'settings' | 'ai' }>(), { panel: 'settings' })
 
-const { t } = useI18n()
+const composer = useI18n({ useScope: 'global' })
+installAiRoleMessages(composer)
+const { t } = composer
 
 const k = (key: string) => `gui.inspector.settings.${key}`
 
@@ -150,7 +230,7 @@ const kind = computed<'run' | 'test' | 'plan'>(() => {
 })
 
 const testCard = useTestCard(() => kind.value === 'test' ? props.target : null)
-const ownCard = useCardSettings(() => (source.value === 'card' && kind.value !== 'test' ? props.target : null))
+const ownCard = useSharedCardSettings(() => (source.value === 'card' && kind.value !== 'test' ? props.target : null))
 const card = {
   node: computed(() => kind.value === 'test' ? testCard.value?.settings.node.value ?? null : ownCard.node.value),
   choices: computed(() => kind.value === 'test' ? testCard.value?.settings.choices.value ?? null : ownCard.choices.value),
@@ -164,6 +244,29 @@ const card = {
   reload: () => kind.value === 'test' ? testCard.value?.reload() : ownCard.reload(),
 }
 const resultFields = ['result_cause', 'follow_scope'] as const
+const instructionReviewFields = computed(() => AI_ADVANCED_FIELDS.instructionReview.filter(field => aiFieldOf(field)))
+const roleRows = computed(() => cardRoleRows(card.node.value?.aiRoles, cardSettingsValue(card.node.value, card.pending.value, 'instruction'), card.pending.value))
+function roleLabel(role: string): string {
+  if (role === 'execution' && kind.value === 'plan') return t(k('plan.run_ai'))
+  if (role === 'execution' && kind.value === 'test') return t('gui.designer.inspector.run_settings.writer_ai')
+  return t(`gui.aiRoles.${role}`)
+}
+function roleDisabled(field: string): boolean {
+  return cardReason.value !== null || !!card.pending.value[field] || !card.node.value?.aiRoles || card.node.value.aiRoles.optionsState !== 'ok' || card.node.value.settingsVersion === undefined
+}
+function changeRole(field: 'instruction_role' | 'execution_role' | 'review_role', value: AiRoleValue) {
+  if (field === 'instruction_role' && instructionHeld.value) return
+  if (!roleDisabled(field)) void card.change(field, value)
+}
+/** flowgate.v02.0113 T#4: an omitted instruction keeps its 지시 AI and 지시서 검수 values, off. */
+const instructionHeld = computed(() => cardSettingsValue(card.node.value, card.pending.value, 'instruction') === 'omit')
+/** flowgate.v02.0113 T#4: a field the card's kind puts on the AI tab and the card has. */
+function aiFieldOf(field: CardSettingsField): boolean {
+  return (AI_FIELDS[kind.value] as readonly string[]).includes(field) && !!card.node.value?.fields[field]
+}
+/** flowgate.v02.0113 T#4: the [고급 ▾] 실행 설정 items of the card (a 테스트 card has none). */
+const advancedRun = computed(() => AI_ADVANCED_FIELDS.run.filter(field => aiFieldOf(field)))
+const runKey = (key: string) => `gui.designer.inspector.run_settings.${key}`
 const sequence = useSettings(() => (source.value === 'sequence' ? props.target : null))
 
 /** The 0048 sequence fields behind the v7 items; the other items have no place on a sequence row. */
@@ -185,16 +288,26 @@ const errorKey = computed(() => {
   return sequence.errorKey.value && !sequence.row.value ? sequence.errorKey.value : null
 })
 
-/** The 🔒 실행 중 line: a running card (server lock or the Flow's run lock), or a v0.1 step started and not done yet. */
+/**
+ * flowgate.v02.0113 T#1 (0002-D 개정 §3.13): a Graph card is locked only while it actually runs — the server's card lock
+ * (`locked`) or its node run's `node_running` (an AI execution of it requested / running, or its AI review), the same
+ * judgement — never because its Flow's run is running or the node is merely open (a person's or a setup wait). Until
+ * the run status is confirmed (`editLock` `unknown`) it still waits.
+ */
+function cardLocked(): boolean {
+  return card.node.value?.locked === true || props.target.nodeRun?.nodeRunning === true || props.target.editLock === 'unknown'
+}
+
+/** The 🔒 실행 중 line: an actually running card (see `cardLocked`), or a v0.1 step started and not done yet. */
 const locked = computed(() => {
-  if (source.value === 'card') return card.node.value?.locked === true || !!props.target.editLock
+  if (source.value === 'card') return cardLocked()
   const row = sequence.row.value
   return row !== null && settingsRowPhase(row) === 'in_progress'
 })
 
 /** TR0031 rev1: the lock line while only the unconfirmed run status locks the card (else the 🔒 실행 중 line). */
 const lockText = computed(() =>
-  source.value === 'card' && card.node.value?.locked !== true && props.target.editLock === 'unknown'
+  source.value === 'card' && card.node.value?.locked !== true && props.target.nodeRun?.nodeRunning !== true && props.target.editLock === 'unknown'
     ? t('gui.designer.center.run_lock_pending')
     : null,
 )
@@ -210,7 +323,7 @@ const cardReason = computed(() => {
     readOnly: props.target.readOnly,
     placing: card.placing.value,
     read: card.node.value !== null,
-    locked: card.node.value?.locked === true || !!props.target.editLock,
+    locked: cardLocked(),
     blocked: card.blocked.value,
   })
 })
@@ -229,11 +342,15 @@ function cardField(field: CardSettingsField): FieldView {
   const node = card.node.value
   const value = cardSettingsValue(node, card.pending.value, field)
   let options: SettingsOption[]
-  if (cardSettingsIsAiField(field)) options = cardSettingsAiOptions(field, card.choices.value?.providers ?? [], value)
+  if (field === 'instruction_review_ai') {
+    options = [{ value: '', label: t('gui.aiRoles.card_review'), key: null, params: {} }, ...cardSettingsAiOptions('review_ai', node?.aiRoles?.options ?? card.choices.value?.providers ?? [], value).slice(1)]
+  } else if (cardSettingsIsAiField(field)) options = cardSettingsAiOptions(field, card.choices.value?.providers ?? [], value)
   else options = cardSettingsChoiceOptions(field, node?.fields[field]?.choices, value)
   let reason = cardReason.value
   if (!reason && field in card.pending.value) reason = 'reason.busy'
   if (reason === null && field === 'review_ai' && cardSettingsReviewOff(cardSettingsValue(node, card.pending.value, 'review_count'))) reason = 'reason.review_off'
+  const reviewSelected = 'review_role' in card.pending.value ? card.pending.value.review_role as AiRoleValue : node?.aiRoles?.roles.review?.selected
+  if (!reason && (field === 'review_count' || field === 'review_basis') && reviewSelected?.kind === 'not_used') reason = 'reason.review_off'
   return { value: cardSettingsText(value), options, disabled: reason !== null, reason }
 }
 
@@ -250,7 +367,7 @@ function sequenceField(field: CardSettingsField): FieldView {
 
 const views = computed(() => {
   const out = {} as Record<CardSettingsField, FieldView>
-  const fields = kind.value === 'plan' ? CARD_SETTINGS_FIELDS.plan : new Set([...CARD_SETTINGS_FIELDS.run, ...CARD_SETTINGS_FIELDS.test])
+  const fields = new Set<CardSettingsField>([...CARD_SETTINGS_FIELDS.run, ...CARD_SETTINGS_FIELDS.test, ...CARD_SETTINGS_FIELDS.plan, 'instruction_review_ai', 'instruction_review_count'])
   for (const field of fields) out[field] = source.value === 'card' ? cardField(field) : sequenceField(field)
   return out
 })
@@ -308,6 +425,7 @@ const runFields = computed<InspectorRunSettingsFields>(() => {
   const shown = kind.value === 'test' ? CARD_SETTINGS_FIELDS.test : RUN_BLOCK_FIELDS
   for (const name of RUN_BLOCK_FIELDS) {
     if (!shown.includes(name)) continue
+    if (card.node.value?.aiRoles && (name === 'run_ai' || name === 'review_ai')) continue
     const view = views.value[name]
     out[name] = {
       value: view.value,
@@ -328,12 +446,36 @@ function planHint(name: InspectorRunSettingsField): string | null {
 function onChange(field: CardSettingsField, text: string) {
   if (views.value[field].disabled) return
   if (source.value === 'card') {
-    const value = cardSettingsValueOf(field, text)
+    const value = field === 'instruction_review_ai' ? text || null : cardSettingsValueOf(field, text)
     if (value !== undefined) void card.change(field, value)
     return
   }
   const mapped = SEQUENCE_FIELD[field]
   if (mapped) void sequence.change(mapped, text)
+}
+
+/**
+ * flowgate.v02.0113 T#4 — a select's options on the AI tab. The two review counts offer 안 함 · 1회 · 2회 · 3회
+ * (0002-D §3.7); a stored count outside them stays shown so nothing is changed by opening the card.
+ */
+function optionsOf(field: CardSettingsField) {
+  const view = views.value[field]
+  const counted = field === 'review_count' || field === 'instruction_review_count'
+  return view.options
+    .filter(option => !counted || AI_REVIEW_COUNTS.includes(Number(option.value)) || option.value === view.value)
+    .map(option => ({ value: option.value, label: labelOf(option) }))
+}
+
+/** Why the field is off (its label's tooltip), or the WP card's 검수 횟수 tooltip. */
+function hintOf(field: CardSettingsField): string | null {
+  const reason = views.value[field].reason
+  if (reason) return t(k(reason))
+  return field === 'review_count' ? planHint('review_count') : null
+}
+
+function onAiChange(field: CardSettingsField, text: string) {
+  if (instructionHeld.value && (field === 'instruction_review_ai' || field === 'instruction_review_count')) return
+  onChange(field, text)
 }
 
 function reload() {
@@ -375,5 +517,48 @@ function reload() {
 .inspector-settings-select {
   height: 32px;
   font-size: 12px;
+}
+
+/* flowgate.v02.0113 T#4 (0029-TR 시안): the AI tab — selects as tall as the run settings', the [고급 ▾] button on its
+   own line at the right, and the fold's two titled sections (실행 설정 in two columns, then 지시서 검수). */
+.inspector-settings :deep(.ui-select) {
+  height: 32px;
+  font-size: 12px;
+}
+
+.inspector-ai-advanced-line {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.inspector-ai-advanced-line + .inspector-block {
+  margin-top: 8px;
+}
+
+.inspector-ai-advanced-title {
+  margin: 0 0 8px;
+  color: #dce7f2;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.inspector-ai-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 10px;
+}
+
+.inspector-ai-advanced-split {
+  height: 1px;
+  margin: 12px 0;
+  border: 0;
+  background: #2c4b64;
+}
+
+@container (max-width: 480px) {
+  .inspector-ai-advanced-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

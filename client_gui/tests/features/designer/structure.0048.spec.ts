@@ -171,6 +171,20 @@ const UNDECIDED_CALL = /(?<!function\s)(?<!\.)\b([A-Za-z_$][\w$]*)\s*\(/g
 const UNDECIDED_HANDLER = /@(?:click|submit|change|input|keydown|keyup|update:[\w-]+)(?:\.[\w.]+)*="\s*([A-Za-z_$][\w$.]*)\s*"/g
 const COMMENTS = /\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->|(^|[^:'"`])\/\/[^\n]*/g
 
+// 0113 D §6.2/§6.3: these exact composition edges reuse the account role control and the
+// settings panel. Invocation DTOs use the project public type surface. Its runtime surface
+// stays useProjectStore + ProjectDialog (project/publicSurface.spec.ts); only the history
+// composable may read the existing project-owned invocation adapter. No transport,
+// arbitrary external feature, Frame edge or sibling implementation is allowed. The settings
+// model consumes DTO types only; it remains pure. Keep the boundary fixtures below unchanged.
+const ROLE_COMPOSITION_IMPORTS: Record<string, readonly { spec: string; typeOnly?: boolean }[]> = {
+  'features/settings/cardRolesModel.ts': [{ spec: '@/features/document', typeOnly: true }],
+  'features/settings/SettingsTab.vue': [{ spec: '@/features/ai' }, { spec: '@/features/document', typeOnly: true }],
+  'features/ai/AiTab.vue': [{ spec: '../settings/SettingsTab.vue' }],
+  'features/ai/AiInvocations.vue': [{ spec: '@/features/project', typeOnly: true }, { spec: '@/features/ai' }],
+  'features/ai/useAiInvocations.ts': [{ spec: '@/features/project/aiInvocationsApi' }, { spec: '@/features/project', typeOnly: true }],
+}
+
 // --- Checks ----------------------------------------------------------------------------------------
 
 const read = (file: string) => readFileSync(file, 'utf8')
@@ -218,7 +232,8 @@ function ruleViolations(code: string, label: string, src: string, rule: ImportRu
   const out: string[] = []
   for (const { spec, typeOnly } of importsOf(src)) {
     const ok = rule.allowed.some((allowed) => (allowed instanceof RegExp ? allowed.test(spec) : allowed.re.test(spec) && typeOnly))
-    if (!ok || rule.forbidden?.test(spec)) out.push(`${code} ${label}: import '${spec}'`)
+    const roleComposition = ROLE_COMPOSITION_IMPORTS[label]?.some(edge => edge.spec === spec && (!edge.typeOnly || typeOnly))
+    if ((!ok || rule.forbidden?.test(spec)) && !roleComposition) out.push(`${code} ${label}: import '${spec}'`)
   }
   const body = rule.body ? src.match(rule.body) : null
   if (body) out.push(`${code} ${label}: uses '${body[0]}'`)
@@ -277,7 +292,9 @@ function featureViolations(root: string, key: string): string[] {
       const sibling = /^\.\.\/([A-Za-z]+)\//.exec(spec)?.[1] ?? /inspector\/features\/([A-Za-z]+)/.exec(spec)?.[1]
       const sharedTestSession = (key === 'testSpec' && name === 'testCardSession.ts' && /^\.\.\/settings\/(cardSettingsModel|useCardSettings)$/.test(spec))
         || (key === 'settings' && name === 'SettingsTab.vue' && spec === '../testSpec/useTestCard')
-      if (sibling && others.includes(sibling) && !sharedTestSession) out.push(`B6 ${label}: imports feature '${sibling}'`)
+      // 0113: AI tab composes the settings panel's AI mode; no other sibling edge is opened.
+      const sharedAiPanel = key === 'ai' && name === 'AiTab.vue' && spec === '../settings/SettingsTab.vue'
+      if (sibling && others.includes(sibling) && !sharedTestSession && !sharedAiPanel) out.push(`B6 ${label}: imports feature '${sibling}'`)
     }
     const kind = FEATURE_RULES.find((candidate) => candidate.file.test(name))
     if (!kind) {

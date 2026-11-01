@@ -17,7 +17,7 @@ import { createPinia, type Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FlowGraph, FlowGraphCardDocument, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
-import SettingsTab from '@/features/designer/inspector/features/settings/SettingsTab.vue'
+import SettingsTab from '../support/SettingsPanelsFixture.0113'
 import { INSPECTOR_HOST } from '@/features/designer/inspector/inspectorHost'
 import { inspectorSettingsKind, toInspectorTarget, type InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import { prepareInspectorI18n } from '../support/inspectorSupport'
@@ -283,7 +283,9 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     expect(isOn(w)).toBe(false)
   })
 
-  it('a running card, the Flow’s run lock, an unconfirmed run status, a read-only view, a card not saved yet: off, nothing sent', async () => {
+  // flowgate.v02.0113 T#1 (0002-D 개정 §3.13): the Flow's run lock alone no longer locks a card's settings — its node run's
+  // node_running (actual running) does; a waiting card under a running run stays editable.
+  it('a running card (server lock / node_running), an unconfirmed run status, a read-only view, a card not saved yet: off, nothing sent', async () => {
     locked = true
     let w = await mountTab()
     expect(w.get('[data-test="inspector-lock-note"]').text()).toBe('🔒 실행 중')
@@ -291,7 +293,8 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     await flip(w)
     w.unmount()
     locked = false
-    for (const fields of [{ editLock: 'run' as const }, { editLock: 'unknown' as const }, { readOnly: 'revision' as const }, { readOnly: 'conflict' as const }, { nodeId: 'tmp_wp' }]) {
+    const running = { nodeRun: { status: 'open', openedAt: null, finishedAt: null, resultDocId: null, nodeRunning: true } }
+    for (const fields of [running, { editLock: 'unknown' as const }, { readOnly: 'revision' as const }, { readOnly: 'conflict' as const }, { nodeId: 'tmp_wp' }]) {
       w = await mountTab(targetFor(fields))
       expect(toggle(w).attributes('disabled'), JSON.stringify(fields)).toBeDefined()
       expect(select(w, 'run_ai').attributes('disabled'), JSON.stringify(fields)).toBeDefined()
@@ -363,6 +366,10 @@ describe('the WP card’s settings tab in the real Frame and registry (flowgate.
     await flushPromises()
     expect(wrapper.findAll('[data-test="designer-inspector-section"]').map((section) => section.attributes('data-key'))).toEqual(['settings'])
     expect(wrapper.find('[data-test="settings-pre-instruction-switch"]').exists()).toBe(true)
+    expect(rowLabels(wrapper)).toEqual([])
+    await wrapper.findAll('[role="tab"]').find(item => item.text() === 'AI')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="settings-pre-instruction-switch"]').exists()).toBe(false)
     expect(rowLabels(wrapper)).toEqual(['작업 AI', '재시작', '검수 AI', '검수 횟수'])
   })
 })

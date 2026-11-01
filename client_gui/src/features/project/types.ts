@@ -490,7 +490,7 @@ export interface FlowCanvasCardDocument {
 }
 
 /** P0008 §2.6 `node_run`: what the Inspector shows of a Graph node's run (status kept as the server sends it). */
-export interface FlowCanvasNodeRun {
+export interface FlowCanvasNodeRun extends RoleRunFields {
   /** Existing node_run.dispatch.error_code; no result is still an open card. */
   dispatchErrorCode?: string | null
   status: string | null
@@ -517,7 +517,8 @@ export interface FlowCanvasNodeRun {
   question?: boolean
   /**
    * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
-   * (`node_running`: open, or in review while its AI review works); absent when not sent.
+   * (`node_running`; flowgate.v02.0113 T#1: actually running — an AI execution of it requested / running, or its AI
+   * review — never merely open); absent when not sent.
    */
   nodeRunning?: boolean
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
@@ -756,7 +757,7 @@ export interface FlowGraphDefinition {
 // Pause, Stop and Resume (T#2 / T#7), with the idle reason, the execution counts and each node's integration / Hold.
 
 /** One node of a run (P0008 S5-4 `node_runs[]`). */
-export interface FlowRunNode {
+export interface FlowRunNode extends RoleRunFields {
   nodeKey: string
   /** `pending` | `open` | `review` | `done` | `rejected` … (open key, as sent). */
   status: string
@@ -773,7 +774,8 @@ export interface FlowRunNode {
   question?: boolean
   /**
    * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
-   * (`node_running`: open, or in review while its AI review works); absent when not sent.
+   * (`node_running`; flowgate.v02.0113 T#1: actually running — an AI execution of it requested / running, or its AI
+   * review — never merely open); absent when not sent.
    */
   nodeRunning?: boolean
   /** flowgate.v02.0061 T#14: the node attempt's running / requested AI executions; absent when not sent. */
@@ -867,4 +869,24 @@ export interface FlowRunApproval {
   targetDocIds: string[]
   /** The documents this approval approved. */
   approvedDocIds: string[]
+}
+
+/** P-1 §6: read-only role assignment facts, absent on older servers. */
+export interface RoleWaitReason { code: string; role: string | null; stage: string | null; seq: number | null; detail: string | null }
+export interface RoleSubmission { docId: string | null; revisionNo: number | null; rejectionCount: number | null }
+export interface RoleStageAssignment {
+  stage: string | null; seq: number | null; current: boolean; role: string | null
+  actor: string | null; actorReason: string | null; providerId: string | null; providerName: string | null
+  roleValue: import('../ai/roles/types').AiRoleValue | null
+  source: string | null; cause: string | null
+  plan: { instructionType: string | null; resultType: string | null } | null
+  reusedDocId: string | null; reviewRounds: number | null; reworkProviderId: string | null
+  author: string | null; authorProviderId: string | null; basis: RoleSubmission | null
+  decidedAt: string | null; stageState: string | null; failCause: string | null; verdict: string | null
+  intent: { kind: string | null; execId: string | null } | null
+}
+export interface RoleRunFields {
+  waitReason?: RoleWaitReason | null
+  stageAssignments?: RoleStageAssignment[] | null
+  approvalWaitSubmission?: RoleSubmission | null
 }

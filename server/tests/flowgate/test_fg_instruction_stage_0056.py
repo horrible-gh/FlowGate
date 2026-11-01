@@ -38,6 +38,7 @@ import pytest
 
 from test_fg_card_approval_0056 import _approve, _current, _events, _node_run, _resume, _run_id, _stop
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
+    legacy_cards, pre_feature_attempts,
     AI, FA, _doc, _h, _run_one_card, _sql, _start, db_path, decided, edge, env, get_settings, node, put_draft,
     setting,
 )
@@ -45,6 +46,11 @@ from test_fg_card_settings_review import (
     INSTRUCTION_RUN, WORK_RUN, _admin_and_reviewer, _node, _recorded_start_run, _result, _review_status, _run_ended,
     _source_scopes, _start_ai, _through_instruction, _work_run_ended, _write_written,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 _SERVER_DIR = Path(__file__).resolve().parents[2]
 ROOT = f"{FA}.0001-R"
@@ -89,7 +95,7 @@ def _card(env, doc_type="T", settings=(), node_type="document"):
                       [edge("tmp_e", "tmp_r", "tmp_c")])
     key = first["key_map"]["tmp_c"]
     for field, value in settings:
-        setting(env, FA, key, field, value)
+        legacy_setting(env, FA, key, field, value)
     assert env["client"].post(f"/api/v1/flows/{FA}/graph/revisions", json={"draft_version": 1},
                               headers=_h()).status_code == 201
     return key
@@ -196,15 +202,16 @@ def test_the_instruction_ai_is_read_and_written_like_any_card_setting(env):
         body = get_settings(env, FA, km[ref])
         assert body["fields"]["instruction_ai"] == {"value": None, "stored": False, "default": None, "choices": None}
     saved = setting(env, FA, km["tmp_t"], "instruction_ai", "aip_instr")
-    assert saved["fields"]["instruction_ai"]["value"] == "aip_instr" and saved["fields"]["instruction_ai"]["stored"]
+    assert not saved["fields"]["instruction_ai"]["stored"]
+    assert saved["ai_roles"]["roles"]["instruction"]["selected"] == {"kind": "assigned", "provider_id": "aip_instr"}
     refused = setting(env, FA, km["tmp_t"], "instruction_ai", "aip_nobody", expect=422)
-    assert refused["error"]["params"]["errors"] == [{"field": "value", "reason": "unknown_ai"}]
+    assert refused["error"]["params"]["errors"] == [{"field": "value", "reason": "ai_not_selectable", "cause": "deleted"}]
     ts = setting(env, FA, km["tmp_s"], "instruction_ai", "aip_instr", expect=422)
     assert ts["error"]["params"]["errors"] == [
         {"field": "field", "reason": "not_a_setting_of_this_card", "card_kind": "test"}]
     assert "instruction_ai" not in get_settings(env, FA, km["tmp_s"])["fields"]
-    back = setting(env, FA, km["tmp_t"], "instruction_ai", None)
-    assert back["fields"]["instruction_ai"] == {"value": None, "stored": False, "default": None, "choices": None}
+    back = setting(env, FA, km["tmp_t"], "instruction_ai", None, expect=422)
+    assert back["error"]["params"]["errors"] == [{"field": "value", "reason": "role_unset_not_allowed"}]
 
 
 @pytest.mark.parametrize("settings, instruction_ai, run_ai", [
@@ -594,9 +601,10 @@ def _before_migration_148(env):
         conn.close()
 
 
+# 0113 T#3 (T §6.4) pre-feature contract: a card run opened before migration 148 (no stage) is a pre-feature attempt by construction (L-2 §2.13, G-14)
 @pytest.mark.parametrize("contact", [True, False])
 @pytest.mark.parametrize("instruction, written, other", [("use", "T", "TR"), ("omit", "TR", "T")])
-def test_a_card_run_opened_before_migration_148_finishes_with_the_type_its_ai_was_told(
+def test_a_card_run_opened_before_migration_148_finishes_with_the_type_its_ai_was_told(pre_feature_attempts, 
         env, decided, monkeypatch, instruction, written, other, contact):
     """A card run whose AI started under the one-stage contract before migration 148 (instruction use: the node's
     own T; omitted: its TR): after 148 its node run has no stage, and the document its AI was told to write is
@@ -793,3 +801,7 @@ def test_migration_148_adds_the_stage_columns_in_every_dialect():
         assert "ALTER TABLE graph_node_runs ADD COLUMN instruction_doc_id" in sql
         assert "ALTER TABLE graph_node_runs ADD COLUMN result_event_floor" in sql
         assert "ALTER TABLE graph_run_token_map ADD COLUMN stage" in sql
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting

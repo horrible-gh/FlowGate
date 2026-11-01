@@ -397,6 +397,9 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     run_id = str(lease_row.get("run_id") or "")
     if not run_id:
         return
+    if end_reason == "orphaned_by_restart":
+        from flowgate.ai_roles import invocations
+        invocations.orphan(run_id)
     existing = db_runs.get(run_id)
     if existing is not None:
         # A replay may follow a partial recovery that persisted the orphan run before
@@ -876,6 +879,10 @@ def _register_run(run: dict, chain: list[dict]) -> None:
         _svc()._runs[run_id] = run
 
 
+from flowgate.ai_roles import invocations as role_invocations
+
+
+@role_invocations.admission
 @graph_execution_hooks.admission
 def start_run(
     *,
@@ -945,6 +952,9 @@ def start_run(
     node_restart_max_attempts: Optional[int] = None,
     graph_exec_id: Optional[str] = None,
     graph_attempt_id: Optional[str] = None,
+    # flowgate.v02.0113 T#3 (P-1 §7.2): a card call's origin (purpose, role, assignment target) kept on the run memory
+    # for the role invocation record (T#4). Internal only; no route passes it.
+    invocation_origin: Optional[dict] = None,
     # 0414 P0007: the [검수] tab's two session-scoped maps — mode-aware worker item_seq ->
     # review count, and -> reviewer provider_id. They ride the RUN (never a token), exactly
     # like the provider/note maps, and are snapshotted into the paused row so a resume or a
@@ -1689,6 +1699,7 @@ def start_run(
     run = {
         "graph_exec_id": graph_exec_id,
         "graph_attempt_id": graph_attempt_id,
+        "invocation_origin": dict(invocation_origin) if invocation_origin else None,
         "graph_review_run_ids": (graph_loop_state or {}).get("review_run_ids") or [],
         "run_id": run_id,
         "status": "running",

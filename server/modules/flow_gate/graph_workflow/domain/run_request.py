@@ -124,6 +124,17 @@ def parse_gate_intent(body: Any) -> tuple[dict, list[dict]]:
     return {"request_id": request_id, "expected_attempt_id": attempt_id, "expected_settings_version": version}, []
 
 
+def parse_command_seq(raw: Optional[str]) -> tuple[Optional[int], list[dict]]:
+    """flowgate.v02.0113 T#5: the command result's ``command_seq`` — a positive integer (the event sequence of the
+    command's start), or absent (the run's latest command)."""
+    if raw is None:
+        return None, []
+    text = str(raw).strip()
+    if not (text.isascii() and text.isdigit()) or int(text) < 1:
+        return None, [{"field": "command_seq", "reason": "not_positive_integer"}]
+    return int(text), []
+
+
 def parse_page(limit: Optional[str], offset: Optional[str]) -> tuple[tuple[int, int], list[dict]]:
     """``limit`` 1~100 (default 20), ``offset`` ≥ 0 (default 0)."""
     errors: list[dict] = []

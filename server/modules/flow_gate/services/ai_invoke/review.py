@@ -1380,6 +1380,14 @@ def _queue_gate_bundle(group_id: str, bundle: dict) -> None:
 
 def _start_graph_hop(*, graph_exec_id=None, **kwargs):
     """Keep the durable request consistent if the existing admission path refuses it."""
+    if graph_exec_id and not kwargs.get("invocation_origin"):
+        from flowgate.graph_run import execution
+        origin = execution.request_origin(graph_exec_id).get("invocation_origin")
+        if origin:
+            origin = dict(origin)
+            if origin.get("origin_kind") == "card_legacy_attempt":
+                origin["requested_ai_id"] = kwargs.get("provider_id")
+            kwargs["invocation_origin"] = origin
     try:
         return _svc().start_run(graph_exec_id=graph_exec_id, **kwargs)
     except Exception as exc:

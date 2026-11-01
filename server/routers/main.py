@@ -52,6 +52,7 @@ from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settin
 from flowgate.conversation.routes import router as _conversation_router
 # flowgate.v02.0053 T#2: the v0.2 card (Node) run settings (server/flowgate/card_settings).
 from flowgate.card_settings.routes import router as _card_settings_router
+from flowgate.ai_roles.routes import router as _ai_roles_router
 # flowgate.v02.0056 T#1: the v0.2 card approval (server/flowgate/card_approval).
 from flowgate.card_approval.routes import router as _card_approval_router
 # flowgate.v02.0056 T#3: a card line's write and the v0.2 card memos (server/flowgate/card_documents, card_memos).
@@ -260,6 +261,7 @@ app.include_router(_graph_canvas_router, prefix=f"{CONTEXT}", tags=["GraphCanvas
 app.include_router(_graph_definition_router, prefix=f"{CONTEXT}", tags=["GraphDefinition"])
 app.include_router(_graph_run_router, prefix=f"{CONTEXT}", tags=["GraphRun"])
 app.include_router(_card_settings_router, prefix=f"{CONTEXT}", tags=["CardSettings"])
+app.include_router(_ai_roles_router, prefix=f"{CONTEXT}", tags=["AiSettings"])
 app.include_router(_card_approval_router, prefix=f"{CONTEXT}", tags=["CardApproval"])
 app.include_router(_card_documents_router, prefix=f"{CONTEXT}", tags=["CardDocuments"])
 app.include_router(_card_memos_router, prefix=f"{CONTEXT}", tags=["CardMemos"])
@@ -286,6 +288,7 @@ app.add_middleware(
 # entirely in dev (no dist), where Vite serves the client on its own port.
 import os as _os
 from fastapi.staticfiles import StaticFiles
+from .client_fallback import api_aware_fallback
 
 _CLIENT_DIST = _os.path.normpath(
     _os.path.join(_os.path.dirname(__file__), "..", "..", "client", "dist")
@@ -359,7 +362,6 @@ if _client_dist_exists or _client_gui_dist_exists:
     def _html(path: str) -> FileResponse:
         return FileResponse(path, headers={"Cache-Control": "no-cache, max-age=0"})
 
-    @app.get("/{full_path:path}", include_in_schema=False)
     async def _serve_client(full_path: str):
         # Never shadow the API surface; let those 404 as JSON.
         if _CTX and (full_path == _CTX or full_path.startswith(f"{_CTX}/")):
@@ -403,4 +405,9 @@ if _client_dist_exists or _client_gui_dist_exists:
         if full_path == "settings" or full_path.startswith("settings/"):
             return _html(_os.path.join(_CLIENT_DIST, "settings.html"))
         return _html(_os.path.join(_CLIENT_DIST, "index.html"))
+
+    app.router.add_api_route(
+        "/{full_path:path}", _serve_client, methods=["GET"], include_in_schema=False,
+        route_class_override=api_aware_fallback(CONTEXT),
+    )
 

@@ -173,6 +173,13 @@ def get_name_any(provider_id: str) -> Optional[str]:
     return (row or {}).get("name")
 
 
+def get_public_row(provider_id: str) -> Optional[dict]:
+    """Role availability lookup across owners: no secret columns or decryption (0113 T#2)."""
+    return get_store()._fetch_one(
+        "SELECT provider_id, name, exec_type, kind, enabled, owner_scope, owner_user_id "
+        "FROM ai_providers WHERE provider_id = ?", [provider_id])
+
+
 def get_system_row(provider_id: str) -> Optional[dict]:
     """A system row by id, whatever scope the caller used to know it by (pre-131 runs kept
     chain_source='project' for rows that are system rows now)."""

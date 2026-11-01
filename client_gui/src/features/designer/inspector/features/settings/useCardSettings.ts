@@ -3,7 +3,7 @@
 // the project's. A card just placed (`tmp_` key) has nothing stored yet: its form is drawn, off, until the
 // draft save answers its key. No server event announces a settings change; a run starting or ending a node
 // (the card's 🔒) is announced, and the card is read again then and when its Canvas run state moves.
-import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
+import { inject, provide, computed, ref, shallowRef, watch, effectScope, getCurrentInstance, onScopeDispose, type ComputedRef, type Ref } from 'vue'
 import {
   settingsChoicesRead,
   settingsNodeErrorMessage,
@@ -14,8 +14,9 @@ import {
   type SettingsChoices,
   type SettingsNode,
 } from '@/features/document'
+import { aiRolePayload, type AiRoleValue } from '@/features/document'
 import { inspectorCardNodeKey, type InspectorTarget } from '../../inspectorTarget'
-import { useInspectorFieldWrite, useInspectorResource, type InspectorEventMatch, type InspectorEventScope, type InspectorResourceStatus } from '../../useInspectorResource'
+import { captureInspectorResourceContext, useInspectorFieldWrite, useInspectorResource, type InspectorEventMatch, type InspectorEventScope, type InspectorResourceStatus } from '../../useInspectorResource'
 import { cardSettingsBlockedBy, type CardSettingsBlocked, type CardSettingsFailureKind, type CardSettingsField } from './cardSettingsModel'
 
 /** Server events after which the card's settings are read again (its run, hence its lock, moved). */
@@ -81,7 +82,10 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
   const writes = useInspectorFieldWrite<SettingsNode>({
     target: scope,
     resource,
-    write: (key, field, value) => settingsNodeWrite(...splitKey(key), field, value),
+    write: (key, field, value) => {
+      if (scope()?.docId !== key) return Promise.reject(new Error('gate_context_changed'))
+      return settingsNodeWrite(...splitKey(key), field, field.endsWith('_role') ? aiRolePayload(value as AiRoleValue) : value, field.endsWith('_role') ? resource.data.value?.settingsVersion : undefined)
+    },
   })
 
   const blocked = ref<CardSettingsBlocked>(null)
@@ -128,3 +132,58 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
     },
   }
 }
+
+const SHARED_CARD_SETTINGS = Symbol('inspector-card-settings')
+export function provideCardSettings(target: () => InspectorTarget | null) {
+  const state = useCardSettings(target)
+  provide(SHARED_CARD_SETTINGS, state)
+}
+interface CardSettingsSession {
+  target: ReturnType<typeof shallowRef<InspectorTarget | null>>
+  state: CardSettingsState
+  users: number
+}
+const cardSettingsApps = new WeakMap<object, Map<string, CardSettingsSession>>()
+const fallbackCardSettingsApp = {}
+
+/** 0113: settings and AI panels share the app/card session, without a feature import in the Frame.
+ * Like testCardSession (0071), resources become inactive when the last consumer leaves. */
+export function useSharedCardSettings(target: () => InspectorTarget | null): CardSettingsState {
+  const provided = inject<CardSettingsState | null>(SHARED_CARD_SETTINGS, null)
+  if (provided) return provided
+  const app = getCurrentInstance()?.appContext ?? fallbackCardSettingsApp
+  const inResourceContext = captureInspectorResourceContext()
+  let sessions = cardSettingsApps.get(app)
+  if (!sessions) { sessions = new Map(); cardSettingsApps.set(app, sessions) }
+  const current = shallowRef<CardSettingsSession | null>(null)
+  const stop = watch(() => {
+    const value = target()
+    return value ? [value.projectId, value.flowId, value.nodeId].join('\n') : null
+  }, (key, _before, cleanup) => {
+    if (!key) { current.value = null; return }
+    let entry = sessions!.get(key)
+    if (!entry) {
+      const selected = shallowRef(target())
+      const scope = effectScope(true)
+      const state = inResourceContext(() => scope.run(() => useCardSettings(() => selected.value)))!
+      entry = { target: selected, state, users: 0 }; sessions!.set(key, entry)
+    }
+    entry.users++; entry.target.value = target(); current.value = entry
+    cleanup(() => { if (--entry!.users === 0) entry!.target.value = null })
+  }, { immediate: true, flush: 'sync' })
+  const stopTarget = watch(target, value => { if (value && current.value) current.value.target.value = value }, { flush: 'sync' })
+  onScopeDispose(() => { stopTarget(); stop() })
+  return {
+    node: computed(() => current.value?.state.node.value ?? null),
+    choices: computed(() => current.value?.state.choices.value ?? null),
+    pending: computed(() => current.value?.state.pending.value ?? {}),
+    status: computed(() => current.value?.state.status.value ?? 'idle'),
+    errorKind: computed(() => current.value?.state.errorKind.value ?? null),
+    failure: computed(() => current.value?.state.failure.value ?? null),
+    blocked: computed(() => current.value?.state.blocked.value ?? null),
+    placing: computed(() => current.value?.state.placing.value ?? false),
+    change: (field, value) => current.value?.state.change(field, value) ?? Promise.resolve(false),
+    reload: () => current.value?.state.reload() ?? Promise.resolve(),
+  }
+}
+

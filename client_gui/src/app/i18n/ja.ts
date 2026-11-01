@@ -245,19 +245,26 @@ export default {
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
+        // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): a person's writing wait by its role, a review card that waits, ◌ = actually running.
+        instruction_write_wait: '指示書作成待ち',
+        result_write_wait: '結果作成待ち',
+        waiting: '待機',
+        manual_write_wait: '手動作成待ち',
+        ai_setup_required: 'AI設定が必要',
+        ai_unavailable: 'AI使用不可',
         no_result: '結果なし',
         incomplete: '実行未完了',
         // flowgate.v02.0083 T#4: an open card no AI execution works on — it waits for an answer or for its writer.
         waiting_answer: '回答待ち',
         waiting_writer: '作成待ち',
-        writing_instruction: '指示書作成中',
-        writing_result: '結果作成中',
-        working: '作業中',
+        writing_instruction: '◌ 指示書作成中',
+        writing_result: '◌ 結果作成中',
+        working: '◌ 実行中',
         awaiting_approval: '承認待ち',
         auto_approval_failed: '自動承認失敗',
-        approved: '承認済み',
+        approved: '完了',
         rejected: '差し戻し',
-        pending: '待機',
+        pending: '準備',
         closed: 'クローズ',
       },
       // flowgate.v02.0056 F2-1 — a card's [승인] (O1 0005-TR §4-1) and why it was refused, by the server's code.
@@ -459,6 +466,7 @@ export default {
       tabs_label: 'インスペクタータブ',
       tabs: {
         documents: 'ドキュメント',
+        ai: 'AI',
         qna: 'Q&A',
         attachments: '添付',
         settings: '設定',
@@ -1496,7 +1504,7 @@ export default {
       editor: '作成する本文',
       placeholder: '本文を Markdown で書きます。空のまま保存すると空の下書きが作られます。',
       contentless: '空の作業計画を作ります。内容は作成後に編集します。',
-      result_note: 'カードは実行中です。この行がカードの結果であれば、保存した文書が結果として登録され、カードは承認待ちになります。結果には本文が必要です。',
+      result_note: 'カードは実行フローで開かれています。この行がカードの結果であれば、保存した文書が結果として登録され、カードは承認待ちになります。結果には本文が必要です。',
       save: '保存',
       create: '作成',
       cancel: 'キャンセル',
@@ -2028,6 +2036,9 @@ export default {
       invalid_request: 'リクエストの値が正しくありません。',
       internal_error: 'サーバー内部エラーで処理できませんでした。サーバーログを確認してください。',
       project_not_found: 'プロジェクトが見つかりません。',
+      ai_role_setup_cards_running: '実行中のカードがあるため、AI設定を保存しませんでした: {cards}',
+      ai_role_setup_unavailable: 'このサーバーではまだAI設定を保存できません。',
+      ai_role_setup_busy: 'このアカウントの別のAI設定を保存中です。少し待ってから保存してください。',
       provider_not_found: 'AI接続が見つかりません。',
       provider_disabled: '使用しない設定のAI接続です。',
       provider_unavailable: '現在使用できないAI接続です。AIの使用設定とAPIキーを確認してください。',

@@ -115,6 +115,10 @@
     />
     <FlowBaseBranchDialog :open="flowBaseTarget !== null" :project-id="projectId"
       :group-id="flowBaseTarget?.flowId ?? null" @close="flowBaseTarget = null" @saved="explorerRefreshToken += 1" />
+    <AiRoleSetupModeless :data="aiSetup.state.data" :saving="aiSetup.state.saving" :error="aiSetup.state.error" @close="aiSetup.cancel" @save="aiSetup.save" />
+    <!-- flowgate.v02.0113 T#5: the run result windows — the 1st only for a command that ended completed or failed. -->
+    <RunResultWindow :key="`result-${runResult.state.seq}`" :result="runResult.state.result" :open="runResult.state.resultOpen" @close="runResult.closeResult" @detail="runResult.openDetail" />
+    <RunResultDetailWindow :key="`detail-${runResult.state.seq}`" :result="runResult.state.result" :open="runResult.state.detailOpen" @close="runResult.closeDetail" />
     <DesignerContextMenu :host="contextMenu.host" @request="contextMenu.run" />
     <component :is="contextMenu.dialogs" v-if="contextMenu.actions" :actions="contextMenu.actions" />
     <ToastHost :toasts="shownToasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
@@ -230,6 +234,9 @@
 //
 // flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4, Q #510 E-1) — an F5 brings the working screen back. See
 // "F5 restore" below.
+import { AiRoleSetupModeless } from '@/features/ai'
+import { createFirstRunAiSetup } from '@/features/ai'
+import { RunResultDetailWindow, RunResultWindow, createRunResultWatch } from '@/features/ai'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { documentRead, settingsNodeHoldWrite } from '@/features/document'
@@ -311,7 +318,14 @@ const projectId = computed<string | null>(() => projectStore.currentProjectId)
 // flowgate.v02.0045 S3 (D0004 §2.3 "Palette 연결"): a Palette card dropped on the Canvas becomes a
 // node of the Flow's Graph draft. The Shell is the only part that knows both: it tells the Center
 // session which node a drop means, so the Palette and the Canvas never know each other.
+const aiSetup: ReturnType<typeof createFirstRunAiSetup> = createFirstRunAiSetup({
+  context: (): string | null => projectStore.designerSessionOwner && projectId.value && center.state.activeFlowId
+    ? `${projectStore.designerSessionOwner}\n${projectId.value}\n${center.state.activeFlowId}` : null,
+})
 const center = createDesignerCenterSession({
+  // flowgate.v02.0113 T#2 rework: the first AI setup is applied to the Flow whose command waits for it.
+  beforeRunPrepare: (flowId) => aiSetup.request(flowId),
+  runSetupCurrent: () => aiSetup.current(),
   // flowgate.v02.0059 T#2: the document read lets 자동 배치 follow a v0.1 sequence root's supersede chain.
   // flowgate.v02.0061 T#15: the card Hold of the card context menu goes through the card settings.
   source: createServerFlowGraphSource(projectStore, documentRead, { write: settingsNodeHoldWrite }),
@@ -339,6 +353,26 @@ function onCanvasPlace(flowId: string, x: number, y: number) {
 }
 
 watch(() => center.state.activeFlowId, () => { selectedPalette.value = null })
+
+// flowgate.v02.0113 T#5 (0030-M §5, 7-1): the run result windows. A 다음 단계 / 전체 실행 command the server took is watched
+// each time its Flow's run is idle again; only a completed or failed command opens the 1st window, once (a step boundary,
+// a manual write wait or a branch waiting shows on the Canvas only, and a waiting command that may still go on with a
+// person's save stays watched until its real end). Another Project or session drops the watches and the windows.
+const runResult = createRunResultWatch({
+  load: (runId, commandSeq) => projectStore.loadFlowCommandResult(runId, commandSeq),
+})
+watch(
+  () => Object.keys(runResult.pending).map((flowId) => {
+    const run = center.runStatus(flowId).run
+    return [flowId, run?.runId ?? '', run?.status ?? '', run?.lastEventSeq ?? ''].join('|')
+  }).join('\n'),
+  () => {
+    for (const flowId of Object.keys(runResult.pending)) runResult.observe(flowId, center.runStatus(flowId).run)
+  },
+)
+watch([projectId, () => projectStore.designerSessionOwner], () => runResult.clear())
+watch([() => center.state.activeFlowId, projectId, () => projectStore.designerSessionOwner], () => aiSetup.cancel(), { flush: 'sync' })
+onBeforeUnmount(() => aiSetup.cancel())
 
 // flowgate.v02.0053 T#9 / flowgate.v02.0061 T#14: the run buttons follow the server run of the open Flow (the Center
 // session's): its phase decides which two show; while a command is answered every run button waits (`runBusy`).
@@ -814,7 +848,14 @@ function onTopCommand(command: DesignerTopCommand) {
       if (flowId === null) return
       // flowgate.v02.0061 T#14: one step / full command on the server (the session confirms an idle Flow's draft first).
       if (center.canRun) {
-        void center.runFlow(flowId, command === 'run.next' ? 'next' : 'all')
+        // flowgate.v02.0113 T#5: a command the server took is watched for its result (the run as known before it).
+        const known = center.runStatus(flowId).run
+        const before = known ? { runId: known.runId, status: known.status, lastEventSeq: known.lastEventSeq } : null
+        void center.runFlow(flowId, command === 'run.next' ? 'next' : 'all').then((taken) => {
+          if (!taken) return
+          runResult.arm(flowId, before)
+          runResult.observe(flowId, center.runStatus(flowId).run)
+        })
         return
       }
       const start = (go: boolean) => {

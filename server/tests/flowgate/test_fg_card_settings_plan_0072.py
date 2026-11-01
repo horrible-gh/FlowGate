@@ -20,7 +20,10 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from test_fg_card_settings import (  # noqa: F401  (pytest fixtures and helpers of the card settings suite)
+    legacy_cards, pre_feature_attempts,
     FB,
     _sql,
     db_path,
@@ -32,6 +35,11 @@ from test_fg_card_settings import (  # noqa: F401  (pytest fixtures and helpers 
     shown,
     stored_rows,
 )
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 PLAN_FIELDS = ["pre_instruction_auto", "run_ai", "restart", "review_ai", "review_count", "time_limit",
                "review_basis", "hold"]
@@ -121,8 +129,9 @@ def test_a_work_plan_card_reads_its_defaults_and_saves_each_value_at_once(env):
         setting(env, FB, key, field, value)
     again = get_settings(env, FB, key)
     assert {k: v for k, v in shown(again).items() if again["fields"][k]["stored"]} == {
-        "run_ai": "aip_card", "restart": -1, "review_ai": "aip_assignee", "review_count": 2, "time_limit": 120,
-        "review_basis": "last"}
+        "restart": -1, "review_count": 2, "time_limit": 120, "review_basis": "last"}
+    assert again["ai_roles"]["roles"]["execution"]["selected"]["provider_id"] == "aip_card"
+    assert again["ai_roles"]["roles"]["review"]["selected"]["provider_id"] == "aip_assignee"
 
 
 def test_values_outside_the_plan_settings_are_refused(env):
@@ -132,7 +141,9 @@ def test_values_outside_the_plan_settings_are_refused(env):
                                  ("run_ai", "aip_missing", "unknown_ai"), ("restart", 99, "not_a_choice"),
                                  ("time_limit", 61, "not_a_choice"), ("review_basis", "all", "not_a_choice")):
         refused = setting(env, FB, key, field, value, expect=422)
-        assert refused["error"]["params"]["errors"] == [{"field": "value", "reason": reason}], field
+        expected = ({"field": "value", "reason": "ai_not_selectable", "cause": "deleted"}
+                    if field == "run_ai" else {"field": "value", "reason": reason})
+        assert refused["error"]["params"]["errors"] == [expected], field
     for field in ("instruction", "instruction_ai", "delegation", "push"):
         refused = setting(env, FB, key, field, "use", expect=422)
         assert refused["error"]["params"]["errors"][0]["reason"] == "not_a_setting_of_this_card"
@@ -151,7 +162,8 @@ def test_the_switch_and_the_run_block_touch_no_document(env, tmp_path):
         setting(env, FB, key, field, value)
     assert _documents(env) == before_docs
     assert _files(storage) == before_files
-    assert stored_rows(env, FB, key) == {(key, "review_count"): "1", (key, "run_ai"): '"aip_card"'}
+    assert stored_rows(env, FB, key) == {(key, "review_count"): "1"}
+    assert get_settings(env, FB, key)["ai_roles"]["roles"]["execution"]["selected"]["provider_id"] == "aip_card"
 
 
 def test_a_work_plan_node_with_its_work_ai_hands_it_to_a_run_revised_0072_t3(env):
@@ -165,7 +177,7 @@ def test_a_work_plan_node_with_its_work_ai_hands_it_to_a_run_revised_0072_t3(env
     assert settings.uses_ai(FB, row) is False                          # nothing stored: a person writes it
     for field, value in (("pre_instruction_auto", True), ("run_ai", "aip_card"), ("review_count", 2),
                          ("time_limit", 120), ("restart", 1)):
-        setting(env, FB, key, field, value)
+        legacy_setting(env, FB, key, field, value)
     assert settings.uses_ai(FB, row) is True
     plan = settings.run_settings(FB, row)
     assert {k: plan.get(k) for k in ("provider_id", "step_timeout_sec", "restart_max")} == {
@@ -173,3 +185,7 @@ def test_a_work_plan_node_with_its_work_ai_hands_it_to_a_run_revised_0072_t3(env
     assert "instruction" not in plan and "result_doc_type" not in plan
     assert settings.result_type(FB, row) is None
     assert settings.instruction_document(FB, row) == {}
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting

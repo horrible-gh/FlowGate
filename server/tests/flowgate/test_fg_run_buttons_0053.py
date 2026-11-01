@@ -1,29 +1,37 @@
 """flowgate.v02.0053 T#9 — the top band's 다음 단계 · 전체 실행 · 중지 on the Graph run API, as the client sends them.
 
-The Designer's run buttons (client ``center/run/flowRunControl.ts``) call the existing run routes
-(``graph_workflow/api/run_routes.py``) in these orders:
+flowgate.v02.0113 T#3 rework (0025-T ⑤): the client sends one command per button since 0061 T#14
+(``center/run/flowRunControl.ts``), and these tests follow it — no start-then-stop any more:
 
-- 전체 실행: ``GET /flows/{id}/runs/current`` -> a stopped run is resumed (``POST /runs/{run}/resume``), else a
-  run starts (``POST /flows/{id}/runs``).
-- 다음 단계: the same, then ``POST /runs/{run}/stop`` at once — the cards it opened keep their work (tokens);
-  their results wait (pending) and nothing after them opens until the next 다음 단계 / 전체 실행 resumes.
-- 중지: ``POST /runs/{run}/stop``.
+- 다음 단계: ``POST /flows/{id}/runs {"revision_no": null, "mode": "step"}`` — a new run, or the Flow's idle run going on
+  with a new step command. A step opens the run candidates of that moment (its targets) and the run settles by itself
+  (``idle``): what follows them waits for the next command (``step_done`` once its targets are done).
+- 전체 실행: the same with ``"mode": "full"`` — the run goes on by itself as cards finish (an approval wakes it).
+- 중지: ``POST /runs/{run}/stop`` (0061 T#7) — only a running or paused run; an idle run is refused ``run_not_running``.
 - 확인 card: ``POST /runs/{run}/nodes/{node}/gate-decision``.
 
-On the same real SQLite DB and fixtures as ``test_fg_card_settings`` (card documents and card settings
-registered as ``startup`` does): a real run is made, its status and node states change and are published,
-stop really stops the frontier, the run hands out with the card's own settings (T#2) and binds its result
-into the card's document line made when the card was placed (T#1). Without decided run rules (the product
-state: D0004 §8 unanswered, every policy slot ``undecided``) a start is refused with
-``run_policy_undecided`` and no run exists — the reason the client shows as a toast.
+On the same real SQLite DB and fixtures as ``test_fg_card_settings`` (card documents and card settings registered as
+``startup`` does): a real run is made, its status and node states change and are published, the run hands out with the
+card's own settings (T#2) and binds its result into the card's document line made when the card was placed (T#1).
+Without decided run rules (the product state: D0004 §8 unanswered, every policy slot ``undecided``) a start is refused
+with ``run_policy_undecided`` and no run exists — the reason the client shows as a toast. The person cards finish with
+their result registered at the opening (the pre-feature contract, ``pre_feature_attempts``); the assigned path of the
+same buttons is ``test_fg_next_step_wait_0113`` / ``test_fg_ai_roles_l2_*``.
 """
 from __future__ import annotations
 
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — pytest fixtures and helpers of the card settings tests
+    legacy_cards, pre_feature_attempts,
     FA, TEST_VERSION, _TestPolicy, _doc, _h, _sql, db_path, decided, edge, env, node, put_draft, setting,
 )
+
+# flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
+# assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
+# runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
+# (``pre_feature_attempts``) by the tests of the pre-feature contract.
+pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 LEE = {"kind": "human", "user_id": "u_lee", "provider_id": None}
 AI = {"kind": "ai", "user_id": None, "provider_id": "aip_assignee"}
@@ -53,22 +61,29 @@ def _post(env, path, expect=200, body=None):
     return res.json()
 
 
+def _command(env, mode):
+    """One run button as the client sends it: a step / full command (a new run, or the Flow's idle run going on)."""
+    res = env["client"].post(f"/api/v1/flows/{FA}/runs", json={"revision_no": None, "mode": mode}, headers=_h())
+    assert res.status_code in (200, 201), res.text
+    return res.json()["run"]
+
+
 def _all(env):
-    """전체 실행 as the client sends it."""
-    current = _current(env)
-    if current and current["status"] == "stopped":
-        return _post(env, f"/runs/{current['run_id']}/resume")["run"]
-    return _post(env, f"/flows/{FA}/runs", 201, {"revision_no": None})["run"]
+    """전체 실행."""
+    return _command(env, "full")
 
 
 def _next(env):
-    """다음 단계 as the client sends it: 전체 실행, then stop at once."""
-    run = _all(env)
-    return _post(env, f"/runs/{run['run_id']}/stop")["run"] if run["status"] == "running" else run
+    """다음 단계."""
+    return _command(env, "step")
 
 
 def _states(env):
     return {r["node_key"]: r["status"] for r in _sql(env["db"], "SELECT node_key, status FROM graph_node_runs")}
+
+
+def _run_row(env):
+    return _sql(env["db"], "SELECT run_id, status, idle_reason, run_mode FROM graph_runs")
 
 
 def _run_statuses(env):
@@ -102,33 +117,61 @@ def test_without_decided_run_rules_a_start_is_refused_and_no_run_is_made(env):
     assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_runs")[0]["n"] == 0
 
 
+# ── 다음 단계: one step command, then the next command ────────────────────────
+
+def test_next_step_opens_one_step_at_a_time(pre_feature_attempts, env, decided):
+    (t1, t2), _body = _confirmed(env, [("T", LEE), ("T", LEE)])
+
+    first = _next(env)                                             # the step opens its target and settles by itself
+    assert (first["status"], first["mode"], first["open_node_keys"]) == ("idle", "step", [t1])
+    assert first["idle_reason"] == "waiting_approval"              # its person card writes: never no_targets
+    assert _states(env)[t1] == "open" and _states(env)[t2] == "pending"
+
+    _finish(env, t1, 90)                                           # the step's target is done ...
+    assert _states(env)[t1] == "done" and _states(env)[t2] == "pending"     # ... and nothing after it opens by itself
+    held = _current(env)
+    assert (held["run_id"], held["status"], held["idle_reason"]) == (first["run_id"], "idle", "step_done")
+    assert {n["node_key"]: n["awaiting_approval"] for n in held["node_runs"]}[t1] is False
+
+    second = _next(env)                                            # the next command: the same run, the next card
+    assert (second["run_id"], second["status"], second["open_node_keys"]) == (first["run_id"], "idle", [t2])
+    assert second["idle_reason"] == "waiting_approval" and _states(env)[t1] == "done"
+    assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_runs")[0]["n"] == 1
+    # the step, its target's approval (a wake within the step's bound, then idle again at it), the next step
+    assert _run_statuses(env) == [(None, "running"), ("running", "idle"), ("idle", "running"), ("running", "idle"),
+                                  ("idle", "running"), ("running", "idle")]
+
+    _finish(env, t2, 91)
+    assert [(r["status"], r["idle_reason"]) for r in _run_row(env)] == [("idle", "completed")]
+
+
+def test_next_step_with_nothing_to_open_says_why_the_run_waits(pre_feature_attempts, env, decided):
+    """A step on a run whose open card waits (a person writes) opens nothing new and tells that wait, not
+    "nothing to run" (0084)."""
+    (t1, _t2), _body = _confirmed(env, [("T", LEE), ("T", LEE)])
+    first = _next(env)
+    again = _next(env)
+    assert (again["run_id"], again["open_node_keys"]) == (first["run_id"], [t1])
+    assert (again["status"], again["idle_reason"]) == ("idle", "waiting_approval")
+
+
 # ── 전체 실행 · 중지 ─────────────────────────────────────────────────────────────
 
-def test_run_all_makes_a_real_run_stop_stops_it_and_run_all_again_resumes_the_same_run(env, decided):
+def test_run_all_goes_on_by_itself_as_its_cards_finish(pre_feature_attempts, env, decided):
     (t1, t2), _body = _confirmed(env, [("T", LEE), ("T", LEE)])
     assert _current(env) is None
 
     run = _all(env)
-    assert run["status"] == "running" and run["open_node_keys"] == [t1]
+    assert (run["status"], run["mode"], run["open_node_keys"]) == ("idle", "full", [t1])
+    assert run["idle_reason"] == "waiting_approval"
     assert _current(env)["run_id"] == run["run_id"]
-    assert _states(env)[t1] == "open" and _states(env)[t2] == "pending"
+    # A second run is never made while the Flow has one: the same command lets that run go on.
+    assert _all(env)["run_id"] == run["run_id"]
 
-    stopped = _post(env, f"/runs/{run['run_id']}/stop")["run"]
-    assert stopped["status"] == "stopped" and _current(env)["status"] == "stopped"
-    # A second start is refused while the run is stopped: the client resumes it instead.
-    assert _post(env, f"/flows/{FA}/runs", 409, {"revision_no": None})["error"]["code"] == "run_already_active"
-
-    # Stopped means stopped: the open card finishes, nothing after it opens.
-    _finish(env, t1, 90)
-    assert _states(env)[t1] == "done" and _states(env)[t2] == "pending"
-
-    resumed = _all(env)
-    assert resumed["run_id"] == run["run_id"] and resumed["status"] == "running"
-    assert _states(env)[t2] == "open"
+    _finish(env, t1, 90)                                           # the full command goes on: no button
+    assert _states(env)[t1] == "done" and _states(env)[t2] == "open"
     _finish(env, t2, 91)
-    assert _current(env) is None                                   # all done: completed, no current run
-    assert _sql(env["db"], "SELECT status FROM graph_runs")[0]["status"] == "completed"
-    assert _run_statuses(env) == [(None, "running"), ("running", "stopped"), ("stopped", "running"), ("running", "completed")]
+    assert [(r["run_id"], r["status"], r["idle_reason"]) for r in _run_row(env)] == [(run["run_id"], "idle", "completed")]
     # Every node change is published too (the Canvas reads itself again on these).
     assert any(e.event_type == "graph_node_state_changed" for e in env["events"])
 
@@ -139,35 +182,13 @@ def test_stop_refuses_a_run_that_is_not_running(env, decided):
     assert _post(env, f"/runs/{run['run_id']}/stop", 409)["error"]["code"] == "run_not_running"
 
 
-# ── 다음 단계 ─────────────────────────────────────────────────────────────────
-
-def test_next_step_opens_one_step_at_a_time(env, decided):
-    (t1, t2), _body = _confirmed(env, [("T", LEE), ("T", LEE)])
-
-    first = _next(env)                                             # start, then stop at once
-    assert first["status"] == "stopped" and first["open_node_keys"] == [t1]
-    assert _states(env)[t1] == "open"
-    _finish(env, t1, 90)                                           # its card works on while stopped
-    assert _states(env)[t2] == "pending"
-    # flowgate.v02.0056 T#1: stopped is not awaiting approval — the card is approved (done) and the run band
-    # shows "멈춤 · 다음 카드 N개 대기" from the run read
-    held = _current(env)
-    assert (held["pending_propagation_count"], held["pending_node_keys"]) == (1, [t1])
-    assert {n["node_key"]: n["awaiting_approval"] for n in held["node_runs"]}[t1] is False
-
-    second = _next(env)                                            # resume -> the next card opens, stop again
-    assert second["run_id"] == first["run_id"] and second["status"] == "stopped"
-    assert second["open_node_keys"] == [t2]
-    assert _run_statuses(env) == [(None, "running"), ("running", "stopped"), ("stopped", "running"), ("running", "stopped")]
-
-
 # ── the run uses the card ────────────────────────────────────────────────────
 
 def test_the_run_hands_out_with_the_card_settings_and_binds_into_the_placed_card_document(env, decided):
     (t1,), body = _confirmed(env, [("T", AI)])
     instruction = next(line["doc_id"] for line in body["card_documents"][t1] if line["slot"] == "instruction")
-    setting(env, FA, t1, "run_ai", "aip_card")                     # T#2: the card's own run AI
-    setting(env, FA, t1, "restart", 2)
+    legacy_setting(env, FA, t1, "run_ai", "aip_card")                     # T#2: the card's own run AI
+    legacy_setting(env, FA, t1, "restart", 2)
 
     run = _all(env)
     dispatch = {n["node_key"]: n["dispatch"] for n in run["node_runs"]}[t1]
@@ -208,17 +229,22 @@ def gate_decided(monkeypatch):
         policies.set_system_default(key, value, version)
 
 
-def test_a_gate_is_decided_while_its_run_runs_and_not_while_it_is_stopped(env, gate_decided):
+# 0113 T#3 (T §6.4) pre-feature contract: its person card's result registered at the opening moves the run to the gate; an assigned person RUN card writes its instruction first (L-2 §2.1/§2.7) — test_fg_ai_roles_l2_assignment.py::test_g2_*
+def test_a_gate_the_run_opened_is_decided_and_completes_the_run(pre_feature_attempts, env, gate_decided):
     (t1, gate), _body = _confirmed(env, [("T", LEE), ("gate", None)])
     run = _all(env)
     _finish(env, t1, 90)
     assert _states(env)[gate] == "open"
+    waiting = _current(env)
+    assert (waiting["status"], waiting["idle_reason"]) == ("idle", "waiting_approval")    # the gate waits for a person
+    # An idle run has nothing to stop (0061 T#7): the client offers no 중지 then.
+    assert _post(env, f"/runs/{run['run_id']}/stop", 409)["error"]["code"] == "run_not_running"
 
-    stopped = _post(env, f"/runs/{run['run_id']}/stop")["run"]
-    refused = _post(env, f"/runs/{stopped['run_id']}/nodes/{gate}/gate-decision", 409, {"decision": "confirm"})
-    assert refused["error"]["code"] == "run_not_running"
-
-    _all(env)
-    decided_run = _post(env, f"/runs/{run['run_id']}/nodes/{gate}/gate-decision", body={"decision": "confirm", "comment": "확인"})["run"]
+    decided_run = _post(env, f"/runs/{run['run_id']}/nodes/{gate}/gate-decision",
+                        body={"decision": "confirm", "comment": "확인"})["run"]
     assert {n["node_key"]: n["status"] for n in decided_run["node_runs"]}[gate] == "done"
-    assert decided_run["status"] == "completed"
+    assert [(r["status"], r["idle_reason"]) for r in _run_row(env)] == [("idle", "completed")]
+
+
+# Fixture-only legacy fields for the pre-T#3 execution contract.
+from test_fg_card_settings import legacy_setting
