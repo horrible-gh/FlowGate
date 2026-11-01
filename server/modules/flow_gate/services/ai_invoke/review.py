@@ -182,7 +182,8 @@ def _provider_name_of(project_id: Optional[str], provider_id: Optional[str]) -> 
     for provider in _enabled_provider_chain(project_id):
         if provider.get("id") == provider_id:
             return provider.get("name") or provider_id
-    return provider_id
+    from modules.flow_gate.db import ai_providers
+    return ai_providers.get_name_any(provider_id) or provider_id
 
 
 def _map_contains(mapping: Optional[dict], item_seq: Optional[int]) -> bool:

@@ -12,7 +12,8 @@ from .connection import get_store, now_iso
 
 def get(user_id: str) -> Optional[str]:
     row = get_store()._fetch_one(
-        "SELECT provider_id FROM user_ai_defaults WHERE user_id = ?", [user_id],
+        "SELECT d.provider_id FROM user_ai_defaults d JOIN ai_providers p ON p.provider_id = d.provider_id "
+        "WHERE d.user_id = ? AND p.deleted_at IS NULL", [user_id],
     )
     return (row or {}).get("provider_id") or None
 

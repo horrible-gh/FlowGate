@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import secrets
+from modules.flow_gate.utils.provider_lifecycle import synchronized
 from typing import Optional
 
 from modules.flow_gate.db import ai_provider_doctype_map as _doctype_db
@@ -746,6 +747,7 @@ def get_system_settings(include_catalog: bool = True) -> dict:
     return result
 
 
+@synchronized
 def save_system_settings(
     providers: Optional[list[dict]],
     default_provider_id: Optional[str],
@@ -795,6 +797,7 @@ def get_user_settings(owner_user_id: str, include_catalog: bool = True) -> dict:
     return result
 
 
+@synchronized
 def save_user_default(owner_user_id: str, provider_id: Optional[str]) -> dict:
     """Pick the caller's default AI: a system AI or one of the caller's own. None (or "") goes
     back to following the system default."""
@@ -808,6 +811,7 @@ def save_user_default(owner_user_id: str, provider_id: Optional[str]) -> dict:
     return get_user_settings(owner_user_id, include_catalog=False)
 
 
+@synchronized
 def save_user_settings(owner_user_id: str, providers: Optional[list[dict]]) -> dict:
     """Full-replace the caller's own AI list. Rows of other owners are never matched: an id
     that is not one of the caller's rows is treated as a new row and gets a fresh id."""

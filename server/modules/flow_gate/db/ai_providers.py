@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ..utils.provider_lifecycle import synchronized
+
 from ..utils import api_key_crypto as _crypto
 from . import system_settings as _system_settings
 from .connection import get_store, now_iso
@@ -34,32 +36,43 @@ SYSTEM_DEFAULT_KEY = "ai_default_provider_id"
 
 
 class ProviderInUseError(Exception):
-    """A missing provider is still referenced; the caller must preserve the whole save."""
+    """A provider is used by live work; roll back the entire settings save."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__("provider_in_use")
 
 
-def _delete_missing(s, where: str, params: list, keep: list[str]) -> None:
-    # Translate only a DELETE's FK violation. The transaction owner still sees an
-    # exception and rolls back before the router answers 409. Do not remove history
-    # or weaken RESTRICT (including references from stopped review loops).
-    try:
-        if keep:
-            placeholders = ", ".join("?" for _ in keep)
-            s._execute(
-                f"DELETE FROM ai_providers WHERE {where} AND provider_id NOT IN ({placeholders})",
-                params + keep,
-            )
-        else:
-            s._execute(f"DELETE FROM ai_providers WHERE {where}", params)
-    except Exception as exc:
-        # psycopg 3 / psycopg2 and SQLite's equivalent used by isolated tests.
-        code = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
-        sqlite_fk = getattr(exc, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_FOREIGNKEY" or (
-            getattr(exc, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_TRIGGER"
-            and str(exc) == "FOREIGN KEY constraint failed"
-        )
-        if code == "23503" or sqlite_fk:
-            raise ProviderInUseError("provider_in_use") from exc
-        raise
+def _delete_missing(s, where: str, params: list, keep: list[str],
+                    active_ids: set[str]) -> None:
+    from ..services.provider_usage_service import deletion_reason
+
+    missing_where = f"{where} AND deleted_at IS NULL"
+    missing_params = list(params)
+    if keep:
+        missing_where += " AND provider_id NOT IN (" + ", ".join("?" for _ in keep) + ")"
+        missing_params += keep
+    missing = s._fetch_all(
+        f"SELECT provider_id, owner_scope FROM ai_providers WHERE {missing_where}", missing_params)
+    ids = [r["provider_id"] for r in missing]
+    if not ids:
+        return
+    system_ids = [r["provider_id"] for r in missing if r["owner_scope"] == OWNER_SYSTEM]
+    reason = deletion_reason(s, system_ids, active_ids)
+    if reason:
+        raise ProviderInUseError(reason)
+    marks = ", ".join("?" for _ in ids)
+    # Explicit replacements for the old SET NULL/CASCADE actions. These are
+    # current selections; run/review/evaluation history and group policy stay intact.
+    s._execute(f"UPDATE user_ai_defaults SET provider_id = NULL WHERE provider_id IN ({marks})", ids)
+    s._execute(f"DELETE FROM ai_provider_doctype_map WHERE provider_id IN ({marks})", ids)
+    for column in ("continuation_base_provider_id", "continuation_work_executor_provider_id"):
+        s._execute(f"UPDATE ai_invoke_paused_chains SET {column} = NULL WHERE {column} IN ({marks})", ids)
+    now = now_iso()
+    s._execute(
+        "UPDATE ai_providers SET deleted_at = ?, updated_at = ?, enabled = 0, "
+        "api_key = NULL, cli_command = NULL, api_base_url = NULL, api_model = NULL "
+        f"WHERE provider_id IN ({marks})", [now, now] + ids)
 
 
 class _KeepStoredSecret:
@@ -92,12 +105,12 @@ EXEC_LOCATIONS = ("local", "remote")
 
 def _scope_where(project_id: Optional[str]) -> tuple[str, list]:
     if project_id is None:
-        return "project_id IS NULL AND owner_scope = 'system'", []
-    return "project_id = ?", [project_id]
+        return "project_id IS NULL AND owner_scope = 'system' AND deleted_at IS NULL", []
+    return "project_id = ? AND deleted_at IS NULL", [project_id]
 
 
 def _user_where(owner_user_id: str) -> tuple[str, list]:
-    return "project_id IS NULL AND owner_scope = 'user' AND owner_user_id = ?", [owner_user_id]
+    return "project_id IS NULL AND owner_scope = 'user' AND owner_user_id = ? AND deleted_at IS NULL", [owner_user_id]
 
 
 def _decrypt_row(row: Optional[dict]) -> Optional[dict]:
@@ -154,6 +167,12 @@ def get_row(project_id: Optional[str], provider_id: str) -> Optional[dict]:
     return _decrypt_row(_get_row_stored(project_id, provider_id))
 
 
+def get_name_any(provider_id: str) -> Optional[str]:
+    """History display only: retain the original name, without exposing secrets."""
+    row = get_store()._fetch_one("SELECT name FROM ai_providers WHERE provider_id = ?", [provider_id])
+    return (row or {}).get("name")
+
+
 def get_system_row(provider_id: str) -> Optional[dict]:
     """A system row by id, whatever scope the caller used to know it by (pre-131 runs kept
     chain_source='project' for rows that are system rows now)."""
@@ -184,6 +203,7 @@ def _key_for_storage(row: dict, stored_keys: dict) -> Optional[str]:
     return _crypto.encrypt_api_key(value)
 
 
+@synchronized
 def replace_scope(
     project_id: Optional[str],
     rows: list[dict],
@@ -202,12 +222,14 @@ def replace_scope(
     and for a project scope the tri-state `mode` — is persisted in the same
     transaction (DB0005 §4).
     """
+    from ..services.provider_usage_service import active_run_provider_ids
+    active_ids = active_run_provider_ids()
     store = get_store()
     with store.transaction() as s:
         _replace_rows(s, _scope_where(project_id), rows, existing_ids,
                       project_id=project_id,
                       owner_scope=OWNER_SYSTEM if project_id is None else None,
-                      owner_user_id=None)
+                      owner_user_id=None, active_ids=active_ids)
 
         if project_id is None:
             # 0148 precedent: set_value's upsert already table-qualifies the existing-row
@@ -223,6 +245,7 @@ def replace_scope(
             upsert_project_ai_state(project_id, mode, default_provider_id)
 
 
+@synchronized
 def replace_user_scope(owner_user_id: str, rows: list[dict], existing_ids: set[str]) -> None:
     """replace_scope() for one user's own AI list (same merge and encryption rules)."""
     with get_store().transaction() as s:
@@ -232,14 +255,14 @@ def replace_user_scope(owner_user_id: str, rows: list[dict], existing_ids: set[s
 
 def _replace_rows(s, scope: tuple[str, list], rows: list[dict], existing_ids: set[str], *,
                   project_id: Optional[str], owner_scope: Optional[str],
-                  owner_user_id: Optional[str]) -> None:
+                  owner_user_id: Optional[str], active_ids: Optional[set[str]] = None) -> None:
     """Delete-missing -> update/insert inside the caller's transaction. Every statement is
     fenced by the scope's WHERE, so one owner's save can never touch another owner's row."""
     now = now_iso()
     where, params = scope
     stored_keys = {r["provider_id"]: r.get("api_key") for r in _list_where_stored(where, params)}
     keep = [r["provider_id"] for r in rows]
-    _delete_missing(s, where, params, keep)
+    _delete_missing(s, where, params, keep, active_ids or set())
 
     for r in rows:
         # project_access only means something on system rows; a caller that does not

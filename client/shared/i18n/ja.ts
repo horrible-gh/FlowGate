@@ -23,7 +23,7 @@ export default {
     toast: {
       settings_saved: '設定を保存しました。',
       settings_save_failed: '設定を保存できませんでした。',
-      ai_provider_in_use: "レビュー・再作業ループなどの保存済み履歴がこの AI を参照しているため削除できません。設定と履歴は保持されました。使用をオフにしてください。",
+      ai_provider_in_use: "実行中のタスクで使用しているAIは削除できません。",
       settings_load_failed: '設定を読み込めませんでした。',
       settings_reverted: '最後に保存した値に戻しました。',
       delete_failed: '削除中にエラーが発生しました。',

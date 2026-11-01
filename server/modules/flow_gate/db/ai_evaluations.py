@@ -231,6 +231,19 @@ def latest_completed(target_ids: list[str]) -> list[dict]:
     return list(latest.values())
 
 
+def active_for_providers(ids: list[str], *, store=None) -> list[dict]:
+    """Capability evaluations only (not ai_evaluation_runs connection tests)."""
+    ids = sorted(set(ids))
+    if not ids:
+        return []
+    marks = ", ".join("?" for _ in ids)
+    states = ", ".join("?" for _ in ACTIVE)
+    return (store or get_store())._fetch_all(
+        f"SELECT evaluation_id FROM ai_evaluations WHERE lifecycle IN ({states}) "
+        f"AND (target_provider_id IN ({marks}) OR judge_provider_id IN ({marks}))",
+        list(ACTIVE) + ids + ids)
+
+
 def active_count() -> int:
     marks = ", ".join("?" for _ in ACTIVE)
     row = get_store()._fetch_one(

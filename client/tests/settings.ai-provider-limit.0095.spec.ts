@@ -41,9 +41,12 @@ describe('0095 legacy list limit', () => {
       expect(document.body.textContent).toContain('300')
     }
   })
-  it.each(['ko', 'en', 'ja'] as const)('explains a referenced-provider conflict in %s', locale => {
+  it.each(['ko', 'en', 'ja'] as const)('explains an active-task deletion conflict in %s', locale => {
     i18n.global.locale.value = locale
     const error = { response: { status: 409, data: { detail: { code: 'provider_in_use' } } } }
-    expect(resolveApiError(error, i18n.global.t, 'common.toast.settings_save_failed')).toBe(i18n.global.t('common.toast.ai_provider_in_use'))
+    const message = resolveApiError(error, i18n.global.t, 'common.toast.settings_save_failed')
+    expect(message).toBe(i18n.global.t('common.toast.ai_provider_in_use'))
+    expect(message).not.toMatch(/history|Disable|저장된 이력|꺼 주세요|保存済み履歴|オフ/)
+    expect(message).toContain({ ko: '진행 중', en: 'task', ja: '実行中' }[locale])
   })
 })
