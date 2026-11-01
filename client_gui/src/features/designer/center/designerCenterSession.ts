@@ -638,7 +638,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     isOpen,
     beforePrepare: options.beforeRunPrepare,
     canProceed: (flowId) => !disposed && (options.runSetupCurrent?.() ?? true) && whenKnown(flowId, run => !isRunLocked(run)),
-    prepare: (flowId) => prepareRun(flowId),
+    prepare: (flowId) => prepareRunTold(flowId),
     refresh: (flowId) => refreshFlow(flowId),
   }, state.runs)
 
@@ -1247,6 +1247,24 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     if (!draft?.editable || !draft.confirmable || !drafts.drawn(flowId)) return true
     if (state.edits[flowId]?.action) return false
     return drafts.confirm(flowId).then(() => state.edits[flowId]?.notice?.kind === 'confirmed')
+  }
+
+  // flowgate.v02.0117 T#4 (T#2 TR §2.2): a run command whose draft confirmation the server refused for its issues ended
+  // with no word — only the cards' issue border. Only for the run (not 검증, which shows its issues), that refusal is the
+  // command's refusal (`graph_validation_failed`), so the Shell's existing run toast says it. Nothing else changes: the
+  // issues still show on the cards, no run command goes, and any other no-go (a busy draft, a save error) stays as it was.
+  function prepareRunTold(flowId: string): boolean | Promise<boolean> {
+    const before = state.edits[flowId]?.check ?? null
+    const ready = prepareRun(flowId)
+    if (typeof ready === 'boolean') return ready
+    return ready.then((go) => {
+      const edit = state.edits[flowId]
+      const check = edit?.check ?? null
+      if (!go && !edit?.notice && check !== null && check !== before && !check.confirmable && check.issues.length > 0) {
+        throw Object.assign(new Error(''), { code: 'graph_validation_failed' })
+      }
+      return go
+    })
   }
 
   // ── flowgate.v02.0064 T#4: a card's own title ───────────────────────────────────────────────────────────────

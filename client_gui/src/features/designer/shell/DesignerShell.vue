@@ -236,7 +236,7 @@
 // "F5 restore" below.
 import { AiRoleSetupModeless } from '@/features/ai'
 import { createFirstRunAiSetup } from '@/features/ai'
-import { RunResultDetailWindow, RunResultWindow, createRunResultWatch } from '@/features/ai'
+import { RunResultDetailWindow, RunResultWindow, createRunResultWatch, runWaitText } from '@/features/ai'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { documentRead, settingsNodeHoldWrite } from '@/features/document'
@@ -358,8 +358,11 @@ watch(() => center.state.activeFlowId, () => { selectedPalette.value = null })
 // each time its Flow's run is idle again; only a completed or failed command opens the 1st window, once (a step boundary,
 // a manual write wait or a branch waiting shows on the Canvas only, and a waiting command that may still go on with a
 // person's save stays watched until its real end). Another Project or session drops the watches and the windows.
+// flowgate.v02.0117 T#4: a command that ended waiting for a person (T#1 TR §5: 사람 작성·승인 대기, also the manual write
+// wait of a role set to 사용하지 않음) is told once per run and reason in the existing toast below (`tellRunWait`).
 const runResult = createRunResultWatch({
   load: (runId, commandSeq) => projectStore.loadFlowCommandResult(runId, commandSeq),
+  tell: (result) => tellRunWait(result),
 })
 watch(
   () => Object.keys(runResult.pending).map((flowId) => {
@@ -470,6 +473,18 @@ watch(
     toasts.value = [...toasts.value.slice(-2), { id: `run-${toastSeq}`, text, tone, duration }]
   },
 )
+
+/**
+ * flowgate.v02.0117 T#4 (CH0004 turn 3 (5)): a run left waiting for a person says why once, in the same toasts — the
+ * run's idle reason and the waiting card's state in their existing words (runWaitText). No band, panel or new display.
+ */
+function tellRunWait(result: Parameters<typeof runWaitText>[0]) {
+  toastSeq += 1
+  toasts.value = [
+    ...toasts.value.slice(-2),
+    { id: `wait-${toastSeq}`, text: () => runWaitText(result, (key) => t(key), (key) => te(key)), tone: 'info', duration: 6000 },
+  ]
+}
 
 // A rejected candidate does not move cards; show its reason once.
 watch(

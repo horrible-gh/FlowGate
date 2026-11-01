@@ -143,6 +143,9 @@ def start_ai_invoke(job: dict) -> dict:
             token_rec={"project": project_id, "group_id": flow_id, "scratch_dir": issue["scratch_dir"]},
             head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
             api_base_url=api_base_url(), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
+            # flowgate.v02.0117: the instruction stage's edit writes the line's empty document for the first time —
+            # no revision, no review feedback, and it keeps the document's own header (``first_write``).
+            **({"first_write": True} if scope == "edit" and job.get("stage") == "instruction" else {}),
         )
         from modules.flow_gate.services import invoke_mention_service
         stored = job.get("card_settings") or {}

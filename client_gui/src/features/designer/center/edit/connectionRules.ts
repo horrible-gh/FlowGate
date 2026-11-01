@@ -8,11 +8,14 @@
 // - allowed with warnings: structures whose execution rule is still undecided (D0004 §8) — a
 //   branch (Q-2), a join (Q-4) or a cycle (Q-6). They can be saved in a draft but block
 //   confirmation until the rule is decided (`rule_undecided`).
+// - flowgate.v02.0117 T#2: refused, a card connected to itself (`self_edge`). Since flowgate.v02.0061 every cycle is a
+//   validation error (rule 4), and the Canvas never draws a self edge (vueFlowMapping), so one taken here could
+//   neither be seen nor removed while it kept the draft from being confirmed — no run of the Flow started.
 import type { DraftModel } from './draftModel'
 
 // flowgate.v02.0061 T#14 (the Center session's, not this pre-check's): `locked` — the Flow's run is running, paused or
 // stopping; `protected` — the target is a done / open / review node, whose incoming lines never change.
-export type ConnectionRefusal = 'not_editable' | 'duplicate' | 'locked' | 'protected'
+export type ConnectionRefusal = 'not_editable' | 'duplicate' | 'self_edge' | 'locked' | 'protected'
 export type ConnectionWarning = 'branch' | 'join' | 'cycle'
 
 export type ConnectionCheck =
@@ -38,10 +41,11 @@ function reaches(model: DraftModel, from: string, to: string): boolean {
 export function checkConnection(model: DraftModel, source: string, target: string): ConnectionCheck {
   const keys = new Set(model.nodes.map((n) => n.key))
   if (!keys.has(source) || !keys.has(target)) return { ok: false, reason: 'not_editable' }
+  if (source === target) return { ok: false, reason: 'self_edge' }
   if (model.edges.some((e) => e.source === source && e.target === target)) return { ok: false, reason: 'duplicate' }
   const warnings: ConnectionWarning[] = []
   if (model.edges.some((e) => e.source === source)) warnings.push('branch')
   if (model.edges.some((e) => e.target === target)) warnings.push('join')
-  if (source === target || reaches(model, target, source)) warnings.push('cycle')
+  if (reaches(model, target, source)) warnings.push('cycle')
   return { ok: true, warnings }
 }

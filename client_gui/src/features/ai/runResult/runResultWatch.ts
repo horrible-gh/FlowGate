@@ -10,6 +10,11 @@ import type { FlowCommandResult } from '@/features/project'
 // on) it stays watched, so its real end (completed / failed) still opens the window. Its real boundaries end the watch:
 // the next command (`arm` again), a Stop (`stopped`), a Time Machine or another command taking the run (`continues`
 // false, or another run), a read failure, a closed Flow or another Project. AI calls are never counted for it.
+//
+// flowgate.v02.0117 T#4 — a command that ended waiting for a person (the run idle `waiting_approval`; T#1 TR §5: also the
+// manual write wait of a role set to 사용하지 않음) is told once (`tell`) for the Shell's existing toast: once per run and
+// reason, and only while it may still go on (`continues`). A step boundary (`step_done`), the window's completed / failed
+// and the reasons T#1 did not observe (hold, no_targets, …) are never told.
 
 /** The run as this tab sees it: enough to tell a run idle again after the command. */
 export interface RunResultRun {
@@ -35,6 +40,8 @@ interface Pending {
 export interface RunResultWatchDeps {
   /** The run's command result (the store's loader): its latest, or the one starting at `commandSeq`. */
   readonly load: (runId: string, commandSeq?: number) => Promise<FlowCommandResult>
+  /** flowgate.v02.0117 T#4: a command that ended waiting for a person (`isToldWait`), told once per run and reason. */
+  readonly tell?: (result: FlowCommandResult) => void
 }
 
 export interface RunResultWindowsState {
@@ -48,9 +55,39 @@ export interface RunResultWindowsState {
 
 export const SHOWN_STATES: readonly string[] = ['completed', 'failed']
 
+/** flowgate.v02.0117 T#4: the idle reasons a waiting command is told for — T#1 TR §5's observed waits for a person. */
+export const TOLD_WAIT_REASONS: readonly string[] = ['waiting_approval']
+
+/** flowgate.v02.0117 T#4: a command that ended waiting for a person and may still go on with a person's save or approval. */
+export function isToldWait(result: FlowCommandResult): boolean {
+  return result.ended && result.state === 'waiting' && result.continues && TOLD_WAIT_REASONS.includes(result.idleReason ?? '')
+}
+
+/**
+ * flowgate.v02.0117 T#4: a told wait in words — the run's idle reason in the existing words (`run_idle_reasons`) and, when a
+ * card of the command waits with a card state the Canvas names (a manual write wait, …), that card and its state.
+ */
+export function runWaitText(result: FlowCommandResult, t: (key: string) => string, te: (key: string) => boolean): string {
+  const head = t(`gui.designer.top.run_idle_reasons.${result.idleReason ?? ''}`)
+  const card = result.nodes.find((node) => node.outcome === 'waiting' && !!node.reason && te(`gui.designer.center.card_states.${node.reason}`))
+  if (!card) return head
+  const cardState = t(`gui.designer.center.card_states.${card.reason}`)
+  return card.title ? `${head} — ${card.title}: ${cardState}` : `${head} — ${cardState}`
+}
+
 export function createRunResultWatch(deps: RunResultWatchDeps) {
   const state = reactive<RunResultWindowsState>({ result: null, resultOpen: false, detailOpen: false, seq: 0 })
   const pending = reactive<Record<string, Pending>>({})
+  // flowgate.v02.0117 T#4: the waits told already (run and reason): the same wait of the same run is never told again.
+  const told = new Set<string>()
+
+  function tellOnce(result: FlowCommandResult) {
+    if (!deps.tell || !isToldWait(result)) return
+    const key = `${result.runId}\n${result.idleReason}`
+    if (told.has(key)) return
+    told.add(key)
+    deps.tell(result)
+  }
 
   function show(result: FlowCommandResult) {
     state.result = result
@@ -109,7 +146,10 @@ export function createRunResultWatch(deps: RunResultWatchDeps) {
           show(result)
           return
         }
-        if (result.continues) return again()                                     // waiting: no window, still watched
+        if (result.continues) {                                                  // waiting: no window, still watched
+          tellOnce(result)                                                       // T#4: a person's wait, told once
+          return again()
+        }
         delete pending[flowId]                                                    // a real end with no window
       },
       () => {

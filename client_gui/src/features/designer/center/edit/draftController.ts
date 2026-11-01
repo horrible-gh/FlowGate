@@ -239,8 +239,23 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     return true
   }
 
+  /**
+   * flowgate.v02.0117 T#2: takes the draft's self edges (a card connected to itself) out, saved and not offered to undo.
+   * Such an edge is always a `cycle` validation error and is never drawn (vueFlowMapping), so a draft stored with one
+   * — before the connection pre-check refused it — could not be confirmed, and no run of its Flow started, while the
+   * Canvas showed nothing to remove. Whether any edge was taken out.
+   */
+  function dropSelfEdges(flowId: string): boolean {
+    const loops = editors.get(flowId)?.model().edges.filter((edge) => edge.source === edge.target) ?? []
+    let dropped = false
+    for (const edge of loops) dropped = run(flowId, { type: 'disconnect', key: edge.key }, false) || dropped
+    return dropped
+  }
+
   // The validate / confirm actions (draftActions.ts, flowgate.v02.0059 T#2: moved there as they were).
-  const { validate, confirm } = createDraftActions({ host, stateOf, editor: (flowId) => editors.get(flowId), stop })
+  const { validate, confirm } = createDraftActions({
+    host, stateOf, editor: (flowId) => editors.get(flowId), stop, tidy: dropSelfEdges,
+  })
 
   /** A tab closed / the project changed: send what waits, forget the Flow. */
   function close(flowId: string) {

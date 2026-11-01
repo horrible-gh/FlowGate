@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { reactive } from 'vue'
 import { createFirstRunAiSetup } from '@/features/ai/roles/firstRunSetup'
 import AiRoleSetupModeless from '@/features/ai/roles/AiRoleSetupModeless.vue'
+import ModelessShell from '@/components/ui/ModelessShell.vue'
 import { createFlowRunControl, type FlowRunState } from '@/features/designer/center/run/flowRunControl'
 import { fixtureFlowGraphSource } from '@/features/designer/center/graph/fixtureFlowGraphSource'
 import { account, deferred, notUsed } from '../ai/rolesFixtures.0113'
@@ -10,6 +11,12 @@ import { prepareInspectorI18n } from './inspector/support/inspectorSupport'
 const i18n = prepareInspectorI18n()
 let wrapper: VueWrapper<any> | null = null
 afterEach(() => { wrapper?.unmount(); wrapper = null })
+// The Teleport stub re-renders the setup's selects on every value change, so a list found once goes stale (its later
+// items are detached and setValue never reaches the component). Find the select again before each choice.
+async function chooseAll(w: VueWrapper<any>, value = 'not_used') {
+  const count = w.findAll('select').length
+  for (let i = 0; i < count; i++) await w.findAll('select')[i]!.setValue(value)
+}
 // flowgate.v02.0113 T#2 rework: [저장] is one server request that saves the account and applies it to the Flow's cards.
 const applied = (completed = true) => ({ flowId: 'f', requestId: 'req', replayed: false, cardKeys: ['gn_1'], account: account(completed) })
 function harness() {
@@ -120,9 +127,35 @@ describe('D §8 first modeless and run lifecycle', () => {
     wrapper = mount(AiRoleSetupModeless, { props: { data: account(), saving: false, error: null }, global: { plugins: [i18n], stubs: { Teleport: true } } })
     expect(wrapper.get('[role="dialog"]').attributes('aria-modal')).toBe('false')
     expect(wrapper.findAll('select')).toHaveLength(3); expect(wrapper.find('p').exists()).toBe(false); expect(wrapper.find('[role="switch"]').exists()).toBe(false); expect(wrapper.find('.ui-modal-overlay').exists()).toBe(false)
-    const save = wrapper.findAll('button').at(-1)!; expect(save.attributes('disabled')).toBeDefined()
-    for (const select of wrapper.findAll('select')) await select.setValue('not_used')
-    await save.trigger('click'); expect(wrapper.emitted('save')).toEqual([[notUsed]])
-    await wrapper.get('header button').trigger('click'); expect(wrapper.emitted('close')).toHaveLength(1)
+    expect(wrapper.findAll('button').at(-1)!.attributes('disabled')).toBeDefined()
+    await chooseAll(wrapper)
+    await wrapper.findAll('button').at(-1)!.trigger('click'); expect(wrapper.emitted('save')).toEqual([[notUsed]])
+    await wrapper.get('[data-modeless-action="close"]').trigger('click'); expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+  // flowgate.v02.0117 T#3: the setup window is a ModelessShell (the frame of the run result window), not its own fixed panel.
+  const mountSetup = (data: ReturnType<typeof account> | null = account()) => mount(AiRoleSetupModeless, { props: { data, saving: false, error: null }, global: { plugins: [i18n], stubs: { Teleport: true } } })
+  it('is framed by ModelessShell: open follows data, title, shell close, no own header or fixed panel', async () => {
+    wrapper = mountSetup()
+    const shell = wrapper.findComponent(ModelessShell)
+    expect(shell.exists()).toBe(true); expect(shell.props('open')).toBe(true); expect(shell.props('title')).toBe(String(i18n.global.t('gui.aiRoles.setup')))
+    expect(wrapper.find('.ui-modeless-panel').exists()).toBe(true); expect(wrapper.find('.ui-modeless-titlebar').text()).toContain(String(i18n.global.t('gui.aiRoles.setup')))
+    expect(wrapper.find('header').exists()).toBe(false)
+    expect(wrapper.get('.ui-modeless-body [data-test="ai-role-setup"]').exists()).toBe(true)
+    expect(wrapper.find('[data-modeless-action="minimize"]').exists()).toBe(true)
+    await wrapper.setProps({ data: null }); expect(wrapper.find('.ui-modeless-panel').exists()).toBe(false); expect(wrapper.find('[data-test="ai-role-setup"]').exists()).toBe(false)
+  })
+  it('closes by Esc, the shell x and [cancel]; each emits close without save', async () => {
+    wrapper = mountSetup()
+    await wrapper.get('.ui-modeless-panel').trigger('keydown', { key: 'Escape' }); expect(wrapper.emitted('close')).toHaveLength(1)
+    await wrapper.get('[data-modeless-action="close"]').trigger('click'); expect(wrapper.emitted('close')).toHaveLength(2)
+    const cancel = wrapper.findAll('footer button').at(-2)!; await cancel.trigger('click'); expect(wrapper.emitted('close')).toHaveLength(3)
+    expect(wrapper.emitted('save')).toBeUndefined()
+  })
+  it('save emits the three role values once and does not close; saving disables it', async () => {
+    wrapper = mountSetup()
+    await chooseAll(wrapper)
+    await wrapper.findAll('footer button').at(-1)!.trigger('click')
+    expect(wrapper.emitted('save')).toEqual([[notUsed]]); expect(wrapper.emitted('close')).toBeUndefined()
+    await wrapper.setProps({ saving: true }); expect(wrapper.findAll('footer button').at(-1)!.attributes('disabled')).toBeDefined()
   })
 })
