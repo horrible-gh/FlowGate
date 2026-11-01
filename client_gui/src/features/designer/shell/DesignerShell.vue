@@ -239,15 +239,7 @@ import { createFirstRunAiSetup } from '@/features/ai'
 import { RunResultDetailWindow, RunResultWindow, createRunResultWatch, runWaitText } from '@/features/ai'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  documentAiRunRead,
-  documentRead,
-  reviewActivityRead,
-  reviewDocumentRead,
-  reviewErrorOf,
-  reviewRunStart,
-  settingsNodeHoldWrite,
-} from '@/features/document'
+import { documentRead, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
@@ -331,27 +323,6 @@ const aiSetup: ReturnType<typeof createFirstRunAiSetup> = createFirstRunAiSetup(
     ? `${projectStore.designerSessionOwner}\n${projectId.value}\n${center.state.activeFlowId}` : null,
 })
 const center = createDesignerCenterSession({
-  // flowgate.v02test.0001 B0001 §2 (O1): a v0.1 Flow's 다음 단계 / 전체 실행 take the existing v0.1 single run.
-  v01Backend: {
-    readStatus: async (docId) => {
-      const read = await reviewDocumentRead(docId)
-      return { status: read.record.docReviewStatus, disposed: read.groupDisposed }
-    },
-    activity: async (flowId) => {
-      const activity = await reviewActivityRead(flowId)
-      return { active: activity.active, runId: activity.runId }
-    },
-    start: async (flowId, docId, scope) => {
-      try {
-        return (await reviewRunStart({ groupId: flowId, docId, scope })).runId
-      } catch (error) {
-        const refused = reviewErrorOf(error)
-        const code = refused.kind === 'running' ? 'run_already_active' : refused.kind === 'disposed' ? 'flow_disposed' : refused.kind === 'forbidden' ? 'flow_access_denied' : null
-        throw Object.assign(new Error(''), { code, status: refused.status })
-      }
-    },
-    endReason: async (runId) => (await documentAiRunRead(runId)).endReason,
-  },
   // flowgate.v02.0113 T#2 rework: the first AI setup is applied to the Flow whose command waits for it.
   beforeRunPrepare: (flowId) => aiSetup.request(flowId),
   runSetupCurrent: () => aiSetup.current(),
@@ -895,10 +866,8 @@ function onTopCommand(command: DesignerTopCommand) {
         // flowgate.v02.0113 T#5: a command the server took is watched for its result (the run as known before it).
         const known = center.runStatus(flowId).run
         const before = known ? { runId: known.runId, status: known.status, lastEventSeq: known.lastEventSeq } : null
-        const graph = center.state.graphs[flowId]
-        const v01 = graph?.status === 'ready' && graph.graph.ownership === 'v01'
         void center.runFlow(flowId, command === 'run.next' ? 'next' : 'all').then((taken) => {
-          if (!taken || v01) return
+          if (!taken) return
           runResult.arm(flowId, before)
           runResult.observe(flowId, center.runStatus(flowId).run)
         })

@@ -144,14 +144,12 @@ import { applyTitleState, nodeTitleEdit, takeTitleStates, type NodeTitleSaveOutc
 import { createLayoutSaveQueue } from './layoutSaveQueue'
 import {
   createFlowRunControl,
-  createFlowRunState,
   type FlowRunFailure,
   type FlowRunMode,
   type FlowRunState,
   type FlowTimeMachineOutcome,
 } from './run/flowRunControl'
 import { flowCardMenu, type FlowCardMenuItem, type FlowCardMenuKey } from './run/flowCardMenu'
-import { runV01Flow, type V01RunDeps, type V01RunResult, type V01RunScope } from './run/v01Run'
 import { NO_RUN_MARKS, flowRunMarks, isEdgeProtected, isRunLocked, type FlowEditLock, type FlowRunMarks } from './run/flowRunLock'
 
 export type {
@@ -465,20 +463,7 @@ export interface DesignerCenterSession {
   saveNodeTitle(flowId: string, nodeId: string, title: string): Promise<NodeTitleSaveOutcome>
 }
 
-/**
- * flowgate.v02test.0001 B0001 §2 (O1): what the menu's 다음 단계 / 전체 실행 call on a v0.1 Flow — the existing v0.1 single
- * run and its reads (`@/features/document`, given by the Shell). Absent = a v0.1 Flow takes no run command here.
- */
-export interface V01RunBackend {
-  readStatus(docId: string): Promise<{ readonly status: string | null; readonly disposed: boolean }>
-  activity(flowId: string): Promise<{ readonly active: boolean; readonly runId: string | null }>
-  /** Starts the single run; throws `{ code, status }` for a refusal. Answers the run id. */
-  start(flowId: string, docId: string, scope: V01RunScope): Promise<string | null>
-  endReason(runId: string): Promise<string | null>
-}
-
 export interface DesignerCenterSessionOptions {
-  readonly v01Backend?: V01RunBackend
   readonly beforeRunPrepare?: (flowId: string, mode: FlowRunMode) => Promise<boolean>
   readonly runSetupCurrent?: () => boolean
   /** Graph source; the fixture source when omitted. Tests pass a fake one. */
@@ -722,57 +707,6 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   }
 
   const editLock = (flowId: string): FlowEditLock => runMarks(flowId).lock
-
-  // ── flowgate.v02test.0001 B0001 §2 (O1): 다음 단계 / 전체 실행 on a v0.1 Flow ────────────────────────────────
-  // The Graph run refuses a v0.1 Flow, so the menu's two commands take the v0.1 single run (run/v01Run.ts). The Flow's
-  // `action` is set meanwhile (the menu is off, so there is no second start); a refusal is told once as the same toast.
-
-  const V01_STOP_CODES: Partial<Record<V01RunResult['stop'], string>> = { busy: 'run_already_active', disposed: 'flow_disposed' }
-
-  /** Thrown by the start adapter when the Flow was closed before the start; the Flow is gone, so no toast follows. */
-  class V01FlowClosed extends Error {}
-
-  async function runV01(flowId: string, mode: FlowRunMode): Promise<boolean> {
-    const backend = options.v01Backend
-    const projectId = state.projectId
-    if (!backend || projectId === null) return false
-    if (!state.runs[flowId]) state.runs[flowId] = createFlowRunState()
-    const flowState = state.runs[flowId]
-    if (flowState.action || flowState.approving !== null || flowState.holding !== null) return false
-    flowState.action = mode
-    flowState.error = null
-    const current = () => !disposed && isOpen(projectId, flowId) && state.runs[flowId] === flowState && readyGraph(flowId)?.ownership === 'v01'
-    const deps: V01RunDeps = {
-      items: () =>
-        (readyGraph(flowId)?.nodes ?? []).flatMap((node) =>
-          node.slot && node.document ? [{ docId: node.document.docId, order: node.slot.order, docType: node.document.typeCode }] : [],
-        ),
-      readStatus: backend.readStatus,
-      activity: () => backend.activity(flowId),
-      // 0006-TR rev1: the adapter checks the open Flow itself too — a closed tab / switched Project never starts a run.
-      start: (docId, scope) => (current() ? backend.start(flowId, docId, scope) : Promise.reject(new V01FlowClosed())),
-      endReason: backend.endReason,
-      current,
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    }
-    let result: V01RunResult
-    try {
-      result = await runV01Flow(mode, deps)
-    } catch (error) {
-      result = { started: false, stop: 'refused', error }
-    } finally {
-      if (state.runs[flowId] === flowState) flowState.action = null
-    }
-    if (!isOpen(projectId, flowId)) return false
-    if (result.stop !== 'done' && result.stop !== 'closed' && !(result.error instanceof V01FlowClosed)) {
-      const refused = result.error as { code?: unknown; status?: unknown } | null | undefined
-      const code = typeof refused?.code === 'string' ? refused.code : (V01_STOP_CODES[result.stop] ?? null)
-      const status = typeof refused?.status === 'number' ? refused.status : null
-      flowState.error = { kind: 'run', code, status, message: '', approval: null, refusal: null, seq: (flowState.error?.seq ?? 0) + 1 }
-    }
-    refreshFlow(flowId)
-    return result.started
-  }
 
   // flowgate.v02.0105 T#2 (B-6): only a confirmed run read (or a command's answer) of the Flow tells it.
   function canApproveFlow(flowId: string): boolean {
@@ -1470,9 +1404,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     }),
     // TR0031 rev1: 다음 단계 / 전체 실행 only on a confirmed idle (or no) run; 일시정지 / 재개 / 중지 on a confirmed run.
     runFlow: (flowId, mode) =>
-      readyGraph(flowId)?.ownership === 'v01'
-        ? runV01(flowId, mode)
-        : whenKnown(flowId, (run) => !isRunLocked(run)) ? runControl.run(flowId, mode) : Promise.resolve(false),
+      whenKnown(flowId, (run) => !isRunLocked(run)) ? runControl.run(flowId, mode) : Promise.resolve(false),
     stopRun: (flowId) => (whenKnown(flowId, (run) => run !== null) ? runControl.stop(flowId) : Promise.resolve(false)),
     canPause: runControl.canPause,
     pauseRun: (flowId) => (whenKnown(flowId, (run) => run !== null) ? runControl.pause(flowId) : Promise.resolve(false)),

@@ -171,10 +171,16 @@ describe('0071 T2 scenario window', () => {
     await context.reload(); await flushPromises()
     expect(w.get('h3 small').text()).toBe([count, token('human')].join(' · '))
   })
-  it('has no whole-rewrite AI button; the window keeps placeholders while the menu run is writing', async () => {
+  it('opens the implemented AI rewrite dialog directly', async () => {
     const w = await render('scenario')
-    expect(w.find('[data-test="scenario-rewrite"]').exists()).toBe(false)
-    expect(mocks.ai).not.toHaveBeenCalled()
+    await w.get('[data-test="scenario-rewrite"]').trigger('click')
+    expect(w.find('[data-test="scenario-rewrite-confirm"]').exists()).toBe(false)
+    expect(mocks.ai).toHaveBeenCalledOnce(); expect(mocks.ai.mock.calls[0][0]).toBe(TS_DOC)
+  })
+  it('disables whole rewrite during case execution and retains the window with placeholders while writing', async () => {
+    server.active_run = liveRun('retry', { selected_case_ids: ['TC-1'] })
+    const w = await render('scenario')
+    expect(w.get('[data-test="scenario-rewrite"]').attributes('disabled')).toBeDefined()
     context.writing.value = 'rewrite-all'; await flushPromises()
     expect(w.find('[data-test="scenario-window"]').exists()).toBe(true); expect(w.findAll('[data-test="scenario-writing"]').length).toBeGreaterThan(0)
   })
@@ -700,11 +706,12 @@ describe('0094 test card windows follow the existing window rules', () => {
     context.closeWindow('case'); context.openWindow('case', '__new__'); await flushPromises()
     expect(w.get('.case-bar').findAll('[data-test]').map(b => b.attributes('data-test'))).toEqual(['case-save', 'case-close'])
   })
-  it('the scenario window: no number before 케이스, and no AI rewrite button', async () => {
+  it("the scenario window: no number before 케이스, and its whole rewrite is the cards' robot button", async () => {
     const w = await render('scenario')
     expect(w.get('.scenario > h3').text()).not.toContain('①')
     expect(w.get('.scenario > h3').text().startsWith('케이스')).toBe(true)
-    expect(w.find('[data-test="scenario-rewrite"]').exists()).toBe(false)
+    const rewrite = w.get('[data-test="scenario-rewrite"]')
+    expect(rewrite.attributes('data-icon')).toBe('robot'); expect(rewrite.attributes('aria-label')).toBe('전체 다시 작성')
   })
   it('the brief window is the requirement document editor: the title alone, the text filling it, [취소] · [저장] · [닫기] in the bar', async () => {
     const w = await render('brief')

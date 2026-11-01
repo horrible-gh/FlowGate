@@ -846,9 +846,14 @@ describe('test section — the existing card rules (flowgate.v02.0094)', () => {
     expect(textOf(w, 'test-card-scenario-state')).toBe('작성 완료')
     expect(el(w, 'test-spec-reason').exists()).toBe(false)
   })
-  it("the 시나리오 line has no AI call button (0006-TR rev2: runs start only from the menu)", async () => {
+  it("the 시나리오 line's AI writing is the cards' [AI 호출] robot button (the 지시서 window only saves)", async () => {
     const w = await mountTab(target())
-    expect(w.find('[data-test="test-card-scenario-ai"]').exists()).toBe(false)
-    expect(w.find('[data-slot="scenario"] .inspector-slot-ai').exists()).toBe(false)
+    const ai = el(w, 'test-card-scenario-ai')
+    expect(ai.attributes('data-icon')).toBe('robot')
+    expect(ai.classes()).toEqual(expect.arrayContaining(['ui-icon-btn', 'inspector-slot-ai']))
+    expect(ai.attributes('aria-label')).toBe('AI 호출')
+    expect(ai.attributes('title')).toBe('AI 호출')
+    expect(ai.attributes('disabled')).toBeUndefined()
+    expect(w.find('[data-slot="instruction"] [data-test="test-card-scenario-ai"]').exists()).toBe(false)
   })
 })

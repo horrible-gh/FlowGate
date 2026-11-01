@@ -37,6 +37,7 @@ import {
   documentIoGuarded,
   documentIoLeave,
   documentAiRunning,
+  openDocumentAiWindow,
   openDocumentHistoryWindow,
   openDocumentWindow,
   openSlotWriteWindow,
@@ -244,7 +245,7 @@ export function cardLineRow(target: InspectorTarget, row: { readonly id?: string
 
 /**
  * flowgate.v02.0056 F2-2 — a row action of a card line. `write`: the line's [작성] window (nothing is made until
- * it is saved); The Flow's Canvas is
+ * it is saved); `ai_invoke`: the document's AI call window (nothing is called until [실행]). The Flow's Canvas is
  * read again (the host's refresh-flow) after a write, after a refusal that means the line has a document now, and
  * when the AI run started there ends.
  */
@@ -271,7 +272,18 @@ export function openCardLineAction(target: InspectorTarget, line: CardLineAction
     })
     return
   }
-  // 0006-TR rev1: the per-document `ai_invoke` action is gone — a run starts only from the menu's 다음 단계 / 전체 실행.
+  if (action === 'ai_invoke' && line.id) {
+    const docId = line.id
+    openDocumentAiWindow({
+      docId,
+      groupId: target.flowId,
+      projectId: target.projectId,
+      name: line.name,
+      nameKey: line.nameKey ?? null,
+      title: target.cardDocuments.find((item) => item.docId === docId)?.title ?? '',
+      finished: refresh,
+    })
+  }
 }
 
 /** flowgate.v02.0056 F2-2 — the lines of the target's card written from here and not yet shown by the Canvas read. */
@@ -289,3 +301,10 @@ export function settleCardLinesWritten(target: InspectorTarget | null): void {
   if (target && nodeKey) settleWrittenCardLines(target.flowId, nodeKey, target.cardDocuments, (docId) => openDocumentWindow(docId))
 }
 
+
+/** Open the existing AI call window for a TS, including document nodes without a card definition. */
+export function openDocumentAi(docId: string, target: InspectorTarget, finished: () => void, lifecycle?: { submitting: () => boolean; rejected: () => void }): void {
+  openDocumentAiWindow({ docId, groupId: target.flowId, projectId: target.projectId,
+    name: target.title, title: target.cardDocuments.find((line) => line.docId === docId)?.title ?? target.title,
+    finished, ...lifecycle })
+}

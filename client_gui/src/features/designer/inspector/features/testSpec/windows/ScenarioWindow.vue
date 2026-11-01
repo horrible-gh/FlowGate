@@ -15,6 +15,7 @@
         </div>
       </Dropdown>
       <Button size="sm" variant="secondary" data-test="scenario-raw" @click="openRaw">{{ t(k('raw')) }}</Button>
+      <InspectorAiButton :label="t(k('rewrite'))" :title="reason('rewriteAll') || t(k('rewrite'))" :disabled="!card.can('rewriteAll').enabled" data-test="scenario-rewrite" @click="rewrite" />
       <Button size="sm" :disabled="!card.can('caseAdd').enabled" :title="reason('caseAdd')" data-test="scenario-add" @click="card.openWindow('case', '__new__')">{{ t(k('add')) }}</Button>
       </span>
     </template>
@@ -59,6 +60,7 @@ import { documentContentRead, documentContentSave } from '@/features/document'
 import { TestMarkBadge, testVerdictMark, TEST_PENDING_MARK, documentHistoryVerdictKey, documentHistoryWhen } from '@/features/documentWindow'
 import InspectorReason from '../../../parts/InspectorReason.vue'
 import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
+import InspectorAiButton from '../../../parts/InspectorAiButton.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
 import type { TestCardCommand } from '../useTestCard'
 import { sessionDraft, useScenarioWindow, type RawDraft } from './scenarioWindowModel'
@@ -91,6 +93,10 @@ function resultMark(id: string) {
   if (!['done', 'unchecked'].includes(c.presentation.value.resultState.key)) return null
   const status = c.rows.value.find(r => r.caseId === id)?.status
   return status ? testVerdictMark(status) : null
+}
+async function rewrite() {
+  if (!current() || !card.value?.can('rewriteAll').enabled) return
+  await card.value.rewriteAll()
 }
 async function openRaw() {
   raw.value.open = true

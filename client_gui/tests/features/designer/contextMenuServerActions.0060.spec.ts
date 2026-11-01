@@ -357,7 +357,7 @@ describe('2-B in the Shell — 플로우 삭제 is the existing dispose (DC) (00
     await choose('flow.delete')
   }
 
-  it('names the right-clicked Flow, shows one effect line, and never runs without a reason; 취소 calls nothing', async () => {
+  it('names the right-clicked Flow, explains DC / list / worktree, and never runs without a reason; 취소 calls nothing', async () => {
     const w = await mountShell()
     await openFlow(w, 'Canvas')
     await openDispose(w)
@@ -365,10 +365,8 @@ describe('2-B in the Shell — 플로우 삭제 is the existing dispose (DC) (00
     expect(dialog()!.closest('[role]')?.getAttribute('role')).toBe('alertdialog')
     expect(q('dma-fact-target')!.textContent).toContain('Canvas')
     expect(q('dma-fact-id')!.textContent).toContain('p.ui.0002')
-    // 0001-B/0004-T T#1: one effect line only — no lead, no bullets, no always-on reason hint.
-    expect(q('dma-dispose-effect')!.textContent).toBe('목록에서 제거되며 연결 작업이 정리됩니다. 기록은 유지됩니다.')
-    expect(q('dma-dispose-effects')).toBeNull()
-    expect(q('dma-reason-required')).toBeNull()
+    const effects = q('dma-dispose-effects')!.textContent!
+    for (const words of ['DC 문서', '목록에서 빠집니다', '워크트리와 작업 브랜치', '영구 삭제가 아닙니다']) expect(effects).toContain(words)
     expect(submitButton().disabled).toBe(true)
     submitButton().click()
     type('dma-reason', '   ')

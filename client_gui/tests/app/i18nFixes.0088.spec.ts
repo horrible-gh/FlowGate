@@ -166,7 +166,7 @@ describe('F14/F15 — the kind key of a slot line', () => {
     }
   })
 
-  it('openCardLineAction passes the key to the write window (no AI call window any more); the window stays keyed by slot', () => {
+  it('openCardLineAction passes the key to both windows; the windows stay keyed by slot / docId', () => {
     const target = {
       nodeType: 'document', nodeId: 'gn_1', flowId: 'p.m.0088', projectId: 'p', title: '카드 제목', nodeRun: null, readOnly: null,
       cardDocuments: [{ slot: 'report', docType: 'TR', docId: 'p.m.0088.0002-TR', title: '레포트 원제목' }],
@@ -177,9 +177,9 @@ describe('F14/F15 — the kind key of a slot line', () => {
       openCardLineAction(target, { ...line, nameKey: null }, 'write', null)
       expect(slotWriteWindowList()).toHaveLength(1)
       expect(slotWriteWindowList()[0].request).toMatchObject({ name: '레포트', nameKey: null, cardTitle: '카드 제목', slot: 'report' })
-      // 0006-TR rev1: the per-document AI call action is gone — nothing opens for it.
       openCardLineAction(target, line, 'ai_invoke', null)
-      expect(documentAiWindowList()).toHaveLength(0)
+      expect(documentAiWindowList()).toHaveLength(1)
+      expect(documentAiWindowList()[0].request).toMatchObject({ name: '레포트', nameKey: 'gui.inspector.taskCard.slot.report', title: '레포트 원제목' })
     } finally {
       for (const win of [...slotWriteWindowList()]) closeSlotWriteWindow(win.key)
       closeAllDocumentWindows()

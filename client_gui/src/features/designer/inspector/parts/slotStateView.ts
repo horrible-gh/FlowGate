@@ -175,7 +175,7 @@ const NO_CARD: SlotLineCard = { cardSlot: null, blank: false, historyCount: null
  * - The row shows no document and the card line has none (missing): [작성] while the card may change and the slot
  *   is one [작성] writes.
  * - The row shows the card line's document: "비어 있음" when it has no body (blank), the history number, and
- *   no run action (runs start only from the menu's 다음 단계 / 전체 실행).
+ *   [AI 호출] while the card may change — drawn running while an AI run works on the document.
  * - Any other row (a document the card line does not hold, no card line) gets nothing.
  */
 export function slotLineCard(
@@ -199,7 +199,6 @@ export function slotLineCard(
     blank: !lineWarns(card) && slotFill(card) === 'blank',
     historyCount: card.historyCount ?? null,
     historyDetail,
-    // 0006-TR rev1: no per-document [AI 호출] here — every run starts from the menu's 다음 단계 / 전체 실행 only.
-    actions: [],
+    actions: context.changeable ? [{ key: 'ai_invoke', state: context.running(card.docId) ? 'running' : 'enabled' }] : [],
   }
 }
