@@ -1,4 +1,8 @@
-"""Run routes (P0008 §7 S5-1~S5-5, S6-1). Thin: no judgement lives here."""
+"""Run routes (P0008 §7 S5-1~S5-5, S6-1). Thin: no judgement lives here.
+
+flowgate.v02.0113 T#5: ``GET /runs/{run_id}/command-result[?command_seq=N]`` — the result of one step / full command
+(``flowgate.graph_run.command_result``, a read only): 200 ``{"command_result": …}``, 404 ``command_not_found``, 422 for a
+``command_seq`` that is not a positive integer."""
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -6,8 +10,9 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Request
 
 from modules.flow_gate.graph_workflow.domain.run_request import (
-    parse_gate_decision, parse_gate_intent, parse_mode, parse_page, parse_reason, parse_start,
+    parse_command_seq, parse_gate_decision, parse_gate_intent, parse_mode, parse_page, parse_reason, parse_start,
 )
+from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.graph_workflow.services import canvas_service, gate_service, run_service
 
 from . import envelope
@@ -67,6 +72,25 @@ def get_run(run_id: str, request: Request):
         group = canvas_service.load_flow(run_service.run_flow_id(run_id))
         envelope.authorize(user_id, group, "read")
         return run_service.with_viewer(run_service.get_run(run_id), group, user_id)
+
+    return envelope.run(request, handle)
+
+
+@router.get("/runs/{run_id}/command-result")
+def get_run_command_result(run_id: str, request: Request, command_seq: Optional[str] = None):
+    def handle() -> dict:
+        from flowgate.graph_run import command_result
+        user_id = envelope.authenticate(request)
+        envelope.client_id_of(request)
+        seq, errors = parse_command_seq(command_seq)
+        if errors:
+            raise envelope.invalid(request, errors)
+        group = canvas_service.load_flow(run_service.run_flow_id(run_id))
+        envelope.authorize(user_id, group, "read")
+        try:
+            return command_result.payload(run_id, seq)
+        except command_result.CommandNotFound:
+            raise GraphApiError(404, "command_not_found", {"run_id": run_id, "command_seq": seq})
 
     return envelope.run(request, handle)
 

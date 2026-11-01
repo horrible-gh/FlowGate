@@ -30,6 +30,16 @@ export { useProjectStore } from './store'
 // flowgate.v02.0105 T#1 adds the Designer F5 snapshot shape the Designer Shell saves / restores through the store.
 export type { RoleRunFields, RoleWaitReason } from './types'
 export type { AiInvocation, AiInvocationsPage } from './aiInvocationsApi'
+// flowgate.v02.0113 T#5 adds the result of one step / full command (the run result windows read it through the store).
+export type {
+  FlowCommandFailure,
+  FlowCommandMessage,
+  FlowCommandModel,
+  FlowCommandNode,
+  FlowCommandResult,
+  FlowCommandRoleUse,
+  FlowCommandState,
+} from './commandResultApi'
 export type { FlowCanvasChangeHandlers } from './flowCanvasEvents'
 export type { DesignerSessionSnapshot, DesignerSessionTab } from './designerSessionStorage'
 export type { ProjectEventFrame, ProjectEventSubscription } from './projectEvents'

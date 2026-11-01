@@ -221,11 +221,14 @@ def flush(run, final=False):
         return
     saved = []
     try:
+        outputs = run.get("_invocation_outputs") or {}
         for record in sorted(run.get("invocations", []), key=lambda r: r["create_seq"]):
             if not store.write_record(record):
                 log.warning("role invocation prefix not stored at %s", record["inv_id"])
                 break  # S-1: no later insert may overtake this record.
             saved.append(record)
+            if record["inv_id"] in outputs and store.write_output(outputs[record["inv_id"]]):
+                outputs.pop(record["inv_id"], None)  # T#5: this launch's own output, stored once
             if record.get("chain_root_id") is None:
                 try:
                     first = store.first(record["unit_key_hash"])
@@ -254,9 +257,35 @@ def begin(run, provider):
     record = _new(run, provider)
     run["invocations"].append(record)
     run["_launch_outcome"] = {"model_calls": [], "flags": {k: _flag(run, k) for k in
-                                                          ("cancelled", "timed_out", "user_paused")}}
+                                                          ("cancelled", "timed_out", "user_paused")},
+                              "seen": _seen(run)}
     if provider.get("exec_type") == "api":
         flush(run)
+
+
+def _seen(run):
+    """flowgate.v02.0113 T#5: the run's output fields as this launch begins — what is still the same object when it
+    ends was left by an earlier launch, not written by this one."""
+    errors = run.get("register_errors")
+    return {"last_message": run.get("last_message"), "stderr_tail": run.get("stderr_tail"),
+            "stdout_tail": run.get("stdout_tail"), "errors": len(errors) if isinstance(errors, list) else 0,
+            "errors_list": errors if isinstance(errors, list) else None}
+
+
+def _launch_output(run, record, seen, detail):
+    """flowgate.v02.0113 T#5: the output this launch itself left (its last message, stderr / stdout tail, the
+    registration errors it added, the classification detail) — none of an earlier launch's."""
+    def fresh(key):
+        value = run.get(key)
+        return value if isinstance(value, str) and value and value is not seen.get(key) else None
+    errors = run.get("register_errors")
+    added = []
+    if isinstance(errors, list):
+        added = errors[seen.get("errors", 0):] if errors is seen.get("errors_list") else list(errors)
+    return {"inv_id": record["inv_id"], "ai_run_id": record.get("ai_run_id"), "launch_no": record.get("launch_no"),
+            "body": fresh("last_message"), "stderr_tail": fresh("stderr_tail"), "stdout_tail": fresh("stdout_tail"),
+            "register_errors_json": json.dumps(added, ensure_ascii=False, default=str) if added else None,
+            "detail": detail if isinstance(detail, str) and detail else None, "created_at": now()}
 
 
 def _flag(run, key):
@@ -349,6 +378,7 @@ def finish(run, classification, detail=None):
                         ("turn_no", "model_turn_no"), ("http_status", "model_http_status")):
         r[column] = failure.get(key)
     _confirmed(r, models.confirmed(r["provider_exec_type"], r["provider_kind"], o))
+    run.setdefault("_invocation_outputs", {})[r["inv_id"]] = _launch_output(run, r, o.get("seen") or {}, detail)
     flush(run)
 
 
@@ -373,7 +403,11 @@ def refused(origin, exc, graph_exec_id=None):
         return
     run = {"invocation_origin": origin, "graph_exec_id": graph_exec_id}
     record = _new(run, refusal=code)
-    store.write_record(record)  # S-4: one attempt, no late save.
+    if store.write_record(record):  # S-4: one attempt, no late save.
+        message = detail.get("message") if isinstance(detail.get("message"), str) else None
+        store.write_output({"inv_id": record["inv_id"], "ai_run_id": None, "launch_no": None, "body": None,
+                            "stderr_tail": None, "stdout_tail": None, "register_errors_json": None,
+                            "detail": message or code, "created_at": now()})
 
 
 @guarded

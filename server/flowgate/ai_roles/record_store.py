@@ -211,6 +211,15 @@ def page_for_node(group_id: str, node_key: str, limit: int, before_seq=None, bef
     return list(get_store()._fetch_all(sql, [*params, int(limit)]) or [])
 
 
+def for_graph_run(graph_run_id: str) -> list[dict]:
+    """R-19 (flowgate.v02.0113 T#5, the command result): every record of one Graph run in creation order. Which
+    command a record is of is told by the run event its request was made at (``command_result``), never by a time
+    window here. A read only."""
+    return [dict(r) for r in get_store()._fetch_all(
+        "SELECT * FROM ai_role_invocations WHERE target_graph_run_id = ? ORDER BY create_seq, inv_id",
+        [graph_run_id]) or []]
+
+
 def run_link_columns_available() -> bool:
     """``ai_invoke_runs`` has the two link columns (migration 165)."""
     store = get_store()
@@ -329,3 +338,55 @@ def write_record(record: Mapping) -> bool:
     except Exception as exc:  # noqa: BLE001 — a record write never fails the call (L-3 §2.2.6)
         _logger.warning("role invocation %s was not stored (%s)", record.get("inv_id"), type(exc).__name__)
         return False
+
+
+# ── launch outputs (flowgate.v02.0113 T#5, migration 168) ───────────────────────────────────────────────────────
+# One row per launch record (``inv_id``), added once when the launch ended: the AI's last message of that launch, its
+# stderr / stdout tail, the registration errors it added and the classification detail — so a command result shows each
+# launch's own body and error, never the run's final launch's output on another launch. Additive and safe to repeat
+# (a key already there is kept as it is); no DELETE. A launch recorded before this store has no row.
+
+OUTPUTS_TABLE = "ai_role_invocation_outputs"
+OUTPUT_COLUMNS = ("inv_id", "ai_run_id", "launch_no", "body", "stderr_tail", "stdout_tail", "register_errors_json",
+                  "detail", "created_at")
+_INSERT_OUTPUT = ("INSERT INTO ai_role_invocation_outputs (" + ", ".join(OUTPUT_COLUMNS) + ") VALUES ("
+                  + ", ".join("?" for _ in OUTPUT_COLUMNS) + ")")
+
+
+def outputs_available() -> bool:
+    """False until migration 168 is applied: no output is written and none is read."""
+    return get_store().table_exists(OUTPUTS_TABLE)
+
+
+def write_output(output: Mapping) -> bool:
+    """Store one launch's output in a short transaction of its own (never the caller's). True = stored now or already
+    there; False = not stored (the store missing, a write error: logged, the call goes on)."""
+    if in_transaction():
+        raise RuntimeError("write_output() runs in its own transaction, not inside the caller's")
+    store = get_store()
+    try:
+        if not outputs_available():
+            return False
+        values = [output.get(column) for column in OUTPUT_COLUMNS]
+        with store.transaction():
+            store.insert_isolated(_INSERT_OUTPUT, values, "fg_aro_ins")
+        return True
+    except Exception as exc:  # noqa: BLE001 — an output write never fails the call (L-3 §2.2.6)
+        _logger.warning("role invocation output %s was not stored (%s)", output.get("inv_id"), type(exc).__name__)
+        return False
+
+
+def outputs_for(inv_ids: Sequence[str]) -> dict:
+    """``{inv_id: output row}`` of the launches that have one (none before migration 168)."""
+    wanted = [i for i in dict.fromkeys(inv_ids) if i]
+    if not wanted or not outputs_available():
+        return {}
+    found: dict = {}
+    store = get_store()
+    for start in range(0, len(wanted), 400):
+        chunk = wanted[start:start + 400]
+        rows = store._fetch_all("SELECT * FROM ai_role_invocation_outputs WHERE inv_id IN ("
+                                + ", ".join("?" for _ in chunk) + ")", chunk) or []
+        for row in rows:
+            found[row["inv_id"]] = dict(row)
+    return found
