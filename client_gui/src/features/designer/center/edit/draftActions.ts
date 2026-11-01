@@ -3,6 +3,8 @@
 // its issues (or its code) on the Flow's edit state, and a refusal that means the shown Graph is outdated
 // reads the Flow again. flowgate.v02.0059 T#2: moved here from draftController.ts as it was (that file
 // keeps its size bound); the controller hands over its edit state, editors and stop.
+// flowgate.v02.0117 T#2: before the saved draft is checked or confirmed (also the run's confirm, FlowCenter
+// `prepareRun`), the controller takes out what can never be confirmed nor be seen on the Canvas (`tidy`: self edges).
 import type { FlowDraftError } from '../graph/flowGraphSource'
 import type { DraftAction, DraftEditState, DraftHost } from './draftController'
 import type { DraftEditor } from './draftEditor'
@@ -23,9 +25,11 @@ export interface DraftActionContext {
   editor(flowId: string): DraftEditor | undefined
   /** Stops editing the Flow (after a confirmation). */
   stop(flowId: string): void
+  /** flowgate.v02.0117 T#2: takes out of the Flow's draft what can never be confirmed nor be seen (a save). */
+  tidy?(flowId: string): void
 }
 
-export function createDraftActions({ host, stateOf, editor: editorOf, stop }: DraftActionContext) {
+export function createDraftActions({ host, stateOf, editor: editorOf, stop, tidy }: DraftActionContext) {
   async function act(flowId: string, action: DraftAction, body: (pid: string) => Promise<void>) {
     const pid = host.projectId()
     const state = stateOf(flowId)
@@ -48,6 +52,7 @@ export function createDraftActions({ host, stateOf, editor: editorOf, stop }: Dr
   async function savedVersion(flowId: string): Promise<number> {
     const editor = editorOf(flowId)
     if (!editor) throw Object.assign(new Error('not editable'), { code: 'draft_not_editable' })
+    tidy?.(flowId)
     if (!(await editor.settled())) throw Object.assign(new Error('not saved'), { code: editor.errorCode() ?? 'save_failed' })
     return editor.version()
   }

@@ -71,7 +71,8 @@ describe('connection pre-check', () => {
     expect(checkConnection(m, 'gn_a', 'gn_c')).toEqual({ ok: true, warnings: ['branch'] })
     expect(checkConnection(m, 'gn_c', 'gn_b')).toEqual({ ok: true, warnings: ['join'] })
     expect(checkConnection(m, 'gn_b', 'gn_a')).toEqual({ ok: true, warnings: ['cycle'] })
-    expect(checkConnection(m, 'gn_c', 'gn_c')).toEqual({ ok: true, warnings: ['cycle'] })
+    // flowgate.v02.0117 T#2: a card connected to itself is refused (never drawn, always a `cycle` error).
+    expect(checkConnection(m, 'gn_c', 'gn_c')).toEqual({ ok: false, reason: 'self_edge' })
   })
 })
 
