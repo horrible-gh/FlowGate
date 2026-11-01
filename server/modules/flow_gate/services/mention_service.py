@@ -1656,8 +1656,10 @@ _NT_AUTHORING_TEXT = {
             "이 단계에서 코드를 구현하지 말고 지시 내용만 작성하십시오."
         ),
         "footer": (
-            "\n\n위 'Instruction to include next document header' 섹션에 주어진 다음 문서 헤더를\n"
-            "(next_type / project / module / group / title / target_id) 그대로 포함하십시오.\n"
+            "\n\n멘션에 'Instruction to include next document header' 섹션이 있으면 그 섹션에 주어진\n"
+            "다음 문서 헤더(next_type / project / module / group / title / target_id)를 그대로 포함하십시오.\n"
+            "멘션이 기존 문서에 직접 작성하라고 지시하면(edit) 그 섹션은 없습니다. 그 문서의 기존 헤더\n"
+            "(front matter)를 그대로 두고 다음 문서 헤더를 새로 넣지 마십시오.\n"
             "제출되면 이 지시문은 다른 관리형 지시문과 마찬가지로 자동 승인되며(non-{M,CH}),\n"
             "무인 체인은 짝을 이루는 리포트 단계로 진행됩니다."
         ),
@@ -1685,9 +1687,11 @@ _NT_AUTHORING_TEXT = {
             "ください。このステップではコードを実装せず、指示内容だけを書いてください。"
         ),
         "footer": (
-            "\n\n上記の「Instruction to include next document header」セクションに示された次の\n"
-            "文書ヘッダー(next_type / project / module / group / title / target_id)をそのまま\n"
-            "含めてください。提出されるとこの指示文は他の管理下の指示文と同様に自動承認され\n"
+            "\n\nメンションに「Instruction to include next document header」セクションがある場合は、そこに示された\n"
+            "次の文書ヘッダー(next_type / project / module / group / title / target_id)をそのまま含めてください。\n"
+            "メンションが既存文書への直接作成(edit)を指示している場合、そのセクションはありません。その文書の\n"
+            "既存ヘッダー(front matter)をそのまま保ち、次の文書ヘッダーを新たに加えないでください。\n"
+            "提出されるとこの指示文は他の管理下の指示文と同様に自動承認され\n"
             "(non-{M,CH})、無人チェーンは対になるレポート段階へ進みます。"
         ),
     },
@@ -1715,8 +1719,10 @@ _NT_AUTHORING_TEXT = {
             "TR that follows. Do NOT implement the code in this step — write the directive."
         ),
         "footer": (
-            "\n\nInclude the next-document header exactly as given in the 'Instruction to include next\n"
-            "document header' section above (next_type / project / module / group / title / target_id).\n"
+            "\n\nWhen the mention has an 'Instruction to include next document header' section, include the\n"
+            "next-document header exactly as given there (next_type / project / module / group / title / target_id).\n"
+            "When the mention asks you to write into an existing document (edit), it has no such section: keep\n"
+            "that document's existing header (front matter) as it is and add no next-document header.\n"
             "On submit this instruction is auto-approved (non-{M,CH}) like any managed instruction and\n"
             "the unmanned chain proceeds to its paired report step."
         ),
@@ -1899,6 +1905,12 @@ def build_mention(
     rejection_target: Optional[dict] = None,
     parent_revision_no: int = 0,
     edit_reason: str = "user_comment",
+    # flowgate.v02.0117: an edit that writes the FIRST content into an existing empty
+    # document (a Graph card's instruction stage writing into its line's empty document,
+    # ``node_dispatch._instruction_job``). It is no revision: Section 2 says so, names no
+    # review feedback and tells the worker to keep the document's existing header. Only
+    # read with action_scope="edit"; every other mention is byte-identical without it.
+    first_write: bool = False,
     # Display locale for human-readable doc-type names (ko/ja/en). Codes stay bare
     # for machine round-trip; the localized name is emitted alongside as *_detail.
     locale: str = "ko",
@@ -1993,7 +2005,18 @@ def build_mention(
         s1_body += f"\n{_PREDECESSOR_IDENTITY_WARNING_TEXT[loc]}"
 
     # ── Section 2: creation or in-place revision instructions ────────────────
-    if is_edit:
+    if is_edit and first_write:
+        target_doc_id = parent_canonical_doc_id or parent_doc_id
+        s2_header = "Writing instructions"
+        s2_body = (
+            f"Write the content of the existing document {target_doc_id} in place.\n"
+            "This document has no body yet: this is its first write, not a revision, "
+            "and there is no review feedback.\n"
+            "Keep the document's existing header (front matter) as it is; there is no "
+            "next-document header to add.\n"
+            "Submit the complete document content."
+        )
+    elif is_edit:
         target_doc_id = parent_canonical_doc_id or parent_doc_id
         s2_header = "Revision instructions"
         s2_body = (
@@ -2442,6 +2465,7 @@ def build_mention_from_token_rec(
     edit_reason: str = "user_comment",
     locale: str = "ko",
     head_context_doc: Optional[dict] = None,
+    first_write: bool = False,
     continuous: bool = False,
     continuous_review_mode: bool = False,
     work_plan_scope: Optional[dict] = None,
@@ -2532,6 +2556,7 @@ def build_mention_from_token_rec(
         rejection_target=rejection_target,
         parent_revision_no=int(parent_doc.get("revision_no") or 0),
         edit_reason=edit_reason,
+        first_write=first_write,
         locale=locale,
         head_doc_type=head_doc_type,
         head_doc_number=head_doc_number,
