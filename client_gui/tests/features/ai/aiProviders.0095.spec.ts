@@ -114,6 +114,20 @@ describe('0095 API key intent', () => {
 })
 
 describe('0095 full-list deletion', () => {
+  it('removes a provider with completed history immediately and after reload', async () => {
+    const items = [cli('past'), cli('keep')]
+    mockLists(items)
+    vi.spyOn(api, 'saveSystemAi').mockResolvedValueOnce({ providers: [items[1]], default_provider_id: 'keep', updated_at: null })
+    const w = await panel()
+    await w.find('.danger-icon').trigger('click')
+    confirmButton().click()
+    await flushPromises()
+    expect(w.findAll('.name-title-row b').map(n => n.text())).toEqual(['keep'])
+    w.unmount()
+    vi.mocked(api.fetchSystemAi).mockResolvedValue({ providers: [items[1]], default_provider_id: 'keep', updated_at: null })
+    const reloaded = await panel()
+    expect(reloaded.findAll('.name-title-row b').map(n => n.text())).toEqual(['keep'])
+  })
   it('disables delete during a pending save and does not lose an operation silently', async () => {
     const items = [cli('one'), cli('two')]
     mockLists(items)
@@ -135,7 +149,7 @@ describe('0095 full-list deletion', () => {
     const items = [cli('one'), cli('two')]
     mockLists(items, [cli('mine')])
     const save = vi.spyOn(api, 'saveSystemAi')
-      .mockRejectedValueOnce(new api.AiRequestError('Referenced history retained', 'provider_in_use', []))
+      .mockRejectedValueOnce(new api.AiRequestError('AI is used by an active task', 'provider_in_use', []))
       .mockResolvedValueOnce({ providers: [items[1]], default_provider_id: 'two', updated_at: null })
     const w = await panel()
     await w.find('.danger-icon').trigger('click')
@@ -144,7 +158,7 @@ describe('0095 full-list deletion', () => {
     expect(w.findAll('.provider-card')).toHaveLength(3)
     expect(w.findAll('.provider-card')[0].find('.system-default').exists()).toBe(true)
     expect(document.querySelector('.ui-confirm-actions')).not.toBeNull()
-    expect(document.body.textContent).toContain('Referenced history retained')
+    expect(document.body.textContent).toContain('AI is used by an active task')
     confirmButton().click()
     await flushPromises()
     expect(save).toHaveBeenNthCalledWith(2, [items[1]], 'two')

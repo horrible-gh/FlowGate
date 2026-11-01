@@ -1,11 +1,14 @@
-"""0095: isolated owner-list saves and restrictive history deletion.
+"""0095/0116: owner-list saves, history-preserving deletion and active-loop conflicts.
 
 No configured database, provider credential or AI process is used. SQLite enforces
-real FK/transaction behavior; PostgreSQL driver's SQLSTATE is tested separately.
+real FK, tombstone, name-index and transaction behavior.
 """
 from contextlib import contextmanager
 import sqlite3
 from types import SimpleNamespace
+from pathlib import Path
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi import FastAPI
@@ -20,6 +23,7 @@ from modules.flow_gate.settings.routers import ai_settings as routes
 
 class Store:
     def __init__(self):
+        self.lock = threading.RLock()
         self.conn = sqlite3.connect(":memory:", check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
@@ -33,31 +37,61 @@ class Store:
           CREATE TABLE system_settings (
             setting_key TEXT PRIMARY KEY, setting_value TEXT, value_type TEXT,
             description TEXT, updated_at TEXT, updated_by TEXT);
-          CREATE TABLE user_defaults (
+          CREATE TABLE user_ai_defaults (
             user_id TEXT PRIMARY KEY,
             provider_id TEXT REFERENCES ai_providers(provider_id) ON DELETE SET NULL);
-          CREATE TABLE review_history (
-            run_id TEXT PRIMARY KEY, stage TEXT,
+          CREATE TABLE ai_invoke_document_review_loops (
+            run_id TEXT PRIMARY KEY, current_stage TEXT, stop_reason TEXT,
             reviewer_provider_id TEXT REFERENCES ai_providers(provider_id) ON DELETE RESTRICT,
             rework_provider_id TEXT REFERENCES ai_providers(provider_id) ON DELETE RESTRICT);
+          CREATE UNIQUE INDEX ux_ai_providers_system_name ON ai_providers(name) WHERE owner_scope='system';
+          CREATE UNIQUE INDEX ux_ai_providers_user_name ON ai_providers(owner_user_id,name) WHERE owner_scope='user';
+          CREATE TABLE tokens (token_id TEXT PRIMARY KEY, provider_id TEXT REFERENCES ai_providers(provider_id));
+          CREATE TABLE group_ai_leases (run_id TEXT, token_id TEXT, state TEXT);
+          CREATE TABLE ai_provider_doctype_map (provider_id TEXT REFERENCES ai_providers(provider_id), doc_type TEXT);
+          CREATE TABLE ai_invoke_paused_chains (group_id TEXT PRIMARY KEY,
+            continuation_base_provider_id TEXT REFERENCES ai_providers(provider_id),
+            continuation_work_executor_provider_id TEXT REFERENCES ai_providers(provider_id));
+          CREATE TABLE ai_group_members (ai_group_id TEXT, provider_id TEXT REFERENCES ai_providers(provider_id));
+          CREATE TABLE ai_invoke_runs (run_id TEXT, provider_id TEXT REFERENCES ai_providers(provider_id));
+          CREATE TABLE document_reviews (doc_id TEXT, provider_id TEXT REFERENCES ai_providers(provider_id), body TEXT);
+          CREATE TABLE ai_evaluations (
+            evaluation_id TEXT PRIMARY KEY, target_provider_id TEXT, target_provider_name TEXT,
+            judge_provider_id TEXT, judge_provider_name TEXT, lifecycle TEXT, active_dedupe_key TEXT UNIQUE,
+            evaluation_set_id TEXT, evaluation_set_name TEXT, created_by TEXT, created_at TEXT, updated_at TEXT,
+            task_title TEXT, task_summary TEXT, total_score INTEGER, artifacts TEXT, review_summary TEXT,
+            failure_stage TEXT, reason_code TEXT, diagnostic_summary TEXT, scratch_ref TEXT,
+            started_at TEXT, finished_at TEXT, human_reviewed_at TEXT, task_instruction TEXT, target_report TEXT);
+          CREATE TABLE ai_evaluation_scores (evaluation_id TEXT, criterion_key TEXT, position INTEGER,
+            criterion_description TEXT, score INTEGER, rationale TEXT);
         """)
+        migration = Path(__file__).parents[1] / 'sql/migrations/sqlite/165_ai_provider_tombstones.sql'
+        self.conn.executescript(migration.read_text(encoding='utf-8'))
 
     def _execute(self, sql, params=None):
-        self.conn.execute(sql, params or [])
+        with self.lock:
+            self.conn.execute(sql, params or [])
 
     def _fetch_all(self, sql, params=None):
-        return [dict(r) for r in self.conn.execute(sql, params or []).fetchall()]
+        with self.lock:
+            return [dict(r) for r in self.conn.execute(sql, params or []).fetchall()]
 
     def _fetch_one(self, sql, params=None):
-        row = self.conn.execute(sql, params or []).fetchone()
-        return dict(row) if row else None
+        with self.lock:
+            row = self.conn.execute(sql, params or []).fetchone()
+            return dict(row) if row else None
+
+    def _execute_affected(self, sql, params=None):
+        with self.lock:
+            return self.conn.execute(sql, params or []).rowcount
 
     @contextmanager
     def transaction(self):
         # Explicit real rollback; catches domain exceptions raised from a driver error.
-        self.conn.commit()
-        with self.conn:
-            yield self
+        with self.lock:
+            self.conn.commit()
+            with self.conn:
+                yield self
 
 
 @pytest.fixture
@@ -68,9 +102,11 @@ def store(monkeypatch):
     monkeypatch.setattr(policy, 'execution_policy_payload', lambda: {})
     monkeypatch.setattr(db._crypto, 'encrypt_api_key', lambda key: 'fake:' + key if key else None)
     monkeypatch.setattr(db._crypto, 'decrypt_api_key', lambda key: key[5:] if key else None)
-    monkeypatch.setattr(svc._user_default_db, 'get', lambda owner: (
-        s._fetch_one('SELECT provider_id FROM user_defaults WHERE user_id=?', [owner]) or {}
-    ).get('provider_id'))
+    from modules.flow_gate.db import ai_evaluations
+    from modules.flow_gate.services.ai_invoke import runtime
+    monkeypatch.setattr(svc._user_default_db, 'get_store', lambda: s)
+    monkeypatch.setattr(ai_evaluations, 'get_store', lambda: s)
+    monkeypatch.setattr(runtime._svc(), '_runs', {})
     yield s
     s.conn.close()
 
@@ -100,7 +136,8 @@ def test_roundtrip_middle_delete_and_owner_isolation(store, count):
     assert svc.save_user_settings('alice', keep_mine)['providers'] == keep_mine
     assert svc.get_system_settings()['providers'] == keep_system
     assert svc.get_user_settings('bob')['providers'] == other['providers']
-    assert store._fetch_one('SELECT COUNT(*) AS n FROM ai_providers')['n'] == 2 * (count - 1) + 1
+    assert store._fetch_one('SELECT COUNT(*) AS n FROM ai_providers WHERE deleted_at IS NULL')['n'] == 2 * (count - 1) + 1
+    assert store._fetch_one('SELECT COUNT(*) AS n FROM ai_providers')['n'] == 2 * count + 1
 
 
 def test_301_rejected_without_mutation(store):
@@ -118,22 +155,22 @@ def test_301_rejected_without_mutation(store):
 def test_delete_default_last_and_user_default(store):
     first = system([cli('one'), cli('two')])
     pid = first['default_provider_id']
-    store._execute('INSERT INTO user_defaults VALUES (?,?)', ['alice', pid])
+    store._execute('INSERT INTO user_ai_defaults VALUES (?,?)', ['alice', pid])
     second = system(first['providers'][1:])
     assert second['default_provider_id'] == second['providers'][0]['id']
     assert svc.get_user_settings('alice')['default_provider_id'] is None
     assert system([])['default_provider_id'] is None
     assert svc.get_system_settings()['providers'] == []
     mine = svc.save_user_settings('alice', [cli()])
-    store._execute('INSERT INTO user_defaults VALUES (?,?)', ['bob', mine['providers'][0]['id']])
+    store._execute('INSERT INTO user_ai_defaults VALUES (?,?)', ['bob', mine['providers'][0]['id']])
     assert svc.save_user_settings('alice', [])['providers'] == []
-    assert store._fetch_one('SELECT provider_id FROM user_defaults WHERE user_id=?', ['bob'])['provider_id'] is None
+    assert store._fetch_one('SELECT provider_id FROM user_ai_defaults WHERE user_id=?', ['bob'])['provider_id'] is None
 
 
 @pytest.mark.parametrize('owner', ['system', 'user'])
 @pytest.mark.parametrize('reference', ['reviewer_provider_id', 'rework_provider_id'])
-@pytest.mark.parametrize('stage', ['review', 'stopped'])
-def test_referenced_delete_409_preserves_settings_and_history(store, owner, reference, stage):
+@pytest.mark.parametrize('stage', ['review', 'rework', 'stopped'])
+def test_history_delete_and_active_loop_contract(store, owner, reference, stage):
     # Hit the HTTP router and real service/transaction with isolated storage.
     app = FastAPI()
     app.include_router(routes.router)
@@ -146,44 +183,34 @@ def test_referenced_delete_409_preserves_settings_and_history(store, owner, refe
         return client.put(path, json={'providers': items, 'default_provider_id': default})
     first = put([cli('one'), cli('two'), cli('three')]).json()
     pid = first['providers'][1]['id']
-    # Stopped loops still keep their references. Only fixture history is ever deleted.
-    store._execute(f'INSERT INTO review_history(run_id,stage,{reference}) VALUES (?,?,?)', ['run', stage, pid])
+    # Historical references survive deletion; only active system work protects the row.
+    store._execute(f'INSERT INTO ai_invoke_document_review_loops(run_id,current_stage,stop_reason,{reference}) VALUES (?,?,?,?)',
+                   ['run', stage, 'review_passed' if stage == 'stopped' else None, pid])
     remaining = [dict(first['providers'][0])]  # drop a restricted and an unrelated row together
     remaining[0]['name'] = 'should roll back'
     response = put(remaining)
-    assert response.status_code == 409
-    assert response.json() == {'detail': {'code': 'provider_in_use'}}
+    blocked = owner == 'system' and stage != 'stopped'
+    assert response.status_code == (409 if blocked else 200)
     after = svc.get_system_settings() if owner == 'system' else svc.get_user_settings('alice')
-    assert after['providers'] == first['providers']
-    assert after['default_provider_id'] == first['default_provider_id']
-    assert store._fetch_one('SELECT * FROM review_history')['stage'] == stage
-    # Retry can succeed when history no longer references the provider (fixture only).
-    store._execute('DELETE FROM review_history')
-    assert put(remaining).status_code == 200
+    if blocked:
+        assert response.json() == {'detail': {'code': 'provider_in_use', 'reason': 'active_loop'}}
+        assert after['providers'] == first['providers']
+        assert after['default_provider_id'] == first['default_provider_id']
+        store._execute("UPDATE ai_invoke_document_review_loops SET current_stage='stopped', stop_reason='review_passed'")
+        assert put(remaining).status_code == 200
+    else:
+        assert after['providers'][0]['name'] == 'should roll back'
+    assert store._fetch_one('SELECT * FROM ai_invoke_document_review_loops')[reference] == pid
+    assert db.get_name_any(pid) == 'two'
+    assert db.get_row(None, pid) is None
 
 
-@pytest.mark.parametrize('attribute', ['sqlstate', 'pgcode'])
-def test_postgres_fk_sqlstate_is_translated(attribute):
-    class ForeignKeyViolation(Exception):
-        pass
-    exc = ForeignKeyViolation('fake diagnostic')
-    setattr(exc, attribute, '23503')
-    exc.diag = SimpleNamespace(constraint_name='ai_invoke_document_review_loops_reviewer_provider_id_fkey')
+def test_storage_errors_are_not_reported_as_in_use():
     class Reject:
-        def _execute(self, sql, params):
-            raise exc
-    with pytest.raises(db.ProviderInUseError) as raised:
-        db._delete_missing(Reject(), "owner_scope = 'system'", [], ['kept'])
-    assert raised.value.__cause__ is exc
-    assert raised.value.__cause__.diag.constraint_name.endswith('_fkey')
-
-
-def test_unrelated_sql_error_is_not_relabelled():
-    class Reject:
-        def _execute(self, sql, params):
+        def _fetch_all(self, sql, params):
             raise RuntimeError('connection lost')
     with pytest.raises(RuntimeError, match='connection lost'):
-        db._delete_missing(Reject(), "owner_scope = 'system'", [], [])
+        db._delete_missing(Reject(), "owner_scope = 'system'", [], [], set())
 
 
 def test_api_key_keep_replace_clear(store):

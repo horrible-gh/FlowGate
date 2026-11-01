@@ -41,6 +41,7 @@ import json
 import logging
 import re
 import threading
+from modules.flow_gate.utils.provider_lifecycle import synchronized
 import unicodedata
 import uuid
 from pathlib import Path, PurePosixPath
@@ -167,6 +168,7 @@ def _emit(kind: str, row: dict | None) -> None:
 
 # ── Start / cancel / read ───────────────────────────────────────────────────────
 
+@synchronized
 def start(target_id: str, judge_id: str, created_by: str | None,
           locale: str | None = None, set_id: str | None = None) -> dict:
     if not isinstance(target_id, str) or not isinstance(judge_id, str) or not target_id or not judge_id:
@@ -179,29 +181,31 @@ def start(target_id: str, judge_id: str, created_by: str | None,
         if evaluation_set is None:
             raise EvaluationError("evaluation_set_not_found", 404)
         evaluation_set = {**evaluation_set, "constraints": _set_constraints(evaluation_set)}
-    # Both connections are frozen before 202 and used unchanged by the worker.
-    target = connection.resolve_subject(SCOPE, target_id, error=EvaluationError, fingerprint=False)
-    judge = connection.resolve_subject(SCOPE, judge_id, error=EvaluationError, fingerprint=False)
-    try:
-        row = repo.create_pending(target_id=target_id, target_name=target.name,
-                                  judge_id=judge_id, judge_name=judge.name, created_by=created_by,
-                                  evaluation_set=evaluation_set)
-    except repo.AlreadyRunning as exc:
-        raise EvaluationError("evaluation_already_running", 409, exc.evaluation_id) from exc
-    state = {"handle": probe.ProbeHandle(), "target": target, "judge": judge, "set": evaluation_set,
-             "language": _LANGUAGES.get((locale or "").split("-")[0].lower(), "English")}
+    # The guard covers re-resolution through thread start. Existing registry lock
+    # precedes pending's DB transaction, matching deletion/admission lock order.
     with _RUNS_LOCK:
-        _RUNS[row["evaluation_id"]] = state
-    _emit("updated", row)
-    try:
-        threading.Thread(target=_worker, args=(row["evaluation_id"], state), daemon=True,
-                         name="ai-evaluation-" + row["evaluation_id"][-8:]).start()
-    except Exception:
-        with _RUNS_LOCK:
+        from modules.flow_gate.db import request_cache
+        request_cache.invalidate()
+        target = connection.resolve_subject(SCOPE, target_id, error=EvaluationError, fingerprint=False)
+        judge = connection.resolve_subject(SCOPE, judge_id, error=EvaluationError, fingerprint=False)
+        try:
+            row = repo.create_pending(target_id=target_id, target_name=target.name,
+                                      judge_id=judge_id, judge_name=judge.name, created_by=created_by,
+                                      evaluation_set=evaluation_set)
+        except repo.AlreadyRunning as exc:
+            raise EvaluationError("evaluation_already_running", 409, exc.evaluation_id) from exc
+        try:
+            state = {"handle": probe.ProbeHandle(), "target": target, "judge": judge, "set": evaluation_set,
+                     "language": _LANGUAGES.get((locale or "").split("-")[0].lower(), "English")}
+            _RUNS[row["evaluation_id"]] = state
+            _emit("updated", row)
+            threading.Thread(target=_worker, args=(row["evaluation_id"], state), daemon=True,
+                             name="ai-evaluation-" + row["evaluation_id"][-8:]).start()
+        except Exception:
             _RUNS.pop(row["evaluation_id"], None)
-        repo.finish(row["evaluation_id"], lifecycle="failed", reason_code="internal_error",
-                    failure_stage="pending")
-        raise
+            repo.finish(row["evaluation_id"], lifecycle="failed", reason_code="internal_error",
+                        failure_stage="pending")
+            raise
     return _public(row, [], full=True)
 
 

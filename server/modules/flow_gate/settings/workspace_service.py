@@ -600,7 +600,8 @@ def _resource_names() -> dict[tuple[str, str], dict]:
     names: dict[tuple[str, str], dict] = {}
     for row in _store()._fetch_all(
         "SELECT provider_id, name, kind, enabled FROM ai_providers "
-        "WHERE project_id IS NULL AND COALESCE(owner_scope, 'system') = 'system' ORDER BY sort_order, name"
+        "WHERE project_id IS NULL AND COALESCE(owner_scope, 'system') = 'system' "
+        "AND deleted_at IS NULL ORDER BY sort_order, name"
     ):
         names[("provider", row["provider_id"])] = {"name": row["name"], "kind": row.get("kind"),
                                                   "enabled": bool(row.get("enabled"))}

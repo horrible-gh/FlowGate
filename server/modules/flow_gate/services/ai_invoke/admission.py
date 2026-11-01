@@ -15,6 +15,7 @@ calls, so the file reads as one policy instead of a service prologue.
 from __future__ import annotations
 
 import threading
+from modules.flow_gate.utils.provider_lifecycle import guard as provider_lifecycle_guard
 import time
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -834,6 +835,45 @@ def _refuse_frozen_group(group_id: str) -> None:
                           "This group is frozen for a final approval in progress.",
                           job_id=claim.get("job_id"), state=claim.get("state"),
                           retryable=False)
+
+
+def _register_run(run: dict, chain: list[dict]) -> None:
+    """Final admission fence, before loop INSERT and worker registration (0116 C-2)."""
+    group_id, run_id = run["group_id"], run["run_id"]
+    with provider_lifecycle_guard, _runs_lock:
+        from modules.flow_gate.db import ai_providers, request_cache
+
+        request_cache.invalidate()
+        required = {p["id"] for p in chain}
+        loop = run.get("document_review_loop") or {}
+        required.update(pid for pid in (loop.get("reviewer_provider_id"),
+                                       loop.get("rework_provider_id")) if pid)
+        for pid in sorted(required):
+            row = ai_providers.get_system_row(pid)
+            if row is None or not row.get("enabled"):
+                run["handoff_gate"].abort()
+                try:
+                    db_group_ai_leases.release(
+                        group_id, run_id, reason="admission_provider_unavailable")
+                finally:
+                    token_service.revoke(run["token_id"], reason="admission_provider_unavailable")
+                raise _http_error(422, PROVIDER_UNAVAILABLE_CODE, PROVIDER_UNAVAILABLE_MESSAGE)
+        run["chain_provider_ids"] = [p["id"] for p in chain]
+        # The durable loop row is created before the worker can finish; a successful start never
+        # exposes memory-only loop state. Roll admission back if persistence fails.
+        if run.get("document_review_loop") is not None:
+            try:
+                _svc()._insert_document_review_loop(run)
+            except Exception:
+                db_group_ai_leases.release(
+                    group_id, run_id, reason="admission_rollback_review_loop_persist_failed"
+                )
+                try:
+                    token_service.revoke(run["token_id"], reason="document_review_loop_persist_failed")
+                except Exception:
+                    logger.warning("review-loop token rollback failed for %s", run_id, exc_info=True)
+                raise _http_error(500, "document_review_loop_persist_failed", "Could not persist document review loop state.")
+        _svc()._runs[run_id] = run
 
 
 @graph_execution_hooks.admission
@@ -1975,22 +2015,7 @@ def start_run(
     run["handoff_gate"] = gate
     _note_issued_raw_token(run, run.get("raw_token"))
     _note_issued_prompt(run, mention)
-    with _runs_lock:
-        # The durable loop row is created before the worker can finish; a successful start never
-        # exposes memory-only loop state. Roll admission back if persistence fails.
-        if document_review_loop is not None:
-            try:
-                _svc()._insert_document_review_loop(run)
-            except Exception:
-                db_group_ai_leases.release(
-                    group_id, run_id, reason="admission_rollback_review_loop_persist_failed"
-                )
-                try:
-                    token_service.revoke(issue["token_id"], reason="document_review_loop_persist_failed")
-                except Exception:
-                    logger.warning("review-loop token rollback failed for %s", run_id, exc_info=True)
-                raise _http_error(500, "document_review_loop_persist_failed", "Could not persist document review loop state.")
-        _svc()._runs[run_id] = run
+    _register_run(run, chain)
 
     thread = threading.Thread(
         target=_svc()._worker,

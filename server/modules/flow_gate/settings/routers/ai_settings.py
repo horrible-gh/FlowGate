@@ -151,7 +151,7 @@ def put_system_ai_settings(
             updated_by=user.get("user_id"),
         )
     except ProviderInUseError as exc:
-        raise HTTPException(status_code=409, detail={"code": "provider_in_use"}) from exc
+        raise HTTPException(status_code=409, detail={"code": "provider_in_use", "reason": exc.reason}) from exc
     except _svc.AiSettingsValidationError as exc:
         raise _validation_error(exc)
 
@@ -207,7 +207,7 @@ def put_my_ai_providers(body: UserAiSettingsPut, user=Depends(get_current_user))
     try:
         return _svc.save_user_settings(user["user_id"], _providers_payload(body))
     except ProviderInUseError as exc:
-        raise HTTPException(status_code=409, detail={"code": "provider_in_use"}) from exc
+        raise HTTPException(status_code=409, detail={"code": "provider_in_use", "reason": exc.reason}) from exc
     except _svc.AiSettingsValidationError as exc:
         raise _validation_error(exc)
 
