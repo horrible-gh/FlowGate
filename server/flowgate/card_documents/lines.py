@@ -248,7 +248,14 @@ def follow_root_conversion(flow_id: str, old_doc_id: str, converted: dict) -> li
 # ── run results ──────────────────────────────────────────────────────────────
 
 def adopt_result(flow_id: str, node_key: str, doc_id: Optional[str]) -> None:
-    """A document bound to a node (run result / its revision) takes the line of its type."""
+    """A document bound to a node (run result / its revision) takes the line of its type.
+
+    The document the line held is superseded by the new one when the card made it (its empty draft) or — flowgate.v02.0118
+    T#1 (0003-NR §2.5) — when an invalidated attempt of this node registered it (``legacy.invalidated_documents``: a Time
+    Machine rewind, a Stop, a lost lease): the earlier result a rework replaces is the card's history, not a live document
+    of no line that the Canvas would draw as a free card. A person's own document, a shared root line and the document
+    of a live attempt are only rebound, as before. Then the node's earlier results such a rework left on no line before
+    this rule (``settle_displaced``) are superseded by what the line shows now."""
     if not doc_id or not repository.available():
         return
     doc = legacy.document(doc_id)
@@ -256,16 +263,63 @@ def adopt_result(flow_id: str, node_key: str, doc_id: Optional[str]) -> None:
         return
     doc_type = str(doc.get("type_code") or "").upper()
     replaced: list[str] = []
+    stale: Optional[set[str]] = None
     for row in repository.rows(flow_id, [node_key]):
         if row["doc_type"] != doc_type or row["doc_id"] == doc_id:
             continue
         repository.rebind(flow_id, node_key, row["slot"], row["doc_type"], doc_id)
         if row["owned"]:
             replaced.append(row["doc_id"])
+            continue
+        if row["doc_type"] in cs.ROOT_TYPES:
+            continue                                # a root the card shows is never a result it replaces
+        if stale is None:
+            stale = legacy.invalidated_documents(flow_id, node_key)
+        if row["doc_id"] in stale:
+            replaced.append(row["doc_id"])
     for old_id in dict.fromkeys(replaced):
-        old = legacy.document(old_id)
-        if old and not old.get("superseded_by") and old.get("status") != legacy.CANCELLED_STATUS:
-            legacy.supersede(old_id, doc_id)
+        _supersede_once(old_id, doc_id)
+    settle_displaced(flow_id, node_key, stale)
+
+
+def _supersede_once(old_id: str, new_id: str) -> bool:
+    old = legacy.document(old_id)
+    if old and not old.get("superseded_by") and old.get("status") != legacy.CANCELLED_STATUS:
+        legacy.supersede(old_id, new_id)
+        return True
+    return False
+
+
+def settle_displaced(flow_id: str, node_key: str, stale: Optional[set[str]] = None) -> list[str]:
+    """flowgate.v02.0118 T#1: the repair of an earlier result a rework displaced before ``adopt_result`` superseded
+    such documents — a document an invalidated attempt of the node registered (``legacy.invalidated_documents``) that
+    is still alive (not superseded, not cancelled) yet on no line of the Flow, while the node's line of its type shows
+    another live document: it is superseded by that document, so it leaves the free documents as the history of the
+    line. Nothing is deleted or made; a document on any line, a root, a person's document (no invalidated attempt
+    registered it) and a type the node has no line of stay as they are. Idempotent; returns the superseded ids."""
+    if not repository.available():
+        return []
+    rows = [r for r in repository.rows(flow_id, [node_key]) if r["doc_type"] not in cs.ROOT_TYPES]
+    if not rows:
+        return []
+    stale = legacy.invalidated_documents(flow_id, node_key) if stale is None else stale
+    if not stale:
+        return []
+    linked = repository.doc_ids(flow_id)
+    docs = {d["doc_id"]: d for d in legacy.flow_documents(flow_id) if d.get("doc_id")}
+    shown_by_type: dict[str, str] = {}
+    for row, shown in _shown_rows(flow_id, docs, [node_key]):
+        if shown and row["doc_type"] not in shown_by_type and row["doc_type"] not in cs.ROOT_TYPES:
+            shown_by_type[row["doc_type"]] = shown["doc_id"]
+    done: list[str] = []
+    for old_id in sorted(stale):
+        old = docs.get(old_id)
+        if old is None or old_id in linked or not legacy.is_alive(old, flow_id):
+            continue
+        new_id = shown_by_type.get(str(old.get("type_code") or "").upper())
+        if new_id and new_id != old_id and _supersede_once(old_id, new_id):
+            done.append(old_id)
+    return done
 
 
 # ── reads ────────────────────────────────────────────────────────────────────

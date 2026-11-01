@@ -127,10 +127,16 @@ export const CARD_MEMO_FAILURE_KEYS: readonly string[] = [
   'other',
 ]
 
-/** Why the memos cannot be changed here (message key under `gui.inspector.cardMemo.`), or null: read only views. */
+/**
+ * Why the memos cannot be changed here (message key under `gui.inspector.cardMemo.`), or null.
+ *
+ * flowgate.v02.0118 T#3 (0003-NR §3.2): only a conflict view locks them. A confirmed (revision) view — a running Flow,
+ * and a card a Time Machine rewind put back — keeps them writable: a memo is no document and changes no definition
+ * (the server takes it whatever the run or view, refusing only a disposed Flow), and it is how a person tells the AI
+ * that works the card again what to change. 0056 F2-2's revision lock is lifted by this decision.
+ */
 export function cardMemoLockedReason(target: Pick<InspectorTarget, 'readOnly'> | null): string | null {
   if (target?.readOnly === 'conflict') return 'locked.conflict'
-  if (target?.readOnly === 'revision') return 'locked.revision'
   return null
 }
 

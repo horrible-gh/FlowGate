@@ -102,8 +102,8 @@ function node(id = 'gn_t'): FlowGraphNode {
   }
 }
 
-function targetOf(viewMode = 'draft', id = 'gn_t') {
-  const graph: FlowGraph = { flowId: FLOW, nodes: [node(id)], edges: [], ownership: 'graph', viewMode, draft: null }
+function targetOf(viewMode = 'draft', id = 'gn_t', ownership = 'graph') {
+  const graph: FlowGraph = { flowId: FLOW, nodes: [node(id)], edges: [], ownership, viewMode, draft: null }
   return toInspectorTarget(selectionOf(graph, id))!
 }
 
@@ -113,8 +113,8 @@ const Harness = defineComponent({
   setup: (props) => () => h('div', [h(CardMemoButton, { target: props.target as never }), h(CardMemoSection, { target: props.target as never })]),
 })
 
-async function mountSection(viewMode = 'draft', id = 'gn_t') {
-  wrapper = mount(Harness, { attachTo: document.body, props: { target: targetOf(viewMode, id) }, global: { plugins: [i18n] } })
+async function mountSection(viewMode = 'draft', id = 'gn_t', ownership = 'graph') {
+  wrapper = mount(Harness, { attachTo: document.body, props: { target: targetOf(viewMode, id, ownership) }, global: { plugins: [i18n] } })
   await flushPromises()
   return wrapper
 }
@@ -185,7 +185,9 @@ describe('the card memo rules (cardMemoModel, flowgate.v02.0056 F2-2)', () => {
     expect(cardMemoFailure(error({ code: 'card_memos_unavailable', status: 409 }))).toMatchObject({ key: 'unavailable' })
     expect(cardMemoFailure(error({ code: 'flow_access_denied', status: 403 }))).toMatchObject({ key: 'forbidden' })
     expect(cardMemoFailure(error({ network: true }))).toMatchObject({ key: 'network' })
-    expect(cardMemoLockedReason({ readOnly: 'revision' })).toBe('locked.revision')
+    // flowgate.v02.0118 T#3: a confirmed (revision) view keeps the memos writable; only a conflict locks them.
+    expect(cardMemoLockedReason({ readOnly: 'revision' })).toBeNull()
+    expect(cardMemoLockedReason({ readOnly: 'conflict' })).toBe('locked.conflict')
     expect(cardMemoLockedReason({ readOnly: null })).toBeNull()
   })
 
@@ -450,11 +452,53 @@ describe('the card memo lines and windows (flowgate.v02.0056 F2-2 · 0017-CH)', 
     expect(qa('card-memo-item')).toHaveLength(2)
   })
 
-  it('a read-only view lists the memos but changes nothing', async () => {
+  it('flowgate.v02.0118 T#3: a confirmed (revision) view — a running or rewound Flow — writes, saves and reads its memos again', async () => {
     await mountSection('revision')
     expect(qa('card-memo-item')).toHaveLength(2)
+    expect((q('designer-inspector-memo') as HTMLButtonElement).disabled).toBe(false)
+    const first = qa('card-memo-item')[0]
+    expect((q('card-memo-edit', first) as HTMLButtonElement).disabled).toBe(false)
+    expect((q('card-memo-remove', first) as HTMLButtonElement).disabled).toBe(false)
+    await click(q('designer-inspector-memo'))
+    await type('card-memo-title-input', '재작업 지시')
+    await type('card-memo-body-input', '반려 사유를 반영할 것')
+    await click(q('card-memo-ai-ref-toggle'))
+    api.postRequest.mockImplementation(async () => {
+      const created = memo('m3', '재작업 지시', { body: '반려 사유를 반영할 것', ai_ref: true })
+      stored = [...stored, created]
+      return { data: { ok: true, memo: created } }
+    })
+    const reads = api.getRequest.mock.calls.length
+    await click(q('card-memo-save'))
+    expect(api.postRequest).toHaveBeenCalledWith(PATH, { title: '재작업 지시', body: '반려 사유를 반영할 것', ai_ref: true })
+    expect(api.getRequest.mock.calls.length).toBe(reads + 1)
+    expect(qa('card-memo-item').map((item) => [item.getAttribute('data-memo'), !!q('card-memo-ai-ref', item)])).toEqual([
+      ['m1', true],
+      ['m2', false],
+      ['m3', true],
+    ])
+    await click(q('card-memo-close'))
+    await click(q('card-memo-edit', qa('card-memo-item')[2]))
+    await type('card-memo-body-input', '반려 사유와 메모를 반영할 것')
+    api.patchRequest.mockImplementation(async () => {
+      stored = stored.map((item) => (item.memo_id === 'm3' ? { ...item, body: '반려 사유와 메모를 반영할 것' } : item))
+      return { data: { ok: true, memo: stored[2] } }
+    })
+    await click(q('card-memo-save'))
+    expect(api.patchRequest).toHaveBeenCalledWith(`${PATH}/m3`, { body: '반려 사유와 메모를 반영할 것' })
+    // Selected again (a remount reads the server list) the saved memo is there.
+    wrapper?.unmount()
+    closeAllCardMemoWindows()
+    await mountSection('revision')
+    await click(q('card-memo-open', qa('card-memo-item')[2]))
+    expect(text(q('card-memo-read'))).toBe('반려 사유와 메모를 반영할 것')
+  })
+
+  it('a conflict view lists the memos but changes nothing', async () => {
+    await mountSection('revision', 'gn_t', 'conflict')
+    expect(qa('card-memo-item')).toHaveLength(2)
     expect((q('designer-inspector-memo') as HTMLButtonElement).disabled).toBe(true)
-    expect(q('designer-inspector-memo')!.getAttribute('title')).toBe('확정본 보기에서는 메모를 바꿀 수 없습니다')
+    expect(q('designer-inspector-memo')!.getAttribute('title')).toBe('담당이 겹친 플로우라 메모를 바꿀 수 없습니다')
     const line = qa('card-memo-item')[0]
     expect((q('card-memo-edit', line) as HTMLButtonElement).disabled).toBe(true)
     expect((q('card-memo-remove', line) as HTMLButtonElement).disabled).toBe(true)

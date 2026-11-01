@@ -100,12 +100,29 @@ def card_title_source(row: dict, document: Optional[dict]) -> tuple[str, Optiona
     return "label", row.get("label"), None
 
 
+def reported_document(lines: Optional[list], by_id: dict) -> Optional[dict]:
+    """flowgate.v02.0118 T#2 (0003-NR §3.1): the written result a card's report line still shows — the live document of
+    its first report line a run fills (author ``run``) whose body is written (``has_body``). A card a Time Machine rewind
+    (or a Stop) put back to pending has no node run result any more, yet its report line keeps the earlier result: the
+    card keeps that title instead of falling back to its palette label. The untouched empty draft a card makes on
+    placement is not written, so a card never run still shows its label. Display only: the AI naming judgement keeps
+    ``card_title_source`` over ``card_document``."""
+    for line in lines or []:
+        if line.get("slot") != "report" or line.get("author") != "run" or not line.get("has_body"):
+            continue
+        doc = by_id.get(line.get("doc_id"))
+        if doc is not None and doc.get("title") and cm.is_alive(doc, doc.get("group_id")):
+            return doc
+    return None
+
+
 def graph_node(row: dict, origin: str, ownership: str, document: Optional[dict], supersedes,
                root_bound: bool, lines: Optional[list] = None, line_doc: Optional[dict] = None,
-               title_state: Optional[dict] = None) -> dict:
+               title_state: Optional[dict] = None, by_id: Optional[dict] = None) -> dict:
     node = to_graph_node(row)
     state = title_state_block(title_state)
-    shown = card_title_source(row, document)[1]
+    titled = document if document is not None else reported_document(lines, by_id or {})
+    shown = card_title_source(row, titled)[1]
     return {
         "node_key": node.key,
         "identity_source": "graph_node",
@@ -160,7 +177,7 @@ def _graph_nodes(out: Projection, view: GraphView, ownership: str, by_id: dict, 
         lines = view.card_docs.get(row["node_key"]) or []
         node = graph_node(row, origin, ownership, doc, supersedes, bound, lines,
                           None if doc is not None else first_line_document(lines, by_id),
-                          view.title_states.get(row["node_key"]))
+                          view.title_states.get(row["node_key"]), by_id)
         if run is not None:
             node["node_run"] = run
             if not bound:

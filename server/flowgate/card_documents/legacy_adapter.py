@@ -48,7 +48,7 @@ _log = logging.getLogger(__name__)
 
 TITLE_MAX_LEN = 100            # v0.1 related-document title limit
 
-__all__ = ["CANCELLED_STATUS", "is_alive", "live_end", "flow_documents", "document", "supersede",
+__all__ = ["CANCELLED_STATUS", "is_alive", "live_end", "flow_documents", "document", "supersede", "invalidated_documents",
            "create_document", "delete_document", "approvable_body", "review_counts", "rejection_count",
            "GraphApiError", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid", "run",
            "locale_of",
@@ -102,6 +102,15 @@ def line_body_facts(doc: Optional[dict]) -> tuple[bool, Optional[str]]:
 
 def supersede(old_id: str, new_id: str) -> None:
     db_documents.set_superseded_by(old_id, new_id)
+
+
+def invalidated_documents(flow_id: str, node_key: str) -> set[str]:
+    """flowgate.v02.0118 T#1: the documents the node's invalidated attempts registered and none of its live attempts
+    did (0061 T#7, a Time Machine rewind / Stop / lost lease) — the card settings' own judgement, called, never
+    changed, so the line binding and the next attempt read one rule."""
+    from flowgate.card_settings import legacy_adapter as card_settings_legacy   # noqa: PLC0415 — no import cycle
+
+    return card_settings_legacy.invalidated_documents(flow_id, node_key)
 
 
 def delete_document(doc_id: str, user_id: Optional[str]) -> None:
