@@ -239,11 +239,12 @@ import { createFirstRunAiSetup } from '@/features/ai'
 import { RunResultDetailWindow, RunResultWindow, createRunResultWatch, runWaitText } from '@/features/ai'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { documentRead, settingsNodeHoldWrite } from '@/features/document'
+import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
+import type { V01RunOutcome } from '../center/run/v01RunControl'
 import DesignerFlowCreateDialog, { type DesignerCreatedFlow } from '../fileMenu/DesignerFlowCreateDialog.vue'
 import FlowBaseBranchDialog from '../fileMenu/FlowBaseBranchDialog.vue'
 import DesignerGroupCreateDialog from '../fileMenu/DesignerGroupCreateDialog.vue'
@@ -326,6 +327,23 @@ const center = createDesignerCenterSession({
   // flowgate.v02.0113 T#2 rework: the first AI setup is applied to the Flow whose command waits for it.
   beforeRunPrepare: (flowId) => aiSetup.request(flowId),
   runSetupCurrent: () => aiSetup.current(),
+  // flowgate.v02test.0001 B0001 §2: a v0.1 Flow's 다음 단계 / 전체 실행 are its work documents' existing v0.1 single run.
+  v01Run: {
+    start: async (flowId, docId, scope) => (await reviewRunStart({ groupId: flowId, docId, scope })).runId,
+    // The started run's own final record: /ai-invoke/active drops a run once it ended (no status), so failure is read here.
+    readRun: async (runId) => {
+      const run = await reviewRunRead(runId)
+      return { finished: run.finished, succeeded: run.succeeded }
+    },
+    readDocument: async (docId) => {
+      const read = await reviewDocumentRead(docId)
+      return { reviewStatus: read.record.docReviewStatus ?? null, disposed: read.groupDisposed }
+    },
+    readActivity: async (flowId) => {
+      const activity = await reviewActivityRead(flowId)
+      return { active: activity.active, status: activity.status }
+    },
+  },
   // flowgate.v02.0059 T#2: the document read lets 자동 배치 follow a v0.1 sequence root's supersede chain.
   // flowgate.v02.0061 T#15: the card Hold of the card context menu goes through the card settings.
   source: createServerFlowGraphSource(projectStore, documentRead, { write: settingsNodeHoldWrite }),
@@ -425,6 +443,17 @@ const SERVER_WORDED_ERRORS: ReadonlySet<string> = new Set([
   'graph_time_machine_blocked',
   'graph_engine_owned',
 ])
+
+/** flowgate.v02test.0001 B0001 §2: the one short sentence of a v0.1 command that did not go (null: nothing to tell). */
+function v01RunErrorKey(outcome: V01RunOutcome): string | null {
+  if (outcome.kind === 'busy') return 'gui.designer.top.run_errors.run_already_active'
+  if (outcome.kind !== 'failed') return null
+  const kind = reviewErrorOf(outcome.error).kind
+  if (kind === 'running') return 'gui.designer.top.run_errors.run_already_active'
+  if (kind === 'disposed') return 'gui.designer.top.run_errors.flow_disposed'
+  if (kind === 'forbidden') return 'gui.designer.top.run_errors.flow_access_denied'
+  return 'gui.designer.top.run_errors.other'
+}
 
 /** A refused run in plain words: the server's message for its 0061 codes, else the code's own sentence or the common one. */
 function runErrorText(error: FlowRunFailure): string {
@@ -861,6 +890,14 @@ function onTopCommand(command: DesignerTopCommand) {
     case 'run.all': {
       const flowId = center.state.activeFlowId
       if (flowId === null) return
+      // flowgate.v02test.0001 B0001 §2: a v0.1 Flow runs its work documents through the same two commands.
+      if (center.isV01Flow(flowId)) {
+        void center.runV01(flowId, command === 'run.next' ? 'next' : 'all').then((outcome) => {
+          const key = v01RunErrorKey(outcome)
+          if (key !== null) menuToast(() => t(key), 'danger')
+        })
+        return
+      }
       // flowgate.v02.0061 T#14: one step / full command on the server (the session confirms an idle Flow's draft first).
       if (center.canRun) {
         // flowgate.v02.0113 T#5: a command the server took is watched for its result (the run as known before it).
