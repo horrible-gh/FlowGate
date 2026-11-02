@@ -44,6 +44,14 @@ approved automatically (``approval_wait_reason``, B-2; null otherwise — ``awai
 409 are judged as before); a run read and a Resume first follow the AI cards whose run-end stage was lost
 (``card_settings_ports.reconcile_stage``, B-3, outside the Flow guard); and a run answered to a user tells whether that user
 may approve its cards (``viewer.can_approve``, B-6: the card approval route's own judgement; ``with_viewer``).
+
+flowgate.v02.0119 T#3 (T-2): no card awaits a person's approval (``awaiting_approval`` is always false, kept for the
+readers T-3 / T-5 remove). Each node run tells instead whether its card is in intervention (``intervention``:
+``{"kind": "needs_intervention" | "system_error", "reason": …}`` of a general card in review that nothing completes,
+null otherwise — ``node_approval.intervention``), with the latest recorded reason as ``approval_wait_reason``. A run
+read's ``idle_reason`` is the run's reason as read: a run idle before T-2 stores ``waiting_approval``, told as
+``waiting_confirm`` (a gate open for its decision) or ``needs_intervention`` (``graph_execution_hooks``
+``idle_reason_read``) and never converted.
 """
 from __future__ import annotations
 
@@ -421,6 +429,23 @@ def resume_run(group: dict, run_id: str, reason: Optional[str], user_id: str, mo
 
 # ── Reads (P0008 S5-4) ───────────────────────────────────────────────────────
 
+LEGACY_WAITING_APPROVAL = "waiting_approval"       # an idle reason stored before flowgate.v02.0119 T#3 (T-2)
+
+
+def idle_reason_read(run: dict) -> Optional[str]:
+    """0119 T-2: the run's idle reason as read — a stored ``waiting_approval`` told as ``waiting_confirm`` /
+    ``needs_intervention`` (``graph_execution_hooks`` ``idle_reason_read``), never converted. A failed read: as stored."""
+    stored = run.get("idle_reason")
+    if stored != LEGACY_WAITING_APPROVAL:
+        return stored
+    from modules.flow_gate.services import graph_execution_hooks
+    try:
+        return graph_execution_hooks.call("idle_reason_read", run) or stored
+    except Exception:  # noqa: BLE001 — the run read goes on
+        _log.warning("graph idle reason read failed run=%s", run.get("run_id"), exc_info=True)
+        return stored
+
+
 def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
     run = run_store.run_by_id(run_id)
     if run is None:
@@ -435,7 +460,7 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
         "last_event_seq": run["last_event_seq"],
         "pending_propagation_count": len(pending),
         "pending_node_keys": sorted({p["node_key"] for p in pending}),
-        "mode": run.get("run_mode") or MODE_FULL, "idle_reason": run.get("idle_reason"),       # 0061 T#2
+        "mode": run.get("run_mode") or MODE_FULL, "idle_reason": idle_reason_read(run),        # 0061 T#2, 0119 T-2
     }
     from modules.flow_gate.services import graph_execution_hooks
     out.update(graph_execution_hooks.call("execution_wire", run_id, run["group_id"]))
@@ -522,15 +547,16 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
     failure = graph_execution_hooks.call("write_failure", row)
     if failure and failure != "question_pending" and dispatch is not None:   # 0111 T-A1: a question wait, no error
         dispatch = {**dispatch, "error_code": failure}
-    awaiting = node_approval.awaiting_approval(flow_id, row)
-    reason = approval_wait_reason(flow_id, row) if awaiting else None
+    state = intervention(flow_id, row)                                                     # 0119 T-2
+    reason = approval_wait_reason(flow_id, row) if state else None
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),
             **(graph_execution_hooks.call("integration_wire", attempt_id) or {}),
             "node_key": row["node_key"], "status": row["status"], "opened_at": row.get("opened_at"),
             "finished_at": row.get("finished_at"), "result_doc_id": row.get("result_doc_id"),
             "root_bound": bool(row.get("root_bound")), "dispatch": dispatch,
-            "awaiting_approval": awaiting,
+            "awaiting_approval": False,                     # 0119 T-2: no person approves a card (T-3 / T-5 remove it)
             "approval_wait_reason": reason,                                                         # 0105 T#2 B-2
+            "intervention": state,                                                                  # 0119 T-2
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
             "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked,
             "node_running": running_lock(flow_id, row), **stage_view(flow_id, row, attempt_id, reason)}
@@ -545,6 +571,16 @@ def stage_view(flow_id: str, row: dict, attempt_id: Optional[str], reason: Optio
     except Exception:  # noqa: BLE001 — the run read goes on
         _log.warning("graph stage view read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
         return {"wait_reason": None, "stage_assignments": None, "approval_wait_submission": None}
+
+
+def intervention(flow_id: str, row: dict) -> Optional[dict]:
+    """flowgate.v02.0119 T#3 (T-2): ``{"kind", "reason"}`` of the node run's card in intervention, or None. A failed read
+    tells none; the run read goes on."""
+    try:
+        return node_approval.intervention(flow_id, row)
+    except Exception:  # noqa: BLE001 — the run read goes on
+        _log.warning("graph intervention read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+        return None
 
 
 def approval_wait_reason(flow_id: str, row: dict) -> Optional[str]:

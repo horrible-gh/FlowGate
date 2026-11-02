@@ -29,6 +29,14 @@ card. These cases use a prepared worktree attempt (its ``input_commit`` and mode
 them) whose result is a real commit on its own branch, merged by the real ``result_merge._merge`` (``git merge
 --no-ff``) into a real group repository; the group's Git lock, branch merge claim and worktree cleanup are stubbed.
 
+flowgate.v02.0119 T#3 (T-2): no person approves a card any more — the card approval route answers 409
+``needs_intervention`` and the run waits ``needs_intervention`` (no longer ``waiting_approval``). The decision these cases
+make on the idle run is now the card's automatic completion after its intervention — a re-review requested after a memo
+that passed (``card_settings.legacy_adapter.approve``, the T-1 completion; local ``_approve``) — whose propagation the
+idle run takes exactly as it took a person's approval (``frontier.defers``, ``command.wake_approval``). The test names
+keep their 0083 wording. The ``reported`` wait is a run idle before T-2 too: its stored ``waiting_approval`` is read as
+``needs_intervention`` (``settle.reason_as_read``), never converted.
+
 On the card settings suites' real SQLite DB, routes and fixtures (``test_fg_card_settings``,
 ``test_fg_card_settings_review``, ``test_fg_card_approval_0056``, ``test_fg_wp_ai_run_0083``). A paused or stopped
 run with a card in review cannot be reached through the routes alone (Stop / Pause need a running run, and a Stop takes
@@ -50,7 +58,7 @@ from test_fg_card_settings_review import (
     _admin_and_reviewer, _executions_ended, _node, _result, _review_status, _run_ended,
 )
 from test_fg_card_approval_0056 import (  # noqa: F401 — card_approval_port: registered as startup does
-    LEE, _approve, _chain, _current, _human_result, _run_id, _v01_approve, card_approval_port,
+    LEE, _chain, _current, _human_result, _run_id, _v01_approve, card_approval_port,
 )
 from test_fg_wp_ai_run_0083 import _cards, _register, _run_status, _start_ai_run
 # flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
@@ -69,6 +77,26 @@ def _begin(env, cards, mode=None):
     started = env["client"].post(f"/api/v1/flows/{FA}/runs", json=body, headers=_h())
     assert started.status_code == 201, started.text
     return keys
+
+
+@pytest.fixture(autouse=True)
+def no_document_gates(monkeypatch):
+    """The automatic completion's read-only document gates (body / test gate) pass: the person's results here have no
+    file."""
+    from flowgate.card_settings import legacy_adapter
+
+    monkeypatch.setattr(legacy_adapter, "completion_gates", lambda doc: None)
+
+
+def _approve(env, key, body=None):
+    """flowgate.v02.0119 T#3 (T-2): the card's automatic completion of its result on the idle run (a re-review requested
+    after a memo that passed), as the card stage makes it (T-1) — no person's card approval. -> ``{"run": …}`` read
+    after it."""
+    from flowgate.card_settings import legacy_adapter
+
+    result = (body or {}).get("result_doc_id") or _node(env, key)[1]
+    assert legacy_adapter.approve(FA, result, "u_kim", legacy_adapter.AUTOMATION, node_key=key) is True
+    return {"run": _current(env)}
 
 
 def _seq(env):
@@ -112,7 +140,7 @@ def _person_waits(env, cards, mode=None, wait="command_chain"):
     """R -> t1 (a person's card) -> … with t1's result registered: the run idle, t1 awaiting its approval."""
     _admin_and_reviewer(env)
     keys = _begin(env, cards, mode)
-    assert _run_status(env) == ("idle", "waiting_approval")       # 0083 T#2: a person writes t1
+    assert _run_status(env) == ("idle", "needs_intervention")       # 0083 T#2: a person writes t1
     if wait == "reported":
         _reported(env)
     result = _human_result(env, keys[0])
@@ -138,7 +166,9 @@ def test_a_person_s_approval_on_an_idle_run_opens_the_next_ai_card_and_creates_i
     assert _review_status(result) == "approved" and _propagations(env, t1) == ["done"]
     assert [j["node_key"] for j in env["jobs"]] == [t2]                 # the AI card's job is created
     assert _run_status(env) == ("running", None)                        # its execution keeps the run working
-    assert _run_events_after(env, seq) == [("idle", "running", "work_resumed", "approval")]
+    # 0119 T-2: the automatic completion records its authority first (B-4), then the idle run is woken
+    assert _run_events_after(env, seq) == [("idle", "idle", "auto_approval_authority", "system"),
+                                           ("idle", "running", "work_resumed", "approval")]
     assert commands == []
 
 
@@ -155,8 +185,9 @@ def test_a_person_s_approval_on_an_idle_run_opens_the_next_person_s_card_and_the
     issued = _sql(env["db"], "SELECT t.issued_to, t.provider_id FROM tokens t JOIN graph_run_token_map m "
                              "ON m.token_id = t.token_id WHERE m.node_key = ?", (t2,))
     assert issued == [{"issued_to": "u_lee", "provider_id": None}]
-    assert _run_status(env) == ("idle", "waiting_approval")             # woken, then idle again: nothing works
-    assert _run_events_after(env, seq) == [("idle", "running", "work_resumed", "approval"),
+    assert _run_status(env) == ("idle", "needs_intervention")             # woken, then idle again: nothing works
+    assert _run_events_after(env, seq) == [("idle", "idle", "auto_approval_authority", "system"),     # 0119 T-2 (B-4)
+                                           ("idle", "running", "work_resumed", "approval"),
                                            ("running", "idle", "run_idle", None)]
     assert commands == []
 
@@ -183,11 +214,14 @@ def test_the_last_card_s_approval_on_an_idle_run_completes_it_revised_0061_t2(pr
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result registered at its opening waits for a person's [승인] (0083 WP-3 / 0061 T#2 scenes); an assigned person RUN card writes its instruction first and its result is approved by the system (L-2 §2.7, T §6.4) — test_fg_ai_roles_l2_assignment.py::test_g2_*
-@pytest.mark.parametrize("wait, before_resume", [("command_chain", "open"), ("reported", "pending")])
+@pytest.mark.parametrize("wait, before_resume", [("command_chain", "pending"), ("reported", "pending")])
 def test_with_the_0061_t2_rule_the_reported_wait_needed_a_resume(pre_feature_attempts, env, decided, monkeypatch, wait, before_resume):
     """What is revised: with the 0061 T#2 ``defers`` (every run not running waits) only a wait whose command its events
     prove went on (``command.resume_approval``, 0083 T#2); the reported wait left the next card pending after the
-    approval, and only the next resume opened it — the reported "a person approves, then resumes"."""
+    approval, and only the next resume opened it — the reported "a person approves, then resumes".
+    flowgate.v02.0119 T#3 (T-2): ``command.resume_approval`` wakes a confirm wait only (``waiting_confirm``), so a card's
+    ``needs_intervention`` wait is never that command chain's either: under the old rule both waits need the resume; the
+    revised ``defers`` (the cases above) moves both on at once."""
     from modules.flow_gate.graph_workflow.domain import frontier
 
     monkeypatch.setattr(frontier, "defers", lambda s: s.status != "running")      # the rule before the revision
@@ -396,7 +430,7 @@ def _person_waits_on_code(env, tree, cards, mode=None, wait="command_chain"):
 
     _admin_and_reviewer(env)
     keys = _begin(env, cards, mode)
-    assert _run_status(env) == ("idle", "waiting_approval")
+    assert _run_status(env) == ("idle", "needs_intervention")
     attempt_id, commit = _prepared_worktree(env, tree, keys[0])
     assert result_merge.needs_integration(workspace.attempt(attempt_id))     # its approval waits for the merge
     if wait == "reported":

@@ -109,7 +109,7 @@ def _person_wp(env, review_count=1, card=("WP", LEE)):
     key, t2 = _cards(env, [card, ("T", AI)], {0: settings} if settings else None)
     _start(env)
     assert env["jobs"] == [] and _node(env, key) == ("open", None)
-    assert _run_status(env) == ("idle", "waiting_approval")
+    assert _run_status(env) == ("idle", "needs_intervention")
     return key, t2
 
 
@@ -355,7 +355,7 @@ def test_2_a_rejected_wp_is_resubmitted_reviewed_again_and_approved_with_no_ai_r
     assert len(reviews) == 1                                             # no AI rework job
     assert [r["kind"] for r in _ledger(env)] == ["review"]               # no rework execution requested
     assert _node(env, wp) == ("review", doc)                             # a rejection is no node event
-    assert _node_run(env, wp)["awaiting_approval"] is True              # a person may approve it meanwhile
+    assert _node_run(env, wp)["intervention"]["kind"] == "needs_intervention"              # a person may approve it meanwhile
     assert _node(env, t2)[0] == "pending"
     if resubmit == "mark_revised":
         _mark_revised(doc)
@@ -692,10 +692,13 @@ def test_6_review_none_waits_for_a_person_when_the_issuer_lacks_document_approve
     doc = _submit(env, wp, 81)
     assert transitions == []                                             # nothing tried
     assert (_node(env, wp), _review_status(doc)) == (("review", doc), "pending_review")
-    assert _node_run(env, wp)["awaiting_approval"] is True and _node(env, t2)[0] == "pending" and env["jobs"] == []
-    assert _run_status(env) == ("idle", "waiting_approval")
-    _approve(env, wp, user="u_lee")                                      # a person's approval of the card
-    assert _node(env, wp) == ("done", doc) and _node(env, t2)[0] == "open"
+    shown = _node_run(env, wp)
+    assert shown["intervention"] == {"kind": "needs_intervention", "reason": "issuer_lacks_approve"}
+    assert _node(env, t2)[0] == "pending" and env["jobs"] == []
+    assert _run_status(env) == ("idle", "needs_intervention")
+    # flowgate.v02.0119 T#3 (T-2): no person approves the card any more (a person's card approval moved it on before)
+    assert _approve(env, wp, expect=409, user="u_lee")["error"]["code"] == "needs_intervention"
+    assert _node(env, wp) == ("review", doc) and _node(env, t2)[0] == "pending"
 
 
 def test_6_a_stop_waits_for_the_review_none_approval_in_flight_on_an_idle_run(env, decided, reviews, monkeypatch):
@@ -762,7 +765,7 @@ def test_6_a_passed_review_waits_for_a_person_when_the_issuer_lacks_document_app
                         lambda u: {"document.read"} if (u or {}).get("user_id") == "u_kim" else real(u))
     _loop_ended(run)
     assert (_node(env, wp), _review_status(doc)) == (("review", doc), "pending_review")
-    assert _node_run(env, wp)["awaiting_approval"] is True and _node(env, t2)[0] == "pending"
+    assert _node_run(env, wp)["intervention"]["kind"] == "needs_intervention" and _node(env, t2)[0] == "pending"
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person's RUN result waited for a person's [승인]; assigned: manual judgement and the system's approval (T §6.4, G-2)
@@ -774,7 +777,7 @@ def test_6_a_person_s_run_card_still_waits_for_a_person_s_approval(pre_feature_a
     doc = _result(81, "T")
     v01_contact.after_inbox_registered(FA, doc, "T", _token(env, key))
     assert reviews == [] and (_node(env, key), _review_status(doc)) == (("review", doc), "pending_review")
-    assert _node_run(env, key)["awaiting_approval"] is True and _node(env, t2)[0] == "pending"
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention" and _node(env, t2)[0] == "pending"
 
 
 # ── 7. the engine: loops with a rework AI unchanged; no rework AI: stop ──────
@@ -1023,6 +1026,6 @@ def test_the_card_registers_the_person_result_port_and_without_it_the_graph_hand
         wp, _t2 = _person_wp(env)
         doc = _submit(env, wp, 81)
         assert reviews == [] and _node(env, wp) == ("review", doc)       # as before WP-4: a person approves
-        assert _node_run(env, wp)["awaiting_approval"] is True
+        assert _node_run(env, wp)["intervention"]["kind"] == "needs_intervention"
     finally:
         ports.register(ports.PERSON_RESULT, review_stage.person_result)

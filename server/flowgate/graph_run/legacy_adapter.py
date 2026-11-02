@@ -11,6 +11,8 @@ step applied: the idle reason ``hold``) and the Canvas refresh signal (``canvas_
 flowgate.v02.0113 T#5 (the command result, ``command_result``): the run row and its event log as stored, the run / node
 status event types, the Flow's card titles, an ended AI run's durable row and the run event each execution request
 was made at (``execution_anchors``) — reads only.
+flowgate.v02.0119 T#3 (T-2): the node's intervention state (``node_approval.intervention``: ``needs_intervention`` /
+``system_error`` of a general card in review that nothing completes) — no card awaits a person's approval any more.
 """
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ from modules.flow_gate.graph_workflow.store import run_store, title_store
 __all__ = ["MODE_FULL", "MODE_STEP", "RUNNING", "PAUSED", "IDLE", "GATE_NODE_TYPE", "AI_RUNNING", "NO_RESULT",
            "Decision", "PolicySnapshotUnavailable", "PolicyUndecided", "apply_decision", "command_candidates",
            "emit_run_status", "read_run_state", "node_runs", "completion_policy", "refusal", "awaiting_approval",
+           "intervention", "NEEDS_INTERVENTION", "SYSTEM_ERROR",
            "set_run_status", "set_idle_reason", "set_run_command", "GraphApiError", "active_run", "load_context",
            "emit_node_state", "run_candidates", "publish_canvas_changed", "RUN_STATUS_EVENT", "NODE_STATE_EVENT",
            "run_by_id", "run_events", "node_titles", "ai_run_row", "execution_anchors"]
@@ -40,6 +43,7 @@ RUNNING, PAUSED, IDLE = run_store.RUNNING, run_store.PAUSED, run_store.IDLE
 RUN_STATUS_EVENT, NODE_STATE_EVENT = run_event_types.RUN_STATUS, run_event_types.NODE_STATE
 GATE_NODE_TYPE = node_approval.GATE_NODE_TYPE
 AI_RUNNING, NO_RESULT = node_approval.AI_RUNNING, node_approval.NO_RESULT
+NEEDS_INTERVENTION, SYSTEM_ERROR = node_approval.NEEDS_INTERVENTION, node_approval.SYSTEM_ERROR    # 0119 T-2
 
 
 def active_run(flow_id: str):
@@ -61,6 +65,11 @@ def refusal(flow_id: str, row: dict, node_type):
 
 def awaiting_approval(flow_id: str, row: dict, node_type) -> bool:
     return node_approval.awaiting_approval(flow_id, row, node_type)
+
+
+def intervention(flow_id: str, row: dict, node_type):
+    """0119 T-2: ``{"kind", "reason"}`` of a general card in review that nothing completes, else None."""
+    return node_approval.intervention(flow_id, row, node_type)
 
 
 def set_run_status(run_id: str, expected: str, status: str, idle_reason=None) -> int:

@@ -223,7 +223,7 @@ def test_start_waits_idle_at_the_gate_and_its_confirm_opens_what_follows_up_to_c
                                   "WHERE run_id = ? AND policy_key = 'gate_node'", (run_id,))
     assert entries == [{"policy_value": "human_confirm_v1", "impl_version": "1"}]
     current = _current(product)
-    assert (current["status"], current["idle_reason"]) == ("idle", "waiting_approval")
+    assert (current["status"], current["idle_reason"]) == ("idle", "waiting_confirm")     # 0119 T-2: the confirm wait
     nodes = _nodes(current)
     assert (nodes[g]["status"], nodes[t]["status"]) == ("open", "pending")
     wire = nodes[g]["gate"]

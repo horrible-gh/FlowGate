@@ -32,6 +32,10 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
                      was not made (the latest B-1 reason recorded for it), or None
     reconcile_stage  a run read and a Resume, outside every Flow guard (flowgate.v02.0105 T#2 B-3): the AI cards whose
                      run-end stage was lost are followed once (an automatic approval only as the run end makes it)
+    intervention     the node judgement and a run read (flowgate.v02.0119 T#3, T-2): ``{"kind", "reason"}`` of a general
+                     card in review that nothing completes — ``needs_intervention`` (its automatic rework ended without a
+                     completion: a memo rework / re-review or the Time Machine moves it) or ``system_error`` (its
+                     automatic completion path failed: retried by ``reconcile_stage``) — never a person's approval
 
 ``run_settings`` answers a dict; every key is optional and an absent key keeps the existing default:
 
@@ -66,7 +70,7 @@ flowgate.v02.0113 T#3 (L-2): the stage assignments of a role card's attempt, kep
 * With no handler registered ``run_settings`` answers ``{}``, ``result_type`` None,
   ``ai_working`` False, ``instruction_document`` ``{}``, ``approve_instruction`` False and ``node_running``
   False, so a node starts and binds exactly as it did before (one stage); ``approval_wait_reason`` None and
-  ``reconcile_stage`` does nothing.
+  ``reconcile_stage`` does nothing; ``intervention`` answers ``needs_intervention`` with the latest recorded reason.
 * A handler exception propagates: the callers run inside a run step's Flow guard or a run read.
 * One handler per port. Registering again replaces it (startup may run more than once in a process).
 """
@@ -97,10 +101,12 @@ STAGE_UNREADABLE = "unreadable"     # ``stage_waits``: the node's assignment cou
 INSTRUCTION_SAVED = "instruction_saved"
 STAGE_FAILED = "stage_failed"
 RESULT_REVIEW_PENDING = "result_review_pending"                  # 0038-T T#3 A-4
+INTERVENTION = "intervention"                                    # flowgate.v02.0119 T#3 (T-2)
+INTERVENTION_NEEDED = "needs_intervention"                       # the default kind (no handler, an unknown answer)
 PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING,
               PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE, CARDS_CREATED, STAGE_DISPATCH, STAGE_RESULT_START,
               STAGE_NEEDS_DISPATCH, STAGE_RETRY, STAGE_VIEW, STAGE_WAITS, INSTRUCTION_SAVED, STAGE_FAILED,
-              RESULT_REVIEW_PENDING)
+              RESULT_REVIEW_PENDING, INTERVENTION)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -224,6 +230,17 @@ def reconcile_stage(flow_id: str) -> None:
     handler = _handler(RECONCILE_STAGE)
     if handler is not None:
         handler(flow_id)
+
+
+def intervention(flow_id: str, row: dict) -> dict:
+    """flowgate.v02.0119 T#3 (T-2): ``{"kind": needs_intervention | system_error, "reason": …}`` of the node run ``row``,
+    a general card in review that nothing completes (``node_approval.intervention`` judged that). No handler:
+    ``needs_intervention`` with the latest recorded reason (``approval_wait_reason``) — never a person's approval."""
+    handler = _handler(INTERVENTION)
+    if handler is None:
+        return {"kind": INTERVENTION_NEEDED, "reason": approval_wait_reason(flow_id, row)}
+    found = handler(flow_id, row)
+    return dict(found) if isinstance(found, dict) else {"kind": INTERVENTION_NEEDED, "reason": None}
 
 
 # ── stage assignments (flowgate.v02.0113 T#3) ────────────────────────────────

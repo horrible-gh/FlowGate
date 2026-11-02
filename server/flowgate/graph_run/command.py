@@ -57,7 +57,9 @@ def record_step_targets(ctx, mode: str, decision) -> None:
 def _waiting_command(ctx) -> bool:
     """Prove the idle wait belongs to an unfinished command, using its durable status events.
 
-    An idle reason can change on a read, so waiting_approval alone is not execution intent.
+    An idle reason can change on a read, so waiting_confirm alone is not execution intent. 0119 T-2: only a confirm
+    wait counts (``waiting_confirm``, or ``waiting_approval`` stored before T-2 — the caller judged the run's reason as
+    read, ``settle.reason_as_read``); a ``needs_intervention`` wait is woken by its own memo rework / re-review request.
     A review explicitly requested during that wait may have woken the run; trace only such
     waiting/working pairs back to a command. Stop, Pause, a completed step, and Time Machine
     break the chain. No command is reconstructed from an old run_mode alone.
@@ -78,7 +80,7 @@ def _waiting_command(ctx) -> bool:
                 engine.RUNNING, engine.IDLE, "run_idle"):
             return False
         payload = json.loads(waiting["payload_json"])
-        if payload.get("idle_reason") != "waiting_approval" or payload.get("mode") != ctx.run.get("run_mode"):
+        if payload.get("idle_reason") not in _confirm_waits() or payload.get("mode") != ctx.run.get("run_mode"):
             return False
         if started["to_status"] != engine.RUNNING:
             return False
@@ -97,8 +99,13 @@ def resume_approval(ctx, decision) -> bool:
 
     0083 WP-3 (0061 T#2 개정): only a run ``approval_wakes`` admits — a stopped run and one under a Time Machine operation
     are not woken here either (their propagation waits for the next command), as ``wake_graph_run``.
+    0119 T-2: only a run idle ``waiting_confirm`` (its reason as read: a stored ``waiting_approval`` with a gate open for
+    its decision) — never ``needs_intervention``.
     """
-    if ctx.run.get("idle_reason") != "waiting_approval" or not approval_wakes(ctx):
+    from flowgate.graph_run import settle
+    if ctx.run.get("idle_reason") not in settle.CONFIRM_WAITS or not approval_wakes(ctx):
+        return False
+    if settle.reason_as_read(ctx) != settle.IDLE_WAITING_CONFIRM:
         return False
     if not any(t.to_status == "done" and t.cause in ("review_approved", "gate_confirmed")
                for t in decision.node_transitions):
@@ -114,6 +121,11 @@ def resume_approval(ctx, decision) -> bool:
     ctx.run["idle_reason"] = None
     engine.emit_run_status(ctx, engine.IDLE, engine.RUNNING, "work_resumed", "approval")
     return True
+
+
+def _confirm_waits() -> tuple:
+    from flowgate.graph_run import settle
+    return settle.CONFIRM_WAITS
 
 
 def approval_wakes(ctx) -> bool:

@@ -126,10 +126,12 @@ def _attempt_of(run_id: str, node_key: str) -> str:
 def _wake(ctx) -> None:
     """An idle run whose command waited for this gate (the approval wake's own test, ``command._waiting_command``)
     goes on running while the accepted confirm's job is unfinished, so its end propagates as a running command's
-    would. Any other idle run stays idle (a stopped one waits for the next command)."""
-    from flowgate.graph_run import command
+    would. Any other idle run stays idle (a stopped one waits for the next command). flowgate.v02.0119 T#3 (T-2): the
+    confirm wait is ``waiting_confirm`` — or ``waiting_approval`` stored before T-2, read as the confirm wait of this
+    open gate (``settle.CONFIRM_WAITS``, never converted); a ``needs_intervention`` run is not this gate's wait."""
+    from flowgate.graph_run import command, settle
     run = ctx.run
-    if run.get("status") != IDLE or run.get("idle_reason") != "waiting_approval":
+    if run.get("status") != IDLE or run.get("idle_reason") not in settle.CONFIRM_WAITS:
         return
     if run.get("run_mode") not in ("full", "step") or (run["run_mode"] == "step" and run.get("step_node_keys") is None):
         return

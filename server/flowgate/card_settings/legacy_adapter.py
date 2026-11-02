@@ -1100,9 +1100,19 @@ def approval_waits(run_id: str, node_key: str, doc_id: Optional[str], attempt_id
     return found
 
 
+def stage_document(row: dict) -> Optional[str]:
+    """flowgate.v02.0119 T#3 (T-2 rework): the document the node run ``row`` waits on now — its instruction while it is
+    open in its instruction stage, else its result (the B-1 of either is recorded with that document)."""
+    if row.get("status") == OPEN_NODE_STATUS and row.get("stage") == "instruction":
+        return row.get("instruction_doc_id")
+    return row.get("result_doc_id")
+
+
 def approval_wait_reason(flow_id: str, row: dict) -> Optional[str]:
-    """B-2: the latest B-1 reason of the node run ``row``'s result (its current attempt), or None."""
-    doc_id = row.get("result_doc_id")
+    """B-2: the latest B-1 reason of the node run ``row``'s current document (its current attempt), or None.
+    flowgate.v02.0119 T#3 (T-2 rework): the document of its current stage (``stage_document``) — its instruction while
+    it is open in its instruction stage, else its result."""
+    doc_id = stage_document(row)
     if not doc_id or not row.get("run_id"):
         return None
     reasons = approval_waits(row["run_id"], row["node_key"], doc_id, run_store.active_attempt_id(row["run_id"], row["node_key"]))
@@ -1339,6 +1349,19 @@ def set_dispatch_error(run_id: str, node_key: str, error_code: str) -> None:
         return
     run_store.set_dispatch(run_id, node_key, {**(run_apply.dispatch_block(row) or {"token_issued": True}),
                                               "error_code": error_code})
+
+
+def clear_dispatch_error(run_id: str, node_key: str, error_codes) -> None:
+    """flowgate.v02.0119 T#3 (T-2 rework): the open node run keeps its dispatch and its error is cleared — only when it
+    is one of ``error_codes`` (the error a failed instruction review start recorded, its retry started the review)."""
+    from modules.flow_gate.graph_workflow.services import run_apply  # noqa: PLC0415
+
+    row = node_run(run_id, node_key)
+    if row is None or row["status"] != OPEN_NODE_STATUS or row.get("dispatch_error_code") not in set(error_codes):
+        return
+    block = dict(run_apply.dispatch_block(row) or {"token_issued": True})
+    block.pop("error_code", None)
+    run_store.set_dispatch(run_id, node_key, block)
 
 
 def fill_line(ctx, node_key: str, doc_id: str) -> None:

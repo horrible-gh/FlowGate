@@ -122,8 +122,8 @@ def test_a_card_whose_ai_question_waits_after_its_responder_failed_is_a_person_s
     execs = len(_executions(env))
 
     run = _step(env)                                             # [다음 단계]
-    assert (run["status"], run["idle_reason"]) == ("idle", "waiting_approval")
-    assert _current(env)["idle_reason"] == "waiting_approval"   # a read settles it the same
+    assert (run["status"], run["idle_reason"]) == ("idle", "needs_intervention")
+    assert _current(env)["idle_reason"] == "needs_intervention"   # a read settles it the same
     assert env["jobs"] == [] and len(_executions(env)) == execs  # no AI start, no execution request
     assert _review_status(instruction) == "pending_review"       # nothing approved it
     assert questions["responders"] == [(901, "aip_review")]      # the failed responder is not asked again
@@ -166,9 +166,12 @@ def test_a_pre_feature_instruction_nobody_judges_is_a_person_s_wait_and_the_read
                       _sql(env["db"], "SELECT doc_id, doc_review_status, revision_no FROM documents ORDER BY doc_id"))
     wire = _wire(detail.json()["run"], key)
     assert (wire["stage"], wire["instruction_doc_id"], wire["stage_assignments"]) == ("instruction", instruction, [])
+    # flowgate.v02.0119 T#3 (T-2 rework): its review that did not start is a system error of the instruction stage —
+    # the node run tells it and the run is in its error family, never a person's wait
+    assert wire["intervention"] == {"kind": "system_error", "reason": "review_not_started"}
 
     run = _step(env)                                             # [다음 단계]
-    assert (run["status"], run["idle_reason"]) == ("idle", "waiting_approval")
+    assert (run["status"], run["idle_reason"]) == ("idle", "error")
     assert env["jobs"] == [] and _review_status(instruction) == "pending_review"
     assert node_run(env, key)["stage"] == "instruction"
 
@@ -190,7 +193,7 @@ def test_an_approved_instruction_whose_result_stage_was_lost_starts_it_once_neve
         _current(env)
     if asked:                                                    # its questions first (0111): nothing starts
         assert env["jobs"] == [] and node_run(env, key)["stage"] == "instruction"
-        assert _current(env)["idle_reason"] == "waiting_approval"
+        assert _current(env)["idle_reason"] == "needs_intervention"
         return
     [job] = env["jobs"]
     assert (job["stage"], job["ref_doc_ids"]) == ("result", [instruction])
@@ -227,7 +230,7 @@ def test_not_used_roles_go_on_without_a_person_s_approval_once_the_content_is_sa
     for blank in ("", "   \n\t\n"):                             # nothing written: the manual write wait stays
         _write_written(instruction, blank)
         run = _step(env)
-        assert run["idle_reason"] == "waiting_approval" and node_run(env, key)["stage"] == "instruction"
+        assert run["idle_reason"] == "needs_intervention" and node_run(env, key)["stage"] == "instruction"
         assert _wire(_current(env), key)["wait_reason"]["code"] == "manual_write_wait"
     _write_written(instruction, BODY)                            # saved, its contact lost: the read judges it
     _submitted(instruction)
@@ -253,9 +256,13 @@ def test_an_unreadable_instruction_review_setting_waits_with_its_cause_and_appro
     instruction = save_instruction(env, key)
     ir = one(env, key, "instruction_review", 1)
     assert (ir["actor"], ir["actor_reason"]) == ("wait_setup", "setting_unreadable")
-    assert _current(env)["idle_reason"] == "waiting_approval"   # the wait, never "nothing to run"
-    wait = _wire(_current(env), key)["wait_reason"]
+    # flowgate.v02.0119 T#3 (T-2 rework): its ``review_result_unknown`` is a system error — the error family (never
+    # "nothing to run", never a person's wait), the setting read again by the reads up to the limit
+    assert _current(env)["idle_reason"] == "error"
+    wire = _wire(_current(env), key)
+    wait = wire["wait_reason"]
     assert (wait["code"], wait["role"]) == ("ai_setup_required", "review")
+    assert wire["intervention"] == {"kind": "system_error", "reason": "review_result_unknown"}
 
     # [다음 단계]: the explicit command opens the waiting attempt again (L-2 §2.10 REOPEN_NEW_ATTEMPT); the new attempt
     # reuses the written instruction, whose review the same setting keeps waiting — and once that post-commit step is
@@ -264,19 +271,21 @@ def test_an_unreadable_instruction_review_setting_waits_with_its_cause_and_appro
     [active] = _sql(env["db"], "SELECT attempt_id FROM graph_node_attempts WHERE node_key = ? AND status = 'active'",
                     (key,))
     assert active["attempt_id"] != ir["attempt_id"]
-    [again] = [a for a in assignments(env, key)
-               if a["attempt_id"] == active["attempt_id"] and a["stage"] == "instruction_review"]
-    assert (again["actor"], again["actor_reason"], again["basis_doc_id"]) == ("wait_setup", "setting_unreadable",
-                                                                              instruction)
+    agains = [a for a in assignments(env, key)
+              if a["attempt_id"] == active["attempt_id"] and a["stage"] == "instruction_review"]
+    again = max(agains, key=lambda a: a["seq"])
+    assert all((a["actor"], a["actor_reason"], a["basis_doc_id"]) == ("wait_setup", "setting_unreadable", instruction)
+               for a in agains)
     # the command's answer itself (the client puts it in its run state at once): the wait of the new attempt, its
-    # review assignment and its cause — never the ``no_targets`` it told before its post-commit step had run
-    assert (run["status"], run["idle_reason"]) == ("idle", "waiting_approval")
+    # review assignment and its cause — never the ``no_targets`` it told before its post-commit step had run; its
+    # ``review_result_unknown`` is the error family (0119 T-2 rework)
+    assert (run["status"], run["idle_reason"]) == ("idle", "error")
     wire = _wire(run, key)
     assert wire["attempt_id"] == active["attempt_id"]
-    [shown] = [x for x in wire["stage_assignments"] if x["stage"] == "instruction_review"]
-    assert (shown["actor"], shown["actor_reason"], shown["seq"]) == ("wait_setup", "setting_unreadable", again["seq"])
+    shown = max((x for x in wire["stage_assignments"] if x["stage"] == "instruction_review"), key=lambda x: x["seq"])
+    assert (shown["actor"], shown["actor_reason"]) == ("wait_setup", "setting_unreadable")
     assert (wire["wait_reason"]["code"], wire["wait_reason"]["role"]) == ("ai_setup_required", "review")
-    assert (_run_row(env)["status"], _run_row(env)["idle_reason"]) == ("idle", "waiting_approval")
+    assert (_run_row(env)["status"], _run_row(env)["idle_reason"]) == ("idle", "error")
     assert _review_status(instruction) != "approved" and starts == [] and env["jobs"] == []
 
 
@@ -289,7 +298,7 @@ def test_a_card_waiting_for_its_ai_setup_is_no_no_targets(env, decided, starts):
     run = _step(env)
     ia = one(env, key, "instruction")
     assert ia["actor"] == "wait_setup"
-    assert run["idle_reason"] == "waiting_approval"
+    assert run["idle_reason"] == "needs_intervention"
     assert _wire(_current(env), key)["wait_reason"]["code"] == "ai_setup_required"
     assert starts == [] and env["jobs"] == []
     assert _sql(env["db"], "SELECT * FROM user_ai_role_defaults") == []
@@ -532,12 +541,26 @@ def test_a_submission_without_its_review_assignment_whose_setting_is_unreadable_
         assert (a["actor"], a["actor_reason"]) == ("wait_setup", "setting_unreadable")
     else:
         assert (a["actor"], a["source"]) == ("wait_setup", "store_error")
-    assert run["idle_reason"] == "waiting_approval"              # a wait with its cause, never "nothing to run"
+    # a wait with its cause, never "nothing to run"; flowgate.v02.0119 T#3 (T-2 rework): the instruction's
+    # ``review_result_unknown`` is a system error (the error family), the result's store error a setup wait
+    assert run["idle_reason"] == ("error" if stage == "instruction" else "needs_intervention")
     wait = _wire(run, key)["wait_reason"]
     assert (wait["code"], wait["role"]) == ("ai_setup_required", "review")
     assert stage == "instruction" or wait["detail"] == "store_error"
     before = assignments(env, key)
     run = _again(env, key, stage, doc_id)
-    assert assignments(env, key) == before and run["idle_reason"] == "waiting_approval"
+    if stage == "instruction":                                   # read again up to the limit, then never
+        reviews = [a for a in assignments(env, key) if a["stage"] == review]
+        assert [(a["seq"], a["actor"], a["actor_reason"], a["stage_state"]) for a in reviews] == \
+            [(1, "wait_setup", "setting_unreadable", "failed"), (2, "wait_setup", "setting_unreadable", "failed"),
+             (3, "wait_setup", "setting_unreadable", "waiting")]
+        assert run["idle_reason"] == "error"
+        assert _wire(run, key)["intervention"] == {"kind": "system_error", "reason": "review_result_unknown"}
+        after = assignments(env, key)
+        _current(env)
+        assert assignments(env, key) == after
+    else:
+        assert assignments(env, key) == before and run["idle_reason"] == "needs_intervention"
+        assert _wire(run, key)["intervention"] == {"kind": "needs_intervention", "reason": "completion_missing"}
     assert _review_status(doc_id) == "pending_review"            # nothing approved it, no person's approval added
     assert launches["requests"] == [] and launches["spawns"] == [] and env["jobs"] == []

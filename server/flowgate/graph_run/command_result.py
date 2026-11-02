@@ -61,6 +61,9 @@ ROOT_BOUND_CAUSE = "root_bound_start"
 TIME_MACHINE_CAUSE = "graph_time_machine"
 WORK_RESUMED = "work_resumed"
 WAITING_APPROVAL, STOPPED_REASON, COMPLETED_REASON = "waiting_approval", "stopped", "completed"
+# flowgate.v02.0119 T#3 (T-2): a person's wait is a confirm (``waiting_confirm``) or a card's intervention
+# (``needs_intervention``); ``waiting_approval`` is the value stored before T-2, read the same way.
+PERSON_WAIT_REASONS = ("waiting_confirm", "needs_intervention", WAITING_APPROVAL)
 HOLD_CAUSES = ("hold_set", "hold_released")             # a person's Hold setting: a refresh signal, no work
 STAGE_ASSIGNED, STAGE_FAILED, APPROVAL_SKIPPED = "stage_assigned", "stage_failed", "auto_approval_skipped"
 PERSON_APPROVAL_WAITS = ("issuer_lacks_approve",)       # a person's work plan result waits for its person (0083 WP-4)
@@ -163,7 +166,7 @@ def command_window(events: list[dict], start: int) -> Window:
             window.status = event.get("to_status")
             if window.status == engine.IDLE:
                 data = _payload_of(event)
-                person_wait = data.get("idle_reason") == WAITING_APPROVAL and data.get("mode") == mode
+                person_wait = data.get("idle_reason") in PERSON_WAIT_REASONS and data.get("mode") == mode
                 stopped = data.get("idle_reason") == STOPPED_REASON
                 linked = False
             continue

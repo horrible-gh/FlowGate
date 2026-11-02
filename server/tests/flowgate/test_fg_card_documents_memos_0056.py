@@ -359,12 +359,11 @@ def test_a_person_s_result_on_a_running_card_binds_through_its_dispatch_token_an
     assert consumed is not None
     assert [json.loads(r["metadata"])["doc_id"] for r in _sql(
         env["db"], "SELECT metadata FROM workflow_events WHERE event_type = 'token_consumed'")] == [result]
-    assert _node_run(env, key)["awaiting_approval"] is True                              # a person approves the card
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"                              # a person approves the card
     assert _review_status(result) == "pending_review"
-    approved = _approve(env, key, body={"result_doc_id": result})
-    assert approved["approval"]["approved_doc_ids"] == [result] and _node(env, key) == ("done", result)
-    # the node is done: its lines are a person's to edit, the report line keeps the card's draft
-    assert _write(env, FA, key, "report", "x", expect=409)["error"]["code"] == "slot_has_document"
+    # flowgate.v02.0119 T#3 (T-2): no person approves the card any more — it needs intervention and stays in review
+    refused = _approve(env, key, 409, body={"result_doc_id": result})["error"]
+    assert refused["code"] == "needs_intervention" and _node(env, key) == ("review", result)
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: the pre-feature dispatch error ai_invoke_failed; an assigned attempt records ai_unavailable:start_failed (P-1 C-2)
@@ -380,7 +379,7 @@ def test_a_person_s_result_on_an_ai_card_whose_ai_failed_awaits_approval(pre_fea
     calls = _recorded_start_run(monkeypatch)
     made = _write(env, FA, key, "report", "## Report\n\nwritten by a person\n")
     assert made["bound_as_result"] is True and _node(env, key) == ("review", made["doc_id"])
-    assert _node_run(env, key)["awaiting_approval"] is True and calls == []      # no AI review, no approval
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention" and calls == []      # no AI review, no approval
     assert _review_status(made["doc_id"]) == "pending_review"
 
 
@@ -457,7 +456,7 @@ def test_two_result_writes_at_once_register_one_result_and_spend_the_token_once(
         env["db"], "SELECT metadata FROM workflow_events WHERE event_type = 'token_consumed'")] == [
         {"token_id": token, "doc_id": result}]
     assert _line_doc(env, FA, key, "instruction") == {"doc_id": result, "owned": 0}
-    assert _node_run(env, key)["awaiting_approval"] is True
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: the report line is the result path at the opening of a person card; assigned: after the instruction stage (T-2 race: test_fg_ai_roles_l2_fixes.py::test_t2_a_lost_token_race_*)
@@ -513,7 +512,7 @@ def test_a_person_s_result_takes_a_line_that_has_no_stored_row(pre_feature_attem
     assert _line_doc(env, FA, key, "instruction") == {"doc_id": result, "owned": 0}
     assert _canvas_lines(env, FA, key)["instruction"]["doc_id"] == result
     assert _doc_row(placeholder)["superseded_by"] is None                 # no longer the line's: left as it was
-    assert _node_run(env, key)["awaiting_approval"] is True and _review_status(result) == "pending_review"
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention" and _review_status(result) == "pending_review"
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
@@ -607,7 +606,7 @@ def test_a_person_s_result_written_while_the_ai_start_holds_the_lease_stops_that
     _work_run_ended()                                                      # the run ends on its own
     assert calls == [] and approvals == []                                 # no card review, no approval
     assert _node(env, key) == ("review", result) and _review_status(result) == "pending_review"
-    assert _node_run(env, key)["awaiting_approval"] is True
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"
 
 
 def test_an_ai_start_that_mapped_its_token_first_refuses_the_person_s_result(env, decided, monkeypatch):
@@ -651,7 +650,7 @@ def test_the_ai_run_s_end_never_takes_a_result_a_person_registered_as_its_own(en
     _work_run_ended()
     assert calls == [] and approvals == []
     assert _node(env, key) == ("review", result) and _review_status(result) == "pending_review"
-    assert _node_run(env, key)["awaiting_approval"] is True
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"
 
 
 def _row_stage(env, key):

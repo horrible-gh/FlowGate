@@ -470,7 +470,7 @@ def test_r_a_person_assigned_run_card_keeps_a_person_s_writing_and_approval_revi
     [token] = _tokens(env, key)
     assert (token["provider_id"], token["issued_to"]) == (None, "u_lee")
     result = _human_result(env, key, 81, typ)
-    assert _node_run(env, key)["awaiting_approval"] is True              # nothing approves a person's result here
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"              # nothing approves a person's result here
     assert _review_status(result) == "pending_review"
 
 

@@ -131,25 +131,38 @@ def test_p1_6_3_a_result_review_wait_setup_is_shown_on_the_node_in_review(env, d
     wire = _wire(env, key)
     assert wire["wait_reason"] == {"code": "ai_setup_required", "role": "review", "stage": "result_review", "seq": 1,
                                    "detail": "none"}
-    assert wire["awaiting_approval"] is True and wire["approval_wait_reason"] is None
+    assert wire["awaiting_approval"] is False and wire["intervention"]["kind"] == "needs_intervention" and wire["approval_wait_reason"] is None
 
 
 def test_p1_6_4_the_b1_submission_mark_is_the_one_of_the_row_approval_wait_reason_shows(env, decided, monkeypatch):
+    """flowgate.v02.0119 T#3 (T-2 rework): a refused automatic approval of the instruction no longer lets the result
+    stage start behind it (it was left to a card approval that no longer exists): the card stays in its instruction
+    stage, a system error whose B-1 carries the instruction's mark, and the next read retries it. The mark shown is
+    always the one of the row ``approval_wait_reason`` reads — the instruction's in its stage, the result's after."""
     from flowgate.card_approval import legacy_adapter as approvals
+    from flowgate.card_settings import legacy_adapter
+
+    def refused(*_a, **_k):
+        raise RuntimeError("refused")
 
     key = flow(env)
     roles(key, "not_used", "not_used", "not_used")
     start(env)
     real = approvals.approve_document
-    monkeypatch.setattr(approvals, "approve_document", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("refused")))
-    save_instruction(env, key)
+    monkeypatch.setattr(approvals, "approve_document", refused)
+    instruction = save_instruction(env, key)
+    wire = _wire(env, key)
+    assert (wire["stage"], wire["approval_wait_reason"]) == ("instruction", "approval_refused")
+    assert wire["approval_wait_submission"] == {"doc_id": instruction, "revision_no": 0, "rejection_count": 0}
+    assert wire["intervention"] == {"kind": "system_error", "reason": "approval_refused"}
     monkeypatch.setattr(approvals, "approve_document", real)
+    assert _wire(env, key)["stage"] == "result"                     # the retry approved it: the result stage
+    monkeypatch.setattr(legacy_adapter, "completion_gates", refused)
     report = write_line(env, key, "report", "## 결과\n\n본문\n")["doc_id"]
     wire = _wire(env, key)
-    assert wire["approval_wait_reason"] == "instruction_not_approved"
+    assert wire["approval_wait_reason"] == "approval_refused"
     assert wire["approval_wait_submission"] == {"doc_id": report, "revision_no": 0, "rejection_count": 0}
-    assert wire["wait_reason"] == {"code": "manual_write_wait", "role": "execution", "stage": "result", "seq": 0,
-                                   "detail": None}
+    assert wire["intervention"] == {"kind": "system_error", "reason": "approval_refused"}
 
 
 # ── §7.1: the no-call stage events ───────────────────────────────────────────

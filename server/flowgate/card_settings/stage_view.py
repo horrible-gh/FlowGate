@@ -90,8 +90,9 @@ def wire(flow_id: str, row: dict, attempt_id: Optional[str], approval_wait_reaso
 
 
 def approval_wait_submission(row: dict, attempt_id: Optional[str]) -> Optional[dict]:
-    """The mark of the latest B-1 row of the node run's result — the very row ``approval_wait_reason`` reads."""
-    doc_id = row.get("result_doc_id")
+    """The mark of the latest B-1 row of the node run's current document (``legacy.stage_document``: its instruction in
+    its instruction stage, else its result) — the very row ``approval_wait_reason`` reads."""
+    doc_id = legacy.stage_document(row)
     if not doc_id:
         return None
     active = legacy.active_attempt_id(row["run_id"], row["node_key"]) or attempt_id

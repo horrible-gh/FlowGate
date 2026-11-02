@@ -36,6 +36,15 @@ idle reason ``completed`` and keeps its Flow. Two tests read the old ``completed
 
 The v0.1 AI invoke admission is replaced by a recorder; the Flow's group AI lease is stubbed where a test says
 an AI run holds it. Auth, RBAC and SSE delivery are stubbed as in the card settings tests.
+
+flowgate.v02.0119 T#3 (T-2): no person approves a card any more. A card in review that nothing completes is
+``needs_intervention`` (or a ``system_error``, ``node_approval.intervention``), ``awaiting_approval`` is always false and
+the card approval route refuses it (409 with that kind; T-3 removes the route). The cases whose premise was a person's
+card approval moving a node on were removed here (the person's approval of a result, the approval's document targets
+and order, the approval permissions, another AI run refusing it); the cases on what still holds were kept or rewritten
+to the new contract: the judgement by state, AI still working, the refusal codes, a gate decided by its own confirm, a
+rejection and a stopped AI run that move nothing (the card needs intervention), a result approved before its card's
+other documents. The T-2 contract itself is ``test_fg_card_intervention_0119`` / ``test_fg_auto_approval_0105``.
 """
 from __future__ import annotations
 
@@ -207,58 +216,31 @@ def _resume(env):
 
 # ── awaiting_approval ────────────────────────────────────────────────────────
 
-# 0113 T#3 (T §6.4) pre-feature contract: a person's RUN result waited for a person's [승인]; assigned: system approval after the manual judgement (T §6.4, G-2)
-def test_a_person_s_result_awaits_approval_and_the_card_approval_moves_the_node_on(pre_feature_attempts, env, decided):
-    _admin_and_reviewer(env)
-    t1, t2 = _chain(env, [("T", LEE), ("T", LEE)])
-    _start(env)
-    assert [_node_run(env, k)["awaiting_approval"] for k in (t1, t2)] == [False, False]   # open, pending
-    result = _human_result(env, t1)
-    assert _node_run(env, t1)["awaiting_approval"] is True                                # nothing approves it
-    body = _approve(env, t1, body={"result_doc_id": result})
-    assert body["approval"] == {"node_key": t1, "target_doc_ids": [result], "approved_doc_ids": [result]}
-    nodes = {n["node_key"]: n for n in body["run"]["node_runs"]}
-    assert (nodes[t1]["status"], nodes[t1]["awaiting_approval"], nodes[t2]["status"]) == ("done", False, "open")
-    assert _review_status(result) == "approved"
-    assert _events(env, t1).count("review_approved") == 1
-    assert _sql(env["db"], "SELECT outcome, status FROM graph_propagations WHERE node_key = ?", (t1,)) == [
-        {"outcome": "approved", "status": "done"}]
-    again = _approve(env, t1, 409)
-    assert (again["error"]["code"], again["error"]["params"]["status"]) == ("already_approved", "done")
 
-
-def test_an_ai_result_awaits_approval_only_when_no_ai_works_on_it(env, decided, monkeypatch):
+def test_an_ai_result_is_in_intervention_only_when_no_ai_works_on_it(env, decided, monkeypatch):
+    """0119 T-2 (was ``..._awaits_approval_only_when_...``): the same judgement now tells the card's intervention."""
     key, result, _token = _in_review(env, monkeypatch, (("review_count", 2), ("review_ai", "aip_review")))
     _lease(monkeypatch, WORK_RUN)                                       # the node's own AI run has not ended
-    assert _node_run(env, key)["awaiting_approval"] is False
+    assert (_node_run(env, key)["awaiting_approval"], _node_run(env, key)["intervention"]) == (False, None)
     assert _approve(env, key, 409)["error"]["code"] == "ai_running"
     _lease(monkeypatch, None)                                            # the run ended (lease released)
     _loop_row(result, "review")                                          # the card's review works on it
-    assert _node_run(env, key)["awaiting_approval"] is False
+    assert _node_run(env, key)["intervention"] is None
     assert _approve(env, key, 409)["error"]["code"] == "ai_running"
     _sql(env["db"], "UPDATE ai_invoke_document_review_loops SET current_stage = 'stopped', "
                     "stop_reason = 'review_count_exhausted', stop_detail = 'spent' WHERE run_id = ?", (REVIEW_RUN,))
-    assert _node_run(env, key)["awaiting_approval"] is True              # count spent: a person approves
-
-
-# 0113 T#3 (T §6.4) pre-feature contract: same person-card scene (no instruction stage before the result)
-def test_another_ai_run_of_the_flow_does_not_hide_the_card_but_refuses_its_approval(pre_feature_attempts, env, decided, monkeypatch):
-    _admin_and_reviewer(env)
-    (t1,) = _chain(env, [("T", LEE)])
-    _start(env)
-    result = _human_result(env, t1)
-    _lease(monkeypatch, "air_someone_else")
-    assert _node_run(env, t1)["awaiting_approval"] is True
-    refused = _approve(env, t1, 409)
-    assert (refused["error"]["code"], refused["error"]["params"]["run_id"]) == ("group_ai_running", "air_someone_else")
-    assert _review_status(result) == "pending_review"
+    shown = _node_run(env, key)                                          # count spent: it needs intervention
+    assert (shown["awaiting_approval"], shown["intervention"]["kind"]) == (False, "needs_intervention")
+    assert _approve(env, key, 409)["error"]["code"] == "needs_intervention"
 
 
 def test_the_node_approval_judgement_by_state():
     from modules.flow_gate.graph_workflow.services import node_approval as na
 
     review = {"node_key": "gn_x", "status": "review", "result_doc_id": "d"}
-    assert na.refusal("f", review) is None and na.awaiting_approval("f", review)
+    # 0119 T-2: a card in review nothing completes is in intervention, never awaiting a person's approval
+    assert na.refusal("f", review) == "needs_intervention" and not na.awaiting_approval("f", review)
+    assert na.intervention("f", review) == {"kind": "needs_intervention", "reason": None}
     assert [na.refusal("f", {"node_key": "gn_x", "status": s, "result_doc_id": None})
             for s in ("pending", "open", "done", "rejected", "closed")] == [
         "node_not_started", "no_result", "already_approved", "node_not_in_review", "node_not_in_review"]
@@ -267,34 +249,6 @@ def test_the_node_approval_judgement_by_state():
 
 
 # ── the card approval: documents, order, one node event ──────────────────────
-
-def test_the_card_approval_approves_the_instruction_first_and_only_the_result_moves_the_node_revised_0061_t2(
-        env, decided, monkeypatch):
-    from modules.flow_gate.graph_workflow.api import v01_contact
-
-    key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
-    instruction = _line_doc(env, key, "instruction")
-    assert _line_doc(env, key, "report") == result
-    _submit_written(instruction)                                         # a person wrote the work instruction
-    seq = _current(env)["last_event_seq"]
-    decided_docs = []
-    real = v01_contact.after_review_decided
-    monkeypatch.setattr(v01_contact, "after_review_decided",
-                        lambda flow, doc_id, action: decided_docs.append(doc_id) or real(flow, doc_id, action))
-    body = _approve(env, key)
-    assert body["approval"]["target_doc_ids"] == [instruction, result]
-    assert body["approval"]["approved_doc_ids"] == [instruction, result]
-    assert decided_docs == [instruction, result]                         # the v0.1 contact, instruction first
-    assert (_review_status(instruction), _review_status(result)) == ("approved", "approved")
-    assert _node(env, key) == ("done", result)
-    run = body["run"]
-    new_causes = [r["cause"] for r in _sql(env["db"], "SELECT cause FROM graph_run_events WHERE event_seq > ? "
-                                                      "AND node_key = ? ORDER BY event_seq", (seq, key))]
-    assert new_causes == ["review_approved"]                             # one node event: the result's
-    # 0061 T#2 개정 (0083 WP-3): a done run is idle with the reason ``completed`` (migration 151), and the person's
-    # approval on the idle run propagated at once (one propagation, done).
-    assert (run["status"], run["idle_reason"]) == ("idle", "completed")  # R -> T: the run is done
-    assert _sql(env["db"], "SELECT status FROM graph_propagations WHERE node_key = ?", (key,)) == [{"status": "done"}]
 
 
 def test_an_instruction_approval_makes_no_node_event(env, decided, monkeypatch):
@@ -308,35 +262,6 @@ def test_an_instruction_approval_makes_no_node_event(env, decided, monkeypatch):
                                     legacy_adapter.permissions_of("u_kim"), "ko")
     assert _review_status(instruction) == "approved"
     assert _current(env)["last_event_seq"] == before and _node(env, key) == ("review", result)
-    body = _approve(env, key)                                            # the rest: the result only
-    assert body["approval"]["approved_doc_ids"] == [result] and _node(env, key) == ("done", result)
-
-
-def test_an_untouched_instruction_draft_is_not_a_target(env, decided, monkeypatch):
-    key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
-    instruction = _line_doc(env, key, "instruction")
-    _write_body(instruction, "\n  \n\t\n")                             # front matter and blanks only
-    assert _node_run(env, key)["awaiting_approval"] is True
-    body = _approve(env, key)
-    assert body["approval"]["target_doc_ids"] == [result]
-    assert _review_status(instruction) in (None, "")                     # the card's empty draft stays as it is
-    assert _node(env, key) == ("done", result)
-
-
-def test_a_written_never_submitted_instruction_is_approved_with_the_card(env, decided, monkeypatch):
-    from modules.flow_gate.db import documents as db_documents
-
-    key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
-    instruction = _line_doc(env, key, "instruction")
-    _write_body(instruction, "\n# 지시\n\n사람이 편집창에서 쓴 지시서\n")
-    assert _review_status(instruction) in (None, "")                     # saved, never submitted
-    seq = _current(env)["last_event_seq"]
-    body = _approve(env, key)
-    assert body["approval"]["target_doc_ids"] == [instruction, result]
-    assert body["approval"]["approved_doc_ids"] == [instruction, result]
-    row = db_documents.get_by_id(instruction)
-    assert (row["doc_review_status"], row["status"]) == ("approved", "open")   # submitted, then approved
-    assert _node(env, key) == ("done", result) and _causes_after(env, key, seq) == ["review_approved"]
 
 
 def test_a_result_approved_before_its_instruction_waits_until_the_card_is_whole(env, decided, monkeypatch):
@@ -346,7 +271,7 @@ def test_a_result_approved_before_its_instruction_waits_until_the_card_is_whole(
     seq = _current(env)["last_event_seq"]
     _v01_approve(result)                                                 # v0.1: the TR first
     node_run = _node_run(env, key)                                       # the read reconciles: nothing missing
-    assert (node_run["status"], node_run["awaiting_approval"]) == ("review", True)
+    assert (node_run["status"], node_run["intervention"]["kind"]) == ("review", "needs_intervention")    # 0119 T-2
     assert _causes_after(env, key, seq) == [] and _review_status(instruction) == "pending_review"
     _v01_approve(instruction)                                            # then the T: the card is whole
     assert _node(env, key) == ("done", result)
@@ -366,27 +291,14 @@ def test_a_lost_contact_of_the_last_document_is_reconciled_by_the_next_read(env,
     assert _node(env, key) == ("done", result) and _causes_after(env, key, seq) == ["review_approved"]
 
 
-def test_the_card_approval_finishes_a_card_whose_result_was_approved_first(env, decided, monkeypatch):
-    key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
-    instruction = _line_doc(env, key, "instruction")
-    _submit_written(instruction)
-    seq = _current(env)["last_event_seq"]
-    _v01_approve(result)
-    body = _approve(env, key, body={"result_doc_id": result})            # not already_approved: the card waits
-    assert body["approval"]["target_doc_ids"] == [instruction, result]
-    assert body["approval"]["approved_doc_ids"] == [instruction]
-    assert _node(env, key) == ("done", result) and _causes_after(env, key, seq) == ["review_approved"]
-
-
 def test_an_automatic_approval_of_the_result_leaves_a_written_instruction_to_the_card(env, decided, monkeypatch):
     key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
     instruction = _line_doc(env, key, "instruction")
     _submit_written(instruction)                                         # a person wrote the instruction
     _work_run_ended()                                                    # no review: the result is approved
     assert _review_status(result) == "approved" and _node(env, key) == ("review", result)
-    assert _node_run(env, key)["awaiting_approval"] is True
-    body = _approve(env, key)
-    assert body["approval"]["approved_doc_ids"] == [instruction] and _node(env, key) == ("done", result)
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"           # 0119 T-2: no person's approval
+    assert _approve(env, key, 409)["error"]["code"] == "needs_intervention" and _node(env, key) == ("review", result)
 
 
 def test_an_approved_result_revised_while_its_card_waits_is_followed_after_a_lost_contact(env, decided, monkeypatch):
@@ -402,12 +314,9 @@ def test_an_approved_result_revised_while_its_card_waits_is_followed_after_a_los
     db_documents.set_superseded_by(old, new)                             # registration's contact is lost
     run = _current(env)                                                  # the read reconciles: the revision first
     node_run = next(n for n in run["node_runs"] if n["node_key"] == key)
-    assert (node_run["status"], node_run["result_doc_id"], node_run["awaiting_approval"]) == ("review", new, True)
+    assert (node_run["status"], node_run["result_doc_id"], node_run["intervention"]["kind"]) == (
+        "review", new, "needs_intervention")                             # 0119 T-2: no person's approval follows
     assert _causes_after(env, key, seq) == ["revised"]
-    body = _approve(env, key, body={"result_doc_id": new})
-    assert body["approval"]["target_doc_ids"] == [instruction, new]
-    assert body["approval"]["approved_doc_ids"] == [instruction, new]
-    assert _node(env, key) == ("done", new) and _causes_after(env, key, seq) == ["revised", "review_approved"]
 
 
 def test_the_reconciliation_follows_a_live_revision_before_an_approved_result_s_card(monkeypatch):
@@ -488,22 +397,15 @@ def test_a_card_that_is_not_awaiting_approval_is_refused_with_its_reason_revised
     assert _approve(env, "gn_nothing", 404)["error"]["code"] == "node_not_found"
     assert _approve(env, t1, 404, run_id="run_missing")["error"]["code"] == "run_not_found"
     result = _human_result(env, t1)
-    changed = _approve(env, t1, 409, body={"result_doc_id": f"{FA}.0099-T"})["error"]
-    assert (changed["code"], changed["params"]["result_doc_id"]) == ("result_changed", result)
-    forbidden = _approve(env, t1, 403, user="u_lee")["error"]           # not an admin: no document.approve
-    assert forbidden["code"] == "approval_forbidden" and _review_status(result) == "pending_review"
+    # 0119 T-2: a person's result in review is no approval's any more — refused with the card's intervention, an admin
+    # too, before any other check; nothing is written
+    for user in ("u_kim", "u_lee"):
+        refused = _approve(env, t1, 409, user=user, body={"result_doc_id": result})["error"]
+        assert (refused["code"], refused["params"]["status"]) == ("needs_intervention", "review")
     bad = env["client"].post(f"/api/v1/runs/{_run_id(env)}/nodes/{t1}/approval", json={"x": 1}, headers=_h())
     assert bad.status_code == 422 and bad.json()["error"]["params"]["errors"] == [
         {"field": "x", "reason": "unknown_field"}]
-    _approve(env, t1)
-    _approve(env, t2, 409)                                               # t2 is open now: no result
-    result2 = _human_result(env, t2, 82)
-    _approve(env, t2, body={"result_doc_id": result2})                   # the run completes
-    # 0061 T#2 개정 (0083 WP-3): a done run is idle (reason ``completed``) and keeps its Flow (migration 151), so a
-    # second approval is refused by the card's own state.
-    assert (_current(env)["status"], _current(env)["idle_reason"]) == ("idle", "completed")
-    finished = _approve(env, t2, 409)["error"]
-    assert (finished["code"], finished["params"]["status"]) == ("already_approved", "done")
+    assert _review_status(result) == "pending_review" and _node(env, t1) == ("review", result)
 
 
 class _GatePolicy:
@@ -544,12 +446,16 @@ def gate_decided(monkeypatch):
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: same person-card scene (no instruction stage before the result)
-def test_a_gate_card_is_not_approved_here(pre_feature_attempts, env, gate_decided):
+def test_a_gate_card_is_not_approved_here(pre_feature_attempts, env, gate_decided, monkeypatch):
+    from flowgate.card_settings import legacy_adapter
+
     _admin_and_reviewer(env)
     t1, gate = _chain(env, [("T", LEE), ("gate", None)])
     _start(env)
-    _human_result(env, t1)
-    _approve(env, t1)
+    result = _human_result(env, t1)
+    monkeypatch.setattr(legacy_adapter, "completion_gates", lambda doc: None)      # no file is written here
+    # 0119 T-2: t1 completes automatically (T-1), no person's card approval
+    assert legacy_adapter.approve(FA, result, "u_kim", legacy_adapter.AUTOMATION, node_key=t1) is True
     assert _node(env, gate)[0] == "open"
     refused = _approve(env, gate, 409)["error"]
     assert (refused["code"], refused["params"]["status"]) == ("node_is_gate", "open")
@@ -576,54 +482,14 @@ def test_a_person_s_rejection_is_no_node_event(pre_feature_attempts, env, decide
     v01_contact.after_review_decided(FA, result, "reject")             # the v0.1 reject route's contact
     run = _current(env)                                                  # reconciliation ran before the read
     node_run = next(n for n in run["node_runs"] if n["node_key"] == t1)
-    assert (node_run["status"], node_run["awaiting_approval"], run["last_event_seq"]) == ("review", True, before)
+    assert (node_run["status"], node_run["intervention"]["kind"], run["last_event_seq"]) == (
+        "review", "needs_intervention", before)                          # 0119 T-2: never a person's approval
     assert _review_status(result) == "rejected"
-    body = _approve(env, t1)                                             # mark revised, then approved
-    assert body["approval"]["approved_doc_ids"] == [result]
-    assert (_node(env, t1)[0], _review_status(result)) == ("done", "approved")
+    assert _approve(env, t1, 409)["error"]["code"] == "needs_intervention"
+    assert (_node(env, t1)[0], _review_status(result)) == ("review", "rejected")
 
 
-def test_an_approver_without_edit_permission_approves_a_rejected_result_and_a_written_draft(
-        env, decided, monkeypatch):
-    from modules.flow_gate.db import documents as db_documents
-    from modules.flow_gate.workflow import pipeline_service
-
-    key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"), ("review_count", 1),
-                                                        ("review_ai", "aip_review")), "TR")
-    instruction = _line_doc(env, key, "instruction")
-    _write_body(instruction, "written, never submitted")
-    _loop_row(result, "review")
-    db_documents.update(result, {"doc_review_status": "rejected"})       # the card review spent its count
-    _sql(env["db"], "UPDATE ai_invoke_document_review_loops SET current_stage = 'stopped', "
-                    "stop_reason = 'review_count_exhausted', stop_detail = 'spent' WHERE run_id = ?", (REVIEW_RUN,))
-    _approver_only(monkeypatch)
-    with pytest.raises(pipeline_service.PermissionError):                # v0.1 would ask for the edit permission
-        pipeline_service.transition_document_review(doc_id=result, action="mark_revised", actor_user_id="u_lee",
-                                                    user_permissions=set(APPROVER_ONLY), dry_run=True)
-    seq = _current(env)["last_event_seq"]
-    body = _approve(env, key, user="u_lee")
-    assert body["approval"]["approved_doc_ids"] == [instruction, result]
-    assert (_review_status(instruction), _review_status(result)) == ("approved", "approved")
-    assert _node(env, key) == ("done", result) and _causes_after(env, key, seq) == ["review_approved"]
-    actions = [r["action"] for r in _sql(env["db"], "SELECT json_extract(metadata, '$.action') AS action "
-                                                    "FROM workflow_events WHERE event_type = 'state_changed' "
-                                                    "AND actor_user_id = 'u_lee' ORDER BY rowid")]
-    assert actions == ["review_submit", "review_approve", "review_mark_revised", "review_approve"]
-
-
-def test_an_approver_without_the_approve_permission_is_refused_before_any_write(env, decided, monkeypatch):
-    from modules.flow_gate.workflow.routers import workflow
-
-    key, result, _token = _in_review(env, monkeypatch, (("instruction", "omit"),), "TR")
-    instruction = _line_doc(env, key, "instruction")
-    _write_body(instruction, "written")
-    monkeypatch.setattr(workflow, "_get_user_permissions", lambda u: {"document.read", "document.update"})
-    refused = _approve(env, key, 403, user="u_lee")["error"]
-    assert (refused["code"], refused["params"]["required"]) == ("approval_forbidden", "document.approve")
-    assert (_review_status(instruction), _review_status(result)) == (None, "pending_review")
-
-
-def test_a_review_that_spent_its_count_leaves_the_card_to_its_approval(env, decided, monkeypatch):
+def test_a_review_that_spent_its_count_leaves_the_card_in_intervention(env, decided, monkeypatch):
     from modules.flow_gate.db import documents as db_documents
     from modules.flow_gate.services import ai_run_end_hooks
 
@@ -635,9 +501,11 @@ def test_a_review_that_spent_its_count_leaves_the_card_to_its_approval(env, deci
     ai_run_end_hooks.run_ended({"run_id": REVIEW_RUN, "group_id": FA, "doc_ref": result, "action_scope": "review",
                                 "mode": "single", "issued_to": "u_kim",
                                 "document_review_loop": {"current_stage": "stopped"}})
-    assert _node(env, key) == ("review", result) and _node_run(env, key)["awaiting_approval"] is True
-    _approve(env, key)
-    assert (_node(env, key)[0], _review_status(result)) == ("done", "approved")
+    assert _node(env, key) == ("review", result)
+    assert _node_run(env, key)["intervention"] == {"kind": "needs_intervention",
+                                                   "reason": "review_not_passed:review_count_exhausted"}
+    assert _approve(env, key, 409)["error"]["code"] == "needs_intervention"       # 0119 T-2: no person's approval
+    assert (_node(env, key)[0], _review_status(result)) == ("review", "rejected")
 
 
 def test_0056_T1_개정_rejected_root_is_input_and_its_card_approval_is_refused(env, decided):
@@ -674,7 +542,7 @@ _STOPPED_AI_RUNS = [("cancelled", "cancelled"), ("timeout", "timeout"), ("user_p
 
 @pytest.mark.parametrize("review_count", [0, 2])
 @pytest.mark.parametrize("end_reason, stop_code", _STOPPED_AI_RUNS)
-def test_an_ai_run_stopped_after_binding_its_result_leaves_the_card_to_its_approval(
+def test_an_ai_run_stopped_after_binding_its_result_leaves_the_card_in_intervention(
         env, decided, monkeypatch, end_reason, stop_code, review_count):
     settings = (("review_count", review_count), ("review_ai", "aip_review")) if review_count else ()
     key, result, _token = _in_review(env, monkeypatch, settings)          # the result is bound (outcome complete)
@@ -682,9 +550,10 @@ def test_an_ai_run_stopped_after_binding_its_result_leaves_the_card_to_its_appro
     _work_run_ended(end_reason=end_reason, stop_code=stop_code)
     assert calls == []                                                   # no review loop
     assert (_node(env, key), _review_status(result)) == (("review", result), "pending_review")   # no approval
-    assert _node_run(env, key)["awaiting_approval"] is True
-    body = _approve(env, key)                                            # a person approves the card
-    assert body["approval"]["approved_doc_ids"] == [result] and _node(env, key) == ("done", result)
+    shown = _node_run(env, key)                                          # 0119 T-2: the AI's abnormal end
+    assert (shown["awaiting_approval"], shown["intervention"]["kind"]) == (False, "needs_intervention")
+    assert shown["intervention"]["reason"].startswith("run_not_clean:")
+    assert _approve(env, key, 409)["error"]["code"] == "needs_intervention" and _node(env, key) == ("review", result)
 
 
 def test_only_a_run_that_ended_on_its_own_is_a_clean_end():
@@ -698,22 +567,6 @@ def test_only_a_run_that_ended_on_its_own_is_a_clean_end():
 
 
 # ── [다음 단계] stop is not awaiting approval ────────────────────────────────────
-
-def test_a_card_approved_while_the_run_is_stopped_is_done_and_only_its_propagation_waits(env, decided):
-    _admin_and_reviewer(env)
-    t1, t2 = _chain(env, [("T", LEE), ("T", LEE)])
-    _start(env)
-    _stop(env)                                                           # 다음 단계: start, then stop
-    result = _human_result(env, t1)
-    assert _node_run(env, t1)["awaiting_approval"] is True
-    run = _approve(env, t1)["run"]
-    nodes = {n["node_key"]: n for n in run["node_runs"]}
-    assert run["status"] == "stopped" and (nodes[t1]["status"], nodes[t2]["status"]) == ("done", "pending")
-    assert nodes[t1]["awaiting_approval"] is False
-    assert (run["pending_propagation_count"], run["pending_node_keys"]) == (1, [t1])
-    assert _review_status(result) == "approved"
-    resumed = _resume(env)
-    assert resumed["open_node_keys"] == [t2] and resumed["pending_propagation_count"] == 0
 
 
 def test_an_automatically_approved_card_never_goes_back_to_awaiting_approval_while_stopped(
