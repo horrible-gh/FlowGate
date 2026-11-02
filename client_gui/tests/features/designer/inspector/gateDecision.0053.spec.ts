@@ -79,7 +79,7 @@ describe('gate Inspector — D §8-10', () => {
     expect(w.get('[data-test="gate-result-value"]').text()).toBe('반려')
     expect(w.find('[data-test="gate-confirm"]').exists()).toBe(false)
   })
-  it('keeps 확인 전 and no archive chip while the intent is accepted; completion comes from GET', async () => {
+  it('shows 반영 중 and no archive chip while the intent is accepted; completion comes from GET', async () => {
     const answer = deferred<any>()
     mocks.decide.mockReturnValue(answer.promise)
     const w = await show()
@@ -90,7 +90,7 @@ describe('gate Inspector — D §8-10', () => {
     expect(w.find('[data-test="gate-archived"]').exists()).toBe(false)
     current = gate('open', 'idle', { decision_in_progress: true, settings_locked: true, decision: { ...result(), result: 'in_progress', status: 'accepted' } })
     answer.resolve(current); await flushPromises()
-    expect(w.get('[data-test="gate-result-value"]').text()).toBe('확인 전')
+    expect(w.get('[data-test="gate-result-value"]').text()).toBe('반영 중')
     expect(w.get('[data-test="gate-confirm"]').attributes('disabled')).toBeDefined()
     expect(w.find('[data-test="gate-archived"]').exists()).toBe(false)
     current = gate('done', 'idle', { archived: true, settings_locked: true, decision: result() })
@@ -233,7 +233,7 @@ describe('gate Inspector — D §8-10', () => {
   it('GETs after a lost response before resending the identical request', async () => {
     const order: string[] = []
     mocks.run.mockImplementation(async () => { order.push('get'); return current })
-    mocks.decide.mockImplementationOnce(async () => { order.push('post'); throw { request: {} } }).mockImplementationOnce(async () => { order.push('replay'); return current = gate('done', 'idle', { decision: result(false) }) })
+    mocks.decide.mockImplementationOnce(async () => { order.push('post'); throw { isAxiosError: true, request: {} } }).mockImplementationOnce(async () => { order.push('replay'); return current = gate('done', 'idle', { decision: result(false) }) })
     const w = await show()
     order.length = 0
     await w.get('[data-test="gate-confirm"]').trigger('click'); await flushPromises()

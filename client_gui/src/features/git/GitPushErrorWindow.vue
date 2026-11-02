@@ -70,7 +70,7 @@ const gateJobs = useGitGateOperations()
 const gateNoticeText = computed(() => {
   const code = gateJobs?.notice.value
   const key = checkOperationErrorKey(code, props.operation?.gate.decision)
-  return key ? t(`gui.inspector.checkSettings.${key}`) : code ?? null
+  return key ? t(`gui.inspector.checkSettings.${key}`) : code ? t('gui.inspector.checkSettings.target.operation_unknown') : null
 })
 const reason = ref('')
 const reviewed = ref(false)

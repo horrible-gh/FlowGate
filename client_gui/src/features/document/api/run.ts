@@ -215,7 +215,7 @@ export interface RunGateState {
   readonly archived: boolean
   readonly recovery_reset_required: boolean
   readonly recovery: RunGateRecovery | null
-  readonly job: { readonly job_id: string; readonly status: string; readonly phase: string | null; readonly last_error_code: string | null } | null
+  readonly job: { readonly job_id: string; readonly status: string; readonly phase: string | null; readonly phase_note?: string | null; readonly last_error_code: string | null } | null
 }
 export function toRunGateState(raw: unknown): RunGateState | null {
   if (!raw || typeof raw !== 'object') return null

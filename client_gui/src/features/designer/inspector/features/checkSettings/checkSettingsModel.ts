@@ -33,6 +33,9 @@ export interface CheckSettingsView {
   readonly failures?: Readonly<Record<string, string>>
 }
 
+// Server contract: flowgate/gate_decisions/repository.py DONE (effect success, not node done).
+export const GATE_EFFECT_SUCCEEDED = 'succeeded'
+
 export const CHECK_SCOPES: readonly CheckScope[] = ['merge', 'commit', 'hold']
 
 /** The card settings read (the `@/features/document` SettingsNode). */
@@ -90,7 +93,8 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
   const targetOptions = input.node?.mergeTargetOptions ?? []
   const scope = oneOf(valueOf('merge_mode'), CHECK_SCOPES)
   const lookupError = state?.status === 'git_unavailable' ? 'target.git_unavailable'
-    : state?.status === 'failed' || state?.status === 'timeout' ? 'target.lookup_failed'
+    : state?.status === 'failed' ? 'target.lookup_failed'
+    : state?.status === 'timeout' ? 'target.lookup_timeout'
     : state?.status === 'empty' ? 'target.empty' : null
   // A Git lookup failure is already the lookup state: the entry's copy of it is not shown twice.
   const targetError = current?.error && state?.status !== 'git_unavailable' ? checkTargetErrorKey(current.error) : null
@@ -102,7 +106,7 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
     target,
     targetStored,
     defaultTarget,
-    targetEnabled: scope === 'merge' && targetOptions.length > 0,
+    targetEnabled: scope === 'merge' && lookupError === null && targetOptions.length > 0,
     targetError: scope === 'merge' ? targetError : null,
     lookupError: scope === 'merge' ? lookupError : null,
     canRefreshTargets: state?.status === 'failed' || state?.status === 'timeout',
@@ -181,9 +185,16 @@ export function checkSettingsSummary(node: SettingsNode | null, decision?: RunGa
 export function checkOperationErrorKey(code: string | null | undefined, decision?: RunGateResult | null): string | null {
   if (code === 'unmerge_target_unknown') return 'target.unmerge_unknown'
   if (code === 'push_rejected') {
-    const localApplied = decision?.effects?.some(e => ['merge', 'commit'].includes(String(e.phase)) && e.status === 'done' && typeof e.sha_after === 'string')
+    const localApplied = decision?.effects?.some(e => ['merge', 'commit'].includes(String(e.phase)) && e.status === GATE_EFFECT_SUCCEEDED && typeof e.sha_after === 'string' && e.sha_after.length > 0)
     return localApplied ? 'target.push_rejected_kept' : 'target.push_rejected'
   }
-  return null
+  const keys: Record<string, string> = {
+    merge_conflict: 'merge_conflict', merge_conflict_aborted: 'merge_aborted', merge_failed: 'merge_aborted',
+    merge_attempt_unsettled: 'target_check', target_moved: 'target_check', target_branch_missing: 'target_check',
+    target_ref_unreadable: 'target_check', gate_git_unavailable: 'target_check',
+    remote_head_unknown: 'remote_unknown', push_result_unknown: 'push_unknown', push_timeout: 'push_unknown',
+    push_auth_failed: 'push_auth_failed', group_branch_missing: 'group_branch_missing',
+  }
+  if (!code) return null
+  return `target.${keys[code] ?? (code.startsWith('merge_target_') ? 'target_check' : 'operation_unknown')}`
 }
-

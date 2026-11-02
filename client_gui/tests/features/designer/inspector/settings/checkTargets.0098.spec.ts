@@ -144,7 +144,7 @@ describe('check card target and push controls — 0098', () => {
     const before = structuredClone(raw.fields)
     const w = await show()
     const control = w.get('[data-test="check-settings-target"]')
-    expect(w.get('[data-test="check-settings-target-state"]').text()).toBe(status === 'git_unavailable' ? 'Git 사용 불가' : '대상 조회 실패')
+    expect(w.get('[data-test="check-settings-target-state"]').text()).toBe(status === 'git_unavailable' ? 'Git 사용 불가' : status === 'timeout' ? '대상 조회 시간 초과' : '대상 조회 실패')
     expect(control.attributes('disabled')).toBeDefined()
     expect(control.attributes('aria-invalid')).toBe('false')
     expect(control.classes()).not.toContain('is-invalid')
@@ -229,7 +229,7 @@ describe('check card target and push controls — 0098', () => {
     expect(w.get('[data-test="gate-summary-unmerge-unknown"]').text()).toBe(i18n.global.t('gui.inspector.checkSettings.target.unmerge_unknown'))
     expect(w.get('[data-test="gate-unmerge"]').attributes('disabled')).toBeDefined()
     await w.setProps({ errorCode: 'unmerge_unsupported_target' })
-    expect(w.find('[data-test="gate-summary-error"]').exists()).toBe(false)
+    expect(w.get('[data-test="gate-summary-error"]').text()).toBe(i18n.global.t('gui.inspector.checkSettings.target.operation_unknown'))
     expect(w.html()).not.toMatch(/병합 취소 미지원|Undo merge is unsupported|マージ取り消し未対応/)
   })
   it.each(['ko', 'en', 'ja'] as const)('hides rejected merge receipts even with push enabled in %s', async locale => {
@@ -246,7 +246,7 @@ describe('check card target and push controls — 0098', () => {
     expect(w.find('[data-test="gate-settings-summary"]').exists()).toBe(false)
   })
   it('renders the receipt target without the unsupported-undo notice; the document tab hides the target line', async () => {
-    const receipt: any = { decision_id: 'd1', attempt_id: 'attempt0098', result: 'confirmed', status: 'succeeded', archived: false, effects: [{ phase: 'merge', status: 'done', sha_after: 'abc' }],
+    const receipt: any = { decision_id: 'd1', attempt_id: 'attempt0098', result: 'confirmed', status: 'succeeded', archived: false, effects: [{ phase: 'merge', status: 'succeeded', sha_after: 'abc' }],
       settings: { shown: { merge_target_branch: 'release/local' }, effective: { merge_mode: 'merge', push: true }, target_basis: { target_branch: 'release/local', unmerge_supported: false, warnings: ['unmerge_unsupported_for_non_base_target'] } } }
     const w = mount(GateSettingsSummary, { props: { node: toSettingsNode(raw), decision: receipt, errorCode: 'push_rejected' }, global: { plugins: [i18n] } }); wrappers.push(w)
     expect(w.get('[data-test="gate-summary-target"]').text()).toBe('release/local')

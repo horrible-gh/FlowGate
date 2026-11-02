@@ -44,7 +44,7 @@ const noticeText = computed(() => {
   if (props.operation) {
     const code = gateJobs?.notice.value
     const key = checkOperationErrorKey(code, props.operation.gate.decision)
-    return key ? t(`gui.inspector.checkSettings.${key}`) : code ?? null
+    return key ? t(`gui.inspector.checkSettings.${key}`) : code ? t('gui.inspector.checkSettings.target.operation_unknown') : null
   }
   const notice = session.state.notices.push
   return notice ? t(`gui.git.notice.${notice.code}`, { ...(notice.params ?? {}) }) : null

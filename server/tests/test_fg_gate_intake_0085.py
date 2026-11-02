@@ -26,7 +26,7 @@ _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 
 from test_fg_card_settings import (  # noqa: E402,F401  (fixtures are used by name)
-    FA, _doc, _h, _sql, db_path, edge, env, node, put_draft, setting)
+    FA, _doc, _h, _sql, db_path, edge, env, node, pre_feature_attempts, put_draft, setting)
 
 LEE = {"kind": "human", "user_id": "u_lee", "provider_id": None}
 SLOT = {"ok": True, "group_branch": "fg/flowgate.v02.0091", "group_head": "a" * 40, "work_base": "main",
@@ -158,15 +158,31 @@ def _token(env, key):
                 (key,))[0]["token_id"]
 
 
+@pytest.fixture()
+def completion_service(product, monkeypatch):
+    """Use startup's real completion ports, replacing the engine suite's approval stand-in for this test."""
+    from flowgate.card_completion import integration
+    from modules.flow_gate.graph_workflow.services import card_completion_ports
+
+    monkeypatch.setattr(card_completion_ports, "_handlers", dict(card_completion_ports._handlers))
+    integration.register()
+    yield
+    integration.unregister()
+
+
 def _finish(env, key, seq, typ="T"):
-    """The card's result registered with its token and approved (the v0.1 contacts, as the inbox and review do)."""
-    from modules.flow_gate.db import documents as db_documents
+    """A pre-feature person card submits its result; review 'none' completes it through the real v0.2 service."""
     from modules.flow_gate.graph_workflow.api import v01_contact
 
-    result = _doc(FA, seq, typ)
+    from modules.flow_gate.db import documents as db_documents
+    from modules.flow_gate.storage.paths import get_storage_root
+
+    result = _doc(FA, seq, typ, "pending_review")
+    path = get_storage_root("flowgate", create=True) / "docs" / f"{result}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# {typ} {seq}\n\nSubmitted result\n", encoding="utf-8")
+    db_documents.update(result, {"file_path": f"docs/{result}.md"})
     v01_contact.after_inbox_registered(FA, result, typ, _token(env, key))
-    db_documents.update(result, {"doc_review_status": "approved"})
-    v01_contact.after_review_decided(FA, result, "approve")
     return result
 
 
@@ -216,7 +232,8 @@ def test_the_product_rule_is_registered_for_the_validator_and_the_run(product):
         gate.HUMAN_CONFIRM_V1.judge("g", "maybe", None)
 
 
-def test_start_waits_idle_at_the_gate_and_its_confirm_opens_what_follows_up_to_completed(product):
+def test_start_waits_idle_at_the_gate_and_its_confirm_opens_what_follows_up_to_completed(
+        pre_feature_attempts, completion_service, product):
     g, t = _linear(product)
     run = _start(product)
     run_id = run["run_id"]
@@ -252,10 +269,21 @@ def test_start_waits_idle_at_the_gate_and_its_confirm_opens_what_follows_up_to_c
     events = _gate_events(product, g)
     assert [(e["cause"], e["actor_user_id"], e["reason"]) for e in events] == [("gate_confirmed", "u_kim", "OK")]
     assert json.loads(events[0]["payload_json"])["gate_decision_id"] == stored[0]["decision_id"]
-    _finish(product, t, 90)
+    result = _finish(product, t, 90)
     final = _current(product)
     assert _nodes(final)[t]["status"] == "done"
     assert (final["status"], final["idle_reason"]) == ("idle", "completed")
+    [completion] = _sql(product["db"], "SELECT * FROM graph_card_completions WHERE node_key = ?", (t,))
+    assert (completion["result_doc_id"], completion["cause"], completion["actor_kind"], completion["status"]) == (
+        result, "human_submitted", "user", "applied")
+    [done] = _sql(product["db"], "SELECT payload_json FROM graph_run_events WHERE node_key = ? AND to_status = 'done'",
+                  (t,))
+    assert json.loads(done["payload_json"])["completion_id"] == completion["completion_id"]
+    assert _attempt(product, run_id, t)["status"] == "ended"
+    _current(product)  # reconciliation must not repeat the completion or the node transition
+    assert len(_sql(product["db"], "SELECT completion_id FROM graph_card_completions WHERE node_key = ?", (t,))) == 1
+    assert len(_sql(product["db"], "SELECT event_seq FROM graph_run_events WHERE node_key = ? AND to_status = 'done'",
+                    (t,))) == 1
 
 
 def test_a_step_command_stops_at_its_targets_after_the_confirm(product):
@@ -973,3 +1001,39 @@ def test_0098_preflight_preserves_the_common_target_rejection(product, slot, mon
     assert response["error"]["params"]["reason"] == reason
     assert "private" not in json.dumps(response)
     assert not _decisions(product) and not _jobs(product)
+
+
+# 0119 T-4: the run read and replay expose the same publish reason as recovery.
+@pytest.mark.parametrize("note,code", [
+    ("gate_conflict", "merge_conflict"), ("gate_failed", "group_branch_missing"),
+    ("gate_recovery", "push_result_unknown"),
+])
+def test_0119_waiting_confirm_acceptance_and_parked_job_wire(product, slot, monkeypatch, note, code):
+    from flowgate.gate_decisions import recovery, repository as repo
+
+    g, t = _linear(product)
+    run = _start(product)
+    run_id = run["run_id"]
+    assert (run["status"], run["idle_reason"]) == ("idle", "waiting_confirm")
+    assert _decisions(product) == _jobs(product) == []
+    setting(product, FA, g, "merge_mode", "commit")
+    request = {"decision": "confirm", "request_id": "0119-wire"}
+    body = _decide(product, run_id, g, request, 202)
+    did, jid = body["decision"]["decision_id"], body["job"]["job_id"]
+    assert body["job"]["phase_note"] is None
+    assert _states(product)[g] == "open" and _states(product)[t] == "pending"
+    # Isolated DB fixture only: model the executor parking after acceptance.
+    _sql(product["db"], "UPDATE operation_job SET status='recovery_required', phase='merge', "
+         "phase_note=?, last_error_code=? WHERE job_id=?", (note, code, jid))
+    _sql(product["db"], "UPDATE gate_decisions SET status='failed', last_error_code=? WHERE decision_id=?", (code, did))
+    monkeypatch.setattr(recovery, "_conflict_open", lambda row: note == "gate_conflict")
+    wire = _nodes(_current(product))[g]["gate"]
+    assert (wire["job"]["phase_note"], wire["job"]["last_error_code"]) == (note, code)
+    assert wire["recovery"] == {"decision_id": did, "decision_version": repo.get(did)["decision_version"],
+                                "status": "failed", **recovery.flags(repo.get(did))}
+    assert wire["recovery"]["retryable"] is (note != "gate_conflict")
+    assert wire["recovery"]["cancelable"] is (note != "gate_conflict")
+    replay = _decide(product, run_id, g, request, 202)
+    assert replay["job"]["phase_note"] == note and replay["decision"]["decision_id"] == did
+    assert len(_decisions(product)) == len(_jobs(product)) == 1
+    assert _gate_events(product, g) == []  # no completion or rejection on a parked job

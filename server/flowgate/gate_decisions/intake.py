@@ -78,7 +78,7 @@ def _job_wire(job: Optional[dict]) -> Optional[dict]:
     if not job:
         return None
     return {"job_id": job["job_id"], "kind": job.get("kind"), "status": job.get("status"), "phase": job.get("phase"),
-            "last_error_code": job.get("last_error_code")}
+            "last_error_code": job.get("last_error_code"), "phase_note": job.get("phase_note")}
 
 
 def _answer(run_id: str, row: dict) -> dict:

@@ -125,7 +125,7 @@ def test_a_lease_lost_during_a_git_step_writes_no_evidence_and_the_next_owner_ju
     job, _ = _run_job(job_id)
     assert job["status"] == "succeeded"
     merged = _rev(r["base"], "refs/heads/main")
-    assert _merges(r["base"]) == 1 and _rev(r["bare"], "refs/heads/main") == merged and merged != sha
+    assert _merges(r["base"]) == 0 and _rev(r["bare"], "refs/heads/main") == merged and merged == sha
     assert len(_sql(env["db"], "SELECT * FROM gate_archive_checkpoints WHERE decision_id = ?", (did,))) == 1
     assert {p: e["status"] for p, e in _effects(env, did).items()} == {
         "snapshot": "succeeded", "merge": "succeeded", "push": "succeeded", "archive": "succeeded"}
