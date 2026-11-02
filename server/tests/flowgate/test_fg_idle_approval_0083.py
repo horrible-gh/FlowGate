@@ -51,21 +51,22 @@ from types import SimpleNamespace
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
-    legacy_cards, pre_feature_attempts,
+    legacy_cards, passive_person_results, pre_feature_attempts,
     AI, FA, _h, _sql, db_path, decided, env,
 )
 from test_fg_card_settings_review import (
     _admin_and_reviewer, _executions_ended, _node, _result, _review_status, _run_ended,
 )
-from test_fg_card_approval_0056 import (  # noqa: F401 — card_approval_port: registered as startup does
-    LEE, _chain, _current, _human_result, _run_id, _v01_approve, card_approval_port,
+from test_fg_card_approval_0056 import (  # noqa: F401 — card_outputs_port: registered as startup does
+    LEE, _chain, _current, _human_result, _run_id, _v01_approve, card_outputs_port,
 )
 from test_fg_wp_ai_run_0083 import _cards, _register, _run_status, _start_ai_run
 # flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
-pytestmark = pytest.mark.usefixtures("legacy_cards")
+# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
+pytestmark = pytest.mark.usefixtures("legacy_cards", "passive_person_results")
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -322,11 +323,13 @@ def test_defers_keeps_every_wait_but_the_wakeable_idle_run_revised_0061_t2():
 # ── regression: the ordinary flow approves by itself ─────────────────────────
 
 def test_r_ai_cards_still_approve_by_themselves_with_no_person_s_approval(env, decided, monkeypatch):
-    from flowgate.card_approval import approval
+    from modules.flow_gate.workflow import pipeline_service
 
+    # 0119 T-3: the card approval is removed; no v0.1 approval (a person's) is taken either
     approvals = []
-    real = approval.approve
-    monkeypatch.setattr(approval, "approve", lambda *a, **kw: approvals.append(a) or real(*a, **kw))
+    real = pipeline_service.transition_document_review
+    monkeypatch.setattr(pipeline_service, "transition_document_review",
+                        lambda **kw: (approvals.append(kw) if kw.get("action") == "approve" else None) or real(**kw))
     commands = _no_command(monkeypatch)
     _admin_and_reviewer(env)
     t1, t2 = _cards(env, [("T", AI), ("T", AI)], {0: (("instruction", "omit"),)})   # t1 writes its result at once

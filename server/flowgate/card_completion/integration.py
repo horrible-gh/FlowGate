@@ -12,6 +12,8 @@ server's start (``startup.start_card_completion_integration``): with no handler 
     unsettled       before a run read: a written record of the Flow that the reconciliation must settle
     settle          inside the reconciliation's guard: the Flow's written records that no longer answer their node turn
                     ``superseded`` (done with them: ``applied``)
+    pending_outputs result binding (flowgate.v02.0119 T#4, T-3): the card's required outputs other than the result not
+                    complete yet (``outputs.pending_outputs``: the instruction the card uses, not approved)
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ import logging
 
 from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
 
-from flowgate.card_completion import completion, repository
+from flowgate.card_completion import completion, outputs, repository
 
 _log = logging.getLogger(__name__)
 
@@ -29,6 +31,7 @@ def register() -> None:
     ports.register(ports.APPLIED, completion.applied)
     ports.register(ports.UNSETTLED, completion.unsettled)
     ports.register(ports.SETTLE, completion.settle)
+    ports.register(ports.PENDING_OUTPUTS, outputs.pending_outputs)
     try:
         repository.ensure_installed()
     except Exception:  # noqa: BLE001 — no boundary yet: no run reads as an existing one until the next start writes it

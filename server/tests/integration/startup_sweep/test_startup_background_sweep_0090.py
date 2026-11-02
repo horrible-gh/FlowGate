@@ -54,7 +54,7 @@ THREAD = "startup-scratch-sweep"
 OTHER_STEPS = (
     "configure_console_encoding", "record_deployment", "preload_singletons", "register_server_instance",
     "recover_git_sessions", "start_conversation_integration", "start_card_document_integration",
-    "start_card_settings_integration", "start_card_approval_integration", "start_card_memo_integration",
+    "start_card_settings_integration", "start_card_completion_integration", "start_card_memo_integration",
     "start_graph_policy_integration", "start_graph_validation_integration", "start_graph_run_integration",
     "start_work_plan_deploy_integration", "recover_graph_time_machine", "encrypt_ai_provider_keys",
     "check_agent_pepper", "recover_ai_evaluations", "start_snapshot_cleanup",

@@ -10,7 +10,7 @@ Checked first, written after; a refusal rolls the guard back and the operation i
 - every attempt of the target nodes (the plan's and any later one) -> ``invalidated`` (``time_machine``), its tokens
   revoked through the existing reclaim path. An invalidated attempt's tokens are no evidence any more
   (``run_store.token_ids``): reconciliation and the result binder never take its result again, and its documents are
-  the card's history (``card_approval`` stale lines), never a node's result;
+  the card's history (the stale lines of ``card_completion.outputs``, flowgate.v02.0119 T-3), never a node's result;
 - a target node opened before migration 151 has tokens of no attempt (``attempt_id`` NULL), which ``token_ids`` would
   keep as evidence (a consumed one is not touched by the reclaim path): they are mapped to one attempt row recorded
   for that old opening, invalidated (``time_machine``) at once — the same durable boundary as every other invalidated

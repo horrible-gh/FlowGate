@@ -99,6 +99,12 @@ RUN_EDIT_MESSAGES = {
         "en": "An earlier decision on this confirm card is still being processed.",
         "ja": "この確認カードの以前の決定がまだ処理中です。",
     },
+    # flowgate.v02.0119 T#4 (T-3): a confirm card has no rejection any more (the Time Machine and a memo stand in for it)
+    "gate_reject_removed": {
+        "ko": "확인 카드는 반려할 수 없습니다. 확인(✓)만 할 수 있습니다.",
+        "en": "A confirm card cannot be rejected any more. It can only be confirmed (✓).",
+        "ja": "確認カードは差し戻しできません。確認（✓）のみ可能です。",
+    },
     "gate_git_unavailable": {
         "ko": "이 그룹의 Git 작업 공간을 사용할 수 없어 Git 반영이나 아카이브가 필요한 확인을 접수할 수 없습니다.",
         "en": "The group's Git workspace is not available, so a confirm that needs a Git apply or an archive cannot be "

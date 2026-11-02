@@ -15,11 +15,13 @@ of the active run and turned into a node event for the resolver:
   (``flowgate.card_completion``, asked through ``card_completion_ports.completion_of``) is the only source of its
   done — never the document's v0.1 review status. A review decision on the v0.1 review screen (``review_decided``,
   approve) is no node event of a Graph-owned Flow, so a person's v0.1 approval completes no node. The event is made
-  by the reconciliation (``next_missing_event``) once the record exists and every other document of the node's card
-  is approved too (``card_approval_ports.pending_documents``, flowgate.v02.0056 T#1); a document approval that is no
-  node's result re-reads the nodes in review (``_follow_card``), so a card waiting for its instruction follows the
-  record once that instruction is approved. Existing runs (before the service) read an approved result as complete
-  (the port's ``legacy`` answer); without the port's handler the approved result completes it, as before.
+  by the reconciliation (``next_missing_event``) once the record exists and the card's other required outputs are
+  complete too (``card_completion_ports.pending_outputs``, flowgate.v02.0119 T#4, T-3: the instruction the card uses,
+  approved — a line document beside the required outputs never holds the node; it replaced the card approval's every
+  approval line's document; flowgate.v02.0119 T#4 rework: a required instruction with no live document holds it too —
+  ``completion_ready`` is that one condition, asked by a code node's merge end as well); a document approval that is no node's result re-reads the nodes in review
+  (``_follow_card``), so a card waiting for its instruction follows the record once that instruction is approved.
+  Existing runs (before the service) read an approved result as complete (the port's ``legacy`` answer).
 
 flowgate.v02.0056 T#1 (0002-CH turn 5~10): a rejection of a node's result — a person's (the v0.1
 ``review_transitions/reject`` route, kept for v0.1) or the one the card's AI review writes on the way to
@@ -78,7 +80,7 @@ from modules.flow_gate.graph_workflow.domain.supersede import live_end
 from modules.flow_gate.graph_workflow.projection.run_documents import document, registered_documents
 from modules.flow_gate.graph_workflow.store import run_store
 
-from . import card_approval_ports, card_completion_ports, card_settings_ports
+from . import card_completion_ports, card_settings_ports
 from .engine_router import read_ownership
 from .flow_guard import with_flow_guard
 from .run_apply import RunContext, apply_decision, fill_line, load_context, read_run_state, settle_run
@@ -252,10 +254,11 @@ def _approval(payload: dict) -> bool:
 
 
 def card_complete(ctx: RunContext, key: str, result_doc_id: str) -> bool:
-    """No other document of the node's card waits for its approval (T0004 §4: the card is approved when all
-    of its documents are)."""
+    """flowgate.v02.0119 T#4 (T-3): no other required output of the node's card is incomplete — the instruction the card
+    uses is approved (``card_completion_ports.pending_outputs``); a line document beside the required outputs never
+    holds the node."""
     node = ctx.node_rows.get(key) or {"node_key": key}
-    return not card_approval_ports.pending_documents(ctx.flow_id, node, result_doc_id)
+    return not card_completion_ports.pending_outputs(ctx.flow_id, node, result_doc_id)
 
 
 def _follow_card(ctx: RunContext) -> None:
@@ -330,19 +333,37 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
         if nxt is not None and nxt.get("status") != CANCELLED and nxt.get("group_id") == ctx.flow_id:
             return RunEvent("revised", key, doc_id=nxt["doc_id"], replaces=cur["doc_id"])
     if nr.status == "review":
-        # flowgate.v02.0119 T#2 (T-1): the node's completion record, not the document's review status (an existing
-        # run's approved result reads as complete through the port's ``legacy`` answer).
-        if card_completion_ports.completion_of(ctx.flow_id, ctx.run, key, cur) is None:
-            return None                                           # no completion: the node stays in review
-        if not card_complete(ctx, key, cur["doc_id"]):
-            return None                                           # approved result, card not yet
-        if card_settings_ports.result_review_pending(ctx.flow_id, ctx.run_id, key, cur["doc_id"]):
-            return None                                           # 0038-T T#3 A-4: approved before, its review waits
-        from modules.flow_gate.services import graph_execution_hooks
-        if graph_execution_hooks.call("integration_waiting", ctx.run_id, key):
-            return None                                           # 0061 T#9: approved, its merge decides
+        if not completion_ready(ctx, key, cur):
+            return None                                           # the node stays in review
         return RunEvent("review_approved", key, doc_id=cur["doc_id"])
     return None
+
+
+def completion_ready(ctx: RunContext, key: str, cur: dict, *, merged: bool = False) -> bool:
+    """The one completion condition of a node in review whose result is ``cur`` (flowgate.v02.0119 T#4 rework,
+    rej_01M6DQW6YF0SCQ5D P1): every path that makes the node's ``review_approved`` asks it, inside its Flow guard —
+    the reconciliation (``next_missing_event``) and a code node's merge end (``result_merge._finish``, ``merged``):
+
+    - the node's completion record (flowgate.v02.0119 T#2, T-1), not the document's review status (an existing run's
+      approved result reads as complete through the port's ``legacy`` answer);
+    - the card's other required outputs complete (``card_complete``: the instruction the card uses, approved — T#4 T-3);
+    - no review of the result waiting (0038-T T#3 A-4: approved before, its review waits);
+    - its merge done (0061 T#9 ``integration_waiting``) — not asked by the merge end itself (``merged``), which has just
+      integrated the attempt and keeps that fact whatever the rest answers.
+
+    False leaves the node in review; once the rest completes (its instruction approved, its review ended), the next
+    reconciliation makes the event — once: the frontier ignores a repeated one (L0009 E-20 / E-36)."""
+    if card_completion_ports.completion_of(ctx.flow_id, ctx.run, key, cur) is None:
+        return False                                              # no completion
+    if not card_complete(ctx, key, cur["doc_id"]):
+        return False                                              # complete result, its instruction not yet
+    if card_settings_ports.result_review_pending(ctx.flow_id, ctx.run_id, key, cur["doc_id"]):
+        return False                                              # 0038-T T#3 A-4: approved before, its review waits
+    if not merged:
+        from modules.flow_gate.services import graph_execution_hooks
+        if graph_execution_hooks.call("integration_waiting", ctx.run_id, key):
+            return False                                          # 0061 T#9: approved, its merge decides
+    return True
 
 
 def needs_reconcile(ctx: RunContext) -> bool:

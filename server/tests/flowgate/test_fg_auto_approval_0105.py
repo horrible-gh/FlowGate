@@ -23,7 +23,7 @@ import json
 
 import pytest
 
-from test_fg_card_approval_0056 import _approve, _current, _node_run
+from test_fg_card_approval_0056 import _approval_route_gone, _current, _node_run
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
     FA, _sql, db_path, decided, env,
 )
@@ -33,13 +33,15 @@ from test_fg_card_settings_review import (
 
 
 @pytest.fixture(autouse=True)
-def card_approval_port():
-    """The card approval's Graph ports, registered as ``startup`` registers them."""
-    from flowgate.card_approval import integration
+def card_outputs_port():
+    """flowgate.v02.0119 T#4 (T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
+    registered as ``startup`` registers it — it replaced the removed card approval port."""
+    from flowgate.card_completion import outputs
+    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
 
-    integration.register()
+    ports.register(ports.PENDING_OUTPUTS, outputs.pending_outputs)
     yield
-    integration.unregister()
+    ports.unregister(ports.PENDING_OUTPUTS)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -207,7 +209,7 @@ def test_a_review_that_did_not_pass_after_its_rework_needs_intervention_and_tell
     assert _intervention(env, key) == (False, {"kind": "needs_intervention", "reason": reason}, reason)
     _reads(env)                                                          # never tried again
     assert _waits(env) == [(result, reason)] and _authorities(env) == []
-    assert _approve(env, key, expect=409)["error"]["code"] == "needs_intervention"    # no person's approval
+    _approval_route_gone(env, key)                                       # 0119 T-3: no person's approval
     assert (_node(env, key)[0], _review_status(result)) == ("review", "pending_review")
 
 
@@ -244,7 +246,7 @@ def test_a_refused_completion_is_a_system_error_retried_up_to_the_limit(env, dec
                                        "approval_refused")
     _reads(env, LIMIT + 2)                                               # past the limit: nothing more is tried
     assert _waits(env) == [(result, "approval_refused")] * LIMIT and _authorities(env) == []
-    assert _approve(env, key, expect=409)["error"]["code"] == "system_error"
+    _approval_route_gone(env, key)                                       # 0119 T-3: the route is gone
     assert (_node(env, key)[0], _review_status(result)) == ("review", "pending_review")
 
 
@@ -653,7 +655,7 @@ def test_a_card_its_review_left_is_never_approved_by_a_person_even_an_admin(pre_
     _lost_run_end(monkeypatch, env, key)
     reason = "review_not_passed:review_count_exhausted"
     assert _intervention(env, key) == (False, {"kind": "needs_intervention", "reason": reason}, reason)
-    assert _approve(env, key, expect=409)["error"]["code"] == "needs_intervention"       # an admin too
+    _approval_route_gone(env, key)                                       # an admin too (0119 T-3: no route)
     assert (_node(env, key)[0], _review_status(result)) == ("review", "pending_review") and _authorities(env) == []
 
 

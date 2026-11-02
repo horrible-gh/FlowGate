@@ -15,10 +15,15 @@ this module offers named ports the Graph calls and the composition root (``start
     settle          ``result_binder.reconcile_links`` (inside the guard of a run read's reconciliation or a command): the
                     Flow's written records that no longer answer their node turn ``superseded`` (done with them:
                     ``applied``); the rows changed
+    pending_outputs ``result_binder.card_complete`` (flowgate.v02.0119 T#4, T-3; inside the Flow guard or a run read): the
+                    required outputs of the card of ``node`` other than its result ``result_doc_id`` not complete yet —
+                    the instruction the card uses, not approved; while any is left the node stays in review. It replaces
+                    the removed ``card_approval_ports.pending_documents``: a line document beside the required outputs
+                    never holds the node
 
 * With no handler registered nothing completes a node: ``completion_of`` answers None whatever the document's review
   status is (no v0.1 compatibility branch — an existing run's approved result is judged by the registered service only),
-  ``applied`` answers None, ``unsettled`` False and ``settle`` 0. The server's start registers the handlers and fails
+  ``applied`` answers None, ``unsettled`` False, ``settle`` 0 and ``pending_outputs`` []. The server's start registers the handlers and fails
   when it cannot (``startup.start_card_completion_integration``).
 * A handler exception propagates: the callers run inside a run step's Flow guard or a run read.
 * One handler per port. Registering again replaces it (startup may run more than once in a process).
@@ -33,7 +38,8 @@ COMPLETION_OF = "completion_of"
 APPLIED = "applied"
 UNSETTLED = "unsettled"
 SETTLE = "settle"
-PORT_NAMES = (COMPLETION_OF, APPLIED, UNSETTLED, SETTLE)
+PENDING_OUTPUTS = "pending_outputs"                              # flowgate.v02.0119 T#4 (T-3)
+PORT_NAMES = (COMPLETION_OF, APPLIED, UNSETTLED, SETTLE, PENDING_OUTPUTS)
 
 _log = logging.getLogger(__name__)
 _handlers: dict[str, Callable[..., Any]] = {}
@@ -91,3 +97,11 @@ def unsettled(flow_id: str, run: Optional[dict]) -> bool:
 def settle(flow_id: str, run: Optional[dict]) -> int:
     handler = _handler(SETTLE)
     return int(handler(flow_id, run) or 0) if handler is not None else 0
+
+
+def pending_outputs(flow_id: str, node: dict, result_doc_id: Optional[str]) -> list[str]:
+    """``node``: the run's node row (node_key, node_type, doc_type …); ``result_doc_id``: the node's result."""
+    handler = _handler(PENDING_OUTPUTS)
+    if handler is None:
+        return []
+    return list(handler(flow_id, node, result_doc_id) or [])

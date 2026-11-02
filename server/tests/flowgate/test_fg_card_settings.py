@@ -93,12 +93,56 @@ def pre_feature_attempts(monkeypatch):
 
 
 @pytest.fixture()
+def passive_person_results(env):
+    """flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): a pre-feature attempt's person result of a run / test card
+    now takes its card's review setting at once (``review_stage.person_result``: review 'none' completes it as
+    ``human_submitted``, a review set starts its one review) and a lost step is taken by the run read
+    (``review_stage._reconcile_person_result``). The suites that use such a person card as a passive vehicle — a
+    result bound with the node's token, its completion / approval / intervention then driven by the test itself — keep
+    it passive with this fixture: the card's step after the bind and the run read's reconciliation take nothing for a
+    pre-feature run / test person card. An assigned attempt and a work plan (0083 WP-4) are followed as ever. The
+    contract itself is tested without it (set up after env, which registers the real handler; ``test_fg_person_wp_review_0083`` test_6_a_person_s_run_card_*,
+    ``test_fg_card_approval_0056``)."""
+    from flowgate.card_settings import fields, manual_stage, review_stage
+    from flowgate.card_settings import stage_assignment as sa
+    from modules.flow_gate.graph_workflow.services import card_settings_ports as ports
+
+    real_result, real_reconcile = review_stage.person_result, review_stage._reconcile_person_result
+
+    def followed(node) -> bool:
+        return review_stage._kind(node) == fields.PLAN
+
+    def person_result(flow_id, node, doc_id):
+        if sa.enabled() and sa.role_card(node):
+            job = manual_stage.person_result(flow_id, node, doc_id)
+            if job != sa.LEGACY:
+                return job
+        return real_result(flow_id, node, doc_id) if followed(node) else None
+
+    def reconcile(flow_id, run_row, row):
+        node = review_stage.legacy.node_of_key(flow_id, row["node_key"])
+        if node is not None and followed(node):
+            real_reconcile(flow_id, run_row, row)
+
+    had = ports.registered(ports.PERSON_RESULT)
+    ports.register(ports.PERSON_RESULT, person_result)
+    review_stage._reconcile_person_result = reconcile
+    try:
+        yield
+    finally:
+        review_stage._reconcile_person_result = real_reconcile
+        if had:
+            ports.register(ports.PERSON_RESULT, real_result)
+        else:
+            ports.unregister(ports.PERSON_RESULT)
+
+
+@pytest.fixture()
 def env(db_path, monkeypatch, tmp_path, request):
     from modules.flow_gate.db import _SqliteTxnAdapter
     from modules.flow_gate.graph_workflow.api import canvas_routes, envelope, graph_routes, run_routes
     from modules.flow_gate.graph_workflow.services import canvas_events, node_dispatch, run_events
 
-    from flowgate.card_approval import routes as card_approval_routes
     from flowgate.card_documents import integration as card_documents
     from flowgate.card_settings import integration, routes
 
@@ -145,7 +189,7 @@ def env(db_path, monkeypatch, tmp_path, request):
     card_documents.register()
     integration.register()
     app = FastAPI()
-    for module in (canvas_routes, graph_routes, run_routes, routes, card_approval_routes):
+    for module in (canvas_routes, graph_routes, run_routes, routes):
         app.include_router(module.router)
     state["client"] = TestClient(app)
     _seed(db_path)

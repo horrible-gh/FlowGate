@@ -309,3 +309,101 @@ def test_conflicting_branch_keeps_merge_in_flight(repo):
     files = branches.merge_no_ff(repo.root, other, "Merge branch 'other' into flow", "other", "flow")
     assert files == ["a.txt"]
     assert git(repo.root, "rev-parse", "MERGE_HEAD") == other
+
+
+def test_merge_end_keeps_integrated_and_leaves_the_node_in_review_until_its_card_is_complete(merge_db, monkeypatch):
+    """flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the merge end (e) asks the one completion condition every
+    ``review_approved`` asks (``result_binder.completion_ready``) in its own Flow guard right before the done — the
+    card's required outputs and no review of the result waiting, not only the completion record. With the instruction
+    the card uses not approved (put back in review while the merge waited), the attempt is integrated (the merge's fact
+    kept) and the node stays in review: nothing applied. Once the instruction is approved the reconciliation makes the
+    ``review_approved`` (the merge no longer waits); a second notice of the merge end is skipped. With the outputs
+    complete the merge end applies the done once."""
+    from modules.flow_gate.graph_workflow.domain.frontier import RunEvent
+    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
+    from modules.flow_gate.graph_workflow.services import card_settings_ports, result_binder, run_apply, run_service
+    from modules.flow_gate.services import graph_execution_hooks
+
+    merge_db._execute("UPDATE graph_runs SET status='running' WHERE run_id='run'")
+    merge_db._execute("UPDATE graph_node_attempts SET integration_status='integrating', result_commit=? "
+                      "WHERE attempt_id=?", [RESULT, merge_db.attempt])
+    ctx = SimpleNamespace(flow_id="flow", run={"run_id": "run"}, run_id="run", revision=None, jobs=[],
+                          node_rows={"node": {"node_key": "node", "node_type": "document", "doc_type": "T"}},
+                          docs=lambda: {"doc": {"doc_id": "doc", "group_id": "flow", "status": "open"}})
+    outputs = {"pending": ["t_instruction"]}
+    asked, applied, settled = [], [], []
+
+    def pending(flow_id, node, result_doc_id):
+        asked.append((node["node_key"], result_doc_id))
+        return list(outputs["pending"])
+
+    monkeypatch.setattr(ports, "completion_of", lambda *a: {"completion_id": "c1", "legacy": False})
+    monkeypatch.setattr(ports, "pending_outputs", pending)
+    monkeypatch.setattr(card_settings_ports, "result_review_pending", lambda *a: False)
+    monkeypatch.setattr(graph_execution_hooks, "call", lambda action, *a, **k: (
+        result_merge.integration_waiting(*a) if action == "integration_waiting" else None))
+    monkeypatch.setattr(result_merge.documents, "get_by_id", lambda did: {"doc_id": did, "type_code": "TR"})
+    monkeypatch.setattr(result_merge, "_node", lambda row: {"node_key": "node", "status": "review",
+                                                             "result_doc_id": "doc"})
+    monkeypatch.setattr(run_apply, "load_context", lambda *a, **k: ctx)
+    monkeypatch.setattr(run_apply, "read_run_state", lambda c: "state")
+    monkeypatch.setattr(run_apply, "settle_run", lambda c: settled.append(c))
+    monkeypatch.setattr(run_apply, "apply_decision", lambda c, d: applied.append(d.event))
+    monkeypatch.setattr(result_merge, "resolve", lambda rev, s, event, pol: SimpleNamespace(ignored=False, event=event))
+    monkeypatch.setattr(result_merge, "policies_of", lambda entries: {})
+    monkeypatch.setattr(run_store, "policy_entries", lambda run_id: [])
+    monkeypatch.setattr(run_service, "run_jobs", lambda jobs: None)
+    monkeypatch.setattr(workspace, "cleanup_ended", lambda attempt_id: False)
+
+    assert result_merge._finish(merge_db.attempt, RESULT, ("integrating",)) == "integrated"
+    assert status(merge_db) == ("integrated", None)                     # the merge's fact is kept
+    assert asked == [("node", "doc")] and applied == [] and len(settled) == 1   # the outputs asked: no done
+    assert not result_merge.integration_waiting("run", "node")
+    review = SimpleNamespace(node=lambda key: SimpleNamespace(status="review", result_doc_id="doc"))
+    assert result_binder.next_missing_event(ctx, review, "node") is None         # its instruction still waits
+    outputs["pending"] = []                                              # the instruction approved
+    assert result_binder.next_missing_event(ctx, review, "node") == RunEvent("review_approved", "node", doc_id="doc")
+    assert result_merge._finish(merge_db.attempt, RESULT, ("integrating",)) == "skipped" and applied == []
+    merge_db._execute("UPDATE graph_node_attempts SET integration_status='integrating' WHERE attempt_id=?",
+                      [merge_db.attempt])
+    assert result_merge._finish(merge_db.attempt, RESULT, ("integrating",)) == "integrated"   # outputs complete
+    assert applied == [RunEvent("review_approved", "node", doc_id="doc")]
+
+
+def test_merge_end_also_waits_for_a_review_of_the_result_and_for_its_completion_record(merge_db, monkeypatch):
+    """The same condition's other parts: no completion record, or a review of the result still waiting (0038-T T#3
+    A-4), leave the node in review at the merge end too."""
+    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
+    from modules.flow_gate.graph_workflow.services import card_settings_ports, run_apply, run_service
+
+    merge_db._execute("UPDATE graph_runs SET status='running' WHERE run_id='run'")
+    ctx = SimpleNamespace(flow_id="flow", run={"run_id": "run"}, run_id="run", revision=None, jobs=[],
+                          node_rows={"node": {"node_key": "node"}})
+    state = {"record": None, "review": False}
+    applied = []
+    monkeypatch.setattr(ports, "completion_of", lambda *a: state["record"])
+    monkeypatch.setattr(ports, "pending_outputs", lambda *a: [])
+    monkeypatch.setattr(card_settings_ports, "result_review_pending", lambda *a: state["review"])
+    monkeypatch.setattr(result_merge.documents, "get_by_id", lambda did: {"doc_id": did, "type_code": "TR"})
+    monkeypatch.setattr(result_merge, "_node", lambda row: {"node_key": "node", "status": "review",
+                                                             "result_doc_id": "doc"})
+    monkeypatch.setattr(run_apply, "load_context", lambda *a, **k: ctx)
+    monkeypatch.setattr(run_apply, "read_run_state", lambda c: "state")
+    monkeypatch.setattr(run_apply, "settle_run", lambda c: None)
+    monkeypatch.setattr(run_apply, "apply_decision", lambda c, d: applied.append(d.event))
+    monkeypatch.setattr(result_merge, "resolve", lambda rev, s, event, pol: SimpleNamespace(ignored=False, event=event))
+    monkeypatch.setattr(result_merge, "policies_of", lambda entries: {})
+    monkeypatch.setattr(run_store, "policy_entries", lambda run_id: [])
+    monkeypatch.setattr(run_service, "run_jobs", lambda jobs: None)
+    monkeypatch.setattr(workspace, "cleanup_ended", lambda attempt_id: False)
+
+    def finish():
+        merge_db._execute("UPDATE graph_node_attempts SET integration_status='integrating' WHERE attempt_id=?",
+                          [merge_db.attempt])
+        return result_merge._finish(merge_db.attempt, RESULT, ("integrating",))
+
+    assert finish() == "integrated" and applied == []                    # no completion record
+    state.update(record={"completion_id": "c1", "legacy": False}, review=True)
+    assert finish() == "integrated" and applied == []                    # its review waits
+    state["review"] = False
+    assert finish() == "integrated" and len(applied) == 1

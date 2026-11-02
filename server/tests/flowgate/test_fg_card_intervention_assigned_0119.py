@@ -172,10 +172,10 @@ def _instruction_reviewed(env, monkeypatch, starts):
 
 def test_an_instruction_whose_automatic_approval_keeps_failing_is_a_system_error_retried_up_to_the_limit(
         env, decided, monkeypatch, starts):
-    from flowgate.card_approval import legacy_adapter as approvals
+    from flowgate.card_completion import instruction as card_instruction   # 0119 T-3: the completion's own approval
 
     key, instruction, ir = _instruction_reviewed(env, monkeypatch, starts)
-    monkeypatch.setattr(approvals, "approve_document", lambda *a, **k: _refused(None))
+    monkeypatch.setattr(card_instruction, "approve", lambda *a, **k: _refused(None))
     _review_end(env, ir, "review_passed")
     row = node_run(env, key)
     assert (row["status"], row["stage"]) == ("open", "instruction")
@@ -190,14 +190,14 @@ def test_an_instruction_whose_automatic_approval_keeps_failing_is_a_system_error
 
 
 def test_an_instruction_whose_automatic_approval_failed_once_goes_on_to_its_result_stage(env, decided, monkeypatch, starts):
-    from flowgate.card_approval import legacy_adapter as approvals
+    from flowgate.card_completion import instruction as card_instruction   # 0119 T-3: the completion's own approval
 
     key, instruction, ir = _instruction_reviewed(env, monkeypatch, starts)
-    real = approvals.approve_document
-    monkeypatch.setattr(approvals, "approve_document", lambda *a, **k: _refused(None))
+    real = card_instruction.approve
+    monkeypatch.setattr(card_instruction, "approve", lambda *a, **k: _refused(None))
     _review_end(env, ir, "review_passed")
     assert _wire(env, key)["intervention"]["kind"] == "system_error"
-    monkeypatch.setattr(approvals, "approve_document", real)          # the cause is gone
+    monkeypatch.setattr(card_instruction, "approve", real)            # the cause is gone
     _read(env)
     assert _review_status(instruction) == "approved" and node_run(env, key)["stage"] == "result"
     assert _wire(env, key)["intervention"] is None

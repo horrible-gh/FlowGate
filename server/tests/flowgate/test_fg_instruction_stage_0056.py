@@ -36,7 +36,7 @@ from pathlib import Path
 
 import pytest
 
-from test_fg_card_approval_0056 import _approve, _current, _events, _node_run, _resume, _run_id, _stop
+from test_fg_card_approval_0056 import _current, _events, _node_run, _resume, _run_id, _stop
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
     legacy_cards, pre_feature_attempts,
     AI, FA, _doc, _h, _run_one_card, _sql, _start, db_path, decided, edge, env, get_settings, node, put_draft,
@@ -57,13 +57,15 @@ ROOT = f"{FA}.0001-R"
 
 
 @pytest.fixture(autouse=True)
-def card_approval_port():
-    """The card approval's Graph port, registered as ``startup`` registers it."""
-    from flowgate.card_approval import integration
+def card_outputs_port():
+    """flowgate.v02.0119 T#4 (T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
+    registered as ``startup`` registers it — it replaced the removed card approval port."""
+    from flowgate.card_completion import outputs
+    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
 
-    integration.register()
+    ports.register(ports.PENDING_OUTPUTS, outputs.pending_outputs)
     yield
-    integration.unregister()
+    ports.unregister(ports.PENDING_OUTPUTS)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -755,7 +757,7 @@ def test_the_source_tools_judge_a_node_token_by_its_stage(env, decided, monkeypa
 # ── the one body judgement ───────────────────────────────────────────────────
 
 def test_the_body_judgement_is_one_function_the_v02_cards_share(env):
-    from flowgate.card_approval import approval, legacy_adapter
+    from flowgate.card_completion import legacy_adapter, outputs
     from flowgate.card_documents import lines
 
     first = put_draft(env, FA, 0, [node("tmp_t", "T")])
@@ -771,9 +773,10 @@ def test_the_body_judgement_is_one_function_the_v02_cards_share(env):
     assert lines.has_body(doc()) is True
     db_documents.update(instruction, {"file_path": None})
     assert lines.has_body(doc()) is False                                # no readable file
-    # the card approval asks the same function (no judgement of its own)
-    assert not hasattr(legacy_adapter, "has_body")
-    src = (_SERVER_DIR / "flowgate" / "card_approval" / "approval.py").read_text(encoding="utf-8")
+    # the completion's output lines ask the same function (no judgement of its own; 0119 T-3: moved from the removed
+    # card approval)
+    assert not hasattr(legacy_adapter, "has_body") and not hasattr(outputs, "has_body")
+    src = (_SERVER_DIR / "flowgate" / "card_completion" / "outputs.py").read_text(encoding="utf-8")
     assert "card_lines.has_body(" in src
     settings_src = (_SERVER_DIR / "flowgate" / "card_settings" / "settings.py").read_text(encoding="utf-8")
     assert "card_lines.has_body(" in settings_src

@@ -32,7 +32,7 @@ from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
     AI, FA, _h, _sql, _start, db_path, decided, edge, env, node, put_draft,
 )
 from test_fg_card_settings_review import _admin_and_reviewer, _node, _review_status
-from test_fg_card_approval_0056 import LEE, _lease, _node_run, _run_id, card_approval_port  # noqa: F401
+from test_fg_card_approval_0056 import LEE, _lease, _node_run, _run_id, card_outputs_port  # noqa: F401
 from test_fg_wp_ai_run_0083 import _opus, _plan_line, _run_status, _start_ai_run, _tokens
 from test_fg_person_wp_review_0083 import (  # noqa: F401 — reviews: the recorder fixture
     AUTHOR_STOP, REVIEWER, _admitted, _hop_ends, _loop_ended, _passes, _person_wp, _stage, _verdict, _wp_body, reviews,

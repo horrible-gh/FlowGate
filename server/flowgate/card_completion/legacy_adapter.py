@@ -9,6 +9,16 @@ event, L0009 E-20 / E-36), the document row and its review verdicts.
 Listed for the directory move (WP 부록 A): ``graph_workflow.services.result_binder`` / ``run_apply`` / ``flow_guard``,
 ``graph_workflow.store.run_store``, ``db.documents``, ``db.document_reviews``, ``workflow_events`` (a submission's author),
 ``services.ai_invoke.runtime.get_run_record`` (the provider a review run actually ran on).
+
+flowgate.v02.0119 T#4 (T-3): what the removed card approval (``flowgate.card_approval``) took from ``modules.flow_gate`` and
+the completion still needs moved here — the card lines an ended attempt left behind (``stale_documents``, 0061 T#7) — with
+the read-only gates the v0.1 approval asked (a readable, non-blank body; a TSR's test gate), which are now the v0.2
+completion's own judgement (``card_completion.gates``), and the system's write of an approved instruction
+(``write_instruction_approved``: no v0.1 review transition, no TR approval hook, no Graph contact). Listed for the directory
+move (WP 부록 A): ``graph_workflow.projection.run_documents.registered_documents``, ``workflow.pipeline_service``
+(``_require_document_body_for_approval`` / ``_require_test_gate_for_approval`` / ``approvable_text`` /
+``AUTO_COMPLETE_TYPES`` / ``FILELESS_APPROVABLE_TYPES`` / ``TransitionError``), ``workflow.transition_rules.get_doc_rule``,
+``db.events``.
 """
 from __future__ import annotations
 
@@ -20,6 +30,7 @@ from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db.connection import get_store, in_transaction
 from modules.flow_gate.graph_workflow.domain.run_policies import policies_of
+from modules.flow_gate.graph_workflow.projection.run_documents import registered_documents
 from modules.flow_gate.graph_workflow.services import result_binder, run_apply
 from modules.flow_gate.graph_workflow.services.engine_router import read_ownership
 from modules.flow_gate.graph_workflow.services.flow_guard import held_guard, with_flow_guard
@@ -27,7 +38,9 @@ from modules.flow_gate.graph_workflow.store import run_store
 
 __all__ = ["graph_owned", "project_of", "active_run", "run_by_id", "node_run", "active_attempt_id", "document",
            "reviews_of", "guarded", "in_guard", "in_transaction", "transaction", "reconcile_node", "run_jobs",
-           "current_attempt_id", "attempt_created_at", "review_run_provider", "submission_author"]
+           "current_attempt_id", "attempt_created_at", "review_run_provider", "submission_author", "stale_documents",
+           "GateRefused", "require_body", "require_test_gate", "approvable_text", "fileless_type",
+           "InstructionRevisionMoved", "write_instruction_approved"]
 
 APPROVED = ("approved", "wf_done")
 STOPPING = "stopping"
@@ -161,3 +174,109 @@ def run_jobs(jobs: list) -> None:
     from modules.flow_gate.graph_workflow.services import run_service  # noqa: PLC0415 — the run stack on use
 
     run_service.run_jobs(jobs)
+
+
+# ── flowgate.v02.0119 T#4 (T-3): moved from the removed card approval, and the completion's own gates ──────────────
+
+def stale_documents(flow_id: str, node_key: Optional[str]) -> set[str]:
+    """flowgate.v02.0061 T#7 (0017-TR question 440, moved from ``card_approval.legacy_adapter`` by T-3): the card's documents
+    an ended attempt of the node left behind — registered (new or edit) with the tokens of the node's invalidated attempts
+    in the Flow's active run (a Stop, a lost lease, a failed worktree) and with none of its live tokens. They stay as the
+    card's history and are no output the node's completion waits for."""
+    if not node_key or not get_store().table_exists("graph_node_attempts"):
+        return set()
+    run_row = run_store.active_run(flow_id)
+    if run_row is None:
+        return set()
+    old_tokens = run_store.invalidated_token_ids(run_row["run_id"], node_key)
+    if not old_tokens:
+        return set()
+    old = {d["doc_id"] for d in registered_documents(flow_id, old_tokens)}
+    live_tokens = run_store.token_ids(run_row["run_id"], node_key)
+    live = {d["doc_id"] for d in registered_documents(flow_id, live_tokens)} if live_tokens and old else set()
+    return old - live
+
+
+class GateRefused(ValueError):
+    """The document does not pass a read-only gate of the completion (the v0.1 approval's ``TransitionError``)."""
+
+
+def require_body(doc: dict, locale: str = "ko") -> None:
+    """A readable, non-blank body after the front matter (the rule the v0.1 approval asked); raises ``GateRefused``."""
+    from modules.flow_gate.workflow import pipeline_service  # noqa: PLC0415 — v0.1 stack on use, called only
+
+    try:
+        pipeline_service._require_document_body_for_approval(doc, locale)
+    except pipeline_service.TransitionError as exc:
+        raise GateRefused(str(exc)) from exc
+
+
+def require_test_gate(doc: dict, locale: str = "ko") -> None:
+    """A TSR's test gate (the rule the v0.1 approval asked); raises ``GateRefused``."""
+    from modules.flow_gate.workflow import pipeline_service  # noqa: PLC0415
+
+    try:
+        pipeline_service._require_test_gate_for_approval(doc, locale)
+    except pipeline_service.TransitionError as exc:
+        raise GateRefused(str(exc)) from exc
+
+
+def approvable_text(doc: dict, text: str) -> bool:
+    """A body text already read passes the body gate (the same rule as ``require_body``)."""
+    from modules.flow_gate.workflow import pipeline_service  # noqa: PLC0415
+
+    return bool(pipeline_service.approvable_text(doc, text))
+
+
+def fileless_type(kind: Optional[str]) -> bool:
+    """A type the body gate never asked a file of (the auto-complete / fileless approvable types)."""
+    from modules.flow_gate.workflow import pipeline_service  # noqa: PLC0415
+
+    kind = str(kind or "").upper()
+    return kind in pipeline_service.AUTO_COMPLETE_TYPES or kind in pipeline_service.FILELESS_APPROVABLE_TYPES
+
+
+class InstructionRevisionMoved(RuntimeError):
+    """The instruction's revision is not the one its approval was asked for (its write rolled back)."""
+
+
+INSTRUCTION_APPROVED_EVENT = "card_instruction_approved"
+SUBMIT_ACTION = "submit"
+
+
+def write_instruction_approved(doc_id: str, revision: int, requested_by: Optional[str]) -> bool:
+    """The card instruction's approved display, written by the system in one transaction with its revision checked before
+    and after the write: review status ``approved`` (a written, never submitted draft also opens as an inbox submission
+    would: the v0.1 rule names the next document state) and a document event naming the system as the actor and the run's
+    issuer as ``requested_by``. False when it reads approved already (nothing written); ``InstructionRevisionMoved`` when
+    the revision moved. No v0.1 review transition, no TR approval hook, no Graph contact."""
+    from modules.flow_gate.db import events as db_events  # noqa: PLC0415
+    from modules.flow_gate.db.connection import now_iso  # noqa: PLC0415
+    from modules.flow_gate.workflow.transition_rules import get_doc_rule  # noqa: PLC0415
+
+    store = get_store()
+
+    def current() -> Optional[dict]:
+        return store._fetch_one("SELECT revision_no, status, doc_review_status FROM documents WHERE doc_id = ?",
+                                [doc_id])
+
+    with store.transaction():
+        row = current()
+        if row is None or int(row["revision_no"] or 0) != int(revision):
+            raise InstructionRevisionMoved(doc_id)
+        if row.get("doc_review_status") in APPROVED:
+            return False
+        fields = {"doc_review_status": "approved", "updated_at": now_iso()}
+        if not row.get("doc_review_status"):
+            rule = get_doc_rule(str(row.get("status") or ""), SUBMIT_ACTION)
+            if rule is not None:
+                fields["status"] = rule.next_state                 # draft -> open, as an inbox submission
+        if not db_documents.update(doc_id, fields):
+            raise InstructionRevisionMoved(doc_id)
+        db_events.insert_event(doc_id, INSTRUCTION_APPROVED_EVENT, note=json.dumps({
+            "actor": "system", "actor_kind": "system", "requested_by": requested_by, "revision_no": int(revision)},
+            ensure_ascii=False))
+        again = current()
+        if again is None or int(again["revision_no"] or 0) != int(revision):
+            raise InstructionRevisionMoved(doc_id)
+    return True

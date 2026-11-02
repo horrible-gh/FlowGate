@@ -314,7 +314,9 @@ def node_of_result(flow_id: str, doc_id: Optional[str]) -> Optional[dict]:
 def person_plan_reviewed(flow_id: str, node: dict) -> bool:
     """0083 WP-4: ``node`` is a work plan card a person writes whose card reviews its result (review count not 0).
     flowgate.v02.0113 T#3 (L-2 §2.14): for an assigned attempt, its current result review assignment's author is not an
-    AI (any card kind)."""
+    AI (any card kind). flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): a pre-feature attempt of any card a person
+    writes whose card has a result stage (run / test / plan: ``fields.after_result``) and reviews it — no longer the work
+    plan alone, so a person's run / test result takes its card's review as the plan's does."""
     from flowgate.card_settings import fields, repository  # noqa: PLC0415 — the card's own settings
 
     found = _assigned_attempt_of(flow_id, node)
@@ -325,9 +327,8 @@ def person_plan_reviewed(flow_id: str, node: dict) -> bool:
         return latest is not None and latest.get("author") != "ai"
     if not node.get("node_key") or not repository.available() or card_settings_ports.uses_ai(flow_id, node):
         return False
-    if fields.card_kind(node.get("node_type"), node.get("doc_type")) != fields.PLAN:
-        return False
-    return fields.after_result(fields.PLAN, repository.values(flow_id, node["node_key"])) == fields.REVIEW
+    kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
+    return fields.after_result(kind, repository.values(flow_id, node["node_key"])) == fields.REVIEW
 
 
 def open_node_of_token(token_rec: dict) -> Optional[tuple[str, dict]]:
@@ -941,13 +942,12 @@ COMPLETION_EVENT = "card_completion_recorded"
 
 
 def completion_gates(doc: dict) -> None:
-    """The read-only gates the v0.1 approval asked before approving: a readable, non-blank body and a TSR's test gate
-    (``pipeline_service``); raises when the document does not pass."""
-    from modules.flow_gate.workflow.pipeline_service import (  # noqa: PLC0415
-        _require_document_body_for_approval, _require_test_gate_for_approval)
+    """The read-only gates the v0.1 approval asked before approving: a readable, non-blank body and a TSR's test gate;
+    raises when the document does not pass. flowgate.v02.0119 T#4 (T-3): the v0.2 completion's own judgement
+    (``card_completion.gates``)."""
+    from flowgate.card_completion import gates  # noqa: PLC0415
 
-    _require_document_body_for_approval(doc, LOCALE)
-    _require_test_gate_for_approval(doc, LOCALE)
+    gates.require_gates(doc, LOCALE)
 
 
 def show_approved(doc_id: str, revision: int, record: Optional[dict]) -> None:

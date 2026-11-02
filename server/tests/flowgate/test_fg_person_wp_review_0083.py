@@ -62,8 +62,8 @@ from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
     AI, FA, _h, _sql, _start, db_path, decided, env, setting,
 )
 from test_fg_card_settings_review import _admin_and_reviewer, _node, _review_status
-from test_fg_card_approval_0056 import (  # noqa: F401 — card_approval_port: registered as startup does
-    LEE, _approve, _current, _node_run, _resume, _run_id, _stop, card_approval_port,
+from test_fg_card_approval_0056 import (  # noqa: F401 — card_outputs_port: registered as startup does
+    LEE, _approval_route_gone, _current, _node_run, _resume, _run_id, _stop, card_outputs_port,
 )
 from test_fg_wp_ai_run_0083 import OPUS, _cards, _opus, _run_status, _tokens, _wp_result
 # flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
@@ -697,7 +697,7 @@ def test_6_review_none_waits_for_a_person_when_the_issuer_lacks_document_approve
     assert _node(env, t2)[0] == "pending" and env["jobs"] == []
     assert _run_status(env) == ("idle", "needs_intervention")
     # flowgate.v02.0119 T#3 (T-2): no person approves the card any more (a person's card approval moved it on before)
-    assert _approve(env, wp, expect=409, user="u_lee")["error"]["code"] == "needs_intervention"
+    _approval_route_gone(env, wp)                                        # 0119 T-3: the route is gone
     assert _node(env, wp) == ("review", doc) and _node(env, t2)[0] == "pending"
 
 
@@ -768,16 +768,91 @@ def test_6_a_passed_review_waits_for_a_person_when_the_issuer_lacks_document_app
     assert _node_run(env, wp)["intervention"]["kind"] == "needs_intervention" and _node(env, t2)[0] == "pending"
 
 
-# 0113 T#3 (T §6.4) pre-feature contract: a person's RUN result waited for a person's [승인]; assigned: manual judgement and the system's approval (T §6.4, G-2)
-def test_6_a_person_s_run_card_still_waits_for_a_person_s_approval(pre_feature_attempts, env, decided, reviews):
+# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1, 0004-CH seq 9 T-3): no person approves a card any more — a
+# pre-feature attempt (no stage assignment record) of a run card a person writes takes its card's review setting as the
+# plan does: review 'none' completes it as ``human_submitted`` at once, a review set reviews each submission once and its
+# pass completes it. Was: test_6_a_person_s_run_card_still_waits_for_a_person_s_approval (a person's [승인], now gone).
+def _completions(env, key):
+    return _sql(env["db"], "SELECT cause, actor_kind, requested_by, status FROM graph_card_completions WHERE node_key = ? "
+                           "ORDER BY created_at", (key,))
+
+
+def _person_run_result(env, key, seq=81):
     from modules.flow_gate.graph_workflow.api import v01_contact
     from test_fg_card_settings_review import _result
 
+    doc, token = _result(seq, "T"), _token(env, key)
+    v01_contact.after_inbox_registered(FA, doc, "T", token)
+    return doc, token
+
+
+def test_6_a_person_s_run_card_of_a_pre_feature_attempt_with_review_none_completes_as_human_submitted_once(
+        pre_feature_attempts, env, decided, reviews):
+    from modules.flow_gate.graph_workflow.api import v01_contact
+
     key, t2 = _person_wp(env, 0, card=("T", LEE))
-    doc = _result(81, "T")
-    v01_contact.after_inbox_registered(FA, doc, "T", _token(env, key))
-    assert reviews == [] and (_node(env, key), _review_status(doc)) == (("review", doc), "pending_review")
-    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention" and _node(env, t2)[0] == "pending"
+    doc, token = _person_run_result(env, key)
+    assert reviews == [] and (_node(env, key), _review_status(doc)) == (("done", doc), "approved")
+    [done] = _completions(env, key)
+    assert (done["cause"], done["actor_kind"], done["requested_by"]) == (
+        "human_submitted", "user", "u_kim")                              # the issuer is the requester only
+    assert _node(env, t2)[0] == "open" and [j["node_key"] for j in env["jobs"]] == [t2]
+    v01_contact.after_inbox_registered(FA, doc, "T", token)              # the same submission told again
+    _current(env)                                                        # and a run read's reconciliation
+    assert len(_completions(env, key)) == 1 and [j["node_key"] for j in env["jobs"]] == [t2]
+    _approval_route_gone(env, key)
+
+
+def test_6_a_person_s_run_card_of_a_pre_feature_attempt_is_reviewed_once_and_its_pass_completes_it(
+        pre_feature_attempts, env, decided, reviews):
+    from modules.flow_gate.graph_workflow.api import v01_contact
+
+    key, t2 = _person_wp(env, 1, card=("T", LEE))
+    doc, token = _person_run_result(env, key)
+    [call] = reviews                                                     # its card's review, once
+    assert call["doc_ref"] == doc and call["issued_to"] == "u_kim"
+    assert call["document_review_loop"]["rework_provider_id"] is None    # no AI reworks a person's result
+    v01_contact.after_inbox_registered(FA, doc, "T", token)              # told again
+    _current(env)                                                        # a run read: nothing more
+    assert len(reviews) == 1 and _node(env, key) == ("review", doc)
+    _passes(_admitted(call, 1))
+    assert (_node(env, key), _review_status(doc)) == (("done", doc), "approved")
+    [done] = _completions(env, key)
+    assert (done["cause"], done["actor_kind"]) == ("ai_review_passed", "ai")
+    assert _node(env, t2)[0] == "open"
+    _current(env)
+    assert len(reviews) == 1 and len(_completions(env, key)) == 1
+
+
+@pytest.mark.parametrize("count", [0, 1], ids=["review_none", "review"])
+def test_6_a_person_s_run_card_step_lost_after_its_bind_is_taken_by_the_run_read_once(
+        pre_feature_attempts, env, decided, reviews, monkeypatch, count):
+    """The binder's post-commit step of a person's submission is lost (the process restarts between the commit and the
+    job: the job never runs and the node's in-memory mark is gone). The next run read's reconciliation takes the step as
+    the job would have — its review, or with 'none' its completion — once, however often it reads."""
+    from flowgate.card_settings import review_stage
+
+    key, t2 = _person_wp(env, count, card=("T", LEE))
+    real = review_stage.follow_person_result
+    review_stage.follow_person_result = lambda *a, **k: None             # the job is lost
+    try:
+        doc, _token_id = _person_run_result(env, key)
+    finally:
+        review_stage.follow_person_result = real
+    with review_stage._handoff_lock:
+        review_stage._handoffs.clear()                                   # the restart: no mark survives
+    assert reviews == [] and _node(env, key) == ("review", doc) and _completions(env, key) == []
+    _current(env)                                                        # the run read takes it
+    if count:
+        assert len(reviews) == 1 and reviews[0]["doc_ref"] == doc
+        _current(env)
+        assert len(reviews) == 1                                         # read again: one review
+        _passes(_admitted(reviews[0], 1))
+    else:
+        assert reviews == []
+    assert (_node(env, key), _review_status(doc)) == (("done", doc), "approved")
+    _current(env)
+    assert len(_completions(env, key)) == 1 and len(reviews) == count and _node(env, t2)[0] == "open"
 
 
 # ── 7. the engine: loops with a rework AI unchanged; no rework AI: stop ──────
@@ -1025,7 +1100,10 @@ def test_the_card_registers_the_person_result_port_and_without_it_the_graph_hand
     try:
         wp, _t2 = _person_wp(env)
         doc = _submit(env, wp, 81)
-        assert reviews == [] and _node(env, wp) == ("review", doc)       # as before WP-4: a person approves
-        assert _node_run(env, wp)["intervention"]["kind"] == "needs_intervention"
+        assert reviews == [] and _node(env, wp) == ("review", doc)       # the binder hands nothing to the card
+        # flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the run read's reconciliation still takes the person's
+        # step the binder never handed (``review_stage._reconcile_person_result``) — no person approves it
+        _node_run(env, wp)
+        assert len(reviews) == 1 and reviews[0]["doc_ref"] == doc
     finally:
         ports.register(ports.PERSON_RESULT, review_stage.person_result)

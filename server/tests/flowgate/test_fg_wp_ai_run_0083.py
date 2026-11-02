@@ -41,8 +41,8 @@ from test_fg_card_settings_review import (
     REVIEW_RUN, _admin_and_reviewer, _executions_ended, _loop_row, _node, _recorded_start_run, _result,
     _review_status, _run_ended,
 )
-from test_fg_card_approval_0056 import (  # noqa: F401 — card_approval_port: registered as startup does
-    LEE, _chain, _current, _human_result, _node_run, _run_id, card_approval_port,
+from test_fg_card_approval_0056 import (  # noqa: F401 — card_outputs_port: registered as startup does
+    LEE, _chain, _current, _human_result, _node_run, _run_id, card_outputs_port,
 )
 # flowgate.v02.0113 T#3 (T §6.4): this suite's cards are cards made before the AI role feature (their legacy fields:
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
@@ -461,17 +461,18 @@ def test_r_run_and_test_cards_keep_their_judgement(pre_feature_attempts, env):
 @pytest.mark.parametrize("doc_type, typ", [("T", "T")])
 def test_r_a_person_assigned_run_card_keeps_a_person_s_writing_and_approval_revised_0083_wp4(pre_feature_attempts, env, decided, doc_type, typ):
     """0083 WP-4 개정 (revised): the WP case is gone from here. A work plan a person writes now takes its card's review
-    or, review 'none' (this card), its automatic approval (``test_fg_person_wp_review_0083``); a person's run card still
-    waits for a person's approval."""
+    or, review 'none' (this card), its automatic approval (``test_fg_person_wp_review_0083``). flowgate.v02.0119 T#4
+    rework (rej_01M6DQW6YF0SCQ5D P1): a person's run card no longer waits for a person's approval — its card reviews
+    nothing, so its result completes as submitted (``human_submitted``); the person still writes it (no AI start)."""
     _admin_and_reviewer(env)
     [key] = _cards(env, [(doc_type, LEE)], {0: (("run_ai", "aip_card"),)})
     _start(env)
     assert env["jobs"] == []
     [token] = _tokens(env, key)
     assert (token["provider_id"], token["issued_to"]) == (None, "u_lee")
-    result = _human_result(env, key, 81, typ)
-    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"              # nothing approves a person's result here
-    assert _review_status(result) == "pending_review"
+    result = _human_result(env, key, 81, typ, state="done")             # completed as submitted, by no person
+    assert _node_run(env, key)["intervention"] is None and _review_status(result) == "approved"
+    assert env["jobs"] == []                                             # still no AI writes it
 
 
 def test_r_a_step_command_keeps_the_next_card_pending_after_the_wp_is_approved(env, decided, monkeypatch):

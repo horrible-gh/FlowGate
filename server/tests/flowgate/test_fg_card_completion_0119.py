@@ -43,11 +43,12 @@ import threading
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — pytest fixtures and helpers of the card settings tests
-    legacy_cards, pre_feature_attempts,
+    legacy_cards, passive_person_results, pre_feature_attempts,
     FA, _doc, _h, _sql, db_path, decided, edge, env, node, put_draft,
 )
 
-pytestmark = pytest.mark.usefixtures("legacy_cards", "pre_feature_attempts", "completions")
+# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
+pytestmark = pytest.mark.usefixtures("legacy_cards", "pre_feature_attempts", "completions", "passive_person_results")
 
 LEE = {"kind": "human", "user_id": "u_lee", "provider_id": None}
 

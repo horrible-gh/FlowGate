@@ -39,13 +39,15 @@ QUESTION = {"id": 901, "anchor_doc_id": ROOT, "asker_kind": "ai", "responder_sta
 
 
 @pytest.fixture(autouse=True)
-def card_approval_port():
-    """The card approval's Graph port, registered as ``startup`` registers it."""
-    from flowgate.card_approval import integration
+def card_outputs_port():
+    """flowgate.v02.0119 T#4 (T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
+    registered as ``startup`` registers it — it replaced the removed card approval port."""
+    from flowgate.card_completion import outputs
+    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
 
-    integration.register()
+    ports.register(ports.PENDING_OUTPUTS, outputs.pending_outputs)
     yield
-    integration.unregister()
+    ports.unregister(ports.PENDING_OUTPUTS)
 
 
 @pytest.fixture()

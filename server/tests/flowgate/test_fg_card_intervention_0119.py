@@ -24,11 +24,13 @@ from __future__ import annotations
 import pytest
 
 from test_fg_card_settings import (  # noqa: F401 — pytest fixtures and helpers of the card settings tests
-    legacy_cards, pre_feature_attempts,
+    legacy_cards, passive_person_results, pre_feature_attempts,
     FA, _doc, _h, _sql, db_path, decided, edge, env, node, put_draft,
 )
 
-pytestmark = pytest.mark.usefixtures("legacy_cards", "pre_feature_attempts", "completions", "fork_join")
+# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
+pytestmark = pytest.mark.usefixtures("legacy_cards", "pre_feature_attempts", "completions", "fork_join",
+                                     "passive_person_results")
 
 LEE = {"kind": "human", "user_id": "u_lee", "provider_id": None}
 NOT_PASSED = "review_not_passed:review_count_exhausted"
@@ -147,12 +149,12 @@ def _completed(key, result):
     assert legacy_adapter.approve(FA, result, "u_kim", legacy_adapter.AUTOMATION, node_key=key) is True
 
 
-def _approve(env, key, expect):
+def _approval_route_gone(env, key):
+    """flowgate.v02.0119 T#4 (T-3): the card approval route is unmounted (404) — no person approves a card."""
     run_id = _current(env)["run_id"]
     res = env["client"].post(f"/api/v1/runs/{run_id}/nodes/{key}/approval", json=None,
                              headers={**_h(), "Authorization": "Bearer user:u_kim"})
-    assert res.status_code == expect, res.text
-    return res.json()
+    assert res.status_code == 404, res.text
 
 
 # ── needs_intervention: only its descendants wait ───────────────────────────
@@ -168,7 +170,7 @@ def test_a_review_that_did_not_pass_stops_only_its_descendants_and_the_run_waits
     shown = _node_run(env, a)
     assert shown["intervention"] == {"kind": "needs_intervention", "reason": NOT_PASSED}
     assert (shown["awaiting_approval"], shown["approval_wait_reason"]) == (False, NOT_PASSED)
-    assert _approve(env, a, 409)["error"]["code"] == "needs_intervention"         # never a person's approval
+    _approval_route_gone(env, a)                                        # never a person's approval
     assert _states(env)[a] == "review"
 
     result_b = _submit(env, b, 91)                                      # the independent branch goes on
@@ -241,7 +243,7 @@ def test_a_failed_automatic_completion_is_a_system_error_and_the_run_is_in_error
     assert shown["intervention"] == {"kind": "system_error", "reason": "approval_refused"}
     run = _current(env)
     assert (run["status"], run["idle_reason"]) == ("idle", "error")
-    assert _approve(env, a, 409)["error"]["code"] == "system_error"
+    _approval_route_gone(env, a)
     assert _states(env)[a2] == "pending"
 
 

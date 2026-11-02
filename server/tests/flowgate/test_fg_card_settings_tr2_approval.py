@@ -17,7 +17,8 @@ retried once and left to a person.
 The harness's ``store`` is taken over only to apply the migrations as ``test_fg_card_settings`` applies
 them: a statement an earlier migration already made (``idx_chat_cmd_run`` of 136, again in 137) must not
 stop the setup. Its token issue is taken over too (flowgate.v02.0056 T#1, ``token_scratch_in_storage``): the
-harness puts the token scratch outside the storage root, which the token scratch policy refuses.
+harness puts the token scratch outside the storage root, which the token scratch policy refuses. flowgate.v02.0119 T#4
+(T-3): that fixture moved here from ``test_fg_card_approval_tr2_0056``, removed with the card approval.
 """
 from __future__ import annotations
 
@@ -26,13 +27,26 @@ import sqlite3
 
 import pytest
 
-from test_fg_card_approval_tr2_0056 import token_scratch_in_storage  # noqa: F401 — fixture used by name
+import tests.e2e.tr2.test_tr2_connected_e2e_0565 as harness
 from tests.e2e.tr2.test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtures used by name
-    USER, _Db, _QUERIES, _SCHEMA_DIR, auto_approved_t2, api, env, git, git_head, make_group, repo, submit_tr2,
+    PROJECT, USER, _Db, _QUERIES, _SCHEMA_DIR, auto_approved_t2, api, env, git, git_head, make_group, repo, submit_tr2,
 )
 
 pytestmark = [pytest.mark.skipif(shutil.which("git") is None, reason="git binary unavailable"),
               pytest.mark.usefixtures("token_scratch_in_storage")]
+
+
+def _issue_token(group: dict, scope: str, doc_ref: str) -> str:
+    """The harness's token issue without its scratch patch: the token scratch lands where the server puts it."""
+    from modules.flow_gate.services import token_service
+
+    return token_service.issue(project=PROJECT, group_id=group["group_id"], action_scope=scope, doc_ref=doc_ref,
+                               issued_to=USER)["raw_token"]
+
+
+@pytest.fixture
+def token_scratch_in_storage(monkeypatch):
+    monkeypatch.setattr(harness, "issue_token", _issue_token)
 
 
 @pytest.fixture

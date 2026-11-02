@@ -1,6 +1,8 @@
 """Rejection stops that path; unrelated branches continue (0061 T#1).
 
-Only a rejected root or gate is routed. Nothing opens on rejection, and descendants
+Only a rejected root is routed (flowgate.v02.0119 T#4, T-3: a confirm card is never rejected any more — the gate rule
+refuses ``reject``, so no new ``gate_rejected`` reaches this policy; a gate rejected before stays as it was, its
+descendants pending as this route left them). Nothing opens on rejection, and descendants
 stay pending: a rejected predecessor cannot propagate approval, and AND joins wait
 for every predecessor to be done. No permanent closed state is invented (the existing
 apply_decision deliberately rejects close decisions). Revisions of a rejected root

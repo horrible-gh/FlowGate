@@ -113,11 +113,11 @@ def _unjudged_instruction(flow_id: str, row: dict) -> bool:
     if row.get("stage") != sa.INSTRUCTION or not row.get("instruction_doc_id"):
         return False
     try:
-        from flowgate.card_approval import legacy_adapter as approvals  # noqa: PLC0415
-        from flowgate.card_documents import lines as card_lines  # noqa: PLC0415
+        from flowgate.card_completion import legacy_adapter as completion_records  # noqa: PLC0415 — T-3: moved from
+        from flowgate.card_documents import lines as card_lines  # noqa: PLC0415     # the removed card approval
         from flowgate.card_settings import review_stage  # noqa: PLC0415 — review_stage imports this package
 
-        doc = approvals.document(row["instruction_doc_id"])
+        doc = completion_records.document(row["instruction_doc_id"])
         if doc is None or doc.get("doc_review_status") in review_stage.APPROVED or not card_lines.has_body(doc):
             return False
         return not review_stage.ai_working(flow_id, row["node_key"], row["instruction_doc_id"])

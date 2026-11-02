@@ -407,6 +407,24 @@ def instruction_document(flow_id: str, node: dict) -> dict:
     return {"doc_type": doc_type, "doc_id": doc["doc_id"] if doc else None, "written": card_lines.has_body(doc)}
 
 
+def required_instruction(flow_id: str, node: dict) -> Optional[str]:
+    """flowgate.v02.0119 T#4 (T-3, 0004-CH seq 9 T-3 "필수 산출물"): the instruction type the card's completion requires
+    approved — the card uses an instruction — whoever writes it, else None. An assigned attempt: its plan names it (a test
+    card's TS unless omitted; a plan card none). A pre-feature attempt: the card's stored instruction use — a run card's
+    instruction stage type (``fields.instruction_stage``: none when omitted), a test card's TS unless omitted. A card with
+    no instruction (requirement, plan, gate) has none."""
+    if not node.get("node_key") or node.get("node_type") == "gate":
+        return None
+    assigned = _assigned(flow_id, node)
+    if assigned is not None:
+        return assigned[1].get("instruction_type") or None
+    stored = repository.values(flow_id, node["node_key"]) if repository.available() else {}
+    stored = stored if isinstance(stored, dict) else {}
+    if fields.card_kind(node.get("node_type"), node.get("doc_type")) == fields.TEST:
+        return None if stored.get("instruction") == "omit" else "TS"
+    return fields.instruction_stage(node.get("node_type"), node.get("doc_type"), stored)
+
+
 def token_step_type(token_rec: dict) -> Optional[str]:
     """The type the holder of a node's token writes when the node's card changes it, else None.
 

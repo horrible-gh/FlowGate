@@ -491,7 +491,9 @@ def _finish(attempt_id: str, integrated: Optional[str], expect) -> str:
         ctx = run_apply.load_context(run_store.run_by_id(current["run_id"]), workspace._project(current), None, jobs)
         node = _node(current)
         if node and node["status"] == "review" and node.get("result_doc_id") and not _completed(ctx, node):
-            log.warning("Graph integration found no completion to apply attempt=%s node=%s", attempt_id,
+            # flowgate.v02.0119 T#4 rework (P1): integrated stays integrated; the node stays in review until its card is
+            # complete (its instruction approved again, its review ended) — the reconciliation then makes it done once
+            log.warning("Graph integration found the node not complete yet attempt=%s node=%s", attempt_id,
                         current["node_key"])
             run_apply.settle_run(ctx)
             return INTEGRATED
@@ -515,10 +517,14 @@ def _finish(attempt_id: str, integrated: Optional[str], expect) -> str:
 
 def _completed(ctx, node: dict) -> bool:
     """flowgate.v02.0119 T#2 (T-1): the held approval is applied only for the node's completion record (an existing
-    run's approved result counts, ``card_completion_ports.completion_of``)."""
-    from modules.flow_gate.graph_workflow.services import card_completion_ports
+    run's approved result counts, ``card_completion_ports.completion_of``). flowgate.v02.0119 T#4 rework
+    (rej_01M6DQW6YF0SCQ5D P1): and only on the one completion condition every ``review_approved`` asks
+    (``result_binder.completion_ready``), judged here in the same Flow guard right before the done — the card's required
+    outputs (an instruction put back in review while the merge waited or its conflict was resolved holds the node) and no
+    review of the result waiting; the merge itself is done (``merged``)."""
+    from modules.flow_gate.graph_workflow.services import result_binder
     doc = documents.get_by_id(node["result_doc_id"])
-    return doc is not None and card_completion_ports.completion_of(ctx.flow_id, ctx.run, node["node_key"], doc) is not None
+    return doc is not None and result_binder.completion_ready(ctx, node["node_key"], doc, merged=True)
 
 
 def _settle_closed(row: dict, expect) -> str:

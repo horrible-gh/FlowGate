@@ -17,7 +17,9 @@ transition (``pipeline_service.transition_document_review``) and with no person 
           the caller writes the completion (the recovery path); approved with no succeeded attempt is refused.
 
 ``write`` is the caller's completion write (``() -> record``, run inside the effect's transaction); with no node it is
-the status display alone. Raises ``EffectRefused`` (the effect is refused: nothing is written) or ``EffectRevisionMoved``
+the status display alone. flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): a test card's TS *instruction* runs the
+same TS effect from its own approval (``instruction.approve``), with the instruction's approved display as ``write`` —
+the TS is no node's result there, so the effect is no longer left to a result completion that never comes. Raises ``EffectRefused`` (the effect is refused: nothing is written) or ``EffectRevisionMoved``
 (the document's revision is not ``revision`` any more).
 
 Listed for the directory move (WP 부록 A): ``services.test_run_service`` / ``spec_execution_service`` /
