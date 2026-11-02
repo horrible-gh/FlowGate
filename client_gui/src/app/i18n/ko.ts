@@ -28,6 +28,9 @@ export default {
     "done": "확인"
 },
   role_profiles: {
+    no_role_group: "AI 역할 그룹이 없습니다.",
+    create_role_group: "AI 역할 그룹 만들기",
+    role_lookup_missing: "AI 역할 그룹을 확인하지 못했습니다. 다시 조회하세요.",
     save_group: "변경 저장",
     create_group: "그룹 만들기",
     edit_group_title: "AI 그룹 정보 수정",

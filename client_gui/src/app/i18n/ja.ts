@@ -25,6 +25,9 @@ export default {
     "done": "確認"
 },
   role_profiles: {
+    no_role_group: "AIロールグループがありません。",
+    create_role_group: "AIロールグループを作成",
+    role_lookup_missing: "AIロールグループを確認できませんでした。再取得してください。",
     save_group: "変更を保存",
     create_group: "グループを作成",
     edit_group_title: "AIグループ情報を編集",

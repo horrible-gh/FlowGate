@@ -25,6 +25,9 @@ export default {
     "done": "Done"
 },
   role_profiles: {
+    no_role_group: "No AI role group yet.",
+    create_role_group: "Create AI role group",
+    role_lookup_missing: "Could not find the AI role group. Refresh to try again.",
     save_group: "Save changes",
     create_group: "Create group",
     edit_group_title: "Edit AI group info",

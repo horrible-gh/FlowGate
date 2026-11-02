@@ -1,4 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import AiSettingsView from '@/features/ai/AiSettingsView.vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
@@ -179,22 +181,284 @@ describe('0120 group integration and preserved dialog contracts', () => {
     vi.spyOn(api, 'deleteAiGroup').mockResolvedValue()
     const wrapper = mount(AiGroupsPanel, { props: { providers: [], initialGroups: [team('general','general'),team('roles','role')] }, attachTo: document.body, global: { plugins: [i18n] } })
     wrappers.push(wrapper)
+    await wrapper.findAll('.group-index-item')[0].trigger('click'); await flushPromises()
     await wrapper.get('.head-actions .danger-icon').trigger('click'); await flushPromises()
     ;(document.querySelector('.ui-confirm-actions .ui-btn--danger') as HTMLButtonElement).click(); await flushPromises()
     expect(wrapper.emitted('changed')).toHaveLength(1)
     expect(wrapper.get('.group-detail-head h2').text()).toBe('roles')
   })
 
-  it('does not switch selection after an older group update completes', async () => {
+  it.each([false, true])('retains a completed OFF update after selecting another group (reload fails=%s)', async reloadFails => {
     const pending = deferred<AiGroup>()
-    vi.spyOn(api,'setAiGroupState').mockImplementation(() => pending.promise)
-    vi.spyOn(api,'listAiGroups').mockResolvedValue([team('general','general'),team('roles','role')])
+    const refreshed = deferred<AiGroup[]>()
+    const updated = { ...team('general','general'), enabled: false }
+    vi.spyOn(api,'setAiGroupState').mockReturnValue(pending.promise)
+    const list = vi.spyOn(api,'listAiGroups').mockReturnValue(refreshed.promise)
     const wrapper = mount(AiGroupsPanel, { props: { providers: [], initialGroups: [team('general','general'),team('roles','role')] }, global: { plugins: [i18n] } })
     wrappers.push(wrapper)
+    await wrapper.findAll('.group-index-item')[0].trigger('click'); await flushPromises()
     await wrapper.get('.head-actions .ui-toggle').trigger('click')
     await wrapper.findAll('.group-index-item')[1].trigger('click'); await flushPromises()
-    pending.resolve({ ...team('general','general'), enabled: false }); await flushPromises()
+    pending.resolve(updated); await flushPromises()
+    // The write response must update A and notify its parent before the GET finishes.
+    expect(wrapper.findAll('.group-index-item')[0].classes()).toContain('off')
+    expect(wrapper.findAll('.group-index-item')[0].get('.off-tag').text()).toBe('OFF')
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+    expect(list).toHaveBeenCalledTimes(1)
     expect(wrapper.get('.group-detail-head h2').text()).toBe('roles')
     expect(wrapper.find('.role-matrix').exists()).toBe(true)
+    if (reloadFails) refreshed.reject(new Error('refresh unavailable'))
+    else refreshed.resolve([updated,team('roles','role')])
+    await flushPromises()
+    expect(wrapper.findAll('.group-index-item')[0].classes()).toContain('off')
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('roles')
+    expect(wrapper.find('.role-matrix').exists()).toBe(true)
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+  })
+
+  it.each(['write', 'refresh'])('refreshes default flags while preserving selection changed during %s', async phase => {
+    const pending = deferred<AiGroup>()
+    const refreshed = deferred<AiGroup[]>()
+    const previous = { ...team('previous','general'), is_default: true }
+    const updated = { ...team('general','general'), is_default: true }
+    vi.spyOn(api,'setAiGroupState').mockReturnValue(pending.promise)
+    const list = vi.spyOn(api,'listAiGroups').mockReturnValue(refreshed.promise)
+    const wrapper = mount(AiGroupsPanel, { props: { providers: [], initialGroups: [team('general','general'),previous,team('roles','role')] }, global: { plugins: [i18n] } })
+    wrappers.push(wrapper); await flushPromises()
+    await wrapper.findAll('.group-index-item')[0].trigger('click')
+    await wrapper.get('.head-actions button[title="기본팀으로"]').trigger('click')
+    if (phase === 'write') await wrapper.findAll('.group-index-item')[1].trigger('click')
+    pending.resolve(updated); await flushPromises()
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+    expect(list).toHaveBeenCalledTimes(1)
+    if (phase === 'refresh') await wrapper.findAll('.group-index-item')[1].trigger('click')
+    refreshed.resolve([updated,{ ...previous, is_default:false },team('roles','role')]); await flushPromises()
+    expect(wrapper.findAll('.group-index-item')[0].find('.star').exists()).toBe(true)
+    expect(wrapper.findAll('.group-index-item')[1].find('.star').exists()).toBe(false)
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('previous')
+    expect(wrapper.find('.team-badge').exists()).toBe(false)
+    expect(wrapper.find('.role-matrix').exists()).toBe(false)
+  })})
+
+
+describe('0120 first entry and role creation recovery', () => {
+  function panel(groups: AiGroup[] = [team('general', 'general')]) {
+    const wrapper = mount(AiGroupsPanel, { props: { providers: [], initialGroups: groups }, attachTo: document.body, global: { plugins: [i18n] } })
+    wrappers.push(wrapper); return wrapper
+  }
+  async function submitRole(wrapper: ReturnType<typeof panel>) {
+    await wrapper.get('.role-entry button').trigger('click'); await flushPromises()
+    const dialog = wrapper.findAllComponents(AiGroupEditDialog)[0]
+    const input = document.querySelector('#ai-group-edit-name') as HTMLInputElement
+    input.value = 'My roles'; input.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+    expect((document.querySelector('#ai-group-edit-type') as HTMLSelectElement).value).toBe('role')
+    expect(dialog.props('initial')).toBeNull()
+    ;(document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement).click(); await flushPromises()
+  }
+  const conflict = () => new api.AiRequestError('role exists', 'ai_role_group_exists', [])
+
+  it('prefers the real role type regardless of list order or group name', async () => {
+    const wrapper = panel([{ ...team('general','general'), name: 'AI 역할' }, team('actual','role')]); await flushPromises()
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('actual')
+    expect(wrapper.findAll('.role-matrix-row')).toHaveLength(1)
+    expect(wrapper.find('.role-entry').exists()).toBe(false)
+    expect(api.getAiRoleProfiles).toHaveBeenCalledWith('actual')
+  })
+
+  it.each([false, true])('offers role creation without writing on entry (empty=%s)', async empty => {
+    const create = vi.spyOn(api,'createAiGroup')
+    const wrapper = panel(empty ? [] : [team('general','general')]); await flushPromises()
+    expect(wrapper.get('.role-entry').text()).toContain('AI 역할 그룹이 없습니다.')
+    expect(wrapper.get('.role-entry button').text()).toBe('AI 역할 그룹 만들기')
+    expect(create).not.toHaveBeenCalled()
+    expect(api.getAiRoleProfiles).not.toHaveBeenCalled()
+    expect(wrapper.find('.role-matrix').exists()).toBe(false)
+    if (!empty) expect(wrapper.findAll('.block')).toHaveLength(2)
+  })
+
+  it('selects delayed initial role data but preserves a clicked general group across refreshes', async () => {
+    const wrapper = panel([])
+    await wrapper.setProps({ initialGroups: [team('a','general')] })
+    await wrapper.setProps({ initialGroups: [team('a','general'),team('roles','role')] }); await flushPromises()
+    expect(wrapper.find('.role-matrix').exists()).toBe(true)
+    await wrapper.findAll('.group-index-item')[0].trigger('click')
+    await wrapper.setProps({ initialGroups: [team('roles','role'),team('a','general')] }); await flushPromises()
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('a')
+    expect(wrapper.find('.role-matrix').exists()).toBe(false)
+    // Only a vanished selection permits automatic fallback again.
+    await wrapper.setProps({ initialGroups: [team('b','general'),team('roles','role')] }); await flushPromises()
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('roles')
+  })
+
+  it('treats a click on the already selected general group as an explicit choice', async () => {
+    const wrapper = panel()
+    await wrapper.get('.group-index-item').trigger('click')
+    await wrapper.setProps({ initialGroups: [team('general','general'),team('roles','role')] }); await flushPromises()
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('general')
+  })
+
+  it('creates once, waits for the real response ID, then mounts only the common row', async () => {
+    const pending = deferred<AiGroup>()
+    const create = vi.spyOn(api,'createAiGroup').mockReturnValue(pending.promise)
+    const update = vi.spyOn(api,'updateAiGroup')
+    const original = team('general','general')
+    const wrapper = panel([original]); await submitRole(wrapper)
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(create).toHaveBeenCalledWith({ name: 'My roles', group_type: 'role' })
+    expect(wrapper.find('.role-matrix').exists()).toBe(false)
+    expect((document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement).disabled).toBe(true)
+    ;(document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement).click(); await flushPromises()
+    expect(create).toHaveBeenCalledTimes(1)
+    pending.resolve(team('server-created-id','role')); await flushPromises()
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('server-created-id')
+    expect(wrapper.findAll('.role-matrix-row')).toHaveLength(1)
+    expect(document.querySelector('#ai-group-edit-name')).toBeNull()
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+    expect(update).not.toHaveBeenCalled()
+    expect(original).toEqual(team('general','general'))
+  })
+
+  it('keeps ordinary creation general even after opening the role creation path', async () => {
+    const create = vi.spyOn(api,'createAiGroup').mockResolvedValue(team('new-general','general'))
+    const wrapper = panel()
+    await wrapper.get('.role-entry button').trigger('click'); await flushPromises()
+    ;(document.querySelector('.dialog-actions .ui-btn--secondary') as HTMLButtonElement).click(); await flushPromises()
+    await wrapper.get('.detail-actions button').trigger('click'); await flushPromises()
+    expect((document.querySelector('#ai-group-edit-type') as HTMLSelectElement).value).toBe('general')
+    const input = document.querySelector('#ai-group-edit-name') as HTMLInputElement
+    input.value='Ordinary'; input.dispatchEvent(new Event('input',{bubbles:true})); await flushPromises()
+    ;(document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement).click(); await flushPromises()
+    expect(create).toHaveBeenCalledWith({name:'Ordinary',group_type:'general'})
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('new-general')
+    expect(wrapper.find('.role-matrix').exists()).toBe(false)
+  })
+
+  it.each([
+    new Error('network unavailable'),
+    new api.AiRequestError('forbidden', 'forbidden', []),
+    new api.AiRequestError('name conflict', 'ai_group_name_exists', []),
+  ])('keeps a failed creation visible without treating other errors as role conflicts: %s', async failure => {
+    vi.spyOn(api,'createAiGroup').mockRejectedValue(failure)
+    const list = vi.spyOn(api,'listAiGroups')
+    const wrapper = panel(); await submitRole(wrapper)
+    expect(document.querySelector('.form-error')?.textContent).toContain(failure.message)
+    expect((document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement).disabled).toBe(false)
+    expect(wrapper.find('.role-matrix').exists()).toBe(false)
+    expect(wrapper.emitted('changed')).toBeUndefined()
+    expect(list).not.toHaveBeenCalled()
+  })
+
+  it('recovers an explicit duplicate from the server and opens the existing role', async () => {
+    const create = vi.spyOn(api,'createAiGroup').mockRejectedValue(conflict())
+    vi.spyOn(api,'listAiGroups').mockResolvedValue([team('general','general'),team('existing','role')])
+    const wrapper = panel(); await submitRole(wrapper)
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(api.listAiGroups).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('existing')
+    expect(wrapper.findAll('.role-matrix-row')).toHaveLength(1)
+    expect(document.querySelector('.form-error')).toBeNull()
+  })
+
+  it.each(['failed','missing'])('retries only GET after duplicate recovery is %s', async mode => {
+    const create = vi.spyOn(api,'createAiGroup').mockRejectedValue(conflict())
+    const list = vi.spyOn(api,'listAiGroups')
+    if (mode === 'failed') list.mockRejectedValueOnce(new Error('lookup offline'))
+    else list.mockResolvedValueOnce([team('general','general')])
+    list.mockResolvedValueOnce([team('general','general'),team('existing','role')])
+    const wrapper = panel(); await submitRole(wrapper)
+    expect(wrapper.get('.role-entry[role="alert"]').text()).toContain(mode === 'failed' ? 'lookup offline' : '다시 조회')
+    expect(wrapper.find('.role-matrix').exists()).toBe(false)
+    // The normal dialog cannot offer another role POST while recovery is pending.
+    await wrapper.get('.detail-actions button').trigger('click'); await flushPromises()
+    expect((document.querySelector('#ai-group-edit-type option[value="role"]') as HTMLOptionElement).disabled).toBe(true)
+    ;(document.querySelector('.dialog-actions .ui-btn--secondary') as HTMLButtonElement).click(); await flushPromises()
+    await wrapper.get('.role-entry button').trigger('click'); await flushPromises()
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('existing')
+  })
+
+  it('keeps a general selection made while duplicate recovery is loading', async () => {
+    vi.spyOn(api,'createAiGroup').mockRejectedValue(conflict())
+    const pending = deferred<AiGroup[]>()
+    vi.spyOn(api,'listAiGroups').mockReturnValue(pending.promise)
+    const wrapper = panel(); await submitRole(wrapper)
+    expect(wrapper.get('.role-entry[role="status"] button').attributes('disabled')).toBeDefined()
+    await wrapper.get('.group-index-item').trigger('click')
+    pending.resolve([team('general','general'),team('existing','role')]); await flushPromises()
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('general')
+    expect(wrapper.find('.role-matrix').exists()).toBe(false)
+  })
+
+  it('adds a delayed created group without overriding a later general selection', async () => {
+    const pending = deferred<AiGroup>()
+    vi.spyOn(api,'createAiGroup').mockReturnValue(pending.promise)
+    const wrapper = panel(); await submitRole(wrapper)
+    await wrapper.get('.group-index-item').trigger('click')
+    pending.resolve(team('new-role','role')); await flushPromises()
+    expect(wrapper.findAll('.group-index-item')).toHaveLength(2)
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('general')
+    await wrapper.setProps({ initialGroups:[team('general','general'),team('new-role','role')] }); await flushPromises()
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('general')
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+  })
+
+  it('preserves explicit general selection through save and GET refresh', async () => {
+    const refreshed = [{...team('general','general'), enabled:false},team('roles','role')]
+    vi.spyOn(api,'setAiGroupState').mockResolvedValue(refreshed[0])
+    vi.spyOn(api,'listAiGroups').mockResolvedValue(refreshed)
+    const wrapper = panel([team('general','general'),team('roles','role')]); await flushPromises()
+    await wrapper.findAll('.group-index-item')[0].trigger('click')
+    await wrapper.get('.head-actions .ui-toggle').trigger('click'); await flushPromises()
+    await wrapper.setProps({initialGroups:copy(refreshed)}); await flushPromises()
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('general')
+    expect(wrapper.findAll('.block')).toHaveLength(2)
+    expect(wrapper.find('.role-matrix').exists()).toBe(false)
+  })
+
+  it.each([false,true])('does not expose creation to non-administrators (empty=%s)', async empty => {
+    setCurrentUser({username:'reader',email:null,isAdmin:false})
+    const create = vi.spyOn(api,'createAiGroup')
+    const wrapper = panel(empty ? [] : [team('general','general')]); await flushPromises()
+    expect(wrapper.get('.role-entry').text()).toContain('AI 역할 그룹이 없습니다.')
+    expect(wrapper.find('.role-entry button').exists()).toBe(false)
+    expect(wrapper.find('.detail-actions').exists()).toBe(false)
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('blocks a role submit if another role appears while the creation dialog is open', async () => {
+    const create=vi.spyOn(api,'createAiGroup')
+    const wrapper=panel()
+    await wrapper.get('.role-entry button').trigger('click'); await flushPromises()
+    const input=document.querySelector('#ai-group-edit-name') as HTMLInputElement
+    input.value='Roles'; input.dispatchEvent(new Event('input',{bubbles:true})); await flushPromises()
+    await wrapper.setProps({initialGroups:[team('general','general'),team('roles','role')]}); await flushPromises()
+    expect((document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement).disabled).toBe(true)
+    expect(create).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('0120 group entry loading boundary', () => {
+  it('does not claim no role before GET completes, and retries a failed initial load', async () => {
+    const pending=deferred<AiGroup[]>()
+    vi.spyOn(api,'fetchVisibleSystemAi').mockResolvedValue({providers:[]} as Awaited<ReturnType<typeof api.fetchVisibleSystemAi>>)
+    const list=vi.spyOn(api,'listAiGroups').mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce([team('general','general'),team('roles','role')])
+    const create=vi.spyOn(api,'createAiGroup')
+    const router=createRouter({history:createMemoryHistory(),routes:[{path:'/ai',component:AiSettingsView}]})
+    await router.push('/ai?tab=groups'); await router.isReady()
+    const wrapper=mount(AiSettingsView,{global:{plugins:[i18n,router]}})
+    wrappers.push(wrapper); await flushPromises()
+    expect(wrapper.find('.view-loading').exists()).toBe(true)
+    expect(wrapper.find('.role-entry').exists()).toBe(false)
+    pending.reject(new Error('initial groups offline')); await flushPromises()
+    expect(wrapper.get('.view-error').text()).toContain('initial groups offline')
+    expect(wrapper.find('.role-entry').exists()).toBe(false)
+    await wrapper.get('.view-error button').trigger('click'); await flushPromises()
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('.group-detail-head h2').text()).toBe('roles')
+    expect(wrapper.findAll('.role-matrix-row')).toHaveLength(1)
+    expect(create).not.toHaveBeenCalled()
   })
 })

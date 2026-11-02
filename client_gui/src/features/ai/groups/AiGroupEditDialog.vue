@@ -84,10 +84,11 @@ const props = withDefaults(
     kind?: 'group' | 'role'
     initial?: (AiGroupRoleInput & { group_type?: AiGroupType }) | null
     roleGroupExists?: boolean
+    defaultGroupType?: AiGroupType
     saving?: boolean
     error?: string | null
   }>(),
-  { kind: 'group', initial: null, saving: false, error: null },
+  { kind: 'group', initial: null, defaultGroupType: 'general', saving: false, error: null },
 )
 
 const emit = defineEmits<{
@@ -106,15 +107,16 @@ const title = computed(() => {
 const form = ref<{ name: string; description: string; criteria: string[]; group_type: AiGroupType }>({ name: '', description: '', criteria: [], group_type: 'general' })
 
 watch(
-  () => [props.open, props.initial] as const,
+  () => [props.open, props.initial, props.defaultGroupType] as const,
   ([open, initial]) => {
     if (!open) return
-    form.value = { group_type: initial?.group_type ?? 'general', name: initial?.name ?? '', description: initial?.description ?? '', criteria: [...(initial?.criteria ?? [])] }
+    form.value = { group_type: initial?.group_type ?? props.defaultGroupType, name: initial?.name ?? '', description: initial?.description ?? '', criteria: [...(initial?.criteria ?? [])] }
   },
   { immediate: true }
 )
 
-const isValid = computed(() => form.value.name.trim().length > 0)
+const isValid = computed(() => !props.saving && form.value.name.trim().length > 0
+  && !(props.kind === 'group' && !isEdit.value && form.value.group_type === 'role' && props.roleGroupExists))
 
 function onClose() {
   if (props.saving) return
