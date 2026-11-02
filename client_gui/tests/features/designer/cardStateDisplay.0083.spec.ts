@@ -20,7 +20,6 @@ import { toVueFlowNodes, type FlowGateNodeData } from '@/features/designer/cente
 import { cardStateView, type CardRunFacts } from '@/features/designer/center/graph/cardStateView'
 import type { FlowGraph, FlowGraphNode, FlowGraphNodeRun } from '@/features/designer/center/graph/flowGraph'
 import InspectorHeader from '@/features/designer/inspector/InspectorHeader.vue'
-import CardApprovalBar from '@/features/designer/inspector/features/cardApproval/CardApprovalBar.vue'
 import { runBandTone, runBandView, type DesignerRunFacts } from '@/features/designer/top/designerTop'
 import DesignerToolbar from '@/features/designer/top/DesignerToolbar.vue'
 import { GRAPH_GRAPH, selectionOf, targetOf } from './inspector/support/inspectorSupport'
@@ -50,7 +49,7 @@ describe('cardStateView — working, waiting and failed are told apart (0083 T#4
     ['the AI start was refused', run('open', { stage: 'result', dispatchErrorCode: 'provider_unavailable', ...idle }), ['incomplete', 'other', 'warning']],
     ['no counts sent (an older server): as before', run('open', { stage: null }), ['working', 'working', 'info']],
     ['review: its review loop works', run('review', { awaitingApproval: false, runningExecutionCount: 1 }), ['working', 'working', 'info']],
-    ['review: awaiting approval', run('review', { awaitingApproval: true, ...idle }), ['awaiting_approval', 'awaiting', 'warning']],
+    ['review: awaiting approval', run('review', { awaitingApproval: true, ...idle }), ['needs_intervention', 'other', 'warning']],
     ['done', run('done', idle), ['approved', 'approved', 'success']],
   ] as const)('%s', (_label, facts, expected) => {
     expect(row(facts)).toEqual(expected)
@@ -109,29 +108,16 @@ describe('the Canvas card (vueFlowMapping, FlowNodeCard)', () => {
     expect(data.gn_none.cardState?.key).toBe('no_result')
   })
 
-  it('0113 P-1 §6.4 scenario C keeps the manual label, approval button and 0105 tooltip', async () => {
-    i18n.global.locale.value = 'ko'
-    const facts = nodeRun('review', { awaitingApproval: true, approvalWaitReason: 'instruction_not_approved',
+  it('manual writing retains its role and never offers approval', () => {
+    const facts = nodeRun('review', { awaitingApproval: true,
       waitReason: { code: 'manual_write_wait', role: 'instruction', stage: 'instruction', seq: 0, detail: null } })
     const scenario: FlowGraph = { ...graph, nodes: [card('gn_manual', facts)] }
     const data = toVueFlowNodes(scenario, null, new Map(), { canApprove: true })[0].data
-    expect(data.cardState).toMatchObject({ key: 'manual_write_wait', approvable: true, tone: 'neutral' })
+    expect(data.cardState).toMatchObject({ key: 'manual_write_wait', approvable: false, tone: 'neutral' })
+    expect(data.approvable).not.toBe(true)
     wrapper = mount(FlowNodeCard, { props: { id: 'gn_manual', data }, global: { plugins: [i18n], stubs: { Handle: true } } })
-    const chip = wrapper.get('[data-test="designer-canvas-node-card-state"]')
-    expect(chip.attributes('title')).toContain('수동 작성 대기')
-    expect(chip.attributes('title')).toContain('instruction_not_approved')
-    await wrapper.get('[data-test="designer-canvas-node-approve"]').trigger('click')
-    expect(wrapper.emitted('approve')).toEqual([['gn_manual']])
-    const header = mount(InspectorHeader, { props: { target: targetOf(selectionOf(scenario, 'gn_manual')) }, global: { plugins: [i18n] } })
-    try {
-      expect(header.get('[data-test="designer-inspector-pill-label"]').text()).toBe('수동 작성 대기')
-      expect(header.get('[data-test="designer-inspector-pill"]').attributes('title')).toContain('instruction_not_approved')
-    } finally { header.unmount() }
-    const approval = mount(CardApprovalBar, { props: { target: { ...targetOf(selectionOf(scenario, 'gn_manual')), canApprove: true } }, global: { plugins: [i18n] } })
-    try {
-      expect(approval.get('[data-test="card-approval-approve"]').attributes('disabled')).toBeUndefined()
-    } finally { approval.unmount() }
-    expect(toVueFlowNodes(scenario, null, new Map(), { canApprove: false })[0].data.approvable).not.toBe(true)
+    expect(wrapper.get('[data-test="designer-canvas-node-card-state"]').attributes('title')).toContain('지시서 작성 대기')
+    expect(wrapper.find('[data-test="designer-canvas-node-approve"]').exists()).toBe(false)
   })
 
   it('the waiting chip is the clock with its words, never the spinning mark', () => {

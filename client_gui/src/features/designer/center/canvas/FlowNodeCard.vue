@@ -50,28 +50,14 @@
         </svg>
       </span>
       <span class="flow-node-kind" data-test="designer-canvas-node-kind">{{ t(kindLabelKey) }}</span>
-      <span
-        v-if="!data.hold && data.cardState && data.cardState.key !== 'pending'"
-        class="flow-node-state is-card"
-        :class="[`flow-node-state--${data.cardState.tone}`, { 'is-icon': cardStateIcon }]"
-        :role="cardStateIcon ? 'img' : undefined"
-        :aria-label="cardStateIcon ? t(data.cardState.labelKey) : undefined"
-        :title="cardStateTitle"
-        data-test="designer-canvas-node-card-state"
-        :data-state="data.cardState.key"
-        :data-phase="data.cardState.phase"
-      >
-        <svg v-if="cardStateIcon" viewBox="0 0 24 24" :class="{ 'is-spinning': data.cardState.phase === 'working' }" aria-hidden="true">
-          <path :d="cardStateIcon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      <span v-if="!data.hold && headerState" class="flow-node-state is-card is-icon"
+        :class="`flow-node-state--${headerState.tone}`" role="img" :aria-label="t(headerState.labelKey)"
+        :title="headerTitle" :data-test="data.gateState ? 'designer-canvas-node-gate-state' : data.cardState ? 'designer-canvas-node-card-state' : 'designer-canvas-node-state'"
+        :data-state="headerState.key" :data-phase="data.cardState?.phase">
+        <svg viewBox="0 0 24 24" :class="{ 'is-spinning': headerSpinning }" aria-hidden="true">
+          <path :d="headerIcon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        <template v-else>{{ t(data.cardState.labelKey) }}</template>
       </span>
-      <span
-        v-else-if="!data.hold && !data.cardState && state"
-        class="flow-node-state"
-        :class="`flow-node-state--${state.tone}`"
-        data-test="designer-canvas-node-state"
-      >{{ t(`gui.designer.center.node_states.${state.key}`) }}</span>
       <span v-if="data.bodyUnreadable" class="flow-node-body-warning" role="img" :aria-label="t('gui.card.bodyUnreadable')" :title="t('gui.card.bodyUnreadable')" data-test="designer-canvas-node-body-warning">⚠</span>
       <span
         v-if="data.question"
@@ -100,23 +86,6 @@
         :title="data.title"
         data-test="designer-canvas-node-title"
       >{{ data.title }}</p>
-      <button
-        v-if="data.approvable"
-        type="button"
-        class="flow-node-approve nodrag nopan"
-        :disabled="data.approving === true"
-        :aria-busy="data.approving === true ? 'true' : undefined"
-        :title="t('gui.designer.center.approval.hint')"
-        data-test="designer-canvas-node-approve"
-        @pointerdown.stop
-        @mousedown.stop
-        @click.stop="emit('approve', id)"
-      >
-        <svg class="flow-node-approve-icon" viewBox="0 0 24 24" aria-hidden="true" data-test="designer-canvas-node-approve-icon">
-          <path :d="CARD_APPROVE_ICON" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        {{ t('gui.designer.center.approval.approve') }}
-      </button>
       <div v-if="data.integration" class="flow-node-flags" data-test="designer-canvas-node-flags">
         <button
           v-if="data.integration === 'conflict'"
@@ -155,7 +124,6 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
 import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay } from './flowNodeKinds'
-import { CARD_APPROVE_ICON } from '../graph/cardStateView'
 import type { FlowGateNodeData } from './vueFlowMapping'
 
 const props = defineProps<{
@@ -164,7 +132,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  approve: [nodeId: string]
   /** flowgate.v02.0061 T#14: the card's 병합 충돌 was pressed (the Git tool panel resolves it). */
   conflict: [nodeId: string]
 }>()
@@ -184,26 +151,24 @@ const kind = computed(() => flowNodeKindView(props.data.kind, props.data.docType
 const kindLabelKey = computed(() => kind.value.labelKey)
 const state = computed(() => flowNodeStateDisplay(props.data.state))
 
-// Presentation only: retain the shared card state and approval rules.
-const cardStateIcon = computed(() => {
-  switch (props.data.cardState?.phase) {
-    case 'approved':
-      return 'M5 12l4 4L19 6'
-    case 'awaiting':
-      return 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 7v5l3 2'
-    case 'working':
-      return 'M21 12a9 9 0 1 1-9-9'
-    default:
-      return null
-  }
+const headerState = computed(() => props.data.gateState ?? (props.data.cardState ? props.data.cardState.key === 'pending' ? null : props.data.cardState : state.value ? {
+  ...state.value, labelKey: `gui.designer.center.node_states.${state.value.key}`, reason: null,
+} : null))
+const headerSpinning = computed(() => props.data.gateState?.key === 'publishing' || (!props.data.gateState && props.data.cardState?.phase === 'working'))
+const headerIcon = computed(() => {
+  const key = headerState.value?.key
+  if (key === 'confirmed' || key === 'approved' || key === 'done') return 'M5 12l4 4L19 6'
+  if (key === 'needs_intervention') return 'M12 3L2 21h20L12 3z M12 9v5 M12 17h.01'
+  if (key === 'system_error' || key === 'recovery_required' || key === 'rejected') return 'M4 4l16 16 M20 4L4 20 M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20'
+  if (key === 'conflict_review') return 'M6 3v5l12 8v5 M18 3v5L6 16v5 M3 3h6 M15 3h6'
+  if (headerSpinning.value) return 'M21 12a9 9 0 1 1-9-9'
+  return 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 7v5l3 2'
 })
-
-/** flowgate.v02.0105 T#2 (B-5): the state's tooltip — its name, and why the result waits when the server told it. */
-const cardStateTitle = computed(() => {
-  const card = props.data.cardState
-  if (!card) return undefined
-  const label = t(card.labelKey)
-  return card.reason ? `${label} (${card.reason})` : label
+const headerTitle = computed(() => {
+  const shown = headerState.value
+  if (!shown) return undefined
+  const label = t(shown.labelKey)
+  return shown.reason ? `${label} (${shown.reason})` : label
 })
 
 /** The title is shown unless it only repeats the kind name of the head row. */

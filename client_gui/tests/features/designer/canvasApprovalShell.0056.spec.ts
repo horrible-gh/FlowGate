@@ -131,79 +131,16 @@ async function openGraph() {
   await doubleClick('UI 개선')
   await doubleClick('Graph')
 }
-async function approveOnCanvas() {
-  const card = wrapper!.get('[data-test="designer-canvas-node"][data-node-id="gn_task"]')
-  expect(card.get('[data-test="designer-canvas-node-card-state"]').text()).toBe(i18n.global.t('gui.designer.center.card_states.awaiting_approval'))
-  await card.get('[data-test="designer-canvas-node-approve"]').trigger('click')
-  await settle()
-}
-const toasts = () => [...document.body.querySelectorAll('.ui-toast')].map((toast) => ({
-  text: toast.querySelector('.ui-toast-content')?.textContent?.trim() ?? '',
-  danger: toast.classList.contains('ui-toast--danger'),
-}))
-
-describe('a refused Canvas [승인] in the Designer Shell (O1 4-1)', () => {
-  it.each([
-    ['ko', '결과 레포트의 TR2 검증을 통과하지 못했습니다', [
-      '문서 승인이 거절되었습니다. — 결과 레포트의 TR2 검증을 통과하지 못했습니다',
-      `거절된 문서: ${TR}`,
-      '사유: tr2_validation_failed',
-      `앞서 승인된 문서: ${T}`,
-    ]],
-    ['en', 'The result report did not pass the TR2 validation', [
-      'A document approval was refused. — The result report did not pass the TR2 validation',
-      `Refused document: ${TR}`,
-      'Reason: tr2_validation_failed',
-      `Approved before: ${T}`,
-    ]],
-    ['ja', '結果レポートが TR2 検証を通過しませんでした', [
-      '文書の承認が拒否されました。 — 結果レポートが TR2 検証を通過しませんでした',
-      `拒否された文書: ${TR}`,
-      '理由: tr2_validation_failed',
-      `先に承認された文書: ${T}`,
-    ]],
-  ])('document_approval_refused (%s): the toast names the refused document, why and the documents approved before it', async (locale, message, parts) => {
-    i18n.global.locale.value = locale
+describe('v0.2 Shell: general cards never ask for human approval', () => {
+  it.each(['ko', 'en', 'ja'])('renders an accessible intervention icon without an approval POST (%s)', async locale => {
+    i18n.global.locale.value = locale as 'ko' | 'en' | 'ja'
     await openGraph()
-    refused = refusal(409, 'document_approval_refused', message, { doc_id: TR, reason: 'tr2_validation_failed', approved_doc_ids: [T] })
-    await approveOnCanvas()
-
-    expect(approvals).toEqual([['/api/v1/runs/run_s/nodes/gn_task/approval', { result_doc_id: TR }]])
-    // The click was the card's [승인], not a selection: the Inspector bar has nothing to show it in.
-    expect(wrapper!.get('[data-test="designer-inspector"]').attributes('data-selected')).toBe('false')
-    const shown = toasts()
-    expect(shown).toHaveLength(1)
-    expect(shown[0].text).toBe(parts.join(' · '))
-    expect(shown[0].danger).toBe(true)
-    expect(shown[0].text).not.toContain('document_approval_refused')
-  })
-
-  it('the refused document toast stays until it is closed', async () => {
-    await openGraph()
-    // Only the toast timers: flushPromises still runs on setImmediate.
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    try {
-      refused = refusal(409, 'document_approval_refused', '거절', { doc_id: TR, reason: 'transition_refused', approved_doc_ids: [] })
-      await approveOnCanvas()
-      expect(toasts()).toHaveLength(1)
-      vi.advanceTimersByTime(10_000)
-      await nextTick()
-      expect(toasts().map((toast) => toast.text)).toEqual([`문서 승인이 거절되었습니다. — 거절 · 거절된 문서: ${TR} · 사유: transition_refused`])
-      ;(document.body.querySelector('.ui-toast-close') as HTMLElement).click()
-      await nextTick()
-      expect(toasts()).toEqual([])
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('a busy refusal names nothing more: its sentence and the server’s message, a warning that goes', async () => {
-    await openGraph()
-    refused = refusal(409, 'group_ai_running', '다른 AI 실행이 그룹을 쓰고 있습니다')
-    await approveOnCanvas()
-    const shown = toasts()
-    expect(shown.map((toast) => toast.text)).toEqual(['이 그룹에서 다른 AI가 실행 중입니다. 끝난 뒤 다시 승인하세요. — 다른 AI 실행이 그룹을 쓰고 있습니다'])
-    expect(shown[0].danger).toBe(false)
-    expect(document.body.querySelector('.ui-toast--warning')).not.toBeNull()
+    const card = wrapper!.get('[data-test="designer-canvas-node"][data-node-id="gn_task"]')
+    const state = card.get('[data-test="designer-canvas-node-card-state"]')
+    expect(state.attributes('role')).toBe('img')
+    expect(state.attributes('aria-label')).toBe(i18n.global.t('gui.designer.center.card_states.needs_intervention'))
+    expect(state.text()).toBe('')
+    expect(card.find('[data-test="designer-canvas-node-approve"]').exists()).toBe(false)
+    expect(postRequest).not.toHaveBeenCalled()
   })
 })

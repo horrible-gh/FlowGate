@@ -149,6 +149,8 @@ export interface FlowGraphNodeSlot {
 }
 
 export interface FlowGraphNodeRun extends RoleRunFields {
+  readonly intervention?: { readonly kind: string; readonly reason: string | null } | null
+  readonly gate?: import('@/features/document').RunGateState | null
   readonly dispatchErrorCode?: string | null
   readonly status: string | null
   readonly openedAt: string | null

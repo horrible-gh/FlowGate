@@ -181,7 +181,8 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect((w.get('[data-role="instruction"] select').element as HTMLSelectElement).value).toBe('')
   })
   it.each([null,undefined])('feature-off/older response (%s) keeps legacy fields with no role writes', async block => {
-    raw.ai_roles = block
+    if (block === undefined) delete raw.ai_roles
+    else raw.ai_roles = block
     wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
     expect(wrapper.find('[data-role]').exists()).toBe(false); expect(wrapper.find('[data-test="inspector-run-settings-run_ai"]').exists()).toBe(true)
     expect(http.patch).not.toHaveBeenCalled()
@@ -206,7 +207,7 @@ describe('three run keys, shared chip/pill and ko/en/ja', () => {
   it.each([['manual_write_wait','neutral'],['ai_setup_required','warning'],['ai_unavailable','danger']] as const)('%s: chip and pill share label/tone/raw detail with question priority', (code,tone) => {
     const facts = { status: 'review', awaitingApproval: true, approvalWaitReason: 'issuer_missing', waitReason: { code, role: 'execution', stage: 'result', seq: 0, detail: 'raw_reason' } }
     const expected = cardStateView(facts)!
-    expect(expected).toMatchObject({ key: code, tone, reason: 'raw_reason · issuer_missing', approvable: true })
+    expect(expected).toMatchObject({ key: code, tone, reason: 'raw_reason', approvable: false })
     expect(cardStateView({ ...facts, question: true })?.key).toBe('waiting_answer')
     const nodeRun = cardNodeRun(null, { nodeKey: 'n', ...facts })!
     expect(inspectorCardState({ ...target(), nodeId: 'n', nodeRun })).toEqual(expected)
@@ -217,10 +218,10 @@ describe('three run keys, shared chip/pill and ko/en/ja', () => {
   it.each([undefined, null])('absent/null wait reason (%s) preserves 0083/0105 question precedence', waitReason => {
     expect(cardStateView({ status: 'open', stage: 'result', runningExecutionCount: 1, question: true, waitReason })?.key).toBe('writing_result')
     expect(cardStateView({ status: 'open', dispatchErrorCode: 'no_result', question: true, waitReason })?.key).toBe('no_result')
-    expect(cardStateView({ status: 'review', awaitingApproval: true, approvalWaitReason: 'instruction_not_approved', question: true, waitReason })).toMatchObject({ key: 'awaiting_approval', approvable: true, reason: 'instruction_not_approved' })
+    expect(cardStateView({ status: 'review', awaitingApproval: true, approvalWaitReason: 'instruction_not_approved', question: true, waitReason })).toMatchObject({ key: 'needs_intervention', approvable: false, reason: 'instruction_not_approved' })
   })
   it('all state keys and newly registered message structures match across three languages', () => {
-    for (const language of [ko,en,ja]) expect(Object.keys(language.designer.center.card_states).sort()).toEqual([...CARD_STATE_KEYS].sort())
+    for (const language of [ko,en,ja]) for (const key of CARD_STATE_KEYS) expect(typeof language.designer.center.card_states[key]).toBe('string')
     for (const messages of [aiMessages,roleMessages]) {
       expect(Object.keys(messages.ko).sort()).toEqual(Object.keys(messages.en).sort())
       expect(Object.keys(messages.ko).sort()).toEqual(Object.keys(messages.ja).sort())

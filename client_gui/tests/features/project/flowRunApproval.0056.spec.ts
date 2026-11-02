@@ -26,7 +26,7 @@ import {
   subscribeFlowCanvasChanges,
 } from '@/features/project/flowCanvasEvents'
 import { FlowGraphApiError } from '@/features/project/flowGraphApi'
-import { approveFlowRunNode, toFlowRun } from '@/features/project/flowRunApi'
+import { toFlowRun } from '@/features/project/flowRunApi'
 import { useProjectStore } from '@/features/project'
 
 const HEADERS = { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } }
@@ -89,55 +89,16 @@ describe('the run’s new fields (O1 / O2 §4-2)', () => {
       ],
       edges: [],
     })
-    expect(canvas.nodes[0].nodeRun).toEqual({ status: 'review', openedAt: null, finishedAt: null, resultDocId: TR, awaitingApproval: true, stage: 'result', instructionDocId: T })
-    expect(canvas.nodes[1].nodeRun).toEqual({ status: 'open', openedAt: null, finishedAt: null, resultDocId: null })
+    expect(canvas.nodes[0].nodeRun).toEqual({ dispatchErrorCode: null, status: 'review', openedAt: null, finishedAt: null, resultDocId: TR, awaitingApproval: true, stage: 'result', instructionDocId: T })
+    expect(canvas.nodes[1].nodeRun).toEqual({ dispatchErrorCode: null, status: 'open', openedAt: null, finishedAt: null, resultDocId: null })
   })
 })
 
-describe('the card approval request (O1 §4-1)', () => {
-  it('POST /runs/{run_id}/nodes/{node_key}/approval with the shown result; answers the run and what it approved', async () => {
-    postRequest.mockResolvedValue({
-      data: {
-        ok: true,
-        run: { ...RUN, node_runs: [{ node_key: 'gn_t', status: 'done', result_doc_id: TR, awaiting_approval: false, stage: 'result' }] },
-        approval: { node_key: 'gn_t', target_doc_ids: [T, TR], approved_doc_ids: [T, TR] },
-      },
-    })
-    const answer = await approveFlowRunNode('run_s1', 'gn_t', TR)
-    expect(postRequest).toHaveBeenCalledWith('/api/v1/runs/run_s1/nodes/gn_t/approval', { result_doc_id: TR }, HEADERS)
-    expect(answer.run).toMatchObject({ runId: 'run_s1', status: 'stopped', pendingPropagationCount: 2, nodeRuns: [{ nodeKey: 'gn_t', status: 'done' }] })
-    expect(answer.approval).toEqual({ nodeKey: 'gn_t', targetDocIds: [T, TR], approvedDocIds: [T, TR] })
-  })
-
-  it('no result shown sends null (the server’s current one)', async () => {
-    postRequest.mockResolvedValue({ data: { ok: true, run: RUN, approval: {} } })
-    const answer = await approveFlowRunNode('run_s1', 'gn t', null)
-    expect(postRequest).toHaveBeenCalledWith('/api/v1/runs/run_s1/nodes/gn%20t/approval', { result_doc_id: null }, HEADERS)
-    expect(answer.approval).toEqual({ nodeKey: 'gn t', targetDocIds: [], approvedDocIds: [] })
-  })
-
-  it.each([
-    ['result_changed', 409, { run_id: 'run_s1', node_key: 'gn_t', result_doc_id: `${F}.0006-TR` }],
-    ['document_approval_refused', 409, { doc_id: TR, reason: 'tr2_validation_failed', approved_doc_ids: [T] }],
-    ['approval_forbidden', 403, { required: 'document.approve' }],
-  ])('a refusal (%s) rejects with its code, status, params and the server’s message', async (code, status, params) => {
-    postRequest.mockRejectedValue(refusal(code, status, params, '승인할 수 없습니다'))
-    const error = await approveFlowRunNode('run_s1', 'gn_t', TR).catch((e: unknown) => e)
-    expect(error).toBeInstanceOf(FlowGraphApiError)
-    expect(error).toMatchObject({ code, status, params, message: '승인할 수 없습니다' })
-  })
-
-  it('an answer without a run is a failure', async () => {
-    postRequest.mockResolvedValue({ data: { ok: true } })
-    await expect(approveFlowRunNode('run_s1', 'gn_t', TR)).rejects.toBeInstanceOf(Error)
-  })
-
-  it('the project store approves through the same transport', async () => {
-    setActivePinia(createPinia())
-    postRequest.mockResolvedValue({ data: { ok: true, run: RUN, approval: { node_key: 'gn_t', target_doc_ids: [TR], approved_doc_ids: [TR] } } })
-    const answer = await useProjectStore().approveFlowRunNode('run_s1', 'gn_t', TR)
-    expect(answer.run.runId).toBe('run_s1')
-    expect(postRequest.mock.calls[0][0]).toBe('/api/v1/runs/run_s1/nodes/gn_t/approval')
+describe('v0.2 has no general-card approval request', () => {
+  it('the API and project store do not expose approval', async () => {
+    expect(await import('@/features/project/flowRunApi')).not.toHaveProperty('approveFlowRunNode')
+    expect(useProjectStore(createPinia())).not.toHaveProperty('approveFlowRunNode')
+    expect(postRequest).not.toHaveBeenCalled()
   })
 })
 

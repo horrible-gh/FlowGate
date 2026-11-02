@@ -84,7 +84,7 @@ function createContext(flowId: string, nodeKey: string) {
     return replaying
   }
   async function decide(decision: RunGateDecision, comment?: string): Promise<boolean> {
-    if (busy.value || Object.keys(pending.value).length) return false
+    if (decision !== 'confirm' || busy.value || Object.keys(pending.value).length) return false
     if (request) return replay()
     if (status.value !== 'ready' || !gate.value?.can_decide || !node.value?.attemptId || settings.value?.settingsVersion === undefined) return false
     request = { runId: run.value!.runId, decision, comment, intent: { request_id: randomUuid(), expected_attempt_id: node.value.attemptId, expected_settings_version: settings.value.settingsVersion } }

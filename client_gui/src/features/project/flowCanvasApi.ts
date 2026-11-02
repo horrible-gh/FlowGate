@@ -1,3 +1,4 @@
+import { toRunGateState } from '@/features/document/api/run'
 // flowgate.v02.0045 S1+S2 — Graph loader / Graph saver transport (D0004 §2.3 features/project):
 // the Canvas read API and the layout save API of P0008 §3 / §4. Reuses the `@shared/api`
 // transport like api.ts; snake_case stays inside this file's normalizers. The Designer reaches
@@ -119,6 +120,8 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
     ...('approval_wait_reason' in raw ? { approvalWaitReason: str(raw.approval_wait_reason) } : {}),
     ...toRoleRunFields(raw),
+    ...('intervention' in raw ? { intervention: raw.intervention ?? null } : {}),
+    ...('gate' in raw ? { gate: toRunGateState(raw.gate) } : {}),
   }
 }
 

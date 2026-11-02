@@ -30,6 +30,7 @@ export function useGateDecision(target: () => InspectorTarget | null) {
     if (error) host?.request({ kind: 'show-tool', tool: 'git' })
   })
   async function decide(decision: RunGateDecision, comment?: string) {
+    if (decision !== 'confirm') return false
     const c = context.value
     const current = target()
     if (!actions.value[decision].enabled || !c || !current) return false

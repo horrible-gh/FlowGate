@@ -271,3 +271,50 @@ describe('check card target and push controls — 0098', () => {
     expect(w.text()).toBe('')
   })
 })
+
+
+describe('0119 refresh icon and field help', () => {
+  it('keeps its accessible name and data-test; disables/spins until the actual refreshed GET finishes', async () => {
+    raw.merge_target_options = []
+    raw.merge_target_state = { status: 'timeout', code: 'merge_target_options_timeout', reason: 'budget', current: entry('main', { checked: false }), default: entry('main', { checked: false }) }
+    const w = await show()
+    const button = w.get('[data-test="check-settings-refresh"]')
+    expect(button.element.tagName).toBe('BUTTON')
+    expect(button.text()).toBe('')
+    expect(button.attributes('aria-label')).toBe('새로 조회')
+    expect(button.attributes('title')).toBe('새로 조회')
+    const help = w.get('[data-test="check-settings-target-state"]')
+    expect(help.attributes('role')).toBe('status')
+    expect(help.element.parentElement).toBe(w.get('.inspector-check-settings-target-wrap').element)
+    expect(w.get('.inspector-check-settings-target-control').find('[data-test="check-settings-target-state"]').exists()).toBe(false)
+    let resolve!: (answer: unknown) => void
+    const answer = new Promise(r => { resolve = r })
+    http.get.mockImplementation(async (url: string) => url.endsWith('/settings') ? answer : { data: { run: structuredClone(current) } })
+    await button.trigger('click')
+    expect(http.get).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { refresh_merge_targets: true })
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(button.attributes('aria-busy')).toBe('true')
+    expect(button.get('svg').classes()).toContain('is-spinning')
+    const count = http.get.mock.calls.length
+    await button.trigger('click')
+    expect(http.get.mock.calls.length).toBe(count)
+    raw.merge_target_options = ['main', 'release/local']; targets('main')
+    resolve({ data: structuredClone(raw) }); await flushPromises()
+    expect(w.find('[data-test="check-settings-target-state"]').exists()).toBe(false)
+    expect(w.get('[data-test="check-settings-target"]').attributes('disabled')).toBeUndefined()
+    expect(optionNames(w)).toEqual(['main', 'release/local'])
+    expect(w.find('[data-test="check-settings-refresh"]').exists()).toBe(false)
+  })
+  it('places target errors under the Select, outside the overlay coordinate box', async () => {
+    raw.fields.merge_target_branch = field('missing', true)
+    raw.merge_target_state = { status: 'ok', current: entry('missing', { error: 'merge_target_not_found' }), default: entry(raw.default_target_branch) }
+    const w = await show()
+    const error = w.get('[data-test="check-settings-target-error"]')
+    expect(error.attributes('role')).toBe('alert')
+    expect(error.classes()).toContain('inspector-check-settings-target-help')
+    expect(error.element.parentElement).toBe(w.get('.inspector-check-settings-target-wrap').element)
+    expect(w.get('[data-test="check-settings-target-display"]').element.parentElement).toBe(w.get('.inspector-check-settings-target-control').element)
+    await w.get('[data-test="check-settings-target"]').setValue('main'); await flushPromises()
+    expect(w.find('[data-test="check-settings-target-error"]').exists()).toBe(false)
+  })
+})

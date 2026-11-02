@@ -85,7 +85,7 @@ export function gateCardSlots(facts: GateCardFacts, instructionOmitted = false):
 
 export type GateOperation = 'confirm' | 'reject'
 
-export const GATE_OPERATIONS: readonly GateOperation[] = ['confirm', 'reject']
+export const GATE_OPERATIONS: readonly GateOperation[] = ['confirm']
 
 export interface GateActionItem {
   readonly visible: boolean
@@ -127,7 +127,7 @@ export function gateActions(
   const reason = gateDecisionReason({ nodeId: facts.nodeId ?? '', readOnly: facts.readOnly ?? null }, run, busy)
   const status = run?.nodes.find(node => node.nodeKey === facts.nodeId)?.status
   const item: GateActionItem = { visible: status !== 'done' && status !== 'rejected', enabled: reason === null, reason }
-  return { confirm: item, reject: item }
+  return { confirm: item, reject: { visible: false, enabled: false, reason: null } }
 }
 
 /** What a refused gate decision shows (the server's code, else the status). */

@@ -1,41 +1,7 @@
-// flowgate.v02.0056 F2-1 — what a Graph card shows for its run, decided in one place for the Canvas card and
-// the Inspector (0056 CH turn 5~10, O1 0005-TR §4-2, O2 0007-TR §4-2). Three states, by the node run alone:
-//
-//   작업 중   open (stage instruction: 지시서 작성 중 / stage result: 결과 작성 중), or review while an AI still
-//             works on it (the node's run, its review loop: awaiting_approval false)
-//   승인 대기 awaiting_approval true (a review node with a result no AI works on any more)
-//   승인됨   done
-//
-// flowgate.v02.0083 T#4: an open card no AI execution works on (the node's running / requested executions are
-// both 0) is not 작업 중 — it waits: for an answer to its document's question (응답 대기) or for its writer, a
-// person or the next AI start (작성 대기). Its writer that ended without a result keeps 결과 없음 / 실행 미완료.
-// Without the counts (an older server) the open card keeps 작업 중 as before.
-//
-// A rejected node (a rejected R/B root the run started with, a gate rejection) shows 반려됨 and never offers
-// [승인]; pending / closed nodes show what they are. The [다음 단계] stop of the run is not a card state: a
-// card approved (done) while the run is stopped stays 승인됨 — its successors wait in the run band, never as
-// 승인 대기 here (`done` is read first). Each document line keeps its own review state (a card waiting for
-// approval may already hold an approved result).
-//
-// Pure: no Vue, no i18n — the label is a message key under `gui.designer.center.card_states.`; the tone is the
-// Canvas chip tone. The [승인] refusals (O1 4-1 codes) are grouped here too, so the Canvas, the run band toast
-// and the Inspector approval bar handle a code the same way.
-//
-// flowgate.v02.0113 T#1 (0002-D 개정 §3.11 표 교체 · §3.13): the server's `node_running` (the card is *actually* running: an
-// AI execution of it requested / running, or its AI review) decides 작업 중 when it is sent — an open card it says false of
-// waits (작성 대기 / 응답 대기), a review card neither running nor awaiting approval waits (대기); without it the 0083 counts
-// decide as before. The chips the user tells apart: 준비 (pending) · 수동 작성 대기 (neutral; 지시서 / 결과 작성 대기 by its
-// role) · AI 설정 필요 / AI 사용 불가 (warning / danger) · ◌ 실행 중 (the running states only) · 완료 (done) · the errors.
-//
-// flowgate.v02.0105 T#2 (NR flowgate.v02.0101.0003 §3.9 B-5): a card awaiting approval tells why its result was not
-// approved automatically (`approval_wait_reason`). An automatic approval that was missed or failed (X: the run issuer
-// lacks the approval, no issuer, the approval was refused, its review never started, a result the server cannot tell)
-// is 자동 승인 실패; a result a person must judge (H: its review did not pass, its AI run did not end on its own) and
-// one with no reason stay 승인 대기. Either may be approved by a person ([승인] only when the server allows the user,
-// B-6). The reason itself is told in the tooltip only (`reason`).
-
+// v0.2 card presentation: automatic completion, intervention and system errors.
 /** The node run facts the state is read from (FlowGraphNodeRun, the Canvas `node_run`). */
 export interface CardRunFacts {
+  readonly intervention?: { readonly kind: string; readonly reason: string | null } | null
   readonly waitReason?: { code: string; detail?: string | null; role?: string | null } | null
   readonly dispatchErrorCode?: string | null
   readonly resultDocId?: string | null
@@ -53,7 +19,7 @@ export interface CardRunFacts {
   readonly nodeRunning?: boolean
 }
 
-export const CARD_STATE_KEYS = ['instruction_write_wait', 'result_write_wait', 'waiting', 'manual_write_wait', 'ai_setup_required', 'ai_unavailable', 'no_result', 'incomplete', 'waiting_answer', 'waiting_writer', 'writing_instruction', 'writing_result', 'working', 'awaiting_approval', 'auto_approval_failed', 'approved', 'rejected', 'pending', 'closed'] as const
+export const CARD_STATE_KEYS = ['instruction_write_wait', 'result_write_wait', 'waiting', 'manual_write_wait', 'ai_setup_required', 'ai_unavailable', 'no_result', 'incomplete', 'waiting_answer', 'waiting_writer', 'writing_instruction', 'writing_result', 'working', 'needs_intervention', 'system_error', 'approved', 'rejected', 'pending', 'closed'] as const
 
 export type CardStateKey = (typeof CARD_STATE_KEYS)[number]
 
@@ -79,30 +45,9 @@ const view = (key: CardStateKey, phase: CardStatePhase, tone: CardStateTone, rea
   phase,
   tone,
   labelKey: `gui.designer.center.card_states.${key}`,
-  approvable: key === 'awaiting_approval' || key === 'auto_approval_failed',
+  approvable: false,
   reason,
 })
-
-/**
- * flowgate.v02.0105 T#2 (B-5): the server's reasons (B-1) of a missed or failed automatic approval (X); any other — a
- * review that did not pass (`review_not_passed:<stop reason>`), an AI run that did not end on its own
- * (`run_not_clean:<code>`) or one this screen does not know — is a person's judgement (H).
- */
-export const AUTO_APPROVAL_FAILURES: readonly string[] = [
-  'issuer_lacks_approve',
-  'issuer_missing',
-  'approval_refused',
-  'review_not_started',
-  'review_result_unknown',
-]
-
-/** flowgate.v02.0105 T#2 (B-5): the reason names a missed or failed automatic approval. */
-export function autoApprovalFailed(reason: string | null | undefined): boolean {
-  return !!reason && AUTO_APPROVAL_FAILURES.includes(reason)
-}
-
-/** flowgate.v02.0105 T#2 (B-7): the [승인] glyph of the Canvas card and the Inspector bar — a shield (24x24, stroked). */
-export const CARD_APPROVE_ICON = 'M12 3l7 3v5c0 4.5-3 8.3-7 10c-4-1.7-7-5.5-7-10V6l7-3z M9 12l2 2l4-4'
 
 /**
  * flowgate.v02.0083 T#4: an AI execution of the node runs or is requested; null when the server sent no counts.
@@ -121,17 +66,20 @@ const WRITE_WAIT_LABELS: Readonly<Record<string, CardStateKey>> = { instruction:
 export function cardStateView(run: CardRunFacts | null | undefined): CardStateView | null {
   const status = run?.status?.trim() ?? ''
   const wait = run?.waitReason
+  if ((status === 'open' || status === 'review') && run?.intervention) {
+    const error = run.intervention.kind === 'system_error'
+    return view(error ? 'system_error' : 'needs_intervention', 'other', error ? 'danger' : 'warning', run.intervention.reason)
+  }
   // 0113 labels override presentation only. A 0105 approval remains available with its raw reason.
   // An absent/null/unknown new wait reason takes the unchanged 0083/0105 branches below.
   if ((status === 'open' || status === 'review') && wait &&
       ['manual_write_wait', 'ai_setup_required', 'ai_unavailable'].includes(wait.code)) {
     const key = run?.question === true ? 'waiting_answer' : wait.code as CardStateKey
     const tone = key === 'ai_unavailable' ? 'danger' : key === 'ai_setup_required' ? 'warning' : 'neutral'
-    const approvable = status === 'review' && run?.awaitingApproval === true
-    const reason = [wait.detail || wait.role, approvable ? run?.approvalWaitReason?.trim() : null].filter(Boolean).join(' · ') || null
+    const reason = wait.detail || wait.role || null
     const named = key === 'manual_write_wait' ? WRITE_WAIT_LABELS[wait.role ?? ''] : undefined
     const shown = view(key, 'awaiting', tone, reason)
-    return { ...shown, ...(named ? { labelKey: `gui.designer.center.card_states.${named}` } : {}), approvable }
+    return { ...shown, ...(named ? { labelKey: `gui.designer.center.card_states.${named}` } : {}), approvable: false }
   }
   switch (status) {
     case 'done':
@@ -139,9 +87,7 @@ export function cardStateView(run: CardRunFacts | null | undefined): CardStateVi
     case 'review': {
       if (run?.awaitingApproval !== true) return run?.nodeRunning === false ? view('waiting', 'awaiting', 'neutral') : view('working', 'working', 'info')
       const reason = run.approvalWaitReason?.trim() || null
-      return autoApprovalFailed(reason)
-        ? view('auto_approval_failed', 'awaiting', 'danger', reason)
-        : view('awaiting_approval', 'awaiting', 'warning', reason)
+      return view('needs_intervention', 'other', 'warning', reason || 'completion_missing')
     }
     case 'open':
       if (!run?.resultDocId && run?.dispatchErrorCode === 'no_result') return view('no_result', 'other', 'warning')

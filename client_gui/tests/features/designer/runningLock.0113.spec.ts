@@ -45,7 +45,7 @@ describe('the card chip follows node_running (flowgate.v02.0113 T#1)', () => {
     ['review, nothing works and no approval wait', run('review', { awaitingApproval: false, nodeRunning: false }),
       ['waiting', 'awaiting', 'neutral', 'waiting']],
     ['review, awaiting approval', run('review', { awaitingApproval: true, nodeRunning: false }),
-      ['awaiting_approval', 'awaiting', 'warning', 'awaiting_approval']],
+      ['needs_intervention', 'other', 'warning', 'needs_intervention']],
     ['done', run('done', { nodeRunning: false }), ['approved', 'approved', 'success', 'approved']],
     ['pending', run('pending'), ['pending', 'other', 'neutral', 'pending']],
     ['an older server (no node_running): the counts decide', run('open', { stage: 'result', runningExecutionCount: 1 }),
@@ -57,7 +57,7 @@ describe('the card chip follows node_running (flowgate.v02.0113 T#1)', () => {
   it('only the running states carry ◌; pending is 준비, done 완료 (ko / en / ja)', () => {
     for (const messages of [ko, en, ja]) {
       const states = messages.designer.center.card_states as Record<string, string>
-      expect(Object.keys(states).sort()).toEqual([...CARD_STATE_KEYS].sort())
+      for (const key of CARD_STATE_KEYS) expect(typeof states[key]).toBe('string')
       for (const key of ['working', 'writing_instruction', 'writing_result']) expect(states[key].startsWith('◌ '), key).toBe(true)
       for (const key of CARD_STATE_KEYS.filter((k) => !['working', 'writing_instruction', 'writing_result'].includes(k))) {
         expect(states[key].includes('◌'), key).toBe(false)

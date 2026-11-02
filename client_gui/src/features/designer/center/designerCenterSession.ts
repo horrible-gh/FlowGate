@@ -420,11 +420,6 @@ export interface DesignerCenterSession {
    * confirmed run read says so (`viewer.can_approve` true). Not told, not read or false: no [승인].
    */
   canApproveFlow(flowId: string): boolean
-  /**
-   * flowgate.v02.0056 F2-1 — a Canvas card's [승인]: approves the card (O1 0005-TR §4-1) with the result its
-   * Canvas read shows. Whether it was approved; a refusal is the Flow's run `error` (kind `approval`).
-   */
-  approveNode(flowId: string, nodeId: string): Promise<boolean>
 
   // flowgate.v02.0061 T#15 — a card's context menu (run/flowCardMenu.ts).
   /** The items of the card's context menu now (empty: none). */
@@ -1421,11 +1416,6 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     }),
     canApprove: runControl.canApprove,
     canApproveFlow,
-    approveNode: (flowId, nodeId) => {
-      const node = readyGraph(flowId)?.nodes.find((candidate) => candidate.id === nodeId)
-      if (!node?.nodeRun) return Promise.resolve(false)
-      return runControl.approve(flowId, nodeId, node.nodeRun.resultDocId ?? null)
-    },
     cardMenu,
     chooseCardMenu,
     cardHold,

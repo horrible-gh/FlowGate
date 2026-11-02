@@ -155,7 +155,7 @@ describe('the real registry on Nodes without a document', () => {
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
     // flowgate.v02.0056 F2-1: the card approval bar is a part of a Graph Flow's documents tab; a gate draws none.
     // flowgate.v02.0056 F2-2: the card's memos sit between the card lines and the approval bar.
-    expect(sections(w)).toEqual(['gateCard', 'cardMemo', 'cardApproval'])
+    expect(sections(w)).toEqual(['gateCard', 'cardMemo'])
     expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
     expect(get(w, 'gate-result').text()).toContain('확인 결과')
     expect(get(w, 'designer-inspector-header').find('[data-test="gate-confirm"]').exists()).toBe(false)
@@ -170,7 +170,7 @@ describe('the real registry on Nodes without a document', () => {
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
     // flowgate.v02.0056 F2-1: the card approval bar draws nothing on a card without a run.
     // flowgate.v02.0056 F2-2: the card's memos sit between the card lines and the approval bar.
-    expect(sections(w)).toEqual(['requirementCard', 'cardMemo', 'cardApproval'])
+    expect(sections(w)).toEqual(['requirementCard', 'cardMemo'])
     expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
     // flowgate.v02.0053 T#5: a line without a document is a hollow dot saying so — no "아직 없음" text.
     expect(get(w, 'inspector-requirement-card').get('[data-test="inspector-slot-state"]').attributes('title')).toBe('문서 없음')
@@ -187,7 +187,7 @@ describe('the real registry on Nodes without a document', () => {
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
     // flowgate.v02.0056 F2-2: the card's memos sit between the card lines and the approval bar.
-    expect(sections(w)).toEqual(['researchCard', 'cardMemo', 'cardApproval'])
+    expect(sections(w)).toEqual(['researchCard', 'cardMemo'])
     expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
     const items = await openMenu(w)
     expect(items.map((item) => item.textContent?.trim())).toEqual(['ID 복사', '실행 이력'])
@@ -200,7 +200,7 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
     const w = mountFrame(SELECTIONS.graphGate)
     await flushPromises()
     expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
-    expect(get(w, 'inspector-gate-card').find('[data-test="inspector-slot-name"]').text()).toBe('확인 결과')
+    expect(get(w, 'inspector-gate-card').find('[data-test="gate-result"] strong').text()).toBe('확인 결과')
     await clickTab(w, 'Q&A')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
     // flowgate.v02.0053 T#6: no "no linked document" sentence on Q&A and attachments.

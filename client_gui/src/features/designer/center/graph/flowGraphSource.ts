@@ -232,12 +232,6 @@ export interface FlowGraphSource {
   /** flowgate.v02.0059 T#2: one document's supersede link (a v0.1 sequence root's chain). Absent = none read. */
   readDocumentLink?(projectId: string, docId: string): Promise<FlowDocumentLink>
   /**
-   * flowgate.v02.0056 F2-1: approves a card waiting for its approval (O1 0005-TR §4-1), `resultDocId` the result
-   * the Canvas showed. Answers the run after it; a refusal rejects with a FlowRunError (the server's code).
-   * Absent = the source approves nothing.
-   */
-  approveNode?(projectId: string, runId: string, nodeKey: string, resultDocId: string | null): Promise<FlowRunInfo>
-  /**
    * flowgate.v02.0061 T#15: sets (true) / releases (false) a card's Hold; resolves whether it is held now. Only the
    * setting changes: nothing runs before the next command. Rejects with a FlowRunError (the server's code).
    */

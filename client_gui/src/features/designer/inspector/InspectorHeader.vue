@@ -136,7 +136,7 @@
       <span
         v-if="pill"
         class="inspector-header-pill"
-        :class="`inspector-header-pill--${pill.tone}`"
+        :class="[`inspector-header-pill--${pill.tone}`, { 'is-intervention': cardState?.key === 'needs_intervention' || cardState?.key === 'system_error' }]"
         :title="pill.title"
         data-test="designer-inspector-pill"
         :data-tone="pill.tone"
@@ -145,7 +145,10 @@
         :data-doc-status="target.docReviewStatus ?? ''"
         :data-run-status="target.nodeRun?.status ?? ''"
       >
-        <span class="inspector-header-pill-label" data-test="designer-inspector-pill-label">{{ pill.label }}</span>
+        <span v-if="cardState?.key === 'needs_intervention' || cardState?.key === 'system_error'" class="inspector-header-state-icon" role="img" :aria-label="pill.label" :title="pill.title" data-test="designer-inspector-intervention">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="cardState.key === 'system_error' ? 'M4 4l16 16 M20 4L4 20 M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20' : 'M12 3L2 21h20L12 3z M12 9v5 M12 17h.01'" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </span>
+        <span v-else class="inspector-header-pill-label" data-test="designer-inspector-pill-label">{{ pill.label }}</span>
         <span v-if="pill.sub" class="inspector-header-pill-sub" data-test="designer-inspector-pill-sub">· {{ pill.sub }}</span>
         <!-- The server values stay in the DOM (hidden: the raw value as data-value, the display name as
              text) for tests and debugging. -->
@@ -521,6 +524,9 @@ onScopeDispose(() => {
 </script>
 
 <style scoped>
+.inspector-header-state-icon { display: inline-flex; width: 16px; height: 16px; }
+.inspector-header-state-icon svg { width: 100%; height: 100%; }
+.inspector-header-pill.is-intervention::before { display: none; }
 /* The size container of the header line (T#4 rev1): a container query cannot change the layout of the
    container itself, so the narrow two-line rule below queries this frame. */
 .inspector-header-frame {

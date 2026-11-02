@@ -67,17 +67,11 @@ describe('gate Inspector — D §8-10', () => {
     expect(w.get('[data-test="gate-confirm"]').attributes('disabled')).toBeUndefined()
     expect(registration).not.toHaveProperty('headerAction')
   })
-  it('rejects immediately with a request id and confirmed attempt/settings version; no reason modal or memo copy', async () => {
-    mocks.decide.mockImplementation(async () => current = gate('rejected', 'idle', { decision: { ...result(false), result: 'rejected', status: 'rejected', comment: null } }))
+  it('has no reject action and sends no reject request', async () => {
     const w = await show()
-    await w.get('[data-test="gate-reject"]').trigger('click'); await flushPromises()
-    expect(mocks.decide).toHaveBeenCalledTimes(1)
-    expect(mocks.decide).toHaveBeenCalledWith(`run_${id}`, target.nodeId, 'reject', undefined, {
-      request_id: expect.any(String), expected_attempt_id: `attempt_${id}`, expected_settings_version: 3,
-    })
+    expect(w.find('[data-test="gate-reject"]').exists()).toBe(false)
     expect(w.find('[data-test="gate-reject-dialog"]').exists()).toBe(false)
-    expect(w.get('[data-test="gate-result-value"]').text()).toBe('반려')
-    expect(w.find('[data-test="gate-confirm"]').exists()).toBe(false)
+    expect(mocks.decide).not.toHaveBeenCalled()
   })
   it('shows 반영 중 and no archive chip while the intent is accepted; completion comes from GET', async () => {
     const answer = deferred<any>()

@@ -45,6 +45,7 @@
 // flowgate.v02.0070 T#1 (B1): a card no longer edits its title (the Inspector header does), so the card data carries
 // no title edit state.
 import type { Edge, Node } from '@vue-flow/core'
+import { gateHeaderState, type GateHeaderState } from './gateHeaderState'
 import { cardNodeRun, cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'
 import { lineWarns, type FlowGraph } from '../graph/flowGraph'
@@ -69,6 +70,7 @@ export interface FlowGateNodeData {
   issueText?: string
   /** flowgate.v02.0056 F2-1: the card state of a Graph node with a run (the chip shows it instead of `state`). */
   cardState?: CardStateView
+  gateState?: GateHeaderState
   /** flowgate.v02.0056 F2-1: the chip offers [승인]. */
   approvable?: boolean
   /** flowgate.v02.0056 F2-1: this card's [승인] is being answered. */
@@ -148,12 +150,13 @@ export function toVueFlowNodes(
       data.issue = true
       data.issueText = issues.get(node.id)
     }
-    // A gate decides with ✓ 확인 · ✕ 반려 (its own card), never [승인]; its chip keeps the Canvas state.
+    // Gates keep their own decision/job/recovery presentation; general card state is excluded.
+    if (node.definition?.nodeType === 'gate') {
+      data.gateState = gateHeaderState(cardNodeRun(node.nodeRun, marks.nodeRuns.get(node.id))?.gate)
+    }
     const cardState = node.definition?.nodeType !== 'gate' ? cardStateView(cardNodeRun(node.nodeRun, marks.nodeRuns.get(node.id))) : null
     if (cardState) {
       data.cardState = cardState
-      if (cardState.approvable && options.canApprove && graph.ownership !== 'conflict') data.approvable = true
-      if (options.approvingNodeId === node.id) data.approving = true
     }
     const runNode = marks.nodeRuns.get(node.id)
     const integration = (runNode && 'integrationStatus' in runNode ? runNode.integrationStatus : node.nodeRun?.integrationStatus) ?? null
