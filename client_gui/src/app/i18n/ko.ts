@@ -2,6 +2,31 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
+  agent_screen: {
+    "title": "에이전트",
+    "register": "에이전트 등록",
+    "list_title": "등록된 개인 Agent",
+    "last_seen": "최근 접속",
+    "before_connection": "연결 전",
+    "edit": "수정",
+    "edit_name": "{name} 수정",
+    "delete_name": "{name} 삭제",
+    "create_title": "새 Agent 등록",
+    "edit_title": "Agent 수정",
+    "name_hint": "1~60자 · 원격 머신을 구분할 이름을 지정합니다.",
+    "connection": "연결 상태",
+    "os": "운영 체제",
+    "create_hint": "원격 Agent Pull 방식으로 등록합니다. 등록 토큰을 Agent 머신에서 한 번 사용해 연결합니다.",
+    "create_submit": "만들고 등록 안내",
+    "save": "변경 저장",
+    "saved": "변경을 저장했습니다.",
+    "enroll_title": "Agent 등록 안내",
+    "enroll_hint": "발급된 일회용 토큰을 Agent 머신의 등록 절차에 입력한 뒤 Agent를 실행하세요.",
+    "expired": "등록 토큰이 만료되었습니다.",
+    "retry_issue": "등록 토큰 다시 발급",
+    "copy": "복사",
+    "done": "확인"
+},
   role_profiles: {
     save_group: "변경 저장",
     create_group: "그룹 만들기",

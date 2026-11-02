@@ -37,7 +37,7 @@
           v-model="form.description"
           :rows="3"
           maxlength="2000"
-          :placeholder="kind === 'group' ? t('gui.ai.groups.placeholder_desc') : t('gui.ai.groups.placeholder_role_desc')"
+          :placeholder="t('gui.ai.groups.placeholder_role_desc')"
           :disabled="saving"
         />
       </div>
