@@ -15,12 +15,14 @@ is such a group and every write route below is administrator-only.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from typing import Literal
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.rbac.decorators import require_permission
 from modules.flow_gate.services import ai_group_service as svc
+from modules.flow_gate.services import ai_group_role_profile_service as profiles
 
 router = APIRouter(tags=['AiGroups'])
 _manage = require_permission('system.settings.manage')
@@ -29,6 +31,7 @@ _manage = require_permission('system.settings.manage')
 class AIGroupCreate(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
+    group_type: Literal['general', 'role'] = 'general'
     name: str
     description: str | None = None
 
@@ -36,6 +39,7 @@ class AIGroupCreate(BaseModel):
 class AIGroupUpdate(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
+    group_type: Literal['general', 'role'] | None = None
     name: str
     description: str | None = None
     # Omitted = unchanged, null = clear the Supervisor, member id = designate that member.
@@ -108,7 +112,7 @@ def create_ai_group(body: AIGroupCreate, user=Depends(_manage)):
 
 @router.put('/ai-groups/{ai_group_id}')
 def update_ai_group(ai_group_id: str, body: AIGroupUpdate, user=Depends(_manage)):
-    return _call(svc.update_group, ai_group_id, body.model_dump(),
+    return _call(svc.update_group, ai_group_id, body.model_dump(exclude_unset=True),
                  supervisor_given='supervisor_member_id' in body.model_fields_set)
 
 
@@ -162,3 +166,36 @@ def delete_ai_group_role(ai_group_id: str, role_id: str, user=Depends(_manage)):
 def set_ai_group_runtime_binding(ai_group_id: str, body: AIGroupRuntimeBindingInput,
                                  user=Depends(_manage)):
     return _call(svc.set_runtime_binding, ai_group_id, body.model_dump())
+
+
+class AIGroupProfileValue(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    kind: Literal['unset', 'inherit', 'not_used', 'assigned']
+    provider_id: str | None = None
+
+
+@router.get('/ai-groups/{ai_group_id}/role-profiles')
+def get_role_profiles(ai_group_id: str, user=Depends(get_current_user)):
+    return _call(profiles.profiles, ai_group_id)
+
+
+@router.get('/ai-groups/{ai_group_id}/role-profile-options')
+def get_role_profile_options(ai_group_id: str, locale: Literal['ko', 'en', 'ja'] = 'ko',
+                             user=Depends(get_current_user)):
+    return _call(profiles.options, ai_group_id, locale)
+
+
+@router.put('/ai-groups/{ai_group_id}/role-profiles/{type_key}')
+def add_role_profile(ai_group_id: str, type_key: str, user=Depends(_manage)):
+    return _call(profiles.add, ai_group_id, type_key)
+
+
+@router.put('/ai-groups/{ai_group_id}/role-profiles/{type_key}/roles/{role}')
+def set_role_profile_cell(ai_group_id: str, type_key: str, role: str,
+                          body: AIGroupProfileValue, user=Depends(_manage)):
+    return _call(profiles.set_cell, ai_group_id, type_key, role, body.model_dump())
+
+
+@router.delete('/ai-groups/{ai_group_id}/role-profiles/{type_key}')
+def delete_role_profile(ai_group_id: str, type_key: str, user=Depends(_manage)):
+    return _call(profiles.remove, ai_group_id, type_key)

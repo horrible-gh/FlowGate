@@ -6,7 +6,7 @@
       </div>
       <!-- A group of system AI is an administrator's; everyone reads and starts with it (CH0006 #48). -->
       <div v-if="canEdit" class="detail-actions">
-        <Button variant="primary" @click="openCreate">＋ {{ t('gui.ai.groups.add_group') }}</Button>
+        <Button variant="primary" @click="openCreate">＋ {{ t('gui.ai.groups.add_title') }}</Button>
       </div>
     </div>
 
@@ -15,6 +15,7 @@
     <div class="groups-layout">
       <!-- Team index -->
       <aside class="group-index">
+        <div class="group-index-head"><strong>{{ t('gui.role_profiles.group_list') }}</strong><small>{{ t('gui.role_profiles.group_count', { count: groups.length }) }}</small></div>
         <label class="detail-search">
           ⌕ <input v-model="searchQuery" :placeholder="t('gui.ai.groups.search_placeholder')" />
         </label>
@@ -33,18 +34,20 @@
             <span v-if="!g.enabled" class="off-tag">OFF</span>
             <span v-if="g.status === 'attention'" class="warn-dot" :title="t('gui.ai.groups.attention_hint')">!</span>
           </span>
-          <small>{{ indexLine(g) }}</small>
+          <small>{{ t(g.group_type === 'role' ? 'gui.role_profiles.role_group' : 'gui.role_profiles.general_group') }}</small>
+          <small v-if="g.group_type !== 'role'">{{ indexLine(g) }}</small>
         </button>
       </aside>
 
       <!-- Team detail -->
-      <section v-if="selected" class="group-detail">
+      <section v-if="selected" class="group-detail" :class="{ 'role-group-detail': selected.group_type === 'role' }">
         <div class="group-detail-head">
           <div class="head-info">
             <h2>{{ selected.name }}</h2>
-            <p v-if="selected.description">{{ selected.description }}</p>
+            <p v-if="selected.group_type !== 'role' && selected.description">{{ selected.description }}</p>
           </div>
-          <div class="head-actions">
+          <Button v-if="selected.group_type === 'role' && canEdit" size="sm" variant="secondary" :disabled="busy" @click="openEdit"><AiIcon name="edit" />{{ t('gui.role_profiles.edit_info') }}</Button>
+          <div v-if="selected.group_type !== 'role'" class="head-actions">
             <span v-if="selected.is_default" class="team-badge">★ {{ t('gui.ai.groups.default_team') }}</span>
             <IconButton
               v-else-if="canEdit"
@@ -80,6 +83,8 @@
           </div>
         </div>
 
+        <AiRoleMatrix v-if="selected.group_type === 'role'" :key="selected.ai_group_id" :group-id="selected.ai_group_id" :can-edit="canEdit" />
+        <template v-else>
         <!-- Members: roles and Supervisor are picked right on the member -->
         <div class="block">
           <div class="block-head">
@@ -242,6 +247,7 @@
             </div>
           </div>
         </div>
+        </template>
       </section>
 
       <section v-else class="group-detail empty-detail">
@@ -252,6 +258,7 @@
     <AiGroupEditDialog
       :open="groupDialog.open"
       kind="group"
+      :role-group-exists="groups.some(g => g.group_type === 'role')"
       :initial="groupDialog.initial"
       :saving="busy"
       :error="dialogError"
@@ -292,7 +299,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
@@ -327,6 +334,8 @@ import {
 import { useCurrentUser } from '@/core/auth/currentUser'
 import AiIcon from '../AiIcon.vue'
 import AiGroupEditDialog from './AiGroupEditDialog.vue'
+import AiRoleMatrix from './AiRoleMatrix.vue'
+import { inProfileQueue } from './roleProfileValues'
 
 // A team: members (AI connections), user-defined roles mapped onto members, an optional
 // Supervisor, a default flag and an ON/OFF switch. Every change is saved as it is made.
@@ -349,7 +358,10 @@ const dialogError = ref<string | null>(null)
 const busy = ref(false)
 const deleting = ref<AiGroup | null>(null)
 const deletingRole = ref<AiGroupRole | null>(null)
-const groupDialog = reactive<{ open: boolean; initial: { name: string; description: string | null } | null }>({ open: false, initial: null })
+const groupDialog = reactive<{ open: boolean; groupId: string | null; initial: AiGroupInput | null }>({ open: false, groupId: null, initial: null })
+let selectionEpoch = 0
+watch(selectedId, () => { selectionEpoch++ }, { flush: 'sync' })
+onBeforeUnmount(() => { selectionEpoch++ })
 const roleDialog = reactive<{ open: boolean; roleId: string | null; initial: AiGroupRoleInput | null }>({
   open: false,
   roleId: null,
@@ -370,7 +382,7 @@ const selected = computed(() => groups.value.find((g) => g.ai_group_id === selec
 const filteredGroups = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
   if (!q) return groups.value
-  return groups.value.filter((g) => g.name.toLowerCase().includes(q) || (g.description || '').toLowerCase().includes(q))
+  return groups.value.filter((g) => `${g.name} ${g.description || ''} ${t(g.group_type === 'role' ? 'gui.role_profiles.role_group' : 'gui.role_profiles.general_group')}`.toLowerCase().includes(q))
 })
 
 // Supervisor first, then the order the members were added in.
@@ -420,27 +432,31 @@ function evaluationLabel(latest?: AiLatestEvaluation | null): string {
     : t('gui.ai.groups.not_evaluated')
 }
 
-function replaceGroup(updated: AiGroup): void {
+function replaceGroup(updated: AiGroup, select: boolean): void {
   const index = groups.value.findIndex((g) => g.ai_group_id === updated.ai_group_id)
   if (index >= 0) groups.value.splice(index, 1, updated)
   else groups.value = [updated, ...groups.value]
-  selectedId.value = updated.ai_group_id
+  if (select) selectedId.value = updated.ai_group_id
 }
 
 async function run(action: () => Promise<AiGroup | void>, onError: 'panel' | 'dialog' = 'panel'): Promise<boolean> {
   if (busy.value) return false
+  const stamp = selectionEpoch
   busy.value = true
   error.value = ''
   dialogError.value = null
   try {
     const result = await action()
-    if (result) replaceGroup(result)
+    if (stamp !== selectionEpoch) return false
+    if (result) replaceGroup(result, true)
     emit('changed')
     return true
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : t('gui.ai.groups.save_failed')
-    if (onError === 'dialog') dialogError.value = message
-    else error.value = message
+    if (stamp === selectionEpoch) {
+      if (onError === 'dialog') dialogError.value = message
+      else error.value = message
+    }
     return false
   } finally {
     busy.value = false
@@ -450,24 +466,23 @@ async function run(action: () => Promise<AiGroup | void>, onError: 'panel' | 'di
 function openCreate(): void {
   dialogError.value = null
   groupDialog.initial = null
+  groupDialog.groupId = null
   groupDialog.open = true
 }
 
 function openEdit(): void {
   if (!selected.value) return
   dialogError.value = null
-  groupDialog.initial = { name: selected.value.name, description: selected.value.description }
+  groupDialog.groupId = selected.value.ai_group_id
+  groupDialog.initial = { name: selected.value.name, group_type: selected.value.group_type ?? 'general' }
   groupDialog.open = true
 }
 
 async function onSaveGroup(input: AiGroupInput): Promise<void> {
-  const current = selected.value
+  const id = groupDialog.groupId
   const ok = await run(
-    () => (groupDialog.initial && current
-      ? updateAiGroup(current.ai_group_id, {
-        ...input,
-        supervisor_member_id: current.supervisor?.member_id ?? null,
-      })
+    () => (groupDialog.initial && id
+      ? inProfileQueue(id, () => updateAiGroup(id, input))
       : createAiGroup(input)),
     'dialog',
   )
@@ -481,16 +496,19 @@ async function onDeleteGroup(): Promise<void> {
   await run(async () => {
     await deleteAiGroup(target.ai_group_id)
     groups.value = groups.value.filter((g) => g.ai_group_id !== target.ai_group_id)
-    selectedId.value = groups.value[0]?.ai_group_id ?? null
   })
+  if (selectedId.value === target.ai_group_id && !groups.value.some(g => g.ai_group_id === target.ai_group_id)) {
+    selectedId.value = groups.value[0]?.ai_group_id ?? null
+  }
 }
 
 async function setState(input: AiGroupStateInput): Promise<void> {
   const current = selected.value
   if (!current) return
+  const stamp = selectionEpoch
   await run(() => setAiGroupState(current.ai_group_id, input))
-  // Only one default team per project: refresh the others' flags.
-  if (input.is_default || input.enabled === false) await reload()
+  // Refresh flags only while this is still the same screen selection.
+  if (stamp === selectionEpoch && (input.is_default || input.enabled === false)) await reload()
 }
 
 async function setSupervisor(memberId: string): Promise<void> {
@@ -558,11 +576,14 @@ async function onDeleteRole(): Promise<void> {
 }
 
 async function reload(): Promise<void> {
+  const stamp = selectionEpoch
   try {
-    groups.value = await listAiGroups()
+    const refreshed = await listAiGroups()
+    if (stamp !== selectionEpoch) return
+    groups.value = refreshed
     if (!groups.value.some((g) => g.ai_group_id === selectedId.value)) selectedId.value = groups.value[0]?.ai_group_id ?? null
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : t('gui.ai.groups.load_failed')
+    if (stamp === selectionEpoch) error.value = err instanceof Error ? err.message : t('gui.ai.groups.load_failed')
   }
 }
 
@@ -584,6 +605,11 @@ function getAvatarClass(name: string): string {
 </script>
 
 <style scoped>
+.group-detail.role-group-detail { padding: 0; gap: 0; overflow: hidden; }
+.role-group-detail .group-detail-head { padding: 19px 23px; border-bottom: 1px solid var(--fg2-line); }
+.role-group-detail :deep(.role-profile-settings) { margin: 22px 23px; }
+.group-index-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 0 8px; font-size: 12px; color: var(--fg2-text); }
+.group-index-head small { color: var(--fg2-muted); }
 .ai-groups-panel {
   display: flex;
   flex-direction: column;
@@ -615,7 +641,7 @@ function getAvatarClass(name: string): string {
 
 .groups-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 252px minmax(0, 1fr);
   gap: 14px;
   min-height: 0;
 }
@@ -729,6 +755,7 @@ function getAvatarClass(name: string): string {
 }
 
 .group-detail {
+  min-width: 0;
   padding: 18px 20px;
   display: flex;
   flex-direction: column;

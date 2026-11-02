@@ -16,13 +16,21 @@
         <Input
           id="ai-group-edit-name"
           v-model="form.name"
-          :maxlength="kind === 'group' ? 200 : 100"
-          :placeholder="kind === 'group' ? t('gui.ai.groups.placeholder_name') : t('gui.ai.groups.placeholder_role_name')"
+          :maxlength="kind === 'group' ? 60 : 100"
+          :placeholder="kind === 'group' ? t('gui.role_profiles.group_name_placeholder') : t('gui.ai.groups.placeholder_role_name')"
           :disabled="saving"
         />
       </div>
 
-      <div class="form-group">
+      <div v-if="kind === 'group'" class="form-group">
+        <label class="form-label" for="ai-group-edit-type">{{ t('gui.role_profiles.group_type') }}</label>
+        <select id="ai-group-edit-type" v-model="form.group_type" class="type-select" :disabled="saving || isEdit">
+          <option value="general">{{ t('gui.role_profiles.general_group') }}</option>
+          <option value="role" :disabled="!isEdit && roleGroupExists">{{ t('gui.role_profiles.role_group') }}</option>
+        </select>
+      </div>
+
+      <div v-if="kind === 'role'" class="form-group">
         <label class="form-label" for="ai-group-edit-desc">{{ t('gui.ai.groups.field_desc') }}</label>
         <Textarea
           id="ai-group-edit-desc"
@@ -52,7 +60,7 @@
           {{ t('gui.common.cancel') }}
         </Button>
         <Button variant="primary" :loading="saving" :disabled="!isValid" @click="onSave">
-          {{ t('gui.common.save') }}
+          {{ kind === 'group' ? t(isEdit ? 'gui.role_profiles.save_group' : 'gui.role_profiles.create_group') : t('gui.common.save') }}
         </Button>
       </div>
     </template>
@@ -68,13 +76,14 @@ import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import Textarea from '@/components/ui/Textarea.vue'
-import { EVALUATION_CRITERIA, type AiGroupRoleInput } from '../types'
+import { EVALUATION_CRITERIA, type AiGroupRoleInput, type AiGroupType } from '../types'
 
 const props = withDefaults(
   defineProps<{
     open: boolean
     kind?: 'group' | 'role'
-    initial?: AiGroupRoleInput | null
+    initial?: (AiGroupRoleInput & { group_type?: AiGroupType }) | null
+    roleGroupExists?: boolean
     saving?: boolean
     error?: string | null
   }>(),
@@ -83,7 +92,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   close: []
-  save: [input: AiGroupRoleInput]
+  save: [input: AiGroupRoleInput & { group_type?: AiGroupType }]
 }>()
 
 const { t } = useI18n()
@@ -91,16 +100,16 @@ const { t } = useI18n()
 const isEdit = computed(() => !!props.initial)
 const title = computed(() => {
   if (props.kind === 'role') return isEdit.value ? t('gui.ai.groups.role_edit_title') : t('gui.ai.groups.role_add_title')
-  return isEdit.value ? t('gui.ai.groups.edit_title') : t('gui.ai.groups.add_title')
+  return isEdit.value ? t('gui.role_profiles.edit_group_title') : t('gui.ai.groups.add_title')
 })
 
-const form = ref<{ name: string; description: string; criteria: string[] }>({ name: '', description: '', criteria: [] })
+const form = ref<{ name: string; description: string; criteria: string[]; group_type: AiGroupType }>({ name: '', description: '', criteria: [], group_type: 'general' })
 
 watch(
   () => [props.open, props.initial] as const,
   ([open, initial]) => {
     if (!open) return
-    form.value = { name: initial?.name ?? '', description: initial?.description ?? '', criteria: [...(initial?.criteria ?? [])] }
+    form.value = { group_type: initial?.group_type ?? 'general', name: initial?.name ?? '', description: initial?.description ?? '', criteria: [...(initial?.criteria ?? [])] }
   },
   { immediate: true }
 )
@@ -114,13 +123,17 @@ function onClose() {
 
 function onSave() {
   if (!isValid.value) return
-  const input: AiGroupRoleInput = { name: form.value.name.trim(), description: form.value.description.trim() || null }
-  if (props.kind === 'role') input.criteria = [...form.value.criteria]
+  const input: AiGroupRoleInput & { group_type?: AiGroupType } = { name: form.value.name.trim() }
+  if (props.kind === 'role') {
+    input.description = form.value.description.trim() || null
+    input.criteria = [...form.value.criteria]
+  } else input.group_type = form.value.group_type
   emit('save', input)
 }
 </script>
 
 <style scoped>
+.type-select { height: 37px; border: 1px solid var(--fg2-line); border-radius: 8px; background: #0b192a; color: var(--fg2-text); padding: 0 12px; }
 .dialog-header {
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--fg2-line);

@@ -2,6 +2,37 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
+  role_profiles: {
+    save_group: "변경 저장",
+    create_group: "그룹 만들기",
+    edit_group_title: "AI 그룹 정보 수정",
+    group_name_placeholder: "예: AI 역할",
+
+    "title": "역할별 AI 설정",
+    "group_type": "그룹 유형",
+    "general_group": "일반 그룹",
+    "role_group": "AI 역할",
+    "group_list": "그룹 목록",
+    "group_count": "{count}개",
+    "edit_info": "정보 수정",
+    "card_type": "카드 유형",
+    "instruction": "지시 AI",
+    "execution": "실행 AI",
+    "review": "검수 AI",
+    "common": "공용",
+    "unset": "미설정",
+    "not_used": "사용하지 않음",
+    "inherit": "공용 · {value}",
+    "add": "＋ 카드 유형 추가",
+    "add_aria": "추가할 카드 유형 선택",
+    "all_added": "모든 카드 유형 설정됨",
+    "remove": "{name} 설정 제거",
+    "unavailable": "{name} (사용 불가)",
+    "load_failed": "역할 설정을 불러오지 못했습니다.",
+    "save_failed": "역할 설정을 저장하지 못했습니다.",
+    "confirm_failed": "저장 확인 실패",
+    "retry": "다시 조회"
+},
   flow_base: {
     "title": "베이스 브랜치",
     "current": "현재",
@@ -2068,6 +2099,7 @@ export default {
       connection_test_not_cancellable: '이미 끝난 연결 테스트입니다.',
       ai_group_not_found: 'AI 그룹을 찾을 수 없습니다.',
       ai_group_name_conflict: '같은 이름의 AI 그룹이 있습니다.',
+      ai_role_group_exists: "AI 역할 그룹은 이미 있습니다.",
       ai_group_role_name_conflict: '같은 이름의 역할이 있습니다.',
       ai_group_member_exists: '이미 멤버인 AI 연결입니다.',
       ai_group_member_limit: '멤버 수 한도에 도달했습니다.',

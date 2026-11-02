@@ -23,7 +23,8 @@ import uuid
 
 from modules.flow_gate.db import ai_evaluations
 from modules.flow_gate.db import ai_groups as repo
-from modules.flow_gate.db import ai_providers
+from modules.flow_gate.db import ai_providers, ai_group_role_profiles
+from modules.flow_gate.db.connection import is_unique_violation
 from modules.flow_gate.settings import ai_settings_service
 
 RUNTIME_SLOTS = repo.RUNTIME_SLOTS
@@ -173,6 +174,7 @@ def _responses(rows: list[dict], available: dict | None = None) -> list[dict]:
                           if slot in bindings_by_group[gid] else None) for slot in RUNTIME_SLOTS}
         result.append({
             'ai_group_id': gid,
+            'group_type': row.get('group_type', 'general'),
             'name': row['name'], 'description': row['description'],
             'enabled': bool(row.get('enabled', 1)), 'is_default': row.get('default_key') is not None,
             'members': members, 'roles': roles,
@@ -230,19 +232,34 @@ def _write_error(exc: Exception, row: dict) -> None:
 
 
 def create_group(data: dict) -> dict:
-    """Name and optional description only. No member, role or provider is required."""
+    """Create a group and, for the single role group, its common row atomically."""
+    group_type = data.get('group_type', 'general')
+    if group_type not in ('general', 'role'):
+        raise AIGroupError('ai_group_type_invalid')
+    if group_type == 'role' and repo.get_role_group() is not None:
+        raise AIGroupError('ai_role_group_exists', 409)
     row = _validated(data)
-    row.update(ai_group_id='aig_' + uuid.uuid4().hex)
+    row.update(ai_group_id='aig_' + uuid.uuid4().hex, group_type=group_type)
     try:
-        repo.create(row)
+        with repo.get_store().transaction():
+            repo.create(row)
+            if group_type == 'role':
+                ai_group_role_profiles.create(row['ai_group_id'], 'common')
     except Exception as exc:
+        # Only uniqueness errors are conflicts; a failed transaction is never success.
+        if not is_unique_violation(exc):
+            raise
+        if group_type == 'role' and repo.get_role_group() is not None:
+            raise AIGroupError('ai_role_group_exists', 409) from exc
         _write_error(exc, row)
     return get_group(row['ai_group_id'])
 
 
 def update_group(ai_group_id: str, data: dict, *, supervisor_given: bool = False) -> dict:
-    _group_row(ai_group_id)
-    row = _validated(data, ai_group_id)
+    current = _group_row(ai_group_id)
+    if 'group_type' in data and data['group_type'] != current.get('group_type', 'general'):
+        raise AIGroupError('ai_group_type_immutable', 409)
+    row = _validated({**current, **data}, ai_group_id)
     supervisor = data.get('supervisor_member_id')
     if supervisor_given and supervisor is not None:
         if not isinstance(supervisor, str) or repo.get_member(ai_group_id, supervisor) is None:

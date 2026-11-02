@@ -21,7 +21,7 @@ RUNTIME_SLOTS = ("work_executor", "reviewer", "reworker")
 DEFAULT_KEY = "default"
 
 _COLUMNS = ("ai_group_id, name, name_key, name_key_hash, description, "
-            "supervisor_member_id, enabled, default_key, created_at, updated_at")
+            "supervisor_member_id, enabled, default_key, group_type, role_group_key, created_at, updated_at")
 _ROLE_COLUMNS = ("role_id, ai_group_id, name, name_key, name_key_hash, description, criteria, "
                  "position, created_at, updated_at")
 
@@ -38,6 +38,11 @@ def get(ai_group_id: str) -> Optional[dict]:
         f"SELECT {_COLUMNS} FROM ai_groups WHERE ai_group_id = ?", [ai_group_id])
 
 
+def get_role_group() -> Optional[dict]:
+    return get_store()._fetch_one(
+        f"SELECT {_COLUMNS} FROM ai_groups WHERE role_group_key = ?", ['role'])
+
+
 def get_by_name_hash(name_key_hash: str) -> Optional[dict]:
     return get_store()._fetch_one(
         f"SELECT {_COLUMNS} FROM ai_groups WHERE name_key_hash = ?", [name_key_hash])
@@ -47,10 +52,11 @@ def create(row: dict) -> None:
     now = now_iso()
     get_store()._execute(
         "INSERT INTO ai_groups (ai_group_id, name, name_key, name_key_hash, "
-        "description, supervisor_member_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+        "description, supervisor_member_id, group_type, role_group_key, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
         [row['ai_group_id'], row['name'], row['name_key'],
-         row['name_key_hash'], row['description'], now, now])
+         row['name_key_hash'], row['description'], row.get('group_type', 'general'),
+         'role' if row.get('group_type') == 'role' else None, now, now])
 
 
 def update(ai_group_id: str, row: dict) -> None:
@@ -101,7 +107,7 @@ def delete(ai_group_id: str) -> None:
     # (SQLite with foreign_keys off) never leaves orphans behind.
     store = get_store()
     with store.transaction():
-        for table in ("ai_group_member_roles", "ai_group_runtime_bindings",
+        for table in ("ai_group_role_profiles", "ai_group_member_roles", "ai_group_runtime_bindings",
                       "ai_group_roles", "ai_group_members"):
             store._execute(f"DELETE FROM {table} WHERE ai_group_id = ?", [ai_group_id])
         store._execute("DELETE FROM ai_groups WHERE ai_group_id = ?", [ai_group_id])
