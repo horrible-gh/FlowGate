@@ -173,6 +173,7 @@ _log = logging.getLogger(__name__)
 PASSED = "review_passed"
 EXITED = "exited"
 APPROVED = ("approved", "wf_done")
+PERSON_AUTHOR = "person"        # flowgate.v02.0119 T#2 (T-1): a person's submission (``stage_assignment.PERSON``)
 # flowgate.v02.0061 T#2: how long a node stays marked as followed when on_run_ended never comes.
 STAGE_HANDOFF_TTL_SEC = 600
 
@@ -504,7 +505,7 @@ def _after_work(flow_id: str, run: dict, answered: bool = False) -> None:
                                           False)) as owned:
             if owned:
                 legacy.approve(flow_id, doc_id, run.get("issued_to") or "", legacy.AUTOMATION,
-                               node_key=node["node_key"], attempt_id=attempt_id)
+                               node_key=node["node_key"], attempt_id=attempt_id, author=legacy.AUTHOR_AI)
 
 
 def run_not_clean(run: dict) -> str:
@@ -603,7 +604,8 @@ def _after_review(flow_id: str, run: dict, answered: bool = False) -> None:
     with _step_hold(flow_id, run_id, node["node_key"], attempt_id, "review_approval", answered) as owned:
         if owned:
             legacy.approve(flow_id, doc_id, run.get("issued_to") or "", None if person else legacy.AUTOMATION,
-                           node_key=node["node_key"], attempt_id=attempt_id)
+                           node_key=node["node_key"], attempt_id=attempt_id,
+                           author=PERSON_AUTHOR if person else legacy.AUTHOR_AI)
 
 
 def not_passed(loop: dict) -> str:
@@ -722,7 +724,7 @@ def _follow_person_result(flow_id: str, run_id: str, node_key: str, doc_id: str,
         # Stop gate's shared hold kept until the approval — its transition, TR hook and Graph contact — is over.
         with legacy.person_hold(flow_id, run_id, node_key, attempt_id, "result_approval") as owned:
             if owned:                           # the issuer's own authority, or nothing is tried (issuer_lacks_approve)
-                legacy.approve(flow_id, doc_id, issuer, node_key=node_key, attempt_id=attempt_id)
+                legacy.approve(flow_id, doc_id, issuer, node_key=node_key, attempt_id=attempt_id, author=PERSON_AUTHOR)
 
 
 def _start_person_review(flow_id: str, run: dict, node_key: str, doc: dict, stored: dict, issuer: str,
@@ -930,7 +932,8 @@ def _reconciled_approval(flow_id: str, run_id: str, key: str, doc_id: str, issue
     for the approval taken too, the run's Stop / Time Machine conditions judged again under the Stop gate's hold)."""
     with legacy.person_hold(flow_id, run_id, key, attempt_id, "reconcile_approval") as owned:
         if owned:
-            legacy.approve(flow_id, doc_id, issuer, legacy.AUTOMATION, node_key=key, attempt_id=attempt_id)
+            legacy.approve(flow_id, doc_id, issuer, legacy.AUTOMATION, node_key=key, attempt_id=attempt_id,
+                           author=legacy.AUTHOR_AI)
 
 
 def _reconcile_instruction(flow_id: str, run_id: str, row: dict) -> None:

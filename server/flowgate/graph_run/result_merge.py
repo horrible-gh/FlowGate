@@ -490,6 +490,11 @@ def _finish(attempt_id: str, integrated: Optional[str], expect) -> str:
         _note(current, INTEGRATED, None, integrated_commit=integrated)
         ctx = run_apply.load_context(run_store.run_by_id(current["run_id"]), workspace._project(current), None, jobs)
         node = _node(current)
+        if node and node["status"] == "review" and node.get("result_doc_id") and not _completed(ctx, node):
+            log.warning("Graph integration found no completion to apply attempt=%s node=%s", attempt_id,
+                        current["node_key"])
+            run_apply.settle_run(ctx)
+            return INTEGRATED
         if node and node["status"] == "review" and node.get("result_doc_id"):
             event = RunEvent("review_approved", current["node_key"], doc_id=node["result_doc_id"])
             d = resolve(ctx.revision, run_apply.read_run_state(ctx), event,
@@ -506,6 +511,14 @@ def _finish(attempt_id: str, integrated: Optional[str], expect) -> str:
     if outcome == INTEGRATED:
         workspace.cleanup_ended(attempt_id)          # T#10: only once the attempt ended (the approval applied)
     return outcome
+
+
+def _completed(ctx, node: dict) -> bool:
+    """flowgate.v02.0119 T#2 (T-1): the held approval is applied only for the node's completion record (an existing
+    run's approved result counts, ``card_completion_ports.completion_of``)."""
+    from modules.flow_gate.graph_workflow.services import card_completion_ports
+    doc = documents.get_by_id(node["result_doc_id"])
+    return doc is not None and card_completion_ports.completion_of(ctx.flow_id, ctx.run, node["node_key"], doc) is not None
 
 
 def _settle_closed(row: dict, expect) -> str:

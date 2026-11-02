@@ -11,11 +11,15 @@ of the active run and turned into a node event for the resolver:
   node's own type, or the card's report when the card omits its instruction (flowgate.v02.0053 T#2,
   ``card_settings_ports.result_type``: the same port the dispatch asked, so the AI is told to write
   exactly the type that is bound);
-- an approval of a node's result document -> ``review_approved`` — once every other document of the node's
-  card is approved too (``card_approval_ports.pending_documents``, flowgate.v02.0056 T#1: a card is approved
-  as a whole). A result approved while its card's instruction is not stays in review, awaiting the card's
-  approval; the approval of that last document — through the card approval or a person's v0.1 approval,
-  in either order — then brings the node in line (``_follow_card``, the reconciliation's own step).
+- a node's completion -> ``review_approved`` (flowgate.v02.0119 T#2, T-1): the node's completion record
+  (``flowgate.card_completion``, asked through ``card_completion_ports.completion_of``) is the only source of its
+  done — never the document's v0.1 review status. A review decision on the v0.1 review screen (``review_decided``,
+  approve) is no node event of a Graph-owned Flow, so a person's v0.1 approval completes no node. The event is made
+  by the reconciliation (``next_missing_event``) once the record exists and every other document of the node's card
+  is approved too (``card_approval_ports.pending_documents``, flowgate.v02.0056 T#1); a document approval that is no
+  node's result re-reads the nodes in review (``_follow_card``), so a card waiting for its instruction follows the
+  record once that instruction is approved. Existing runs (before the service) read an approved result as complete
+  (the port's ``legacy`` answer); without the port's handler the approved result completes it, as before.
 
 flowgate.v02.0056 T#1 (0002-CH turn 5~10): a rejection of a node's result — a person's (the v0.1
 ``review_transitions/reject`` route, kept for v0.1) or the one the card's AI review writes on the way to
@@ -74,7 +78,7 @@ from modules.flow_gate.graph_workflow.domain.supersede import live_end
 from modules.flow_gate.graph_workflow.projection.run_documents import document, registered_documents
 from modules.flow_gate.graph_workflow.store import run_store
 
-from . import card_approval_ports, card_settings_ports
+from . import card_approval_ports, card_completion_ports, card_settings_ports
 from .engine_router import read_ownership
 from .flow_guard import with_flow_guard
 from .run_apply import RunContext, apply_decision, fill_line, load_context, read_run_state, settle_run
@@ -201,13 +205,9 @@ def locate(ctx: RunContext, kind: str, payload: dict) -> Optional[RunEvent]:
             return RunEvent("result_submitted", row["node_key"], doc_id=doc["doc_id"])
         return None                                               # already has a result
     if kind == "review_decided":
-        row = run_store.node_run_by_result(ctx.run_id, doc["doc_id"])
-        cause = _DECISIONS.get(_decision(payload))
-        if row is None or cause is None:
-            return None
-        if not card_complete(ctx, row["node_key"], doc["doc_id"]):
-            return None                                           # the card's other documents wait
-        return RunEvent(cause, row["node_key"], doc_id=doc["doc_id"])
+        # flowgate.v02.0119 T#2 (T-1): a review decision on the v0.1 review screen is no node event of a Graph-owned
+        # Flow (its hidden person's approval): the node follows its completion record only (``next_missing_event``).
+        return None
     return None
 
 
@@ -329,7 +329,11 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
         nxt = ctx.docs().get(cur["superseded_by"]) or document(cur["superseded_by"])
         if nxt is not None and nxt.get("status") != CANCELLED and nxt.get("group_id") == ctx.flow_id:
             return RunEvent("revised", key, doc_id=nxt["doc_id"], replaces=cur["doc_id"])
-    if nr.status == "review" and cur.get("doc_review_status") in ("approved", "wf_done"):
+    if nr.status == "review":
+        # flowgate.v02.0119 T#2 (T-1): the node's completion record, not the document's review status (an existing
+        # run's approved result reads as complete through the port's ``legacy`` answer).
+        if card_completion_ports.completion_of(ctx.flow_id, ctx.run, key, cur) is None:
+            return None                                           # no completion: the node stays in review
         if not card_complete(ctx, key, cur["doc_id"]):
             return None                                           # approved result, card not yet
         if card_settings_ports.result_review_pending(ctx.flow_id, ctx.run_id, key, cur["doc_id"]):
@@ -342,6 +346,9 @@ def next_missing_event(ctx: RunContext, s: RunState, key: str) -> Optional[RunEv
 
 
 def needs_reconcile(ctx: RunContext) -> bool:
+    # flowgate.v02.0119 T#2 (T-1): a written completion record that no longer answers its node is settled too
+    if card_completion_ports.unsettled(ctx.flow_id, ctx.run):
+        return True
     s = read_run_state(ctx)
     return any(next_missing_event(ctx, s, key) is not None for key in reconcile_targets(ctx, s))
 
@@ -363,6 +370,10 @@ def reconcile_node(ctx: RunContext, key: str, policies: dict) -> None:
 
 
 def reconcile_links(ctx: RunContext, policies: dict) -> None:
+    # flowgate.v02.0119 T#2 (T-1): inside the guard, first the Flow's written completion records that no longer answer
+    # their node (a moved result / attempt / revision, a node out of review, another run) turn superseded — a run read
+    # or a command settles them with no explicit apply — then the nodes take their missing events.
+    card_completion_ports.settle(ctx.flow_id, ctx.run)
     for key in reconcile_targets(ctx, read_run_state(ctx)):
         reconcile_node(ctx, key, policies)
 

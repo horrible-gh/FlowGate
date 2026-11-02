@@ -30,7 +30,7 @@ from modules.flow_gate.graph_workflow.projection.graph_projector import to_graph
 from modules.flow_gate.graph_workflow.projection.run_documents import flow_documents
 from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, run_store
 
-from . import node_dispatch, run_events, run_state_ports
+from . import card_completion_ports, node_dispatch, run_events, run_state_ports
 from modules.flow_gate.services import graph_execution_hooks
 from .card_document_ports import result_bound
 
@@ -169,6 +169,10 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
     ``note`` (who decided, the comment) goes with the node transitions of the deciding event (gate).
     flowgate.v02.0085 T#2 (D0007 §3.2): a gate's reject ends its attempt as a done node's approval does.
 
+    flowgate.v02.0119 T#2 (T-1): a ``review_approved`` that makes its node done turns the node's completion record
+    ``applied`` in the same transaction (``card_completion_ports.applied``) and its node event carries the record's
+    ``completion_id``: the done and the openings below follow that one record.
+
     0061 T#9: a code node's approval (``review_approved``) is done only once its attempt's result is merged into the
     Flow's branch: until then the decision is held back whole (``defer_done``: the node stays in review, its
     integration is requested after the commit) and only whether the run goes on is judged.
@@ -199,9 +203,18 @@ def apply_decision(ctx: RunContext, d: Decision, note: Optional[dict] = None, se
         _assert_one(run_store.transition_node_run(
             ctx.run_id, t.node, t.from_status, t.expected_doc_id, t.to_status, t.result_doc_id,
             finished=t.to_status in ("done", "rejected")), f"transition {t.node} {t.cause}")
+        node_note = note
+        if t.cause == "review_approved" and t.to_status == "done":
+            # flowgate.v02.0119 T#2 (T-1): the completion record the done follows turns applied in this transaction
+            # (before the attempt ends: the record is keyed by it) and the node event carries its id.
+            completion_id = card_completion_ports.applied(ctx.flow_id, ctx.run_id, t.node, t.result_doc_id,
+                                                          int(ctx.run["last_event_seq"]) + 1)
+            if completion_id:
+                node_note = {**(note or {}), "payload": {**((note or {}).get("payload") or {}),
+                                                         "completion_id": completion_id}}
         if t.to_status == "done" or t.cause == "gate_rejected":
             run_store.end_attempt(ctx.run_id, t.node)                  # 0061 T#2: the node's attempt ends
-        seq = emit_node_state(ctx, t.node, t.from_status, t.to_status, t.cause, t.result_doc_id, note=note)
+        seq = emit_node_state(ctx, t.node, t.from_status, t.to_status, t.cause, t.result_doc_id, note=node_note)
         if t.result_doc_id and t.result_doc_id != t.expected_doc_id:
             result_bound(ctx.flow_id, t.node, t.result_doc_id)        # flowgate.v02.0053 T#1: fills the line
         for p in d.propagation_new:

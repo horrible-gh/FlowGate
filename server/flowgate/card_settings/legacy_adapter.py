@@ -55,7 +55,6 @@ as stored (``repository.stored``) and the result's review loops (``review_loops`
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -105,9 +104,6 @@ REVIEW_NODE_STATUS = "review"
 STOPPED_LOOP_STAGE = "stopped"
 LOCALE = "ko"
 APPROVE_PERMISSION = "document.approve"
-# The TR2 approval attempt key of a card approval (the unmanned chain's own is "auto:").
-TR2_REQUEST_KEY_PREFIX = "card:"
-TR2_REQUEST_KEY_LEN = 48
 # flowgate.v02.0105 T#2 (B-4): an AI card's automatic approval authority — approval alone, no other permission.
 AUTOMATION = "automation"
 AUTOMATION_APPROVE_PERMISSIONS = frozenset({APPROVE_PERMISSION})
@@ -791,45 +787,67 @@ def review_loop_active(doc_id: str) -> bool:
     return any(r.get("current_stage") != STOPPED_LOOP_STAGE for r in db_review_loops.list_by_document(doc_id) or [])
 
 
-def _retryable_tr2(exc: Exception) -> bool:
-    """A TR2 refusal the unmanned chain retries once with a new attempt key (``settle_completed_step``)."""
-    from modules.flow_gate.documents import tr2_service  # noqa: PLC0415
-    from modules.flow_gate.documents.tr2_errors import TR2_ERRORS  # noqa: PLC0415
+AUTHOR_AI = "ai"                        # ``stage_assignment.AI``: the submission's author kind of an AI's result
 
-    return (isinstance(exc, tr2_service.Tr2ValidationError) and exc.code != "tr2_in_progress"
-            and exc.code in TR2_ERRORS and bool(TR2_ERRORS[exc.code].retryable))
+
+def completion_cause(verdict: Optional[dict], author: Optional[str], automation: bool) -> str:
+    """The completion's cause (flowgate.v02.0119 T#2, T-1): ``ai_review_passed`` when the current revision's latest
+    review passed it; otherwise from the submission's author kind (the review assignment's ``author``) —
+    ``no_review_submitted`` for an AI's result, ``human_submitted`` for a person's. Only when the author kind is not known
+    does the authority stand in for it (``AUTOMATION``: an AI card's result). The authority is never read as the author:
+    a person's result approved under the system's authority is still a person's submission."""
+    from flowgate.card_completion import completion  # noqa: PLC0415
+
+    if verdict is not None:
+        return completion.AI_REVIEW_PASSED
+    if author is not None:
+        return completion.NO_REVIEW_SUBMITTED if author == AUTHOR_AI else completion.HUMAN_SUBMITTED
+    return completion.NO_REVIEW_SUBMITTED if automation else completion.HUMAN_SUBMITTED
 
 
 def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[str] = None, *,
             node_key: Optional[str] = None, attempt_id: Optional[str] = None, mark: Optional[dict] = None,
-            expected_revision: Optional[int] = None):
-    """The v0.1 approval of ``doc_id`` as the unmanned chain makes it (``inbox_routes.settle_completed_step``),
-    then the TR approval hook every approval entry point calls and the Graph contact a person's approval
-    reaches. True when approved; any refusal is logged, its reason recorded (B-1, ``record_approval_wait``) and the
-    result left to a person (False).
+            expected_revision: Optional[int] = None, cause: Optional[str] = None, author: Optional[str] = None):
+    """The automatic completion of the node whose result in review is ``doc_id`` (flowgate.v02.0119 T#2, T-1): the v0.2
+    completion record (``flowgate.card_completion``) — the only source of the node's done — written with the document's
+    status display (``approved``, by the system) in one transaction, then applied in the Flow guard (the node done, its
+    attempt ended, the next cards opened). True when complete (the record applied, or recorded for the reconciliation /
+    a code node's merge); any refusal is logged, its reason recorded (B-1, ``record_approval_wait``) and the result left
+    as it is (False). A record that is not live — superseded by a newer verdict or revoked by a Time Machine rewind — is
+    no completion (False).
+
+    No v0.1 approval is taken: no ``transition_document_review``, no TR approval hook
+    (``tr_commit_service.on_document_approved``: a code result's one commit is its attempt's result commit), no Graph
+    contact (``after_review_decided``) and no person recorded as an approver. Before the record the document passes the
+    read-only gates the v0.1 approval asked (a readable body, a TSR's test gate). A TS (the admission of its test run)
+    and a TR2 (its source change) have an effect of their own: the v0.2 completion runs it itself
+    (``card_completion.own_effects``), with the record in the effect's own transaction (TS) or its finalize hook (TR2),
+    and writes a lost record again when the effect was made before (the recovery path of a retry or a restart).
+
+    ``cause`` (``ai_review_passed`` / ``no_review_submitted`` / ``human_submitted``): when None, ``completion_cause``
+    (a passing review of the current revision, else the submission's ``author`` kind — ``ai`` / ``person`` from the
+    review assignment — else the authority). The actor: the provider the review actually ran on, the system, or the
+    person who wrote the submission (``card_completion`` reads the author from the submission's own records). The
+    record's ``requested_by`` is the Graph run's issuer (its ``started_by``) — not ``actor_user_id``, which is the
+    authority's principal (a person card's token recipient may be its assignee). A repeated call (a review pass told
+    twice, a retried job) finds the record its key already has and changes nothing.
 
     - Authority: ``authority`` ``AUTOMATION`` (an AI card's result, flowgate.v02.0105 T#2 B-4, Q #511 o3 — 0083 T#4
       개정): the server's automatic approval authority (``AUTOMATION_APPROVE_PERMISSIONS``), never the issuer's
       permissions; an empty issuer approves nothing (``issuer_missing``) and the system's authority is recorded beside
-      the approval. None (a person's work plan result, 0083 WP-4): the run issuer's own permissions, resolved as the
+      the completion. None (a person's work plan result, 0083 WP-4): the run issuer's own permissions, resolved as the
       approve button resolves them; without ``document.approve`` nothing is attempted (``issuer_lacks_approve``).
-    - Actor and principal: the issuer — never the author of the result — as the Flow's server-owned completion context
-      (``system_principal``, the one the unmanned approval passes), so the group mutation guard admits it as it admits
-      that approval.
     - Revision: the document's revision as read here (``expected_revision``). flowgate.v02.0113 T#3 (K-6):
-      ``expected_revision`` — the revision a review passed (an assigned review's) — is the revision approved, or none:
-      it is the TR2 approval's expected revision, and any other approval checks it in its own transaction before and
-      after its write (``pinned``). A document whose revision moved meanwhile is not approved and nothing is recorded:
-      ``REVISION_MOVED`` (the caller hands the newer submission to its own review).
-    - TR2: its own approval (precheck, source lock, apply, validation, commit) under an attempt key of
-      the document and revision, retried once with a new key on a retryable TR2 refusal.
+      ``expected_revision`` — the revision a review passed (an assigned review's) — is the revision completed, or none:
+      the completion write checks it in its own transaction before and after the write (``pinned``; a TS's in its
+      effect's transaction, a TR2's in its apply). A document whose revision moved meanwhile is not completed and
+      nothing is recorded: ``REVISION_MOVED`` (the caller hands the newer submission to its own review).
     """
     from modules.flow_gate.db import documents as db_documents  # noqa: PLC0415
     from modules.flow_gate.db import users as db_users  # noqa: PLC0415
-    from modules.flow_gate.services import tr_commit_service  # noqa: PLC0415
-    from modules.flow_gate.services.mutation_policy import system_principal  # noqa: PLC0415
-    from modules.flow_gate.workflow.pipeline_service import transition_document_review  # noqa: PLC0415
     from modules.flow_gate.workflow.routers.workflow import _get_user_permissions  # noqa: PLC0415
+    from flowgate.card_completion import completion, own_effects  # noqa: PLC0415 — the v0.2 completion service
+    from flowgate.card_completion import legacy_adapter as completion_records  # noqa: PLC0415
 
     automation = authority == AUTOMATION
     if automation:
@@ -852,34 +870,120 @@ def approve(flow_id: str, doc_id: str, actor_user_id: str, authority: Optional[s
         _log.info("card approval not made flow=%s doc=%s: revision %s moved to %s", flow_id, doc_id,
                   expected_revision, revision)
         return REVISION_MOVED
-    tr2 = str(doc.get("type_code") or "").upper() == "TR2"
-    result = None
-    for attempt in range(2 if tr2 else 1):
-        request_key = None
-        if tr2:
-            digest = hashlib.sha256(f"{doc_id}:{revision}:{attempt}".encode("utf-8")).hexdigest()
-            request_key = TR2_REQUEST_KEY_PREFIX + digest[:TR2_REQUEST_KEY_LEN]
-        try:
-            def transition(key=request_key):
-                return transition_document_review(
-                    doc_id=doc_id, action="approve", actor_user_id=actor_user_id, user_permissions=permissions,
-                    locale=LOCALE, mutation_principal=system_principal(user_id=actor_user_id, group_id=flow_id),
-                    expected_revision=revision, request_key=key)
-            result = transition() if expected_revision is None or tr2 else pinned(doc_id, revision, transition)
-            break
-        except RevisionMoved:
-            _log.info("card approval not made flow=%s doc=%s: revision %s moved", flow_id, doc_id, revision)
-            return REVISION_MOVED
-        except Exception as exc:  # noqa: BLE001 — the result stays in review for a person
-            if tr2 and attempt == 0 and _retryable_tr2(exc):
-                continue
-            _log.warning("card approval refused flow=%s doc=%s", flow_id, doc_id, exc_info=True)
-            record_approval_wait(flow_id, node_key, doc_id, APPROVAL_REFUSED, attempt_id=attempt_id, mark=mark)
-            return False
+    own_effect = own_effects.has_effect(doc)
+    found = completion.target_of(flow_id, doc_id, node_key)
+    if found is None:
+        done = [r for r in completion.repository.of_document(flow_id, doc_id) if r["status"] in completion.LIVE]
+        if done:
+            return True                         # its completion is recorded already (a repeated pass, a retried job)
+        if own_effect:                          # no node takes it: the document's own effect alone, by the system
+            return _effect_alone(flow_id, doc_id, doc, actor_user_id, permissions, revision, node_key, attempt_id, mark)
+        _log.info("card completion not made flow=%s doc=%s: no node in review has it as its result", flow_id, doc_id)
+        return False
+    active = found["attempt_id"]
+    if attempt_id and active and attempt_id != active:
+        _log.info("card completion not made flow=%s doc=%s: attempt %s is not the node's active %s", flow_id, doc_id,
+                  attempt_id, active)
+        return False
+    try:
+        completion_gates(doc)
+    except Exception:  # noqa: BLE001 — the document does not pass the gates the approval asked
+        _log.warning("card completion refused flow=%s doc=%s", flow_id, doc_id, exc_info=True)
+        record_approval_wait(flow_id, found["node_key"], doc_id, APPROVAL_REFUSED, attempt_id=attempt_id, mark=mark)
+        return False
+    verdict = completion.passing_verdict(doc_id, revision)
+    cause = cause or completion_cause(verdict, author, automation)
+    writer = completion_records.submission_author(doc) if cause == completion.HUMAN_SUBMITTED else None
+    actor_kind, actor_id = completion.actor_of(cause, verdict, writer)
+    fields = dict(cause=cause, actor_kind=actor_kind, actor_id=actor_id,
+                  requested_by=completion.requested_by_of(found["run"]),
+                  verdict_id=(verdict or {}).get("id"), revision_no=revision)
+    run_id, key = found["run"]["run_id"], found["node_key"]
+
+    def write():
+        written, created = completion.record(flow_id, run_id, key, active, doc_id, **fields)
+        if created and written["status"] in completion.LIVE:
+            show_approved(doc_id, revision, written)
+        return written
+
+    try:
+        if own_effect:
+            own_effects.run(doc, flow_id=flow_id, issuer=actor_user_id, permissions=permissions, revision=revision,
+                            write=write)
+        rec = pinned(doc_id, revision, write)   # the effect's record read back, or written now (a lost one: recovery)
+    except (RevisionMoved, own_effects.EffectRevisionMoved):
+        _log.info("card completion not made flow=%s doc=%s: revision %s moved", flow_id, doc_id, revision)
+        return REVISION_MOVED
+    except Exception:  # noqa: BLE001 — nothing recorded: the result stays in review
+        _log.warning("card completion not recorded flow=%s doc=%s", flow_id, doc_id, exc_info=True)
+        record_approval_wait(flow_id, key, doc_id, APPROVAL_REFUSED, attempt_id=attempt_id, mark=mark)
+        return False
+    if rec["status"] not in completion.LIVE:
+        _log.info("card completion not made flow=%s doc=%s: its record %s is %s (%s)", flow_id, doc_id,
+                  rec["completion_id"], rec["status"], rec.get("status_reason"))
+        return False
     if automation:
-        record_approval_authority(flow_id, node_key, doc_id, actor_user_id, attempt_id=attempt_id)
-    tr_commit_service.on_document_approved(doc_id, result)
-    v01_contact.after_review_decided(flow_id, doc_id, "approve")
+        record_approval_authority(flow_id, key, doc_id, actor_user_id, attempt_id=attempt_id)
+    try:
+        status = completion.apply(flow_id, rec["completion_id"])
+    except Exception:  # noqa: BLE001 — ① committed: the next reconciliation applies the record (② again)
+        _log.warning("card completion recorded, not applied yet flow=%s doc=%s completion=%s", flow_id, doc_id,
+                     rec["completion_id"], exc_info=True)
+        return True
+    if status not in completion.LIVE:
+        _log.info("card completion not made flow=%s doc=%s: its record %s turned %s", flow_id, doc_id,
+                  rec["completion_id"], status)
+        return False
+    return True
+
+
+COMPLETION_EVENT = "card_completion_recorded"
+
+
+def completion_gates(doc: dict) -> None:
+    """The read-only gates the v0.1 approval asked before approving: a readable, non-blank body and a TSR's test gate
+    (``pipeline_service``); raises when the document does not pass."""
+    from modules.flow_gate.workflow.pipeline_service import (  # noqa: PLC0415
+        _require_document_body_for_approval, _require_test_gate_for_approval)
+
+    _require_document_body_for_approval(doc, LOCALE)
+    _require_test_gate_for_approval(doc, LOCALE)
+
+
+def show_approved(doc_id: str, revision: int, record: Optional[dict]) -> None:
+    """The document's status display, written by the v0.2 completion as the system (inside its transaction): review status
+    ``approved`` for the completed revision (nothing when it reads approved already), and a document event naming the
+    completion (cause, actor, issuer) — or, with no ``record`` (a TS / TR2 that no node takes), its own effect."""
+    from modules.flow_gate.db import events as db_events  # noqa: PLC0415
+    from modules.flow_gate.db.connection import now_iso  # noqa: PLC0415
+
+    store = get_store()
+    store._execute_affected(
+        "UPDATE documents SET doc_review_status = 'approved', updated_at = ? WHERE doc_id = ? AND revision_no = ? "
+        "AND COALESCE(doc_review_status, '') NOT IN ('approved', 'wf_done')", [now_iso(), doc_id, int(revision)])
+    rec = record or {}
+    db_events.insert_event(doc_id, COMPLETION_EVENT, note=json.dumps({
+        "completion_id": rec.get("completion_id"), "cause": rec.get("cause"), "actor": SYSTEM_AUTHORITY,
+        "actor_kind": rec.get("actor_kind") or SYSTEM_AUTHORITY, "actor_id": rec.get("actor_id"),
+        "requested_by": rec.get("requested_by"), "revision_no": revision}, ensure_ascii=False))
+
+
+def _effect_alone(flow_id, doc_id, doc, actor_user_id, permissions, revision, node_key, attempt_id, mark):
+    """A TS / TR2 that no node takes: its own effect alone, run by the system with the status display (no record, no
+    v0.1 transition): True, False (refused, its reason recorded) or ``REVISION_MOVED``."""
+    from flowgate.card_completion import own_effects  # noqa: PLC0415
+
+    try:
+        completion_gates(doc)
+        own_effects.run(doc, flow_id=flow_id, issuer=actor_user_id, permissions=permissions, revision=revision,
+                        write=lambda: show_approved(doc_id, revision, None))
+    except own_effects.EffectRevisionMoved:
+        _log.info("card approval not made flow=%s doc=%s: revision %s moved", flow_id, doc_id, revision)
+        return REVISION_MOVED
+    except Exception:  # noqa: BLE001 — the result stays as it is
+        _log.warning("card approval refused flow=%s doc=%s", flow_id, doc_id, exc_info=True)
+        record_approval_wait(flow_id, node_key, doc_id, APPROVAL_REFUSED, attempt_id=attempt_id, mark=mark)
+        return False
     return True
 
 

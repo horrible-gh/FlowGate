@@ -886,3 +886,38 @@ def test_db(all_migrations_db):
     finally:
         all_migrations_db.rollback()
 
+
+
+# ── flowgate.v02.0119 T#2 (T-1): the completion stand-in of the Graph engine suites ──────────────────────────────────
+#
+# Production has no completion fallback any more: with no handler registered the Graph's ``card_completion_ports``
+# answers "no completion" whatever the document's review status, and the server's start fails when it cannot register
+# ``flowgate.card_completion``. The Graph engine suites written before 0119 (runs, gates, attempts, time machine, card
+# settings ...) drive their nodes to done by approving the result document; for them this TEST-ONLY stand-in answers as
+# the document's approval did (approved / wf_done -> complete). It is registered only when no handler is registered
+# (a suite that registers ``flowgate.card_completion`` replaces it for its own test) and removed after each test.
+# What a suite proves through it is the engine's behaviour, NOT the completion contract: the completion contract (records
+# as the only source, no completion when unregistered) is verified with the real registration in
+# ``tests/flowgate/test_fg_card_completion_0119.py``.
+
+def _completion_stand_in_for_engine_suites(flow_id, run, node_key, doc):
+    return {"completion_id": None, "legacy": True} if (doc or {}).get("doc_review_status") in ("approved", "wf_done") \
+        else None
+
+
+@pytest.fixture(autouse=True)
+def _graph_completion_stand_in():
+    try:
+        from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
+    except Exception:  # noqa: BLE001 — a suite without the Graph package
+        yield
+        return
+    if ports.registered(ports.COMPLETION_OF):
+        yield
+        return
+    ports.register(ports.COMPLETION_OF, _completion_stand_in_for_engine_suites)
+    try:
+        yield
+    finally:
+        if ports._handler(ports.COMPLETION_OF) is _completion_stand_in_for_engine_suites:
+            ports.unregister(ports.COMPLETION_OF)

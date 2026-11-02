@@ -1260,24 +1260,58 @@ def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
     try:
         from modules.flow_gate.workflow.pipeline_service import transition_document_review
 
-        transition_document_review(
-            doc_id=slot["doc_id"],
-            action="reject",
-            actor_user_id=actor_user_id,
-            user_permissions=permissions,
-            comment=reason,
-            # T0005 2.1.5: the review row this rejection is FOR, so the stored history item
-            # carries a `review_id` key the next gate pass can match against
-            # (_review_already_rejected above). A missing review, or a row without an id,
-            # passes None -- the pre-existing behaviour: the item is written without the
-            # key and falls back to legacy reason matching for it.
-            review_id=(review or {}).get("id"),
-        )
+        def reject() -> None:
+            transition_document_review(
+                doc_id=slot["doc_id"],
+                action="reject",
+                actor_user_id=actor_user_id,
+                user_permissions=permissions,
+                comment=reason,
+                # T0005 2.1.5: the review row this rejection is FOR, so the stored history item
+                # carries a `review_id` key the next gate pass can match against
+                # (_review_already_rejected above). A missing review, or a row without an id,
+                # passes None -- the pre-existing behaviour: the item is written without the
+                # key and falls back to legacy reason matching for it.
+                review_id=(review or {}).get("id"),
+            )
+
+        if (review or {}).get("actual_provider_id"):
+            # flowgate.v02.0119 T#2 (T-1): the rejection and its attribution to the reviewing AI, one transaction.
+            from modules.flow_gate.db.connection import get_store
+
+            with get_store().transaction():
+                reject()
+                _attribute_rejection(slot["doc_id"], review, actor_user_id)
+        else:
+            reject()                       # no provider evidence: the item is written as before (the issuer)
     except Exception as exc:  # noqa: BLE001 — the stored document is never touched
         logger.warning("review gate auto-reject failed for %s", slot["doc_id"], exc_info=True)
         _svc()._log_review_annotation_failure("write", slot, bundle, exc)
         return {"ok": False, "stop_code": REVIEW_REJECT_FAILED_STOP_CODE, "detail": str(exc)}
     return {"ok": True}
+
+
+def _attribute_rejection(doc_id: str, review: Optional[dict], issuer: Optional[str]) -> None:
+    """flowgate.v02.0119 T#2 (T-1): the automatic rejection just written names the AI provider whose review rejected it
+    as ``rejected_by`` (``rejected_by_kind`` ``ai``), the chain issuer only as ``requested_by``. In the rejection's own
+    transaction; a review with no provider evidence leaves the item as the transition wrote it (the issuer)."""
+    provider = (review or {}).get("actual_provider_id")
+    review_id = (review or {}).get("id")
+    if not provider:
+        return
+    from modules.flow_gate.workflow.pipeline_service import parse_rejection_history, rejection_review_key
+
+    doc = db_docs.get_by_id(doc_id) or {}
+    history = parse_rejection_history(doc.get("rejection_history"))
+    wanted = rejection_review_key(review_id) if review_id is not None else None
+    target = next((item for item in reversed(history) if isinstance(item, dict)
+                   and (wanted is None or rejection_review_key(item.get("review_id")) == wanted)), None)
+    if target is None:
+        return
+    target["rejected_by"] = str(provider)
+    target["rejected_by_kind"] = "ai"
+    target["requested_by"] = issuer
+    db_docs.update(doc_id, {"rejection_history": json.dumps(history, ensure_ascii=False)})
 
 
 def _latest_review_of(slot: dict) -> Optional[dict]:

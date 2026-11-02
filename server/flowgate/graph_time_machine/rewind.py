@@ -17,6 +17,8 @@ Checked first, written after; a refusal rolls the guard back and the operation i
   attempt, so ``token_ids``, ``invalidated_token_ids`` (stale documents), the authorship read and the token fence
   (``graph_source_hooks.binding`` -> an invalidated attempt) all leave them out. Nothing of the token, document or
   approval history is deleted;
+- the target nodes' completion records (``flowgate.card_completion``, flowgate.v02.0119 T#2) are kept and marked
+  ``revoked``: no reconciliation completes a rewound node from them again;
 - the target documents' approval goes back (``approved`` -> ``pending_review``, the existing review status CAS);
   their content, revisions and approval / rejection history stay as the old attempt's output;
 - the target nodes (but a root-bound node, which follows its root document and has no attempt) go back to
@@ -145,6 +147,8 @@ def rewind(ctx, plan: dict, reverts: list[dict]) -> dict:
     legacy = _detach_legacy_tokens(ctx, keys, stamp)
     tokens += [t for _attempt, node_tokens in legacy for t in node_tokens]
     _revoke(tokens)
+    from flowgate.card_completion import completion as card_completion
+    card_completion.revoke_rewound(run_id, keys)          # flowgate.v02.0119 T#2 (T-1): kept, never applied again
 
     reopened = []
     for doc in plan.get("documents") or ():

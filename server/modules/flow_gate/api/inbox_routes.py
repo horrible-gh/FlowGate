@@ -3551,7 +3551,9 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
             db_reviews.insert_review(
                 doc_id=doc_id,
                 revision_no=revision_no,
-                reviewer_id=actor_user_id,
+                # flowgate.v02.0119 T#2 (T-1): the reviewer is the AI provider that ran the review (its run's issuer
+                # stays the token's ``issued_to``); a review with no provider evidence keeps the issuer as before.
+                reviewer_id=review_provider.get("actual_provider_id") or actor_user_id,
                 verdict=verdict,
                 findings_json=findings_json,
                 comment=comment if (comment is None or isinstance(comment, str)) else str(comment),
@@ -5525,7 +5527,6 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
         target["ai_response"] = response_text[:AI_RESPONSE_MAX_LEN]
         target["responded_at"] = now_iso()
-        target["response_recorded_by"] = actor_user_id
         target["response_revision_no"] = existing_doc.get("revision_no", 0) + 1
         # 0582 T0005 SSC: snapshot THIS rework submission's own effective run/provider --
         # never the review's (a different run) and never a prior response's (a stale
@@ -5540,6 +5541,10 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         target["response_ai_run_id"] = _response_provenance.get("ai_run_id")
         target["response_actual_provider_id"] = _response_provenance.get("actual_provider_id")
         target["response_actual_provider_name"] = _response_provenance.get("actual_provider_name")
+        # flowgate.v02.0119 T#2 (T-1): the response is recorded by the AI provider that wrote it (the token's issuer
+        # only as ``response_requested_by``); a response with no provider evidence keeps the issuer as before.
+        target["response_recorded_by"] = _response_provenance.get("actual_provider_id") or actor_user_id
+        target["response_requested_by"] = actor_user_id
         rejection_history_update = json.dumps(history, ensure_ascii=False)
 
     if linked_doc_id and db_docs.get_by_id(linked_doc_id) is None:

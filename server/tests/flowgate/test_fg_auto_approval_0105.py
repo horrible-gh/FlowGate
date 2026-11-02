@@ -185,14 +185,17 @@ def test_an_ai_run_that_timed_out_waits_for_a_person_and_tells_why(env, decided,
 # ── a missed or failed automatic approval ────────────────────────────────────
 
 def test_a_refused_transition_is_recorded_and_the_card_waits(env, decided, monkeypatch):
+    """flowgate.v02.0119 T#2 (T-1): the automatic completion takes no v0.1 review transition any more; its refusal is
+    the document failing the gates the approval asked (``completion_gates``), injected here, recorded the same way."""
+    from flowgate.card_settings import legacy_adapter
     from modules.flow_gate.workflow import pipeline_service
 
     key, result, _token = _in_review(env, monkeypatch, NO_REVIEW)
 
-    def refuse(**_kw):
+    def refuse(_doc):
         raise pipeline_service.TransitionError("expected_revision")
 
-    monkeypatch.setattr(pipeline_service, "transition_document_review", refuse)
+    monkeypatch.setattr(legacy_adapter, "completion_gates", refuse)
     _work_run_ended()
     shown = _node_run(env, key)
     assert (shown["awaiting_approval"], shown["approval_wait_reason"]) == (True, "approval_refused")

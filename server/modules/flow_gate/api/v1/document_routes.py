@@ -53,7 +53,8 @@ def _parse_rejection_history(raw: Any) -> list:
     if not isinstance(parsed, list):
         return []
     from modules.flow_gate.workflow.pipeline_service import enrich_rejection_history_provenance
-    return enrich_rejection_history_provenance(parsed)
+    # flowgate.v02.0119 T#2 (T-1): each item also tells its actors (the AI, the issuer as requested_by only).
+    return [db_reviews.rejection_actors(item) for item in enrich_rejection_history_provenance(parsed)]
 
 
 def _fail(status: int, message: str) -> JSONResponse:
@@ -83,6 +84,7 @@ def _shape_review(row: dict) -> dict:
         # 0535 T0007 §2: one shared builder for both read surfaces, so the key set and
         # the true/false/null normalization of fallback_used cannot drift apart.
         "review_provider": db_reviews.review_provider_payload(row),
+        "actor": db_reviews.review_actor(row),          # flowgate.v02.0119 T#2 (T-1)
         "review_intent": row.get("review_intent"),
         "superseded_review_id": row.get("superseded_review_id"),
         "verdict": row.get("verdict"),

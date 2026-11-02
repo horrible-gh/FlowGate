@@ -307,8 +307,10 @@ def approve_for(flow_id: str, a: dict, doc: Optional[dict], mode: str, reviewed:
     edit, a resubmission) is not approved: ``MOVED`` — the caller hands the newer submission to its own review."""
     from flowgate.card_settings import review_stage  # noqa: PLC0415
 
-    if not doc or doc.get("doc_review_status") in APPROVED:
-        return bool(doc)
+    if not doc:
+        return False
+    if doc.get("doc_review_status") in APPROVED and a["stage"] == sa.INSTRUCTION_REVIEW:
+        return True
     run_row, node = _context(flow_id, a["run_id"], a["node_key"])
     if run_row is None or node is None:
         return False
@@ -320,18 +322,26 @@ def approve_for(flow_id: str, a: dict, doc: Optional[dict], mode: str, reviewed:
         if not owned:
             return False
         current = _doc(doc["doc_id"])
-        if current is None or int(current.get("revision_no") or 0) != expected \
+        if current is None:
+            return MOVED
+        if current.get("doc_review_status") in APPROVED and a["stage"] == sa.INSTRUCTION_REVIEW:
+            return True
+        # flowgate.v02.0119 T#2 (T-1): a result approved before (0038-T T#3 A-4, a report taken already approved) is no
+        # node completion by itself — this attempt's pass completes it — and is judged as any other result first: the
+        # reviewed revision must still be the document's and the submission the one the assignment reviewed.
+        if int(current.get("revision_no") or 0) != expected \
                 or (a.get("author") != sa.AI and sa.needs_new_submission(a, current)):
             return MOVED
-        if current.get("doc_review_status") in APPROVED:
-            return True
         submission = sa.mark(current)
         if a["stage"] == sa.INSTRUCTION_REVIEW:
             done = review_stage.approve_instruction(flow_id, node, current["doc_id"], issuer, mark=submission,
                                                     attempt_id=a["attempt_id"], expected_revision=expected)
         else:
+            # ``issuer`` (the token recipient: a person card's assignee) is the authority's principal only; the record's
+            # requested_by is the run's started_by and its author kind the assignment's (L-2: ``author``).
             done = legacy.approve(flow_id, current["doc_id"], issuer, legacy.AUTOMATION, node_key=a["node_key"],
-                                  attempt_id=a["attempt_id"], mark=submission, expected_revision=expected)
+                                  attempt_id=a["attempt_id"], mark=submission, expected_revision=expected,
+                                  author=a.get("author"))
         return MOVED if done == legacy.REVISION_MOVED else done
 
 

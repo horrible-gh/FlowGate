@@ -374,7 +374,9 @@ def test_k6_a_pass_of_an_instruction_never_approves_its_revision_edited_after_th
 def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env, decided, monkeypatch, path):
     """An edit landing while the approval writes rolls the approval back (``REVISION_MOVED``); one committed before it
     approves nothing either. No B-1: a moved submission is no refusal."""
+    from flowgate.card_completion import completion
     from flowgate.card_settings import legacy_adapter, review_stage
+    from modules.flow_gate.graph_workflow.store import run_store
     from modules.flow_gate.workflow import pipeline_service
 
     key = flow(env, "T")
@@ -382,12 +384,28 @@ def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env
     start(env)
     doc_id = _doc(FA, 72, "TR" if path == "result" else "T", review="pending_review")
     _write_written(doc_id, "## 본문\n\n내용\n")
-    real = pipeline_service.transition_document_review
+    if path == "result":
+        # flowgate.v02.0119 T#2 (T-1): a result's automatic completion takes no v0.1 transition; its write (the completion
+        # record and the document's status display) is the span the edit lands in. The node takes the document as its
+        # result in review (``completion.target_of``) for this check alone.
+        run = run_store.active_run(FA)
+        monkeypatch.setattr(completion, "target_of", lambda flow_id, d, node_key=None: {
+            "run": run, "node_key": key, "node_run": {}, "attempt_id": run_store.active_attempt_id(run["run_id"], key)})
+        real = legacy_adapter.show_approved
+        target, name = legacy_adapter, "show_approved"
 
-    def racing(**kw):
-        out = real(**kw)
-        _set_revision(doc_id, 1)                                       # an edit inside the approval's span
-        return out
+        def racing(*a, **kw):
+            out = real(*a, **kw)
+            _set_revision(doc_id, 1)                                   # an edit inside the completion's span
+            return out
+    else:
+        real = pipeline_service.transition_document_review
+        target, name = pipeline_service, "transition_document_review"
+
+        def racing(**kw):
+            out = real(**kw)
+            _set_revision(doc_id, 1)                                   # an edit inside the approval's span
+            return out
 
     def approve():
         if path == "result":
@@ -395,10 +413,11 @@ def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env
                                           expected_revision=0)
         return review_stage.approve_instruction(FA, {"node_key": key}, doc_id, "u_kim", expected_revision=0)
 
-    monkeypatch.setattr(pipeline_service, "transition_document_review", racing)
+    monkeypatch.setattr(target, name, racing)
     assert approve() == legacy_adapter.REVISION_MOVED
     assert _review_status(doc_id) != "approved"                       # rolled back with its check
-    monkeypatch.setattr(pipeline_service, "transition_document_review", real)
+    assert _sql(env["db"], "SELECT 1 FROM graph_card_completions WHERE result_doc_id = ?", (doc_id,)) == []
+    monkeypatch.setattr(target, name, real)
     _sql(env["db"], "UPDATE documents SET revision_no = 1 WHERE doc_id = ?", (doc_id,))   # committed before it
     assert approve() == legacy_adapter.REVISION_MOVED
     assert _review_status(doc_id) != "approved" and b1(env) == []
