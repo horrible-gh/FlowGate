@@ -377,13 +377,13 @@ def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env
     from flowgate.card_completion import completion
     from flowgate.card_settings import legacy_adapter, review_stage
     from modules.flow_gate.graph_workflow.store import run_store
-    from modules.flow_gate.workflow import pipeline_service
 
     key = flow(env, "T")
     roles(key, "not_used", "not_used", "not_used")
     start(env)
     doc_id = _doc(FA, 72, "TR" if path == "result" else "T", review="pending_review")
     _write_written(doc_id, "## 본문\n\n내용\n")
+    raced = []
     if path == "result":
         # flowgate.v02.0119 T#2 (T-1): a result's automatic completion takes no v0.1 transition; its write (the completion
         # record and the document's status display) is the span the edit lands in. The node takes the document as its
@@ -396,15 +396,22 @@ def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env
 
         def racing(*a, **kw):
             out = real(*a, **kw)
+            raced.append(doc_id)
             _set_revision(doc_id, 1)                                   # an edit inside the completion's span
             return out
     else:
-        real = pipeline_service.transition_document_review
-        target, name = pipeline_service, "transition_document_review"
+        # 0119 T-3 owns the instruction write. Inject inside its transaction; the removed v0.1
+        # transition is never called, and wrapping the whole write would race after its commit.
+        from flowgate.card_completion import legacy_adapter as completion_records
 
-        def racing(**kw):
-            out = real(**kw)
-            _set_revision(doc_id, 1)                                   # an edit inside the approval's span
+        real = completion_records.db_documents.update
+        target, name = completion_records.db_documents, "update"
+
+        def racing(updated_doc_id, fields):
+            out = real(updated_doc_id, fields)
+            if updated_doc_id == doc_id and fields.get("doc_review_status") == "approved":
+                raced.append(doc_id)
+                _set_revision(doc_id, 1)                               # before the transaction's second check
             return out
 
     def approve():
@@ -415,6 +422,7 @@ def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env
 
     monkeypatch.setattr(target, name, racing)
     assert approve() == legacy_adapter.REVISION_MOVED
+    assert raced == [doc_id]                                         # the fault reached the write exactly once
     assert _review_status(doc_id) != "approved"                       # rolled back with its check
     assert _sql(env["db"], "SELECT 1 FROM graph_card_completions WHERE result_doc_id = ?", (doc_id,)) == []
     monkeypatch.setattr(target, name, real)
