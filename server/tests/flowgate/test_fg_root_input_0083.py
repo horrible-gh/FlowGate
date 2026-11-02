@@ -11,7 +11,7 @@ import pytest
 from test_fg_card_settings import (
     FA, FB, _doc, _h, _sql, db_path, decided, edge, env, node, put_draft, setting,
 )
-from test_fg_card_approval_0056 import LEE, card_approval_port
+from test_fg_card_approval_0056 import LEE, card_outputs_port
 
 
 def _chain(env, typ="R", bound=True):

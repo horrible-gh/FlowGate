@@ -34,7 +34,7 @@ from test_fg_card_settings_review import (
 )
 from test_fg_question_pending_0111 import (  # noqa: F401 — fixtures used by name
     QUESTION, _after_answers, _ai_run_finished, _answer, _asked_instruction, _asked_result, _attempts, _executions,
-    _row, card_approval_port, questions,
+    _row, card_outputs_port, questions,
 )
 
 

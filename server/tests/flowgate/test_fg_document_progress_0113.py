@@ -444,7 +444,7 @@ def test_full_on_a_linear_flow_stops_at_its_first_unwritten_card_and_never_opens
     assert [status(env, keys[r]) for r in ("c1", "c2", "c3", "c4")] == ["done", "done", "open", "pending"]
     run = current(env)
     assert wire(run, keys["c3"])["wait_reason"]["code"] == "manual_write_wait"
-    assert (run["status"], run["idle_reason"]) == ("idle", "waiting_approval")
+    assert (run["status"], run["idle_reason"]) == ("idle", "needs_intervention")
     assert write_jobs(env) == [] and starts == []
 
 
@@ -462,7 +462,7 @@ def test_full_on_parallel_branches_waits_at_every_unwritten_card_at_once_and_the
                    "c33": "open", "c4": "pending"}
     run = current(env)
     assert {wire(run, keys[r])["wait_reason"]["code"] for r in ("c31", "c33")} == {"manual_write_wait"}
-    assert run["idle_reason"] == "waiting_approval"                     # not complete: two branches wait
+    assert run["idle_reason"] == "needs_intervention"                     # not complete: two branches wait
     assert write_jobs(env) == [] and starts == []
 
     save_instruction(env, keys["c31"])                                   # one branch written: the join still waits

@@ -374,20 +374,45 @@ def test_k6_a_pass_of_an_instruction_never_approves_its_revision_edited_after_th
 def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env, decided, monkeypatch, path):
     """An edit landing while the approval writes rolls the approval back (``REVISION_MOVED``); one committed before it
     approves nothing either. No B-1: a moved submission is no refusal."""
+    from flowgate.card_completion import completion
     from flowgate.card_settings import legacy_adapter, review_stage
-    from modules.flow_gate.workflow import pipeline_service
+    from modules.flow_gate.graph_workflow.store import run_store
 
     key = flow(env, "T")
     roles(key, "not_used", "not_used", "not_used")
     start(env)
     doc_id = _doc(FA, 72, "TR" if path == "result" else "T", review="pending_review")
     _write_written(doc_id, "## 본문\n\n내용\n")
-    real = pipeline_service.transition_document_review
+    raced = []
+    if path == "result":
+        # flowgate.v02.0119 T#2 (T-1): a result's automatic completion takes no v0.1 transition; its write (the completion
+        # record and the document's status display) is the span the edit lands in. The node takes the document as its
+        # result in review (``completion.target_of``) for this check alone.
+        run = run_store.active_run(FA)
+        monkeypatch.setattr(completion, "target_of", lambda flow_id, d, node_key=None: {
+            "run": run, "node_key": key, "node_run": {}, "attempt_id": run_store.active_attempt_id(run["run_id"], key)})
+        real = legacy_adapter.show_approved
+        target, name = legacy_adapter, "show_approved"
 
-    def racing(**kw):
-        out = real(**kw)
-        _set_revision(doc_id, 1)                                       # an edit inside the approval's span
-        return out
+        def racing(*a, **kw):
+            out = real(*a, **kw)
+            raced.append(doc_id)
+            _set_revision(doc_id, 1)                                   # an edit inside the completion's span
+            return out
+    else:
+        # 0119 T-3 owns the instruction write. Inject inside its transaction; the removed v0.1
+        # transition is never called, and wrapping the whole write would race after its commit.
+        from flowgate.card_completion import legacy_adapter as completion_records
+
+        real = completion_records.db_documents.update
+        target, name = completion_records.db_documents, "update"
+
+        def racing(updated_doc_id, fields):
+            out = real(updated_doc_id, fields)
+            if updated_doc_id == doc_id and fields.get("doc_review_status") == "approved":
+                raced.append(doc_id)
+                _set_revision(doc_id, 1)                               # before the transaction's second check
+            return out
 
     def approve():
         if path == "result":
@@ -395,10 +420,12 @@ def test_k6_the_approval_checks_its_expected_revision_in_its_own_transaction(env
                                           expected_revision=0)
         return review_stage.approve_instruction(FA, {"node_key": key}, doc_id, "u_kim", expected_revision=0)
 
-    monkeypatch.setattr(pipeline_service, "transition_document_review", racing)
+    monkeypatch.setattr(target, name, racing)
     assert approve() == legacy_adapter.REVISION_MOVED
+    assert raced == [doc_id]                                         # the fault reached the write exactly once
     assert _review_status(doc_id) != "approved"                       # rolled back with its check
-    monkeypatch.setattr(pipeline_service, "transition_document_review", real)
+    assert _sql(env["db"], "SELECT 1 FROM graph_card_completions WHERE result_doc_id = ?", (doc_id,)) == []
+    monkeypatch.setattr(target, name, real)
     _sql(env["db"], "UPDATE documents SET revision_no = 1 WHERE doc_id = ?", (doc_id,))   # committed before it
     assert approve() == legacy_adapter.REVISION_MOVED
     assert _review_status(doc_id) != "approved" and b1(env) == []
@@ -608,7 +635,7 @@ def test_t46_an_open_node_whose_assignment_cannot_be_read_is_an_error_and_the_re
         save_instruction(env, key)
         assert one(env, key, "instruction_review", 1)["actor"] == "wait_setup"
     legacy_adapter.settle_graph_run(FA)
-    assert _run_row(env)["idle_reason"] == "waiting_approval"
+    assert _run_row(env)["idle_reason"] == "needs_intervention"
     repair = _break_reads(monkeypatch)
     legacy_adapter.settle_graph_run(FA)
     assert (_run_row(env)["status"], _run_row(env)["idle_reason"]) == ("idle", "error")      # never no_targets
@@ -616,7 +643,7 @@ def test_t46_an_open_node_whose_assignment_cannot_be_read_is_an_error_and_the_re
     assert (wire["wait_reason"], wire["stage_assignments"]) == (None, None)
     repair()
     legacy_adapter.settle_graph_run(FA)
-    assert _run_row(env)["idle_reason"] == "waiting_approval"
+    assert _run_row(env)["idle_reason"] == "needs_intervention"
 
 
 # ── L-2 §2.10 / E-13: an admission refusal of a review loop keeps its code ───
@@ -635,7 +662,16 @@ def _refusing_loops(monkeypatch, calls, code="no_enabled_provider"):
     monkeypatch.setattr(ai_invoke_service, "start_run", start_run)
 
 
+LIMIT = 3          # ``flowgate.card_intervention.reasons.SYSTEM_ERROR_RETRY_LIMIT``
+
+
 def test_e13_a_refused_result_review_loop_fails_with_its_own_code_and_no_other_ai(env, decided, monkeypatch):
+    """flowgate.v02.0119 T#3 (T-2 rework): the refused start is a system error. Each run read tries the review again with
+    the same AI (a new review assignment, the next seq) until ``SYSTEM_ERROR_RETRY_LIMIT`` tries, then no more; its
+    B-1 is recorded once (the tries are the assignments), no other AI is asked and nothing is approved."""
+    from flowgate.card_intervention import reasons
+
+    assert reasons.SYSTEM_ERROR_RETRY_LIMIT == LIMIT
     calls: list = []
     key = flow(env, extra_settings=(("instruction", "omit"),))
     roles(key, execution="not_used", review=B)
@@ -647,10 +683,43 @@ def test_e13_a_refused_result_review_loop_fails_with_its_own_code_and_no_other_a
     loops = [c for c in calls if c.get("document_review_loop")]
     assert len(loops) == 1 and loops[0]["document_review_loop"]["reviewer_provider_id"] == B
     assert [(d, r) for d, r, _m in b1(env)] == [(report, "review_not_started")]
-    _read(env)
-    _read(env)                                                       # no read restarts it, no other AI asked
-    assert len([c for c in calls if c.get("document_review_loop")]) == 1
+    for _ in range(LIMIT + 2):
+        _read(env)                                                   # tried again up to the limit, then never
+    loops = [c for c in calls if c.get("document_review_loop")]
+    assert len(loops) == LIMIT and {c["document_review_loop"]["reviewer_provider_id"] for c in loops} == {B}
+    reviews = [a for a in assignments(env, key) if a["stage"] == "result_review"]
+    assert [(a["seq"], a["actor"], a["stage_state"], a["fail_cause"], a["basis_doc_id"]) for a in reviews] == \
+        [(n, "ai", "failed", "start_refused:no_enabled_provider", report) for n in range(1, LIMIT + 1)]
     assert len(b1(env)) == 1 and _review_status(report) != "approved"
+    assert _wire(env, key)["intervention"] == {"kind": "system_error", "reason": "review_not_started"}
+    assert _read(env)["idle_reason"] == "error"                      # the error family, never a person's wait
+
+
+def test_e13_a_result_review_whose_start_failed_for_a_moment_starts_on_the_next_read_and_completes(
+        env, decided, monkeypatch):
+    """flowgate.v02.0119 T#3 (T-2 rework): once the admission takes it again, the next run read starts the review (the
+    next assignment, the same AI and submission), and its pass completes the card automatically."""
+    from flowgate.card_settings import legacy_adapter
+
+    calls: list = []
+    key = flow(env, extra_settings=(("instruction", "omit"),))
+    roles(key, execution="not_used", review=B)
+    start(env)
+    _refusing_loops(monkeypatch, calls)
+    report = write_line(env, key, "report", "## 결과\n\n본문\n")["doc_id"]
+    assert one(env, key, "result_review", 1)["stage_state"] == "failed"
+    record_starts(monkeypatch, calls)                                # the admission takes it now
+    _read(env)
+    rr = one(env, key, "result_review", 2)
+    assert (rr["actor"], rr["provider_id"], rr["stage_state"], rr["intent_kind"], rr["basis_doc_id"]) == \
+        ("ai", B, "active", "execution", report)
+    assert len([c for c in calls if c.get("document_review_loop")]) == 2
+    _read(env)
+    assert one(env, key, "result_review", 3) is None                 # a review working: nothing tried again
+    monkeypatch.setattr(legacy_adapter, "submission_passed", lambda doc_id: True)
+    _review_end(env, rr, "review_passed")
+    assert _review_status(report) == "approved" and node_run(env, key)["status"] == "done"
+    assert one(env, key, "result_review", 2)["verdict"] == "passed"
 
 
 def test_e13_a_refused_instruction_review_loop_records_its_code_on_the_node(env, decided, monkeypatch):
@@ -665,9 +734,47 @@ def test_e13_a_refused_instruction_review_loop_records_its_code_on_the_node(env,
     assert node_run(env, key)["dispatch_error_code"] == "review_not_started:start_refused:provider_inactive"
     assert [(d, r) for d, r, _m in b1(env)] == [(instruction, "review_not_started")]
     assert _wire(env, key)["wait_reason"]["detail"] == "start_refused:provider_inactive"
-    _read(env)
-    assert len([c for c in calls if c.get("document_review_loop")]) == 1
+    # flowgate.v02.0119 T#3 (T-2 rework): a system error of the instruction stage — shown so (the node run's
+    # intervention, the run's error family) and tried again by the reads, with the same AI, up to the limit
+    for _ in range(LIMIT + 1):
+        wire = _wire(env, key)
+    assert len([c for c in calls if c.get("document_review_loop")]) == LIMIT
+    reviews = [a for a in assignments(env, key) if a["stage"] == "instruction_review"]
+    assert [(a["seq"], a["stage_state"]) for a in reviews] == [(n, "failed") for n in range(1, LIMIT + 1)]
+    assert wire["intervention"] == {"kind": "system_error", "reason": "review_not_started"}
+    assert node_run(env, key)["dispatch_error_code"] == "review_not_started:start_refused:provider_inactive"
+    assert _read(env)["idle_reason"] == "error"
+    assert [(d, r) for d, r, _m in b1(env)] == [(instruction, "review_not_started")]
     assert _review_status(instruction) != "approved" and one(env, key, "result") is None
+
+
+def test_e13_an_instruction_review_whose_start_failed_for_a_moment_starts_on_the_next_read(env, decided, monkeypatch):
+    """flowgate.v02.0119 T#3 (T-2 rework): the retry that starts the instruction review clears the node's start error
+    (no error family any more) and its pass approves the instruction and starts the result stage."""
+    from flowgate.card_settings import legacy_adapter
+
+    calls: list = []
+    key = flow(env, extra_settings=(("instruction_review_count", 1), ("instruction_review_ai", B)))
+    roles(key, "not_used", "not_used", "not_used")
+    start(env)
+    _refusing_loops(monkeypatch, calls, "provider_inactive")
+    instruction = save_instruction(env, key)
+    assert node_run(env, key)["dispatch_error_code"] == "review_not_started:start_refused:provider_inactive"
+    assert _wire(env, key)["intervention"] == {"kind": "system_error", "reason": "review_not_started"}   # one retry
+    assert one(env, key, "instruction_review", 2)["stage_state"] == "failed"                            # refused too
+    record_starts(monkeypatch, calls)                                # the admission takes it now
+    _read(env)
+    ir = one(env, key, "instruction_review", 3)
+    assert (ir["actor"], ir["provider_id"], ir["stage_state"], ir["intent_kind"]) == ("ai", B, "active", "execution")
+    assert node_run(env, key)["dispatch_error_code"] is None         # the start error is over
+    assert _wire(env, key)["intervention"] is None                   # its review works on it
+    monkeypatch.setattr(legacy_adapter, "submission_passed", lambda doc_id: True)
+    _review_end(env, ir, "review_passed")
+    assert _review_status(instruction) == "approved"
+    # the result stage's start: this harness ends the loop's execution before its run-end contact, so the run is idle
+    # by then and the run-end step (AUTO) is refused; the next read takes it (RC-4, as test_k4_rc4_*)
+    _read(env)
+    assert node_run(env, key)["stage"] == "result" and node_run(env, key)["dispatch_error_code"] is None
 
 
 # ── RC-1: a lost end of an assigned review that did not pass (0105 B-1 with its submission mark) ──

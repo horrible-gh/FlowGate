@@ -323,17 +323,22 @@ def start_card_settings_integration():
         logger.warning(f"[startup] card settings integration registration failed: {exc}")
 
 
-def start_card_approval_integration():
-    """flowgate.v02.0056 T#1 (D0006 §2.1, §2.3): composition root of the card approval. Connects
-    ``flowgate.card_approval`` to the Graph workflow's card approval port (result binding): a node is done
-    only when every document of its card is approved. Unregistered, a result's approval moves its node on
-    alone, as before."""
+def start_card_completion_integration():
+    """flowgate.v02.0119 T#2 (T-1; D0006 §2.1, §2.3): composition root of the v0.2 card completion. Connects
+    ``flowgate.card_completion`` to the Graph workflow's card completion ports: a node's ``review -> done`` follows its
+    completion record only (a person's v0.1 approval of the document completes no node), and the done turns the record
+    applied. Also marks when the service was installed (an existing run's approved result reads as complete).
+    flowgate.v02.0119 T#4 (T-3): it also answers the card's required outputs (``pending_outputs``), the port that replaced
+    the removed card approval's (``start_card_approval_integration`` is gone with it).
+    Unregistered, nothing completes a node (the port answers no completion), so a failed registration fails the start
+    instead of running the Graph with no completion source: the error is logged and raised."""
     try:
-        from flowgate.card_approval import integration
+        from flowgate.card_completion import integration
 
         integration.register()
     except Exception as exc:
-        logger.warning(f"[startup] card approval integration registration failed: {exc}")
+        logger.error(f"[startup] card completion integration registration failed: {exc}")
+        raise
 
 
 def start_card_memo_integration():
@@ -434,7 +439,7 @@ def run_all():
     start_conversation_integration()
     start_card_document_integration()
     start_card_settings_integration()
-    start_card_approval_integration()
+    start_card_completion_integration()
     start_card_memo_integration()
     start_graph_policy_integration()
     start_graph_validation_integration()

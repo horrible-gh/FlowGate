@@ -18,16 +18,18 @@ the checks first and writing nothing, then the decision. The checks, in the orde
    the Flow (409 ``gate_decision_blocked``) holds the Flow's changes
 9. a new client's ``expected_attempt_id`` / ``expected_settings_version`` not the gate's round / settings version now
    -> 409 ``gate_context_changed`` (``reason``: ``attempt`` / ``settings_version``)
-10. a confirm's settings and Git checks (``preflight``) -> 409 ``gate_settings_invalid`` / ``gate_git_unavailable``
+10. the rule's judgement: a ``reject`` -> 409 ``gate_reject_removed`` (flowgate.v02.0119 T#4, T-3: a confirm card has no
+   rejection any more; nothing is written)
+11. a confirm's settings and Git checks (``preflight``) -> 409 ``gate_settings_invalid`` / ``gate_git_unavailable``
 
 Time Machine rounds use ``rounds.insert_decision`` to link ``previous_decision_id`` / ``time_machine_ref``
 and retarget the predecessor's ``superseded_by_decision_id``, including replacement of a no-effect canceled intent.
 
 Then the decision (its run event carries ``gate_decision_id``, ``history.decision_link``):
 
-- reject: stored ``rejected``, the gate ``rejected`` and its attempt ended (``gate_rejected``); what follows stays
-  pending, other branches go on and the run settles (``blocked_rejected`` once nothing else is left). No Git or
-  archive job. -> 200
+- reject: removed (flowgate.v02.0119 T#4, T-3) — refused at the rule's judgement (10), so no new ``rejected`` decision and
+  no ``gate_rejected`` event is made. A gate rejected before stays as it was (its decision and event are history, read
+  and shown; ``blocked_rejected`` / the revision adoption block still read it), never converted.
 - confirm with neither a Git apply nor an archive: stored ``succeeded`` and the gate ``done`` (``gate_confirmed``) in
   the same transaction; what follows opens by the existing approval rules (an idle run waiting for this approval in its
   command goes on at once, a step stays within its targets, a paused / stopped run's propagation waits). -> 200
@@ -76,7 +78,7 @@ def _job_wire(job: Optional[dict]) -> Optional[dict]:
     if not job:
         return None
     return {"job_id": job["job_id"], "kind": job.get("kind"), "status": job.get("status"), "phase": job.get("phase"),
-            "last_error_code": job.get("last_error_code")}
+            "last_error_code": job.get("last_error_code"), "phase_note": job.get("phase_note")}
 
 
 def _answer(run_id: str, row: dict) -> dict:
@@ -126,10 +128,12 @@ def _attempt_of(run_id: str, node_key: str) -> str:
 def _wake(ctx) -> None:
     """An idle run whose command waited for this gate (the approval wake's own test, ``command._waiting_command``)
     goes on running while the accepted confirm's job is unfinished, so its end propagates as a running command's
-    would. Any other idle run stays idle (a stopped one waits for the next command)."""
-    from flowgate.graph_run import command
+    would. Any other idle run stays idle (a stopped one waits for the next command). flowgate.v02.0119 T#3 (T-2): the
+    confirm wait is ``waiting_confirm`` — or ``waiting_approval`` stored before T-2, read as the confirm wait of this
+    open gate (``settle.CONFIRM_WAITS``, never converted); a ``needs_intervention`` run is not this gate's wait."""
+    from flowgate.graph_run import command, settle
     run = ctx.run
-    if run.get("status") != IDLE or run.get("idle_reason") != "waiting_approval":
+    if run.get("status") != IDLE or run.get("idle_reason") not in settle.CONFIRM_WAITS:
         return
     if run.get("run_mode") not in ("full", "step") or (run["run_mode"] == "step" and run.get("step_node_keys") is None):
         return
@@ -203,11 +207,15 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
             raise legacy.GraphApiError(409, IN_PROGRESS if holder["status"] in repo.RESERVING else "node_not_open", {
                 "run_id": run_id, "node_key": node_key, "decision_id": holder["decision_id"],
                 "status": holder["status"]})
+        from flowgate.graph_policies.gate import GateDecisionRemoved
         try:
-            outcome = policies[legacy.GATE_POLICY].judge(node_key, decision, comment)
+            outcome = policies[legacy.GATE_POLICY].judge(node_key, decision, comment)       # 10
         except legacy.PolicyUndecided as exc:                                            # E-21 (defence)
             raise legacy.gate_undecided(flow_id, int(run["revision_no"]),
                                         [{"policy": exc.key, "rule_ref": legacy.RULE_REF[exc.key]}])
+        except GateDecisionRemoved as exc:                                               # 0119 T-3: no gate rejection
+            raise legacy.GraphApiError(409, exc.code, {"run_id": run_id, "node_key": node_key,
+                                                       "decision": exc.decision})
         kind = legacy.GATE_EVENTS.get(outcome)
         if kind is None:
             raise legacy.ProgrammingError(f"gate_node policy returned {outcome!r}")
@@ -225,7 +233,7 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
                                                                                  "group_head": None, "target_basis": None}})
             _apply(ctx, state, policies, kind, node_key, user_id, comment, stored)
             return _answer(run_id, stored)
-        plan = preflight.plan(project_id, flow_id, node_key)                            # 10
+        plan = preflight.plan(project_id, flow_id, node_key)                            # 11
         snapshot = {"shown": plan["settings"], "effective": plan["effective"],
                     "settings_version": plan["settings_version"], "group_branch": plan["group_branch"],
                     "group_head": plan["group_head"], "target_basis": plan.get("target_basis")}
@@ -282,7 +290,8 @@ def recovery_flags(row: dict, job: Optional[dict]) -> dict:
 
 def run_wire(run: dict, rows: list[dict]) -> dict:
     """``{gate node key: …}`` for every gate of the run: the current decision (the newest of the gate's history), whether
-    a decision holds the gate and its job, ``can_decide`` (the server's judgement of the confirm / reject buttons:
+    a decision holds the gate and its job, ``can_decide`` (the server's judgement of the confirm button — 0119 T-3: a
+    gate has no reject any more —:
     a running or idle run, the gate open, nothing holding it or the Flow), the settings lock and whether the current
     confirm's archive is done (``archived``: the newest decision succeeded with its own checkpoint, on a done gate).
 

@@ -34,17 +34,27 @@ def _0098_target(r, name="review/selected"):
     return name
 
 
+@pytest.mark.parametrize("diverged", [False, True])
 @pytest.mark.parametrize("push", [False, True])
-def test_0098_selected_local_target_uses_its_snapshot_and_creates_origin_only_when_on(git_env, push):
+def test_0098_selected_local_target_uses_its_snapshot_and_creates_origin_only_when_on(git_env, push, diverged):
     from modules.flow_gate.services import git_service as svc
     r = git_env
     env, g, _, run_id = _start_linear(r)
     branch = _0098_target(r)
+    if diverged:
+        side = _git(["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "independent target history"], cwd=r["base"])
+        _git(["update-ref", "refs/heads/" + branch, side], cwd=r["base"])
     before = _rev(r["base"], branch)
     work_base = _sql(env["db"], "SELECT work_base_ref FROM groups WHERE group_id = ?", (FA,))[0]
     frozen = _work(r, "selected.txt")
     _gate(env, g, merge_mode="merge", merge_target_branch=branch, push=push)
+    from test_fg_gate_intake_0085 import _current, _jobs, _nodes
+    waiting = _current(env)
+    assert (waiting["status"], waiting["idle_reason"]) == ("idle", "waiting_confirm")
+    assert _jobs(env) == [] and _rev(r["base"], branch) == before
+    assert _rev(r["bare"], "refs/heads/" + branch) is None  # no early merge or push
     body = _confirm(env, run_id, g, "selected-0098")
+    assert _rev(r["base"], branch) == before and _rev(r["bare"], "refs/heads/" + branch) is None
     assert _sql(env["db"], "SELECT work_base_ref FROM groups WHERE group_id = ?", (FA,))[0] == work_base
     did, jid = body["decision"]["decision_id"], body["job"]["job_id"]
     saved = json.loads(_decision(env, did)["settings_json"])
@@ -57,10 +67,16 @@ def test_0098_selected_local_target_uses_its_snapshot_and_creates_origin_only_wh
     job, _ = _run_job(jid)
     assert job["status"] == "succeeded", job
     applied = _rev(r["base"], branch)
-    assert applied != before and _rev(r["base"], applied + "^2") == frozen
-    assert _rev(r["base"], "main") == before
+    assert applied != before
+    assert _git(["merge-base", "--is-ancestor", frozen, applied], cwd=r["base"]) == ""
+    assert _merges(r["base"], branch) == (1 if diverged else 0)
+    assert (_rev(r["base"], applied + "^2") == frozen) if diverged else applied == frozen
+    assert _rev(r["base"], "main") == saved["target_basis"]["scope_floor_sha"]
     assert _rev(r["bare"], "refs/heads/" + branch) == (applied if push else None)
     effects = _effects(env, did)
+    assert "archive" not in effects
+    assert _sql(env["db"], "SELECT * FROM gate_archive_checkpoints WHERE decision_id = ?", (did,)) == []
+    assert _nodes(_current(env))[g]["gate"]["job"] is None
     assert effects["merge"]["sha_before"] == before
     assert json.loads(_decision(env, did)["settings_json"])["target_basis"]["accepted_target_sha"] == before
     mid = json.loads(effects["merge"]["evidence_json"])["merge_id"]
@@ -154,5 +170,5 @@ def test_0098_rejected_push_keeps_local_merge_and_retries_only_the_same_applied_
     _act(env, run_id, g, did, "retry", {"request_id": "push-retry-0098", "expected_decision_version": _version(env, did)}, 202)
     job, _ = _run_job(jid)
     assert job["last_error_code"] == "push_rejected" and _rev(r["base"], branch) == applied
-    assert _merges(r["base"], branch) == 1
+    assert _merges(r["base"], branch) == 0  # retry preserves the same fast-forward
     assert json.loads(_effects(env, did)["push"]["evidence_json"])["sent_sha"] == applied

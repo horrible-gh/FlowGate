@@ -166,3 +166,45 @@ def get_by_id(review_id: int) -> Optional[dict]:
     provider snapshot into the rejection item itself.
     """
     return get_store()._fetch_one("SELECT * FROM document_reviews WHERE id = ?", [review_id])
+
+
+# ── flowgate.v02.0119 T#2 (T-1): who acted, read from the row (existing rows are never rewritten) ──
+
+def review_actor(row: dict) -> dict:
+    """The actor of a review: the AI provider that ran it when the row carries provider evidence
+    (``actual_provider_id``) -- an existing row whose ``reviewer_id`` holds the run's issuer reads as that AI too,
+    the issuer then shown as ``requested_by`` only -- else the stored reviewer."""
+    provider = row.get("actual_provider_id")
+    reviewer = row.get("reviewer_id")
+    if provider:
+        return {"actor_kind": "ai", "actor_id": provider, "actor_name": row.get("actual_provider_name"),
+                "requested_by": reviewer if reviewer and reviewer != provider else None}
+    return {"actor_kind": "user" if reviewer else None, "actor_id": reviewer, "actor_name": None, "requested_by": None}
+
+
+def _item_actor(provider: Optional[dict], stored: Optional[str], kind: Optional[str],
+                requested_by: Optional[str]) -> dict:
+    provider = provider or {}
+    provider_id = provider.get("ai_provider_id")
+    if kind == "ai" or provider_id:
+        actor_id = provider_id or stored
+        return {"actor_kind": "ai", "actor_id": actor_id, "actor_name": provider.get("ai_provider_name"),
+                "requested_by": requested_by or (stored if stored and stored != actor_id else None)}
+    return {"actor_kind": "user" if stored else None, "actor_id": stored, "actor_name": None,
+            "requested_by": requested_by}
+
+
+def rejection_actors(item: dict) -> dict:
+    """``rejection_actor`` / ``response_actor`` of one rejection_history item already carrying its provider evidence
+    (``rejection_provider`` / ``response_provider``, ``pipeline_service.rejection_provenance_view``): an automatic
+    rejection's AI reviewer and the AI that wrote the response, the issuer as ``requested_by`` only -- for an existing
+    item whose ``rejected_by`` / ``response_recorded_by`` holds the issuer as well. A person's rejection stays theirs."""
+    out = dict(item)
+    out["rejection_actor"] = _item_actor(item.get("rejection_provider"), item.get("rejected_by"),
+                                         item.get("rejected_by_kind"), item.get("requested_by"))
+    if item.get("ai_response") is not None or item.get("response_recorded_by"):
+        out["response_actor"] = _item_actor(item.get("response_provider"), item.get("response_recorded_by"), None,
+                                            item.get("response_requested_by"))
+    else:
+        out["response_actor"] = None
+    return out

@@ -294,7 +294,12 @@ def _replay(row: dict) -> dict:
 def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             mutation_principal, expected_revision: int | None = None,
             request_key: str | None = None, locale: str = "ko",
-            expected_command_admission_fingerprint: str | None = None) -> dict:
+            expected_command_admission_fingerprint: str | None = None, completion_hook=None) -> dict:
+    """``completion_hook`` (flowgate.v02.0119 T#2, T-1 — the v0.2 card completion's TR2 effect,
+    ``flowgate.card_completion.own_effects``): called with the approved document inside the finalize transaction, after
+    the ledger and the review CAS; it writes the v0.2 completion (its record and its own document event, the system as
+    the actor), so no person's state change is logged for it (``log_state_changed`` is skipped). It may raise to roll
+    the finalize back (the source change is then rolled back as any finalize failure is). None: as before."""
     if in_transaction():
         _raise("tr2_nested_transaction")
     doc = db_docs.get_by_id(doc_id)
@@ -424,11 +429,14 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
                 next_head = tr2.effective_head_for(doc_id)
                 if next_head and next_head.get("result_doc_id") == doc_id:
                     _raise("tr2_workflow_conflict", "workflow_progression")
-                log_state_changed(project_id=doc["project_id"], actor_user_id=actor_user_id,
-                                  from_state=f"review:{fresh_review_status}",
-                                  to_state="review:approved",
-                                  group_id=doc["group_id"], document_id=doc.get("id"),
-                                  action_code="review_approve")
+                if completion_hook is not None:
+                    completion_hook(db_docs.get_by_id(doc_id))
+                else:
+                    log_state_changed(project_id=doc["project_id"], actor_user_id=actor_user_id,
+                                      from_state=f"review:{fresh_review_status}",
+                                      to_state="review:approved",
+                                      group_id=doc["group_id"], document_id=doc.get("id"),
+                                      action_code="review_approve")
                 db_attempts.finish(attempt_id, state="succeeded", result_code="succeeded",
                                    ledger_row_id=ledger["id"],
                                    ledger_json={"id": ledger["id"], "commit_sha": sha})

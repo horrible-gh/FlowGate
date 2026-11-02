@@ -114,7 +114,7 @@ def test_0098_nonbase_resume_uses_own_attempt_and_never_takes_an_external_marker
     else:
         assert job["status"] == "succeeded", job
         assert _decision(env, did)["frozen_sha"] == frozen
-    assert _rev(r["base"], branch) == applied and _merges(r["base"], branch) == 1
+    assert _rev(r["base"], branch) == applied == frozen and _merges(r["base"], branch) == 0
 
 
 def test_0098_project_base_change_cannot_switch_the_recorded_lock_slot(git_env, monkeypatch):

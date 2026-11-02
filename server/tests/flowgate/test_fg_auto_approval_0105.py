@@ -8,6 +8,14 @@ issuer included) and records why it did not (``auto_approval_skipped`` run event
 own passed review, a review loop started once and never an approval for a card that needs one, nothing but one recorded
 reason otherwise — and every existing record is kept. The durable row of the lost AI run (``ai_run_record``) and, where a
 case names it, the verdict of the current revision (``submission_passed``) are mocks.
+
+flowgate.v02.0119 T#3 (T-2) — the new contract: no card waits for a person's approval (``awaiting_approval`` is always
+false; the cases that assumed the person's approval fallback — the card approval of a card left by its review — are
+gone). A card whose review did not pass after its automatic rework, or whose AI run did not end on its own, is
+``needs_intervention`` with its reason (the node run's ``intervention``) and is never tried again; the card approval route
+refuses it. A failed automatic completion path (``issuer_missing``, ``approval_refused``, ``review_not_started``,
+``review_result_unknown``) is a ``system_error``: the run read's reconciliation tries it again, each failure recorded,
+until ``SYSTEM_ERROR_RETRY_LIMIT`` records — and a retry that succeeds completes the card.
 """
 from __future__ import annotations
 
@@ -15,7 +23,7 @@ import json
 
 import pytest
 
-from test_fg_card_approval_0056 import _approve, _current, _node_run
+from test_fg_card_approval_0056 import _approval_route_gone, _current, _node_run
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
     FA, _sql, db_path, decided, env,
 )
@@ -25,13 +33,15 @@ from test_fg_card_settings_review import (
 
 
 @pytest.fixture(autouse=True)
-def card_approval_port():
-    """The card approval's Graph ports, registered as ``startup`` registers them."""
-    from flowgate.card_approval import integration
+def card_outputs_port():
+    """flowgate.v02.0119 T#4 (T-3): the card's required outputs port (``card_completion_ports.pending_outputs``),
+    registered as ``startup`` registers it — it replaced the removed card approval port."""
+    from flowgate.card_completion import outputs
+    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
 
-    integration.register()
+    ports.register(ports.PENDING_OUTPUTS, outputs.pending_outputs)
     yield
-    integration.unregister()
+    ports.unregister(ports.PENDING_OUTPUTS)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -110,6 +120,32 @@ def _verdict(monkeypatch, passed=True):
     monkeypatch.setattr(legacy_adapter, "submission_passed", lambda doc_id: passed)
 
 
+LIMIT = 3          # ``flowgate.card_intervention.reasons.SYSTEM_ERROR_RETRY_LIMIT`` (asserted below)
+
+
+def _intervention(env, key):
+    shown = _node_run(env, key)
+    return shown["awaiting_approval"], shown["intervention"], shown["approval_wait_reason"]
+
+
+def _reads(env, n=LIMIT + 1):
+    for _ in range(n):
+        _current(env)
+
+
+def test_the_retry_limit_is_the_packages():
+    from flowgate.card_intervention import reasons
+
+    assert reasons.SYSTEM_ERROR_RETRY_LIMIT == LIMIT
+    assert reasons.retry_due([]) and reasons.retry_due(["approval_refused"] * (LIMIT - 1))
+    assert not reasons.retry_due(["approval_refused"] * LIMIT)
+    assert not reasons.retry_due(["approval_refused", "review_not_passed:review_count_exhausted"])
+    assert [reasons.kind_of(r) for r in ("issuer_missing", "approval_refused", "review_not_started",
+                                         "review_result_unknown", "review_not_passed:review_stalled",
+                                         "run_not_clean:timeout", None, "a_reason_this_version_does_not_know")] == \
+        ["system_error"] * 4 + ["needs_intervention"] * 4
+
+
 def _review_starts(monkeypatch, env, result):
     """The review loop's admission is a recorder; a start writes the loop row as the engine's start does. The recorder
     never acquires the loop's Graph execution, so the engine's scheduler replays that same requested execution (harness):
@@ -140,8 +176,7 @@ def test_review_none_is_approved_automatically_for_an_admin_or_a_non_admin_issue
         _non_admin(monkeypatch)
     _work_run_ended()
     assert (_node(env, key), _review_status(result)) == (("done", result), "approved")
-    shown = _node_run(env, key)
-    assert (shown["awaiting_approval"], shown["approval_wait_reason"]) == (False, None)
+    assert _intervention(env, key) == (False, None, None)
     assert _waits(env) == [] and _authorities(env) == [(result, "system", "u_kim")]
 
 
@@ -159,52 +194,81 @@ def test_a_passed_review_is_approved_automatically_for_an_admin_or_a_non_admin_i
     assert _waits(env) == [] and _authorities(env) == [(result, "system", "u_kim")]
 
 
-# ── a person's judgement (kept, told apart) ──────────────────────────────────
+# ── needs_intervention: the card's own outcome after its automatic rework (0119 T-2) ──
 
 @pytest.mark.parametrize("stop_reason", ["review_count_exhausted", "review_verdict_hold", "review_stalled"])
-def test_a_review_that_did_not_pass_waits_for_a_person_and_tells_why(env, decided, monkeypatch, stop_reason):
+def test_a_review_that_did_not_pass_after_its_rework_needs_intervention_and_tells_why(env, decided, monkeypatch,
+                                                                                       stop_reason):
     from modules.flow_gate.services import ai_run_end_hooks
 
     key, result, _token = _in_review(env, monkeypatch, REVIEWED)
     ai_run_end_hooks.run_ended({"run_id": REVIEW_RUN, "group_id": FA, "doc_ref": result, "action_scope": "review",
                                 "mode": "single", "issued_to": "u_kim",
                                 "document_review_loop": {"current_stage": "stopped", "stop_reason": stop_reason}})
-    shown = _node_run(env, key)
-    assert (shown["awaiting_approval"], shown["approval_wait_reason"]) == (True, f"review_not_passed:{stop_reason}")
-    assert _waits(env) == [(result, f"review_not_passed:{stop_reason}")] and _authorities(env) == []
+    reason = f"review_not_passed:{stop_reason}"
+    assert _intervention(env, key) == (False, {"kind": "needs_intervention", "reason": reason}, reason)
+    _reads(env)                                                          # never tried again
+    assert _waits(env) == [(result, reason)] and _authorities(env) == []
+    _approval_route_gone(env, key)                                       # 0119 T-3: no person's approval
+    assert (_node(env, key)[0], _review_status(result)) == ("review", "pending_review")
 
 
-def test_an_ai_run_that_timed_out_waits_for_a_person_and_tells_why(env, decided, monkeypatch):
+def test_an_ai_run_that_timed_out_needs_intervention_and_tells_why(env, decided, monkeypatch):
     key, result, _token = _in_review(env, monkeypatch, NO_REVIEW)
     _work_run_ended(end_reason="timeout", stop_code="timeout")
-    shown = _node_run(env, key)
-    assert (shown["awaiting_approval"], shown["approval_wait_reason"]) == (True, "run_not_clean:timeout")
-    assert _review_status(result) == "pending_review"
+    assert _intervention(env, key) == (False, {"kind": "needs_intervention", "reason": "run_not_clean:timeout"},
+                                       "run_not_clean:timeout")
+    _reads(env)
+    assert _review_status(result) == "pending_review" and _waits(env) == [(result, "run_not_clean:timeout")]
 
 
-# ── a missed or failed automatic approval ────────────────────────────────────
+# ── system_error: a failed automatic completion path, retried (0119 T-2) ─────
 
-def test_a_refused_transition_is_recorded_and_the_card_waits(env, decided, monkeypatch):
+def _refused(monkeypatch):
+    """The document fails the gates the automatic completion asks (``completion_gates``, T-1), injected here."""
+    from flowgate.card_settings import legacy_adapter
     from modules.flow_gate.workflow import pipeline_service
 
-    key, result, _token = _in_review(env, monkeypatch, NO_REVIEW)
-
-    def refuse(**_kw):
+    def refuse(_doc):
         raise pipeline_service.TransitionError("expected_revision")
 
-    monkeypatch.setattr(pipeline_service, "transition_document_review", refuse)
+    monkeypatch.setattr(legacy_adapter, "completion_gates", refuse)
+
+
+def test_a_refused_completion_is_a_system_error_retried_up_to_the_limit(env, decided, monkeypatch):
+    """flowgate.v02.0119 T#2 (T-1): the automatic completion takes no v0.1 review transition; its refusal is recorded
+    (``approval_refused``). T#3 (T-2): a system error — each run read tries the path again, recorded each time, until the
+    limit; never a person's approval."""
+    key, result, _token = _in_review(env, monkeypatch, NO_REVIEW)
+    _refused(monkeypatch)
     _work_run_ended()
-    shown = _node_run(env, key)
-    assert (shown["awaiting_approval"], shown["approval_wait_reason"]) == (True, "approval_refused")
-    _current(env)                                                        # read again: nothing more is tried
-    assert _waits(env) == [(result, "approval_refused")] and _authorities(env) == []
+    assert _intervention(env, key) == (False, {"kind": "system_error", "reason": "approval_refused"},
+                                       "approval_refused")
+    _reads(env, LIMIT + 2)                                               # past the limit: nothing more is tried
+    assert _waits(env) == [(result, "approval_refused")] * LIMIT and _authorities(env) == []
+    _approval_route_gone(env, key)                                       # 0119 T-3: the route is gone
+    assert (_node(env, key)[0], _review_status(result)) == ("review", "pending_review")
+
+
+def test_a_system_error_whose_retry_succeeds_completes_the_card(env, decided, monkeypatch):
+    from flowgate.card_settings import legacy_adapter
+
+    key, result, _token = _in_review(env, monkeypatch, NO_REVIEW)
+    real = legacy_adapter.completion_gates
+    _refused(monkeypatch)
+    _work_run_ended()
+    assert _waits(env) == [(result, "approval_refused")]
+    monkeypatch.setattr(legacy_adapter, "completion_gates", real)         # the cause went away
+    _current(env)                                                        # the reconciliation's retry
+    assert (_node(env, key), _review_status(result)) == (("done", result), "approved")
+    assert _intervention(env, key) == (False, None, None) and _waits(env) == [(result, "approval_refused")]
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: the AI run's empty issued_to as the approval actor; an assigned attempt's actor is the node token recipient fixed at its opening (L-2 §2.6/§2.7.4) — the assigned path: test_fg_ai_roles_l2_*
 def test_no_issuer_approves_nothing(pre_feature_attempts, env, decided, monkeypatch):
     key, result, _token = _in_review(env, monkeypatch, NO_REVIEW)
     _work_run_ended(issued_to="")
-    assert _node_run(env, key)["approval_wait_reason"] == "issuer_missing"
+    assert _intervention(env, key)[1:] == ({"kind": "system_error", "reason": "issuer_missing"}, "issuer_missing")
     assert _review_status(result) == "pending_review"
 
 
@@ -217,13 +281,13 @@ def test_a_review_that_cannot_start_is_recorded_and_never_approved(pre_feature_a
     calls = _recorded_start_run(monkeypatch)
     _work_run_ended()
     _lost_run_end(monkeypatch, env, key)
-    for _ in range(2):                                                   # ④-a: read again and again
-        shown = _node_run(env, key)
-        assert (shown["awaiting_approval"], shown["approval_wait_reason"]) == (True, "review_not_started")
-    _stored(env, key, "review_count", "0")                               # set to 'none' afterwards: still nothing
+    for _ in range(LIMIT - 1):                                           # ④-a: read again: retried (0119 T-2)
+        assert _intervention(env, key)[1:] == ({"kind": "system_error", "reason": "review_not_started"},
+                                               "review_not_started")
+    _stored(env, key, "review_count", "0")                               # set to 'none' after the limit: still nothing
     _current(env)
     assert calls == [] and _review_status(result) == "pending_review"
-    assert _waits(env) == [(result, "review_not_started")] and _loops(env) == []
+    assert _waits(env) == [(result, "review_not_started")] * LIMIT and _loops(env) == []
 
 
 # ── B-3: a lost run end, reconciled once ─────────────────────────────────────
@@ -271,16 +335,18 @@ def test_a_lost_run_end_before_the_review_starts_the_review_once_and_approves_no
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: the project default reviewer of the pre-feature review start (G-9) — test_fg_ai_roles_l2_review.py::test_g9_*
-def test_a_lost_run_end_whose_review_cannot_start_is_recorded_once(pre_feature_attempts, env, decided, monkeypatch):
+def test_a_lost_run_end_whose_review_cannot_start_is_retried_up_to_the_limit(pre_feature_attempts, env, decided,
+                                                                              monkeypatch):
     from flowgate.card_settings import legacy_adapter
 
     key, result, _token = _in_review(env, monkeypatch, (("review_count", 1), ("instruction", "omit")))
     monkeypatch.setattr(legacy_adapter, "default_reviewer", lambda project_id: None)
     calls = _recorded_start_run(monkeypatch)
     _lost_run_end(monkeypatch, env, key)
-    for _ in range(3):
+    for _ in range(LIMIT + 1):
         assert _node_run(env, key)["approval_wait_reason"] == "review_not_started"
-    assert calls == [] and _waits(env) == [(result, "review_not_started")] and _review_status(result) == "pending_review"
+    assert calls == [] and _waits(env) == [(result, "review_not_started")] * LIMIT
+    assert _review_status(result) == "pending_review"
 
 
 def test_a_review_still_working_is_never_approved_even_when_no_ai_is_told_working(env, decided, monkeypatch):
@@ -304,10 +370,10 @@ def test_a_lost_run_end_of_a_review_that_did_not_pass_records_it_once(pre_featur
     loops = _loops(env)
     calls = _recorded_start_run(monkeypatch)
     _lost_run_end(monkeypatch, env, key)
-    _current(env)
-    shown = _node_run(env, key)
-    assert (shown["awaiting_approval"], shown["approval_wait_reason"]) == (True, f"review_not_passed:{stop_reason}")
-    assert _waits(env) == [(result, f"review_not_passed:{stop_reason}")]
+    _reads(env)                                                          # needs_intervention: recorded once, never again
+    reason = f"review_not_passed:{stop_reason}"
+    assert _intervention(env, key) == (False, {"kind": "needs_intervention", "reason": reason}, reason)
+    assert _waits(env) == [(result, reason)]
     assert calls == [] and _loops(env) == loops and _review_status(result) == "pending_review"
 
 
@@ -317,9 +383,9 @@ def test_a_review_count_that_cannot_be_read_approves_nothing(pre_feature_attempt
     key, result, _token = _in_review(env, monkeypatch, REVIEWED)
     _stored(env, key, "review_count", raw)
     _lost_run_end(monkeypatch, env, key)
-    _current(env)
-    assert _node_run(env, key)["approval_wait_reason"] == "review_result_unknown"
-    assert _waits(env) == [(result, "review_result_unknown")] and _review_status(result) == "pending_review"
+    _reads(env)
+    assert _intervention(env, key)[1] == {"kind": "system_error", "reason": "review_result_unknown"}
+    assert _waits(env) == [(result, "review_result_unknown")] * LIMIT and _review_status(result) == "pending_review"
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation (loop rows with no assignment); an assigned attempt: K-6 — test_fg_ai_roles_l2_fixes.py::test_k6_*
@@ -329,9 +395,8 @@ def test_a_pass_that_is_not_the_current_one_approves_nothing(pre_feature_attempt
     _passed_loop(env, result)
     _verdict(monkeypatch, case != "earlier_revision")
     _lost_run_end(monkeypatch, env, key, review_exec=case != "earlier_attempt")
-    _current(env)
-    _current(env)
-    assert _waits(env) == [(result, "review_result_unknown")] and _review_status(result) == "pending_review"
+    _reads(env)
+    assert _waits(env) == [(result, "review_result_unknown")] * LIMIT and _review_status(result) == "pending_review"
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt's NO_REVIEW assignment decides (K-10)
@@ -340,8 +405,8 @@ def test_a_review_none_card_whose_result_has_a_loop_approves_nothing(pre_feature
     _passed_loop(env, result)
     _stored(env, key, "review_count", "0")                               # set to 'none' after its review started
     _lost_run_end(monkeypatch, env, key)
-    _current(env)
-    assert _waits(env) == [(result, "review_result_unknown")] and _review_status(result) == "pending_review"
+    _reads(env)
+    assert _waits(env) == [(result, "review_result_unknown")] * LIMIT and _review_status(result) == "pending_review"
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: review_result_unknown of the pre-feature reconciliation; an assigned attempt: T §4.6 — test_fg_ai_roles_l2_fixes.py::test_t46_*
@@ -356,9 +421,8 @@ def test_a_read_that_fails_approves_nothing_and_is_not_tried_again(pre_feature_a
 
     monkeypatch.setattr(legacy_adapter, "review_loops", broken)
     _lost_run_end(monkeypatch, env, key)
-    _current(env)
-    _current(env)
-    assert _waits(env) == [(result, "review_result_unknown")] and _review_status(result) == "pending_review"
+    _reads(env)                                                          # a system error: tried again up to the limit
+    assert _waits(env) == [(result, "review_result_unknown")] * LIMIT and _review_status(result) == "pending_review"
 
 
 @pytest.mark.parametrize("ending", [{"end_reason": "timeout", "stop_code": "timeout"}, {"end_reason": "cancelled"}])
@@ -516,7 +580,7 @@ def test_a_lost_instruction_end_that_needs_its_review_starts_it_once_on_an_idle_
 
 # 0113 T#3 (T §6.4) pre-feature contract: the project default reviewer of the pre-feature instruction review (L-2 §2.8.2); assigned: E-42 / E-13 — test_fg_ai_roles_l2_fixes.py::test_e13_*
 @pytest.mark.parametrize("failure", ["no_reviewer", "start_refused"])
-def test_a_lost_instruction_review_that_cannot_start_on_an_idle_run_is_recorded_once(pre_feature_attempts, env, decided, monkeypatch, failure):
+def test_a_lost_instruction_review_that_cannot_start_on_an_idle_run_is_retried_up_to_the_limit(pre_feature_attempts, env, decided, monkeypatch, failure):
     from flowgate.card_settings import legacy_adapter
     from modules.flow_gate.services import ai_invoke_service
 
@@ -530,10 +594,9 @@ def test_a_lost_instruction_review_that_cannot_start_on_an_idle_run_is_recorded_
         raise RuntimeError("admission refused")
 
     monkeypatch.setattr(ai_invoke_service, "start_run", refuse)
-    for _ in range(3):
-        _current(env)
-    assert len(starts) == (0 if failure == "no_reviewer" else 1)
-    assert _waits(env) == [(instruction, "review_not_started")] and _refusals(env) == []
+    _reads(env)
+    assert len(starts) == (0 if failure == "no_reviewer" else LIMIT)    # 0119 T-2: a system error, retried
+    assert _waits(env) == [(instruction, "review_not_started")] * LIMIT and _refusals(env) == []
     assert _review_status(instruction) != "approved" and _stage(env, key) == ("open", "instruction")
     assert _result_jobs(env) == []
 
@@ -583,23 +646,17 @@ def test_an_instruction_run_of_an_earlier_attempt_is_never_reconciled(env, decid
     assert _stage(env, key) == ("open", "instruction") and _events(env)[len(before):] == []
 
 
-# ── B-6: viewer.can_approve, the approval route's own judgement ──────────────
+# ── B-6 removed by 0119 T-2: no person approves a card left by its review ────
 
 # 0113 T#3 (T §6.4) pre-feature contract: its passed-loop scene is a loop row with no assignment reference (pre-feature reconciliation)
-def test_the_run_tells_the_viewer_whether_the_approval_route_would_take_its_approval(pre_feature_attempts, env, decided, monkeypatch):
-    from flowgate.card_approval import legacy_adapter as approvals
-
+def test_a_card_its_review_left_is_never_approved_by_a_person_even_an_admin(pre_feature_attempts, env, decided, monkeypatch):
     key, result, _token = _in_review(env, monkeypatch, REVIEWED)
-    _passed_loop(env, result, "review_count_exhausted")                  # H1: a person decides
+    _passed_loop(env, result, "review_count_exhausted")                  # formerly H1: a person decided
     _lost_run_end(monkeypatch, env, key)
-    assert _current(env)["viewer"] == {"can_approve": True}              # an admin
-    real = approvals.permissions_of
-    monkeypatch.setattr(approvals, "permissions_of", lambda user_id: {"document.read"})
-    assert _current(env)["viewer"] == {"can_approve": False}
-    assert _approve(env, key, expect=403)["error"]["code"] == "approval_forbidden"
-    monkeypatch.setattr(approvals, "permissions_of", real)
-    body = _approve(env, key)
-    assert body["run"]["viewer"] == {"can_approve": True} and _node(env, key)[0] == "done"
+    reason = "review_not_passed:review_count_exhausted"
+    assert _intervention(env, key) == (False, {"kind": "needs_intervention", "reason": reason}, reason)
+    _approval_route_gone(env, key)                                       # an admin too (0119 T-3: no route)
+    assert (_node(env, key)[0], _review_status(result)) == ("review", "pending_review") and _authorities(env) == []
 
 
 # Fixture-only legacy fields for the pre-T#3 execution contract.

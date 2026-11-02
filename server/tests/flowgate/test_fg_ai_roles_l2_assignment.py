@@ -26,21 +26,22 @@ X, B, A, Y = "aip_x", "aip_b", "aip_a", "aip_y"
 
 @pytest.fixture(autouse=True)
 def wired(env, monkeypatch):
-    """The card approval port and the card documents routes, as ``startup`` / ``main`` wire them (their RBAC answer:
-    every permission)."""
-    from flowgate.card_approval import integration as approval
+    """The card's required outputs port (0119 T-3: it replaced the card approval port) and the card documents routes, as
+    ``startup`` / ``main`` wire them (their RBAC answer: every permission)."""
+    from flowgate.card_completion import outputs
     from flowgate.card_documents import legacy_adapter as documents
     from flowgate.card_documents import routes as document_routes
+    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
 
     monkeypatch.setattr(documents, "has_permission", lambda u, p, perm: True)
-    approval.register()
+    ports.register(ports.PENDING_OUTPUTS, outputs.pending_outputs)
     env["client"].app.include_router(document_routes.router)
     _sql(env["db"], "UPDATE users SET is_admin = 1 WHERE user_id = 'u_kim'")
     for pid in (X, B, A, Y):
         _sql(env["db"], "INSERT OR IGNORE INTO ai_providers (provider_id, name, exec_type, kind, created_at, updated_at) "
                         "VALUES (?, ?, 'cli', 'claude', 't', 't')", (pid, "AI " + pid))
     yield
-    approval.unregister()
+    ports.unregister(ports.PENDING_OUTPUTS)
 
 
 @pytest.fixture()

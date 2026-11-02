@@ -4,7 +4,7 @@ External AI processes are recorders; DB, routes, token issuing, stage handoff an
 from copy import deepcopy
 import pytest
 from test_work_plan_instruction_mode_0074 import (  # noqa: F401
-    api, env, db_path, card_approval_port, card_start_port, decided, _put, _stop_run,
+    api, env, db_path, card_outputs_port, card_start_port, decided, _put, _stop_run,
     _read, _save, _preview, _execute, _confirm_and_run_after_the_root, _flow, _write_plan,
     _line_doc, _file, _one_job, _row, _sql, _h, FA,
 )

@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from test_fg_instruction_stage_0056 import (  # noqa: F401 — fixtures used by name
-    _card, _line, _one_job, card_approval_port, db_path, decided, env,
+    _card, _line, _one_job, card_outputs_port, db_path, decided, env,
 )
 from test_fg_card_settings import _start
 from test_fg_card_settings_review import _admin_and_reviewer, _review_status, _write_written

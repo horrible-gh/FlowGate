@@ -85,7 +85,7 @@ export function gateCardSlots(facts: GateCardFacts, instructionOmitted = false):
 
 export type GateOperation = 'confirm' | 'reject'
 
-export const GATE_OPERATIONS: readonly GateOperation[] = ['confirm', 'reject']
+export const GATE_OPERATIONS: readonly GateOperation[] = ['confirm']
 
 export interface GateActionItem {
   readonly visible: boolean
@@ -127,7 +127,7 @@ export function gateActions(
   const reason = gateDecisionReason({ nodeId: facts.nodeId ?? '', readOnly: facts.readOnly ?? null }, run, busy)
   const status = run?.nodes.find(node => node.nodeKey === facts.nodeId)?.status
   const item: GateActionItem = { visible: status !== 'done' && status !== 'rejected', enabled: reason === null, reason }
-  return { confirm: item, reject: item }
+  return { confirm: item, reject: { visible: false, enabled: false, reason: null } }
 }
 
 /** What a refused gate decision shows (the server's code, else the status). */
@@ -157,6 +157,9 @@ export function gateFailureKey(error: { readonly kind: string; readonly status: 
   return 'failure.other'
 }
 
+// Server job_store GATE_PARKED_CONFLICT / GATE_PARKED_FAILED / GATE_PARKED_RECOVERY.
+const GATE_PHASE_NOTES = { conflict: 'gate_conflict', failed: 'gate_failed', recovery: 'gate_recovery' } as const
+
 /** Only the current successful decision's own completed archive receipt can light the chip. */
 export function gateResult(node: { status: string; attemptId?: string | null; gate?: RunGateState | null } | null) {
   const gate = node?.gate
@@ -165,9 +168,12 @@ export function gateResult(node: { status: string; attemptId?: string | null; ga
   const confirmed = finished && node?.status === 'done'
   const rejected = finished && node?.status === 'rejected'
   const current = !!result && (result.attempt_id === node?.attemptId || result.attempt_id === null)
+  const note = gate?.job?.phase_note
+  const conflict = note === GATE_PHASE_NOTES.conflict
+  const recovery = note === GATE_PHASE_NOTES.failed || note === GATE_PHASE_NOTES.recovery
   return {
-    key: confirmed ? 'confirmed' : rejected ? 'rejected' : 'before',
-    tone: confirmed ? 'success' : rejected ? 'danger' : 'neutral',
+    key: confirmed ? 'confirmed' : rejected ? 'rejected' : conflict ? 'conflict_review' : recovery ? 'recovery_required' : gate?.decision_in_progress ? 'publishing' : 'before',
+    tone: confirmed ? 'success' : rejected ? 'danger' : conflict ? 'warning' : recovery ? 'danger' : gate?.decision_in_progress ? 'running' : 'neutral',
     archived: !!(confirmed && current && gate?.archived && result?.archived && result.archive_id && result.result === 'confirmed' && result.status === 'succeeded'),
     description: current && (confirmed || rejected) ? [result.actor_user_id, result.completed_at ?? result.decided_at, result.comment].filter(Boolean).join(' · ') : '',
   }

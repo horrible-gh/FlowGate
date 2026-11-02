@@ -880,6 +880,9 @@ _ACTIONS = {
     "held_nodes": hold.held,
     # 0085 T#3: gates waiting for a round split after an abandoned recovery, never opened either (not a Hold).
     "opening_held": lambda flow_id: _settle().opening_held(flow_id),
+    # flowgate.v02.0119 T#3 (T-2): a run read's idle reason, a stored ``waiting_approval`` read as waiting_confirm /
+    # needs_intervention (never converted).
+    "idle_reason_read": lambda run: _settle().read_idle_reason(run),
     # T#13: an unfinished Graph Time Machine operation refuses a step / full command (``run_service``).
     "time_machine_refusal": lambda flow_id: _time_machine().require_no_operation(flow_id),
     # T#14: a chat's edit / edit-once source access while the Flow's run is locked (``token_service.issue``).

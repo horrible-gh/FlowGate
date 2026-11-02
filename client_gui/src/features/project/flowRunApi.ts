@@ -1,3 +1,4 @@
+import { toRunGateState } from '@/features/document/api/run'
 // flowgate.v02.0053 T#9 — Graph run transport (P0008 §7 S5-1 ~ S5-5): start a Flow's run, read its
 // current run, stop and resume a run. snake_case stays inside this file; every request carries this tab's
 // `x-canvas-client-id` (flowCanvasApi.ts) like the Graph saver's. A refused request rejects with a
@@ -10,9 +11,6 @@
 //   pause    POST /api/v1/runs/{run_id}/pause  { reason? }              -> { run }  (T#2 Pause: running -> paused)
 //   stop     POST /api/v1/runs/{run_id}/stop   { reason? }              -> { run }  (T#7 Stop: stopping, then idle)
 //   resume   POST /api/v1/runs/{run_id}/resume { reason? }              -> { run }  (a paused run's own command)
-//   approve  POST /api/v1/runs/{run_id}/nodes/{node_key}/approval { result_doc_id } -> { run, approval }
-//            (flowgate.v02.0056 F2-1, O1 0005-TR §4-1: the card's [승인] — its documents not approved yet, the
-//            result last; refusals are 409 / 403 / 404 / 422 codes, see center/graph/cardStateView.ts)
 //   rewind   POST /api/v1/runs/{run_id}/nodes/{node_key}/time-machine (no body) -> { time_machine, run }
 //            (flowgate.v02.0061 T#15: the T#13 Graph Time Machine of a done node and everything below it; 409
 //            `graph_time_machine_blocked` carries the assessment — its `reasons` and `impact` — in the params)
@@ -31,7 +29,7 @@
 import { getRequest, postRequest } from '@shared/api'
 import { canvasHeaders, num, str, toRoleRunFields, type Raw } from './flowCanvasApi'
 import { toGraphError } from './flowGraphApi'
-import type { FlowRun, FlowRunApproval, FlowRunNode, FlowRunTimeMachine, FlowRunTimeMachineRefusal } from './types'
+import type { FlowRun, FlowRunNode, FlowRunTimeMachine, FlowRunTimeMachineRefusal } from './types'
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [])
 
@@ -53,6 +51,8 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
     ...('approval_wait_reason' in raw ? { approvalWaitReason: str(raw.approval_wait_reason) } : {}),
     ...toRoleRunFields(raw),
+    ...('intervention' in raw ? { intervention: raw.intervention ?? null } : {}),
+    ...('gate' in raw ? { gate: toRunGateState(raw.gate) } : {}),
     ...(raw.gate && typeof raw.gate === 'object' ? { gateRecoveryResetRequired: (raw.gate as Raw).recovery_reset_required === true } : {}),
   }
 }
@@ -215,31 +215,3 @@ export async function timeMachineFlowRunNode(runId: string, nodeKey: string): Pr
   }
 }
 
-/** The server's `approval` object -> FlowRunApproval. */
-function toApproval(raw: unknown, nodeKey: string): FlowRunApproval {
-  const approval = raw && typeof raw === 'object' ? (raw as Raw) : {}
-  return {
-    nodeKey: str(approval.node_key) ?? nodeKey,
-    targetDocIds: strings(approval.target_doc_ids),
-    approvedDocIds: strings(approval.approved_doc_ids),
-  }
-}
-
-/**
- * flowgate.v02.0056 F2-1 — POST /api/v1/runs/{runId}/nodes/{nodeKey}/approval: approves the card (O1 0005-TR
- * §4-1). `resultDocId` is the result the screen showed (null: the server's current one); the server refuses
- * with 409 `result_changed` when the node's result moved meanwhile. Answers the run after it and what it
- * approved. A refusal rejects with a FlowGraphApiError carrying the server's code / params / message.
- */
-export async function approveFlowRunNode(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun; approval: FlowRunApproval }> {
-  try {
-    const response = await postRequest<Raw>(
-      `${runPath(runId)}/nodes/${encodeURIComponent(nodeKey)}/approval`,
-      { result_doc_id: resultDocId },
-      canvasHeaders(),
-    )
-    return { run: runOf(response.data, 'The card was not approved.'), approval: toApproval(response.data?.approval, nodeKey) }
-  } catch (error) {
-    throw toGraphError(error, 'Failed to approve the card.')
-  }
-}

@@ -551,7 +551,10 @@ def _parse_doc_workflow(doc: dict) -> dict:
     # attaches (rejection_provider/response_provider), via the one shared function, so
     # the console UI and the T-API worker view of the same rejection cannot disagree.
     from modules.flow_gate.workflow.pipeline_service import enrich_rejection_history_provenance
-    out["rejection_history"] = enrich_rejection_history_provenance(parsed_history)
+    from modules.flow_gate.db import document_reviews as _db_reviews_actor
+    # flowgate.v02.0119 T#2 (T-1): each item also tells its actors (the AI, the issuer as requested_by only).
+    out["rejection_history"] = [_db_reviews_actor.rejection_actors(item)
+                                for item in enrich_rejection_history_provenance(parsed_history)]
 
     # 0291 T3: read the group's document list **once, first**, and let the R/B root lookup and
     # the head decision below share that result. Previously the root was fetched by two narrow
@@ -3150,6 +3153,7 @@ def _shape_review(row: dict) -> dict:
         # 0535 T0007 §2: one shared builder for both read surfaces, so the key set and
         # the true/false/null normalization of fallback_used cannot drift apart.
         "review_provider": _db_reviews_shape.review_provider_payload(row),
+        "actor": _db_reviews_shape.review_actor(row),   # flowgate.v02.0119 T#2 (T-1)
         "review_intent": row.get("review_intent"),
         "superseded_review_id": row.get("superseded_review_id"),
         "verdict": row.get("verdict"),

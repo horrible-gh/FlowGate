@@ -51,6 +51,28 @@ flowgate.v02.0085 T#2 (D0007 §3.3): a confirm gate held by its accepted decisio
 finished: accepted, failed, recovery_required) is unfinished apply work, not a person's wait. It keeps a running /
 paused run working, like an integration in progress, so the run is never idle or completed meanwhile; an idle run with
 such a gate is idle with the reason ``gate_publish`` (never ``waiting_approval`` for it, never ``completed``).
+
+flowgate.v02.0119 T#3 (T-2, 0004-CH seq 9 T-2): ``waiting_approval`` is split. A confirm gate open for its decision is
+``waiting_confirm`` (the only person's decision of v0.2); a general card a person must act on is ``needs_intervention`` —
+a card in review that nothing completes after its automatic rework (``node_approval.intervention`` kind
+``needs_intervention``: count spent, hold, stall, failure, the AI's abnormal end), an open card a person writes, an
+assigned stage that waits for a person, an AI question nobody answered. ``waiting_confirm`` comes first: the confirm
+intake (``gate_decisions.intake``) and the approval wake (``command``) see ``waiting_confirm`` only. A card in review
+whose automatic completion path failed (kind ``system_error``) is the error family (``error``), retried by the run read's
+reconciliation, never a person's wait. The order is now ``completed``, ``no_targets``, ``waiting_confirm``,
+``needs_intervention``, ``gate_publish``, ``merge_conflict``, ``error``, ``blocked_recovery``, ``blocked_rejected``,
+``hold``, ``step_done``, else ``no_targets``. A run that went idle before stores ``waiting_approval``; it is read as
+``waiting_confirm`` when a gate of the run is open for its decision, else ``needs_intervention`` (``reason_as_read``) and
+the stored value is never converted — a run read writes an idle reason only when the judged one differs from the one as
+read. An intervention card stops only its own descendants (a node not done propagates nothing, an AND join waits: the
+``stop_path`` way); a running run goes on opening the independent branches' candidates.
+
+flowgate.v02.0119 T#3 (T-2 rework, review P2): a node's explicit system error is never read as a person's wait. A card
+whose automatic path failed (``node_approval.intervention`` kind ``system_error``: in review, or open in its instruction
+stage with its instruction's automatic approval / review failed) is the error family even where its stage assignment
+also waits (``stage_waits``: an instruction review waiting on a setting that could not be read records
+``review_result_unknown``) or its pre-feature instruction is unjudged; ``needs_intervention`` takes only the waits with
+no system error.
 """
 from __future__ import annotations
 
@@ -60,15 +82,21 @@ from flowgate.graph_run import legacy_adapter as engine
 from flowgate.graph_run import scheduling
 
 IDLE_COMPLETED, IDLE_NO_TARGETS = "completed", "no_targets"
-IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR = "waiting_approval", "blocked_rejected", "error"
+IDLE_BLOCKED_REJECTED, IDLE_ERROR = "blocked_rejected", "error"
+IDLE_WAITING_CONFIRM = "waiting_confirm"                     # 0119 T-2: a confirm gate open for its decision
+IDLE_NEEDS_INTERVENTION = "needs_intervention"               # 0119 T-2: a general card a person must act on
+LEGACY_WAITING_APPROVAL = "waiting_approval"                 # stored before 0119 T-2: read by ``reason_as_read``
+IDLE_WAITING_APPROVAL = LEGACY_WAITING_APPROVAL              # kept name: the stored legacy value, never written now
 IDLE_STOPPED = "stopped"                                     # T#7: set by a Stop only
 IDLE_MERGE_CONFLICT = "merge_conflict"                       # T#9: approved results whose merge waits (conflict / failed)
 IDLE_HOLD = "hold"                                           # T#11: held targets left (open key, no migration)
 IDLE_STEP_DONE = "step_done"                                 # a step that opened targets ended (open key, no migration)
 IDLE_GATE_PUBLISH = "gate_publish"                           # 0085 T#2: a confirm's accepted apply work unfinished
 IDLE_BLOCKED_RECOVERY = "blocked_recovery"                   # 0085 T#3: a gate waits for its round split
-IDLE_REASONS = (IDLE_COMPLETED, IDLE_NO_TARGETS, IDLE_WAITING_APPROVAL, IDLE_BLOCKED_REJECTED, IDLE_ERROR,
-                IDLE_STOPPED, IDLE_MERGE_CONFLICT, IDLE_HOLD, IDLE_STEP_DONE, IDLE_GATE_PUBLISH, IDLE_BLOCKED_RECOVERY)
+IDLE_REASONS = (IDLE_COMPLETED, IDLE_NO_TARGETS, IDLE_WAITING_CONFIRM, IDLE_NEEDS_INTERVENTION, IDLE_BLOCKED_REJECTED,
+                IDLE_ERROR, IDLE_STOPPED, IDLE_MERGE_CONFLICT, IDLE_HOLD, IDLE_STEP_DONE, IDLE_GATE_PUBLISH,
+                IDLE_BLOCKED_RECOVERY)
+CONFIRM_WAITS = (IDLE_WAITING_CONFIRM, LEGACY_WAITING_APPROVAL)   # a confirm wait, as stored now or before 0119 T-2
 CAUSE_COMPLETED, CAUSE_IDLE, CAUSE_WORK_RESUMED = "completed", "run_idle", "work_resumed"
 
 
@@ -101,13 +129,39 @@ def opening_held(flow_id: str) -> frozenset:
     return frozenset(dict(r)["node_key"] for r in rows)
 
 
-def _waits_on_person(ctx, row: dict, reserved: Optional[dict] = None) -> bool:
-    """A gate open for its decision (0085 T#2: not one a decision already holds), or a card in review awaiting a
-    person's approval. 0083 WP-2 / 0061 T#2 개정: an open human writer also uses waiting_approval."""
+def _waits_confirm(ctx, row: dict, reserved: Optional[dict] = None) -> bool:
+    """0119 T-2 ``waiting_confirm``: a gate open for its decision (0085 T#2: not one a decision already holds)."""
+    return (row["status"] == "open" and _node_type(ctx, row["node_key"]) == engine.GATE_NODE_TYPE
+            and row["node_key"] not in (reserved or {}))
+
+
+def _intervention_kind(ctx, row: dict) -> Optional[str]:
+    """0119 T-2: ``needs_intervention`` / ``system_error`` of a general card in review that nothing completes, else
+    None (``node_approval.intervention``: not in review with a result, AI still working, its integration waiting).
+    0119 T-2 rework: a card open in its instruction stage whose instruction's automatic path failed: ``system_error``."""
+    if row["status"] not in ("review", "open"):
+        return None
+    found = engine.intervention(ctx.flow_id, row, _node_type(ctx, row["node_key"]))
+    return found.get("kind") if found else None
+
+
+def _system_error(ctx, row: dict) -> bool:
+    """0119 T-2: a card in review whose automatic completion path failed — the run's error family, retried by the run
+    read's reconciliation (``card_settings_ports.reconcile_stage``), never a person's wait."""
+    return _intervention_kind(ctx, row) == engine.SYSTEM_ERROR
+
+
+def _needs_intervention(ctx, row: dict) -> bool:
+    """0119 T-2 ``needs_intervention`` (a general card a person must act on): a card in review that nothing completes
+    after its automatic rework, an assigned stage in review that waits for a person; an open card a person writes (0083
+    WP-2 / 0061 T#2 개정), an assigned stage that waits for a person, an AI question nobody answered (0113 T#3)."""
     node_type = _node_type(ctx, row["node_key"])
+    if node_type == engine.GATE_NODE_TYPE:
+        return False
+    kind = _intervention_kind(ctx, row)
+    if kind == engine.SYSTEM_ERROR:
+        return False                                                      # 0119 T-2 rework: its error family first
     if row["status"] == "open":
-        if node_type == engine.GATE_NODE_TYPE:
-            return row["node_key"] not in (reserved or {})
         from modules.flow_gate.graph_workflow.services import card_settings_ports
         judged = card_settings_ports.stage_waits(ctx.flow_id, row)       # 0113 T#3: an assigned attempt's stage
         if judged == card_settings_ports.STAGE_UNREADABLE:
@@ -122,13 +176,39 @@ def _waits_on_person(ctx, row: dict, reserved: Optional[dict] = None) -> bool:
         from modules.flow_gate.graph_workflow.services import card_settings_ports
         if card_settings_ports.stage_waits(ctx.flow_id, row) is True:
             return True                                                   # a review assignment waits (L-2 §2.12)
-    return row["status"] == "review" and engine.awaiting_approval(ctx.flow_id, row, node_type)
+    return kind == engine.NEEDS_INTERVENTION
+
+
+def _waits_on_person(ctx, row: dict, reserved: Optional[dict] = None) -> bool:
+    """A person must act on the node: its confirm (``waiting_confirm``) or the card's intervention
+    (``needs_intervention``). Kept for its readers; the idle reason tells the two apart (0119 T-2)."""
+    return _waits_confirm(ctx, row, reserved) or _needs_intervention(ctx, row)
+
+
+def reason_as_read(ctx, rows: Optional[list[dict]] = None) -> Optional[str]:
+    """0119 T-2: the run's idle reason as read. A stored ``waiting_approval`` (a run idle before T-2) is
+    ``waiting_confirm`` when a gate of the run is open for its decision, else ``needs_intervention``; the stored value is
+    not converted. Any other value as stored."""
+    stored = ctx.run.get("idle_reason")
+    if stored != LEGACY_WAITING_APPROVAL:
+        return stored
+    reserved = _gate_reserved(ctx)
+    rows = engine.node_runs(ctx.run_id) if rows is None else rows
+    return IDLE_WAITING_CONFIRM if any(_waits_confirm(ctx, r, reserved) for r in rows) else IDLE_NEEDS_INTERVENTION
+
+
+def read_idle_reason(run: Optional[dict]) -> Optional[str]:
+    """``graph_execution_hooks`` ``idle_reason_read`` (the run read's wire): ``reason_as_read`` of the run row ``run``."""
+    if not run or run.get("idle_reason") != LEGACY_WAITING_APPROVAL:
+        return (run or {}).get("idle_reason")
+    return reason_as_read(engine.load_context(run, None, None))
 
 
 def _asks(ctx, row: dict) -> bool:
     """flowgate.v02.0113 T#3 rework (0084: an idle run ``no_targets`` whose card's AI asked a question its responder
     failed to answer): an open card whose own AI asked a question nobody has answered yet waits for that answer — a
-    person's, or its responder's — so the run waits for a person (``waiting_approval``), never "nothing to run". The
+    person's, or its responder's — so the run waits for a person (``needs_intervention`` since 0119 T-2, before it
+    ``waiting_approval``), never "nothing to run". The
     card tells it by its question mark (``run_service.question_nodes``). A failed read: not asking."""
     from modules.flow_gate.graph_workflow.services import run_service
     try:
@@ -188,15 +268,17 @@ def idle_reason(ctx, rows: list[dict], state) -> str:
     if reason == IDLE_NO_TARGETS:
         return IDLE_NO_TARGETS
     reserved = _gate_reserved(ctx)
-    if any(_waits_on_person(ctx, r, reserved) for r in rows):
-        return IDLE_WAITING_APPROVAL
+    if any(_waits_confirm(ctx, r, reserved) for r in rows):
+        return IDLE_WAITING_CONFIRM                          # 0119 T-2: the confirm intake sees this one only
+    if any(_needs_intervention(ctx, r) for r in rows):
+        return IDLE_NEEDS_INTERVENTION                       # 0119 T-2: a general card a person must act on
     if reserved:
         return IDLE_GATE_PUBLISH                             # 0085 T#2: a confirm's apply work is unfinished
     from flowgate.graph_run import result_merge
     if result_merge.waiting(ctx.run_id):
         return IDLE_MERGE_CONFLICT                           # T#9: conflict / failed merges left
-    if any(_failed(ctx, r) for r in rows):
-        return IDLE_ERROR
+    if any(_failed(ctx, r) or _system_error(ctx, r) for r in rows):
+        return IDLE_ERROR                                    # 0119 T-2: a failed automatic completion path too
     if _recovery_reset(ctx, rows):
         return IDLE_BLOCKED_RECOVERY                         # 0085 T#3: an abandoned recovery waits for its round split
     if any(r["status"] == "rejected" for r in rows):
@@ -252,7 +334,7 @@ def settle_plan(ctx) -> Optional[tuple[str, object]]:
     if working(ctx, rows):
         return ("running", None)
     reason = idle_reason(ctx, rows, state)
-    return ("reason", reason) if reason != ctx.run.get("idle_reason") else None
+    return ("reason", reason) if reason != reason_as_read(ctx, rows) else None      # 0119 T-2: legacy not converted
 
 
 def _assert_one(affected: int, what: str) -> None:

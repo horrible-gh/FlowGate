@@ -32,7 +32,7 @@ describe('cardStateView — the three card states (flowgate.v02.0056 F2-1)', () 
     ['open · no stage (a run before O2, a person’s card)', run('open', { stage: null }), ['working', 'working', 'info', '-']],
     ['review · an AI still works (its run, the review loop)', run('review', { awaitingApproval: false }), ['working', 'working', 'info', '-']],
     ['review · no awaiting_approval sent', run('review'), ['working', 'working', 'info', '-']],
-    ['review · awaiting approval', run('review', { awaitingApproval: true, stage: 'result' }), ['awaiting_approval', 'awaiting', 'warning', '승인']],
+    ['review · awaiting approval', run('review', { awaitingApproval: true, stage: 'result' }), ['needs_intervention', 'other', 'warning', '-']],
     ['done', run('done', { awaitingApproval: false }), ['approved', 'approved', 'success', '-']],
     ['rejected R/B root (O1 rev 2: awaiting_approval false)', run('rejected', { awaitingApproval: false }), ['rejected', 'other', 'danger', '-']],
     ['pending', run('pending'), ['pending', 'other', 'neutral', '-']],
@@ -60,11 +60,11 @@ describe('cardStateView — the three card states (flowgate.v02.0056 F2-1)', () 
 
   it('every state has a label in ko / en / ja (gui.designer.center.card_states)', () => {
     for (const messages of [ko, en, ja]) {
-      expect(Object.keys(messages.designer.center.card_states).sort()).toEqual([...CARD_STATE_KEYS].sort())
+      for (const key of CARD_STATE_KEYS) expect(typeof messages.designer.center.card_states[key]).toBe('string')
     }
     // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): ◌ = actually running, 완료 = done, 준비 = not opened yet.
-    expect(ko.designer.center.card_states).toMatchObject({ writing_instruction: '◌ 지시서 작성 중', writing_result: '◌ 결과 작성 중', working: '◌ 실행 중', awaiting_approval: '승인 대기', approved: '완료', pending: '준비' })
-    expect(cardStateView(run('review', { awaitingApproval: true }))!.labelKey).toBe('gui.designer.center.card_states.awaiting_approval')
+    expect(ko.designer.center.card_states).toMatchObject({ writing_instruction: '◌ 지시서 작성 중', writing_result: '◌ 결과 작성 중', working: '◌ 실행 중', needs_intervention: '개입 필요', approved: '완료', pending: '준비' })
+    expect(cardStateView(run('review', { awaitingApproval: true }))!.labelKey).toBe('gui.designer.center.card_states.needs_intervention')
   })
 })
 

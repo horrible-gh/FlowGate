@@ -248,6 +248,14 @@ export default {
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
+        needs_intervention: '개입 필요',
+        system_error: '시스템 오류',
+        waiting_confirm: '확인 대기',
+        publishing: '반영 중',
+        conflict_review: '충돌 검수 대기',
+        recovery_required: '복구 필요',
+        confirmed: '확인 완료',
+
         // flowgate.v02.0113 T#1 (0002-D 개정 §3.11): a person's writing wait by its role, a review card that waits, ◌ = actually running.
         instruction_write_wait: '지시서 작성 대기',
         result_write_wait: '결과 작성 대기',

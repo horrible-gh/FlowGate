@@ -31,7 +31,7 @@ from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
     AI, FA, _h, _sql, _start, db_path, decided, env, edge, node, put_draft, setting,
 )
 from test_fg_card_settings_review import _admin_and_reviewer, _node
-from test_fg_card_approval_0056 import LEE, card_approval_port  # noqa: F401 — card_approval_port: autouse
+from test_fg_card_approval_0056 import LEE, card_outputs_port  # noqa: F401 — card_outputs_port: autouse
 from test_fg_wp_ai_run_0083 import (
     OPUS, ROOT, _consumed, _grant_document_create, _opus, _plan_line, _start_ai_run, _wp_json,
 )

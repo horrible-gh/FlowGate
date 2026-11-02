@@ -886,6 +886,8 @@ export interface RoleStageAssignment {
   intent: { kind: string | null; execId: string | null } | null
 }
 export interface RoleRunFields {
+  readonly intervention?: { readonly kind: string; readonly reason: string | null } | null
+  readonly gate?: import('@/features/document').RunGateState | null
   waitReason?: RoleWaitReason | null
   stageAssignments?: RoleStageAssignment[] | null
   approvalWaitSubmission?: RoleSubmission | null

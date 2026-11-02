@@ -60,7 +60,6 @@ import type {
   FlowGraphDraftSaveResult,
   FlowGraphValidation,
   FlowRun,
-  FlowRunApproval,
   FlowRunTimeMachine,
   MergeReviewFileDiff,
   Project,
@@ -106,7 +105,6 @@ import {
   validateFlowGraphDraft as validateFlowGraphDraftApi,
 } from './flowGraphApi'
 import {
-  approveFlowRunNode as approveFlowRunNodeApi,
   fetchCurrentFlowRun,
   pauseFlowRun as pauseFlowRunApi,
   resumeFlowRun as resumeFlowRunApi,
@@ -688,11 +686,6 @@ export const useProjectStore = defineStore('project', () => {
     return fetchFlowCommandResult(runId, commandSeq)
   }
 
-  // flowgate.v02.0056 F2-1: a card's [승인] on the Canvas (O1 0005-TR §4-1); the run it answers goes to the band.
-  function approveFlowRunNode(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun; approval: FlowRunApproval }> {
-    return approveFlowRunNodeApi(runId, nodeKey, resultDocId)
-  }
-
   // flowgate.v02.0061 T#15: the Graph Time Machine of a done card (its context menu); the run it answers goes to the band.
   function timeMachineFlowRunNode(runId: string, nodeKey: string): Promise<{ run: FlowRun; timeMachine: FlowRunTimeMachine }> {
     return timeMachineFlowRunNodeApi(runId, nodeKey)
@@ -808,7 +801,6 @@ export const useProjectStore = defineStore('project', () => {
     stopFlowRun,
     resumeFlowRun,
     loadFlowCommandResult,
-    approveFlowRunNode,
     timeMachineFlowRunNode,
     subscribeFlowCanvasChanges,
     subscribeProjectEvents,

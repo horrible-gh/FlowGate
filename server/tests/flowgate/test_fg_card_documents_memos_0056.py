@@ -43,9 +43,9 @@ os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
 os.environ.setdefault("CONTEXT", "/flowgate")
 os.environ.setdefault("DB_TYPE", "sqlite")
 
-from test_fg_card_approval_0056 import LEE, _approve, _chain, _events, _lease, _node_run
+from test_fg_card_approval_0056 import LEE, _approval_route_gone, _chain, _events, _lease, _node_run
 from test_fg_card_settings import (  # noqa: F401 — fixtures used by name
-    legacy_cards, pre_feature_attempts,
+    legacy_cards, passive_person_results, pre_feature_attempts,
     AI, FA, FB, _doc, _h, _sql, _start, db_path, decided, edge, env, node, put_draft, setting,
 )
 from test_fg_card_settings_review import (
@@ -56,7 +56,8 @@ from test_fg_card_settings_review import (
 # assignee, run_ai, review_count / review_ai — L-1 §2.4.5); the stage assignment feature stays on, so each new attempt
 # runs the assigned path (L-2) resolved from those fields. Pre-feature attempts are made explicitly
 # (``pre_feature_attempts``) by the tests of the pre-feature contract.
-pytestmark = pytest.mark.usefixtures("legacy_cards")
+# flowgate.v02.0119 T#4 rework (rej_01M6DQW6YF0SCQ5D P1): the person cards here are passive vehicles (``passive_person_results``).
+pytestmark = pytest.mark.usefixtures("legacy_cards", "passive_person_results")
 
 _SERVER_DIR = Path(__file__).resolve().parents[2]
 ROOT = f"{FA}.0001-R"
@@ -65,19 +66,21 @@ MEMO_ON, MEMO_OFF = "Use the v2 error table", "Private note"
 
 @pytest.fixture(autouse=True)
 def o3(env, permissions):
-    """The card approval port, the card memo port and the two T#3 routers, as ``startup`` / ``main`` wire them."""
-    from flowgate.card_approval import integration as approval
+    """The card's required outputs port (0119 T-3: it replaced the card approval port), the card memo port and the two
+    T#3 routers, as ``startup`` / ``main`` wire them."""
+    from flowgate.card_completion import outputs
     from flowgate.card_documents import routes as document_routes
     from flowgate.card_memos import integration as memos
     from flowgate.card_memos import routes as memo_routes
+    from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
 
-    approval.register()
+    ports.register(ports.PENDING_OUTPUTS, outputs.pending_outputs)
     memos.register()
     for module in (document_routes, memo_routes):
         env["client"].app.include_router(module.router)
     yield
     memos.unregister()
-    approval.unregister()
+    ports.unregister(ports.PENDING_OUTPUTS)
 
 
 @pytest.fixture()
@@ -235,13 +238,16 @@ def test_a_line_tells_whether_its_document_is_written(env):
 
 
 def test_the_body_judgement_is_the_one_of_the_instruction_stage():
-    """No second judgement: the line read asks the same function the instruction stage and the card approval ask."""
+    """No second judgement: the line read asks the same function the instruction stage and the completion's outputs ask."""
     lines_src = (_SERVER_DIR / "flowgate" / "card_documents" / "lines.py").read_text(encoding="utf-8")
-    # 0064 T#2 (L0005 2.1.1): the line reads its file once for both facts; ``written`` is still the approval's own
-    # judgement (``approvable_text``, the text rule ``_require_document_body_for_approval`` applies).
+    # 0064 T#2 (L0005 2.1.1): the line reads its file once for both facts; ``written`` is the body gate's judgement
+    # (``approvable_text``, the text rule ``_require_document_body_for_approval`` applies). flowgate.v02.0119 T#4 (T-3):
+    # that judgement is the v0.2 completion's body gate (``card_completion.gates``), asked by the card documents' adapter.
     assert "written, body_state = legacy.line_body_facts(shown)" in lines_src and '"has_body": written' in lines_src
     adapter_src = (_SERVER_DIR / "flowgate" / "card_documents" / "legacy_adapter.py").read_text(encoding="utf-8")
-    assert "return pipeline_service.approvable_text(doc, text), state" in adapter_src
+    assert "return gates.text_complete(doc, text), state" in adapter_src and "return gates.body_complete(doc)" in adapter_src
+    completion_src = (_SERVER_DIR / "flowgate" / "card_completion" / "legacy_adapter.py").read_text(encoding="utf-8")
+    assert "return bool(pipeline_service.approvable_text(doc, text))" in completion_src
     pipeline_src = (_SERVER_DIR / "modules" / "flow_gate" / "workflow" / "pipeline_service.py").read_text(encoding="utf-8")
     assert "if not approvable_text(doc, content):" in pipeline_src
     assert lines_src.count("def has_body(") == 1 and "approvable_body" in lines_src
@@ -359,12 +365,12 @@ def test_a_person_s_result_on_a_running_card_binds_through_its_dispatch_token_an
     assert consumed is not None
     assert [json.loads(r["metadata"])["doc_id"] for r in _sql(
         env["db"], "SELECT metadata FROM workflow_events WHERE event_type = 'token_consumed'")] == [result]
-    assert _node_run(env, key)["awaiting_approval"] is True                              # a person approves the card
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"                              # a person approves the card
     assert _review_status(result) == "pending_review"
-    approved = _approve(env, key, body={"result_doc_id": result})
-    assert approved["approval"]["approved_doc_ids"] == [result] and _node(env, key) == ("done", result)
-    # the node is done: its lines are a person's to edit, the report line keeps the card's draft
-    assert _write(env, FA, key, "report", "x", expect=409)["error"]["code"] == "slot_has_document"
+    # flowgate.v02.0119 T#3 (T-2): no person approves the card any more — it needs intervention and stays in review;
+    # T#4 (T-3): the card approval route is gone
+    _approval_route_gone(env, key)
+    assert _node(env, key) == ("review", result)
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: the pre-feature dispatch error ai_invoke_failed; an assigned attempt records ai_unavailable:start_failed (P-1 C-2)
@@ -380,7 +386,7 @@ def test_a_person_s_result_on_an_ai_card_whose_ai_failed_awaits_approval(pre_fea
     calls = _recorded_start_run(monkeypatch)
     made = _write(env, FA, key, "report", "## Report\n\nwritten by a person\n")
     assert made["bound_as_result"] is True and _node(env, key) == ("review", made["doc_id"])
-    assert _node_run(env, key)["awaiting_approval"] is True and calls == []      # no AI review, no approval
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention" and calls == []      # no AI review, no approval
     assert _review_status(made["doc_id"]) == "pending_review"
 
 
@@ -457,7 +463,7 @@ def test_two_result_writes_at_once_register_one_result_and_spend_the_token_once(
         env["db"], "SELECT metadata FROM workflow_events WHERE event_type = 'token_consumed'")] == [
         {"token_id": token, "doc_id": result}]
     assert _line_doc(env, FA, key, "instruction") == {"doc_id": result, "owned": 0}
-    assert _node_run(env, key)["awaiting_approval"] is True
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: the report line is the result path at the opening of a person card; assigned: after the instruction stage (T-2 race: test_fg_ai_roles_l2_fixes.py::test_t2_a_lost_token_race_*)
@@ -513,7 +519,7 @@ def test_a_person_s_result_takes_a_line_that_has_no_stored_row(pre_feature_attem
     assert _line_doc(env, FA, key, "instruction") == {"doc_id": result, "owned": 0}
     assert _canvas_lines(env, FA, key)["instruction"]["doc_id"] == result
     assert _doc_row(placeholder)["superseded_by"] is None                 # no longer the line's: left as it was
-    assert _node_run(env, key)["awaiting_approval"] is True and _review_status(result) == "pending_review"
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention" and _review_status(result) == "pending_review"
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: the report line written at the opening of a person card is its result (assigned: the instruction stage first)
@@ -607,7 +613,7 @@ def test_a_person_s_result_written_while_the_ai_start_holds_the_lease_stops_that
     _work_run_ended()                                                      # the run ends on its own
     assert calls == [] and approvals == []                                 # no card review, no approval
     assert _node(env, key) == ("review", result) and _review_status(result) == "pending_review"
-    assert _node_run(env, key)["awaiting_approval"] is True
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"
 
 
 def test_an_ai_start_that_mapped_its_token_first_refuses_the_person_s_result(env, decided, monkeypatch):
@@ -651,7 +657,7 @@ def test_the_ai_run_s_end_never_takes_a_result_a_person_registered_as_its_own(en
     _work_run_ended()
     assert calls == [] and approvals == []
     assert _node(env, key) == ("review", result) and _review_status(result) == "pending_review"
-    assert _node_run(env, key)["awaiting_approval"] is True
+    assert _node_run(env, key)["intervention"]["kind"] == "needs_intervention"
 
 
 def _row_stage(env, key):

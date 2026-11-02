@@ -32,7 +32,8 @@ removed only through the existing v0.1 services (``legacy_adapter``).
 - flowgate.v02.0056 T#2: whether a card document is written is decided by its body, not by the document
   existing (``has_body``: a non-blank body after the front matter, the v0.1 approval's own rule). It is the
   one judgement of the v0.2 cards: the instruction stage of a card run (``card_settings``), the card
-  approval's targets (``card_approval``) and the card document read all ask it.
+  completion's required outputs (``card_completion.outputs``, flowgate.v02.0119 T-3: the removed card approval's
+  targets before) and the card document read all ask it.
 - flowgate.v02.0056 T#3: every line read (draft save, Canvas) carries whether its document is written
   (``has_body``, that same judgement) and the count of its document's review history as the v0.1 document read
   shows it — its AI reviews (``review_count``), its rejections (``rejection_count``) and both

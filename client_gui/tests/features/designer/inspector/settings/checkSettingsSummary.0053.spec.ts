@@ -23,7 +23,7 @@ describe('check settings branch contract — 0098', () => {
   it.each(['commit', 'hold'])('disables targets in %s while retaining the stored name', mode => {
     expect(checkSettingsView({ ...base, node: node({ fields: { merge_mode: field(mode), merge_target_branch: field('release', true) } }) })).toMatchObject({ target: 'release', targetEnabled: false })
   })
-  it.each([['empty', 'target.empty'], ['failed', 'target.lookup_failed'], ['timeout', 'target.lookup_failed'], ['git_unavailable', 'target.git_unavailable']])('distinguishes %s from other lookup states', (status, lookupError) => {
+  it.each([['empty', 'target.empty'], ['failed', 'target.lookup_failed'], ['timeout', 'target.lookup_timeout'], ['git_unavailable', 'target.git_unavailable']])('distinguishes %s from other lookup states', (status, lookupError) => {
     expect(checkSettingsView({ ...base, node: node({ merge_target_options: [], merge_target_state: { status, current: null, default: null } }) })).toMatchObject({ targetEnabled: false, lookupError })
   })
   it.each(['failed', 'timeout', 'git_unavailable'].flatMap(status => [false, true].map(stored => ({ status, stored }))))('keeps unchecked names without invalidating targets on $status (stored=$stored)', ({ status, stored }) => {
@@ -32,7 +32,7 @@ describe('check settings branch contract — 0098', () => {
     const saved = node({ fields: { merge_mode: field('merge'), merge_target_branch: field(stored ? name : null, stored) },
       merge_target_options: [], merge_target_state: { status, current: entry(name, unchecked), default: entry('feature/v0.2.0', unchecked) } })
     expect(checkSettingsView({ ...base, node: saved })).toMatchObject({ target: name, targetStored: stored, targetError: null,
-      lookupError: status === 'git_unavailable' ? 'target.git_unavailable' : 'target.lookup_failed', targetEnabled: false })
+      lookupError: status === 'git_unavailable' ? 'target.git_unavailable' : status === 'timeout' ? 'target.lookup_timeout' : 'target.lookup_failed', targetEnabled: false })
   })
   it('keeps invalid stored names out of choices and never substitutes another inherited branch', () => {
     const missing = entry('gone', { error: 'merge_target_not_found' })
@@ -86,10 +86,27 @@ describe('check settings branch contract — 0098', () => {
     expect(checkSettingsSummary(node(), { ...saved, settings: null, settingsUnavailable: true })).toEqual(empty)
   })
   it('renders rejected pushes according to recorded local effects and maps only the unknown-target unmerge refusal', () => {
-    expect(checkOperationErrorKey('push_rejected', receipt({ effects: [{ phase: 'merge', status: 'done', sha_after: 'abc' }] }))).toBe('target.push_rejected_kept')
+    expect(checkOperationErrorKey('push_rejected', receipt({ effects: [{ phase: 'merge', status: 'succeeded', sha_after: 'abc' }] }))).toBe('target.push_rejected_kept')
     expect(checkOperationErrorKey('push_rejected', receipt({ effects: [{ phase: 'merge', status: 'pending', sha_after: null }] }))).toBe('target.push_rejected')
-    expect(checkOperationErrorKey('unmerge_unsupported_target')).toBeNull()
+    expect(checkOperationErrorKey('unmerge_unsupported_target')).toBe('target.operation_unknown')
     expect(checkOperationErrorKey('unmerge_target_unknown')).toBe('target.unmerge_unknown')
+  })
+  it.each(['done', 'failed', 'unknown', 'pending', 'skipped'])('does not claim local preservation for %s', status => {
+    expect(checkOperationErrorKey('push_rejected', receipt({ effects: [{ phase: 'merge', status, sha_after: 'abc' }] }))).toBe('target.push_rejected')
+  })
+  it.each([null, '', undefined])('requires a nonempty applied SHA: %s', sha_after => {
+    expect(checkOperationErrorKey('push_rejected', receipt({ effects: [{ phase: 'merge', status: 'succeeded', sha_after }] }))).toBe('target.push_rejected')
+  })
+  it.each([
+    ['merge_conflict', 'merge_conflict'], ['merge_conflict_aborted', 'merge_aborted'], ['target_moved', 'target_check'],
+    ['merge_target_busy', 'target_check'], ['remote_head_unknown', 'remote_unknown'], ['push_result_unknown', 'push_unknown'],
+    ['push_auth_failed', 'push_auth_failed'], ['group_branch_missing', 'group_branch_missing'], ['private_unknown', 'operation_unknown'],
+  ])('explains %s in every locale without raw diagnostics', (code, key) => {
+    expect(checkOperationErrorKey(code)).toBe(`target.${key}`)
+    for (const locale of ['ko', 'en', 'ja'] as const) expect((messages[locale].target as Record<string, string>)[key]).toBeTruthy()
+  })
+  it('keeps a failed lookup disabled even if a stale list is present', () => {
+    expect(checkSettingsView({ ...base, node: node({ merge_target_state: { status: 'failed' } }) }).targetEnabled).toBe(false)
   })
   it('keeps locks and all ko/en/ja labels', () => {
     expect(checkSettingsView({ ...base, node: { ...node(), locked: true } }).reason).toBe('reason.locked')

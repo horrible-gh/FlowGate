@@ -1,10 +1,8 @@
 <template>
-  <div v-if="actions.confirm.visible || actions.reject.visible" class="inspector-gate-actions" :class="{ 'is-failed': failureKey !== null }"
+  <div v-if="actions.confirm.visible" class="inspector-gate-actions" :class="{ 'is-failed': failureKey !== null }"
     role="group" :aria-label="t(k('label'))" data-test="inspector-gate-actions" :data-busy="busy ?? ''">
     <Button v-if="actions.confirm.visible" size="sm" variant="primary" :disabled="!actions.confirm.enabled" :loading="busy === 'confirm'"
       :title="tipOf(actions.confirm.reason)" data-test="gate-confirm" @click="decide('confirm')">{{ t(k('confirm')) }}</Button>
-    <Button v-if="actions.reject.visible" size="sm" variant="danger" :disabled="!actions.reject.enabled" :loading="busy === 'reject'"
-      :title="tipOf(actions.reject.reason)" data-test="gate-reject" @click="decide('reject')">{{ t(k('reject')) }}</Button>
   </div>
 </template>
 <script setup lang="ts">

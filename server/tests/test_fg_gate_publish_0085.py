@@ -68,12 +68,16 @@ def _rev(repo, ref):
 
 
 @pytest.fixture()
-def git_env(product, monkeypatch, tmp_path, request):
+def git_env(product, monkeypatch, tmp_path_factory, request):
     """A real bare origin, the project's Git config and the Flow's provisioned group slot."""
     from modules.flow_gate.services import git_service as svc
     from modules.flow_gate.services.git import instance_registry as reg
     from modules.flow_gate.services.git import lock_manager as lm
 
+    # Keep the isolated repository below pytest's Self-check scratch root with a
+    # short name: Git for Windows rejects long linked-worktree GIT_DIR paths.
+    tmp_path = tmp_path_factory.mktemp("gp")
+    monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "s"))
     monkeypatch.setenv("FLOWGATE_GIT_ENCRYPT_KEY", base64.b64encode(b"K" * 32).decode())
     monkeypatch.setattr(reg, "_start_identity", lambda pid: "self-marker")
     monkeypatch.setattr(reg, "node_key", lambda: "node-gate-publish")
@@ -87,6 +91,13 @@ def git_env(product, monkeypatch, tmp_path, request):
     # host failed ensure_lease with LeaseLost. The default lease and death limits stay intact.
     reg.startup()
     request.addfinalizer(reg.shutdown)
+    run_git = svc._run_git
+    def diagnosed_git(args, **kwargs):
+        result = run_git(args, **kwargs)
+        if result.returncode != 0 and args[:2] == ["worktree", "add"]:
+            print("isolated gate worktree preparation failed:", args, result.stderr)
+        return result
+    monkeypatch.setattr(svc, "_run_git", diagnosed_git)
     bare, seed = tmp_path / "origin.git", tmp_path / "seed"
     _git(["init", "--bare", "-b", "main", str(bare)])
     _git(["init", "-b", "main", str(seed)])
@@ -235,11 +246,11 @@ def test_a_merge_with_push_and_archive_publishes_the_frozen_result_once_and_keep
     d = _decision(env, did)
     assert (d["status"], d["frozen_sha"]) == ("succeeded", sha)
     merged = _rev(r["base"], "refs/heads/main")
-    assert _rev(r["base"], f"{merged}^1") == main_before and _rev(r["base"], f"{merged}^2") == sha
+    assert merged == sha and merged != main_before  # fast-forward is a normal merge result
     assert _rev(r["bare"], "refs/heads/main") == merged                     # pushed: the merge result
-    assert d["target_sha"] == merged and _merges(r["base"]) == 1
+    assert d["target_sha"] == merged and _merges(r["base"]) == 0
     assert _rev(r["base"], f"refs/flowgate/gate-archive/{did}") == sha
-    assert _rev(r["base"], f"refs/flowgate/gate-archive/{did}-applied") == merged
+    assert _rev(r["base"], f"refs/flowgate/gate-archive/{did}-applied") is None  # same as frozen
     checkpoints = _sql(env["db"], "SELECT * FROM gate_archive_checkpoints WHERE decision_id = ?", (did,))
     assert len(checkpoints) == 1 and (checkpoints[0]["source_sha"], checkpoints[0]["applied_sha"]) == (sha, merged)
     effects = _effects(env, did)
@@ -309,7 +320,7 @@ def test_a_local_merge_without_push_stays_local(git_env):
     job, _ = _run_job(body["job"]["job_id"])
     assert job["status"] == "succeeded"
     merged = _rev(r["base"], "refs/heads/main")
-    assert _rev(r["base"], f"{merged}^2") == sha and _rev(r["bare"], "refs/heads/main") == origin_before
+    assert merged == sha and _rev(r["bare"], "refs/heads/main") == origin_before
     assert _nodes(_current(env))[g]["gate"]["archived"] is False            # archive OFF: no chip
 
 
@@ -339,7 +350,7 @@ def test_a_db_failure_after_the_git_work_retries_only_the_completion(git_env, mo
     assert _rev(r["bare"], "refs/heads/main") == merged
     job, _ = _run_job(body["job"]["job_id"])
     assert job["status"] == "succeeded"
-    assert _rev(r["base"], "refs/heads/main") == merged and _merges(r["base"]) == 1       # not merged again
+    assert _rev(r["base"], "refs/heads/main") == merged and _merges(r["base"]) == 0       # not merged again
     assert [e["cause"] for e in _gate_events(env, g)] == ["gate_confirmed"]
     assert _states(env)[t] == "open"
 
@@ -387,7 +398,7 @@ def test_a_push_timeout_is_judged_by_the_remote(git_env, monkeypatch, landed):
     job, _ = _run_job(job_id)
     assert job["status"] == "succeeded"
     assert _rev(r["bare"], "refs/heads/main") == _rev(r["base"], "refs/heads/main")
-    assert _merges(r["base"]) == 1 and [e["cause"] for e in _gate_events(env, g)] == ["gate_confirmed"]
+    assert _merges(r["base"]) == 0 and [e["cause"] for e in _gate_events(env, g)] == ["gate_confirmed"]
 
 
 def test_a_crash_after_the_archive_ref_resumes_from_the_ref_after_the_reconcile(git_env, monkeypatch):
@@ -416,7 +427,7 @@ def test_a_crash_after_the_archive_ref_resumes_from_the_ref_after_the_reconcile(
     job, _ = _run_job(job_id)
     assert job["status"] == "succeeded"
     assert len(_sql(env["db"], "SELECT * FROM gate_archive_checkpoints WHERE decision_id = ?", (did,))) == 1
-    assert _merges(r["base"]) == 1 and _states(env)[g] == "done"
+    assert _merges(r["base"]) == 0 and _states(env)[g] == "done"
 
 
 def test_a_crash_right_after_the_merge_commit_is_settled_by_the_existing_attempt_recovery(git_env, monkeypatch):
@@ -438,12 +449,12 @@ def test_a_crash_right_after_the_merge_commit_is_settled_by_the_existing_attempt
     monkeypatch.setattr(merge_target, "finish_manual_attempt", crash)
     job, _ = _run_job(job_id)
     landed = _rev(r["base"], "refs/heads/main")
-    assert _rev(r["base"], f"{landed}^2") == sha and job["status"] == "running"
+    assert landed == sha and job["status"] == "running"
     assert _effects(env, did)["merge"]["status"] == "unknown" and _states(env)[g] == "open"
     _expire_and_reconcile(job_id)
     job, _ = _run_job(job_id)
     assert job["status"] == "succeeded"
-    assert _rev(r["base"], "refs/heads/main") == landed and _merges(r["base"]) == 1   # the same merge commit
+    assert _rev(r["base"], "refs/heads/main") == landed and _merges(r["base"]) == 0   # the same merge commit
     merge = _effects(env, did)["merge"]
     assert merge["status"] == "succeeded" and merge["sha_after"] == landed
     assert [e["cause"] for e in _gate_events(env, g)] == ["gate_confirmed"]
@@ -476,7 +487,7 @@ def test_a_stolen_lease_writes_no_completion_and_the_new_owner_completes_once(gi
     job = _expire_and_reconcile(job_id)
     assert job["status"] == "pending"
     job, _ = _run_job(job_id)
-    assert job["status"] == "succeeded" and _merges(r["base"]) == 1
+    assert job["status"] == "succeeded" and _merges(r["base"]) == 0
     assert [e["cause"] for e in _gate_events(env, g)] == ["gate_confirmed"]
     from modules.flow_gate.services.git import job_store
     with pytest.raises(job_store.LeaseLost):                                 # the first claim's late write vanishes

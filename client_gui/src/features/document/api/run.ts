@@ -8,15 +8,7 @@
 // is thrown as it is (see documentErrorOf): 409 `run_not_running` (a stopped run takes no decision),
 // `node_not_open`, `node_not_gate`, `run_policy_undecided` (the gate rule is not decided yet) …
 //
-// flowgate.v02.0056 F2-1 — a card's [승인] from the Inspector (O1 0005-TR §4-1):
-//
-//   approve   POST /api/v1/runs/{run_id}/nodes/{node_key}/approval { result_doc_id } -> { run, approval }
-//
-// The node rows also carry `awaiting_approval` / `stage` / `result_doc_id` and the run its pending propagation
-// (O1 / O2 §4-2), each kept only when sent. A refused approval is read by runCardApprovalErrorOf: the code, the
-// status, the server's message as sent (x-locale) and the params a refusal names (the refused document, why,
-// the documents approved before it, the node's current result).
-import { normalizeApiError } from '@shared/apiErrors'
+// v0.2 general cards complete automatically; only gate confirmation is a human decision.
 import { getRequest, postRequest } from '@shared/api'
 
 const API = '/api/v1'
@@ -98,74 +90,6 @@ export async function runGateDecide(runId: string, nodeKey: string, decision: Ru
   return toRunCurrent(response.data?.run)
 }
 
-/** flowgate.v02.0056 F2-1: what a card approval did (O1 0005-TR §4-1 `approval`). */
-export interface RunCardApproval {
-  readonly nodeKey: string
-  /** The card's documents in approval order (the instruction first, the result last). */
-  readonly targetDocIds: readonly string[]
-  readonly approvedDocIds: readonly string[]
-}
-
-/**
- * flowgate.v02.0056 F2-1 — approves a card waiting for its approval; `resultDocId` is the result the screen
- * showed (null: the node's current one). Answers the run after it and what it approved. A refusal is thrown as
- * it is (see runCardApprovalErrorOf).
- */
-export async function runCardApprove(
-  runId: string,
-  nodeKey: string,
-  resultDocId: string | null,
-): Promise<{ readonly run: RunCurrent | null; readonly approval: RunCardApproval }> {
-  const response = await postRequest<Raw>(`${API}/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeKey)}/approval`, {
-    result_doc_id: resultDocId,
-  })
-  const approval = (response.data?.approval && typeof response.data.approval === 'object' ? response.data.approval : {}) as Raw
-  return {
-    run: toRunCurrent(response.data?.run),
-    approval: {
-      nodeKey: text(approval.node_key) ?? nodeKey,
-      targetDocIds: texts(approval.target_doc_ids),
-      approvedDocIds: texts(approval.approved_doc_ids),
-    },
-  }
-}
-
-/** flowgate.v02.0056 F2-1: a refused card approval as the screen reads it. */
-export interface RunCardApprovalError {
-  readonly code: string | null
-  readonly status: number | null
-  /** No answer reached the screen. */
-  readonly network: boolean
-  /** The server's message as it sent it (x-locale), or ''. */
-  readonly message: string
-  /** `document_approval_refused`: the refused document and why (`transition_refused`, a TR2 code …). */
-  readonly docId: string | null
-  readonly reason: string | null
-  readonly detail: string | null
-  /** `document_approval_refused`: the documents approved before the refusal. */
-  readonly approvedDocIds: readonly string[]
-  /** `result_changed`: the node's current result. */
-  readonly resultDocId: string | null
-}
-
-/** What a failed runCardApprove threw: code, status, the server's message and the params it names. */
-export function runCardApprovalErrorOf(error: unknown): RunCardApprovalError {
-  const normalized = normalizeApiError(error)
-  const source = normalized.source as Raw
-  const params = (source.params && typeof source.params === 'object' ? source.params : {}) as Raw
-  return {
-    code: normalized.code,
-    status: normalized.status,
-    network: normalized.network,
-    message: typeof source.message === 'string' ? source.message.trim() : '',
-    docId: text(params.doc_id),
-    reason: text(params.reason),
-    detail: text(params.detail),
-    approvedDocIds: texts(params.approved_doc_ids),
-    resultDocId: text(params.result_doc_id),
-  }
-}
-
 // D0007 §6/7.2: keep the server's gate facts; no client-side success inference.
 export interface RunGateIntent {
   readonly request_id: string
@@ -215,7 +139,7 @@ export interface RunGateState {
   readonly archived: boolean
   readonly recovery_reset_required: boolean
   readonly recovery: RunGateRecovery | null
-  readonly job: { readonly job_id: string; readonly status: string; readonly phase: string | null; readonly last_error_code: string | null } | null
+  readonly job: { readonly job_id: string; readonly status: string; readonly phase: string | null; readonly phase_note?: string | null; readonly last_error_code: string | null } | null
 }
 export function toRunGateState(raw: unknown): RunGateState | null {
   if (!raw || typeof raw !== 'object') return null

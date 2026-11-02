@@ -135,11 +135,6 @@ export interface FlowRunControl {
   resume(flowId: string): Promise<boolean>
   /** 중지 (T#7 Stop) of a running or paused run. Resolves whether the server took it (stopping, or idle at once). */
   stop(flowId: string): Promise<boolean>
-  /**
-   * flowgate.v02.0056 F2-1: approves the card `nodeKey` of the Flow's run; `resultDocId` is the result the Canvas
-   * showed. Resolves whether it was approved. Ignored while another approval of the Flow is answered.
-   */
-  approve(flowId: string, nodeKey: string, resultDocId: string | null): Promise<boolean>
   /** flowgate.v02.0061 T#15: the source can hold / release cards. */
   readonly canHold: boolean
   /** flowgate.v02.0061 T#15: the source has the Graph Time Machine. */
@@ -322,36 +317,6 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     return control(flowId, 'stop', (projectId, runId) => source.stopRun!(projectId, runId))
   }
 
-  async function approve(flowId: string, nodeKey: string, resultDocId: string | null): Promise<boolean> {
-    const projectId = deps.projectId()
-    if (!available || !source.approveNode || projectId === null) return false
-    const state = stateOf(flowId)
-    if (state.approving !== null) return false
-    state.approving = nodeKey
-    state.error = null
-    reads.delete(flowId)
-    let ok = false
-    try {
-      // The run the card belongs to: the Flow's one run (read when this tab does not know it).
-      const runId = await runIdOf(projectId, flowId, state)
-      if (runId === null) throw Object.assign(new Error(''), { code: 'run_not_active' })
-      const next = await source.approveNode(projectId, runId, nodeKey, resultDocId)
-      if (deps.isOpen(projectId, flowId) && !state.action) {
-        state.run = next
-        state.readState = 'read'
-      }
-      ok = true
-    } catch (error) {
-      if (deps.isOpen(projectId, flowId)) state.error = failureOf('approval', error, ++failures)
-    } finally {
-      state.approving = null
-    }
-    if (!deps.isOpen(projectId, flowId)) return false
-    if (!ok) read(flowId)
-    deps.refresh(flowId)
-    return ok
-  }
-
   async function hold(flowId: string, nodeKey: string, on: boolean, answered?: (held: boolean) => void): Promise<boolean | null> {
     const projectId = deps.projectId()
     if (!source.writeCardHold || projectId === null) return null
@@ -412,14 +377,13 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
 
   return {
     available,
-    canApprove: available && !!source.approveNode,
+    canApprove: false,
     canPause: available && !!source.pauseRun,
     read,
     run,
     pause,
     resume,
     stop,
-    approve,
     canHold: !!source.writeCardHold,
     canTimeMachine: available && !!source.timeMachine,
     hold,

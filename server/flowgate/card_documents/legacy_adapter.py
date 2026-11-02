@@ -4,8 +4,9 @@ Everything this package takes from ``modules.flow_gate`` goes through here, call
 changed: the v0.1 document rows, numbering (``reserve_document``), the document service
 (``create_document`` / ``delete_document``, with their ``doc_created`` / ``doc_deleted`` events),
 the document file path, the empty work plan body, the Graph's document liveness / supersede
-rules (so a card shows a document exactly as the Canvas does) and the v0.1 approval's empty body rule
-(``approvable_body``, the one judgement behind ``lines.has_body``, flowgate.v02.0056 T#2).
+rules (so a card shows a document exactly as the Canvas does) and the empty body rule (``approvable_body``, the one
+judgement behind ``lines.has_body``, flowgate.v02.0056 T#2). flowgate.v02.0119 T#4 (T-3): that rule is the v0.2
+completion's body gate (``card_completion.gates``), no longer the v0.1 approval's own judgement asked here.
 
 flowgate.v02.0056 T#3: the review history counts of a line's document as the v0.1 document read carries the
 history (``document_reviews`` rows, ``rejection_history`` items), the Graph API envelope / RBAC / Flow load,
@@ -67,15 +68,11 @@ def document(doc_id: str) -> Optional[dict]:
 
 
 def approvable_body(doc: dict) -> bool:
-    """The v0.1 approval would not refuse ``doc`` as empty (``_require_document_body_for_approval``): its
-    file is readable and holds a non-blank body after the front matter."""
-    from modules.flow_gate.workflow import pipeline_service   # noqa: PLC0415 — v0.1 stack on use
+    """The v0.2 completion would not refuse ``doc`` as empty (flowgate.v02.0119 T#4, T-3: ``card_completion.gates``, the
+    completion's body gate): its file is readable and holds a non-blank body after the front matter."""
+    from flowgate.card_completion import gates   # noqa: PLC0415 — card_completion imports this package
 
-    try:
-        pipeline_service._require_document_body_for_approval(doc)
-    except pipeline_service.TransitionError:
-        return False
-    return True
+    return gates.body_complete(doc)
 
 
 def line_body_facts(doc: Optional[dict]) -> tuple[bool, Optional[str]]:
@@ -83,7 +80,7 @@ def line_body_facts(doc: Optional[dict]) -> tuple[bool, Optional[str]]:
     if doc is None:
         return False, None
     from modules.flow_gate.storage.body import body_read_state
-    from modules.flow_gate.workflow import pipeline_service
+    from flowgate.card_completion import gates   # noqa: PLC0415 — T-3: the completion's body gate
 
     try:
         state, text = body_read_state(doc)
@@ -92,12 +89,11 @@ def line_body_facts(doc: Optional[dict]) -> tuple[bool, Optional[str]]:
         return False, "read_error"
     # These types have always bypassed the file/body approval requirement.
     # Preserve has_body while exposing their independently measured body state.
-    kind = str(doc.get("type_code") or "").upper()
-    if kind in pipeline_service.AUTO_COMPLETE_TYPES or kind in pipeline_service.FILELESS_APPROVABLE_TYPES:
+    if gates.fileless(doc):
         return approvable_body(doc), state
     if state != "readable":
         return False, state
-    return pipeline_service.approvable_text(doc, text), state
+    return gates.text_complete(doc, text), state
 
 
 def supersede(old_id: str, new_id: str) -> None:

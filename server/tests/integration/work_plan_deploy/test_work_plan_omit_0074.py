@@ -28,7 +28,7 @@ import _flowgate_test_imports  # noqa: F401
 from test_fg_card_settings import AI, FA, _h, _sql, _start, edge, put_draft
 from test_fg_card_settings_review import _admin_and_reviewer, _review_status
 from test_fg_instruction_stage_0056 import (  # noqa: F401 — fixtures used by name
-    _one_job, _row, card_approval_port, db_path, decided, env,
+    _one_job, _row, card_outputs_port, db_path, decided, env,
 )
 from test_work_plan_deploy_0074 import (
     _attach, _chain, _doc_row, _draft, _edge_input, _file, _flow, _has_body, _line_doc, _node_input, _source,

@@ -1089,7 +1089,7 @@ def _judge_local_target(basis: CheckTargetBasis, name: str, sha: str, incoming_o
     if is_base:
         _raise_if_base_slot_unavailable(basis, own_merge_id)
     else:
-        verdict, details = inspect_workspace(basis.project_id, name)
+        verdict, details = _inspect_traced(basis.project_id, name)
         # Only a ``busy`` workspace (one claim, its marker naming the same attempt and owner) can be the caller's
         # own resumed attempt; a mismatch -- another owner's marker, several claims -- stays refused whatever id.
         own = verdict == "busy" and own_merge_id is not None and str(details.get("merge_id")) == str(own_merge_id)
@@ -1165,6 +1165,144 @@ def _verdict(basis: CheckTargetBasis, name: str) -> dict:
     return _entry(name, checked=True, unmerge_supported=judged["unmerge_supported"], warnings=judged["warnings"])
 
 
+# ── flowgate.v02.0119 T#1 (T-0, NR §2.6 (c)): one diagnostic line for a lookup that did not list ─────────────────
+# Diagnostics only: the trace lives in a context variable of one ``check_target_view`` call, is never part of its
+# response or of the cached snapshot, and is written as one WARNING line only when the view ends ``failed`` /
+# ``timeout`` (or ``git_unavailable``). It says which shared read, which name and which stage the budget went to, so
+# H1 (timeout, H1-b: ``inspect_workspace``), H2 (a shared read failed) and H3 (one name's unclassified error) can be
+# told apart from the server log -- including the GitServiceError path of ``_compute_snapshot``, which logs nothing
+# else, and the judgement ``_entry_of`` adds for a stored target a cached / joined snapshot did not hold.
+CHECK_TRACE_SLOWEST = 5
+_check_trace: contextvars.ContextVar[Optional["_CheckTrace"]] = contextvars.ContextVar(
+    "flowgate_check_target_trace", default=None)
+
+
+def _ms(seconds: float) -> int:
+    return int(round(seconds * 1000))
+
+
+def _error_label(exc: BaseException) -> str:
+    if isinstance(exc, GitServiceError):
+        details = exc.details if isinstance(exc.details, dict) else {}
+        reason = details.get("reason")
+        return f"GitServiceError:{exc.code}" + (f"/{reason}" if reason else "")
+    return type(exc).__name__
+
+
+class _CheckTrace:
+    """Where one ``check_target_view`` spent its budget (shared reads run in pool threads: guarded by ``lock``)."""
+
+    def __init__(self) -> None:
+        self.started = time.monotonic()
+        self.lock = threading.Lock()
+        self.source = "computed"          # computed | cache | joined (another request's computation)
+        self.stage = "basis"              # basis | flight_wait | shared_reads | names | extra | entries
+        self.basis_ms: Optional[int] = None
+        self.shared: dict[str, int] = {}  # shared read -> ms (checkout, refs, slots, floor, containing, dirty)
+        self.failed_read: Optional[str] = None
+        self.failed_name: Optional[str] = None
+        self.error: Optional[str] = None
+        self.listed: Optional[int] = None
+        self.names: list[tuple[int, str]] = []   # (ms, name) of each listed name judged
+        # (ms, name) of each name ``_entry_of`` judged on its own (a stored target / work base the snapshot -- often
+        # a cached or joined one -- did not hold): the stage ``entries`` time, which ``names`` / ``extra`` never see
+        self.entries: list[tuple[int, str]] = []
+        self.inspect_calls = 0
+        self.inspect_ms = 0.0
+        self.extra_ms = 0.0
+
+
+def _trace_stage(trace: Optional[_CheckTrace], stage: str) -> None:
+    if trace is not None:
+        trace.stage = stage
+
+
+def _trace_error(trace: Optional[_CheckTrace], exc: BaseException) -> None:
+    if trace is not None and trace.error is None:
+        trace.error = _error_label(exc)
+
+
+def _traced_read(label: str, fn, *args):
+    """A shared read of the snapshot, timed into the view's trace (none: called as is)."""
+    trace = _check_trace.get()
+    if trace is None:
+        return fn(*args)
+    started = time.monotonic()
+    try:
+        return fn(*args)
+    except BaseException as exc:
+        with trace.lock:
+            if trace.failed_read is None:
+                trace.failed_read = f"{label}:{_error_label(exc)}"
+        raise
+    finally:
+        with trace.lock:
+            trace.shared[label] = _ms(time.monotonic() - started)
+
+
+def _inspect_traced(project_id: str, branch: str) -> tuple[str, dict]:
+    """``inspect_workspace`` as a judgement calls it; inside a view its calls and time are counted (H1-b)."""
+    trace = _check_trace.get()
+    if trace is None:
+        return inspect_workspace(project_id, branch)
+    started = time.monotonic()
+    try:
+        return inspect_workspace(project_id, branch)
+    finally:
+        elapsed = time.monotonic() - started
+        with trace.lock:
+            trace.inspect_calls += 1
+            trace.inspect_ms += elapsed
+
+
+def _traced_name(trace: Optional[_CheckTrace], name: str, judge, *, kind: str):
+    """One name's judgement, timed into the view's trace; the name that raised is kept (H3: an unclassified error of
+    one name). ``kind``: ``listed`` (a listed local branch of the snapshot), ``extra`` (the snapshot's work base /
+    stored target outside the list) or ``entry`` (``_entry_of``'s own judgement of a name the snapshot lacked)."""
+    if trace is None:
+        return judge()
+    started = time.monotonic()
+    try:
+        return judge()
+    except BaseException:
+        if trace.failed_name is None:
+            trace.failed_name = name
+        raise
+    finally:
+        elapsed = time.monotonic() - started
+        if kind == "listed":
+            trace.names.append((_ms(elapsed), name))
+        elif kind == "entry":
+            trace.entries.append((_ms(elapsed), name))
+        else:
+            trace.extra_ms += elapsed
+
+
+def _log_check_trace(project_id: Optional[str], group_id: str, refresh: bool, state: dict,
+                     trace: _CheckTrace) -> None:
+    """The one line of a failed / timed-out view (never raises: diagnostics do not change the response)."""
+    try:
+        with trace.lock:
+            shared = ",".join(f"{k}:{v}" for k, v in sorted(trace.shared.items())) or "-"
+            inspect_calls, inspect_ms = trace.inspect_calls, trace.inspect_ms
+        names = list(trace.names)
+        entries = list(trace.entries)
+        slowest = ",".join(f"{n}:{ms}" for ms, n in sorted(names, key=lambda x: (-x[0], x[1]))[:CHECK_TRACE_SLOWEST])
+        entries_ms = ",".join(f"{n}:{ms}" for ms, n in entries)
+        _log.warning(
+            "check target lookup %s group=%s project=%s code=%s reason=%s source=%s stage=%s error=%s "
+            "failed_read=%s failed_name=%s refresh=%s total_ms=%d budget_ms=%d basis_ms=%s shared_ms=%s "
+            "names=%d/%s judge_ms=%d inspect_workspace=%d/%dms extra_ms=%d slowest_ms=%s entries=%d entries_ms=%s",
+            state.get("status"), group_id, project_id, state.get("code"), state.get("reason"), trace.source,
+            trace.stage, trace.error or "-", trace.failed_read or "-", trace.failed_name or "-", bool(refresh),
+            _ms(time.monotonic() - trace.started), _ms(CHECK_TARGET_BUDGET_SEC),
+            "-" if trace.basis_ms is None else trace.basis_ms, shared, len(names),
+            "-" if trace.listed is None else trace.listed, sum(ms for ms, _n in names), inspect_calls,
+            _ms(inspect_ms), _ms(trace.extra_ms), slowest or "-", len(entries), entries_ms or "-")
+    except Exception:  # noqa: BLE001 — the trace is diagnostics only
+        _log.debug("check target trace line failed for %s", group_id, exc_info=True)
+
+
 def _failed_snapshot(status: str, code: str, reason: Optional[str] = None, **extra) -> dict:
     return {"status": status, "code": code, "reason": reason, "options": [], "verdicts": {}, **extra}
 
@@ -1223,10 +1361,13 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
     common = {"default_branch": basis.work_base_ref, "basis": basis}
 
     def floor_and_containing() -> tuple:
-        floor = check_scope_floor(basis)          # read only; None: no verified floor (no tip stands in)
-        return floor, (_branches_containing(basis.base_root, floor) if floor else None)
+        # read only; None: no verified floor (no tip stands in)
+        floor = _traced_read("floor", check_scope_floor, basis)
+        return floor, (_traced_read("containing", _branches_containing, basis.base_root, floor) if floor else None)
 
+    trace = _check_trace.get()                    # 0119 T#1: diagnostics only (None outside a view)
     try:
+        _trace_stage(trace, "shared_reads")
         if _spent(budget):
             return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
         # The shared reads run side by side under the one budget (each thread carries it) and are all joined
@@ -1234,13 +1375,14 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="check-target") as pool:
             def run(fn, *args):
                 return pool.submit(contextvars.copy_context().run, fn, *args)
-            checkout = run(raise_if_base_checkout_off_branch, basis.project_id, basis.base_branch)
-            listed = run(local_branch_refs, basis.base_root)
+            checkout = run(_traced_read, "checkout", raise_if_base_checkout_off_branch, basis.project_id,
+                           basis.base_branch)
+            listed = run(_traced_read, "refs", local_branch_refs, basis.base_root)
             history = run(floor_and_containing)
-            dirty = run(_base_dirty, basis.base_root)
+            dirty = run(_traced_read, "dirty", _base_dirty, basis.base_root)
             # The ledger ``branches.internal_slot_owner`` reads (registered group worktrees), read once.
             slots = {row.get("branch"): row.get("group_id")
-                     for row in _gs.db_git.list_states_of_project(basis.project_id)}
+                     for row in _traced_read("slots", _gs.db_git.list_states_of_project, basis.project_id)}
             checkout.result()
             refs = listed.result()
             floor, contained = history.result()
@@ -1255,23 +1397,30 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
             return (0 if name in contained else 1), None
 
         verdicts: dict[str, dict] = {}
+        _trace_stage(trace, "names")
+        if trace is not None:
+            trace.listed = len(refs)
         for name in sorted(refs):
-            verdicts[name] = _listed_verdict(judged, name, refs[name], slots, incoming_of)
+            verdicts[name] = _traced_name(
+                trace, name, lambda: _listed_verdict(judged, name, refs[name], slots, incoming_of), kind="listed")
             if _spent(budget):
                 return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
+        _trace_stage(trace, "extra")
         for name in (basis.work_base_ref, *extra):   # a work base / stored target that is no listed local branch
             if name and name not in verdicts:
-                verdicts[name] = _verdict(judged, name)
+                verdicts[name] = _traced_name(trace, name, lambda: _verdict(judged, name), kind="extra")
         if _spent(budget):
             return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
     except GitServiceError as exc:
+        _trace_error(trace, exc)                  # 0119 T#1: this path logs nothing else (NR §2.4)
         if _spent(budget):
             return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
         if exc.code == "base_checkout_branch_mismatch":
             return _failed_snapshot(CHECK_STATUS_GIT_UNAVAILABLE, exc.code, **common)
         reason = (exc.details or {}).get("reason") if exc.code == CHECK_GIT_UNAVAILABLE else exc.code
         return _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, reason, **common)
-    except Exception:  # noqa: BLE001 — a basis read failed: no partial list
+    except Exception as exc:  # noqa: BLE001 — a basis read failed: no partial list
+        _trace_error(trace, exc)
         _log.warning("check target candidates failed for %s", basis.group_id, exc_info=True)
         if _spent(budget):
             return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
@@ -1285,9 +1434,13 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
                     selected: Optional[str] = None) -> dict:
     """The (cached) snapshot of one group's candidates, read under the view's ``budget``: the basis, the shared
     computation and the wait for another request's computation all spend the same deadline."""
+    trace = _check_trace.get()                    # 0119 T#1: diagnostics only
+    _trace_stage(trace, "basis")
+    started = time.monotonic()
     try:
         basis = check_target_basis(project_id, group_id, require_slot=False)
     except GitServiceError as exc:
+        _trace_error(trace, exc)
         default = None
         try:
             from modules.flow_gate.services import git_service as _gs
@@ -1298,6 +1451,9 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
             return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, default_branch=default, basis=None)
         return _failed_snapshot(CHECK_STATUS_GIT_UNAVAILABLE, exc.code, (exc.details or {}).get("reason"),
                                 default_branch=default, basis=None)
+    finally:
+        if trace is not None:
+            trace.basis_ms = _ms(time.monotonic() - started)
     key = (project_id, group_id)
     fingerprint = (basis.base_branch, basis.work_base_ref, basis.source_branch, basis.slot_registered,
                    str(basis.base_root))
@@ -1306,6 +1462,8 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
         hit = _check_cache.get(key)
         if (not refresh and hit is not None and hit["fingerprint"] == fingerprint
                 and time.monotonic() - hit["at"] < CHECK_TARGET_CACHE_SEC):
+            if trace is not None:
+                trace.source = "cache"
             return hit
         flight_key = (key, epoch, fingerprint)
         flight = None if refresh else _check_inflight.get(flight_key)
@@ -1316,6 +1474,9 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
     if not owner:
         # Joining another request's computation spends this request's own deadline; one that does not end inside
         # it is this request's timeout (never a second computation past the budget).
+        if trace is not None:
+            trace.source = "joined"
+        _trace_stage(trace, "flight_wait")
         flight.done.wait(max(budget.remaining(), 0.0))
         if flight.result is not None:
             return flight.result
@@ -1324,7 +1485,8 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
     snapshot: Optional[dict] = None
     try:
         snapshot = _compute_snapshot(basis, budget, (selected,) if selected else ())
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _trace_error(trace, exc)
         _log.warning("check target snapshot failed for %s", group_id, exc_info=True)
         snapshot = _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, "probe_failed",
                                     default_branch=basis.work_base_ref, basis=None)
@@ -1360,9 +1522,11 @@ def _entry_of(snapshot: dict, name: Optional[str], budget) -> dict:
         return {**found, "warnings": list(found["warnings"])}
     if _spent(budget):
         raise _BudgetSpent()
+    trace = _check_trace.get()                    # 0119 T#1: this judgement's name / time / error (diagnostics only)
     try:
-        found = _verdict(snapshot["basis"], name)
-    except Exception:  # noqa: BLE001 — could not be judged now; the list keeps its own status
+        found = _traced_name(trace, name, lambda: _verdict(snapshot["basis"], name), kind="entry")
+    except Exception as exc:  # noqa: BLE001 — could not be judged now; the list keeps its own status
+        _trace_error(trace, exc)
         if _spent(budget):
             raise _BudgetSpent() from None
         _log.warning("check target judgement of %r failed", name, exc_info=True)
@@ -1395,23 +1559,34 @@ def check_target_view(project_id: Optional[str], group_id: str, selected: Option
     never read this (they call ``judge_check_target``)."""
     from .command import git_budget
 
-    with git_budget(CHECK_TARGET_BUDGET_SEC) as budget:
-        snapshot = _check_snapshot(project_id, group_id, refresh, budget, selected)
-        default_branch = snapshot.get("default_branch")
-        try:
-            default = _entry_of(snapshot, default_branch, budget) if default_branch else _entry(None, checked=True)
-            current = dict(default) if selected is None else _entry_of(snapshot, selected, budget)
-        except _BudgetSpent:
-            snapshot = _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT,
-                                        default_branch=default_branch, basis=None)
-            default = _entry(default_branch, checked=False) if default_branch else _entry(None, checked=True)
-            current = dict(default) if selected is None else _entry(selected, checked=False)
+    trace = _CheckTrace()                         # 0119 T#1: the failed / timed-out view's one diagnostic line
+    token = _check_trace.set(trace)
+    try:
+        with git_budget(CHECK_TARGET_BUDGET_SEC) as budget:
+            snapshot = _check_snapshot(project_id, group_id, refresh, budget, selected)
+            default_branch = snapshot.get("default_branch")
+            if snapshot["status"] in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY):
+                _trace_stage(trace, "entries")
+            try:
+                default = _entry_of(snapshot, default_branch, budget) if default_branch else _entry(None, checked=True)
+                current = dict(default) if selected is None else _entry_of(snapshot, selected, budget)
+            except _BudgetSpent:
+                trace.error = trace.error or "budget_spent"
+                snapshot = _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT,
+                                            default_branch=default_branch, basis=None)
+                default = _entry(default_branch, checked=False) if default_branch else _entry(None, checked=True)
+                current = dict(default) if selected is None else _entry(selected, checked=False)
+    finally:
+        _check_trace.reset(token)
     current["inherited"] = selected is None
+    state = {"status": snapshot["status"], "code": snapshot["code"], "reason": snapshot["reason"],
+             "current": current, "default": default}
+    if state["status"] not in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY):
+        _log_check_trace(project_id, group_id, refresh, state, trace)
     return {
         "merge_target_options": list(snapshot["options"]),
         "default_target_branch": default_branch,
-        "merge_target_state": {"status": snapshot["status"], "code": snapshot["code"], "reason": snapshot["reason"],
-                               "current": current, "default": default},
+        "merge_target_state": state,
     }
 
 

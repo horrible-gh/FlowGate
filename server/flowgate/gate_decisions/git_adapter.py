@@ -6,7 +6,7 @@ root ``wf_done`` premise, its absorb commit, its slot cleanup or its push rollba
 - the slot and its guards are finalize's (``_finalize_context``: an enabled Git integration and a registered group
   worktree; ``guard_base_free``, ``raise_if_base_checkout_off_branch``, the tracked-dirty refusal of the base checkout);
 - a merge is finalize's attempt record (``merge_target.open_attempt`` before any merge work, ``record_merge_inputs``,
-  ``git merge --no-ff`` with the FlowGate identity and the configured author, the landed-merge check of a failed
+  ``git merge --ff`` (fast-forward allowed) with the FlowGate identity and the configured author, the landed-merge check of a failed
   command, the conflict session with its EOL separation and rerere checkpoint). The attempt is opened as a manual
   merge (``origin=manual_merge``, action ``merge_only``): a gate is no group completion, so the reviewed end of its
   conflict keeps the group's slot and puts the ledger back to ``none`` exactly as a manual merge does, and the attempt
@@ -285,6 +285,12 @@ def _session_rows(slot: Slot, decision_id: str, job_id: str) -> list[dict]:
     return out
 
 
+def _fast_forward_landed(root: Path, pre_head: Optional[str], source: Optional[str]) -> bool:
+    """A v0.2 merge may fast-forward: prove its exact recorded result, never just a moved tip."""
+    return bool(pre_head and source and pre_head != source and _gs()._rev_parse(root, "HEAD") == source
+                and not _gs()._merge_in_progress(root) and is_ancestor(root, pre_head, source) is True)
+
+
 def merge_state(slot: Slot, decision_id: str, job_id: str) -> Optional[dict]:
     """What an earlier claim's merge attempt left (under the target's lock): None = nothing (run the merge), else
     ``{"outcome": merged | conflict | conflict_closed | unsettled, ...}``. An interrupted attempt of this job is settled
@@ -298,7 +304,19 @@ def merge_state(slot: Slot, decision_id: str, job_id: str) -> Optional[dict]:
             if mt.attempt_phase(session) == mt.PHASE_CONFLICT:
                 files = [row["path"] for row in gs.db_git.session_files(merge_id)]
                 return {"outcome": CONFLICT, "merge_id": merge_id, "files": files}
-            verdict = mt.recover_interrupted_attempt(session, "gate_publish_resume")
+            # Shared recovery recognizes two-parent merges. Reconcile this v0.2 job's
+            # exact fast-forward separately, under the same target lock and owner check.
+            inputs = context.get(mt.MERGE_INPUTS_KEY) or {}
+            ctx = mt.resolve_session_target(session)
+            if (context.get("gate_allow_fast_forward") and ctx.root is not None
+                    and mt.workspace_ownership(ctx) == mt.OWN_OWNED
+                    and _fast_forward_landed(ctx.root, inputs.get("pre_head"), inputs.get("source_head"))):
+                sha = inputs["source_head"]
+                mt.finish_manual_attempt(ctx, merge_commit=sha[:7], merge_commit_sha=sha,
+                                         pushed=False, recovered=True)
+                verdict = mt.ATTEMPT_COMPLETED
+            else:
+                verdict = mt.recover_interrupted_attempt(session, "gate_publish_resume")
             if verdict == mt.ATTEMPT_INTERRUPTED:
                 return None
             if verdict != mt.ATTEMPT_COMPLETED:
@@ -369,7 +387,9 @@ def validate_merge_target(slot: Slot, decision: dict, job_id: str) -> None:
             from modules.flow_gate.services.git.finalize import _merge_commit_landed
             landed = (inputs.get("pre_head") == accepted and
                       inputs.get("source_head") == decision.get("frozen_sha") and ctx.root is not None and
-                      _merge_commit_landed(ctx.root, accepted, inputs["source_head"]))
+                      (_merge_commit_landed(ctx.root, accepted, inputs["source_head"]) or
+                        (context.get("gate_allow_fast_forward") and
+                         _fast_forward_landed(ctx.root, accepted, inputs["source_head"]))))
         if not landed:
             refuse("target_moved")
         evidence["changed"] = True
@@ -425,7 +445,7 @@ def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen:
     from flowgate.gate_decisions import repository as decisions
     saved = decisions.get(decision_id) or {}
     basis = (saved.get("settings") or {}).get("target_basis")
-    additions = {CONTEXT_KEY: decision_id}
+    additions = {CONTEXT_KEY: decision_id, "gate_allow_fast_forward": True}
     if basis:
         rec = mt.target_record(gs.db_git.get_session(attempt.merge_id)) or {}
         additions[mt.TARGET_RECORD_KEY] = {**rec, "project_base_branch": basis["project_base_branch"],
@@ -460,7 +480,7 @@ def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen:
         on_started({"merge_id": attempt.merge_id, "pre_head": pre_head})
         proc = gs._run_git(
             [*gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "-c", "rerere.enabled=false",
-             "-c", "rerere.autoupdate=false", "merge", "--no-ff", "-m",
+             "-c", "rerere.autoupdate=false", "merge", "--ff", "-m",
              _merge_commit_subject(slot.group_branch, target_branch), frozen],
             cwd=root, author_env=_author_env_from_cfg(slot.cfg))
         landed = proc.returncode == 0
@@ -468,7 +488,8 @@ def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen:
         if not landed:
             listed = gs._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=root)
             files = [line.strip() for line in (listed.stdout or "").splitlines() if line.strip()]
-            if not files and _merge_commit_landed(root, pre_head, frozen):
+            if not files and (_merge_commit_landed(root, pre_head, frozen) or
+                              _fast_forward_landed(root, pre_head, frozen)):
                 if gs._rev_parse(root, "MERGE_HEAD"):
                     gs._run_git(["merge", "--quit"], cwd=root)
                 landed = True

@@ -81,28 +81,30 @@ def test_e18_the_same_submission_saved_twice_is_judged_once(env, decided):
     assert len([1 for _r, p in events(env, "stage_assigned") if p["stage"] == "result"]) == 1
 
 
-def test_an_instruction_whose_automatic_approval_is_refused_starts_the_result_stage_and_the_result_waits(
+def test_an_instruction_whose_automatic_approval_is_refused_stays_in_its_stage_until_the_retry_approves_it(
         env, decided, monkeypatch, starts):
-    """E-25 / L-2 §2.7.3: the refusal is B-1 ``approval_refused`` (this submission's mark), the result stage still starts;
-    the person's result is then ``instruction_not_approved`` (B-1 once) and nothing is approved."""
-    from flowgate.card_approval import legacy_adapter as approvals
+    """E-25 / L-2 §2.7.3, revised by flowgate.v02.0119 T#3 / T#4 (T-2 / T-3): the refusal is B-1 ``approval_refused``
+    (this submission's mark) and the card stays in its instruction stage — a system error, no result stage behind an
+    unapproved instruction (it was left to a card approval that no longer exists). The instruction's approval is the
+    v0.2 completion's own (``card_completion.instruction``, by the system); once the cause is gone the next run read
+    retries it and the result stage opens."""
+    from flowgate.card_completion import instruction as card_instruction
 
     key = _person_card(env)
-    real = approvals.approve_document
-    monkeypatch.setattr(approvals, "approve_document",
+    real = card_instruction.approve
+    monkeypatch.setattr(card_instruction, "approve",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("gate refused")))
     instruction = save_instruction(env, key)
-    monkeypatch.setattr(approvals, "approve_document", real)
     assert [(d, r) for d, r, _m in b1(env)] == [(instruction, "approval_refused")]
     assert b1(env)[0][2] == {"doc_id": instruction, "revision_no": 0, "rejection_count": 0}
     assert one(env, key, "instruction_review", 1)["verdict"] == "auto_approved"
-    assert one(env, key, "result")["actor"] == "person"
-    report = write_line(env, key, "report", "## 결과\n\n본문\n")["doc_id"]
-    assert [(d, r) for d, r, _m in b1(env)][1:] == [(report, "instruction_not_approved")]
-    assert one(env, key, "result_review", 1) is None
-    assert _review_status(report) != "approved" and node_run(env, key)["status"] == "review"
-    write_line(env, key, "report", "again", expect=409)                      # the line holds its document
-    assert len(b1(env)) == 2 and starts == []
+    assert one(env, key, "result") is None and node_run(env, key)["stage"] == "instruction"
+    assert _review_status(instruction) != "approved"
+    monkeypatch.setattr(card_instruction, "approve", real)
+    res = env["client"].get(f"/api/v1/flows/{FA}/runs/current", headers={"Authorization": "Bearer user:u_kim"})
+    assert res.status_code == 200, res.text                                 # the run read's reconciliation retries it
+    assert _review_status(instruction) == "approved" and node_run(env, key)["stage"] == "result"
+    assert one(env, key, "result")["actor"] == "person" and starts == []
 
 
 # ── TEST and PLAN cards (L-2 §1.1, §2.5.1, G-10 ~ G-14) ──────────────────────

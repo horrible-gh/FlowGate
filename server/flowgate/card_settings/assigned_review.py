@@ -87,6 +87,15 @@ def approval_waits_for(run_id: str, key: str, attempt_id: Optional[str], submiss
     return False
 
 
+def approval_wait_reasons_for(run_id: str, key: str, attempt_id: Optional[str], submission: Optional[dict],
+                              stage: str) -> list[str]:
+    """flowgate.v02.0119 T#3 (T-2): the B-1 reasons recorded for this submission (its mark) and stage, oldest first."""
+    if not submission:
+        return []
+    return [str(row["reason"]) for row in legacy.approval_wait_rows(run_id, key, attempt_id)
+            if row.get("submission_mark") == submission and row.get("stage", "result") == stage and row.get("reason")]
+
+
 def record_once(flow_id: str, run_id: str, key: str, attempt_id: Optional[str], doc_id: Optional[str],
                 reason: str, submission: Optional[dict], stage: str = "result") -> None:
     """B-1 with its submission mark, once per submission and reason."""
@@ -216,10 +225,118 @@ def _review_not_started(flow_id: str, a: dict, doc: Optional[dict]) -> None:
             a["run_id"], a["node_key"], "review_not_started:" + str(a.get("fail_cause") or "refused")))
 
 
+# ── a review start that failed: a system error, retried (flowgate.v02.0119 T#3, T-2 rework) ──
+
+REVIEW_RETRY = "review_retry"
+
+
+def _setting_unreadable(a: dict) -> bool:
+    return a["actor"] == sa.WAIT_SETUP and a.get("actor_reason") == sa.SETTING_UNREADABLE
+
+
+def _retryable(a: Optional[dict]) -> bool:
+    """A review assignment whose automatic review did not start: an AI review whose start failed, or a wait on its
+    setting that could not be read (still waiting)."""
+    if not a or a["stage"] not in sa.REVIEW_STAGES:
+        return False
+    if a["actor"] == sa.AI:
+        return a["stage_state"] == sa.FAILED
+    return _setting_unreadable(a) and a["stage_state"] == sa.WAITING
+
+
+def review_start_tries(a: dict) -> int:
+    """How many times the automatic review of ``a``'s submission (its basis) was tried in its stage and did not start:
+    its review assignments that failed and those that waited on a setting that could not be read. Each try is an
+    assignment of its own (a retry opens the next ``seq``), so the count is the rows themselves, apart from the B-1
+    records (``record_once`` keeps one per submission and reason, which counts no try)."""
+    basis = sa.basis_of(a)
+    return sum(1 for r in store.for_node(a["run_id"], a["node_key"], a["attempt_id"])
+               if r["stage"] == a["stage"] and sa.basis_of(r) == basis
+               and (r["stage_state"] == sa.FAILED or _setting_unreadable(r)))
+
+
+def review_retry_due(a: dict) -> bool:
+    """May the review of ``a``'s submission be tried again: no needs_intervention reason recorded for that submission
+    (its mark and stage) and fewer than ``SYSTEM_ERROR_RETRY_LIMIT`` tries made."""
+    from flowgate.card_intervention import reasons as intervention  # noqa: PLC0415
+
+    recorded = approval_wait_reasons_for(a["run_id"], a["node_key"], a["attempt_id"], sa.basis_of(a), _b1_stage(a))
+    if any(not intervention.is_system_error(r) for r in recorded):
+        return False
+    return review_start_tries(a) < intervention.SYSTEM_ERROR_RETRY_LIMIT
+
+
+def _stage_holds(a: dict, row: Optional[dict], doc: Optional[dict]) -> bool:
+    """The node still waits on ``a``'s submission: in review with it as its result (an instruction: open in its
+    instruction stage with it as its instruction), not approved."""
+    if row is None or not doc or doc["doc_id"] != a.get("basis_doc_id") or doc.get("doc_review_status") in APPROVED:
+        return False
+    if a["stage"] == sa.RESULT_REVIEW:
+        return row["status"] == "review" and row.get("result_doc_id") == doc["doc_id"]
+    return (row["status"] == "open" and row.get("stage") == sa.INSTRUCTION
+            and row.get("instruction_doc_id") == doc["doc_id"])
+
+
+def _start_errors(a: dict) -> tuple:
+    """The node's dispatch errors a failed instruction review start recorded (``_review_not_started``,
+    ``stage_assignment.start_failed``)."""
+    cause = str(a.get("fail_cause") or "refused")
+    return ("review_not_started:" + cause, "ai_unavailable:" + cause)
+
+
+def retry_review_stage(flow_id: str, a: dict, mode: str, jobs: list) -> None:
+    """flowgate.v02.0119 T#3 (T-2 rework, review P1): the automatic review of ``a``'s submission is tried again while
+    ``review_retry_due`` allows it: a new review assignment (the next ``seq``, the same author and basis, its role
+    resolved again: a start that failed for a moment, a setting fixed since) with its intent, in one Flow guard under
+    ``hold_of(mode)``; a setting wait it replaces is failed (``setting_unreadable``: its try counted, kept as history).
+    A try that fails again is the next row (``review_start_tries``); past the limit the card stays a system error and
+    nothing is tried again (an explicit command opens a new attempt). Nothing else is retried: a needs_intervention
+    reason, a node moved on, another consumer's newer assignment."""
+    if not _retryable(a) or not review_retry_due(a):
+        return
+    run_id, key = a["run_id"], a["node_key"]
+    run_row, node = _context(flow_id, run_id, key)
+    if run_row is None or node is None:
+        return
+    after: list = []
+    with hold_of(mode, flow_id, run_id, key, a["attempt_id"], REVIEW_RETRY) as owned:
+        if not owned:
+            return
+
+        def body():
+            cur = sa.current_review_assignment(a["attempt_id"], a["stage"])
+            if cur is None or int(cur["seq"]) != int(a["seq"]) or not _retryable(cur):
+                return None                         # another consumer took it first
+            row = legacy.node_run(run_id, key)
+            doc = _doc(review_target(cur, row))
+            if not _stage_holds(cur, row, doc):
+                return None
+            if cur["actor"] == sa.WAIT_SETUP:
+                sa.fail(cur, sa.SETTING_UNREADABLE)
+            nxt = sa.start_stage(flow_id, run_row, node, cur["attempt_id"], cur["stage"], int(cur["seq"]) + 1,
+                                 author=cur.get("author") or "unknown", basis=sa.basis_of(cur),
+                                 author_provider_id=cur.get("author_provider_id"))
+            if not isinstance(nxt, dict):
+                return None
+            nxt = ensure_intent_locked(flow_id, run_row, node, nxt, doc, mode, after)
+            if cur["stage"] == sa.INSTRUCTION_REVIEW and nxt.get("stage_state") != sa.FAILED:
+                legacy.clear_dispatch_error(run_id, key, _start_errors(cur))
+            return nxt
+
+        nxt = legacy.with_flow_guard(flow_id, body)
+        _run_jobs(after)
+    if isinstance(nxt, dict):
+        drive_review_assignment(flow_id, nxt, mode, jobs)
+
+
 # ── what is left of an assignment (L-2 §2.8.4) ───────────────────────────────
 
-def drive_review_assignment(flow_id: str, a: dict, mode: str, jobs: list) -> None:
-    """Outside every guard (the caller's hold, if any, is re-entrant). Only what is left, once."""
+def drive_review_assignment(flow_id: str, a: dict, mode: str, jobs: list, retry: bool = False) -> None:
+    """Outside every guard (the caller's hold, if any, is re-entrant). Only what is left, once.
+
+    flowgate.v02.0119 T#3 (T-2 rework): ``retry`` (the run read's reconciliation, RC-1 / RC-4) — a review whose start
+    failed (``failed``: ``review_not_started``) or whose setting could not be read (``wait_setup(setting_unreadable)``:
+    ``review_result_unknown``) is a system error, tried again by ``retry_review_stage`` up to its limit."""
     a = store.read(a["attempt_id"], a["stage"], a["seq"]) or a
     run_id, key = a["run_id"], a["node_key"]
     row = legacy.node_run(run_id, key)
@@ -241,6 +358,8 @@ def drive_review_assignment(flow_id: str, a: dict, mode: str, jobs: list) -> Non
             # the intent recovered from the ledger: its loop may have ended already (its verdict is consumed below)
         elif a["stage_state"] == sa.FAILED:
             _review_not_started(flow_id, a, _doc(doc_id))
+            if retry:
+                retry_review_stage(flow_id, a, mode, jobs)     # 0119 T-2: a system error, retried (bounded)
             return
         loop = legacy.loop_of_assignment(a["attempt_id"], a["stage"], a["seq"])
         if loop is None or (loop.get("current_stage") != STOPPED and not a.get("verdict")):
@@ -256,6 +375,9 @@ def drive_review_assignment(flow_id: str, a: dict, mode: str, jobs: list) -> Non
     if a["actor"] == sa.WAIT_SETUP and a.get("actor_reason") == sa.SETTING_UNREADABLE:
         record_once(flow_id, run_id, key, a["attempt_id"], doc_id, legacy.REVIEW_RESULT_UNKNOWN, sa.basis_of(a),
                     _b1_stage(a))
+        if retry:
+            retry_review_stage(flow_id, a, mode, jobs)         # 0119 T-2: the setting is read again (bounded)
+        return
     if a["actor"] == sa.WAIT_UNAVAILABLE and a["stage"] == sa.INSTRUCTION_REVIEW:
         error = "ai_unavailable:" + str(a.get("cause"))
         if row is not None and row.get("dispatch_error_code") != error:
@@ -307,8 +429,10 @@ def approve_for(flow_id: str, a: dict, doc: Optional[dict], mode: str, reviewed:
     edit, a resubmission) is not approved: ``MOVED`` — the caller hands the newer submission to its own review."""
     from flowgate.card_settings import review_stage  # noqa: PLC0415
 
-    if not doc or doc.get("doc_review_status") in APPROVED:
-        return bool(doc)
+    if not doc:
+        return False
+    if doc.get("doc_review_status") in APPROVED and a["stage"] == sa.INSTRUCTION_REVIEW:
+        return True
     run_row, node = _context(flow_id, a["run_id"], a["node_key"])
     if run_row is None or node is None:
         return False
@@ -320,18 +444,26 @@ def approve_for(flow_id: str, a: dict, doc: Optional[dict], mode: str, reviewed:
         if not owned:
             return False
         current = _doc(doc["doc_id"])
-        if current is None or int(current.get("revision_no") or 0) != expected \
+        if current is None:
+            return MOVED
+        if current.get("doc_review_status") in APPROVED and a["stage"] == sa.INSTRUCTION_REVIEW:
+            return True
+        # flowgate.v02.0119 T#2 (T-1): a result approved before (0038-T T#3 A-4, a report taken already approved) is no
+        # node completion by itself — this attempt's pass completes it — and is judged as any other result first: the
+        # reviewed revision must still be the document's and the submission the one the assignment reviewed.
+        if int(current.get("revision_no") or 0) != expected \
                 or (a.get("author") != sa.AI and sa.needs_new_submission(a, current)):
             return MOVED
-        if current.get("doc_review_status") in APPROVED:
-            return True
         submission = sa.mark(current)
         if a["stage"] == sa.INSTRUCTION_REVIEW:
             done = review_stage.approve_instruction(flow_id, node, current["doc_id"], issuer, mark=submission,
                                                     attempt_id=a["attempt_id"], expected_revision=expected)
         else:
+            # ``issuer`` (the token recipient: a person card's assignee) is the authority's principal only; the record's
+            # requested_by is the run's started_by and its author kind the assignment's (L-2: ``author``).
             done = legacy.approve(flow_id, current["doc_id"], issuer, legacy.AUTOMATION, node_key=a["node_key"],
-                                  attempt_id=a["attempt_id"], mark=submission, expected_revision=expected)
+                                  attempt_id=a["attempt_id"], mark=submission, expected_revision=expected,
+                                  author=a.get("author"))
         return MOVED if done == legacy.REVISION_MOVED else done
 
 
@@ -355,6 +487,8 @@ def after_approved(flow_id: str, a: dict, doc: Optional[dict], mode: str, jobs: 
         return
     if a["stage"] != sa.INSTRUCTION_REVIEW or not doc:
         return
+    if doc.get("doc_review_status") not in APPROVED:
+        return              # 0119 T-2 rework: its automatic approval failed — a system error, retried (``after_verdict``)
     row = legacy.node_run(a["run_id"], a["node_key"])
     if row is None or row["status"] != "open" or row.get("stage") != sa.INSTRUCTION:
         return
@@ -369,14 +503,26 @@ def after_approved(flow_id: str, a: dict, doc: Optional[dict], mode: str, jobs: 
 
 
 def after_verdict(flow_id: str, a: dict, mode: str, jobs: list) -> None:
-    """The verdict was consumed already: only the step left after it (a lost approval / result stage, a takeover)."""
+    """The verdict was consumed already: only the step left after it (a lost approval / result stage, a takeover).
+    flowgate.v02.0119 T#3 (T-2): an approval its B-1 tells failed on the automatic path (a system error: ``approval_refused``,
+    ``issuer_missing``, …) is tried again while ``card_intervention.reasons.retry_due`` allows it — each failure records
+    its reason again (``legacy.approve``), so the retries end at ``SYSTEM_ERROR_RETRY_LIMIT`` records; it was tried once
+    before. A needs_intervention reason is never tried again.
+
+    The records counted are those of the submission the approval itself records them for (``approve_for``: the mark of
+    the document as it is now, ``sa.mark``) — not the review assignment's basis: an AI result reworked inside its loop
+    (a new revision, a rejection counted) keeps its assignment (``needs_new_submission`` is False for an AI author), so
+    the basis would find none of its failures and the retries would never end (0119 T-2 rework, review P1). Another
+    submission's or attempt's records are not this one's (``approval_wait_reasons_for``: its mark and attempt)."""
+    from flowgate.card_intervention import reasons as intervention  # noqa: PLC0415
+
     row = legacy.node_run(a["run_id"], a["node_key"])
     doc = _doc(review_target(a, row))
     verdict = a.get("verdict")
     if verdict in (sa.PASSED, sa.AUTO_APPROVED) and doc and not sa.needs_new_submission(a, doc):
         if doc.get("doc_review_status") not in APPROVED and (verdict == sa.AUTO_APPROVED or legacy.submission_passed(
-                doc["doc_id"])) and not approval_waits_for(a["run_id"], a["node_key"], a["attempt_id"],
-                                                             sa.basis_of(a), _b1_stage(a)):
+                doc["doc_id"])) and intervention.retry_due(approval_wait_reasons_for(
+                    a["run_id"], a["node_key"], a["attempt_id"], sa.mark(doc), _b1_stage(a))):
             reviewed = None if verdict == sa.AUTO_APPROVED else int(doc.get("revision_no") or 0)
             if approve_for(flow_id, a, doc, mode, reviewed) == MOVED:
                 take_over_submission(flow_id, a, mode, jobs)
@@ -527,7 +673,7 @@ def reconcile_row(flow_id: str, run_row: dict, row: dict) -> None:
         rr = sa.current_review_assignment(attempt_id, sa.RESULT_REVIEW)
         ra = store.read(attempt_id, sa.RESULT, 0)
         if rr is not None and not sa.needs_new_submission(rr, doc):
-            drive_review_assignment(flow_id, rr, HELD, jobs)                                   # RC-1
+            drive_review_assignment(flow_id, rr, HELD, jobs, retry=True)                       # RC-1
         elif rr is not None and review_loop_active(rr):
             return
         elif ra is not None and ra["actor"] != sa.PERSON and ra["stage_state"] == sa.DONE and rr is None \
@@ -545,7 +691,7 @@ def reconcile_row(flow_id: str, run_row: dict, row: dict) -> None:
         ir = sa.current_review_assignment(attempt_id, sa.INSTRUCTION_REVIEW)
         ins = _doc(row.get("instruction_doc_id"))
         if ir is not None and ins and ir.get("basis_doc_id") == ins["doc_id"] and not sa.needs_new_submission(ir, ins):
-            drive_review_assignment(flow_id, ir, HELD, jobs)                                   # RC-4
+            drive_review_assignment(flow_id, ir, HELD, jobs, retry=True)                       # RC-4
         elif ir is not None and review_loop_active(ir):
             return
         elif ia is None or ia["stage_state"] == sa.FAILED:
@@ -567,6 +713,19 @@ def reconcile_row(flow_id: str, run_row: dict, row: dict) -> None:
     _run_jobs(jobs)
 
 
+def _reconcile_due(run_id: str, key: str, attempt_id: Optional[str], doc: dict) -> bool:
+    """flowgate.v02.0119 T#3 (T-2 rework, review P1): may the lost review opening of the submission ``doc`` be taken
+    now? Not when a needs_intervention reason is recorded for it (``run_not_clean``, ``review_not_passed``, ...): the
+    card waits for a memo rework / re-review or the Time Machine. A system error recorded (``assignment_unreadable`` of
+    a post-commit step, ...) no longer stops it for good, as any record did before. Its tries are bounded apart from
+    the records: the opening either makes the review assignment (the next read drives it, RC-1, where a review that
+    does not start is counted, ``review_start_tries``) or fails on a read and writes nothing (the node is skipped)."""
+    from flowgate.card_intervention import reasons as intervention  # noqa: PLC0415
+
+    recorded = approval_wait_reasons_for(run_id, key, attempt_id, sa.mark(doc), "result")
+    return not any(not intervention.is_system_error(r) for r in recorded)
+
+
 def _reconcile_lost_result_end(flow_id: str, run_row: dict, row: dict, attempt_id: str) -> None:
     from flowgate.card_settings import review_stage  # noqa: PLC0415
 
@@ -574,7 +733,7 @@ def _reconcile_lost_result_end(flow_id: str, run_row: dict, row: dict, attempt_i
     doc = _doc(doc_id)
     if not doc or doc.get("doc_review_status") in APPROVED:
         return
-    if approval_waits_for(run_id, key, attempt_id, sa.mark(doc), "result"):
+    if not _reconcile_due(run_id, key, attempt_id, doc):
         return
     work = legacy.result_ai_run(flow_id, run_id, key, doc_id)
     if work is None or not review_stage.ended_cleanly(work) or legacy.open_questions_of_ai_run(flow_id, work["run_id"]):
@@ -595,7 +754,7 @@ def _reconcile_taken_result(flow_id: str, run_row: dict, row: dict, attempt_id: 
         return
     if doc.get("doc_review_status") in APPROVED and not legacy.taken_judged(run_id, key, attempt_id, doc_id):
         return
-    if approval_waits_for(run_id, key, attempt_id, sa.mark(doc), "result"):
+    if not _reconcile_due(run_id, key, attempt_id, doc):
         return
     node = legacy.run_node_row(flow_id, run_row, key)
     if node is None:

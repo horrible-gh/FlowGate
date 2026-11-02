@@ -26,7 +26,7 @@ _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 
 from test_fg_card_settings import (  # noqa: E402,F401  (fixtures are used by name)
-    FA, _doc, _h, _sql, db_path, edge, env, node, put_draft, setting)
+    FA, _doc, _h, _sql, db_path, edge, env, node, pre_feature_attempts, put_draft, setting)
 
 LEE = {"kind": "human", "user_id": "u_lee", "provider_id": None}
 SLOT = {"ok": True, "group_branch": "fg/flowgate.v02.0091", "group_head": "a" * 40, "work_base": "main",
@@ -158,15 +158,31 @@ def _token(env, key):
                 (key,))[0]["token_id"]
 
 
+@pytest.fixture()
+def completion_service(product, monkeypatch):
+    """Use startup's real completion ports, replacing the engine suite's approval stand-in for this test."""
+    from flowgate.card_completion import integration
+    from modules.flow_gate.graph_workflow.services import card_completion_ports
+
+    monkeypatch.setattr(card_completion_ports, "_handlers", dict(card_completion_ports._handlers))
+    integration.register()
+    yield
+    integration.unregister()
+
+
 def _finish(env, key, seq, typ="T"):
-    """The card's result registered with its token and approved (the v0.1 contacts, as the inbox and review do)."""
-    from modules.flow_gate.db import documents as db_documents
+    """A pre-feature person card submits its result; review 'none' completes it through the real v0.2 service."""
     from modules.flow_gate.graph_workflow.api import v01_contact
 
-    result = _doc(FA, seq, typ)
+    from modules.flow_gate.db import documents as db_documents
+    from modules.flow_gate.storage.paths import get_storage_root
+
+    result = _doc(FA, seq, typ, "pending_review")
+    path = get_storage_root("flowgate", create=True) / "docs" / f"{result}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# {typ} {seq}\n\nSubmitted result\n", encoding="utf-8")
+    db_documents.update(result, {"file_path": f"docs/{result}.md"})
     v01_contact.after_inbox_registered(FA, result, typ, _token(env, key))
-    db_documents.update(result, {"doc_review_status": "approved"})
-    v01_contact.after_review_decided(FA, result, "approve")
     return result
 
 
@@ -210,12 +226,14 @@ def test_the_product_rule_is_registered_for_the_validator_and_the_run(product):
     assert run_policies.implementation("gate_node", "human_confirm_v1", "1") is gate.HUMAN_CONFIRM_V1
     assert policies.current()["gate_node"] is gate.HUMAN_CONFIRM_V1                 # validator: no rule_undecided
     assert gate.HUMAN_CONFIRM_V1.judge("g", "confirm", None) == "confirmed"
-    assert gate.HUMAN_CONFIRM_V1.judge("g", "reject", "x") == "rejected"
+    with pytest.raises(gate.GateDecisionRemoved):                     # 0119 T-3: no new gate rejection
+        gate.HUMAN_CONFIRM_V1.judge("g", "reject", "x")
     with pytest.raises(ValueError):
         gate.HUMAN_CONFIRM_V1.judge("g", "maybe", None)
 
 
-def test_start_waits_idle_at_the_gate_and_its_confirm_opens_what_follows_up_to_completed(product):
+def test_start_waits_idle_at_the_gate_and_its_confirm_opens_what_follows_up_to_completed(
+        pre_feature_attempts, completion_service, product):
     g, t = _linear(product)
     run = _start(product)
     run_id = run["run_id"]
@@ -223,16 +241,16 @@ def test_start_waits_idle_at_the_gate_and_its_confirm_opens_what_follows_up_to_c
                                   "WHERE run_id = ? AND policy_key = 'gate_node'", (run_id,))
     assert entries == [{"policy_value": "human_confirm_v1", "impl_version": "1"}]
     current = _current(product)
-    assert (current["status"], current["idle_reason"]) == ("idle", "waiting_approval")
+    assert (current["status"], current["idle_reason"]) == ("idle", "waiting_confirm")     # 0119 T-2: the confirm wait
     nodes = _nodes(current)
     assert (nodes[g]["status"], nodes[t]["status"]) == ("open", "pending")
     wire = nodes[g]["gate"]
     assert (wire["can_decide"], wire["decision"], wire["decision_in_progress"], wire["settings_locked"],
             wire["archived"]) == (True, None, False, False, False)
     assert "gate" not in nodes[t]
-    # A card approval never stands in for the person's confirm: the gate is no card in review.
+    # A card approval never stands in for the person's confirm (0119 T-3: the card approval route is gone).
     approval = product["client"].post(f"/api/v1/runs/{run_id}/nodes/{g}/approval", json={}, headers=_h())
-    assert approval.status_code == 409, approval.text
+    assert approval.status_code == 404, approval.text
     assert _states(product)[g] == "open" and _states(product)[t] == "pending"
 
     attempt = _attempt(product, run_id, g)["attempt_id"]
@@ -251,10 +269,21 @@ def test_start_waits_idle_at_the_gate_and_its_confirm_opens_what_follows_up_to_c
     events = _gate_events(product, g)
     assert [(e["cause"], e["actor_user_id"], e["reason"]) for e in events] == [("gate_confirmed", "u_kim", "OK")]
     assert json.loads(events[0]["payload_json"])["gate_decision_id"] == stored[0]["decision_id"]
-    _finish(product, t, 90)
+    result = _finish(product, t, 90)
     final = _current(product)
     assert _nodes(final)[t]["status"] == "done"
     assert (final["status"], final["idle_reason"]) == ("idle", "completed")
+    [completion] = _sql(product["db"], "SELECT * FROM graph_card_completions WHERE node_key = ?", (t,))
+    assert (completion["result_doc_id"], completion["cause"], completion["actor_kind"], completion["status"]) == (
+        result, "human_submitted", "user", "applied")
+    [done] = _sql(product["db"], "SELECT payload_json FROM graph_run_events WHERE node_key = ? AND to_status = 'done'",
+                  (t,))
+    assert json.loads(done["payload_json"])["completion_id"] == completion["completion_id"]
+    assert _attempt(product, run_id, t)["status"] == "ended"
+    _current(product)  # reconciliation must not repeat the completion or the node transition
+    assert len(_sql(product["db"], "SELECT completion_id FROM graph_card_completions WHERE node_key = ?", (t,))) == 1
+    assert len(_sql(product["db"], "SELECT event_seq FROM graph_run_events WHERE node_key = ? AND to_status = 'done'",
+                    (t,))) == 1
 
 
 def test_a_step_command_stops_at_its_targets_after_the_confirm(product):
@@ -295,8 +324,12 @@ def test_a_running_or_idle_run_takes_the_decision(product, status):
     g, _t = _linear(product)
     run_id = _start(product)["run_id"]
     _set_run(product, status, None if status == "running" else "waiting_approval")
-    body = _decide(product, run_id, g, {"decision": "reject", "request_id": f"rs-{status}"})
-    assert _nodes(body["run"])[g]["status"] == "rejected"
+    before = _marks(product)
+    refused = _decide(product, run_id, g, {"decision": "reject", "request_id": f"rj-{status}"}, 409)
+    assert refused["error"]["code"] == "gate_reject_removed"            # 0119 T-3: a gate has no rejection
+    _nothing_written(product, before)
+    body = _decide(product, run_id, g, {"decision": "confirm", "request_id": f"rs-{status}"})
+    assert _nodes(body["run"])[g]["status"] == "done"
 
 
 @pytest.mark.parametrize("status", ["paused", "stopping"])
@@ -399,9 +432,14 @@ def test_an_idle_run_whose_command_did_not_wait_keeps_idle_with_the_publish_reas
     assert settle.idle_reason(ctx, run_store.node_runs(run_id), run_apply.read_run_state(ctx)) == "gate_publish"
 
 
-# ── §8-3 (reject): the round ends, history stays, other branches go on, no adoption ──
+# ── §8-3 (reject) — removed by flowgate.v02.0119 T#4 (T-3): a reject is refused and writes nothing ──
 
-def test_a_reject_ends_the_round_keeps_other_branches_and_blocks_a_revision_adoption(product):
+def test_a_reject_is_refused_writes_nothing_and_the_gate_waits_for_its_confirm(product):
+    """0119 T-3 (0004-CH seq 9 D-2): a confirm card has no rejection any more (the Time Machine and a memo stand in for
+    it). A reject is refused with 409 ``gate_reject_removed`` after the run / gate checks and before anything is
+    written: no decision, no job, no ``gate_rejected`` event; the gate stays open, decidable, and its confirm goes on.
+    The other branch goes on as ever. A gate rejected before keeps its history (``test_an_undecided_snapshot_shows_its_
+    gate_and_its_legacy_history_but_takes_no_decision``)."""
     keys = _confirmed(product, [node("tmp_r", "R"), node("tmp_g", None, "gate"), node("tmp_a", "T", assignee=LEE),
                                 node("tmp_b", "T", assignee=LEE)],
                       [edge("tmp_e1", "tmp_r", "tmp_g"), edge("tmp_e2", "tmp_g", "tmp_a"),
@@ -409,31 +447,22 @@ def test_a_reject_ends_the_round_keeps_other_branches_and_blocks_a_revision_adop
     g, a, b = keys["tmp_g"], keys["tmp_a"], keys["tmp_b"]
     run_id = _start(product)["run_id"]
     assert _states(product)[g] == "open" and _states(product)[b] == "open"
-    body = _decide(product, run_id, g, {"decision": "reject", "comment": "rework", "request_id": "rj-1"})
-    assert body["decision"]["status"] == "rejected" and body["job"] is None
-    assert _states(product)[g] == "rejected" and _states(product)[a] == "pending"
-    assert _attempt(product, run_id, g)["status"] == "ended"
-    assert _jobs(product) == []
-    events = _gate_events(product, g)
-    assert [(e["cause"], e["reason"]) for e in events] == [("gate_rejected", "rework")]
-    assert json.loads(events[0]["payload_json"])["gate_decision_id"] == body["decision"]["decision_id"]
-    again = _decide(product, run_id, g, {"decision": "confirm", "request_id": "rj-2"}, 409)
-    assert again["error"]["code"] == "node_not_open" and again["error"]["params"]["status"] == "rejected"
-    # The unrelated branch goes on and the run ends blocked by the rejection.
-    _finish(product, b, 91)
-    final = _current(product)
-    assert _nodes(final)[b]["status"] == "done" and _nodes(final)[a]["status"] == "pending"
-    assert (final["status"], final["idle_reason"]) == ("idle", "blocked_rejected")
-    # A newer revision is not adopted while the rejected gate is unresolved (its definition stays protected too).
-    _confirm_next(b, "gn_extra")
-    refused = product["client"].post(f"/api/v1/runs/{run_id}/resume", json={"mode": "full"}, headers=_h())
-    assert refused.status_code == 409, refused.text
-    err = refused.json()["error"]
-    assert (err["code"], err["params"]["reason"], err["params"]["node_keys"]) == (
-        "graph_revision_migration_blocked", "gate_rejected", [g])
-    assert _run_row(product)["status"] == "idle"
+    before = _marks(product)
+    refused = _decide(product, run_id, g, {"decision": "reject", "comment": "rework", "request_id": "rj-1"}, 409)
+    assert refused["error"]["code"] == "gate_reject_removed" and refused["error"]["message"]
+    assert refused["error"]["params"] == {"run_id": run_id, "node_key": g, "decision": "reject"}
+    _nothing_written(product, before)
+    assert _states(product)[g] == "open" and _states(product)[a] == "pending" and _gate_events(product, g) == []
+    assert _attempt(product, run_id, g)["status"] != "ended"
+    assert _nodes(_current(product))[g]["gate"]["can_decide"] is True
+    old = _decide(product, run_id, g, {"decision": "reject"}, 409)          # an old client's reject: refused alike
+    assert old["error"]["code"] == "gate_reject_removed"
+    _nothing_written(product, before)
+    assert _states(product)[b] == "open"                                 # the unrelated branch is untouched
+    body = _decide(product, run_id, g, {"decision": "confirm", "request_id": "rj-2"})
+    assert _nodes(body["run"])[g]["status"] == "done" and _states(product)[a] == "open"
     page = product["client"].get(f"/api/v1/runs/{run_id}/nodes/{g}/gate-decisions", headers=_h()).json()
-    assert [i["status"] for i in page["items"]] == ["rejected"] and page["latest"]["comment"] == "rework"
+    assert [i["status"] for i in page["items"]] == ["succeeded"]
 
 
 # ── §8-5: duplicates, stale screens, two gates, a lost answer ────────────────
@@ -593,9 +622,9 @@ def test_the_decision_and_its_history_need_the_permission_on_every_call(product,
     assert denied["error"]["code"] == "flow_access_denied"
     _nothing_written(product, before)
     allowed["allow"] = True
-    done = _decide(product, run_id, g, {"decision": "reject", "comment": "secret", "request_id": "perm-2"})
+    done = _decide(product, run_id, g, {"decision": "confirm", "comment": "secret", "request_id": "perm-2"})
     allowed["allow"] = False
-    resent = _decide(product, run_id, g, {"decision": "reject", "comment": "secret", "request_id": "perm-2"}, 403)
+    resent = _decide(product, run_id, g, {"decision": "confirm", "comment": "secret", "request_id": "perm-2"}, 403)
     assert "decision" not in resent and "secret" not in json.dumps(resent)
     hidden = product["client"].get(f"/api/v1/runs/{run_id}/nodes/{g}/gate-decisions", headers=_h())
     assert hidden.status_code == 403 and "secret" not in hidden.text
@@ -612,15 +641,15 @@ def test_the_history_pages_with_a_stable_cursor(product, slot):
     _set_run(product, "running")
     assert product["client"].post(f"/api/v1/runs/{run_id}/stop", json={}, headers=_h()).status_code == 200
     assert product["client"].post(f"/api/v1/runs/{run_id}/resume", json={"mode": "full"}, headers=_h()).status_code == 200
-    rejected = _decide(product, run_id, g, {"decision": "reject", "request_id": "hp-2"})
+    later = _decide(product, run_id, g, {"decision": "confirm", "request_id": "hp-2"}, 202)   # 0119 T-3: no reject
     url = f"/api/v1/runs/{run_id}/nodes/{g}/gate-decisions"
     first = product["client"].get(url + "?limit=1", headers=_h()).json()
     assert [i["decision_id"] for i in first["items"]] == [accepted["decision"]["decision_id"]]
-    assert first["latest"]["decision_id"] == rejected["decision"]["decision_id"]
+    assert first["latest"]["decision_id"] == later["decision"]["decision_id"]
     second = product["client"].get(url, params={"limit": 1, "cursor": first["next_cursor"]}, headers=_h()).json()
-    assert [i["decision_id"] for i in second["items"]] == [rejected["decision"]["decision_id"]]
+    assert [i["decision_id"] for i in second["items"]] == [later["decision"]["decision_id"]]
     assert second["next_cursor"] is None
-    assert [i["status"] for i in first["items"] + second["items"]] == ["canceled", "rejected"]
+    assert [i["status"] for i in first["items"] + second["items"]] == ["canceled", "accepted"]
     for query, field in (("?limit=0", "limit"), ("?limit=x", "limit"), ("?cursor=nope", "cursor")):
         bad = product["client"].get(url + query, headers=_h())
         assert bad.status_code == 422 and bad.json()["error"]["params"]["errors"][0]["field"] == field
@@ -861,6 +890,8 @@ def _race(env, monkeypatch, calls, first):
 @pytest.mark.parametrize("first", ["confirm", "reject"])
 @pytest.mark.parametrize("merge_mode", [None, "commit"])
 def test_a_confirm_and_a_reject_racing_on_one_gate_keep_one_decision(product, slot, monkeypatch, merge_mode, first):
+    """0119 T-3: a reject never decides (409 ``gate_reject_removed`` when it comes first, writing nothing); the confirm is
+    the gate's one decision whichever request takes the guard first."""
     g, t = _linear(product)
     run_id = _start(product)["run_id"]
     if merge_mode:
@@ -868,18 +899,21 @@ def test_a_confirm_and_a_reject_racing_on_one_gate_keep_one_decision(product, sl
     results, _order = _race(product, monkeypatch, {
         "confirm": (run_id, g, {"decision": "confirm", "request_id": "race-c"}),
         "reject": (run_id, g, {"decision": "reject", "comment": "no", "request_id": "race-r"})}, first)
-    loser = "reject" if first == "confirm" else "confirm"
-    won, lost = results[first], results[loser]
-    expected = 202 if (first == "confirm" and merge_mode) else 200
+    won, lost = results["confirm"], results["reject"]
+    expected = 202 if merge_mode else 200
     assert won.status_code == expected, won.text
     assert lost.status_code == 409, lost.text
-    held = first == "confirm" and merge_mode
-    assert lost.json()["error"]["code"] == ("gate_decision_in_progress" if held else "node_not_open")
+    held = bool(merge_mode)
+    if first == "reject":
+        assert lost.json()["error"]["code"] == "gate_reject_removed"
+    else:
+        assert lost.json()["error"]["code"] == ("gate_decision_in_progress" if held else "node_not_open")
+    first = "confirm"                                                    # the one decision either way
     decision = won.json()["decision"]
     stored = _decisions(product)
     assert [(d["decision_id"], d["decision"], d["request_id"]) for d in stored] == [
         (decision["decision_id"], first, "race-" + first[0])]
-    if held:
+    if held and lost.json()["error"]["code"] == "gate_decision_in_progress":
         assert lost.json()["error"]["params"]["decision_id"] == decision["decision_id"]
     jobs = _jobs(product)
     events = _gate_events(product, g)
@@ -938,7 +972,7 @@ def test_0098_effective_preserves_branch_intent_only_for_merge(mode):
         "review/x" if mode == "merge" else None)
 
 
-@pytest.mark.parametrize("decision", ["confirm", "reject"])
+@pytest.mark.parametrize("decision", ["confirm"])                    # 0119 T-3: a reject stores no decision
 def test_0098_immediate_decisions_store_the_new_shown_and_effective_key(product, decision):
     g, _ = _linear(product)
     run_id = _start(product)["run_id"]
@@ -967,3 +1001,39 @@ def test_0098_preflight_preserves_the_common_target_rejection(product, slot, mon
     assert response["error"]["params"]["reason"] == reason
     assert "private" not in json.dumps(response)
     assert not _decisions(product) and not _jobs(product)
+
+
+# 0119 T-4: the run read and replay expose the same publish reason as recovery.
+@pytest.mark.parametrize("note,code", [
+    ("gate_conflict", "merge_conflict"), ("gate_failed", "group_branch_missing"),
+    ("gate_recovery", "push_result_unknown"),
+])
+def test_0119_waiting_confirm_acceptance_and_parked_job_wire(product, slot, monkeypatch, note, code):
+    from flowgate.gate_decisions import recovery, repository as repo
+
+    g, t = _linear(product)
+    run = _start(product)
+    run_id = run["run_id"]
+    assert (run["status"], run["idle_reason"]) == ("idle", "waiting_confirm")
+    assert _decisions(product) == _jobs(product) == []
+    setting(product, FA, g, "merge_mode", "commit")
+    request = {"decision": "confirm", "request_id": "0119-wire"}
+    body = _decide(product, run_id, g, request, 202)
+    did, jid = body["decision"]["decision_id"], body["job"]["job_id"]
+    assert body["job"]["phase_note"] is None
+    assert _states(product)[g] == "open" and _states(product)[t] == "pending"
+    # Isolated DB fixture only: model the executor parking after acceptance.
+    _sql(product["db"], "UPDATE operation_job SET status='recovery_required', phase='merge', "
+         "phase_note=?, last_error_code=? WHERE job_id=?", (note, code, jid))
+    _sql(product["db"], "UPDATE gate_decisions SET status='failed', last_error_code=? WHERE decision_id=?", (code, did))
+    monkeypatch.setattr(recovery, "_conflict_open", lambda row: note == "gate_conflict")
+    wire = _nodes(_current(product))[g]["gate"]
+    assert (wire["job"]["phase_note"], wire["job"]["last_error_code"]) == (note, code)
+    assert wire["recovery"] == {"decision_id": did, "decision_version": repo.get(did)["decision_version"],
+                                "status": "failed", **recovery.flags(repo.get(did))}
+    assert wire["recovery"]["retryable"] is (note != "gate_conflict")
+    assert wire["recovery"]["cancelable"] is (note != "gate_conflict")
+    replay = _decide(product, run_id, g, request, 202)
+    assert replay["job"]["phase_note"] == note and replay["decision"]["decision_id"] == did
+    assert len(_decisions(product)) == len(_jobs(product)) == 1
+    assert _gate_events(product, g) == []  # no completion or rejection on a parked job

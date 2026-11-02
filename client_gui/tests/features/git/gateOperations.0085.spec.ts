@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ read: vi.fn(), recover: vi.fn() }))
 vi.mock('@/features/document', async original => ({ ...await original<typeof import('@/features/document')>(), runCurrentRead: (...a: unknown[]) => mocks.read(...a), runGateRecover: (...a: unknown[]) => mocks.recover(...a) }))
 import GitPushErrorWindow from '@/features/git/GitPushErrorWindow.vue'
+import GitPushFailureCard from '@/features/git/GitPushFailureCard.vue'
 import { useGateOperations, GATE_OPERATIONS_CONTEXT, type GateOperations } from '@/features/git/gateOperations'
 import { GIT_PANEL_CONTEXT } from '@/features/git/gitSession'
 import { prepareInspectorI18n } from '../designer/inspector/support/inspectorSupport'
@@ -21,18 +22,22 @@ const node = () => ({ nodeKey: 'g1', status: 'open', attemptId: 'a1', gate: {
   recovery: { decision_id: 'd1', decision_version: 7, status: 'recovery_required', retryable: true, cancelable: false, resolvable: true,
     evidence_version: 4, evidence_refs: ['d1/push@2'], phase: 'push', error_code: 'push_timeout' },
 } })
-async function show() {
+async function show(withFailureCard = false) {
   wrapper = mount(defineComponent({ setup() {
     jobs = useGateOperations(() => 'flowgate', () => 'flowgate.v02.0085', () => readOnly)
     provide(GATE_OPERATIONS_CONTEXT, jobs)
     provide(GIT_PANEL_CONTEXT, { session: { state: { pushFailure: null }, closeWindow: close, setWindowMinimized: vi.fn() } } as any)
-    return () => h(GitPushErrorWindow, { win: { id: 'gate-job:flowgate.v02.0085', kind: 'push-error', title: 'Git job', minimized: false, groupId: 'flowgate.v02.0085', mergeId: null }, operation: jobs.selected.value })
+    return () => h('div', [
+      h(GitPushErrorWindow, { win: { id: 'gate-job:flowgate.v02.0085', kind: 'push-error', title: 'Git job', minimized: false, groupId: 'flowgate.v02.0085', mergeId: null }, operation: jobs.selected.value }),
+      withFailureCard && jobs.selected.value ? h(GitPushFailureCard, { operation: jobs.selected.value }) : null,
+    ])
   } }), { global: { plugins: [i18n], stubs: { ModelessShell: { template: '<div><slot /></div>' } } } })
   await flushPromises()
   jobs.select(jobs.operations.value[0]); await flushPromises()
   return wrapper
 }
 beforeEach(() => {
+  i18n.global.locale.value = 'ko'
   readOnly = false; close.mockReset(); mocks.read.mockReset(); mocks.recover.mockReset()
   current = { runId: 'r1', status: 'idle', nodes: [node()] }
   mocks.read.mockImplementation(async () => current)
@@ -63,7 +68,7 @@ describe('existing Git operation details — D §8-10', () => {
   })
   it('uses recorded target restrictions and local effects in recovery without disabling the existing retry', async () => {
     current.nodes[0].gate.decision.settings = { shown: { merge_target_branch: 'release/local' }, effective: { merge_mode: 'merge', push: true }, target_basis: { target_branch: 'release/local', unmerge_supported: false, warnings: ['unmerge_unsupported_for_non_base_target'] } }
-    current.nodes[0].gate.decision.effects.unshift({ phase: 'merge', status: 'done', sha_after: 'local-merge' })
+    current.nodes[0].gate.decision.effects.unshift({ phase: 'merge', status: 'succeeded', sha_after: 'local-merge' })
     current.nodes[0].gate.recovery.error_code = 'push_rejected'
     const w = await show()
     expect(w.get('[data-test="gate-summary-target"]').text()).toBe('release/local')
@@ -82,11 +87,24 @@ describe('existing Git operation details — D §8-10', () => {
   it('GETs before resending the identical recovery request after network loss', async () => {
     const order: string[] = []
     mocks.read.mockImplementation(async () => { order.push('get'); return current })
-    mocks.recover.mockImplementationOnce(async () => { order.push('post'); throw { request: {} } }).mockImplementationOnce(async () => { order.push('replay'); return { ...current, nodes: [] } })
+    mocks.recover.mockImplementationOnce(async () => { order.push('post'); throw { isAxiosError: true, request: {} } }).mockImplementationOnce(async () => { order.push('replay'); return { ...current, nodes: [] } })
     const w = await show(); order.length = 0
     await w.get('[data-test="git-job-retry"]').trigger('click'); await flushPromises()
     expect(order).toEqual(['post', 'get', 'replay'])
     expect(mocks.recover.mock.calls[1]).toEqual(mocks.recover.mock.calls[0])
+  })
+  it.each(['ko', 'en', 'ja'] as const)('renders an unknown notice in both the failure card and detail window in %s', async locale => {
+    i18n.global.locale.value = locale
+    const w = await show(true)
+    jobs.notice.value = 'unregistered_internal_failure'
+    await flushPromises()
+    const message = i18n.global.t('gui.inspector.checkSettings.target.operation_unknown')
+    expect(w.get('[data-test="git-push-card"] [data-test="git-notice"]').text()).toBe(message)
+    expect(w.get('[data-test="git-push-window"] [role="alert"]').text()).toBe(message)
+    expect(w.text()).not.toContain('unregistered_internal_failure')
+    expect(w.get('[data-test="git-job-evidence"]').text()).toContain('push_timeout')
+    expect(w.get('[data-test="git-push-retry"]').attributes('disabled')).toBeUndefined()
+    expect(mocks.recover).not.toHaveBeenCalled()
   })
   it('keeps common controls read only and rejects a version refusal without synthesizing completion', async () => {
     const w = await show()

@@ -499,8 +499,9 @@ def test_runtime_invalidation_tolerates_its_own_shared_hold():
                 pass
 
 
-def test_an_ended_attempts_line_document_is_no_approval_target():
-    from flowgate.card_approval import approval
+def test_an_ended_attempts_line_document_is_no_output():
+    # 0119 T-3: the line reads moved from the removed card approval to the completion's outputs
+    from flowgate.card_completion import outputs
     stale = {"slot": "instruction", "doc_id": "old_t", "doc_review_status": "pending_review", "stale": True}
-    assert not approval.is_target(stale)
-    assert approval.is_target({**stale, "stale": False})
+    assert not outputs.is_target(stale)
+    assert outputs.is_target({**stale, "stale": False})

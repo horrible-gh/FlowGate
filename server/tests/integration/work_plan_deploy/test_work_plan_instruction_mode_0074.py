@@ -4,7 +4,7 @@ from copy import deepcopy
 import pytest
 
 from test_work_plan_omit_0074 import (
-    api, env, db_path, card_approval_port, decided,  # noqa: F401
+    api, env, db_path, card_outputs_port, decided,  # noqa: F401
     _read, _save, _preview, _execute, _confirm_and_run_after_the_root,
     _flow, _write_plan, _line_doc, _file, _one_job, _row, _sql, _h, FA,
 )

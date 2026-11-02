@@ -54,7 +54,7 @@ def test_retry_resumes_the_same_decision_and_job_and_never_repeats_what_succeede
     assert job["status"] == "succeeded"
     d = _decision(env, did)
     assert (d["status"], d["frozen_sha"], d["settings_json"]) == ("succeeded", sha, before["settings_json"])
-    assert _rev(r["base"], "refs/heads/main") == merged == _rev(r["bare"], "refs/heads/main") and _merges(r["base"]) == 1
+    assert _rev(r["base"], "refs/heads/main") == merged == _rev(r["bare"], "refs/heads/main") and _merges(r["base"]) == 0
     assert len(_decisions(env)) == 1 and len(_jobs(env)) == 1
     assert _states(env)[g] == "done" and _states(env)[t] == "pending"        # paused: what follows waits
     resume = env["client"].post(f"/api/v1/runs/{run_id}/resume", json={}, headers=_h())
@@ -294,10 +294,11 @@ def test_abandon_closes_without_the_remote_and_blocks_the_gate_until_a_round_spl
     assert _attempt(env, run_id, g)["status"] == "ended" and _states(env)[g] == "pending"
     assert len(_gate_events(env, g)) == events_before                       # no confirm, no reject
     assert _rev(r["base"], f"refs/flowgate/gate-recovery/{did}") == sha
-    assert _rev(r["base"], f"refs/flowgate/gate-recovery/{did}-merge") == merged
+    assert merged == sha  # fast-forward: the snapshot recovery ref already retains the applied SHA
+    assert _rev(r["base"], f"refs/flowgate/gate-recovery/{did}-merge") is None
     effects = _effects(env, did)
     assert (effects["merge"]["recovery_state"], effects["merge"]["recovery_ref"]) == (
-        "confirmed", f"refs/flowgate/gate-recovery/{did}-merge")
+        "confirmed", None)
     assert effects["snapshot"]["recovery_ref"] == f"refs/flowgate/gate-recovery/{did}"
     assert all(e["reviewed_evidence_version"] is not None for e in effects.values())
     assert _rev(r["base"], "refs/heads/main") == merged                      # nothing reverted

@@ -10,13 +10,15 @@ Checked first, written after; a refusal rolls the guard back and the operation i
 - every attempt of the target nodes (the plan's and any later one) -> ``invalidated`` (``time_machine``), its tokens
   revoked through the existing reclaim path. An invalidated attempt's tokens are no evidence any more
   (``run_store.token_ids``): reconciliation and the result binder never take its result again, and its documents are
-  the card's history (``card_approval`` stale lines), never a node's result;
+  the card's history (the stale lines of ``card_completion.outputs``, flowgate.v02.0119 T-3), never a node's result;
 - a target node opened before migration 151 has tokens of no attempt (``attempt_id`` NULL), which ``token_ids`` would
   keep as evidence (a consumed one is not touched by the reclaim path): they are mapped to one attempt row recorded
   for that old opening, invalidated (``time_machine``) at once — the same durable boundary as every other invalidated
   attempt, so ``token_ids``, ``invalidated_token_ids`` (stale documents), the authorship read and the token fence
   (``graph_source_hooks.binding`` -> an invalidated attempt) all leave them out. Nothing of the token, document or
   approval history is deleted;
+- the target nodes' completion records (``flowgate.card_completion``, flowgate.v02.0119 T#2) are kept and marked
+  ``revoked``: no reconciliation completes a rewound node from them again;
 - the target documents' approval goes back (``approved`` -> ``pending_review``, the existing review status CAS);
   their content, revisions and approval / rejection history stay as the old attempt's output;
 - the target nodes (but a root-bound node, which follows its root document and has no attempt) go back to
@@ -145,6 +147,8 @@ def rewind(ctx, plan: dict, reverts: list[dict]) -> dict:
     legacy = _detach_legacy_tokens(ctx, keys, stamp)
     tokens += [t for _attempt, node_tokens in legacy for t in node_tokens]
     _revoke(tokens)
+    from flowgate.card_completion import completion as card_completion
+    card_completion.revoke_rewound(run_id, keys)          # flowgate.v02.0119 T#2 (T-1): kept, never applied again
 
     reopened = []
     for doc in plan.get("documents") or ():

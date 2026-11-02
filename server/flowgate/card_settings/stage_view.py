@@ -90,8 +90,9 @@ def wire(flow_id: str, row: dict, attempt_id: Optional[str], approval_wait_reaso
 
 
 def approval_wait_submission(row: dict, attempt_id: Optional[str]) -> Optional[dict]:
-    """The mark of the latest B-1 row of the node run's result — the very row ``approval_wait_reason`` reads."""
-    doc_id = row.get("result_doc_id")
+    """The mark of the latest B-1 row of the node run's current document (``legacy.stage_document``: its instruction in
+    its instruction stage, else its result) — the very row ``approval_wait_reason`` reads."""
+    doc_id = legacy.stage_document(row)
     if not doc_id:
         return None
     active = legacy.active_attempt_id(row["run_id"], row["node_key"]) or attempt_id
@@ -112,11 +113,11 @@ def _unjudged_instruction(flow_id: str, row: dict) -> bool:
     if row.get("stage") != sa.INSTRUCTION or not row.get("instruction_doc_id"):
         return False
     try:
-        from flowgate.card_approval import legacy_adapter as approvals  # noqa: PLC0415
-        from flowgate.card_documents import lines as card_lines  # noqa: PLC0415
+        from flowgate.card_completion import legacy_adapter as completion_records  # noqa: PLC0415 — T-3: moved from
+        from flowgate.card_documents import lines as card_lines  # noqa: PLC0415     # the removed card approval
         from flowgate.card_settings import review_stage  # noqa: PLC0415 — review_stage imports this package
 
-        doc = approvals.document(row["instruction_doc_id"])
+        doc = completion_records.document(row["instruction_doc_id"])
         if doc is None or doc.get("doc_review_status") in review_stage.APPROVED or not card_lines.has_body(doc):
             return False
         return not review_stage.ai_working(flow_id, row["node_key"], row["instruction_doc_id"])

@@ -24,6 +24,8 @@ root (``startup.py``) calls :func:`register` once at startup.
     approval_wait_reason   a run read: why the automatic approval of a node's result was not made (``legacy_adapter``,
                      flowgate.v02.0105 T#2 B-2)
     reconcile_stage  a run read / Resume: a lost run-end stage followed once (``review_stage``, flowgate.v02.0105 T#2 B-3)
+    intervention     the node judgement: ``needs_intervention`` / ``system_error`` of a card in review nothing completes
+                     (``flowgate.card_intervention.judge``, flowgate.v02.0119 T#3 T-2)
     after_registration   the inbox's card title candidate of a registration (``modules.flow_gate.services.
                      node_title_hooks``): the Graph's AI naming applies it (``node_title_ai``, 0064 T-B4d)
 """
@@ -50,6 +52,8 @@ def register() -> None:
     ports.register(ports.PERSON_RESULT, review_stage.person_result)          # flowgate.v02.0083 WP-4
     ports.register(ports.APPROVAL_WAIT_REASON, legacy_adapter.approval_wait_reason)   # flowgate.v02.0105 T#2 B-2
     ports.register(ports.RECONCILE_STAGE, review_stage.reconcile)            # flowgate.v02.0105 T#2 B-3
+    from flowgate.card_intervention import judge as intervention_judge      # flowgate.v02.0119 T#3 (T-2)
+    ports.register(ports.INTERVENTION, intervention_judge.intervention)
     from flowgate.card_settings import manual_stage, stage_assignment, stage_view  # flowgate.v02.0113 T#3 (L-2)
     ports.register(ports.STAGE_DISPATCH, stage_assignment.dispatch_role_card)
     ports.register(ports.STAGE_RESULT_START, stage_assignment.result_stage_start)

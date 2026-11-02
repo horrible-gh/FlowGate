@@ -11,18 +11,36 @@ decision intent is stored with its request key, a reject ends the gate's attempt
 apply or archive is needed is only accepted (a ``gate_publish`` job) - the gate is done once that work succeeded, never
 before (D0007 §3.3). The engine asks a run's own snapshot for it, so only a run that took this rule takes this intake.
 Pure judgement otherwise; the validator side has nothing to refuse (a gate is an allowed structure).
+
+flowgate.v02.0119 T#4 (T-3, 0004-CH seq 9 D-2 / T-3): a confirm card has no rejection any more — the Time Machine and a
+memo stand in for it. ``judge`` refuses ``reject`` (``GateDecisionRemoved``, the intake's 409 ``gate_reject_removed``), so
+no new ``gate_rejected`` node event is ever made; a gate's existing ``rejected`` decisions and events stay as history,
+read and shown only (``gate_decisions.history``), never converted.
 """
 from __future__ import annotations
 
 HUMAN_CONFIRM = "human_confirm_v1"
 IMPL_VERSION = "1"
-OUTCOMES = {"confirm": "confirmed", "reject": "rejected"}
+OUTCOMES = {"confirm": "confirmed"}
+REMOVED_DECISIONS = ("reject",)                 # flowgate.v02.0119 T#4 (T-3): no new gate rejection
+
+
+class GateDecisionRemoved(ValueError):
+    """A decision the product rule no longer takes (``reject``): refused before anything is written."""
+
+    code = "gate_reject_removed"
+
+    def __init__(self, decision: str):
+        super().__init__(f"gate decision removed: {decision!r}")
+        self.decision = decision
 
 
 class HumanConfirm:
     key = HUMAN_CONFIRM
 
     def judge(self, _node_key, decision, _comment) -> str:
+        if decision in REMOVED_DECISIONS:
+            raise GateDecisionRemoved(decision)
         outcome = OUTCOMES.get(decision)
         if outcome is None:
             raise ValueError(f"not a gate decision: {decision!r}")

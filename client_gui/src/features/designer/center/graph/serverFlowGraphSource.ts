@@ -71,7 +71,6 @@ export interface FlowCanvasLoaders {
   /** flowgate.v02.0061 T#14: Pause; absent = the Designer cannot pause. */
   pauseFlowRun?(runId: string): Promise<FlowRun>
   /** flowgate.v02.0056 F2-1: a card's [승인] (O1 0005-TR §4-1); absent = the Canvas approves nothing. */
-  approveFlowRunNode?(runId: string, nodeKey: string, resultDocId: string | null): Promise<{ run: FlowRun }>
   /** flowgate.v02.0061 T#15: a done card's Graph Time Machine (T#13); absent = none. */
   timeMachineFlowRunNode?(runId: string, nodeKey: string): Promise<{ run: FlowRun; timeMachine: FlowRunTimeMachine }>
   /** flowgate.v02.0064 T#4: a card's title save (P0006 §4.2.2); absent = no inline title edit. */
@@ -320,10 +319,6 @@ export function createServerFlowGraphSource(
     loadLayoutGraph: async (_projectId: string, flowId: string, view?: string) =>
       toFlowGraph(await loaders.loadFlowCanvas(flowId, view)),
     readDocumentLink: readDocument ? (_projectId, docId) => readDocument(docId) : undefined,
-    approveNode:
-      runLoaders && loaders.approveFlowRunNode
-        ? async (_projectId, runId, nodeKey, resultDocId) => toRunInfo((await loaders.approveFlowRunNode!(runId, nodeKey, resultDocId)).run)
-        : undefined,
     writeCardHold: cardHold ? (_projectId, flowId, nodeKey, on) => cardHold.write(flowId, nodeKey, on) : undefined,
     timeMachine:
       runLoaders && loaders.timeMachineFlowRunNode

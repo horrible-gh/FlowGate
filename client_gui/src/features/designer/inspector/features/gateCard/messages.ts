@@ -3,7 +3,7 @@
 // flowgate.v02.0053 T#9 — the gate decision: why it waits, why it was refused, the reject reason dialog.
 export default {
   ko: {
-    result: { before: '확인 전', confirmed: '확인 완료', rejected: '반려', archived: '아카이브됨' },
+    result: { before: '확인 전', confirmed: '확인 완료', rejected: '반려', archived: '아카이브됨', publishing: '반영 중', conflict_review: '충돌 검수 대기', recovery_required: '복구 필요' },
     label: '확인',
     slot: {
       result: '확인 결과',
@@ -44,7 +44,7 @@ export default {
     },
   },
   en: {
-    result: { before: 'Before check', confirmed: 'Confirmed', rejected: 'Rejected', archived: 'Archived' },
+    result: { before: 'Before check', confirmed: 'Confirmed', rejected: 'Rejected', archived: 'Archived', publishing: 'Publishing', conflict_review: 'Waiting for conflict review', recovery_required: 'Recovery required' },
     label: 'Check',
     slot: {
       result: 'Check result',
@@ -85,7 +85,7 @@ export default {
     },
   },
   ja: {
-    result: { before: '確認前', confirmed: '確認完了', rejected: '差し戻し', archived: 'アーカイブ済み' },
+    result: { before: '確認前', confirmed: '確認完了', rejected: '差し戻し', archived: 'アーカイブ済み', publishing: '反映中', conflict_review: '競合レビュー待ち', recovery_required: '復旧が必要' },
     label: '確認',
     slot: {
       result: '確認結果',

@@ -124,7 +124,7 @@ def test_next_step_opens_one_step_at_a_time(pre_feature_attempts, env, decided):
 
     first = _next(env)                                             # the step opens its target and settles by itself
     assert (first["status"], first["mode"], first["open_node_keys"]) == ("idle", "step", [t1])
-    assert first["idle_reason"] == "waiting_approval"              # its person card writes: never no_targets
+    assert first["idle_reason"] == "needs_intervention"              # its person card writes: never no_targets
     assert _states(env)[t1] == "open" and _states(env)[t2] == "pending"
 
     _finish(env, t1, 90)                                           # the step's target is done ...
@@ -135,11 +135,11 @@ def test_next_step_opens_one_step_at_a_time(pre_feature_attempts, env, decided):
 
     second = _next(env)                                            # the next command: the same run, the next card
     assert (second["run_id"], second["status"], second["open_node_keys"]) == (first["run_id"], "idle", [t2])
-    assert second["idle_reason"] == "waiting_approval" and _states(env)[t1] == "done"
+    assert second["idle_reason"] == "needs_intervention" and _states(env)[t1] == "done"
     assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_runs")[0]["n"] == 1
-    # the step, its target's approval (a wake within the step's bound, then idle again at it), the next step
-    assert _run_statuses(env) == [(None, "running"), ("running", "idle"), ("idle", "running"), ("running", "idle"),
-                                  ("idle", "running"), ("running", "idle")]
+    # the step, then the next step. 0119 T-2: its target's completion no longer wakes the step's command within its bound
+    # (``command.resume_approval`` wakes a confirm wait only); the idle run's reason turns ``step_done`` in place
+    assert _run_statuses(env) == [(None, "running"), ("running", "idle"), ("idle", "running"), ("running", "idle")]
 
     _finish(env, t2, 91)
     assert [(r["status"], r["idle_reason"]) for r in _run_row(env)] == [("idle", "completed")]
@@ -152,7 +152,7 @@ def test_next_step_with_nothing_to_open_says_why_the_run_waits(pre_feature_attem
     first = _next(env)
     again = _next(env)
     assert (again["run_id"], again["open_node_keys"]) == (first["run_id"], [t1])
-    assert (again["status"], again["idle_reason"]) == ("idle", "waiting_approval")
+    assert (again["status"], again["idle_reason"]) == ("idle", "needs_intervention")
 
 
 # ── 전체 실행 · 중지 ─────────────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ def test_run_all_goes_on_by_itself_as_its_cards_finish(pre_feature_attempts, env
 
     run = _all(env)
     assert (run["status"], run["mode"], run["open_node_keys"]) == ("idle", "full", [t1])
-    assert run["idle_reason"] == "waiting_approval"
+    assert run["idle_reason"] == "needs_intervention"
     assert _current(env)["run_id"] == run["run_id"]
     # A second run is never made while the Flow has one: the same command lets that run go on.
     assert _all(env)["run_id"] == run["run_id"]
@@ -236,7 +236,7 @@ def test_a_gate_the_run_opened_is_decided_and_completes_the_run(pre_feature_atte
     _finish(env, t1, 90)
     assert _states(env)[gate] == "open"
     waiting = _current(env)
-    assert (waiting["status"], waiting["idle_reason"]) == ("idle", "waiting_approval")    # the gate waits for a person
+    assert (waiting["status"], waiting["idle_reason"]) == ("idle", "waiting_confirm")    # the gate waits for a person
     # An idle run has nothing to stop (0061 T#7): the client offers no 중지 then.
     assert _post(env, f"/runs/{run['run_id']}/stop", 409)["error"]["code"] == "run_not_running"
 

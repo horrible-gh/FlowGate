@@ -144,7 +144,7 @@ def test_full_with_one_branch_waiting_is_waiting_never_completed(env, fork_join,
     _written(env, keys["c1"])
     run = start(env)
     r = result(env, run["run_id"])
-    assert (r["state"], r["idle_reason"], r["continues"]) == ("waiting", "waiting_approval", True)
+    assert (r["state"], r["idle_reason"], r["continues"]) == ("waiting", "needs_intervention", True)
     assert outcomes(r) == {keys["c1"]: "done", keys["c2"]: "waiting"}
     assert r["counts"] == {"done": 1, "failed": 0, "waiting": 1}
     assert next(n for n in r["nodes"] if n["node_key"] == keys["c2"])["reason"] == "manual_write_wait"
@@ -157,7 +157,7 @@ def test_one_branch_failed_while_another_waits_is_failed_with_its_reason(env, fo
     roles(keys["c1"], "not_used", _write_wait(env, "wait_unavailable"), "not_used")   # 사용 불가 AI 지정
     run = start(env)
     r = result(env, run["run_id"])
-    assert r["idle_reason"] == "waiting_approval"                        # the run waits for c2's person ...
+    assert r["idle_reason"] == "needs_intervention"                        # the run waits for c2's person ...
     assert (r["state"], r["continues"]) == ("failed", False)              # ... and the command failed (c1)
     assert outcomes(r) == {keys["c1"]: "failed", keys["c2"]: "waiting"}
     assert r["counts"] == {"done": 0, "failed": 1, "waiting": 1}
