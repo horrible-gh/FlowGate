@@ -28,47 +28,17 @@
         :aria-busy="running ? 'true' : undefined"
       >
         <template v-if="dialog.phase === 'confirm' || dialog.phase === 'running'">
-          <p class="graph-tm-text">{{ t('gui.designer.center.time_machine.confirm_intro', { card: titleOf(dialog.nodeId) }) }}</p>
-          <p class="graph-tm-label">{{ t('gui.designer.center.time_machine.start') }}</p>
-          <ul class="graph-tm-list" data-test="graph-time-machine-start">
-            <li :data-node-id="dialog.nodeId">{{ titleOf(dialog.nodeId) }}</li>
-          </ul>
-          <p class="graph-tm-note">{{ t('gui.designer.center.time_machine.scope_note') }}</p>
-          <p class="graph-tm-note">{{ t('gui.designer.center.time_machine.confirm_note') }}</p>
+          <p class="graph-tm-label" data-test="graph-time-machine-start" :data-node-id="dialog.nodeId">{{ titleOf(dialog.nodeId) }}</p>
+          <p class="graph-tm-text">{{ t('gui.designer.center.time_machine.confirm_line') }}</p>
           <p v-if="dialog.notice" class="graph-tm-text is-notice" role="alert" data-test="graph-time-machine-notice" :data-notice="dialog.notice">
             {{ t(`gui.designer.center.time_machine.notice_${dialog.notice}`) }}
           </p>
-          <p v-if="running" class="graph-tm-text" role="status">{{ t('gui.designer.center.time_machine.running') }}</p>
         </template>
         <template v-else-if="done">
-          <p class="graph-tm-text" role="status">{{ t('gui.designer.center.time_machine.done_intro', { card: titleOf(done.nodeKey) }) }}</p>
-          <p class="graph-tm-label">{{ t('gui.designer.center.time_machine.impact', { n: done.impactNodeKeys.length }) }}</p>
-          <ul class="graph-tm-list" data-test="graph-time-machine-impact">
-            <li v-for="nodeId in done.impactNodeKeys" :key="nodeId" :data-node-id="nodeId">{{ titleOf(nodeId) }}</li>
-          </ul>
-          <ul class="graph-tm-facts" data-test="graph-time-machine-result">
-            <li>{{ t('gui.designer.center.time_machine.reset', { n: done.resetNodeKeys.length }) }}</li>
-            <li>{{ t('gui.designer.center.time_machine.reverted', { n: done.revertedCommitCount }) }}</li>
-            <li>{{ t('gui.designer.center.time_machine.invalidated', { n: done.invalidatedAttemptCount }) }}</li>
-            <li v-if="done.reopenedDocumentIds.length">
-              {{ t('gui.designer.center.time_machine.reopened', { docs: done.reopenedDocumentIds.join(', ') }) }}
-            </li>
-          </ul>
-          <p class="graph-tm-note">{{ t('gui.designer.center.time_machine.done_note') }}</p>
+          <p class="graph-tm-text" role="status" data-test="graph-time-machine-result">{{ t('gui.designer.center.time_machine.done_line') }}</p>
         </template>
         <template v-else-if="blocked">
-          <p class="graph-tm-text" role="alert">{{ t('gui.designer.center.time_machine.blocked_intro') }}</p>
-          <ul class="graph-tm-list is-reasons" data-test="graph-time-machine-reasons">
-            <li v-for="(reason, index) in blocked.reasons" :key="`${reason.code}-${index}`" :data-code="reason.code">
-              {{ reason.message || reason.code }}
-            </li>
-          </ul>
-          <template v-if="blocked.impactNodeKeys.length">
-            <p class="graph-tm-label">{{ t('gui.designer.center.time_machine.impact', { n: blocked.impactNodeKeys.length }) }}</p>
-            <ul class="graph-tm-list" data-test="graph-time-machine-impact">
-              <li v-for="nodeId in blocked.impactNodeKeys" :key="nodeId" :data-node-id="nodeId">{{ titleOf(nodeId) }}</li>
-            </ul>
-          </template>
+          <p class="graph-tm-text" role="alert" data-test="graph-time-machine-reasons">{{ blockedText }}</p>
         </template>
         <p v-else class="graph-tm-text" role="alert" data-test="graph-time-machine-failure">{{ failureText }}</p>
       </div>
@@ -130,6 +100,12 @@ function titleOf(nodeId: string): string {
   const name = props.titles.get(nodeId)
   return name ? `${name} (${nodeId})` : nodeId
 }
+
+/** Blocked: the server's first reason, in its own words (the details stay in the server's records). */
+const blockedText = computed(() => {
+  const first = blocked.value?.reasons[0]
+  return first?.message || first?.code || t('gui.designer.center.time_machine.failed')
+})
 
 /** Not run: the server's own message (x-locale), else the code's sentence, else the common one. */
 const failureText = computed(() => {

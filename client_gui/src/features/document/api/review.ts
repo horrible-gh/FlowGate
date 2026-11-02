@@ -166,6 +166,36 @@ export async function reviewActivityRead(groupId: string): Promise<ReviewActivit
   return toReviewActivity(response.data)
 }
 
+/** A started run's own record: whether it ended and, once ended, whether it ended well. */
+export interface ReviewRunResult {
+  readonly runId: string
+  /** The run ended (`status: finished`); `succeeded` means nothing before that. */
+  readonly finished: boolean
+  /** The server's terminal verdict (`succeeded`): true only for a normal completion. Null while unfinished or unreadable. */
+  readonly succeeded: boolean | null
+  readonly outcome: string | null
+  readonly endReason: string | null
+}
+
+/** The /ai-invoke/{run_id} answer -> ReviewRunResult. */
+export function toReviewRunResult(runId: string, raw: unknown): ReviewRunResult {
+  const row = record(raw)
+  const finished = text(row.status) === 'finished'
+  return {
+    runId,
+    finished,
+    succeeded: finished && typeof row.succeeded === 'boolean' ? row.succeeded : null,
+    outcome: text(row.outcome),
+    endReason: text(row.end_reason),
+  }
+}
+
+/** Reads one started run's final result (GET /ai-invoke/{run_id}; the group's /active answer drops a run once it ended). */
+export async function reviewRunRead(runId: string): Promise<ReviewRunResult> {
+  const response = await getRequest<unknown>(`${API}/ai-invoke/${encodeURIComponent(runId)}`)
+  return toReviewRunResult(runId, response.data)
+}
+
 /**
  * Why a review call was refused:
  * running = an AI run owns the group (423 GROUP_AI_RUN_LOCKED, 409 run_in_progress);

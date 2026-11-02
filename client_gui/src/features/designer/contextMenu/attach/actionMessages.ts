@@ -11,13 +11,7 @@ const ko = {
   },
   dispose: {
     title: '플로우 삭제', submit: '삭제', reason: '삭제 사유', reasonRequired: '사유를 입력해야 삭제할 수 있습니다.',
-    lead: '이 플로우를 삭제(폐기)합니다.',
-    effects: [
-      '폐기 기록(DC 문서)이 남고, 플로우는 목록에서 빠집니다.',
-      '이 플로우의 워크트리와 작업 브랜치가 정리됩니다.',
-      '열려 있는 이 플로우의 탭은 닫힙니다.',
-      '영구 삭제가 아닙니다. 문서와 기록은 지워지지 않습니다.',
-    ],
+    note: '목록에서 제거됩니다. 기록은 유지됩니다.',
   },
   create: {
     folderTitle: '새 폴더', fileTitle: '새 파일', name: '이름', submit: '만들기',
@@ -66,13 +60,7 @@ const en: Messages = {
   },
   dispose: {
     title: 'Delete flow', submit: 'Delete', reason: 'Reason', reasonRequired: 'A reason is required to delete.',
-    lead: 'This flow is deleted (disposed).',
-    effects: [
-      'A dispose record (DC document) is kept and the flow leaves the list.',
-      "The flow's worktree and work branch are cleaned up.",
-      "This flow's open tab is closed.",
-      'Not a permanent delete: documents and history are not erased.',
-    ],
+    note: 'Removed from the list. Records are kept.',
   },
   create: {
     folderTitle: 'New folder', fileTitle: 'New file', name: 'Name', submit: 'Create',
@@ -119,13 +107,7 @@ const ja: Messages = {
   },
   dispose: {
     title: 'フローを削除', submit: '削除', reason: '削除理由', reasonRequired: '理由を入力すると削除できます。',
-    lead: 'このフローを削除(破棄)します。',
-    effects: [
-      '破棄記録(DC文書)が残り、フローは一覧から外れます。',
-      'このフローのワークツリーと作業ブランチが整理されます。',
-      '開いているこのフローのタブは閉じます。',
-      '完全削除ではありません。文書と記録は消えません。',
-    ],
+    note: '一覧から削除されます。記録は保持されます。',
   },
   create: {
     folderTitle: '新規フォルダー', fileTitle: '新規ファイル', name: '名前', submit: '作成',
