@@ -78,14 +78,13 @@ def test_detail_online_requires_current_credential_heartbeat_and_ttl():
 
 
 @pytest.fixture
-def heartbeat_api(monkeypatch):
+def heartbeat_api(monkeypatch, migrated_sqlite_db):
  from contextlib import contextmanager
  from fastapi import FastAPI
  from fastapi.testclient import TestClient
 
- db=sqlite3.connect(":memory:",check_same_thread=False)
+ db=sqlite3.connect(migrated_sqlite_db("agent_heartbeat_0625.sqlite"),check_same_thread=False)
  db.execute("PRAGMA foreign_keys=ON")
- db.executescript((MIG/"sqlite"/"121_agent_registry.sql").read_text())
  agent(db)
  raw="agc_test-credential"
  db.execute("INSERT INTO agent_credentials(credential_id,agent_id,credential_digest,pepper_id,issued_at) VALUES(?,?,?,?,?)",

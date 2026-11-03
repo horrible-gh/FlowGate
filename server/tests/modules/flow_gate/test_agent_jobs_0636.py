@@ -62,11 +62,6 @@ class Store:
         return [dict(zip([c[0] for c in cur.description], row)) for row in cur.fetchall()]
 
 
-def setup_schema(store):
-    store.db.executescript((MIG / "sqlite" / "121_agent_registry.sql").read_text())
-    store.db.executescript((MIG / "sqlite" / "124_agent_jobs.sql").read_text())
-
-
 def add_agent(store, aid, *, capable=True, enabled=True):
     ts = "2026-01-01T00:00:00Z"
     store._execute(
@@ -87,10 +82,9 @@ def add_agent(store, aid, *, capable=True, enabled=True):
 
 
 @pytest.fixture
-def setup(tmp_path, monkeypatch):
+def setup(migrated_sqlite_db, monkeypatch):
     monkeypatch.setattr(jobs, "_now", lambda: NOW)
-    store = Store(str(tmp_path / "jobs.sqlite"))
-    setup_schema(store)
+    store = Store(str(migrated_sqlite_db("agent_jobs_0636.sqlite")))
     credentials = {aid: add_agent(store, aid) for aid in ("agt_a", "agt_b")}
     yield store, jobs.AgentJobService(store), credentials
     store.db.close()
@@ -159,11 +153,10 @@ def test_claim_target_no_job_capability_disabled_and_revoked(setup):
     assert_error("unauthorized", lambda: svc.claim(creds["agt_a"]))
 
 
-def test_concurrent_claim_has_one_winner(tmp_path, monkeypatch):
+def test_concurrent_claim_has_one_winner(migrated_sqlite_db, monkeypatch):
     monkeypatch.setattr(jobs, "_now", lambda: NOW)
-    path = str(tmp_path / "concurrent.sqlite")
+    path = str(migrated_sqlite_db("agent_jobs_concurrent_0636.sqlite"))
     seed = Store(path)
-    setup_schema(seed)
     a = add_agent(seed, "agt_a")
     b = add_agent(seed, "agt_b")
     enqueue(jobs.AgentJobService(seed), job_id="one", attempt_id="one")

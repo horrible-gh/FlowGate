@@ -159,14 +159,15 @@ def test_active_catalog_options_and_api_permissions(world):
     assert c.get(base+'/role-profiles').status_code == 401
     assert c.get(base+'/role-profile-options',headers={'X-User':'user'}).status_code == 200
     choices = c.get(base+'/role-profile-options?locale=en',headers={'X-User':'user'}).json()
-    assert {'R','B','N','NR','D','WP','T','TR','TS'} <= {t['type_key'] for t in choices['types']}
+    assert [t['type_key'] for t in choices['types']] == ['D','P','L','DB','N','WP','T','TS']
+    assert [t['label'] for t in choices['types']] == ['Basic design','Protocol','Logic','DB design','Research','Work plan','Task','Test']
     assert {p['provider_id'] for p in choices['providers']} == {'p1','p2'}
     assert all(set(p) == {'provider_id','provider_name'} for p in choices['providers'])
     for method, path, body in [('PUT','/role-profiles/T',{}),
                               ('PUT','/role-profiles/common/roles/review',{'kind':'not_used'}),
                               ('DELETE','/role-profiles/T',None)]:
         assert c.request(method,base+path,headers={'X-User':'user'},json=body).status_code == 403
-    for key in ('상세 설계', 'run', 'invalid-key'):
+    for key in ('상세 설계', 'run', 'invalid-key', 'confirm', 'R', 'B', 'NR', 'TR', 'CH'):
         assert c.put(base+'/role-profiles/'+key,headers={'X-User':'admin'},json={}).status_code == 422
     assert c.put(base+'/role-profiles/T',headers={'X-User':'admin'},json={}).status_code == 200
     response = c.put(base+'/role-profiles/T/roles/review',headers={'X-User':'admin'},json={'kind':'assigned','provider_id':'p1'})

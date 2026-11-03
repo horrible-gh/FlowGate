@@ -1,5 +1,6 @@
 """0120 T#1: group role settings only; does not resolve or mutate card/runtime AI."""
-from modules.flow_gate.db import ai_group_role_profiles as repo, templates
+from modules.flow_gate.db import ai_group_role_profiles as repo
+from modules.flow_gate.graph_workflow.services.node_title_names import PALETTE_KEY_OF_DOC_TYPE, PALETTE_NAMES
 from modules.flow_gate.services import ai_group_service as groups
 
 
@@ -11,13 +12,13 @@ def _group(ai_group_id: str) -> dict:
 
 
 def _types(locale: str = "ko") -> list[dict]:
-    # Use the live global catalog, never card_kind or guessed display-name mappings.
-    result = {}
-    for row in templates.list_document_types(locale=locale):
-        key = row["type_code"]
-        if row.get("is_active") and row.get("project_id") is None and key != repo.COMMON:
-            result.setdefault(key, {"type_key": key, "label": row.get("type_name") or key})
-    return list(result.values())
+    # These are the Designer palette's document cards, in palette order.
+    # The human confirmation card has no document type and no AI role profile.
+    language = locale if locale in ("ko", "ja", "en") else "ko"
+    return [
+        {"type_key": key, "label": PALETTE_NAMES[item][language]}
+        for key, item in PALETTE_KEY_OF_DOC_TYPE.items()
+    ]
 
 
 def options(ai_group_id: str, locale: str = "ko") -> dict:

@@ -34,11 +34,11 @@ export const ADMIN_SETTINGS_SCOPES: readonly SettingsScopeKey[] = ['project', 's
 // from these menus.
 export const SETTINGS_PAGES: readonly SettingsPage[] = [
   { key: 'account', scope: 'me', routeName: 'settings-me-account', path: '/settings/me/account', labelKey: 'gui.settings.me_nav.account', icon: 'user' },
-  // 0120 T#2: personal-menu placement; the existing administrator registry and URL remain.
-  { key: 'agents', scope: 'me', adminOnly: true, routeName: 'settings-system-agents', path: '/settings/system/agents', labelKey: 'gui.agent_screen.title', icon: 'bot' },
+  { key: 'agents', scope: 'me', routeName: 'settings-me-agents', path: '/settings/me/agents', labelKey: 'gui.agent_screen.title', icon: 'bot' },
   { key: 'security', scope: 'me', routeName: 'settings-me-security', path: '/settings/me/security', labelKey: 'gui.settings.me_nav.security', icon: 'shield' },
   { key: 'project', scope: 'project', routeName: 'settings-project', path: '/settings/project', labelKey: 'gui.settings.project_nav.select', icon: 'folder' },
   { key: 'general', scope: 'system', routeName: 'settings-system-general', path: '/settings/system/general', labelKey: 'gui.settings.system_nav.general', icon: 'gear', groupKey: 'gui.settings.system_groups.ops' },
+  { key: 'agents', scope: 'system', adminOnly: true, routeName: 'settings-system-agents', path: '/settings/system/agents', labelKey: 'gui.settings.system_nav.agents', icon: 'bot', groupKey: 'gui.settings.system_groups.resources' },
   { key: 'users', scope: 'system', routeName: 'settings-system-users', path: '/settings/system/users', labelKey: 'gui.settings.users.title', icon: 'users', groupKey: 'gui.settings.system_groups.accounts' },
   { key: 'projects', scope: 'system', routeName: 'settings-system-projects', path: '/settings/system/projects', labelKey: 'gui.settings.system_nav.projects', icon: 'folder', groupKey: 'gui.settings.system_groups.accounts' },
 ]

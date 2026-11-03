@@ -114,7 +114,7 @@ const menu = useSettingsMenu()
 const { notice, clearNotice } = useSettingsAccessNotice()
 
 // ── 확인 필요: 시스템 Agent 화면을 열 수 있는 사람(시스템 관리자)에게만 ──
-const showAttention = computed(() => menu.value.some((page) => page.key === 'agents'))
+const showAttention = computed(() => menu.value.some((page) => page.routeName === 'settings-system-agents'))
 const agentList = ref<SystemAgent[] | null>(null)
 const attentionError = ref('')
 let alive = true

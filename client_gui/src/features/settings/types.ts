@@ -211,6 +211,8 @@ export type AgentCapabilities = Record<AgentCapability, boolean>
 /** One Agent of GET /system/agents (services/agent_registry.detail); also the answer of POST, PATCH
  *  and credential/revoke. Holds no secret: the enrollment token is only in AgentEnrollment. */
 export interface SystemAgent {
+  scope?: 'system' | 'personal'
+  owner_user_id?: string | null
   agent_id: string
   name: string
   enabled: boolean

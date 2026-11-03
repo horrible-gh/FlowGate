@@ -1,15 +1,15 @@
 <template>
-  <SettingsShell scope="me">
-    <template #nav><SettingsSubnav :items="meNav" active="agents" /></template>
-    <section data-panel="system-agents">
+  <SettingsShell :scope="personal ? 'me' : 'system'">
+    <template #nav><SettingsSubnav :items="personal ? meNav : systemNav" active="agents" /></template>
+    <section :data-panel="personal ? 'personal-agents' : 'system-agents'">
       <header class="agent-page-head">
-        <h2>{{ t('gui.agent_screen.title') }}</h2>
+        <h2>{{ t(personal ? 'gui.agent_screen.title' : 'gui.settings.system_nav.agents') }}</h2>
         <Button variant="primary" :disabled="busy || !agents" data-testid="agent-new" @click="startCreate">
           <SettingsIcon name="plus" size="sm" />{{ t('gui.agent_screen.register') }}
         </Button>
       </header>
       <section class="fgs-panel">
-        <div class="fgs-phead"><h3>{{ t('gui.agent_screen.list_title') }}</h3></div>
+        <div class="fgs-phead"><h3>{{ t(personal ? 'gui.agent_screen.list_title' : 'gui.agent_screen.system_list_title') }}</h3></div>
         <div class="fgs-panel-body">
           <LoadingState v-if="loading && !agents" :label="t('gui.common.loading')" />
           <ErrorState v-else-if="listError && !agents" :title="t('gui.settings.agents.errors.load_failed')" :message="listError" data-testid="agents-error">
@@ -41,7 +41,74 @@
       </section>
     </section>
 
-    <AgentEditDialog v-if="mode === 'create' || selected" :creating="mode === 'create'" :agent="selected" :name="mode === 'create' ? form.name : edit.name" :caps="mode === 'create' ? form.caps : edit.caps" :busy="busy" :can-save="mode === 'create' ? createCanSave : editCanSave" :name-problem="mode === 'create' ? createNameProblem : editNameProblem" :error="mode === 'create' ? formError : actionError" :saved="editSaved" :state-label="selected ? stateLabel(selected) : ''" @update:name="setName" @update:cap="setCap" @submit="mode === 'create' ? submitCreate() : saveEdit()" @close="closeEditor" />
+    <ModalShell :open="mode === 'create'" surface-class="agent-registration-drawer fgs-drawer narrow" close-on-backdrop :aria-label="t('gui.settings.agents.create')" @close="closeEditor">
+      <template #header="{ titleId }">
+          <div class="fgs-d-head">
+            <div>
+              <h2 :id="titleId">{{ t('gui.settings.agents.create') }}</h2>
+              <p>{{ t('gui.settings.agents.create_sub') }}</p>
+            </div>
+            <button type="button" class="fgs-iconbtn" :title="t('gui.common.close')" :aria-label="t('gui.common.close')" :disabled="busy" data-testid="agent-editor-close" @click="closeEditor">
+              <SettingsIcon name="x" />
+            </button>
+          </div>
+      </template>
+          <form class="fgs-d-main" data-testid="agent-create-form" @submit.prevent="submitCreate">
+            <div class="fgs-d-body">
+              <div class="fgs-formfield">
+                <label for="agent-new-name">{{ t('gui.settings.agents.fields.name') }}</label>
+                <input id="agent-new-name" v-model="form.name" class="fgs-input" maxlength="100" autocomplete="off" data-modal-autofocus :disabled="busy" placeholder="debian-dev-02" data-testid="agent-name" />
+                <span v-if="form.name && createNameProblem" class="fgs-error" data-testid="agent-name-invalid">{{ createNameProblem }}</span>
+                <span v-else class="fgs-hintline">{{ t('gui.settings.agents.name_hint', { max: NAME_MAX }) }}</span>
+              </div>
+              <div class="fgs-formfield">
+                <span class="label">{{ t('gui.settings.agents.create_location') }}</span>
+                <div class="fgs-segment" role="group" :aria-label="t('gui.settings.agents.create_location')" data-testid="agent-location">
+                  <button v-for="loc in LOCATIONS" :key="loc" type="button" :class="{ on: form.location === loc }" :aria-pressed="form.location === loc ? 'true' : 'false'" :disabled="busy" :data-location="loc" @click="form.location = loc">
+                    {{ t(`gui.settings.agents.location_option.${loc}`) }}
+                  </button>
+                </div>
+                <span v-if="form.location === 'remote'" class="fgs-hintline" data-testid="agent-remote-fields">{{ t('gui.settings.agents.fields.connection') }} {{ t('gui.settings.agents.connection.agent_pull') }} · {{ t('gui.settings.agents.connection_hint') }}</span>
+                <span v-else class="fgs-hintline">{{ t('gui.settings.agents.local_hint') }}</span>
+                <span class="fgs-hintline">{{ t('gui.settings.agents.location_fixed') }}</span>
+              </div>
+              <div v-if="form.location === 'local'" class="fgs-formfield" data-testid="agent-local-fields">
+                <label for="agent-new-path">{{ t('gui.settings.agents.fields.path') }}</label>
+                <input id="agent-new-path" v-model="form.path" class="fgs-input mono" autocomplete="off" :disabled="busy" placeholder="/opt/flowgate-agent" data-testid="agent-path" />
+              </div>
+              <div class="fgs-formfield">
+                <span class="label">{{ t('gui.settings.agents.create_caps') }}</span>
+                <div class="fgs-checks">
+                  <label v-for="cap in createCaps" :key="cap" class="fgs-check-row">
+                    <input v-model="form.caps[cap]" type="checkbox" :disabled="busy" :data-cap="cap" />
+                    <span>
+                      <strong>{{ t(`gui.settings.agents.caps.${cap}`) }}</strong>
+                      <small>{{ t(`gui.settings.agents.caps_desc.${cap}`) }}</small>
+                    </span>
+                  </label>
+                </div>
+                <span class="fgs-hintline">{{ t('gui.settings.agents.caps_hint') }} {{ t('gui.settings.agents.storage_hint') }}</span>
+              </div>
+              <div class="fgs-formfield">
+                <div class="fgs-checks">
+                  <label class="fgs-check-row">
+                    <input v-model="form.enabled" type="checkbox" :disabled="busy" data-testid="agent-enabled" />
+                    <span><strong>{{ t('gui.settings.agents.create_enabled') }}</strong></span>
+                  </label>
+                </div>
+              </div>
+              <p v-if="formError" class="fgs-error" role="alert" data-testid="agent-form-error">{{ formError }}</p>
+            </div>
+            <div class="fgs-d-foot">
+              <div class="l" />
+              <div class="r">
+                <button type="button" class="fgs-btn ghost" :disabled="busy" data-testid="agent-create-cancel" @click="closeEditor">{{ t('gui.common.cancel') }}</button>
+                <button type="button" class="fgs-btn pri" :disabled="!createCanSave" data-testid="agent-create-submit" @click="submitCreate">{{ busy ? t('gui.settings.saving') : t('gui.settings.agents.create_submit') }}</button>
+              </div>
+            </div>
+          </form>
+    </ModalShell>
+    <AgentEditDialog v-if="selected" :creating="false" :agent="selected" :name="mode === 'create' ? form.name : edit.name" :caps="mode === 'create' ? form.caps : edit.caps" :busy="busy" :can-save="mode === 'create' ? createCanSave : editCanSave" :name-problem="mode === 'create' ? createNameProblem : editNameProblem" :error="mode === 'create' ? formError : actionError" :saved="editSaved" :state-label="selected ? stateLabel(selected) : ''" @update:name="setName" @update:cap="setCap" @submit="mode === 'create' ? submitCreate() : saveEdit()" @close="closeEditor" />
     <AgentEnrollmentDialog v-if="enrollmentAgent" :agent="enrollmentAgent" :enrollment="enrollment" :busy="busy" :error="enrollmentError" :refresh-error="listError" :state-label="stateLabel(enrollmentAgent)" :expired="enrollmentExpired" @retry="retryEnrollment" @refresh="load" @close="closeEnrollment" @copied="onCopied" />
     <ModalShell :open="!!pending" size="sm" :aria-label="pending?.title" @close="closePending">
       <div v-if="pending" class="confirm" data-testid="agent-confirm" :data-action="pending.kind">
@@ -80,8 +147,7 @@
 </template>
 
 <script setup lang="ts">
-// 0120 T#2: retain the system registry and its permission boundary. This screen does not
-// implement personal ownership. All changes still use the existing management API.
+// Shared interactions; each route has its own API, scope and component lifetime.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -101,15 +167,26 @@ import AgentEditDialog from '../components/AgentEditDialog.vue'
 import AgentEnrollmentDialog from '../components/AgentEnrollmentDialog.vue'
 import { useSettingsToasts } from '../components/useSettingsToasts'
 import { useMeNav } from '../components/meNav'
+import { useSystemNav } from '../components/systemNav'
 import { useUnsavedLeaveGuard } from '../components/useUnsavedLeaveGuard'
-import { createSystemAgent, deleteSystemAgent, issueAgentEnrollment, listSystemAgents, updateSystemAgent } from '../api'
+import { createSystemAgent, deleteSystemAgent, issueAgentEnrollment, listSystemAgents, updateSystemAgent,
+  createPersonalAgent, deletePersonalAgent, issuePersonalAgentEnrollment, listPersonalAgents, updatePersonalAgent } from '../api'
 import type { AgentCapabilities, AgentCapability, AgentEnrollment, SystemAgent, SystemAgentChanges } from '../types'
 
+const props = defineProps<{ personal?: boolean }>()
+const listAgents = props.personal ? listPersonalAgents : listSystemAgents
+const createAgent = props.personal ? createPersonalAgent : createSystemAgent
+const updateAgent = props.personal ? updatePersonalAgent : updateSystemAgent
+const deleteAgent = props.personal ? deletePersonalAgent : deleteSystemAgent
+const issueEnrollmentToken = props.personal ? issuePersonalAgentEnrollment : issueAgentEnrollment
 const CAPS = AGENT_CAPS
-const NAME_MAX = 60
+const NAME_MAX = 100
+const LOCATIONS = computed(() => props.personal ? ['remote'] as const : ['remote', 'local'] as const)
+const createCaps = computed(() => props.personal ? CAPS.filter(cap => cap !== 'storage') : CAPS)
 const STATE_TONE = AGENT_STATE_TONE
 const { t, locale } = useI18n()
 const meNav = useMeNav()
+const systemNav = useSystemNav()
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
 const message = (err: unknown) => err instanceof Error ? err.message : String(err)
 const ago = (value: string | null) => relativeTime(value, locale.value)
@@ -148,7 +225,8 @@ const selected = computed(() =>
 // ── 응답의 수명: 화면 이탈 · 세션/권한 변경 뒤에 도착한 응답은 버린다 ──
 const route = useRoute()
 const router = useRouter()
-const { user } = useCurrentUser()
+const { user, status } = useCurrentUser()
+const accessAllowed = () => status.value === 'ready' && !!user.value && currentSettingsAccess(route).kind === 'allow'
 /** Thrown by live() for an answer of an ended epoch; the caller just stops. */
 const STALE = Symbol('stale')
 let epoch = 0
@@ -160,7 +238,7 @@ const hasToken = () => !!(window.__accessToken__ || sessionStorage.getItem('fg_a
 /** Epoch `at` is still this screen, this person and an administrator with a token. */
 function sameSession(at: number): boolean {
   if (disposed || at !== epoch) return false
-  if (hasToken() && currentSettingsAccess(route).kind === 'allow') return true
+  if (hasToken() && accessAllowed()) return true
   expire()
   return false
 }
@@ -206,10 +284,10 @@ async function quiet<T>(task: Promise<T>, fallback: T): Promise<T> {
 }
 
 // Another person, a lost role or a pending /auth/me: what was asked before is not theirs.
-watch(() => `${user.value?.username ?? ''}|${currentSettingsAccess(route).kind}`, () => {
+watch(() => `${user.value?.username ?? ''}|${status.value}|${currentSettingsAccess(route).kind}`, () => {
   expire()
   agents.value = null
-  if (!disposed && hasToken() && currentSettingsAccess(route).kind === 'allow') void load()
+  if (!disposed && hasToken() && accessAllowed()) void load()
 }, { flush: 'sync' })
 
 // At most one GET per session; focus and polling share it. Writes wait for an older
@@ -227,7 +305,7 @@ async function performRead(at: number): Promise<boolean> {
   loading.value = true
   listError.value = ''
   try {
-    const list = await live(at, listSystemAgents())
+    const list = await live(at, listAgents())
     if (!Array.isArray(list) || !list.every(isAgent)) throw new Error(t('gui.settings.agents.errors.bad_response'))
     agents.value = list
     const current = list.find((a) => a.agent_id === selectedId.value)
@@ -285,11 +363,12 @@ async function select(row: SystemAgent) {
   syncEdit()
 }
 
-// New registrations always send the complete existing remote contract, including storage.
-const blankForm = () => ({ name: '', caps: { ai_cli: true, ai_api: false, storage: false } })
+// Restore the original registration form; personal Agents retain their own API scope.
+const blankForm = () => ({ name: '', location: 'remote' as 'remote' | 'local', path: '', enabled: true, caps: { ai_cli: false, ai_api: false, storage: false } })
 const form = reactive(blankForm())
 const formError = ref('')
-const createDirty = computed(() => mode.value === 'create' && (form.name.trim() !== '' || !form.caps.ai_cli || form.caps.ai_api))
+const createDirty = computed(() => mode.value === 'create' && (form.name.trim() !== '' || form.location !== 'remote'
+  || form.path.trim() !== '' || !form.enabled || CAPS.some(cap => form.caps[cap])))
 const createNameProblem = computed(() => nameProblem(form.name))
 const createCanSave = computed(() => mode.value === 'create' && !createNameProblem.value && !busy.value)
 
@@ -336,10 +415,11 @@ async function submitCreate() {
   formError.value = ''
   try {
     await waitForRead(at)
-    const created = await live(at, createSystemAgent({
-      name: form.name.trim(), enabled: true, location: 'remote', connection_mode: 'agent_pull',
-      local_executable_path: null,
-      configured_capabilities: { ai_cli: form.caps.ai_cli, ai_api: form.caps.ai_api, storage: false },
+    const created = await live(at, createAgent({
+      name: form.name.trim(), enabled: form.enabled, location: form.location,
+      connection_mode: form.location === 'remote' ? 'agent_pull' : null,
+      local_executable_path: form.location === 'local' ? form.path.trim() || null : null,
+      configured_capabilities: { ...form.caps },
     }))
     // A successful POST must never leave a submit-able create form, even if confirmation fails.
     mode.value = 'view'
@@ -347,6 +427,15 @@ async function submitCreate() {
     if (!isAgent(created)) {
       await reloadAfterChange(at)
       actionError.value = t('gui.settings.agents.errors.unconfirmed')
+      return
+    }
+    if (created.location === 'local' || !created.enabled) {
+      if (!(await reloadAfterChange(at))) return
+      if (!agents.value?.some(agent => agent.agent_id === created.agent_id)) {
+        actionError.value = t('gui.settings.agents.errors.reread_mismatch')
+        return
+      }
+      pushToast(t('gui.settings.agents.created', { name: created.name }))
       return
     }
     enrollmentAgent.value = created
@@ -455,7 +544,7 @@ function applied(a: SystemAgent, changes: SystemAgentChanges): boolean {
 /** One PATCH with `changes`; done only when its answer and the re-read both show them. */
 async function patchAgent(at: number, a: SystemAgent, changes: SystemAgentChanges): Promise<boolean> {
   clearEnrollment() // the Agent is being changed: a token shown for it goes
-  const answered = await live(at, updateSystemAgent(a.agent_id, changes))
+  const answered = await live(at, updateAgent(a.agent_id, changes))
   if (!isAgent(answered) || answered.agent_id !== a.agent_id || !applied(answered, changes)) {
     actionError.value = t('gui.settings.agents.errors.unconfirmed')
     await read(at)
@@ -551,7 +640,7 @@ function askDelete(a: SystemAgent) {
     label: t('gui.settings.agents.delete'),
     run: async (at) => {
       closeEnrollment()
-      await live(at, deleteSystemAgent(a.agent_id))
+      await live(at, deleteAgent(a.agent_id))
       if (!(await reloadAfterChange(at))) return
       if (agents.value?.some((x) => x.agent_id === a.agent_id)) {
         actionError.value = t('gui.settings.agents.errors.reread_mismatch')
@@ -592,7 +681,7 @@ async function issueEnrollment(at: number, id: string, generation: number) {
   enrollmentError.value = ''
   enrollmentExpired.value = false
   try {
-    const issued = await live(at, issueAgentEnrollment(id))
+    const issued = await live(at, issueEnrollmentToken(id))
     if (generation !== enrollmentEpoch || enrollmentAgent.value?.agent_id !== id) return
     const expires = Date.parse(issued?.expires_at)
     if (!issued || issued.agent_id !== id || typeof issued.enrollment_token !== 'string' || !issued.enrollment_token.trim() || !Number.isFinite(expires)) {
@@ -683,6 +772,13 @@ onBeforeUnmount(() => {
   expire()
 })
 </script>
+
+<style>
+.ui-modal-overlay:has(> .agent-registration-drawer) { padding: 0; align-items: stretch; justify-content: flex-end; }
+.ui-modal-surface.agent-registration-drawer { width: min(470px, 100%); max-width: 470px; height: 100%; max-height: 100%; border-radius: 0; padding: 0; }
+.agent-registration-drawer .ui-modal-body { padding: 0; flex: 1; min-height: 0; display: flex; }
+.agent-registration-drawer .fgs-d-main { width: 100%; }
+</style>
 
 <style scoped>
 .agent-page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }

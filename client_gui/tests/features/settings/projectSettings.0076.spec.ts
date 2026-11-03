@@ -308,7 +308,7 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
   it('system/projects: p1 · p2 · p3 read only with 활성 / 비활성, the p2 row opens p2/general; no Root / Git GET', async () => {
     const w = await open('/settings/system/projects')
     expect(net.requests).toEqual([LIST])
-    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'users', 'projects'])
+    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users', 'projects'])
     expect(w.get('.subnav [data-subnav="projects"]').attributes('aria-current')).toBe('page')
     const rows = w.findAll('[data-project-row]')
     expect(rows.map((r) => r.attributes('data-project-row'))).toEqual(['p1', 'p2', 'p3'])
@@ -341,7 +341,7 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
     expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me', 'project', 'system'])
     expect(hub.get('[data-scope-card="project"] a').attributes('href')).toBe('/app/settings/project')
     expect(hub.get('[data-scope-card="project"]').findAll('.tag').map((t) => t.text())).toEqual(['프로젝트 선택'])
-    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '사용자', '전체 프로젝트'])
+    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자', '전체 프로젝트'])
     expect(net.requests).toEqual(['GET /api/v1/system/agents'])
   })
 })

@@ -47,6 +47,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { DEFAULT_PALETTE_ITEMS } from '@/features/designer/palette/paletteCatalog'
 import { addAiRoleProfile, deleteAiRoleProfile, getAiRoleProfileOptions, getAiRoleProfiles, setAiRoleProfileCell } from '../api'
 import type { AiRoleProfile, AiRoleProfileOptions, AiRoleProfiles, RoleProfileRole, RoleProfileValue } from '../types'
 import { inProfileQueue, PROFILE_ROLES, profileValue, profileValueKey } from './roleProfileValues'
@@ -61,9 +62,14 @@ const error = ref('')
 const retryRead = ref(false)
 let epoch = 0
 const common = computed(() => rows.value.find(row => row.type_key === 'common'))
-const addable = computed(() => options.value.types.filter(type => !rows.value.some(row => row.type_key === type.type_key)))
+const paletteTypes = computed(() => DEFAULT_PALETTE_ITEMS
+  .filter(item => item.docType !== null && options.value.types.some(type => type.type_key === item.docType))
+  .map(item => ({ type_key: item.docType!, label: t(`gui.designer.palette.items.${item.labelKey}`) })))
+const addable = computed(() => paletteTypes.value.filter(type => !rows.value.some(row => row.type_key === type.type_key)))
 function typeLabel(key: string): string {
-  return key === 'common' ? t('gui.role_profiles.common') : options.value.types.find(type => type.type_key === key)?.label ?? key
+  if (key === 'common') return t('gui.role_profiles.common')
+  const item = DEFAULT_PALETTE_ITEMS.find(item => item.docType === key)
+  return item ? t(`gui.designer.palette.items.${item.labelKey}`) : options.value.types.find(type => type.type_key === key)?.label ?? key
 }
 function unavailable(value: RoleProfileValue): boolean {
   return value.kind === 'assigned' && !options.value.providers.some(p => p.provider_id === value.provider_id)

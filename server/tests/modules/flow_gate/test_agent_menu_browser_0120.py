@@ -88,13 +88,13 @@ def test_agent_menu_real_router_save_refresh_and_permissions(env):
                 page = context.new_page()
                 page.goto(url)
                 expect(page.locator('.agent-row')).to_have_count(2)
-                expect(page.locator('.scope.open [data-scope]')).to_have_attribute('data-scope', 'me')
-                expect(page.locator('[data-subnav="agents"]')).to_have_text('에이전트')
+                expect(page.locator('.scope.open [data-scope]')).to_have_attribute('data-scope', 'system')
+                expect(page.locator('[data-subnav="agents"]')).to_have_text('시스템 Agent')
                 expect(page.locator('[data-subnav="agents"]')).to_have_attribute('href', '/app/settings/system/agents')
                 capture(page, 'agents-direct')
                 page.locator('.nav-home').click()
                 expect(page.locator('[data-scope-card="me"]')).to_contain_text('에이전트')
-                expect(page.locator('[data-scope-card="system"]')).not_to_contain_text('에이전트')
+                expect(page.locator('[data-scope-card="system"]')).to_contain_text('시스템 Agent')
                 page.locator(f'[data-attention="{remote_id}"] [data-testid="hub-attention-go"]').first.click()
                 expect(page.locator('[data-testid="agent-detail"]')).to_have_attribute('data-agent', remote_id)
                 # The existing view consumes ?agent after opening the matching record.
@@ -107,8 +107,12 @@ def test_agent_menu_real_router_save_refresh_and_permissions(env):
                 capture(page, 'agents-menu')
                 page.locator('[data-testid="agent-new"]').click()
                 expect(page.locator('[data-testid="agent-name"]')).to_be_focused()
-                box = page.locator('.agent-settings-dialog').bounding_box()
-                assert box and abs(box['width']-515) < 2
+                page.locator('.agent-registration-drawer').evaluate('el => Promise.all(el.getAnimations().map(a => a.finished))')
+                box = page.locator('.agent-registration-drawer').bounding_box()
+                assert box and abs(box['width']-470) < 2 and abs(box['x']+box['width']-1440) < 2
+                expect(page.locator('[data-location="local"]')).to_be_visible()
+                expect(page.locator('[data-cap="storage"]')).to_be_visible()
+                expect(page.locator('[data-testid="agent-enabled"]')).to_be_checked()
                 evidence['modal_box'] = box
                 capture(page, 'agents-register')
                 page.locator('[data-testid="agent-name"]').fill('Browser registered')
@@ -172,13 +176,59 @@ def test_agent_menu_real_router_save_refresh_and_permissions(env):
                 page.goto(url+'?agent='+local_id)
                 expect(page.locator('[data-testid="settings-access-notice"]')).to_be_visible()
                 expect(page.locator('[data-panel="system-agents"]')).to_have_count(0)
-                expect(page.locator('[data-scope-card="me"]')).not_to_contain_text('에이전트')
+                expect(page.locator('[data-scope-card="me"]')).to_contain_text('에이전트')
                 assert not any('/system/agents' in r['path'] for r in evidence['requests'][start:])
                 capture(page,'agents-nonadmin-blocked')
                 denied=env.client.get(API+'/system/agents',headers=env.h('M'))
                 assert denied.status_code==403
                 evidence['nonadmin_management_requests']=0
                 evidence['nonadmin_server_status']=403
+                # The same ordinary account can manage its own Agents.
+                personal_url=origin+'/app/settings/me/agents'
+                page.goto(personal_url)
+                expect(page.locator('[data-panel="personal-agents"]')).to_be_visible()
+                expect(page.locator('.scope.open [data-scope]')).to_have_attribute('data-scope', 'me')
+                expect(page.locator('[data-subnav="agents"]')).to_have_text('에이전트')
+                expect(page.locator('.agent-row')).to_have_count(0)
+                capture(page, 'personal-empty')
+                page.set_viewport_size({'width':390,'height':844})
+                page.locator('[data-testid="agent-new"]').click()
+                expect(page.locator('[data-location="local"]')).to_have_count(0)
+                expect(page.locator('[data-cap="storage"]')).to_have_count(0)
+                page.locator('.agent-registration-drawer').evaluate('el => Promise.all(el.getAnimations().map(a => a.finished))')
+                drawer = page.locator('.agent-registration-drawer').bounding_box()
+                assert drawer and drawer['x'] >= 0 and drawer['x'] + drawer['width'] <= 390
+                capture(page, 'personal-registration-narrow')
+                page.locator('[data-testid="agent-name"]').fill('My browser Agent')
+                page.locator('[data-testid="agent-create-submit"]').click()
+                expect(page.locator('[data-testid="enrollment-token"]')).to_be_visible()
+                capture(page, 'personal-enrollment-masked')
+                page.keyboard.press('Escape')
+                mine=env.client.get(API+'/me/agents', headers=env.h('M')).json()['agents']
+                assert len(mine)==1 and mine[0]['owner_user_id']=='usr_ag_m0076'
+                personal_id=mine[0]['agent_id']
+                page.locator(f'[data-edit-agent="{personal_id}"]').click()
+                page.locator('[data-testid="edit-name"]').fill('My renamed Agent')
+                page.locator('[data-edit-cap="ai_api"]').check()
+                page.locator('[data-testid="edit-save"]').click()
+                expect(page.locator('[data-testid="agent-detail"]')).to_have_count(0)
+                page.reload()
+                expect(page.locator('.agent-row')).to_have_count(1)
+                expect(page.locator('.agent-title')).to_contain_text('My renamed Agent')
+                capture(page, 'personal-refreshed')
+                assert env.client.get(API+'/me/agents',headers=env.h('N')).json()['agents']==[]
+                assert len(env.client.get(API+'/system/agents',headers=env.h('A')).json()['agents'])==2
+                page.set_viewport_size({'width':390,'height':844})
+                page.locator(f'[data-edit-agent="{personal_id}"]').click()
+                assert page.evaluate('document.documentElement.scrollWidth')<=390
+                capture(page, 'personal-narrow')
+                page.keyboard.press('Escape')
+                page.locator(f'[data-delete-agent="{personal_id}"]').click()
+                page.locator('[data-testid="agent-confirm-ok"]').click()
+                expect(page.locator('.agent-row')).to_have_count(0)
+                page.reload()
+                expect(page.locator('.agent-row')).to_have_count(0)
+                evidence['personal_crud_and_refresh']=True
                 evidence['completed']=True
                 nonadmin.close()
             finally: browser.close()

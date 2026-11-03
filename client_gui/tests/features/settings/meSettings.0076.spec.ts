@@ -167,11 +167,11 @@ describe('V01 (내 설정 부분) — the hub and the 내 설정 sub-navigation'
   it('a non-administrator gets the 내 설정 card with exactly its two screens, nothing else', async () => {
     const hub = await open('/settings')
     expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me'])
-    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '보안 · 세션'])
+    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '에이전트', '보안 · 세션'])
     expect(hub.get('[data-scope-card="me"] a').attributes('href')).toBe('/app/settings/me/account')
     expect(net.requests).toEqual([])
     await go('/settings/me/account')
-    expect(hub.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['account', 'security'])
+    expect(hub.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['account', 'agents', 'security'])
     expect(hub.findAll('[data-scope]').map((t) => t.attributes('data-scope'))).toEqual(['me'])
   })
 })
@@ -183,8 +183,9 @@ describe('V07 개인 정보 / 언어', () => {
     expect(w.get('[data-testid="me-username"]').text()).toBe('member')
     expect(w.get('[data-testid="me-email"]').text()).toBe('member@flowgate.local')
     expect(profile.findAll('input, select, textarea, [contenteditable], button').length).toBe(0)
-    // Profile remains bootstrap-only; UI settings and role defaults are each read once, with no writes.
-    expect(net.requests.slice().sort()).toEqual(['GET /api/v1/me/ai-roles', 'GET /api/v1/me/ui-settings'])
+    // The account screen only reads display preferences; AI defaults belong elsewhere.
+    expect(net.requests).toEqual(['GET /api/v1/me/ui-settings'])
+    expect(w.text()).not.toContain('AI 역할 기본값')
     expect(net.requests.filter(call => call === 'GET /api/v1/me/ui-settings')).toHaveLength(1)
     expect(writes()).toEqual([])
   })

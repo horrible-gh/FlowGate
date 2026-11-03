@@ -88,6 +88,9 @@ def test_role_entry_create_save_refresh_and_general_preservation(world):
                 expect(page.locator('.role-matrix-row')).to_have_count(1)
                 expect(page.locator('.group-detail-head h2')).to_have_text('Browser roles')
                 rid=world['groups_repo'].get_role_group()['ai_group_id']
+                expect(page.locator('.add-kind-select option')).to_have_text([
+                    '＋ 카드 유형 추가', '기본 설계', '프로토콜', '로직', 'DB설계', '조사', '작업계획', '작업', '테스트'])
+                evidence['palette_types'] = page.locator('.add-kind-select option').all_text_contents()[1:]
                 capture(page,'isolated-common')
                 page.locator('.add-kind-select').select_option('T')
                 expect(page.locator('[data-type="T"]')).to_be_visible()

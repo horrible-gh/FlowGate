@@ -1,5 +1,6 @@
 export default {
   agent_screen: {
+    system_list_title: '登録済みシステム Agent',
     "title": "エージェント",
     "register": "エージェント登録",
     "list_title": "登録済みの個人 Agent",
@@ -2185,7 +2186,7 @@ export default {
       attention: '要確認',
       attention_count: '{n} 件',
       attention_go: '確認',
-      attention_where: '個人設定 · エージェント',
+      attention_where: 'システム · システム Agent',
       attention_mismatch: '{name} 機能の不一致',
       attention_mismatch_sub: '{caps} を許可したが Agent が報告していない',
       attention_empty: '確認が必要な項目はありません',

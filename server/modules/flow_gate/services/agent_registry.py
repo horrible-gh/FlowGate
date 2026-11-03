@@ -5,6 +5,7 @@ from modules.flow_gate.db.connection import FlowGateStore,get_store
 
 SUPPORTED=[1]; ENROLLMENT_TTL=600; HEARTBEAT_INTERVAL=30; ONLINE_TTL=90
 CAPS=("ai_cli","ai_api","storage")
+ALL_OWNERS = object()
 
 class AgentError(Exception):
  def __init__(self,status,code,message,details=None): self.status=status;self.code=code;self.message=message;self.details=details or {}
@@ -44,7 +45,7 @@ def detail(r,at=None):
    t=datetime.fromisoformat(str(hb).replace("Z","+00:00")); n=at or now()
    if t<=n<t+timedelta(seconds=ONLINE_TTL): online="online"
   except ValueError: pass
- return {"agent_id":r["agent_id"],"name":r["name"],"enabled":_bool(r["enabled"]),"location":r["location"],
+ return {"agent_id":r["agent_id"],"owner_user_id":r.get("owner_user_id"),"scope":"personal" if r.get("owner_user_id") else "system","name":r["name"],"enabled":_bool(r["enabled"]),"location":r["location"],
  "connection_mode":r["connection_mode"],"local_executable_path":r["local_executable_path"],
  "configured_capabilities":cfg,"reported_capabilities":rep,
  "effective_capabilities":{k:cfg[k] and rep[k] is True for k in CAPS},
@@ -56,21 +57,32 @@ def detail(r,at=None):
  "last_protocol_rejection_at":r["last_protocol_rejection_at"],"os":r["os"],"architecture":r["architecture"]}
 
 class AgentService:
- def __init__(self,store=None): self.s=store or get_store()
+ def __init__(self,store=None,*,owner_user_id=ALL_OWNERS):
+  self.s=store or get_store()
+  self.owner_user_id=owner_user_id
  def get(self,aid):
   r=_row(self.s,aid)
-  if not r: raise AgentError(404,"agent_not_found","Agent not found")
+  if not r or (self.owner_user_id is not ALL_OWNERS and r.get("owner_user_id")!=self.owner_user_id):
+   raise AgentError(404,"agent_not_found","Agent not found")
   return detail(r)
  def list(self):
-  ids=self.s._fetch_all("SELECT agent_id FROM agents ORDER BY agent_id")
+  clause,params=("",[]) if self.owner_user_id is ALL_OWNERS else (" WHERE owner_user_id IS NULL",[]) if self.owner_user_id is None else (" WHERE owner_user_id=?",[self.owner_user_id])
+  ids=self.s._fetch_all("SELECT agent_id FROM agents"+clause+" ORDER BY agent_id",params)
   return [detail(_row(self.s,x["agent_id"])) for x in ids]
+ def _personal_fields(self,b):
+  if self.owner_user_id is ALL_OWNERS or self.owner_user_id is None: return
+  if b.get("location","remote")!="remote" or b.get("local_executable_path") is not None or b.get("configured_capabilities",{}).get("storage"):
+   raise AgentError(422,"validation_failed","Personal Agents support remote AI CLI and AI API only")
  def create(self,b):
+  self._personal_fields(b)
   aid="agt_"+secrets.token_urlsafe(20); ts=stamp(); c=b["configured_capabilities"]
   with self.s.transaction():
-   self.s._execute("""INSERT INTO agents(agent_id,name,enabled,location,connection_mode,local_executable_path,configured_ai_cli,configured_ai_api,configured_storage,created_at,updated_at)
- VALUES(?,?,?,?,?,?,?,?,?,?,?)""",[aid,b["name"].strip(),b["enabled"],b["location"],b["connection_mode"],b["local_executable_path"],c["ai_cli"],c["ai_api"],c["storage"],ts,ts])
+   self.s._execute("""INSERT INTO agents(agent_id,name,enabled,location,connection_mode,local_executable_path,configured_ai_cli,configured_ai_api,configured_storage,created_at,updated_at,owner_user_id)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",[aid,b["name"].strip(),b["enabled"],b["location"],b["connection_mode"],b["local_executable_path"],c["ai_cli"],c["ai_api"],c["storage"],ts,ts,None if self.owner_user_id is ALL_OWNERS else self.owner_user_id])
   return self.get(aid)
  def patch(self,aid,b):
+  self.get(aid)
+  self._personal_fields(b)
   if "location" in b: raise AgentError(422,"validation_failed","Invalid Agent field",{"field":"location","reason":"immutable"})
   current=self.get(aid); merged={k:b.get(k,current[k]) for k in ("name","enabled","connection_mode","local_executable_path")}
   caps=b.get("configured_capabilities",current["configured_capabilities"])
@@ -82,6 +94,7 @@ class AgentService:
    [merged["name"].strip(),merged["enabled"],merged["connection_mode"],merged["local_executable_path"],caps["ai_cli"],caps["ai_api"],caps["storage"],stamp(),aid])
   return self.get(aid)
  def issue(self,aid):
+  self.get(aid)
   raw=secret("enr_"); ts=now(); exp=ts+timedelta(seconds=ENROLLMENT_TTL)
   with self.s.transaction():
    r=_row(self.s,aid)
@@ -106,9 +119,12 @@ class AgentService:
   return {"agent_id":e["agent_id"],"agent_credential":raw,"protocol_version":1,"supported_protocol_versions":SUPPORTED,"heartbeat_interval_seconds":HEARTBEAT_INTERVAL,"online_ttl_seconds":ONLINE_TTL}
  def authenticate(self,raw):
   if not raw or not raw.startswith("agc_"): raise AgentError(401,"unauthorized","Invalid Agent credential")
-  r=self.s._fetch_one("""SELECT c.credential_id,c.agent_id,a.enabled,a.location FROM agent_credentials c JOIN agents a ON a.agent_id=c.agent_id WHERE c.credential_digest=? AND c.revoked_at IS NULL""",[digest("agent_credential",raw)])
+  r=self.s._fetch_one("""SELECT c.credential_id,c.agent_id,a.enabled,a.location,a.owner_user_id FROM agent_credentials c JOIN agents a ON a.agent_id=c.agent_id WHERE c.credential_digest=? AND c.revoked_at IS NULL""",[digest("agent_credential",raw)])
   if not r: raise AgentError(401,"unauthorized","Invalid Agent credential")
   if not _bool(r["enabled"]): raise AgentError(403,"agent_disabled","Agent is disabled")
+  if r.get("owner_user_id"):
+   owner=self.s._fetch_one("SELECT is_active FROM users WHERE user_id=?",[r["owner_user_id"]])
+   if not owner or not owner["is_active"]: raise AgentError(403,"agent_owner_inactive","Agent owner is inactive")
   return r
  def heartbeat(self,raw,b):
   auth=self.authenticate(raw); ts=stamp()

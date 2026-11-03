@@ -379,18 +379,18 @@ async function focus() { window.dispatchEvent(new Event('focus')); await flushPr
 const deleteRow = (w: VueWrapper, id = 'agt_e_new') => click(w, `[data-delete-agent="${id}"]`)
 
 
-describe('0120 T#2 — personal menu placement with the existing administrator boundary', () => {
-  it('opens Agents from the personal submenu and keeps the legacy route name and URL', async () => {
+describe('0120 — distinct personal and system menu entries', () => {
+  it('opens System Agents under System and exposes a separate personal entry', async () => {
     const w = await open('/settings/system/agents')
-    expect(w.get('.scope.open [data-scope]').attributes('data-scope')).toBe('me')
+    expect(w.get('.scope.open [data-scope]').attributes('data-scope')).toBe('system')
     const link = w.get('[data-subnav="agents"]')
-    expect(link.text()).toBe('에이전트')
+    expect(link.text()).toBe('시스템 Agent')
     expect(link.attributes('href')).toBe('/app/settings/system/agents')
     expect(link.attributes('aria-current')).toBe('page')
     await click(w, '.nav-home')
     await waitForPath('/settings')
     expect(w.get('[data-scope-card="me"]').text()).toContain('에이전트')
-    expect(w.get('[data-scope-card="system"]').text()).not.toContain('에이전트')
+    expect(w.get('[data-scope-card="system"]').text()).toContain('시스템 Agent')
     await router.push('/settings/system/agents')
     await flushPromises()
     await click(w, '[data-subnav="agents"]')
@@ -399,18 +399,18 @@ describe('0120 T#2 — personal menu placement with the existing administrator b
     expect(writes()).toEqual([])
   })
 
-  it.each([false, null])('removes the personal-menu Agent entry and late data on privilege/session loss (%s)', async (admin) => {
+  it.each([false, null])('removes system access and late data on privilege/session loss (%s)', async (admin) => {
     net.holdList = true
     const w = await open('/settings/system/agents')
     const release = net.release!
-    expect(w.get('[data-subnav="agents"]').text()).toBe('에이전트')
+    expect(w.get('[data-subnav="agents"]').text()).toBe('시스템 Agent')
     setCurrentUser(admin === null ? null : { ...ADMIN, isAdmin: false })
     await waitForPath('/settings')
     release()
     await flushPromises()
     expect(w.find('[data-panel="system-agents"]').exists()).toBe(false)
     expect(w.text()).not.toContain('build-online')
-    expect(w.get('[data-scope-card="me"]').text()).not.toContain('에이전트')
+    expect(w.get('[data-scope-card="me"]').text()).toContain('에이전트')
     expect(w.find('a[href="/app/settings/system/agents"]').exists()).toBe(false)
     expect(net.requests).toEqual(['GET /api/v1/system/agents'])
     expect(writes()).toEqual([])
@@ -421,7 +421,7 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
   it('one GET; only names, states, last seen and two named icon actions, without the old table, counts, search or drawer', async () => {
     const w = await open('/settings/system/agents')
     expect(net.requests).toEqual(['GET /api/v1/system/agents'])
-    expect(w.get('[data-panel="system-agents"]').text()).toContain('등록된 개인 Agent')
+    expect(w.get('[data-panel="system-agents"]').text()).toContain('등록된 시스템 Agent')
     expect(w.get('[data-testid="agent-new"]').text()).toContain('에이전트 등록')
     const rows = w.findAll('.agent-row')
     expect(rows.map((r) => r.attributes('data-agent'))).toEqual(fixtures().map((r) => r.agent_id))
@@ -435,7 +435,7 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     expect(rows[0].get('[data-edit-agent]').attributes('title')).toBe('수정')
     expect(rows[0].get('[data-edit-agent]').attributes('aria-label')).toBe('build-online 수정')
     expect(rows[0].findAll('button')).toHaveLength(2)
-    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['account', 'agents', 'security'])
+    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users', 'projects'])
   })
 
   it('disabled takes priority; incompatible and revoked are never presented as online; edit has read-only status and OS', async () => {
@@ -456,12 +456,45 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     expect(writes()).toEqual(['POST /api/v1/system/agents', 'POST /api/v1/system/agents/agt_new1/enrollments'])
     expect(bodiesOf(/^POST \/api\/v1\/system\/agents$/)).toEqual([{
       name: 'new-machine', enabled: true, location: 'remote', connection_mode: 'agent_pull', local_executable_path: null,
-      configured_capabilities: { ai_cli: true, ai_api: false, storage: false },
+      configured_capabilities: { ai_cli: false, ai_api: false, storage: false },
     }])
     expect(net.requests.at(-1)).toBe('GET /api/v1/system/agents')
     expect(w.find('[data-testid="agent-create-form"]').exists()).toBe(false)
     expectTokenOnlyInBox(w, server('agt_new1')!.pending!.token, true)
     expect(w.get('[data-testid="enrollment-expiry"]').text()).toContain(server('agt_new1')!.pending!.expires_at)
+  })
+
+  it.each(['local', 'remote'] as const)('restores %s registration fields and skips enrollment when disabled', async location => {
+    const w = await open('/settings/system/agents')
+    await click(w, '[data-testid="agent-new"]')
+    await type(w, '[data-testid="agent-name"]', 'restored-agent')
+    await click(w, `[data-location="${location}"]`)
+    if (location === 'local') await type(w, '[data-testid="agent-path"]', '/opt/restored-agent')
+    await w.get('[data-cap="storage"]').setValue(true)
+    await w.get('[data-testid="agent-enabled"]').setValue(false)
+    await click(w, '[data-testid="agent-create-submit"]')
+    expect(writes()).toEqual(['POST /api/v1/system/agents'])
+    expect(server('agt_new1')).toMatchObject({
+      name: 'restored-agent', enabled: false, location,
+      connection_mode: location === 'remote' ? 'agent_pull' : null,
+      local_executable_path: location === 'local' ? '/opt/restored-agent' : null,
+      configured: { ai_cli: false, ai_api: false, storage: true },
+    })
+    expect(w.find('[data-testid="agent-create-form"]').exists()).toBe(false)
+    expect(w.find('[data-testid="agent-enrollment"]').exists()).toBe(false)
+    expect(net.requests.at(-1)).toBe('GET /api/v1/system/agents')
+  })
+
+  it('enabled local registration never attempts remote enrollment', async () => {
+    const w = await open('/settings/system/agents')
+    await click(w, '[data-testid="agent-new"]')
+    await type(w, '[data-testid="agent-name"]', 'a'.repeat(100))
+    await click(w, '[data-location="local"]')
+    await w.get('[data-cap="ai_cli"]').setValue(true)
+    await click(w, '[data-testid="agent-create-submit"]')
+    expect(writes()).toEqual(['POST /api/v1/system/agents'])
+    expect(server('agt_new1')).toMatchObject({ enabled: true, location: 'local', configured: { ai_cli: true } })
+    expect(toastText(w)).toContain('등록')
   })
 
   it('local and disabled agents remain editable, preserving hidden storage, enabled, location and executable path', async () => {
@@ -478,10 +511,13 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
   it('empty/long names send nothing; create 403 keeps the form and input without reporting success', async () => {
     const w = await open('/settings/system/agents')
     await click(w, '[data-testid="agent-new"]')
-    expect(w.findAll('[data-cap]').map((c) => c.attributes('data-cap'))).toEqual(['ai_cli','ai_api'])
-    expect(w.find('[data-testid="agent-location"], [data-testid="agent-path"], [data-testid="agent-enabled"]').exists()).toBe(false)
+    expect(w.findAll('[data-cap]').map((c) => c.attributes('data-cap'))).toEqual(['ai_cli','ai_api','storage'])
+    expect(w.find('[data-testid="agent-location"]').exists()).toBe(true)
+    expect(w.find('[data-testid="agent-enabled"]').exists()).toBe(true)
+    expect(w.find('[data-testid="agent-path"]').exists()).toBe(false)
+    expect(w.get('[data-testid="agent-name"]').attributes('maxlength')).toBe('100')
     await click(w, '[data-testid="agent-create-submit"]')
-    await type(w, '[data-testid="agent-name"]', 'a'.repeat(61))
+    await type(w, '[data-testid="agent-name"]', 'a'.repeat(101))
     expect(w.get('[data-testid="agent-create-submit"]').attributes('disabled')).toBeDefined()
     expect(writes()).toEqual([])
     await type(w, '[data-testid="agent-name"]', 'kept-name')

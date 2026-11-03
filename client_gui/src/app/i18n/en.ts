@@ -1,5 +1,6 @@
 export default {
   agent_screen: {
+    system_list_title: 'Registered system Agents',
     "title": "Agents",
     "register": "Register agent",
     "list_title": "Registered personal Agents",
@@ -2184,7 +2185,7 @@ export default {
       attention: 'Needs attention',
       attention_count: '{n}',
       attention_go: 'Check',
-      attention_where: 'My settings · Agents',
+      attention_where: 'System · System Agents',
       attention_mismatch: '{name} capability mismatch',
       attention_mismatch_sub: '{caps} allowed, but not reported by the agent',
       attention_empty: 'Nothing needs attention',

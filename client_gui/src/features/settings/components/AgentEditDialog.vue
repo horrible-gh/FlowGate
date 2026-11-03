@@ -6,9 +6,9 @@
     <form class="agent-dialog-form" :data-testid="creating ? 'agent-create-form' : 'agent-detail'" :data-agent="agent?.agent_id" @submit.prevent="emit('submit')">
       <div class="agent-form-group">
         <label for="agent-dialog-name">{{ t('gui.settings.agents.fields.name') }} <span>*</span></label>
-        <Input id="agent-dialog-name" :model-value="name" :maxlength="!creating && (agent?.name.length ?? 0) > 60 ? 100 : 60" :disabled="busy" :invalid="!!name && !!nameProblem" autocomplete="off" data-modal-autofocus :data-testid="creating ? 'agent-name' : 'edit-name'" @update:model-value="emit('update:name', $event)" />
+        <Input id="agent-dialog-name" :model-value="name" :maxlength="100" :disabled="busy" :invalid="!!name && !!nameProblem" autocomplete="off" data-modal-autofocus :data-testid="creating ? 'agent-name' : 'edit-name'" @update:model-value="emit('update:name', $event)" />
         <small v-if="name && nameProblem" class="fgs-error" data-testid="agent-name-invalid">{{ nameProblem }}</small>
-        <small v-else>{{ t('gui.agent_screen.name_hint') }}</small>
+        <small v-else>{{ t('gui.settings.agents.name_hint', { max: 100 }) }}</small>
       </div>
       <dl v-if="agent && !creating" class="agent-info-grid" data-testid="agent-status">
         <div><dt>{{ t('gui.agent_screen.connection') }}</dt><dd data-field="connection">{{ stateLabel }}</dd></div>

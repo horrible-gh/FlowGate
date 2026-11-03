@@ -3,6 +3,7 @@
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
   agent_screen: {
+    system_list_title: '등록된 시스템 Agent',
     "title": "에이전트",
     "register": "에이전트 등록",
     "list_title": "등록된 개인 Agent",
@@ -2196,7 +2197,7 @@ export default {
       attention: '확인 필요',
       attention_count: '{n}건',
       attention_go: '확인',
-      attention_where: '내 설정 · 에이전트',
+      attention_where: '시스템 · 시스템 Agent',
       attention_mismatch: '{name} 기능 불일치',
       attention_mismatch_sub: '{caps} 허용했지만 Agent가 보고하지 않음',
       attention_empty: '확인이 필요한 항목이 없습니다',

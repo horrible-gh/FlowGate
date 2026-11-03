@@ -16,7 +16,7 @@ const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
 const profile = (type_key: string): AiRoleProfile => ({ type_key, position: type_key === 'common' ? 0 : 1,
   roles: Object.fromEntries(['instruction','execution','review'].map(role => [role, { kind: type_key === 'common' ? 'unset' : 'inherit' }])) as AiRoleProfile['roles'] })
 const initial = (id = 'roles'): AiRoleProfiles => ({ ai_group_id: id, items: [profile('common')] })
-const choices = { types: [{ type_key: 'T', label: '작업' }, { type_key: 'R', label: '요구사항' }],
+const choices = { types: [{ type_key: 'T', label: '작업' }, { type_key: 'D', label: '기본 설계' }],
   providers: [{ provider_id: 'p1', provider_name: 'Model One' }, { provider_id: 'p2', provider_name: 'Model Two' }] }
 const team = (id: string, group_type: 'general' | 'role'): AiGroup => ({ ai_group_id: id, group_type, name: id,
   description: 'preserved', enabled: true, is_default: false, members: [], roles: [], supervisor: null,
@@ -69,11 +69,28 @@ describe('0120 role matrix mounted behavior', () => {
     const wrapper = matrix(); await flushPromises()
     await wrapper.get('.add-kind-select').setValue('T'); await flushPromises()
     expect(wrapper.find('.add-kind-select option[value="T"]').exists()).toBe(false)
-    await wrapper.get('.add-kind-select').setValue('R'); await flushPromises()
+    await wrapper.get('.add-kind-select').setValue('D'); await flushPromises()
     expect(wrapper.get('.add-kind-select').attributes('disabled')).toBeDefined()
     await wrapper.get('[data-type="T"] .remove-kind').trigger('click'); await flushPromises()
     expect(wrapper.find('.add-kind-select option[value="T"]').exists()).toBe(true)
     expect(wrapper.get('.add-kind-select').attributes('disabled')).toBeUndefined()
+  })
+
+  it.each(['ko','ja','en'] as const)('uses the palette names and order without confirmation or other documents (%s)', async language => {
+    const { DEFAULT_PALETTE_ITEMS } = await import('@/features/designer/palette/paletteCatalog')
+    i18n.global.locale.value = language
+    const documentCards = DEFAULT_PALETTE_ITEMS.filter(item => item.docType)
+    vi.mocked(api.getAiRoleProfileOptions).mockResolvedValue({
+      ...choices,
+      types: [...documentCards].reverse().map(item => ({ type_key: item.docType!, label: 'catalog label' }))
+        .concat([{ type_key: 'R', label: 'Requirements' }, { type_key: 'confirm', label: 'Confirm' }, { type_key: 'TR', label: 'Report' }]),
+    })
+    const wrapper = matrix(); await flushPromises()
+    const offered = wrapper.findAll('.add-kind-select option').slice(1)
+    expect(offered.map(option => option.attributes('value'))).toEqual(documentCards.map(item => item.docType))
+    expect(offered.map(option => option.text())).toEqual(documentCards.map(item => i18n.global.t(`gui.designer.palette.items.${item.labelKey}`)))
+    await wrapper.get('.add-kind-select').setValue('D'); await flushPromises()
+    expect(wrapper.get('[data-type="D"] .role-kind strong').text()).toBe(i18n.global.t('gui.designer.palette.items.basic_design'))
   })
 
   it('restores the last confirmed cell and keeps rows after failed add/delete', async () => {
@@ -87,8 +104,8 @@ describe('0120 role matrix mounted behavior', () => {
     expect(wrapper.get('[role="alert"]').text()).toContain('write refused')
     await wrapper.get('[data-type="T"] .remove-kind').trigger('click'); await flushPromises()
     expect(wrapper.find('[data-type="T"]').exists()).toBe(true)
-    await wrapper.get('.add-kind-select').setValue('R'); await flushPromises()
-    expect(wrapper.find('[data-type="R"]').exists()).toBe(false)
+    await wrapper.get('.add-kind-select').setValue('D'); await flushPromises()
+    expect(wrapper.find('[data-type="D"]').exists()).toBe(false)
   })
 
   it('distinguishes committed write/read failure and retries only GET', async () => {
