@@ -252,12 +252,12 @@ def ensure_intent_locked(flow_id: str, run_row: dict, node: dict, a: dict, doc: 
 
 
 def _start_loop(flow_id: str, a: dict, doc_id: str, issuer: str, loop: dict, criteria: str, exec_id: str) -> None:
-    """After the commit: the requested loop is started (``start_review_loop`` on its ledger request)."""
+    """After the commit: start the requested loop, or await the owner of a duplicate start's verdict."""
     failure: dict = {}
     started = legacy.start_review_loop(legacy.project_of(flow_id), flow_id, doc_id, issuer, loop,
                                        lambda last: fields.review_basis_note(criteria, last), a["node_key"],
                                        graph_exec_id=exec_id, attempt_id=a["attempt_id"], failure=failure)
-    if started is None:
+    if started is None and not failure.get("duplicate_start"):
         # L-2 §2.10 / E-13: an admission refusal keeps its own code (``start_refused:<code>``), any other failure of
         # the start is ``start_failed``; no other AI is asked, and no read restarts it (E-40)
         cause = failure.get("cause") or sa.START_FAILED

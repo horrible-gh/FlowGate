@@ -725,7 +725,9 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
 
     flowgate.v02.0113 T#3 (L-2 §2.10, E-13): ``failure`` (an assigned review's caller) is told why a start that returns
     None failed — ``{"cause": "start_refused:<the admission's code>"}`` for an admission refusal, else
-    ``{"cause": "start_failed"}``; the return value stays None either way (no other AI is asked)."""
+    ``{"cause": "start_failed"}``. flowgate.v02.0128 T#1: a run_in_progress refusal of an execution another launcher
+    owns instead reports ``{"duplicate_start": True}``: its assignment awaits that owner's verdict. The return value
+    stays None in each case (no other AI is asked)."""
     from modules.flow_gate.services import ai_invoke_service, card_memo_hooks, invoke_mention_service  # noqa: PLC0415
     from modules.flow_gate.services import workflow_decision_service  # noqa: PLC0415
     from modules.flow_gate.graph_workflow.services.ai_node_starter import api_base_url  # noqa: PLC0415
@@ -769,6 +771,15 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
             document_review_loop=dict(loop),
         )
     except Exception as exc:  # noqa: BLE001 -- the result stays in review for a person
+        from flowgate.ai_roles.invocations import duplicate_start  # noqa: PLC0415
+
+        # Same code + ledger judgment as the role journal. Admission has released the refused
+        # launcher's claim; an owner here is the other start, whose verdict still belongs to the assignment.
+        if duplicate_start(exc, graph_exec_id):
+            if failure is not None:
+                failure["duplicate_start"] = True
+            _log.info("card review loop duplicate start flow=%s doc=%s exec=%s", flow_id, doc_id, graph_exec_id)
+            return None
         if failure is not None:
             failure["cause"] = node_dispatch._start_failure(exc)
         execution.start_failed(graph_exec_id, exc)
