@@ -256,9 +256,10 @@ interface RunButton {
 }
 
 const RUN_BUTTONS: Readonly<Record<DesignerRunPhase, readonly RunButton[]>> = {
-  // flowgate.v02test.0001 B0001 §2 / T0004 T#2: starting a run is the menu's 다음 단계 / 전체 실행 only — no start button here.
-  // The buttons below show while a run is going (일시정지 / 재개 / 중지), as before.
-  idle: [],
+  idle: [
+    { key: 'next', command: 'run.next', label: 'run_next', icon: 'next' },
+    { key: 'all', command: 'run.all', label: 'run_all', icon: 'all' },
+  ],
   running: [
     { key: 'pause', command: 'run.pause', label: 'pause', icon: 'pause' },
     { key: 'stop', command: 'run.stop', label: 'stop', icon: 'stop' },

@@ -323,9 +323,11 @@ describe('Designer initial state — no work target right after entry (0039 T#3)
     expect(w.find('[data-test="designer-menu-subpop"][data-sub="recent-project"]').exists()).toBe(true)
   })
 
-  it('the toolbar has no run start button, so nothing starts a run from it', async () => {
+  it('both toolbar run buttons stay visible and disabled without an open Flow', async () => {
     const w = await mountShell()
-    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
+    const buttons = w.findAll('[data-test="designer-tool-run"]')
+    expect(buttons.map((button) => button.attributes('data-command'))).toEqual(['run.next', 'run.all'])
+    expect(buttons.every(isDisabled)).toBe(true)
     await settle()
     expect(runServer.calls).toEqual([])
   })
@@ -406,7 +408,7 @@ describe('Designer initial state — only an open Flow continues into the Design
     expect(explorerRow(w, 'Canvas').classes()).toContain('is-selected')
     expectUnselectedState(w)
     // The run state does not outlive its target.
-    expect(w.find('[data-test="designer-tool-run"]').exists()).toBe(false)
+    expect(w.find('[data-test="designer-tool-run"][data-command="run.stop"]').exists()).toBe(false)
   })
 
   it('a Project context change starts the new Project in the initial state again', async () => {
@@ -422,7 +424,7 @@ describe('Designer initial state — only an open Flow continues into the Design
 
     expectUnselectedState(w)
     // The run state does not outlive its target.
-    expect(w.find('[data-test="designer-tool-run"]').exists()).toBe(false)
+    expect(w.find('[data-test="designer-tool-run"][data-command="run.stop"]').exists()).toBe(false)
   })
 
   it('a Project context change after the Git / Conversation parts were shown reads nothing for the new Project', async () => {
