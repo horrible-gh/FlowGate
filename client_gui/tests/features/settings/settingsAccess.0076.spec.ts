@@ -175,14 +175,14 @@ afterEach(() => {
 })
 
 describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
-  it('A: 내 설정 2개, 프로젝트 선택, 시스템 › 일반 · 시스템 Agent · 사용자 · 전체 프로젝트; no Workspace/retired/"준비 중" entry', async () => {
+  it('A: 내 설정에 에이전트, 프로젝트 선택, 시스템 › 일반 · 사용자 · 전체 프로젝트; no Workspace/retired/"준비 중" entry', async () => {
     setCurrentUser(ADMIN)
     const hub = await enterDirectly('/settings')
     expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me', 'project', 'system'])
     expect(hub.get('[data-scope-card="project"] a').attributes('href')).toBe('/app/settings/project')
     expect(hub.get('[data-scope-card="project"]').findAll('.tag').map((t) => t.text())).toEqual(['프로젝트 선택'])
     expect(hub.get('[data-scope-card="me"] a').attributes('href')).toBe('/app/settings/me/account')
-    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '보안 · 세션'])
+    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '에이전트', '보안 · 세션'])
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/general')
     expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자', '전체 프로젝트'])
     expectNoRetiredOrInertEntries(hub)
@@ -204,7 +204,7 @@ describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
     setCurrentUser(person)
     const hub = await enterDirectly('/settings')
     expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me'])
-    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '보안 · 세션'])
+    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '에이전트', '보안 · 세션'])
     expect(hrefs(hub).filter((href) => /\/settings\/(system|project)/.test(href))).toEqual([])
     expect(hub.find('[data-testid="settings-hub-empty"]').exists()).toBe(false)
     expectNoRetiredOrInertEntries(hub)

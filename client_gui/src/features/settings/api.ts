@@ -221,6 +221,28 @@ export const revokeAgentCredential = (id: string) =>
 export const deleteSystemAgent = (id: string) =>
   call(() => deleteRequest<unknown>(agent(id)), 'action_failed')
 
+// Personal management keeps the same DTOs; ownership is assigned by the server.
+const personalAgent = (id: string) => `${API}/me/agents/${encodeURIComponent(id)}`
+export const listPersonalAgents = async () =>
+  (await call(() => getRequest<{ agents?: SystemAgent[] }>(`${API}/me/agents`), 'load_failed')).agents
+export const createPersonalAgent = (input: SystemAgentCreate) =>
+  call(() => postRequest<SystemAgent>(`${API}/me/agents`, {
+    name: input.name, enabled: input.enabled, location: 'remote', connection_mode: 'agent_pull',
+    local_executable_path: null,
+    configured_capabilities: { ai_cli: input.configured_capabilities.ai_cli, ai_api: input.configured_capabilities.ai_api, storage: false },
+  }), 'save_failed')
+export const updatePersonalAgent = (id: string, changes: SystemAgentChanges) => {
+  const body: SystemAgentChanges = {}
+  if (changes.name !== undefined) body.name = changes.name
+  if (changes.enabled !== undefined) body.enabled = changes.enabled
+  if (changes.configured_capabilities !== undefined) body.configured_capabilities = { ...changes.configured_capabilities, storage: false }
+  return call(() => patchRequest<SystemAgent>(personalAgent(id), body), 'save_failed')
+}
+export const issuePersonalAgentEnrollment = (id: string) =>
+  call(() => postRequest<AgentEnrollment>(`${personalAgent(id)}/enrollments`, {}), 'action_failed')
+export const deletePersonalAgent = (id: string) =>
+  call(() => deleteRequest<unknown>(personalAgent(id)), 'action_failed')
+
 // ── 프로젝트 조회 · 시스템 › 전체 프로젝트 (flowgate.v02.0076 T#5, D §2.3/§2.4/§2.8) ──────
 // Three existing GETs and nothing else: the project list (status=all; the 활성 filter is the
 // screen's own display rule, not a server permission filter), one project's storage Root and one

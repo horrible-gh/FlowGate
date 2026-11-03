@@ -16,6 +16,10 @@ import type {
   AiEvaluationSet,
   AiEvaluationSetInput,
   AiGroup,
+  AiRoleProfiles,
+  AiRoleProfileOptions,
+  RoleProfileRole,
+  RoleProfileValue,
   AiGroupInput,
   AiGroupRoleInput,
   AiGroupStateInput,
@@ -405,4 +409,22 @@ export async function applyFirstAiRoleSetup(flowId: string, requestId: string, r
     cardKeys: (raw.cards ?? []).map((card: RoleRaw) => card.node_key),
     account: raw.account ? toMyAiRoles(raw.account) : null,
   }
+}
+
+export function getAiRoleProfiles(groupId: string): Promise<AiRoleProfiles> {
+  return call(() => getRequest<AiRoleProfiles>(`${group(groupId)}/role-profiles`), 'gui.role_profiles.load_failed')
+}
+export function getAiRoleProfileOptions(groupId: string, locale: string): Promise<AiRoleProfileOptions> {
+  return call(() => getRequest<AiRoleProfileOptions>(`${group(groupId)}/role-profile-options`, { locale }), 'gui.role_profiles.load_failed')
+}
+const profile = (groupId: string, typeKey: string) => `${group(groupId)}/role-profiles/${encodeURIComponent(typeKey)}`
+export function addAiRoleProfile(groupId: string, typeKey: string): Promise<AiRoleProfiles> {
+  return call(() => putRequest<AiRoleProfiles>(profile(groupId, typeKey), {}), 'gui.role_profiles.save_failed')
+}
+export function setAiRoleProfileCell(groupId: string, typeKey: string, role: RoleProfileRole, value: RoleProfileValue): Promise<AiRoleProfiles> {
+  const body = value.kind === 'assigned' ? { kind: value.kind, provider_id: value.provider_id } : { kind: value.kind }
+  return call(() => putRequest<AiRoleProfiles>(`${profile(groupId, typeKey)}/roles/${role}`, body), 'gui.role_profiles.save_failed')
+}
+export function deleteAiRoleProfile(groupId: string, typeKey: string): Promise<AiRoleProfiles> {
+  return call(() => deleteRequest<AiRoleProfiles>(profile(groupId, typeKey)), 'gui.role_profiles.save_failed')
 }

@@ -273,8 +273,8 @@ afterEach(() => {
 })
 
 describe('V01 (시스템 부분) — 일반 joins the menus', () => {
-  // 시스템 Agent (T#4) sits between them in D §1.2 order, 전체 프로젝트 (T#5) comes last.
-  it('A: hub 시스템 card opens 일반 and lists 일반 · 시스템 Agent · 사용자 · 전체 프로젝트; the sub-navigation is the same four', async () => {
+  // 0120 T#2: Agents moved to the personal menu while remaining administrator-only.
+  it('A: hub 시스템 card opens 일반 and lists 일반 · 사용자 · 전체 프로젝트; Agents is offered under 내 설정', async () => {
     const hub = await open('/settings')
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/general')
     expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자', '전체 프로젝트'])

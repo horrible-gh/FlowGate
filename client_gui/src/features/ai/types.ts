@@ -230,8 +230,11 @@ export interface AiGroupRole {
   member_ids: string[]
 }
 
+export type AiGroupType = 'general' | 'role'
+
 export interface AiGroup {
   ai_group_id: string
+  group_type?: AiGroupType
   name: string
   description: string | null
   enabled: boolean
@@ -247,6 +250,7 @@ export interface AiGroup {
 }
 
 export interface AiGroupInput {
+  group_type?: AiGroupType
   name: string
   description?: string | null
 }
@@ -271,4 +275,23 @@ export interface AiExecutionPolicy {
   repeat_count_max: number
   repeat_count_min: number
   repeat_count_hard_max: number
+}
+
+// Group profiles are separate from account/card AiRoleValue semantics.
+export type RoleProfileRole = 'instruction' | 'execution' | 'review'
+export type RoleProfileValue =
+  | { kind: 'unset' | 'inherit' | 'not_used' }
+  | { kind: 'assigned'; provider_id: string; provider_name?: string | null; is_available?: boolean; status?: AiConnectionStatus }
+export interface AiRoleProfile {
+  type_key: string
+  position: number
+  roles: Record<RoleProfileRole, RoleProfileValue>
+}
+export interface AiRoleProfiles {
+  ai_group_id: string
+  items: AiRoleProfile[]
+}
+export interface AiRoleProfileOptions {
+  types: { type_key: string; label: string }[]
+  providers: { provider_id: string; provider_name: string }[]
 }

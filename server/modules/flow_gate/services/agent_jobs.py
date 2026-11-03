@@ -72,6 +72,7 @@ class AgentJobService:
     def enqueue_remote_cli(
         self, *, command_line, stdin_text, cwd, timeout_seconds,
         job_id=None, attempt_id=None, target_agent_id=None,
+        requested_by_user_id=None, project_id=None,
     ):
         if not isinstance(command_line, str) or not command_line.strip() or "\n" in command_line or "\r" in command_line:
             raise AgentError(422, "validation_failed", "command_line must be one nonempty line")
@@ -85,9 +86,21 @@ class AgentJobService:
                 or not isinstance(attempt_id, str) or not attempt_id or len(attempt_id) > 96
                 or (target_agent_id is not None and (not isinstance(target_agent_id, str) or not target_agent_id))):
             raise AgentError(422, "validation_failed", "Invalid Job identity or target")
+        if requested_by_user_id is not None:
+            if not isinstance(requested_by_user_id, str) or not requested_by_user_id:
+                raise AgentError(422, "validation_failed", "A requester identity is required")
+            if not self._requester_allowed(requested_by_user_id, project_id):
+                raise AgentError(403, "agent_job_forbidden", "Requester cannot access this project")
+        if target_agent_id:
+            target = AgentService(self.s).get(target_agent_id)
+            if target.get("owner_user_id") != requested_by_user_id:
+                raise AgentError(403, "agent_job_forbidden", "Agent ownership does not match the requester")
         payload = {"execution_type": "remote_cli", "command_line": command_line,
                    "stdin_text": stdin_text, "cwd": cwd, "timeout_seconds": timeout_seconds,
                    "target_agent_id": target_agent_id}
+        # Keep legacy system-job fingerprints stable across the migration.
+        if requested_by_user_id is not None or project_id is not None:
+            payload.update(requested_by_user_id=requested_by_user_id, project_id=project_id)
         fingerprint = _hash(payload)
         ts = _stamp(_now())
         with self.s.transaction():
@@ -108,10 +121,10 @@ class AgentJobService:
             inserted = self.s._execute_affected(
                 """INSERT INTO agent_jobs(job_id,attempt_id,execution_type,command_line,stdin_text,cwd,
                    timeout_seconds,status,target_agent_id,payload_digest,cancel_requested,
-                   stdout_truncated,stderr_truncated,created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,0,0,0,?,?) ON CONFLICT DO NOTHING""",
+                   stdout_truncated,stderr_truncated,created_at,updated_at,requested_by_user_id,project_id)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,0,0,0,?,?,?,?) ON CONFLICT DO NOTHING""",
                 [job_id, attempt_id, "remote_cli", command_line, stdin_text, cwd,
-                 timeout_seconds, "NEW", target_agent_id, fingerprint, ts, ts],
+                 timeout_seconds, "NEW", target_agent_id, fingerprint, ts, ts, requested_by_user_id, project_id],
             )
             if inserted != 1:
                 existing = self.s._fetch_one(
@@ -125,6 +138,25 @@ class AgentJobService:
                             "status": existing["status"], "created": False}
                 _conflict("job_attempt_active", "A Job attempt is already active")
         return {"job_id": job_id, "attempt_id": attempt_id, "status": "NEW", "created": True}
+
+    def _requester_allowed(self, user_id, project_id):
+        user = self.s._fetch_one("SELECT is_active,is_admin FROM users WHERE user_id=?", [user_id])
+        if not user or not user["is_active"]:
+            return False
+        if project_id is None:
+            return True
+        project = self.s._fetch_one("SELECT is_active FROM projects WHERE project_id=?", [project_id])
+        if not project or not project["is_active"]:
+            return False
+        from modules.flow_gate.rbac.permission_service import has_permission
+        return bool(user["is_admin"]) or has_permission(user_id, project_id, "perm_document_read")
+
+    def _job_allowed(self, row, agent_id):
+        agent = self.s._fetch_one("SELECT owner_user_id FROM agents WHERE agent_id=?", [agent_id])
+        if not agent or agent.get("owner_user_id") != row.get("requested_by_user_id"):
+            return False
+        owner = agent.get("owner_user_id")
+        return owner is None or self._requester_allowed(owner, row.get("project_id"))
 
     def _reclaim(self, ts):
         self.s._execute_affected(
@@ -146,12 +178,16 @@ class AgentJobService:
             ts = _stamp(_now())
             self._reclaim(ts)
             candidates = self.s._fetch_all(
-                """SELECT job_id,attempt_id FROM agent_jobs
-                   WHERE status='NEW' AND (target_agent_id IS NULL OR target_agent_id=?)
-                   ORDER BY created_at,job_id,attempt_id""",
-                [agent_id],
+                """SELECT j.* FROM agent_jobs j JOIN agents a ON a.agent_id=?
+                   WHERE j.status='NEW' AND (j.target_agent_id IS NULL OR j.target_agent_id=?)
+                   AND ((a.owner_user_id IS NULL AND j.requested_by_user_id IS NULL)
+                        OR a.owner_user_id=j.requested_by_user_id)
+                   ORDER BY j.created_at,j.job_id,j.attempt_id""",
+                [agent_id, agent_id],
             )
             for candidate in candidates:
+                if not self._job_allowed(candidate, agent_id):
+                    continue
                 token = "lsh_" + secrets.token_urlsafe(32)
                 expiry = _stamp(_now() + timedelta(seconds=LEASE_TTL_SECONDS))
                 won = self.s._execute_affected(
@@ -172,6 +208,8 @@ class AgentJobService:
             return None
 
     def _owned(self, row, agent_id, lease_token):
+        if not self._job_allowed(row, agent_id):
+            raise AgentError(403, "agent_job_forbidden", "Agent cannot execute this user or project job")
         if row["lease_owner_agent_id"] != agent_id or not lease_token or not secrets.compare_digest(
             str(row["lease_token"] or ""), lease_token
         ):
