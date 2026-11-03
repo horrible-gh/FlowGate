@@ -608,11 +608,14 @@ def dispatch_role_card(ctx, node: dict) -> Optional[dict]:
     first = INSTRUCTION if plan["instruction_type"] else RESULT
     found = instruction_line_document(flow_id, node, plan) if first == INSTRUCTION else {"doc_id": None}
     reuse = found["doc_id"] if found.get("written") else None
+    from flowgate.card_completion import human
+    if reuse and human.instruction_approval(flow_id, node, reuse):
+        first = RESULT
     a = start_stage(flow_id, ctx.run, node, attempt_id, first, 0, opening=True, reused_doc_id=reuse, plan=plan,
                     project_id=ctx.project_id, ctx=ctx)
     if a == LEGACY:
         return None
-    if first == INSTRUCTION:                                          # 0038-T A-2: the report baseline
+    if plan["instruction_type"]:                                     # Human instruction reuse keeps the baseline contract
         # a baseline that cannot be recorded raises (``BaselineUnavailable``): the step's guard rolls the opening back
         report_baseline.record_at_opening(attempt_id, ctx.run_id, flow_id, key, bool(reuse),
                                           report_line(flow_id, node, plan)[1], reuse)
@@ -631,7 +634,7 @@ def dispatch_role_card(ctx, node: dict) -> Optional[dict]:
     if first == INSTRUCTION:
         error = act_instruction_stage(ctx, node, a, issued_to, token, found, plan)
     else:
-        error = act_result_stage(ctx, node, a, issued_to, None, plan, token)
+        error = act_result_stage(ctx, node, a, issued_to, reuse, plan, token)
     out = {"token_issued": True, "mention_id": None, "issued_to": shown}
     if error:
         out["error_code"] = error

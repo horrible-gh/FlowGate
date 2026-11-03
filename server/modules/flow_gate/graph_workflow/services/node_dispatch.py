@@ -80,7 +80,7 @@ from modules.flow_gate.graph_workflow.domain.graph_model import run_doc_type
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.services import token_service
 
-from . import card_settings_ports
+from . import card_settings_ports, card_completion_ports
 from modules.flow_gate.services import graph_execution_hooks
 
 _log = logging.getLogger(__name__)
@@ -123,6 +123,8 @@ def _savepoint(name: str = "graph_dispatch"):
 def dispatch(ctx, node_key: str) -> Optional[dict]:
     """``dispatch_node``: the executor of the node's type, or ``None`` (no executor: no dispatch)."""
     row = ctx.node_rows.get(node_key) or {}
+    if card_completion_ports.human_dispatch(ctx, node_key):
+        return None
     executor = _EXECUTORS.get(row.get("node_type"))
     return executor(ctx, row) if executor else None
 

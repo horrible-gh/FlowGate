@@ -181,7 +181,8 @@ def _tr2_succeeded(doc_id: str, revision: int) -> bool:
     from modules.flow_gate.db import tr2_approval_attempts as db_attempts  # noqa: PLC0415
 
     success = db_attempts.latest_success(doc_id)
-    return bool(success) and int(success.get("document_revision") or -1) == int(revision)
+    return bool(success) and success.get("document_revision") is not None \
+        and int(success["document_revision"]) == int(revision)
 
 
 def _tr2_apply(flow_id: str, doc_id: str, revision: int, issuer: str, permissions, request_key: str,

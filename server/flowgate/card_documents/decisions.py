@@ -113,11 +113,6 @@ def _targets(flow_id, node_key, node, docs, slot, action):
                 gates.require_test_gate(target)
         except gates.GateRefused as exc:
             context.refuse("document_decision_gate_refused", slot=target_slot, detail=str(exc))
-        # TR2 applies source outside this transaction. T#2 must connect the strong finalize
-        # hook; saving an approved badge without it would bypass the apply gate.
-        if action == "approve" and target.get("type_code") == "TR2":
-            if not own_effects._tr2_succeeded(target["doc_id"], int(target.get("revision_no") or 0)):
-                context.refuse("document_decision_effect_required", slot=target_slot, continuation="T#2")
     if action == "reject":
         context.require_rejection_safe(flow_id, node_key, docs)
     return targets
@@ -180,7 +175,7 @@ def write(group, node_key, slot, body, user_id):
     canonical = json.dumps({"slot": slot, "actor_id": user_id, **body}, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode()).hexdigest()
 
-    def decide():
+    def decide(*, validate_only=False, finalizing=None):
         context.authorize(user_id, group, body["action"])
         if not repository.available():
             context.refuse("document_decisions_unavailable")
@@ -195,10 +190,22 @@ def write(group, node_key, slot, body, user_id):
         doc = docs.get(slot)
         if not doc or doc["doc_id"] != body["doc_id"]:
             context.refuse("document_slot_mismatch", slot=slot)
-        if body["expected_revision"] != int(doc.get("revision_no") or 0) or body["expected_context"] != ctx \
+        compared = ctx
+        if finalizing == doc["doc_id"]:
+            # The strong TR2 finalize has just CASed this badge in this same guard.
+            # Every other field, fingerprint, slot and card version must still match.
+            compared = {**ctx, "documents": {**ctx["documents"], slot: {
+                **ctx["documents"][slot],
+                "doc_review_status": body["expected_context"]["documents"][slot]["doc_review_status"]}}}
+        if body["expected_revision"] != int(doc.get("revision_no") or 0) or body["expected_context"] != compared \
                 or body["expected_decision_version"] != repository.version(flow_id, node_key):
             context.refuse("document_decision_context_changed", current=_view(group, node_key, user_id))
         targets = _targets(flow_id, node_key, node, docs, slot, body["action"])
+        if validate_only:
+            return targets
+        if finalizing:
+            targets = [(s, {**d, "doc_review_status": body["expected_context"]["documents"][s]["doc_review_status"]}
+                        if d["doc_id"] == finalizing else d, cascade) for s, d, cascade in targets]
         version = repository.version(flow_id, node_key) + 1
         request_id = "gdr_" + uuid.uuid4().hex
 
@@ -231,4 +238,36 @@ def write(group, node_key, slot, body, user_id):
                 context.refuse("document_decision_effect_refused", detail=str(exc))
         return persist()
 
-    return with_flow_guard(flow_id, decide)
+    # TR2 source work owns its source lock outside every DB transaction. The final
+    # decision/cascade/receipt joins its guarded strong finalize, or all roll back.
+    targets = with_flow_guard(flow_id, lambda: decide(validate_only=True))
+    tr2 = next((d for _s, d, _c in targets if d.get("type_code") == "TR2"), None) if isinstance(targets, list) else None
+    if body["action"] == "approve" and tr2 and not own_effects._tr2_succeeded(tr2["doc_id"], int(tr2.get("revision_no") or 0)):
+        from modules.flow_gate.documents import tr2_approval_service, tr2_service
+        from modules.flow_gate.graph_workflow.services.flow_guard import held_guard
+        from modules.flow_gate.services.mutation_policy import system_principal
+        saved = {}
+
+        def check():
+            return decide(validate_only=True) if held_guard() == ("flow", flow_id) else with_flow_guard(
+                flow_id, lambda: decide(validate_only=True))
+
+        def finalized(_doc):
+            saved["result"] = decide(finalizing=tr2["doc_id"])
+
+        try:
+            tr2_approval_service.approve(doc_id=tr2["doc_id"], actor_user_id=user_id,
+                user_permissions=context.permissions(user_id),
+                mutation_principal=system_principal(user_id=user_id, group_id=flow_id),
+                expected_revision=int(tr2.get("revision_no") or 0), request_key="graph:" + digest[:48],
+                completion_hook=finalized, decision_check=check,
+                finalize_guard=lambda fn: with_flow_guard(flow_id, fn))
+        except tr2_service.Tr2ValidationError as exc:
+            context.refuse("document_decision_effect_refused", detail=str(exc))
+        result = saved.get("result") or with_flow_guard(flow_id, decide)
+    else:
+        result = with_flow_guard(flow_id, decide)
+    if body["action"] == "approve":
+        from flowgate.card_completion import human
+        human.refresh(flow_id)
+    return result

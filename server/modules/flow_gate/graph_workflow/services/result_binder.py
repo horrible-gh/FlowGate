@@ -299,7 +299,8 @@ def reconcile_targets(ctx: RunContext, s: RunState) -> list[str]:
     out = []
     for key in sorted(s.node_runs):
         nr = s.node_runs[key]
-        if (nr.status == "open" and nr.result_doc_id is None and run_store.token_ids(ctx.run_id, key)) or \
+        if (nr.status == "open" and nr.result_doc_id is None
+                and (run_store.token_ids(ctx.run_id, key) or card_completion_ports.human_due(ctx, key))) or \
                 (nr.result_doc_id is not None and nr.status in ("review", "rejected")):
             out.append(key)
     return out
@@ -371,11 +372,13 @@ def needs_reconcile(ctx: RunContext) -> bool:
     if card_completion_ports.unsettled(ctx.flow_id, ctx.run):
         return True
     s = read_run_state(ctx)
-    return any(next_missing_event(ctx, s, key) is not None for key in reconcile_targets(ctx, s))
+    return any(card_completion_ports.human_due(ctx, key) or next_missing_event(ctx, s, key) is not None
+               for key in reconcile_targets(ctx, s))
 
 
 def reconcile_node(ctx: RunContext, key: str, policies: dict) -> None:
     """Inside a guard only: apply missing events one at a time, re-reading the state each time."""
+    card_completion_ports.human_reconcile(ctx, key)
     for _ in range(RECONCILE_MAX_STEPS_PER_NODE):
         s = read_run_state(ctx)
         event = next_missing_event(ctx, s, key)

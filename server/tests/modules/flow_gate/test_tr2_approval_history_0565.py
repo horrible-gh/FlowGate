@@ -196,6 +196,8 @@ def test_source_history_distinguishes_restore_pending_and_conflict(monkeypatch, 
 
 
 def test_time_machine_uses_one_mode_for_mixed_batch(monkeypatch):
+    # Mode selection is isolated from the recovery DB, as from its ledger/Git dependencies.
+    monkeypatch.setattr(tr_commit_service.db_recovery, "has_unresolved", lambda _group: False)
     ids = ["t", "r", "r2"]
     docs = {"t": {"type_code": "T"}, "r": {"type_code": "TR"},
             "r2": {"type_code": "TR2"}}
@@ -219,6 +221,8 @@ def test_time_machine_uses_one_mode_for_mixed_batch(monkeypatch):
 
 
 def test_pure_tr_time_machine_retains_legacy_uncommit(monkeypatch):
+    # Mode selection is isolated from the recovery DB, as from its ledger/Git dependencies.
+    monkeypatch.setattr(tr_commit_service.db_recovery, "has_unresolved", lambda _group: False)
     row = {"id": 1, "doc_id": "r", "commit_sha": "a"}
     monkeypatch.setattr(tr_commit_service.db_docs, "get_documents_by_ids",
                         lambda _ids: {"r": {"type_code": "TR"}})

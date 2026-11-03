@@ -105,7 +105,11 @@ def pending_outputs(flow_id: str, node: dict, result_doc_id: Optional[str]) -> l
         if not doc_id or doc_id == result_doc_id or not is_target(line):
             continue                                           # no document, the result itself, an empty draft, stale
         live = True
-        if line.get("doc_review_status") not in APPROVED and doc_id not in out:
+        from flowgate.card_documents import decision_repository
+        doc = legacy.document(doc_id)
+        projected = decision_repository.projection(flow_id, node["node_key"], slots.INSTRUCTION, doc)
+        status = projected.get("doc_review_status", line.get("doc_review_status"))
+        if status not in APPROVED and doc_id not in out:
             out.append(doc_id)
     if live or _one_stage(flow_id, node, result_doc_id, wanted):
         return out

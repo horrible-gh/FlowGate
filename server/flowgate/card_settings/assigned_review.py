@@ -968,6 +968,13 @@ def reconcile_row(flow_id: str, run_row: dict, row: dict) -> None:
     attempt_id = legacy.active_attempt_id(run_id, key)
     if review_stage._handoff_pending(flow_id, key) or legacy.node_ai_run_active(flow_id, key):
         return
+    from flowgate.card_completion import human
+    node = legacy.run_node_row(flow_id, run_row, key)
+    instruction = human._document(flow_id, node, "instruction") if node and row.get("stage") == sa.INSTRUCTION else None
+    if node and ((row.get("result_doc_id") and human.result_approved(flow_id, run_id, key, row["result_doc_id"]))
+                 or (instruction and human.instruction_approval(flow_id, node, instruction["doc_id"]))):
+        human.refresh(flow_id)
+        return
     jobs: list = []
     if row["status"] == "review" and row.get("result_doc_id"):
         doc = _doc(row["result_doc_id"])
@@ -1070,6 +1077,9 @@ def taken_review_pending(flow_id: str, run_id: str, key: str, doc_id: str) -> bo
     review of it has not passed nor approved it automatically yet — its old approval completes nothing. Anything
     that cannot be read is pending (the node waits; never completed on a judgement that is not this attempt's)."""
     try:
+        from flowgate.card_completion import human
+        if human.result_approved(flow_id, run_id, key, doc_id):
+            return False  # Explicit override; old review/assignment rows remain intact.
         attempt_id = legacy.active_attempt_id(run_id, key)
         if not attempt_id or sa.is_legacy_attempt(attempt_id) or not legacy.taken_judged(run_id, key, attempt_id,
                                                                                         doc_id):

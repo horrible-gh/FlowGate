@@ -1,11 +1,12 @@
 """Card completion (flowgate.v02.0119 T#2, T-1; 0004-CH seq 9 §1 · seq 11 교체 2 · seq 13 정정 2).
 
 The completion record is the only source of "this node is done" in a Graph run. A node's ``review -> done`` has three
-causes, never a person's approval of a document:
+submission causes, plus revision-bound Graph human approval:
 
     ai_review_passed     the card's AI review passed the result (actor: the provider the review actually ran on)
     no_review_submitted  the card has no review: the AI result is complete as submitted (actor: system)
     human_submitted      a person's result with no review, complete as submitted (actor: the person who wrote it)
+    human_approved       an explicit Graph decision, pinned by decision_id (actor: its actual human approver)
 
 ``requested_by`` is the Graph run's issuer (``started_by``) and only that (it is never the actor, nor the card's
 assignee). ``verdict_id`` is the passing review row.
@@ -53,7 +54,8 @@ from flowgate.card_completion.repository import APPLIED, LIVE, RECORDED, REVOKED
 _log = logging.getLogger(__name__)
 
 AI_REVIEW_PASSED, NO_REVIEW_SUBMITTED, HUMAN_SUBMITTED = "ai_review_passed", "no_review_submitted", "human_submitted"
-CAUSES = (AI_REVIEW_PASSED, NO_REVIEW_SUBMITTED, HUMAN_SUBMITTED)
+HUMAN_APPROVED = "human_approved"
+CAUSES = (AI_REVIEW_PASSED, NO_REVIEW_SUBMITTED, HUMAN_SUBMITTED, HUMAN_APPROVED)
 SYSTEM, AI, USER = "system", "ai", "user"
 ACTOR_KINDS = (SYSTEM, AI, USER)
 SYSTEM_ACTOR_ID = "system"
@@ -136,7 +138,7 @@ def _renews(latest: dict, revision_no: Optional[int]) -> bool:
 
 def record(flow_id: str, run_id: str, node_key: str, attempt_id: Optional[str], result_doc_id: str, *, cause: str,
            actor_kind: str, actor_id: Optional[str], requested_by: Optional[str], verdict_id=None,
-           revision_no: Optional[int] = None) -> tuple[dict, bool]:
+           revision_no: Optional[int] = None, decision_id: Optional[str] = None) -> tuple[dict, bool]:
     """Write the completion (or read back the one its key has): ``(row, created)``. Joins the caller's transaction when
     there is one (the automatic completion writes it with the document's status display, revision pinned).
 
@@ -144,6 +146,11 @@ def record(flow_id: str, run_id: str, node_key: str, attempt_id: Optional[str], 
     first (``revision_changed``); a superseded row followed by a newer revision of the result takes the new submission's
     row as the key's next generation. A revoked row, or a superseded one with no newer revision, is returned as it is —
     the caller must not report it as a completion (its status is not live)."""
+    if cause == HUMAN_APPROVED:
+        from flowgate.card_completion import human
+        human.require_evidence(flow_id, run_id, node_key, result_doc_id, decision_id, actor_kind, actor_id)
+        if verdict_id is not None:
+            raise CompletionRefused("human_approval_has_no_ai_verdict")
     if cause not in CAUSES:
         raise CompletionRefused("unknown_cause", cause=cause)
     if actor_kind not in ACTOR_KINDS:
@@ -153,7 +160,7 @@ def record(flow_id: str, run_id: str, node_key: str, attempt_id: Optional[str], 
     row = {"run_id": run_id, "group_id": flow_id, "node_key": node_key, "attempt_id": attempt_id,
            "result_doc_id": result_doc_id, "revision_no": revision_no, "cause": cause, "actor_kind": actor_kind,
            "actor_id": actor_id, "requested_by": requested_by,
-           "verdict_id": None if verdict_id is None else str(verdict_id)}
+           "verdict_id": None if verdict_id is None else str(verdict_id), "decision_id": decision_id}
     with legacy.transaction():
         latest = repository.by_key(run_id, node_key, attempt_id, result_doc_id)
         if latest is None:
@@ -162,7 +169,14 @@ def record(flow_id: str, run_id: str, node_key: str, attempt_id: Optional[str], 
                 and int(latest["revision_no"]) != int(revision_no):
             repository.set_status(latest["completion_id"], (RECORDED,), SUPERSEDED, "revision_changed")
             latest = repository.by_id(latest["completion_id"]) or latest
-        if _renews(latest, revision_no):
+        if latest["status"] == RECORDED and latest.get("cause") == HUMAN_APPROVED:
+            from flowgate.card_completion import human
+            if not human.record_valid(latest):
+                repository.set_status(latest["completion_id"], (RECORDED,), SUPERSEDED, "human_decision_changed")
+                latest = repository.by_id(latest["completion_id"]) or latest
+        renewed_decision = (latest["status"] == SUPERSEDED and latest.get("status_reason") == "human_decision_changed"
+                            and decision_id and decision_id != latest.get("decision_id"))
+        if _renews(latest, revision_no) or renewed_decision:
             return repository.insert(row, int(latest.get("generation") or 0) + 1)
         return latest, False
 
@@ -171,6 +185,10 @@ def record(flow_id: str, run_id: str, node_key: str, attempt_id: Optional[str], 
 
 def stale_reason(rec: dict, row: Optional[dict], active_attempt: Optional[str], doc: Optional[dict]) -> Optional[str]:
     """Why the record ``rec`` no longer answers the node run ``row`` in review (None: it does)."""
+    if rec.get("cause") == HUMAN_APPROVED:
+        from flowgate.card_completion import human
+        if not human.record_valid(rec):
+            return "human_decision_changed"
     if row is None:
         return "node_not_in_run"
     if row.get("result_doc_id") != rec["result_doc_id"]:
@@ -316,6 +334,10 @@ def completion_of(flow_id: str, run: dict, node_key: str, doc: dict) -> Optional
     attempt = legacy.active_attempt_id(run_id, node_key)
     rec = repository.by_key(run_id, node_key, attempt, doc["doc_id"])
     if rec is not None:
+        if rec.get("cause") == HUMAN_APPROVED:
+            from flowgate.card_completion import human
+            if not human.record_valid(rec):
+                return None
         if rec["status"] == APPLIED:
             return {"completion_id": rec["completion_id"], "legacy": False}
         if rec["status"] == RECORDED and stale_reason(rec, legacy.node_run(run_id, node_key), attempt, doc) is None:

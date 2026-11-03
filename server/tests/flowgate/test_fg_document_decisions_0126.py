@@ -558,6 +558,6 @@ def test_tr2_apply_gate_cannot_be_bypassed_by_human_cascade(decisions_env):
     env = decisions_env
     key = _card(env, "T2")
     response = _post(env, key, _request(env, key), status=409)
-    assert response["error"]["code"] == "document_decision_effect_required"
+    assert response["error"]["code"] == "document_decision_effect_refused"
     assert _rows(env) == [] and _rows(env, "graph_document_decision_requests") == []
     assert set(_states(env, key).values()) == {None}
