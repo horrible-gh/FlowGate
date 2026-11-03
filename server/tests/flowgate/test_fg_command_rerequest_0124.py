@@ -154,7 +154,7 @@ def test_a_step_requests_the_spent_review_again_as_seq_2_with_its_assignment_and
     assert second is not None
     assert (second["actor"], second["provider_id"], second["rework_provider_id"], second["review_rounds"],
             second["author"], second["source"]) == \
-        ("ai", B, X, first["review_rounds"], "ai", first["source"])
+        ("ai", A, A, 3, "ai", first["source"])
     assert (second["stage_state"], second["verdict"], second["intent_kind"]) == ("active", None, "execution")
     assert second["basis_doc_id"] == result
     assert one(env, a, "result_review", 1) == before                       # seq 1 only read
@@ -168,7 +168,7 @@ def test_a_step_requests_the_spent_review_again_as_seq_2_with_its_assignment_and
     [loop] = started
     assert loop["graph_exec_id"] == second["intent_exec_id"] and loop["doc_ref"] == result
     assert (loop["document_review_loop"]["reviewer_provider_id"], loop["document_review_loop"]["rework_provider_id"],
-            loop["document_review_loop"]["review_count"]) == (B, X, first["review_rounds"])
+            loop["document_review_loop"]["review_count"]) == (A, A, 3)
     [assigned] = [p for p in _stage_assigned(env, a) if p.get("seq") == 2]
     assert (assigned["rerequest_of_seq"], assigned["rerequest_cause"], assigned["cause"]) == \
         (1, "user_command", "stage_assigned")
@@ -343,6 +343,15 @@ def test_an_excluded_card_is_never_requested_again_by_a_command(env, decided, mo
     rows = len(assignments(env, a))
     loops, requests = len(_loops(starts)), len(ledger(env))
     command(env, "step")
+    if case in {"review_verdict_hold", "run_not_clean", "completion_missing", "person_author"}:
+        # 0126: explicit reentry now covers these waits; attribution and older seqs remain fixed.
+        second = one(env, a, "result_review", 2)
+        assert second is not None and len(assignments(env,a)) == rows + 1
+        assert len(_loops(starts)) == loops + 1 and len(ledger(env)) == requests + 1
+        assert node_run(env,a2)["status"] == "pending"
+        if case == "person_author":
+            assert second["review_rounds"] == 1 and second["rework_provider_id"] is None
+        return
     assert len(assignments(env, a)) == rows and one(env, a, "result_review", 2) is None
     assert len(_loops(starts)) == loops and len(ledger(env)) == requests
     assert a not in (_run()["step_node_keys"] or [])
@@ -414,6 +423,7 @@ def test_a_command_requests_every_admitted_card_of_a_flow_again_and_nothing_of_a
         a: "review_not_passed:retry_exhausted", b: "review_not_passed:total_timeout",
         c: "review_not_passed:review_verdict_hold"}
     assert _run_row(env)["status"] == "idle"
+    _hold(env, c)  # 0126: verdict hold is retryable; the independent card Hold still blocks.
     asked = []
     real = assigned_review.rerequest_review_locked
 

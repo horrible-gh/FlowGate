@@ -84,6 +84,18 @@ def command_rerequest_due(reason: Optional[str]) -> bool:
     return reason[len(REVIEW_NOT_PASSED):] in COMMAND_REREQUEST_STOPS
 
 
+def command_reentry_due(reason: Optional[str]) -> bool:
+    """0126: explicit intent also releases a verdict hold or failed path; never a card Hold.
+
+    A missing completion is inspected against durable document/assignment evidence by the caller.
+    Permission, unknown reasons and instruction approval gates remain blocked.
+    """
+    return (command_rerequest_due(reason) or reason in (
+        REVIEW_NOT_PASSED + "review_verdict_hold", COMPLETION_MISSING,
+        REVIEW_NOT_STARTED, REVIEW_RESULT_UNKNOWN, APPROVAL_REFUSED, STAGE_NOT_PERSON)
+        or isinstance(reason, str) and reason.startswith(RUN_NOT_CLEAN))
+
+
 def state(reason: Optional[str]) -> dict:
     """``{"kind", "reason"}`` of a card in review nothing completes, its latest recorded reason ``reason``."""
     return {"kind": kind_of(reason), "reason": reason or COMPLETION_MISSING}
