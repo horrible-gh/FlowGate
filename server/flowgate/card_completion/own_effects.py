@@ -112,10 +112,18 @@ def _announce(doc: dict, admitted: dict) -> None:
     """After the commit: the run and its report are visible before anyone is told."""
     from modules.flow_gate.services import test_run_service as runner  # noqa: PLC0415
 
-    runner._emit_started(doc, admitted["run"])
-    runner._broadcast("group_view_refresh", doc, {
-        "group_id": doc.get("group_id"), "reason": "test_report_opened", "doc_id": admitted["tsr_doc_id"],
-        "run_id": admitted["run"]["run_id"]})
+    from modules.flow_gate.db.connection import after_commit
+
+    def send():
+        runner._emit_started(doc, admitted["run"])
+        runner._broadcast("group_view_refresh", doc, {
+            "group_id": doc.get("group_id"), "reason": "test_report_opened", "doc_id": admitted["tsr_doc_id"],
+            "run_id": admitted["run"]["run_id"]})
+
+    # 0126 T#1: a human cascade can own the outer Flow transaction. Its admission
+    # notice must not escape before the badges, request and audit rows commit.
+    if not after_commit(send):
+        send()
 
 
 def _ts(doc_id: str, revision: int, runner_id: str, write: Callable[[], object]):

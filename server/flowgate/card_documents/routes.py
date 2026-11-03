@@ -14,9 +14,11 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 
 from flowgate.card_documents import compose
+from flowgate.card_documents.decision_routes import router as decision_router
 from flowgate.card_documents import legacy_adapter as legacy
 
 router = APIRouter(prefix="/api/v1", tags=["CardDocuments"])
+router.include_router(decision_router)
 
 
 @router.post("/flows/{flow_id}/nodes/{node_key}/slots/{slot}/document")
