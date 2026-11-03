@@ -728,44 +728,82 @@ def write_failure(row):
     ``question_pending`` — a question wait, no failure (``settle._failed``, ``needs_ai_dispatch``, the node wire's
     ``error_code``); once they are all answered it reads ``no_result``, retried as one (``retry_result_stage``).
     """
+    return _write_end(row)[0]
+
+
+def _write_end(row):
+    """(``write_failure``'s answer, the finalized ``ai_invoke_runs`` row it was read from or None)."""
     if row.get("status") != "open" or row.get("result_doc_id") or row.get("stage") != "result":
-        return None
+        return None, None
     if not get_store().table_exists("graph_attempt_runs") or ledger.handing_off(row["run_id"]):
-        return None
+        return None, None
     attempt = run_store.active_attempt_id(row["run_id"], row["node_key"])
     if not attempt:
-        return None
+        return None, None
     if run_store._one("SELECT 1 AS present FROM graph_attempt_runs WHERE attempt_id = ? "
                       "AND status IN ('requested', 'running') LIMIT 1", [attempt]):
-        return None
+        return None, None
     latest = run_store._one("SELECT * FROM graph_attempt_runs WHERE attempt_id = ? "
                             "ORDER BY created_at DESC, exec_id DESC LIMIT 1", [attempt])
     if not latest or latest["kind"] != "write" or latest["status"] != "ended" or not latest.get("ai_run_id"):
-        return None
+        return None, None
     job = json.loads(latest["request_json"]).get("job") or {}
     if job.get("stage") != "result":
-        return None
+        return None, None
     ended = ai_invoke_runs.get(latest["ai_run_id"])
     if not ended or ended.get("status") != "finished":
-        return None
+        return None, None
     # A registration whose contact was lost must reconcile normally, never look like missing output.
     from modules.flow_gate.graph_workflow.services import result_binder, run_apply
     graph = run_store.run_by_id(row["run_id"])
     if not graph or graph["status"] == stop.STOPPING:
-        return None
+        return None, None
     ctx = run_apply.load_context(graph, None, None)
     if result_binder.next_missing_event(ctx, run_apply.read_run_state(ctx), row["node_key"]) is not None:
-        return None
-    if ended.get("end_reason") == "exited" and ended.get("exit_code") == 0 \
-            and ended.get("stop_code") in (None, "", "no_output_exhausted", QUESTION_PENDING) \
-            and not ended.get("register_errors"):
+        return None, None
+    if ended.get("end_reason") == "exited" and ended.get("exit_code") == 0             and ended.get("stop_code") in (None, "", "no_output_exhausted", QUESTION_PENDING)             and not ended.get("register_errors"):
         if ended.get("stop_code") == QUESTION_PENDING and _asked_open(graph["group_id"], latest["ai_run_id"]):
-            return QUESTION_PENDING
-        return "no_result"
-    return "ai_invoke_failed"
+            return QUESTION_PENDING, ended
+        return "no_result", ended
+    return "ai_invoke_failed", ended
 
 
 QUESTION_PENDING = "question_pending"
+# flowgate.v02.0121 T#2: the one ``ai_invoke_failed`` end an explicit command writes again on the same attempt.
+PROVIDER_FAILED = "provider_failed"
+
+
+def provider_failure_retry_due(row):
+    """flowgate.v02.0121 T#1 / T#2: the node's result writer ended because its provider itself failed — the finalized
+    run exited on its own (``end_reason`` ``exited``) with the canonical stop code ``provider_failed`` (a non-zero CLI
+    exit or a ``turn.failed`` / ``error`` event, ``finalize.provider_failure_of``: a model at capacity, a dropped
+    stream) and registered nothing, nothing refused. Read from the same durable records as ``write_failure`` (it is
+    ``ai_invoke_failed`` here: the current attempt has no requested / running execution, its latest one is that
+    writer's ended result write, no registration is waiting to be reconciled, the run is not stopping). Every other
+    ``ai_invoke_failed`` end keeps its own policy: a cancel, a pause, a timeout (``end_reason`` is not ``exited``),
+    ``providers_exhausted``, a refused worker (``group_lease_denied``), an inbox stop or a refused registration
+    (``register_errors``). A read only: nothing is requested or written here."""
+    failure, ended = _write_end(row)
+    return failure == "ai_invoke_failed" and ended is not None and ended.get("end_reason") == "exited"         and ended.get("stop_code") == PROVIDER_FAILED and not ended.get("register_errors")
+
+
+# flowgate.v02.0121 T#4: the short causes a failed result writer's card shows (the node wire's ``dispatch.error_detail``)
+PROVIDER_CAPACITY = "provider_capacity"
+_SHOWN_STOPS = (PROVIDER_FAILED, "timeout", "providers_exhausted")
+
+
+def write_failure_detail(row):
+    """flowgate.v02.0121 T#4: the short cause of the node's ``ai_invoke_failed`` result writer — ``provider_capacity``
+    (its provider said the model is at capacity: the canonical ``stop_reason`` the finalize wrote from the provider's
+    own words, ``finalize._stop_reason_text``), else its stop code when it is one of ``_SHOWN_STOPS``; None for any
+    other end (nothing is guessed). The provider's whole output stays in the run's log and records."""
+    failure, ended = _write_end(row)
+    if failure != "ai_invoke_failed" or not ended:
+        return None
+    code = ended.get("stop_code")
+    if code == PROVIDER_FAILED and "at capacity" in str(ended.get("stop_reason") or "").lower():
+        return PROVIDER_CAPACITY
+    return code if code in _SHOWN_STOPS else None
 
 
 def _asked_open(flow_id, ai_run_id):
@@ -867,6 +905,8 @@ _ACTIONS = {
     "launch": launch, "finish": finish, "transition": transition, "heartbeat": heartbeat,
     "working": ledger.working, "start_failed": start_failed, "write_failure": write_failure,
     "instruction_continuation_due": instruction_continuation_due,       # 0111 T-A1
+    "provider_failure_retry_due": provider_failure_retry_due,           # flowgate.v02.0121 T#2
+    "write_failure_detail": write_failure_detail,                       # flowgate.v02.0121 T#4
     "report_refused": fencing.report_refused, "node_refused": fencing.node_refused, "result_refused": result_refused,
     "execution_attempt": fencing.execution_attempt, "handoff_end": handoff_end, "node_hold": node_hold,
     # T#9: an approved code node is done once its result is merged into the Flow's branch.

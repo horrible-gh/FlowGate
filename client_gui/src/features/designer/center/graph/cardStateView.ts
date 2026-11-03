@@ -4,6 +4,8 @@ export interface CardRunFacts {
   readonly intervention?: { readonly kind: string; readonly reason: string | null } | null
   readonly waitReason?: { code: string; detail?: string | null; role?: string | null } | null
   readonly dispatchErrorCode?: string | null
+  /** flowgate.v02.0121 T#4: the failed AI call's short cause (`provider_capacity`, ...); absent: none told. */
+  readonly dispatchErrorDetail?: string | null
   readonly resultDocId?: string | null
   readonly status: string | null
   readonly awaitingApproval?: boolean
@@ -62,6 +64,27 @@ function executing(run: CardRunFacts): boolean | null {
 /** flowgate.v02.0113 T#1: a person's writing wait is named by the role that writes (지시서 / 결과 작성 대기). */
 const WRITE_WAIT_LABELS: Readonly<Record<string, CardStateKey>> = { instruction: 'instruction_write_wait', execution: 'result_write_wait' }
 
+/** flowgate.v02.0121 T#4: the short causes of a failed AI call (an `incomplete` card's reason, the node wire's
+ * `dispatch.error_detail`) that are worded as a sentence of their own (`gui.designer.center.card_failure_reasons.*`). */
+export const CARD_FAILURE_REASONS = ['provider_capacity', 'provider_failed', 'timeout', 'providers_exhausted'] as const
+
+/**
+ * flowgate.v02.0121 T#4 (rej_01M6FFMXBCPX855V): the shown text of a card state's reason, one rule for every screen that
+ * shows a `CardStateView` (the Canvas card title, the Inspector state pill): an `incomplete` card's known cause as its
+ * ko / en / ja sentence; any other reason (an intervention's, an approval wait's, a cause this screen does not know) as
+ * sent; null when the state has no reason.
+ */
+export function cardStateReasonText(
+  state: { readonly key: string; readonly reason?: string | null } | null | undefined,
+  t: (key: string) => string,
+): string | null {
+  if (!state || !state.reason) return null
+  if (state.key === 'incomplete' && (CARD_FAILURE_REASONS as readonly string[]).includes(state.reason)) {
+    return t(`gui.designer.center.card_failure_reasons.${state.reason}`)
+  }
+  return state.reason
+}
+
 /** The card state of a node run, or null (no run, or a status this screen does not know). */
 export function cardStateView(run: CardRunFacts | null | undefined): CardStateView | null {
   const status = run?.status?.trim() ?? ''
@@ -91,7 +114,8 @@ export function cardStateView(run: CardRunFacts | null | undefined): CardStateVi
     }
     case 'open':
       if (!run?.resultDocId && run?.dispatchErrorCode === 'no_result') return view('no_result', 'other', 'warning')
-      if (!run?.resultDocId && run?.dispatchErrorCode) return view('incomplete', 'other', 'warning')
+      // flowgate.v02.0121 T#4: its short cause as the reason (`card_failure_reasons`); the details stay in the logs.
+      if (!run?.resultDocId && run?.dispatchErrorCode) return view('incomplete', 'other', 'warning', run.dispatchErrorDetail?.trim() || null)
       if (run && executing(run) === false) return view(run.question === true ? 'waiting_answer' : 'waiting_writer', 'awaiting', 'neutral')
       if (run?.stage === 'instruction') return view('writing_instruction', 'working', 'info')
       if (run?.stage === 'result') return view('writing_result', 'working', 'info')

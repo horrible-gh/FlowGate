@@ -548,6 +548,11 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
     failure = graph_execution_hooks.call("write_failure", row)
     if failure and failure != "question_pending" and dispatch is not None:   # 0111 T-A1: a question wait, no error
         dispatch = {**dispatch, "error_code": failure}
+        # flowgate.v02.0121 T#4: the failed writer's short cause (``provider_capacity``, ``provider_failed``, ...), only
+        # when the records tell one; the provider's output itself is never put on the wire.
+        detail = graph_execution_hooks.call("write_failure_detail", row) if failure == "ai_invoke_failed" else None
+        if detail:
+            dispatch["error_detail"] = detail
     state = intervention(flow_id, row)                                                     # 0119 T-2
     reason = approval_wait_reason(flow_id, row) if state else None
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),

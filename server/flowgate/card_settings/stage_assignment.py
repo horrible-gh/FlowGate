@@ -810,8 +810,18 @@ def needs_dispatch(ctx, row: dict) -> str:
         return DISPATCH
     if a is None or row["status"] != "open":
         return NONE
-    if a["stage"] == RESULT and a["actor"] == AI and legacy.write_failure(row) == "no_result":
-        return RETRY_SAME_ATTEMPT
+    if a["stage"] == RESULT and a["actor"] == AI:
+        failure = legacy.write_failure(row)
+        if failure == "no_result":
+            return RETRY_SAME_ATTEMPT
+        # flowgate.v02.0121 T#2: a writer whose provider failed (``provider_failed``: a model at capacity, a dropped
+        # stream) with no result is written again on the same attempt by the same assigned AI, as ``no_result`` is —
+        # its workspace, branch and files kept; the failed execution and AI run stay recorded. Its assignment stays
+        # ``active`` (the end is told by the durable records, never by a state rewritten); a failed assignment keeps
+        # its new attempt (below), and every other failure (cancel, pause, timeout, providers_exhausted, ...) its own
+        # policy (``NONE``).
+        if failure == "ai_invoke_failed" and a["stage_state"] == ACTIVE and legacy.provider_failure_retry_due(row):
+            return RETRY_SAME_ATTEMPT
     if a["stage_state"] == FAILED:
         return REOPEN_NEW_ATTEMPT
     if a["stage"] in (INSTRUCTION, RESULT) and a["actor"] in WAIT_ACTORS:

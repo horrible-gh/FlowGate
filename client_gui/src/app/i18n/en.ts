@@ -231,6 +231,14 @@ export default {
         done: 'Done',
         blocked: 'On hold',
       },
+      // flowgate.v02.0121 T#4 — a card's failed AI call, its short cause (node_run.dispatch.error_detail) beside 실행 미완료;
+      // the provider's whole output stays in the logs and the run's records.
+      card_failure_reasons: {
+        provider_capacity: 'The call ended because the model is at capacity.',
+        provider_failed: 'The call ended on an AI provider error.',
+        timeout: 'The call ended after its time limit.',
+        providers_exhausted: 'The call ended because no AI provider could run.',
+      },
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {

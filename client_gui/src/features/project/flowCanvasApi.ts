@@ -107,6 +107,8 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     finishedAt: str(raw.finished_at),
     resultDocId: str(raw.result_doc_id),
     dispatchErrorCode: str(raw.dispatch?.error_code),
+    // flowgate.v02.0121 T#4: the failed AI call's short cause (`provider_capacity`, `provider_failed`, ...), kept only when sent.
+    ...(str(raw.dispatch?.error_detail) ? { dispatchErrorDetail: str(raw.dispatch?.error_detail) } : {}),
     ...(typeof raw.awaiting_approval === 'boolean' ? { awaitingApproval: raw.awaiting_approval } : {}),
     ...('stage' in raw ? { stage: str(raw.stage) } : {}),
     ...('instruction_doc_id' in raw ? { instructionDocId: str(raw.instruction_doc_id) } : {}),
