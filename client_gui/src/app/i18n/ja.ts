@@ -772,10 +772,19 @@ export default {
         merge_conflict: 'マージ競合',
         hold: 'Hold で待機',
         step_done: '次のステップ完了',
+        needs_intervention: '介入が必要',   // flowgate.v02.0124 T#2
+        waiting_confirm: '確認待ち',
       },
       run_executions: '実行 {running}/{limit}',
       run_requested: '要求 {n}',
       run_waiting_cards: '次のカード {n} 件待ち',
+      // flowgate.v02.0124 T#2 — a told wait: the other blocking cards, and how the first one is released.
+      run_wait_more: '他{n}件',
+      run_wait_release: {
+        new_submission: '解除: 文書を修正して再提出',
+        issuer_permission: '解除: 発行者の承認権限を補う',
+        memo_rereview: '解除: メモ後に再レビュー依頼、または Graph Time Machine',
+      },
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: '停止中 · 次のカード {n} 件待ち',
       run_pending_keys: '次に進むカード: {keys}',

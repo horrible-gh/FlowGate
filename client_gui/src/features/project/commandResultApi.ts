@@ -39,6 +39,17 @@ export interface FlowCommandFailure {
   readonly role: string | null
 }
 
+/** flowgate.v02.0124 T#2: a card of the latest waiting command that waits on a person's intervention. `reason` is the
+ *  server's own text (never translated); `release` is the server's code for how it is released (null: no line). */
+export interface FlowCommandBlocking {
+  readonly nodeKey: string
+  readonly title: string | null
+  readonly docType: string | null
+  readonly kind: string | null
+  readonly reason: string | null
+  readonly release: string | null
+}
+
 export interface FlowCommandRoleUse {
   /** ai / person / no_review / wait_setup / wait_unavailable */
   readonly kind: string
@@ -90,6 +101,8 @@ export interface FlowCommandResult {
   readonly startedAt: string | null
   readonly endedAt: string | null
   readonly ended: boolean
+  /** The event sequence the command ended at (null: it has not ended). */
+  readonly endSeq: number | null
   /** It ended waiting and may still go on with no new command (a person's save or approval): keep watching it. */
   readonly continues: boolean
   readonly state: FlowCommandState
@@ -98,6 +111,8 @@ export interface FlowCommandResult {
   readonly counts: { readonly done: number; readonly failed: number; readonly waiting: number }
   readonly nodes: readonly FlowCommandNode[]
   readonly failure: FlowCommandFailure | null
+  /** flowgate.v02.0124 T#2: the cards waiting on a person's intervention (the latest waiting command only, else `[]`). */
+  readonly blocking: readonly FlowCommandBlocking[]
   readonly roles: {
     readonly instruction: readonly FlowCommandRoleUse[]
     readonly execution: readonly FlowCommandRoleUse[]
@@ -172,6 +187,7 @@ export function toFlowCommandResult(raw: unknown): FlowCommandResult {
     startedAt: str(r.started_at),
     endedAt: str(r.ended_at),
     ended: r.ended === true,
+    endSeq: num(r.end_seq),
     continues: r.continues === true,
     state,
     idleReason: str(r.idle_reason),
@@ -182,6 +198,10 @@ export function toFlowCommandResult(raw: unknown): FlowCommandResult {
       outcome: String(n.outcome ?? ''), stage: str(n.stage), reason: str(n.reason), detail: str(n.detail),
     })),
     failure: toFailure(r.failure),
+    blocking: objects(r.blocking).map((b) => ({
+      nodeKey: String(b.node_key ?? ''), title: str(b.title), docType: str(b.doc_type), kind: str(b.kind),
+      reason: str(b.reason), release: str(b.release),
+    })),
     roles: { instruction: toRoleUses(roles.instruction), execution: toRoleUses(roles.execution), review: toRoleUses(roles.review) },
     messages: objects(r.messages).map(toMessage),
   }

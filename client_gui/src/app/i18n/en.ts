@@ -772,10 +772,19 @@ export default {
         merge_conflict: 'Merge conflict',
         hold: 'Waiting on Hold',
         step_done: 'Next step done',
+        needs_intervention: 'Intervention needed',   // flowgate.v02.0124 T#2
+        waiting_confirm: 'Waiting for confirmation',
       },
       run_executions: 'Running {running}/{limit}',
       run_requested: 'Requested {n}',
       run_waiting_cards: '{n} next card(s) waiting',
+      // flowgate.v02.0124 T#2 — a told wait: the other blocking cards, and how the first one is released.
+      run_wait_more: '+{n} more',
+      run_wait_release: {
+        new_submission: 'Release: edit the document and submit it again',
+        issuer_permission: 'Release: give the issuer approval rights',
+        memo_rereview: 'Release: memo and re-review request, or Graph Time Machine',
+      },
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: 'Stopped · {n} next card(s) waiting',
       run_pending_keys: 'Cards to go on from: {keys}',

@@ -783,10 +783,19 @@ export default {
         merge_conflict: '병합 충돌',
         hold: 'Hold로 대기',
         step_done: '다음 단계 완료',
+        needs_intervention: '개입 필요',   // flowgate.v02.0124 T#2
+        waiting_confirm: '확인 대기',
       },
       run_executions: '실행 {running}/{limit}',
       run_requested: '요청 {n}',
       run_waiting_cards: '다음 카드 {n}개 대기',
+      // flowgate.v02.0124 T#2 — a told wait: the other blocking cards, and how the first one is released.
+      run_wait_more: '외 {n}개',
+      run_wait_release: {
+        new_submission: '해제: 문서 수정 후 새 제출',
+        issuer_permission: '해제: 발행자 승인 권한 보완',
+        memo_rereview: '해제: 메모 후 재검수 요청 또는 Graph Time Machine',
+      },
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: '멈춤 · 다음 카드 {n}개 대기',
       run_pending_keys: '다음으로 넘어갈 카드: {keys}',

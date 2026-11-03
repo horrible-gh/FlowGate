@@ -11,10 +11,13 @@ import type { FlowCommandResult } from '@/features/project'
 // the next command (`arm` again), a Stop (`stopped`), a Time Machine or another command taking the run (`continues`
 // false, or another run), a read failure, a closed Flow or another Project. AI calls are never counted for it.
 //
-// flowgate.v02.0117 T#4 — a command that ended waiting for a person (the run idle `waiting_approval`; T#1 TR §5: also the
-// manual write wait of a role set to 사용하지 않음) is told once (`tell`) for the Shell's existing toast: once per run and
-// reason, and only while it may still go on (`continues`). A step boundary (`step_done`), the window's completed / failed
-// and the reasons T#1 did not observe (hold, no_targets, …) are never told.
+// flowgate.v02.0117 T#4, flowgate.v02.0124 T#2 — a command that ended waiting for a person (the run idle
+// `waiting_approval` / `needs_intervention` / `waiting_confirm`) is told (`tell`) for the Shell's existing toast: once per
+// command and end (`runId`, `commandSeq`, `endSeq`, idle reason — the same result read again is not told again, a new
+// command or a new end of the same command is), and only while it may still go on (`continues`). The words name the
+// first card of the result's `blocking` (title, the server's own reason, `외 N`, how it is released); with none, the
+// card of `nodes` that waits as before. A step boundary (`step_done`), the window's completed / failed and the reasons
+// not observed (hold, no_targets, …) are never told.
 
 /** The run as this tab sees it: enough to tell a run idle again after the command. */
 export interface RunResultRun {
@@ -40,7 +43,7 @@ interface Pending {
 export interface RunResultWatchDeps {
   /** The run's command result (the store's loader): its latest, or the one starting at `commandSeq`. */
   readonly load: (runId: string, commandSeq?: number) => Promise<FlowCommandResult>
-  /** flowgate.v02.0117 T#4: a command that ended waiting for a person (`isToldWait`), told once per run and reason. */
+  /** flowgate.v02.0117 T#4 / 0124 T#2: a command that ended waiting for a person (`isToldWait`), told once per command and end. */
   readonly tell?: (result: FlowCommandResult) => void
 }
 
@@ -55,8 +58,8 @@ export interface RunResultWindowsState {
 
 export const SHOWN_STATES: readonly string[] = ['completed', 'failed']
 
-/** flowgate.v02.0117 T#4: the idle reasons a waiting command is told for — T#1 TR §5's observed waits for a person. */
-export const TOLD_WAIT_REASONS: readonly string[] = ['waiting_approval']
+/** flowgate.v02.0117 T#4 / 0124 T#2: the idle reasons a waiting command is told for — a person's waits. */
+export const TOLD_WAIT_REASONS: readonly string[] = ['waiting_approval', 'needs_intervention', 'waiting_confirm']
 
 /** flowgate.v02.0117 T#4: a command that ended waiting for a person and may still go on with a person's save or approval. */
 export function isToldWait(result: FlowCommandResult): boolean {
@@ -67,8 +70,23 @@ export function isToldWait(result: FlowCommandResult): boolean {
  * flowgate.v02.0117 T#4: a told wait in words — the run's idle reason in the existing words (`run_idle_reasons`) and, when a
  * card of the command waits with a card state the Canvas names (a manual write wait, …), that card and its state.
  */
-export function runWaitText(result: FlowCommandResult, t: (key: string) => string, te: (key: string) => boolean): string {
+export function runWaitText(
+  result: FlowCommandResult,
+  t: (key: string, values?: Record<string, unknown>) => string,
+  te: (key: string) => boolean,
+): string {
   const head = t(`gui.designer.top.run_idle_reasons.${result.idleReason ?? ''}`)
+  // flowgate.v02.0124 T#2 (D8): the first blocking card first — its title, the server's reason as it is, `외 N`, and how it
+  // is released (the server's `release` code, when the words exist).
+  const first = result.blocking[0]
+  if (first) {
+    const who = first.title ?? first.nodeKey
+    let text = first.reason ? `${head} — ${who}: ${first.reason}` : `${head} — ${who}`
+    if (result.blocking.length > 1) text += ` (${t('gui.designer.top.run_wait_more', { n: result.blocking.length - 1 })})`
+    const release = first.release ? `gui.designer.top.run_wait_release.${first.release}` : null
+    if (release && te(release)) text += ` · ${t(release)}`
+    return text
+  }
   const card = result.nodes.find((node) => node.outcome === 'waiting' && !!node.reason && te(`gui.designer.center.card_states.${node.reason}`))
   if (!card) return head
   const cardState = t(`gui.designer.center.card_states.${card.reason}`)
@@ -78,12 +96,13 @@ export function runWaitText(result: FlowCommandResult, t: (key: string) => strin
 export function createRunResultWatch(deps: RunResultWatchDeps) {
   const state = reactive<RunResultWindowsState>({ result: null, resultOpen: false, detailOpen: false, seq: 0 })
   const pending = reactive<Record<string, Pending>>({})
-  // flowgate.v02.0117 T#4: the waits told already (run and reason): the same wait of the same run is never told again.
+  // flowgate.v02.0124 T#2 (D9): the waits told already (run, command, end, idle reason): the same result read again is not
+  // told again; a new command or a new end of the same command is.
   const told = new Set<string>()
 
   function tellOnce(result: FlowCommandResult) {
     if (!deps.tell || !isToldWait(result)) return
-    const key = `${result.runId}\n${result.idleReason}`
+    const key = `${result.runId}\n${result.commandSeq}\n${result.endSeq ?? ''}\n${result.idleReason ?? ''}`
     if (told.has(key)) return
     told.add(key)
     deps.tell(result)
