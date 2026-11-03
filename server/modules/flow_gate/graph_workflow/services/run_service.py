@@ -53,6 +53,11 @@ null otherwise — ``node_approval.intervention``), with the latest recorded rea
 read's ``idle_reason`` is the run's reason as read: a run idle before T-2 stores ``waiting_approval``, told as
 ``waiting_confirm`` (a gate open for its decision) or ``needs_intervention`` (``graph_execution_hooks``
 ``idle_reason_read``) and never converted.
+
+flowgate.v02.0125 T#1 (Q #544, 0005-NR §3.5 / §4.1): a step / full command given its mode (the menu's 다음 단계 / 전체
+실행) is also the person's explicit re-review request of a card whose result review count was spent on a revision no
+review answered yet (``needs_intervention``, ``review_not_passed:review_count_exhausted``): after its guard and its
+stage reconciliation it asks ``card_settings_ports.command_review``. A run read never asks it.
 """
 from __future__ import annotations
 
@@ -245,6 +250,13 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
         ctx.command_pending = False
         flow_id = run["group_id"]
         jobs.append(lambda: card_settings_ports.reconcile_stage(flow_id))        # 0105 T#2 B-3, after the guard
+        if mode is not None:
+            # flowgate.v02.0125 T#1 (Q #544): the person's explicit step / full command (a mode given: the menu's
+            # 다음 단계 / 전체 실행) asks again for the review of a card whose review count was spent on a revision no
+            # review answered — after the reconciliation (its RC-1 consumes a stopped loop's verdict first), outside
+            # the guard as a card stage step is. Only here: a run read, F5 and every automatic path never ask it. The
+            # command's own scope (``record_command`` / ``record_step_targets``) is not widened by it.
+            jobs.append(lambda: card_settings_ports.command_review(flow_id, run_id))
         # 0061 T#9: the integrations that wait (pending / integrating / failed) go first. Asked after the commit in
         # attempt order; until the drain has asked each of them the command holds — its re-dispatch, drain and
         # openings follow in ``go_on_command`` from the state of that moment (the Git work stays outside the guard).

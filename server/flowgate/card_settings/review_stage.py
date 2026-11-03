@@ -159,7 +159,9 @@ stage's start (``start_result_stage`` ``idle_ok``), and an approved instruction 
 # "a person approves the card" fallbacks above (a loop that did not pass after its automatic rework, an AI run that
 # did not end on its own) record their B-1 reason as before (``legacy.record_approval_wait``, nothing converted) and
 # that reason makes the card ``needs_intervention`` (``flowgate.card_intervention``): only its descendants wait, and a
-# memo with a rework / re-review request or the Time Machine moves it — never the card approval. The automatic
+# memo with a rework / re-review request, the person's step / full command for a review count spent on a revision no
+# review answered (flowgate.v02.0125 T#1, ``assigned_review.command_review``) or the Time Machine moves it — never the
+# card approval. The automatic
 # completion path's own failures (``issuer_missing``, ``approval_refused``, ``review_not_started``,
 # ``review_result_unknown``) make it a ``system_error`` instead: the reconciliation below (B-3) tries the path again
 # while ``card_intervention.reasons.retry_due`` allows it (a needs_intervention reason never; system errors up to

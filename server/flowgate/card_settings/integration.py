@@ -26,6 +26,8 @@ root (``startup.py``) calls :func:`register` once at startup.
     reconcile_stage  a run read / Resume: a lost run-end stage followed once (``review_stage``, flowgate.v02.0105 T#2 B-3)
     intervention     the node judgement: ``needs_intervention`` / ``system_error`` of a card in review nothing completes
                      (``flowgate.card_intervention.judge``, flowgate.v02.0119 T#3 T-2)
+    command_review   an explicit step / full command: a spent result review count of an AI card asked again for the
+                     revision no review answered (``assigned_review.command_review``, flowgate.v02.0125 T#1)
     after_registration   the inbox's card title candidate of a registration (``modules.flow_gate.services.
                      node_title_hooks``): the Graph's AI naming applies it (``node_title_ai``, 0064 T-B4d)
 """
@@ -65,6 +67,7 @@ def register() -> None:
     ports.register(ports.STAGE_FAILED, stage_assignment.start_failed)
     from flowgate.card_settings import assigned_review  # 0038-T T#3 A-4
     ports.register(ports.RESULT_REVIEW_PENDING, assigned_review.taken_review_pending)
+    ports.register(ports.COMMAND_REVIEW, assigned_review.command_review)   # flowgate.v02.0125 T#1 (Q #544)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDING, review_stage.on_run_ending)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_QUESTION_ANSWERED, question_wait.on_question_answered)

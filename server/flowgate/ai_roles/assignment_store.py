@@ -94,6 +94,15 @@ def for_node(run_id: str, node_key: str, attempt_id: str) -> list[dict]:
         "ORDER BY stage, seq", [run_id, node_key, attempt_id]) or [])
 
 
+def asked_for_revision(stage: str, doc_id: str, revision_no: int) -> bool:
+    """flowgate.v02.0125 T#1: some assignment of ``stage`` (any attempt, any ``seq``) was already asked with the basis
+    ``(doc_id, revision_no)`` — whatever its ``basis_rejection_count``: a revision rejected and put back in review
+    (``rejected`` + submit -> ``revised``) keeps its number and is still the same revision."""
+    return get_store()._fetch_one(
+        "SELECT 1 AS present FROM graph_stage_assignments WHERE stage = ? AND basis_doc_id = ? AND basis_revision_no = ? "
+        "LIMIT 1", [stage, doc_id, int(revision_no)]) is not None
+
+
 def ledger_columns_available() -> bool:
     """The ledger's assignment columns exist (migration 164). Before it W-11 binds nothing and R-9 finds nothing."""
     store = get_store()

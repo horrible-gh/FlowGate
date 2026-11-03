@@ -34,8 +34,13 @@ named ports the Graph calls and the composition root (``startup.py``) registers 
                      run-end stage was lost are followed once (an automatic approval only as the run end makes it)
     intervention     the node judgement and a run read (flowgate.v02.0119 T#3, T-2): ``{"kind", "reason"}`` of a general
                      card in review that nothing completes — ``needs_intervention`` (its automatic rework ended without a
-                     completion: a memo rework / re-review or the Time Machine moves it) or ``system_error`` (its
+                     completion: a memo rework / re-review, a step / full command's re-review of a spent count
+                     (``command_review``, flowgate.v02.0125 T#1) or the Time Machine moves it) or ``system_error`` (its
                      automatic completion path failed: retried by ``reconcile_stage``) — never a person's approval
+    command_review   an explicit step / full command only, after its Flow guard and its ``reconcile_stage`` job
+                     (flowgate.v02.0125 T#1, Q #544): the run's AI cards whose result review count was spent on a revision
+                     no review answered yet are reviewed again (a new review assignment of the latest revision and its
+                     loop request); never asked by a run read, a reselection, the reconciliation or a loop end
 
 ``run_settings`` answers a dict; every key is optional and an absent key keeps the existing default:
 
@@ -102,11 +107,12 @@ INSTRUCTION_SAVED = "instruction_saved"
 STAGE_FAILED = "stage_failed"
 RESULT_REVIEW_PENDING = "result_review_pending"                  # 0038-T T#3 A-4
 INTERVENTION = "intervention"                                    # flowgate.v02.0119 T#3 (T-2)
+COMMAND_REVIEW = "command_review"                                # flowgate.v02.0125 T#1 (Q #544)
 INTERVENTION_NEEDED = "needs_intervention"                       # the default kind (no handler, an unknown answer)
 PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING,
               PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE, CARDS_CREATED, STAGE_DISPATCH, STAGE_RESULT_START,
               STAGE_NEEDS_DISPATCH, STAGE_RETRY, STAGE_VIEW, STAGE_WAITS, INSTRUCTION_SAVED, STAGE_FAILED,
-              RESULT_REVIEW_PENDING, INTERVENTION)
+              RESULT_REVIEW_PENDING, INTERVENTION, COMMAND_REVIEW)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -230,6 +236,16 @@ def reconcile_stage(flow_id: str) -> None:
     handler = _handler(RECONCILE_STAGE)
     if handler is not None:
         handler(flow_id)
+
+
+def command_review(flow_id: str, run_id: str) -> None:
+    """flowgate.v02.0125 T#1 (Q #544): the person's explicit step / full command (``run_service._go_on`` with a mode,
+    after its Flow guard and its ``reconcile_stage`` job) asks again for the result review of the run's AI cards whose
+    review count was spent on a revision no review answered yet (no handler: nothing). Only that command asks it: a run
+    read, F5, a card's reselection, the reconciliation and a review loop's end never do."""
+    handler = _handler(COMMAND_REVIEW)
+    if handler is not None:
+        handler(flow_id, run_id)
 
 
 def intervention(flow_id: str, row: dict) -> dict:

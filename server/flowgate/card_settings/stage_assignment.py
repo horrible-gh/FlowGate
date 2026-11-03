@@ -60,7 +60,8 @@ class AssignmentUnreadable(RuntimeError):
 
 class _Reads:
     """``assignment_store`` with its reads raising ``AssignmentUnreadable`` (its writes and constants as they are)."""
-    _READS = frozenset({"available", "read", "latest", "has_any", "for_node", "ledger_exec_for", "current_attempts"})
+    _READS = frozenset({"available", "read", "latest", "has_any", "for_node", "ledger_exec_for", "current_attempts",
+                        "asked_for_revision"})
 
     def __getattr__(self, name):
         attr = getattr(_store, name)

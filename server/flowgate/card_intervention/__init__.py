@@ -8,7 +8,8 @@ stage already records, ``card_settings.legacy_adapter.record_approval_wait``):
   completion — the review loop's count spent, a hold, a stall, a failure (``review_not_passed:<stop reason>``) or its AI
   run ended abnormally (``run_not_clean:<stop code / end reason>``). Only that card's descendants wait (the Graph's
   ``stop_path`` way: a node not done propagates nothing, an AND join waits); independent branches go on. It moves again
-  only by a memo and a rework / re-review request, or by the Time Machine.
+  only by a memo and a rework / re-review request, by the person's step / full command when its review count was spent
+  on a revision no review answered (that command's re-review, flowgate.v02.0125 T#1), or by the Time Machine.
 - ``system_error``: the automatic completion path itself failed (``issuer_missing``, ``approval_refused``,
   ``review_not_started``, ``review_result_unknown``, …). It is never handed to a person: the run shows it in its error
   family and the run read's reconciliation tries the automatic path again (``retry_due``, bounded).
