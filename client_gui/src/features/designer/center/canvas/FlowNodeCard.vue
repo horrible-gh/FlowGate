@@ -125,6 +125,7 @@ import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
 import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay } from './flowNodeKinds'
 import type { FlowGateNodeData } from './vueFlowMapping'
+import { cardStateReasonText } from '../graph/cardStateView'
 
 const props = defineProps<{
   id: string
@@ -168,7 +169,10 @@ const headerTitle = computed(() => {
   const shown = headerState.value
   if (!shown) return undefined
   const label = t(shown.labelKey)
-  return shown.reason ? `${label} (${shown.reason})` : label
+  // flowgate.v02.0121 T#4: a failed AI call's short cause is a sentence of its own, worded as the Inspector words it
+  // (cardStateReasonText); any other reason as sent.
+  const reason = cardStateReasonText(shown, t)
+  return reason ? `${label} (${reason})` : label
 })
 
 /** The title is shown unless it only repeats the kind name of the head row. */

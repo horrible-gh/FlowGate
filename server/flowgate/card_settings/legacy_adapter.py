@@ -1590,6 +1590,14 @@ def write_failure(row: dict) -> Optional[str]:
     return graph_execution_hooks.call("write_failure", row)
 
 
+def provider_failure_retry_due(row: dict) -> bool:
+    """flowgate.v02.0121 T#2: the node's result writer ended on its provider's own failure (``provider_failed``) with no
+    result — ``execution.provider_failure_retry_due``."""
+    from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
+
+    return bool(graph_execution_hooks.call("provider_failure_retry_due", row))
+
+
 def held_nodes(flow_id: str) -> frozenset:
     from modules.flow_gate.services import graph_execution_hooks  # noqa: PLC0415
 

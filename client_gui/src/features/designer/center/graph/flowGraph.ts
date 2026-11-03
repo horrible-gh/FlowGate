@@ -152,6 +152,8 @@ export interface FlowGraphNodeRun extends RoleRunFields {
   readonly intervention?: { readonly kind: string; readonly reason: string | null } | null
   readonly gate?: import('@/features/document').RunGateState | null
   readonly dispatchErrorCode?: string | null
+  /** flowgate.v02.0121 T#4: the failed AI call's short cause (node_run.dispatch.error_detail); absent when not sent. */
+  readonly dispatchErrorDetail?: string | null
   readonly status: string | null
   readonly openedAt: string | null
   readonly finishedAt: string | null

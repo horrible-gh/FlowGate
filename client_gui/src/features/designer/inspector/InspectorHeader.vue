@@ -205,6 +205,7 @@ import { useI18n } from 'vue-i18n'
 import Dropdown from '../../../components/ui/Dropdown.vue'
 import IconButton from '../../../components/ui/IconButton.vue'
 import { flowNodeKindView, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
+import { cardStateReasonText } from '../center/graph/cardStateView'
 import { INSPECTOR_HOST } from './inspectorHost'
 import { NODE_TITLE_MAX_CHARS, checkNodeTitle, inspectorCardState, type InspectorTarget, type NodeTitleSaveOutcome } from './inspectorTarget'
 
@@ -343,7 +344,10 @@ const pill = computed<HeaderPill | null>(() => {
     .join(' · ')
   const tip = t('gui.designer.inspector.header.state_tip', { doc: tipOf(docText, doc), run: tipOf(runText, run) })
   // flowgate.v02.0105 T#2 (B-5): why the result waits, in the tooltip only.
-  const title = card?.reason ? `${tip}\n${label} (${card.reason})` : tip
+  // flowgate.v02.0121 T#4: a failed AI call's short cause worded as the Canvas card words it (cardStateReasonText);
+  // any other reason as sent.
+  const reason = cardStateReasonText(card, t)
+  const title = reason ? `${tip}\n${label} (${reason})` : tip
   return { label, tone, sub: sub || null, title }
 })
 

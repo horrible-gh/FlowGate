@@ -493,6 +493,8 @@ export interface FlowCanvasCardDocument {
 export interface FlowCanvasNodeRun extends RoleRunFields {
   /** Existing node_run.dispatch.error_code; no result is still an open card. */
   dispatchErrorCode?: string | null
+  /** flowgate.v02.0121 T#4: node_run.dispatch.error_detail, the failed AI call's short cause; absent when not sent. */
+  dispatchErrorDetail?: string | null
   status: string | null
   openedAt: string | null
   finishedAt: string | null

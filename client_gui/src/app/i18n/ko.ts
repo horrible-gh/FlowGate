@@ -294,6 +294,14 @@ export default {
         done: '완료',
         blocked: '보류',
       },
+      // flowgate.v02.0121 T#4 — a card's failed AI call, its short cause (node_run.dispatch.error_detail) beside 실행 미완료;
+      // the provider's whole output stays in the logs and the run's records.
+      card_failure_reasons: {
+        provider_capacity: '모델 수용량 초과로 호출이 종료되었습니다.',
+        provider_failed: 'AI 제공자 오류로 호출이 종료되었습니다.',
+        timeout: '제한 시간을 넘겨 호출이 종료되었습니다.',
+        providers_exhausted: '실행할 수 있는 AI 제공자가 없어 호출이 종료되었습니다.',
+      },
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
