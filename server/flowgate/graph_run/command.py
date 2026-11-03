@@ -47,6 +47,8 @@ def command_of(run: dict, mode: Optional[str]) -> Optional[str]:
 
 
 def record_command(ctx, mode: str) -> None:
+    from flowgate.graph_time_machine import rejection_store
+    rejection_store.release_for_command(ctx.flow_id)
     if engine.set_run_command(ctx.run_id, mode, None) != 1:
         raise AssertionError("command missed its run")
     ctx.run["run_mode"], ctx.run["step_node_keys"] = mode, None

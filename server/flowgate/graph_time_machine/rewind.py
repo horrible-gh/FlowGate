@@ -63,19 +63,34 @@ def _merged(attempt: dict) -> bool:
 
 def _check(ctx, keys: list[str], plan: dict, reverts: list[dict]) -> list[dict]:
     run = ctx.run
-    if run["status"] != "idle":
+    rejection = plan.get("kind") == "document_rejection"
+    if not rejection and run["status"] != "idle":
         raise RewindRefused("run_not_idle", status=run["status"])
     busy = run_store._all("SELECT exec_id FROM graph_attempt_runs WHERE run_id = ? "
                           "AND status IN ('requested', 'running') ORDER BY exec_id", [ctx.run_id])
+    if rejection:
+        ids = set(plan['attempt_ids'])
+        busy = [r for r in run_store._all(
+            "SELECT x.exec_id, a.node_key FROM graph_attempt_runs x JOIN graph_node_attempts a "
+            "ON a.attempt_id = x.attempt_id WHERE x.run_id = ? AND x.status IN ('requested','running')",
+            [ctx.run_id]) if r['node_key'] in keys]
+        current = run_store.current_attempts(ctx.run_id)
+        if any(current.get(k) and current[k] not in ids for k in keys):
+            raise RewindRefused('attempt_context_changed')
     if busy:
         raise RewindRefused("executions_in_progress", exec_ids=[r["exec_id"] for r in busy])
     attempts = run_store._all(
         f"SELECT * FROM graph_node_attempts WHERE run_id = ? AND status IN ('active', 'ended') "
         f"AND node_key IN ({_marks(keys)}) ORDER BY created_at, attempt_id", [ctx.run_id, *keys]) if keys else []
+    if rejection:
+        attempts = [a for a in attempts if a['attempt_id'] in set(plan['attempt_ids'])]
     if "gate_decisions" in plan:
         from flowgate.gate_decisions import rounds, repository as gates
         jobs = rounds.unfinished(ctx.flow_id)
         reservations = gates.reservations_of_group(ctx.flow_id)
+        if rejection:
+            jobs = [j for j in jobs if j.get('target_key') in keys or not j.get('target_key')]
+            reservations = [r for r in reservations if r.get('node_key') in keys or not r.get('node_key')]
         if jobs or reservations:
             raise RewindRefused("gate_jobs_in_progress", jobs=jobs,
                                 decision_ids=[r["decision_id"] for r in reservations])
@@ -92,10 +107,10 @@ def _check(ctx, keys: list[str], plan: dict, reverts: list[dict]) -> list[dict]:
     return attempts
 
 
-def _revoke(token_ids) -> None:
+def _revoke(token_ids, reason=INVALIDATED_REASON) -> None:
     from modules.flow_gate.services import ai_invoke_service
     for token_id in dict.fromkeys(token_ids):
-        ai_invoke_service._reclaim_orphan_lease_token({"token_id": token_id}, INVALIDATED_REASON)
+        ai_invoke_service._reclaim_orphan_lease_token({"token_id": token_id}, reason)
 
 
 def _detach_legacy_tokens(ctx, keys: list[str], stamp: str) -> list[tuple[str, list[str]]]:
@@ -133,22 +148,28 @@ def rewind(ctx, plan: dict, reverts: list[dict]) -> dict:
     keys = sorted(set(plan.get("node_keys") or ()))
     attempts = _check(ctx, keys, plan, reverts)
     stamp = execution_store.now()
+    reason = plan.get('invalidation_reason', INVALIDATED_REASON)
 
     ids = [a["attempt_id"] for a in attempts]
     for attempt_id in ids:
         if run_store._affected("UPDATE graph_node_attempts SET status = 'invalidated', active_node_key = NULL, "
                                "invalidated_reason = ?, ended_at = COALESCE(ended_at, ?) "
                                "WHERE attempt_id = ? AND status IN ('active', 'ended')",
-                               [INVALIDATED_REASON, stamp, attempt_id]) != 1:
+                               [reason, stamp, attempt_id]) != 1:
             raise AssertionError(f"time machine missed attempt {attempt_id}")
     tokens = [r["token_id"] for r in run_store._all(
         f"SELECT token_id FROM graph_run_token_map WHERE attempt_id IN ({_marks(ids)}) ORDER BY mapped_at, token_id",
         ids)] if ids else []
     legacy = _detach_legacy_tokens(ctx, keys, stamp)
     tokens += [t for _attempt, node_tokens in legacy for t in node_tokens]
-    _revoke(tokens)
-    from flowgate.card_completion import completion as card_completion
-    card_completion.revoke_rewound(run_id, keys)          # flowgate.v02.0119 T#2 (T-1): kept, never applied again
+    _revoke(tokens, reason)
+    if plan.get('kind') == 'document_rejection':
+        from flowgate.card_completion import repository as completions
+        revoked = completions.revoke(run_id, keys, reason)
+    else:
+        # Keep the existing completion-service boundary for ordinary rewinds.
+        from flowgate.card_completion import completion as card_completion
+        revoked = card_completion.revoke_rewound(run_id, keys)
 
     reopened = []
     for doc in plan.get("documents") or ():
@@ -176,7 +197,8 @@ def rewind(ctx, plan: dict, reverts: list[dict]) -> dict:
 
     canceled = []
     for r in reverts:
-        row = tr_commit_ledger.by_attempt(r["attempt_id"])
+        row = (tr_commit_ledger.get_by_id(r['ledger_row_id']) if r.get('ledger_row_id')
+               else tr_commit_ledger.by_attempt(r["attempt_id"]))
         if not row or row.get("state") != "live":
             continue
         if r.get("revert_commit"):
@@ -199,7 +221,7 @@ def rewind(ctx, plan: dict, reverts: list[dict]) -> dict:
         reason = settle.idle_reason(ctx, run_store.node_runs(run_id), run_apply.read_run_state(ctx))
         if reason != ctx.run.get("idle_reason") and run_store.set_idle_reason(run_id, reason) == 1:
             ctx.run["idle_reason"] = reason
-    return {"split_decision_ids": split_decisions, "invalidated_attempt_ids": ids, "active_attempt_ids": [a["attempt_id"] for a in attempts
+    return {"revoked_completion_ids": revoked, "split_decision_ids": split_decisions, "invalidated_attempt_ids": ids, "active_attempt_ids": [a["attempt_id"] for a in attempts
                                                                     if a["status"] == "active"],
             "detached_legacy_attempt_ids": [attempt_id for attempt_id, _tokens in legacy],
             "reset_node_keys": reset, "reopened_document_ids": reopened, "canceled_ledger_row_ids": canceled,

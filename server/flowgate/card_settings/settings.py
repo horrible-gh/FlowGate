@@ -404,7 +404,8 @@ def instruction_document(flow_id: str, node: dict) -> dict:
         # 0061 T#7: what an invalidated attempt of the node wrote is not this attempt's instruction: the line counts
         # as having none, so the instruction AI writes a new one (never into the old attempt's document).
         doc = None
-    return {"doc_type": doc_type, "doc_id": doc["doc_id"] if doc else None, "written": card_lines.has_body(doc)}
+    return {"doc_type": doc_type, "doc_id": doc["doc_id"] if doc else None,
+            "written": bool(doc and doc.get("doc_review_status") != "rejected" and card_lines.has_body(doc))}
 
 
 def required_instruction(flow_id: str, node: dict) -> Optional[str]:

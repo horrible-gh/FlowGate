@@ -31,9 +31,11 @@ def instruction_approval(flow_id, node, doc_id):
     if not doc or doc['doc_id'] != doc_id:
         return None
     approval = decision_repository.valid_approval(flow_id, node['node_key'], slots.INSTRUCTION, doc)
-    if approval:
+    from flowgate.graph_time_machine import rejection_store
+    carry = rejection_store.carried(flow_id, node['node_key'], doc)
+    if approval or carry:
         gates.require_gates(doc)
-    return approval
+    return approval or ({'cause': 'preserved_instruction'} if carry else None)
 
 
 def evidence(flow_id, node):

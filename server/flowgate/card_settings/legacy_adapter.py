@@ -452,7 +452,9 @@ def invalidated_documents(flow_id: str, node_key: str) -> set[str]:
         return set()
     old = {d["doc_id"] for d in registered_documents(flow_id, tokens)}
     live = run_store.token_ids(run_row["run_id"], node_key)
-    return old - {d["doc_id"] for d in registered_documents(flow_id, live)} if live and old else old
+    stale = old - {d["doc_id"] for d in registered_documents(flow_id, live)} if live and old else old
+    from flowgate.graph_time_machine.rejection_store import without_carried
+    return without_carried(flow_id, node_key, stale)
 
 
 # ── the question wait (flowgate.v02.0063) ────────────────────────────────────

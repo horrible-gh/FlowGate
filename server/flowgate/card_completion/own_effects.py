@@ -181,6 +181,11 @@ def _tr2_succeeded(doc_id: str, revision: int) -> bool:
     from modules.flow_gate.db import tr2_approval_attempts as db_attempts  # noqa: PLC0415
 
     success = db_attempts.latest_success(doc_id)
+    if success and success.get('ledger_row_id'):
+        from modules.flow_gate.db import tr_commit_ledger
+        ledger = tr_commit_ledger.get_by_id(success['ledger_row_id'])
+        if not ledger or ledger.get('state') == 'canceled':
+            return False
     return bool(success) and success.get("document_revision") is not None \
         and int(success["document_revision"]) == int(revision)
 

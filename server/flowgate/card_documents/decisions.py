@@ -85,12 +85,18 @@ def read(group, node_key, user_id):
     return with_read_snapshot(lambda: _view(group, node_key, user_id))
 
 
-def _targets(flow_id, node_key, node, docs, slot, action):
+def _targets(flow_id, node_key, node, docs, slot, action, *, recovering=False):
     doc = docs.get(slot)
     if not doc:
         context.refuse("document_slot_missing", slot=slot)
     wanted = outputs.instruction_type(flow_id, node)
-    separate = bool(wanted) and not outputs._one_stage(flow_id, node, (docs.get("report") or {}).get("doc_id"), wanted)
+    # A recovered pending card has no stage until the next command. That is not
+    # the legacy one-stage contract and must not suppress its instruction cascade.
+    current_row = context.current(flow_id, node_key)[1]
+    pending = current_row is not None and current_row.get('status') == 'pending'
+    report_type = str((docs.get('report') or {}).get('type_code') or '').strip().upper()
+    separate = bool(wanted) and report_type != wanted and (pending or not outputs._one_stage(
+        flow_id, node, (docs.get("report") or {}).get("doc_id"), wanted))
     if slot == "instruction" and not wanted:
         context.refuse("document_slot_not_required", slot=slot)
     targets = [(slot, doc, None)]
@@ -105,7 +111,8 @@ def _targets(flow_id, node_key, node, docs, slot, action):
             targets.append(("report", report, doc["doc_id"]))
     stale = outputs.legacy.stale_documents(flow_id, node_key)
     for target_slot, target, _cause in targets:
-        if target["doc_id"] in stale:
+        from flowgate.graph_time_machine import rejection_store
+        if target["doc_id"] in stale and not rejection_store.recoverable(flow_id, node_key, target):
             context.refuse("document_decision_stale_document", slot=target_slot)
         try:
             gates.require_body(target)
@@ -113,7 +120,7 @@ def _targets(flow_id, node_key, node, docs, slot, action):
                 gates.require_test_gate(target)
         except gates.GateRefused as exc:
             context.refuse("document_decision_gate_refused", slot=target_slot, detail=str(exc))
-    if action == "reject":
+    if action == "reject" and not recovering:
         context.require_rejection_safe(flow_id, node_key, docs)
     return targets
 
@@ -168,7 +175,7 @@ def _record(group, node_key, slot, doc, action, cascade, user_id, request_id, ve
                                   audience="*", project=group.get("project_id"), group_id=flow_id, doc_id=doc["doc_id"]))
 
 
-def write(group, node_key, slot, body, user_id):
+def write(group, node_key, slot, body, user_id, *, _recovery=None):
     """All preconditions are re-read under the same durable Flow guard as the write."""
     flow_id = group["group_id"]
     context.authorize(user_id, group, body["action"])
@@ -186,7 +193,8 @@ def write(group, node_key, slot, body, user_id):
             result = json.loads(receipt["result_json"])
             return {**result, "replayed": True, "current": _view(group, node_key, user_id)}
         node, row, ctx, docs = context.current(flow_id, node_key)
-        context.require_editable(flow_id, node_key, docs)
+        context.require_editable(flow_id, node_key, docs, **(
+            {"recovery_operation": _recovery['operation_id']} if _recovery else {}))
         doc = docs.get(slot)
         if not doc or doc["doc_id"] != body["doc_id"]:
             context.refuse("document_slot_mismatch", slot=slot)
@@ -200,7 +208,7 @@ def write(group, node_key, slot, body, user_id):
         if body["expected_revision"] != int(doc.get("revision_no") or 0) or body["expected_context"] != compared \
                 or body["expected_decision_version"] != repository.version(flow_id, node_key):
             context.refuse("document_decision_context_changed", current=_view(group, node_key, user_id))
-        targets = _targets(flow_id, node_key, node, docs, slot, body["action"])
+        targets = _targets(flow_id, node_key, node, docs, slot, body["action"], recovering=bool(_recovery))
         if validate_only:
             return targets
         if finalizing:
@@ -237,6 +245,18 @@ def write(group, node_key, slot, body, user_id):
             except (own_effects.EffectRefused, own_effects.EffectRevisionMoved) as exc:
                 context.refuse("document_decision_effect_refused", detail=str(exc))
         return persist()
+
+    if _recovery:
+        # Only the journal executor calls this, inside its final DB transaction.
+        from modules.flow_gate.graph_workflow.services.flow_guard import held_guard
+        assert held_guard() == ("flow", flow_id)
+        return decide()
+    if body['action'] == 'reject':
+        from flowgate.graph_time_machine import document_rejection
+        recovered = document_rejection.execute(group, node_key, slot, body, user_id,
+                                               lambda: decide(validate_only=True), digest)
+        if recovered is not None:
+            return recovered
 
     # TR2 source work owns its source lock outside every DB transaction. The final
     # decision/cascade/receipt joins its guarded strong finalize, or all roll back.

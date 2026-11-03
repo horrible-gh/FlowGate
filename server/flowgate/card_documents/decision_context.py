@@ -1,7 +1,6 @@
-"""0126 T#1: current card context, authority and fail-closed recovery boundary.
+"""Current card context, authority and scoped journaled rejection preconditions.
 
-T#3 must replace ``require_rejection_safe`` with journaled invalidation before any badge
-write. This module does not rewind, integrate code, cancel workers or start a run.
+This module does not rewind, integrate code, cancel workers or start a run.
 """
 from __future__ import annotations
 
@@ -63,15 +62,22 @@ def current(flow_id, node_key):
         if doc and (doc.get("group_id") != flow_id or not lines.legacy.is_alive(doc, flow_id)):
             refuse("document_slot_mismatch", slot=slot.slot)
         docs[slot.slot] = doc
+    from flowgate.graph_time_machine import rejection_store
+    context['recovery_generation'] = rejection_store.generation(flow_id, node_key)
     context["documents"] = {slot: ({**fingerprint(doc), "doc_review_status": doc.get("doc_review_status")}
                                     if doc else None) for slot, doc in docs.items()}
     return node, node_run, context, docs
 
 
-def require_editable(flow_id, node_key, docs):
+def require_editable(flow_id, node_key, docs, *, recovery_operation=None):
     graph_service.require_writable(flow_id)
     engine_router.require_graph_editable(flow_id, engine_router.read_ownership(flow_id))
-    editing.require_settings_editable(flow_id)
+    if recovery_operation is None:
+        editing.require_settings_editable(flow_id)
+    else:
+        from flowgate.graph_time_machine import operation
+        if any(op['operation_id'] != recovery_operation for op in operation._unfinished(flow_id)):
+            refuse('graph_time_machine_in_progress', flow_id=flow_id)
     if not repository.available():
         refuse("document_decisions_unavailable")
     store = get_store()
@@ -86,34 +92,6 @@ def require_editable(flow_id, node_key, docs):
 
 
 def require_rejection_safe(flow_id, node_key, docs):
-    """T#3 integration point. Until atomic recovery exists, refuse BEFORE any mutation.
-
-    Check durable effects even if the run is no longer active or its UI status is stale.
-    Independent nodes are never blocked by this node-scoped check.
-    """
-    store = get_store()
-    checks = [
-        ("SELECT 1 FROM graph_node_runs n JOIN graph_runs r ON r.run_id = n.run_id "
-         "WHERE r.group_id = ? AND n.node_key = ? AND n.status = 'done'", [flow_id, node_key]),
-        ("SELECT 1 FROM graph_card_completions WHERE group_id = ? AND node_key = ? "
-         "AND status IN ('recorded','applied')", [flow_id, node_key]),
-        ("SELECT 1 FROM graph_node_attempts a JOIN graph_runs r ON r.run_id = a.run_id "
-         "WHERE r.group_id = ? AND a.node_key = ? AND (a.integrated_commit IS NOT NULL "
-         "OR (a.integration_status IS NOT NULL AND a.integration_status NOT IN ('','none')))", [flow_id, node_key]),
-        ("SELECT 1 FROM tr_commit_ledger WHERE group_id = ? AND node_key = ? AND commit_sha IS NOT NULL",
-         [flow_id, node_key]),
-    ]
-    if any(store._fetch_one(sql + " LIMIT 1", params) for sql, params in checks):
-        refuse("document_rejection_recovery_required", flow_id=flow_id, node_key=node_key, continuation="T#3")
-    # TS admission and TR2 apply have their own effects even without a Graph completion.
-    for doc in docs.values():
-        if not doc:
-            continue
-        has_effect = doc.get("type_code") in ("TS", "TR2") and doc.get("doc_review_status") in ("approved", "wf_done")
-        if doc.get("type_code") == "TS":
-            has_effect = has_effect or store._fetch_one("SELECT 1 FROM test_runs WHERE doc_id = ? LIMIT 1", [doc["doc_id"]])
-        if doc.get("type_code") == "TR2":
-            from modules.flow_gate.db import tr2_approval_attempts
-            has_effect = has_effect or tr2_approval_attempts.latest_success(doc["doc_id"])
-        if has_effect:
-            refuse("document_rejection_recovery_required", doc_id=doc["doc_id"], continuation="T#3")
+    """Assess the exact dependency scope before a badge can change (0126 T#3)."""
+    from flowgate.graph_time_machine import document_rejection
+    return document_rejection.assess(flow_id, node_key, docs)

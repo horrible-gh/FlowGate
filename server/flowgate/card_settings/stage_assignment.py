@@ -585,7 +585,8 @@ def instruction_line_document(flow_id: str, node: dict, plan: dict) -> dict:
     doc = line.get("document")
     if doc and doc["doc_id"] in legacy.invalidated_documents(flow_id, node["node_key"]):
         doc = None
-    return {"doc_id": doc["doc_id"] if doc else None, "written": card_lines.has_body(doc)}
+    return {"doc_id": doc["doc_id"] if doc else None,
+            "written": bool(doc and doc.get('doc_review_status') != 'rejected' and card_lines.has_body(doc))}
 
 
 def dispatch_role_card(ctx, node: dict) -> Optional[dict]:
