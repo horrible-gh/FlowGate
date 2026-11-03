@@ -68,6 +68,12 @@ const WRITE_WAIT_LABELS: Readonly<Record<string, CardStateKey>> = { instruction:
  * `dispatch.error_detail`) that are worded as a sentence of their own (`gui.designer.center.card_failure_reasons.*`). */
 export const CARD_FAILURE_REASONS = ['provider_capacity', 'provider_failed', 'timeout', 'providers_exhausted'] as const
 
+/** flowgate.v02.0125 T#2: a `needs_intervention` card's reason worded as a sentence of its own, by message key
+ * (`gui.designer.center.card_intervention_reasons.*`). Q #544: an exhausted review is re-reviewed by `다음 단계` / `전체 실행`. */
+export const CARD_INTERVENTION_REASONS: Readonly<Record<string, string>> = {
+  'review_not_passed:review_count_exhausted': 'review_count_exhausted',
+}
+
 /**
  * flowgate.v02.0121 T#4 (rej_01M6FFMXBCPX855V): the shown text of a card state's reason, one rule for every screen that
  * shows a `CardStateView` (the Canvas card title, the Inspector state pill): an `incomplete` card's known cause as its
@@ -81,6 +87,9 @@ export function cardStateReasonText(
   if (!state || !state.reason) return null
   if (state.key === 'incomplete' && (CARD_FAILURE_REASONS as readonly string[]).includes(state.reason)) {
     return t(`gui.designer.center.card_failure_reasons.${state.reason}`)
+  }
+  if (state.key === 'needs_intervention' && Object.prototype.hasOwnProperty.call(CARD_INTERVENTION_REASONS, state.reason)) {
+    return t(`gui.designer.center.card_intervention_reasons.${CARD_INTERVENTION_REASONS[state.reason]}`)
   }
   return state.reason
 }
