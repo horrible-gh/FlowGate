@@ -896,6 +896,8 @@ def _settle():
 _ACTIONS = {
     "manual_git_blocker": manual_git_blocker,
     "admission": scheduling.admission, "admit": scheduling.admit, "legacy_acquire": scheduling.legacy_acquire,
+    # flowgate.v02test.0004 T#1: a refused start that only repeated a start of the same execution (no refusal record)
+    "duplicate_start": scheduling.duplicate_start,
     "execution_wire": scheduling.wire, "opening": scheduling.opening, "can_open": scheduling.can_open,
     "prepare_workspace": workspace.prepare,
     "map_token": map_token, "validate_write": validate_write, "loop_state": loop_state,
