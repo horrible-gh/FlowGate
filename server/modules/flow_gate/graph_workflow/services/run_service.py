@@ -268,7 +268,11 @@ def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
     """The second half of ``_go_on``, inside the run's Flow guard: re-dispatch -> drain -> run candidates (a step
     records its targets). 0061 T#9: also the end of a command's integration hold, once its waiting integrations were
     asked (``flowgate.graph_run.result_merge``). 0061 T#11: a bound node its Hold kept pending at the start takes its
-    input completion first, once released (``_take_root_binding``, 0056 T#1 개정)."""
+    input completion first, once released (``_take_root_binding``, 0056 T#1 개정).
+
+    flowgate.v02.0124 T#1 (0003-NR §5.1.1 / §5.1.3-1): after the re-dispatch of the open nodes a new command
+    (``command`` given) asks for each node in review whether its card's spent result review is requested again
+    (``_rerequest_reviews``); the cards it requested are the step's targets with what the decision opens."""
     run_id = ctx.run_id
     _take_root_binding(ctx, policies)
     for row in run_store.node_runs(run_id):                                      # 5-3 re-dispatch
@@ -285,11 +289,22 @@ def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
             run_store.set_dispatch(run_id, row["node_key"], dispatch)
             emit_node_state(ctx, row["node_key"], "open", "open", "redispatched",
                             row.get("result_doc_id"), dispatch)
+    rerequested = _rerequest_reviews(ctx) if command is not None else []         # 0124 T#1, 5-3b
     event = RunEvent("resume" if command is None else "command")
     d = resolve(ctx.revision, read_run_state(ctx), event, policies)
     if command is not None:
-        run_state_ports.record_step_targets(ctx, command, d)
+        run_state_ports.record_step_targets(ctx, command, d, rerequested)
     apply_decision(ctx, d)
+
+
+def _rerequest_reviews(ctx: RunContext) -> list[str]:
+    """flowgate.v02.0124 T#1 (0003-NR §5.1.3-1): inside the explicit command's Flow guard, the node keys whose result
+    review the command requested again — every node in review is asked (``graph_execution_hooks``
+    ``rerequest_review``, as ``reopen_attempt`` is for an open node); the v0.2 card stage judges which may be and writes
+    it (0003-NR §5.1.2). No handler: none. The node stays in review; nothing else of the run changes here."""
+    from modules.flow_gate.services import graph_execution_hooks
+    return [row["node_key"] for row in run_store.node_runs(ctx.run_id)
+            if row["status"] == "review" and graph_execution_hooks.call("rerequest_review", ctx, row)]
 
 
 def _refuse_time_machine(flow_id: str) -> None:
