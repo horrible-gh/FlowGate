@@ -299,6 +299,10 @@ export default {
         timeout: '制限時間を超えたため呼び出しが終了しました。',
         providers_exhausted: '実行できるAIプロバイダーがないため呼び出しが終了しました。',
       },
+      // flowgate.v02.0125 T#2 — a needs_intervention card's known reason as a sentence (cardStateReasonText); other reasons are shown as sent.
+      card_intervention_reasons: {
+        review_count_exhausted: 'レビュー回数を使い切り、最後の修正版は未レビューです。`次のステップ`または`全体実行`で再レビューしてください。承認だけでは完了しません。',
+      },
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {

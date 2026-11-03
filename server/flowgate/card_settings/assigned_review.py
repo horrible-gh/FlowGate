@@ -11,6 +11,9 @@
   reconciliation share them.
 - ``after_result_work`` / ``after_loop_end`` / ``reconcile_row`` (§2.9, §2.11): the run-end and run-read branches of an
   assigned attempt; a pre-feature attempt never reaches them (``review_stage`` keeps its own functions).
+- ``command_review`` (flowgate.v02.0125 T#1, Q #544): the person's explicit step / full command asks again for the
+  result review of an AI card whose review count was spent on a revision its loop reworked and no review answered —
+  only that command (``card_settings_ports.command_review``), never a run read nor the reconciliation.
 
 ``mode`` is the hold the step is judged in (§2.8.5): ``AUTO`` — at an AI run's end (``attempt_hold``, an idle run
 refused); ``HELD`` — a person's step, an answered question, an opening's follow-up or a reconciliation
@@ -341,8 +344,10 @@ def retry_review_stage(flow_id: str, a: dict, mode: str, jobs: list) -> None:
     resolved again: a start that failed for a moment, a setting fixed since) with its intent, in one Flow guard under
     ``hold_of(mode)``; a setting wait it replaces is failed (``setting_unreadable``: its try counted, kept as history).
     A try that fails again is the next row (``review_start_tries``); past the limit the card stays a system error and
-    nothing is tried again (an explicit command opens a new attempt). Nothing else is retried: a needs_intervention
-    reason, a node moved on, another consumer's newer assignment."""
+    nothing is tried again (an explicit command opens a new attempt). Nothing else is retried here: a needs_intervention
+    reason, a node moved on, another consumer's newer assignment. flowgate.v02.0125 T#1 (Q #544) changed the 0119 T-2
+    contract for one case only, outside this retry: a review count spent on a revision no review answered is asked
+    again by the person's explicit step / full command (``command_review``), never by a read or a reconciliation."""
     if not _retryable(a) or not review_retry_due(a):
         return
     run_id, key = a["run_id"], a["node_key"]
@@ -494,6 +499,134 @@ def rerequest_review_locked(ctx, row: dict) -> bool:
     if opened and after:
         ctx.jobs.append(lambda: _run_jobs(after))
     return opened
+
+
+# ── a spent review asked again by the person's step / full command (flowgate.v02.0125 T#1, Q #544) ──
+#
+# Beside the flowgate.v02.0124 T#1 re-request above (the same command, inside its Flow guard, so it runs first): when
+# that one opened ``seq + 1`` for the card, the latest result review is no longer the spent one and nothing is asked
+# here; this asks what it does not admit (e.g. a spent assignment without its rework AI recorded, or a command held by
+# its integrations). Lock order: this runs as a job after the command's guard and fence, and takes the node's hold
+# before the Flow guard, as ``retry_review_stage`` does — never a hold inside the guard.
+
+COMMAND_REVIEW = "command_review"
+EXHAUSTED = "review_count_exhausted"
+EXHAUSTED_VERDICT = sa.NOT_PASSED + EXHAUSTED                # the spent assignment's verdict (``consume_loop_verdict``)
+EXHAUSTED_REASON = legacy.REVIEW_NOT_PASSED + EXHAUSTED      # its B-1 (``review_stage.not_passed``)
+REVISED = "revised"
+
+
+def command_review(flow_id: str, run_id: str) -> None:
+    """``card_settings_ports.command_review`` handler (flowgate.v02.0125 T#1, Q #544; 0005-NR §3.5 / §4.1), outside
+    every guard: the person's explicit step / full command (the menu's 다음 단계 / 전체 실행 — ``run_service._go_on``
+    with a mode, after its Flow guard and its ``reconcile_stage`` job) is that card's explicit re-review request.
+
+    It changes the 0119 T-2 contract (``retry_review_stage``, ``command._waiting_command``) for this command only: an
+    AI card in review whose result review assignment ended ``not_passed:review_count_exhausted`` (its B-1
+    ``review_not_passed:review_count_exhausted`` recorded) on a document its loop then reworked (``revised``) and no
+    review answered yet (``command_review_due``) takes one new result review assignment — the next ``seq``, the card's
+    review count, the same author and rework AI (``sa.start_stage``) — whose basis is the document's latest revision
+    (its submission mark, never the spent assignment's basis), with its loop request (``ensure_intent_locked``,
+    ``HELD``: an idle run taken back to running), in one Flow guard under the person's hold (``hold_of(HELD)``: the
+    run still the Flow's active one, not stopped, no Time Machine operation). The conditions are judged again inside
+    that guard, so concurrent or repeated commands open one ``seq`` for a revision and none for a revision already
+    asked or judged. The loop's first hop follows the document (``compute_review_baseline``: ``revised`` -> review).
+
+    The command's own scope is unchanged (``record_command`` / ``record_step_targets``): a pass completes the card
+    (the automatic approval and ``ai_review_passed``) and its next cards open as the command's mode lets them (full: at
+    once; step: pending until the next command). A run read, F5, a reselection, the reconciliation and a loop end never
+    get here. A memo is no condition. Never raises."""
+    try:
+        if not repository.available() or not legacy.graph_owned(flow_id):
+            return
+        run_row = legacy.active_run(flow_id)
+        if run_row is None or run_row["run_id"] != run_id or not legacy.person_stage_open(flow_id, run_row):
+            return                              # not the Flow's active run, stopped, stopping, a Time Machine operation
+        rows = legacy.node_runs(run_id)
+    except Exception:  # noqa: BLE001 — the command stands; nothing is asked
+        _log.warning("command re-review not read flow=%s run=%s", flow_id, run_id, exc_info=True)
+        return
+    for row in rows:
+        if row["status"] != "review" or not row.get("result_doc_id"):
+            continue
+        try:
+            _command_review_row(flow_id, run_row, row)
+        except Exception:  # noqa: BLE001 — nothing asked for this node; the next command judges it again
+            _log.warning("command re-review failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+
+
+def command_review_due(flow_id: str, run_id: str, row: Optional[dict]) -> Optional[tuple]:
+    """(the spent result review assignment, the document) when the node run ``row`` takes a command's re-review now,
+    else None (0005-NR §3.5 guards 2 ~ 5, Q #544 5): an assigned attempt, the card not held; its latest result review
+    an AI one, done with ``not_passed:review_count_exhausted`` (an AI author) and its B-1 recorded for its basis; the
+    node still in review on that document (``_stage_holds``), the document ``revised``; its latest revision — by
+    ``(doc_id, revision_no)``, never its submission mark — neither asked already (a result review assignment of any
+    attempt and ``seq`` with that basis revision: ``store.asked_for_revision``) nor reviewed (any ``document_reviews``
+    row of that revision: ``legacy.revision_reviewed``; a rejected revision submitted again is the same revision); no AI
+    working on the card (its AI run, an execution request, a review loop: ``review_stage.ai_working``)."""
+    from flowgate.card_settings import review_stage  # noqa: PLC0415
+
+    if row is None or row.get("status") != "review" or not row.get("result_doc_id"):
+        return None
+    key = row["node_key"]
+    attempt_id = legacy.active_attempt_id(run_id, key)
+    if not attempt_id or sa.is_legacy_attempt(attempt_id) or key in legacy.held_nodes(flow_id):
+        return None
+    rr = sa.current_review_assignment(attempt_id, sa.RESULT_REVIEW)
+    if rr is None or rr["actor"] != sa.AI or rr.get("author") != sa.AI or rr["stage_state"] != sa.DONE \
+            or rr.get("verdict") != EXHAUSTED_VERDICT:
+        return None
+    doc = _doc(row["result_doc_id"])
+    if not _stage_holds(rr, row, doc) or doc.get("doc_review_status") != REVISED:
+        return None
+    if EXHAUSTED_REASON not in approval_wait_reasons_for(run_id, key, attempt_id, sa.basis_of(rr), _b1_stage(rr)):
+        return None
+    # One request per revision (Q #544 5), judged by ``(doc_id, revision_no)`` only: a revision rejected and put back in
+    # review (``rejected`` + submit -> ``revised``) keeps its number — its submission mark (``rejection_count``) and
+    # ``submission_judged`` (a resubmission) change, but it is no new revision for this command.
+    revision = int(doc.get("revision_no") or 0)
+    if store.asked_for_revision(sa.RESULT_REVIEW, doc["doc_id"], revision):
+        return None                             # this revision's review was asked already (any attempt, any seq)
+    if legacy.revision_reviewed(doc["doc_id"], revision):
+        return None                             # a review row answers this revision already (any verdict)
+    if review_stage.ai_working(flow_id, key, doc["doc_id"]):
+        return None
+    return rr, doc
+
+
+def _command_review_row(flow_id: str, run_row: dict, row: dict) -> None:
+    run_id, key = run_row["run_id"], row["node_key"]
+    if command_review_due(flow_id, run_id, row) is None:
+        return
+    attempt_id = legacy.active_attempt_id(run_id, key)
+    run_ctx, node = _context(flow_id, run_id, key)
+    if run_ctx is None or node is None:
+        return
+    jobs: list = []
+    after: list = []
+    with hold_of(HELD, flow_id, run_id, key, attempt_id, COMMAND_REVIEW) as owned:
+        if not owned:
+            return
+
+        def body():
+            if legacy.active_attempt_id(run_id, key) != attempt_id:
+                return None                     # the node was opened again
+            found = command_review_due(flow_id, run_id, legacy.node_run(run_id, key))
+            if found is None:
+                return None                     # another command took it first, or the card moved on
+            cur, doc = found
+            nxt = sa.start_stage(flow_id, run_ctx, node, attempt_id, sa.RESULT_REVIEW, int(cur["seq"]) + 1,
+                                 author=cur.get("author") or sa.AI, basis=sa.mark(doc),
+                                 author_provider_id=cur.get("author_provider_id"))
+            if not isinstance(nxt, dict):
+                return None
+            return ensure_intent_locked(flow_id, run_ctx, node, nxt, doc, HELD, after)
+
+        nxt = legacy.with_flow_guard(flow_id, body)
+        _run_jobs(after)
+    if isinstance(nxt, dict):
+        drive_review_assignment(flow_id, nxt, HELD, jobs)
+    _run_jobs(jobs)
 
 
 # ── what is left of an assignment (L-2 §2.8.4) ───────────────────────────────
@@ -884,7 +1017,8 @@ def reconcile_row(flow_id: str, run_row: dict, row: dict) -> None:
 def _reconcile_due(run_id: str, key: str, attempt_id: Optional[str], doc: dict) -> bool:
     """flowgate.v02.0119 T#3 (T-2 rework, review P1): may the lost review opening of the submission ``doc`` be taken
     now? Not when a needs_intervention reason is recorded for it (``run_not_clean``, ``review_not_passed``, ...): the
-    card waits for a memo rework / re-review or the Time Machine. A system error recorded (``assignment_unreadable`` of
+    card waits for a memo rework / re-review, an explicit step / full command's re-review of a spent count
+    (``command_review``, flowgate.v02.0125 T#1) or the Time Machine. A system error recorded (``assignment_unreadable`` of
     a post-commit step, ...) no longer stops it for good, as any record did before. Its tries are bounded apart from
     the records: the opening either makes the review assignment (the next read drives it, RC-1, where a review that
     does not start is counted, ``review_start_tries``) or fails on a read and writes nothing (the node is skipped)."""

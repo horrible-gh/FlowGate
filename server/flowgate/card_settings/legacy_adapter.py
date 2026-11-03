@@ -93,7 +93,7 @@ __all__ = ["GraphApiError", "GitServiceError", "judge_merge_target", "merge_targ
            "default_reviewer", "last_rejection", "start_review_loop", "review_loop_row", "review_loop_active",
            "approve", "settle_graph_run",
            "person_plan_reviewed", "active_run", "node_run", "active_attempt_id", "run_issuer", "person_stage_open",
-           "person_hold", "attempt_node", "submission_judged", "submission_passed", "explicit_request",
+           "person_hold", "attempt_node", "submission_judged", "revision_reviewed", "submission_passed", "explicit_request",
            "AUTOMATION", "AUTOMATION_APPROVE_PERMISSIONS", "record_approval_wait", "record_approval_authority",
            "approval_waits", "approval_wait_reason", "node_runs", "result_ai_run", "stage_ai_run", "review_loops"]
 
@@ -1272,6 +1272,15 @@ def submission_judged(doc_id: str) -> bool:
     resubmitted = (v01_review._review_already_rejected(latest, slot, None)
                    and doc.get("doc_review_status") != "rejected")
     return not resubmitted
+
+
+def revision_reviewed(doc_id: str, revision_no: int) -> bool:
+    """flowgate.v02.0125 T#1: some review row (``document_reviews``) answers exactly this revision of the document —
+    whatever its verdict, and whether or not its ``issues`` was turned into a rejection and the document put back in
+    review since (unlike ``submission_judged``, which counts such a resubmission as a new submission)."""
+    from modules.flow_gate.db import document_reviews as db_reviews  # noqa: PLC0415
+
+    return db_reviews.get_latest_for_revision(doc_id, int(revision_no)) is not None
 
 
 def submission_passed(doc_id: str) -> bool:

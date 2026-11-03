@@ -76,9 +76,11 @@ def _waiting_command(ctx) -> bool:
 
     An idle reason can change on a read, so waiting_confirm alone is not execution intent. 0119 T-2: only a confirm
     wait counts (``waiting_confirm``, or ``waiting_approval`` stored before T-2 — the caller judged the run's reason as
-    read, ``settle.reason_as_read``); a ``needs_intervention`` wait is woken by its own memo rework / re-review request
-    (or, flowgate.v02.0124 T#1, by a new explicit command that requests a spent review again — that command is its own
-    ``user_command`` / ``user_resume`` start, never this reconstruction).
+    read, ``settle.reason_as_read``); a ``needs_intervention`` wait is woken by its own memo rework / re-review request,
+    or by a new explicit step / full command that asks a spent review again — flowgate.v02.0124 T#1, a review loop's
+    spent budget (``rerequest_review``), and flowgate.v02.0125 T#1 (Q #544), a review count spent on a revision no
+    review answered (``card_settings_ports.command_review``). That command is its own ``user_command`` /
+    ``user_resume`` start, never this reconstruction; an approval never wakes it here.
     A review explicitly requested during that wait may have woken the run; trace only such
     waiting/working pairs back to a command. Stop, Pause, a completed step, and Time Machine
     break the chain. No command is reconstructed from an old run_mode alone.

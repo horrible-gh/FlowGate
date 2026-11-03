@@ -11,8 +11,9 @@ integration does not wait is in intervention:
 
 - ``needs_intervention``: its automatic rework ran first and ended without a completion (count spent, hold, stall,
   failure, the AI's abnormal end) — or nothing told why. Only its descendants wait (a node not done propagates nothing:
-  the ``stop_path`` way); independent branches go on. It moves again by a memo and a rework / re-review request, or by
-  the Time Machine — never by an approval.
+  the ``stop_path`` way); independent branches go on. It moves again by a memo and a rework / re-review request, by
+  the person's step / full command when its review count was spent on a revision no review answered (its re-review,
+  flowgate.v02.0125 T#1), or by the Time Machine — never by an approval.
 - ``system_error``: the automatic completion path failed (the ``auto_approval_skipped`` family: ``issuer_missing``,
   ``approval_refused``, ``review_not_started``, ``review_result_unknown``). It is the run's error family and the run
   read's reconciliation retries it; no person approves it either.
