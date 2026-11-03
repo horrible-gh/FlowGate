@@ -14,7 +14,7 @@ from modules.flow_gate.db.connection import after_commit
 
 CANVAS_REASON_DOCUMENTS = "documents"
 CANVAS_REASON_TITLE = "title"
-_NODE_KEY_REASONS = ("layout", "hold", CANVAS_REASON_TITLE)
+_NODE_KEY_REASONS = ("layout", "hold", "settings", CANVAS_REASON_TITLE)
 
 
 def _queue(event: FlowEvent) -> None:

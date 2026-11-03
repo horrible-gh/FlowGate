@@ -368,7 +368,7 @@ const rowLabels = (w: VueWrapper<any>) => w.findAll('[data-test="inspector-contr
 describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 execSettings', () => {
   it('a card just placed: the v7 blocks, items and order with the card’s values (the server defaults), no sentence', async () => {
     const w = await mountPart(SettingsTab, targetFor(TASK))
-    expect(nodeRead).toHaveBeenCalledWith(FLOW, 'gn_task')
+    expect(nodeRead).toHaveBeenCalledWith(FLOW, 'gn_task', false, expect.any(Object))
     expect(choicesRead).toHaveBeenCalledWith(PROJECT)
     expect(w.get('[data-test="inspector-settings"]').attributes('data-source')).toBe('card')
     expect(w.find('[data-test="inspector-lock-note"]').exists()).toBe(false)
@@ -564,7 +564,7 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
     expect(w.find('[data-test="inspector-pane-state"]').exists()).toBe(false)
     await w.setProps({ target: targetFor(TASK) })
     await flushPromises()
-    expect(nodeRead).toHaveBeenCalledWith(FLOW, 'gn_task')
+    expect(nodeRead).toHaveBeenCalledWith(FLOW, 'gn_task', false, expect.any(Object))
     expect(isDisabled(runSelect(w, 'run_ai'))).toBe(false)
   })
 
@@ -902,7 +902,7 @@ describe('the settings tab of a card just placed and of a done card, in the real
     const w = await mountFrame(card)
     expect(sections(w)).toEqual(parts)
     expect(rowLabels(w)).toEqual(labels)
-    expect(nodeRead).toHaveBeenCalledWith(FLOW, card.id)
+    expect(nodeRead).toHaveBeenCalledWith(FLOW, card.id, false, expect.any(Object))
     expect(w.find('[data-test="settings-done-values"]').exists()).toBe(false)
   })
 

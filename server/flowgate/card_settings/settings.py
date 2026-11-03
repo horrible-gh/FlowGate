@@ -69,7 +69,7 @@ from flowgate.card_documents import lines as card_lines
 from flowgate.card_documents import slots as card_slots
 from flowgate.ai_roles import card_roles, role_store
 from flowgate.ai_roles.resolve import applicable_roles
-from flowgate.card_settings import fields
+from flowgate.card_settings import fields, context as settings_context
 from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
 from flowgate.gate_decisions import settings_lock as gate_lock
@@ -109,16 +109,30 @@ def _card(flow_id: str, node_key: str) -> dict:
     return node
 
 
-def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=None) -> dict:
+def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=None, expected_context=None) -> dict:
     kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
     reason = gate_lock.lock_reason(flow_id, node["node_key"]) if kind == fields.CHECK else None
     # A gate is open while it waits for the person: only the gate's own lock decides. Every other card is locked only
     # while it actually runs (flowgate.v02.0113 T#1: ``legacy.node_running``) or a Time Machine operation is unfinished.
+    node_running = legacy.node_running(flow_id, node["node_key"])
     if kind == fields.CHECK:
         locked = reason is not None
     else:
-        locked = editing.settings_locked(flow_id, node["node_key"]) or legacy.node_running(flow_id, node["node_key"])
-    payload = {"flow_id": flow_id, "node_key": node["node_key"], "card_kind": kind,
+        locked = editing.settings_locked(flow_id, node["node_key"]) or node_running
+    owner_reason = None
+    try:
+        settings_context.require_owner(flow_id)
+    except legacy.GraphApiError as exc:
+        owner_reason = exc.code
+    context, current_node = settings_context.current(flow_id, node["node_key"])
+    context_valid = current_node is not None and (expected_context is None or expected_context == context)
+    locked = locked or not context_valid or owner_reason is not None
+    payload = {"context": context, "node_running": node_running,
+               "settings_capability": {"editable": not locked,
+                                       "reason": owner_reason or ("settings_context" if not context_valid else
+                                                 ("node_settings_locked" if node_running else
+                                                  ("settings_locked" if locked else None)))},
+               "flow_id": flow_id, "node_key": node["node_key"], "card_kind": kind,
                "locked": locked,
                "settings_version": repository.settings_version(flow_id, node["node_key"]),
                "fields": fields.view(kind, stored, legacy.repeat_choices())}
@@ -151,17 +165,17 @@ def _with_merge_targets(group: dict, payload: dict, refresh: bool = False) -> di
             "push_remote_check_required": push and (shown.get(MERGE_TARGET_FIELD) or {}).get("value") != ORIGIN}
 
 
-def read(group: dict, node_key: str, refresh_merge_targets: bool = False, *, viewer=None) -> dict:
+def read(group: dict, node_key: str, refresh_merge_targets: bool = False, *, viewer=None, expected_context=None) -> dict:
     """``GET /flows/{flow_id}/nodes/{node_key}/settings``. ``refresh_merge_targets``: a check card's candidates are
     judged again instead of read from their cache (nothing else changes)."""
     flow_id = group["group_id"]
     node = _card(flow_id, node_key)
-    return _with_merge_targets(group, _payload(flow_id, node, repository.values(flow_id, node_key), viewer, group.get("project_id")),
+    return _with_merge_targets(group, _payload(flow_id, node, repository.values(flow_id, node_key), viewer, group.get("project_id"), expected_context),
                                refresh_merge_targets)
 
 
 def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[str],
-          locale: Optional[str] = None, expected_version: Optional[int] = None) -> dict:
+          locale: Optional[str] = None, expected_version: Optional[int] = None, expected_context=None) -> dict:
     """``PATCH /flows/{flow_id}/nodes/{node_key}/settings`` — one field, saved at once. ``locale`` (the request's)
     titles an AI delegation line document the change makes (flowgate.v02.0088). ``expected_version`` is the
     settings version the screen was drawn from (None: not checked)."""
@@ -173,6 +187,16 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
     registered = legacy.registered_doc_types(group.get("project_id"))
 
     def body() -> dict:
+        settings_context.require_owner(flow_id)
+        # Same guard as the write: a run/revision/draft change cannot redirect an old view.
+        if expected_context is not None:
+            settings_context.require_current(flow_id, node_key, expected_context)
+        if expected_version is not None:
+            current_version = repository.settings_version(flow_id, node_key)
+            if current_version != expected_version:
+                raise legacy.GraphApiError(409, "gate_context_changed", {
+                    "flow_id": flow_id, "node_key": node_key, "reason": "settings_version",
+                    "expected_settings_version": expected_version, "settings_version": current_version})
         if name == fields.HOLD.name:
             return _write_hold(group, node_key, value, user_id)
         found = repository.card_node(flow_id, node_key)
@@ -180,7 +204,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             gate_lock.require_unlocked(flow_id, node_key)             # D0007 §7.2: the gate's own lock
         else:
             editing.require_settings_editable(flow_id)                # 0113 T#1: the running check below locks
-        node = _card(flow_id, node_key)
+        node = settings_context.require_current(flow_id, node_key, expected_context)[1] if expected_context is not None else _card(flow_id, node_key)
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
         role_write = name in card_roles.ROLE_FIELDS and role_store.available()
         if name in card_roles.NEW_FIELDS and not role_write:
@@ -196,12 +220,6 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
         if kind != fields.CHECK and legacy.node_running(flow_id, node_key):     # a gate: gate_lock decided above
             raise legacy.GraphApiError(409, "node_settings_locked", {"flow_id": flow_id, "node_key": node_key},
                                        message="The card is running; its settings cannot change now.")
-        if expected_version is not None:
-            current = repository.settings_version(flow_id, node_key)
-            if expected_version != current:
-                raise legacy.GraphApiError(409, "gate_context_changed", {
-                    "flow_id": flow_id, "node_key": node_key, "reason": "settings_version",
-                    "expected_settings_version": expected_version, "settings_version": current})
         if role_write:
             changed = card_roles.apply_role_write(flow_id, node_key, kind, name, value, user_id)
         elif value is None:
@@ -221,6 +239,10 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
                 changed = repository.put(flow_id, node_key, name, checked, user_id)
         if changed:
             repository.bump_version(flow_id, node_key)
+            from modules.flow_gate.graph_workflow.services import canvas_events
+            canvas_events.publish_canvas_changed(project_id=group.get("project_id"), flow_id=flow_id,
+                                                 reason="settings", actor_user_id=user_id,
+                                                 origin_client_id=None, node_keys=[node_key])
         stored = repository.values(flow_id, node_key)
         if name == DELEGATION_FIELD:
             card_lines.set_delegation(group, node, stored.get(DELEGATION_FIELD) == "on", user_id, registered,

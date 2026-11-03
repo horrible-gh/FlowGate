@@ -20,7 +20,7 @@ import { captureInspectorResourceContext, useInspectorFieldWrite, useInspectorRe
 import { cardSettingsBlockedBy, type CardSettingsBlocked, type CardSettingsFailureKind, type CardSettingsField } from './cardSettingsModel'
 
 /** Server events after which the card's settings are read again (its run, hence its lock, moved). */
-export const CARD_SETTINGS_EVENTS = ['graph_run_status_changed', 'graph_node_state_changed', 'ai_invoke_started', 'ai_invoke_finished'] as const
+export const CARD_SETTINGS_EVENTS = ['graph_canvas_changed', 'graph_run_status_changed', 'graph_node_state_changed', 'ai_invoke_started', 'ai_invoke_finished'] as const
 
 /** An event of the card's Flow. */
 export const cardSettingsEventMatches: InspectorEventMatch = (frame, scope) => frame.groupId === scope.flowId
@@ -63,11 +63,15 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
   const scope = (): InspectorEventScope | null => {
     const current = target()
     const nodeKey = inspectorCardNodeKey(current)
-    return current && nodeKey ? { projectId: current.projectId, flowId: current.flowId, docId: cardKeyOf(current.flowId, nodeKey) } : null
+    return current && nodeKey ? { projectId: current.projectId, flowId: current.flowId, docId: cardKeyOf(current.flowId, nodeKey) + '\n' + JSON.stringify(current.settingsContext ?? null) } : null
   }
   const resource = useInspectorResource<SettingsNode>({
     target: scope,
-    read: (key) => settingsNodeRead(...splitKey(key)),
+    read: (key) => {
+      const [flowId, tail] = splitKey(key)
+      const [nodeKey, context] = tail.split('\n')
+      return settingsNodeRead(flowId, nodeKey, false, JSON.parse(context) ?? undefined)
+    },
     events: CARD_SETTINGS_EVENTS,
     matches: cardSettingsEventMatches,
   })
@@ -84,7 +88,10 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
     resource,
     write: (key, field, value) => {
       if (scope()?.docId !== key) return Promise.reject(new Error('gate_context_changed'))
-      return settingsNodeWrite(...splitKey(key), field, field.endsWith('_role') ? aiRolePayload(value as AiRoleValue) : value, field.endsWith('_role') ? resource.data.value?.settingsVersion : undefined)
+      const [flowId, tail] = splitKey(key)
+      const [nodeKey, context] = tail.split('\n')
+      return settingsNodeWrite(flowId, nodeKey, field, field.endsWith('_role') ? aiRolePayload(value as AiRoleValue) : value,
+        resource.data.value?.settingsVersion, JSON.parse(context) ?? undefined)
     },
   })
 
@@ -125,7 +132,12 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
       const current = target()
       return current !== null && current.nodeType !== null && inspectorCardNodeKey(current) === null
     }),
-    change: (field, value) => writes.write(field, value),
+    change: (field, value) => {
+      const current = target()
+      const reason = current?.readOnly === 'conflict' ? 'conflict' : current?.settingsReadOnly === undefined ? current?.readOnly : current.settingsReadOnly
+      if (!current || !resource.data.value || reason || current.editLock === 'unknown' || current.nodeRun?.nodeRunning || resource.data.value?.locked || resource.data.value?.settingsEditable === false) return Promise.resolve(false)
+      return writes.write(field, value)
+    },
     reload: async () => {
       blocked.value = null
       await Promise.all([resource.reload(), choices.reload()])

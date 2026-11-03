@@ -153,11 +153,11 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     const w = await tab('ai'), fields = structuredClone(raw.fields), otherRoles = structuredClone(raw.ai_roles.roles)
     await w.get('[data-role="instruction"] select').setValue('assigned:a'); await flushPromises()
     expect(http.patch).toHaveBeenCalledTimes(1)
-    expect(http.patch).toHaveBeenCalledWith('/api/v1/flows/f/nodes/gn_1/settings', { field: 'instruction_role', value: { kind: 'assigned', provider_id: 'a' }, expected_settings_version: 7 })
+    expect(http.patch).toHaveBeenCalledWith('/api/v1/flows/f/nodes/gn_1/settings', { field: 'instruction_role', value: { kind: 'assigned', provider_id: 'a' }, expected_settings_version: 7, expected_context: { run_id: null, graph_revision_no: null, draft_version: null } })
     expect(raw.fields).toEqual(fields); expect(raw.ai_roles.roles.execution).toEqual(otherRoles.execution); expect(raw.ai_roles.roles.review).toEqual(otherRoles.review)
     await w.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
     await w.get('[data-test="inspector-run-settings-restart"]').setValue('1'); await flushPromises()
-    expect(http.patch.mock.calls[1][1]).toEqual({ field: 'restart', value: 1 })
+    expect(http.patch.mock.calls[1][1]).toEqual({ field: 'restart', value: 1, expected_settings_version: 8, expected_context: { run_id: null, graph_revision_no: null, draft_version: null } })
   })
   it('PLAN has no 지시 AI; an omitted instruction keeps its 지시 AI and 지시서 검수 off with their values, without saving', async () => {
     const w = await tab('ai','plan'); expect(w.findAll('[data-role]').map(row => row.attributes('data-role'))).toEqual(['execution','review'])
