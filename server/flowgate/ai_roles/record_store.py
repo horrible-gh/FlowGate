@@ -172,10 +172,15 @@ def first(unit_hash: str) -> Optional[dict]:
         "ORDER BY create_seq ASC, inv_id ASC LIMIT 1", [unit_hash])
 
 
-def latest(unit_hash: str, before_create_seq: int, purposes: Optional[Iterable[str]] = None) -> Optional[dict]:
-    """R-12: the unit's last record made before ``before_create_seq`` (optionally only these purposes)."""
+def latest(unit_hash: str, before_create_seq: int, purposes: Optional[Iterable[str]] = None,
+           launched_only: bool = False) -> Optional[dict]:
+    """R-12: the unit's last record made before ``before_create_seq`` (optionally only these purposes).
+    ``launched_only`` (flowgate.v02test.0004 T#2): never a start refused at admission (``admission_refused``, nothing
+    launched) — the previous call of a later one is a launched record, failed or not."""
     params: list = [unit_hash, before_create_seq]
     sql = "SELECT * FROM ai_role_invocations WHERE unit_key_hash = ? AND create_seq < ?"
+    if launched_only:
+        sql += " AND result <> 'admission_refused'"
     if purposes is not None:
         wanted = list(purposes)
         if not wanted:

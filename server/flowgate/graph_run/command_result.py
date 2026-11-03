@@ -224,6 +224,35 @@ def _invocation_failure(record: dict) -> bool:
     return record.get("result") in FAILED_RESULTS
 
 
+def duplicate_starts(records: list[dict]) -> set[str]:
+    """flowgate.v02test.0004 T#3: the records, among ``records``, of a harmless duplicate start stored before T#1 stopped
+    recording them — a start refused ``admission_refused`` / ``run_in_progress`` of a Graph execution while a launch of
+    that same execution (``graph_exec_id``) was running: made at or after that launch's start and not after its end (a
+    launch still running has no end). Told by the execution and the launch's own times, never by the message. Such a
+    record is no work and no failure of the command (``payload`` leaves it out); it stays stored as it is, and the
+    card's own invocation list still shows it. A refusal of an execution no launch of it covered (another execution's
+    lease, no free slot, a refusal before any launch) is not one of them."""
+    launches: dict[str, list[tuple[int, Optional[int]]]] = {}
+    for record in records:
+        exec_id = record.get("graph_exec_id")
+        if exec_id and record.get("ai_run_id") and record.get("launch_no") is not None:
+            started = _ms(record.get("started_at"))
+            if started is not None:
+                ended = None if record.get("result") == "running" else _ms(record.get("ended_at"))
+                launches.setdefault(exec_id, []).append((started, ended))
+    found: set[str] = set()
+    for record in records:
+        if record.get("result") != "admission_refused" or record.get("result_detail") != "run_in_progress":
+            continue
+        at = _ms(record.get("created_at"))
+        if at is None:
+            continue
+        if any(started <= at and (ended is None or at <= ended)
+               for started, ended in launches.get(record.get("graph_exec_id") or "", ())):
+            found.add(record["inv_id"])
+    return found
+
+
 def _record_lines(record: dict) -> list[str]:
     """What the record itself tells of its end (its own columns only)."""
     lines = [f"result: {record.get('result')}" + (f" ({record['result_detail']})" if record.get("result_detail") else "")]
@@ -502,7 +531,8 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
     # The §3.10 role invocation records of the command: attributed by the run event their request was made at.
     all_records = record_store.for_graph_run(run_id) if record_store.available() else []
     owner = _attribute(run_id, all_records, events, windows)
-    records = [r for r in all_records if owner.get(r["inv_id"], (None,))[0] == chosen]
+    duplicates = duplicate_starts(all_records)          # flowgate.v02test.0004 T#3: stored before T#1, no work of it
+    records = [r for r in all_records if owner.get(r["inv_id"], (None,))[0] == chosen and r["inv_id"] not in duplicates]
     last_launch: dict[str, int] = {}
     for record in all_records:
         if record.get("ai_run_id") and record.get("launch_no") is not None:

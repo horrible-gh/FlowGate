@@ -106,6 +106,30 @@ def busy(run_id=None):
                                      "run_id": run_id})
 
 
+# flowgate.v02test.0004 T#1: the ledger states of an execution that another launcher of it already owns — claimed by its
+# admission (``requested`` with ``ai_run_id``), acquired (``running``) or run to its end (``ended``). A cancelled or lost
+# execution is no such owner: a start refused against it keeps its refusal record.
+DUPLICATE_START_STATUSES = ("requested", "running", "ended")
+
+
+def duplicate_start(exec_id, ai_run_id=None):
+    """flowgate.v02test.0004 T#1: a refused start of ``exec_id`` was a harmless duplicate start of the same execution —
+    the request (``request_write``'s own start job and the same transaction's refill replay, ``queue_requests``) started
+    twice and the other start already owns it. Read from the durable ledger after the refusal (the refused start's own
+    claim is released by then, ``admission``), never from the refusal's message: the execution exists, it is in
+    ``DUPLICATE_START_STATUSES`` and its ``ai_run_id`` is another launcher's than ``ai_run_id``. A start refused while
+    the execution is unclaimed — another execution's lease, no free slot, a Time Machine operation, a real admission
+    failure — is no duplicate: its refusal stays a refusal. A read only."""
+    if not exec_id:
+        return False
+    from flowgate.graph_run import execution_store as ledger
+    row = ledger.get(exec_id)
+    if not row or row.get("status") not in DUPLICATE_START_STATUSES:
+        return False
+    owner = row.get("ai_run_id")
+    return bool(owner) and owner != ai_run_id
+
+
 def legacy_acquire(acquire, **kwargs):
     """Use the same durable Flow guard as Graph acquire, preserving the legacy lease implementation."""
     if not get_store().table_exists("graph_attempt_runs"):

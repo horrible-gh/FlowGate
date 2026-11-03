@@ -34,17 +34,47 @@ def guarded(fn):
 
 
 def admission(fn):
-    """Record an explicit origin's HTTP refusal exactly once across nested callers."""
+    """Record an explicit origin's HTTP refusal exactly once across nested callers.
+
+    flowgate.v02test.0004 T#1: a refusal that only repeated a start of the same Graph execution — another start of it
+    already owns it (``duplicate_start``) — records nothing: the execution runs (or ran) once under its owner, and an
+    ``admission_refused`` record of it would read as that work failing and become the next call's ``prev_inv_id``.
+    It is logged as an informational diagnostic only. Every other refusal is recorded as before."""
     @wraps(fn)
     def call(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except Exception as exc:
             if not getattr(exc, "_role_refusal_recorded", False):
-                refused(kwargs.get("invocation_origin"), exc, kwargs.get("graph_exec_id"))
+                exec_id = kwargs.get("graph_exec_id")
+                if duplicate_start(exc, exec_id):
+                    log.info("role invocation duplicate start of execution %s not recorded", exec_id)
+                else:
+                    refused(kwargs.get("invocation_origin"), exc, exec_id)
                 exc._role_refusal_recorded = True
             raise
     return call
+
+
+# flowgate.v02test.0004 T#1: the refusal code a duplicate start of an owned execution answers (``scheduling.busy``).
+DUPLICATE_START_CODE = "run_in_progress"
+
+
+def duplicate_start(exc, graph_exec_id):
+    """flowgate.v02test.0004 T#1: ``exc`` refused a start of the Graph execution ``graph_exec_id`` that another start of
+    the same execution already owns. Both must hold: the refusal's code is ``run_in_progress`` and the execution
+    ledger says the execution is owned by another launcher (``scheduling.duplicate_start``, the ``duplicate_start``
+    Graph hook) — the message text is never read. No Graph execution, another code, no Graph port, or a read that
+    fails: False (the refusal is recorded as before)."""
+    detail = getattr(exc, "detail", None)
+    if not graph_exec_id or not isinstance(detail, dict) or detail.get("code") != DUPLICATE_START_CODE:
+        return False
+    try:
+        from modules.flow_gate.services import graph_execution_hooks
+        return bool(graph_execution_hooks.call("duplicate_start", graph_exec_id))
+    except Exception as err:
+        log.warning("role invocation duplicate start not judged (%s)", type(err).__name__)
+        return False
 
 
 def fingerprint(provider):
@@ -74,17 +104,51 @@ def _request(record, req):
         record["requested_model_" + key] = req[key]
 
 
+# flowgate.v02test.0004 T#2: a record of a start refused at admission — nothing was launched, so it is never the
+# previous call of a later one (``_latest``). Every launched record stays one, failed or not.
+NOT_LAUNCHED = "admission_refused"
+
+
 def _latest(record, memory, purposes=None, unit_hash=None, read_db=True):
     unit_hash = unit_hash or record["unit_key_hash"]
     choices = [r for r in memory if r["unit_key_hash"] == unit_hash and r["create_seq"] < record["create_seq"]
-               and (purposes is None or r.get("purpose") in purposes)]
+               and (purposes is None or r.get("purpose") in purposes) and r.get("result") != NOT_LAUNCHED]
     try:
-        found = store.latest(unit_hash, record["create_seq"], purposes) if read_db else None
+        found = store.latest(unit_hash, record["create_seq"], purposes, launched_only=True) if read_db else None
     except Exception:
         found = None
     if found:
         choices.append(found)
     return max(choices, key=lambda r: (r["create_seq"], r["inv_id"])) if choices else None
+
+
+REWORK_PURPOSES = ("result_rework", "instruction_rework")
+REVIEW_PURPOSES = ("result_review_round", "instruction_review_round")
+WRITE_PURPOSES = ("instruction_write", "instruction_write_retry", "result_write", "result_write_retry")
+
+
+def writer_unit_hash(record, origin=None):
+    """The work unit of the writer a review round (``review_of``) reviews when no rework precedes it: the unit of the
+    same target's write stage (seq 0), only when that writer is an AI (the run's ``origin`` author, else the card's
+    assignment or the legacy document's writer). None otherwise. Shared by ``_links`` and the read model's display of a
+    stored link (``invocation_view._shown_prev``, flowgate.v02test.0004 T#2) so both follow one condition."""
+    origin = origin or {}
+    purpose = record.get("purpose") or ""
+    author = origin.get("author")
+    if author is None and record["origin_kind"] == "card_assigned":
+        from flowgate.ai_roles import assignment_store
+        a = assignment_store.read(record["target_attempt_id"], record["target_stage"], record["target_seq"])
+        author = (a or {}).get("author")
+    elif author is None and record["origin_kind"] == "card_legacy_attempt" and record.get("target_doc_id"):
+        from flowgate.card_settings import legacy_adapter
+        doc = legacy_adapter.document_row(record["target_doc_id"]) or {}
+        if doc.get("revision_no", 0) == record.get("target_doc_revision_no"):
+            author = legacy_adapter.written_by(record["target_doc_id"]).get("author")
+    if author != "ai":
+        return None
+    writer = dict(record, target_stage="instruction" if purpose.startswith("instruction") else "result", target_seq=0)
+    _, parts = store.unit_key(writer)
+    return store.unit_key_hash(parts)
 
 
 def _links(record, memory, origin, read_db=True):
@@ -101,26 +165,13 @@ def _links(record, memory, origin, read_db=True):
     elif purpose.endswith("write_retry"):
         link, dep = "stage_retry", latest()
     elif purpose.endswith("review_round"):
-        link, dep = "review_of", latest(["result_rework", "instruction_rework"])
+        link, dep = "review_of", latest(REWORK_PURPOSES)
         if dep is None:
-            author = origin.get("author")
-            if author is None and record["origin_kind"] == "card_assigned":
-                from flowgate.ai_roles import assignment_store
-                a = assignment_store.read(record["target_attempt_id"], record["target_stage"], record["target_seq"])
-                author = (a or {}).get("author")
-            elif author is None and record["origin_kind"] == "card_legacy_attempt" and record.get("target_doc_id"):
-                from flowgate.card_settings import legacy_adapter
-                doc = legacy_adapter.document_row(record["target_doc_id"]) or {}
-                if doc.get("revision_no", 0) == record.get("target_doc_revision_no"):
-                    author = legacy_adapter.written_by(record["target_doc_id"]).get("author")
-            if author == "ai":
-                writer = dict(record, target_stage="instruction" if purpose.startswith("instruction") else "result",
-                              target_seq=0)
-                _, parts = store.unit_key(writer)
-                dep = latest(["instruction_write", "instruction_write_retry", "result_write",
-                              "result_write_retry"], store.unit_key_hash(parts))
+            writer_unit = writer_unit_hash(record, origin)
+            if writer_unit is not None:
+                dep = latest(WRITE_PURPOSES, writer_unit)
     elif purpose.endswith("rework"):
-        link, dep = "rework_of", latest(["result_review_round", "instruction_review_round"])
+        link, dep = "rework_of", latest(REVIEW_PURPOSES)
     elif purpose == "qa_response":
         link = "answers_question_of"
         dep = {"inv_id": record.get("qa_asker_inv_id")}

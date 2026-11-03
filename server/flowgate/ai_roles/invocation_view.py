@@ -48,6 +48,50 @@ def _config_state(record):
         return "unknown"
 
 
+REWORK_PURPOSES = invocations.REWORK_PURPOSES
+REVIEW_PURPOSES = invocations.REVIEW_PURPOSES
+WRITE_PURPOSES = invocations.WRITE_PURPOSES
+
+
+def _shown_prev(record):
+    """flowgate.v02test.0004 T#2: the previous call shown for a record. A record stored before T#2 may name a start
+    refused at admission (``admission_refused``: nothing launched) as its previous call; it is shown with the previous
+    call it would name now — what ``invocations._links`` picks for its link kind among launched records before it:
+    ``stage_retry`` the unit's last; ``rework_of`` the unit's last review round; ``review_of`` the unit's last rework,
+    and when none, the AI writer's last write (``invocations.writer_unit_hash``, the condition ``_links`` uses). The
+    stored ``prev_inv_id`` is never changed (``recorded_prev_inv_id``); nothing launched before it, or a read that
+    fails: the stored value."""
+    prev = record.get("prev_inv_id")
+    if not prev:
+        return prev
+    try:
+        named = record_store.get(prev)
+        if not named or named.get("result") != invocations.NOT_LAUNCHED:
+            return prev
+        kind, before = record.get("link_kind"), record["create_seq"]
+
+        def latest(unit_hash, purposes):
+            return record_store.latest(unit_hash, before, purposes, launched_only=True) if unit_hash else None
+
+        if kind == "stage_retry":
+            found = latest(named["unit_key_hash"], None)
+        elif kind == "rework_of":
+            found = latest(named["unit_key_hash"], REVIEW_PURPOSES)
+        elif kind == "review_of":
+            found = (latest(record.get("unit_key_hash"), REWORK_PURPOSES)
+                     if named["unit_key_hash"] == record.get("unit_key_hash") else None)
+            if found is None:
+                writer_unit = (named["unit_key_hash"] if named["unit_key_hash"] != record.get("unit_key_hash")
+                               else invocations.writer_unit_hash(record))
+                found = latest(writer_unit, WRITE_PURPOSES)
+        else:
+            return prev
+        return found["inv_id"] if found else prev
+    except Exception:
+        log.warning("role invocation previous call not resolved for %s", record.get("inv_id"))
+        return prev
+
+
 def item(record):
     r = record
     keys = ("inv_id", "create_seq", "ai_run_id", "launch_no", "hop_no", "graph_exec_id", "origin_kind", "purpose",
@@ -82,7 +126,7 @@ def item(record):
     out["model_call_failure"] = ({"kind": r["model_call_failure_kind"], "call_no": r.get("model_call_no"),
         "turn_no": r.get("model_turn_no"), "http_status": r.get("model_http_status")}
         if r.get("model_call_failure_kind") else None)
-    out["link"] = {"kind": r.get("link_kind"), "prev_inv_id": r.get("prev_inv_id")}
+    out["link"] = {"kind": r.get("link_kind"), "prev_inv_id": _shown_prev(r), "recorded_prev_inv_id": r.get("prev_inv_id")}
     root = record_store.first(r["unit_key_hash"])
     out["chain_root_id"] = (root or {}).get("inv_id") or r.get("chain_root_id")
     if out["chain_root_id"] != r.get("chain_root_id"):
