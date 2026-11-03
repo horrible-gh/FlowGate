@@ -1,6 +1,6 @@
 <template>
-  <SettingsShell scope="system">
-    <template #nav><SettingsSubnav :items="systemNav" active="agents" /></template>
+  <SettingsShell scope="me">
+    <template #nav><SettingsSubnav :items="meNav" active="agents" /></template>
     <section data-panel="system-agents">
       <header class="agent-page-head">
         <h2>{{ t('gui.agent_screen.title') }}</h2>
@@ -100,7 +100,7 @@ import SettingsSubnav from '../components/SettingsSubnav.vue'
 import AgentEditDialog from '../components/AgentEditDialog.vue'
 import AgentEnrollmentDialog from '../components/AgentEnrollmentDialog.vue'
 import { useSettingsToasts } from '../components/useSettingsToasts'
-import { useSystemNav } from '../components/systemNav'
+import { useMeNav } from '../components/meNav'
 import { useUnsavedLeaveGuard } from '../components/useUnsavedLeaveGuard'
 import { createSystemAgent, deleteSystemAgent, issueAgentEnrollment, listSystemAgents, updateSystemAgent } from '../api'
 import type { AgentCapabilities, AgentCapability, AgentEnrollment, SystemAgent, SystemAgentChanges } from '../types'
@@ -109,7 +109,7 @@ const CAPS = AGENT_CAPS
 const NAME_MAX = 60
 const STATE_TONE = AGENT_STATE_TONE
 const { t, locale } = useI18n()
-const systemNav = useSystemNav()
+const meNav = useMeNav()
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
 const message = (err: unknown) => err instanceof Error ? err.message : String(err)
 const ago = (value: string | null) => relativeTime(value, locale.value)

@@ -2185,7 +2185,7 @@ export default {
       attention: '要確認',
       attention_count: '{n} 件',
       attention_go: '確認',
-      attention_where: 'システム Agent',
+      attention_where: '個人設定 · エージェント',
       attention_mismatch: '{name} 機能の不一致',
       attention_mismatch_sub: '{caps} を許可したが Agent が報告していない',
       attention_empty: '確認が必要な項目はありません',

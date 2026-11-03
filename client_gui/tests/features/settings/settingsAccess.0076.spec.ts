@@ -175,25 +175,25 @@ afterEach(() => {
 })
 
 describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
-  it('A: 내 설정 2개, 프로젝트 선택, 시스템 › 일반 · 시스템 Agent · 사용자 · 전체 프로젝트; no Workspace/retired/"준비 중" entry', async () => {
+  it('A: 내 설정에 에이전트, 프로젝트 선택, 시스템 › 일반 · 사용자 · 전체 프로젝트; no Workspace/retired/"준비 중" entry', async () => {
     setCurrentUser(ADMIN)
     const hub = await enterDirectly('/settings')
     expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me', 'project', 'system'])
     expect(hub.get('[data-scope-card="project"] a').attributes('href')).toBe('/app/settings/project')
     expect(hub.get('[data-scope-card="project"]').findAll('.tag').map((t) => t.text())).toEqual(['프로젝트 선택'])
     expect(hub.get('[data-scope-card="me"] a').attributes('href')).toBe('/app/settings/me/account')
-    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '보안 · 세션'])
+    expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '에이전트', '보안 · 세션'])
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/general')
-    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자', '전체 프로젝트'])
+    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '사용자', '전체 프로젝트'])
     expectNoRetiredOrInertEntries(hub)
     expect(settingsRequests()).toEqual(HUB_ADMIN_READ) // the overview's only read: 확인 필요 (0077)
     hub.unmount()
 
     const page = await enterDirectly('/settings/system/users')
     expect(page.findAll('[data-scope]').map((t) => t.attributes('data-scope'))).toEqual(['me', 'project', 'system'])
-    expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users', 'projects'])
+    expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'users', 'projects'])
     // flowgate.v02.0077 (시안 ⑩): the four pages under their group headings — headings only, no extra entry.
-    expect(page.findAll('.subnav-group').map((g) => g.text())).toEqual(['운영', '실행 자원', '계정 · 프로젝트'])
+    expect(page.findAll('.subnav-group').map((g) => g.text())).toEqual(['운영', '계정 · 프로젝트'])
     for (const href of hrefs(page)) expect(href).not.toMatch(/\/settings\/(workspaces|system\/security)/)
     for (const key of ['storage', 'environment', 'logs', 'security', 'info', 'workspace']) {
       expect(page.find(`[data-subnav="${key}"]`).exists()).toBe(false)

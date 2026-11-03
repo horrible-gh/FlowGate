@@ -378,6 +378,45 @@ async function create(w: VueWrapper, name = 'new-machine') {
 async function focus() { window.dispatchEvent(new Event('focus')); await flushPromises() }
 const deleteRow = (w: VueWrapper, id = 'agt_e_new') => click(w, `[data-delete-agent="${id}"]`)
 
+
+describe('0120 T#2 — personal menu placement with the existing administrator boundary', () => {
+  it('opens Agents from the personal submenu and keeps the legacy route name and URL', async () => {
+    const w = await open('/settings/system/agents')
+    expect(w.get('.scope.open [data-scope]').attributes('data-scope')).toBe('me')
+    const link = w.get('[data-subnav="agents"]')
+    expect(link.text()).toBe('에이전트')
+    expect(link.attributes('href')).toBe('/app/settings/system/agents')
+    expect(link.attributes('aria-current')).toBe('page')
+    await click(w, '.nav-home')
+    await waitForPath('/settings')
+    expect(w.get('[data-scope-card="me"]').text()).toContain('에이전트')
+    expect(w.get('[data-scope-card="system"]').text()).not.toContain('에이전트')
+    await router.push('/settings/system/agents')
+    await flushPromises()
+    await click(w, '[data-subnav="agents"]')
+    expect(router.currentRoute.value.name).toBe('settings-system-agents')
+    expect(w.find('[data-panel="system-agents"]').exists()).toBe(true)
+    expect(writes()).toEqual([])
+  })
+
+  it.each([false, null])('removes the personal-menu Agent entry and late data on privilege/session loss (%s)', async (admin) => {
+    net.holdList = true
+    const w = await open('/settings/system/agents')
+    const release = net.release!
+    expect(w.get('[data-subnav="agents"]').text()).toBe('에이전트')
+    setCurrentUser(admin === null ? null : { ...ADMIN, isAdmin: false })
+    await waitForPath('/settings')
+    release()
+    await flushPromises()
+    expect(w.find('[data-panel="system-agents"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('build-online')
+    expect(w.get('[data-scope-card="me"]').text()).not.toContain('에이전트')
+    expect(w.find('a[href="/app/settings/system/agents"]').exists()).toBe(false)
+    expect(net.requests).toEqual(['GET /api/v1/system/agents'])
+    expect(writes()).toEqual([])
+  })
+})
+
 describe('0120 T#2 — list, accessible edit and preserved system registry', () => {
   it('one GET; only names, states, last seen and two named icon actions, without the old table, counts, search or drawer', async () => {
     const w = await open('/settings/system/agents')
@@ -396,7 +435,7 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     expect(rows[0].get('[data-edit-agent]').attributes('title')).toBe('수정')
     expect(rows[0].get('[data-edit-agent]').attributes('aria-label')).toBe('build-online 수정')
     expect(rows[0].findAll('button')).toHaveLength(2)
-    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'users', 'projects'])
+    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['account', 'agents', 'security'])
   })
 
   it('disabled takes priority; incompatible and revoked are never presented as online; edit has read-only status and OS', async () => {

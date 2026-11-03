@@ -2184,7 +2184,7 @@ export default {
       attention: 'Needs attention',
       attention_count: '{n}',
       attention_go: 'Check',
-      attention_where: 'System agent',
+      attention_where: 'My settings · Agents',
       attention_mismatch: '{name} capability mismatch',
       attention_mismatch_sub: '{caps} allowed, but not reported by the agent',
       attention_empty: 'Nothing needs attention',
