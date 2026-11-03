@@ -252,12 +252,12 @@ def ensure_intent_locked(flow_id: str, run_row: dict, node: dict, a: dict, doc: 
 
 
 def _start_loop(flow_id: str, a: dict, doc_id: str, issuer: str, loop: dict, criteria: str, exec_id: str) -> None:
-    """After the commit: the requested loop is started (``start_review_loop`` on its ledger request)."""
+    """After the commit: start the requested loop, or await the owner of a duplicate start's verdict."""
     failure: dict = {}
     started = legacy.start_review_loop(legacy.project_of(flow_id), flow_id, doc_id, issuer, loop,
                                        lambda last: fields.review_basis_note(criteria, last), a["node_key"],
                                        graph_exec_id=exec_id, attempt_id=a["attempt_id"], failure=failure)
-    if started is None:
+    if started is None and not failure.get("duplicate_start"):
         # L-2 §2.10 / E-13: an admission refusal keeps its own code (``start_refused:<code>``), any other failure of
         # the start is ``start_failed``; no other AI is asked, and no read restarts it (E-40)
         cause = failure.get("cause") or sa.START_FAILED
@@ -657,6 +657,8 @@ def drive_review_assignment(flow_id: str, a: dict, mode: str, jobs: list, retry:
                 return
             # the intent recovered from the ledger: its loop may have ended already (its verdict is consumed below)
         elif a["stage_state"] == sa.FAILED:
+            if retry and _consume_failed_pass(flow_id, a, mode, jobs):
+                return
             _review_not_started(flow_id, a, _doc(doc_id))
             if retry:
                 retry_review_stage(flow_id, a, mode, jobs)     # 0119 T-2: a system error, retried (bounded)
@@ -682,6 +684,53 @@ def drive_review_assignment(flow_id: str, a: dict, mode: str, jobs: list, retry:
         error = "ai_unavailable:" + str(a.get("cause"))
         if row is not None and row.get("dispatch_error_code") != error:
             legacy.with_flow_guard(flow_id, lambda: legacy.set_dispatch_error(run_id, key, error))
+
+
+def _consume_failed_pass(flow_id: str, a: dict, mode: str, jobs: list) -> bool:
+    """0128 T#2: before retrying, restore only this submission's latest ended pass to the normal consumer.
+
+    The hold fences Stop/rewind; the guard rechecks the current seq, basis and ledger before the FAILED -> ACTIVE
+    CAS. ``_claim`` still accepts only ACTIVE/WAITING, and approval keeps its own revision check. Never search past
+    a newer non-pass or mismatched loop for an older pass.
+    """
+    from modules.flow_gate.db.connection import get_store  # noqa: PLC0415
+
+    with hold_of(mode, flow_id, a["run_id"], a["node_key"], a["attempt_id"], "review_retry_verdict") as owned:
+        if not owned:
+            return False
+
+        def body():
+            cur = sa.current_review_assignment(a["attempt_id"], a["stage"])
+            if cur is None or cur["seq"] != a["seq"] or cur["actor"] != sa.AI \
+                    or cur["stage_state"] != sa.FAILED or cur.get("verdict"):
+                return None
+            row = legacy.node_run(cur["run_id"], cur["node_key"])
+            doc = _doc(review_target(cur, row))
+            basis = sa.basis_of(cur)
+            if not _stage_holds(cur, row, doc) or basis != sa.mark(doc) or not store.ledger_columns_available():
+                return None
+            loop = get_store()._fetch_one(
+                "SELECT l.* FROM graph_attempt_runs e JOIN ai_invoke_document_review_loops l ON l.run_id = e.ai_run_id "
+                "WHERE e.attempt_id = ? AND e.assignment_stage = ? AND e.assignment_seq = ? "
+                "AND e.status = 'ended' AND l.current_stage = ? "
+                "ORDER BY e.ended_at DESC, e.created_at DESC, e.exec_id DESC LIMIT 1",
+                [cur["attempt_id"], cur["stage"], cur["seq"], STOPPED])
+            if not loop or loop.get("stop_reason") != PASSED_STOP or loop.get("doc_ref") != basis["doc_id"] \
+                    or loop.get("baseline_revision_no") != basis["revision_no"] \
+                    or not legacy.submission_passed(doc["doc_id"]):
+                return None
+            if not store.update_state(cur["attempt_id"], cur["stage"], cur["seq"], sa.FAILED, sa.ACTIVE):
+                return None
+            if cur["stage"] == sa.INSTRUCTION_REVIEW:
+                legacy.clear_dispatch_error(cur["run_id"], cur["node_key"], _start_errors(cur))
+            return store.read(cur["attempt_id"], cur["stage"], cur["seq"]), loop
+
+        found = legacy.with_flow_guard(flow_id, body)
+        if found is None:
+            return False
+        current, loop = found
+        consume_loop_verdict(flow_id, current, loop, mode, jobs)
+        return True
 
 
 def consume_loop_verdict(flow_id: str, a: dict, loop: dict, mode: str, jobs: list) -> None:
