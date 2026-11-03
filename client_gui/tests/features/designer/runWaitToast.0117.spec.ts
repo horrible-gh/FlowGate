@@ -17,17 +17,18 @@ import type { FlowGraphSource, FlowRunCommand, FlowRunInfo } from '@/features/de
 import { prepareInspectorI18n } from './inspector/support/inspectorSupport'
 
 const i18n = prepareInspectorI18n()
-const t = (key: string) => String(i18n.global.t(key))
+const t = (key: string, values?: Record<string, unknown>) => String(values ? i18n.global.t(key, values) : i18n.global.t(key))
 const te = (key: string) => i18n.global.te(key)
 
 /** A command result as the server answers it; by default T#1 S4 / S6: [다음 단계] left 작업 waiting for its instruction writer. */
 function result(over: Record<string, unknown> = {}) {
   return toFlowCommandResult({
     run_id: 'run_1', flow_id: 'f', command_seq: 5, latest: true, scope: 'step', started_at: '2026-11-01T00:00:00.000+00:00',
-    ended_at: '2026-11-01T00:00:00.100+00:00', ended: true, continues: true, state: 'waiting',
+    ended_at: '2026-11-01T00:00:00.100+00:00', ended: true, end_seq: 7, continues: true, state: 'waiting',
     idle_reason: 'waiting_approval', next_state: 'waiting_approval', counts: { done: 0, failed: 0, waiting: 1 },
     nodes: [{ node_key: 'gn_t', title: '작업', doc_type: 'T', status: 'open', outcome: 'waiting', stage: 'instruction', reason: 'manual_write_wait', detail: null }],
-    failure: null, failures: [], roles: { instruction: [{ kind: 'person' }], execution: [], review: [] }, message_count: 0, messages: [],
+    failure: null, failures: [], blocking: [], roles: { instruction: [{ kind: 'person' }], execution: [], review: [] },
+    message_count: 0, messages: [],
     ...over,
   })
 }
@@ -35,8 +36,14 @@ function result(over: Record<string, unknown> = {}) {
 describe('a run left waiting for a person is told once (item 1)', () => {
   beforeEach(() => { i18n.global.locale.value = 'ko' })
 
-  it('tells the waiting command once, never again for the same run and reason, again for another run', async () => {
-    const answers = [result(), result(), result({ run_id: 'run_2' })]
+  // flowgate.v02.0124 T#2 (D9): told once per command and end — the same result read again is not told again.
+  it('tells the waiting command once per command and end, again for a new end, a new command or another run', async () => {
+    const answers = [
+      result(), result(),                                                          // 1. cmd 5 end 7, read again
+      result({ end_seq: 9 }),                                                      // 2. the same command, a new end
+      result({ command_seq: 11, end_seq: 12 }),                                    // 3. a new command (after arm)
+      result({ run_id: 'run_2' }),                                                 // 4. another run
+    ]
     const load = vi.fn(async () => answers.shift()!)
     const tell = vi.fn()
     const watch = createRunResultWatch({ load, tell })
@@ -47,14 +54,26 @@ describe('a run left waiting for a person is told once (item 1)', () => {
     expect(tell.mock.calls[0][0]).toMatchObject({ runId: 'run_1', state: 'waiting', idleReason: 'waiting_approval' })
     expect(watch.state.resultOpen).toBe(false)                                  // no window for a wait
     expect(Object.keys(watch.pending)).toEqual(['f'])                           // still watched (a person's save goes on)
-    watch.observe('f', { runId: 'run_1', status: 'idle', lastEventSeq: 4 })     // the same wait read again
+    watch.observe('f', { runId: 'run_1', status: 'idle', lastEventSeq: 4 })     // 1. the same result (cmd 5, end 7) read again
     await flushPromises()
     expect(load).toHaveBeenCalledTimes(2)
-    expect(tell).toHaveBeenCalledTimes(1)                                       // not told twice
-    watch.arm('f', { runId: 'run_1', status: 'idle', lastEventSeq: 4 })
-    watch.observe('f', { runId: 'run_2', status: 'idle', lastEventSeq: 1 })     // another run, the same reason
+    expect(tell).toHaveBeenCalledTimes(1)
+    watch.observe('f', { runId: 'run_1', status: 'idle', lastEventSeq: 9 })     // 2. the same command, a new end (cmd 5, end 9)
     await flushPromises()
     expect(tell).toHaveBeenCalledTimes(2)
+    watch.arm('f', { runId: 'run_1', status: 'idle', lastEventSeq: 9 })
+    watch.observe('f', { runId: 'run_1', status: 'idle', lastEventSeq: 12 })    // 3. a new command (cmd 11, end 12), same run and reason
+    await flushPromises()
+    expect(tell).toHaveBeenCalledTimes(3)
+    watch.arm('f', { runId: 'run_1', status: 'idle', lastEventSeq: 12 })
+    watch.observe('f', { runId: 'run_2', status: 'idle', lastEventSeq: 1 })     // 4. another run
+    await flushPromises()
+    expect(tell).toHaveBeenCalledTimes(4)
+    const before = load.mock.calls.length
+    watch.observe('f', { runId: 'run_2', status: 'idle', lastEventSeq: 1 })     // 5. nothing new since the last read: no read
+    await flushPromises()
+    expect(load).toHaveBeenCalledTimes(before)
+    expect(tell).toHaveBeenCalledTimes(4)
   })
 
   it.each([
@@ -76,7 +95,7 @@ describe('a run left waiting for a person is told once (item 1)', () => {
   })
 
   it('tells only the observed wait for a person; a watch without `tell` still works', async () => {
-    expect(TOLD_WAIT_REASONS).toEqual(['waiting_approval'])
+    expect(TOLD_WAIT_REASONS).toEqual(['waiting_approval', 'needs_intervention', 'waiting_confirm'])
     expect(isToldWait(result())).toBe(true)
     const watch = createRunResultWatch({ load: vi.fn(async () => result()) })
     watch.arm('f', null)

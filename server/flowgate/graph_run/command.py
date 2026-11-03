@@ -11,7 +11,15 @@ records it through here:
   status event, so the event, the stored run and the response tell the same command.
 - ``record_step_targets``: a step's targets are the nodes its command's decision opens (the drained propagations and
   the run candidates of the moment); a full command has none. T#11: never a held node (the decision opens none; one is
-  dropped all the same, so a refill of the step cannot open it either).
+  dropped all the same, so a refill of the step cannot open it either). flowgate.v02.0124 T#1 (0003-NR §5.1.1): also
+  the cards whose result review the command requested again (``rerequested``) — in review, so never in the
+  decision's openings; without them a step that only re-requested would store no targets and settle ``no_targets``.
+- ``rerequest_review`` (flowgate.v02.0124 T#1, ``graph_execution_hooks`` ``rerequest_review``): inside an explicit
+  step / full command's Flow guard, a card in review whose ``needs_intervention`` is a review loop's spent budget is
+  requested again as its result review's next assignment (``card_settings.assigned_review.rerequest_review_locked``,
+  0003-NR §5.1.2 / §5.1.3). Step and full alike take every card admitted at the command; a step's next cards still
+  wait for the next command (0053: a target's propagation waits, ``frontier.RunState.in_command``), a full command's
+  follow as its cards finish.
 
 0083 WP-3 (0061 T#2 개정, revised): a person's approval is the exception path of a card (a review that did not pass or
 spent its count, a card a person writes) and moves the node on with no further resume (the flowgate.v02.0056 T#1
@@ -44,14 +52,23 @@ def record_command(ctx, mode: str) -> None:
     ctx.run["run_mode"], ctx.run["step_node_keys"] = mode, None
 
 
-def record_step_targets(ctx, mode: str, decision) -> None:
+def record_step_targets(ctx, mode: str, decision, rerequested=()) -> None:
+    """``rerequested``: the cards the command requested again (``rerequest_review``), targets of a step too."""
     if mode != engine.MODE_STEP:
         return
     from flowgate.graph_run import hold
-    keys = sorted(set(decision.open) - hold.held(ctx.flow_id))
+    keys = sorted((set(decision.open) | set(rerequested or ())) - hold.held(ctx.flow_id))
     if engine.set_run_command(ctx.run_id, engine.MODE_STEP, keys) != 1:
         raise AssertionError("step command missed its run")
     ctx.run["step_node_keys"] = keys
+
+
+def rerequest_review(ctx, row: dict) -> bool:
+    """flowgate.v02.0124 T#1: the ``rerequest_review`` hook — True when the explicit command requested the result
+    review of the node run ``row``'s card again (the card stage judges and writes it inside this guard)."""
+    from flowgate.card_settings import assigned_review  # noqa: PLC0415 — the card stage (v0.2), on use
+
+    return bool(assigned_review.rerequest_review_locked(ctx, row))
 
 
 def _waiting_command(ctx) -> bool:
@@ -59,7 +76,9 @@ def _waiting_command(ctx) -> bool:
 
     An idle reason can change on a read, so waiting_confirm alone is not execution intent. 0119 T-2: only a confirm
     wait counts (``waiting_confirm``, or ``waiting_approval`` stored before T-2 — the caller judged the run's reason as
-    read, ``settle.reason_as_read``); a ``needs_intervention`` wait is woken by its own memo rework / re-review request.
+    read, ``settle.reason_as_read``); a ``needs_intervention`` wait is woken by its own memo rework / re-review request
+    (or, flowgate.v02.0124 T#1, by a new explicit command that requests a spent review again — that command is its own
+    ``user_command`` / ``user_resume`` start, never this reconstruction).
     A review explicitly requested during that wait may have woken the run; trace only such
     waiting/working pairs back to a command. Stop, Pause, a completed step, and Time Machine
     break the chain. No command is reconstructed from an old run_mode alone.

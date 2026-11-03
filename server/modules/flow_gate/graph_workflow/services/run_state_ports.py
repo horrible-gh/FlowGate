@@ -14,7 +14,8 @@ engine calls and the composition root (``startup.py``) registers the handlers.
     command_of           a paused / idle run goes on: the new command's mode, or None when a paused run goes on
                          with its own command (``run, mode`` -> ``"step" | "full" | None``)
     record_command       the running run's new command, before its run status event (``ctx, mode`` -> None)
-    record_step_targets  a command's decision: a step's targets are the nodes it opens (``ctx, mode, decision``)
+    record_step_targets  a command's decision: a step's targets are the nodes it opens (``ctx, mode, decision``) and
+                         (flowgate.v02.0124 T#1) the cards whose review the command requested again (``rerequested``)
     stop                 0061 T#7 Stop (``group, run_id, reason, user_id`` -> the response): stopping, the AI
                          processes ended, the attempts invalidated, the open / review nodes pending, idle (stopped)
 
@@ -99,8 +100,11 @@ def record_command(ctx: Any, mode: str) -> None:
     _handler(RECORD_COMMAND)(ctx, mode)
 
 
-def record_step_targets(ctx: Any, mode: str, decision: Any) -> None:
-    _handler(RECORD_STEP_TARGETS)(ctx, mode, decision)
+def record_step_targets(ctx: Any, mode: str, decision: Any, rerequested: Any = ()) -> None:
+    if rerequested:
+        _handler(RECORD_STEP_TARGETS)(ctx, mode, decision, list(rerequested))
+    else:
+        _handler(RECORD_STEP_TARGETS)(ctx, mode, decision)
 
 
 def stop(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:

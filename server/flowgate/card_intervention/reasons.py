@@ -3,6 +3,10 @@
 The reasons are the B-1 vocabulary the card stage records (``card_settings.legacy_adapter``: ``ISSUER_MISSING`` …,
 ``card_settings.assigned_review``: ``ASSIGNMENT_UNREADABLE`` …), repeated here as strings so this module reads a record
 without importing the stage that wrote it.
+
+flowgate.v02.0124 T#1 (0003-NR §5.1.2): ``command_rerequest_due`` — the ``needs_intervention`` reasons an explicit step /
+full command may request the card's result review again for (the review loop's budget spent). ``retry_due`` is unchanged:
+nothing is retried automatically.
 """
 from __future__ import annotations
 
@@ -62,6 +66,22 @@ def retry_due(reasons: Iterable[str]) -> bool:
     if any(not is_system_error(r) for r in found):
         return False
     return len(found) < SYSTEM_ERROR_RETRY_LIMIT
+
+
+# flowgate.v02.0124 T#1 (0003-NR §5.1.2 condition 2): the stop reasons of a review loop that spent its budget — its
+# rounds, its rework retries or its total time. Only these are requested again by an explicit command; a hold
+# (``review_verdict_hold``), a stall, an orphaned restart, an abnormal end (``run_not_clean:*``), ``issuer_lacks_approve``,
+# ``instruction_not_approved``, ``completion_missing`` and a reason this version does not know are not.
+COMMAND_REREQUEST_STOPS = frozenset({"retry_exhausted", "review_count_exhausted", "total_timeout"})
+
+
+def command_rerequest_due(reason: Optional[str]) -> bool:
+    """May an explicit step / full command request the result review of a card in ``needs_intervention`` again, its
+    latest recorded reason ``reason``? Only ``review_not_passed:<a budget spent>`` (``COMMAND_REREQUEST_STOPS``). Never an
+    automatic retry: ``retry_due`` still answers no for every needs_intervention reason (0003-NR §5.1.4)."""
+    if not isinstance(reason, str) or not reason.startswith(REVIEW_NOT_PASSED):
+        return False
+    return reason[len(REVIEW_NOT_PASSED):] in COMMAND_REREQUEST_STOPS
 
 
 def state(reason: Optional[str]) -> dict:

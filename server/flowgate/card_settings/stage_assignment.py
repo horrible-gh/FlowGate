@@ -468,6 +468,44 @@ def start_stage(flow_id: str, run: dict, node: dict, attempt_id: str, stage: str
     return stored
 
 
+# flowgate.v02.0124 T#1 (0003-NR §5.1.3-4): what the ``stage_assigned`` event of a re-requested review carries — the
+# ``seq`` it follows and the cause. ``rerequest_cause`` and not ``cause``: ``append_run_event`` spreads its extra keys over
+# the event's own payload, whose ``cause`` is ``stage_assigned``.
+REREQUEST_OF_SEQ, REREQUEST_CAUSE, USER_COMMAND = "rerequest_of_seq", "rerequest_cause", "user_command"
+_RESTART_COPIED = ("run_id", "group_id", "node_key", "role", "actor", "actor_reason", "provider_id", "provider_name",
+                   "role_value_kind", "role_value_provider_id", "source", "cause", "review_rounds", "rework_provider_id",
+                   "author", "author_provider_id")
+
+
+def restart_review_stage(flow_id: str, cur: dict, basis: Optional[dict], ctx=None) -> tuple[dict, bool]:
+    """flowgate.v02.0124 T#1 (0003-NR §5.1.3-4), inside the caller's Flow guard: the review assignment that follows
+    ``cur`` — the stage's latest one, ended — for an explicit command's re-request. ``cur``'s reviewer, rework AI, rounds,
+    source and author are copied as they are (no role is resolved again: the card's current settings never replace
+    the reviewer and rework AI the card's result review was assigned), ``basis`` is the document's submission now, and
+    the new row is ``active`` with no verdict or intent. ``cur`` itself is only read. Insert-if-absent: ``(row,
+    inserted)`` — False when another writer made that ``seq`` first (the caller requests nothing then, W-11). The
+    ``stage_assigned`` event of an inserted row carries ``rerequest_of_seq`` and ``rerequest_cause`` (``user_command``).
+    ``needs_new_submission`` keeps its meaning: an AI's document saved again opens no ``seq`` by itself."""
+    legacy.require_guard(flow_id)
+    if cur.get("stage") not in REVIEW_STAGES or cur.get("actor") != AI:
+        raise ValueError("only an AI review assignment is requested again")
+    now = _now()
+    row = {column: cur.get(column) for column in _RESTART_COPIED}
+    row.update({
+        "attempt_id": cur["attempt_id"], "stage": cur["stage"], "seq": int(cur["seq"]) + 1, "group_id": flow_id,
+        "plan_instruction_type": None, "plan_result_type": None, "reused_doc_id": None,
+        "basis_doc_id": (basis or {}).get("doc_id"), "basis_revision_no": (basis or {}).get("revision_no"),
+        "basis_rejection_count": (basis or {}).get("rejection_count"),
+        "decided_at": now, "stage_state": ACTIVE, "fail_cause": None, "verdict": None, "intent_kind": None,
+        "intent_exec_id": None, "updated_at": now,
+    })
+    stored, inserted = store.insert_if_absent(row)
+    if inserted:
+        _event(stored, EV_ASSIGNED, stored["actor"],
+               {**_assigned_keys(stored), REREQUEST_OF_SEQ: int(cur["seq"]), REREQUEST_CAUSE: USER_COMMAND}, ctx)
+    return stored, inserted
+
+
 # ── who works a stage, the AI request of a purpose (L-2 §2.10) ───────────────
 
 def issued_to_of(node: dict, run: dict, actor: Optional[str] = None) -> str:

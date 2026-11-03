@@ -41,16 +41,26 @@ read from what the run already records — every existing trace stays.
   store) only the AI run's last launch shows the run's final output (``"run"``), any other launch says its output was not
   preserved (``"not_preserved"``) and never shows another launch's output or error. Each node event and each failure is
   a short event message. Nothing is cut.
+- Its blocking (flowgate.v02.0124 T#2, 0003-NR §5.3-1): only the run's latest command that ended idle waiting for a
+  person (``PERSON_WAIT_REASONS``) and was not cut lists the cards that wait on a person's intervention — the current
+  node runs whose ``engine.intervention`` is a dict (a gate, a manual write wait and a Hold are none) — each with the
+  intervention's own ``reason`` (never translated) and a ``release`` code the server judges from the stage assignment
+  rows (``_release_of``): ``new_submission`` (a person's document), ``issuer_permission``, ``memo_rereview``, or None
+  (a system error, or a card the next command requests again). Every other command: ``[]``. ``nodes`` / ``counts`` /
+  ``state`` keep their meaning. A read only.
 """
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
 from flowgate.ai_roles import record_store
 from flowgate.graph_run import legacy_adapter as engine
+
+log = logging.getLogger(__name__)
 
 COMMAND_CAUSES = ("user_start", "user_command", "user_resume")
 STATE_RUNNING, STATE_COMPLETED, STATE_FAILED, STATE_WAITING = "running", "completed", "failed", "waiting"
@@ -66,7 +76,10 @@ WAITING_APPROVAL, STOPPED_REASON, COMPLETED_REASON = "waiting_approval", "stoppe
 PERSON_WAIT_REASONS = ("waiting_confirm", "needs_intervention", WAITING_APPROVAL)
 HOLD_CAUSES = ("hold_set", "hold_released")             # a person's Hold setting: a refresh signal, no work
 STAGE_ASSIGNED, STAGE_FAILED, APPROVAL_SKIPPED = "stage_assigned", "stage_failed", "auto_approval_skipped"
-PERSON_APPROVAL_WAITS = ("issuer_lacks_approve",)       # a person's work plan result waits for its person (0083 WP-4)
+ISSUER_LACKS_APPROVE = "issuer_lacks_approve"
+PERSON_APPROVAL_WAITS = (ISSUER_LACKS_APPROVE,)         # a person's work plan result waits for its person (0083 WP-4)
+# flowgate.v02.0124 T#2 (0003-NR §5.3-1): how a blocking card is released (``blocking[].release``; None: no line).
+RELEASE_NEW_SUBMISSION, RELEASE_ISSUER, RELEASE_MEMO = "new_submission", "issuer_permission", "memo_rereview"
 ROLE_OF_STAGE = {"instruction": "instruction", "result": "execution", "result_review": "review",
                  "instruction_review": "review"}
 ROLE_OF_INVOCATION = {"instruction": "instruction", "execution": "execution", "review": "review",
@@ -348,6 +361,45 @@ def _attribute(run_id: str, records: list[dict], events: list[dict], windows: li
     return out
 
 
+def _intervention_of(flow_id: str, row: dict, node_type) -> Optional[dict]:
+    """``{"kind", "reason"}`` of the node run's card in intervention, else None. A failed read tells none (as the run
+    read does, ``run_service.intervention``): the card is left out and the read goes on."""
+    try:
+        return engine.intervention(flow_id, row, node_type)
+    except Exception:  # noqa: BLE001 — not told
+        log.warning("command result intervention read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+        return None
+
+
+def _release_of(run_id: str, key: str, found: dict) -> Optional[str]:
+    """flowgate.v02.0124 T#2 (D4): how the blocking card ``found`` is released, judged from the stage assignment rows,
+    never from the reason text. A system error: None (the automatic retry takes it). ``issuer_lacks_approve``:
+    ``issuer_permission`` (before the author, 0083). A person's document (the latest result review's ``author`` is the
+    person, an assigned attempt): ``new_submission``. A spent budget of an AI's document with its reviewer and rework AI:
+    None (the next command requests it again, 0124 T#1). Any other: ``memo_rereview``. A failed read: None. A read only."""
+    from flowgate.card_intervention import reasons  # noqa: PLC0415
+    from flowgate.card_settings import legacy_adapter as settings  # noqa: PLC0415
+    from flowgate.card_settings import stage_assignment as sa  # noqa: PLC0415
+
+    try:
+        reason = found.get("reason")
+        if found.get("kind") == reasons.SYSTEM_ERROR:
+            return None
+        if reason == ISSUER_LACKS_APPROVE:
+            return RELEASE_ISSUER
+        attempt_id = settings.active_attempt_id(run_id, key)
+        cur = None if sa.is_legacy_attempt(attempt_id) else sa.current_review_assignment(attempt_id, sa.RESULT_REVIEW)
+        if cur is not None and cur.get("author") == sa.PERSON:
+            return RELEASE_NEW_SUBMISSION
+        if reasons.command_rerequest_due(reason) and cur is not None and cur.get("author") == sa.AI \
+                and cur.get("provider_id") and cur.get("rework_provider_id"):
+            return None
+        return RELEASE_MEMO
+    except Exception:  # noqa: BLE001 — not told: no release line
+        log.warning("command result release read failed run=%s node=%s", run_id, key, exc_info=True)
+        return None
+
+
 def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
     """``{"command_result": …}`` of the run's command starting at ``command_seq`` (none: its latest). Raises
     ``CommandNotFound`` when there is no such command. A read only."""
@@ -570,6 +622,16 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
                          "detail": None, "at": events[last].get("created_at"), "role": None}
     continues = (state == STATE_WAITING and latest and not win.cut and run.get("status") == engine.IDLE
                  and run.get("idle_reason") != STOPPED_REASON)
+    # flowgate.v02.0124 T#2 (D1, D2, D6): the cards waiting on a person's intervention, only for the latest command that
+    # ended waiting for a person and was not cut — the cards it touched first, then the others in node order.
+    blocking: list[dict] = []
+    if latest and end is not None and not win.cut and idle_reason in PERSON_WAIT_REASONS:
+        for key in touched + [k for k in rows if k not in touched]:
+            row = rows.get(key)
+            found = _intervention_of(run["group_id"], row, (ctx.node_rows.get(key) or {}).get("node_type")) if row else None
+            if found:
+                blocking.append({"node_key": key, **titles.of(key), "kind": found.get("kind"),
+                                 "reason": found.get("reason"), "release": _release_of(run_id, key, found)})
     messages.sort(key=lambda m: (m.get("at") or ""))
     return {"command_result": {
         "run_id": run_id, "flow_id": run["group_id"], "command_seq": int(head["event_seq"]),
@@ -583,5 +645,5 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
         "counts": {"done": len([n for n in nodes if n["outcome"] == "done"]), "failed": len(counted),
                    "waiting": len([n for n in nodes if n["outcome"] == "waiting"])},
         "nodes": nodes, "failure": first_failure if state == STATE_FAILED else None,
-        "failures": failures, "roles": roles, "message_count": len(messages), "messages": messages,
+        "failures": failures, "blocking": blocking, "roles": roles, "message_count": len(messages), "messages": messages,
     }}

@@ -511,7 +511,7 @@ function tellRunWait(result: Parameters<typeof runWaitText>[0]) {
   toastSeq += 1
   toasts.value = [
     ...toasts.value.slice(-2),
-    { id: `wait-${toastSeq}`, text: () => runWaitText(result, (key) => t(key), (key) => te(key)), tone: 'info', duration: 6000 },
+    { id: `wait-${toastSeq}`, text: () => runWaitText(result, (key, values) => (values ? t(key, values) : t(key)), (key) => te(key)), tone: 'info', duration: 6000 },
   ]
 }
 

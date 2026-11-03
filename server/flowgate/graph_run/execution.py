@@ -902,6 +902,8 @@ _ACTIONS = {
     "settle": settle, "request_write": request_write, "request_hop": request_hop, "request_loop": request_loop,
     # flowgate.v02.0113 T#3: the review assignment's locked loop request and the explicit command's new attempt.
     "request_loop_locked": request_loop_locked, "reopen_attempt": reopen_attempt, "command_fence": command_fence,
+    # flowgate.v02.0124 T#1: an explicit command requests a card's spent result review again (``run_service``).
+    "rerequest_review": command.rerequest_review,
     "launch": launch, "finish": finish, "transition": transition, "heartbeat": heartbeat,
     "working": ledger.working, "start_failed": start_failed, "write_failure": write_failure,
     "instruction_continuation_due": instruction_continuation_due,       # 0111 T-A1
