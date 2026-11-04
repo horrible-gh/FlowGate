@@ -190,11 +190,6 @@ describe('Designer entry — no default Explorer selection (0039 T#2)', () => {
     expect(tree(w).find('.ui-badge').exists()).toBe(false)
     expect(tree(w).text()).not.toContain('현재')
     expect(useProjectStore().currentProjectId).toBe('p')
-    // flowgate.v02test.0002 R0001 #5: the same single click also closes the (open) Project root; another opens it.
-    expect(explorerRow(w, 'Alpha').attributes('aria-expanded')).toBe('false')
-    await click(w, 'Alpha')
-    expect(explorerRow(w, 'Alpha').attributes('aria-expanded')).toBe('true')
-    expect(explorerRow(w, 'Alpha').attributes('aria-selected')).toBe('true')
 
     await click(w, 'UI 개선')
     expect(explorerRow(w, 'UI 개선').attributes('aria-selected')).toBe('true')

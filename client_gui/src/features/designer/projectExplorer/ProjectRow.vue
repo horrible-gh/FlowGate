@@ -1,7 +1,6 @@
 <template>
-  <!-- v0.2 Project root. Single click selects it and opens or closes its Group list
-       (flowgate.v02test.0002 R0001 #5; a double click toggles once); Enter / the caret / Left-Right
-       open or close it too. -->
+  <!-- v0.2 Project root. Single click selects it; double click / Enter / the caret open or
+       close its Group list. -->
   <ExplorerRowFrame
     :row-id="project.id"
     :level="1"

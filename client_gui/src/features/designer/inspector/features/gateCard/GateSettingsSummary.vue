@@ -1,9 +1,8 @@
 <template>
-  <!-- flowgate.v02test.0002 R0001 #1: no standing "missing remote branches are created" line (push ON or OFF);
-       the box shows only the target, the restore limit and real errors, and is not drawn when none is left. -->
-  <div v-if="!rejected && ((summary.target && !hideTarget) || summary.unmergeUnknown || errorKey)" class="inspector-gate-summary" data-test="gate-settings-summary">
+  <div v-if="!rejected && ((summary.target && !hideTarget) || summary.push || summary.unmergeUnknown || errorKey)" class="inspector-gate-summary" data-test="gate-settings-summary">
     <span v-if="summary.target && !hideTarget">{{ t(k('git.target')) }} <strong data-test="gate-summary-target">{{ summary.target }}</strong></span>
     <span v-if="summary.unmergeUnknown" data-test="gate-summary-unmerge-unknown">{{ t(k('target.unmerge_unknown')) }}</span>
+    <span v-if="summary.push" data-test="gate-summary-push-create">{{ t(k('target.push_create')) }}</span>
     <Button v-if="unmergeBlocked" size="sm" variant="ghost" disabled :title="t(k('target.unmerge_unknown'))" data-test="gate-unmerge">{{ t(k('target.undo_merge')) }}</Button>
     <span v-if="errorKey" role="alert" data-test="gate-summary-error">{{ t(k(errorKey)) }}</span>
   </div>
