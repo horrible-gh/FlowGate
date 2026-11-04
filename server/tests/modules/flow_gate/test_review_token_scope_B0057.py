@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from unittest.mock import MagicMock
+import pytest
 
 from inbox_client import post_inbox as _raw_post_inbox
 from store_transaction_support import build_live_sqlite_db, install_live_sqlite_store
@@ -164,7 +165,7 @@ def test_handle_review_accepts_review_scope_token(monkeypatch, tmp_path):
     install_live_sqlite_store(monkeypatch, db)
 
     resp = post_inbox(_review_body())
-    assert resp.status_code == 201
+    assert resp.status_code == 201, resp.text
     insert.assert_called_once()
 
 
@@ -229,3 +230,14 @@ def test_handle_edit_rejects_review_scope_token(monkeypatch):
     resp = post_inbox(body)
     assert resp.status_code == 403
     assert resp.json()["error_message"] == "Context binding mismatch. Use the correct token."
+
+
+@pytest.fixture(autouse=True)
+def scope_routing_store(monkeypatch):
+    from store_transaction_support import install_null_transaction_store
+    from modules.flow_gate.api import inbox_routes
+    install_null_transaction_store(monkeypatch)
+    monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda doc_id: {
+        "doc_id":doc_id, "group_id":"flowgate.default.0057", "project_id":"flowgate",
+        "revision_no":0, "type_code":"B", "module":"default", "status":"open", "title":"Bug",
+    })

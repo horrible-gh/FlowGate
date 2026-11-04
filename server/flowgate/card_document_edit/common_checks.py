@@ -28,7 +28,7 @@ def identity_frontmatter(text, doc, rule, current_body):
         raise invalid("invalid_content", "content", "document_identity_changed", doc)
 
 
-def encoding_guard(text, doc, extras=None, locale="ko"):
+def encoding_guard(text, doc, extras=None, locale="ko", *, legacy=False):
     from modules.flow_gate.api import inbox_routes as inbox
     extras = extras or {}
     try:
@@ -36,9 +36,12 @@ def encoding_guard(text, doc, extras=None, locale="ko"):
     except UnicodeError as exc:
         raise invalid("invalid_content", "content", "invalid_format", doc,
                       validation={"reason": "encoding"}) from exc
-    result = inbox._encoding_guard(fields={"body": text}, fingerprint_field="body",
+    result = inbox._encoding_guard(fields={"body": text, **extras.get("fields", {})}, fingerprint_field="body",
         body_sha256=extras.get("body_sha256"), body_chars=extras.get("body_chars"),
         force_encoding_reason=extras.get("force_encoding_reason"), locale=locale)
     if result is not None:
+        if legacy:
+            from .legacy_edit import reject
+            reject(result)
         payload = json.loads(result.body)
         raise invalid("invalid_content", "content", "invalid_format", doc, validation=payload)

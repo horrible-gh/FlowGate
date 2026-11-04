@@ -75,25 +75,35 @@ def line_projection(flow_id, node, slot):
     return public_line(line)
 
 
+def related_rows(doc):
+    """Server records only: retain both old and live members of a supersede chain."""
+    if not repository.available():
+        raise RuntimeError("card_edit_unavailable")
+    flow_id = doc["group_id"]
+    docs = {d["doc_id"]: d for d in legacy.flow_documents(flow_id) if d.get("doc_id")}
+    def chain(doc_id):
+        found = set()
+        while doc_id:
+            if doc_id in found or doc_id not in docs or docs[doc_id].get("group_id") != flow_id:
+                raise RuntimeError("ambiguous_or_inconsistent_binding")
+            found.add(doc_id)
+            doc_id = docs[doc_id].get("superseded_by")
+        return found
+    token_chain = chain(doc["doc_id"])
+    rows = [row for row in repository.rows(flow_id)
+            if row.get("doc_id") and token_chain.intersection(chain(row["doc_id"]))]
+    if not repository.available():
+        raise RuntimeError("card_edit_unavailable")
+    return rows
+
+
 def classify_card_slot(doc):
     if not doc.get("group_id"):
         return NON_CARD
+    if not card_edit_port_registered():
+        return UNAVAILABLE
     try:
-        if not card_edit_port_registered() or not repository.available():
-            return UNAVAILABLE
-        rows = repository.rows(doc["group_id"])
-        if not repository.available():
-            return UNAVAILABLE
-        docs = {d["doc_id"]: d for d in legacy.flow_documents(doc["group_id"]) if d.get("doc_id")}
-        found = False
-        for row in rows:
-            if row["doc_id"] == doc["doc_id"]:
-                found = True
-            old = docs.get(row["doc_id"])
-            end = legacy.live_end(doc["group_id"], old, docs)[0] if old else None
-            if end is not None and end["doc_id"] == doc["doc_id"]:
-                found = True
-        return CARD if found else NON_CARD
+        return CARD if related_rows(doc) else NON_CARD
     except Exception:
         _log.warning("card_classification_unavailable doc=%s", doc.get("doc_id"), exc_info=True)
         return UNAVAILABLE

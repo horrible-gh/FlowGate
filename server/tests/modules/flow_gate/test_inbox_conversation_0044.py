@@ -57,7 +57,12 @@ class _MockDB:
 
     @contextmanager
     def begin_transaction(self):
-        yield _MockTxn(self._conn)
+        try:
+            yield _MockTxn(self._conn)
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def close(self):
         self._conn.close()
@@ -70,7 +75,7 @@ class _MockTxn:
 
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
-        self._conn.commit()
+        return self._last_cursor  # L#1/L#2: actual CAS count, inside the real transaction.
 
     def fetch_one(self):
         if self._last_cursor is None:
@@ -193,14 +198,13 @@ def _build_client():
 def _issue_token(tmp_path, action_scope, doc_ref, issued_to="usr_test_001"):
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
-        issued = token_service.issue(
-            project="testprj",
-            group_id="testprj-__ALL__-0001",
-            action_scope=action_scope,
-            doc_ref=doc_ref,
-            issued_to=issued_to,
-        )
+    issued = token_service.issue(
+        project="testprj",
+        group_id="testprj-__ALL__-0001",
+        action_scope=action_scope,
+        doc_ref=doc_ref,
+        issued_to=issued_to,
+    )
     return issued["raw_token"]
 
 

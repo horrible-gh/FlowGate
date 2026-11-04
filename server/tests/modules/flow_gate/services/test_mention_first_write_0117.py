@@ -74,7 +74,12 @@ def test_first_write_is_ignored_by_a_new_mention():
     assert _NEXT_HEADER in _build(first_write=True)
 
 
-def test_token_rec_builder_forwards_first_write():
+def test_token_rec_builder_forwards_first_write(monkeypatch):
+    # Pure prompt forwarding: provide the already-read document through the T#2 snapshot port.
+    # Real snapshot/body/revision consistency is covered in test_card_document_edit_agent_0127.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    card_document_ports.register(card_document_ports.CARD_DOCUMENT_EDIT, lambda operation, doc: (doc, None))
     parent = {"doc_id": "flowgate.v02.0117.0002-T", "type_code": "T", "seq": 2, "title": "t", "revision_no": 0}
     rec = {"project": "flowgate", "group_id": "flowgate.v02.0117", "scratch_dir": "S"}
     kw = dict(token_rec=rec, head_type="T", head_status="pending", parent_doc=parent,

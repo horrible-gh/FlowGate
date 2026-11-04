@@ -518,7 +518,12 @@ class _MockDB:
 
     @contextmanager
     def begin_transaction(self):
-        yield _MockTxn(self._conn)
+        try:
+            yield _MockTxn(self._conn)
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def close(self):
         self._conn.close()
@@ -536,7 +541,7 @@ class _MockTxn:
 
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
-        self._conn.commit()
+        return self._last_cursor  # L#1/L#2: actual CAS count, inside the real transaction.
 
     def fetch_one(self):
         if self._last_cursor is None:
@@ -1420,12 +1425,11 @@ def _inbox_post(tmp_path, content, doc_code="0003-WP", doc_type="WP", locale=Non
 def _inbox_edit(tmp_path, doc_id, content, *, locale=None):
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
-        token = token_service.issue(
-            project=PROJECT, group_id=GROUP, action_scope="edit",
-            doc_ref=doc_id, issued_to="usr_wp_001",
-            continuation_locale=locale,
-        )["raw_token"]
+    token = token_service.issue(
+        project=PROJECT, group_id=GROUP, action_scope="edit",
+        doc_ref=doc_id, issued_to="usr_wp_001",
+        continuation_locale=locale,
+    )["raw_token"]
     return _inbox_client().post(
         "/api/v1/inbox",
         json={
@@ -1568,14 +1572,14 @@ def test_ai_inbox_edit_cas_loser_rolls_back_body_and_keeps_title_meta(
         project_id=PROJECT,
     ))
     store = get_store()
-    execute = store._execute
+    execute = store._execute_affected
 
     def lose_revision_cas(sql, params=None):
         if str(sql).startswith("UPDATE documents SET revision_no = revision_no + 1"):
-            return None
+            return 0
         return execute(sql, params)
 
-    with patch.object(store, "_execute", side_effect=lose_revision_cas):
+    with patch.object(store, "_execute_affected", side_effect=lose_revision_cas):
         rejected = _inbox_edit(
             tmp_path, doc_id, wp.dumps(uploaded), locale="ko",
         )

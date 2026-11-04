@@ -36,7 +36,14 @@ def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope, ex
     run = _run(tmp_path); run["action_scope"] = scope
     definitions = tools.definitions_for_run(run)
     assert [d["name"] for d in definitions] == expected
-    assert next(d for d in definitions if d["name"] == "register_document")["schema"] == tools.REGISTER_SCHEMAS[scope]
+    expected_schema = tools.REGISTER_SCHEMAS[scope]
+    if scope == "edit":
+        # P#2 §8: this fixture has no card group, so advertise the legacy descriptor.
+        import copy
+        expected_schema = copy.deepcopy(expected_schema)
+        expected_schema["properties"].pop("expected_revision")
+        expected_schema["required"].remove("expected_revision")
+    assert next(d for d in definitions if d["name"] == "register_document")["schema"] == expected_schema
     assert all("oneOf" in d["schema"] or d["schema"]["additionalProperties"] is False for d in definitions)
 
 

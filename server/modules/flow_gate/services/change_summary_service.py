@@ -155,24 +155,29 @@ def build(
     No ``before_path`` means a first registration: with no prior revision to compare, ``before``
     is ``null``, ``changed`` is true, and everything counts as added (P0002 scenario 15).
     """
+    return build_text(doc_id=doc_id, after_text=read_canonical(after_path), after_revision_no=after_revision_no,
+                      before_text=read_canonical(before_path) if before_path else None,
+                      before_revision_no=before_revision_no, before_required=bool(before_path))
+
+
+def build_text(*, doc_id, after_text, after_revision_no, before_text=None, before_revision_no=None, before_required=False):
+    """Same summary from a protected snapshot and the validated stored string."""
     started = time.monotonic()
 
     def _over_budget() -> bool:
         return (time.monotonic() - started) * 1000.0 > SUMMARY_TIME_BUDGET_MS
 
     try:
-        after_text = read_canonical(after_path)
         if after_text is None:
             return _unavailable()
-        after_doc = DocumentText(after_text)
+        after_doc = DocumentText.from_raw(after_text)
 
         before_doc: Optional[DocumentText] = None
-        if before_path:
-            before_text = read_canonical(before_path)
+        if before_required or before_text is not None:
             if before_text is None:
                 # The backup file should exist but is unreadable → give up on the summary only.
                 return _unavailable()
-            before_doc = DocumentText(before_text)
+            before_doc = DocumentText.from_raw(before_text)
 
         if after_doc.document_lines > SUMMARY_MAX_LINES or (
             before_doc is not None and before_doc.document_lines > SUMMARY_MAX_LINES

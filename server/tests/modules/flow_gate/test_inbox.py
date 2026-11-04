@@ -58,7 +58,12 @@ class _MockDB:
 
     @contextmanager
     def begin_transaction(self):
-        yield _MockTxn(self._conn)
+        try:
+            yield _MockTxn(self._conn)
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def close(self):
         self._conn.close()
@@ -71,7 +76,7 @@ class _MockTxn:
 
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
-        self._conn.commit()
+        return self._last_cursor  # L#1/L#2: actual CAS count, inside the real transaction.
 
     def fetch_one(self) -> dict | None:
         if self._last_cursor is None:
@@ -88,7 +93,7 @@ class _MockTxn:
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def _stub_legacy_test_scratch_layout(monkeypatch):
+def _stub_legacy_test_scratch_layout(monkeypatch, tmp_path):
     """These inbox tests intentionally supply arbitrary tmp_path scratch names.
 
     Ownership and safe deletion of real tok_* paths are exercised separately in
@@ -96,6 +101,7 @@ def _stub_legacy_test_scratch_layout(monkeypatch):
     """
     from modules.flow_gate.services import token_service
 
+    monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path))
     monkeypatch.setattr(
         token_service.token_scratch, "create",
         lambda _project, _token, path: Path(path).mkdir(parents=True, exist_ok=True),
@@ -997,7 +1003,9 @@ class TestInboxEdit:
         """Invalid edit_reason enum -> 400."""
         from modules.flow_gate.api import inbox_routes
 
-        raw = self._make_edit_token(tmp_path, "NR_EDIT_001")
+        doc_id = "testprj-__ALL__-0001-NR0098"
+        self._create_target_doc(doc_id, tmp_path / "valid-reason-base.md")
+        raw = self._make_edit_token(tmp_path, doc_id)
 
         with patch(
             "modules.flow_gate.rbac.permission_service.has_permission",
@@ -1016,7 +1024,7 @@ class TestInboxEdit:
                     "module": "__ALL__",
                     "group": "0001",
                     "action": "edit",
-                    "doc_id": "NR_EDIT_001",
+                    "doc_id": doc_id,
                     "edit_reason": "invalid_reason_xyz",
                     "content": "# Updated",
                 },
@@ -1035,25 +1043,17 @@ class TestInboxEdit:
 
         raw = self._make_edit_token(tmp_path, doc_id)
 
-        # Simulate CAS failure: after UPDATE, set revision_no back to 0 to force 409
-        original_execute = get_store()._db.execute
-
-        call_count = {"n": 0}
-
-        def _patched_execute(sql: str, params=None):
-            result = original_execute(sql, params)
-            if "revision_no = revision_no + 1" in sql:
-                # Increment executed, but set it back to 0 to force CAS validation failure
-                get_store()._db._conn.execute(
-                    "UPDATE documents SET revision_no = 0 WHERE doc_id = ?", [doc_id]
-                )
-                get_store()._db._conn.commit()
-            return result
+        # L#2 §2.2: the store judges affected rows, before replacing any body.
+        original_execute = get_store()._execute_affected
+        def lose_cas(sql, params=None):
+            if sql.startswith("UPDATE documents SET revision_no = revision_no + 1"):
+                return 0
+            return original_execute(sql, params)
 
         with patch(
             "modules.flow_gate.rbac.permission_service.has_permission",
             return_value=True,
-        ), patch.object(get_store()._db, "execute", side_effect=_patched_execute):
+        ), patch.object(get_store(), "_execute_affected", side_effect=lose_cas):
             from starlette.testclient import TestClient
             from fastapi import FastAPI
             app = FastAPI()

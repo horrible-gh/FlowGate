@@ -103,7 +103,7 @@ def commit_revision(ctx, inp):
         raise internal_error()
     updates = dict(built.row_updates)
     extras = req.transport_extras.get("row_updates", {})
-    if set(updates) - {"title", "meta", "filename"} or set(extras) - {"rejection_history"}:
+    if set(updates) - ({"title", "meta", "filename", "rejection_history"} if req.actor.kind == "worker" else {"title", "meta", "filename"}) or set(extras) - {"rejection_history"}:
         raise internal_error()
     if extras and req.actor.kind != "worker":
         raise internal_error()
@@ -127,6 +127,8 @@ def commit_revision(ctx, inp):
                 stored_sha256=hashlib.sha256(built.stored_bytes).hexdigest(),
                 run_id=req.origin.run_id, token_id=req.origin.token_id,
                 server_call_id=req.origin.server_call_id, event_reason=getattr(req, "event_reason", None))
+    if req.origin.kind == "agent":
+        meta["agent_result"] = built.result
     workflow_events.create({"event_type": "doc_edited", "project_id": doc["project_id"],
                             "group_id": doc.get("group_id"), "document_id": doc["id"],
                             "actor_user_id": req.actor.user_id, "metadata": idempotency.dumps(meta),

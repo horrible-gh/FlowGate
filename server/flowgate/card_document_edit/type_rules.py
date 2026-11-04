@@ -112,7 +112,7 @@ class Tr2Rule:
                      result={"body": canonical, "derived": derived, "dropped_keys": dropped})
 
 
-def rule_for(doc, request=None):
+def _base_rule_for(doc, request=None):
     from modules.flow_gate import template_provision
     code = doc.get("type_code")
     if code == "CH":
@@ -128,3 +128,11 @@ def rule_for(doc, request=None):
     if Path(doc.get("file_path") or "").suffix.lower() == ".md":
         return MarkdownRule(request)
     return None
+
+
+def rule_for(doc, request=None):
+    rule = _base_rule_for(doc, request)
+    if rule is not None and request is not None and request.origin.kind == "agent" and "submission" in request.transport_extras:
+        from .agent_rules import AgentRule
+        return AgentRule(request, rule)
+    return rule

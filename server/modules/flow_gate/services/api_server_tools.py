@@ -137,7 +137,7 @@ SCHEMAS = {
 NODE_TITLE_SCHEMA = {"type": "string", "x-flowgate-lenient": True}
 REGISTER_SCHEMAS = {
     "new": _obj({"title": {"type": "string"}, "content": {"type": "string", "minLength": 1}, "doc_type": {"type": "string"}, "node_title": NODE_TITLE_SCHEMA}, ["content", "doc_type"]),
-    "edit": _obj({"content": {"type": "string", "minLength": 1}, "edit_reason": {"type": "string", "enum": ["rejected", "qna_followup", "user_comment", "worker_self"]}, "rejection_response": {"type": "string"}, "rejection_id": {"type": "string"}, "rejection_review_id": {"type": "integer"}, "node_title": NODE_TITLE_SCHEMA}, ["content", "edit_reason"]),
+    "edit": _obj({"content": {"type": "string"}, "expected_revision": {"type": "integer", "minimum": 0}, "edit_reason": {"type": "string", "enum": ["rejected", "qna_followup", "user_comment", "worker_self"]}, "rejection_response": {"type": "string"}, "rejection_id": {"type": "string"}, "rejection_review_id": {"type": "integer"}, "node_title": NODE_TITLE_SCHEMA}, ["content", "expected_revision", "edit_reason"]),
     # 0474 T0007 §1.1: force_encoding_reason removed -- review never accepts a
     # model-authored corruption bypass, so the schema no longer exposes the field.
     "review": _obj({"verdict": {"type": "string", "enum": ["pass", "issues", "hold"]}, "findings": {"type": "array", "items": _obj({"locus": {"type": "string"}, "note": {"type": "string"}})}, "comment": {"type": "string"}, "body_sha256": {"type": "string"}, "body_chars": {"type": "integer"}}, ["verdict"]),
@@ -267,10 +267,13 @@ def _is_tr_new(run: dict) -> bool:
 
 
 def definitions_for_run(run: dict) -> list[dict]:
-    scope = run.get("action_scope")
+    context = run.get("register_context") or {}
+    scope = context.get("action") or run.get("action_scope")
+    bound = {**run, "action_scope": scope, "doc_ref": context.get("doc") or run.get("doc_ref")}
+    run["_register_edit_context"] = scope == "edit"
     if scope not in DOCUMENT_SCOPES:
         raise ToolError(422, "invalid_action_scope")
-    step_type = _step_type(run)
+    step_type = _step_type(bound)
     if not step_type:
         raise ToolError(409, "toolset_unavailable")
     names = list(BASE_NAMES)
@@ -284,7 +287,7 @@ def definitions_for_run(run: dict) -> list[dict]:
     tr_edit = scope == "edit" and step_type == "TR" and bool(run.get("doc_ref"))
     tr_review = scope == "review" and step_type == "TR" and bool(run.get("doc_ref"))
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
-    if tr_edit or _is_tr_new(run):
+    if tr_edit or _is_tr_new(bound):
         # 0652/0656: TR edit uses Self-check as its execution path; TR review validates the live
         # worktree plus read-only Self-check evidence. 0638 T#1: a TR(new) worker runs it too,
         # before its TR exists; the runs are owned by its token and linked on registration.
@@ -297,6 +300,11 @@ def definitions_for_run(run: dict) -> list[dict]:
     result = []
     for name in names:
         schema = REGISTER_SCHEMAS[scope] if name == "register_document" else SCHEMAS[name]
+        if name == "register_document" and scope == "edit":
+            from modules.flow_gate.graph_workflow.services import card_document_ports
+            run["_register_edit_context"] = True
+            if card_document_ports.registered(card_document_ports.CARD_DOCUMENT_EDIT):
+                schema = card_document_ports.card_edit("schema", run, schema)
         result.append({"name": name, "description": DESCRIPTIONS[name], "schema": schema, "completion": name == "register_document"})
     return result
 

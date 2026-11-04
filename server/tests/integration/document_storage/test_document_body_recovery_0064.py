@@ -30,6 +30,10 @@ DISPOSED = "Modification not allowed: the group has been disposed."
 
 @pytest.fixture(autouse=True)
 def recovery_routes(env, monkeypatch):
+    from modules.flow_gate.graph_workflow.services import card_document_ports as ports
+    from flowgate.card_document_edit import integration
+    monkeypatch.setattr(ports, "_handlers", dict(ports._handlers))
+    integration.register()
     app = env["client"].app
     app.include_router(console.router, prefix="/api/v1")
     app.include_router(token.router, prefix="/flowgate")
@@ -864,12 +868,13 @@ _OWNERS = {"modules/flow_gate/documents/routers/documents.py", "modules/flow_gat
            "modules/flow_gate/documents/document_service.py"}
 # (file, function) -> what writes there. "save:*" must record ``doc_body_saved`` in the same function (2.4.1).
 EXPECTED_WRITERS = {
-    ("modules/flow_gate/documents/routers/documents.py", "update_document_content.save"): "save:console_save",
+    ("modules/flow_gate/documents/routers/documents.py", "update_document_content.save.write_file"): "save:console_save",
     ("modules/flow_gate/documents/routers/work_plan.py", "save_work_plan"): "save:work_plan_save",
     ("modules/flow_gate/documents/routers/work_plan.py", "restore_work_plan_revision"): "save:work_plan_save",
     ("modules/flow_gate/documents/tr2_service.py", "_save"): "save:tr2_save",
     ("modules/flow_gate/api/inbox_routes.py", "_handle_new"): "inbox",
-    ("modules/flow_gate/api/inbox_routes.py", "_handle_edit"): "inbox",
+    ("flowgate/card_document_edit/store.py", "snapshot_policy_apply"): "revision snapshot",
+    ("flowgate/card_document_edit/store.py", "body_replace"): "guarded revision body",
     ("flowgate/card_documents/legacy_adapter.py", "_write_file"): "card document creation",
     ("modules/flow_gate/documents/root_conversion.py", "stage_converted_file"): "conversion",
     ("modules/flow_gate/documents/attachments/conversion.py", "stage_attachment_room"): "conversion",
@@ -906,7 +911,7 @@ class _Calls(ast.NodeVisitor):
 
 def test_every_body_write_is_a_recorded_save_or_a_known_writer():
     """V-B1d-9: a new body write point fails here until it records ``doc_body_saved`` or is classified."""
-    found = {}
+    found, recorded, delegated = {}, set(), set()
     for path in sorted(_SERVER_DIR.rglob("*.py")):
         relative = path.relative_to(_SERVER_DIR).as_posix()
         parts = relative.split("/")
@@ -918,14 +923,23 @@ def test_every_body_write_is_a_recorded_save_or_a_known_writer():
         names = _WRITERS | (_RAW if relative in _OWNERS else set())
         if not any(name in text for name in names):
             continue
-        visitor = _Calls(names | {"record_body_saved"})
+        visitor = _Calls(names | {"record_body_saved", "stage_body_save"})
         visitor.visit(ast.parse(text))
         for function, calls in visitor.found.items():
+            if "record_body_saved" in calls:
+                recorded.add((relative, function))
+            if "stage_body_save" in calls:
+                delegated.add((relative, function))
             if calls & names and not function.endswith("write_body_atomically"):
                 found[(relative, function)] = calls
     assert set(found) == set(EXPECTED_WRITERS)
     for key, kind in EXPECTED_WRITERS.items():
-        assert ("record_body_saved" in found[key]) == kind.startswith("save:"), key
+        # A write_gate callback belongs to its enclosing save transaction.
+        evidence = key
+        if key[1].endswith(".write_file"):
+            assert (key[0], key[1].rsplit(".", 1)[0]) in delegated
+            evidence = (key[0], "stage_body_save")
+        assert (evidence in recorded) == kind.startswith("save:"), key
 
 
 # ── shared pieces ────────────────────────────────────────────────────────────

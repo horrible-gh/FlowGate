@@ -30,7 +30,9 @@ CARD_VIEW = "card_view"
 ON_RESULT_BOUND = "on_result_bound"
 ON_ROOT_CONVERTED = "on_root_converted"
 CARD_LINE_DOCUMENTS = "card_line_documents"
-PORT_NAMES = (ON_DRAFT_SAVED, CARD_VIEW, ON_RESULT_BOUND, ON_ROOT_CONVERTED, CARD_LINE_DOCUMENTS)
+CARD_DOCUMENT_EDIT = "card_document_edit"
+CARD_DOCUMENT_EDIT_BOUNDARY = "card_document_edit_boundary"
+PORT_NAMES = (ON_DRAFT_SAVED, CARD_VIEW, ON_RESULT_BOUND, ON_ROOT_CONVERTED, CARD_LINE_DOCUMENTS, CARD_DOCUMENT_EDIT, CARD_DOCUMENT_EDIT_BOUNDARY)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -72,6 +74,14 @@ def registered(name: str) -> bool:
 def _handler(name: str) -> Optional[Callable[..., Any]]:
     with _lock:
         return _handlers.get(name)
+
+
+def card_edit(operation, *args, **kwargs):
+    """Required edit/read port. Missing registration is an explicit unavailable failure."""
+    handler = _handler(CARD_DOCUMENT_EDIT) or _handler(CARD_DOCUMENT_EDIT_BOUNDARY)
+    if handler is None:
+        raise RuntimeError("card_edit_unavailable")
+    return handler(operation, *args, **kwargs)
 
 
 def draft_saved(group: dict, user_id: Optional[str], nodes: list[dict], removed_keys: Iterable[str],

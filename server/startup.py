@@ -438,6 +438,8 @@ def run_all():
     recover_git_sessions()
     start_conversation_integration()
     start_card_document_integration()
+    from flowgate.card_document_edit import integration as card_document_edit_integration
+    card_document_edit_integration.register()
     start_card_settings_integration()
     start_card_completion_integration()
     start_card_memo_integration()

@@ -35,7 +35,7 @@ def submission(monkeypatch, tmp_path, seed_data):
         "dry_run_count": 0,
     }
     monkeypatch.setattr(token_service, "verify", lambda _raw: token)
-    monkeypatch.setattr(token_service, "consume", lambda **_kwargs: None)
+    monkeypatch.setattr(token_service, "consume", lambda **_kwargs: True)
     monkeypatch.setattr(token_service, "increment_dry_run", lambda _id: None)
     monkeypatch.setattr(inbox_routes, "has_permission", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(inbox_routes.git_service, "worktree_untracked_summary", lambda *_args: {})

@@ -72,7 +72,7 @@ def judge_and_store(ctx, req, flow, holder, restore_log):
             meta = verdict.record["parsed"]
             plan = ContactPlan(current["project_id"], current.get("group_id"), dict(current), req.actor.user_id,
                                meta.get("token_id"), bool(meta.get("node_key") and meta.get("slot")))
-            raise ReplayDone({"doc_id": meta["doc_id"], "revision_no": meta["revision_no"],
+            raise ReplayDone({**meta.get("agent_result", {}), "doc_id": meta["doc_id"], "revision_no": meta["revision_no"],
                               "updated_at": meta["updated_at"], "replayed": True}, plan)
         if verdict.kind == idempotency.STALE:
             raise conflict(req, current)
@@ -83,15 +83,24 @@ def judge_and_store(ctx, req, flow, holder, restore_log):
     if len(req.content) > CONTENT_MAX_CHARS:
         raise invalid("invalid_content", "content", "invalid_format", current,
                       validation={"reason": "too_long", "max": CONTENT_MAX_CHARS})
-    common_checks.identity_frontmatter(req.content, current, rule, body)
+    text = rule.prepare(req.content, current, body) if hasattr(rule, "prepare") else req.content
+    common_checks.identity_frontmatter(text, current, rule, body)
     common_checks.encoding_guard(req.content, current, req.transport_extras.get("encoding"), req.locale)
-    built = rule.validate_and_build(req.content, current, body)
+    built = rule.validate_and_build(text, current, body)
     if req.validate_only:
-        raise ValidateOnlyDone(_verdict(req, current))
+        verdict = _verdict(req, current)
+        if req.origin.kind == "agent" and "_agent_checks" in built.result:
+            verdict["checks_passed"] = built.result["_agent_checks"]
+            for key in ("normalizations", "worktree_untracked"):
+                if key in built.result:
+                    verdict[key] = built.result[key]
+            if "_agent_tr_scope" in built.result:
+                verdict["tr_scope"] = built.result["_agent_tr_scope"]
+        raise ValidateOnlyDone(verdict)
     plan = store.commit_revision(ctx, StoreInput(current, body, built, rule, req, binding, restore_log))
     plan.card_slot = True
     assert after_commit(lambda: holder.put(plan))
-    return _result(plan.doc)
+    return {**built.result, **_result(plan.doc)}
 
 
 def revise(req):
