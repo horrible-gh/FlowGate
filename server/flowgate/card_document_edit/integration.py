@@ -11,8 +11,8 @@ def dispatch(operation, *args, **kwargs):
 
 
 def dedicated(action, *args, **kwargs):
-    from . import dedicated_windows, recovery_bridge, generated_bridge
-    handlers = {"wp_save": dedicated_windows.wp_save, "wp_restore": dedicated_windows.wp_restore,
+    from . import dedicated_windows, recovery_bridge, generated_bridge, legacy_snapshots
+    handlers = {"tr2_backfill": legacy_snapshots.tr2_backfill, "wp_save": dedicated_windows.wp_save, "wp_restore": dedicated_windows.wp_restore,
                 "tr2_save": dedicated_windows.tr2_save, "tr2_create": dedicated_windows.tr2_create,
                 "tr2_registration": dedicated_windows.tr2_registration,
                 "recover": recovery_bridge.recover, "wp_heal": recovery_bridge.heal,
@@ -27,6 +27,9 @@ def dedicated(action, *args, **kwargs):
 
 def register():
     from .pending import flush
+    from . import write_gate, author_evidence
+    ports.register(ports.DOCUMENT_WRITE_GATE, write_gate.dispatch)
+    ports.register(ports.DOCUMENT_AUTHOR_EVIDENCE, author_evidence.current)
     ports.register(ports.DEDICATED_DOCUMENT_WRITE, dedicated)
     ports.register(ports.DOCUMENT_WRITE_RELEASED, flush)
     ports.register(ports.CARD_DOCUMENT_EDIT_BOUNDARY, unavailable)

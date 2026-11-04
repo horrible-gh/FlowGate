@@ -175,6 +175,12 @@ def body_replace(inp):
 
 
 def commit_revision(ctx, inp):
+    from .write_gate import revision
+    with revision(ctx, inp):
+        return _commit_revision(ctx, inp)
+
+
+def _commit_revision(ctx, inp):
     ctx.assert_held()
     doc, built, req = inp.current, inp.built, inp.req
     if ctx.doc_id != doc["doc_id"]:

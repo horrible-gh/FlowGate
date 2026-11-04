@@ -113,15 +113,19 @@ def test_tr2_expected_revision_and_build_current_are_protected(env, monkeypatch)
 def test_tr2_create_contacts_follow_outer_commit(env, monkeypatch, rollback):
     raw = tr2_env(env, monkeypatch)
     env.path.unlink()
+    # CREATE evidence comes from the real INSERT in this same outer transaction.
+    initial = documents.get_by_id(D)
+    env.db._execute("DELETE FROM documents WHERE doc_id = ?", [D])
     with pytest.raises(RuntimeError) if rollback else __import__('contextlib').nullcontext():
         with env.db.transaction():
+            documents.create(initial)
             result = tr2.create(D, raw, actor="user")
             assert result["new_revision"] == 1 and not env.events
             if rollback:
                 raise RuntimeError("outer failure")
     assert bool(env.events) != rollback
     assert env.path.exists() != rollback
-    assert documents.get_by_id(D)["revision_no"] == (0 if rollback else 1)
+    assert documents.get_by_id(D) is None if rollback else documents.get_by_id(D)["revision_no"] == 1
 
 
 def test_join_failure_rolls_back_all_revisions_and_files(env):
@@ -167,7 +171,8 @@ def test_recovery_raw_sidecar_preserves_r0_and_failure_rolls_back(env):
     original = document_revisions.list_by_doc(D)[0]
     backup = paths.resolve_storage_path(original["backup_path"], "flowgate")
     raw = backup.read_bytes()
-    documents.update(D, {"revision_no": 0})
+    # Deliberately seed legacy corruption; production UPDATE must reject this rewind.
+    env.db._execute("UPDATE documents SET revision_no = 0 WHERE doc_id = ?", [D])
     env.path.write_bytes(b"broken but readable")
     dedicated_bridge.dedicated_save(req)
     assert backup.read_bytes() == raw

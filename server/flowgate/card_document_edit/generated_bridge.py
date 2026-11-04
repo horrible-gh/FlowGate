@@ -247,7 +247,9 @@ def conversion_identity(doc, new_row):
             and meta.get("revision_no") == doc["revision_no"] and meta.get("old_doc_id") == doc["doc_id"]
             and meta.get("final_doc_id") == new_row["doc_id"] and documents.get_by_id(new_row["doc_id"]) is None):
         raise internal_error()
-    inserted = documents.create(new_row)
+    from .write_gate import identity_transfer
+    with identity_transfer(fresh, new_row):
+        inserted = documents.create(new_row)
     # documents.create deliberately initializes revision 0. This is identity transfer of an
     # already revised row, not another edit or an arbitrary caller-supplied creation revision.
     affected = store._execute_affected(

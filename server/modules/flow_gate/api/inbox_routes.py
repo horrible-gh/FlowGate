@@ -5,6 +5,7 @@ Auth: Authorization: Bearer {raw_token}
 action: "new" | "edit"
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import json
@@ -416,7 +417,7 @@ def update_editable_source_content(
         )
 
     encoded = body.content.encode("utf-8")
-    full_path.write_bytes(encoded)
+    document_write_ports.write_gate("paths", [full_path], lambda: full_path.write_bytes(encoded))
     _emit_source_edit_refresh(project_id, resolved_group_id, path)
 
     response: dict = {
@@ -1674,7 +1675,7 @@ def _write_submission_body(stored_path: pathlib.Path, body: str) -> None:
     bytes the guards checked and a no-op CRLF resubmission is corrupted. The
     read side (_submission_text) is symmetric: newline="" there too.
     """
-    with open(stored_path, "w", encoding="utf-8", newline="") as fh:
+    with document_write_ports.write_paths([stored_path]), open(stored_path, "w", encoding="utf-8", newline="") as fh:
         fh.write(body)
 
 
@@ -4944,7 +4945,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             work_plan_service.write_body_atomically(stored_path, wp_plan)
             if doc_path is not None:
                 try:
-                    os.unlink(doc_path)
+                    document_write_ports.write_gate("paths", [doc_path], lambda: os.unlink(doc_path))
                 except OSError:
                     pass
         else:
@@ -4965,7 +4966,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
             if doc_path is not None:
                 try:
-                    os.unlink(doc_path)
+                    document_write_ports.write_gate("paths", [doc_path], lambda: os.unlink(doc_path))
                 except OSError:
                     pass
     except OSError as exc:
@@ -5027,6 +5028,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # guessing "human" or a provider (TS0010 TC-7).
     _origin_run_id = token_rec.get("ai_run_id")
     _origin_provider_name = _resolve_origin_provider_name(_origin_run_id)
+    from modules.flow_gate.storage.files import file_identity, remove_owned_file
+    submission_file_identity = file_identity(stored_path) if stored_path.exists() else None
+
     def register_new():
         tr2_saved = None
         try:
@@ -5079,7 +5083,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             # storage/DB rollback: q_service validation failures must not leave a half-created
             # document, and their client-facing 4xx status must survive this route boundary.
             try:
-                stored_path.unlink(missing_ok=True)
+                remove_owned_file(stored_path, submission_file_identity)
             except OSError:
                 pass
             try:
@@ -5164,7 +5168,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             try:
                 tr2_saved = tr2_service.create(
                     canonical_doc_id, tr2_body, actor=actor_user_id,
-                    origin=tr2_service.ORIGIN_AI)
+                    origin=tr2_service.ORIGIN_AI, token_id=token_rec.get("token_id"))
             except tr2_service.Tr2ValidationError as exc:
                 db_docs.delete(canonical_doc_id)
                 payload = error_payload(exc.code, details=exc.details)

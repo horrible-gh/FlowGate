@@ -1,5 +1,6 @@
 """Remote TS test execution service."""
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import contextlib
 import json
@@ -2708,7 +2709,7 @@ def _start_service_step(
     started = time.monotonic()
     cmd = _replace_placeholders(step["cmd"], port, scratch)
     log_path = scratch / f"{step['case_no'].lower()}-service.log"
-    log_handle = log_path.open("ab")
+    log_handle = document_write_ports.write_gate("paths", [log_path], lambda: log_path.open("ab"))
     eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, root)
     kwargs = _popen_kwargs(root, env)
     kwargs["cwd"] = eff_cwd

@@ -4,6 +4,7 @@ No copy/delete fallback: unsupported native atomic rename fails without changing
 the source. The caller holds the normal group/attempt mutation lock throughout.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import ctypes
 import errno
@@ -35,11 +36,12 @@ def canonical_move_path(root: Path, value: str) -> str:
 
 def move_file(root: Path, source: str, destination: str) -> int:
     """Return moved byte count; preserve file bytes, mode, and Git index."""
-    if os.name == 'nt':
-        return _move_windows(root.resolve(), source, destination)
-    if sys.platform.startswith('linux'):
-        return _move_linux(root.resolve(), source, destination)
-    raise OSError(errno.ENOTSUP, 'atomic no-replace move is unavailable')
+    with document_write_ports.write_paths([root / source, root / destination]):
+        if os.name == 'nt':
+            return _move_windows(root.resolve(), source, destination)
+        if sys.platform.startswith('linux'):
+            return _move_linux(root.resolve(), source, destination)
+        raise OSError(errno.ENOTSUP, 'atomic no-replace move is unavailable')
 
 
 def _has_git_marker_fd(fd):

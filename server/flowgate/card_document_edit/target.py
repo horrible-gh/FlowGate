@@ -98,11 +98,19 @@ def related_rows(doc):
 
 
 def classify_card_slot(doc):
-    if not doc.get("group_id"):
-        return NON_CARD
     if not card_edit_port_registered():
         return UNAVAILABLE
     try:
+        # A metadata-only group reassignment cannot hide a still-referencing card row.
+        if not repository.available():
+            raise RuntimeError("card_edit_unavailable")
+        from modules.flow_gate.db.connection import get_store
+        references = get_store()._fetch_all(
+            "SELECT group_id FROM graph_node_documents WHERE doc_id = ?", [doc["doc_id"]])
+        if any(row["group_id"] != doc.get("group_id") for row in references):
+            return UNAVAILABLE
+        if not doc.get("group_id"):
+            return NON_CARD
         return CARD if related_rows(doc) else NON_CARD
     except Exception:
         _log.warning("card_classification_unavailable doc=%s", doc.get("doc_id"), exc_info=True)

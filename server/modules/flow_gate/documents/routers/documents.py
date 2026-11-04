@@ -13,6 +13,7 @@ RBAC: assumes rbac.decorators.require_permission.
       When not implemented, stub as no-op decorator (noted in TR).
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import json as _json
 import logging as _logging
@@ -905,7 +906,7 @@ def create_document(
         )
         try:
             doc_file_path.parent.mkdir(parents=True, exist_ok=True)
-            doc_file_path.write_text(md_content, encoding="utf-8")
+            document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.write_text(md_content, encoding="utf-8"))
             data["file_path"] = storage_paths.to_storage_relative(
                 doc_file_path, data["project_id"]
             )
@@ -1100,7 +1101,7 @@ def create_related_document(
     stored_file_path: Optional[str] = None
     try:
         doc_file_path.parent.mkdir(parents=True, exist_ok=True)
-        doc_file_path.write_text(md_content, encoding="utf-8")
+        document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.write_text(md_content, encoding="utf-8"))
         stored_file_path = storage_paths.to_storage_relative(
             doc_file_path, body.project_id
         )
@@ -1293,7 +1294,7 @@ def create_next_empty_document(
                 next_type=next_type,
             )
             doc_file_path.parent.mkdir(parents=True, exist_ok=True)
-            doc_file_path.write_text(md_content, encoding="utf-8")
+            document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.write_text(md_content, encoding="utf-8"))
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Failed to create document file: {exc}") from exc
 
@@ -1380,9 +1381,9 @@ def create_next_empty_document(
                 )
     except Exception as exc:
         try:
-            doc_file_path.unlink(missing_ok=True)
+            document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.unlink(missing_ok=True))
             if is_tr2:
-                _tr2.snapshot_path(data, 1).unlink(missing_ok=True)
+                document_write_ports.write_gate("paths", [_tr2.snapshot_path(data, 1)], lambda: _tr2.snapshot_path(data, 1).unlink(missing_ok=True))
         except OSError:
             pass
         if isinstance(exc, _tr2.Tr2ValidationError):
@@ -1952,7 +1953,7 @@ def create_next_approved_core(
 
     try:
         doc_file_path.parent.mkdir(parents=True, exist_ok=True)
-        doc_file_path.write_text(md_content, encoding="utf-8")
+        document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.write_text(md_content, encoding="utf-8"))
     except OSError as exc:
         raise NextApprovedError(500, f"Failed to create document file: {exc}") from exc
 
@@ -2014,31 +2015,31 @@ def create_next_approved_core(
                 doc = refreshed
     except NextApprovedError:
         try:
-            doc_file_path.unlink(missing_ok=True)
+            document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.unlink(missing_ok=True))
         except OSError:
             pass
         raise
     except PermissionError as exc:
         try:
-            doc_file_path.unlink(missing_ok=True)
+            document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.unlink(missing_ok=True))
         except OSError:
             pass
         raise NextApprovedError(403, str(exc)) from exc
     except TransitionError as exc:
         try:
-            doc_file_path.unlink(missing_ok=True)
+            document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.unlink(missing_ok=True))
         except OSError:
             pass
         raise NextApprovedError(409, str(exc)) from exc
     except ValueError as exc:
         try:
-            doc_file_path.unlink(missing_ok=True)
+            document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.unlink(missing_ok=True))
         except OSError:
             pass
         raise NextApprovedError(422, str(exc)) from exc
     except Exception:
         try:
-            doc_file_path.unlink(missing_ok=True)
+            document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.unlink(missing_ok=True))
         except OSError:
             pass
         raise
@@ -2660,7 +2661,7 @@ def _create_next_empty_document_for_auto_draft(
 
     try:
         doc_file_path.parent.mkdir(parents=True, exist_ok=True)
-        doc_file_path.write_text(md_content, encoding="utf-8")
+        document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.write_text(md_content, encoding="utf-8"))
     except OSError:
         return None
 
@@ -2705,7 +2706,7 @@ def _create_next_empty_document_for_auto_draft(
                 created_doc = refreshed
     except Exception:
         try:
-            doc_file_path.unlink(missing_ok=True)
+            document_write_ports.write_gate("paths", [doc_file_path], lambda: doc_file_path.unlink(missing_ok=True))
         except OSError:
             pass
         return None
@@ -2905,6 +2906,11 @@ def get_test_brief(doc_id: str, current_user: dict = Depends(get_current_user)) 
 def save_test_brief(doc_id: str, body: TestBriefSaveBody,
                     current_user: dict = Depends(get_current_user), request: Request = None) -> dict:
     from modules.flow_gate.services import test_spec_service
+    doc = document_service.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    from modules.flow_gate.graph_workflow.services.card_document_ports import write_gate
+    write_gate("none", doc)
     current = get_test_brief(doc_id, current_user)
     if current["content"] != body.expected_content:
         raise HTTPException(status_code=409, detail={"error": "content_conflict"})
@@ -2973,6 +2979,8 @@ def save_test_spec(
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    from modules.flow_gate.graph_workflow.services.card_document_ports import write_gate
+    write_gate("none", doc)
     if str(doc.get("type_code") or "").upper() != "TS":
         raise HTTPException(status_code=422, detail={"error": "not_ts", "doc_id": doc_id})
     from modules.flow_gate.services import test_run_service as _test_run_service
@@ -3418,6 +3426,11 @@ def stage_body_save(doc: dict, *, relative: str, size: int, actor_user_id: str, 
     its file here; the work plan deploy (``flowgate.work_plan_deploy``) passes no ``write_file`` because it replaces
     the file itself as the last, restorable step of its own guard, and announces its draft change once.
     """
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    return card_document_ports.write_gate("stage", doc, lambda: _stage_body_save(doc, relative=relative, size=size, actor_user_id=actor_user_id, source=source, write_file=write_file, canvas_event=canvas_event, after_guard=after_guard), relative=relative)
+
+
+def _stage_body_save(doc, *, relative, size, actor_user_id, source, write_file, canvas_event, after_guard):
     from modules.flow_gate.storage.body import record_body_saved
     from modules.flow_gate.db.connection import after_commit
 
@@ -3454,15 +3467,8 @@ def stage_body_save(doc: dict, *, relative: str, size: int, actor_user_id: str, 
 
 
 def _run_body_save_guard(doc: dict, call):
-    from modules.flow_gate.db.connection import get_store
-    from modules.flow_gate.graph_workflow.store import definition_store
-    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
-
-    if doc.get("group_id") and definition_store.available():
-        return with_flow_guard(doc["group_id"], call)
-    with get_store().transaction():
-        return call()
-
+    from modules.flow_gate.graph_workflow.services.flow_guard import run_in_document_guard
+    return run_in_document_guard(doc["doc_id"], call)
 
 def _save_target(doc: dict) -> Path:
     if (doc.get("file_path") or "").strip():
@@ -3478,6 +3484,8 @@ def _save_target(doc: dict) -> Path:
 
 
 def _save_write_checks(doc: dict) -> None:
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    card_document_ports.write_gate("none", doc)
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     if str(doc.get("type_code") or "").upper() == "TR2":

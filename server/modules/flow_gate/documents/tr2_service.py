@@ -1,5 +1,6 @@
 """Canonical TR2 document domain: one validator, writer and fingerprint implementation."""
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import json
@@ -385,18 +386,19 @@ def _decode_canonical(raw: bytes, doc: dict, *, loc: str) -> dict:
 
 
 def _write_bytes_atomically(path, content: bytes) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp = tempfile.mkstemp(prefix=".tr2-", suffix=".json", dir=path.parent)
-    try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp, path)
-    finally:
-        if os.path.exists(temp):
-            os.unlink(temp)
+    with document_write_ports.write_paths([path]):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp = tempfile.mkstemp(prefix=".tr2-", suffix=".json", dir=path.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp, path)
+        finally:
+            if os.path.exists(temp):
+                os.unlink(temp)
 
 
 def write_body_atomically(path, body: dict) -> None:
@@ -685,14 +687,14 @@ def read(doc_id: str) -> dict:
 
 
 def create(doc_id: str, raw_body: str | dict, *, actor: str,
-           origin: str = ORIGIN_HUMAN) -> dict:
+           origin: str = ORIGIN_HUMAN, token_id: str | None = None) -> dict:
     """Create the canonical body after the workflow slot has been registered.
 
     Every creation path (AI inbox, the human "create next document" route) ends here,
     so revision 1 is written, snapshotted and registered by the same writer.
     """
     from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
-    return dedicated_write("tr2_create", doc_id, raw_body, actor=actor, origin=origin)
+    return dedicated_write("tr2_create", doc_id, raw_body, actor=actor, origin=origin, token_id=token_id)
 
 
 def _lock(doc_id: str) -> threading.Lock:
@@ -756,12 +758,12 @@ def _assert_mutable(doc: dict) -> None:
 
 
 def save(doc_id: str, raw_body: str | dict, *, actor: str, expected_revision: int,
-         origin: str = ORIGIN_HUMAN, operation: str = "save") -> dict:
+         origin: str = ORIGIN_HUMAN, operation: str = "save", token_id: str | None = None) -> dict:
     # This is the only canonical writer for human PUT, AI inbox and direct API. A whole
     # replacement does not read the stored body, so it also replaces an unreadable one.
     return _save(doc_id, lambda _current: raw_body, actor=actor,
                  expected_revision=expected_revision, origin=origin,
-                 operation=operation, needs_current=False)
+                 operation=operation, needs_current=False, token_id=token_id)
 
 
 def revisions_dir(doc: dict) -> Path:
@@ -772,33 +774,14 @@ def snapshot_path(doc: dict, revision_no: int) -> Path:
     return revisions_dir(doc) / f"{doc['doc_id']}.r{int(revision_no)}.json"
 
 
-def _record_snapshot(store, doc: dict, revision_no: int, content: bytes, *,
-                     actor: str, origin: str, now: str) -> Path:
-    """Keep the exact canonical bytes of ``revision_no`` as its recovery source.
-
-    Reuses the work-plan revision layout (``revisions/{doc_id}.r{n}{suffix}`` next to the
-    document, one ``document_revisions`` row per file). The row runs in the caller's
-    transaction, so a revision is never committed without its snapshot.
-    """
-    target = snapshot_path(doc, revision_no)
-    _write_bytes_atomically(target, content)
-    store._execute(
-        "INSERT INTO document_revisions "
-        "(doc_id, revision_no, backup_path, edit_reason, linked_doc_id, created_by, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [doc["doc_id"], int(revision_no),
-         storage_paths.to_storage_relative(target, doc["project_id"]),
-         origin if origin in (ORIGIN_HUMAN, ORIGIN_AI) else ORIGIN_HUMAN,
-         None, actor, now])
-    return target
 
 
 def _save(doc_id: str, build, *, actor: str, expected_revision: int,
           origin: str = ORIGIN_HUMAN, operation: str = "save",
-          needs_current: bool = True) -> dict:
+          needs_current: bool = True, token_id: str | None = None) -> dict:
     from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
     return dedicated_write("tr2_save", doc_id, build, actor=actor, expected_revision=expected_revision,
-                           origin=origin, operation=operation, needs_current=needs_current)
+                           origin=origin, operation=operation, needs_current=needs_current, token_id=token_id)
 
 
 ITEM_COLLECTIONS = ("edits", "deferred")
@@ -969,27 +952,9 @@ def _backfill_current_snapshot(doc: dict) -> None:
     Only the exact bytes of the current revision are copied, under the document lock and
     only while the revision is unchanged — nothing is regenerated from current sources.
     """
-    revision = int(doc.get("revision_no") or 0)
-    if revision <= 0 or _snapshot_row(doc, revision) is not None:
-        return
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
     try:
-        with _lock(doc["doc_id"]):
-            fresh = db_docs.get_by_id(doc["doc_id"])
-            if not fresh or int(fresh.get("revision_no") or 0) != revision:
-                return
-            if _snapshot_row(fresh, revision) is not None:
-                return
-            raw = canonical_path_for_doc(fresh).read_bytes()
-            _decode_canonical(raw, fresh, loc="document.json")
-            store = get_store()
-            target = snapshot_path(fresh, revision)
-            try:
-                with store.transaction():
-                    _record_snapshot(store, fresh, revision, raw, actor=fresh["owner_id"],
-                                     origin=ORIGIN_HUMAN, now=now_iso())
-            except Exception:
-                target.unlink(missing_ok=True)
-                raise
+        return dedicated_write("tr2_backfill", doc)
     except Exception:
         log.warning("TR2 snapshot backfill skipped for %s", doc.get("doc_id"), exc_info=True)
 

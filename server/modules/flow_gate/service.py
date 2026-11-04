@@ -1,5 +1,6 @@
 """FlowGate MVP — Preview / Apply / Error business logic."""
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import os
@@ -47,11 +48,12 @@ def _safe_filename(filename: str) -> bool:
 
 
 def _move_file(filename: str, src_dir: str, dst_dir: str):
-    src = os.path.join(src_dir, filename)
-    dst = os.path.join(dst_dir, filename)
-    if os.path.exists(src):
-        os.makedirs(dst_dir, exist_ok=True)
-        shutil.move(src, dst)
+    with document_write_ports.write_paths([os.path.join(src_dir, filename), os.path.join(dst_dir, filename)]):
+        src = os.path.join(src_dir, filename)
+        dst = os.path.join(dst_dir, filename)
+        if os.path.exists(src):
+            os.makedirs(dst_dir, exist_ok=True)
+            document_write_ports.write_gate("paths", [src,dst], lambda: shutil.move(src, dst))
 
 
 def _resolve_duplicate_filename(filename: str) -> str:
@@ -79,33 +81,35 @@ def _file_exists_in_accept(filename: str) -> bool:
 
 def _move_to_error(filename: str, errors: list[str]):
     """Move a file to error/ and create a failure reason memo."""
-    _move_file(filename, db.INBOX_DIR, db.ERROR_DIR)
-    error_memo = os.path.join(db.ERROR_DIR, f"_error_{filename}")
-    with open(error_memo, "w", encoding="utf-8") as f:
-        f.write("---\n")
-        f.write("reason: lint_failed\n")
-        f.write(f"source_file: {filename}\n")
-        f.write(f"created_at: {datetime.now().isoformat()}\n")
-        f.write("---\n\n")
-        f.write(f"# Lint Failed - {filename}\n\n")
-        for e in errors:
-            f.write(f"- {e}\n")
+    with document_write_ports.write_paths([os.path.join(db.INBOX_DIR, filename), os.path.join(db.ERROR_DIR, filename), os.path.join(db.ERROR_DIR, "_error_" + filename)]):
+        _move_file(filename, db.INBOX_DIR, db.ERROR_DIR)
+        error_memo = os.path.join(db.ERROR_DIR, f"_error_{filename}")
+        with document_write_ports.write_paths([error_memo]), open(error_memo, "w", encoding="utf-8") as f:
+            f.write("---\n")
+            f.write("reason: lint_failed\n")
+            f.write(f"source_file: {filename}\n")
+            f.write(f"created_at: {datetime.now().isoformat()}\n")
+            f.write("---\n\n")
+            f.write(f"# Lint Failed - {filename}\n\n")
+            for e in errors:
+                f.write(f"- {e}\n")
 
 
 def _move_to_conflict(filename: str, reason: str, related_target_id: str | None = None):
     """Move a file to conflict/ and create a conflict reason memo."""
-    _move_file(filename, db.INBOX_DIR, db.CONFLICT_DIR)
-    conflict_memo = os.path.join(db.CONFLICT_DIR, f"_conflict_{filename}")
-    with open(conflict_memo, "w", encoding="utf-8") as f:
-        f.write("---\n")
-        f.write("reason: conflict_detected\n")
-        f.write(f"source_file: {filename}\n")
-        if related_target_id:
-            f.write(f"related_target_id: {related_target_id}\n")
-        f.write(f"created_at: {datetime.now().isoformat()}\n")
-        f.write("---\n\n")
-        f.write(f"# Conflict Detected - {filename}\n\n")
-        f.write(f"- {reason}\n")
+    with document_write_ports.write_paths([os.path.join(db.INBOX_DIR, filename), os.path.join(db.CONFLICT_DIR, filename), os.path.join(db.CONFLICT_DIR, "_conflict_" + filename)]):
+        _move_file(filename, db.INBOX_DIR, db.CONFLICT_DIR)
+        conflict_memo = os.path.join(db.CONFLICT_DIR, f"_conflict_{filename}")
+        with document_write_ports.write_paths([conflict_memo]), open(conflict_memo, "w", encoding="utf-8") as f:
+            f.write("---\n")
+            f.write("reason: conflict_detected\n")
+            f.write(f"source_file: {filename}\n")
+            if related_target_id:
+                f.write(f"related_target_id: {related_target_id}\n")
+            f.write(f"created_at: {datetime.now().isoformat()}\n")
+            f.write("---\n\n")
+            f.write(f"# Conflict Detected - {filename}\n\n")
+            f.write(f"- {reason}\n")
 
 
 def _bucket_dir(bucket: str) -> str | None:
@@ -709,7 +713,7 @@ def save_memo_template_to_inbox(filename: str, content: str) -> dict:
 
     os.makedirs(db.INBOX_DIR, exist_ok=True)
     path = os.path.join(db.INBOX_DIR, filename)
-    with open(path, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([path]), open(path, "w", encoding="utf-8") as f:
         f.write(content)
     lint_result = lint_inbox_file(filename)
     return {
@@ -961,208 +965,209 @@ def apply_file(filename: str, _depth: int = 0) -> dict:
     if not _safe_filename(filename):
         return {"success": False, "error": "Invalid filename", "filename": filename}
 
-    if db.is_file_processed(filename):
-        return {"success": False, "error": "File already processed", "filename": filename}
+    with document_write_ports.write_gate("inventory", "scope", "legacy_apply", filename=filename):
+        if db.is_file_processed(filename):
+            return {"success": False, "error": "File already processed", "filename": filename}
 
-    result = lint_inbox_file(filename)
-    if not result["valid"]:
-        _move_to_error(filename, result["errors"])
-        db.insert_event(
-            f"memo:{filename}",
-            "lint_failed",
-            memo_file=filename,
-            reason="lint_failed",
-            note="; ".join(result["errors"]),
-        )
-        return {"success": False, "error": "Lint validation failed",
-                "errors": result["errors"], "filename": filename}
-
-    file_hash = hashlib.sha256(result["content"].encode("utf-8")).hexdigest()
-    if db.is_hash_processed(file_hash):
-        return {
-            "success": False,
-            "error": "File already processed",
-            "filename": filename,
-        }
-
-    header = result["header"]
-    doc_type = header["type"]
-
-    # ── D/DB/P/L single-item Apply blocked: must be processed via DC ──
-    if doc_type in ("D", "DB", "P", "L"):
-        return {
-            "success": False,
-            "error": f"{doc_type} type cannot be applied individually. Submit via DC (design complete).",
-            "filename": filename,
-        }
-
-    # ── CONFIRM Processing ──
-    if doc_type == "CONFIRM":
-        target = header.get("target", "")
-        if not target:
-            _move_to_error(filename, ["CONFIRM memo has no target"])
+        result = lint_inbox_file(filename)
+        if not result["valid"]:
+            _move_to_error(filename, result["errors"])
             db.insert_event(
                 f"memo:{filename}",
-                "confirm_failed",
+                "lint_failed",
                 memo_file=filename,
-                reason="confirm_target_missing",
-                note="CONFIRM memo has no target",
+                reason="lint_failed",
+                note="; ".join(result["errors"]),
             )
-            return {"success": False, "error": "CONFIRM target missing", "filename": filename}
+            return {"success": False, "error": "Lint validation failed",
+                    "errors": result["errors"], "filename": filename}
 
-        target_path = os.path.join(db.INBOX_DIR, target)
-        if not os.path.exists(target_path):
-            _move_to_error(filename, [f"CONFIRM target '{target}' is not in inbox"])
+        file_hash = hashlib.sha256(result["content"].encode("utf-8")).hexdigest()
+        if db.is_hash_processed(file_hash):
+            return {
+                "success": False,
+                "error": "File already processed",
+                "filename": filename,
+            }
+
+        header = result["header"]
+        doc_type = header["type"]
+
+        # ── D/DB/P/L single-item Apply blocked: must be processed via DC ──
+        if doc_type in ("D", "DB", "P", "L"):
+            return {
+                "success": False,
+                "error": f"{doc_type} type cannot be applied individually. Submit via DC (design complete).",
+                "filename": filename,
+            }
+
+        # ── CONFIRM Processing ──
+        if doc_type == "CONFIRM":
+            target = header.get("target", "")
+            if not target:
+                _move_to_error(filename, ["CONFIRM memo has no target"])
+                db.insert_event(
+                    f"memo:{filename}",
+                    "confirm_failed",
+                    memo_file=filename,
+                    reason="confirm_target_missing",
+                    note="CONFIRM memo has no target",
+                )
+                return {"success": False, "error": "CONFIRM target missing", "filename": filename}
+
+            target_path = os.path.join(db.INBOX_DIR, target)
+            if not os.path.exists(target_path):
+                _move_to_error(filename, [f"CONFIRM target '{target}' is not in inbox"])
+                db.insert_event(
+                    f"memo:{filename}",
+                    "confirm_failed",
+                    memo_file=filename,
+                    reason="confirm_target_not_found",
+                    related_doc_id=target,
+                    note=f"CONFIRM target '{target}' is not in inbox",
+                )
+                return {"success": False, "error": f"target not found: {target}", "filename": filename}
+
+            target_result = apply_file(target, _depth=_depth + 1)
+            _move_file(filename, db.INBOX_DIR, db.PROCESSED_DIR)
             db.insert_event(
                 f"memo:{filename}",
-                "confirm_failed",
+                "confirm_processed",
                 memo_file=filename,
-                reason="confirm_target_not_found",
+                reason="confirm_applied",
                 related_doc_id=target,
-                note=f"CONFIRM target '{target}' is not in inbox",
+                note=f"target={target}, success={target_result.get('success')}",
             )
-            return {"success": False, "error": f"target not found: {target}", "filename": filename}
+            return {"success": target_result["success"],
+                    "confirm_target": target, "target_result": target_result,
+                    "filename": filename}
 
-        target_result = apply_file(target, _depth=_depth + 1)
-        _move_file(filename, db.INBOX_DIR, db.PROCESSED_DIR)
-        db.insert_event(
-            f"memo:{filename}",
-            "confirm_processed",
-            memo_file=filename,
-            reason="confirm_applied",
-            related_doc_id=target,
-            note=f"target={target}, success={target_result.get('success')}",
+        # ── General Document Processing ──
+        project = header["project"]
+        module = (header.get("module") or "").strip()
+        doc_id = db.get_next_doc_id(project, module, doc_type)
+        title = header["title"]
+        target_id = (header.get("target_id") or "").strip() or None
+        owner = (header.get("owner") or "").strip() or None
+        priority = (header.get("priority") or "").strip().lower() or None
+        due_date = (header.get("due_date") or "").strip() or None
+
+        # ── group_id: used directly from header ──
+        group_id = (header.get("group_id") or "").strip() or None
+        assign_warnings: list[str] = []
+
+        # ── NR/TR: transition target document status to closed ──
+        if doc_type in linter.NR_TR_TYPES:
+            if not target_id:
+                _move_to_error(filename, [f"{doc_type} type requires target_id"])
+                db.insert_event(
+                    f"memo:{filename}",
+                    "apply_failed",
+                    memo_file=filename,
+                    reason="target_missing",
+                    note=f"{doc_type} type requires target_id",
+                )
+                return {"success": False, "error": "target_id missing", "filename": filename}
+
+            target_doc = db.get_document_by_id(target_id)
+            if target_doc is None:
+                _move_to_error(filename, [f"target_id '{target_id}' document not found"])
+                db.insert_event(
+                    f"memo:{filename}",
+                    "apply_failed",
+                    memo_file=filename,
+                    reason="target_not_found",
+                    related_target_id=target_id,
+                    note=f"target_id '{target_id}' document not found",
+                )
+                return {"success": False, "error": f"target not found: {target_id}", "filename": filename}
+
+            has_conflict, open_result_doc_ids = db.has_open_result_for_target(target_id)
+            if has_conflict:
+                reason = (
+                    f"there are already open result documents for target '{target_id}': "
+                    f"{', '.join(open_result_doc_ids)}"
+                )
+                _move_to_conflict(filename, reason, related_target_id=target_id)
+                db.insert_event(
+                    target_id,
+                    "conflict_detected",
+                    memo_file=filename,
+                    file_hash=file_hash,
+                    reason="conflict_open_result_exists",
+                    related_target_id=target_id,
+                    related_doc_id=",".join(open_result_doc_ids),
+                    note=reason,
+                )
+                return {"success": False, "error": reason, "filename": filename}
+
+            ok, msg = db.update_document_status(target_id, "closed")
+            if not ok:
+                _move_to_error(filename, [f"target '{target_id}' status transition failed: {msg}"])
+                db.insert_event(
+                    f"memo:{filename}",
+                    "apply_failed",
+                    memo_file=filename,
+                    reason="target_transition_failed",
+                    related_target_id=target_id,
+                    note=msg,
+                )
+                return {"success": False, "error": msg, "filename": filename}
+
+            db.insert_event(target_id, "status_changed",
+                            memo_file=filename, note=f"{msg} (by {doc_type})")
+
+        db.insert_document(
+            doc_id,
+            doc_type,
+            project,
+            module,
+            title,
+            target_id=target_id,
+            group_id=group_id,
+            owner=owner,
+            priority=priority,
+            due_date=due_date,
         )
-        return {"success": target_result["success"],
-                "confirm_target": target, "target_result": target_result,
-                "filename": filename}
+        db.insert_event(doc_id, "created", memo_file=filename, file_hash=file_hash, note=f"hash:{file_hash}")
 
-    # ── General Document Processing ──
-    project = header["project"]
-    module = (header.get("module") or "").strip()
-    doc_id = db.get_next_doc_id(project, module, doc_type)
-    title = header["title"]
-    target_id = (header.get("target_id") or "").strip() or None
-    owner = (header.get("owner") or "").strip() or None
-    priority = (header.get("priority") or "").strip().lower() or None
-    due_date = (header.get("due_date") or "").strip() or None
+        # Directive types (DS/N/T) remain in inbox — moved to accept/reject on approval/rejection
+        # Q type moves directly to accept/ after apply (T030)
+        if doc_type in ("DS", "N", "T"):
+            actual_filename = filename
+            moved_to = "inbox"
+        elif doc_type == "Q":
+            # Q moves inbox→accept/ directly (T030: process/ passthrough not needed)
+            actual_filename = _resolve_duplicate_filename(filename)
+            if actual_filename != filename:
+                src = os.path.join(db.INBOX_DIR, filename)
+                tmp = os.path.join(db.INBOX_DIR, actual_filename)
+                if os.path.exists(src):
+                    document_write_ports.write_gate("paths", [src,tmp], lambda: os.rename(src, tmp))
+            _move_file(actual_filename, db.INBOX_DIR, db.ACCEPT_DIR)
+            moved_to = "accept"
+        else:
+            # Duplicate filename handling: append suffix if same filename exists in processed/accept
+            actual_filename = _resolve_duplicate_filename(filename)
+            if actual_filename != filename:
+                src = os.path.join(db.INBOX_DIR, filename)
+                tmp = os.path.join(db.INBOX_DIR, actual_filename)
+                if os.path.exists(src):
+                    document_write_ports.write_gate("paths", [src,tmp], lambda: os.rename(src, tmp))
+            _move_file(actual_filename, db.INBOX_DIR, db.PROCESSED_DIR)
+            moved_to = "processed"
 
-    # ── group_id: used directly from header ──
-    group_id = (header.get("group_id") or "").strip() or None
-    assign_warnings: list[str] = []
+        gap_warnings = detect_gaps(group_id) if group_id else []
+        all_warnings = assign_warnings + gap_warnings
 
-    # ── NR/TR: transition target document status to closed ──
-    if doc_type in linter.NR_TR_TYPES:
-        if not target_id:
-            _move_to_error(filename, [f"{doc_type} type requires target_id"])
-            db.insert_event(
-                f"memo:{filename}",
-                "apply_failed",
-                memo_file=filename,
-                reason="target_missing",
-                note=f"{doc_type} type requires target_id",
-            )
-            return {"success": False, "error": "target_id missing", "filename": filename}
-
-        target_doc = db.get_document_by_id(target_id)
-        if target_doc is None:
-            _move_to_error(filename, [f"target_id '{target_id}' document not found"])
-            db.insert_event(
-                f"memo:{filename}",
-                "apply_failed",
-                memo_file=filename,
-                reason="target_not_found",
-                related_target_id=target_id,
-                note=f"target_id '{target_id}' document not found",
-            )
-            return {"success": False, "error": f"target not found: {target_id}", "filename": filename}
-
-        has_conflict, open_result_doc_ids = db.has_open_result_for_target(target_id)
-        if has_conflict:
-            reason = (
-                f"there are already open result documents for target '{target_id}': "
-                f"{', '.join(open_result_doc_ids)}"
-            )
-            _move_to_conflict(filename, reason, related_target_id=target_id)
-            db.insert_event(
-                target_id,
-                "conflict_detected",
-                memo_file=filename,
-                file_hash=file_hash,
-                reason="conflict_open_result_exists",
-                related_target_id=target_id,
-                related_doc_id=",".join(open_result_doc_ids),
-                note=reason,
-            )
-            return {"success": False, "error": reason, "filename": filename}
-
-        ok, msg = db.update_document_status(target_id, "closed")
-        if not ok:
-            _move_to_error(filename, [f"target '{target_id}' status transition failed: {msg}"])
-            db.insert_event(
-                f"memo:{filename}",
-                "apply_failed",
-                memo_file=filename,
-                reason="target_transition_failed",
-                related_target_id=target_id,
-                note=msg,
-            )
-            return {"success": False, "error": msg, "filename": filename}
-
-        db.insert_event(target_id, "status_changed",
-                        memo_file=filename, note=f"{msg} (by {doc_type})")
-
-    db.insert_document(
-        doc_id,
-        doc_type,
-        project,
-        module,
-        title,
-        target_id=target_id,
-        group_id=group_id,
-        owner=owner,
-        priority=priority,
-        due_date=due_date,
-    )
-    db.insert_event(doc_id, "created", memo_file=filename, file_hash=file_hash, note=f"hash:{file_hash}")
-
-    # Directive types (DS/N/T) remain in inbox — moved to accept/reject on approval/rejection
-    # Q type moves directly to accept/ after apply (T030)
-    if doc_type in ("DS", "N", "T"):
-        actual_filename = filename
-        moved_to = "inbox"
-    elif doc_type == "Q":
-        # Q moves inbox→accept/ directly (T030: process/ passthrough not needed)
-        actual_filename = _resolve_duplicate_filename(filename)
-        if actual_filename != filename:
-            src = os.path.join(db.INBOX_DIR, filename)
-            tmp = os.path.join(db.INBOX_DIR, actual_filename)
-            if os.path.exists(src):
-                os.rename(src, tmp)
-        _move_file(actual_filename, db.INBOX_DIR, db.ACCEPT_DIR)
-        moved_to = "accept"
-    else:
-        # Duplicate filename handling: append suffix if same filename exists in processed/accept
-        actual_filename = _resolve_duplicate_filename(filename)
-        if actual_filename != filename:
-            src = os.path.join(db.INBOX_DIR, filename)
-            tmp = os.path.join(db.INBOX_DIR, actual_filename)
-            if os.path.exists(src):
-                os.rename(src, tmp)
-        _move_file(actual_filename, db.INBOX_DIR, db.PROCESSED_DIR)
-        moved_to = "processed"
-
-    gap_warnings = detect_gaps(group_id) if group_id else []
-    all_warnings = assign_warnings + gap_warnings
-
-    return {
-        "success": True,
-        "doc_id": doc_id,
-        "group_id": group_id,
-        "gap_warnings": all_warnings,
-        "filename": actual_filename,
-        "moved_to": moved_to,
-    }
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "group_id": group_id,
+            "gap_warnings": all_warnings,
+            "filename": actual_filename,
+            "moved_to": moved_to,
+        }
 
 
 def apply_all_inbox() -> list[dict]:

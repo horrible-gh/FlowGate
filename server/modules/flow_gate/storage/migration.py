@@ -13,6 +13,7 @@ Key functions:
     run_full(...)       — run all 3 steps together, including skipping deletion on verification failure
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import os
@@ -199,27 +200,28 @@ def _copy_storage(src_root: str, dst_root: str, dry_run: bool) -> dict:
     if not src.exists():
         return {"copied_dirs": 0, "copied_files": 0,
                 "error": f"src missing: {src}"}
-    copied_dirs = 0
-    copied_files = 0
-    for sub in COPY_SUBDIRS:
-        s = src / sub
-        if not s.is_dir():
-            continue
-        d = dst / sub
-        if dry_run:
-            copied_files += sum(1 for _ in s.rglob("*") if _.is_file())
+    with document_write_ports.write_gate("inventory", "scope", "copy_storage", source=src_root, destination=dst_root):
+        copied_dirs = 0
+        copied_files = 0
+        for sub in COPY_SUBDIRS:
+            s = src / sub
+            if not s.is_dir():
+                continue
+            d = dst / sub
+            if dry_run:
+                copied_files += sum(1 for _ in s.rglob("*") if _.is_file())
+                copied_dirs += 1
+                continue
+            d.mkdir(parents=True, exist_ok=True)
+            for item in s.rglob("*"):
+                if item.is_file():
+                    rel = item.relative_to(s)
+                    target = d / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    document_write_ports.write_gate("paths", [target], lambda: shutil.copy2(item, target))
+                    copied_files += 1
             copied_dirs += 1
-            continue
-        d.mkdir(parents=True, exist_ok=True)
-        for item in s.rglob("*"):
-            if item.is_file():
-                rel = item.relative_to(s)
-                target = d / rel
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, target)
-                copied_files += 1
-        copied_dirs += 1
-    return {"copied_dirs": copied_dirs, "copied_files": copied_files}
+        return {"copied_dirs": copied_dirs, "copied_files": copied_files}
 
 
 def migrate(src: str, dst: str, db_old: str, db_new: str,
@@ -230,34 +232,35 @@ def migrate(src: str, dst: str, db_old: str, db_new: str,
     if not os.path.exists(db_new):
         return {"ok": False, "error": f"New DB not found: {db_new}"}
 
-    old = _connect(db_old, ro=True)
-    new = _connect(db_new, ro=False)
-    try:
-        if not dry_run:
-            new.execute("BEGIN")
+    with document_write_ports.write_gate("inventory", "scope", "copy_storage", source=src, destination=dst):
+        old = _connect(db_old, ro=True)
+        new = _connect(db_new, ro=False)
         try:
-            g = _migrate_groups(old, new, dry_run)
-            d = _migrate_documents(old, new, dry_run)
-            e = _migrate_events(old, new, dry_run)
             if not dry_run:
-                new.commit()
-        except Exception:
-            if not dry_run:
-                new.rollback()
-            raise
-        f = _copy_storage(src, dst, dry_run)
-    finally:
-        old.close()
-        new.close()
+                new.execute("BEGIN")
+            try:
+                g = _migrate_groups(old, new, dry_run)
+                d = _migrate_documents(old, new, dry_run)
+                e = _migrate_events(old, new, dry_run)
+                if not dry_run:
+                    new.commit()
+            except Exception:
+                if not dry_run:
+                    new.rollback()
+                raise
+            f = _copy_storage(src, dst, dry_run)
+        finally:
+            old.close()
+            new.close()
 
-    return {
-        "ok": "error" not in f,
-        "dry_run": dry_run,
-        "groups": g,
-        "documents": d,
-        "events": e,
-        "files": f,
-    }
+        return {
+            "ok": "error" not in f,
+            "dry_run": dry_run,
+            "groups": g,
+            "documents": d,
+            "events": e,
+            "files": f,
+        }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -361,33 +364,35 @@ def delete_legacy(src: str, db_old: str,
     removed_db = None
     errors: list[str] = []
 
-    src_p = Path(src)
-    for sub in COPY_SUBDIRS:
-        s = src_p / sub
-        if not s.is_dir():
-            continue
-        if os.path.normpath(str(s)) in protect:
-            continue
-        for item in s.rglob("*"):
-            if item.is_file():
-                try:
-                    item.unlink()
-                    deleted_files += 1
-                except OSError as exc:
-                    errors.append(f"{item}: {exc}")
-        try:
-            shutil.rmtree(s)
-            deleted_dirs += 1
-        except OSError as exc:
-            errors.append(f"{s}: {exc}")
-
-    if os.path.exists(db_old) and os.path.normpath(db_old) not in protect:
-        try:
-            os.remove(db_old)
-            removed_db = db_old
-        except OSError as exc:
-            errors.append(f"{db_old}: {exc}")
-
+    sources = [Path(src) / sub for sub in COPY_SUBDIRS if os.path.normpath(str(Path(src) / sub)) not in protect]
+    targets = [db_old] if os.path.normpath(db_old) not in protect else []
+    with document_write_ports.write_paths(targets, trees=sources):
+        src_p = Path(src)
+        for sub in COPY_SUBDIRS:
+            s = src_p / sub
+            if not s.is_dir():
+                continue
+            if os.path.normpath(str(s)) in protect:
+                continue
+            for item in s.rglob("*"):
+                if item.is_file():
+                    try:
+                        item.unlink()
+                        deleted_files += 1
+                    except OSError as exc:
+                        errors.append(f"{item}: {exc}")
+            try:
+                shutil.rmtree(s)
+                deleted_dirs += 1
+            except OSError as exc:
+                errors.append(f"{s}: {exc}")
+    
+        if os.path.exists(db_old) and os.path.normpath(db_old) not in protect:
+            try:
+                os.remove(db_old)
+                removed_db = db_old
+            except OSError as exc:
+                errors.append(f"{db_old}: {exc}")
     return {
         "ok": not errors,
         "deleted_files": deleted_files,
@@ -482,14 +487,15 @@ def _verify_files_only(src: str, dst: str) -> dict:
 
 def _cleanup_dst(dst: str) -> None:
     """Clean up partially copied target directories on verification failure."""
-    dst_p = Path(dst)
-    for sub in COPY_SUBDIRS:
-        d = dst_p / sub
-        if d.is_dir():
-            try:
-                shutil.rmtree(d)
-            except OSError:
-                pass
+    with document_write_ports.write_paths([], trees=[Path(dst) / sub for sub in COPY_SUBDIRS]):
+        dst_p = Path(dst)
+        for sub in COPY_SUBDIRS:
+            d = dst_p / sub
+            if d.is_dir():
+                try:
+                    shutil.rmtree(d)
+                except OSError:
+                    pass
 
 
 # ─────────────────────────────────────────────────────────────

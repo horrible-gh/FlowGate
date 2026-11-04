@@ -683,7 +683,10 @@ def test_files_other_rows_still_use_are_kept(env):
                     content_sha256=hashlib.sha256(b"alpha").hexdigest(), uploaded_by=USER)
     (old_room / "loose.txt").write_bytes(b"no row")
     absolute = str((env["storage"] / BODY_REL).resolve())
-    make_doc(env, doc_id=f"{FLOW}.0003-M", seq=3, body=None, rel=absolute)    # same body, another spelling
+    # Seed the pre-existing shared-reference defect; normal CREATE must refuse this alias.
+    make_doc(env, doc_id=f"{FLOW}.0003-M", seq=3, body=None, rel="")
+    from modules.flow_gate.db.connection import get_store
+    get_store()._execute("UPDATE documents SET file_path = ? WHERE doc_id = ?", [absolute,f"{FLOW}.0003-M"])
 
     convert()
     assert (old_room / "a.txt").read_bytes() == b"alpha"                        # another row's file

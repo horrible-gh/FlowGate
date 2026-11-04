@@ -10,6 +10,7 @@ New endpoints:
   GET  /api/v1/projects/{project_id}/files/download-zip
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import shutil
 import tempfile
@@ -210,7 +211,7 @@ def update_src_file_content(
                 full_path = mutation.exact_targets[0][1]
                 if not full_path.is_file():
                     raise HTTPException(status_code=404, detail="Not found")
-                full_path.write_text(body.content, encoding="utf-8")
+                document_write_ports.write_gate("paths", [full_path], lambda: full_path.write_text(body.content, encoding="utf-8"))
         except tr2_policy.Tr2FilePolicyError as exc:
             status = 409 if exc.code in {
                 tr2_policy.TR2_MANAGED_FILE,
@@ -223,7 +224,7 @@ def update_src_file_content(
     full_path = _resolve_src_path(project_id, path, None)
     if not full_path.is_file():
         raise HTTPException(status_code=404, detail="Not found")
-    full_path.write_text(body.content, encoding="utf-8")
+    document_write_ports.write_gate("paths", [full_path], lambda: full_path.write_text(body.content, encoding="utf-8"))
 
     from modules.flow_gate.services import git_service
     base_git = git_service.base_checkout_dirty_status(project_id)
@@ -270,7 +271,7 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
                 if actual_type != body.type:
                     return _err(409, "TYPE_MISMATCH", "path type does not match request")
                 try:
-                    shutil.rmtree(full_path) if actual_type == "folder" else full_path.unlink()
+                    document_write_ports.write_gate("paths", [] if actual_type == "folder" else [full_path], lambda: shutil.rmtree(full_path) if actual_type == "folder" else full_path.unlink(), trees=[full_path] if actual_type == "folder" else [])
                 except OSError:
                     return _err(500, "DELETE_FAILED", "failed to delete path")
         except tr2_policy.Tr2FilePolicyError as exc:
@@ -287,7 +288,7 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
         if not full_path.exists(): return _err(404, "NOT_FOUND", "path does not exist")
         actual_type = "folder" if full_path.is_dir() else "file" if full_path.is_file() else ""
         if actual_type != body.type: return _err(409, "TYPE_MISMATCH", "path type does not match request")
-        try: shutil.rmtree(full_path) if actual_type == "folder" else full_path.unlink()
+        try: document_write_ports.write_gate("paths", [] if actual_type == "folder" else [full_path], lambda: shutil.rmtree(full_path) if actual_type == "folder" else full_path.unlink(), trees=[full_path] if actual_type == "folder" else [])
         except OSError: return _err(500, "DELETE_FAILED", "failed to delete path")
 
     from modules.flow_gate.services import git_service

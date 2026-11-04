@@ -12,6 +12,7 @@ module is now the only owner of these rules. Three measurements share them:
   size and mtime is unchanged. It never hashes; a miss is "not measured", not a measurement.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import logging
@@ -228,45 +229,46 @@ def _hash_file(root, relative, expected, deadline, target=None, *, durable=True)
     ``durable`` fsyncs the copy. A run's disposable root is removed after the run, so it
     skips the fsync.
     """
-    source = _safe_file(root, relative, expected)
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(source, flags)
-    except OSError as exc:
-        raise SourceFingerprintError("source_changed", "source could not be opened safely") from exc
-    digest = hashlib.sha256()
-    count = 0
-    try:
-        opened = os.fstat(fd)
-        if not stat.S_ISREG(opened.st_mode) or not _same(opened, expected):
-            raise SourceFingerprintError("source_changed", "source changed before read")
-        if target is not None:
-            target.parent.mkdir(parents=True, exist_ok=True)
-        with os.fdopen(fd, "rb", closefd=False) as stream:
-            with (target.open("xb") if target is not None else open(os.devnull, "wb")) as out:
-                while True:
-                    _check_time(deadline)
-                    chunk = stream.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    count += len(chunk)
-                    if count > MAX_FILE_BYTES:
-                        raise SourceFingerprintError("file_limit", "source file grew beyond limit")
-                    digest.update(chunk)
-                    if target is not None:
-                        out.write(chunk)
-                if target is not None and durable:
-                    out.flush()
-                    os.fsync(out.fileno())
-        if not _same(os.fstat(fd), expected) or not _same(source.lstat(), expected):
-            raise SourceFingerprintError("source_changed", "source changed while reading")
-    finally:
-        os.close(fd)
-    item = {"path": relative, "size": count, "sha256": digest.hexdigest()}
-    # The mode was checked unchanged around the read (``_same``), so it is the read's.
-    if _exec_bits(expected):
-        item["exec"] = format(_exec_bits(expected), "03o")
-    return item
+    with document_write_ports.write_paths([target]):
+        source = _safe_file(root, relative, expected)
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(source, flags)
+        except OSError as exc:
+            raise SourceFingerprintError("source_changed", "source could not be opened safely") from exc
+        digest = hashlib.sha256()
+        count = 0
+        try:
+            opened = os.fstat(fd)
+            if not stat.S_ISREG(opened.st_mode) or not _same(opened, expected):
+                raise SourceFingerprintError("source_changed", "source changed before read")
+            if target is not None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                with (target.open("xb") if target is not None else open(os.devnull, "wb")) as out:
+                    while True:
+                        _check_time(deadline)
+                        chunk = stream.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        count += len(chunk)
+                        if count > MAX_FILE_BYTES:
+                            raise SourceFingerprintError("file_limit", "source file grew beyond limit")
+                        digest.update(chunk)
+                        if target is not None:
+                            out.write(chunk)
+                    if target is not None and durable:
+                        out.flush()
+                        os.fsync(out.fileno())
+            if not _same(os.fstat(fd), expected) or not _same(source.lstat(), expected):
+                raise SourceFingerprintError("source_changed", "source changed while reading")
+        finally:
+            os.close(fd)
+        item = {"path": relative, "size": count, "sha256": digest.hexdigest()}
+        # The mode was checked unchanged around the read (``_same``), so it is the read's.
+        if _exec_bits(expected):
+            item["exec"] = format(_exec_bits(expected), "03o")
+        return item
 
 
 def _fingerprint(entries, directories=()):

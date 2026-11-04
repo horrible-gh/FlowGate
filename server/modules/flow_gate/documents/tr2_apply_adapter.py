@@ -8,6 +8,7 @@ hive/backup.py at 4ed4f6119fb54faacf93d48efac363ff55a9af5a.  Partial
 application is intentionally absent from this adapter.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import ast
 import hashlib
@@ -91,16 +92,17 @@ def _safe_target(root: Path, rel: str, kind: str) -> Path:
 
 
 def _atomic_bytes(path: Path, data: bytes) -> None:
-    fd, tmp = tempfile.mkstemp(prefix=".tr2-", dir=path.parent)
-    try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+    with document_write_ports.write_paths([path]):
+        fd, tmp = tempfile.mkstemp(prefix=".tr2-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
 
 
 def _manifest_path(backup_root: Path, bundle_id: str) -> Path:
@@ -225,58 +227,59 @@ class Tr2ApplyAdapter:
             raise tr2.Tr2ValidationError(result["code"], "edit_spec", result)
         if set(result["targets"]) != set(manifest["files"]) | set(manifest["created"]):
             raise tr2.Tr2ValidationError("tr2_recovery_required", "backup_bundle_id")
-        manifest["phase"] = "apply"
-        _save_manifest(path, manifest)  # durable recovery marker before first source write
-        written: list[str] = []
-        created_opened: set[str] = set()
-        try:
-            for edit in spec["edits"]:
-                rel = tr2.normalized_target_path(edit)
-                kind = edit.get("kind", "edit")
-                target = _safe_target(root, rel, kind)
-                if kind == "create_file":
-                    if target.exists() or target.is_symlink():
-                        raise ValueError(f"create collision: {rel}")
-                    data = edit["content"].encode("utf-8")
-                    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                    flags |= getattr(os, "O_NOFOLLOW", 0)
-                    fd = os.open(target, flags, 0o644)
-                    with os.fdopen(fd, "wb") as stream:
-                        created_opened.add(rel)
-                        manifest["created_opened"] = sorted(created_opened)
-                        _save_manifest(path, manifest)
-                        stream.write(data)
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                else:
-                    text, eol, bom = _decode_preserving(target.read_bytes())
-                    anchor = _norm_nl(edit["anchor_old"])
-                    replacement = _norm_nl(edit["replacement_new"])
-                    if not anchor or text.count(anchor) != 1:
-                        raise ValueError(f"anchor no longer unique: {rel}")
-                    modified = text.replace(anchor, replacement, 1)
-                    if _post_apply_defects(rel, text, anchor, replacement, modified):
-                        raise ValueError(f"post-apply check failed: {rel}")
-                    mode = target.stat().st_mode & 0o777
-                    _atomic_bytes(target, _encode_preserving(
-                        modified, eol, bom))
-                    os.chmod(target, mode)
-                if rel not in written:
-                    written.append(rel)
-            manifest["phase"] = "applied"
-            _save_manifest(path, manifest)
-            return {"ok": True, "bundle_id": bundle_id, "written": written}
-        except Exception as exc:
-            manifest["phase"] = "rollback"
-            _save_manifest(path, manifest)  # durable before any restore mutation
+        with document_write_ports.write_paths([root / rel for rel in result["targets"]] + [path]):
+            manifest["phase"] = "apply"
+            _save_manifest(path, manifest)  # durable recovery marker before first source write
+            written: list[str] = []
+            created_opened: set[str] = set()
             try:
-                self.restore(store, bundle_id, source_root=root,
-                             owned_created=created_opened)
-            except Exception as restore_exc:
-                raise tr2.Tr2ValidationError("tr2_recovery_required", "restore",
-                                             {"reason": str(restore_exc)}) from restore_exc
-            raise tr2.Tr2ValidationError("tr2_apply_failed", "apply",
-                                         {"reason": str(exc)}) from exc
+                for edit in spec["edits"]:
+                    rel = tr2.normalized_target_path(edit)
+                    kind = edit.get("kind", "edit")
+                    target = _safe_target(root, rel, kind)
+                    if kind == "create_file":
+                        if target.exists() or target.is_symlink():
+                            raise ValueError(f"create collision: {rel}")
+                        data = edit["content"].encode("utf-8")
+                        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                        flags |= getattr(os, "O_NOFOLLOW", 0)
+                        fd = os.open(target, flags, 0o644)
+                        with os.fdopen(fd, "wb") as stream:
+                            created_opened.add(rel)
+                            manifest["created_opened"] = sorted(created_opened)
+                            _save_manifest(path, manifest)
+                            stream.write(data)
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                    else:
+                        text, eol, bom = _decode_preserving(target.read_bytes())
+                        anchor = _norm_nl(edit["anchor_old"])
+                        replacement = _norm_nl(edit["replacement_new"])
+                        if not anchor or text.count(anchor) != 1:
+                            raise ValueError(f"anchor no longer unique: {rel}")
+                        modified = text.replace(anchor, replacement, 1)
+                        if _post_apply_defects(rel, text, anchor, replacement, modified):
+                            raise ValueError(f"post-apply check failed: {rel}")
+                        mode = target.stat().st_mode & 0o777
+                        _atomic_bytes(target, _encode_preserving(
+                            modified, eol, bom))
+                        os.chmod(target, mode)
+                    if rel not in written:
+                        written.append(rel)
+                manifest["phase"] = "applied"
+                _save_manifest(path, manifest)
+                return {"ok": True, "bundle_id": bundle_id, "written": written}
+            except Exception as exc:
+                manifest["phase"] = "rollback"
+                _save_manifest(path, manifest)  # durable before any restore mutation
+                try:
+                    self.restore(store, bundle_id, source_root=root,
+                                 owned_created=created_opened)
+                except Exception as restore_exc:
+                    raise tr2.Tr2ValidationError("tr2_recovery_required", "restore",
+                                                 {"reason": str(restore_exc)}) from restore_exc
+                raise tr2.Tr2ValidationError("tr2_apply_failed", "apply",
+                                             {"reason": str(exc)}) from exc
 
     def restore(self, backup_root, bundle_id: str, *, source_root,
                 owned_created: set[str] | None = None) -> dict:
@@ -285,45 +288,46 @@ class Tr2ApplyAdapter:
         root = Path(manifest["source_root"]).resolve()
         if root != Path(source_root).resolve():
             raise tr2.Tr2ValidationError("tr2_recovery_required", "source_root")
-        if manifest["phase"] == "restored":
-            return {"ok": True, "bundle_id": bundle_id, "restored": True}
-        if manifest["phase"] == "applied":
-            # All declared creates were exclusively opened by this attempt.
-            # Validation may subsequently edit their bytes; they still belong
-            # to this rollback, including after a restart.
-            manifest["rollback_from"] = "applied"
-        manifest["phase"] = "rollback"
-        _save_manifest(path, manifest)
-        for rel, metadata in manifest["files"].items():
-            target = _safe_target(root, rel, "edit")
-            snapshot = path.parent / "files" / rel
-            data = snapshot.read_bytes()
-            if _digest(data) != metadata["sha256"]:
-                raise tr2.Tr2ValidationError("tr2_recovery_required", rel,
-                                             {"reason": "backup bytes changed"})
-            _atomic_bytes(target, data)
-            os.chmod(target, metadata["mode"])
-        for rel, expected_sha in manifest["created"].items():
-            owned = (set(manifest.get("created_opened") or [])
-                     if owned_created is None else owned_created)
-            if (owned_created is not None and rel not in owned_created
-                    and manifest.get("rollback_from") != "applied"):
-                continue
-            target = _safe_target(root, rel, "create_file")
-            if target.exists():
-                if (rel not in owned and manifest.get("rollback_from") != "applied" and
-                        (not target.is_file() or _digest(target.read_bytes()) != expected_sha)):
+        with document_write_ports.write_paths([root / rel for rel in set(manifest["files"]) | set(manifest["created"])] + [path]):
+            if manifest["phase"] == "restored":
+                return {"ok": True, "bundle_id": bundle_id, "restored": True}
+            if manifest["phase"] == "applied":
+                # All declared creates were exclusively opened by this attempt.
+                # Validation may subsequently edit their bytes; they still belong
+                # to this rollback, including after a restart.
+                manifest["rollback_from"] = "applied"
+            manifest["phase"] = "rollback"
+            _save_manifest(path, manifest)
+            for rel, metadata in manifest["files"].items():
+                target = _safe_target(root, rel, "edit")
+                snapshot = path.parent / "files" / rel
+                data = snapshot.read_bytes()
+                if _digest(data) != metadata["sha256"]:
                     raise tr2.Tr2ValidationError("tr2_recovery_required", rel,
-                                                 {"reason": "created target differs"})
-                target.unlink()
-        for rel, metadata in manifest["files"].items():
-            if _digest(_safe_target(root, rel, "edit").read_bytes()) != metadata["sha256"]:
-                raise tr2.Tr2ValidationError("tr2_recovery_required", rel)
-        if any(_safe_target(root, rel, "create_file").exists() for rel in manifest["created"]):
-            raise tr2.Tr2ValidationError("tr2_recovery_required", "created")
-        manifest["phase"] = "restored"
-        _save_manifest(path, manifest)
-        return {"ok": True, "bundle_id": bundle_id, "restored": True}
+                                                 {"reason": "backup bytes changed"})
+                _atomic_bytes(target, data)
+                os.chmod(target, metadata["mode"])
+            for rel, expected_sha in manifest["created"].items():
+                owned = (set(manifest.get("created_opened") or [])
+                         if owned_created is None else owned_created)
+                if (owned_created is not None and rel not in owned_created
+                        and manifest.get("rollback_from") != "applied"):
+                    continue
+                target = _safe_target(root, rel, "create_file")
+                if target.exists():
+                    if (rel not in owned and manifest.get("rollback_from") != "applied" and
+                            (not target.is_file() or _digest(target.read_bytes()) != expected_sha)):
+                        raise tr2.Tr2ValidationError("tr2_recovery_required", rel,
+                                                     {"reason": "created target differs"})
+                    target.unlink()
+            for rel, metadata in manifest["files"].items():
+                if _digest(_safe_target(root, rel, "edit").read_bytes()) != metadata["sha256"]:
+                    raise tr2.Tr2ValidationError("tr2_recovery_required", rel)
+            if any(_safe_target(root, rel, "create_file").exists() for rel in manifest["created"]):
+                raise tr2.Tr2ValidationError("tr2_recovery_required", "created")
+            manifest["phase"] = "restored"
+            _save_manifest(path, manifest)
+            return {"ok": True, "bundle_id": bundle_id, "restored": True}
 
     def recover(self, backup_root, bundle_id: str, *, source_root) -> dict:
         """Restart path: an interrupted apply/rollback resumes restore, never apply."""

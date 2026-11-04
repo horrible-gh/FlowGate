@@ -35,6 +35,7 @@ task; the judge still lays out the Scratch and writes the standard. A person may
 review to a completed evaluation; the human score, when given, is the final score.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import json
@@ -470,7 +471,7 @@ def _worker(evaluation_id: str, state: dict) -> None:
                        TARGET_TIMEOUT_SEC, scratch, run_id)
         if target.exec_type == "api":
             # An API connection has no file tools: its answer is its work product.
-            (workspace / OUTPUT_DIR / "RESPONSE.md").write_text(report, encoding="utf-8")
+            document_write_ports.write_gate("paths", [workspace / OUTPUT_DIR / "RESPONSE.md"], lambda: (workspace / OUTPUT_DIR / "RESPONSE.md").write_text(report, encoding="utf-8"))
 
         # 5. Collect results / work products.
         artifacts = _collect(workspace, baseline)
@@ -738,7 +739,7 @@ def _materialize(workspace: Path, task: dict) -> dict[str, str]:
         target.parent.mkdir(parents=True, exist_ok=True)
         if root not in target.parent.resolve(strict=True).parents and target.parent.resolve(strict=True) != root:
             raise _StageFailed("judge_output_invalid", "A task file escaped the workspace.")
-        target.write_bytes(data)
+        document_write_ports.write_gate("paths", [target], lambda: target.write_bytes(data))
         baseline[relative] = hashlib.sha256(data).hexdigest()
 
     write(INSTRUCTION_FILE, f"# {task['title']}\n\n{task['instruction']}\n".encode("utf-8"))

@@ -1,5 +1,6 @@
 """Stable, versioned execution fingerprints. Secret material never enters the DB."""
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import base64
 import hashlib
@@ -66,7 +67,7 @@ def _key() -> bytes:
             raise FingerprintKeyError("Persisted evaluation HMAC key is missing")
         key = os.urandom(32)
         try:
-            with key_path.open("x", encoding="ascii") as stream:
+            with document_write_ports.write_paths([key_path]), key_path.open("x", encoding="ascii") as stream:
                 stream.write(base64.b64encode(key).decode("ascii"))
             os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR)
         except FileExistsError:
@@ -81,11 +82,11 @@ def _key() -> bytes:
         if old_version > FINGERPRINT_VERSION or (old_version == FINGERPRINT_VERSION and marker.get("key_sha256") != identity):
             raise FingerprintKeyError("Evaluation HMAC key changed without fingerprint version increase")
         if old_version < FINGERPRINT_VERSION:
-            marker_path.write_text(json.dumps({"version": FINGERPRINT_VERSION, "key_sha256": identity}), encoding="ascii")
+            document_write_ports.write_gate("paths", [marker_path], lambda: marker_path.write_text(json.dumps({"version": FINGERPRINT_VERSION, "key_sha256": identity}), encoding="ascii"))
     else:
         if _history_exists():
             raise FingerprintKeyError("Evaluation HMAC version marker is missing")
-        with marker_path.open("x", encoding="ascii") as stream:
+        with document_write_ports.write_paths([marker_path]), marker_path.open("x", encoding="ascii") as stream:
             stream.write(json.dumps({"version": FINGERPRINT_VERSION, "key_sha256": identity}))
         os.chmod(marker_path, stat.S_IRUSR | stat.S_IWUSR)
     return key

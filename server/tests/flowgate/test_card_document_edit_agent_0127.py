@@ -422,8 +422,10 @@ def test_ts_shared_scenario_is_one_instruction_coordinate(agent,monkeypatch):
 
 def test_supersede_binding_keeps_old_token_coordinate(agent):
     other=F+".0003-N"
+    replacement_path = agent.env.path.with_name("replacement.md")
+    replacement_path.write_bytes(agent.env.path.read_bytes().replace(b"0002-N", b"0003-N"))
     documents.create({"doc_id":other,"project_id":"flowgate","module":"v02","group_id":F,
-        "type_code":"N","seq":3,"title":"replacement","status":"draft","owner_id":"user","file_path":agent.env.doc["file_path"]})
+        "type_code":"N","seq":3,"title":"replacement","status":"draft","owner_id":"user","file_path":paths.to_storage_relative(replacement_path,"flowgate")})
     documents.update(D,{"superseded_by":other})
     repository.rebind(F,"research","instruction","N",other)
     assert agent_binding.bind(token_service.verify(agent.raw),documents.get_by_id(D))["doc_id"]==D

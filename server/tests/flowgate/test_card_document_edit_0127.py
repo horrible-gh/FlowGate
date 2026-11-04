@@ -41,6 +41,8 @@ HEADER = "---\nproject: flowgate\nmodule: v02\ngroup: 0127\ntype: N\ndoc_number:
 
 @pytest.fixture
 def env(monkeypatch, tmp_path, migrated_sqlite_db):
+    from flowgate.card_document_edit import integration
+    integration.register()
     from modules.flow_gate.db import _SqliteDbAdapter, _SqliteTxnAdapter
     db_path = migrated_sqlite_db("card_document_edit.db")
     db = connection.FlowGateStore.__new__(connection.FlowGateStore)
@@ -456,7 +458,8 @@ def test_classification_unavailable_never_means_non_card(env, monkeypatch, fault
     assert target.notify_scope(target.UNAVAILABLE) is True
     with pytest.raises(GraphApiError) as e: target.require_non_card(env.doc)
     assert e.value.params["errors"][0]["validation"]["reason"] == "card_edit_unavailable"
-    assert target.classify_card_slot({"group_id": None}) == target.NON_CARD
+    # A null group cannot hide this document's still-existing card reference.
+    assert target.classify_card_slot({**env.doc, "group_id": None}) == target.UNAVAILABLE
 
 
 def test_own_join_create_modes_and_wrong_guard(env):

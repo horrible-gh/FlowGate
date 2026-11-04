@@ -516,6 +516,8 @@ def _recover_legacy(doc_id: str, expected_method: Optional[str], actor: str) -> 
         if fresh is None:
             raise not_found()
         recover_write_checks(fresh)
+        from modules.flow_gate.graph_workflow.services.card_document_ports import write_gate
+        write_gate("none", fresh)
         reason = read_state(fresh)
         if reason == "read_error":
             raise RecoveryRefused("read_error")
@@ -539,6 +541,8 @@ def _apply(doc: dict, reason: str, found: dict, actor: str) -> dict:
     from modules.flow_gate.db.events import insert_event
     from modules.flow_gate.storage.files import StorageUnwritable, document_using_file, write_new_file
 
+    from modules.flow_gate.graph_workflow.services.card_document_ports import write_gate
+    write_gate("none", db_documents.get_by_id(doc["doc_id"]) or doc)
     method, project_id = found["method"], doc.get("project_id")
     own = (doc["doc_id"],)
     data = content = None

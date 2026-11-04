@@ -26,6 +26,9 @@ matching file_transfer_routes._get_src_root.
 """
 from __future__ import annotations
 
+from fastapi import HTTPException
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
+
 import codecs
 import logging
 import os
@@ -1381,24 +1384,25 @@ def _atomic_write_bytes(target: Path, data: bytes, mode: Optional[int] = None) -
     carried over explicitly — otherwise patching an executable script would
     silently drop its +x.
     """
-    tmp = target.with_name(target.name + ".flowgate-patch.tmp")
-    try:
-        with open(tmp, "wb") as fh:
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        if mode is not None:
-            try:
-                os.chmod(tmp, mode)
-            except OSError:
-                pass   # best-effort (no-op on Windows) — never fail the patch for this
-        os.replace(tmp, target)
-    except BaseException:
+    with document_write_ports.write_paths([target, target.with_name(target.name + ".flowgate-patch.tmp")]):
+        tmp = target.with_name(target.name + ".flowgate-patch.tmp")
         try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            if mode is not None:
+                try:
+                    os.chmod(tmp, mode)
+                except OSError:
+                    pass   # best-effort (no-op on Windows) — never fail the patch for this
+            os.replace(tmp, target)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
 
 
 def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
@@ -1579,20 +1583,21 @@ def _exec_write(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     if mode == "create" and existed:
         raise _OpError(409)
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    file_mode = "ab" if mode == "append" else "wb"
-    with open(target, file_mode) as fh:
-        fh.write(data)
+    with document_write_ports.write_paths([target]):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        file_mode = "ab" if mode == "append" else "wb"
+        with open(target, file_mode) as fh:
+            fh.write(data)
 
-    created = not existed
-    return (
-        {
-            "path": body["path"],
-            "bytes_written": len(data),
-            "created": created,
-        },
-        len(data),
-    )
+        created = not existed
+        return (
+            {
+                "path": body["path"],
+                "bytes_written": len(data),
+                "created": created,
+            },
+            len(data),
+        )
 
 
 def _clear_readonly_and_retry(func, path, _exc_info) -> None:
@@ -1608,34 +1613,36 @@ def _clear_readonly_and_retry(func, path, _exc_info) -> None:
 
 def _delete_file(target: Path) -> None:
     """Delete even when read-only; if still blocked, answer with 'retrying will not help'."""
-    try:
-        os.remove(target)
-    except PermissionError:
+    with document_write_ports.write_paths([target]):
         try:
-            _clear_readonly_and_retry(os.remove, str(target), None)
-        except OSError:
-            raise _OpError(409, details={"reason": "path_locked"})
+            os.remove(target)
+        except PermissionError:
+            try:
+                _clear_readonly_and_retry(os.remove, str(target), None)
+            except OSError:
+                raise _OpError(409, details={"reason": "path_locked"})
 
 
 def _delete_tree(target: Path) -> int:
     """Delete a whole directory and return how many files were removed."""
-    count = sum(1 for path in target.rglob("*") if path.is_file())
-    failures: list[str] = []
+    with document_write_ports.write_paths([], trees=[target]):
+        count = sum(1 for path in target.rglob("*") if path.is_file())
+        failures: list[str] = []
 
-    def _on_error(func, path, exc_info):
-        try:
-            _clear_readonly_and_retry(func, path, exc_info)
-        except OSError:
-            failures.append(str(path))
+        def _on_error(func, path, exc_info):
+            try:
+                _clear_readonly_and_retry(func, path, exc_info)
+            except OSError:
+                failures.append(str(path))
 
-    # Python 3.12+ deprecates onerror in favour of onexc. The handler ignores the third argument.
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(str(target), onexc=_on_error)
-    else:
-        shutil.rmtree(str(target), onerror=_on_error)
-    if failures:
-        raise _OpError(409, details={"reason": "path_locked"})
-    return count
+        # Python 3.12+ deprecates onerror in favour of onexc. The handler ignores the third argument.
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(str(target), onexc=_on_error)
+        else:
+            shutil.rmtree(str(target), onerror=_on_error)
+        if failures:
+            raise _OpError(409, details={"reason": "path_locked"})
+        return count
 
 
 def _exec_move(body: dict, root: Path) -> tuple[dict, Optional[int]]:
@@ -1648,7 +1655,8 @@ def _exec_move(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         target = canonical_move_path(root, body["target_path"])
         if os.path.normcase(source) == os.path.normcase(target):
             raise _OpError(422, details={"reason": "same_path"})
-        size = move_file(root, source, target)
+        with document_write_ports.write_paths([root / source, root / target]):
+            size = move_file(root, source, target)
     except MutationPathUnsafeError as exc:
         raise _OpError(422, details={"reason": "unsafe_move_path"}) from exc
     except FileNotFoundError as exc:
@@ -2215,6 +2223,16 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
                 error["details"] = exc.details
             return exc.status, _envelope(False, op, error=error)
         return exc.status, _fail_envelope(op, exc.status, locale)
+    except HTTPException as exc:
+        if exc.status_code == 409 and exc.detail == "card_document_edit_required":
+            _log(grant, op, log_path, log_pattern, status=409)
+            return 409, _envelope(False, op, error={
+                "code": "card_document_edit_required",
+                "message": "Use the card document revision endpoint to edit this body.",
+            })
+        status = exc.status_code if exc.status_code in ERROR_CODE_BY_STATUS else 503
+        _log(grant, op, log_path, log_pattern, status=status)
+        return status, _fail_envelope(op, status, locale)
     except OSError:
         _log(grant, op, log_path, log_pattern, status=503)
         return 503, _fail_envelope(op, 503, locale)

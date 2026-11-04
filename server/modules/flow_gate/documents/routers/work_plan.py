@@ -575,6 +575,8 @@ def create_work_plan(
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
 
+    from modules.flow_gate.storage.files import file_identity, remove_owned_file
+    written_identity = file_identity(path)
     now = now_iso()
     try:
         doc = document_service.create_document({
@@ -605,7 +607,7 @@ def create_work_plan(
         )
     except Exception as exc:  # noqa: BLE001 — roll the file and row back, never leave an orphan
         try:
-            path.unlink(missing_ok=True)
+            remove_owned_file(path, written_identity)
         except OSError:
             pass
         try:

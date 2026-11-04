@@ -74,9 +74,12 @@ def _write_plan(wp_doc, quantities, texts=None, step_values=None, bump=False):
             step["pre_instruction_text"] = texts[step["key"]]
         step.update((step_values or {}).get(step["key"], {}))
     plan = wp.validate(body, project_id="flowgate", doc_id=wp_doc, action="save", enforce_provider_scope=False)
-    wp.write_body_atomically(wp.plan_path_for_doc(doc), plan)
+    # Seed the pre-deployment fixture directly; the production primitive now rejects card rewrites.
+    wp.plan_path_for_doc(doc).write_text(wp.dumps(plan), encoding="utf-8")
     if bump:
-        db_documents.update(wp_doc, {"revision_no": int(doc.get("revision_no") or 0) + 1})
+        from modules.flow_gate.db.connection import get_store
+        get_store()._execute("UPDATE documents SET revision_no = ? WHERE doc_id = ?",
+                             [int(doc.get("revision_no") or 0) + 1, wp_doc])
     return plan
 
 
@@ -440,7 +443,9 @@ def test_a_plan_changed_after_the_preview_is_refused(dep):
     _write_plan(wp_doc, {"T": 2})                                         # the file changed, the revision did not
     changed = _execute(dep, wp_doc, "first", expect=409, baseline=preview["baseline"])
     assert (changed["code"], changed.get("reason")) == ("wp_changed", "plan_digest")
-    db_documents.update(wp_doc, {"revision_no": 3})
+    # Seed the concurrent preview invalidation; generic UPDATE cannot rewrite a card revision.
+    from modules.flow_gate.db.connection import get_store
+    get_store()._execute("UPDATE documents SET revision_no = 3 WHERE doc_id = ?", [wp_doc])
     assert _execute(dep, wp_doc, "first", expect=409, baseline=preview["baseline"])["code"] == "wp_changed"
     assert _preview(dep, wp_doc, "first", expect=409, revision=0)["code"] == "wp_changed"
     assert _draft(dep)[0] and len(_draft(dep)[0]) == 2                     # R and WP only

@@ -6,6 +6,7 @@ next writer of that path takes (``cleanup_runner``). The transaction's own lock 
 run, so another server process may already have moved the file aside and staged its own at the same path.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import logging
 import os
@@ -140,43 +141,45 @@ def write_new_file(abs_path, data: bytes, exclude_doc_ids=()) -> None:
     row pointing at a missing file still uses that path. Without them (a caller whose row may point at
     the path already) only an existing file is checked, as before.
     """
-    path, tmp = Path(abs_path), None
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if os.path.lexists(path):
-            if referenced_by_any_document(path, exclude_doc_ids):
+    with document_write_ports.write_paths([abs_path]):
+        path, tmp = Path(abs_path), None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if os.path.lexists(path):
+                if referenced_by_any_document(path, exclude_doc_ids):
+                    raise StorageUnwritable("target_in_use")
+                orphan = _side_path(path, ORPHAN_SUFFIX)
+                path.rename(orphan)
+                _log.warning("orphan moved aside: %s -> %s", path, orphan)
+            elif exclude_doc_ids and referenced_by_any_document(path, exclude_doc_ids):
                 raise StorageUnwritable("target_in_use")
-            orphan = _side_path(path, ORPHAN_SUFFIX)
-            path.rename(orphan)
-            _log.warning("orphan moved aside: %s -> %s", path, orphan)
-        elif exclude_doc_ids and referenced_by_any_document(path, exclude_doc_ids):
-            raise StorageUnwritable("target_in_use")
-        tmp = _side_path(path, TEMP_SUFFIX)
-        with tmp.open("xb") as stream:
-            stream.write(data)
-        tmp.replace(path)
-        identity = file_identity(path)
-        track_new_file(path, still_ours=lambda p: is_same_file_as(p, identity),
-                       under=cleanup_runner(f"rollback new file {path}"))
-    except OSError as exc:
-        if tmp is not None:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                _log.warning("temporary file cleanup failed: %s", tmp, exc_info=True)
-        raise StorageUnwritable(exception=type(exc).__name__) from exc
+            tmp = _side_path(path, TEMP_SUFFIX)
+            with tmp.open("xb") as stream:
+                stream.write(data)
+            tmp.replace(path)
+            identity = file_identity(path)
+            track_new_file(path, still_ours=lambda p: is_same_file_as(p, identity),
+                           under=cleanup_runner(f"rollback new file {path}"))
+        except OSError as exc:
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    _log.warning("temporary file cleanup failed: %s", tmp, exc_info=True)
+            raise StorageUnwritable(exception=type(exc).__name__) from exc
 
 
 def overwrite_file(abs_path, data: bytes) -> None:
     """Replace an existing document atomically, preserving submitted bytes exactly."""
-    path = Path(abs_path)
-    tmp = _side_path(path, TEMP_SUFFIX)
-    try:
-        with tmp.open("xb") as stream:
-            stream.write(data)
-        tmp.replace(path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    with document_write_ports.write_paths([abs_path]):
+        path = Path(abs_path)
+        tmp = _side_path(path, TEMP_SUFFIX)
+        try:
+            with tmp.open("xb") as stream:
+                stream.write(data)
+            tmp.replace(path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 # ── restorable replacement (flowgate.v02.0074 T#4, D0006 §3.6.5) ─────────────
@@ -205,7 +208,7 @@ class ReplacedFile:
         stays where it is (``keep``) for an operator."""
         if self.restored:
             return True
-        if not is_same_file_as(self.path, self.replaced):
+        if not is_same_file_as(self.keep, self.original) or not is_same_file_as(self.path, self.replaced):
             _log.warning("replaced file not restored, the path changed again: %s (original kept at %s)",
                          self.path, self.keep)
             return False
@@ -218,7 +221,8 @@ class ReplacedFile:
         if self.restored:
             return
         try:
-            self.keep.unlink(missing_ok=True)
+            if is_same_file_as(self.keep, self.original):
+                self.keep.unlink(missing_ok=True)
         except OSError:
             _log.warning("kept original not removed: %s", self.keep, exc_info=True)
 
@@ -233,28 +237,29 @@ def replace_restorably(abs_path, data: bytes, expected_identity: Optional[tuple]
     checked), ``release`` drops the kept original after the commit. Nothing here is registered with the transaction:
     the caller decides when to restore and under which lock (``cleanup_runner``).
     """
-    path = Path(abs_path)
-    if expected_identity is None or not is_same_file_as(path, expected_identity):
-        raise FileChanged(path)
-    keep = _side_path(path, KEEP_SUFFIX)
-    try:
-        os.link(path, keep)
-    except OSError:
-        import shutil
-
-        shutil.copy2(path, keep)
-    original = file_identity(keep)
-    tmp = _side_path(path, TEMP_SUFFIX)
-    try:
-        if not is_same_file_as(path, expected_identity):
-            keep.unlink(missing_ok=True)
+    with document_write_ports.write_paths([abs_path]):
+        path = Path(abs_path)
+        if expected_identity is None or not is_same_file_as(path, expected_identity):
             raise FileChanged(path)
-        with tmp.open("xb") as stream:
-            stream.write(data)
-        tmp.replace(path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        if is_same_file_as(path, expected_identity):
-            keep.unlink(missing_ok=True)     # the original never left the path: nothing to keep
-        raise
-    return ReplacedFile(path, keep, original, file_identity(path))
+        keep = _side_path(path, KEEP_SUFFIX)
+        try:
+            os.link(path, keep)
+        except OSError:
+            import shutil
+
+            shutil.copy2(path, keep)
+        original = file_identity(keep)
+        tmp = _side_path(path, TEMP_SUFFIX)
+        try:
+            if not is_same_file_as(path, expected_identity):
+                keep.unlink(missing_ok=True)
+                raise FileChanged(path)
+            with tmp.open("xb") as stream:
+                stream.write(data)
+            tmp.replace(path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            if is_same_file_as(path, expected_identity):
+                keep.unlink(missing_ok=True)     # the original never left the path: nothing to keep
+            raise
+        return ReplacedFile(path, keep, original, file_identity(path))

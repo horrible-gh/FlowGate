@@ -220,18 +220,30 @@ def _tr2_result(result, actor, operation):
             "updated_by": actor, "doc_review_status": doc.get("doc_review_status")}
 
 
-def tr2_save(doc_id, build, *, actor, expected_revision, origin, operation, needs_current):
+def _tr2_origin(doc_id, actor, origin, token_id):
+    if origin == tr2.ORIGIN_AI and token_id:
+        from modules.flow_gate.db import tokens
+        token, doc = tokens.get_by_id(token_id), documents.get_by_id(doc_id)
+        if (token and doc and token.get('issued_to') == actor
+                and token.get('project') == doc['project_id'] and token.get('group_id') == doc.get('group_id')
+                and token.get('action_scope') in {'new', 'edit'}
+                and (token['action_scope'] == 'new' or token.get('doc_ref') == doc_id)):
+            return Origin('agent', token_id=token_id, run_id=token.get('ai_run_id'))
+    return Origin('tr2_window')
+
+
+def tr2_save(doc_id, build, *, actor, expected_revision, origin, operation, needs_current, token_id=None):
     req = DedicatedRequest(doc_id, expected_revision, Actor(actor, "worker" if origin == tr2.ORIGIN_AI else "person"),
-                           Tr2Save(build, needs_current), Origin("tr2_window"), event_reason=operation)
+                           Tr2Save(build, needs_current), _tr2_origin(doc_id, actor, origin, token_id), event_reason=operation)
     with graph_source_hooks.write_session():
         result = dedicated_bridge.dedicated_save(req)
     return _tr2_result(result, actor, operation)
 
 
-def tr2_create(doc_id, raw_body, *, actor, origin):
+def tr2_create(doc_id, raw_body, *, actor, origin, token_id=None):
     from .pending import enqueue
     req = DedicatedRequest(doc_id, 0, Actor(actor, "worker" if origin == tr2.ORIGIN_AI else "person"),
-        Tr2Save(lambda _current: raw_body, False), Origin("tr2_window"), event_reason="create", new_document=True)
+        Tr2Save(lambda _current: raw_body, False), _tr2_origin(doc_id, actor, origin, token_id), event_reason="create", new_document=True)
     result, pending = dedicated_bridge.dedicated_create(req)
     enqueue(pending)
     return _tr2_result(result, actor, "create")

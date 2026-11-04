@@ -7,6 +7,7 @@ Note:
   T533 download endpoint is implemented in tree_routes.py.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import os
 import re
@@ -120,9 +121,10 @@ def _save_file(full_path_str: str, data: bytes) -> None:
     every other request for the duration of the write — up to 100 MB per file and
     500 MB per request.
     """
-    os.makedirs(os.path.dirname(full_path_str), exist_ok=True)
-    with open(full_path_str, "wb") as fh:
-        fh.write(data)
+    with document_write_ports.write_paths([full_path_str]):
+        os.makedirs(os.path.dirname(full_path_str), exist_ok=True)
+        with open(full_path_str, "wb") as fh:
+            fh.write(data)
 
 
 def _err(status: int, code: str, message: str) -> JSONResponse:
@@ -235,14 +237,12 @@ async def upload_files(request: Request, project_id: str):
                 exact_paths=[rel for rel, _data, _size in pending],
                 allow_missing_leaf=True,
             ) as mutation:
-                # Every target has passed no-alias + managed ownership checks before
-                # the first byte is written. A managed conflict therefore cannot
-                # partially overwrite another file in the same multipart request.
-                for (canonical, target), (_rel, data, file_size) in zip(
-                    mutation.exact_targets, pending
-                ):
-                    _save_file(str(target), data)
-                    results.append({"path": canonical, "size": file_size})
+                with document_write_ports.write_paths([target for _canonical, target in mutation.exact_targets]):
+                    for (canonical, target), (_rel, data, file_size) in zip(
+                        mutation.exact_targets, pending
+                    ):
+                        _save_file(str(target), data)
+                        results.append({"path": canonical, "size": file_size})
             return results
 
         try:
@@ -269,13 +269,23 @@ async def upload_files(request: Request, project_id: str):
 
     src_root_path = await anyio.to_thread.run_sync(_get_src_root, project_id, None)
     root_str = str(src_root_path)
+    targets = []
     for combined_rel, data, file_size in pending:
         full_path_str = os.path.realpath(os.path.join(root_str, combined_rel))
         if not _under_root(full_path_str, root_str):
             skipped.append({"path": combined_rel, "reason": "PATH_TRAVERSAL"})
             continue
-        await anyio.to_thread.run_sync(_save_file, full_path_str, data)
-        saved_rel = os.path.relpath(full_path_str, root_str).replace("\\", "/")
-        uploaded.append({"path": saved_rel, "size": file_size})
+        targets.append((full_path_str, data, file_size))
+
+    def save_batch():
+        results = []
+        with document_write_ports.write_paths([target for target, _data, _size in targets]):
+            for full_path_str, data, file_size in targets:
+                _save_file(full_path_str, data)
+                saved_rel = os.path.relpath(full_path_str, root_str).replace("\\", "/")
+                results.append({"path": saved_rel, "size": file_size})
+        return results
+
+    uploaded.extend(await anyio.to_thread.run_sync(save_batch))
 
     return {"uploaded": uploaded, "skipped": skipped}

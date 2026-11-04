@@ -93,6 +93,11 @@ def find_by_content_fingerprint(
 
 
 def create(data: dict[str, Any]) -> dict:
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    return card_document_ports.write_gate("create", data, lambda: _insert_document(data))
+
+
+def _insert_document(data):
     store = get_store()
     now = now_iso()
     cols = [
@@ -129,6 +134,13 @@ def create(data: dict[str, Any]) -> dict:
 
 
 def update(doc_id: str, updates: dict[str, Any]) -> Optional[dict]:
+    if {"file_path", "filename", "revision_no", "project_id", "branch"}.intersection(updates):
+        from modules.flow_gate.graph_workflow.services import card_document_ports
+        return card_document_ports.write_gate("row", doc_id, updates, lambda: _update_document(doc_id, updates))
+    return _update_document(doc_id, updates)
+
+
+def _update_document(doc_id, updates):
     store = get_store()
     updates = {k: v for k, v in updates.items() if k not in ("doc_id", "id", "created_at")}
     # auto-derive filename from file_path if file_path is updated and filename not explicitly set

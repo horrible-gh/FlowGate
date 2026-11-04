@@ -14,6 +14,7 @@ flowgate.v02.0047: ``"auto_title": true`` (optional) creates the chat owing its 
 on the title it is created with (``auto_title.owed_meta``); without it nothing is owed.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import logging
 from typing import Any, Optional
@@ -122,10 +123,10 @@ def create_chat(user: dict, body: Any) -> dict:
     file_path = legacy_adapter.document_file_path(project_id, group_id, doc_code, module)
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(
+        document_write_ports.write_gate("paths", [file_path], lambda: file_path.write_text(
             _content(project_id=project_id, module=module, group_id=group_id, doc_code=doc_code, title=title),
             encoding="utf-8",
-        )
+        ))
     except OSError as exc:
         raise c.ConversationError(500, "conversation_file_write_failed", "could not write the document file") from exc
 
@@ -154,7 +155,7 @@ def create_chat(user: dict, body: Any) -> dict:
                 doc = legacy_adapter.update_document(doc_id, {"doc_review_status": "approved"})
     except Exception:
         try:
-            file_path.unlink(missing_ok=True)
+            document_write_ports.write_gate("paths", [file_path], lambda: file_path.unlink(missing_ok=True))
         except OSError:
             pass
         raise

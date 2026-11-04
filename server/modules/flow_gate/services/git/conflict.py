@@ -3,6 +3,7 @@
 Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/부록 A).
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import difflib
 import hashlib
@@ -110,7 +111,7 @@ def _encode_eol(content: str, eol: str) -> bytes:
 def _write_resolved_file(root: Path, path: str, target: Path, content: str) -> None:
     """Write a resolution in bytes, in the file's own line ending — never text mode."""
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(_encode_eol(content, _path_eol(root, path)))
+    document_write_ports.write_gate("paths", [target], lambda: target.write_bytes(_encode_eol(content, _path_eol(root, path))))
 
 
 def _marker_labels(text: str) -> tuple[str, str, str]:
@@ -155,7 +156,7 @@ def _eol_normalized_merge(root: Path, path: str) -> Optional[tuple[int, bytes]]:
         names = []
         for name, stage in zip(("ours", "base", "theirs"), stages):
             p = Path(tmp) / name
-            p.write_bytes(stage.replace(b"\r\n", b"\n"))
+            document_write_ports.write_gate("paths", [p], lambda: p.write_bytes(stage.replace(b"\r\n", b"\n")))
             names.append(str(p))
         try:
             proc = subprocess.run(
@@ -190,33 +191,34 @@ def separate_eol_conflicts(root: Path, paths: list[str]) -> dict:
     from modules.flow_gate.services import git_service as _gs
     from modules.flow_gate.storage.safe_path import resolve_in_root
 
-    eol_only: list[str] = []
-    renormalized: list[str] = []
-    for path in paths:
-        target = resolve_in_root(root, path)
-        if target is None:
-            continue
-        result = _eol_normalized_merge(root, path)
-        if result is None:
-            continue
-        conflicts, merged = result
-        try:
-            before = target.read_bytes()
-        except OSError:
-            before = b""
-        if conflicts == 0:
-            target.write_bytes(merged)
-            proc = _gs._run_git(["add", "--", path], cwd=root)
-            if proc.returncode != 0:
-                _log.warning("eol-only conflict %s could not be staged: %s",
-                             path, _gs._last_line(proc.stderr))
-                target.write_bytes(before)
+    with document_write_ports.write_paths([root / path for path in paths]):
+        eol_only: list[str] = []
+        renormalized: list[str] = []
+        for path in paths:
+            target = resolve_in_root(root, path)
+            if target is None:
                 continue
-            eol_only.append(path)
-        elif merged != before:
-            target.write_bytes(merged)
-            renormalized.append(path)
-    return {"eol_only": eol_only, "renormalized": renormalized}
+            result = _eol_normalized_merge(root, path)
+            if result is None:
+                continue
+            conflicts, merged = result
+            try:
+                before = target.read_bytes()
+            except OSError:
+                before = b""
+            if conflicts == 0:
+                document_write_ports.write_gate("paths", [target], lambda: target.write_bytes(merged))
+                proc = _gs._run_git(["add", "--", path], cwd=root)
+                if proc.returncode != 0:
+                    _log.warning("eol-only conflict %s could not be staged: %s",
+                                 path, _gs._last_line(proc.stderr))
+                    document_write_ports.write_gate("paths", [target], lambda: target.write_bytes(before))
+                    continue
+                eol_only.append(path)
+            elif merged != before:
+                document_write_ports.write_gate("paths", [target], lambda: target.write_bytes(merged))
+                renormalized.append(path)
+        return {"eol_only": eol_only, "renormalized": renormalized}
 
 
 def apply_eol_separation(merge_id: int, root: Path) -> dict:
