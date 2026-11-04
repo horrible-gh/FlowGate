@@ -163,12 +163,15 @@ def test_0098_rejected_push_keeps_local_merge_and_retries_only_the_same_applied_
     _git(["commit", "-m", "remote advance"], cwd=r["seed"])
     _git(["push", "origin", branch], cwd=r["seed"])
     job, _ = _run_job(jid)
-    assert job["status"] == "recovery_required" and job["last_error_code"] == "push_rejected"
+    assert job["status"] == "recovery_required" and job["last_error_code"] == "push_remote_ahead"
     assert _decision(env, did)["status"] == "recovery_required" and job["recovery_since"] is None
     applied = _rev(r["base"], branch)
     assert _effects(env, did)["push"]["status"] == "failed"
+    evidence = json.loads(_effects(env, did)["push"]["evidence_json"])
+    assert evidence["exit_code"] == 1 and evidence["diagnostic_tail"]
+    assert "remote_sync" not in _effects(env, did)  # 0132 T#1 parks; T#2 adds sync.
     _act(env, run_id, g, did, "retry", {"request_id": "push-retry-0098", "expected_decision_version": _version(env, did)}, 202)
     job, _ = _run_job(jid)
-    assert job["last_error_code"] == "push_rejected" and _rev(r["base"], branch) == applied
+    assert job["last_error_code"] == "push_remote_ahead" and _rev(r["base"], branch) == applied
     assert _merges(r["base"], branch) == 0  # retry preserves the same fast-forward
     assert json.loads(_effects(env, did)["push"]["evidence_json"])["sent_sha"] == applied

@@ -520,20 +520,22 @@ def _push(ctx, plan: Plan, sha: str) -> None:
                 evidence={"remote": "origin", "branch": branch, "remote_head_before": h0 or None,
                           "sent_sha": sha, "attempt_kind": "update" if h0 else "create"}, new_attempt=True)
         _store().ensure_lease(ctx)
-        outcome, code = git.push(slot, sha, branch)
+        outcome, code, command_evidence = git.push(slot, sha, branch)
         if outcome == git.PUSHED:
             _effect(ctx, plan, "push", status=repo.DONE, target_ref=remote_ref, sha_after=sha,
                     evidence={"remote": "origin", "branch": branch, "changed": True, "result": code,
                               "remote_head_before": h0 or None, "sent_sha": sha,
-                              "attempt_kind": "update" if h0 else "create"})
+                              "attempt_kind": "update" if h0 else "create", **command_evidence})
             return
         if outcome == git.PUSH_UNKNOWN:
-            _effect(ctx, plan, "push", status=repo.UNKNOWN, error_code=code)
+            _effect(ctx, plan, "push", status=repo.UNKNOWN, error_code=code,
+                    evidence={"remote": "origin", "branch": branch, "remote_head_before": h0 or None,
+                              "sent_sha": sha, "attempt_kind": "update" if h0 else "create", **command_evidence})
             raise _Transient(code)
         _effect(ctx, plan, "push", status=repo.EFFECT_FAILED, error_code=code,
                 evidence={"remote": "origin", "branch": branch, "changed": False,
                           "remote_head_before": h0 or None, "sent_sha": sha,
-                          "attempt_kind": "update" if h0 else "create"})
+                          "attempt_kind": "update" if h0 else "create", **command_evidence})
         if outcome == git.PUSH_TRANSIENT:
             raise _Transient(code)
         raise _Failure(code)

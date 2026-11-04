@@ -21,6 +21,7 @@ scrubbed (``redact``); a failure is a safe code.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,12 @@ CONTEXT_KEY = "gate_decision_id"
 _TRANSIENT_MARKS = ("could not resolve host", "connection refused", "connection timed out", "timed out",
                     "operation timed out", "failed to connect", "network is unreachable", "temporary failure",
                     "early eof", "the remote end hung up unexpectedly", "rpc failed", "timeout_expired")
+
+_AUTH_MARKS = ("authentication failed", "permission denied", "access denied", "could not read username")
+_PROTECTED_MARKS = ("[remote rejected]", "protected branch", "gh006", "pre-receive hook declined",
+                    "hook declined", "not allowed to push", "push declined")
+_NON_FF_MARKS = ("fetch first", "non-fast-forward", "updates were rejected because the remote contains work",
+                 "tip of your current branch is behind", "a pushed branch tip is behind its remote")
 
 
 def _gs():
@@ -227,7 +234,11 @@ def fetch_branch(slot: Slot, branch: str) -> bool:
 
 def remote_contains(slot: Slot, branch: str, sha: str):
     """Does origin's branch hold ``sha`` (the same SHA or a descendant)? True / False / READ_ERROR. Under R."""
-    head = remote_head(slot, branch)
+    return _remote_contains_head(slot, branch, sha, remote_head(slot, branch))
+
+
+def _remote_contains_head(slot: Slot, branch: str, sha: str, head):
+    """Judge the exact observed tip; push classification reuses this same post-failure observation."""
     if head is READ_ERROR:
         return READ_ERROR
     if not head:
@@ -240,32 +251,49 @@ def remote_contains(slot: Slot, branch: str, sha: str):
     return READ_ERROR if found is None else found
 
 
-def push(slot: Slot, sha: str, branch: str) -> tuple[str, str]:
-    """A plain push of ``sha`` to origin's ``refs/heads/<branch>`` (never forced; git refuses anything but a
-    fast-forward). Returns (outcome, safe code). A failed command is judged against the remote itself: holding the
-    SHA (also after a timeout) is pushed; unreadable is unknown; else a network failure is transient and anything
-    else (rejected, no permission, no repository) is rejected. Under R."""
+def push(slot: Slot, sha: str, branch: str) -> tuple[str, str, dict]:
+    """Plain SHA push under R; returns (outcome, safe code, scrubbed command evidence).
+
+    Failure precedence (0132 NR §4.1): landed/unknown, transient, authentication, protection,
+    missing repository, proven non-ff, unknown rejection. Only explicit non-ff plus the same
+    post-failure tip's graph permits remote sync; this adapter never changes a local target.
+    """
     if not _sync_origin(slot):
-        return PUSH_TRANSIENT, "origin_sync_failed"
+        return PUSH_TRANSIENT, "origin_sync_failed", {}
     proc = _git(slot.base_root, ["push", "origin", f"{sha}:refs/heads/{branch}"],
-                timeout=_gs().GIT_NET_TIMEOUT_SEC, **slot.credentials())
+                timeout=_gs().GIT_NET_TIMEOUT_SEC, extra_env={"LC_ALL": "C", "LANGUAGE": "C"},
+                **slot.credentials())
+    # Scrub complete lines before bounding the tail: truncation must not split a credential before redaction.
+    tail = "\n".join(redact.scrub(line, *slot.secrets) for line in (proc.stderr or "").splitlines()[-6:])
+    evidence = {"diagnostic_tail": tail[-redact.TEXT_MAX:], "exit_code": proc.returncode}
+
+    def result(outcome, code):
+        return outcome, code, evidence
+
     if proc.returncode == 0:
-        return PUSHED, "pushed"
-    text = redact.scrub(proc.stderr, *slot.secrets)
-    _log.warning("gate push failed for %s (%s): %s", slot.group_id, proc.returncode, text)
-    landed = remote_contains(slot, branch, sha)
+        return result(PUSHED, "pushed")
+    _log.warning("gate push failed for %s (%s): %s", slot.group_id, proc.returncode,
+                 redact.scrub(proc.stderr, *slot.secrets))
+    h1 = remote_head(slot, branch)
+    landed = _remote_contains_head(slot, branch, sha, h1)
     if landed is True:
-        return PUSHED, "push_landed_after_error"
+        return result(PUSHED, "push_landed_after_error")
     if landed is READ_ERROR:
-        return PUSH_UNKNOWN, "push_result_unknown"
+        return result(PUSH_UNKNOWN, "push_result_unknown")
     lowered = (proc.stderr or "").lower()
     if proc.returncode == -1 or any(mark in lowered for mark in _TRANSIENT_MARKS):
-        return PUSH_TRANSIENT, "push_network_error"
-    if "auth" in lowered or "permission" in lowered or "403" in lowered or "401" in lowered:
-        return PUSH_REJECTED, "push_auth_failed"
+        return result(PUSH_TRANSIENT, "push_network_error")
+    if any(mark in lowered for mark in _AUTH_MARKS) or re.search(r"\b(?:401|403)\b", lowered):
+        return result(PUSH_REJECTED, "push_auth_failed")
+    if any(mark in lowered for mark in _PROTECTED_MARKS):
+        return result(PUSH_REJECTED, "push_protected")
     if "not found" in lowered or "does not appear to be a git repository" in lowered:
-        return PUSH_REJECTED, "push_remote_missing"
-    return PUSH_REJECTED, "push_rejected"
+        return result(PUSH_REJECTED, "push_remote_missing")
+    if (h1 and re.search(r"!\s+\[rejected\]", lowered)
+            and any(mark in lowered for mark in _NON_FF_MARKS)
+            and is_ancestor(slot.base_root, h1, sha) is False):
+        return result(PUSH_REJECTED, "push_remote_ahead")
+    return result(PUSH_REJECTED, "push_rejected")
 
 
 # ── the merge into the target branch ─────────────────────────────────────────
