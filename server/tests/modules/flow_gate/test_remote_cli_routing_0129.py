@@ -6,10 +6,10 @@ A pull Agent is simulated in a thread with the public queue calls (claim/started
 Only the server-local process boundary (`_execute_local`), the Graph launch hook and the
 invocation journal are replaced, so nothing here starts a real CLI or touches a real run.
 
-Job creation is closed in the product until the Agent working-directory contract is
-verified (``provider_remote.AGENT_WORKDIR_CONTRACT_VERIFIED``); the fixture opens it so
-the gated lifecycle (D0005 (가)~(라)) is still exercised, and one test pins the closed
-default.
+Job creation is gated by ``provider_remote.AGENT_WORKDIR_CONTRACT_VERIFIED``. The product
+default is open since flowgate.v02.0131 CH0004 (operator instruction); the fixture opens
+it explicitly so the lifecycle (D0005 (가)~(라)) is exercised regardless, one test pins
+the open default and one test keeps the closed-gate behaviour covered.
 """
 from __future__ import annotations
 
@@ -708,10 +708,11 @@ def test_job_creation_is_closed_until_the_agent_workdir_contract_is_verified(env
     assert jobs_rows(env) == [] and env.launches == [] and env.local_calls == [] and agent.received == []
 
 
-def test_the_product_default_keeps_job_creation_closed():
+def test_the_product_default_opens_job_creation():
+    # flowgate.v02.0131 CH0004: the operator opened remote CLI Job creation.
     import importlib
     source = Path(provider_remote.__file__).read_text(encoding="utf-8")
-    assert "\nAGENT_WORKDIR_CONTRACT_VERIFIED = False\n" in source
+    assert "\nAGENT_WORKDIR_CONTRACT_VERIFIED = True\n" in source
     assert importlib.import_module("modules.flow_gate.services.ai_invoke.provider_remote") is provider_remote
 
 
