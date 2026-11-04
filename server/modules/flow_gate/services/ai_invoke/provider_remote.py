@@ -49,13 +49,15 @@ REMOTE_POLL_SEC = 1.0
 REMOTE_PROGRESS_INTERVAL_SEC = STALL_POLL_INTERVAL_SEC
 REMOTE_COMMAND_FALLBACK = "remote_command_missing"
 
-# D0005 §9 (마): Job creation is enabled only after the deployed Agent is confirmed to
-# honour the working-directory contract (relative ``flowgate-runs/<job_id>`` under its
-# own workspace root, escape refusal incl. links, creation, deletion after the report)
-# and the cross-path-system acceptance run has passed. That evidence does not exist yet
-# (the Agent is not in this repository), so the boundary is closed. This is a code fact,
-# not a setting: it changes only together with the TR that records the verification.
-AGENT_WORKDIR_CONTRACT_VERIFIED = False
+# D0005 §9 (마): Job creation is gated on the deployed Agent honouring the working-directory
+# contract (relative ``flowgate-runs/<job_id>`` under its own workspace root, escape refusal
+# incl. links, creation, deletion after the report).
+# flowgate.v02.0131 CH0004 (admin instruction, 2026-11-04): opened by the operator so remote
+# CLI connections run. The deployed-Agent contract verification and the cross-path-system
+# acceptance run are still outstanding (the Agent is not in this repository); the server
+# side only ever sends a server-chosen relative cwd. Set back to False to close the
+# boundary again -- every remote CLI request then ends at the pre-check as before.
+AGENT_WORKDIR_CONTRACT_VERIFIED = True
 
 # Failure codes surfaced in fallback_history / last_message (no secrets, no paths).
 UNASSIGNED = "remote_agent_unassigned"
