@@ -7,8 +7,8 @@ call context). The ``handler`` of both tools is a fail-closed shell: reached thr
 ``(run, input)`` signature it authenticates first and then always answers 422
 ``call_identity_unavailable`` without writing anything.
 
-The call handlers (``chat_read`` / ``chat_edit``) and the merge into ``PROVIDE_CHAT_TOOLS``
-are T#7 (L#3 §2.5·§2.6); until a call handler is supplied the descriptors only carry the shell.
+T#7 connects the call handlers in ``chat_adapter`` through ``PROVIDE_CHAT_TOOLS``.
+Without a call handler the descriptors retain the fail-closed shell.
 """
 from __future__ import annotations
 
@@ -81,6 +81,8 @@ def descriptor(name: str, call_handler: Optional[Callable] = None) -> dict:
         raise ValueError(f"unknown card document chat tool: {name}")
     tool = {"name": name, "description": description, "schema": schema,
             "handler": stub_handler, "own_validation": True, "completion": False}
+    if name == REVISE_TOOL:
+        tool["cli_mention"] = cli_mention_section
     if call_handler is not None:
         if not callable(call_handler):
             raise TypeError(f"call_handler of {name} is not callable")
@@ -92,3 +94,28 @@ def descriptors(call_handlers: Optional[dict] = None) -> list:
     """Both descriptors; ``call_handlers`` maps tool name -> ``call_handler(run, call_context)``."""
     handlers = call_handlers or {}
     return [descriptor(READ_TOOL, handlers.get(READ_TOOL)), descriptor(REVISE_TOOL, handlers.get(REVISE_TOOL))]
+
+
+def cli_mention_section(api_base: str, raw_token: str) -> str:
+    """L#3 §2.12: one section for both routes, independent of command permission."""
+    base = api_base.rstrip("/")
+    if base.endswith("/api/v1"):
+        base = base[:-len("/api/v1")] + "/api/v2/chat"
+    else:
+        base += "/api/v2/chat"
+    return (
+        "[Card document read and edit]\n"
+        f"GET {base}/flows/{{flow_id}}/nodes/{{node_key}}/slots/{{slot}}/document\n"
+        f"POST {base}/flows/{{flow_id}}/nodes/{{node_key}}/slots/{{slot}}/document/revisions\n"
+        f"Authorization: Bearer {raw_token}\n"
+        "First GET the full body, doc_id and revision_no. Only then edit with POST, sending "
+        "expected_doc_id, expected_revision, content (the entire new body), and idempotency_key. "
+        "Make a new UUID v4 idempotency_key for each save attempt; reuse it only when retransmitting "
+        "the same attempt. After a conflict, a new body requires a new key. "
+        "Never write the same document through /inbox, a shell, v1 PATCH or register_document. "
+        "Read mode refuses edits. Report refusals, conflicts and 500 errors honestly; do not claim "
+        "a save succeeded, and re-read after an uncertain result. Document editing does not consume "
+        "this token. API chat 413 result_too_large means its transport size limit: do not claim "
+        "a read or edit succeeded; tell the user and suggest CLI chat, Designer or Agent. "
+        "CLI chat has no API chat result-size limit."
+    )

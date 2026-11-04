@@ -39,9 +39,13 @@ def on_chat_run_start(run: dict) -> None:
 def provide_chat_tools(run) -> list[dict]:
     """``run_command`` for a run admitted through :func:`on_chat_run_start` (or, with
     ``run=None``, the description for the CLI mention built before the run exists)."""
-    if run is not None and not run.get("chat_command_capability"):
-        return []
-    return [commands.tool_descriptor()]
+    from flowgate.card_document_edit import chat_tools, chat_adapter
+
+    tools = [commands.tool_descriptor()] if run is None or run.get("chat_command_capability") else []
+    return tools + chat_tools.descriptors({
+        chat_tools.READ_TOOL: chat_adapter.read_card_document_call_handler,
+        chat_tools.REVISE_TOOL: chat_adapter.revise_card_document_call_handler,
+    })
 
 
 def _run_was_cancelled(run: dict) -> bool:

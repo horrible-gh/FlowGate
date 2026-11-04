@@ -14,6 +14,9 @@ from .structured_identity import INPUT_TS_BRIEF, INPUT_TS_SPEC
 router = APIRouter(prefix="/api/v2", tags=["CardDocumentEdit"])
 BASE = "/flows/{flow_id}/nodes/{node_key}/slots/{slot}/document"
 
+from .chat_routes import router as chat_router
+router.include_router(chat_router)
+
 
 @router.get(BASE)
 def get_document(flow_id: str, node_key: str, slot: str, request: Request):

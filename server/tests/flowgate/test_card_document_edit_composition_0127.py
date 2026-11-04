@@ -74,19 +74,22 @@ def composition(env, monkeypatch):
 
 def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
     reference, current, _ = composition
-    from flowgate.card_document_edit import routes as edit_routes
+    from flowgate.card_document_edit import routes as edit_routes, chat_routes
 
     endpoints = (edit_routes.get_document, edit_routes.post_revision,
                  # 0127 T#5 (L#2 §2.15): the structured TS projection reads and revisions, still /api/v2.
                  edit_routes.get_test_spec, edit_routes.get_test_brief,
-                 edit_routes.post_test_spec_revision, edit_routes.post_test_brief_revision)
+                 edit_routes.post_test_spec_revision, edit_routes.post_test_brief_revision,
+                 chat_routes.get_document, chat_routes.post_revision)
     added = [r for r in current.routes if isinstance(r, APIRoute) and r.endpoint in endpoints]
-    assert len(added) == 6
+    assert len(added) == 8
     expected = "/flowgate/api/v2/flows/{flow_id}/nodes/{node_key}/slots/{slot}/document"
     assert {(r.path, tuple(sorted(r.methods))) for r in added} == {
         (expected, ("GET",)), (expected + "/revisions", ("POST",)),
         (expected + "/test-spec", ("GET",)), (expected + "/test-brief", ("GET",)),
-        (expected + "/test-spec/revisions", ("POST",)), (expected + "/test-brief/revisions", ("POST",))}
+        (expected + "/test-spec/revisions", ("POST",)), (expected + "/test-brief/revisions", ("POST",)),
+        (expected.replace("/api/v2/", "/api/v2/chat/"), ("GET",)),
+        (expected.replace("/api/v2/", "/api/v2/chat/") + "/revisions", ("POST",))}
     before = [r for r in reference.routes if isinstance(r, APIRoute)]
     after = [r for r in current.routes if isinstance(r, APIRoute) and r not in added]
     assert [_route_signature(r) for r in before] == [_route_signature(r) for r in after]
@@ -107,15 +110,17 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
         assert posted.mutation_resource == "system"
         assert posted.mutation_reason == "explicit_non_group_route"
         assert posted.group_resolver is None  # Flow-coordinate routes enforce policy inside the service.
-    print(f"COMPOSITION: {len(before)} legacy API routes unchanged; 6 distinct v2 routes; 4 middleware unchanged")
+    print(f"COMPOSITION: {len(before)} legacy API routes unchanged; 8 distinct v2 routes (including chat); 4 middleware unchanged")
 
 
 @pytest.mark.parametrize("method,path", [
     ("POST", "/flowgate/api/v1/flows/{flow}/nodes/research/slots/instruction/document"),
     ("GET", "/flowgate/api/v2/flows/{flow}/nodes/research/slots/instruction/document"),
+    ("GET", "/flowgate/api/v2/chat/flows/{flow}/nodes/research/slots/instruction/document"),
+    ("POST", "/flowgate/api/v2/chat/flows/{flow}/nodes/research/slots/instruction/document/revisions"),
     ("POST", "/flowgate/api/v2/flows/{flow}/nodes/research/slots/instruction/document/revisions"),
 ])
-def test_main_routes_require_user_auth(composition, method, path):
+def test_main_routes_require_auth(composition, method, path):
     reference, current, _ = composition
     path = path.format(flow=F)
     response = TestClient(current).request(method, path, json={})

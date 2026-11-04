@@ -71,7 +71,8 @@ def judge_and_store(ctx, req, flow, holder, restore_log):
                 raise ValidateOnlyDone(_verdict(req, current))
             meta = verdict.record["parsed"]
             plan = ContactPlan(current["project_id"], current.get("group_id"), dict(current), req.actor.user_id,
-                               meta.get("token_id"), bool(meta.get("node_key") and meta.get("slot")))
+                               meta.get("token_id") if req.actor.kind == "worker" else None,
+                               bool(meta.get("node_key") and meta.get("slot")))
             raise ReplayDone({**meta.get("agent_result", {}), "doc_id": meta["doc_id"], "revision_no": meta["revision_no"],
                               "updated_at": meta["updated_at"], "replayed": True}, plan)
         if verdict.kind == idempotency.STALE:
