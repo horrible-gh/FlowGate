@@ -17,7 +17,7 @@
        flowgate.v02.0074 T0017: no dashed block under the line — a plan with no started cards shows no progress line
        (the block was not a drop target; the T#1 placeholder is gone). -->
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
-    <InspectorSlotList :slots="lines" @open="openLine" @history="historyLine" @action="actionLine">
+    <InspectorSlotList :target="target" :slots="lines" @open="openLine" @history="historyLine" @action="actionLine">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>
     </InspectorSlotList>

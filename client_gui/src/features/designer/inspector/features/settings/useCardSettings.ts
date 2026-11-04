@@ -20,7 +20,7 @@ import { captureInspectorResourceContext, useInspectorFieldWrite, useInspectorRe
 import { cardSettingsBlockedBy, type CardSettingsBlocked, type CardSettingsFailureKind, type CardSettingsField } from './cardSettingsModel'
 
 /** Server events after which the card's settings are read again (its run, hence its lock, moved). */
-export const CARD_SETTINGS_EVENTS = ['graph_canvas_changed', 'graph_run_status_changed', 'graph_node_state_changed', 'ai_invoke_started', 'ai_invoke_finished'] as const
+export const CARD_SETTINGS_EVENTS = ['doc_review_status_changed', 'graph_canvas_changed', 'graph_run_status_changed', 'graph_node_state_changed', 'ai_invoke_started', 'ai_invoke_finished'] as const
 
 /** An event of the card's Flow. */
 export const cardSettingsEventMatches: InspectorEventMatch = (frame, scope) => frame.groupId === scope.flowId

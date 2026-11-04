@@ -168,11 +168,12 @@ describe('card document lines on the Frame', () => {
       'inspector-slot-name',
       'document-io-upload',
       'document-io-download',
-      // the line's own buttons as before: [AI 호출] · history · open · ✎
+      // 0126: preserve AI/edit/history/open, with the decision as the last button.
       'inspector-slot-action',
+      'inspector-slot-edit',
       'inspector-slot-history',
       'inspector-slot-open',
-      'inspector-slot-edit',
+      'inspector-document-decision',
     ])
     expect(report.attributes('data-empty')).toBe('true')
     expect(report.find('[data-test="document-io"]').exists()).toBe(false)

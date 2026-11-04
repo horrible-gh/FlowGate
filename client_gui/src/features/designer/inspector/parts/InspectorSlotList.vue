@@ -31,15 +31,16 @@
       :key="line.key ?? line.name"
       :kind="line.kind ?? 'document'"
       :name="line.name"
+      :decision-layout="decisionOf(line).visible"
       :id="line.id ?? null"
       :openable="line.open === 'enabled'"
       :empty="line.empty ?? false"
       :empty-text="line.emptyText ?? null"
-      :state="line.state ?? null"
+      :state="stateOf(line)"
       :summary="line.summary ?? null"
       :progress="line.progress ?? null"
       :focus="line.focus ?? false"
-      :danger="line.danger ?? false"
+      :danger="decisionOf(line).authoritative ? stateOf(line)?.tone === 'danger' : (line.danger ?? false)"
       :test-ids="line.testIds ?? null"
       :author="line.author ?? null"
       :blank="line.blank ?? false"
@@ -95,6 +96,15 @@
           @click="emit('action', line, action.key)"
         >{{ actionLabel(action) }}</Button>
       </template>
+      <IconButton
+        v-if="decisionOf(line).visible && editable && line.open === 'enabled'"
+        :label="t('gui.designer.inspector.slot.edit')"
+        :title="t('gui.designer.inspector.slot.edit')"
+        variant="secondary"
+        size="sm"
+        data-test="inspector-slot-edit"
+        @click="emit('edit', line)"
+      >✎</IconButton>
       <InspectorHistoryButton
         v-if="line.open === 'enabled' && line.id && line.history !== false"
         :count="line.historyCount ?? null"
@@ -111,7 +121,7 @@
         @click="open(line)"
       />
       <IconButton
-        v-if="editable && line.open === 'enabled'"
+        v-if="!decisionOf(line).visible && editable && line.open === 'enabled'"
         :label="t('gui.designer.inspector.slot.edit')"
         :title="t('gui.designer.inspector.slot.edit')"
         variant="secondary"
@@ -119,12 +129,21 @@
         data-test="inspector-slot-edit"
         @click="emit('edit', line)"
       >✎</IconButton>
+      <InspectorDocumentDecision v-if="decisionOf(line).visible" :name="line.name"
+        :action="decisionOf(line).action" :disabled="decisionOf(line).disabled" :reason="decisionOf(line).reason"
+        @click="decisions.decide(line.cardSlot ?? line.key ?? '', line.id)" />
     </InspectorSlotRow>
+    <InspectorReason v-if="decisions.failure.value" tone="danger" :text="decisions.failure.value" role="alert" data-test="document-decision-failure" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { useCardDocumentDecisions } from '../useCardDocumentDecisions'
+import type { InspectorTarget } from '../inspectorTarget'
+import InspectorDocumentDecision from './InspectorDocumentDecision.vue'
+import { documentDecisionMessages } from './documentDecisionMessages'
+import InspectorReason from './InspectorReason.vue'
 import Button from '../../../../components/ui/Button.vue'
 import IconButton from '../../../../components/ui/IconButton.vue'
 import InspectorAiButton from './InspectorAiButton.vue'
@@ -186,9 +205,10 @@ export interface InspectorSlotView {
   readonly testIds?: (InspectorSlotTestIds & { readonly nav?: string; readonly open?: string }) | null
 }
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     slots: readonly InspectorSlotView[]
+    target?: InspectorTarget | null
     /** ✎ (open straight in the editor) on every line that opens. */
     editable?: boolean
   }>(),
@@ -205,7 +225,25 @@ const emit = defineEmits<{
   action: [line: InspectorSlotView, key: SlotActionKey]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const decisions = useCardDocumentDecisions(() => props.target ?? null)
+const decisionOf = (line: InspectorSlotView) => {
+  const row = decisions.row(line.cardSlot ?? line.key ?? '', line.id)
+  return { ...row, visible: row.visible && (line.kind ?? 'document') === 'document' && !line.nav }
+}
+
+function stateOf(line: InspectorSlotView) {
+  const state = decisionOf(line).state
+  if (!decisionOf(line).authoritative) return line.state ?? null
+  if (!state) return null
+  if (state !== 'approved' && state !== 'wf_done' && state !== 'rejected') {
+    const tone = state === 'pending_review' ? 'warning' as const : state === 'revised' ? 'info' as const : 'neutral' as const
+    return { label: t(`gui.designer.inspector.review_status.${state}`), tone }
+  }
+  const words = documentDecisionMessages[locale.value as keyof typeof documentDecisionMessages] ?? documentDecisionMessages.en
+  return { label: state === 'rejected' ? words.decision.rejected : words.decision.approved,
+    tone: state === 'rejected' ? 'danger' as const : 'success' as const }
+}
 
 /** flowgate.v02.0068 T#1: a line that stands for a document of its own (the upload / download group's lines). */
 function hasDocument(line: InspectorSlotView): boolean {
