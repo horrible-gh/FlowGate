@@ -80,16 +80,21 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
                  # 0127 T#5 (L#2 §2.15): the structured TS projection reads and revisions, still /api/v2.
                  edit_routes.get_test_spec, edit_routes.get_test_brief,
                  edit_routes.post_test_spec_revision, edit_routes.post_test_brief_revision,
-                 chat_routes.get_document, chat_routes.post_revision)
+                 chat_routes.get_document, chat_routes.post_revision,
+                 # 0127 CH0028: chat doc_id read / existing-body revision / new-document create.
+                 chat_routes.get_document_by_id, chat_routes.post_document_revision, chat_routes.post_document)
     added = [r for r in current.routes if isinstance(r, APIRoute) and r.endpoint in endpoints]
-    assert len(added) == 8
+    assert len(added) == 11
     expected = "/flowgate/api/v2/flows/{flow_id}/nodes/{node_key}/slots/{slot}/document"
     assert {(r.path, tuple(sorted(r.methods))) for r in added} == {
         (expected, ("GET",)), (expected + "/revisions", ("POST",)),
         (expected + "/test-spec", ("GET",)), (expected + "/test-brief", ("GET",)),
         (expected + "/test-spec/revisions", ("POST",)), (expected + "/test-brief/revisions", ("POST",)),
         (expected.replace("/api/v2/", "/api/v2/chat/"), ("GET",)),
-        (expected.replace("/api/v2/", "/api/v2/chat/") + "/revisions", ("POST",))}
+        (expected.replace("/api/v2/", "/api/v2/chat/") + "/revisions", ("POST",)),
+        ("/flowgate/api/v2/chat/documents/{doc_id}", ("GET",)),
+        ("/flowgate/api/v2/chat/documents/{doc_id}/revisions", ("POST",)),
+        ("/flowgate/api/v2/chat/documents", ("POST",))}
     before = [r for r in reference.routes if isinstance(r, APIRoute)]
     after = [r for r in current.routes if isinstance(r, APIRoute) and r not in added]
     assert [_route_signature(r) for r in before] == [_route_signature(r) for r in after]
@@ -106,11 +111,16 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
         scope = {"type": "http", "path": concrete, "method": next(iter(new.methods)), "root_path": ""}
         first = next(r for r in current.routes if r.matches(scope)[0] is Match.FULL)
         assert first is new
-    for posted in (r for r in added if "POST" in r.methods):
+    for posted in (r for r in added if "POST" in r.methods and "/flows/" in r.path):
         assert posted.mutation_resource == "system"
         assert posted.mutation_reason == "explicit_non_group_route"
         assert posted.group_resolver is None  # Flow-coordinate routes enforce policy inside the service.
-    print(f"COMPOSITION: {len(before)} legacy API routes unchanged; 8 distinct v2 routes (including chat); 4 middleware unchanged")
+    # 0127 CH0028: the chat doc_id routes keep the standard group resolver (lease check in front of
+    # the service, which re-checks the lease owner itself).
+    for posted in (r for r in added if "POST" in r.methods and "/chat/documents" in r.path):
+        assert posted.mutation_resource == "group"
+        assert posted.mutation_reason == "standard_group_resolver"
+    print(f"COMPOSITION: {len(before)} legacy API routes unchanged; 11 distinct v2 routes (including chat); 4 middleware unchanged")
 
 
 @pytest.mark.parametrize("method,path", [

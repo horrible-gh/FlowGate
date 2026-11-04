@@ -18,6 +18,10 @@ from . import chat_authz, chat_errors
 
 READ_TOOL = "read_card_document"
 REVISE_TOOL = "revise_card_document"
+# 0127 CH0028: doc_id tools. The server resolves card bindings; no card coordinates are asked.
+READ_DOC_TOOL = "read_document_by_id"
+REVISE_DOC_TOOL = "revise_document_by_id"
+CREATE_DOC_TOOL = "create_new_document"
 
 READ_SCHEMA = {
     "type": "object",
@@ -44,6 +48,37 @@ REVISE_SCHEMA = {
     "additionalProperties": False,
 }
 
+READ_DOC_SCHEMA = {
+    "type": "object",
+    "properties": {"doc_id": {"type": "string", "minLength": 1}},
+    "required": ["doc_id"],
+    "additionalProperties": False,
+}
+
+REVISE_DOC_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "doc_id": {"type": "string", "minLength": 1},
+        "expected_revision": {"type": "integer", "minimum": 0},
+        "content": {"type": "string"},
+    },
+    "required": ["doc_id", "expected_revision", "content"],
+    "additionalProperties": False,
+}
+
+CREATE_DOC_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "doc_type": {"type": "string", "enum": ["R", "B"]},
+        "title": {"type": "string", "minLength": 1},
+        "content": {"type": "string"},
+        "module": {"type": "string"},
+        "priority": {"type": "string", "enum": ["low", "medium", "high"]},
+    },
+    "required": ["title", "content"],
+    "additionalProperties": False,
+}
+
 _SIZE_NOTE = (
     " A 413 result_too_large is the API chat size limit: do not say the document was read or "
     "edited, tell the user, and point them to the CLI chat, the Designer or an Agent. Never work "
@@ -56,7 +91,30 @@ READ_DESCRIPTION = (
 REVISE_DESCRIPTION = (
     "Replace the whole body of one card document on the user's behalf. Send expected_doc_id and "
     "expected_revision from your latest read_card_document result and the full new content. "
-    "Refusals, conflicts and errors are not saves: report them as they are." + _SIZE_NOTE
+    "Refusals, conflicts and errors are not saves: report them as they are. When you only know a "
+    "doc_id, use read_document_by_id / revise_document_by_id instead and never ask the user for card "
+    "coordinates." + _SIZE_NOTE
+)
+READ_DOC_DESCRIPTION = (
+    "Read one existing document of this project by doc_id (e.g. test2.default.0121.0001-R), card-bound "
+    "or not. Returns content, revision_no, status and edit_path. Use revision_no as expected_revision "
+    "before revise_document_by_id. Never ask the user for flow_id, node_key or slot." + _SIZE_NOTE
+)
+REVISE_DOC_DESCRIPTION = (
+    "Write or rewrite the body of an EXISTING document by doc_id on the user's behalf (an empty body "
+    "included). The server finds the card binding itself and keeps the doc_id; the revision goes up "
+    "by one. Send expected_revision from your latest read_document_by_id result and the whole new content. "
+    "If content has no front matter, the document's current front matter is kept; never change the "
+    "identity fields (doc_id, type, group, target_id). It never creates documents: a missing doc_id "
+    "is 404 document_not_found, use create_new_document for a new one. Refusals, revision_conflict and "
+    "errors are not saves: report them as they are and re-read after a conflict." + _SIZE_NOTE
+)
+CREATE_DOC_DESCRIPTION = (
+    "Register a NEW workflow-root document (doc_type R = requirement, B = bug report; default R) in "
+    "this project with a new group, on the user's behalf. Send the title and the body as content "
+    "WITHOUT front matter (the server writes it). module defaults to this chat's module. Returns the "
+    "new doc_id. Use it only when the user asks for a new document; to write into an existing "
+    "document use revise_document_by_id. Refusals and errors are not creations: report them as they are."
 )
 
 
@@ -77,12 +135,20 @@ def descriptor(name: str, call_handler: Optional[Callable] = None) -> dict:
         description, schema = READ_DESCRIPTION, READ_SCHEMA
     elif name == REVISE_TOOL:
         description, schema = REVISE_DESCRIPTION, REVISE_SCHEMA
+    elif name == READ_DOC_TOOL:
+        description, schema = READ_DOC_DESCRIPTION, READ_DOC_SCHEMA
+    elif name == REVISE_DOC_TOOL:
+        description, schema = REVISE_DOC_DESCRIPTION, REVISE_DOC_SCHEMA
+    elif name == CREATE_DOC_TOOL:
+        description, schema = CREATE_DOC_DESCRIPTION, CREATE_DOC_SCHEMA
     else:
         raise ValueError(f"unknown card document chat tool: {name}")
     tool = {"name": name, "description": description, "schema": schema,
             "handler": stub_handler, "own_validation": True, "completion": False}
     if name == REVISE_TOOL:
         tool["cli_mention"] = cli_mention_section
+    elif name == REVISE_DOC_TOOL:
+        tool["cli_mention"] = cli_document_mention_section
     if call_handler is not None:
         if not callable(call_handler):
             raise TypeError(f"call_handler of {name} is not callable")
@@ -90,10 +156,41 @@ def descriptor(name: str, call_handler: Optional[Callable] = None) -> dict:
     return tool
 
 
+ALL_TOOLS = (READ_TOOL, REVISE_TOOL, READ_DOC_TOOL, REVISE_DOC_TOOL, CREATE_DOC_TOOL)
+
+
 def descriptors(call_handlers: Optional[dict] = None) -> list:
-    """Both descriptors; ``call_handlers`` maps tool name -> ``call_handler(run, call_context)``."""
+    """All descriptors; ``call_handlers`` maps tool name -> ``call_handler(run, call_context)``."""
     handlers = call_handlers or {}
-    return [descriptor(READ_TOOL, handlers.get(READ_TOOL)), descriptor(REVISE_TOOL, handlers.get(REVISE_TOOL))]
+    return [descriptor(name, handlers.get(name)) for name in ALL_TOOLS]
+
+
+def _chat_base(api_base: str) -> str:
+    base = api_base.rstrip("/")
+    if base.endswith("/api/v1"):
+        return base[:-len("/api/v1")] + "/api/v2/chat"
+    return base + "/api/v2/chat"
+
+
+def cli_document_mention_section(api_base: str, raw_token: str) -> str:
+    """0127 CH0028: doc_id read / existing-body edit / new-document create for CLI chat."""
+    base = _chat_base(api_base)
+    return (
+        "[Document read, edit and create by doc_id]\n"
+        f"GET {base}/documents/{{doc_id}}\n"
+        f"POST {base}/documents/{{doc_id}}/revisions\n"
+        f"POST {base}/documents\n"
+        f"Authorization: Bearer {raw_token}\n"
+        "Existing document (any doc_id of this project, card-bound or not): GET it first for content and "
+        "revision_no, then POST /revisions with expected_revision, content (the whole new body; without "
+        "front matter the current front matter is kept) and idempotency_key (new UUID v4 per attempt). "
+        "The server resolves card bindings; never ask the user for flow_id, node_key or slot. A missing "
+        "doc_id is 404 and is never created by /revisions. "
+        "New document: POST /documents with title, content (body without front matter), optional "
+        "doc_type (R or B, default R), module, priority and idempotency_key; it returns the new doc_id. "
+        "Read mode refuses edits and creation. Report refusals, revision_conflict and errors honestly; "
+        "do not claim a save succeeded, and re-read after an uncertain result."
+    )
 
 
 def cli_mention_section(api_base: str, raw_token: str) -> str:

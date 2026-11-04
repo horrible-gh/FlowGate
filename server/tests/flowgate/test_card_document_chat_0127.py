@@ -152,7 +152,8 @@ def test_tool_keys_unchanged_and_optional_keys_are_checked(clean_hooks):
 
 def test_card_document_descriptors_are_valid_tools_with_a_fail_closed_shell(clean_hooks):
     tools = chat_tools.descriptors()
-    assert [tool["name"] for tool in tools] == ["read_card_document", "revise_card_document"]
+    assert [tool["name"] for tool in tools] == ["read_card_document", "revise_card_document",
+                                                "read_document_by_id", "revise_document_by_id", "create_new_document"]
     for tool in tools:
         assert tool["handler"] is chat_tools.stub_handler and tool["own_validation"] is True
         assert "call_handler" not in tool and tool["schema"]["additionalProperties"] is False
@@ -167,7 +168,7 @@ def test_card_document_descriptors_are_valid_tools_with_a_fail_closed_shell(clea
     with pytest.raises(ValueError):
         chat_tools.descriptor("run_command")
     chat_run_hooks.register(chat_run_hooks.PROVIDE_CHAT_TOOLS, lambda run: chat_tools.descriptors())
-    assert len(chat_run_hooks.chat_tools({"action_scope": "chat"})) == 2
+    assert len(chat_run_hooks.chat_tools({"action_scope": "chat"})) == len(chat_tools.ALL_TOOLS)
 
 
 def test_stub_handler_authenticates_first_then_refuses_call_identity(reads):
@@ -315,7 +316,8 @@ def test_integration_registers_every_port_including_call_acceptance(clean_hooks)
     assert isinstance(ctx, call_ledger.CallContext) and ctx.run_id == RUN_ID and ctx.tool_call_id == "call_0"
     # run_command keeps its (run, input) descriptor alongside the T#7 card tools.
     tools = chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})
-    assert [t["name"] for t in tools] == ["run_command", "read_card_document", "revise_card_document"]
+    assert [t["name"] for t in tools] == ["run_command", "read_card_document", "revise_card_document",
+                                          "read_document_by_id", "revise_document_by_id", "create_new_document"]
     assert "call_handler" not in tools[0] and all(callable(t["call_handler"]) for t in tools[1:])
 
 

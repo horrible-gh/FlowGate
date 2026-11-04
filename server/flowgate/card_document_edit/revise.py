@@ -36,7 +36,7 @@ def _verdict(req, current):
 
 
 def judge_and_store(ctx, req, flow, holder, restore_log):
-    guards.check_writable(req.flow_id, guards.principal_of(req), guards.operation_of(req))
+    guards.check_writable(req.flow_id, guards.principal_of(req, req.flow_id), guards.operation_of(req))
     if req.recheck is not None:
         req.recheck()
     node, spec = target.check_card(flow, req.node_key, req.slot)

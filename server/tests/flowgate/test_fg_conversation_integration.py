@@ -102,10 +102,11 @@ def test_register_connects_every_port_idempotently(clean_hooks):
     integration.register()
     assert all(chat_run_hooks.registered(name) for name in chat_run_hooks.HOOK_NAMES)
     tools = chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})
-    assert [t["name"] for t in tools] == ["run_command", "read_card_document", "revise_card_document"]
+    assert [t["name"] for t in tools] == ["run_command", "read_card_document", "revise_card_document",
+                                          "read_document_by_id", "revise_document_by_id", "create_new_document"]
     # Document delegation is independent of command capability.
     assert [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})] == [
-        "read_card_document", "revise_card_document"]
+        "read_card_document", "revise_card_document", "read_document_by_id", "revise_document_by_id", "create_new_document"]
 
 
 # ── call sites in the existing engine (composition, order) ───────────────────
@@ -245,7 +246,8 @@ def test_api_worker_exposes_run_command_and_returns_the_result_to_the_same_run(e
                                 "api_model": "m"}, "prompt", run)
     assert outcome == ("started_ok", None)
     assert calls[0]["tools"] == ["read_chat_history", "read_help", "run_command",
-                                 "read_card_document", "revise_card_document", "send_chat_reply"]
+                                 "read_card_document", "revise_card_document",
+                                 "read_document_by_id", "revise_document_by_id", "create_new_document", "send_chat_reply"]
     assert "`run_command`" in calls[0]["conversation"][2]["content"]
     tool_msg = next(m for m in calls[1]["conversation"] if m.get("role") == "tool")
     assert tool_msg["tool_call_id"] == "call_cmd"

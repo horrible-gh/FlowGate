@@ -378,8 +378,13 @@ def test_projection_failure_still_notifies_after_commit_and_reports_500(chat, mo
 def test_cli_mention_and_descriptors_cover_contract_without_command_capability():
     from flowgate.conversation import integration
     tools = integration.provide_chat_tools({"action_scope": "chat"})
-    assert [t["name"] for t in tools] == [chat_tools.READ_TOOL, chat_tools.REVISE_TOOL]
+    assert [t["name"] for t in tools] == [chat_tools.READ_TOOL, chat_tools.REVISE_TOOL, chat_tools.READ_DOC_TOOL,
+                                          chat_tools.REVISE_DOC_TOOL, chat_tools.CREATE_DOC_TOOL]
     assert all(t["completion"] is False and callable(t["call_handler"]) for t in tools)
+    doc_section = tools[3]["cli_mention"]("http://host/flowgate/api/v1/", "raw")
+    for word in ("/api/v2/chat/documents/{doc_id}", "/revisions", "POST http://host/flowgate/api/v2/chat/documents",
+                 "expected_revision", "idempotency_key", "never ask the user for flow_id"):
+        assert word in doc_section
     section = tools[1]["cli_mention"]("http://host/flowgate/api/v1/", "raw")
     for word in ("/api/v2/chat/flows/", "GET", "POST", "expected_doc_id", "expected_revision", "content", "idempotency_key",
                  "UUID v4", "conflict", "/inbox", "shell", "PATCH", "Read mode", "500", "does not consume", "413", "Designer", "Agent"):
