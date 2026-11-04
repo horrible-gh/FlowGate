@@ -33,8 +33,11 @@ def require_owner(flow_id):
 
 
 def require_current(flow_id, node_key, expected):
+    """A PATCH's ``expected_context`` against now (409 ``gate_context_changed`` / ``settings_context``).
+    flowgate.v02.0130: only the context decides — a card only in the draft (placed after the run's revision) is
+    still a card of the Flow (``settings._card``), its settings writable like any other waiting card."""
     context, node = current(flow_id, node_key)
-    if node is None or (expected is not None and context != expected):
+    if expected is not None and context != expected:
         raise legacy.GraphApiError(409, "gate_context_changed", {
             "flow_id": flow_id, "node_key": node_key, "reason": "settings_context", "context": context})
     return context, node

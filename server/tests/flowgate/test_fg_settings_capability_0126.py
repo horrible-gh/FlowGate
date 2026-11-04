@@ -163,7 +163,9 @@ def test_context_version_historical_unconfirmed_and_structure_protection(env, de
     for context in [dict(before['context'],run_id='old-run'),dict(before['context'],graph_revision_no=0),
                     dict(before['context'],graph_revision_no=2),{'run_id':None,'graph_revision_no':None,'draft_version':None}]:
         r=env['client'].get(url(key),params={'context':json.dumps(context)},headers=_h())
-        assert r.status_code == 200 and r.json()['locked'] is True
+        # flowgate.v02.0130: the screen's view never locks the card; the answer names the server's context.
+        assert r.status_code == 200 and r.json()['locked'] is False and r.json()['context'] == before['context']
+        assert r.json()['context_matches'] is False
         bad=dict(before,context=context)
         assert save(env,key,'review_count',2,bad,expect=409)['error']['params']['reason']=='settings_context'
     after=save(env,key,'review_count',2)
@@ -355,7 +357,8 @@ def test_an_existing_historical_revision_cannot_write_the_new_execution_revision
     assert current['context']['graph_revision_no']==2
     historical=dict(current['context'],graph_revision_no=1)
     view=env['client'].get(url(key),params={'context':json.dumps(historical)},headers=_h())
-    assert view.status_code==200 and view.json()['locked'] is True
+    # flowgate.v02.0130: viewing a historical revision does not lock the card; writing from it still refuses.
+    assert view.status_code==200 and view.json()['locked'] is False and view.json()['context']==current['context']
     refused=save(env,key,'review_count',3,dict(current,context=historical),expect=409)
     assert refused['error']['params']['reason']=='settings_context'
     assert save(env,key,'review_count',3)['fields']['review_count']['value']==3

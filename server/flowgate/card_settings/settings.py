@@ -124,14 +124,17 @@ def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=Non
         settings_context.require_owner(flow_id)
     except legacy.GraphApiError as exc:
         owner_reason = exc.code
-    context, current_node = settings_context.current(flow_id, node["node_key"])
-    context_valid = current_node is not None and (expected_context is None or expected_context == context)
-    locked = locked or not context_valid or owner_reason is not None
+    # flowgate.v02.0130: the screen's view (revision / draft / run it draws) never locks a card. 0126 locked the card
+    # whenever the context the screen built differed from ``context.current`` — and the screen builds it from another
+    # run choice (the Canvas run) and another view (draft), so a waiting ToD card read locked with nothing running.
+    # The answer carries the server's context; the screen sends that one back with a PATCH (a stale one is still 409).
+    context, _current_node = settings_context.current(flow_id, node["node_key"])
+    locked = locked or owner_reason is not None
     payload = {"context": context, "node_running": node_running,
+               "context_matches": expected_context is None or expected_context == context,
                "settings_capability": {"editable": not locked,
-                                       "reason": owner_reason or ("settings_context" if not context_valid else
-                                                 ("node_settings_locked" if node_running else
-                                                  ("settings_locked" if locked else None)))},
+                                       "reason": owner_reason or ("node_settings_locked" if node_running else
+                                                                  ("settings_locked" if locked else None))},
                "flow_id": flow_id, "node_key": node["node_key"], "card_kind": kind,
                "locked": locked,
                "settings_version": repository.settings_version(flow_id, node["node_key"]),
@@ -188,7 +191,8 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
 
     def body() -> dict:
         settings_context.require_owner(flow_id)
-        # Same guard as the write: a run/revision/draft change cannot redirect an old view.
+        # Same guard as the write: a run/revision/draft change after the screen's read cannot redirect an old view.
+        # flowgate.v02.0130: the context compared is the one the read answered (never one the screen built).
         if expected_context is not None:
             settings_context.require_current(flow_id, node_key, expected_context)
         if expected_version is not None:
@@ -204,7 +208,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             gate_lock.require_unlocked(flow_id, node_key)             # D0007 §7.2: the gate's own lock
         else:
             editing.require_settings_editable(flow_id)                # 0113 T#1: the running check below locks
-        node = settings_context.require_current(flow_id, node_key, expected_context)[1] if expected_context is not None else _card(flow_id, node_key)
+        node = _card(flow_id, node_key)       # 0130: a card only in the draft keeps its settings during a run too
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
         role_write = name in card_roles.ROLE_FIELDS and role_store.available()
         if name in card_roles.NEW_FIELDS and not role_write:

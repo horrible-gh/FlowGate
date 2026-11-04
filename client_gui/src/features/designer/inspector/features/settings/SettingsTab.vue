@@ -295,7 +295,9 @@ const errorKey = computed(() => {
  * the run status is confirmed (`editLock` `unknown`) it still waits.
  */
 function cardLocked(): boolean {
-  return card.node.value?.locked === true || props.target.nodeRun?.nodeRunning === true || props.target.editLock === 'unknown'
+  // flowgate.v02.0130: the unconfirmed run status only waits until the card's own settings are read — after that the
+  // server's answer (`locked`, which already holds `node_running`) decides.
+  return card.node.value?.locked === true || props.target.nodeRun?.nodeRunning === true || (props.target.editLock === 'unknown' && card.node.value === null)
 }
 
 /** The 🔒 실행 중 line: an actually running card (see `cardLocked`), or a v0.1 step started and not done yet. */
@@ -307,7 +309,7 @@ const locked = computed(() => {
 
 /** TR0031 rev1: the lock line while only the unconfirmed run status locks the card (else the 🔒 실행 중 line). */
 const lockText = computed(() =>
-  source.value === 'card' && card.node.value?.locked !== true && props.target.nodeRun?.nodeRunning !== true && props.target.editLock === 'unknown'
+  source.value === 'card' && card.node.value === null && props.target.nodeRun?.nodeRunning !== true && props.target.editLock === 'unknown'
     ? t('gui.designer.center.run_lock_pending')
     : null,
 )
