@@ -55,6 +55,7 @@ from flowgate.card_settings.routes import router as _card_settings_router
 from flowgate.ai_roles.routes import router as _ai_roles_router
 # flowgate.v02.0056 T#3: a card line's write and the v0.2 card memos (server/flowgate/card_documents, card_memos).
 from flowgate.card_documents.routes import router as _card_documents_router
+from flowgate.card_document_edit.routes import router as _card_document_edit_router
 from flowgate.card_memos.routes import router as _card_memos_router
 from flowgate.work_plan_deploy.routes import router as _work_plan_deploy_router
 # flowgate.v02.0061 T#13: the Graph Time Machine (server/flowgate/graph_time_machine).
@@ -261,6 +262,7 @@ app.include_router(_graph_run_router, prefix=f"{CONTEXT}", tags=["GraphRun"])
 app.include_router(_card_settings_router, prefix=f"{CONTEXT}", tags=["CardSettings"])
 app.include_router(_ai_roles_router, prefix=f"{CONTEXT}", tags=["AiSettings"])
 app.include_router(_card_documents_router, prefix=f"{CONTEXT}", tags=["CardDocuments"])
+app.include_router(_card_document_edit_router, prefix=f"{CONTEXT}", tags=["CardDocumentEdit"])
 app.include_router(_card_memos_router, prefix=f"{CONTEXT}", tags=["CardMemos"])
 app.include_router(_work_plan_deploy_router, prefix=f"{CONTEXT}", tags=["WorkPlanDeploy"])
 app.include_router(_graph_time_machine_router, prefix=f"{CONTEXT}", tags=["GraphTimeMachine"])
