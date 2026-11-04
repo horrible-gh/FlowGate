@@ -294,7 +294,8 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     w.unmount()
     locked = false
     const running = { nodeRun: { status: 'open', openedAt: null, finishedAt: null, resultDocId: null, nodeRunning: true } }
-    for (const fields of [running, { editLock: 'unknown' as const }, { readOnly: 'revision' as const }, { readOnly: 'conflict' as const }, { nodeId: 'tmp_wp' }]) {
+    // flowgate.v02.0130: an unconfirmed run status no longer holds a card whose settings the server answered (below).
+    for (const fields of [running, { readOnly: 'revision' as const }, { readOnly: 'conflict' as const }, { nodeId: 'tmp_wp' }]) {
       w = await mountTab(targetFor(fields))
       expect(toggle(w).attributes('disabled'), JSON.stringify(fields)).toBeDefined()
       expect(select(w, 'run_ai').attributes('disabled'), JSON.stringify(fields)).toBeDefined()
@@ -303,6 +304,12 @@ describe('the AI 사전 지시서 작성 switch is a card setting (flowgate.v02.
     }
     wrapper = null
     expect(writes).toEqual([])
+    // 0130: with the run status still unconfirmed, a card the server answered as not locked takes its settings.
+    w = await mountTab(targetFor({ editLock: 'unknown' as const }))
+    expect(toggle(w).attributes('disabled')).toBeUndefined()
+    expect(select(w, 'run_ai').attributes('disabled')).toBeUndefined()
+    w.unmount()
+    wrapper = null
   })
 })
 

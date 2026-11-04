@@ -90,8 +90,11 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
       if (scope()?.docId !== key) return Promise.reject(new Error('gate_context_changed'))
       const [flowId, tail] = splitKey(key)
       const [nodeKey, context] = tail.split('\n')
+      // flowgate.v02.0130: the context sent back is the one the server answered for this card (its own run / revision /
+      // draft choice), never the one the screen built from its view — those differ and 0126 refused every write then.
+      const answered = resource.data.value?.context
       return settingsNodeWrite(flowId, nodeKey, field, field.endsWith('_role') ? aiRolePayload(value as AiRoleValue) : value,
-        resource.data.value?.settingsVersion, JSON.parse(context) ?? undefined)
+        resource.data.value?.settingsVersion, answered ?? JSON.parse(context) ?? undefined)
     },
   })
 
@@ -135,7 +138,8 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
     change: (field, value) => {
       const current = target()
       const reason = current?.readOnly === 'conflict' ? 'conflict' : current?.settingsReadOnly === undefined ? current?.readOnly : current.settingsReadOnly
-      if (!current || !resource.data.value || reason || current.editLock === 'unknown' || current.nodeRun?.nodeRunning || resource.data.value?.locked || resource.data.value?.settingsEditable === false) return Promise.resolve(false)
+      // 0130: once the server answered, its lock decides (an unconfirmed Canvas run status no longer holds a read card).
+      if (!current || !resource.data.value || reason || current.nodeRun?.nodeRunning || resource.data.value?.locked || resource.data.value?.settingsEditable === false) return Promise.resolve(false)
       return writes.write(field, value)
     },
     reload: async () => {

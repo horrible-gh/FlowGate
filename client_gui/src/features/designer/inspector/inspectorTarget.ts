@@ -220,9 +220,9 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     ownership,
     viewMode,
     readOnly: inspectorReadOnly(ownership, viewMode),
-    settingsReadOnly: ownership === 'conflict' ? 'conflict'
-      : viewMode === 'revision' && !(ownership === 'graph' && graph.run?.runId && typeof graph.viewRevisionNo === 'number' && graph.run.revisionNo === graph.viewRevisionNo) ? 'revision'
-      : viewMode === 'revision' ? null : undefined,
+    // flowgate.v02.0130: a card's settings follow the server's capability in every view (revision, an older revision,
+    // draft, with or without a Canvas run) — the view never turns the AI tab off; only an ownership conflict does here.
+    settingsReadOnly: ownership === 'conflict' ? 'conflict' : viewMode === 'revision' ? null : undefined,
     settingsContext: node.definition ? {
       run_id: graph.run?.runId ?? null,
       graph_revision_no: viewMode === 'revision' ? graph.viewRevisionNo ?? null : null,
