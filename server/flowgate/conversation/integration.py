@@ -9,6 +9,11 @@ handler failure never fails the AI run (the hook port logs it and moves on).
     on_chat_run_finalize            finalize: close open commands, then record the run change
     on_chat_run_cancel              cancel: close the run's commands before it is announced
     on_conversation_reply_appended  reply append: move the run's activity anchors
+    accept_chat_call                API worker: accept a received tool call (card document
+                                    call ledger, flowgate.v02.0127 L#3 §2.1 W1)
+
+flowgate.v02.0127 L#3 §2.1 W4: cancel and finalize first close the run's card document edit
+gate (``card_document_edit.chat_gate``) and only then do what they did before.
 """
 from __future__ import annotations
 
@@ -50,7 +55,13 @@ def _run_was_cancelled(run: dict) -> bool:
 
 def on_chat_run_finalize(run: dict) -> None:
     """Commands first -- nothing of a finished run stays open and the end snapshot must
-    not race a command still writing files -- then the run change (D0006 §3.8.2)."""
+    not race a command still writing files -- then the run change (D0006 §3.8.2).
+
+    Before both, the card document edit gate closes with ``finished`` (0127 L#3 §2.7, W4);
+    a gate already closed by a cancel keeps ``cancelled``. That step never raises."""
+    from flowgate.card_document_edit import chat_gate
+
+    chat_gate.close_on_finalize(run)
     if run.get("post_process_recovered"):
         return
     reason = c.REASON_RUN_CANCELLED if _run_was_cancelled(run) else c.REASON_RUN_FINISHED
@@ -62,11 +73,24 @@ def on_chat_run_finalize(run: dict) -> None:
 
 
 def on_chat_run_cancel(run: dict, announce) -> None:
+    """0127 L#3 §2.7 (W4): ① close the card document edit gate (``cancelled``; waits at most
+    CANCEL_DRAIN_SEC for edits already past it, a failure never blocks the cancel) ②
+    the existing command stop, which announces the cancel under its launch gate."""
+    from flowgate.card_document_edit import chat_gate
+
+    chat_gate.close_on_cancel(run)
     commands.stop_run(run["run_id"], on_closed=announce)
 
 
 def on_conversation_reply_appended(doc_id: str, turn: dict) -> None:
     activity.on_turn_appended(doc_id, turn)
+
+
+def accept_chat_call(run: dict, call: dict):
+    """0127 L#3 §2.1 W1: the server call context of a received tool call (or None)."""
+    from flowgate.card_document_edit import call_ledger
+
+    return call_ledger.accept_call(run, call)
 
 
 HANDLERS = {
@@ -75,6 +99,7 @@ HANDLERS = {
     hooks.ON_CHAT_RUN_FINALIZE: on_chat_run_finalize,
     hooks.ON_CHAT_RUN_CANCEL: on_chat_run_cancel,
     hooks.ON_CONVERSATION_REPLY_APPENDED: on_conversation_reply_appended,
+    hooks.ACCEPT_CHAT_CALL: accept_chat_call,
 }
 
 

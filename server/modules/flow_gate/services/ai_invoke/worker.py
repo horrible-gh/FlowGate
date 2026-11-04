@@ -1332,6 +1332,13 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     # single direct send_chat_reply tool exactly as before.
     chat_tools = chat_run_hooks.chat_tools(run) if is_chat else []
     chat_tool_handlers = {tool["name"]: tool["handler"] for tool in chat_tools}
+    # flowgate.v02.0127 L#3 §2.1 W2/W3: optional descriptor keys. A tool with ``call_handler``
+    # receives only the server call context of its accepted call (never the model input);
+    # ``own_validation`` skips the generic schema validation below because the handler maps
+    # input errors itself. Tools without them (run_command) keep handler(run, input).
+    chat_tool_call_handlers = {tool["name"]: tool["call_handler"] for tool in chat_tools
+                               if callable(tool.get("call_handler"))}
+    chat_tool_own_validation = {tool["name"] for tool in chat_tools if tool.get("own_validation") is True}
     chat_tool_specs: Optional[list[dict]] = None
     if chat_tools:
         # The history/help reads of _chat_tool_definitions stay; the port's tools replace
@@ -1592,6 +1599,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if tool_specs is not None:
             exposed = {item["name"]: item for item in tool_specs}
             validation_errors = []
+            # flowgate.v02.0127 L#3 §2.1 W1/W3: every received call of a chat run is handed to the
+            # call acceptance port exactly once, right here -- before any normalization or schema
+            # validation, with the provider's original input. The answer (server call context or
+            # None) is only ever passed to a ``call_handler`` below.
+            call_contexts = [chat_run_hooks.accept_chat_call(run, call) if is_chat else None
+                             for call in tool_calls]
             for call in tool_calls:
                 try:
                     spec = exposed.get(call.get("name"))
@@ -1604,6 +1617,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         tool_input = api_server_tools.normalize_read_help_input(tool_input)
                     elif call["name"] == "register_document" and _run_register_context(run).get("action") == "edit":
                         pass  # T#2 ordered edit port receives original input, before schema/allowlist filtering.
+                    elif call["name"] in chat_tool_own_validation:
+                        pass  # 0127 L#3 W3: the tool maps its own input errors (P#2 §9.26).
                     else:
                         api_server_tools.validate(spec["schema"], tool_input)
                     call["input"] = tool_input
@@ -1616,7 +1631,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             # 0608 T0007: a tool the model asked for in this turn that did not succeed. The
             # model has not seen that failure yet, so a resolve sent alongside it is a guess.
             failed_tools: list[str] = []
-            for call, validation_error in zip(tool_calls, validation_errors):
+            for call, validation_error, call_context in zip(tool_calls, validation_errors, call_contexts):
                 if validation_error is not None:
                     _status, resp = api_server_tools.error_payload(
                         call.get("name") or "tool_call", validation_error
@@ -1683,7 +1698,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         # flowgate.v02.0032 T#1: blocks this same loop while a command waits
                         # for the user's decision and runs; the result returns to this
                         # conversation and the model continues from it.
-                        _status, resp = chat_tool_handlers[call["name"]](run, call["input"])
+                        if call["name"] in chat_tool_call_handlers:
+                            # flowgate.v02.0127 L#3 §2.1 W3: the call context only; the handler
+                            # reads the input from the frozen record of that accepted call.
+                            _status, resp = chat_tool_call_handlers[call["name"]](run, call_context)
+                        else:
+                            _status, resp = chat_tool_handlers[call["name"]](run, call["input"])
                     elif call["name"] == _CHAT_HISTORY_TOOL_NAME:
                         _status, resp = _conversation_history_read(
                             run, current_token, call["input"]
