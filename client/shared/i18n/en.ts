@@ -408,6 +408,7 @@ export default {
         mode: 'Settings mode',
         default_provider_id: 'Default provider',
         default_provider_index: 'Default provider',
+        target_agent_id: 'Target Agent',
       },
       reason: {
         required: 'This field is required.',
@@ -420,6 +421,9 @@ export default {
         unknown_kind: 'This kind is not supported for the selected execution type.',
         unknown_mode: 'Unsupported settings mode.',
         bad_default: 'The provider chosen as default is not in the list.',
+        required_for_remote_cli: 'Required for remote CLI.',
+        invalid_target_agent: 'The selected Agent was not found.',
+        target_agent_unavailable: 'The selected Agent is not available.',
       },
       toast_invalid: 'Some fields are invalid. Check each entry.',
       unsaved_badge: 'Unsaved',

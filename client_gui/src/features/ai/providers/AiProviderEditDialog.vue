@@ -93,6 +93,28 @@
             :disabled="saving"
           />
         </div>
+
+        <!-- Remote CLI only: the Agent that runs it -->
+        <div v-if="isRemoteCli" class="form-group">
+          <span id="provider-agent-label" class="form-label">{{ t('gui.ai.providers.field_target_agent') }} *</span>
+          <div class="agent-list" role="radiogroup" aria-labelledby="provider-agent-label">
+            <button
+              v-for="row in agentRows"
+              :key="row.agent.agent_id"
+              type="button"
+              role="radio"
+              class="agent-cell"
+              :class="{ on: form.target_agent_id === row.agent.agent_id }"
+              :aria-checked="form.target_agent_id === row.agent.agent_id"
+              :disabled="saving || !!row.reason"
+              @click="form.target_agent_id = row.agent.agent_id"
+            >
+              <b>{{ row.agent.name }}</b>
+              <small :class="{ 'text-warn': !!row.reason }">{{ row.state }}<template v-if="row.reason"> · {{ row.reason }}</template></small>
+            </button>
+          </div>
+          <small v-if="agentNote" class="field-hint text-warn" role="alert">{{ agentNote }}</small>
+        </div>
       </template>
 
       <!-- API settings -->
@@ -167,6 +189,9 @@ import Input from '@/components/ui/Input.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import Select from '@/components/ui/Select.vue'
 import Toggle from '@/components/ui/Toggle.vue'
+import { agentState } from '@/features/settings/agentState'
+import { listPersonalAgents, listSystemAgents } from '@/features/settings/api'
+import type { SystemAgent } from '@/features/settings/types'
 import type { AiOwnerScope, ExecLocation, ProviderExecType, ProviderItem } from '../types'
 import { EXEC_LOCATIONS, EXEC_TYPES, isExecTypeSupported } from './providerDisplay'
 import { FIELD_MAX, KINDS, validateProvider } from './providerValidation'
@@ -212,6 +237,7 @@ interface FormState {
   api_model: string
   api_key: string
   api_key_set: boolean
+  target_agent_id: string
 }
 
 const form = ref<FormState>({
@@ -226,6 +252,7 @@ const form = ref<FormState>({
   api_model: '',
   api_key: '',
   api_key_set: false,
+  target_agent_id: '',
 })
 
 const selectedOwner = ref<AiOwnerScope>(props.owner)
@@ -266,6 +293,7 @@ watch(
         api_model: p.api_model ?? '',
         api_key: '',
         api_key_set: !!p.api_key_set,
+        target_agent_id: p.target_agent_id ?? '',
       }
     } else {
       form.value = {
@@ -280,6 +308,7 @@ watch(
         api_model: '',
         api_key: '',
         api_key_set: false,
+        target_agent_id: '',
       }
     }
     nameTouched.value = false
@@ -291,6 +320,73 @@ watch(
 // Reopening the dialog (another card, or another add) starts from the owner it was opened for.
 watch(() => [props.open, props.owner] as const, () => {
   selectedOwner.value = props.owner
+})
+
+// Remote CLI: the target Agent comes from the list of whose AI this is (system AI = system Agents,
+// my AI = my Agents). Nothing is picked for the user; an Agent that cannot take the work is shown with why.
+const isRemoteCli = computed(() => form.value.exec_type === 'cli' && form.value.exec_location === 'remote')
+const effectiveOwner = computed(() => (isEdit.value ? props.owner : selectedOwner.value))
+const agents = ref<SystemAgent[]>([])
+const agentsState = ref<'idle' | 'loading' | 'ready' | 'failed'>('idle')
+let agentsRequest = 0
+
+async function loadAgents() {
+  const request = ++agentsRequest
+  agentsState.value = 'loading'
+  // A new connection never keeps the previous owner's list or pick while the current owner's list is pending.
+  if (!isEdit.value) {
+    agents.value = []
+    form.value.target_agent_id = ''
+  }
+  try {
+    const list = (await (effectiveOwner.value === 'system' ? listSystemAgents() : listPersonalAgents())) ?? []
+    if (request !== agentsRequest) return
+    agents.value = list.filter((agent) => agent.location === 'remote')
+    agentsState.value = 'ready'
+    if (!isEdit.value && !agents.value.some((agent) => agent.agent_id === form.value.target_agent_id)) {
+      form.value.target_agent_id = ''
+    }
+  } catch {
+    if (request !== agentsRequest) return
+    agents.value = []
+    agentsState.value = 'failed'
+  }
+}
+
+watch(
+  () => [props.open, isRemoteCli.value, effectiveOwner.value] as const,
+  ([open, remote]) => {
+    if (open && remote) { void loadAgents(); return }
+    agentsRequest += 1 // drop any in-flight list so a late response cannot refill a stale pick
+    agents.value = []
+    agentsState.value = 'idle'
+    if (!isEdit.value) form.value.target_agent_id = ''
+  },
+  { immediate: true },
+)
+
+function agentReason(agent: SystemAgent): string {
+  if (!agent.enabled) return t('gui.ai.providers.agent_reason_disabled')
+  if (agent.registration_status !== 'registered') return t('gui.ai.providers.agent_reason_revoked')
+  if (!agent.effective_capabilities.ai_cli) return t('gui.ai.providers.agent_reason_no_cli')
+  return ''
+}
+
+const agentRows = computed(() => agents.value.map((agent) => ({
+  agent,
+  state: t(`gui.settings.agents.state.${agentState(agent)}`),
+  reason: agentReason(agent),
+})))
+
+const agentMissing = computed(() => agentsState.value === 'ready' && !!form.value.target_agent_id
+  && !agents.value.some((agent) => agent.agent_id === form.value.target_agent_id))
+
+const agentNote = computed(() => {
+  if (agentsState.value === 'loading') return t('gui.ai.providers.agent_loading')
+  if (agentsState.value === 'failed') return t('gui.ai.providers.agent_load_failed')
+  if (agentsState.value === 'ready' && !agents.value.length) return t('gui.ai.providers.agent_none')
+  if (agentMissing.value) return t('gui.ai.providers.agent_missing')
+  return ''
 })
 
 const normalizedName = computed(() => form.value.name.trim())
@@ -307,7 +403,10 @@ const validationMessages = computed(() => fieldIssues.value.map(({ field, reason
   field: t(`settings.ai.field.${field}`),
   reason: t(`settings.ai.reason.${reason}`, { max: FIELD_MAX[field] }),
 })))
-const isValid = computed(() => fieldIssues.value.length === 0 && !duplicateName.value)
+// A new remote CLI can only be saved once the current owner's list arrived (loading/failed/idle block it).
+const agentPending = computed(() => isRemoteCli.value && !isEdit.value && agentsState.value !== 'ready')
+const isValid = computed(() => fieldIssues.value.length === 0 && !duplicateName.value
+  && !agentPending.value && !(isRemoteCli.value && agentMissing.value))
 
 function onNameChange() {
   nameTouched.value = true
@@ -332,6 +431,7 @@ function onSave() {
     api_base_url: form.value.exec_type === 'api' ? form.value.api_base_url : null,
     api_model: form.value.exec_type === 'api' ? form.value.api_model : null,
     api_key: clearApiKey.value ? '' : form.value.api_key || null,
+    ...(isRemoteCli.value ? { target_agent_id: form.value.target_agent_id } : {}),
   }, isEdit.value ? props.owner : selectedOwner.value)
 }
 </script>
@@ -428,6 +528,46 @@ function onSave() {
 
 .mode-cell:disabled {
   opacity: 0.45;
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 8px;
+  background: #0c1b2c;
+  color: #dce7f3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-cell b {
+  font-size: 13px;
+}
+
+.agent-cell small {
+  font-size: 11px;
+  color: var(--fg2-muted);
+}
+
+.agent-cell.on {
+  border-color: #55a9ff;
+  background: #132a44;
+}
+
+.agent-cell:disabled {
+  opacity: 0.55;
   border-style: dashed;
   cursor: not-allowed;
 }

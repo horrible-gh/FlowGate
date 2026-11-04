@@ -408,6 +408,7 @@ export default {
         mode: '설정 방식',
         default_provider_id: '기본 프로바이더',
         default_provider_index: '기본 프로바이더',
+        target_agent_id: '대상 Agent',
       },
       reason: {
         required: '값을 입력하세요.',
@@ -420,6 +421,9 @@ export default {
         unknown_kind: '선택한 실행 방식에서 지원하지 않는 종류입니다.',
         unknown_mode: '지원하지 않는 설정 방식입니다.',
         bad_default: '기본으로 지정한 프로바이더가 목록에 없습니다.',
+        required_for_remote_cli: '원격 CLI에서는 반드시 고르세요.',
+        invalid_target_agent: '선택한 Agent를 찾을 수 없습니다.',
+        target_agent_unavailable: '선택한 Agent를 쓸 수 없습니다.',
       },
       toast_invalid: '입력값이 올바르지 않습니다. 각 항목을 확인하세요.',
       unsaved_badge: '저장 안 됨',

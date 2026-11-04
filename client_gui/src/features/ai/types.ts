@@ -24,6 +24,8 @@ export interface ProviderItem {
   api_key_hint?: string | null
   owner_scope?: AiOwnerScope
   exec_location?: ExecLocation
+  // Remote CLI only: the Agent that runs it (the server requires it for remote CLI).
+  target_agent_id?: string | null
 }
 
 // ── Owned AI lists (system settings > 시스템 AI, personal settings > 내 AI) ──────

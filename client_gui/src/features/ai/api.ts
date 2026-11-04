@@ -148,10 +148,20 @@ export async function fetchSystemAi(): Promise<SystemAiSettings> {
   return call(() => getRequest<SystemAiSettings>('/api/v1/system/ai-settings'), 'gui.ai.request_failed.system_load')
 }
 
+// target_agent_id belongs to remote CLI only; every other connection is sent without the field.
+export function toWireProviders(providers: ProviderItem[]): ProviderItem[] {
+  return providers.map((provider) => {
+    if (provider.exec_type === 'cli' && provider.exec_location === 'remote') return provider
+    const { target_agent_id: _dropped, ...rest } = provider
+    return rest
+  })
+}
+
 export async function saveSystemAi(providers: ProviderItem[], defaultProviderId: string | null): Promise<SystemAiSettings> {
+  const wire = toWireProviders(providers)
   return call(
-    () => putRequest<SystemAiSettings>('/api/v1/system/ai-settings', { providers, default_provider_id: defaultProviderId }),
-    'gui.ai.request_failed.system_save', providers,
+    () => putRequest<SystemAiSettings>('/api/v1/system/ai-settings', { providers: wire, default_provider_id: defaultProviderId }),
+    'gui.ai.request_failed.system_save', wire,
   )
 }
 
@@ -177,7 +187,8 @@ export async function fetchMyAi(): Promise<UserAiSettings> {
 }
 
 export async function saveMyAi(providers: ProviderItem[]): Promise<UserAiSettings> {
-  return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers }), 'gui.ai.request_failed.my_save', providers)
+  const wire = toWireProviders(providers)
+  return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers: wire }), 'gui.ai.request_failed.my_save', wire)
 }
 
 // null = follow the system default.
