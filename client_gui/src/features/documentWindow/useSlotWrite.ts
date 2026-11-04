@@ -55,7 +55,8 @@ export function useSlotWrite(win: () => SlotWriteWindowState): SlotWriteState {
       const refused = slotWriteFailure(cardLineErrorOf(error))
       failure.value = refused
       if (refused.kind === 'existing') {
-        if (refused.docId) openDocumentWindow(refused.docId)
+        // §2.11: the line's own card coordinates (flow / node / slot) travel with the opened window, so it stays editable.
+        if (refused.docId) openDocumentWindow(refused.docId, 'view', { card: { projectId: current.projectId ?? '', flowId: current.flowId, nodeKey: current.nodeKey, ownerSlot: current.slot, openedDocId: refused.docId } })
         else openWhenShown(current.flowId, current.nodeKey, current.slot)
         current.reread?.()
       }

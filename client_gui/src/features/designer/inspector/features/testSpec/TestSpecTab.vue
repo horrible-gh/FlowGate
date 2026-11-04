@@ -10,7 +10,7 @@
           <span v-if="line.key === 'report' && stage.resultState.key === 'unchecked'" class="test-card-summary">{{ t(k('stage.unchecked')) }}</span>
           <span v-if="line.key === 'report' && view?.gate?.applies && !view.gate.passed" class="test-card-danger" data-test="test-spec-gate">{{ t(k('card.gate_blocked')) }}</span>
         </template>
-        <template v-if="line.id" #io><DocumentIoGroup :doc-id="line.id" :project-id="target.projectId" :group-id="target.flowId" /></template>
+        <template v-if="line.id" #io><DocumentIoGroup :doc-id="line.id" :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, line.id)" /></template>
         <template v-if="line.key === 'instruction'">
           <IconButton :label="t('gui.designer.inspector.slot.edit')" :title="canOpen('brief') ? t('gui.designer.inspector.slot.edit') : openReason('brief')" variant="secondary" size="sm" :disabled="!canOpen('brief')" data-test="test-card-brief" @click="openWindow('brief')">✎</IconButton>
         </template>
@@ -54,7 +54,7 @@ import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { DocumentIoGroup, openDocumentHistory } from '../../openDocument'
+import { cardDocumentContext, DocumentIoGroup, openDocumentHistory } from '../../openDocument'
 import { type TestCardWindowKind } from './testCardSession'
 import { testCardPresentation, testSpecLiveRun, type TestSpecSlotTone } from './testSpecModel'
 import { useTestCard } from './useTestCard'

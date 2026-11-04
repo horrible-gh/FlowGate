@@ -15,6 +15,7 @@
 // an exact open never brings back a usual one. Its opener may put a part under the body (`aside`, e.g. the old
 // document's Q&A history).
 import { markRaw, reactive, type Component } from 'vue'
+import type { CardDocumentContext } from '@/features/document'
 import { closeAllDocumentAiWindows } from './documentAiWindows'
 import { closeAllSlotWriteWindows } from './slotWriteWindows'
 
@@ -32,6 +33,11 @@ export interface DocumentWindowOpenOptions {
   readonly exact?: boolean
   /** An exact window's part under the body (ignored on a usual window). */
   readonly aside?: DocumentWindowAside | null
+  /**
+   * flowgate.v02.0127 T#5 (0009-L §2.11): the card coordinates the opener took from its target and the line's real
+   * slot. Without them the window can view but not edit (no v1 save fallback).
+   */
+  readonly card?: CardDocumentContext | null
 }
 
 export interface DocumentWindowState {
@@ -45,6 +51,11 @@ export interface DocumentWindowState {
   readonly exact: boolean
   /** The exact window's part under the body, or null. */
   readonly aside: DocumentWindowAside | null
+  /**
+   * The card coordinates of the latest opener. A new edit session takes them when it starts; an active session keeps
+   * the coordinates it froze (a later open from another card never rewrites them).
+   */
+  card: CardDocumentContext | null
   mode: DocumentWindowMode
   minimized: boolean
   readonly x: number
@@ -108,6 +119,8 @@ export function openDocumentWindow(docId: string, mode: DocumentWindowMode = 'vi
   const exact = options.exact === true
   const open = exact ? windowById(exactId(docId)) : documentWindowOf(docId)
   if (open) {
+    // Opening again only brings the window forward; the opener's coordinates are taken while no edit session exists.
+    if (!exact && open.mode === 'view' && options.card) open.card = options.card
     bringBack(open, exact ? 'view' : mode)
     return
   }
@@ -119,6 +132,7 @@ export function openDocumentWindow(docId: string, mode: DocumentWindowMode = 'vi
     shown: docId,
     exact,
     aside,
+    card: exact ? null : options.card ?? null,
     mode: exact ? 'view' : mode,
     minimized: false,
     x: ORIGIN_X + offset,

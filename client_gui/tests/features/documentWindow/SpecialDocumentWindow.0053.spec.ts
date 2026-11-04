@@ -22,10 +22,12 @@ import { registerAppMessages } from '@/app/i18n'
 import { DocumentWindows, closeAllDocumentWindows, closeDocumentWindow, openDocumentWindow } from '@/features/documentWindow'
 import { DOCUMENT_WINDOW_POLL_MS, DOCUMENT_WINDOW_REFRESH_COALESCE_MS } from '@/features/documentWindow/useDocumentWindowEvents'
 import { setCurrentUser } from '@/core/auth/currentUser'
+import { CARD, cardDocumentBridge } from './cardDocumentBridge'
 
 const recordRead = vi.fn()
 const contentRead = vi.fn()
 const contentSave = vi.fn()
+const cardBridge = cardDocumentBridge(contentRead, contentSave)
 const planRead = vi.fn()
 const testRead = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
@@ -35,6 +37,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentRead: (...args: unknown[]) => recordRead(...args),
     documentContentRead: (...args: unknown[]) => contentRead(...args),
     documentContentSave: (...args: unknown[]) => contentSave(...args),
+    cardDocumentRead: (...args: unknown[]) => cardBridge.read(...(args as [never])),
+    cardDocumentRevise: (...args: unknown[]) => cardBridge.revise(...(args as [never, never])),
     workPlanDocumentRead: (...args: unknown[]) => planRead(...args),
     testSpecDocumentRead: (...args: unknown[]) => testRead(...args),
   }
@@ -412,7 +416,7 @@ async function type(node: HTMLElement | null, value: string) {
   await flushPromises()
 }
 async function open(docId: string, mode: 'view' | 'edit' = 'view') {
-  openDocumentWindow(docId, mode)
+  openDocumentWindow(docId, mode, { card: CARD(docId) })
   await flushPromises()
   return panelOf(docId)
 }

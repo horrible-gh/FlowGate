@@ -30,10 +30,12 @@ import {
 } from '@/features/documentWindow/useDocumentWindowEvents'
 import { installProjectEventStream, removeProjectEventStream, type ProjectEventStream } from '../designer/inspector/support/projectEventStream'
 import { setCurrentUser } from '@/core/auth/currentUser'
+import { CARD, cardDocumentBridge } from './cardDocumentBridge'
 
 const recordRead = vi.fn()
 const contentRead = vi.fn()
 const contentSave = vi.fn()
+const cardBridge = cardDocumentBridge(contentRead, contentSave)
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -41,6 +43,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentRead: (...args: unknown[]) => recordRead(...args),
     documentContentRead: (...args: unknown[]) => contentRead(...args),
     documentContentSave: (...args: unknown[]) => contentSave(...args),
+    cardDocumentRead: (...args: unknown[]) => cardBridge.read(...(args as [never])),
+    cardDocumentRevise: (...args: unknown[]) => cardBridge.revise(...(args as [never, never])),
   }
 })
 
@@ -126,7 +130,7 @@ async function click(node: HTMLElement | null) {
 
 /** Opens a window and lets its first reads and its stream subscription land; the server accepts the stream. */
 async function open(docId: string, mode: 'view' | 'edit' = 'view') {
-  openDocumentWindow(docId, mode)
+  openDocumentWindow(docId, mode, { card: CARD(docId) })
   await flushPromises()
   stream.open()
   return panelOf(docId)

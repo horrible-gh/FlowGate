@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const contentSave = vi.fn()
+const cardBridge = cardDocumentBridge(vi.fn(), contentSave)
 const download = vi.fn()
 const infoRead = vi.fn()
 const recordRead = vi.fn()
@@ -16,6 +17,8 @@ vi.mock('@/features/document', async (importOriginal) => {
   return {
     ...actual,
     documentContentSave: (...args: unknown[]) => contentSave(...args),
+    cardDocumentRead: (...args: unknown[]) => cardBridge.read(...(args as [never])),
+    cardDocumentRevise: (...args: unknown[]) => cardBridge.revise(...(args as [never, never])),
     documentDownload: (...args: unknown[]) => download(...args),
     documentInfoRead: (...args: unknown[]) => infoRead(...args),
     documentRead: (...args: unknown[]) => recordRead(...args),
@@ -44,6 +47,7 @@ import {
   documentIoUpload,
   resetDocumentIo,
 } from '@/features/documentWindow/documentIo'
+import { CARD, cardDocumentBridge } from './cardDocumentBridge'
 
 const A = 'flowgate.v02.0068.0007-T'
 const B = 'flowgate.v02.0068.0008-TR'
@@ -128,7 +132,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
   it('saves the file text as it is (only a leading BOM dropped) to the fixed id, reflects, releases, then tells', async () => {
     const a = win([A])
     const b = win([B])
-    await documentIoUpload(A, { pick: async () => md('﻿---\r\ntitle: 새 문서\r\n---\r\n# 본문\r\n') })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('﻿---\r\ntitle: 새 문서\r\n---\r\n# 본문\r\n') })
     expect(contentSave).toHaveBeenCalledWith(A, '---\r\ntitle: 새 문서\r\n---\r\n# 본문\r\n')
     expect(a.log).toEqual([`guard:${A}`, `reflect:${A}`, `release:${A}`])
     expect(b.log).toEqual([])
@@ -142,12 +146,12 @@ describe('upload — the lifecycle (D §3.1)', () => {
     const a = win([A])
     a.isDirty = true
     const pick = vi.fn()
-    await documentIoUpload(A, { pick })
+    await documentIoUpload(A, { card: CARD(A), pick })
     expect(pick).not.toHaveBeenCalled()
     expect(notices()).toEqual(['upload_hold'])
     a.isDirty = false
     a.isSaving = true
-    await documentIoUpload(A, { pick })
+    await documentIoUpload(A, { card: CARD(A), pick })
     expect(pick).not.toHaveBeenCalled()
     expect(contentSave).not.toHaveBeenCalled()
   })
@@ -155,17 +159,17 @@ describe('upload — the lifecycle (D §3.1)', () => {
   it('check 1 looks at the document only: unsaved text of another document does not hold it', async () => {
     const b = win([B])
     b.isDirty = true
-    await documentIoUpload(A, { pick: async () => md('# a') })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('# a') })
     expect(contentSave).toHaveBeenCalledWith(A, '# a')
   })
 
   it('a second press while the upload runs is ignored (same document); another document runs on its own', async () => {
     const pick = deferred<File | null>()
-    const first = documentIoUpload(A, { pick: () => pick.promise })
+    const first = documentIoUpload(A, { card: CARD(A), pick: () => pick.promise })
     const again = vi.fn()
-    await documentIoUpload(A, { pick: again })
+    await documentIoUpload(A, { card: CARD(A), pick: again })
     expect(again).not.toHaveBeenCalled()
-    await documentIoUpload(B, { pick: async () => md('# b') })
+    await documentIoUpload(B, { card: CARD(B), pick: async () => md('# b') })
     expect(contentSave).toHaveBeenCalledWith(B, '# b')
     pick.resolve(md('# a'))
     await first
@@ -174,7 +178,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
 
   it('pick cancelled → nothing changes, no notice, released', async () => {
     const a = win([A])
-    await documentIoUpload(A, { pick: async () => null })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => null })
     expect(contentSave).not.toHaveBeenCalled()
     expect(notices()).toEqual([])
     expect(a.log).toEqual([])
@@ -183,7 +187,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
 
   it('a file that is not Markdown / text → told, no guard', async () => {
     const a = win([A])
-    await documentIoUpload(A, { pick: async () => md('%PDF', 'x.pdf', 'application/pdf') })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('%PDF', 'x.pdf', 'application/pdf') })
     expect(notices()).toEqual(['upload_type'])
     expect(a.log).toEqual([])
     expect(contentSave).not.toHaveBeenCalled()
@@ -192,7 +196,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
   it('check 2: the editor turned dirty while the file was picked → held, the draft stays, no guard', async () => {
     const a = win([A])
     const pick = deferred<File | null>()
-    const run = documentIoUpload(A, { pick: () => pick.promise })
+    const run = documentIoUpload(A, { card: CARD(A), pick: () => pick.promise })
     a.isDirty = true
     pick.resolve(md('# a'))
     await run
@@ -205,7 +209,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
   it('the guard starts with check 2, before the file is read', async () => {
     const a = win([A])
     const read = deferred<string>()
-    const run = documentIoUpload(A, { pick: async () => md('x'), read: () => read.promise })
+    const run = documentIoUpload(A, { card: CARD(A), pick: async () => md('x'), read: () => read.promise })
     await vi.waitFor(() => expect(a.log).toEqual([`guard:${A}`]))
     expect(documentIoGuarded(A)).toBe(true)
     read.resolve('# a')
@@ -215,7 +219,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
 
   it('reading fails → told, released, nothing saved or reflected', async () => {
     const a = win([A])
-    await documentIoUpload(A, { pick: async () => md('x'), read: async () => Promise.reject(new Error('io')) })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('x'), read: async () => Promise.reject(new Error('io')) })
     expect(notices()).toEqual(['upload_read_failed'])
     expect(a.log).toEqual([`guard:${A}`, `release:${A}`])
     expect(contentSave).not.toHaveBeenCalled()
@@ -223,7 +227,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
 
   it('an empty file (BOM and blanks only) → not saved, released', async () => {
     const a = win([A])
-    await documentIoUpload(A, { pick: async () => md('﻿  \r\n\t\n') })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('﻿  \r\n\t\n') })
     expect(notices()).toEqual(['upload_empty'])
     expect(a.log).toEqual([`guard:${A}`, `release:${A}`])
     expect(contentSave).not.toHaveBeenCalled()
@@ -232,7 +236,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
   it('check 3: a save started before the guard is still running → not saved, released', async () => {
     const a = win([A])
     const read = deferred<string>()
-    const run = documentIoUpload(A, { pick: async () => md('x'), read: () => read.promise })
+    const run = documentIoUpload(A, { card: CARD(A), pick: async () => md('x'), read: () => read.promise })
     await vi.waitFor(() => expect(documentIoGuarded(A)).toBe(true))
     a.isSaving = true
     read.resolve('# a')
@@ -253,7 +257,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
   ])('a refused save still reflects (the server may have stored it), releases and tells: %#', async (error, key) => {
     const a = win([A])
     contentSave.mockRejectedValue(error)
-    await expect(documentIoUpload(A, { pick: async () => md('# a') })).resolves.toBeUndefined()
+    await expect(documentIoUpload(A, { card: CARD(A), pick: async () => md('# a') })).resolves.toBeUndefined()
     expect(a.log).toEqual([`guard:${A}`, `reflect:${A}`, `release:${A}`])
     expect(notices()).toEqual([key])
     expect(changed).toEqual([])
@@ -266,7 +270,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
       a.log.push('reflect')
       return new Promise(() => {})
     }
-    const run = documentIoUpload(A, { pick: async () => md('# a') })
+    const run = documentIoUpload(A, { card: CARD(A), pick: async () => md('# a') })
     await vi.waitFor(() => expect(a.log).toContain('reflect'))
     expect(documentIoGuarded(A)).toBe(true)
     closeWindows()
@@ -280,7 +284,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
     const a = win([A])
     a.reflect = () => new Promise(() => {})
     // (the file reader of jsdom runs on timers: a plain reader here)
-    const run = documentIoUpload(A, { pick: async () => md('# a'), read: async () => '# a' })
+    const run = documentIoUpload(A, { card: CARD(A), pick: async () => md('# a'), read: async () => '# a' })
     await vi.advanceTimersByTimeAsync(0)
     expect(documentIoGuarded(A)).toBe(true)
     await vi.advanceTimersByTimeAsync(9999)
@@ -292,7 +296,7 @@ describe('upload — the lifecycle (D §3.1)', () => {
   })
 
   it('the default reader reads the picked file as UTF-8 text', async () => {
-    await documentIoUpload(A, { pick: async () => md('﻿# 한글 본문\n') })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('﻿# 한글 본문\n') })
     expect(contentSave).toHaveBeenCalledWith(A, '# 한글 본문\n')
   })
 })
@@ -302,12 +306,12 @@ describe('upload — the lifecycle (D §3.1)', () => {
 describe('leaving the Designer during an upload', () => {
   it('U1: reading → leave → upload the same document again → the old read ends late: no save, no notice; the new one holds', async () => {
     const oldRead = deferred<string>()
-    const old = documentIoUpload(A, { pick: async () => md('old'), read: () => oldRead.promise })
+    const old = documentIoUpload(A, { card: CARD(A), pick: async () => md('old'), read: () => oldRead.promise })
     await vi.waitFor(() => expect(documentIoGuarded(A)).toBe(true))
     documentIoLeave()
     expect(documentIoGuarded(A)).toBe(false)
     const newRead = deferred<string>()
-    const fresh = documentIoUpload(A, { pick: async () => md('new'), read: () => newRead.promise })
+    const fresh = documentIoUpload(A, { card: CARD(A), pick: async () => md('new'), read: () => newRead.promise })
     await vi.waitFor(() => expect(documentIoGuarded(A)).toBe(true))
     oldRead.resolve('# old')
     await old
@@ -324,14 +328,14 @@ describe('leaving the Designer during an upload', () => {
   it('U2: the save was sent → leave → the document stays guarded in the new Designer until it answers; then a change signal, no notice', async () => {
     const save = deferred<void>()
     contentSave.mockReturnValue(save.promise)
-    const old = documentIoUpload(A, { pick: async () => md('# a') })
+    const old = documentIoUpload(A, { card: CARD(A), pick: async () => md('# a') })
     await vi.waitFor(() => expect(contentSave).toHaveBeenCalled())
     documentIoLeave()
     const a = win([A])
     expect(documentIoGuarded(A)).toBe(true)
     expect(documentIoButtons(A).upload).toMatchObject({ enabled: false, reason: 'uploading' })
     const pick = vi.fn()
-    await documentIoUpload(A, { pick })
+    await documentIoUpload(A, { card: CARD(A), pick })
     expect(pick).not.toHaveBeenCalled()
     save.resolve()
     await old
@@ -339,7 +343,7 @@ describe('leaving the Designer during an upload', () => {
     expect(changed).toEqual([`${A}:free`])
     expect(notices()).toEqual([])
     expect(a.log).toEqual([`release:${A}`])
-    await documentIoUpload(A, { pick: async () => md('# again') })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('# again') })
     expect(contentSave).toHaveBeenLastCalledWith(A, '# again')
   })
 
@@ -348,7 +352,7 @@ describe('leaving the Designer during an upload', () => {
       changed.length = 0
       const save = deferred<void>()
       contentSave.mockReturnValueOnce(save.promise)
-      const old = documentIoUpload(A, { pick: async () => md('# a') })
+      const old = documentIoUpload(A, { card: CARD(A), pick: async () => md('# a') })
       await vi.waitFor(() => expect(documentIoGuarded(A)).toBe(true))
       await vi.waitFor(() => expect(contentSave).toHaveBeenCalled())
       documentIoDesignerExit()
@@ -363,7 +367,7 @@ describe('leaving the Designer during an upload', () => {
 
   it('U3: the file is picked after the Designer was left → nothing happens', async () => {
     const pick = deferred<File | null>()
-    const run = documentIoUpload(A, { pick: () => pick.promise })
+    const run = documentIoUpload(A, { card: CARD(A), pick: () => pick.promise })
     documentIoLeave()
     pick.resolve(md('# a'))
     await run
@@ -378,7 +382,7 @@ describe('leaving the Designer during an upload', () => {
       a.log.push('reflect')
       return new Promise(() => {})
     }
-    const run = documentIoUpload(A, { pick: async () => md('# a') })
+    const run = documentIoUpload(A, { card: CARD(A), pick: async () => md('# a') })
     await vi.waitFor(() => expect(a.log).toContain('reflect'))
     documentIoLeave()
     await run
@@ -420,7 +424,7 @@ describe('download', () => {
 
   it('works while an upload guards the document (the server file only)', async () => {
     const read = deferred<string>()
-    const run = documentIoUpload(A, { pick: async () => md('x'), read: () => read.promise })
+    const run = documentIoUpload(A, { card: CARD(A), pick: async () => md('x'), read: () => read.promise })
     await vi.waitFor(() => expect(documentIoGuarded(A)).toBe(true))
     download.mockResolvedValue({ blob: new Blob(['x']), disposition: null })
     const save = vi.fn()
@@ -533,13 +537,13 @@ describe('the buttons’ document state', () => {
     documentIoDraw(A)
     await vi.waitFor(() => expect(documentIoInfo(A).state).toBe('READY'))
     contentSave.mockRejectedValue(http(403))
-    await documentIoUpload(A, { pick: async () => md('# a') })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('# a') })
     expect(documentIoButtons(A)).toMatchObject({ upload: { enabled: false, reason: 'forbidden' }, download: { enabled: true } })
   })
 
   it('upload save 404 → GONE', async () => {
     contentSave.mockRejectedValue(http(404))
-    await documentIoUpload(A, { pick: async () => md('# a') })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('# a') })
     expect(documentIoInfo(A).state).toBe('GONE')
   })
 
@@ -566,7 +570,7 @@ describe('the buttons’ document state', () => {
     documentIoDraw(A)
     await vi.waitFor(() => expect(documentIoInfo(A).state).toBe('READY'))
     contentSave.mockRejectedValue(http(403))
-    await documentIoUpload(A, { pick: async () => md('# a') })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('# a') })
     expect(documentIoInfo(A).uploadDenied).toBe(true)
     window.dispatchEvent(new CustomEvent('fg:document_content_changed', { detail: { doc_id: A } }))
     await vi.waitFor(() => expect(documentIoInfo(A).uploadDenied).toBe(false))
@@ -593,7 +597,7 @@ describe('review regression — request results supersede pending information', 
       await vi.waitFor(() => expect(infoRead).toHaveBeenCalledTimes(1))
       if (operation === 'upload') {
         contentSave.mockRejectedValueOnce(http(status))
-        await documentIoUpload(A, { pick: async () => md('NEW') })
+        await documentIoUpload(A, { card: CARD(A), pick: async () => md('NEW') })
       } else {
         download.mockRejectedValueOnce(http(status))
         recordRead.mockRejectedValueOnce(http(status))
@@ -618,7 +622,7 @@ describe('review regression — request results supersede pending information', 
     documentIoDraw(A)
     await vi.waitFor(() => expect(documentIoInfo(A).state).toBe('READY'))
     contentSave.mockRejectedValueOnce(http(403))
-    await documentIoUpload(A, { pick: async () => md('NEW') })
+    await documentIoUpload(A, { card: CARD(A), pick: async () => md('NEW') })
     expect(documentIoInfo(A).uploadDenied).toBe(true)
     infoRead.mockResolvedValueOnce(toDocumentInfo({ doc_id: A, is_editable: false, download_available: false }))
     download.mockResolvedValueOnce({ blob: new Blob(['CANONICAL']), disposition: null })

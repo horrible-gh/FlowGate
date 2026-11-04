@@ -7,6 +7,7 @@ from typing import Callable, Optional, Protocol
 
 CONTENT_MAX_CHARS = 500_000
 FINGERPRINT_ALG = "sha256-utf8-v1"
+STRUCTURED_FP_ALG = "sha256-canonical-json-v1"  # L#2 §2.15.2 structured_fingerprint_version 1
 EVENT_SCHEMA = "card_document_edit/v1"
 PROJECTION_FAILED = object()
 
@@ -44,6 +45,7 @@ class ReviseRequest:
     recheck: Optional[Callable] = None
     size_guard: Optional[Callable] = None
     locale: str = "ko"
+    structured: Optional[object] = None  # StructuredCommand; content stays "" (never client-rendered)
 
 
 @dataclass(frozen=True)

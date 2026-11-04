@@ -419,7 +419,8 @@ function toTestSpecEvidence(raw: unknown): TestSpecEvidence | null {
   return value === null ? null : { kind: text(row.kind), value, label: text(row.label) }
 }
 
-function toTestSpecCaseDetail(raw: unknown): TestSpecCaseDetail | null {
+/** One server case dict (snake_case, a projection of a v2 snapshot or a v1 view) as a case detail. */
+export function toTestSpecCaseDetail(raw: unknown): TestSpecCaseDetail | null {
   const base = toTestSpecCase(raw)
   if (base === null) return null
   const row = record(raw)
@@ -529,18 +530,8 @@ export function testSpecCasePayload(item: TestSpecCaseDetail): TestSpecCasePaylo
     ...(item.fields.runCwd ? { run_cwd: item.fields.runCwd } : {}) }
 }
 
-export async function testBriefRead(docId: string): Promise<{ text: string; content: string }> {
-  const response = await getRequest<{ text: string; content: string }>(`${API}/documents/${encodeURIComponent(docId)}/test-brief`)
-  return response.data
-}
-export async function testBriefSave(docId: string, text: string, expectedContent: string): Promise<{ text: string; content: string }> {
-  const response = await putRequest<{ text: string; content: string }>(`${API}/documents/${encodeURIComponent(docId)}/test-brief`, { text, expected_content: expectedContent })
-  return response.data
-}
-
-export async function testSpecSave(docId: string, cases: readonly TestSpecCasePayload[], title: string | null): Promise<void> {
-  await putRequest(`${API}/documents/${encodeURIComponent(docId)}/test-spec`, { cases, ...(title ? { title } : {}) })
-}
+// flowgate.v02.0127 T#5: the v1 TS editing calls (GET/PUT test-brief, PUT test-spec) are gone from the client. The
+// structured read and revisions are the card document's /api/v2 test-spec / test-brief routes (cardDocument.ts).
 
 export async function testSpecCaseRun(tsDocId: string, caseId: string): Promise<TestSpecRunAck> {
   const response = await postRequest<unknown>(`${API}/documents/${encodeURIComponent(tsDocId)}/test-spec/cases/${encodeURIComponent(caseId)}/run`, {})

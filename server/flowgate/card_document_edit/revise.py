@@ -80,12 +80,19 @@ def judge_and_store(ctx, req, flow, holder, restore_log):
             raise GraphApiError(409, "idempotency_key_reused", coordinates(req, current))
     if current["revision_no"] != req.expected_revision:
         raise conflict(req, current)
-    if len(req.content) > CONTENT_MAX_CHARS:
+    if req.structured is not None:
+        # §2.15.2: build the next body only here, from the fresh protected read.
+        from . import structured_ts_adapter
+        text = structured_ts_adapter.build_text(req.structured, current, body)
+    else:
+        text = req.content
+    if len(text) > CONTENT_MAX_CHARS:
         raise invalid("invalid_content", "content", "invalid_format", current,
                       validation={"reason": "too_long", "max": CONTENT_MAX_CHARS})
-    text = rule.prepare(req.content, current, body) if hasattr(rule, "prepare") else req.content
+    if req.structured is None and hasattr(rule, "prepare"):
+        text = rule.prepare(req.content, current, body)
     common_checks.identity_frontmatter(text, current, rule, body)
-    common_checks.encoding_guard(req.content, current, req.transport_extras.get("encoding"), req.locale)
+    common_checks.encoding_guard(text, current, req.transport_extras.get("encoding"), req.locale)
     built = rule.validate_and_build(text, current, body)
     if req.validate_only:
         verdict = _verdict(req, current)

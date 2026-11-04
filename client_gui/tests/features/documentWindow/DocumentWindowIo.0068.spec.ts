@@ -26,10 +26,12 @@ import { documentIoDownload, documentIoLeave, documentIoNotices, documentIoReadF
 import { setCurrentUser } from '@/core/auth/currentUser'
 import { closeAllWorkPlanEditWindows, setWorkPlanEditOpener, workPlanEditWindowList } from '@/features/workPlanWindow/workPlanEditWindows'
 import { DOC as WP_DOC, FLOW as WP_FLOW, hiddenPlanBody, readAnswer } from '../workPlanWindow/workPlanFixtures'
+import { CARD, cardDocumentBridge } from './cardDocumentBridge'
 
 const recordRead = vi.fn()
 const contentRead = vi.fn()
 const contentSave = vi.fn()
+const cardBridge = cardDocumentBridge(contentRead, contentSave)
 const infoRead = vi.fn()
 const download = vi.fn()
 const planEditRead = vi.fn()
@@ -41,6 +43,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentRead: (...args: unknown[]) => recordRead(...args),
     documentContentRead: (...args: unknown[]) => contentRead(...args),
     documentContentSave: (...args: unknown[]) => contentSave(...args),
+    cardDocumentRead: (...args: unknown[]) => cardBridge.read(...(args as [never])),
+    cardDocumentRevise: (...args: unknown[]) => cardBridge.revise(...(args as [never, never])),
     documentInfoRead: (...args: unknown[]) => infoRead(...args),
     documentDownload: (...args: unknown[]) => download(...args),
     // flowgate.v02.0074 T#2: a work plan's download, edit window and body view read the plan
@@ -78,7 +82,7 @@ function deferred<T>() {
 
 const md = (text: string) => new File([text], 'upload.md', { type: 'text/markdown' })
 const upload = (docId: string, text: string | Promise<string>, pick?: Promise<File | null>) =>
-  documentIoUpload(docId, { pick: () => pick ?? Promise.resolve(md('x')), read: () => Promise.resolve(text) })
+  documentIoUpload(docId, { card: CARD(docId), pick: () => pick ?? Promise.resolve(md('x')), read: () => Promise.resolve(text) })
 
 let wrapper: VueWrapper<any> | null = null
 
@@ -147,7 +151,7 @@ async function type(docId: string, value: string) {
   await flushPromises()
 }
 async function open(docId: string, mode: 'view' | 'edit' = 'view') {
-  openDocumentWindow(docId, mode)
+  openDocumentWindow(docId, mode, { card: CARD(docId) })
   await flushPromises()
   return panelOf(docId)
 }
@@ -297,7 +301,7 @@ describe('upload — the guard (D §3.1, L §2.13)', () => {
   it('while guarded: an open clean editor is read only and [저장] disabled; a view window’s [편집] disabled; then released', async () => {
     await open(DOC, 'edit')
     const read = deferred<string>()
-    const run = documentIoUpload(DOC, { pick: async () => md(NEW), read: () => read.promise })
+    const run = documentIoUpload(DOC, { card: CARD(DOC), pick: async () => md(NEW), read: () => read.promise })
     await flushPromises()
     expect(documentIoGuarded(DOC)).toBe(true)
     expect(area(DOC)!.hasAttribute('readonly')).toBe(true)
@@ -322,19 +326,19 @@ describe('upload — the guard (D §3.1, L §2.13)', () => {
   it('a view window: [편집] is disabled while guarded and the Inspector’s edit request opens the view', async () => {
     await open(DOC)
     const read = deferred<string>()
-    const run = documentIoUpload(DOC, { pick: async () => md(NEW), read: () => read.promise })
+    const run = documentIoUpload(DOC, { card: CARD(DOC), pick: async () => md(NEW), read: () => read.promise })
     await flushPromises()
     expect(editButton(DOC).disabled).toBe(true)
     expect(editButton(DOC).getAttribute('title')).toBe('업로드 처리 중')
     await click(editButton(DOC))
-    openDocument(DOC, 'edit')
+    openDocument(DOC, 'edit', { card: CARD(DOC) })
     await flushPromises()
     expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[DOC, 'view']])
     read.resolve(NEW)
     await run
     await flushPromises()
     expect(editButton(DOC).disabled).toBe(false)
-    openDocument(DOC, 'edit')
+    openDocument(DOC, 'edit', { card: CARD(DOC) })
     await flushPromises()
     expect(documentWindowList().map((win) => [win.docId, win.mode])).toEqual([[DOC, 'edit']])
   })
@@ -344,7 +348,7 @@ describe('upload — the guard (D §3.1, L §2.13)', () => {
     await open(DOC)
     contentRead.mockClear()
     const read = deferred<string>()
-    const run = documentIoUpload(DOC, { pick: async () => md(NEW), read: () => read.promise })
+    const run = documentIoUpload(DOC, { card: CARD(DOC), pick: async () => md(NEW), read: () => read.promise })
     await flushPromises()
     expect(area(OTHER)!.hasAttribute('readonly')).toBe(false)
     expect(saveButton(OTHER).disabled).toBe(false)
@@ -381,10 +385,10 @@ describe('upload — the guard (D §3.1, L §2.13)', () => {
   it('an editor entered while guarded (another way in) waits for the release, then reads', async () => {
     await open(DOC)
     const read = deferred<string>()
-    const run = documentIoUpload(DOC, { pick: async () => md(NEW), read: () => read.promise })
+    const run = documentIoUpload(DOC, { card: CARD(DOC), pick: async () => md(NEW), read: () => read.promise })
     await flushPromises()
     // Not the [편집] button: an edit open of the window list itself.
-    openDocumentWindow(DOC, 'edit')
+    openDocumentWindow(DOC, 'edit', { card: CARD(DOC) })
     await flushPromises()
     expect(q(panelOf(DOC), 'document-window-editor-loading')).not.toBeNull()
     read.resolve('   ')
@@ -446,7 +450,7 @@ describe('upload — the reflect (D §3.1, §7 A)', () => {
 
   it('cancelled pick: nothing changes, the editor keeps its text', async () => {
     await open(DOC, 'edit')
-    await documentIoUpload(DOC, { pick: async () => null })
+    await documentIoUpload(DOC, { card: CARD(DOC), pick: async () => null })
     await flushPromises()
     expect(area(DOC)!.value).toBe('# 옛 본문\n')
     expect(area(DOC)!.hasAttribute('readonly')).toBe(false)
@@ -456,7 +460,7 @@ describe('upload — the reflect (D §3.1, §7 A)', () => {
   it('the window closed while guarded: the upload ends and the guard is released', async () => {
     await open(DOC)
     const read = deferred<string>()
-    const run = documentIoUpload(DOC, { pick: async () => md(NEW), read: () => read.promise })
+    const run = documentIoUpload(DOC, { card: CARD(DOC), pick: async () => md(NEW), read: () => read.promise })
     await flushPromises()
     await click(q(bar(DOC, 'viewer'), 'document-window-close'))
     expect(panels()).toHaveLength(0)

@@ -851,3 +851,115 @@ def test_empty_readable_body_can_be_explicitly_replaced(env):
     assert res.status_code == 200, res.text
     rev = document_revisions.list_by_doc(D)[0]
     assert paths.resolve_storage_path(rev["backup_path"], "flowgate").read_bytes() == b""
+
+
+# --- 0127 T#5 (L#2 §2.15): structured TS revisions through the real transport, boundary, CAS and idempotency -------
+
+TS_ID = F + ".0003-TS"
+TS_CASE = {"case_id": "TC-001", "title": "login", "category": "normal", "requirement": "R-1",
+           "execution_mode": "manual", "required": True, "precondition": "-", "input": "id/pw",
+           "procedure": "sign in", "expected": "dashboard", "check_points": "title"}
+
+
+def _ts_env(env, monkeypatch):
+    from modules.flow_gate.services import test_spec_service as spec
+    path = env.root / "storage" / "documents" / "ts.md"
+    header = ("---\nproject: flowgate\nmodule: v02\ngroup: 0127\ntype: TS\ndoc_number: 0003-TS\n"
+              "test_contract_version: 2\n---\n")
+    path.write_bytes((header + spec.render_spec_body([TS_CASE], title="TS")).encode())
+    documents.create({"doc_id": TS_ID, "project_id": "flowgate", "module": "v02", "group_id": F, "type_code": "TS",
+                      "seq": 3, "title": "TS", "status": "draft", "owner_id": "user",
+                      "file_path": paths.to_storage_relative(path, "flowgate")})
+    repository.insert(F, "ts", "instruction", "TS", TS_ID, True, 0, "user")
+    node = {"node_key": "ts", "node_type": "document", "doc_type": "TS"}
+    nodes = {"ts": node, "research": env.node}
+    monkeypatch.setattr(target.settings, "card_node", lambda f, k: nodes.get(k) if f == F else None)
+    return path, spec
+
+
+def _ts_url(kind, save):
+    base = f"/flowgate/api/v2/flows/{F}/nodes/ts/slots/instruction/document/{kind}"
+    return base + ("/revisions" if save else "")
+
+
+def _ts_post(env, kind, body):
+    return env.client.post(_ts_url(kind, True), headers={"Authorization": "Bearer user"}, json=body)
+
+
+def test_structured_ts_revisions_build_in_the_boundary_and_replay_by_command_identity(env, monkeypatch):
+    path, spec = _ts_env(env, monkeypatch)
+    got = env.client.get(_ts_url("test-spec", False), headers={"Authorization": "Bearer user"})
+    assert got.status_code == 200 and got.json()["revision_no"] == 0
+    assert got.json()["projection"]["cases"][0]["case_id"] == "TC-001"
+    assert env.client.get(_ts_url("test-brief", False), headers={"Authorization": "Bearer user"}).json()["projection"] == {"text": ""}
+
+    changed = {**TS_CASE, "title": "login v2"}
+    body = {"expected_doc_id": TS_ID, "expected_revision": 0, "idempotency_key": "ts-1", "cases": [changed]}
+    saved = _ts_post(env, "test-spec", body)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1 and saved.json()["replayed"] is False and "line" in saved.json()
+    assert spec.parse_spec(path.read_bytes().decode())["cases"][0]["title"] == "login v2"
+    assert documents.get_by_id(TS_ID)["revision_no"] == 1
+    event = json.loads(env.db._fetch_all("SELECT metadata FROM workflow_events WHERE event_type = 'doc_edited' ORDER BY id")[-1]["metadata"])
+    assert event["input_kind"] == "ts_spec" and event["fingerprint_algorithm"] == contracts.STRUCTURED_FP_ALG
+    assert event["request_fingerprint"] == event["content_sha256"]
+
+    # The same command replays without a second build or revision; another command, kind or raw request reuses the key.
+    again = _ts_post(env, "test-spec", body)
+    assert again.status_code == 200 and again.json()["replayed"] is True and again.json()["revision_no"] == 1
+    assert documents.get_by_id(TS_ID)["revision_no"] == 1 and count(env, "document_revisions") == 1
+    other = _ts_post(env, "test-spec", {**body, "cases": [{**changed, "title": "x"}]})
+    assert other.status_code == 409 and other.json()["error"]["code"] == "idempotency_key_reused"
+    brief_same_key = _ts_post(env, "test-brief", {"expected_doc_id": TS_ID, "expected_revision": 0, "idempotency_key": "ts-1", "text": "t"})
+    assert brief_same_key.status_code == 409 and brief_same_key.json()["error"]["code"] == "idempotency_key_reused"
+    raw_same_key = env.client.post(url(replace(env.req, expected_doc_id=TS_ID, node_key="ts"), True), headers={"Authorization": "Bearer user"},
+                                   json={"expected_doc_id": TS_ID, "expected_revision": 0, "content": "x", "idempotency_key": "ts-1"})
+    assert raw_same_key.status_code == 409 and raw_same_key.json()["error"]["code"] == "idempotency_key_reused"
+
+    # CAS: a stale base is a revision_conflict, never a silent rebase; the brief only replaces the intro.
+    stale = _ts_post(env, "test-brief", {"expected_doc_id": TS_ID, "expected_revision": 0, "idempotency_key": "ts-2", "text": "brief"})
+    assert stale.status_code == 409 and stale.json()["error"]["code"] == "revision_conflict"
+    brief = _ts_post(env, "test-brief", {"expected_doc_id": TS_ID, "expected_revision": 1, "idempotency_key": "ts-3", "text": "brief"})
+    assert brief.status_code == 200 and brief.json()["revision_no"] == 2
+    text = path.read_bytes().decode()
+    assert "brief" in text and spec.parse_spec(text)["cases"][0]["title"] == "login v2" and "type: TS" in text
+
+
+def test_structured_ts_last_case_delete_is_saved_and_cases_can_be_added_again(env, monkeypatch):
+    """Review fix: edit validation allows an empty spec; submission validation still rejects it."""
+    from modules.flow_gate.api import inbox_routes as inbox
+    path, spec = _ts_env(env, monkeypatch)
+    emptied = _ts_post(env, "test-spec", {"expected_doc_id": TS_ID, "expected_revision": 0,
+                                          "idempotency_key": "ts-del", "cases": []})
+    assert emptied.status_code == 200, emptied.text
+    assert emptied.json()["revision_no"] == 1 and documents.get_by_id(TS_ID)["revision_no"] == 1
+    assert spec.parse_spec(path.read_bytes().decode())["cases"] == []
+    # Submission/test-run validation of the emptied spec keeps rejecting it.
+    assert inbox._spec_ts_submission_failure(path.read_bytes().decode()) is not None
+    readded = _ts_post(env, "test-spec", {"expected_doc_id": TS_ID, "expected_revision": 1,
+                                          "idempotency_key": "ts-add", "cases": [TS_CASE]})
+    assert readded.status_code == 200, readded.text
+    assert readded.json()["revision_no"] == 2
+    assert spec.parse_spec(path.read_bytes().decode())["cases"][0]["case_id"] == "TC-001"
+
+
+def test_structured_ts_rejects_bad_requests_before_any_effect(env, monkeypatch):
+    path, _ = _ts_env(env, monkeypatch)
+    before = (path.read_bytes(), documents.get_by_id(TS_ID)["revision_no"], count(env, "workflow_events"))
+    base = {"expected_doc_id": TS_ID, "expected_revision": 0, "idempotency_key": "bad-1"}
+    unknown = _ts_post(env, "test-spec", {**base, "cases": [], "content": "raw"})
+    assert unknown.status_code == 422 and unknown.json()["error"]["params"]["errors"][0] == {"field": "content", "reason": "unknown_field"}
+    invalid = _ts_post(env, "test-spec", {**base, "cases": [{"case_id": "bad id"}]})
+    assert invalid.status_code == 422 and invalid.json()["error"]["code"] == "invalid_content"
+    assert invalid.json()["error"]["params"]["errors"][0]["validation"]["error"] == "invalid_spec"
+    assert _ts_post(env, "test-brief", {**base, "text": "x" * 20001}).json()["error"]["code"] == "invalid_content"
+    assert _ts_post(env, "test-brief", {**base}).json()["error"]["params"]["errors"][0] == {"field": "text", "reason": "required"}
+    worker = env.client.post(_ts_url("test-spec", True), headers={"Authorization": "Bearer worker"}, json={**base, "cases": []})
+    assert worker.status_code == 403 and worker.json()["error"]["code"] == "token_kind_not_allowed"
+    assert env.client.post(_ts_url("test-spec", True), json={}).status_code == 401
+    assert (path.read_bytes(), documents.get_by_id(TS_ID)["revision_no"], count(env, "workflow_events")) == before
+    # A non-TS card refuses a structured command with the P#1 invalid_content body.
+    not_ts = env.client.post(f"/flowgate/api/v2/flows/{F}/nodes/research/slots/instruction/document/test-brief/revisions",
+                             headers={"Authorization": "Bearer user"},
+                             json={"expected_doc_id": D, "expected_revision": 0, "idempotency_key": "bad-2", "text": "x"})
+    assert not_ts.status_code == 422 and not_ts.json()["error"]["code"] == "invalid_content"

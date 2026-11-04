@@ -8,7 +8,7 @@
   <section class="inspector-research-card" data-test="inspector-research-card" :data-doc-type="target.docType ?? ''">
     <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
-      <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>
+      <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, docId)" /></template>
     </InspectorSlotList>
   </section>
 </template>
@@ -17,7 +17,7 @@
 import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { INSPECTOR_HOST } from '../../inspectorHost'
-import { cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
+import { cardDocumentContext, cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import { researchCardSlots, type ResearchSlot } from './researchCardModel'
@@ -69,12 +69,12 @@ function authorOf(key: string): string | null {
 const lines = computed(() => researchCardSlots(props.target, instructionOmitted.value).map(lineOf))
 
 function open(line: InspectorSlotView) {
-  if (line.id) openDocument(line.id)
+  if (line.id) openDocument(line.id, 'view', { card: cardDocumentContext(props.target, line.id, line.key) })
 }
 
 /** ✎: the same document window, straight in its editor (flowgate.v02.0053 T#3). */
 function edit(line: InspectorSlotView) {
-  if (line.id) openDocument(line.id, 'edit')
+  if (line.id) openDocument(line.id, 'edit', { card: cardDocumentContext(props.target, line.id, line.key) })
 }
 
 /** The history button: the document's 검수·반려 이력 window (flowgate.v02.0056 F1). */

@@ -15,7 +15,7 @@ import MdViewer from '@/features/documentWindow/MdViewer.vue'
 import { DocumentWindows, closeAllDocumentWindows, openDocumentWindow } from '@/features/documentWindow'
 import { setCurrentUser } from '@/core/auth/currentUser'
 
-const api = vi.hoisted(() => ({ getRequest: vi.fn(), patchRequest: vi.fn() }))
+const api = vi.hoisted(() => ({ getRequest: vi.fn(), patchRequest: vi.fn(), postRequest: vi.fn() }))
 vi.mock('@shared/api', async (importOriginal) => ({ ...await importOriginal<typeof import('@shared/api')>(), ...api }))
 registerAppMessages(i18n)
 
@@ -39,6 +39,7 @@ async function type(node: HTMLElement | null, value: string) {
 beforeEach(() => {
   api.getRequest.mockReset()
   api.patchRequest.mockReset()
+  api.postRequest.mockReset()
   i18n.global.locale.value = 'ko'
   setCurrentUser(null)
   closeAllDocumentWindows()
@@ -131,28 +132,26 @@ describe('0064 unreadable viewer and re-entry', () => {
     expect(el(w, 'md-viewer-unreadable').exists()).toBe(false)
     expect(el(w, 'md-viewer-content').text()).toBe('')
   })
-  it('opens the existing editor and preserves input with collision recovery guidance', async () => {
+  it('flowgate.v02.0127 T#5: an unreadable body is never edited into an empty string — the card v2 read is not readable, the editor is blocked and nothing is sent (no v1 fallback)', async () => {
     setCurrentUser({ username: 'worker', email: null, isAdmin: false })
     api.getRequest.mockImplementation(async (url: string) => {
+      if (url.includes('/api/v2/')) return { data: { ok: true, doc_id: DOC, revision_no: 3, body_state: 'file_path_missing', content: null, line: {} } }
       if (url.includes('/content?')) throw failure(404, { reason: 'file_path_missing' })
       return { data: { doc_id: DOC, type_code: 'R', title: 'R', status: 'draft', is_editable: true } }
     })
-    api.patchRequest.mockRejectedValue(failure(409, { detail: 'file_exists_unrecorded' }))
     const w = mount(DocumentWindows, { global: { plugins: [i18n] }, attachTo: document.body })
     wrappers.push(w)
-    openDocumentWindow(DOC)
+    openDocumentWindow(DOC, 'view', { card: { projectId: 'flowgate', flowId: 'flowgate.v02.0064', nodeKey: 'req', ownerSlot: 'requirement', openedDocId: DOC } })
     await flushPromises()
     // The window is teleported to <body> (ModelessShell), so it is read from the document, not the wrapper.
     // flowgate.v02.0070 T#3 (B3): the footer offers [본문 다시 입력] in place of [편집], beside [닫기].
     expect([...inBody('document-window-viewer-bar')!.querySelectorAll('button')].map((b) => b.getAttribute('data-test')))
       .toEqual(['document-window-reenter', 'document-window-close'])
     await click(inBody('document-window-reenter'))
-    await type(inBody('document-window-textarea'), 'New body')
-    await click(inBody('document-window-save'))
-    expect(api.patchRequest).toHaveBeenCalledWith('/api/v1/documents/content', { doc_id: DOC, content: 'New body' })
-    expect(inBody('document-window-save-error')!.textContent).toContain('진단·복구')
-    expect((inBody('document-window-textarea') as HTMLTextAreaElement).value).toBe('New body')
-    expect(inBody('document-window-recover')).toBeNull()
+    expect(inBody('document-window-textarea')).toBeNull()
+    expect(inBody('document-window-editor-error')!.textContent).toContain('본문을 읽을 수 없어 편집할 수 없습니다')
+    expect(api.patchRequest).not.toHaveBeenCalled()
+    expect(api.postRequest).not.toHaveBeenCalled()
   })
   it('reads the server editability without inventing permission from a missing field', () => {
     expect(toDocumentRecord({ doc_id: DOC }).isEditable).toBeUndefined()

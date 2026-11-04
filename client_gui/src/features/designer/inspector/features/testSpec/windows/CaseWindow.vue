@@ -72,14 +72,27 @@ watch(() => [card.value?.test.status.value, card.value?.view.value, card.value?.
   notifySaved(t(k('missing'), { id }), 'info')
 }, { immediate: true, flush: 'sync' })
 const textFields = ['precondition', 'procedure', 'expected'] as const
-const conflict = computed(() => !!draft.value && !!card.value && card.value.test.status.value === 'ready' && card.value.view.value?.details?.complete === true && (draft.value.docId !== card.value.view.value?.tsDocId || draft.value.snapshot !== scenarioSnapshot(card.value.cases.value, card.value.view.value?.details?.title ?? null)))
+/** The draft's pin must be the very snapshot the draft was shown from (§2.15.3); a pin of another snapshot is a conflict, never a rebase. */
+const pinStale = computed(() => !!draft.value?.pin && draft.value.snapshot !== scenarioSnapshot(draft.value.pin.cases, draft.value.pin.title))
+const pinReady = computed(() => !!draft.value?.pin && !pinStale.value)
+async function ensurePin(d: CaseDraft | null) {
+  const c = card.value
+  if (!d || !c || d.pin || d.pinState === 'loading') return
+  d.pinState = 'loading'
+  const pin = await c.pinCases()
+  if (d.pin) return
+  if (pin) { d.pin = pin; d.pinState = 'idle' } else d.pinState = 'failed'
+}
+watch(draft, (d) => { void ensurePin(d) }, { immediate: true })
+// A failed pin read is tried again when the window is opened again (a pin that exists is never replaced).
+watch(() => state.value?.open, (open) => { if (open && draft.value?.pinState === 'failed') { draft.value.pinState = 'idle'; void ensurePin(draft.value) } })
+const conflict = computed(() => pinStale.value || !!draft.value && !!card.value && card.value.test.status.value === 'ready' && card.value.view.value?.details?.complete === true && (draft.value.docId !== card.value.view.value?.tsDocId || draft.value.snapshot !== scenarioSnapshot(card.value.cases.value, card.value.view.value?.details?.title ?? null)))
 // The server's required case fields this window shows; category and check points are hidden and defaulted.
-const valid = computed(() => !!draft.value && (['title', 'requirement', 'procedure', 'expected'] as const).every(field => !!draft.value![field].trim()))
+const valid = computed(() => pinReady.value && !!draft.value && (['title', 'requirement', 'procedure', 'expected'] as const).every(field => !!draft.value![field].trim()))
 /** Preserve each case’s selected failure policy when saving or deleting. */
-function payloadFor(deleting: boolean) {
-  const c = card.value, d = draft.value
-  if (!c || !d) return null
-  return deleting ? c.cases.value.filter(item => item.caseId !== d.original.case_id).map(testSpecCasePayload) : adding.value ? addedCase(c.cases.value, d) : mergeCase(c.cases.value, d)
+function builderFor(deleting: boolean, d: CaseDraft) {
+  // Derived from the pin's own cases (the same v2 response as the base revision), never from the separately read v1 view.
+  return (cases: Parameters<typeof mergeCase>[0]) => deleting ? cases.filter(item => item.caseId !== d.original.case_id).map(testSpecCasePayload) : adding.value ? addedCase(cases, d) : mergeCase(cases, d)
 }
 const locked = computed(() => !card.value?.can(adding.value ? 'caseAdd' : 'caseSave').enabled)
 const saveReason = computed(() => conflict.value ? t(k('conflict')) : !valid.value ? t(k('required_fields')) : reason(adding.value ? 'caseAdd' : 'caseSave'))
@@ -120,9 +133,8 @@ async function commit(deleting: boolean) {
   try {
     await c.reload()
     if (!current() || draft.value !== d || conflict.value || c.test.status.value !== 'ready' || !c.can(op).enabled) return
-    const payload = payloadFor(deleting)
-    if (!payload) return
-    const ok = await c.saveCases(payload, op)
+    if (!d.pin || pinStale.value) return
+    const ok = await c.saveCases(d.pin, builderFor(deleting, d), op)
     if (!ok && current() && !deleting) commandCode.value = c.refusal.value?.fieldErrors.find(error => error.field === 'run_command')?.code ?? null
     if (!ok || !current() || state.value?.caseId !== (adding.value ? '__new__' : d.original.case_id)) return
     delete c.drafts[`t2:case:${adding.value ? '__new__' : d.original.case_id}`]
@@ -132,6 +144,7 @@ async function commit(deleting: boolean) {
 }
 const save = () => commit(false)
 const remove = () => { if (confirming.value) return commit(true) }
+/** Adopts the latest snapshot explicitly: a new draft (and a new pin) is made from the current view; the old pin is dropped with it. */
 function resetDraft() { if (card.value && draft.value) { delete card.value.drafts[`t2:case:${adding.value ? '__new__' : draft.value.original.case_id}`]; confirming.value = false } }
 </script>
 <style scoped>

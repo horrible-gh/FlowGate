@@ -13,7 +13,8 @@ vi.mock('@shared/api', () => ({
   patchRequest: (...args: unknown[]) => patchRequest(...args),
 }))
 
-import { documentContentRead, documentContentSave, documentErrorOf } from '@/features/document'
+import * as documentApi from '@/features/document'
+import { documentContentRead, documentErrorOf } from '@/features/document'
 
 const DOC = 'flowgate.v02.0053.0007-TR'
 const axiosError = (status: number) => ({ isAxiosError: true, response: { status, data: { detail: 'x' } } })
@@ -23,7 +24,7 @@ beforeEach(() => {
   patchRequest.mockReset()
 })
 
-describe('documentContentRead / documentContentSave (flowgate.v02.0053 T#3)', () => {
+describe('documentContentRead (flowgate.v02.0053 T#3; the v1 save was removed by flowgate.v02.0127 T#5)', () => {
   it('reads the stored file as it is, frontmatter included', async () => {
     getRequest.mockResolvedValue({ data: { content: '---\ntitle: x\n---\n# 본문\n' } })
     await expect(documentContentRead(DOC)).resolves.toEqual({ docId: DOC, content: '---\ntitle: x\n---\n# 본문\n', missing: false })
@@ -41,12 +42,9 @@ describe('documentContentRead / documentContentSave (flowgate.v02.0053 T#3)', ()
     expect(documentErrorOf(error).kind).toBe('forbidden')
   })
 
-  it('saves the whole body with the doc_id; a refusal is thrown as it is', async () => {
-    patchRequest.mockResolvedValue({ data: {} })
-    await documentContentSave(DOC, '---\na: 1\n---\n본문')
-    expect(patchRequest).toHaveBeenCalledWith('/api/v1/documents/content', { doc_id: DOC, content: '---\na: 1\n---\n본문' })
-    patchRequest.mockRejectedValue(axiosError(422))
-    const error = await documentContentSave(DOC, 'x').catch((thrown: unknown) => thrown)
-    expect(documentErrorOf(error).status).toBe(422)
+  it('flowgate.v02.0127 T#5: there is no v1 whole-body save left (PATCH /api/v1/documents/content); a body is saved only through the card document session', () => {
+    expect('documentContentSave' in documentApi).toBe(false)
+    expect(typeof documentApi.cardDocumentRevise).toBe('function')
+    expect(patchRequest).not.toHaveBeenCalled()
   })
 })

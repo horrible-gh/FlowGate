@@ -1,7 +1,20 @@
 // v8: one live controller per selected card; data and window drafts survive tab/card changes.
 import { computed, effectScope, getCurrentInstance, onScopeDispose, reactive, ref, shallowRef, watch, type ComputedRef } from 'vue'
-import { documentHistoryRead, testSpecSave, testSpecMutationErrorOf, type TestSpecView, type TestSpecCasePayload, type TestSpecResultEntry, type TestSpecFormatError } from '@/features/document'
-import { openDocumentAi } from '../../openDocument'
+import {
+  cardDocumentRead,
+  cardDocumentStructuredRead,
+  documentHistoryRead,
+  testSpecMutationErrorOf,
+  toTestSpecCaseDetail,
+  type CardStructuredCommand,
+  type TestSpecCaseDetail,
+  type TestSpecView,
+  type TestSpecCasePayload,
+  type TestSpecResultEntry,
+  type TestSpecFormatError,
+} from '@/features/document'
+import { cardDocumentContext, openDocumentAi } from '../../openDocument'
+import { reviseTs, tsOwnerOf, tsStartNewIntent, type TsBase, type TsReviseResult, type TsSubmitted } from './tsEditSession'
 import { captureInspectorResourceContext, useInspectorResource } from '../../useInspectorResource'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { cardSettingsDisabledReason, type CardSettingsField } from '../settings/cardSettingsModel'
@@ -23,6 +36,59 @@ export interface TestCardRefusal {
   operation: TestCardCommand; key: string; kind: string; status: number | null; code: string | null
   message: string | null; fieldErrors: readonly TestSpecFormatError[]; error: unknown
 }
+/**
+ * flowgate.v02.0127 T#5 — a TS v2 revision that was not saved (rejected / uncertain / busy / no card connection),
+ * thrown to `changeDocument` so the refusal reads the same way as every other command's.
+ */
+export class TsReviseFailure extends Error {
+  constructor(readonly result: Extract<TsReviseResult, { ok: false }>) {
+    super(result.failure?.errorKey ?? result.kind)
+  }
+}
+
+function tsFailureParsed(failure: TsReviseFailure) {
+  const { result } = failure
+  const code = result.failure?.code ?? null
+  const status = result.failure?.status ?? result.error?.status ?? null
+  const params = (result.failure?.params ?? {}) as Record<string, unknown>
+  let kind: string
+  if (result.kind === 'no_context') kind = 'binding'
+  else if (result.kind === 'blocked') kind = code === 'idempotency_key_reused' ? 'reused' : 'config'
+  else if (result.kind === 'busy' || result.kind === 'uncertain') kind = 'uncertain'
+  else if (code === 'revision_conflict') kind = 'conflict'
+  else if (code === 'slot_document_changed' || code === 'no_document') kind = 'detached'
+  else if (code === 'unauthorized') kind = 'unauthorized'
+  else if (code === 'token_kind_not_allowed') kind = 'config'
+  else if (code === 'invalid_content' || code === 'invalid_request') kind = 'invalid'
+  else if (code === 'GROUP_AI_RUN_LOCKED' || code === 'workflow_revert_pending') kind = 'running'
+  else if (code === 'flow_disposed') kind = 'disposed'
+  else if (code === 'permission_denied') kind = 'forbidden'
+  else if (code === 'not_editable') {
+    // §2.13: only an approved / terminal document is "approved"; an unreadable body or an unsupported type is not.
+    const reason = typeof (result.failure?.params ?? {}).reason === 'string' ? String((result.failure?.params ?? {}).reason) : ''
+    kind = reason === 'body_unreadable' || reason === 'unsupported_type' ? 'other' : 'approved'
+  } else if (code === 'idempotency_key_reused') kind = 'reused'
+  else if (code === 'node_not_found' || code === 'flow_not_found') kind = 'not_found'
+  else kind = 'other'
+  // invalid_content carries the structured validator's errors under errors[].validation.errors (§2.15.1).
+  const errors = Array.isArray(params.errors) ? (params.errors as Record<string, unknown>[]) : []
+  const inner = errors.flatMap((entry) => {
+    const validation = entry.validation as Record<string, unknown> | undefined
+    return Array.isArray(validation?.errors) ? (validation!.errors as Record<string, unknown>[]) : []
+  })
+  const fieldErrors: TestSpecFormatError[] = inner.map((row) => ({
+    code: typeof row.code === 'string' ? row.code : null, caseId: typeof row.case_id === 'string' ? row.case_id : null,
+    field: typeof row.field === 'string' ? row.field : null, message: typeof row.message === 'string' ? row.message : null,
+  }))
+  return { kind, status, code, message: null as string | null, fieldErrors }
+}
+
+type TsCaseList = readonly TestSpecCaseDetail[]
+/** The cases draft's snapshot: base (doc, revision, coordinates) and the cases/title of the SAME v2 response. */
+export interface CasesPin { base: TsBase; title: string | null; cases: TsCaseList }
+/** The confirmed answer for a draft: the new base (N+1) and the pending's own submission (never the caller's current text). */
+interface TsAck { base: TsBase; submitted: TsSubmitted; resent: boolean }
+
 export const TEST_CARD_WINDOW_LOADERS = import.meta.glob('./windows/*Window.vue')
 export const testCardWindowAvailable = (kind: TestCardWindowKind) => `./windows/${kind[0].toUpperCase() + kind.slice(1)}Window.vue` in TEST_CARD_WINDOW_LOADERS
 const windowKinds: TestCardWindowKind[] = ['brief', 'scenario', 'case', 'report', 'follow']
@@ -168,16 +234,16 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (!canOpen(kind)) return false
     const window = windows[kind]
     window.open = true; window.minimized = false; window.caseId = caseId; window.zIndex = ++front
-    return true
+        return true
   }
   function closeWindow(kind: TestCardWindowKind) { windows[kind].open = false }
 
   function reject(operation: TestCardCommand, error: unknown) {
     if (!target()) return
-    const parsed = testSpecMutationErrorOf(error, operation === 'rawSave')
+    const parsed = error instanceof TsReviseFailure ? tsFailureParsed(error) : testSpecMutationErrorOf(error, operation === 'rawSave')
     const { kind, status, code, message, fieldErrors } = parsed
     if (documentCommands.includes(operation) && kind === 'forbidden') documentDenied.value = true
-    const shared = ['running', 'disposed', 'forbidden', 'not_found', 'network', 'not_approved', 'report_approved', 'origin_pending', 'no_automated']
+    const shared = ['running', 'disposed', 'forbidden', 'not_found', 'network', 'not_approved', 'report_approved', 'origin_pending', 'no_automated', 'unauthorized', 'config', 'detached', 'uncertain', 'binding']
     const failureOperation = operation === 'caseAdd' ? 'caseSave' : operation === 'briefSave' ? 'rawSave' : operation
     const key = kind === 'approved' ? 'guard.approved' : kind === 'forbidden' && documentCommands.includes(operation) ? `failure.${failureOperation}_forbidden` : shared.includes(kind) ? `failure.${kind}` : `failure.${failureOperation}_${['conflict', 'invalid'].includes(kind) ? kind : 'other'}`
     refusal.value = { operation, key, kind, status, code, message, fieldErrors, error }
@@ -194,11 +260,91 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     finally { if (target()) await reload(); busy.value = null }
     return ok
   }
-  async function saveCases(payload: readonly TestSpecCasePayload[], operation: 'caseSave' | 'caseDelete' | 'caseAdd' = 'caseSave'): Promise<boolean> {
+  // flowgate.v02.0127 T#5 (§2.15.3): the card's v2 coordinates of the TS and the snapshots the drafts pinned.
+  // Review fix: every draft pins ONE v2 response — docId, revision, coordinates and the content/projection it shows
+  // are taken from that same response and stay with that draft. A reopen, another draft's ACK or a late GET never
+  // replaces them; only this draft's own confirmed ACK moves its base (to N+1, with the submitted cases).
+  const tsContext = () => { const id = view.value?.tsDocId; return id ? cardDocumentContext(target(), id) : null }
+  const caseDetails = (rows: unknown): TsCaseList => (Array.isArray(rows) ? rows : []).flatMap((row) => toTestSpecCaseDetail(row) ?? [])
+  /** Reads one structured snapshot; null when it is not readable or not this card's TS. */
+  async function pinCases(): Promise<CasesPin | null> {
+    const ctx = tsContext()
+    const expected = view.value?.tsDocId
+    if (!ctx || !expected) return null
+    try {
+      const snapshot = await cardDocumentStructuredRead(ctx, 'ts_spec')
+      const projection = snapshot.projection as { cases?: unknown; title?: unknown } | null | undefined
+      if (snapshot.bodyState !== 'readable' || snapshot.docId !== expected || !projection || !Array.isArray(projection.cases)) return null
+      return {
+        base: { docId: snapshot.docId, revisionNo: snapshot.revisionNo, ctx },
+        title: typeof projection.title === 'string' && projection.title ? projection.title : null,
+        cases: caseDetails(projection.cases),
+      }
+    } catch { return null }
+  }
+  /** The brief's text and base from one structured read (null when it is not readable or not this TS). */
+  async function pinBrief(): Promise<{ text: string; base: TsBase } | null> {
+    const ctx = tsContext()
+    if (!ctx) return null
+    const snapshot = await cardDocumentStructuredRead(ctx, 'ts_brief')
+    const projection = snapshot.projection as { text?: unknown } | null | undefined
+    if (snapshot.bodyState !== 'readable' || snapshot.docId !== view.value?.tsDocId || typeof projection?.text !== 'string') return null
+    return { text: projection.text, base: { docId: snapshot.docId, revisionNo: snapshot.revisionNo, ctx } }
+  }
+  /** The whole stored text, its frontmatter and base of one plain v2 read, for the raw editor. */
+  async function pinRaw(): Promise<{ content: string; base: TsBase } | null> {
+    const ctx = tsContext()
+    if (!ctx) return null
+    const snapshot = await cardDocumentRead(ctx)
+    if (snapshot.bodyState !== 'readable' || snapshot.content === null || snapshot.docId !== view.value?.tsDocId) return null
+    return { content: snapshot.content, base: { docId: snapshot.docId, revisionNo: snapshot.revisionNo, ctx } }
+  }
+  async function send(kind: 'raw' | 'brief' | 'cases', base: TsBase, payload: Parameters<typeof reviseTs>[2]): Promise<TsAck> {
+    const result = await reviseTs(tsOwnerOf(kind, base.ctx, base.docId), base, payload)
+    if (!result.ok) throw new TsReviseFailure(result)
+    return { base: { docId: result.confirmed.docId, revisionNo: result.confirmed.revisionNo, ctx: base.ctx }, submitted: result.submitted, resent: result.resent }
+  }
+  const sameCommand = (a: CardStructuredCommand | null, b: CardStructuredCommand) => !!a && JSON.stringify(a) === JSON.stringify(b)
+  /**
+   * Cases save on the draft's own pin. `build` derives the cases array from the pin's cases (the same snapshot as
+   * the base revision), so an array of revision N is never sent as N+1. When the document's kept request was resent
+   * instead (an earlier uncertain save), only that submission becomes the pin's N+1 and this save is reported unsaved.
+   */
+  async function saveCases(pin: CasesPin, build: (cases: TsCaseList) => readonly TestSpecCasePayload[], operation: 'caseSave' | 'caseDelete' | 'caseAdd' = 'caseSave'): Promise<boolean> {
     const current = view.value
     if (!current?.tsDocId) return false
-    return changeDocument(operation, () => testSpecSave(current.tsDocId!, payload, current.details?.title ?? null))
+    let saved = false
+    const ok = await changeDocument(operation, async () => {
+      if (pin.base.docId !== current.tsDocId) throw new TsReviseFailure({ ok: false, kind: 'no_context', failure: null, error: null })
+      const title = pin.title ?? current.details?.title ?? null
+      const command: CardStructuredCommand = { kind: 'ts_spec', cases: build(pin.cases) as unknown as Record<string, unknown>[], ...(title ? { title } : {}) }
+      const ack = await send('cases', pin.base, { command })
+      // Move this pin to the confirmed N+1 with the submitted cases only.
+      pin.base = ack.base
+      if (ack.submitted.command?.kind === 'ts_spec') {
+        pin.cases = caseDetails(ack.submitted.command.cases)
+        if (ack.submitted.command.title) pin.title = ack.submitted.command.title
+      }
+      saved = sameCommand(ack.submitted.command, command)
+      if (!saved) throw new TsReviseFailure({ ok: false, kind: 'busy', failure: null, error: null })
+    })
+    return ok && saved
   }
+  /** Brief save: the draft's own pinned base; returns the confirmed N+1 base and the text the server stored for that request. */
+  async function reviseBrief(base: TsBase, text: string): Promise<{ base: TsBase; text: string; same: boolean }> {
+    const ack = await send('brief', base, { command: { kind: 'ts_brief', text } })
+    const stored = ack.submitted.command?.kind === 'ts_brief' ? ack.submitted.command.text : text
+    return { base: ack.base, text: stored, same: stored === text }
+  }
+  /** Raw save: the whole stored text on the raw draft's pinned base; returns N+1 and the submitted text. */
+  async function reviseRaw(base: TsBase, text: string): Promise<{ base: TsBase; text: string; same: boolean }> {
+    const ack = await send('raw', base, { raw: text })
+    const stored = ack.submitted.text ?? text
+    return { base: ack.base, text: stored, same: stored === text }
+  }
+  /** An explicit new intent for a draft whose kept request was blocked (key reuse / corrected setting). */
+  function startNewIntent(kind: 'raw' | 'brief' | 'cases', base: TsBase) { tsStartNewIntent(base.docId, tsOwnerOf(kind, base.ctx, base.docId)) }
+
   async function changeSetting(field: CardSettingsField, value: unknown): Promise<boolean> {
     if (!can('settingChange', undefined, field).enabled) return false
     return settings.change(field, value)
@@ -227,7 +373,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   }
   return { target: computed(() => target() ?? lastTarget.value), test, settings, reviewHistory, view, cases, rows, formatErrors,
     lastNormal, presentation, writing, writingCaseId, instructionOmitted, busy, refusal, drafts, windows, reportRecentlyConfirmed,
-    can, canOpen, openReason, openWindow, closeWindow, reload, reject, changeDocument, saveCases, changeSetting, rewriteAll,
+    can, canOpen, openReason, openWindow, closeWindow, reload, reject, changeDocument, saveCases, pinCases, pinBrief, pinRaw, reviseBrief, reviseRaw, startNewIntent, changeSetting, rewriteAll,
     run: () => can('run').enabled ? test.run() : Promise.resolve(false),
     cancel: () => can('cancel').enabled ? test.cancel() : Promise.resolve(false),
     rerunCase: (caseId: string) => can('rerunCase', caseId).enabled ? test.rerunCase(caseId) : Promise.resolve(false),

@@ -25,7 +25,10 @@ export {
   documentIoUpload,
   dismissDocumentIoNotice,
 } from './documentIo'
-export { documentIoGuarded } from './documentEditRegistry'
+export {
+  documentIoGuarded, documentIoHasUnresolved, documentIoMarkUnresolved, documentIoTsBegin, documentIoTsEnd,
+  documentIoUnresolvedOwner,
+} from './documentEditRegistry'
 // flowgate.v02.0072 T#3 — the work plan edit window (features/workPlanWindow; DocumentWindows mounts its host): openers
 // outside the window features (the Inspector's openDocument.ts) open it through this surface like the other in-tab windows.
 export { openWorkPlanEditWindow, type WorkPlanEditRequest } from '@/features/workPlanWindow/workPlanEditWindows'

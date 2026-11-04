@@ -23,7 +23,10 @@ class MarkdownRule:
             result = template_provision.validate_design_document_structure(doc["project_id"], doc["type_code"], locale, text)
             if not result.get("valid"):
                 _failure(doc, result)
-        if self.kind == "TS":
+        # Structured cases/brief edits (L#2 §2.15.1) allow an empty spec so the last case can be
+        # deleted and re-added; submission/approval/test-run keep the no_cases rejection.
+        structured_edit = getattr(self.request, "structured", None) is not None
+        if self.kind == "TS" and not structured_edit:
             result = inbox._spec_ts_submission_failure(text)
             if result is not None:
                 _failure(doc, json.loads(result.body))

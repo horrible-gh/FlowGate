@@ -34,7 +34,7 @@
 //   download   GET /api/v1/document/{doc_id}/download   (403 / 404 no document or no file / 422 / 500)
 // The file comes as a blob (the request carries the bearer header); a refusal also arrives as a blob and
 // is read back into the JSON envelope before it is thrown, so documentErrorOf reads its status.
-import { downloadBlobRequest, getRequest, patchRequest } from '@shared/api'
+import { downloadBlobRequest, getRequest } from '@shared/api'
 import { normalizeApiInput } from '@shared/apiErrors'
 import { documentErrorOf } from '../documentError'
 
@@ -216,10 +216,8 @@ export async function documentContentRead(docId: string): Promise<DocumentConten
   }
 }
 
-/** Saves a document's whole body (frontmatter included). Errors are thrown as they are. */
-export async function documentContentSave(docId: string, content: string): Promise<void> {
-  await patchRequest<unknown>(`${API}/documents/content`, { doc_id: docId, content })
-}
+// flowgate.v02.0127 T#5: the v1 whole-body save (PATCH /api/v1/documents/content) is gone from the client. A
+// body is saved only through the card document session (cardDocument.ts, /api/v2 revisions); no v1 fallback.
 
 /** A downloaded document file (flowgate.v02.0068): the server's canonical Markdown and its file name. */
 export interface DocumentDownload {

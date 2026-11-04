@@ -18,9 +18,14 @@
 // as `<docId>.json` (GET …/work-plan, `body` only, the plan window's export format), never the Markdown file; its upload
 // is the plan window's [JSON 가져오기] (opened, nothing saved here), never the content save.
 import { reactive, ref } from 'vue'
-import { normalizeApiInput } from '@shared/apiErrors'
 import {
-  documentContentSave,
+  cardDocumentErrorOf,
+  cardDocumentRead,
+  cardDocumentRevise,
+  cardDocumentConfirmRevision,
+  type CardApiError,
+  type CardDocumentContext,
+  type CardRevisionRequest,
   documentDownload,
   documentErrorOf,
   documentInfoRead,
@@ -29,6 +34,11 @@ import {
   workPlanErrorOf,
   type DocumentDownload,
 } from '@/features/document'
+import {
+  classifyFailure,
+  newIdempotencyKey,
+  saveFailureKey,
+} from '@/features/document/cardEditSession'
 import {
   openWorkPlanEditImport,
   workPlanEditOpenerOf,
@@ -47,6 +57,7 @@ import {
   documentIoEndDownload,
   documentIoEpoch,
   documentIoGuard,
+  documentIoMarkUnresolved,
   documentIoNewToken,
   documentIoReflectAll,
   documentIoRelease,
@@ -66,7 +77,6 @@ import {
   documentIoFallbackName,
   documentIoFilename,
   documentIoSafeName,
-  documentIoSaveNotice,
   documentIoTooLarge,
   documentIoUploadText,
   documentIoView,
@@ -287,9 +297,61 @@ export interface DocumentIoUploadOptions {
   readonly read?: (file: File) => Promise<string>
   /** flowgate.v02.0074 T#2: the drawing group's project and Flow, for a work plan window it opens (else the read's). */
   readonly context?: { readonly projectId: string | null; readonly groupId: string | null }
+  /**
+   * flowgate.v02.0127 T#5 (§2.11 / §2.14): the card coordinates of the button's line, handed by the caller that draws
+   * the group. Without them nothing is picked or saved (no v1 save fallback).
+   */
+  readonly card?: CardDocumentContext | null
 }
 
 type SaveOutcome = { readonly ok: true } | { readonly ok: false; readonly error: unknown }
+
+/** The v2 answer did not match this request (ok / doc_id / N+1 / updated_at / replayed / line): the result is uncertain. */
+class UploadUnverified extends Error {}
+
+/** One upload request whose result is uncertain: frozen with its key, resent as it is by an explicit upload press. */
+interface HeldUpload {
+  readonly card: CardDocumentContext
+  readonly request: CardRevisionRequest
+}
+
+const heldUploads = new Map<string, HeldUpload>()
+
+async function sendUpload(card: CardDocumentContext, request: CardRevisionRequest): Promise<void> {
+  const raw = await cardDocumentRevise(card, request)
+  if (cardDocumentConfirmRevision(raw, request.expectedDocId, request.expectedRevision) === null) throw new UploadUnverified()
+}
+
+/** Message key under `gui.document_io.notice.save` for a failed v2 upload (§2.13 codes). */
+function cardUploadNotice(error: unknown): { readonly key: string; readonly uncertain: boolean } {
+  if (error instanceof UploadUnverified) return { key: 'uncertain', uncertain: true }
+  const read: CardApiError = cardDocumentErrorOf(error)
+  const failure = classifyFailure(read)
+  if (failure.kind === 'uncertain') return { key: 'uncertain', uncertain: true }
+  const key = saveFailureKey(read)
+  if (key.startsWith('not_editable')) return { key: 'locked', uncertain: false }
+  const mapped: Readonly<Record<string, string>> = {
+    unauthorized: 'unauthorized',
+    token_kind_not_allowed: 'token_kind_not_allowed',
+    revision_conflict: 'conflict',
+    slot_document_changed: 'detached',
+    no_document: 'detached',
+    invalid_content: 'invalid_content',
+    invalid_request: 'invalid_content',
+    expected_revision_missing: 'invalid_content',
+    GROUP_AI_RUN_LOCKED: 'busy',
+    workflow_revert_pending: 'busy',
+    permission_denied: 'forbidden',
+    card_binding_missing: 'binding_required',
+    card_document_edit_required: 'binding_required',
+    file_exists_unrecorded: 'file_exists_unrecorded',
+    idempotency_key_reused: 'reused',
+    flow_disposed: 'gone',
+    node_not_found: 'gone',
+    flow_not_found: 'gone',
+  }
+  return { key: mapped[key] ?? 'save', uncertain: false }
+}
 
 async function settle(save: () => Promise<void>): Promise<SaveOutcome> {
   try {
@@ -303,7 +365,7 @@ async function settle(save: () => Promise<void>): Promise<SaveOutcome> {
 /** The previous Designer's save answered (L §2.12 orphan_settled): a content change signal, no notice. */
 function orphanSettled(token: DocumentIoToken, outcome: SaveOutcome): void {
   if (!documentIoDropInflight(token)) return
-  if (outcome.ok || documentErrorOf(outcome.error).kind === 'network') contentChanged(token.docId)
+  if (outcome.ok || cardUploadNotice(outcome.error).uncertain) contentChanged(token.docId)
   documentIoResume(token.docId)
 }
 
@@ -329,15 +391,39 @@ export async function documentIoUpload(docId: string, options: DocumentIoUploadO
     return
   }
   if (documentIoBusy(docId)) return
+  const held = heldUploads.get(docId)
+  if (held) {
+    // An earlier request of this document ended uncertain: only the same request is sent again (same key, same bytes).
+    await resendHeldUpload(docId, held)
+    return
+  }
   // Check 1: unsaved or saving text of the document stays; the upload waits for it.
   if (documentIoConflict(docId)) {
     notify('upload_hold', 'warning')
+    return
+  }
+  const card = options.card ?? null
+  if (!card) {
+    notify('save.binding_required', 'warning')
     return
   }
   const token = documentIoNewToken(docId)
   documentIoStartUpload(token)
   let released = false
   try {
+    // §2.14: the base read comes before the file picker; what it fixes is the only base the upload saves against.
+    let base: Awaited<ReturnType<typeof cardDocumentRead>>
+    try {
+      base = await cardDocumentRead(card)
+    } catch {
+      if (documentIoAlive(token)) notify('save.base_failed', 'danger')
+      return
+    }
+    if (!documentIoAlive(token)) return // C0
+    if (base.bodyState !== 'readable' || base.content === null || base.docId !== docId) {
+      notify('save.base_failed', 'warning')
+      return
+    }
     let file: File | null
     try {
       file = await (options.pick ?? documentIoPickFile)(UPLOAD_ACCEPT)
@@ -379,7 +465,17 @@ export async function documentIoUpload(docId: string, options: DocumentIoUploadO
       return
     }
     documentIoSetPhase(token, 'saving')
-    const outcome = await settle(() => documentContentSave(docId, text))
+    const request: CardRevisionRequest = {
+      expectedDocId: base.docId,
+      expectedRevision: base.revisionNo,
+      idempotencyKey: newIdempotencyKey(),
+      content: text,
+    }
+    const outcome = await settle(() => sendUpload(card, request))
+    if (!outcome.ok && cardUploadNotice(outcome.error).uncertain) {
+      heldUploads.set(docId, { card, request })
+      documentIoMarkUnresolved(docId, true)
+    }
     if (token.epoch !== documentIoEpoch()) {
       // C3: the save left before the Designer did and answered after.
       orphanSettled(token, outcome)
@@ -397,10 +493,50 @@ export async function documentIoUpload(docId: string, options: DocumentIoUploadO
       notify('upload_done', 'success')
       return
     }
-    const error = documentErrorOf(outcome.error)
-    notify(`save.${documentIoSaveNotice(error, normalizeApiInput(outcome.error).data.detail)}`, 'danger')
-    if (error.status === 403) mark(docId, { uploadDenied: true })
-    else if (error.status === 404) mark(docId, { state: 'GONE' })
+    const notice = cardUploadNotice(outcome.error)
+    notify(`save.${notice.key}`, 'danger')
+    const status = outcome.error instanceof UploadUnverified ? null : cardDocumentErrorOf(outcome.error).status
+    if (status === 403 && notice.key === 'forbidden') mark(docId, { uploadDenied: true })
+    else if (status === 404 && notice.key === 'gone') mark(docId, { state: 'GONE' })
+  } finally {
+    if (!released) documentIoRelease(token)
+  }
+}
+
+/** The explicit resend of an uncertain upload: no new key, no new file, no new base. */
+async function resendHeldUpload(docId: string, held: HeldUpload): Promise<void> {
+  const token = documentIoNewToken(docId)
+  documentIoStartUpload(token)
+  let released = false
+  try {
+    documentIoGuard(token)
+    documentIoSetPhase(token, 'saving')
+    const outcome = await settle(() => sendUpload(held.card, held.request))
+    if (token.epoch !== documentIoEpoch()) {
+      if (outcome.ok || !cardUploadNotice(outcome.error).uncertain) {
+        heldUploads.delete(docId)
+        documentIoMarkUnresolved(docId, false)
+      }
+      orphanSettled(token, outcome)
+      return
+    }
+    if (!documentIoAlive(token)) return
+    const stillUncertain = !outcome.ok && cardUploadNotice(outcome.error).uncertain
+    if (!stillUncertain) {
+      heldUploads.delete(docId)
+      documentIoMarkUnresolved(docId, false)
+    }
+    documentIoSetPhase(token, 'reflecting')
+    await documentIoReflectAll(token)
+    if (!documentIoAlive(token)) return
+    documentIoRelease(token)
+    released = true
+    if (outcome.ok) {
+      contentChanged(docId)
+      notify('upload_done', 'success')
+      return
+    }
+    notify(`save.${cardUploadNotice(outcome.error).key}`, 'danger')
   } finally {
     if (!released) documentIoRelease(token)
   }
