@@ -71,7 +71,7 @@ def _delete_missing(s, where: str, params: list, keep: list[str],
     now = now_iso()
     s._execute(
         "UPDATE ai_providers SET deleted_at = ?, updated_at = ?, enabled = 0, "
-        "api_key = NULL, cli_command = NULL, api_base_url = NULL, api_model = NULL "
+        "api_key = NULL, cli_command = NULL, api_base_url = NULL, api_model = NULL, target_agent_id = NULL "
         f"WHERE provider_id IN ({marks})", [now, now] + ids)
 
 
@@ -93,7 +93,7 @@ KEEP_STORED_SECRET = _KeepStoredSecret()
 _COLUMNS = (
     "provider_id, project_id, name, exec_type, kind, enabled, cli_command, "
     "api_base_url, api_model, api_key, sort_order, created_at, updated_at, "
-    "owner_scope, owner_user_id, project_access, exec_location"
+    "owner_scope, owner_user_id, project_access, exec_location, target_agent_id"
 )
 
 OWNER_SYSTEM = "system"
@@ -280,27 +280,27 @@ def _replace_rows(s, scope: tuple[str, list], rows: list[dict], existing_ids: se
                 "UPDATE ai_providers SET name = ?, exec_type = ?, kind = ?, enabled = ?, "
                 "cli_command = ?, api_base_url = ?, api_model = ?, api_key = ?, "
                 "sort_order = ?, project_access = COALESCE(?, project_access), "
-                "exec_location = COALESCE(?, exec_location), updated_at = ? "
+                "exec_location = COALESCE(?, exec_location), target_agent_id = ?, updated_at = ? "
                 f"WHERE provider_id = ? AND {where}",
                 [
                     r["name"], r["exec_type"], r["kind"], r["enabled"],
                     r["cli_command"], r["api_base_url"], r["api_model"],
                     _key_for_storage(r, stored_keys),
-                    r["sort_order"], access, r.get("exec_location"), now, r["provider_id"],
+                    r["sort_order"], access, r.get("exec_location"), r.get("target_agent_id"), now, r["provider_id"],
                 ] + params,
             )
         else:
             s._execute(
                 "INSERT INTO ai_providers (provider_id, project_id, name, exec_type, kind, "
                 "enabled, cli_command, api_base_url, api_model, api_key, sort_order, "
-                "created_at, updated_at, owner_scope, owner_user_id, project_access, exec_location) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "created_at, updated_at, owner_scope, owner_user_id, project_access, exec_location, target_agent_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     r["provider_id"], project_id, r["name"], r["exec_type"], r["kind"],
                     r["enabled"], r["cli_command"], r["api_base_url"], r["api_model"],
                     _key_for_storage(r, stored_keys), r["sort_order"], now, now,
                     owner_scope or OWNER_SYSTEM, owner_user_id, access or "all",
-                    r.get("exec_location") or "local",
+                    r.get("exec_location") or "local", r.get("target_agent_id"),
                 ],
             )
 

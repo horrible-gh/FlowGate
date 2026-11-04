@@ -44,6 +44,7 @@ class ProviderIn(BaseModel):
     api_key: str | None = None
     project_access: str | None = None
     exec_location: str | None = None
+    target_agent_id: str | None = None
 
 
 class SystemAiSettingsPut(BaseModel):
@@ -107,7 +108,11 @@ class DoctypeProvidersPut(BaseModel):
 def _providers_payload(body: SystemAiSettingsPut) -> list[dict] | None:
     if body.providers is None:
         return None
-    return [p.model_dump() for p in body.providers]
+    # An omitted target keeps the saved assignment; explicit null requests removal.
+    return [p.model_dump(exclude={"target_agent_id"})
+            | ({"target_agent_id": p.target_agent_id}
+               if "target_agent_id" in p.model_fields_set else {})
+            for p in body.providers]
 
 
 def _validation_error(exc: _svc.AiSettingsValidationError) -> HTTPException:

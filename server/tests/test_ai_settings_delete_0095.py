@@ -33,7 +33,7 @@ class Store:
             kind TEXT, enabled INTEGER, cli_command TEXT, api_base_url TEXT,
             api_model TEXT, api_key TEXT, sort_order INTEGER, created_at TEXT,
             updated_at TEXT, owner_scope TEXT, owner_user_id TEXT,
-            project_access TEXT, exec_location TEXT);
+            project_access TEXT, exec_location TEXT, target_agent_id TEXT);
           CREATE TABLE system_settings (
             setting_key TEXT PRIMARY KEY, setting_value TEXT, value_type TEXT,
             description TEXT, updated_at TEXT, updated_by TEXT);

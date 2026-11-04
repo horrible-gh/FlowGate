@@ -623,6 +623,7 @@ def _to_view(row: dict) -> dict:
         "api_key_hint": api_key[-HINT_LEN:] if api_key else None,
         "owner_scope": row.get("owner_scope") or _ai_db.OWNER_SYSTEM,
         "exec_location": row.get("exec_location") or "local",
+        "target_agent_id": row.get("target_agent_id"),
     }
     if unreadable:
         view["api_key_unreadable"] = True
@@ -663,7 +664,7 @@ def _pick_default(default_id: Optional[str], chain: list[dict]) -> Optional[str]
 
 
 def _merge_rows(existing: dict[str, dict], providers: list[dict],
-                with_access: bool) -> tuple[list[dict], dict[str, str]]:
+                with_access: bool, owner_user_id: Optional[str] = None) -> tuple[list[dict], dict[str, str]]:
     """Payload -> stored rows with final ids and merged keys. Ids are global (PK), so a new id
     is checked against every owner's rows, not only this list's."""
     taken = set(existing) | _ai_db.all_provider_ids()
@@ -694,7 +695,51 @@ def _merge_rows(existing: dict[str, dict], providers: list[dict],
             if with_access else None,
             "exec_location": p.get("exec_location") or (old or {}).get("exec_location") or "local",
         })
+    _validate_target_agents(existing, providers, rows, owner_user_id)
     return rows, id_map
+
+
+def _validate_target_agents(existing: dict[str, dict], providers: list[dict],
+                            rows: list[dict], owner_user_id: Optional[str]) -> None:
+    """Validate the effective saved mode, preserving omitted fields and legacy NULLs.
+
+    Ownership/existence errors deliberately share a reason. Availability is checked
+    only for a new assignment; online state and capabilities belong to execution.
+    """
+    from modules.flow_gate.services.agent_registry import AgentError, AgentService
+
+    errors = []
+    registry = AgentService(_ai_db.get_store(), owner_user_id=owner_user_id)
+    for index, (incoming, row) in enumerate(zip(providers, rows)):
+        old = existing.get(incoming.get("id")) or {}
+        remote_cli = row["exec_type"] == "cli" and row["exec_location"] == "remote"
+        target = incoming.get("target_agent_id", old.get("target_agent_id"))
+        target = (target or "").strip() or None
+        row["target_agent_id"] = target if remote_cli else None
+        if not remote_cli:
+            continue
+        unchanged = (old.get("exec_type") == "cli"
+                     and old.get("exec_location") == "remote"
+                     and old.get("target_agent_id") == target)
+        reason = None
+        if target is None:
+            if not unchanged:
+                reason = "required_for_remote_cli"
+        else:
+            try:
+                agent = registry.get(target)
+            except AgentError as exc:
+                if exc.status != 404:
+                    raise
+                reason = "invalid_target_agent"
+            else:
+                if not unchanged and (not agent["enabled"]
+                                      or agent["registration_status"] != "registered"):
+                    reason = "target_agent_unavailable"
+        if reason:
+            errors.append({"index": index, "field": "target_agent_id", "reason": reason})
+    if errors:
+        raise AiSettingsValidationError(errors)
 
 
 def _save_scope(
@@ -819,7 +864,7 @@ def save_user_settings(owner_user_id: str, providers: Optional[list[dict]]) -> d
     if errors:
         raise AiSettingsValidationError(errors)
     existing = {r["provider_id"]: r for r in _ai_db.list_user(owner_user_id)}
-    rows, _id_map = _merge_rows(existing, providers or [], with_access=False)
+    rows, _id_map = _merge_rows(existing, providers or [], with_access=False, owner_user_id=owner_user_id)
     _ai_db.replace_user_scope(owner_user_id, rows, set(existing))
     return get_user_settings(owner_user_id, include_catalog=False)
 
