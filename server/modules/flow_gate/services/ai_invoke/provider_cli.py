@@ -28,6 +28,7 @@ from modules.flow_gate.settings import ai_settings_service
 # so they now live on `runtime` (the parameter block) and `oracle` (the progress probes,
 # §16) instead.
 from . import oracle
+from . import provider_remote
 from .runtime import (
     OUTPUT_TAIL_BYTES,
     PROBE_CANCELLED,
@@ -514,6 +515,10 @@ def _execute_local(exec_id, cwd, prompt, env, *, command, run, decision, started
 def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """stdin-injected CLI run (claude/copilot/codex; args are forbidden — cp932
     truncation). Returns (classification, failure_detail)."""
+    if provider_remote.is_remote_cli(provider):
+        # flowgate.v02.0129 T#2: a remote CLI connection runs only as a Job on its target
+        # Agent -- never through the local process boundary below.
+        return provider_remote.execute(provider, prompt, run)
     cmd = (provider.get("cli_command") or "").strip()
     if not cmd:
         return "spawn_failed", "cli_command not set"

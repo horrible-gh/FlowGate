@@ -58,7 +58,7 @@ OTHER_STEPS = (
     "start_graph_policy_integration", "start_graph_validation_integration", "start_graph_run_integration",
     "start_work_plan_deploy_integration", "recover_graph_time_machine", "encrypt_ai_provider_keys",
     "check_agent_pepper", "recover_ai_evaluations", "start_snapshot_cleanup",
-    "remove_retired_source_bundle_storage", "recover_chat_commands",
+    "remove_retired_source_bundle_storage", "recover_chat_commands", "start_remote_ai_supervisor",
 )
 
 

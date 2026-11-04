@@ -116,6 +116,11 @@ _STATUS_INSERT_AT = 5  # after (run_id, group_id, project_id, doc_ref, mode)
 # them would fail and the finished run's row would be lost, so a row without them writes exactly as before.
 _LINK_COLUMNS = ("invocation_origin_kind", "graph_exec_id")
 
+# flowgate.v02.0129 T#2 (migration 172): the remote Job identity of a remote CLI run (target /
+# claiming Agent, job_id / attempt_id, states). Bound like the link columns above: only when
+# the run used a remote connection AND the column exists.
+_REMOTE_JOB_COLUMN = "remote_job_json"
+
 _ARRAY_FIELDS = ("reached_doc_ids", "fallback_history", "register_errors",
                  "auto_handled_item_seqs", "source_dirty_files", "api_turn_trace")
 _BOOL_FIELDS = ("resumable", "turn_limit_exhausted", "oracle_mismatch",
@@ -225,6 +230,8 @@ def _row_to_payload(row: dict) -> dict:
         raw = row.get(field)
         payload[field] = None if raw is None else bool(raw)
     payload["write_plan"] = _load_write_plan(row.get("write_plan_json"))
+    if _REMOTE_JOB_COLUMN in row:
+        payload["remote_job"] = _load_write_plan(row.get(_REMOTE_JOB_COLUMN))
     return payload
 
 
@@ -342,6 +349,9 @@ def upsert(row: dict[str, Any]) -> None:
                   if row.get(col) is not None and store.column_exists("ai_invoke_runs", col))
     bound = (*_BOUND_COLUMNS, *links)
     values.update({col: row[col] for col in links})
+    if isinstance(row.get("remote_job"), dict) and store.column_exists("ai_invoke_runs", _REMOTE_JOB_COLUMN):
+        bound = (*bound, _REMOTE_JOB_COLUMN)
+        values[_REMOTE_JOB_COLUMN] = json.dumps(row["remote_job"], ensure_ascii=False, sort_keys=True)
     ordered_values = [values[col] for col in bound]
 
     columns_sql = ", ".join((

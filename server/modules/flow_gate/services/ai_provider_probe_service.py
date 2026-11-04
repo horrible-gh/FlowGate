@@ -91,6 +91,12 @@ def probe_provider(form: dict) -> dict:
         return {**base, "status": "skipped", "reason": "not_cli",
                 "message": "Connection test currently supports CLI providers only."}
 
+    # flowgate.v02.0129 T#2 (D0005 §3-8): a remote CLI connection runs only on its Agent.
+    # This launch probe would spawn it here, so it is refused like the other run-less paths.
+    if (form.get("exec_location") or "local") == "remote":
+        return {**base, "status": "skipped", "reason": "remote_cli_unsupported",
+                "message": "Remote CLI connections run only on their Agent; this server does not launch them."}
+
     cli_command = (form.get("cli_command") or "").strip()
     if cli_command == "":
         return {**base, "status": "skipped", "reason": "required_for_cli",

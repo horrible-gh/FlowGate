@@ -30,7 +30,21 @@ def recover_ai_invoke_leases():
     Every lease still in the table when this runs belongs to a process that no
     longer exists (this process's live-run registry starts empty), so it is safe
     to reclaim unconditionally at this point in the bootstrap sequence.
+
+    flowgate.v02.0129 T#2 (D0005 §3-4): AI-run remote Jobs of the previous process go
+    first -- an unclaimed one is cancelled, a claimed one is asked to stop, settled
+    bodies (prompt/token, output) are scrubbed -- and every run whose remote Job is not
+    settled yet is held: its group lease and Graph execution lease are left out of the
+    reclaim below until the remote supervisor sees the Job settled.
     """
+    try:
+        from modules.flow_gate.services.ai_invoke import remote_supervisor
+
+        held = remote_supervisor.startup_hold_remote_runs()
+        if held:
+            logger.info(f"[startup] holding restart recovery of {len(held)} run(s) with a live remote Job")
+    except Exception as exc:
+        logger.warning(f"[startup] remote AI Job recovery failed: {exc}")
     try:
         from modules.flow_gate.services import ai_invoke_service
 
@@ -39,6 +53,18 @@ def recover_ai_invoke_leases():
             logger.info(f"[startup] reclaimed {reclaimed} orphaned AI-run lease(s)")
     except Exception as exc:
         logger.warning(f"[startup] AI-run lease recovery failed: {exc}")
+
+
+def start_remote_ai_supervisor():
+    """flowgate.v02.0129 T#2 (D0005 §3-4/§3-6): the periodic remote AI Job supervisor --
+    stage limits without an Agent request, owner-loss / retrieval-deadline hand-over and
+    scrub, token revocation retry, and resumption of restart-held recoveries."""
+    try:
+        from modules.flow_gate.services.ai_invoke import remote_supervisor
+
+        remote_supervisor.start()
+    except Exception as exc:
+        logger.warning(f"[startup] remote AI Job supervisor start failed: {exc}")
 
 
 def sweep_ai_run_scratches():
@@ -455,6 +481,7 @@ def run_all():
         recover_graph_executions()
     except Exception as exc:
         logger.warning(f"[startup] graph execution recovery failed: {exc}")
+    start_remote_ai_supervisor()     # flowgate.v02.0129 T#2: after the Graph recovery it may resume
     encrypt_ai_provider_keys()
     check_agent_pepper()
     recover_ai_evaluations()

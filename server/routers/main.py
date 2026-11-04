@@ -126,6 +126,12 @@ async def lifespan(app: FastAPI):
         instance_registry.shutdown()
     except Exception:
         logger.warning("server instance shutdown failed", exc_info=True)
+    try:
+        # flowgate.v02.0129 T#2: the remote AI Job supervisor started by the bootstrap.
+        from modules.flow_gate.services.ai_invoke import remote_supervisor
+        remote_supervisor.stop_supervisor()
+    except Exception:
+        logger.warning("remote AI Job supervisor shutdown failed", exc_info=True)
 
 
 app = FastAPI(lifespan=lifespan)

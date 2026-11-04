@@ -478,17 +478,37 @@ def _reclaim_orphan_lease_token(lease_row: dict, reason: str) -> None:
     token_service.revoke(token_id, reason=reason)
 
 
-def _startup_recover_graph_leases() -> None:
+def _recover_graph_lease_row(store, row: dict) -> None:
+    """One previous-process Graph execution: restart end record, then lease expiry."""
+    from datetime import timezone
+    from modules.flow_gate.db import groups as db_groups
+
+    group = db_groups.get_by_id(row["group_id"]) or {}
+    # Include admitted requests: replay must not reuse their previous AI id.
+    _svc()._record_orphaned_lease_run({
+        "run_id": row["ai_run_id"], "group_id": row["group_id"],
+        "project_id": group.get("project_id"), "acquired_at": row["created_at"],
+    }, "orphaned_by_restart")
+    if row["status"] == "running":
+        stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        store._execute(
+            "UPDATE graph_attempt_runs SET lease_expires_at = ? WHERE exec_id = ? "
+            "AND status = 'running' AND ai_run_id = ? AND lease_token = ?",
+            [stamp, row["exec_id"], row["ai_run_id"], row["lease_token"]])
+
+
+def _startup_recover_graph_leases(held: frozenset = frozenset()) -> None:
     """Before traffic or handoff replay, retire the previous process's Graph owners.
 
     Graph workers have no group lease. Persist the same restart end record first,
     then expire their execution lease so the existing Graph recovery (including
     Stop) can fence/reset them without waiting for the heartbeat TTL. A run in
     this process's registry is never treated as a restart orphan.
-    """
-    from datetime import timezone
-    from modules.flow_gate.db import groups as db_groups
 
+    flowgate.v02.0129 T#2 (D0005 §3-4 step 2): a run whose remote Job is not settled
+    (``held``) gets neither the end record nor the lease expiry; the remote supervisor
+    resumes both once the Job is settled.
+    """
     store = db_connection.get_store()
     if not store.table_exists("graph_attempt_runs"):
         return
@@ -498,21 +518,67 @@ def _startup_recover_graph_leases() -> None:
     for row in rows:
         if _svc().get_run_record(row["ai_run_id"]) is not None:
             continue
+        if row["ai_run_id"] in held:
+            continue
         try:
-            group = db_groups.get_by_id(row["group_id"]) or {}
-            # Include admitted requests: replay must not reuse their previous AI id.
-            _svc()._record_orphaned_lease_run({
-                "run_id": row["ai_run_id"], "group_id": row["group_id"],
-                "project_id": group.get("project_id"), "acquired_at": row["created_at"],
-            }, "orphaned_by_restart")
-            if row["status"] == "running":
-                stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                store._execute(
-                    "UPDATE graph_attempt_runs SET lease_expires_at = ? WHERE exec_id = ? "
-                    "AND status = 'running' AND ai_run_id = ? AND lease_token = ?",
-                    [stamp, row["exec_id"], row["ai_run_id"], row["lease_token"]])
+            _recover_graph_lease_row(store, row)
         except Exception:
             logger.warning("orphaned Graph execution recovery failed for %s", row["exec_id"], exc_info=True)
+
+
+def _recover_orphan_group_lease_row(row: dict) -> None:
+    """One reclaimed group lease: restart end record and orphan token revoke."""
+    try:
+        _svc()._record_orphaned_lease_run(row, "orphaned_by_restart")
+    except Exception:
+        logger.warning(
+            "orphaned-lease end record failed for run %s", row.get("run_id"), exc_info=True
+        )
+    # Independent of the end-record write above (0447 T0007 item 2): a victim
+    # whose run already has a normal end record -- e.g. the process died after
+    # persisting ai_invoke_runs but before releasing the lease -- still carries
+    # an active orphan token that must be reclaimed here.
+    try:
+        _reclaim_orphan_lease_token(row, "orphaned_by_restart")
+    except Exception:
+        logger.warning(
+            "orphaned-lease token revoke failed for run %s token %s",
+            row.get("run_id"), row.get("token_id"), exc_info=True,
+        )
+
+
+def _restart_held_run_ids() -> Optional[frozenset]:
+    """Runs whose restart recovery waits for their remote Job (None = unknown)."""
+    from . import remote_supervisor
+    try:
+        return frozenset(remote_supervisor.held_run_ids())
+    except Exception:
+        logger.warning("[ai_invoke] remote restart holds unreadable", exc_info=True)
+        return None
+
+
+def resume_remote_held_recovery(run_id: str) -> list[dict]:
+    """flowgate.v02.0129 T#2 (D0005 §3-4 step 4): the restart recovery that was held for
+    ``run_id`` while its remote Job was alive, done now that the Job is settled.
+
+    Group lease: released with the same restart end record and orphan token revoke the
+    startup reclaim gives every other run. Graph: the same end record and execution lease
+    expiry ``_startup_recover_graph_leases`` gives. Returns the Graph execution rows the
+    caller hands to the Graph execution recovery.
+    """
+    lease = db_group_ai_leases.get_by_run_id(run_id)
+    if lease:
+        db_group_ai_leases.release(lease["group_id"], run_id, reason="orphaned_by_restart")
+        _recover_orphan_group_lease_row(lease)
+    store = db_connection.get_store()
+    if not store.table_exists("graph_attempt_runs"):
+        return []
+    rows = store._fetch_all(
+        "SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+        "WHERE e.status IN ('requested', 'running') AND e.ai_run_id = ?", [run_id])
+    for row in rows:
+        _recover_graph_lease_row(store, row)
+    return rows
 
 
 def startup_recover_leases() -> int:
@@ -525,30 +591,22 @@ def startup_recover_leases() -> int:
     lease a sibling process is mid-admission on.
     """
     before = now_iso()
-    victims = db_group_ai_leases.reclaim_orphaned(before)
+    # flowgate.v02.0129 T#2 (D0005 §3-4 step 2): a run whose remote Job is not settled
+    # keeps its leases (held); unknown holds keep every lease rather than free a live one.
+    held = _restart_held_run_ids()
+    if held is None:
+        logger.warning("[ai_invoke] startup lease reclaim skipped: remote Job holds unknown")
+        victims = []
+    else:
+        victims = db_group_ai_leases.reclaim_orphaned(before, keep_run_ids=held)
     for row in victims:
-        try:
-            _svc()._record_orphaned_lease_run(row, "orphaned_by_restart")
-        except Exception:
-            logger.warning(
-                "orphaned-lease end record failed for run %s", row.get("run_id"), exc_info=True
-            )
-        # Independent of the end-record write above (0447 T0007 item 2): a victim
-        # whose run already has a normal end record -- e.g. the process died after
-        # persisting ai_invoke_runs but before releasing the lease -- still carries
-        # an active orphan token that must be reclaimed here.
-        try:
-            _reclaim_orphan_lease_token(row, "orphaned_by_restart")
-        except Exception:
-            logger.warning(
-                "orphaned-lease token revoke failed for run %s token %s",
-                row.get("run_id"), row.get("token_id"), exc_info=True,
-            )
+        _recover_orphan_group_lease_row(row)
     if victims:
         logger.warning("[ai_invoke] startup reclaimed %d orphaned group lease(s)", len(victims))
     # 0406 T0022 work item 4: the same startup also recovers hop handoffs that were cut
     # off. It pairs with lease reclaim: one recovers the lock, the other the intent.
-    _startup_recover_graph_leases()
+    if held is not None:
+        _startup_recover_graph_leases(held)
     _svc().startup_recover_handoffs()
     # 0661 T0004 F3: question items whose AI responder died with the previous process
     # become a visible 'failed / interrupted' the Q&A panel can re-dispatch, instead of a

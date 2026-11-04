@@ -64,6 +64,8 @@ class ProviderProbeIn(BaseModel):
     kind: str = ""
     cli_command: str | None = None
     api_base_url: str | None = None
+    # flowgate.v02.0129 T#2: a remote CLI form is refused, never launched on this host.
+    exec_location: str | None = None
     prompt: str | None = None
 
 

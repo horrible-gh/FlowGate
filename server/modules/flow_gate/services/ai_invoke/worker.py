@@ -51,6 +51,7 @@ from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
 from . import admission
 from . import oracle as oracle_module
 from . import provider_api
+from . import provider_remote
 from . import terminal
 from . import review
 from .provenance import effective_action_scope
@@ -302,6 +303,10 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             if run.get("document_review_loop"):
                 loop = review._checkpoint_document_review_loop(run)
                 run["document_review_loop_checkpointed"] = True
+                if run.get("remote_final_failure"):
+                    # flowgate.v02.0129 T#2: no next/same review-loop stage after a remote
+                    # final failure inside this run (D0005 §3-3).
+                    break
                 # 0583 T0004 section 5: the gate reserves the review stage AGAIN only
                 # when the hop it just judged left no verdict this run owns. Before a
                 # second reviewer is launched -- second token, second provider, second
@@ -501,11 +506,52 @@ _CLI_REVIEW_FILE_FIRST: dict[str, str] = {
 }
 
 
+_REMOTE_CLI_TRANSPORT: dict[str, str] = {
+    "ko": (
+        "## 원격 CLI 실행 규약\n---\n"
+        "이 작업은 원격 Agent에서 실행됩니다. FLOWGATE_TOKEN·FLOWGATE_SCRATCH·FLOWGATE_API_BASE "
+        "환경 변수는 없으므로 이 프롬프트에 적힌 토큰과 주소를 쓰십시오. `{SCRATCH}`와 scratch "
+        "디렉터리는 현재 작업 디렉터리를 뜻합니다. 제출할 본문(리뷰 JSON 포함)은 현재 작업 "
+        "디렉터리에 UTF-8 파일로 작성하고, 그 파일 내용을 POST /inbox 요청 본문의 content로 "
+        "보내십시오(명령줄 문자열에 직접 넣지 않음). body_chars와 body_sha256을 함께 보내고 "
+        "doc_path는 쓰지 마십시오. 이 규약은 위의 doc_path 제출 안내보다 우선합니다."
+    ),
+    "ja": (
+        "## リモートCLI実行規約\n---\n"
+        "この作業はリモートAgentで実行されます。FLOWGATE_TOKEN・FLOWGATE_SCRATCH・FLOWGATE_API_BASE "
+        "環境変数はないため、このプロンプトに記載されたトークンとアドレスを使ってください。"
+        "`{SCRATCH}`とscratchディレクトリは現在の作業ディレクトリを指します。提出する本文"
+        "(レビューJSONを含む)は現在の作業ディレクトリにUTF-8ファイルとして作成し、そのファイルの"
+        "内容をPOST /inboxリクエスト本文のcontentとして送ってください(コマンドライン文字列に直接"
+        "入れない)。body_charsとbody_sha256も送り、doc_pathは使わないでください。この規約は上記の"
+        "doc_path提出案内より優先されます。"
+    ),
+    "en": (
+        "## Remote CLI execution contract\n---\n"
+        "This work runs on a remote Agent. There are no FLOWGATE_TOKEN, FLOWGATE_SCRATCH or "
+        "FLOWGATE_API_BASE variables; use the token and address written in this prompt. "
+        "`{SCRATCH}` and the scratch directory mean the current working directory. Write every "
+        "body you submit (review JSON included) as a UTF-8 file in the current working directory "
+        "and send that file's content as `content` in the POST /inbox request body (never inline "
+        "on a command line), together with body_chars and body_sha256; do not use doc_path. This "
+        "contract overrides the doc_path submission guidance above."
+    ),
+}
+
+
 def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
     """Add transport rules that apply only at a concrete provider boundary."""
     # flowgate.v02.0064 T-B4d: a claiming Graph AI start's card title request, worded for THIS provider (P0006
     # §4.2.6); any other token's prompt is returned as it is.
     prompt = node_title_hooks.provider_prompt(prompt, run.get("raw_token"), provider.get("exec_type"))
+    if provider_remote.is_remote_cli(provider):
+        # flowgate.v02.0129 T#2 (D0005 §3-5): a remote Agent has no FLOWGATE_* variables and
+        # cannot see this server's scratch, so it writes in its current directory and
+        # submits the file's content. Local CLI prompts are untouched.
+        locale = str(run.get("continuation_locale") or run.get("locale") or "ko").lower()
+        if locale not in _REMOTE_CLI_TRANSPORT:
+            locale = "ko"
+        return prompt.rstrip() + "\n\n" + _REMOTE_CLI_TRANSPORT[locale]
     # Review loops keep their admission scope while hop_kind tracks the live stage.
     if provider.get("exec_type") == "api" or effective_action_scope(run) != "review":
         return prompt
@@ -528,6 +574,7 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
     started_ok = False
     last_reason = None
     policy = run.get("responder_startup_policy")
+    run.pop("remote_final_failure", None)
     for index, provider in enumerate(chain):
         # 0111 T-A3: one run keeps its item claim and group lease across startup
         # candidates. An answer, hand-off, lost claim, pause/cancel or deadline ends
@@ -583,6 +630,13 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
                     and not run.get("last_message_received") and not run.get("last_message")
                     and not run.get("stdout_tail")):
                 classification, detail = "zero_output", "Responder exited without output or an answer."
+        if (classification != "started_ok" and provider_remote.is_remote_cli(provider)
+                and not run.get("remote_final_failure")):
+            # flowgate.v02.0129 T#2 (D0005 §3-3): whatever ended a remote CLI attempt, the
+            # same request is never handed to the next connection, another Agent or here.
+            run["remote_final_failure"] = {"code": "remote_" + str(classification),
+                                           "reason": str(classification),
+                                           "provider_id": provider.get("id")}
         role_invocations.finish(run, classification, detail)
         if classification == "started_ok":
             started_ok = True
@@ -596,6 +650,15 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
             "attempt_no": run.get("attempt_no"),
             "token_id": run.get("token_id"),
         })
+        remote_failure = run.get("remote_final_failure")
+        if remote_failure:
+            # Kept on the per-connection history (persisted with the run record): the
+            # target Agent, the Agent that actually claimed (if any) and the Job identity.
+            run["fallback_history"][-1]["remote_final"] = {
+                key: remote_failure.get(key) for key in (
+                    "code", "target_agent_id", "claimed_agent_id", "job_id", "attempt_id")}
+            run["last_message"] = detail
+            break
         if run["cancel_event"].is_set():
             break
 
@@ -682,6 +745,10 @@ def _retry_eligible(run: dict) -> bool:
     145 seconds, reported that it could not work, and exited 0. That is not a startup failure —
     it is a completed attempt with nothing to show, and it needs an edge of its own.
     """
+    if run.get("remote_final_failure"):
+        # flowgate.v02.0129 T#2 (D0005 §3-3): a remote final failure is never retried
+        # inside the same run, on any connection.
+        return False
     scope_retry = oracle_module._scope_oracle_retry_run(run)
     # flowgate.v02.0053 T#2: a Graph node's single 'new' run whose card picked restarts
     # (admission `node_restart_open`) retries like a continuous hop; other single runs do not.

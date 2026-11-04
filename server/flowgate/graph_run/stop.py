@@ -154,7 +154,12 @@ def _process_ended(row: dict) -> bool:
         return False
     live = ai_invoke_service.get_run_record(ai_run_id)
     if live is None:
-        return ai_invoke_runs.get(ai_run_id) is not None
+        if ai_invoke_runs.get(ai_run_id) is None:
+            return False
+        # flowgate.v02.0129 T#2 (D0005 §3-4): a restart-held run whose remote Job is not
+        # settled (or whose held recovery has not resumed) has not ended.
+        from modules.flow_gate.services.ai_invoke import remote_supervisor
+        return not remote_supervisor.remote_alive(ai_run_id)
     if live.get("status") == "finished":
         return True
     return live.get("graph_exec_id") == row["exec_id"] and bool(live.get("graph_execution_finished"))

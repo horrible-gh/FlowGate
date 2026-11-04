@@ -179,7 +179,7 @@ def recover_expired(group_id: Optional[str] = None) -> int:
     return len(rows)
 
 
-def reclaim_orphaned(before: str) -> list[dict]:
+def reclaim_orphaned(before: str, keep_run_ids=frozenset()) -> list[dict]:
     """Reclaim every lease acquired before *before* -- the startup dead-lease sweep
     (flowgate.default.0401 NR0003 SS6-1 / T0004 item 1).
 
@@ -191,7 +191,11 @@ def reclaim_orphaned(before: str) -> list[dict]:
     process that is gone. A lease acquired at or after *before* is left alone (another
     process may be mid-admission for it). Returns the reclaimed rows (group/run/
     acquired_at and the rest) so the caller can explain each one's disappearance.
+
+    flowgate.v02.0129 T#2: a lease whose run is in *keep_run_ids* (its remote Job is
+    not settled yet) is not reclaimed; the remote supervisor releases it later.
     """
+    keep = {str(run_id) for run_id in (keep_run_ids or ())}
     def _log_startup_reclaim(row: dict) -> None:
         _append_event(
             event_type="lease_startup_reclaimed", group_id=row["group_id"],
@@ -208,7 +212,8 @@ def reclaim_orphaned(before: str) -> list[dict]:
     if _using_memory():
         with _memory_lock:
             _sync_test_scope()
-            victims = [dict(row) for row in _memory.values() if str(row.get("acquired_at") or "") < before]
+            victims = [dict(row) for row in _memory.values()
+                       if str(row.get("acquired_at") or "") < before and str(row.get("run_id")) not in keep]
             for row in victims:
                 _memory.pop(row["group_id"], None)
             for row in victims:
@@ -216,6 +221,13 @@ def reclaim_orphaned(before: str) -> list[dict]:
             return victims
     store = get_store()
     rows = store._fetch_all("SELECT * FROM group_ai_leases WHERE acquired_at < ?", [before])
+    if keep:
+        rows = [row for row in rows if str(row.get("run_id")) not in keep]
+        for row in rows:
+            store._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND run_id = ? AND acquired_at < ?",
+                           [row["group_id"], row["run_id"], before])
+            _log_startup_reclaim(row)
+        return rows
     if rows:
         store._execute("DELETE FROM group_ai_leases WHERE acquired_at < ?", [before])
         for row in rows:
