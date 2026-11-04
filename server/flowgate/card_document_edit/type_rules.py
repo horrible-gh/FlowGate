@@ -92,24 +92,11 @@ class WorkPlanRule:
 class Tr2Rule:
     def validate_and_build(self, text, doc, body):
         from modules.flow_gate.documents import tr2_service as tr2
+        from .tr2_rules import build
         try:
-            tr2._assert_mutable(doc)
-            raw = tr2.parse(text)
-            dropped = [k for k in ("codebase_root", "source_honey") if k in raw]
-            validated = tr2.validate(raw, doc=doc)
-            tr2.verify_pair(doc["doc_id"], validated)
-            canonical = tr2.canonicalize(validated)
-            spec = canonical["edit_spec"]
-            tr2.target_set(spec)
-            root = tr2.resolve_source_root(doc["project_id"], doc["group_id"])
-            canonical["baseline_fingerprint"] = tr2.target_fingerprint(spec, root)
-            derived = {"files": tr2.derived_files(spec, root), "spec_fingerprint": tr2.spec_fingerprint(spec)}
-            path = tr2.canonical_path_for_doc(doc)
+            return build(text, doc)
         except tr2.Tr2ValidationError as exc:
             _failure(doc, {"code": exc.code, **exc.details})
-        return Built(tr2.dumps(canonical).encode("utf-8"), target_path=path,
-                     row_updates={"filename": path.name}, snapshot_policy="CURRENT", body_saved_source="tr2_save",
-                     result={"body": canonical, "derived": derived, "dropped_keys": dropped})
 
 
 def _base_rule_for(doc, request=None):

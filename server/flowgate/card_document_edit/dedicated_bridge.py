@@ -1,4 +1,4 @@
-"""L#1 §2.9 ports. Existing WP/TR2 routes are connected by T#3, not by this service."""
+"""Dedicated OWN/CREATE and trusted internal JOIN storage (L#1 §2.9, L#2 §2.7)."""
 import logging
 from modules.flow_gate.db import documents
 from modules.flow_gate.db.connection import in_transaction, after_commit, after_rollback
@@ -101,4 +101,21 @@ def dedicated_create(req):
         assert after_rollback(pending.discard)
         return result
     result = boundary.enter(doc, boundary.CREATE, stage, new_document=True)
+    return result, pending
+
+
+def dedicated_join(req, restore_log=None):
+    """Join only the matching durable guard; contacts belong to the outer commit."""
+    doc = documents.get_by_id(req.doc_id)
+    if doc is None:
+        req.rule_call.precheck(doc)
+        raise internal_error()
+    restore_log = restore_log if restore_log is not None else RestoreLog()
+    pending = PendingContacts(restore_log)
+    def stage(ctx):
+        result, pending.plan = stage_dedicated(ctx, req, restore_log)
+        assert after_commit(pending.mark_committed)
+        assert after_rollback(pending.discard)
+        return result
+    result = boundary.enter(doc, boundary.JOIN, stage)
     return result, pending

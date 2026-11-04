@@ -75,7 +75,8 @@ def sync_draft_cards(flow_id: str, project_id: Optional[str], doc_id: str, holde
 
         raise ConversionRefused("draft_version_conflict", doc_id=doc_id)
     definition_store.replace_draft_content(flow_id, nodes, draft["edges"])
-    publish_canvas_changed(project_id=project_id, flow_id=flow_id, reason=CANVAS_REASON_DRAFT,
+    from .card_document_ports import dedicated_write
+    dedicated_write("conversion_canvas", project_id=project_id, flow_id=flow_id, reason=CANVAS_REASON_DRAFT,
                            actor_user_id=actor, origin_client_id=None,
                            draft_version=int(head["draft_version"]) + 1)
     return changed

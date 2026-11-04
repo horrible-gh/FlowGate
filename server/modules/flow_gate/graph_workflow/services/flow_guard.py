@@ -99,6 +99,8 @@ def with_flow_guard(flow_id: str, body: Callable[[], T]) -> T:
                 return body()
     finally:
         lock.release()
+        from .card_document_ports import document_write_released
+        document_write_released()
 
 
 # The first statement of a read unit, by dialect: it makes the unit's reads one snapshot. SQLite: the driver opens no
@@ -155,6 +157,8 @@ def with_document_lock(doc_id: str, body: Callable[[], T]) -> T:
                 return body()
     finally:
         lock.release()
+        from .card_document_ports import document_write_released
+        document_write_released()
 
 
 def lock_flow_guard_row(flow_id: str) -> None:

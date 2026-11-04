@@ -5027,157 +5027,174 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # guessing "human" or a provider (TS0010 TC-7).
     _origin_run_id = token_rec.get("ai_run_id")
     _origin_provider_name = _resolve_origin_provider_name(_origin_run_id)
-    try:
-        created_doc = db_docs.create({
-            "doc_id": canonical_doc_id,
-            "project_id": project,
-            "module": module,
-            "group_id": group["group_id"],
-            "type_code": doc_type,
-            "seq": seq,
-            "title": extracted_title,
-            "file_path": to_storage_relative(stored_path, project),
-            "status": "open",
-            "owner_id": actor_user_id,
-            "triggered_by": prev_doc_id,
-            "revision_no": 0,
-            "created_at": now,
-            "updated_at": now,
-            "meta": meta_value,
-            "commit_message": commit_message_draft,
-            "origin_provider_name": _origin_provider_name,
-            "origin_ai_run_id": _origin_run_id,
-            # The TR2 canonical path is derived from the row (tr2_service.canonical_path_for_doc),
-            # so the row must name the branch directory its file is stored under.
-            **({"branch": branch} if tr2_body is not None else {}),
-        })
-        # group 0022 §5 / D0005 §3.4 type ①: create document + query together. The AI
-        # worker attaches low-confidence points as queries on that document
-        # (asker_kind='ai'). On failure, roll back the document and file.
-        new_questions = body.get("questions")
-        if new_questions:
-            from modules.flow_gate.services import q_service
-            q_service.add_questions(
-                doc_id=canonical_doc_id,
-                questions=new_questions,
-                asker_kind="ai",
-                project_id=project,
-                notify_audience=actor_user_id,
-            )
-        if wp_plan is not None:
-            # 0599 T#2: persist the exact canonical AI-created bytes as r0 only
-            # after the document row and any attached questions are registered.
-            work_plan_service.ensure_revision_snapshot(
-                created_doc,
-                stored_path,
-                created_by=actor_user_id,
-                revision_no=0,
-            )
-    except Exception as exc:
-        # storage/DB rollback: q_service validation failures must not leave a half-created
-        # document, and their client-facing 4xx status must survive this route boundary.
+    def register_new():
+        tr2_saved = None
         try:
-            stored_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        try:
-            db_docs.delete(canonical_doc_id)
-        except Exception:
-            pass
-        if isinstance(exc, HTTPException):
-            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
-            return _fail(exc.status_code, detail)
-        return _fail(500, f"DB registration error: {exc}")
-
-    if snapshot_provenance:
-        try:
-            snapshot_access_service.attach_tr(
-                str(token_rec.get("ai_run_id") or ""), canonical_doc_id
-            )
-        except Exception:
-            pass
-
-    db_events.create({
-        "event_type": "action_taken",
-        "project_id": project,
-        "group_id": group["group_id"],
-        "document_id": None,
-        "actor_user_id": actor_user_id,
-        "from_state": None,
-        "to_state": "open",
-        "metadata": json.dumps({"action_code": "doc_created", "doc_id": canonical_doc_id}),
-    })
-
-    # ── Step 7.5: Workflow head processing (M: auto-complete / others: pending-review transition) ──────
-    # T823: head-slot registration is best-effort (inside try/except);
-    #       doc_review_status transition is mandatory for non-M (outside try/except).
-    # L0044.0008 §3.1/§3.2: auto-complete types (M memo, CH conversation) are the
-    # single source of truth in AUTO_COMPLETE_TYPES; the literal "M" branches below
-    # generalize to set membership so CH takes the same non-gate path as M.
-    from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
-    try:
-        from modules.flow_gate.db import workflow_sequences as _db_wfseq
-        from modules.flow_gate.workflow.pipeline_service import register_workflow_result
-        head_item = _db_wfseq.get_pending_head_by_group(group["group_id"], project)
-        if head_item is not None and head_item.get("type") == doc_type.upper():
-            if doc_type.upper() in AUTO_COMPLETE_TYPES:
-                # M (memo) / CH (conversation): review step not needed — fill the
-                # result slot. Approval is set unconditionally below (L-AUTO §3.3).
-                _db_wfseq.set_item_result_doc_id(head_item["id"], canonical_doc_id)
-                # NOTE: do NOT silently finalize here even when this memo fills the
-                # last pending slot. AC (final approval) is an explicit review step
-                # (M042 §3.1 — PM rejected silent wf_done). With no pending slots
-                # left, head resolution surfaces AC/pending so the final-approval
-                # screen appears; wf_done is set only when AC is approved.
-                # NR0003: the inbox path previously called mark_sequence_done +
-                # set the parent R to wf_done here, bypassing the AC gate and the
-                # "all steps approved" guard (a memo as the final slot finalized the
-                # whole workflow without review). Aligned with documents.py:819-827.
-            else:
-                # Non-auto-complete with a matching head: register result slot.
-                # Status transition is handled unconditionally below (T823).
-                register_workflow_result(
-                    item_id=head_item["id"],
-                    registered_path=to_storage_relative(stored_path, project),
-                    registered_doc_id=canonical_doc_id,
-                    registered_at=now,
-                    actor_user_id=actor_user_id,
+            created_doc = db_docs.create({
+                "doc_id": canonical_doc_id,
+                "project_id": project,
+                "module": module,
+                "group_id": group["group_id"],
+                "type_code": doc_type,
+                "seq": seq,
+                "title": extracted_title,
+                "file_path": to_storage_relative(stored_path, project),
+                "status": "open",
+                "owner_id": actor_user_id,
+                "triggered_by": prev_doc_id,
+                "revision_no": 0,
+                "created_at": now,
+                "updated_at": now,
+                "meta": meta_value,
+                "commit_message": commit_message_draft,
+                "origin_provider_name": _origin_provider_name,
+                "origin_ai_run_id": _origin_run_id,
+                # The TR2 canonical path is derived from the row (tr2_service.canonical_path_for_doc),
+                # so the row must name the branch directory its file is stored under.
+                **({"branch": branch} if tr2_body is not None else {}),
+            })
+            # group 0022 §5 / D0005 §3.4 type ①: create document + query together. The AI
+            # worker attaches low-confidence points as queries on that document
+            # (asker_kind='ai'). On failure, roll back the document and file.
+            new_questions = body.get("questions")
+            if new_questions:
+                from modules.flow_gate.services import q_service
+                q_service.add_questions(
+                    doc_id=canonical_doc_id,
+                    questions=new_questions,
+                    asker_kind="ai",
+                    project_id=project,
+                    notify_audience=actor_user_id,
                 )
-    except Exception:
-        pass
+            if wp_plan is not None:
+                # 0599 T#2: persist the exact canonical AI-created bytes as r0 only
+                # after the document row and any attached questions are registered.
+                work_plan_service.ensure_revision_snapshot(
+                    created_doc,
+                    stored_path,
+                    created_by=actor_user_id,
+                    revision_no=0,
+                )
+        except Exception as exc:
+            # storage/DB rollback: q_service validation failures must not leave a half-created
+            # document, and their client-facing 4xx status must survive this route boundary.
+            try:
+                stored_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            try:
+                db_docs.delete(canonical_doc_id)
+            except Exception:
+                pass
+            if isinstance(exc, HTTPException):
+                detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                return _fail(exc.status_code, detail)
+            return _fail(500, f"DB registration error: {exc}")
 
-    # L0044.0008 §3.3 (L-AUTO): auto-complete types are created already-approved
-    # regardless of whether a matching pending head slot existed above. A standalone-
-    # opened conversation (CH) has no pre-seeded head, so without this its
-    # doc_review_status would leak NULL — violating "approved on creation"
-    # (D0044.0006 §4 / P0044.0007 §3). Idempotent for M (already approved above).
-    if doc_type.upper() in AUTO_COMPLETE_TYPES:
+        if snapshot_provenance:
+            try:
+                snapshot_access_service.attach_tr(
+                    str(token_rec.get("ai_run_id") or ""), canonical_doc_id
+                )
+            except Exception:
+                pass
+
+        db_events.create({
+            "event_type": "action_taken",
+            "project_id": project,
+            "group_id": group["group_id"],
+            "document_id": None,
+            "actor_user_id": actor_user_id,
+            "from_state": None,
+            "to_state": "open",
+            "metadata": json.dumps({"action_code": "doc_created", "doc_id": canonical_doc_id}),
+        })
+
+        # ── Step 7.5: Workflow head processing (M: auto-complete / others: pending-review transition) ──────
+        # T823: head-slot registration is best-effort (inside try/except);
+        #       doc_review_status transition is mandatory for non-M (outside try/except).
+        # L0044.0008 §3.1/§3.2: auto-complete types (M memo, CH conversation) are the
+        # single source of truth in AUTO_COMPLETE_TYPES; the literal "M" branches below
+        # generalize to set membership so CH takes the same non-gate path as M.
+        from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
         try:
-            from modules.flow_gate.db import documents as _db_docs_ac
-            _db_docs_ac.update(canonical_doc_id, {"doc_review_status": "approved"})
+            from modules.flow_gate.db import workflow_sequences as _db_wfseq
+            from modules.flow_gate.workflow.pipeline_service import register_workflow_result
+            head_item = _db_wfseq.get_pending_head_by_group(group["group_id"], project)
+            if head_item is not None and head_item.get("type") == doc_type.upper():
+                if doc_type.upper() in AUTO_COMPLETE_TYPES:
+                    # M (memo) / CH (conversation): review step not needed — fill the
+                    # result slot. Approval is set unconditionally below (L-AUTO §3.3).
+                    _db_wfseq.set_item_result_doc_id(head_item["id"], canonical_doc_id)
+                    # NOTE: do NOT silently finalize here even when this memo fills the
+                    # last pending slot. AC (final approval) is an explicit review step
+                    # (M042 §3.1 — PM rejected silent wf_done). With no pending slots
+                    # left, head resolution surfaces AC/pending so the final-approval
+                    # screen appears; wf_done is set only when AC is approved.
+                    # NR0003: the inbox path previously called mark_sequence_done +
+                    # set the parent R to wf_done here, bypassing the AC gate and the
+                    # "all steps approved" guard (a memo as the final slot finalized the
+                    # whole workflow without review). Aligned with documents.py:819-827.
+                else:
+                    # Non-auto-complete with a matching head: register result slot.
+                    # Status transition is handled unconditionally below (T823).
+                    register_workflow_result(
+                        item_id=head_item["id"],
+                        registered_path=to_storage_relative(stored_path, project),
+                        registered_doc_id=canonical_doc_id,
+                        registered_at=now,
+                        actor_user_id=actor_user_id,
+                    )
         except Exception:
             pass
+
+        # L0044.0008 §3.3 (L-AUTO): auto-complete types are created already-approved
+        # regardless of whether a matching pending head slot existed above. A standalone-
+        # opened conversation (CH) has no pre-seeded head, so without this its
+        # doc_review_status would leak NULL — violating "approved on creation"
+        # (D0044.0006 §4 / P0044.0007 §3). Idempotent for M (already approved above).
+        if doc_type.upper() in AUTO_COMPLETE_TYPES:
+            try:
+                from modules.flow_gate.db import documents as _db_docs_ac
+                _db_docs_ac.update(canonical_doc_id, {"doc_review_status": "approved"})
+            except Exception:
+                pass
+
+        if tr2_body is not None:
+            try:
+                tr2_saved = tr2_service.create(
+                    canonical_doc_id, tr2_body, actor=actor_user_id,
+                    origin=tr2_service.ORIGIN_AI)
+            except tr2_service.Tr2ValidationError as exc:
+                db_docs.delete(canonical_doc_id)
+                payload = error_payload(exc.code, details=exc.details)
+                payload["help_url"] = "/flowgate/api/v1/help/items/authoring_guide/TR2"
+                return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status, content=payload)
+
+        # T823: all non-auto-complete inbox docs must reach pending_review regardless of head.
+        if doc_type.upper() not in AUTO_COMPLETE_TYPES:
+            from modules.flow_gate.workflow.pipeline_service import transition_document_review
+            transition_document_review(
+                doc_id=canonical_doc_id,
+                action="submit",
+                actor_user_id=actor_user_id,
+                user_permissions={"document.update"},
+            )
+
+        return created_doc, tr2_saved
 
     if tr2_body is not None:
+        from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
         try:
-            tr2_saved = tr2_service.create(
-                canonical_doc_id, tr2_body, actor=actor_user_id,
-                origin=tr2_service.ORIGIN_AI)
-        except tr2_service.Tr2ValidationError as exc:
-            db_docs.delete(canonical_doc_id)
-            payload = error_payload(exc.code, details=exc.details)
-            payload["help_url"] = "/flowgate/api/v1/help/items/authoring_guide/TR2"
-            return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status, content=payload)
-
-    # T823: all non-auto-complete inbox docs must reach pending_review regardless of head.
-    if doc_type.upper() not in AUTO_COMPLETE_TYPES:
-        from modules.flow_gate.workflow.pipeline_service import transition_document_review
-        transition_document_review(
-            doc_id=canonical_doc_id,
-            action="submit",
-            actor_user_id=actor_user_id,
-            user_permissions={"document.update"},
-        )
+            registration = dedicated_write("tr2_registration", group["group_id"], canonical_doc_id,
+                                           stored_path, register_new)
+        except Exception:
+            return _fail(500, "TR2 registration failed.")
+    else:
+        registration = register_new()
+    if isinstance(registration, JSONResponse):
+        return registration
+    created_doc, tr2_saved = registration
 
     # flowgate.v02.0045 D0004 §4.3: a Graph-owned Flow hands the document to the result binder.
     from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact

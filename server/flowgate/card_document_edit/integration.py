@@ -10,7 +10,25 @@ def dispatch(operation, *args, **kwargs):
     return handlers[operation](*args, **kwargs)
 
 
+def dedicated(action, *args, **kwargs):
+    from . import dedicated_windows, recovery_bridge, generated_bridge
+    handlers = {"wp_save": dedicated_windows.wp_save, "wp_restore": dedicated_windows.wp_restore,
+                "tr2_save": dedicated_windows.tr2_save, "tr2_create": dedicated_windows.tr2_create,
+                "tr2_registration": dedicated_windows.tr2_registration,
+                "recover": recovery_bridge.recover, "wp_heal": recovery_bridge.heal,
+                "convert": generated_bridge.convert, "tsr": generated_bridge.tsr,
+                "generated_boundary": generated_bridge.generated_boundary, "tsr_open": generated_bridge.open_tsr,
+                "conversion_stage": generated_bridge.conversion_stage,
+                "conversion_identity": generated_bridge.conversion_identity,
+                "conversion_finish": generated_bridge.conversion_finish,
+                "conversion_canvas": generated_bridge.conversion_canvas}
+    return handlers[action](*args, **kwargs)
+
+
 def register():
+    from .pending import flush
+    ports.register(ports.DEDICATED_DOCUMENT_WRITE, dedicated)
+    ports.register(ports.DOCUMENT_WRITE_RELEASED, flush)
     ports.register(ports.CARD_DOCUMENT_EDIT_BOUNDARY, unavailable)
     ports.register(ports.CARD_DOCUMENT_EDIT, dispatch)
 

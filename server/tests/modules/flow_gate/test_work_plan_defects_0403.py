@@ -330,6 +330,7 @@ class _MockTxn:
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
         self._conn.commit()
+        return self._last_cursor
 
     def fetch_one(self):
         if self._last_cursor is None:
@@ -515,13 +516,14 @@ def test_f1_the_request_that_loses_the_revision_never_writes_the_canonical_file(
     monkeypatch.setattr(route.db_docs, "get_by_id", _stale_first)
 
     writes: list = []
-    real_write = wp.write_body_atomically
+    from modules.flow_gate.storage import files
+    real_write = files.replace_restorably
 
-    def _recording_write(path, plan_body):
+    def _recording_write(path, plan_body, **kwargs):
         writes.append(plan_body)
-        real_write(path, plan_body)
+        return real_write(path, plan_body, **kwargs)
 
-    monkeypatch.setattr(route.wp, "write_body_atomically", _recording_write)
+    monkeypatch.setattr(files, "replace_restorably", _recording_write)
 
     body_b = json.loads(json.dumps(body_a))
     body_b["defaults"]["note"] = "B 가 덮어쓰려던 본문"
@@ -633,3 +635,12 @@ def test_f8_legacy_request_title_is_ignored_and_canonical_totals_own_the_title(s
     assert resp.status_code == 201, resp.text
     assert resp.json()["title"] == "작업계획 — 설계 2장 · 작업 0세트"
     assert len(calls) == 1
+
+
+@pytest.fixture(autouse=True)
+def dedicated_document_write_ports_0127(monkeypatch):
+    # Direct service/route fixtures reproduce the composition root's required ports.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration as document_edit
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    document_edit.register()

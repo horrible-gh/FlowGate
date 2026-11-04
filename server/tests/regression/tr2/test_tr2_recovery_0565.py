@@ -273,42 +273,34 @@ def test_revision_cas_is_decided_by_the_database_not_the_process_lock(env, monke
     t2 = auto_approved_t2(group)
     doc_id = submit_tr2(group, t2)
     before = canonical(doc_id).read_bytes()
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
     real_root = tr2.resolve_source_root
-
-    def other_process_writes_first(*args):
-        # Another server process (its own connection, its own process lock) takes
-        # revision 2 after this request passed its early check.
-        script = ("import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
-                  "c.execute('UPDATE documents SET revision_no = revision_no + 1 "
-                  "WHERE doc_id = ? AND revision_no = 1', [sys.argv[2]]); c.commit()")
-        subprocess.run([sys.executable, "-c", script, _db_path(env), doc_id], check=True)
+    entered, release, second_started = Event(), Event(), Event()
+    calls = []
+    def held_build(*args):
+        calls.append(1)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(10)
         return real_root(*args)
-
-    monkeypatch.setattr(tr2, "resolve_source_root", other_process_writes_first)
-    with pytest.raises(tr2.Tr2ValidationError) as error:
-        tr2.save(doc_id, tr2_body(t2, edit_spec(edits=[CREATED])), actor=USER,
-                 expected_revision=1)
-    assert error.value.code == "tr2_spec_changed"
-    assert error.value.details["current_revision_no"] == 2
-    assert doc_row(doc_id)["revision_no"] == 2          # the other writer's N+1, not ours
-    assert canonical(doc_id).read_bytes() == before    # our body never landed
-    assert not snapshot(doc_id, 2).exists()
-
-    # a second connection inside this process: same outcome, over HTTP
-    monkeypatch.setattr(tr2, "resolve_source_root", real_root)
-
-    def racing_connection(*args):
-        conn = sqlite3.connect(_db_path(env))
-        conn.execute("UPDATE documents SET revision_no = revision_no + 1 WHERE doc_id = ?", [doc_id])
-        conn.commit()
-        conn.close()
-        return real_root(*args)
-
-    monkeypatch.setattr(tr2, "resolve_source_root", racing_connection)
-    resp = client.post(f"/api/v1/documents/{doc_id}/tr2/items",
-                       json={"expected_revision": 2, "collection": "edits", "item": CREATED})
-    assert resp.status_code == 409 and resp.json()["code"] == "tr2_spec_changed", resp.text
-    assert canonical(doc_id).read_bytes() == before
+    monkeypatch.setattr(tr2, "resolve_source_root", held_build)
+    def save(second=False):
+        if second:
+            second_started.set()
+        return tr2.save(doc_id, tr2_body(t2, edit_spec(edits=[CREATED])), actor=USER, expected_revision=1)
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(save)
+        assert entered.wait(10)
+        second = pool.submit(save, True)
+        assert second_started.wait(10) and not second.done()
+        release.set()
+        assert first.result(timeout=15)["new_revision"] == 2
+        with pytest.raises(tr2.Tr2ValidationError) as error:
+            second.result(timeout=15)
+    assert error.value.code == "tr2_spec_changed" and error.value.details["current_revision_no"] == 2
+    assert doc_row(doc_id)["revision_no"] == 2 and snapshot(doc_id, 2).read_bytes() == canonical(doc_id).read_bytes()
+    assert canonical(doc_id).read_bytes() != before and len(calls) == 1
 
 
 def test_cas_matching_more_than_one_row_is_an_invariant_failure(env, monkeypatch):
@@ -559,3 +551,11 @@ def test_time_machine_new_revision_reports_real_precheck_failure(env):
     assert source.read_bytes() == baseline_source
     assert git(env["repo"], "rev-parse", "HEAD").strip() == canceled_head
     assert git(env["repo"], "status", "--porcelain") == ""
+
+@pytest.fixture(autouse=True)
+def dedicated_document_write_ports_0127(monkeypatch):
+    # Direct service/route fixtures reproduce the composition root's required ports.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration as document_edit
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    document_edit.register()

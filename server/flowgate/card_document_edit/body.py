@@ -14,7 +14,11 @@ def read_body_bytes(doc):
         data = path.read_bytes()
         if identity is None or identity != files.file_identity(path):
             return Body("read_error", path=path)
-        return Body("readable", data, data.decode("utf-8", errors="strict"), path, identity)
+        try:
+            text = data.decode("utf-8", errors="strict")
+        except UnicodeError:
+            return Body("read_error", data, None, path, identity)
+        return Body("readable", data, text, path, identity)
     except (OSError, UnicodeError):
         return Body("read_error", path=path)
 

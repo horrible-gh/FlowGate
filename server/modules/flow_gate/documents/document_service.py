@@ -567,7 +567,8 @@ def convert_by_number_swap(
     new_row["file_path"] = new_file_path
     new_row["filename"] = new_filename
     new_row["updated_at"] = now_iso()
-    inserted = db_docs.create(new_row)
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    inserted = dedicated_write("conversion_identity", doc, new_row)
     new_int_id = (inserted or {}).get("id")
 
     # Repoint every inbound / self reference keyed on the textual doc_id.

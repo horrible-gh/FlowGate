@@ -1980,9 +1980,11 @@ def test_an_already_broken_plan_heals_the_first_time_it_is_opened(seed, storage_
 
     # 두 번째로 열어도 같은 표가 나온다(되살리기는 한 번으로 끝난다).
     assert client.get(f"/api/v1/documents/{doc_id}/work-plan").status_code == 200
-    # 0599 T#2: self-heal is not evidence of the original creation bytes and must
-    # never fabricate a legacy r0 from today's settings.
-    assert db_revisions.list_by_doc(doc_id) == []
+    # 0127: preserve the actual raw r0 before-image, never today's generated plan.
+    [before] = db_revisions.list_by_doc(doc_id)
+    assert before["revision_no"] == 0
+    assert (storage_root / before["backup_path"]).read_bytes() == stub_path.read_bytes()
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 1
 
 
 def test_a_broken_plan_with_content_is_never_overwritten(seed, storage_root):
@@ -2255,7 +2257,7 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
     )
     published = []
     with patch(
-        "modules.flow_gate.api.v1.events.publisher.publish_event_threadsafe",
+        "flowgate.card_document_edit.contacts.broadcast_event_threadsafe",
         side_effect=published.append,
     ):
         saved_response = client.put(
@@ -2340,7 +2342,7 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
         failed_body["counted_types"], failed_body["quantities"],
     )
     with patch(
-        "modules.flow_gate.documents.routers.work_plan.wp.write_body_atomically",
+        "modules.flow_gate.storage.files.replace_restorably",
         side_effect=OSError("simulated write failure"),
     ):
         failed = client.put(
@@ -2582,7 +2584,7 @@ def test_created_r0_restores_before_first_save_and_preserves_broken_raw(
 
     restore_events = [
         event for event in db_events.list_by_project(PROJECT)
-        if (json.loads(event.get("metadata") or "{}").get("edit_reason")
+        if (json.loads(event.get("metadata") or "{}").get("event_reason")
             == "work_plan_revision_restore")
         and json.loads(event.get("metadata") or "{}").get("doc_id") == doc_id
     ]
@@ -2996,3 +2998,12 @@ def test_revision_brief_fails_closed_for_untrusted_backup(seed, storage_root):
         assert "backup_path" not in listed
     finally:
         canonical.write_text(original, encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def dedicated_document_write_ports_0127(monkeypatch):
+    # Direct service/route fixtures reproduce the composition root's required ports.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration as document_edit
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    document_edit.register()

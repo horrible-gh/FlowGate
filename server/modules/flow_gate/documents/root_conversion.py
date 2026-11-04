@@ -280,6 +280,11 @@ def _converted_path_string(raw: str, old_code: str, new_code: str) -> str:
 
 
 def stage_converted_file(doc: dict, new_id: str, new_type: str, mode: str) -> StagedFile:
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    return dedicated_write("conversion_stage", doc, new_id, new_type, mode, None)[0]
+
+
+def prepare_converted_file(doc: dict, new_id: str, new_type: str, mode: str):
     """Prepare the converted body next to the original, which is never touched here (both modes)."""
     doc_id = doc["doc_id"]
     old_code, new_code = _code(doc_id), _code(new_id)
@@ -288,7 +293,7 @@ def stage_converted_file(doc: dict, new_id: str, new_type: str, mode: str) -> St
     if not raw:
         if mode == SUCCESSION:                                     # the body went missing after the judgement
             raise ConversionRefused("root_body_unreadable", doc_id=doc_id, reason="file_path_missing", mode=mode)
-        return StagedFile(doc.get("file_path"), filename)          # number swap: the value stays as it is
+        return StagedFile(doc.get("file_path"), filename), None          # number swap: the value stays as it is
     try:
         old_abs, state = storage_paths.locate_storage_path(raw, doc.get("project_id"), doc.get("branch") or "main")
     except (OSError, UnicodeError):
@@ -296,7 +301,7 @@ def stage_converted_file(doc: dict, new_id: str, new_type: str, mode: str) -> St
     if old_abs is None:
         if mode == SUCCESSION:                                     # the body went missing after the judgement
             raise ConversionRefused("root_body_unreadable", doc_id=doc_id, reason=state, mode=mode)
-        return StagedFile(_converted_path_string(raw, old_code, new_code), filename)
+        return StagedFile(_converted_path_string(raw, old_code, new_code), filename), None
     new_name = document_service._converted_filename(old_abs.name, old_code, new_code)
     if new_name == old_abs.name:
         new_name = f"{new_code}_{old_abs.name}"                    # a name that does not start with the code
@@ -311,11 +316,10 @@ def stage_converted_file(doc: dict, new_id: str, new_type: str, mode: str) -> St
                                 field=exc.check.field)
     except (OSError, UnicodeError):
         raise ConversionRefused("root_body_unreadable", doc_id=doc_id, reason="read_error", mode=mode)
-    write_new_file(new_abs, data)                                  # removed again if anything rolls back
     if doc.get("filename") == old_abs.name:
         filename = new_abs.name
     return StagedFile(storage_paths.to_storage_relative(new_abs, doc.get("project_id")), filename,
-                      new_abs, old_abs, old_identity)
+                      new_abs, old_abs, old_identity), data
 
 
 def _remove_old_body(old_abs: Path, old_identity: Optional[tuple]) -> None:
@@ -353,17 +357,8 @@ def finish_converted_file(staged: StagedFile, mode: str, doc_id: str, cleanup_ke
 # ── coordinator (L0005 2.6) ──────────────────────────────────────────────────
 
 def execute_root_conversion(doc_id: str, new_type: Any, actor: Optional[str]) -> dict:
-    """The route's and the v0.1 contact's one entry point: ``{"data": row}`` plus ``conversion`` when it ran.
-
-    The boundary is the document's guard (its Flow's, or its own row lock without a Flow), shared with the
-    attachment writes. Called inside a transaction that is not that guard, it refuses before anything is
-    read or staged (``transaction_required``)."""
-    from modules.flow_gate.graph_workflow.services.flow_guard import GuardNotHeld, run_in_document_guard
-
-    try:
-        return run_in_document_guard(doc_id, lambda: _execute_in_guard(doc_id, new_type, actor))
-    except GuardNotHeld:
-        raise ConversionRefused("transaction_required", doc_id=doc_id)
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    return dedicated_write("convert", doc_id, new_type, actor)
 
 
 def _execute_in_guard(doc_id: str, new_type: Any, actor: Optional[str]) -> dict:
@@ -392,7 +387,8 @@ def _convert_by_number_swap(doc: dict, judged: Judgement, actor: Optional[str]) 
     old_id, new_id, mode = doc["doc_id"], judged.new_id, judged.mode
     old_type, new_type = (doc.get("type_code") or "").upper(), judged.new_type
     attachment_conversion.require_target_empty(old_id, new_id, mode, "number_confirmed")
-    staged = stage_converted_file(doc, new_id, new_type, mode)
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    staged, doc, pending = dedicated_write("conversion_stage", doc, new_id, new_type, mode, actor)
     stage = attachment_conversion.stage_attachment_room(doc, new_id, staged.path_value, mode)
     inserted = document_service.convert_by_number_swap(
         doc, new_id, new_type, staged.path_value, staged.filename, actor,
@@ -402,6 +398,7 @@ def _convert_by_number_swap(doc: dict, judged: Judgement, actor: Optional[str]) 
     )
     draft_node_keys = v01_contact.follow_root_conversion(doc, inserted, old_type=old_type, new_type=new_type,
                                                          actor=actor)
+    dedicated_write("conversion_finish", pending, inserted, bool(draft_node_keys))
     cleanup_key = document_guard_key(inserted, new_id)          # the guard the next conversion of the root takes
     finish_converted_file(staged, mode, old_id, cleanup_key)
     attachment_conversion.finish_attachment_room(stage, old_id, cleanup_key)

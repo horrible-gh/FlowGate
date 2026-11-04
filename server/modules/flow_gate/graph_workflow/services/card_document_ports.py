@@ -32,7 +32,9 @@ ON_ROOT_CONVERTED = "on_root_converted"
 CARD_LINE_DOCUMENTS = "card_line_documents"
 CARD_DOCUMENT_EDIT = "card_document_edit"
 CARD_DOCUMENT_EDIT_BOUNDARY = "card_document_edit_boundary"
-PORT_NAMES = (ON_DRAFT_SAVED, CARD_VIEW, ON_RESULT_BOUND, ON_ROOT_CONVERTED, CARD_LINE_DOCUMENTS, CARD_DOCUMENT_EDIT, CARD_DOCUMENT_EDIT_BOUNDARY)
+DEDICATED_DOCUMENT_WRITE = "dedicated_document_write"
+DOCUMENT_WRITE_RELEASED = "document_write_released"
+PORT_NAMES = (DEDICATED_DOCUMENT_WRITE, DOCUMENT_WRITE_RELEASED, ON_DRAFT_SAVED, CARD_VIEW, ON_RESULT_BOUND, ON_ROOT_CONVERTED, CARD_LINE_DOCUMENTS, CARD_DOCUMENT_EDIT, CARD_DOCUMENT_EDIT_BOUNDARY)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -82,6 +84,19 @@ def card_edit(operation, *args, **kwargs):
     if handler is None:
         raise RuntimeError("card_edit_unavailable")
     return handler(operation, *args, **kwargs)
+
+
+def dedicated_write(action, *args, **kwargs):
+    handler = _handler(DEDICATED_DOCUMENT_WRITE)
+    if handler is None:
+        raise RuntimeError("dedicated_document_write_unavailable")
+    return handler(action, *args, **kwargs)
+
+
+def document_write_released():
+    handler = _handler(DOCUMENT_WRITE_RELEASED)
+    if handler is not None:
+        handler()
 
 
 def draft_saved(group: dict, user_id: Optional[str], nodes: list[dict], removed_keys: Iterable[str],

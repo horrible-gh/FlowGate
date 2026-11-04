@@ -73,7 +73,9 @@ def judge(flow_id: str, row: dict, docs_by_id: dict, *, started: bool,
                 return Verdict(PROTECTED, HAS_BODY, shown)
         if legacy.attachment_count(shown["doc_id"]) > 0:
             return Verdict(PROTECTED, HAS_ATTACHMENT, shown)
-        if (not legacy.is_disposable_draft(shown) or int(shown.get("revision_no") or 0) != 0
+        from flowgate.card_document_edit.deployment_bridge import deployment_only
+        if (not legacy.is_disposable_draft(shown)
+                or not deployment_only(shown, deploy_mark, flow_id, row)
                 or legacy.review_count(shown["doc_id"]) > 0 or legacy.rejection_count(shown) > 0
                 or legacy.review_event_count(shown) > 0):
             return Verdict(PROTECTED, HAS_HISTORY, shown)

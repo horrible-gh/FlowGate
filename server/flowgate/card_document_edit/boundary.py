@@ -41,6 +41,8 @@ def type_lock(doc, *, wait=True):
     finally:
         _owned_types.reset(token)
         lock.release()
+        from .pending import flush
+        flush()
 
 
 @dataclass(frozen=True)

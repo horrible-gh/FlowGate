@@ -990,34 +990,39 @@ def transition_document_review(
         update_fields["meta"] = test_basis_service.metadata_without_basis(
             {"meta": update_fields.get("meta") or doc.get("meta")})
         admitted = None
-        with _runner._admission_lock, get_store().transaction():
-            fresh = db_docs.get_by_id(doc_id)
-            if (fresh or {}).get("doc_review_status") != current_review_status or (
-                fresh or {}
-            ).get("revision_no") != doc.get("revision_no"):
-                raise TransitionError("TS changed during approval")
-            blocker = spec_execution_service.admission_blocker(doc_id) if selected else None
-            if blocker:
-                raise TransitionError(_TEST_GATE_MESSAGES["ts_run"][lang].format(**blocker))
-            updated = db_docs.update(doc_id, update_fields)
-            if not updated:
-                raise TransitionError("Review status transition failed")
-            if selected:
-                # Same transaction as the approval (D#1 §3-1 steps 5-6): the queued run and
-                # the report it opens exist exactly when the approval does.
-                admitted = spec_execution_service.admit_on_approval(
-                    updated, parsed, selected, runner_id=actor_user_id, locale=locale)
-                from modules.flow_gate.db import events as db_events
-                db_events.insert_event(doc_id, "test_spec_execution_admitted", note=json.dumps({
+        with _runner._admission_lock:
+            def stage_spec_approval():
+                admitted = None
+                fresh = db_docs.get_by_id(doc_id)
+                if (fresh or {}).get("doc_review_status") != current_review_status or (
+                    fresh or {}
+                ).get("revision_no") != doc.get("revision_no"):
+                    raise TransitionError("TS changed during approval")
+                blocker = spec_execution_service.admission_blocker(doc_id) if selected else None
+                if blocker:
+                    raise TransitionError(_TEST_GATE_MESSAGES["ts_run"][lang].format(**blocker))
+                updated = db_docs.update(doc_id, update_fields)
+                if not updated:
+                    raise TransitionError("Review status transition failed")
+                if selected:
+                    # Same transaction as the approval (D#1 §3-1 steps 5-6): the queued run and
+                    # the report it opens exist exactly when the approval does.
+                    admitted = spec_execution_service.admit_on_approval(
+                        updated, parsed, selected, runner_id=actor_user_id, locale=locale)
+                    from modules.flow_gate.db import events as db_events
+                    db_events.insert_event(doc_id, "test_spec_execution_admitted", note=json.dumps({
+                        "run_id": admitted["run"]["run_id"], "tsr_doc_id": admitted["tsr_doc_id"],
+                        "admission": spec_execution_service.ADMISSION_APPROVAL,
+                        "ts_revision_no": doc.get("revision_no"),
+                        "case_ids": admitted["selected_case_ids"], "actor": actor_user_id,
+                    }, ensure_ascii=False))
+                updated["spec_execution"] = ({
                     "run_id": admitted["run"]["run_id"], "tsr_doc_id": admitted["tsr_doc_id"],
-                    "admission": spec_execution_service.ADMISSION_APPROVAL,
-                    "ts_revision_no": doc.get("revision_no"),
-                    "case_ids": admitted["selected_case_ids"], "actor": actor_user_id,
-                }, ensure_ascii=False))
-            updated["spec_execution"] = ({
-                "run_id": admitted["run"]["run_id"], "tsr_doc_id": admitted["tsr_doc_id"],
-                "selected_case_ids": admitted["selected_case_ids"], "status": "queued",
-            } if admitted else None)
+                    "selected_case_ids": admitted["selected_case_ids"], "status": "queued",
+                } if admitted else None)
+                return updated, admitted
+            from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+            updated, admitted = dedicated_write("generated_boundary", doc, stage_spec_approval)
         if admitted:
             # After commit: the run and its report are visible before anyone is told.
             _runner._emit_started(updated, admitted["run"])

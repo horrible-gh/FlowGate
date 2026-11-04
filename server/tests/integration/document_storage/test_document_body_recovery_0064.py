@@ -42,6 +42,11 @@ def recovery_routes(env, monkeypatch):
     monkeypatch.setattr(token, "verify_bearer", lambda request: {"_is_user_jwt": True})
     refreshed = []
     monkeypatch.setattr(console, "_broadcast_document_refresh", lambda doc: refreshed.append(doc["doc_id"]))
+    from flowgate.card_document_edit import contacts
+    def record_refresh(event):
+        if event.event_type == contacts.EventType.DOCUMENT_EXPLORER_REFRESH:
+            refreshed.append(event.doc_id)
+    monkeypatch.setattr(contacts, "broadcast_event_threadsafe", record_refresh)
     env["refreshed"] = refreshed
     env["client"] = TestClient(app, raise_server_exceptions=False)
 
@@ -344,7 +349,10 @@ def test_each_method_recovers_a_readable_body_and_changes_only_the_path(env, tmp
         "before_file_path": before["file_path"], "after_file_path": after}
     assert out["restored_from"] == body_recovery.RESTORED_FROM[method]
     row = documents.get_by_id(doc_id)
-    assert stable(row) == stable(before) and row["file_path"] == after and out["data"]["file_path"] == after
+    expected = dict(before)
+    if method == "regenerate_card_draft":
+        expected["revision_no"] += 1  # 0127: existing card bodies now use the common revision store.
+    assert stable(row) == stable(expected) and row["file_path"] == after and out["data"]["file_path"] == after
     state, content, outline = token_reads(env, doc_id)
     assert (state, outline) == ("readable", 200) and content == out["content"]
     [event] = recovered_events(doc_id)
@@ -869,14 +877,12 @@ _OWNERS = {"modules/flow_gate/documents/routers/documents.py", "modules/flow_gat
 # (file, function) -> what writes there. "save:*" must record ``doc_body_saved`` in the same function (2.4.1).
 EXPECTED_WRITERS = {
     ("modules/flow_gate/documents/routers/documents.py", "update_document_content.save.write_file"): "save:console_save",
-    ("modules/flow_gate/documents/routers/work_plan.py", "save_work_plan"): "save:work_plan_save",
-    ("modules/flow_gate/documents/routers/work_plan.py", "restore_work_plan_revision"): "save:work_plan_save",
-    ("modules/flow_gate/documents/tr2_service.py", "_save"): "save:tr2_save",
     ("modules/flow_gate/api/inbox_routes.py", "_handle_new"): "inbox",
     ("flowgate/card_document_edit/store.py", "snapshot_policy_apply"): "revision snapshot",
     ("flowgate/card_document_edit/store.py", "body_replace"): "guarded revision body",
+    ("flowgate/card_document_edit/generated_bridge.py", "conversion_stage"): "succession CREATE",
+    ("flowgate/card_document_edit/generated_bridge.py", "tsr.write"): "new TSR CREATE",
     ("flowgate/card_documents/legacy_adapter.py", "_write_file"): "card document creation",
-    ("modules/flow_gate/documents/root_conversion.py", "stage_converted_file"): "conversion",
     ("modules/flow_gate/documents/attachments/conversion.py", "stage_attachment_room"): "conversion",
     ("modules/flow_gate/documents/body_recovery.py", "_apply"): "recovery",
     # a new document's first file (not an existing document's body)
@@ -886,8 +892,6 @@ EXPECTED_WRITERS = {
     ("modules/flow_gate/documents/routers/documents.py", "create_next_approved_core"): "new document",
     ("modules/flow_gate/documents/routers/documents.py", "_create_next_empty_document_for_auto_draft"): "new document",
     ("modules/flow_gate/documents/routers/work_plan.py", "create_work_plan"): "new document",
-    # a plan file that never held a plan revived next to it (no person's content; the old file stays)
-    ("modules/flow_gate/documents/routers/work_plan.py", "_heal_unwritten_plan"): "plan revival",
 }
 
 
@@ -963,3 +967,12 @@ def test_the_card_generator_and_its_recovery_share_the_front_matter():
     assert legacy_adapter._front_matter(*args) == body_recovery.card_front_matter(*args) == (
         f"---\nproject: flowgate\nmodule: v02\ngroup: 0082\ngroup_id: {FB}\ntype: N\ndoc_number: 0002-N\n"
         "title: 조사 · 지시서\n---\n")
+
+
+@pytest.fixture(autouse=True)
+def dedicated_document_write_ports_0127(monkeypatch):
+    # Direct service/route fixtures reproduce the composition root's required ports.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration as document_edit
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    document_edit.register()

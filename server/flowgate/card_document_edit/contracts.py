@@ -64,6 +64,11 @@ class Built:
     body_saved_source: Optional[str] = None
     type_tasks: list = field(default_factory=list)
     result: dict = field(default_factory=dict)
+    body_action: str = "REPLACE"
+    target_reference: Optional[str] = None
+    target_identity: Optional[tuple] = None
+    event_metadata: dict = field(default_factory=dict)
+    transaction_tasks: list = field(default_factory=list)
 
 
 class Rule(Protocol):
@@ -81,6 +86,7 @@ class ContactPlan:
     type_tasks: list = field(default_factory=list)
     consumed: bool = False
     legacy_non_card: bool = False
+    canvas_already_queued: bool = False
 
 
 @dataclass

@@ -30,7 +30,7 @@ def run(plan):
         payload={"operation": "updated", "doc_id": doc["doc_id"], "type": doc["type_code"],
                  "title": doc.get("title"), "status": doc.get("status"), "revision_no": doc["revision_no"]},
         project=plan.project_id, group_id=plan.flow_id, doc_id=doc["doc_id"], audience="*")))
-    if plan.card_slot:
+    if plan.card_slot and not plan.canvas_already_queued:
         _best_effort("graph_canvas_changed", lambda: canvas_events.publish_canvas_changed(
             project_id=plan.project_id, flow_id=plan.flow_id, reason="documents",
             actor_user_id=plan.actor_user_id, origin_client_id=None))
