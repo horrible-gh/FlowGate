@@ -65,7 +65,7 @@ import contextlib
 import logging
 from typing import Optional
 
-from modules.flow_gate.graph_workflow.domain.frontier import MODE_FULL, RunEvent, resolve
+from modules.flow_gate.graph_workflow.domain.frontier import MODE_FULL, MODE_STEP, RunEvent, resolve
 from modules.flow_gate.graph_workflow.domain.run_policies import (
     PolicyUndecided,
     RULE_REF,
@@ -245,8 +245,18 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
         command = run.get("run_mode") or MODE_FULL
     try:
         from modules.flow_gate.services import graph_execution_hooks
+        # A completion repaired here consumes this step; its newly enabled successors
+        # belong to the next step. Independent candidates already runnable remain in scope.
+        before_repair = {r["node_key"]: r["status"] for r in run_store.node_runs(run_id)}
+        initial_targets: set = set()
+        if command == MODE_STEP:
+            from dataclasses import replace
+            prospective = replace(read_run_state(ctx), mode=MODE_STEP, step_targets=None)
+            initial_targets = set(resolve(ctx.revision, prospective, RunEvent("command"), policies).open)
         ctx.command_pending = True  # this explicit command owns any reconciled approval
         result_binder.reconcile_links(ctx, policies)                             # 5-1 while paused / idle
+        repaired = {r["node_key"] for r in run_store.node_runs(run_id)
+                    if r["status"] == "done" and before_repair.get(r["node_key"]) in ("open", "review")}
         ctx.command_pending = False
         flow_id = run["group_id"]
         jobs.append(lambda: card_settings_ports.reconcile_stage(flow_id))        # 0105 T#2 B-3, after the guard
@@ -266,6 +276,11 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
         ctx.run["idle_reason"] = None
         if command is not None:
             run_state_ports.record_command(ctx, command)
+            if command == MODE_STEP and repaired:
+                targets = sorted(initial_targets | repaired)
+                if run_store.set_run_command(run_id, MODE_STEP, targets) != 1:
+                    raise AssertionError("completion repair missed its step")
+                ctx.run["step_node_keys"] = targets
         emit_run_status(ctx, from_status, run_store.RUNNING, cause, reason)
         if held:
             graph_execution_hooks.call("hold_command", ctx, command)
@@ -301,7 +316,8 @@ def go_on_command(ctx: RunContext, command: Optional[str], policies) -> None:
             run_store.set_dispatch(run_id, row["node_key"], dispatch)
             emit_node_state(ctx, row["node_key"], "open", "open", "redispatched",
                             row.get("result_doc_id"), dispatch)
-    rerequested = _rerequest_reviews(ctx) if command is not None else []         # 0124 T#1, 5-3b
+    recovered = list(ctx.run.get("step_node_keys") or ()) if command == MODE_STEP else []
+    rerequested = (_rerequest_reviews(ctx) if command is not None else []) + recovered
     event = RunEvent("resume" if command is None else "command")
     d = resolve(ctx.revision, read_run_state(ctx), event, policies)
     if command is not None:
@@ -316,7 +332,7 @@ def _rerequest_reviews(ctx: RunContext) -> list[str]:
     it (0003-NR §5.1.2). No handler: none. The node stays in review; nothing else of the run changes here."""
     from modules.flow_gate.services import graph_execution_hooks
     return [row["node_key"] for row in run_store.node_runs(ctx.run_id)
-            if row["status"] == "review" and graph_execution_hooks.call("rerequest_review", ctx, row)]
+            if row["status"] in ("open", "review") and graph_execution_hooks.call("rerequest_review", ctx, row)]
 
 
 def _refuse_time_machine(flow_id: str) -> None:

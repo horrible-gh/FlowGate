@@ -120,13 +120,15 @@ def _recovery_reset(ctx, rows: list[dict]) -> bool:
 def opening_held(flow_id: str) -> frozenset:
     """0085 T#3 (``graph_execution_hooks`` ``opening_held``): the gates of the Flow that wait for a round split after an
     abandoned recovery - no command, resume or refill opens them (their successors wait behind them)."""
+    from flowgate.graph_time_machine import rejection_store
+    waiting = rejection_store.waiting(flow_id)
     from flowgate.gate_decisions import repository as gate_decisions
     if not gate_decisions.available():
-        return frozenset()
+        return waiting
     from modules.flow_gate.db.connection import get_store
     rows = get_store()._fetch_all("SELECT DISTINCT node_key FROM gate_decisions WHERE group_id = ? "
                                   "AND recovery_reset_required = 1", [flow_id]) or []
-    return frozenset(dict(r)["node_key"] for r in rows)
+    return waiting | frozenset(dict(r)["node_key"] for r in rows)
 
 
 def _waits_confirm(ctx, row: dict, reserved: Optional[dict] = None) -> bool:

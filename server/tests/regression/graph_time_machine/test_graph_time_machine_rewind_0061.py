@@ -19,6 +19,8 @@ import pytest
 from flowgate.graph_time_machine import git_revert, journal, operation, rewind
 from modules.flow_gate.graph_workflow.api import graph_messages
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
+# Load copied run_apply aliases before any fixture replaces their source functions.
+from modules.flow_gate.graph_workflow.services import run_service  # noqa: F401
 from modules.flow_gate.graph_workflow.store import run_store
 
 
@@ -337,6 +339,12 @@ def db(monkeypatch):
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     connection.executescript(SCHEMA)
+    # This pre-completion schema belongs to this connection, never the unbound
+    # application store. The real repository must see the fixture's availability.
+    from flowgate.card_completion import repository as completion_store
+    schema_store = SimpleNamespace(table_exists=lambda table: bool(connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", [table]).fetchone()))
+    monkeypatch.setattr(completion_store, 'get_store', lambda: schema_store)
     connection.execute("INSERT INTO graph_runs (run_id, group_id, revision_no, status, active_group_id, "
                        "last_event_seq, run_mode, idle_reason) VALUES ('run','flow',1,'idle','flow',9,'full','completed')")
     nodes = {"R": "done", "A": "done", "B": "done", "J": "done", "C": "review", "D": "pending"}

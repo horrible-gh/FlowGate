@@ -248,7 +248,7 @@ def test_3_a_command_with_no_memo_asks_one_review_of_the_latest_revision_with_th
     assert answer["status"] == "running"                             # the command's answer after its jobs
     assert _wire(env, a)["intervention"] is None                     # its review works on it
     if mode == "step":
-        assert json.loads(run["step_node_keys"]) == []               # the re-review opens no step target
+        assert json.loads(run["step_node_keys"]) == [a]              # 0124/0126: a re-review is a step target
     assert node_run(env, a2)["status"] == "pending"
 
 
@@ -274,8 +274,8 @@ def test_3_b_step_its_pass_completes_the_card_and_the_next_card_waits_for_the_ne
     assert node_run(env, a2)["status"] == "pending"                  # the step boundary: never opened at once
     assert ("approved", "pending") in [(p["outcome"], p["status"]) for p in _propagations(env, a)]
     run = _read(env)
-    assert run["status"] == "idle" and run["idle_reason"] == "no_targets"
-    assert json.loads(_run(env)["step_node_keys"]) == []
+    assert run["status"] == "idle" and run["idle_reason"] == "step_done"
+    assert json.loads(_run(env)["step_node_keys"]) == [a]
     assert node_run(env, a2)["status"] == "pending"
     command(env, then)
     assert node_run(env, a2)["status"] == "open"
@@ -365,13 +365,28 @@ def test_6_two_commands_judged_together_open_one_seq(env, decided, monkeypatch, 
     from flowgate.card_settings import assigned_review, legacy_adapter
 
     a, _a2, result, _latest = _spent(env, monkeypatch, starts, "step", follow=False)
-    run_row = legacy_adapter.active_run(FA)
+    from flowgate.graph_run import command as commands
+    from modules.flow_gate.graph_workflow.services import run_apply
+    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+    from modules.flow_gate.graph_workflow.store import run_store
+
+    # The continuation must belong to a fresh explicit command, not the spent writer's command.
+    def begin_command():
+        old = legacy_adapter.active_run(FA)
+        assert run_store.set_run_status(old["run_id"], "idle", "running") == 1
+        ctx = run_apply.load_context({**old, "status": "running"}, "flowgate", "u_kim", [])
+        commands.record_command(ctx, "step")
+        run_apply.emit_run_status(ctx, "idle", "running", "user_command")
+        assert run_store.set_run_command(old["run_id"], "step", [a]) == 1
+        return run_store.run_by_id(old["run_id"])
+
+    run_row = with_flow_guard(FA, begin_command)
     outside = legacy_adapter.node_run(run_row["run_id"], a)
-    stale = assigned_review.command_review_due(FA, run_row["run_id"], outside)
+    stale = assigned_review.rerequest_due(FA, run_row, outside, None, idle_ok=True)
     assert stale is not None
-    real = assigned_review.command_review_due
-    monkeypatch.setattr(assigned_review, "command_review_due",
-                        lambda f, r, row: stale if row is outside else real(f, r, row))
+    real = assigned_review.rerequest_due
+    monkeypatch.setattr(assigned_review, "rerequest_due",
+                        lambda f, r, row, attempt, **kw: stale if row is outside else real(f, r, row, attempt, **kw))
     assigned_review._command_review_row(FA, run_row, outside)
     assigned_review._command_review_row(FA, run_row, outside)       # the second command: its outside view is stale
     assert [r["seq"] for r in _reviews(env, a)] == [1, 2] and len(_loops(starts)) == 2
@@ -485,21 +500,21 @@ def test_7_another_run_than_the_flow_s_active_one_takes_no_re_review(env, decide
 
 
 @pytest.mark.parametrize("status", ["rejected", "pending_review"])
-def test_7_a_document_not_revised_takes_no_re_review(env, decided, monkeypatch, starts, status):
+def test_7_an_explicit_command_recovers_a_rejected_or_pending_document(env, decided, monkeypatch, starts, status):
     from modules.flow_gate.db import documents as db_documents
 
     a, _a2, result, _latest = _spent(env, monkeypatch, starts, "step", follow=False)
     db_documents.update(result, {"doc_review_status": status})
     command(env, "step")
-    assert len(_reviews(env, a)) == 1 and len(_loops(starts)) == 1
+    assert len(_reviews(env, a)) == 2 and len(_loops(starts)) == 2
 
 
-def test_7_a_card_whose_reason_is_completion_missing_takes_no_re_review(env, decided, monkeypatch, starts):
+def test_7_completion_missing_with_unapproved_output_recovers_at_review(env, decided, monkeypatch, starts):
     a, _a2, result, _latest = _spent(env, monkeypatch, starts, "step", follow=False)
     _sql(env["db"], "DELETE FROM graph_run_events WHERE cause = 'auto_approval_skipped'")   # no reason recorded
     assert _wire(env, a)["intervention"] == {"kind": "needs_intervention", "reason": "completion_missing"}
     command(env, "step")
-    assert len(_reviews(env, a)) == 1 and len(_loops(starts)) == 1
+    assert len(_reviews(env, a)) == 2 and len(_loops(starts)) == 2
 
 
 def test_7_a_system_error_takes_no_re_review_and_keeps_its_own_retry(env, decided, monkeypatch, starts):

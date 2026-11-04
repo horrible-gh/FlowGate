@@ -54,11 +54,19 @@ def attempt_key(attempt_id: Optional[str]) -> str:
 
 def _one(sql: str, params: list) -> Optional[dict]:
     row = get_store()._fetch_one(sql, params)
-    return dict(row) if row else None
+    return _with_decision(dict(row)) if row else None
 
 
 def _all(sql: str, params: list) -> list[dict]:
-    return [dict(r) for r in get_store()._fetch_all(sql, params) or []]
+    return [_with_decision(dict(r)) for r in get_store()._fetch_all(sql, params) or []]
+
+
+def _with_decision(row):
+    if row.get("cause") == "human_approved" and get_store().table_exists("graph_card_completion_decisions"):
+        evidence = get_store()._fetch_one(
+            "SELECT decision_id FROM graph_card_completion_decisions WHERE completion_id = ?", [row["completion_id"]])
+        row["decision_id"] = evidence["decision_id"] if evidence else None
+    return row
 
 
 def by_id(completion_id: Optional[str]) -> Optional[dict]:
@@ -134,6 +142,9 @@ def insert(row: dict, generation: int = 0) -> tuple[dict, bool]:
     sql = f"INSERT INTO {TABLE} ({_COLUMNS}) VALUES ({marks})"
     with store.transaction():
         created = store.insert_isolated(sql, params, "card_completion_insert")
+        if created and row.get("decision_id"):
+            store._execute("INSERT INTO graph_card_completion_decisions (completion_id, decision_id) VALUES (?, ?)",
+                           [completion_id, row["decision_id"]])
         found = by_key(row["run_id"], row["node_key"], row.get("attempt_id"), row["result_doc_id"])
     if found is None:
         raise AssertionError("card completion missed its row")

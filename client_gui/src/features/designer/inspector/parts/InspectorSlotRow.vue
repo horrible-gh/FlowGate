@@ -35,7 +35,7 @@
        whole, the summary gives way first, then the name. -->
   <div
     class="inspector-slot"
-    :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-blank': blank && !empty, 'is-focus': focus, 'is-danger': danger, 'has-io': !!$slots.io, 'is-state-first': warns }]"
+    :class="[`inspector-slot--${kind}`, { 'is-empty': empty, 'is-blank': blank && !empty, 'is-focus': focus, 'is-danger': danger, 'has-io': !!$slots.io, 'is-state-first': warns, 'has-decision': decisionLayout }]"
     :title="view.kind === 'blank' ? view.title : undefined"
     data-test="inspector-slot"
     :data-kind="kind"
@@ -81,10 +81,11 @@
         ><i :style="{ width: `${clamped}%` }" /></span>
       </template>
     </span>
-    <span v-if="$slots.io" class="inspector-slot-io" data-test="inspector-slot-io">
+    <span v-if="$slots.io && !decisionLayout" class="inspector-slot-io" data-test="inspector-slot-io">
       <slot name="io" />
     </span>
     <span class="inspector-slot-buttons" data-test="inspector-slot-buttons">
+      <span v-if="$slots.io && decisionLayout" class="inspector-slot-io" data-test="inspector-slot-io"><slot name="io" /></span>
       <slot />
     </span>
   </div>
@@ -108,6 +109,7 @@ const props = withDefaults(
     /** document: a document the card holds; result: what a run or a check gives. */
     kind?: 'document' | 'result'
     name: string
+    decisionLayout?: boolean
     /** The document id behind the line (data-doc); null when there is none. */
     id?: string | null
     bodyState?: string | null
@@ -483,5 +485,29 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   .inspector-slot-state {
     padding: 0 5px;
   }
+}
+/* 0126: keep the file/info/decision groups together and in reading order at every width. */
+.inspector-slot.has-decision {
+  grid-template-columns: minmax(45px, 112px) minmax(0, 1fr) max-content;
+  height: auto;
+  min-height: 38px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.inspector-slot.has-decision .inspector-slot-buttons { flex-wrap: wrap; }
+.inspector-slot.has-decision .inspector-slot-io { grid-row: auto; grid-column: auto; }
+.inspector-slot.has-decision .inspector-slot-io :deep(.document-io-divider) {
+  display: block; width: 1px; height: 20px; flex: 0 0 1px; margin: 0 3px; background: #34465b; opacity: .9;
+}
+@media (max-width: 520px) {
+  .inspector-slot.has-decision { column-gap: 4px; padding-left: 8px; }
+  .inspector-slot.has-decision .inspector-slot-buttons,
+  .inspector-slot.has-decision :deep(.document-io-group) { gap: 4px; }
+  .inspector-slot.has-decision :deep(.ui-icon-btn--sm) { width: 26px; height: 26px; }
+  .inspector-slot.has-decision .inspector-slot-io :deep(.document-io-divider) { height: 18px; margin: 0 2px; }
+}
+@container (max-width: 360px) {
+  .inspector-slot.has-decision { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .inspector-slot.has-decision .inspector-slot-buttons { grid-column: 1 / -1; }
 }
 </style>

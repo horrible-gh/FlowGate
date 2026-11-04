@@ -57,6 +57,13 @@ def test_s1_a_no_op_command_lists_the_blocking_card_with_its_reason_and_release(
         env, decided, monkeypatch, starts, fork_join, case):
     a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
     EXCLUDED[case](env, a, result, first)
+    if case in {"review_verdict_hold", "run_not_clean", "completion_missing", "person_author"}:
+        # 0126: these cases now have a real execution target and an outstanding review request.
+        command(env,"step")
+        r=_latest(env)
+        assert r["state"]=="running" and [n["node_key"] for n in r["nodes"]]==[a]
+        assert r["blocking"]==[] and one(env,a,"result_review",2) is not None
+        return
     for mode in ("step", "full"):
         command(env, mode)
         r = _latest(env)
@@ -105,7 +112,7 @@ def test_s3_a_re_requested_review_spent_again_is_listed_and_the_next_command_is_
 
 def test_s4_only_the_latest_command_lists_blocking_cards(env, decided, monkeypatch, starts, fork_join):
     a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
-    EXCLUDED["review_verdict_hold"](env, a, result, first)
+    EXCLUDED["review_stalled"](env, a, result, first)
     command(env, "step")
     c1 = _latest(env)
     assert len(c1["blocking"]) == 1
@@ -134,7 +141,7 @@ def _mixed(env):
     return a, m
 
 
-def _mixed_spent(env, monkeypatch, starts, reason="review_verdict_hold"):
+def _mixed_spent(env, monkeypatch, starts, reason="review_stalled"):
     """The first full command opens m (a manual write wait) and starts a's AI; a's review loop spends its budget and a
     gets the excluded ``reason``. -> (a, m, result)."""
     a, m = _mixed(env)
@@ -181,7 +188,7 @@ def test_s5_a_manual_write_wait_beside_an_intervention_card_blocks_nothing_and_k
     # a: the card's own words and its release; blocking lists a alone (m has no intervention)
     [b] = r["blocking"]
     assert (b["node_key"], b["doc_type"], b["kind"]) == (a, "T", "needs_intervention")
-    assert b["reason"] == intervention["reason"] and b["release"] == "memo_rereview" and b["title"]
+    assert b["reason"] == intervention["reason"] and b["release"] is None and b["title"]
     assert [x["node_key"] for x in r["blocking"]] == [a]
     # the counts are those of the nodes (the old rule) ...
     tally = {"done": 0, "failed": 0, "waiting": 0}
@@ -238,7 +245,7 @@ def test_s6_a_gate_waiting_beside_an_intervention_card_blocks_only_the_card(
     _loop_row(result, REVIEW_RUN, "rework")
     _loop_end(env, rr["intent_exec_id"], result, REVIEW_RUN, "retry_exhausted")
     _read(env)
-    EXCLUDED["review_verdict_hold"](env, a, result, one(env, a, "result_review", 1))
+    EXCLUDED["review_stalled"](env, a, result, one(env, a, "result_review", 1))
     assert _wire(env, a)["intervention"]["kind"] == "needs_intervention"
     assert _wire(env, g)["intervention"] is None
 
@@ -248,7 +255,7 @@ def test_s6_a_gate_waiting_beside_an_intervention_card_blocks_only_the_card(
           "blocking =", [(b["node_key"] == g and "g" or "a", b["reason"], b["release"]) for b in r["blocking"]])   # measured
     assert r["idle_reason"] in PERSON_WAITS and r["ended"] is True and r["latest"] is True
     assert [b["node_key"] for b in r["blocking"]] == [a]                          # the card alone; never the gate
-    assert r["blocking"][0]["reason"] == "review_not_passed:review_verdict_hold"
+    assert r["blocking"][0]["reason"] == "review_not_passed:review_stalled"
     command(env, "step")                                                           # a no-op command: the same
     r2 = _latest(env)
     print("S6 gate+card no-op: idle =", r2["idle_reason"], "nodes =", r2["nodes"], "blocking =",
@@ -260,7 +267,7 @@ def test_s6_a_gate_waiting_beside_an_intervention_card_blocks_only_the_card(
                                            ("step_done", False), ("completed", False), ("error", False)])
 def test_s6_blocking_only_for_the_idle_reasons_of_a_person_s_wait(env, decided, monkeypatch, starts, fork_join, reason, listed):
     a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
-    EXCLUDED["review_verdict_hold"](env, a, result, first)
+    EXCLUDED["review_stalled"](env, a, result, first)
     command(env, "step")                                                                       # the copy: S1's run, its idle reason told
     _sql(env["db"], "UPDATE graph_runs SET idle_reason = ? WHERE group_id = ?", (reason, FA))
     r = _latest(env)
@@ -291,7 +298,7 @@ def test_s7_a_refused_re_request_start_is_the_command_s_failure_with_its_real_co
 
 def test_s8_reading_the_command_result_writes_nothing(env, decided, monkeypatch, starts, fork_join):
     a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
-    EXCLUDED["review_verdict_hold"](env, a, result, first)
+    EXCLUDED["review_stalled"](env, a, result, first)
     command(env, "step")
     before = _rows(env)
     for _ in range(3):
@@ -305,7 +312,7 @@ def test_s9_a_failed_read_leaves_the_card_out_or_its_release_unsaid_and_the_read
     from flowgate.graph_run import legacy_adapter as engine
 
     a, _a2, _a3, result, first = _spent(env, monkeypatch, starts)
-    EXCLUDED["review_verdict_hold"](env, a, result, first)
+    EXCLUDED["review_stalled"](env, a, result, first)
     command(env, "step")
     whole = _latest(env)
     assert whole["blocking"][0]["release"] == "memo_rereview"

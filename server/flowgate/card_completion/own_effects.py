@@ -112,10 +112,18 @@ def _announce(doc: dict, admitted: dict) -> None:
     """After the commit: the run and its report are visible before anyone is told."""
     from modules.flow_gate.services import test_run_service as runner  # noqa: PLC0415
 
-    runner._emit_started(doc, admitted["run"])
-    runner._broadcast("group_view_refresh", doc, {
-        "group_id": doc.get("group_id"), "reason": "test_report_opened", "doc_id": admitted["tsr_doc_id"],
-        "run_id": admitted["run"]["run_id"]})
+    from modules.flow_gate.db.connection import after_commit
+
+    def send():
+        runner._emit_started(doc, admitted["run"])
+        runner._broadcast("group_view_refresh", doc, {
+            "group_id": doc.get("group_id"), "reason": "test_report_opened", "doc_id": admitted["tsr_doc_id"],
+            "run_id": admitted["run"]["run_id"]})
+
+    # 0126 T#1: a human cascade can own the outer Flow transaction. Its admission
+    # notice must not escape before the badges, request and audit rows commit.
+    if not after_commit(send):
+        send()
 
 
 def _ts(doc_id: str, revision: int, runner_id: str, write: Callable[[], object]):
@@ -173,7 +181,13 @@ def _tr2_succeeded(doc_id: str, revision: int) -> bool:
     from modules.flow_gate.db import tr2_approval_attempts as db_attempts  # noqa: PLC0415
 
     success = db_attempts.latest_success(doc_id)
-    return bool(success) and int(success.get("document_revision") or -1) == int(revision)
+    if success and success.get('ledger_row_id'):
+        from modules.flow_gate.db import tr_commit_ledger
+        ledger = tr_commit_ledger.get_by_id(success['ledger_row_id'])
+        if not ledger or ledger.get('state') == 'canceled':
+            return False
+    return bool(success) and success.get("document_revision") is not None \
+        and int(success["document_revision"]) == int(revision)
 
 
 def _tr2_apply(flow_id: str, doc_id: str, revision: int, issuer: str, permissions, request_key: str,

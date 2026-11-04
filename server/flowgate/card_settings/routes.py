@@ -11,16 +11,17 @@ of reading their cache (a read option only: nothing is written).
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Request
 
 from flowgate.card_settings import legacy_adapter as legacy
-from flowgate.card_settings import settings
+from flowgate.card_settings import settings, context as settings_context
 
 router = APIRouter(prefix="/api/v1", tags=["CardSettings"])
 
-_BODY_KEYS = {"field", "value", "expected_settings_version"}
+_BODY_KEYS = {"field", "value", "expected_settings_version", "expected_context"}
 _TRUE = {"1", "true", "yes"}
 
 
@@ -57,9 +58,23 @@ def parse_expected_version(body: Any) -> tuple[Optional[int], list[dict]]:
 def get_card_settings(flow_id: str, node_key: str, request: Request):
     def handle() -> dict:
         user_id = legacy.authenticate(request)
+        expected_context = None
+        if "context" in request.query_params:
+            try:
+                expected_context = json.loads(request.query_params["context"])
+            except (ValueError, TypeError):
+                raise legacy.invalid(request, [{"field": "context", "reason": "invalid_context"}])
+            if not settings_context.parse(expected_context):
+                raise legacy.invalid(request, [{"field": "context", "reason": "invalid_context"}])
         group = legacy.load_flow(flow_id)
         legacy.authorize(user_id, group, "read")
-        return settings.read(group, node_key, refresh_merge_targets=refresh_requested(request), viewer=user_id)
+        answer = settings.read(group, node_key, refresh_merge_targets=refresh_requested(request), viewer=user_id, expected_context=expected_context)
+        try:
+            legacy.authorize(user_id, group, "write")
+        except legacy.GraphApiError:
+            answer["locked"] = True
+            answer["settings_capability"] = {"editable": False, "reason": "forbidden"}
+        return answer
 
     return legacy.run(request, handle)
 
@@ -71,11 +86,14 @@ def patch_card_settings(flow_id: str, node_key: str, request: Request, body: Any
         name, value, errors = parse_change(body)
         expected_version, version_errors = parse_expected_version(body)
         errors = errors + version_errors
+        expected_context = body.get("expected_context") if isinstance(body, dict) else None
+        if isinstance(body, dict) and "expected_context" in body and not settings_context.parse(expected_context):
+            errors.append({"field": "expected_context", "reason": "invalid_context"})
         if errors:
             raise legacy.invalid(request, errors)
         group = legacy.load_flow(flow_id)
         legacy.authorize(user_id, group, "write")
         return settings.write(group, node_key, name, value, user_id, legacy.locale_of(request),
-                              expected_version=expected_version)
+                              expected_version=expected_version, expected_context=expected_context)
 
     return legacy.run(request, handle)

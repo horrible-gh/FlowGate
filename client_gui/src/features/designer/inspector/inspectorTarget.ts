@@ -82,6 +82,9 @@ export interface InspectorTarget {
   readonly ownership: string | null
   readonly viewMode: string | null
   readonly readOnly: InspectorReadOnly
+  /** Settings only; structure/documents retain readOnly. Missing context fails closed on revisions. */
+  readonly settingsReadOnly?: InspectorReadOnly
+  readonly settingsContext?: { readonly run_id: string | null; readonly graph_revision_no: number | null; readonly draft_version: number | null }
   /**
    * flowgate.v02.0061 T#14: `run` while the Flow's Graph run is running, paused or stopping — its structure and card
    * settings cannot change (the Center session's run lock); TR0031 rev1: `unknown` while the run's status is not
@@ -217,6 +220,14 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     ownership,
     viewMode,
     readOnly: inspectorReadOnly(ownership, viewMode),
+    settingsReadOnly: ownership === 'conflict' ? 'conflict'
+      : viewMode === 'revision' && !(ownership === 'graph' && graph.run?.runId && typeof graph.viewRevisionNo === 'number' && graph.run.revisionNo === graph.viewRevisionNo) ? 'revision'
+      : viewMode === 'revision' ? null : undefined,
+    settingsContext: node.definition ? {
+      run_id: graph.run?.runId ?? null,
+      graph_revision_no: viewMode === 'revision' ? graph.viewRevisionNo ?? null : null,
+      draft_version: viewMode === 'draft' ? graph.draft?.version ?? null : null,
+    } : undefined,
     editLock: selection.editLock ?? null,
     canApprove: selection.canApprove === true,
     titleState: node.titleState ?? null,

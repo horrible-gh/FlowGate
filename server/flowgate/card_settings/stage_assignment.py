@@ -37,6 +37,7 @@ pre-feature attempt and every consumer keeps its current function for it (§2.13
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -416,7 +417,9 @@ def _initialize_pending(flow_id: str, node_key: str, kind: Optional[str]) -> Non
 def start_stage(flow_id: str, run: dict, node: dict, attempt_id: str, stage: str, seq: int = 0, *,
                 opening: bool = False, author: Optional[str] = None, basis: Optional[dict] = None,
                 author_provider_id: Optional[str] = None, reused_doc_id: Optional[str] = None,
-                plan: Optional[dict] = None, project_id: Optional[str] = None, ctx=None):
+                plan: Optional[dict] = None, project_id: Optional[str] = None, ctx=None,
+                explicit_retry: bool = False, rerequest_of_seq: Optional[int] = None,
+                insertion: Optional[list] = None):
     """L-2 §2.2.1 / §4.1. Inside the caller's Flow guard. Returns the stored row (this call's or the winner's) or
     ``LEGACY``. Read errors propagate (the caller's guard rolls back, E-03)."""
     legacy.require_guard(flow_id)
@@ -424,6 +427,8 @@ def start_stage(flow_id: str, run: dict, node: dict, attempt_id: str, stage: str
         return LEGACY
     found = store.read(attempt_id, stage, seq)
     if found is not None:
+        if insertion is not None:
+            insertion.append(False)
         return found
     if not opening and not store.has_any(attempt_id):
         return LEGACY
@@ -440,6 +445,14 @@ def start_stage(flow_id: str, run: dict, node: dict, attempt_id: str, stage: str
         a = assignment_from(stage, r, starter)
         if stage == RESULT_REVIEW:
             a = with_result_review_plan(a, attempt_id, author, r, inputs.stored or {})
+    if explicit_retry and stage in REVIEW_STAGES and a["actor"] == AI and author == AI:
+        # A new command resolves the reworker from today's write role, never seq 0's author.
+        write_role = "instruction" if stage == INSTRUCTION_REVIEW else "execution"
+        worker = resolve.resolve_role(flow_id, node, write_role, project_id=project_id, inputs=inputs)
+        a["rework_provider_id"] = worker.provider_id if worker.outcome == "ai" else None
+        if stage == INSTRUCTION_REVIEW:
+            count = _review_count((inputs.stored or {}).get("instruction_review_count"))
+            a["review_rounds"] = count if count in (1, 2, 3, -1) else 1
     review = stage in REVIEW_STAGES
     value_kind, value_pid = _slot_value(flow_id, key, ROLE_OF[stage])
     now = _now()
@@ -464,8 +477,15 @@ def start_stage(flow_id: str, run: dict, node: dict, attempt_id: str, stage: str
         "fail_cause": None, "verdict": None, "intent_kind": None, "intent_exec_id": None, "updated_at": now,
     }
     stored, inserted = store.insert_if_absent(row)
+    if insertion is not None:
+        insertion.append(inserted)
     if inserted:
-        _event(stored, EV_ASSIGNED, stored["actor"], _assigned_keys(stored), ctx)
+        extra = {**_assigned_keys(stored), "settings_version": repository.settings_version(flow_id, key),
+                 "review_rounds": stored.get("review_rounds"),
+                 "rework_provider_id": stored.get("rework_provider_id")}
+        if explicit_retry:
+            extra.update({REREQUEST_OF_SEQ: rerequest_of_seq, REREQUEST_CAUSE: USER_COMMAND})
+        _event(stored, EV_ASSIGNED, stored["actor"], extra, ctx)
     return stored
 
 
@@ -473,38 +493,43 @@ def start_stage(flow_id: str, run: dict, node: dict, attempt_id: str, stage: str
 # ``seq`` it follows and the cause. ``rerequest_cause`` and not ``cause``: ``append_run_event`` spreads its extra keys over
 # the event's own payload, whose ``cause`` is ``stage_assigned``.
 REREQUEST_OF_SEQ, REREQUEST_CAUSE, USER_COMMAND = "rerequest_of_seq", "rerequest_cause", "user_command"
-_RESTART_COPIED = ("run_id", "group_id", "node_key", "role", "actor", "actor_reason", "provider_id", "provider_name",
-                   "role_value_kind", "role_value_provider_id", "source", "cause", "review_rounds", "rework_provider_id",
-                   "author", "author_provider_id")
 
 
 def restart_review_stage(flow_id: str, cur: dict, basis: Optional[dict], ctx=None) -> tuple[dict, bool]:
-    """flowgate.v02.0124 T#1 (0003-NR §5.1.3-4), inside the caller's Flow guard: the review assignment that follows
-    ``cur`` — the stage's latest one, ended — for an explicit command's re-request. ``cur``'s reviewer, rework AI, rounds,
-    source and author are copied as they are (no role is resolved again: the card's current settings never replace
-    the reviewer and rework AI the card's result review was assigned), ``basis`` is the document's submission now, and
-    the new row is ``active`` with no verdict or intent. ``cur`` itself is only read. Insert-if-absent: ``(row,
-    inserted)`` — False when another writer made that ``seq`` first (the caller requests nothing then, W-11). The
-    ``stage_assigned`` event of an inserted row carries ``rerequest_of_seq`` and ``rerequest_cause`` (``user_command``).
-    ``needs_new_submission`` keeps its meaning: an AI's document saved again opens no ``seq`` by itself."""
+    """Explicit step/full: a fresh resolution, keeping every previous seq immutable.
+
+    The Flow guard serializes settings writes, seq selection and the intent insertion.
+    The event records the settings version and effective review tuple in that transaction.
+    """
     legacy.require_guard(flow_id)
-    if cur.get("stage") not in REVIEW_STAGES or cur.get("actor") != AI:
-        raise ValueError("only an AI review assignment is requested again")
-    now = _now()
-    row = {column: cur.get(column) for column in _RESTART_COPIED}
-    row.update({
-        "attempt_id": cur["attempt_id"], "stage": cur["stage"], "seq": int(cur["seq"]) + 1, "group_id": flow_id,
-        "plan_instruction_type": None, "plan_result_type": None, "reused_doc_id": None,
-        "basis_doc_id": (basis or {}).get("doc_id"), "basis_revision_no": (basis or {}).get("revision_no"),
-        "basis_rejection_count": (basis or {}).get("rejection_count"),
-        "decided_at": now, "stage_state": ACTIVE, "fail_cause": None, "verdict": None, "intent_kind": None,
-        "intent_exec_id": None, "updated_at": now,
-    })
-    stored, inserted = store.insert_if_absent(row)
-    if inserted:
-        _event(stored, EV_ASSIGNED, stored["actor"],
-               {**_assigned_keys(stored), REREQUEST_OF_SEQ: int(cur["seq"]), REREQUEST_CAUSE: USER_COMMAND}, ctx)
-    return stored, inserted
+    if cur.get("stage") not in REVIEW_STAGES:
+        raise ValueError("only a review assignment is requested again")
+    seq = int(cur["seq"]) + 1
+    found = store.read(cur["attempt_id"], cur["stage"], seq)
+    if found is not None:
+        return found, False
+    run = legacy.run_by_id(cur["run_id"])
+    node = legacy.run_node_row(flow_id, run, cur["node_key"]) if run else None
+    if run is None or node is None:
+        raise AssignmentUnreadable("command stage context missing")
+    insertion: list = []
+    nxt = start_stage(flow_id, run, node, cur["attempt_id"], cur["stage"], seq,
+                      author=cur.get("author") or "unknown", author_provider_id=cur.get("author_provider_id"),
+                      basis=basis, explicit_retry=True, rerequest_of_seq=int(cur["seq"]), ctx=ctx, insertion=insertion)
+    return nxt, bool(insertion and insertion[0])
+
+
+def assigned_settings_version(a: dict) -> Optional[int]:
+    """Version of the immutable resolution event; older assignments have no such evidence."""
+    from modules.flow_gate.db.connection import get_store
+    rows = get_store()._fetch_all(
+        "SELECT payload_json FROM graph_run_events WHERE run_id = ? AND cause = ? ORDER BY event_seq DESC",
+        [a["run_id"], EV_ASSIGNED]) or []
+    for row in rows:
+        data = json.loads(row["payload_json"])
+        if (data.get("attempt_id"), data.get("stage"), data.get("seq")) == (a["attempt_id"], a["stage"], a["seq"]):
+            return data.get("settings_version")
+    return None
 
 
 # ── who works a stage, the AI request of a purpose (L-2 §2.10) ───────────────
@@ -585,7 +610,8 @@ def instruction_line_document(flow_id: str, node: dict, plan: dict) -> dict:
     doc = line.get("document")
     if doc and doc["doc_id"] in legacy.invalidated_documents(flow_id, node["node_key"]):
         doc = None
-    return {"doc_id": doc["doc_id"] if doc else None, "written": card_lines.has_body(doc)}
+    return {"doc_id": doc["doc_id"] if doc else None,
+            "written": bool(doc and doc.get('doc_review_status') != 'rejected' and card_lines.has_body(doc))}
 
 
 def dispatch_role_card(ctx, node: dict) -> Optional[dict]:
@@ -608,11 +634,14 @@ def dispatch_role_card(ctx, node: dict) -> Optional[dict]:
     first = INSTRUCTION if plan["instruction_type"] else RESULT
     found = instruction_line_document(flow_id, node, plan) if first == INSTRUCTION else {"doc_id": None}
     reuse = found["doc_id"] if found.get("written") else None
+    from flowgate.card_completion import human
+    if reuse and human.instruction_approval(flow_id, node, reuse):
+        first = RESULT
     a = start_stage(flow_id, ctx.run, node, attempt_id, first, 0, opening=True, reused_doc_id=reuse, plan=plan,
                     project_id=ctx.project_id, ctx=ctx)
     if a == LEGACY:
         return None
-    if first == INSTRUCTION:                                          # 0038-T A-2: the report baseline
+    if plan["instruction_type"]:                                     # Human instruction reuse keeps the baseline contract
         # a baseline that cannot be recorded raises (``BaselineUnavailable``): the step's guard rolls the opening back
         report_baseline.record_at_opening(attempt_id, ctx.run_id, flow_id, key, bool(reuse),
                                           report_line(flow_id, node, plan)[1], reuse)
@@ -631,7 +660,7 @@ def dispatch_role_card(ctx, node: dict) -> Optional[dict]:
     if first == INSTRUCTION:
         error = act_instruction_stage(ctx, node, a, issued_to, token, found, plan)
     else:
-        error = act_result_stage(ctx, node, a, issued_to, None, plan, token)
+        error = act_result_stage(ctx, node, a, issued_to, reuse, plan, token)
     out = {"token_issued": True, "mention_id": None, "issued_to": shown}
     if error:
         out["error_code"] = error
@@ -851,16 +880,17 @@ def needs_dispatch(ctx, row: dict) -> str:
         return NONE
     if a["stage"] == RESULT and a["actor"] == AI:
         failure = legacy.write_failure(row)
-        if failure == "no_result":
-            return RETRY_SAME_ATTEMPT
-        # flowgate.v02.0121 T#2: a writer whose provider failed (``provider_failed``: a model at capacity, a dropped
-        # stream) with no result is written again on the same attempt by the same assigned AI, as ``no_result`` is —
-        # its workspace, branch and files kept; the failed execution and AI run stay recorded. Its assignment stays
-        # ``active`` (the end is told by the durable records, never by a state rewritten); a failed assignment keeps
-        # its new attempt (below), and every other failure (cancel, pause, timeout, providers_exhausted, ...) its own
-        # policy (``NONE``).
-        if failure == "ai_invoke_failed" and a["stage_state"] == ACTIVE and legacy.provider_failure_retry_due(row):
-            return RETRY_SAME_ATTEMPT
+        if failure and failure != "question_pending":
+            # 0126 (B-1) + 0121: an explicit command after a failed write never leaves the card stuck. A writer that ended
+            # with no result or a provider failure, whose write role still resolves to the recorded assignment, is
+            # written again on the same attempt by the same AI (its workspace and commits kept; retry_target's original
+            # snapshot). Every other failed end, and any such end whose write role changed, resolves a new assignment
+            # (a new attempt) from today's settings; the earlier attempt, assignment and ledger rows stay as history.
+            if _same_attempt_retry_due(ctx, node, row, a, failure):
+                return RETRY_SAME_ATTEMPT
+            return REOPEN_NEW_ATTEMPT
+    if a["stage"] in REVIEW_STAGES and (row.get("instruction_doc_id") or row.get("result_doc_id")):
+        return NONE                              # the command opens its next review seq, preserving this attempt
     if a["stage_state"] == FAILED:
         return REOPEN_NEW_ATTEMPT
     if a["stage"] in (INSTRUCTION, RESULT) and a["actor"] in WAIT_ACTORS:
@@ -871,6 +901,26 @@ def needs_dispatch(ctx, row: dict) -> str:
 
 
 WAIT_ACTORS = (PERSON, WAIT_SETUP, WAIT_UNAVAILABLE)                 # the waiting write stages (B-6)
+
+
+def _same_attempt_retry_due(ctx, node: dict, row: dict, a: dict, failure: str) -> bool:
+    """0121 / 0126: the failed AI writer the assignment a may be written again on its own attempt by an explicit command: its end
+    is a clean end with no result or a provider failure (the 0121 policy; no other end is retried in place) and the
+    card's write role still resolves to the recorded assignment (same actor and AI). A role that changed, became
+    unavailable, or cannot be read now is a new assignment (a new attempt) instead — never the old AI by default."""
+    retryable = failure == "no_result" or (failure == "ai_invoke_failed" and a["stage_state"] == ACTIVE
+                                           and legacy.provider_failure_retry_due(row))
+    if not retryable:
+        return False
+    try:
+        inputs = resolve.read_card_role_inputs(ctx.flow_id, node)
+        r = resolve.resolve_role(ctx.flow_id, node, ROLE_OF[a["stage"]], project_id=ctx.project_id, inputs=inputs)
+        now = assignment_from(a["stage"], r, ctx.run.get("started_by"))
+    except Exception:  # noqa: BLE001 — a role that cannot be read now is resolved again by the new attempt
+        _log.warning("write role not resolved for a same-attempt retry flow=%s node=%s", ctx.flow_id,
+                     node.get("node_key"), exc_info=True)
+        return False
+    return _same_assignment(a, now)
 
 
 def _same_assignment(a: dict, now: dict) -> bool:

@@ -836,7 +836,11 @@ def test_the_required_instruction_judgement_names_a_missing_empty_or_stale_instr
     (``missing:<type>``); a live one not approved is named; approved, the card's outputs are complete. Exempt only: no
     instruction used, a one-stage node (its result of the instruction's type, a node run with no stage)."""
     from flowgate.card_completion import legacy_adapter, outputs
+    from flowgate.card_documents import decision_repository
 
+    # 0126 T#2: the output judgement also reads the human-decision ledger; this stubbed test has no store, so the
+    # projection sees no decisions and the document's own review status decides (the ledger: test_fg_human_*_0126).
+    monkeypatch.setattr(decision_repository, "available", lambda: False)
     lines, used, row, result_type = [], {"type": "T"}, {"stage": "result"}, {"type": "TR"}
     monkeypatch.setattr(outputs, "card_lines_of", lambda flow_id, node: [dict(line) for line in lines])
     monkeypatch.setattr(outputs, "instruction_type", lambda flow_id, node: used["type"])

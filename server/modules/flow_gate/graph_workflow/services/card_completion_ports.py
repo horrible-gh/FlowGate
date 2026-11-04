@@ -39,7 +39,8 @@ APPLIED = "applied"
 UNSETTLED = "unsettled"
 SETTLE = "settle"
 PENDING_OUTPUTS = "pending_outputs"                              # flowgate.v02.0119 T#4 (T-3)
-PORT_NAMES = (COMPLETION_OF, APPLIED, UNSETTLED, SETTLE, PENDING_OUTPUTS)
+HUMAN_DISPATCH, HUMAN_DUE, HUMAN_RECONCILE = "human_dispatch", "human_due", "human_reconcile"
+PORT_NAMES = (COMPLETION_OF, APPLIED, UNSETTLED, SETTLE, PENDING_OUTPUTS, HUMAN_DISPATCH, HUMAN_DUE, HUMAN_RECONCILE)
 
 _log = logging.getLogger(__name__)
 _handlers: dict[str, Callable[..., Any]] = {}
@@ -105,3 +106,19 @@ def pending_outputs(flow_id: str, node: dict, result_doc_id: Optional[str]) -> l
     if handler is None:
         return []
     return list(handler(flow_id, node, result_doc_id) or [])
+
+
+def human_dispatch(ctx, key: str) -> bool:
+    handler = _handler(HUMAN_DISPATCH)
+    return bool(handler(ctx, key)) if handler else False
+
+
+def human_due(ctx, key: str) -> bool:
+    handler = _handler(HUMAN_DUE)
+    return bool(handler(ctx, key)) if handler else False
+
+
+def human_reconcile(ctx, key: str) -> None:
+    handler = _handler(HUMAN_RECONCILE)
+    if handler:
+        handler(ctx, key)

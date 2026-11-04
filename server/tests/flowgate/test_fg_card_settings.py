@@ -46,7 +46,8 @@ FB = "flowgate.v02.0092"      # unassigned, no documents
 TEST_VALUE, TEST_VERSION = "card_settings_test", "1"
 # flowgate.v02.0056 T#2: the run cards' instruction AI comes right after the instruction it writes.
 RUN_FIELDS = ["instruction", "instruction_ai", "run_ai", "restart", "review_ai", "review_count", "time_limit",
-              "review_basis"]
+              "review_basis", "instruction_review_ai", "instruction_review_count",
+              "instruction_note", "run_note", "run_pre_instruction"]
 
 
 @pytest.fixture()
@@ -394,9 +395,11 @@ def test_the_time_limit_choices_and_default_are_the_engine_budget():
 def test_a_new_card_reads_its_defaults_and_saves_each_value_at_once(env):
     key = placed(env, FB, "T")
     body = get_settings(env, FB, key)
-    assert (body["card_kind"], body["locked"], list(body["fields"])) == ("run", False, RUN_FIELDS)
+    assert (body["card_kind"], body["locked"], list(body["fields"])) == ("run", False, RUN_FIELDS + ["hold"])
     assert shown(body) == {"instruction": "use", "instruction_ai": None, "run_ai": None, "restart": 0,
-                           "review_ai": None, "review_count": 0, "time_limit": 60, "review_basis": "type"}
+                           "review_ai": None, "review_count": 0, "time_limit": 60, "review_basis": "type",
+                           "instruction_review_ai": None, "instruction_review_count": 0,
+                           "instruction_note": "", "run_note": "", "run_pre_instruction": "", "hold": False}
     assert not any(f["stored"] for f in body["fields"].values())
     assert body["fields"]["time_limit"]["choices"] == [30, 45, 60, 90, 120, 180, 240]
     assert body["fields"]["restart"]["choices"][:3] == [-1, 0, 1] and body["fields"]["run_ai"]["choices"] is None
@@ -445,7 +448,7 @@ def test_each_card_kind_keeps_its_own_settings(env):
     assert req["card_kind"] == "requirement"
     assert {k: v for k, v in shown(req).items()} == {
         "delegation": "off", "scope": "confirm", "team": "team_auth", "limit_max_nodes": 12,
-        "limit_total_reviews": 30, "limit_retries_per_card": None, "limit_replans": None}
+        "limit_total_reviews": 30, "limit_retries_per_card": None, "limit_replans": None, "hold": False}
     # flowgate.v02.0085 T#1: a check card has the archive flag and a remote (null | origin) as merge target, no usage.
     for field, value in (("archive", True), ("merge_mode", "merge"), ("merge_target", "origin"),
                          ("push", True), ("keep_branch", False)):
@@ -528,11 +531,18 @@ def _start(env):
 
 def test_a_running_card_is_locked_and_a_completed_card_reads_and_writes(env, decided, monkeypatch):
     from modules.flow_gate.db import documents as db_documents
-    from modules.flow_gate.graph_workflow.api import v01_contact
 
     from flowgate.card_settings import legacy_adapter
+    from test_fg_ai_roles_l2_assignment import roles, save_instruction, write_line
+    from flowgate.card_documents import routes as document_routes, legacy_adapter as documents
+
+    monkeypatch.setattr(documents, "has_permission", lambda u, p, perm: True)
+    env["client"].app.include_router(document_routes.router)
+    _sql(env["db"], "UPDATE users SET is_admin = 1 WHERE user_id = ?", ("u_kim",))
 
     key = _run_one_card(env, {"kind": "human", "user_id": "u_lee", "provider_id": None})
+    # Use real required instruction/report outputs; review is explicitly unused for this human card.
+    roles(key, "not_used", "not_used", "not_used")
     setting(env, FA, key, "review_count", 2)                              # before the run: the confirmed card
     assert _sql(env["db"], "SELECT COUNT(*) AS n FROM graph_draft_nodes WHERE group_id = ?", (FA,))[0]["n"] == 0
     _start(env)
@@ -542,11 +552,9 @@ def test_a_running_card_is_locked_and_a_completed_card_reads_and_writes(env, dec
     locked = setting(env, FA, key, "restart", 1, expect=409)
     assert locked["error"]["code"] == "node_settings_locked"
     monkeypatch.setattr(legacy_adapter, "node_ai_run_active", lambda flow_id, node_key: False)
-    token = _sql(env["db"], "SELECT token_id FROM graph_run_token_map WHERE node_key = ?", (key,))[0]["token_id"]
-    result = _doc(FA, 90, "T")
-    v01_contact.after_inbox_registered(FA, result, "T", token)
-    db_documents.update(result, {"doc_review_status": "approved"})
-    v01_contact.after_review_decided(FA, result, "approve")
+    instruction = save_instruction(env, key)
+    assert db_documents.get_by_id(instruction)["doc_review_status"] == "approved"
+    write_line(env, key, "report", "## Report\n\nCompleted settings test report.\n")
     status = _sql(env["db"], "SELECT status FROM graph_node_runs WHERE node_key = ?", (key,))[0]["status"]
     assert status == "done"
     done = get_settings(env, FA, key)                                     # a completed card, revision only
@@ -678,7 +686,7 @@ def test_after_review_is_no_setting_and_a_stored_value_is_not_read(env):
     _sql(env["db"], "INSERT INTO graph_node_settings (group_id, node_key, field, value_json, updated_at) "
                     "VALUES (?, ?, 'after_review', '\"human\"', 't')", (FB, key))
     body = get_settings(env, FB, key)                                     # a row left from before: not read
-    assert "after_review" not in body["fields"] and list(body["fields"]) == RUN_FIELDS
+    assert "after_review" not in body["fields"] and list(body["fields"]) == RUN_FIELDS + ["hold"]
     assert f.run_plan(f.RUN, {"after_review": "human"}) == {"settings": {}}
     # what follows a result is the former follow, whatever was stored
     assert [f.after_result(kind, {"after_review": "human"}) for kind in (f.RUN, f.TEST)] == [f.APPROVE, f.APPROVE]
@@ -760,15 +768,18 @@ def test_the_feature_is_in_the_v02_package_and_the_graph_holds_only_the_port():
 
     pkg = _SERVER_DIR / "flowgate" / "card_settings"
     assert {p.stem for p in pkg.glob("*.py")} == {
-        "__init__", "fields", "settings", "review_stage", "routes", "repository", "legacy_adapter", "integration"}
+        "__init__", "fields", "settings", "review_stage", "routes", "repository", "legacy_adapter", "integration",
+        "assigned_review", "context", "manual_stage", "question_wait", "report_baseline",
+        "stage_assignment", "stage_view"}
     graph = _SERVER_DIR / "modules" / "flow_gate" / "graph_workflow"
     callers = sorted(p.relative_to(graph).as_posix() for p in graph.rglob("*.py")
                      if "card_settings_ports" in p.read_text(encoding="utf-8") and p.name != "card_settings_ports.py")
-    assert callers == ["services/node_approval.py", "services/node_dispatch.py", "services/result_binder.py"]
+    assert callers == ["services/graph_service.py", "services/node_approval.py", "services/node_dispatch.py",
+                       "services/node_title.py", "services/result_binder.py", "services/run_service.py"]
     tree = ast.parse((graph / "services" / "card_settings_ports.py").read_text(encoding="utf-8"))
     imported = {(n.module or "").split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     imported |= {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
-    assert imported <= {"__future__", "threading", "typing"}
+    assert imported <= {"__future__", "logging", "threading", "typing"}
 
 
 

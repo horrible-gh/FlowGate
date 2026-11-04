@@ -244,7 +244,8 @@ def _compensate(session: dict, flow_id: str, operation_id: str, made: list[str],
 
 def _line(target: dict, revert: Optional[str], outcome: str) -> dict:
     return {"attempt_id": target["attempt_id"], "node_key": target["node_key"], "commit_sha": target["commit_sha"],
-            "revert_commit": revert, "outcome": outcome}
+            "revert_commit": revert, "outcome": outcome,
+            **({'ledger_row_id': target['ledger_row_id']} if target.get('ledger_row_id') else {})}
 
 
 def _failed(reason: str, made: list[str], **extra) -> dict:
@@ -291,7 +292,9 @@ def _apply(session: dict, flow_id: str, operation_id: str, targets: list[dict], 
             refused = refused or ("integration_commit_off_branch", sha)
             continue
         parents = _parents(wt, sha)
-        if len(parents) < 2 or not target.get("result_commit") or target["result_commit"] not in parents[1:]:
+        verified = (len(parents) == 1 and parents[0] == target.get('parent_commit')) if target.get('kind') == 'tr2' else (
+            len(parents) >= 2 and target.get('result_commit') in parents[1:])
+        if not verified:
             refused = refused or ("integration_commit_unverified", sha)
         else:
             plan.append((line[sha], target, parents[0]))
@@ -318,7 +321,8 @@ def _apply(session: dict, flow_id: str, operation_id: str, targets: list[dict], 
             continue
         outcome = _step(session, operation_id, STEP_REVERT, sha, first_parent,
                         subject=git.cancel_subject(_subject(wt, sha)),
-                        body=_revert_body(flow_id, operation_id, target, first_parent), mainline=1)
+                        body=_revert_body(flow_id, operation_id, target, first_parent),
+                        mainline=None if target.get('kind') == 'tr2' else 1)
         kind = outcome.get("kind")
         if kind == "ok":
             made.append(outcome["commit"])

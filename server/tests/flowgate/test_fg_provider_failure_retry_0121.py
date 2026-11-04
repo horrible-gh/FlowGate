@@ -960,16 +960,25 @@ def test_a_second_click_and_a_run_end_told_twice_start_one_execution(env, decide
     {"end_reason": "worker_error", "stop_code": None, "exit_code": None, "stop_reason": None},
 ], ids=["cancelled", "paused", "timeout", "providers_exhausted", "lease_denied", "registration_refused",
         "worker_error"])
-def test_other_failed_ends_are_not_retried_by_a_command(env, decided, monkeypatch, questions, ending):
+def test_other_failed_ends_are_not_retried_in_place_but_get_a_new_attempt_from_a_command(
+        env, decided, monkeypatch, questions, ending):
+    """0126 (A4): these ends are still never written again on the same attempt (the 0121 policy), but an explicit
+    command no longer leaves the card stuck on them (it was ``none``: accepted, nothing requested): it resolves a new
+    assignment in a new attempt; the failed attempt, its assignment and its executions stay as history."""
     key, _job, _second = _failed_writer(env, monkeypatch, **ending)
     row = _row(env, key)
     assert _hooks("write_failure", row) == "ai_invoke_failed"
     assert _hooks("provider_failure_retry_due", row) is False
-    assert _verdict(env, key) == "none"
+    assert _verdict(env, key) == "reopen_new_attempt"
+    old = _attempts(env, key)[0]["attempt_id"]
     execs = _executions(env)
     _command(env, "step")
-    assert env["jobs"] == [] and _executions(env) == execs                                 # the existing policy (none)
-    assert _assignment(env, key)["stage_state"] == "active" and len(_attempts(env, key)) == 1
+    [job] = env["jobs"]
+    assert job["assignment_ref"]["attempt_id"] != old and job["assignment_ref"]["stage"] == "result"
+    attempts = _attempts(env, key)
+    assert [a["status"] for a in attempts] == ["invalidated", "active"] and attempts[1]["attempt_id"] != old
+    assert _executions(env)[:len(execs)] == execs                                           # the failed run's rows kept
+    assert _assignment(env, key)["stage_state"] == "active"                                 # its assignment row kept
 
 
 def test_a_clean_end_with_no_result_is_still_retried_as_before(env, decided, monkeypatch, questions):

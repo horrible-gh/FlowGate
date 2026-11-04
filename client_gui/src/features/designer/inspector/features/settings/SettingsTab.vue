@@ -321,6 +321,7 @@ const cardReason = computed(() => {
   }
   return cardSettingsDisabledReason({
     readOnly: props.target.readOnly,
+    settingsReadOnly: props.target.settingsReadOnly,
     placing: card.placing.value,
     read: card.node.value !== null,
     locked: cardLocked(),

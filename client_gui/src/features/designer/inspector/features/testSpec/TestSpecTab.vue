@@ -3,9 +3,9 @@
     <InspectorPaneState v-if="card?.test.status.value === 'loading' && !view" state="loading" />
     <InspectorPaneState v-if="card?.test.errorKey.value" state="error" :message="t(k(card.test.errorKey.value))" retryable @retry="card?.reload()" />
     <div class="test-card-lines" data-test="inspector-slot-list">
-      <InspectorSlotRow v-for="line in lines" :key="line.key" :name="t(k(`slot.${line.key}`))" :id="line.id" :class="{ 'is-empty': line.blank }" :focus="line.key === 'report' && (stage.stage === 5 || card?.reportRecentlyConfirmed.value)" :data-slot="line.key" :data-doc="line.id" :openable="canOpen(line.kind)" @open="openWindow(line.kind)">
+      <InspectorSlotRow v-for="line in lines" :key="line.key" :name="t(k(`slot.${line.key}`))" :id="line.id" :decision-layout="decisions.row(line.key, line.id).visible" :class="{ 'is-empty': line.blank }" :focus="line.key === 'report' && (stage.stage === 5 || card?.reportRecentlyConfirmed.value)" :data-slot="line.key" :data-doc="line.id" :openable="canOpen(line.kind)" @open="openWindow(line.kind)">
         <template #summary>
-          <InspectorStatusChip :label="line.label" :tone="line.tone" :data-test="line.key === 'report' ? 'test-spec-state' : `test-card-${line.key}-state`" :data-state="line.key === 'report' ? runState.key : undefined" />
+          <InspectorStatusChip :label="decisionLabel(line)" :tone="decisionTone(line)" :data-test="line.key === 'report' ? 'test-spec-state' : `test-card-${line.key}-state`" :data-state="line.key === 'report' ? runState.key : undefined" />
           <span v-if="line.summary" class="test-card-summary" :data-test="`test-card-${line.key}-summary`" :title="line.summary">{{ line.summary }}</span>
           <span v-if="line.key === 'report' && stage.resultState.key === 'unchecked'" class="test-card-summary">{{ t(k('stage.unchecked')) }}</span>
           <span v-if="line.key === 'report' && view?.gate?.applies && !view.gate.passed" class="test-card-danger" data-test="test-spec-gate">{{ t(k('card.gate_blocked')) }}</span>
@@ -35,9 +35,15 @@
           </Dropdown>
           <IconButton v-if="stage.canFollow" :label="t(k('card.follow'))" :title="canOpen('follow') ? t(k('card.follow')) : openReason('follow')" variant="secondary" size="sm" :disabled="!canOpen('follow')" data-test="test-card-follow" @click="openWindow('follow')">→</IconButton>
         </template>
+        <InspectorHistoryButton v-if="line.key !== 'scenario' && line.id" @click="openDocumentHistory(line.id)" />
+        <InspectorOpenButton v-if="line.key === 'instruction' && line.id" @click="openDocument(line.id)" />
         <InspectorOpenButton v-if="line.key !== 'instruction'" :disabled="!canOpen(line.kind)" :title="openReason(line.kind)" :data-test="line.key === 'report' ? 'test-spec-open' : 'test-card-scenario-open'" @click="openWindow(line.kind)" />
+        <InspectorDocumentDecision v-if="decisions.row(line.key, line.id).visible" :name="t(k(`slot.${line.key}`))"
+          :action="decisions.row(line.key, line.id).action" :disabled="decisions.row(line.key, line.id).disabled"
+          :reason="decisions.row(line.key, line.id).reason" @click="decisions.decide(line.key, line.id)" />
       </InspectorSlotRow>
     </div>
+    <InspectorReason v-if="decisions.failure.value" tone="danger" :text="decisions.failure.value" role="alert" data-test="document-decision-failure" />
     <InspectorReason v-if="card?.test.failure.value" tone="danger" :text="t(k(card.test.failure.value.key))" data-test="test-spec-failure" />
   </section>
 </template>
@@ -46,6 +52,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Dropdown from '../../../../../components/ui/Dropdown.vue'
 import IconButton from '../../../../../components/ui/IconButton.vue'
+import { useCardDocumentDecisions } from '../../useCardDocumentDecisions'
+import InspectorDocumentDecision from '../../parts/InspectorDocumentDecision.vue'
 import InspectorAiButton from '../../parts/InspectorAiButton.vue'
 import InspectorHistoryButton from '../../parts/InspectorHistoryButton.vue'
 import InspectorSlotRow from '../../parts/InspectorSlotRow.vue'
@@ -54,12 +62,13 @@ import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { DocumentIoGroup, openDocumentHistory } from '../../openDocument'
+import { DocumentIoGroup, openDocument, openDocumentHistory } from '../../openDocument'
 import { type TestCardWindowKind } from './testCardSession'
 import { testCardPresentation, testSpecLiveRun, type TestSpecSlotTone } from './testSpecModel'
 import { useTestCard } from './useTestCard'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()
+const decisions = useCardDocumentDecisions(() => props.target)
 const k = (key: string) => `gui.inspector.testSpec.${key}`
 const card = useTestCard(() => props.target)
 const view = computed(() => card.value?.view.value ?? null)
@@ -83,6 +92,16 @@ function openWindow(kind: TestCardWindowKind) {
   card.value?.openWindow(kind)
 }
 interface Line { key: 'instruction' | 'scenario' | 'report'; kind: TestCardWindowKind; id: string | null; blank: boolean; label: string; tone: TestSpecSlotTone; summary: string }
+function decisionLabel(line: Line) {
+  const row = decisions.row(line.key, line.id)
+  return row.authoritative && row.state ? t(`gui.designer.inspector.review_status.${row.state === 'wf_done' ? 'approved' : row.state}`) : line.label
+}
+function decisionTone(line: Line): TestSpecSlotTone {
+  const row = decisions.row(line.key, line.id)
+  if (!row.authoritative) return line.tone
+  return row.state === 'approved' || row.state === 'wf_done' ? 'success'
+    : row.state === 'rejected' ? 'danger' : row.state === 'pending_review' ? 'warning' : line.tone
+}
 const lines = computed<Line[]>(() => {
   const v = view.value, state = stage.value, writing = card.value?.writing.value
   const own = (slot: string) => props.target.cardDocuments.find((line) => line.slot === slot)

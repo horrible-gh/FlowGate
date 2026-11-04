@@ -150,9 +150,15 @@ def _finish(flow_id: str, run_id: str, operation_id: str, plan: dict, actor: Opt
         if run is None or run["group_id"] != flow_id:
             raise rewind.RewindRefused("run_missing")
         ctx = run_apply.load_context(run, _project(flow_id), actor)
-        held["result"] = rewind.rewind(ctx, plan, reverts)
+        if plan.get('kind') == 'document_rejection':
+            from . import document_rejection
+            held['result'] = document_rejection.finish(ctx, plan, reverts)
+        else:
+            held["result"] = rewind.rewind(ctx, plan, reverts)
         journal.emit(ctx, operation_id, journal.COMPLETED, node_key=plan["node_key"], reverts=reverts,
                      result=held["result"])
+        if plan.get('kind') == 'document_rejection':
+            document_rejection.finish_receipt(plan, held['result'])
 
     try:
         with fencing.exclusive(flow_id):

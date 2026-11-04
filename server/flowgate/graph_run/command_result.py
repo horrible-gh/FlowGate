@@ -420,9 +420,8 @@ def _release_of(run_id: str, key: str, found: dict) -> Optional[str]:
         cur = None if sa.is_legacy_attempt(attempt_id) else sa.current_review_assignment(attempt_id, sa.RESULT_REVIEW)
         if cur is not None and cur.get("author") == sa.PERSON:
             return RELEASE_NEW_SUBMISSION
-        if reasons.command_rerequest_due(reason) and cur is not None and cur.get("author") == sa.AI \
-                and cur.get("provider_id") and cur.get("rework_provider_id"):
-            return None
+        if reasons.command_reentry_due(reason) and not sa.is_legacy_attempt(attempt_id):
+            return None                          # 0126: explicit reentry judges the current settings
         return RELEASE_MEMO
     except Exception:  # noqa: BLE001 — not told: no release line
         log.warning("command result release read failed run=%s node=%s", run_id, key, exc_info=True)

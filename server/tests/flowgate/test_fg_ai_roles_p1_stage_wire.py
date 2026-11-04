@@ -23,7 +23,9 @@ ASSIGNMENT_KEYS = {"stage", "seq", "current", "role", "actor", "actor_reason", "
                    "intent"}
 STAGE_EVENT_KEYS = {"flow_id", "run_id", "revision_no", "event_seq", "from", "to", "cause", "reason", "node_key",
                     "attempt_id", "stage", "seq", "role", "actor", "actor_reason", "source", "cause_code", "provider_id",
-                    "provider_name", "author", "decided_at"}
+                    "provider_name", "author", "decided_at",
+                    # 0126 T#5: the immutable resolution event also records the settings version and the review tuple
+                    "settings_version", "review_rounds", "rework_provider_id"}
 
 
 def _wire(env, key):

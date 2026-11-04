@@ -294,7 +294,8 @@ def _replay(row: dict) -> dict:
 def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             mutation_principal, expected_revision: int | None = None,
             request_key: str | None = None, locale: str = "ko",
-            expected_command_admission_fingerprint: str | None = None, completion_hook=None) -> dict:
+            expected_command_admission_fingerprint: str | None = None, completion_hook=None,
+            decision_check=None, finalize_guard=None) -> dict:
     """``completion_hook`` (flowgate.v02.0119 T#2, T-1 — the v0.2 card completion's TR2 effect,
     ``flowgate.card_completion.own_effects``): called with the approved document inside the finalize transaction, after
     the ledger and the review CAS; it writes the v0.2 completion (its record and its own document event, the system as
@@ -320,6 +321,8 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             if replay["state"] != "in_progress" or not _stale(replay):
                 return _replay(replay)
     assert_group_mutation_allowed(doc["group_id"], mutation_principal, "tr2_approve")
+    if decision_check is not None:
+        decision_check()
     with tr2_precheck.source_lock(doc["project_id"], doc["group_id"], request_key=request_key) as locked:
         # delete-vs-approval: the document may disappear while this request waits for
         # the mutex. Re-read before creating an attempt, backup, or source mutation.
@@ -354,7 +357,7 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             if success and success["document_revision"] == int(doc.get("revision_no") or 0):
                 return doc
             _raise("tr2_history_invariant_error", "approved_without_attempt")
-        if get_doc_review_rule(doc.get("doc_review_status") or "", "approve") != "approved":
+        if decision_check is None and get_doc_review_rule(doc.get("doc_review_status") or "", "approve") != "approved":
             _raise("tr2_workflow_conflict", "review_status")
         revision = int(doc.get("revision_no") or 0)
         if expected_revision is not None and expected_revision != revision:
@@ -406,46 +409,55 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             db_attempts.update(attempt_id, phase="commit")
             sha, paths = _commit_exact(locked, checked, attempt_id)
             db_attempts.update(attempt_id, phase="finalize")
-            with get_store().transaction():
-                fresh = db_docs.get_by_id(doc_id)
-                if not fresh or int(fresh.get("revision_no") or 0) != revision:
-                    _raise("tr2_spec_changed", "revision_no")
-                fresh_review_status = fresh.get("doc_review_status") or ""
-                if get_doc_review_rule(fresh_review_status, "approve") != "approved":
-                    _raise("tr2_spec_changed", "review_status",
-                           current_review_status=fresh_review_status)
-                fresh_body = tr2.load_current(fresh)
-                fresh_spec = tr2.canonicalize(tr2.validate(fresh_body, doc=fresh))["edit_spec"]
-                if tr2.spec_fingerprint(fresh_spec) != fingerprint:
-                    _raise("tr2_spec_changed", "spec_fingerprint")
-                ledger = db_ledger.record_commit(group_id=doc["group_id"], doc_id=doc_id,
-                                                 commit_sha=sha,
-                                                 commit_subject=f"feat(tr2): approve {doc_id.rsplit('.', 1)[-1]}")
-                if not ledger or not ledger.get("id"):
-                    _raise("tr2_history_invariant_error", "ledger")
-                if not db_docs.update_review_cas(doc_id, revision, fresh_review_status,
-                                                 {"doc_review_status": "approved"}):
-                    _raise("tr2_spec_changed", "review_cas")
-                next_head = tr2.effective_head_for(doc_id)
-                if next_head and next_head.get("result_doc_id") == doc_id:
-                    _raise("tr2_workflow_conflict", "workflow_progression")
-                if completion_hook is not None:
-                    completion_hook(db_docs.get_by_id(doc_id))
-                else:
-                    log_state_changed(project_id=doc["project_id"], actor_user_id=actor_user_id,
-                                      from_state=f"review:{fresh_review_status}",
-                                      to_state="review:approved",
-                                      group_id=doc["group_id"], document_id=doc.get("id"),
-                                      action_code="review_approve")
-                db_attempts.finish(attempt_id, state="succeeded", result_code="succeeded",
-                                   ledger_row_id=ledger["id"],
-                                   ledger_json={"id": ledger["id"], "commit_sha": sha})
-                def notify():
-                    from modules.flow_gate.services import workflow_rework_service
-                    workflow_rework_service.clear_return_point_if_complete(doc["group_id"], doc)
-                after_commit(notify)
-                after_commit(lambda: test_command_service.reflect_tr2_validation_success(
-                    doc["project_id"], doc_id, attempt_id, sha, validation["commands"]))
+            def finalize():
+                with get_store().transaction():
+                    if decision_check is not None:
+                        decision_check()
+                    fresh = db_docs.get_by_id(doc_id)
+                    if not fresh or int(fresh.get("revision_no") or 0) != revision:
+                        _raise("tr2_spec_changed", "revision_no")
+                    fresh_review_status = fresh.get("doc_review_status") or ""
+                    if decision_check is None and get_doc_review_rule(fresh_review_status, "approve") != "approved":
+                        _raise("tr2_spec_changed", "review_status",
+                               current_review_status=fresh_review_status)
+                    fresh_body = tr2.load_current(fresh)
+                    fresh_spec = tr2.canonicalize(tr2.validate(fresh_body, doc=fresh))["edit_spec"]
+                    if tr2.spec_fingerprint(fresh_spec) != fingerprint:
+                        _raise("tr2_spec_changed", "spec_fingerprint")
+                    ledger = db_ledger.record_commit(group_id=doc["group_id"], doc_id=doc_id,
+                                                     commit_sha=sha,
+                                                     commit_subject=f"feat(tr2): approve {doc_id.rsplit('.', 1)[-1]}")
+                    if not ledger or not ledger.get("id"):
+                        _raise("tr2_history_invariant_error", "ledger")
+                    if not db_docs.update_review_cas(doc_id, revision, fresh_review_status,
+                                                     {"doc_review_status": "approved"}):
+                        _raise("tr2_spec_changed", "review_cas")
+                    next_head = tr2.effective_head_for(doc_id)
+                    if next_head and next_head.get("result_doc_id") == doc_id:
+                        _raise("tr2_workflow_conflict", "workflow_progression")
+                    if completion_hook is not None:
+                        completion_hook(db_docs.get_by_id(doc_id))
+                    else:
+                        log_state_changed(project_id=doc["project_id"], actor_user_id=actor_user_id,
+                                          from_state=f"review:{fresh_review_status}",
+                                          to_state="review:approved",
+                                          group_id=doc["group_id"], document_id=doc.get("id"),
+                                          action_code="review_approve")
+                    db_attempts.finish(attempt_id, state="succeeded", result_code="succeeded",
+                                       ledger_row_id=ledger["id"],
+                                       ledger_json={"id": ledger["id"], "commit_sha": sha})
+                    def notify():
+                        from modules.flow_gate.services import workflow_rework_service
+                        workflow_rework_service.clear_return_point_if_complete(doc["group_id"], doc)
+                    after_commit(notify)
+                    after_commit(lambda: test_command_service.reflect_tr2_validation_success(
+                        doc["project_id"], doc_id, attempt_id, sha, validation["commands"]))
+            # Graph decisions acquire their Flow guard before the finalize transaction.
+            # A rejected CAS rolls back this finalize and uses the existing source compensation.
+            if finalize_guard is not None:
+                finalize_guard(finalize)
+            else:
+                finalize()
             finalized = True
             return db_docs.get_by_id(doc_id)
         except Exception as exc:

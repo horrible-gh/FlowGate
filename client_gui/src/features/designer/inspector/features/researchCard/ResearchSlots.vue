@@ -6,7 +6,7 @@
        flowgate.v02.0053 T#5 (0053 CH) — the lines are the card's documents (made when it was placed); the
        지시서 line is hidden when the card's settings omit the instruction (useResearchCard). -->
   <section class="inspector-research-card" data-test="inspector-research-card" :data-doc-type="target.docType ?? ''">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
+    <InspectorSlotList :target="target" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>
     </InspectorSlotList>

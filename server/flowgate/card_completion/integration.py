@@ -21,7 +21,7 @@ import logging
 
 from modules.flow_gate.graph_workflow.services import card_completion_ports as ports
 
-from flowgate.card_completion import completion, outputs, repository
+from flowgate.card_completion import completion, human, outputs, repository
 
 _log = logging.getLogger(__name__)
 
@@ -32,6 +32,9 @@ def register() -> None:
     ports.register(ports.UNSETTLED, completion.unsettled)
     ports.register(ports.SETTLE, completion.settle)
     ports.register(ports.PENDING_OUTPUTS, outputs.pending_outputs)
+    ports.register(ports.HUMAN_DISPATCH, human.before_dispatch)
+    ports.register(ports.HUMAN_DUE, human.due)
+    ports.register(ports.HUMAN_RECONCILE, human.reconcile)
     try:
         repository.ensure_installed()
     except Exception:  # noqa: BLE001 — no boundary yet: no run reads as an existing one until the next start writes it

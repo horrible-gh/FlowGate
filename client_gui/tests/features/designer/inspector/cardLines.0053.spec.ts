@@ -265,7 +265,7 @@ describe('the 지시서 line follows the card settings (flowgate.v02.0053 T#5, v
   it.each(CARDS.filter((card) => card.node.cardDocuments!.some((own) => own.slot === 'instruction')))('$card: instruction omitted -> no 지시서 line', async ({ node, names }) => {
     settingsNodeRead.mockResolvedValue(omitting)
     const w = await mountFrame(node)
-    expect(settingsNodeRead).toHaveBeenCalledWith(FLOW, node.id)
+    expect(settingsNodeRead).toHaveBeenCalledWith(FLOW, node.id, false, expect.any(Object))
     expect(lines(w).map((row) => row.get('[data-test="inspector-slot-name"]').text())).toEqual(names.slice(1))
   })
 

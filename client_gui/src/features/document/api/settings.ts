@@ -340,8 +340,17 @@ export interface SettingsMergeTargetState {
   readonly default: SettingsMergeTargetEntry | null
 }
 
+export interface SettingsContext {
+  readonly run_id: string | null
+  readonly graph_revision_no: number | null
+  readonly draft_version: number | null
+}
+
 /** A card's settings (T#2). */
 export interface SettingsNode {
+  readonly context?: SettingsContext
+  readonly settingsEditable?: boolean
+  readonly nodeRunning?: boolean
   readonly aiRoles?: CardAiRoles | null
   readonly mergeTargetOptions?: readonly string[]
   readonly defaultTargetBranch?: string | null
@@ -369,6 +378,9 @@ export function toSettingsNode(raw: unknown): SettingsNode {
     }
   }
   return { cardKind: text(data.card_kind), locked: data.locked === true, fields,
+    ...('context' in data ? { context: data.context as SettingsContext } : {}),
+    ...('settings_capability' in data ? { settingsEditable: record(data.settings_capability).editable === true } : {}),
+    ...('node_running' in data ? { nodeRunning: data.node_running === true } : {}),
     ...('ai_roles' in data ? { aiRoles: data.ai_roles === null ? null : toCardAiRoles(record(data.ai_roles)) } : {}),
     ...('merge_target_options' in data ? { mergeTargetOptions: list(data.merge_target_options).filter((v): v is string => typeof v === 'string') } : {}),
     ...('default_target_branch' in data ? { defaultTargetBranch: text(data.default_target_branch) } : {}),
@@ -379,11 +391,10 @@ export function toSettingsNode(raw: unknown): SettingsNode {
 }
 
 /** Reads a card's settings. */
-export async function settingsNodeRead(flowId: string, nodeKey: string, refreshMergeTargets = false): Promise<SettingsNode> {
+export async function settingsNodeRead(flowId: string, nodeKey: string, refreshMergeTargets = false, context?: SettingsContext): Promise<SettingsNode> {
   const url = `${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`
-  const response = refreshMergeTargets
-    ? await getRequest<unknown>(url, { refresh_merge_targets: true })
-    : await getRequest<unknown>(url)
+  const params = { ...(refreshMergeTargets ? { refresh_merge_targets: true } : {}), ...(context ? { context: JSON.stringify(context) } : {}) }
+  const response = Object.keys(params).length ? await getRequest<unknown>(url, params) : await getRequest<unknown>(url)
   return toSettingsNode(response.data)
 }
 
@@ -402,11 +413,12 @@ export function settingsInstructionOmitted(node: SettingsNode | null | undefined
 //             The AI Team choices of a requirement card (the server takes the ids of this table only).
 
 /** Changes one setting; gate callers pass the confirmed version for the server's concurrency check. */
-export async function settingsNodeWrite(flowId: string, nodeKey: string, field: string, value: unknown, expectedSettingsVersion?: number): Promise<SettingsNode> {
+export async function settingsNodeWrite(flowId: string, nodeKey: string, field: string, value: unknown, expectedSettingsVersion?: number, expectedContext?: SettingsContext): Promise<SettingsNode> {
   const response = await patchRequest<unknown>(`${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`, {
     field,
     value: value ?? null,
     ...(expectedSettingsVersion === undefined ? {} : { expected_settings_version: expectedSettingsVersion }),
+    ...(expectedContext === undefined ? {} : { expected_context: expectedContext }),
   })
   return toSettingsNode(response.data)
 }

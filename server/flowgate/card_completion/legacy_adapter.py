@@ -194,7 +194,8 @@ def stale_documents(flow_id: str, node_key: Optional[str]) -> set[str]:
     old = {d["doc_id"] for d in registered_documents(flow_id, old_tokens)}
     live_tokens = run_store.token_ids(run_row["run_id"], node_key)
     live = {d["doc_id"] for d in registered_documents(flow_id, live_tokens)} if live_tokens and old else set()
-    return old - live
+    from flowgate.graph_time_machine.rejection_store import without_carried
+    return without_carried(flow_id, node_key, old - live)
 
 
 class GateRefused(ValueError):

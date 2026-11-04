@@ -172,6 +172,7 @@ export type CardSettingsBlocked = 'disposed' | null
 
 export interface CardSettingsInput {
   readonly readOnly: InspectorReadOnly
+  readonly settingsReadOnly?: InspectorReadOnly
   /** The card was just placed: its key is not the server's yet (`tmp_`). */
   readonly placing: boolean
   /** The card's settings were read (a failed or running read leaves the form drawn, off). */
@@ -183,8 +184,9 @@ export interface CardSettingsInput {
 
 /** Why the card's settings cannot change now (message key under `gui.inspector.settings.`), or null. */
 export function cardSettingsDisabledReason(input: CardSettingsInput): string | null {
-  if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
-  if (input.readOnly === 'revision') return 'reason.read_only_revision'
+  const reason = input.readOnly === 'conflict' ? 'conflict' : input.settingsReadOnly === undefined ? input.readOnly : input.settingsReadOnly
+  if (reason === 'conflict') return 'reason.read_only_conflict'
+  if (reason === 'revision') return 'reason.read_only_revision'
   if (input.blocked === 'disposed') return 'reason.disposed'
   if (input.placing) return 'reason.placing'
   if (input.locked) return 'reason.locked'

@@ -70,7 +70,8 @@ def db(monkeypatch):
     store = Store()
     # The parent tables' non-ledger behavior is supplied by mocks below.
     store.db.executescript("""
-        CREATE TABLE graph_runs(run_id TEXT PRIMARY KEY, group_id TEXT, status TEXT);
+        CREATE TABLE graph_runs(run_id TEXT PRIMARY KEY, group_id TEXT, status TEXT,
+                                last_event_seq INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE graph_run_token_map(token_id TEXT PRIMARY KEY, run_id TEXT, node_key TEXT,
                                          stage TEXT, mapped_at TEXT);
         CREATE TABLE graph_node_runs(run_id TEXT, node_key TEXT, status TEXT, result_doc_id TEXT,
@@ -81,6 +82,9 @@ def db(monkeypatch):
     # 0064 T-B4d: 154 adds the token map kind run_store.map_token writes (DB0007 §2.2.1).
     for version in ("151_graph_run_state_attempts.sql", "152_graph_attempt_runs.sql", "154_graph_run_token_map_kind.sql"):
         store.db.executescript((MIGRATIONS / "sqlite" / version).read_text(encoding="utf-8"))
+    # Apply the deployed attempt result schema; this suite has no real commit ledger.
+    store.db.execute("CREATE TABLE tr_commit_ledger(id INTEGER PRIMARY KEY)")
+    store.db.executescript((MIGRATIONS / "sqlite" / "153a_graph_attempt_results.sql").read_text(encoding="utf-8"))
     store._execute("INSERT INTO graph_runs(run_id,group_id,status,run_mode,step_node_keys) "
                    "VALUES('run','flow','running','step','[\"node\"]')")
     store._execute("INSERT INTO graph_node_runs(run_id,node_key,status,result_doc_id) "
@@ -97,6 +101,18 @@ def db(monkeypatch):
         with store.transaction():
             return body()
     monkeypatch.setattr(execution, "with_flow_guard", guard)
+    monkeypatch.setattr(execution.fencing, "with_flow_guard", guard)
+    # This ledger suite admits a valid document workspace and available capacity. Keep the
+    # real SQL acquire/CAS, but isolate filesystem, scheduler policy and other recovery modules.
+    monkeypatch.setattr(execution.workspace, "verify_execution", lambda _eid: None)
+    monkeypatch.setattr(execution.workspace, "cleanup", lambda _aid: None)
+    monkeypatch.setattr(execution.workspace, "cleanup_finished", lambda: None)
+    monkeypatch.setattr(execution.scheduling, "acquire", lambda eid, rid: ledger.acquire(eid, rid))
+    monkeypatch.setattr(execution.result_merge, "recover", lambda: None)
+    monkeypatch.setattr(execution.result_merge, "in_progress", lambda _rid: False)
+    monkeypatch.setattr(execution.stop, "recover", lambda: None)
+    monkeypatch.setattr(execution._time_machine(), "busy", lambda _flow: False)
+    monkeypatch.setattr(settle, "_gate_reserved", lambda _ctx: {})
     monkeypatch.setattr(graph_execution_hooks, "_handler", None)
     execution.register()
     store.attempt = run_store.open_attempt("run", "node", 1)
@@ -120,7 +136,7 @@ def test_attempt_survives_write_review_rework_until_node_done(db):
         ledger.end(eid, owner)
         assert not ledger.working("run")
         assert run_store.active_attempt_id("run", "node") == db.attempt
-    assert not settle.working(SimpleNamespace(run_id="run"), [{"status": "review"}])
+    assert not settle.working(SimpleNamespace(run_id="run", run=run_store.run_by_id("run")), [{"status": "review"}])
     assert run_store.end_attempt("run", "node") == 1
     assert run_store.active_attempt_id("run", "node") is None
 
@@ -215,7 +231,7 @@ def test_cli_lease_denial_precedes_process_construction(db, monkeypatch):
     monkeypatch.setattr(provider_cli, "_prepare_cli_command", lambda *_: "cli")
     monkeypatch.setattr(provider_cli, "_canonicalize_cli_prompt", lambda *_: ("prompt", "local"))
     monkeypatch.setattr(provider_cli, "_cli_scratch_env", lambda *_: {})
-    monkeypatch.setattr(provider_cli, "_resolve_cli_launch", lambda *_: ({"effective_command": "cli"}, None))
+    monkeypatch.setattr(provider_cli, "_resolve_cli_launch", lambda *_: ({"effective_command": "cli", "spawn_cwd": str(MIGRATIONS)}, None))
     process = Mock()
     monkeypatch.setattr(provider_cli, "_CliProcess", process)
     assert provider_cli._cli_execute({"cli_command": "cli", "kind": "codex"}, "prompt", run)[0] == "spawn_failed"

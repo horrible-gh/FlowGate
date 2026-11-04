@@ -47,6 +47,8 @@ def command_of(run: dict, mode: Optional[str]) -> Optional[str]:
 
 
 def record_command(ctx, mode: str) -> None:
+    from flowgate.graph_time_machine import rejection_store
+    rejection_store.release_for_command(ctx.flow_id)
     if engine.set_run_command(ctx.run_id, mode, None) != 1:
         raise AssertionError("command missed its run")
     ctx.run["run_mode"], ctx.run["step_node_keys"] = mode, None
@@ -71,7 +73,7 @@ def rerequest_review(ctx, row: dict) -> bool:
     return bool(assigned_review.rerequest_review_locked(ctx, row))
 
 
-def _waiting_command(ctx) -> bool:
+def _waiting_command(ctx, *, human: bool = False) -> bool:
     """Prove the idle wait belongs to an unfinished command, using its durable status events.
 
     An idle reason can change on a read, so waiting_confirm alone is not execution intent. 0119 T-2: only a confirm
@@ -101,7 +103,8 @@ def _waiting_command(ctx) -> bool:
                 engine.RUNNING, engine.IDLE, "run_idle"):
             return False
         payload = json.loads(waiting["payload_json"])
-        if payload.get("idle_reason") not in _confirm_waits() or payload.get("mode") != ctx.run.get("run_mode"):
+        waits = (*_confirm_waits(), "needs_intervention", "error", "no_targets") if human else _confirm_waits()
+        if payload.get("idle_reason") not in waits or payload.get("mode") != ctx.run.get("run_mode"):
             return False
         if started["to_status"] != engine.RUNNING:
             return False
@@ -161,7 +164,7 @@ def approval_wakes(ctx) -> bool:
     if run.get("run_mode") == engine.MODE_STEP and run.get("step_node_keys") is None:
         return False
     from flowgate.graph_time_machine.operation import busy
-    return not busy(ctx.flow_id)
+    return not busy(ctx.flow_id) and (not getattr(ctx, "human_approval", False) or _waiting_command(ctx, human=True))
 
 
 def wake_approval(ctx) -> None:

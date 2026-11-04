@@ -197,14 +197,18 @@ def node_running(flow_id: str, node_key: str) -> bool:
     A node merely open (a person's or a setup wait, a question, an unavailable AI), one awaiting approval, done or in
     error, and a running run alone are not running."""
     run_row: Optional[dict] = run_store.active_run(flow_id)
-    if run_row is None:
-        return False
-    row = next((r for r in run_store.node_runs(run_row["run_id"]) if r["node_key"] == node_key), None)
-    if row is None or row["status"] not in (OPEN_NODE_STATUS, REVIEW_NODE_STATUS):
-        return False
+    row = next((r for r in run_store.node_runs(run_row["run_id"]) if r["node_key"] == node_key), None) if run_row else None
     from flowgate.card_settings import review_stage  # noqa: PLC0415 — review_stage imports this module
 
-    return bool(review_stage.ai_working(flow_id, node_key, row.get("result_doc_id")))
+    # Activity is evidence, not a display status. A delayed worker/lease or an instruction
+    # review still protects this card even when its node status was already changed.
+    docs = {row.get("result_doc_id"), row.get("instruction_doc_id")} if row else set()
+    if get_store().table_exists("graph_node_documents"):
+        docs.update(r["doc_id"] for r in get_store()._fetch_all(
+            "SELECT doc_id FROM graph_node_documents WHERE group_id = ? AND node_key = ?",
+            [flow_id, node_key]) or [])
+    return bool(review_stage.ai_working(flow_id, node_key, None) or
+                any(review_stage.review_running(flow_id, node_key, doc) for doc in docs if doc))
 
 
 # ── the review stage ─────────────────────────────────────────────────────────
@@ -282,6 +286,14 @@ def _lease_held(lease: Optional[dict]) -> bool:
 def node_ai_run_active(flow_id: str, node_key: str) -> bool:
     """Requested/running Graph executions keep the card working too: they use attempt leases,
     not the legacy group lease. Retain the group-lease check for ordinary document AI runs."""
+    # Include an outstanding execution from an older attempt of this exact card.
+    store = get_store()
+    if store.table_exists("graph_attempt_runs") and store._fetch_one(
+            "SELECT x.exec_id FROM graph_attempt_runs x JOIN graph_runs r ON r.run_id = x.run_id "
+            "JOIN graph_node_attempts a ON a.attempt_id = x.attempt_id "
+            "WHERE r.group_id = ? AND a.node_key = ? AND x.status IN ('requested','running') LIMIT 1",
+            [flow_id, node_key]):
+        return True
     run_row = run_store.active_run(flow_id)
     if run_row is None:
         return False
@@ -452,7 +464,9 @@ def invalidated_documents(flow_id: str, node_key: str) -> set[str]:
         return set()
     old = {d["doc_id"] for d in registered_documents(flow_id, tokens)}
     live = run_store.token_ids(run_row["run_id"], node_key)
-    return old - {d["doc_id"] for d in registered_documents(flow_id, live)} if live and old else old
+    stale = old - {d["doc_id"] for d in registered_documents(flow_id, live)} if live and old else old
+    from flowgate.graph_time_machine.rejection_store import without_carried
+    return without_carried(flow_id, node_key, stale)
 
 
 # ── the question wait (flowgate.v02.0063) ────────────────────────────────────
