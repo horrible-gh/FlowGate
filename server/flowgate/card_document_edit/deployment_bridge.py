@@ -64,7 +64,12 @@ def fill(state, key, instruction_target, verdict_doc, path, identity, text, inst
         def conflict(self, doc):
             return service.DeployError(409, "instruction_target_changed", {"doc_id": doc_id})
         def build(self, doc, body):
-            if body.identity != verdict.identity or body.text != verdict.text:
+            # protection.judge uses the legacy universal-newline reader, while
+            # the revision snapshot preserves the exact bytes for the backup.
+            # Compare text in that reader's representation without weakening the
+            # file identity fence or changing the stored before-image.
+            legacy_text = None if body.text is None else body.text.replace("\r\n", "\n").replace("\r", "\n")
+            if body.identity != verdict.identity or legacy_text != verdict.text:
                 raise self.conflict(doc)
             return Built(data, target_path=body.path, body_saved_source=legacy.DEPLOY_SOURCE,
                 event_metadata={"node_key": key, "slot": row["slot"], "wp_doc_id": state.doc["doc_id"],

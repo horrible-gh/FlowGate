@@ -73,8 +73,17 @@ class _Store:
 
 
 @pytest.fixture
-def issuing(monkeypatch, tmp_path):
-    """token_service.issue with its storage stubbed; returns (written rows, hook calls)."""
+def issuing(monkeypatch, tmp_path, migrated_sqlite_db):
+    """Stub token rows; give the real scratch write gate an isolated reference DB."""
+    from modules.flow_gate.db import connection, _SqliteDbAdapter, _SqliteTxnAdapter
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration
+    db = connection.FlowGateStore.__new__(connection.FlowGateStore)
+    db._db, db._sq = _SqliteDbAdapter(migrated_sqlite_db("l3verify-chat-source-lock.db")), None
+    monkeypatch.setattr(connection, "STORE", db)
+    monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda s: s._cur), raising=False)
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    integration.register()
     monkeypatch.setattr(token_scratch.storage_paths, "get_storage_root", lambda: tmp_path)
     monkeypatch.setattr(token_service, "get_storage_root", lambda: tmp_path)
     monkeypatch.setattr(token_scratch.db_projects, "get_by_id", lambda _: {"project_name": "Project"})

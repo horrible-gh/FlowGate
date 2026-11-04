@@ -107,6 +107,10 @@ def store(migrated_sqlite_db, monkeypatch, tmp_path):
     real._execute(
         "INSERT INTO groups (group_id, project_id, module, title, status, created_at, updated_at) "
         "VALUES (?, ?, 'default', '0180 admission', 'OPEN', ?, ?)", [GROUP, PROJECT, stamp, stamp])
+    # The scripted provider must also exist at the real final admission fence.
+    real._execute(
+        "INSERT INTO ai_providers (provider_id,name,exec_type,kind,enabled,owner_scope,created_at,updated_at) "
+        "VALUES ('p1','fake-api','api','openai',1,'system',?,?)", [stamp, stamp])
     return real
 
 
