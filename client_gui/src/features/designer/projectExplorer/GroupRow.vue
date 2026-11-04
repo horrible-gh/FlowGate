@@ -1,6 +1,7 @@
 <template>
-  <!-- v0.2 Group = v0.1 module. Single click selects the Group (reported upward);
-       double click / Enter / the caret open or close its Flow list. -->
+  <!-- v0.2 Group = v0.1 module. Single click selects the Group (reported upward) and opens
+       or closes its Flow list (flowgate.v02test.0002 R0001 #5; a double click toggles once);
+       Enter / the caret / Left-Right open or close it too. -->
   <ExplorerRowFrame
     :row-id="group.id"
     :level="2"

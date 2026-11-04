@@ -469,9 +469,10 @@ describe('ProjectExplorer — reports the user selection (0039 T#3)', () => {
     await settle()
     expect(wrapper.emitted('update:selection')).toBeUndefined()
 
-    await click(wrapper, 'Alpha')
+    // flowgate.v02test.0002 R0001 #5: a Project click also folds the root, so the Group is chosen first.
     await click(wrapper, 'UI 개선')
-    expect(wrapper.emitted('update:selection')).toEqual([[{ kind: 'project', id: 'project:p' }], [{ kind: 'group', id: 'module:p:ui' }]])
+    await click(wrapper, 'Alpha')
+    expect(wrapper.emitted('update:selection')).toEqual([[{ kind: 'group', id: 'module:p:ui' }], [{ kind: 'project', id: 'project:p' }]])
 
     await wrapper.setProps({ projectId: 'q' })
     await settle()

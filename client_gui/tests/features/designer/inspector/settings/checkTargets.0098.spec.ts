@@ -257,12 +257,41 @@ describe('check card target and push controls — 0098', () => {
     raw.fields.push = field(false); raw.default_target_branch = 'main'; targets(null)
     await w.setProps({ node: toSettingsNode(raw) })
     expect(w.get('[data-test="gate-summary-target"]').text()).toBe('release/local')
-    expect(w.find('[data-test="gate-summary-push-create"]').exists()).toBe(true)
+    // flowgate.v02test.0002 R0001 #1: the recorded push=true no longer draws the "missing remote branches are created" line.
+    expect(w.find('[data-test="gate-summary-push-create"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('없는 원격 브랜치는 새로 생성')
     // The card's document tab (GateSlots) passes hideTarget: neither the target line nor a substitute is drawn.
     await w.setProps({ hideTarget: true })
     expect(w.find('[data-test="gate-summary-target"]').exists()).toBe(false)
     expect(w.text()).not.toContain('병합 대상')
     expect(w.text()).not.toContain('release/local')
+  })
+  it.each(['ko', 'en', 'ja'] as const)('flowgate.v02test.0002 R0001 #1: no remote-branch creation line with push ON or OFF, before or after the decision, in %s', async locale => {
+    i18n.global.locale.value = locale
+    const creation = /없는 원격 브랜치는 새로 생성|Missing remote branches will be created|存在しないリモートブランチを新規作成/
+    const receipt = (push: boolean): any => ({ decision_id: 'd0002', attempt_id: 'attempt0098', result: 'confirmed', status: 'succeeded', archived: false, effects: [{ phase: 'merge', status: 'succeeded', sha_after: 'abc' }],
+      settings: { shown: { merge_target_branch: 'release/local' }, effective: { merge_mode: 'merge', push }, target_basis: { target_branch: 'release/local', unmerge_supported: true, warnings: [] } } })
+    for (const push of [true, false]) {
+      raw.fields.push = field(push, true)
+      for (const decision of [null, receipt(push)]) {
+        const w = mount(GateSettingsSummary, { props: { node: toSettingsNode(raw), decision }, global: { plugins: [i18n] } }); wrappers.push(w)
+        expect(w.find('[data-test="gate-summary-push-create"]').exists()).toBe(false)
+        expect(w.html()).not.toMatch(creation)
+        // The target line stays: the live default before the decision, the recorded target after it.
+        expect(w.get('[data-test="gate-summary-target"]').text()).toBe(decision ? 'release/local' : 'feature/v0.2.0')
+        // With the target line hidden and nothing else to say, no empty summary box is left (push ON too).
+        await w.setProps({ hideTarget: true })
+        expect(w.find('[data-test="gate-settings-summary"]').exists()).toBe(false)
+        // A real error is still shown.
+        await w.setProps({ errorCode: 'push_rejected' })
+        expect(w.find('[data-test="gate-summary-error"]').exists()).toBe(true)
+      }
+    }
+    // The settings form itself has no such line either, with push ON.
+    raw.fields.push = field(true, true)
+    const form = await show()
+    expect(form.get('[data-test="check-settings-push"]').attributes('aria-checked')).toBe('true')
+    expect(form.html()).not.toMatch(creation)
   })
   it('the document tab without a decision draws no target line and no unsupported-undo notice', async () => {
     const w = mount(GateSettingsSummary, { props: { node: toSettingsNode(raw), hideTarget: true }, global: { plugins: [i18n] } }); wrappers.push(w)
@@ -316,5 +345,27 @@ describe('0119 refresh icon and field help', () => {
     expect(w.get('[data-test="check-settings-target-display"]').element.parentElement).toBe(w.get('.inspector-check-settings-target-control').element)
     await w.get('[data-test="check-settings-target"]').setValue('main'); await flushPromises()
     expect(w.find('[data-test="check-settings-target-error"]').exists()).toBe(false)
+  })
+  it('flowgate.v02test.0002 R0001 #2: the two switches stay the same Toggles, in order, to the right of the target in its row', async () => {
+    raw.fields.push = field(true, true)
+    const w = await show()
+    const git = w.get('[data-test="check-settings-git"]')
+    expect(git.classes()).toContain('inspector-check-settings-git')
+    const targetRow = w.get('[data-test="check-settings-target"]').element.closest('[data-test="inspector-control-row"]')!
+    expect(targetRow.getAttribute('data-label')).toBe('병합 대상')
+    const switches = w.get('[data-test="check-settings-switches"]')
+    expect(switches.element.closest('[data-test="inspector-control-row"]')).toBe(targetRow)
+    // The target area comes first, then the switch pairs (원격 반영, 브랜치 보관) with their own labels.
+    const value = targetRow.querySelector('.inspector-control-value')!
+    expect([...value.children].map(el => el.className)).toEqual(['inspector-check-settings-target-group', 'inspector-check-settings-switches'])
+    expect(switches.findAll('.inspector-check-settings-toggle').map(l => l.text())).toEqual(['원격 반영', '브랜치 보관'])
+    const toggles = switches.findAll('[role="switch"]')
+    expect(toggles.map(t => t.attributes('data-test'))).toEqual(['check-settings-push', 'check-settings-keep-branch'])
+    expect(toggles.every(t => t.classes().includes('ui-toggle'))).toBe(true)
+    expect(toggles.map(t => t.attributes('aria-checked'))).toEqual(['true', 'false'])
+    // Saving is unchanged: one PATCH per switch with the current version.
+    await toggles[1].trigger('click'); await flushPromises()
+    expect(http.patch).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { field: 'keep_branch', value: true, expected_settings_version: 6 })
+    expect(w.get('[data-test="check-settings-keep-branch"]').attributes('aria-checked')).toBe('true')
   })
 })
