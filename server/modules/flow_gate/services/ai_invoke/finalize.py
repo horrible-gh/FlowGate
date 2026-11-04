@@ -1642,6 +1642,18 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
         logger.warning("ai-invoke stop-row update failed for %s", run["run_id"], exc_info=True)
 
 
+_REMOTE_JOB_RECORD_KEYS = ("provider_id", "target_agent_id", "claimed_agent_id", "job_id", "attempt_id",
+                           "status", "terminal_cause", "failure_code", "cancel_reason")
+
+
+def _remote_job_record(run: dict):
+    """The durable part of ``run["remote_job"]`` (identifiers and states, never bodies)."""
+    info = run.get("remote_job")
+    if not isinstance(info, dict):
+        return None
+    return {key: info.get(key) for key in _REMOTE_JOB_RECORD_KEYS}
+
+
 def _persist_run_record(run: dict) -> bool:
     """Write the one durable row for this hop (L0007 §2.10.1).
 
@@ -1754,6 +1766,9 @@ def _persist_run_record(run: dict) -> bool:
             "write_requested_by_human": run.get("write_requested_by_human"),
             "allow_test_edits": run.get("allow_test_edits"),
             "write_plan": run.get("write_plan"),
+            # flowgate.v02.0129 T#2 (D0005 §3-3/§5): the remote Job this run used -- target
+            # and claiming Agent, job_id/attempt_id -- kept on success as well as failure.
+            "remote_job": _remote_job_record(run),
             "created_at": stamp,
             "updated_at": stamp,
         })

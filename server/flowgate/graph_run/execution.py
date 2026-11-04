@@ -369,6 +369,32 @@ def _lock(run):
     return run.setdefault("_graph_execution_lock", threading.RLock())
 
 
+def _remote_work_alive(run, exec_id):
+    """flowgate.v02.0129 T#2 (D0005 §3-3): a remote Job is a provider too. Alive while the
+    run marks it, or while any remote Job of this run or of an execution of the same node
+    (an earlier attempt / replay this launch follows) is not settled."""
+    if run.get("remote_job_active"):
+        return True
+    from modules.flow_gate.services.ai_invoke import remote_supervisor
+    if not remote_supervisor.available():
+        return False
+    if remote_supervisor.run_has_unsettled_job(run.get("run_id")):
+        return True
+    exec_ids = [exec_id]
+    try:
+        row = ledger.get(exec_id) or {}
+        attempt = run_store._one("SELECT run_id, node_key FROM graph_node_attempts WHERE attempt_id = ?",
+                                 [row.get("attempt_id")]) if row.get("attempt_id") else None
+        if attempt:
+            exec_ids += [r["exec_id"] for r in run_store._all(
+                "SELECT e.exec_id FROM graph_attempt_runs e JOIN graph_node_attempts a "
+                "ON a.attempt_id = e.attempt_id WHERE a.run_id = ? AND a.node_key = ?",
+                [attempt["run_id"], attempt["node_key"]])]
+    except Exception:
+        log.warning("Graph launch could not list the node's executions for %s", exec_id, exc_info=True)
+    return remote_supervisor.executions_unsettled(dict.fromkeys(exec_ids))
+
+
 def launch(run):
     exec_id = run.get("graph_exec_id")
     if not exec_id:
@@ -384,6 +410,8 @@ def launch(run):
                 raise ledger.LeaseLost("execution was cancelled or finished")
             proc = run.get("proc")
             if proc is not None and proc.poll() is None:
+                raise ledger.LeaseLost("previous provider has not exited")
+            if _remote_work_alive(run, exec_id):
                 raise ledger.LeaseLost("previous provider has not exited")
             workspace.verify_execution(exec_id)
             if run.get("graph_lease_token"):
@@ -612,6 +640,11 @@ def replay(row):
         raise ValueError("unknown execution request type")
 
 
+_RECOVER_ROWS_SQL = ("SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r "
+                     "ON r.run_id = e.run_id WHERE e.status IN ('requested', 'running') "
+                     "AND r.status <> 'stopping'")
+
+
 def recover():
     """Once after orphan AI cleanup and Graph port registration. Never infer death from TTL alone."""
     from modules.flow_gate.services import ai_invoke_service
@@ -620,73 +653,94 @@ def recover():
         return
     result_merge.recover()  # T#9: an integrating merge is finished or pending again, before a Stop goes on
     stop.recover()          # T#7: a stopping run goes on with its stop, never with a replay or a lease loss
-    rows = run_store._all("SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r "
-                         "ON r.run_id = e.run_id WHERE e.status IN ('requested', 'running') "
-                         "AND r.status <> 'stopping' ORDER BY e.created_at, e.exec_id", [])
+    rows = run_store._all(_RECOVER_ROWS_SQL + " ORDER BY e.created_at, e.exec_id", [])
     for snapshot in rows:
-        jobs = []
-        invalidated = []
-        def body():
-            row = ledger.get(snapshot["exec_id"])
-            if not row or row["status"] not in ("requested", "running"):
-                return
-            if row["status"] == "requested":
-                if _time_machine().busy(snapshot["group_id"]):
-                    return              # T#13: kept requested; replayed once the Time Machine operation is finished
-                if ledger.eligible(row):
-                    live = ai_invoke_service.get_run_record(row.get("ai_run_id")) if row.get("ai_run_id") else None
-                    if live and live.get("status") != "finished":
-                        return
-                    run_store._affected("UPDATE graph_attempt_runs SET ai_run_id = NULL WHERE exec_id = ? "
-                                        "AND status = 'requested'", [row["exec_id"]])
-                    jobs.append(lambda: replay(row))
-                else:
-                    ledger.cancel(row["exec_id"], None, "requested")
-                return
-            if not row.get("lease_expires_at") or row["lease_expires_at"] > ledger.now():
-                return
-            live = ai_invoke_service.get_run_record(row.get("ai_run_id"))
-            ended = ai_invoke_runs.get(row.get("ai_run_id")) if row.get("ai_run_id") else None
-            from modules.flow_gate.services.ai_invoke.terminal import provider_stopped
-            if (live and (live.get("status") != "finished" or not provider_stopped(live))) or not ended:
-                log.warning("Graph recovery has no confirmed AI termination: %s", row["exec_id"])
-                return
-            ledger.mark_lost(row["exec_id"], row["lease_token"])
-            attempt = run_store._one("SELECT * FROM graph_node_attempts WHERE attempt_id = ?", [row["attempt_id"]])
-            if not stop.invalidate_attempt(row["attempt_id"], "lease_expired"):
-                return
-            invalidated.append(row["attempt_id"])
-            run = run_store.run_by_id(row["run_id"])
-            node = next((n for n in run_store.node_runs(row["run_id"]) if n["node_key"] == attempt["node_key"]), None)
-            if not node or node["status"] == "done":
-                return
-            ctx = run_apply.load_context(run, (db_groups.get_by_id(snapshot["group_id"]) or {}).get("project_id"), None, jobs)
-            stop.reset_node(ctx, node, "lease_expired")
-            run_apply.settle_run(ctx)  # T#2 command candidates preserve the step target set.
-        try:
-            # T#7: a lease-expired attempt is invalidated under the Stop gate's exclusive hold, as a Stop and a failed
-            # worktree are (no side effect of its token runs across the commit).
-            with fencing.exclusive(snapshot["group_id"], own_ok=True):
-                with_flow_guard(snapshot["group_id"], body)
-        except Exception:
-            log.exception("Graph execution recovery failed for %s", snapshot["exec_id"])
-            continue  # A failed transaction never dispatches its jobs.
-        # Outside the exclusive fence and Flow transaction, before replaying deferred jobs.
-        # Keep this even when the invalidated attempt has no node (or the node is done).
-        for attempt_id in invalidated:
-            workspace.cleanup(attempt_id)
-        for job in jobs:
-            try:
-                job()
-            except Exception as exc:
-                log.exception("Graph execution replay failed for %s", snapshot["exec_id"])
-                try:
-                    start_failed(snapshot["exec_id"], exc)
-                except Exception:
-                    log.exception("Graph replay failure could not be recorded for %s", snapshot["exec_id"])
+        _recover_snapshot(snapshot, ai_invoke_service, run_apply)
 
     # Outside all Flow guards and DB transactions. T#10: invalidated and integrated (ended) attempts' trees.
     workspace.cleanup_finished()
+
+
+def recover_execution(exec_id):
+    """flowgate.v02.0129 T#2 (D0005 §3-4 step 4): the startup recovery of ONE execution whose
+    restart recovery was held while its remote Job was alive, once that Job is settled and
+    its lease expired. Same rules as ``recover`` for that row; nothing else is replayed."""
+    from modules.flow_gate.services import ai_invoke_service
+    from modules.flow_gate.graph_workflow.services import run_apply
+    if not get_store().table_exists("graph_attempt_runs"):
+        return
+    for snapshot in run_store._all(_RECOVER_ROWS_SQL + " AND e.exec_id = ?", [exec_id]):
+        _recover_snapshot(snapshot, ai_invoke_service, run_apply)
+    workspace.cleanup_finished()
+
+
+def _recover_snapshot(snapshot, ai_invoke_service, run_apply):
+    jobs = []
+    invalidated = []
+    def body():
+        row = ledger.get(snapshot["exec_id"])
+        if not row or row["status"] not in ("requested", "running"):
+            return
+        if row["status"] == "requested":
+            if _time_machine().busy(snapshot["group_id"]):
+                return              # T#13: kept requested; replayed once the Time Machine operation is finished
+            if ledger.eligible(row):
+                live = ai_invoke_service.get_run_record(row.get("ai_run_id")) if row.get("ai_run_id") else None
+                if live and live.get("status") != "finished":
+                    return
+                run_store._affected("UPDATE graph_attempt_runs SET ai_run_id = NULL WHERE exec_id = ? "
+                                    "AND status = 'requested'", [row["exec_id"]])
+                jobs.append(lambda: replay(row))
+            else:
+                ledger.cancel(row["exec_id"], None, "requested")
+            return
+        if not row.get("lease_expires_at") or row["lease_expires_at"] > ledger.now():
+            return
+        live = ai_invoke_service.get_run_record(row.get("ai_run_id"))
+        ended = ai_invoke_runs.get(row.get("ai_run_id")) if row.get("ai_run_id") else None
+        from modules.flow_gate.services.ai_invoke.terminal import provider_stopped
+        if (live and (live.get("status") != "finished" or not provider_stopped(live))) or not ended:
+            log.warning("Graph recovery has no confirmed AI termination: %s", row["exec_id"])
+            return
+        # flowgate.v02.0129 T#2 (D0005 §3-4 step 2): a remote Job not settled yet, or a
+        # restart hold not resumed yet, is no confirmed termination either.
+        from modules.flow_gate.services.ai_invoke import remote_supervisor
+        if remote_supervisor.remote_alive(row.get("ai_run_id")):
+            log.warning("Graph recovery waits for the remote Job of %s", row["exec_id"])
+            return
+        ledger.mark_lost(row["exec_id"], row["lease_token"])
+        attempt = run_store._one("SELECT * FROM graph_node_attempts WHERE attempt_id = ?", [row["attempt_id"]])
+        if not stop.invalidate_attempt(row["attempt_id"], "lease_expired"):
+            return
+        invalidated.append(row["attempt_id"])
+        run = run_store.run_by_id(row["run_id"])
+        node = next((n for n in run_store.node_runs(row["run_id"]) if n["node_key"] == attempt["node_key"]), None)
+        if not node or node["status"] == "done":
+            return
+        ctx = run_apply.load_context(run, (db_groups.get_by_id(snapshot["group_id"]) or {}).get("project_id"), None, jobs)
+        stop.reset_node(ctx, node, "lease_expired")
+        run_apply.settle_run(ctx)  # T#2 command candidates preserve the step target set.
+    try:
+        # T#7: a lease-expired attempt is invalidated under the Stop gate's exclusive hold, as a Stop and a failed
+        # worktree are (no side effect of its token runs across the commit).
+        with fencing.exclusive(snapshot["group_id"], own_ok=True):
+            with_flow_guard(snapshot["group_id"], body)
+    except Exception:
+        log.exception("Graph execution recovery failed for %s", snapshot["exec_id"])
+        return  # A failed transaction never dispatches its jobs.
+    # Outside the exclusive fence and Flow transaction, before replaying deferred jobs.
+    # Keep this even when the invalidated attempt has no node (or the node is done).
+    for attempt_id in invalidated:
+        workspace.cleanup(attempt_id)
+    for job in jobs:
+        try:
+            job()
+        except Exception as exc:
+            log.exception("Graph execution replay failed for %s", snapshot["exec_id"])
+            try:
+                start_failed(snapshot["exec_id"], exc)
+            except Exception:
+                log.exception("Graph replay failure could not be recorded for %s", snapshot["exec_id"])
 
 
 def map_token(exec_id, token_id):

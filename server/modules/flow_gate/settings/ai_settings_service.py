@@ -623,6 +623,7 @@ def _to_view(row: dict) -> dict:
         "api_key_hint": api_key[-HINT_LEN:] if api_key else None,
         "owner_scope": row.get("owner_scope") or _ai_db.OWNER_SYSTEM,
         "exec_location": row.get("exec_location") or "local",
+        "target_agent_id": row.get("target_agent_id"),
     }
     if unreadable:
         view["api_key_unreadable"] = True
@@ -663,7 +664,7 @@ def _pick_default(default_id: Optional[str], chain: list[dict]) -> Optional[str]
 
 
 def _merge_rows(existing: dict[str, dict], providers: list[dict],
-                with_access: bool) -> tuple[list[dict], dict[str, str]]:
+                with_access: bool, owner_user_id: Optional[str] = None) -> tuple[list[dict], dict[str, str]]:
     """Payload -> stored rows with final ids and merged keys. Ids are global (PK), so a new id
     is checked against every owner's rows, not only this list's."""
     taken = set(existing) | _ai_db.all_provider_ids()
@@ -694,7 +695,51 @@ def _merge_rows(existing: dict[str, dict], providers: list[dict],
             if with_access else None,
             "exec_location": p.get("exec_location") or (old or {}).get("exec_location") or "local",
         })
+    _validate_target_agents(existing, providers, rows, owner_user_id)
     return rows, id_map
+
+
+def _validate_target_agents(existing: dict[str, dict], providers: list[dict],
+                            rows: list[dict], owner_user_id: Optional[str]) -> None:
+    """Validate the effective saved mode, preserving omitted fields and legacy NULLs.
+
+    Ownership/existence errors deliberately share a reason. Availability is checked
+    only for a new assignment; online state and capabilities belong to execution.
+    """
+    from modules.flow_gate.services.agent_registry import AgentError, AgentService
+
+    errors = []
+    registry = AgentService(_ai_db.get_store(), owner_user_id=owner_user_id)
+    for index, (incoming, row) in enumerate(zip(providers, rows)):
+        old = existing.get(incoming.get("id")) or {}
+        remote_cli = row["exec_type"] == "cli" and row["exec_location"] == "remote"
+        target = incoming.get("target_agent_id", old.get("target_agent_id"))
+        target = (target or "").strip() or None
+        row["target_agent_id"] = target if remote_cli else None
+        if not remote_cli:
+            continue
+        unchanged = (old.get("exec_type") == "cli"
+                     and old.get("exec_location") == "remote"
+                     and old.get("target_agent_id") == target)
+        reason = None
+        if target is None:
+            if not unchanged:
+                reason = "required_for_remote_cli"
+        else:
+            try:
+                agent = registry.get(target)
+            except AgentError as exc:
+                if exc.status != 404:
+                    raise
+                reason = "invalid_target_agent"
+            else:
+                if not unchanged and (not agent["enabled"]
+                                      or agent["registration_status"] != "registered"):
+                    reason = "target_agent_unavailable"
+        if reason:
+            errors.append({"index": index, "field": "target_agent_id", "reason": reason})
+    if errors:
+        raise AiSettingsValidationError(errors)
 
 
 def _save_scope(
@@ -819,7 +864,7 @@ def save_user_settings(owner_user_id: str, providers: Optional[list[dict]]) -> d
     if errors:
         raise AiSettingsValidationError(errors)
     existing = {r["provider_id"]: r for r in _ai_db.list_user(owner_user_id)}
-    rows, _id_map = _merge_rows(existing, providers or [], with_access=False)
+    rows, _id_map = _merge_rows(existing, providers or [], with_access=False, owner_user_id=owner_user_id)
     _ai_db.replace_user_scope(owner_user_id, rows, set(existing))
     return get_user_settings(owner_user_id, include_catalog=False)
 
@@ -877,12 +922,50 @@ def build_preset_command_for_project(
 
 # ── Effective resolution (L0004 §2.4) ────────────────────────────────────────
 
+def is_personal_runnable(row: Optional[dict]) -> bool:
+    """A user's own AI that a run can execute (flowgate.v02.0129 CH0012): enabled, CLI, run on
+    a remote Agent and assigned to one. A local CLI / API personal AI would run on this server,
+    so it stays out exactly as before (it never appears in a selection list or a run)."""
+    return bool(
+        row
+        and (row.get("owner_scope") or _ai_db.OWNER_SYSTEM) == _ai_db.OWNER_USER
+        and row.get("enabled")
+        and (row.get("exec_type") or "cli") == "cli"
+        and row.get("exec_location") == "remote"
+        and row.get("target_agent_id")
+    )
+
+
+def _chain_entry(row: dict) -> dict:
+    from modules.flow_gate.services.provider_capability_service import provider_capabilities
+    view = _to_view(row)
+    return {**view, "capabilities": provider_capabilities(view)}
+
+
+def personal_selectable(user_id: Optional[str]) -> list[dict]:
+    """The caller's own runnable AI as chain entries, in their order (flowgate.v02.0129 CH0012).
+
+    Selection lists and explicit choices append these after the effective (system) chain. They
+    are never part of resolve_effective / resolve_global, so every fallback chain, default and
+    name lookup that reads those stays system AI only, exactly as before. The workspace
+    allowlist governs shared AI; a list built for the owner exempts the owner's own AI from it
+    (approved (A)) -- project access and Agent ownership are still checked at run start."""
+    if not user_id:
+        return []
+    return [_chain_entry(r) for r in _ai_db.list_user(user_id) if is_personal_runnable(r)]
+
+
+def personal_default_id(user_id: Optional[str], personal: list[dict]) -> Optional[str]:
+    """The user's default AI when it is one of their own runnable AI, else None."""
+    default_id = _user_default_db.get(user_id) if user_id else None
+    return default_id if default_id in {p["id"] for p in personal} else None
+
+
 def _effective_view(user_id: Optional[str] = None) -> dict:
     """Every enabled system AI, in system order. No project narrows it (CH0006 (4))."""
     rows = _ai_db.list_scope(None)
 
-    from modules.flow_gate.services.provider_capability_service import provider_capabilities
-    chain = [{**_to_view(r), "capabilities": provider_capabilities(_to_view(r))} for r in rows if r["enabled"]]
+    chain = [_chain_entry(r) for r in rows if r["enabled"]]
     # Default (flowgate.v02.0017 CH0006 (3)): the user's pick when the chain has it, otherwise
     # the system default, otherwise the chain head (_pick_default).
     default_id = _user_default_db.get(user_id) if user_id else None
@@ -906,6 +989,45 @@ def resolve_global(user_id: Optional[str] = None) -> dict:
     order; disabled rows are excluded; api_key never appears (use get_provider_secret).
     With user_id, default_provider_id is that user's default when the chain has it."""
     return {"ok": True, **_effective_view(user_id)}
+
+
+def selectable_provider(project_id: Optional[str], provider_id: Optional[str],
+                        requester_user_id: Optional[str]) -> Optional[dict]:
+    """The chain entry an EXPLICIT choice of requester_user_id names, or None
+    (flowgate.v02.0129 CH0012). A system AI must be in the project's effective chain; a user's
+    own AI must be runnable and owned by the requester (no requester = never a user's AI)."""
+    if not provider_id:
+        return None
+    effective = resolve_effective(project_id) if project_id else resolve_global()
+    hit = next((p for p in effective.get("providers") or [] if p.get("id") == provider_id), None)
+    if hit is not None or not requester_user_id:
+        return hit
+    row = _ai_db.get_user_row(provider_id)
+    if not is_personal_runnable(row) or row.get("owner_user_id") != requester_user_id:
+        return None
+    return _chain_entry(row)
+
+
+def provider_selectable_any_owner(project_id: Optional[str], provider_id: Optional[str]) -> bool:
+    """Is provider_id an AI some requester could still run? For checks that run without a
+    requester (resume / review-gate re-checks): a user's own runnable AI counts, and the
+    run start that follows (admission.start_run, requester = issued_to) refuses it with
+    provider_unavailable unless the requester owns it -- it is never swapped for another AI."""
+    if not provider_id:
+        return False
+    effective = resolve_effective(project_id) if project_id else resolve_global()
+    if any(p.get("id") == provider_id for p in effective.get("providers") or []):
+        return True
+    return is_personal_runnable(_ai_db.get_user_row(provider_id))
+
+
+def personal_runnable_names() -> dict[str, str]:
+    """id -> name of every user's runnable own AI. Display lookups only (no owner check)."""
+    from modules.flow_gate.db.connection import get_store
+    rows = get_store()._fetch_all(
+        "SELECT provider_id, name, owner_scope, enabled, exec_type, exec_location, target_agent_id "
+        "FROM ai_providers WHERE project_id IS NULL AND owner_scope = 'user' AND deleted_at IS NULL", [])
+    return {r["provider_id"]: r["name"] for r in rows if is_personal_runnable(r)}
 
 
 def resolve_effective(project_id: str, user_id: Optional[str] = None) -> dict:

@@ -508,7 +508,8 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     if body.continuation_reworker_provider_id is not None:
         if body.mode != "continuous":
             return _validation_failed([{"loc": "continuation_reworker_provider_id", "msg": "requires continuous mode"}])
-        if body.continuation_reworker_provider_id not in ai_group_service._available():
+        # flowgate.v02.0129 CH0012: the requester's own runnable AI counts as available.
+        if body.continuation_reworker_provider_id not in ai_group_service._available(user_id):
             return JSONResponse(status_code=422, content={"code": "reworker_unavailable",
                                                           "message": "The selected reworker is unavailable."})
 
@@ -519,7 +520,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             ai_group_service.validate_start(body.requested_ai_group_id)
         except ai_group_service.AIGroupError as exc:
             return JSONResponse(status_code=exc.status, content={"code": exc.code, "message": str(exc)})
-        available = ai_group_service._available()
+        available = ai_group_service._available(user_id)
         if not body.provider_id:
             return JSONResponse(status_code=422, content={"code": "ai_group_work_executor_required",
                                                           "message": "A concrete provider_id is required."})

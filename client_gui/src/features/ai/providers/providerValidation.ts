@@ -19,8 +19,12 @@ export function validateProvider(p: Pick<ProviderItem, 'name' | 'kind' | 'exec_t
   }
   check('name', p.name, 'required', true)
   if (!KINDS[p.exec_type]?.includes(p.kind)) errors.push({ field: 'kind', reason: 'unknown_kind' })
-  if (p.exec_type === 'cli') check('cli_command', p.cli_command, 'required_for_cli')
-  else {
+  if (p.exec_type === 'cli') {
+    check('cli_command', p.cli_command, 'required_for_cli')
+    if (p.exec_location === 'remote' && !(p.target_agent_id ?? '').trim()) {
+      errors.push({ field: 'target_agent_id', reason: 'required_for_remote_cli' })
+    }
+  } else {
     check('api_model', p.api_model, 'required_for_api')
     check('api_base_url', p.api_base_url)
     check('api_key', p.api_key)

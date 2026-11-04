@@ -2,6 +2,7 @@ from __future__ import annotations
 import hashlib,hmac,os,secrets
 from datetime import datetime,timezone,timedelta
 from modules.flow_gate.db.connection import FlowGateStore,get_store
+from modules.flow_gate.utils.provider_lifecycle import synchronized
 
 SUPPORTED=[1]; ENROLLMENT_TTL=600; HEARTBEAT_INTERVAL=30; ONLINE_TTL=90
 CAPS=("ai_cli","ai_api","storage")
@@ -149,8 +150,10 @@ class AgentService:
    self.s._execute("UPDATE agent_credentials SET revoked_at=? WHERE agent_id=? AND revoked_at IS NULL",[ts,aid])
    self.s._execute("UPDATE agent_enrollments SET revoked_at=? WHERE agent_id=? AND consumed_at IS NULL AND revoked_at IS NULL",[ts,aid])
   return self.get(aid)
+ @synchronized
  def delete(self,aid):
   self.get(aid)
   with self.s.transaction():
+   if self.s._fetch_one("SELECT 1 ok FROM ai_providers WHERE target_agent_id=?",[aid]): raise AgentError(409,"agent_in_use","Agent is referenced by an AI connection")
    if self.s._fetch_one("SELECT 1 ok FROM agent_credentials WHERE agent_id=?",[aid]): raise AgentError(409,"agent_has_registration_history","Registered Agent cannot be deleted")
    self.s._execute("DELETE FROM agents WHERE agent_id=?",[aid])

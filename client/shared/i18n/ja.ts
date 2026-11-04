@@ -408,6 +408,7 @@ export default {
         mode: '設定方式',
         default_provider_id: '既定プロバイダー',
         default_provider_index: '既定プロバイダー',
+        target_agent_id: '対象 Agent',
       },
       reason: {
         required: '値を入力してください。',
@@ -420,6 +421,9 @@ export default {
         unknown_kind: '選択した実行方式ではサポートしていない種類です。',
         unknown_mode: 'サポートしていない設定方式です。',
         bad_default: '既定に指定したプロバイダーが一覧にありません。',
+        required_for_remote_cli: 'リモート CLI では必須です。',
+        invalid_target_agent: '選択した Agent が見つかりません。',
+        target_agent_unavailable: '選択した Agent は利用できません。',
       },
       toast_invalid: '入力値が正しくありません。各項目を確認してください。',
       unsaved_badge: '未保存',

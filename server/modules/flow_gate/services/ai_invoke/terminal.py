@@ -49,6 +49,10 @@ def provider_stopped(run: dict) -> bool:
     # API runs have no child. The worker flag, not the absence of a PID, fences them.
     if run.get("_provider_active"):
         return False
+    # flowgate.v02.0129 T#2: a remote Job not yet settled (or whose unconfirmed end could
+    # not be fenced by token revocation) keeps the run "alive" so leases are not released.
+    if run.get("remote_job_active"):
+        return False
     proc = run.get("proc")
     if proc is not None:
         try:

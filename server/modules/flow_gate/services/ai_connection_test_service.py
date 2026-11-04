@@ -115,6 +115,10 @@ def resolve_subject(project_id: str, provider_id: str, *, error=ConnectionTestEr
             raise error("provider_not_found", 404)
         raise error("provider_disabled" if not stored.get("enabled") else "provider_unavailable", 409)
     provider = dict(provider)
+    if provider["exec_type"] == "cli" and provider.get("exec_location") == "remote":
+        # flowgate.v02.0129 T#2 (D0005 §3-8): connection test, AI Evaluation and commit
+        # suggestion would run the CLI on this server; a remote CLI connection never does.
+        raise error("remote_cli_unsupported", 409)
     if provider["exec_type"] == "cli" and provider.get("cli_command"):
         provider["cli_command"] = ai_settings_service.normalize_cli_command(
             provider["kind"], provider["cli_command"])

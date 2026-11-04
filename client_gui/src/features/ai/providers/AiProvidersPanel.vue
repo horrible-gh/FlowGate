@@ -653,7 +653,10 @@ async function onSaveProvider(item: ProviderItem, owner: AiOwnerScope) {
   const current = [...listOf(owner)]
   const idx = current.findIndex((p) => p.id === item.id)
   if (idx >= 0) {
-    current[idx] = { ...current[idx], ...item }
+    const merged = { ...current[idx], ...item }
+    // The dialog omits target_agent_id for non-remote-CLI; do not let the old value survive the merge.
+    if (!('target_agent_id' in item)) delete merged.target_agent_id
+    current[idx] = merged
   } else {
     current.push(item)
   }
