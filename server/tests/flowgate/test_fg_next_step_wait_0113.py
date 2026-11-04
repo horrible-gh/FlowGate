@@ -264,13 +264,14 @@ def test_an_unreadable_instruction_review_setting_waits_with_its_cause_and_appro
     assert (wait["code"], wait["role"]) == ("ai_setup_required", "review")
     assert wire["intervention"] == {"kind": "system_error", "reason": "review_result_unknown"}
 
-    # [다음 단계]: the explicit command opens the waiting attempt again (L-2 §2.10 REOPEN_NEW_ATTEMPT); the new attempt
-    # reuses the written instruction, whose review the same setting keeps waiting — and once that post-commit step is
-    # over the run is judged again (it stayed ``no_targets`` before).
+    # [다음 단계]: 0126 T#5 — the explicit command resolves the waiting instruction review again as the NEXT review seq
+    # of the same attempt (the old seq 1 stays as history, the attempt is not invalidated); the written instruction is
+    # kept, the same setting keeps that review waiting — and once that post-commit step is over the run is judged again
+    # (it stayed ``no_targets`` before).
     run = _step(env)
     [active] = _sql(env["db"], "SELECT attempt_id FROM graph_node_attempts WHERE node_key = ? AND status = 'active'",
                     (key,))
-    assert active["attempt_id"] != ir["attempt_id"]
+    assert active["attempt_id"] == ir["attempt_id"]
     agains = [a for a in assignments(env, key)
               if a["attempt_id"] == active["attempt_id"] and a["stage"] == "instruction_review"]
     again = max(agains, key=lambda a: a["seq"])

@@ -881,8 +881,13 @@ def needs_dispatch(ctx, row: dict) -> str:
     if a["stage"] == RESULT and a["actor"] == AI:
         failure = legacy.write_failure(row)
         if failure and failure != "question_pending":
-            # Every explicit failed-write reentry resolves a new assignment, even when settings
-            # did not change. Automatic retries still use retry_target's original snapshot.
+            # 0126 (B-1) + 0121: an explicit command after a failed write never leaves the card stuck. A writer that ended
+            # with no result or a provider failure, whose write role still resolves to the recorded assignment, is
+            # written again on the same attempt by the same AI (its workspace and commits kept; retry_target's original
+            # snapshot). Every other failed end, and any such end whose write role changed, resolves a new assignment
+            # (a new attempt) from today's settings; the earlier attempt, assignment and ledger rows stay as history.
+            if _same_attempt_retry_due(ctx, node, row, a, failure):
+                return RETRY_SAME_ATTEMPT
             return REOPEN_NEW_ATTEMPT
     if a["stage"] in REVIEW_STAGES and (row.get("instruction_doc_id") or row.get("result_doc_id")):
         return NONE                              # the command opens its next review seq, preserving this attempt
@@ -896,6 +901,26 @@ def needs_dispatch(ctx, row: dict) -> str:
 
 
 WAIT_ACTORS = (PERSON, WAIT_SETUP, WAIT_UNAVAILABLE)                 # the waiting write stages (B-6)
+
+
+def _same_attempt_retry_due(ctx, node: dict, row: dict, a: dict, failure: str) -> bool:
+    """0121 / 0126: the failed AI writer the assignment a may be written again on its own attempt by an explicit command: its end
+    is a clean end with no result or a provider failure (the 0121 policy; no other end is retried in place) and the
+    card's write role still resolves to the recorded assignment (same actor and AI). A role that changed, became
+    unavailable, or cannot be read now is a new assignment (a new attempt) instead — never the old AI by default."""
+    retryable = failure == "no_result" or (failure == "ai_invoke_failed" and a["stage_state"] == ACTIVE
+                                           and legacy.provider_failure_retry_due(row))
+    if not retryable:
+        return False
+    try:
+        inputs = resolve.read_card_role_inputs(ctx.flow_id, node)
+        r = resolve.resolve_role(ctx.flow_id, node, ROLE_OF[a["stage"]], project_id=ctx.project_id, inputs=inputs)
+        now = assignment_from(a["stage"], r, ctx.run.get("started_by"))
+    except Exception:  # noqa: BLE001 — a role that cannot be read now is resolved again by the new attempt
+        _log.warning("write role not resolved for a same-attempt retry flow=%s node=%s", ctx.flow_id,
+                     node.get("node_key"), exc_info=True)
+        return False
+    return _same_assignment(a, now)
 
 
 def _same_assignment(a: dict, now: dict) -> bool:

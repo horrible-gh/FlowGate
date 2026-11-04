@@ -1156,7 +1156,10 @@ def test_main_mounts_the_t3_routes_and_the_packages_reach_modules_only_through_t
     for name in ("card_documents", "card_memos"):
         assert f"from flowgate.{name}.routes import router as _{name}_router" in main
         assert f'app.include_router(_{name}_router, prefix=f"{{CONTEXT}}"' in main
+    # 0126 T#1 adds the revision-bound human decision routes (GET list, POST decision) to the same router.
     assert [(r.path, sorted(r.methods)) for r in documents_router.routes] == [
+        ("/api/v1/flows/{flow_id}/nodes/{node_key}/documents/decisions", ["GET"]),
+        ("/api/v1/flows/{flow_id}/nodes/{node_key}/documents/{slot}/decision", ["POST"]),
         ("/api/v1/flows/{flow_id}/nodes/{node_key}/slots/{slot}/document", ["POST"])]
     assert [(r.path, sorted(r.methods)) for r in memos_router.routes] == [
         ("/api/v1/flows/{flow_id}/nodes/{node_key}/memos", ["GET"]),

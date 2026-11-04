@@ -137,12 +137,11 @@ def test_k3_an_unavailable_instruction_reviewer_waits_and_only_an_explicit_comma
     old = _attempts(env, key)[0]["attempt_id"]
     command(env)
     attempts = _attempts(env, key)
-    assert [a["status"] for a in attempts] == ["invalidated", "active"]
-    new = attempts[1]["attempt_id"]
-    ia = one_of(env, new, "instruction")
-    assert ia["reused_doc_id"] == instruction                                  # a person's saved draft is reused
-    ir2 = one_of(env, new, "instruction_review", 1)
-    assert (ir2["actor"], ir2["provider_id"]) == ("ai", Y)
+    # 0126 T#5: the explicit command resolves the review again as the NEXT seq of the same attempt — the attempt is
+    # not invalidated, the person's saved draft stays the instruction under review, the old seq 1 stays as history
+    assert [a["status"] for a in attempts] == ["active"] and attempts[0]["attempt_id"] == old
+    ir2 = one_of(env, old, "instruction_review", 2)
+    assert (ir2["actor"], ir2["provider_id"], ir2["basis_doc_id"]) == ("ai", Y, instruction)
     assert one_of(env, old, "instruction_review", 1)["actor"] == "wait_unavailable"   # the old record is kept
 
 
@@ -166,7 +165,9 @@ def test_k15_a_reused_instruction_s_unavailable_review_keeps_waiting_after_its_c
     assert one(env, key, "result") is None
     command(env)
     new = [a for a in _attempts(env, key) if a["status"] == "active"][0]["attempt_id"]
-    ir = one_of(env, new, "instruction_review", 1)
+    # 0126 T#5: the command's resolution is the next review seq (2) of the attempt; seq 1 keeps its wait as history
+    assert one_of(env, new, "instruction_review", 1)["actor"] == "wait_unavailable"
+    ir = one_of(env, new, "instruction_review", 2)
     assert (ir["actor"], ir["actor_reason"]) == ("no_review", "no_review_setting")
     assert _review_status(instruction) == "approved"
 
@@ -188,6 +189,8 @@ def test_an_explicit_command_retries_a_no_result_writer_on_the_same_attempt_with
     stored(key, "run_ai", Y)                                                    # a value change is not the assignment
     command(env)
     [again] = env["jobs"]
+    # 0126 keeps this contract while the write role still resolves to the recorded assignment (a changed role opens a
+    # new attempt: test_fg_settings_retry_0126)
     assert (again["provider_id"], again["assignment_ref"]["attempt_id"]) == (X, attempt)
     assert again["invocation_origin"]["purpose"] == "result_write_retry"
     assert len(_attempts(env, key)) == 1 and first["provider_id"] == X

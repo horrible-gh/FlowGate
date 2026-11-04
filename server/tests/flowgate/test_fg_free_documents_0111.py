@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from flowgate.card_documents import lines, repository
+from flowgate.card_documents import decision_repository, lines, repository
 from modules.flow_gate.graph_workflow.projection.flow_snapshot import FlowSnapshot
 from modules.flow_gate.graph_workflow.projection.graph_projector import GraphView, project_graph
 from modules.flow_gate.graph_workflow.services import canvas_service as canvas
@@ -68,6 +68,9 @@ def scenario(monkeypatch):
     store = LineStore(connection)
     s = SimpleNamespace(store=store, documents=[], draft=[node()], revision=[node()], binding=None)
     monkeypatch.setattr(repository, "get_store", lambda: store)
+    # 0126 T#1: card lines also read the human-decision ledger; this in-memory fixture has no such tables
+    # (the ledger is covered by test_fg_document_decisions_0126), so the projection sees no decisions.
+    monkeypatch.setattr(decision_repository, "available", lambda: False)
     monkeypatch.setattr(lines.legacy, "review_counts", lambda _ids: {})
     monkeypatch.setattr(lines.legacy, "rejection_count", lambda _doc: 0)
     monkeypatch.setattr(lines.legacy, "line_body_facts", lambda d: (bool(d), "written" if d else None))

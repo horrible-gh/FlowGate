@@ -140,8 +140,12 @@ def test_failed_writer_explicit_command_gets_new_attempt_and_current_provider(
     before_calls=len(starts)
     command(env,mode)
     writers=[r for r in assignments(env,key) if r['stage']=='result']
-    assert len(writers)==2
-    second=next(r for r in writers if r['attempt_id']!=first['attempt_id'])
+    # 0121 keeps its contract while the write role still resolves to the recorded assignment: a provider failure or a
+    # clean end with no result is written again on the SAME attempt by the same AI; every other end, and any end whose
+    # role changed, resolves a new assignment in a new attempt (the earlier one stays as history)
+    same_attempt=(not changed) and failure in ('provider_failed','no_result')
+    assert len(writers)==(1 if same_attempt else 2)
+    second=first if same_attempt else next(r for r in writers if r['attempt_id']!=first['attempt_id'])
     assert second['provider_id']==expected_provider and first in writers
     from modules.flow_gate.graph_workflow.services import ai_node_starter
     new_job=next(j for j in env['jobs'] if (j.get('assignment_ref') or {}).get('attempt_id')==second['attempt_id'])
@@ -150,7 +154,7 @@ def test_failed_writer_explicit_command_gets_new_attempt_and_current_provider(
     assert call['provider_id']==expected_provider and call['graph_attempt_id']==second['attempt_id']
     assert all(row in history(env)[table] for table,rows in frozen.items() for row in rows)
     old_attempt=_sql(env['db'],'SELECT * FROM graph_node_attempts WHERE attempt_id=?',(first['attempt_id'],))[0]
-    assert old_attempt['status']=='invalidated'
+    assert old_attempt['status']==('active' if same_attempt else 'invalidated')
     (tmp_path/'writer-evidence.json').write_text(json.dumps({
         'failure':failure,'mode':mode,'old_version':old['settings_version'],'new_version':new['settings_version'],
         'old_assignment':first,'new_assignment':second,'actual_provider_id':call['provider_id']},indent=2),encoding='utf-8')
