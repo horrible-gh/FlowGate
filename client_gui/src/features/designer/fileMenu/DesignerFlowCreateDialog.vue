@@ -20,7 +20,7 @@
         <div class="dfm-field">
           <label class="dfm-label" for="dfc-group">{{ t('gui.designer.file_menu.flow_group') }}</label>
           <div class="dfm-control" :class="{ 'is-disabled': loading, 'has-error': showGroupError }">
-            <Select id="dfc-group" v-model="groupId" :options="groupOptions" :disabled="loading"
+            <Select id="dfc-group" :model-value="groupId" @update:model-value="pickGroup" :options="groupOptions" :disabled="loading"
               :invalid="showGroupError" :aria-invalid="showGroupError || undefined"
               :aria-describedby="showGroupError ? 'dfc-group-error' : undefined" data-test="designer-flow-create-group" />
             <svg class="dfm-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -130,6 +130,11 @@ const formElement = ref<HTMLFormElement | null>(null)
 const nodes = ref<GroupTreeNode[]>([])
 const loading = ref(false)
 const groupId = ref('')
+const groupPicked = ref(false)
+function pickGroup(value: string) {
+  groupId.value = value
+  groupPicked.value = true
+}
 const title = ref('')
 const submitting = ref(false)
 // flowgate.v02.0088 F10: the server's own words raw, otherwise the localized fallback key —
@@ -226,8 +231,10 @@ async function load() {
     const next = await projectStore.fetchGroupTree(pid)
     if (myGeneration !== generation) return
     nodes.value = next
-    // Keep the preselected Group when it exists; otherwise the first Group.
-    if (!groups.value.some((group) => group.id === groupId.value)) groupId.value = groups.value[0]?.id ?? ''
+    // Only default to the first Group without a calling Group or an explicit user choice.
+    if (!groups.value.some((group) => group.id === groupId.value)) {
+      groupId.value = props.groupId == null && !groupPicked.value ? (groups.value[0]?.id ?? '') : ''
+    }
   } catch (err) {
     if (myGeneration !== generation) return
     submitError.value = failureOf(err, 'gui.designer.file_menu.load_failed')
@@ -245,9 +252,13 @@ watch(
     submitting.value = false
     if (!isOpen) return
     const opening = !previous?.[0]
+    const projectChanged = previous && previous[1] !== pid
     nodes.value = []
     loading.value = false
-    groupId.value = props.groupId ?? (opening ? '' : groupId.value)
+    if (opening || projectChanged) {
+      groupId.value = props.groupId ?? ''
+      groupPicked.value = false
+    }
     if (opening) {
       title.value = ''
       workBaseRef.value = ''
@@ -263,6 +274,16 @@ watch(
   },
   { immediate: true, flush: 'sync', deep: true },
 )
+
+// Shell assigns open before groupId, so observe the calling Group separately.
+// flowgate.v02test.0006 T / 0004-NR §2.1: keep sync timing without restarting loads.
+watch(() => props.groupId, next => {
+  if (!props.open || groupPicked.value) return
+  groupId.value = next ?? ''
+  if (!loading.value && nodes.value.length && !groups.value.some(group => group.id === groupId.value)) {
+    groupId.value = ''
+  }
+}, { flush: 'sync' })
 
 onBeforeUnmount(() => { generation += 1 })
 

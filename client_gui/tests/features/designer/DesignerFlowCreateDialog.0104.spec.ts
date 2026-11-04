@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
-import { setCurrentUser } from '@/core/auth/currentUser'
+import { loadCurrentUser, setCurrentUser } from '@/core/auth/currentUser'
 import { useProjectStore } from '@/features/project'
 import DesignerFlowCreateDialog from '@/features/designer/fileMenu/DesignerFlowCreateDialog.vue'
 import { createFlow, fetchWorkBaseOptions } from '@/features/project/api'
@@ -343,6 +343,146 @@ describe('T0014 compact dialog and accessible lookup feedback', () => {
     expect(el('base-error')).toBeNull()
     expect(el('base-retry')).toBeNull()
     expect(disabled()).toBe(false)
+  })
+})
+
+
+describe('v02test.0006 context-menu group selection', () => {
+  const groupTree = (pid = 'p') => ({ data: { data: { nodes: [
+    { id: `project:${pid}`, parent_id: null, node_type: 'project', label: pid },
+    { id: 'G_FALLBACK', parent_id: `project:${pid}`, node_type: 'module', label: 'fallback-module', title: 'Fallback group' },
+    { id: 'G_MENU', parent_id: `project:${pid}`, node_type: 'module', label: 'menu-module', title: 'Menu group' },
+    { id: 'G_PICKED', parent_id: `project:${pid}`, node_type: 'module', label: 'picked-module', title: 'Picked group' },
+  ] } } })
+  const selected = () => el<HTMLSelectElement>('group').value
+  const treeReads = () => get.mock.calls.filter(([url]) => url.endsWith('/groups/tree'))
+
+  beforeEach(() => {
+    get.mockImplementation(async (url: string) => url.endsWith('/groups/tree') ? groupTree(url.split('/')[4]) : options())
+  })
+
+  it('uses the calling group when open and groupId are assigned together, including the create payload', async () => {
+    const pending = deferred()
+    get.mockImplementation((url: string) => url.endsWith('/groups/tree') ? pending.promise : Promise.resolve(options()))
+    const create = vi.spyOn(store, 'createFlow')
+    const w = open({ open: false, groupId: 'G_FALLBACK' })
+    await w.setProps({ open: true, groupId: 'G_MENU' })
+    pending.resolve(groupTree())
+    await flushPromises()
+    expect(selected()).toBe('G_MENU')
+    expect(el<HTMLSelectElement>('group').selectedOptions[0].textContent).toBe('Menu group')
+    await input('title', 'Menu flow')
+    await click('submit')
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p', moduleName: 'menu-module' }))
+    expect(post).toHaveBeenCalledWith('/api/v1/groups', expect.objectContaining({ project_id: 'p', module: 'menu-module' }))
+  })
+
+  it.each(['user', 'userStatus'])('preserves a direct group choice through %s refresh and submits its module', async refresh => {
+    open({ groupId: 'G_MENU' })
+    await flushPromises()
+    await input('group', 'G_PICKED')
+    await input('title', 'Keep selection')
+    await input('base', 'feature')
+    if (refresh === 'user') {
+      account()
+    } else {
+      const auth = deferred()
+      get.mockImplementation((url: string) => url === '/auth/me' ? auth.promise
+        : Promise.resolve(url.endsWith('/groups/tree') ? groupTree(url.split('/')[4]) : options()))
+      const pending = loadCurrentUser()
+      await flushPromises()
+      expect(selected()).toBe('G_PICKED')
+      auth.resolve({ data: { username: 'alice', is_admin: false } })
+      await pending
+    }
+    await flushPromises()
+    expect(selected()).toBe('G_PICKED')
+    expect(el<HTMLInputElement>('title').value).toBe('Keep selection')
+    expect(el<HTMLSelectElement>('base').value).toBe('feature')
+    await click('submit')
+    expect(post).toHaveBeenCalledWith('/api/v1/groups', expect.objectContaining({ module: 'picked-module', work_base_ref: 'feature' }))
+  })
+
+  it('does not overwrite a direct choice when the calling group prop changes', async () => {
+    const w = open({ groupId: 'G_MENU' })
+    await flushPromises()
+    await input('group', 'G_PICKED')
+    await w.setProps({ groupId: 'G_FALLBACK' })
+    await flushPromises()
+    expect(selected()).toBe('G_PICKED')
+    expect(treeReads()).toHaveLength(1)
+    expect(optionReads()).toHaveLength(1)
+  })
+
+  it.each(['G_MENU', 'G_MISSING'])('validates a late calling group (%s) without reloading or resetting other inputs', async groupId => {
+    const w = open({ groupId: 'G_FALLBACK' })
+    await flushPromises()
+    await input('title', 'Preserved title')
+    await input('base', 'feature')
+    await w.setProps({ groupId })
+    await flushPromises()
+    expect(selected()).toBe(groupId === 'G_MENU' ? 'G_MENU' : '')
+    expect(el<HTMLInputElement>('title').value).toBe('Preserved title')
+    expect(el<HTMLSelectElement>('base').value).toBe('feature')
+    expect(treeReads()).toHaveLength(1)
+    expect(optionReads()).toHaveLength(1)
+    await click('submit')
+    if (groupId === 'G_MISSING') {
+      expect(document.querySelector('#dfc-group-error')).not.toBeNull()
+      expect(post).not.toHaveBeenCalled()
+    } else {
+      expect(post).toHaveBeenCalledWith('/api/v1/groups', expect.objectContaining({ module: 'menu-module' }))
+    }
+  })
+
+  it('leaves a missing calling group empty and blocks creation with the existing group error', async () => {
+    open({ groupId: 'G_MISSING' })
+    await flushPromises()
+    expect(selected()).toBe('')
+    await input('title', 'Missing group')
+    await click('submit')
+    expect(document.querySelector('#dfc-group-error')).not.toBeNull()
+    expect(el('group').getAttribute('aria-invalid')).toBe('true')
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it.each([null, undefined])('keeps the first-group default when no calling group is supplied (%s)', async groupId => {
+    open({ groupId })
+    await flushPromises()
+    expect(selected()).toBe('G_FALLBACK')
+  })
+
+  it('resets direct selection on consecutive opens and cancellation followed by reopen', async () => {
+    const w = open({ groupId: 'G_MENU' })
+    await flushPromises()
+    expect(selected()).toBe('G_MENU')
+    await input('group', 'G_PICKED')
+    await w.setProps({ open: false })
+    await w.setProps({ open: true, groupId: 'G_FALLBACK' })
+    await flushPromises()
+    expect(selected()).toBe('G_FALLBACK')
+    await input('group', 'G_PICKED')
+    await click('cancel')
+    expect(w.emitted('close')).toHaveLength(1)
+    await w.setProps({ open: false })
+    await w.setProps({ open: true, groupId: 'G_MENU' })
+    await flushPromises()
+    expect(selected()).toBe('G_MENU')
+  })
+
+  it('resets direct selection on project change and accepts the next calling group', async () => {
+    const w = open({ groupId: 'G_MENU' })
+    await flushPromises()
+    await input('group', 'G_PICKED')
+    await w.setProps({ projectId: 'q' })
+    await flushPromises()
+    expect(selected()).toBe('G_MENU')
+    await w.setProps({ groupId: 'G_FALLBACK' })
+    await flushPromises()
+    expect(selected()).toBe('G_FALLBACK')
+    await input('title', 'New project')
+    await click('submit')
+    expect(post).toHaveBeenCalledWith('/api/v1/groups', expect.objectContaining({ project_id: 'q', module: 'fallback-module' }))
   })
 })
 
