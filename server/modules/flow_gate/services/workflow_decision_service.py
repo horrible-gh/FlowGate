@@ -140,6 +140,15 @@ def provider_view_of(project_id: Optional[str]) -> dict:
             for row in (effective.get("providers") or [])
             if row.get("id")
         }
+        # flowgate.v02.0129 CH0012: a step may name a user's own runnable AI; it is registered
+        # (name shown, reviewer accepted) and the hop's start_run checks the requester owns it.
+        try:
+            personal = ai_settings_service.personal_runnable_names()
+        except Exception:  # noqa: BLE001 — the system view stays readable on its own
+            _log.warning("workflow sequence personal AI view failed for %s", project_id, exc_info=True)
+            personal = {}
+        for pid, name in personal.items():
+            providers.setdefault(str(pid), {"id": pid, "name": name, "owner_scope": "user"})
         return {"readable": True, "providers": providers}
     except Exception:  # noqa: BLE001 — a transient settings failure must not mark rows unavailable
         _log.warning("workflow sequence provider view failed for %s", project_id, exc_info=True)

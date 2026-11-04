@@ -192,6 +192,10 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
     run["remote_job"] = info
 
     # ① pre-check: no launch call, no Job.
+    # flowgate.v02.0129 CH0012 (approved (B)): a user's own AI runs only for its owner. Admission
+    # already refuses another requester; this keeps the remote boundary closed on its own.
+    if requester is not None and run.get("issued_to") != requester:
+        return _final(run, provider, UNAVAILABLE, "requester_not_owner")
     failure = agent_failure(target, requester)
     if failure is not None:
         return _final(run, provider, *failure)

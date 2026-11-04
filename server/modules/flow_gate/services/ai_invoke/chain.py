@@ -1634,11 +1634,12 @@ def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Opt
     if not provider_id:
         return None
     try:
-        chain = ai_settings_service.resolve_effective(project_id).get("providers") or []
+        # flowgate.v02.0129 CH0012: a user's own AI stays pinned; start_run checks its owner.
+        usable = ai_settings_service.provider_selectable_any_owner(project_id, provider_id)
     except Exception:  # noqa: BLE001 — start_run re-resolves and reports the real failure
         logger.warning("resume provider re-check failed for %s", project_id, exc_info=True)
         return None
-    if any(p.get("id") == provider_id for p in chain):
+    if usable:
         return provider_id
     logger.info(
         "paused chain %s pinned provider %s is no longer enabled — resuming unpinned",

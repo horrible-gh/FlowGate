@@ -16,6 +16,8 @@ evaluation scores on the criteria each role relies on (all criteria when a role 
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import json
 import unicodedata
@@ -63,13 +65,31 @@ def _description(value, invalid_code: str) -> str | None:
     return value.strip() or None
 
 
+# flowgate.v02.0129 CH0012: the signed-in user a group is read or edited for. Groups are shared,
+# but a user's own runnable AI is available only to its owner (approved (B)); the routes set this.
+_viewer: contextvars.ContextVar[str | None] = contextvars.ContextVar('ai_group_viewer', default=None)
+
+
+@contextlib.contextmanager
+def viewer(user_id: str | None):
+    token = _viewer.set(user_id)
+    try:
+        yield
+    finally:
+        _viewer.reset(token)
+
+
 def _registry_provider(provider_id: str) -> dict | None:
-    return ai_providers.get_row(None, provider_id)
+    # A user's own AI is still "registered" for every viewer (shown unavailable, not broken).
+    return ai_providers.get_row(None, provider_id) or ai_providers.get_user_row(provider_id)
 
 
-def _available() -> dict[str, dict]:
-    """The AI a group may use: every enabled system AI (the chain is the same in every project)."""
-    return {p['id']: p for p in ai_settings_service.resolve_global()['providers']}
+def _available(user_id: str | None = None) -> dict[str, dict]:
+    """The AI a group may use: every enabled system AI (the chain is the same in every project),
+    plus the viewer's own runnable AI (flowgate.v02.0129 CH0012)."""
+    user_id = user_id or _viewer.get()
+    providers = ai_settings_service.resolve_global()['providers'] + ai_settings_service.personal_selectable(user_id)
+    return {p['id']: p for p in providers}
 
 
 def _connection(provider_id: str, available: dict, registry: dict) -> dict:

@@ -130,7 +130,9 @@ def test_feature_off_read_write_errors_and_registry_errors(role_api, monkeypatch
 def test_actual_missing_163_tables_and_public_lookup_has_no_secrets(role_api):
     from modules.flow_gate.db import ai_providers
     row=ai_providers.get_public_row("aip_card")
-    assert set(row)=={"provider_id","name","exec_type","kind","enabled","owner_scope","owner_user_id"}
+    # flowgate.v02.0129 CH0012: where it runs (exec_location, target Agent id) is not a secret.
+    assert set(row)=={"provider_id","name","exec_type","kind","enabled","owner_scope","owner_user_id",
+                      "exec_location","target_agent_id"}
     _sql(role_api["db"],"DROP TABLE user_ai_role_defaults")
     assert role_api["roles_client"].get("/api/v1/me/ai-roles").status_code==409
     assert role_api["roles_client"].put("/api/v1/me/ai-roles",json=body()).status_code==409

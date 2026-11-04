@@ -8,6 +8,14 @@ def lookup(provider_id):
     return ai_providers.get_public_row(provider_id)
 
 
+def _personal_runnable(row):
+    """flowgate.v02.0129 CH0012: a user's own CLI AI assigned to a remote Agent runs on that Agent.
+    The card's run start (admission.start_run, requester = the run starter) still refuses it
+    unless the starter owns it, so a card never runs another user's AI nor swaps it for one."""
+    return ((row.get("exec_type") or "cli") == "cli" and row.get("exec_location") == "remote"
+            and bool(row.get("target_agent_id")))
+
+
 def check_availability(provider_id, level, user_id=None, project_id=None):
     def check():
         row = lookup(provider_id)
@@ -17,10 +25,12 @@ def check_availability(provider_id, level, user_id=None, project_id=None):
             return "inactive"
         if level == ACCOUNT:
             return None if (row.get("owner_scope") == "system" or row.get("owner_user_id") == user_id) else "not_selectable"
+        runnable_personal = row.get("owner_scope") != "system" and _personal_runnable(row)
         allowed = workspace_service.allowed_resource_ids(project_id, "provider")
-        if allowed is not None and provider_id not in allowed:
+        # The workspace allowlist governs shared AI; a runnable own AI is exempt (approved (A)).
+        if allowed is not None and provider_id not in allowed and not runnable_personal:
             return "not_allowed_in_project"
-        if row.get("owner_scope") != "system":
+        if row.get("owner_scope") != "system" and not runnable_personal:
             return "personal_not_runnable"
         return None
     try:

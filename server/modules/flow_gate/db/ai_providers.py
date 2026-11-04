@@ -18,8 +18,10 @@ Owner scope (flowgate.v02.0017 TR0003 rev7, migration 131): a row is owned by th
 (owner_scope='system', managed by an administrator) or by one user (owner_scope='user',
 owner_user_id). Projects no longer own rows, and since migration 135 keep no usage policy
 either (project_access is stored but no longer read). The "global" scope below means SYSTEM rows only: a
-user's own AI never appears in list_scope(None)/get_row(None, ...)/get_secret(), so no server
-execution path can pick it up (it runs on its owner's Agent, a follow-up execution layer).
+user's own AI never appears in list_scope(None)/get_row(None, ...)/get_secret(), so the
+server's fallback chains never pick it up. flowgate.v02.0129 CH0012: an owner may select their
+own remote-CLI AI explicitly; such a run reads it through get_runnable_row(id, requester), which
+returns a user row only to that row's owner, and it executes on the owner's Agent.
 The project_id branch stays for pre-131 callers and reads nothing after the migration.
 """
 from __future__ import annotations
@@ -176,8 +178,27 @@ def get_name_any(provider_id: str) -> Optional[str]:
 def get_public_row(provider_id: str) -> Optional[dict]:
     """Role availability lookup across owners: no secret columns or decryption (0113 T#2)."""
     return get_store()._fetch_one(
-        "SELECT provider_id, name, exec_type, kind, enabled, owner_scope, owner_user_id "
-        "FROM ai_providers WHERE provider_id = ?", [provider_id])
+        "SELECT provider_id, name, exec_type, kind, enabled, owner_scope, owner_user_id, "
+        "exec_location, target_agent_id FROM ai_providers WHERE provider_id = ?", [provider_id])
+
+
+def get_user_row(provider_id: str) -> Optional[dict]:
+    """A user-owned row by id, whatever its owner (callers check the owner themselves)."""
+    return _decrypt_row(get_store()._fetch_one(
+        f"SELECT {_COLUMNS} FROM ai_providers WHERE project_id IS NULL AND owner_scope = 'user' "
+        "AND deleted_at IS NULL AND provider_id = ?", [provider_id]))
+
+
+def get_runnable_row(provider_id: str, requester_user_id: Optional[str]) -> Optional[dict]:
+    """The row a run requested by requester_user_id may execute (flowgate.v02.0129 CH0012):
+    a system row, or a row the requester owns. Another user's AI is never returned."""
+    row = get_system_row(provider_id)
+    if row is not None or not requester_user_id:
+        return row
+    where, params = _user_where(requester_user_id)
+    return _decrypt_row(get_store()._fetch_one(
+        f"SELECT {_COLUMNS} FROM ai_providers WHERE {where} AND provider_id = ?",
+        params + [provider_id]))
 
 
 def get_system_row(provider_id: str) -> Optional[dict]:

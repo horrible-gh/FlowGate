@@ -336,8 +336,9 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                     loop_issue_builder.loop_stage = loop["current_stage"]
                 prepared = _svc()._prepare_retry_token(run)
                 selected_id = review.resolve_loop_provider(loop, loop["current_stage"])
-                enabled = ai_settings_service.resolve_effective(run["project_id"]).get("providers") or []
-                selected = next((item for item in enabled if item.get("id") == selected_id), None)
+                # flowgate.v02.0129 CH0012: the run's requester may have picked their own AI.
+                selected = ai_settings_service.selectable_provider(
+                    run["project_id"], selected_id, run.get("issued_to"))
                 if prepared is None or selected is None:
                     run["outcome"] = "none"
                     run["end_reason"] = "document_review_loop_transition_failed"
@@ -927,15 +928,12 @@ def _retry_provider_chain(run: dict) -> list[dict]:
     if not selected_provider_id:
         return []
     try:
-        effective = ai_settings_service.resolve_effective(run["project_id"])
-        chain = effective.get("providers") or []
+        # flowgate.v02.0129 CH0012: same provider, including the requester's own AI.
+        selected = ai_settings_service.selectable_provider(
+            run["project_id"], selected_provider_id, run.get("issued_to"))
     except Exception:
         logger.warning("ai-invoke retry chain lookup failed for %s", run["run_id"], exc_info=True)
         return []
-    selected = next(
-        (provider for provider in chain if provider.get("id") == selected_provider_id),
-        None,
-    )
     return [selected] if selected else []
 
 

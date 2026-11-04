@@ -1185,9 +1185,24 @@ def test_job_keeps_the_run_project_for_shared_and_personal_connections(env, monk
     monkeypatch.setattr(jobs.AgentJobService, "_requester_allowed", lambda self, user, project: True)
     personal_agent = FakeAgent(env, "agt_p", completes())
     personal_agent.start()
-    run = make_run(project_id="prj_personal")
+    run = make_run(project_id="prj_personal", issued_to="u-system")
     assert provider_cli._cli_execute(remote(target="agt_p"), "p", run)[0] == "started_ok"
     personal_agent.join(5)
     personal = env.store._fetch_one("SELECT * FROM agent_jobs WHERE ai_run_id=?", [run["run_id"]])
     assert (personal["project_id"], personal["requested_by_user_id"]) == ("prj_personal", "u-system")
     assert personal["lease_owner_agent_id"] == "agt_p" and personal["ai_run_id"] == run["run_id"]
+
+
+# ── CH0012 (approved (B)): a personal connection runs only for its owner ──────────
+
+def test_a_personal_connection_refuses_a_run_requested_by_another_user(env, monkeypatch):
+    env.store._execute("UPDATE users SET is_active=1 WHERE user_id='u-system'")
+    env.creds["agt_p"] = add_agent(env.store, "agt_p", owner="u-system")
+    monkeypatch.setattr(provider_remote, "_binding", lambda provider: {"target_agent_id": "agt_p",
+                                                                       "requester": "u-system"})
+    run = make_run(project_id="prj_personal", issued_to="someone-else")
+    assert provider_cli._cli_execute(remote(target="agt_p"), "p", run) == (
+        "spawn_failed", "remote_agent_unavailable: requester_not_owner")
+    assert run["remote_final_failure"]["code"] == "remote_agent_unavailable"
+    # Final: no launch approval, no Job, no local fallback.
+    assert jobs_rows(env) == [] and env.launches == [] and env.local_calls == []

@@ -164,9 +164,16 @@ def _enabled_provider_chain(project_id: Optional[str]) -> list[dict]:
 
 
 def _provider_enabled(project_id: Optional[str], provider_id: Optional[str]) -> bool:
-    return bool(provider_id) and any(
-        p.get("id") == provider_id for p in _enabled_provider_chain(project_id)
-    )
+    """An explicit pick that can still run. flowgate.v02.0129 CH0012: a user's own runnable AI
+    counts too -- the hop's start_run (requester = issued_to) refuses it unless the requester
+    owns it, so it is never silently replaced by the project default here."""
+    if not provider_id or not project_id:
+        return False
+    try:
+        return ai_settings_service.provider_selectable_any_owner(project_id, provider_id)
+    except Exception:  # noqa: BLE001 — start_run re-resolves and reports the real failure
+        logger.warning("review gate provider check failed for %s", project_id, exc_info=True)
+        return False
 
 
 def _first_enabled_provider_id(project_id: Optional[str]) -> Optional[str]:

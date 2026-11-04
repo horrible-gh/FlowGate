@@ -720,11 +720,17 @@ def list_runtime_providers(project_id: str, user_id: Optional[str] = None) -> di
     caller's own default AI when this project can run it (flowgate.v02.0017 CH0006 (3))."""
     effective = (ai_settings_service.resolve_effective(project_id, user_id) if user_id
                  else ai_settings_service.resolve_effective(project_id))
+    # flowgate.v02.0129 CH0012: the caller's own runnable (remote CLI, Agent-assigned) AI are
+    # offered after the system AI -- the chat composer, card settings and start dialogs all
+    # read this list. The caller's default may be one of them.
+    personal = ai_settings_service.personal_selectable(user_id)
+    providers = (effective.get("providers") or []) + personal
     return {
         "ok": True,
         "project": project_id,
-        "providers": [oracle._provider_brief(provider) for provider in effective.get("providers") or []],
-        "default_provider_id": effective.get("default_provider_id"),
+        "providers": [oracle._provider_brief(provider) for provider in providers],
+        "default_provider_id": (ai_settings_service.personal_default_id(user_id, personal)
+                                or effective.get("default_provider_id")),
         # flowgate.default.0490 T0005 §3.5: the only metadata endpoint every execution
         # dialog already calls, so this is the SSOT for the client-side max/min instead of
         # a screen fetching /system/settings (system.settings.manage-gated, out of reach
@@ -910,7 +916,9 @@ def _register_run(run: dict, chain: list[dict]) -> None:
         required.update(pid for pid in (loop.get("reviewer_provider_id"),
                                        loop.get("rework_provider_id")) if pid)
         for pid in sorted(required):
-            row = ai_providers.get_system_row(pid)
+            # flowgate.v02.0129 CH0012: a system row, or the requester's own row -- never
+            # another user's AI (approved (B): refused, not replaced).
+            row = ai_providers.get_runnable_row(pid, run.get("issued_to"))
             if row is None or not row.get("enabled"):
                 run["handoff_gate"].abort()
                 try:
@@ -1108,7 +1116,15 @@ def start_run(
         continuation_auto_approve_item_seqs
     )
     effective = ai_settings_service.resolve_effective(project_id)
-    chain = effective.get("providers") or []
+    # flowgate.v02.0129 CH0012: explicit choices may name the requester's own runnable AI;
+    # the unpinned fallback chain below is narrowed back to system AI.
+    try:
+        personal = ai_settings_service.personal_selectable(issued_to)
+    except Exception:  # noqa: BLE001 -- fail closed: an unreadable own-AI list selects none of them
+        logger.warning("ai-invoke: own AI lookup failed for the requester", exc_info=True)
+        personal = []
+    chain = (effective.get("providers") or []) + personal
+    selectable_chain = chain
     chain_source = effective.get("source")
     selected_provider_source = (
         "review_loop" if document_review_loop is not None else "project_default"
@@ -1202,6 +1218,9 @@ def start_run(
                 chain = [selected]
                 selected_provider_source = "document_type"
 
+    if chain is selectable_chain:
+        # No tier named a provider: this is the fallback chain, which stays system AI only.
+        chain = [p for p in chain if p.get("owner_scope") != "user"]
     if mode == "continuous" and stored_provider_id and not stored_provider_active and chain:
         logger.warning(
             "continuation hop provider fallback: %s not active for %s item_seq %s, "
