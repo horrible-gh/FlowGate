@@ -221,6 +221,8 @@ def retry(run_id: str, node_key: str, decision_id: str, user_id: str, body: dict
             raise AssertionError("gate decision moved under the Flow guard")
         repo.insert_recovery_request(decision_id, user_id, repo.RETRY, body["request_id"], fp, 202,
                                      {"outcome": "resumed", "job_id": job["job_id"]})
+        from flowgate.gate_decisions.run_hold import gate_resume_wake
+        gate_resume_wake(legacy.load_context(run, job.get("project_id"), user_id, jobs), repo.get(decision_id))
         reopened = legacy.get_job(job["job_id"])
         jobs.append(lambda: legacy.notify_job(reopened))
         return answer(run_id, decision_id, 202)

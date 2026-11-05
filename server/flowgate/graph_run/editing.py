@@ -20,7 +20,11 @@ def require_editable(flow_id: str, node_key=None) -> None:
     if not run:
         return
     params = {"flow_id": flow_id, "run_id": run["run_id"], "status": run["status"]}
-    if run["status"] in LOCKED:
+    from flowgate.gate_decisions.run_hold import gate_live
+    active = gate_live(run["run_id"])
+    if active:
+        params["reason"] = "gate_git_active"
+    if run["status"] in LOCKED or active:
         raise GraphApiError(409, "graph_run_locked", params)
     if node_key is not None and any(r["node_key"] == node_key and r["status"] in PROTECTED
                                     for r in run_store.node_runs(run["run_id"])):

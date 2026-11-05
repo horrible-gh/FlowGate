@@ -58,7 +58,11 @@ def require_settable(flow_id: str, node_key: str, on: bool) -> None:
     if not run:
         return
     params = {"flow_id": flow_id, "run_id": run["run_id"], "status": run["status"]}
-    if run["status"] in editing.LOCKED:
+    from flowgate.gate_decisions.run_hold import gate_live
+    active = gate_live(run["run_id"])
+    if active:
+        params["reason"] = "gate_git_active"
+    if run["status"] in editing.LOCKED or active:
         raise engine.GraphApiError(409, "graph_run_locked", params)
     if on and any(r["node_key"] == node_key and r["status"] == "done" for r in engine.node_runs(run["run_id"])):
         raise engine.GraphApiError(409, DONE_NODE, {**params, "node_key": node_key})

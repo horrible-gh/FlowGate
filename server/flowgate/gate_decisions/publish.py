@@ -941,6 +941,11 @@ def _complete(ctx, plan: Plan) -> None:
         if not repo.move(plan.decision_id, decision["decision_version"], repo.SUCCEEDED):
             raise AssertionError("gate decision moved under its job's lease")
         stored = repo.get(plan.decision_id)
+        from flowgate.gate_decisions.run_hold import gate_resume_wake
+        gate_resume_wake(run_ctx, decision)
+        # An asynchronous publish must not use either generic approval wake/continuation hook to bypass intent.
+        run_ctx.gate_resume_deferred = run_ctx.run.get("status") != "running"
+        state = legacy.read_run_state(run_ctx)
         intake._apply(run_ctx, state, policies, legacy.GATE_EVENTS["confirmed"], plan.node_key,
                       decision["actor_user_id"], decision.get("decision_comment"), stored)
         return {"status": run["status"]}
@@ -1034,6 +1039,15 @@ def run(ctx, entry: str):
         return None
     plan = plan_of(job, decision)
     try:
+        # All claims, including Sweeper and db_finalize-only retries, share the same command-intent fence.
+        from flowgate.gate_decisions.run_hold import gate_resume_wake
+        def wake(run, jobs):
+            store.ensure_lease(ctx)
+            current = repo.get(plan.decision_id)
+            if current is None or current.get("job_id") != ctx.job_id or current["status"] not in repo.RESERVING:
+                raise store.LeaseLost(ctx.job_id)
+            gate_resume_wake(legacy.load_context(run, plan.project_id, current["actor_user_id"], jobs), current)
+        _outside_job_context(ctx, lambda: legacy.guarded_run(plan.run_id, wake))
         if (job.get("phase") or "start") != "db_finalize":
             if decision["status"] != repo.ACCEPTED:
                 _guarded(ctx, plan, lambda current: current["status"] == repo.ACCEPTED or

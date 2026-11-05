@@ -39,6 +39,7 @@ def run_status_payload(run: dict, seq: int, from_status: Optional[str], to_statu
         "flow_id": run["group_id"], "run_id": run["run_id"], "revision_no": run["revision_no"],
         "event_seq": seq, "from": from_status, "to": to_status, "cause": cause,
         "actor_user_id": actor_user_id if cause not in AUTO_CAUSES else None, "reason": reason,
+        "step_node_keys": run.get("step_node_keys"), "active_group_id": run.get("active_group_id"),
         "mode": run.get("run_mode") or "full", "idle_reason": run.get("idle_reason") if to_status == "idle" else None,
     }
 

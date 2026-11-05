@@ -157,6 +157,9 @@ def approval_wakes(ctx) -> bool:
     (``frontier.defers``)? ``wake_graph_run``'s conditions, judged on the guarded context: idle, the Flow's active run,
     not stopped, no Time Machine operation unfinished; and not inside an explicit command, nor a step with no targets."""
     run = ctx.run
+    # 0132 T#3: the asynchronous gate publisher already judged its recorded command intent.
+    if getattr(ctx, "gate_resume_deferred", False):
+        return False
     if run.get("status") != engine.IDLE or run.get("idle_reason") == "stopped" or ctx.command_pending:
         return False
     if run.get("active_group_id") != ctx.flow_id:

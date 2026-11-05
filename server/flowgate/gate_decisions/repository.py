@@ -53,7 +53,7 @@ _DECISION_INSERT = (
     "decision_id", "group_id", "run_id", "node_key", "attempt_id", "revision_no", "policy_version", "actor_user_id",
     "request_id", "request_fingerprint", "decision", "decision_comment", "status", "settings_version", "settings_json",
     "frozen_sha", "input_attempt_ref", "target_remote", "target_branch", "target_sha", "job_id",
-    "previous_decision_id", "time_machine_ref", "accepted_at", "completed_at")
+    "previous_decision_id", "time_machine_ref", "accepted_at", "completed_at", "accept_wake", "accept_event_seq")
 _DECISION_UPDATABLE = frozenset({
     "job_id", "last_error_code", "frozen_sha", "target_sha", "target_remote", "target_branch", "settings_json",
     "settings_version", "close_kind", "closed_by", "close_reason", "closed_at", "recovery_reset_required",
@@ -167,8 +167,8 @@ def reservation(run_id: str, node_key: str) -> Optional[dict]:
 
 def reservations_of_run(run_id: str) -> dict[str, dict]:
     """flowgate.v02.0085 T#2: ``{node key: decision}`` of every gate of the run held by a decision right now (accepted,
-    failed or recovery_required) - unfinished apply work the run's settlement must not take for done or for a person's
-    wait (D0007 §3.3)."""
+    failed or recovery_required). A reservation retains card ownership and prevents completion. 0132 T#3 separates
+    its LIVE/PARKED activity in run_hold: parked reservations permit run idle (NR §4.4)."""
     if not available():
         return {}
     marks = ", ".join("?" for _ in RESERVING)

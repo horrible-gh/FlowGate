@@ -16,13 +16,17 @@ from flowgate.graph_run import execution, execution_store as ledger, fencing, se
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.services import graph_source_hooks
 
+_RECOVER_STOP = stop.recover
+
 
 @pytest.fixture
 def fenced(db, monkeypatch):
     # The run columns a Stop writes (the T#4 fixture keeps only the ledger's).
     for column in ("stopped_at TEXT", "updated_at TEXT", "finished_at TEXT",
                    "last_event_seq INTEGER DEFAULT 0", "revision_no INTEGER DEFAULT 1"):
-        db._execute("ALTER TABLE graph_runs ADD COLUMN " + column)
+        if column.split()[0] not in {r["name"] for r in db._fetch_all("PRAGMA table_info(graph_runs)")}:
+            db._execute("ALTER TABLE graph_runs ADD COLUMN " + column)
+    db._execute("CREATE TABLE IF NOT EXISTS tokens(token_id TEXT PRIMARY KEY, ai_run_id TEXT)")
     recorded = []
     monkeypatch.setattr(fencing, "record", lambda row, operation, why, **extra:
                         recorded.append((operation, why, (row or {}).get("attempt_id"))))
@@ -32,6 +36,8 @@ def fenced(db, monkeypatch):
 
 @pytest.fixture
 def stopping(fenced, monkeypatch):
+    # The ledger-only parent suppresses startup recovery; Stop tests exercise the real recovery function.
+    monkeypatch.setattr(stop, "recover", _RECOVER_STOP)
     def guard(_flow, body):
         with fenced.transaction():
             return body()
@@ -44,7 +50,7 @@ def stopping(fenced, monkeypatch):
     monkeypatch.setattr(run_apply, "emit_node_state", lambda ctx, key, frm, to, cause, doc, *a, **k:
                         events.append(("node", key, frm, to, cause)))
     monkeypatch.setattr(stop, "_kill", Mock())
-    monkeypatch.setattr(stop, "_revoke", lambda tokens: fenced.revoked.extend(tokens))
+    monkeypatch.setattr(stop, "_revoke", lambda tokens, cause=None: fenced.revoked.extend(tokens))
     monkeypatch.setattr(stop, "KILL_WAIT_SEC", 0)
     from modules.flow_gate.graph_workflow.services import run_service
     monkeypatch.setattr(run_service, "run_payload", lambda run_id, with_nodes: run_store.run_by_id(run_id))
@@ -343,6 +349,7 @@ def test_result_binder_contact_is_refused_while_stopping(fenced):
     fenced._execute("INSERT INTO graph_run_token_map(token_id,run_id,node_key,stage,mapped_at,attempt_id) "
                     "VALUES('old','run','node',NULL,'0',?)", [fenced.attempt])
     fenced._execute("UPDATE graph_node_attempts SET status='invalidated', active_node_key=NULL")
+    fenced._execute("INSERT INTO tokens(token_id,ai_run_id) VALUES('old',NULL)")
     assert execution.result_refused(run_store.run_by_id("run"), "inbox_registered", {"token_id": "old"})
 
 
@@ -369,7 +376,7 @@ def test_review_transition_refused_while_stopping(fenced):
 def test_hop_request_refused_while_stopping(fenced, monkeypatch):
     fenced._execute("UPDATE graph_runs SET status='stopping'")
     monkeypatch.setattr(execution, "_attempt_for_document", lambda flow, doc: {
-        "attempt_id": fenced.attempt, "run_id": "run", "status": "active"})
+        "attempt_id": fenced.attempt, "run_id": "run", "node_key": "node", "status": "active"})
     with pytest.raises(graph_source_hooks.GraphAttemptInactive):
         execution.request_hop("flow", {}, {"slot": {"doc_id": "doc"}}, "review")
     assert run_store._one("SELECT COUNT(*) AS n FROM graph_attempt_runs", [])["n"] == 0
@@ -417,9 +424,11 @@ def test_explicit_review_hop_on_an_idle_run_and_automatic_refused(fenced, monkey
     fenced._execute("UPDATE graph_runs SET status='idle', idle_reason='waiting_approval'")
     _guard_in(fenced, monkeypatch, fencing)
     monkeypatch.setattr(execution, "_attempt_for_document", lambda flow, doc: {
-        "attempt_id": fenced.attempt, "run_id": "run", "status": "active"})
+        "attempt_id": fenced.attempt, "run_id": "run", "node_key": "node", "status": "active"})
     monkeypatch.setattr(run_apply, "load_context", lambda run, project, actor: SimpleNamespace(run=run))
     monkeypatch.setattr(execution.db_groups, "get_by_id", lambda flow: {"project_id": "proj"})
+    from modules.flow_gate.db import documents
+    monkeypatch.setattr(documents, "get_by_id", lambda did: {"doc_id": did, "revision_no": 1})
     promoted = Mock()
     monkeypatch.setattr(run_apply, "settle_run", promoted)
     with pytest.raises(graph_source_hooks.GraphAttemptInactive):

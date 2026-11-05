@@ -38,10 +38,16 @@ def result_db(db, monkeypatch, tmp_path):
         INSERT INTO documents VALUES ('doc','flow','TR',1,'feat(graph): commit attempt');
         INSERT INTO documents VALUES ('legacy','flow','TR',2,'fix(graph): legacy');
     """)
+    # The parent owns current attempt columns and an empty ledger stub.
+    # Replace only that empty in-memory stub with this fixture's complete ledger.
+    assert db._fetch_one("SELECT COUNT(*) AS n FROM tr_commit_ledger")["n"] == 0
+    db.db.execute("DROP TABLE tr_commit_ledger")
     db.db.executescript((MIGRATIONS / "sqlite" / "086d_tr_commit_ledger.sql").read_text(encoding="utf-8"))
     db._execute("INSERT INTO tr_commit_ledger(group_id,doc_id,state,skip_reason,created_at,updated_at) "
                 "VALUES ('flow','legacy','no_commit','no_changes','now','now')")
-    db.db.executescript((MIGRATIONS / "sqlite" / "153a_graph_attempt_results.sql").read_text(encoding="utf-8"))
+    migration = (MIGRATIONS / "sqlite" / "153a_graph_attempt_results.sql").read_text(encoding="utf-8")
+    # The parent already migrated attempt columns; apply only this fresh ledger's portion.
+    db.db.executescript(migration[migration.index("ALTER TABLE tr_commit_ledger"):])
     db._execute("UPDATE graph_node_attempts SET input_commit=?, input_source='integration_head' "
                 "WHERE attempt_id=?", [BASE, db.attempt])
     db._execute("INSERT INTO tokens VALUES ('author','new',NULL)")

@@ -582,7 +582,9 @@ def test_a_stop_during_the_job_cancels_without_effects_and_parks_with_them(git_e
         return
     assert (job["status"], job["last_error_code"]) == ("recovery_required", "stop_requested")
     assert _decision(env, did)["status"] == "recovery_required"
-    assert run["status"] == "stopping" and _states(env)[g] == "open"          # not a Stop end yet
+    # 0132 T#3: parked effects retain the gate while Stop itself finishes.
+    assert (run["status"], run["idle_reason"]) == ("idle", "stopped")
+    assert _states(env)[g] == "open"
     _act(env, run_id, g, did, "resolve", {"request_id": "ab1", "expected_decision_version": _version(env, did),
                                          "resolution": "abandon", "reason": "stopped after the merge",
                                          **_evidence(env, g)}, 200)

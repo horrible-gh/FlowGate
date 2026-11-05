@@ -35,8 +35,8 @@ Then the decision (its run event carries ``gate_decision_id``, ``history.decisio
   command goes on at once, a step stays within its targets, a paused / stopped run's propagation waits). -> 200
 - confirm with work: stored ``accepted`` with its settings snapshot, target and ``gate_publish`` job in the same
   transaction; the gate stays open and held (no other decision, no settings change, nothing follows it). An idle run
-  whose command waited for this gate goes on running while the job is unfinished; the settlement never takes the run
-  for completed or for a person's wait meanwhile (``flowgate.graph_run.settle``). Running the job is a later card's.
+  whose command waited for this gate goes on running while its job is LIVE (0132 T#3). A parked reservation permits
+  idle, retains the confirm settings lock and never completes the run. The recorded acceptance intent controls resume.
   -> 202 ``{"run", "decision", "job"}``
 
 An idle run stopped with its gate still open (the existing defence) takes the decision, but its propagation and
@@ -125,24 +125,10 @@ def _attempt_of(run_id: str, node_key: str) -> str:
     return legacy.run_store.active_attempt_id(run_id, node_key) or f"{PRE151_ATTEMPT_PREFIX}{run_id}:{node_key}"
 
 
-def _wake(ctx) -> None:
-    """An idle run whose command waited for this gate (the approval wake's own test, ``command._waiting_command``)
-    goes on running while the accepted confirm's job is unfinished, so its end propagates as a running command's
-    would. Any other idle run stays idle (a stopped one waits for the next command). flowgate.v02.0119 T#3 (T-2): the
-    confirm wait is ``waiting_confirm`` — or ``waiting_approval`` stored before T-2, read as the confirm wait of this
-    open gate (``settle.CONFIRM_WAITS``, never converted); a ``needs_intervention`` run is not this gate's wait."""
-    from flowgate.graph_run import command, settle
-    run = ctx.run
-    if run.get("status") != IDLE or run.get("idle_reason") not in settle.CONFIRM_WAITS:
-        return
-    if run.get("run_mode") not in ("full", "step") or (run["run_mode"] == "step" and run.get("step_node_keys") is None):
-        return
-    if run.get("active_group_id") != ctx.flow_id or not command._waiting_command(ctx):
-        return
-    if legacy.run_store.set_run_status(ctx.run_id, IDLE, RUNNING) != 1:
-        raise AssertionError("gate publish wake missed its run")
-    run["idle_reason"] = None
-    legacy.emit_run_status(ctx, IDLE, RUNNING, WAKE_CAUSE, WAKE_REASON)
+def _wake(ctx, decision: dict) -> None:
+    """Initial intake uses the same wake as retry/claim/completion, with the recorded acceptance intent."""
+    from flowgate.gate_decisions.run_hold import gate_resume_wake
+    gate_resume_wake(ctx, decision, reason=WAKE_REASON)
 
 
 def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Optional[str], user_id: str,
@@ -250,11 +236,15 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
             project_id, {"decision_id": decision_id, "group_id": flow_id, "run_id": run_id, "node_key": node_key},
             group_id=flow_id, target_key=node_key, requested_by=user_id,
             payload={"decision_id": decision_id, "run_id": run_id, "node_key": node_key, "attempt_id": attempt_id})
-        stored = rounds.insert_decision({**base, **target, "decision_id": decision_id, "status": repo.ACCEPTED,
+        from flowgate.gate_decisions.run_hold import accept_intent
+        stored = rounds.insert_decision({**base, **target, **accept_intent(ctx, node_key),
+                                       "decision_id": decision_id, "status": repo.ACCEPTED,
                                        "settings": {**snapshot, "group_branch": plan["group_branch"],
-                                                    "group_head": plan["group_head"]},
+                                                    "group_head": plan["group_head"],
+                                                    "accept_command": {k: ctx.run.get(k) for k in
+                                                        ("run_mode", "step_node_keys", "active_group_id")}},
                                        "job_id": job["job_id"]})
-        _wake(ctx)
+        _wake(ctx, stored)
         legacy.settle_run(ctx)
         jobs.append(lambda: legacy.notify_job(job))
         return _answer(run_id, stored)
@@ -303,6 +293,8 @@ def run_wire(run: dict, rows: list[dict]) -> dict:
     if not gates:
         return {}
     reserved = repo.reservations_of_run(run["run_id"])
+    from flowgate.gate_decisions.run_hold import gate_activity, LIVE, PARKED
+    activity = gate_activity(run["run_id"])
     blocked = blocked_reason(flow_id)
     decided = legacy.gate_rule_decided(run["run_id"])
     out = {}
@@ -315,7 +307,8 @@ def run_wire(run: dict, rows: list[dict]) -> dict:
         job = legacy.get_job(held.get("job_id")) if held else None
         out[key] = {
             "decision": _summary(latest), "decision_in_progress": held is not None,
-            "job": _job_wire(job),
+            "job": _job_wire(job), "git_active": activity.get(key) == LIVE,
+            "parked": activity.get(key) == PARKED,
             # T#3 (D0007 §7.3): what the common Git job actions may do with the held decision now
             "recovery": ({"decision_id": held["decision_id"], "decision_version": held["decision_version"],
                           "status": held["status"], **recovery_flags(held, job)} if held else None),

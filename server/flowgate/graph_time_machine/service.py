@@ -27,6 +27,16 @@ def inspect(flow_id: str, node_key: str, locale: str = "ko") -> dict:
 
 def require_safe(flow_id: str, node_key: str, locale: str = "ko") -> dict:
     assert in_transaction(), "Time Machine's deciding read requires the caller's Flow guard"
+    from flowgate.graph_run.editing import LOCKED
+    from flowgate.gate_decisions.run_hold import gate_live
+    from modules.flow_gate.graph_workflow.store import run_store
+    run = run_store.current_run(flow_id)
+    active = bool(run and gate_live(run["run_id"]))
+    if run and (run["status"] in LOCKED or active):
+        params = {"flow_id": flow_id, "run_id": run["run_id"], "status": run["status"]}
+        if active:
+            params["reason"] = "gate_git_active"
+        raise GraphApiError(409, "graph_run_locked", params)
     result = _assess(flow_id, node_key, locale)
     if not result["allowed"]:
         raise GraphApiError(409, "graph_time_machine_blocked", result)
