@@ -113,6 +113,42 @@ def _write_askpass() -> tuple[Path, Path]:
     return launcher, tmpdir
 
 
+
+def git_failure_cause(proc: subprocess.CompletedProcess) -> str:
+    """Conservative stderr classification (0134 T#1).
+
+    Network/auth phrases come from status.py's existing probes; bare HTTP status
+    numbers and generic 'unable to access' are ambiguous and stay unknown.
+    Ref locks require Git's lock diagnostic, never a generic 'permission denied'.
+    """
+    stderr = (proc.stderr or "").strip().lower()
+    if proc.returncode == -1 and stderr == "timeout_expired":
+        return "timeout"
+    if any(p in stderr for p in (
+        "authentication failed", "invalid username", "could not read username",
+        "permission denied (publickey",
+    )):
+        return "auth"
+    if any(p in stderr for p in (
+        "could not resolve host", "connection refused", "connection timed out",
+        "network is unreachable",
+    )):
+        return "network"
+    if "cannot lock ref" in stderr or (".lock" in stderr and "file exists" in stderr):
+        return "ref_lock"
+    return "unknown"
+
+
+def git_failure_details(proc: subprocess.CompletedProcess, stage: str) -> dict:
+    return {"stage": stage, "cause": git_failure_cause(proc)}
+
+
+def _git_result(args, returncode, stdout, stderr) -> subprocess.CompletedProcess:
+    proc = subprocess.CompletedProcess(args, returncode, stdout, stderr)
+    proc.cause = git_failure_cause(proc)
+    return proc
+
+
 def _run_git(
     args: list[str],
     *,
@@ -136,7 +172,7 @@ def _run_git(
     if budget is not None:
         left = budget.remaining()
         if left <= 0:
-            return subprocess.CompletedProcess(["git", *args], returncode=-1, stdout="", stderr="timeout_expired")
+            return _git_result(["git", *args], returncode=-1, stdout="", stderr="timeout_expired")
         timeout = min(timeout, left)
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -172,7 +208,7 @@ def _run_git(
         except subprocess.TimeoutExpired:
             if budget is not None and budget.remaining() <= 0:
                 budget.expired = True
-            return subprocess.CompletedProcess(
+            return _git_result(
                 ["git", *args], returncode=-1, stdout="", stderr="timeout_expired"
             )
         except FileNotFoundError:
@@ -180,7 +216,7 @@ def _run_git(
                 500, "git_unavailable",
                 "git binary not found on server (install git in the runtime image)",
             )
-        proc = subprocess.CompletedProcess(
+        proc = _git_result(
             proc.args, proc.returncode,
             _scrub(proc.stdout, secret), _scrub(proc.stderr, secret),
         )
