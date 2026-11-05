@@ -2572,6 +2572,15 @@ export default {
       // 0674 T0004 §2-3 — Git 後処理が待機/復旧状態に残った最終承認(ジョブが引き継いで処理する)。
       approval_job_queued: '最終承認の Git 後処理が待機中です ({stage}、ジョブ {job})。終わるまで承認ボタンをロックします。',
       approval_job_recovery: '最終承認の Git 後処理が復旧待ちです (ジョブ {job})。サーバーが再判定します。続く場合は管理者の確認が必要です。その間は承認ボタンをロックします。',
+      approval_job_retry_wait: '最終承認の Git 後処理が再試行待ちです (ジョブ {job})。サーバーが自動で再試行します。その間は承認ボタンをロックします。',
+      approval_job_unknown: 'サーバーがこのグループの最終承認をまだ処理中です。ジョブ情報を確認する間、承認ボタンをロックします。',
+      approval_job_error: '直近のエラー: {code}{where}。',
+      approval_job_attempts: '試行 {count}/{max}。',
+      approval_job_next_at: '次の試行 {time}。',
+      approval_job_next_check: '次の自動再評価 {time}。',
+      approval_job_cancel: '承認ジョブをキャンセル',
+      approval_job_cancel_accepted: 'キャンセルを要求しました。',
+      approval_job_cancel_failed: '現在はキャンセルできません。状態を再確認します。',
       approval_job_blocker: '待機理由: {domain} ロック、保持 {holder}。',
       approval_job_done: '待機していた最終承認が完了しました。',
       approval_job_stage: {

@@ -371,7 +371,9 @@ def cancel_unfrozen_waiting(job_id: str, now: str, result: str) -> int:
         "lease_owner = NULL, lease_token = NULL, lease_until = NULL, updated_at = ?, "
         "touch_seq = touch_seq + 1 "
         "WHERE job_id = ? AND status IN ('freeze_wait','pending','blocked','retry_wait') "
-        "AND (has_freeze_phase = 0 OR freeze_record IS NULL)",
+        "AND (has_freeze_phase = 0 OR freeze_record IS NULL) "
+        "AND (kind <> 'final_approval_publish' OR "
+        "(lease_token IS NULL AND lease_owner IS NULL AND lease_until IS NULL))",
         [now, result, now, job_id],
     )
 
@@ -437,15 +439,39 @@ def gate_publish_park(job_id: str, now: str, code: str, note: str) -> int:
 
 
 def mark_cancel_for_release(job_id: str, release_intent: str, now: str) -> int:
-    """(b) Waiting job with a freeze record: flag it so only a release claim picks it up."""
+    """(b) Idle freeze job: persist release intent, including recovery before F1.
+    Only release may claim it; pin verification still gates its terminal state.
+    """
     return get_store()._execute_affected(
         "UPDATE operation_job "
-        "SET cancel_requested = 1, release_intent = ?, available_at = ?, updated_at = ?, "
+        "SET cancel_requested = 1, release_intent = ?, status = 'freeze_wait', available_at = ?, updated_at = ?, "
         "touch_seq = touch_seq + 1 "
-        "WHERE job_id = ? AND status IN ('freeze_wait','pending','blocked','retry_wait') "
-        "AND has_freeze_phase = 1 AND freeze_record IS NOT NULL "
-        "AND (status = 'freeze_wait' OR phase = 'publish_pending')",
+        "WHERE job_id = ? AND status IN ('freeze_wait','pending','blocked','retry_wait','recovery_required') "
+        "AND has_freeze_phase = 1 "
+        "AND release_intent IS NULL AND cancel_requested = 0 "
+        "AND lease_token IS NULL AND lease_owner IS NULL AND lease_until IS NULL "
+        "AND phase IN ('freeze_pending','F1','F3','publish_pending','admission','fetched')",
         [release_intent, now, now, job_id],
+    )
+
+
+def requeue_approval_recovery(job_id: str, now: str, threshold: str) -> int:
+    """Manual re-judge beyond the automatic window: same job, phase, evidence and intent.
+    A fenced old writer cannot write; resource locks still protect any live Git command.
+    """
+    from modules.flow_gate.services.git.job_store import approval_rejudgeable
+    if not approval_rejudgeable(get_job(job_id) or {}, threshold=threshold):
+        return 0
+    return get_store()._execute_affected(
+        "UPDATE operation_job SET status = CASE "
+        "WHEN release_intent IS NOT NULL OR phase IN ('freeze_pending','F1','F3') "
+        "THEN 'freeze_wait' ELSE 'retry_wait' END, "
+        "available_at = ?, lease_owner = NULL, lease_token = NULL, lease_until = NULL, "
+        "recovery_since = CASE WHEN release_intent IS NULL THEN NULL ELSE recovery_since END, "
+        "updated_at = ?, touch_seq = touch_seq + 1 "
+        "WHERE job_id = ? AND kind = 'final_approval_publish' AND status = 'recovery_required' "
+        "AND ((lease_token IS NULL AND lease_owner IS NULL AND lease_until IS NULL) OR lease_until < ?)",
+        [now, now, job_id, threshold],
     )
 
 
@@ -453,7 +479,7 @@ def mark_cancel_requested(job_id: str, now: str) -> int:
     """(c) Executing job: flag only; the executor checks it at a phase boundary."""
     return get_store()._execute_affected(
         "UPDATE operation_job SET cancel_requested = 1, updated_at = ?, touch_seq = touch_seq + 1 "
-        "WHERE job_id = ? AND status IN ('freezing','running')",
+        "WHERE job_id = ? AND status IN ('freezing','running') AND kind <> 'final_approval_publish'",
         [now, job_id],
     )
 

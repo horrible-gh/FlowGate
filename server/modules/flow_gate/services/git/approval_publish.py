@@ -38,10 +38,11 @@ Deviations from L, recorded as design changes (0669 chat):
   0594 attempt recovery), which a lock-free decider must not run. The evidence is the
   same one 4.4 names (attempt merge inputs, remote ref via ``_settle_landed_merge``);
   an outcome that cannot be proven parks the job in recovery_required.
-* A 4xx Git result (base dirty, open conflict elsewhere, invalid target, frozen source
-  mismatch, ...) is PERMANENT: the approval fails as it did before and the freeze is
-  released. ``git_busy`` and 5xx are TRANSIENT (retry_wait with backoff); past
-  RETRY_MAX_ATTEMPTS they fail through freeze_release too.
+* Stage/cause classify Git failures (0134 T#1): fetch/merge timeout, network and
+  ref locks, push_rejected and git_busy retry with backoff. Divergence/auth get
+  one recheck; unknown failures stop after three identical consecutive results.
+  A durable deadline also bounds retry waiting. Every failure exits through the
+  existing freeze_release protocol; db_finalize after terminal Git is separate.
 * The job's execution never asks for the approver's live permissions: like the
   conflict-deferred approval (``approval_intent._DEFERRED_PERMISSIONS``) the grant was
   checked by the request's precheck when the job was created.
@@ -53,8 +54,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Optional
 
 from modules.flow_gate.db import documents as db_documents
@@ -67,7 +70,7 @@ from . import job_runner as runner
 from . import job_store as store
 from . import lock_manager as locks
 from . import merge_target
-from .credentials import GitServiceError
+from .credentials import GitServiceError, _scrub
 from .finalize import APPROVAL_FINALIZE_ACTIONS, ApprovalFinalizeContext
 
 _log = logging.getLogger(__name__)
@@ -86,7 +89,13 @@ QUEUED = "queued"
 RECOVERY = "recovery_required"
 FAILED = "failed"
 
-_TRANSIENT_CODES = frozenset(("git_busy",))
+_TRANSIENT_CODES = frozenset(("git_busy", "push_rejected"))
+_PERSISTENT_CODES = frozenset(("target_diverged", "base_diverged"))
+_TRANSIENT_CAUSES = frozenset(("timeout", "network", "ref_lock"))
+# 2 total observations = one recheck; unknown gets two rechecks. Both < default 8.
+_PERSISTENT_MAX_ATTEMPTS = 2
+_UNKNOWN_MAX_CONSECUTIVE = 3
+_RETRY_EVIDENCE = "publish_retry"
 _LEASE_CLEARED = {"lease_owner": None, "lease_token": None, "lease_until": None}
 _HANDOFF_RESULT = "handed_off_to_conflict_review"
 
@@ -172,12 +181,34 @@ def job_view(job: Optional[dict]) -> Optional[dict]:
         "attempt_count", "created_at", "updated_at", "finished_at")}
     view["cancel_requested"] = int(job.get("cancel_requested") or 0) == 1
     view["retryable"] = job.get("retryable") in (1, True, None)
-    view["cancelable"] = (job.get("status") in ("freeze_wait", "pending", "blocked", "retry_wait")
-                          and job.get("phase") in ("freeze_pending", "F1", "F3", "publish_pending"))
+    view["cancelable"] = store.approval_cancelable(job)
+    view["rejudgeable"] = store.approval_rejudgeable(job)
     view["outcome"] = job_outcome(job)
     view["stage"] = job_stage(job)
     view["doc_id"] = _payload(job).get("doc_id")
+    view.update(_retry_view(job))
     return view
+
+
+def _retry_view(job: dict) -> dict:
+    """T#3: what the screen needs to explain a waiting retry / recovery — the last error's
+    code and its stage/cause (never the diagnostic text or stderr), the attempt count with
+    its ceiling, and when the next attempt is due. Empty for any other status."""
+    if job.get("status") not in ("retry_wait", "recovery_required"):
+        return {}
+    attempt = _evidence(job).get("attempt_error")
+    attempt = attempt if isinstance(attempt, dict) else {}
+    # The evidence keeps the last *Git* attempt's error, but a DB-finalize failure or a
+    # recovery verdict only replaces ``last_error_code``. Show stage/cause only when they
+    # belong to the same error as the code on screen; never an older cause as the latest.
+    if str(attempt.get("code") or "")[:64] != str(job.get("last_error_code") or ""):
+        attempt = {}
+    return {
+        "error_stage": attempt.get("stage"),
+        "error_cause": attempt.get("cause"),
+        "max_attempts": store.retry_max_attempts(),
+        "available_at": job.get("available_at"),
+    }
 
 
 def blocker_of(job: Optional[dict]) -> Optional[dict]:
@@ -306,8 +337,13 @@ def _drive_request(ctx: store.JobContext) -> Outcome:
 # ── executor (Runner entry, L 4.5) ───────────────────────────────────────────
 
 def run(ctx: store.JobContext, entry: str) -> None:
-    if entry in (store.FREEZE, store.RELEASE):
+    if entry == store.FREEZE:
         return approval_freeze.run_entry(ctx, entry)
+    if entry == store.RELEASE:
+        intent = approval_freeze._json(ctx.job.get("release_intent"))
+        release(ctx, intent.get("final_status") or "cancelled",
+                intent.get("code") or "cancelled_by_user")
+        return None
     publish(ctx, JOB)
     return None
 
@@ -347,12 +383,20 @@ def publish(ctx: store.JobContext, origin: str) -> Outcome:
                 store.job_write(ctx, phase="admission")
             git = _resume(ctx)
             if git is None:
-                git = _run_git(ctx)
+                if _retry_deadline_expired(ctx.job):
+                    # Resume/settle already ran under W/B+R. Never start new publish
+                    # work after the deadline; release happens after dropping locks.
+                    git = {"ok": False, "retry_deadline_expired": True,
+                           "error": _evidence(ctx.job).get("attempt_error") or {
+                               "code": ctx.job.get("last_error_code") or "git_error"}}
+                else:
+                    git = _run_git(ctx)
     except GitServiceError as exc:
         # raised outside finalize (target planning, resume): same classification
         git = {"ok": False, "http_status": exc.status,
                "error": {"code": exc.code, "message": exc.message, **(
-                   {"details": exc.details} if getattr(exc, "details", None) else {})}}
+                   {"details": exc.details} if getattr(exc, "details", None) else {}), **(
+                   {"diagnostic": exc.diagnostic[:500]} if getattr(exc, "diagnostic", None) else {})}}
     finally:
         for key in reversed(held):
             if ctx.lock_ctx.find_held(key) is not None:
@@ -360,6 +404,58 @@ def publish(ctx: store.JobContext, origin: str) -> Outcome:
     if failure is not None:
         return _record_admission_failure(ctx, origin, failure)
     return _after_git(ctx, origin, git or {})
+
+
+def release(ctx: store.JobContext, final_status: str, code: str) -> None:
+    """No new commit/push: settle the preceding publish under W/B+R before release.
+
+    A landed Git result completes its DB transaction; ambiguity keeps the freeze.
+    Used for release claims and recovery retries, including after service restart.
+    """
+    phase = ctx.job.get("phase")
+    if phase == "db_finalize":
+        _db_finalize(ctx, JOB, _evidence(ctx.job).get("git") or {})
+        return
+    intent = approval_freeze._json(ctx.job.get("release_intent"))
+    if not intent:
+        store.job_write(ctx, release_intent={"final_status": final_status, "code": code})
+    if phase not in PUBLISH_PHASES or phase == "publish_pending":
+        approval_freeze.freeze_release(ctx, final_status, code)
+        return
+    held = []
+    git = None
+    failure = None
+    try:
+        failure = _admit(ctx, JOB, held)
+        if failure is None:
+            git = _resume(ctx)
+            if git is None:
+                from modules.flow_gate.services import git_service as _gs
+                # A foreign open attempt or a push crash without evidence proves nothing.
+                if (phase in ("push_started", "pushed")
+                        or _gs.db_git.get_open_session_by_group(ctx.job["group_id"]) is not None):
+                    git = {"ok": False, "recovery": True,
+                           "error": {"code": "approval_release_unsettled"}}
+    except GitServiceError:
+        git = {"ok": False, "recovery": True,
+               "error": {"code": "approval_release_check_failed"}}
+    finally:
+        for key in reversed(held):
+            if ctx.lock_ctx.find_held(key) is not None:
+                locks.release(ctx.lock_ctx, key)
+    if failure is not None:
+        domain, outcome = failure
+        if outcome.kind == locks.RECOVERY_REQUIRED:
+            approval_freeze.finish_freeze_recovery(ctx, f"release_{domain}_recovery_required")
+        else:
+            approval_freeze.wait_release(ctx, f"release_{domain}_{outcome.kind}")
+    elif git is not None:
+        if git.get("recovery"):
+            approval_freeze.finish_freeze_recovery(ctx, git["error"]["code"])
+        else:
+            _after_git(ctx, JOB, git)
+    else:
+        approval_freeze.freeze_release(ctx, final_status, code)
 
 
 def _admit(ctx: store.JobContext, origin: str, held: list) -> Optional[tuple]:
@@ -489,14 +585,89 @@ def _closed_attempt_result(ctx: store.JobContext, action: Optional[str]) -> Opti
     return None
 
 
+def retry_deadline_sec() -> int:
+    """Policy bound, not a measured SLA: 10 min vs nominal default backoff 915s.
+
+    Retains the short retries without another ~22 minute lock wait. Operators can
+    tune 1s..1h; already-started waits keep their persisted deadline on restart.
+    """
+    return int(store._env_num("FLOWGATE_APPROVAL_RETRY_DEADLINE_SEC", 600, 1, 3600))
+
+
+def _retry_state(job: dict) -> dict:
+    return dict(_evidence(job).get(_RETRY_EVIDENCE) or {})
+
+
+def _retry_deadline_expired(job: dict) -> bool:
+    deadline = _retry_state(job).get("deadline_at")
+    return bool(deadline and datetime.fromisoformat(now_iso()) >= datetime.fromisoformat(deadline))
+
+
+def _write_retry_state(ctx: store.JobContext, state: dict, **extra) -> None:
+    store.job_write(ctx, evidence=runner._merged_evidence(
+        ctx.job, {_RETRY_EVIDENCE: state, **extra}))
+
+
+def _start_retry_state(job: dict) -> dict:
+    state = _retry_state(job)
+    if not state.get("deadline_at"):
+        now = datetime.fromisoformat(now_iso())
+        state.update(started_at=now.isoformat(),
+                     deadline_at=(now + timedelta(seconds=retry_deadline_sec())).isoformat())
+    return state
+
+
+def _record_attempt_error(ctx: store.JobContext, error: dict) -> tuple[dict, dict]:
+    details = error.get("details") or {}
+    code = str(error.get("code") or "git_error")
+    stage = str(details.get("stage") or error.get("stage") or (
+        "push" if code == "push_rejected" else "merge" if code in _PERSISTENT_CODES else "unknown"))
+    cause = str(details.get("cause") or error.get("cause") or (
+        "conflict_other" if code in _PERSISTENT_CODES else "unknown"))
+    diagnostic = _scrub(str(error.get("diagnostic") or error.get("message") or code))[:500]
+    attempt = {"code": code, "stage": stage, "cause": cause, "diagnostic": diagnostic}
+    state = _start_retry_state(ctx.job)
+    fingerprint = [stage, cause, re.sub(r"\s+", " ", diagnostic).strip().lower()]
+    state["consecutive"] = int(state.get("consecutive") or 0) + 1 if state.get("fingerprint") == fingerprint else 1
+    state["fingerprint"] = fingerprint
+    if code in _PERSISTENT_CODES or cause == "auth":
+        key = "auth" if cause == "auth" else code
+        counts = dict(state.get("persistent_counts") or {})
+        counts[key] = int(counts.get(key) or 0) + 1
+        state["persistent_counts"] = counts
+    _write_retry_state(ctx, state, attempt_error=attempt)
+    return attempt, state
+
+
+def _release_failed(ctx: store.JobContext, origin: str, code: str, reason: str) -> None:
+    state = _retry_state(ctx.job)
+    state["stop_reason"] = reason
+    _write_retry_state(ctx, state)
+    approval_freeze.freeze_release(ctx, "failed", code[:64])
+    _notify_failed(ctx, origin, code)
+
+
 def _transient(ctx: store.JobContext, origin: str, code: str) -> None:
-    """retry_wait with backoff; past RETRY_MAX_ATTEMPTS the approval fails through
-    freeze_release (store.finish_run would refuse a job with a freeze record)."""
-    if int(ctx.job.get("attempt_count") or 0) + 1 > store.retry_max_attempts():
-        approval_freeze.freeze_release(ctx, "failed", code[:64])
-        _notify_failed(ctx, origin, code)
+    """Use the store's fenced retry contract, with available_at capped at deadline.
+
+    Do not touch db_finalize-only retries or change freeze_release's own policy.
+    """
+    state = _start_retry_state(ctx.job)
+    _write_retry_state(ctx, state)
+    if _retry_deadline_expired(ctx.job):
+        _release_failed(ctx, origin, code, "deadline_exceeded")
         return
-    store.finish_run(ctx, store.RunResult(store.TRANSIENT, code=code[:64]))
+    a = int(ctx.job.get("attempt_count") or 0) + 1
+    if a > store.retry_max_attempts():
+        _release_failed(ctx, origin, code, "retry_exhausted")
+        return
+    now = datetime.fromisoformat(now_iso())
+    available = min(now + timedelta(seconds=store.next_delay(a)),
+                    datetime.fromisoformat(state["deadline_at"]))
+    store.job_write(ctx, status="retry_wait", attempt_count=a,
+                    available_at=available.isoformat(), last_error_code=code[:64],
+                    retryable=1, **_LEASE_CLEARED)
+
 
 
 def _notify_failed(ctx: store.JobContext, origin: str, code: str) -> None:
@@ -527,11 +698,29 @@ def _after_git(ctx: store.JobContext, origin: str, git: dict) -> Outcome:
         error = git.get("error") or {"code": "git_error", "message": "Git finalize failed"}
         code = str(error.get("code") or "git_error")
         status = int(git.get("http_status") or 500)
-        if status >= 500 or code in _TRANSIENT_CODES:
-            _transient(ctx, origin, code)
+        if git.get("retry_deadline_expired"):
+            _release_failed(ctx, origin, code, "deadline_exceeded")
         else:
-            approval_freeze.freeze_release(ctx, "failed", code[:64])
-            _notify_failed(ctx, origin, code)
+            attempt, state = _record_attempt_error(ctx, error)
+            cause, stage = attempt["cause"], attempt["stage"]
+            persistent = code in _PERSISTENT_CODES or cause == "auth"
+            key = "auth" if cause == "auth" else code
+            transient = code in _TRANSIENT_CODES or (
+                stage in ("fetch", "merge") and cause in _TRANSIENT_CAUSES)
+            if persistent:
+                if state["persistent_counts"][key] >= _PERSISTENT_MAX_ATTEMPTS:
+                    _release_failed(ctx, origin, code, "persistent_limit")
+                else:
+                    _transient(ctx, origin, code)
+            elif transient:
+                _transient(ctx, origin, code)
+            elif cause == "unknown" and (code == "git_error" or status >= 500):
+                if state["consecutive"] >= _UNKNOWN_MAX_CONSECUTIVE:
+                    _release_failed(ctx, origin, code, "unknown_limit")
+                else:
+                    _transient(ctx, origin, code)
+            else:
+                _release_failed(ctx, origin, code, "permanent")
         out = describe(ctx.job)
         out.git, out.error = git, error
         if out.state == FAILED:
@@ -638,6 +827,7 @@ def _decide_resume(job: dict) -> "runner.Decision":
 def install() -> None:
     """Executor, deciders and the freeze hooks. Idempotent."""
     approval_freeze.install()
+    runner.register_freeze_hooks(approval_freeze.reconcile_freeze_expired, release)
     runner.register_executor(KIND, run)
     for phase in PUBLISH_PHASES:
         runner.register_decider(KIND, phase, _decide_resume)

@@ -412,6 +412,15 @@
             <AppIcon :name="approvalJob?.stage === 'recovery_required' ? 'warning' : 'hourglass-medium'" />
             {{ approvalJobNotice }}
           </span>
+          <button
+            v-if="approvalJob?.cancelable"
+            class="btn btn-outline-secondary btn-sm"
+            :disabled="cancelingApprovalJob"
+            data-testid="ab-approval-job-cancel"
+            @click="onCancelApprovalJob"
+          >
+            {{ t('main.review_action_bar.approval_job_cancel') }}
+          </button>
           <span v-if="testGateBlocked" class="ab-gate-hint" data-testid="ab-test-gate-hint">
             <AppIcon name="prohibit" /> {{ t('main.review_action_bar.test_gate_blocked') }}
           </span>
@@ -836,6 +845,13 @@ interface ApprovalJobView {
   stage?: string | null
   doc_id?: string | null
   last_error_code?: string | null
+  // T#3: retry_wait / recovery_required detail (no stderr — code, stage and cause only).
+  error_stage?: string | null
+  error_cause?: string | null
+  attempt_count?: number | null
+  max_attempts?: number | null
+  available_at?: string | null
+  cancelable?: boolean | null
   blocker?: ApprovalJobBlocker | null
 }
 const gitFin = ref<GitFinState | null>(null)
@@ -1351,6 +1367,7 @@ const canApprove = computed(
     !approving.value &&
     approvedDocId.value !== props.docId &&
     !approvalJob.value &&
+    !approvalLockWithoutJob.value &&
     !props.testGateBlocked &&
     ['pending_review', 'revised'].includes(normalizedStatus.value),
 )
@@ -1462,12 +1479,49 @@ const approvalJob = ref<ApprovalJobView | null>(null)
 const APPROVAL_JOB_POLL_MS = 5_000
 let approvalJobTracking = false
 
+// T#3: the server holds the approval (`approval_in_flight`) but gave no job to describe —
+// the lock stays, and the bar says it is waiting on the server rather than going quiet.
+const approvalLockWithoutJob = ref(false)
+
+function approvalJobErrorDetail(job: ApprovalJobView): string {
+  const parts: string[] = []
+  if (job.last_error_code) {
+    const where = [job.error_stage, job.error_cause].filter((x) => x && x !== 'unknown').join('/')
+    parts.push(t('main.review_action_bar.approval_job_error', {
+      code: job.last_error_code, where: where ? ` (${where})` : '',
+    }))
+  }
+  if (job.attempt_count != null && job.max_attempts) {
+    parts.push(t('main.review_action_bar.approval_job_attempts', {
+      count: job.attempt_count, max: job.max_attempts,
+    }))
+  }
+  // retry_wait: next attempt; recovery_required: next automatic re-evaluation (both are
+  // recorded in `available_at` by the server).
+  const isRecovery = job.stage === 'recovery_required' || job.status === 'recovery_required'
+  const isRetry = job.stage === 'retry_wait' || job.status === 'retry_wait'
+  if (job.available_at && (isRecovery || isRetry)) {
+    const when = new Date(job.available_at)
+    if (!Number.isNaN(when.getTime())) {
+      const key = isRecovery ? 'approval_job_next_check' : 'approval_job_next_at'
+      parts.push(t(`main.review_action_bar.${key}`, { time: when.toLocaleTimeString() }))
+    }
+  }
+  return parts.length ? ` ${parts.join(' ')}` : ''
+}
+
 const approvalJobNotice = computed(() => {
+  if (!approvalJob.value && approvalLockWithoutJob.value) {
+    return t('main.review_action_bar.approval_job_unknown')
+  }
   const job = approvalJob.value
   if (!job) return ''
   const jobId = job.job_id || '-'
   if (job.stage === 'recovery_required' || job.status === 'recovery_required') {
-    return t('main.review_action_bar.approval_job_recovery', { job: jobId })
+    return `${t('main.review_action_bar.approval_job_recovery', { job: jobId })}${approvalJobErrorDetail(job)}`
+  }
+  if (job.stage === 'retry_wait' || job.status === 'retry_wait') {
+    return `${t('main.review_action_bar.approval_job_retry_wait', { job: jobId })}${approvalJobErrorDetail(job)}`
   }
   const stageKey = `main.review_action_bar.approval_job_stage.${job.stage || job.status || 'pending'}`
   const stage = te(stageKey) ? t(stageKey) : String(job.stage || job.status || '')
@@ -1497,9 +1551,26 @@ function setApprovalJob(next: ApprovalJobView | null) {
 function adoptApprovalJob(state: GitFinState) {
   // `approval_in_flight` null/missing means "could not tell": keep what the bar has.
   if (state.approval_in_flight === false) {
+    const wasLockOnly = approvalLockWithoutJob.value && !approvalJob.value
+    approvalLockWithoutJob.value = false
     setApprovalJob(null)
+    if (wasLockOnly) void onApprovalJobSettled(approveGeneration)
   } else if (state.approval_in_flight === true && state.approval_job !== undefined) {
-    setApprovalJob(approvalJobOfState(state))
+    const job = approvalJobOfState(state)
+    if (job) {
+      approvalLockWithoutJob.value = false
+      setApprovalJob(job)
+    } else if (state.approval_job) {
+      // Another document's job in this group: not this bar's approval (unchanged).
+      approvalLockWithoutJob.value = false
+      setApprovalJob(null)
+    } else {
+      // T#3: the server says the lock is held but names no job at all. That is
+      // "still locked", never "released": keep the current job if the bar has one,
+      // otherwise lock on the server's word alone and keep polling.
+      if (!approvalJob.value) approvalLockWithoutJob.value = true
+      void trackApprovalLock(approveGeneration)
+    }
   }
 }
 
@@ -1509,17 +1580,49 @@ async function refreshApprovalJob() {
   if (state) adoptApprovalJob(state)
 }
 
+// One polling life for both the job and the job-less lock: the loop runs while the bar holds
+// a job OR the lock-only state, so a null -> job -> released progression never drops the
+// timer (the shared `approvalJobTracking` guard used to make the handover loop exit).
+// Only an explicit `approval_in_flight === false` (adoptApprovalJob) ends it.
+function approvalPollActive(generation: number): boolean {
+  return generation === approveGeneration && (!!approvalJob.value || approvalLockWithoutJob.value)
+}
+
 async function trackApprovalJob(generation: number) {
   if (approvalJobTracking) return
   approvalJobTracking = true
   try {
-    while (generation === approveGeneration && approvalJob.value) {
+    while (approvalPollActive(generation)) {
       await new Promise((resolve) => setTimeout(resolve, APPROVAL_JOB_POLL_MS))
-      if (generation !== approveGeneration || !approvalJob.value) return
+      if (!approvalPollActive(generation)) return
       await refreshApprovalJob()
     }
   } finally {
     approvalJobTracking = false
+  }
+}
+
+// Lock-only entry point: the same single loop as the job.
+function trackApprovalLock(generation: number) {
+  return trackApprovalJob(generation)
+}
+
+const cancelingApprovalJob = ref(false)
+async function onCancelApprovalJob() {
+  const job = approvalJob.value
+  if (!job?.job_id || !job.cancelable || cancelingApprovalJob.value) return
+  cancelingApprovalJob.value = true
+  try {
+    await postRequest<any>(
+      `/api/v1/documents/approval-jobs/${encodeURIComponent(job.job_id)}/cancel`,
+      { doc_id: props.docId },
+    )
+    showToast(t('main.review_action_bar.approval_job_cancel_accepted'), 'info')
+  } catch {
+    showToast(t('main.review_action_bar.approval_job_cancel_failed'), 'warning')
+  } finally {
+    cancelingApprovalJob.value = false
+    await refreshApprovalJob()
   }
 }
 
@@ -1540,6 +1643,7 @@ function onApprovalJobEvent(e: Event) {
 
 watch(() => props.docId, () => {
   approvalJob.value = null
+  approvalLockWithoutJob.value = false
   targetBlocker.value = null
   blockerReviewMergeId.value = null
 })

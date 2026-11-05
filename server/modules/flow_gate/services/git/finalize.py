@@ -24,6 +24,7 @@ from .commit import (
     _merge_commit_subject,
 )
 from . import merge_target
+from .command import git_failure_details
 from .credentials import GitServiceError, _author_env_from_cfg
 from .refs import (
     _ahead_of_base,
@@ -1517,7 +1518,7 @@ def _finalize_execute(
                 cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
             )
             if proc.returncode != 0:
-                raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+                raise _command_error(proc, "fetch")
             already_published = _is_ancestor(
                 base_root, unpushed_merge, f"refs/remotes/origin/{base_branch}",
             ) is True
@@ -1531,7 +1532,7 @@ def _finalize_execute(
                 # drop the only copy of the work). Keep the slot and stay
                 # retryable; a later finalize finds the same merge again.
                 _gs._set_status(group_id, "waiting")
-                raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(push.stderr))
+                raise _command_error(push, "push", "push_rejected", "Git push was rejected")
         return finish_merged(
             _rev_parse(base_root, unpushed_merge, short=True) or unpushed_merge[:7],
             wants_push,
@@ -1581,7 +1582,7 @@ def _finalize_execute(
             cwd=wt_path, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
         )
         if proc.returncode != 0:
-            raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(proc.stderr))
+            raise _command_error(proc, "push", "push_rejected", "Git push was rejected")
         if approval_context is not None:
             approval_context.phase("pushed", {"remote_head": approval_context.frozen_sha})
             record_clean_approval_retry("pushed", None)
@@ -1634,6 +1635,14 @@ def _finalize_execute(
         raise
 
 
+
+def _command_error(proc, stage: str, code: str = "git_error",
+                   message: str = "Git command failed") -> GitServiceError:
+    from modules.flow_gate.services import git_service as _gs
+    return GitServiceError(500, code, message, details=git_failure_details(proc, stage),
+                           diagnostic=_gs._last_line(proc.stderr))
+
+
 def _attempt_error(exc: BaseException) -> dict:
     """The failed attempt's ``attempt_error``: code + message as before, plus the
     error's details/diagnostic when it has them (flowgate.v02.0086 NR0003 §5.2-5)."""
@@ -1645,9 +1654,12 @@ def _attempt_error(exc: BaseException) -> dict:
     if isinstance(details, dict) and details:
         # stored in the session context JSON: never let a non-JSON value mask ``exc``
         error["details"] = json.loads(json.dumps(details, ensure_ascii=False, default=str))
+    details = error.get("details") or {}
+    error["stage"] = details.get("stage") or "unknown"
+    error["cause"] = details.get("cause") or "unknown"
     diagnostic = getattr(exc, "diagnostic", None)
-    if isinstance(diagnostic, str) and diagnostic:
-        error["diagnostic"] = diagnostic[:500]
+    error["diagnostic"] = (diagnostic if isinstance(diagnostic, str) and diagnostic
+                           else error["message"])[:500]
     return error
 
 
@@ -1689,7 +1701,7 @@ def _finish_unpushed_merge_recovery(
                 cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
             )
             if proc.returncode != 0:
-                raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+                raise _command_error(proc, "fetch")
             already_published = _is_ancestor(
                 base_root, merge_commit, f"refs/remotes/origin/{base_branch}",
             ) is True
@@ -1701,7 +1713,7 @@ def _finish_unpushed_merge_recovery(
             if push.returncode != 0:
                 # As in finalize: the merge predates this request and is never rewound.
                 _gs._set_status(group_id, "waiting")
-                raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(push.stderr))
+                raise _command_error(push, "push", "push_rejected", "Git push was rejected")
         return finish_merged(
             _rev_parse(base_root, merge_commit, short=True) or merge_commit[:7],
             wants_push, attempt, recovered=True,
@@ -1753,22 +1765,28 @@ def _finalize_merge_attempt(
         cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
     )
     if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+        raise _command_error(proc, "fetch")
     if approval_context is not None:
         approval_context.phase("fetched", {"merge_id": attempt.merge_id})
     synced_from = _rev_parse(merge_root, "HEAD") if recheck_after_sync else None
     if _gs._ref_exists(merge_root, f"refs/remotes/origin/{target_branch}"):
         proc = _gs._run_git(["merge", "--ff-only", f"origin/{target_branch}"], cwd=merge_root)
         if proc.returncode != 0:
+            failure_details = git_failure_details(proc, "merge")
+            if failure_details["cause"] != "unknown":
+                raise _command_error(proc, "merge")
             if attempt.is_project_base:
                 raise GitServiceError(  # E4
                     500, "base_diverged",
                     "base checkout has local-only commits and cannot fast-forward",
+                    details={"stage": "merge", "cause": "conflict_other"},
+                    diagnostic=_gs._last_line(proc.stderr),
                 )
             raise GitServiceError(
                 500, "target_diverged",
                 "target branch has local-only commits and cannot fast-forward",
-                details={"target_branch": target_branch},
+                details={"target_branch": target_branch, "stage": "merge", "cause": "conflict_other"},
+                diagnostic=_gs._last_line(proc.stderr),
             )
     if recheck_after_sync:
         # 0066 D#1 §3-6(5) ③: what origin already had may contain the group's commits;
@@ -1858,7 +1876,7 @@ def _finalize_merge_attempt(
                 # Rewind exactly the merge this request made; the slot stays.
                 _gs._run_git(["reset", "--hard", pre_merge_head or "ORIG_HEAD"], cwd=merge_root)
                 _gs._set_status(group_id, "waiting")
-                raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(push.stderr))
+                raise _command_error(push, "push", "push_rejected", "Git push was rejected")
             if approval_context is not None:
                 approval_context.phase("pushed", {"remote_head": landed_head})
         head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=merge_root)
@@ -1882,9 +1900,9 @@ def _finalize_merge_attempt(
                 409, "base_untracked_conflict",
                 "the merge is blocked by uncommitted new files in the base "
                 "checkout; commit or remove them, then retry",
-                details={"files": blockers},
+                details={"files": blockers, "stage": "merge", "cause": "conflict_other"},
             )
-        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+        raise _command_error(proc, "merge")
     # 0481 D0006 §3.4 / L0007 §2.1: the review gate's `resolver_baseline` and its
     # eventual `expected_remote_head` CAS-push condition both need the exact
     # inputs this merge attempt started from, captured now while MERGE_HEAD is
@@ -2240,6 +2258,8 @@ def run_approve_git_action(
         error = {"code": exc.code, "message": exc.message}
         if getattr(exc, "details", None):
             error["details"] = exc.details
+        if getattr(exc, "diagnostic", None):
+            error["diagnostic"] = exc.diagnostic[:500]
         return {
             "ok": False,
             "terminal": False,
