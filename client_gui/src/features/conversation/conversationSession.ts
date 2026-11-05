@@ -16,6 +16,7 @@ import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, typ
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import { buildTimeline, mergeTurns, replaceServerActivities, upsertActivity, type PendingTurn, type TimelineItem } from './timeline'
 import type {
+  AiRunState,
   ChatProvider,
   ChatSettings,
   ChatSettingsPatch,
@@ -259,6 +260,18 @@ export function createConversationSession(options: ConversationSessionOptions = 
       code,
       text,
     })
+  }
+
+  /** flowgate.v02.0135 CH0006: a run that started no connection says why, not only `all_providers_failed`. */
+  function addFailureStatus(run: AiRunState): void {
+    const failure = run.failure
+    if (failure?.cause) {
+      const { workdir, message } = failure
+      const parts = workdir && message?.includes(workdir) ? [message] : [workdir, message]
+      addStatus('danger', `remote_${failure.cause}`, parts.filter(Boolean).join(' · ') || null)
+    } else {
+      addStatus('danger', 'run_no_reply', failure?.detail ?? run.endReason)
+    }
   }
 
   function clearChat(): void {
@@ -775,7 +788,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       if (delivered) void loadSettings()
       // A delivered answer shows itself; only a run that ended without one says so.
       if (run.endReason === 'cancelled') addStatus('info', 'run_cancelled')
-      else if (!delivered) addStatus('danger', 'run_no_reply', run.endReason)
+      else if (!delivered) addFailureStatus(run)
       // Right after the end: the run change and the closed requests (D0006 §3.9.2-3).
       await loadActivities(chatId, gen)
       return

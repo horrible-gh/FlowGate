@@ -24,6 +24,7 @@ import { extractApiErrorMessage, getRequest, patchRequest, postRequest } from '@
 import { randomUuid } from '@shared/utils/uuid'
 import type {
   ActivityAnchor,
+  AiRunFailure,
   AiRunState,
   ChatProvider,
   ChatSettings,
@@ -484,11 +485,34 @@ export async function startChatRun(chatId: string, providerId: string | null): P
   return data?.run_id ?? null
 }
 
+interface RawFallbackEntry {
+  detail?: string | null
+  remote_final?: { cause?: string | null; message?: string | null; workdir?: string | null } | null
+}
+
+const textOrNull = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim() : null)
+
+/** flowgate.v02.0135 CH0006: the last failed connection of a run that started none. */
+function runFailure(history: unknown): AiRunFailure | null {
+  if (!Array.isArray(history) || !history.length) return null
+  const last = (history[history.length - 1] ?? {}) as RawFallbackEntry
+  const remote = last.remote_final ?? {}
+  const failure = {
+    cause: textOrNull(remote.cause),
+    message: textOrNull(remote.message),
+    workdir: textOrNull(remote.workdir),
+    detail: textOrNull(last.detail),
+  }
+  return failure.cause || failure.detail ? failure : null
+}
+
 export async function fetchRun(runId: string): Promise<AiRunState> {
   const data = await call(
-    () => getRequest<{ status?: string; end_reason?: string | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
+    () => getRequest<{ status?: string; end_reason?: string | null; fallback_history?: unknown }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
   )
-  return { runId, status: data?.status === 'finished' ? 'finished' : 'running', endReason: data?.end_reason ?? null }
+  const endReason = data?.end_reason ?? null
+  const failure = endReason === 'all_providers_failed' ? runFailure(data?.fallback_history) : null
+  return { runId, status: data?.status === 'finished' ? 'finished' : 'running', endReason, ...(failure ? { failure } : {}) }
 }
 
 export async function cancelRun(runId: string): Promise<void> {

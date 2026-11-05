@@ -369,7 +369,7 @@ class AgentJobService:
             result = {key: row.get(key) for key in (
                 "job_id", "attempt_id", "status", "target_agent_id", "lease_owner_agent_id",
                 "child_exit_code", "end_reason", "terminal_cause", "duration_seconds",
-                "claimed_at", "started_at", "finished_at")}
+                "claimed_at", "started_at", "finished_at", "diagnostics")}
             result["collected"] = won == 1
             result["stdout"] = row.get("stdout") if won == 1 else None
             result["stderr"] = row.get("stderr") if won == 1 else None

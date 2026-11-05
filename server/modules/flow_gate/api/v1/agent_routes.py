@@ -12,12 +12,15 @@ class Strict(BaseModel): model_config=ConfigDict(extra="forbid")
 class Caps(Strict): ai_cli:bool;ai_api:bool;storage:bool
 class AgentCreate(Strict):
  name:str=Field(min_length=1,max_length=100);enabled:bool;location:Literal["local","remote"];connection_mode:Literal["agent_pull"]|None;local_executable_path:str|None;configured_capabilities:Caps
+ remote_workdir:str|None=None
  @model_validator(mode="after")
  def combo(self):
   if self.name.strip()=="" or (self.location=="remote" and(self.connection_mode!="agent_pull" or self.local_executable_path is not None)) or (self.location=="local" and self.connection_mode is not None): raise ValueError("invalid Agent field combination")
   return self
 class AgentPatch(Strict):
  name:str|None=None;enabled:bool|None=None;location:Literal["local","remote"]|None=None;connection_mode:Literal["agent_pull"]|None=None;local_executable_path:str|None=None;configured_capabilities:Caps|None=None
+ # flowgate.v02.0135 CH0006: null or blank clears it.
+ remote_workdir:str|None=None
  @model_validator(mode="after")
  def valid_changes(self):
   for field in ("name","enabled","configured_capabilities"):

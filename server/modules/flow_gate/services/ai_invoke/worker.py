@@ -655,9 +655,12 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
         if remote_failure:
             # Kept on the per-connection history (persisted with the run record): the
             # target Agent, the Agent that actually claimed (if any) and the Job identity.
+            # flowgate.v02.0135 CH0006: plus the cause, the Agent's own words and the Job's
+            # working directory, so the GUI shows what actually failed.
             run["fallback_history"][-1]["remote_final"] = {
                 key: remote_failure.get(key) for key in (
-                    "code", "target_agent_id", "claimed_agent_id", "job_id", "attempt_id")}
+                    "code", "target_agent_id", "claimed_agent_id", "job_id", "attempt_id",
+                    "cause", "message", "workdir")}
             run["last_message"] = detail
             break
         if run["cancel_event"].is_set():

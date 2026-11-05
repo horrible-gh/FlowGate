@@ -220,6 +220,8 @@ export interface SystemAgent {
   /** 'agent_pull' for remote, null for local. */
   connection_mode: 'agent_pull' | null
   local_executable_path: string | null
+  /** flowgate.v02.0135 CH0006: the directory sent to this Agent's Jobs; `${AGENT_JOB_ID}` is replaced by the Job id. null = not set. */
+  remote_workdir?: string | null
   configured_capabilities: AgentCapabilities
   /** null until the Agent reported (heartbeat); local never reports. */
   reported_capabilities: Record<AgentCapability, boolean | null>
@@ -251,7 +253,7 @@ export interface SystemAgentCreate {
 }
 
 /** PATCH /system/agents/{aid}: only the changed fields; location / connection_mode are never sent. */
-export type SystemAgentChanges = Partial<Pick<SystemAgent, 'name' | 'enabled' | 'local_executable_path' | 'configured_capabilities'>>
+export type SystemAgentChanges = Partial<Pick<SystemAgent, 'name' | 'enabled' | 'local_executable_path' | 'remote_workdir' | 'configured_capabilities'>>
 
 /** POST /system/agents/{aid}/enrollments (201): the token exists only in this answer. */
 export interface AgentEnrollment {

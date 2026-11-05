@@ -184,7 +184,7 @@ describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
     expect(hub.get('[data-scope-card="me"] a').attributes('href')).toBe('/app/settings/me/account')
     expect(hub.get('[data-scope-card="me"]').findAll('.tag').map((t) => t.text())).toEqual(['계정 · 화면', '에이전트', '보안 · 세션'])
     expect(hub.get('[data-scope-card="system"] a').attributes('href')).toBe('/app/settings/system/general')
-    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자', '전체 프로젝트'])
+    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 에이전트', '사용자', '전체 프로젝트'])
     expectNoRetiredOrInertEntries(hub)
     expect(settingsRequests()).toEqual(HUB_ADMIN_READ) // the overview's only read: 확인 필요 (0077)
     hub.unmount()

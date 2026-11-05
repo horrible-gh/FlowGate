@@ -948,6 +948,13 @@ export default {
     status: {
       run_cancelled: 'AI 呼び出しを停止しました',
       run_no_reply: 'AI 呼び出しが返信なしで終了しました',
+      remote_workdir_unset: 'リモート作業ディレクトリが設定されていません。Agent を編集で設定してください',
+      remote_permission_denied: 'Agent に作業ディレクトリの権限がありません。Agent を実行するアカウントの権限を確認してください',
+      remote_workdir_create_failed: 'Agent が作業ディレクトリを作成できませんでした。パスと親ディレクトリを確認してください',
+      remote_workdir_missing: 'Agent のマシンに作業ディレクトリがありません。ディレクトリを作成するか、リモート作業ディレクトリを変更してください',
+      remote_path_invalid: 'Agent が作業ディレクトリのパスを使用できません。リモート作業ディレクトリを確認してください',
+      remote_agent_rejected: 'Agent が実行を拒否しました',
+      remote_agent_failed: 'Agent が実行を開始できませんでした',
     },
     participants: {
       label: '参加',
@@ -2501,6 +2508,7 @@ export default {
         version: 'Agent バージョン',
         platform: 'OS / アーキテクチャ',
         agent_id: 'Agent ID',
+        remote_workdir: 'リモート作業ディレクトリ',
       },
       connection: {
         agent_pull: 'Agent Pull',

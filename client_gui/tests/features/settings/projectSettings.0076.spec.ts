@@ -341,7 +341,7 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
     expect(hub.findAll('[data-scope-card]').map((c) => c.attributes('data-scope-card'))).toEqual(['me', 'project', 'system'])
     expect(hub.get('[data-scope-card="project"] a').attributes('href')).toBe('/app/settings/project')
     expect(hub.get('[data-scope-card="project"]').findAll('.tag').map((t) => t.text())).toEqual(['프로젝트 선택'])
-    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 Agent', '사용자', '전체 프로젝트'])
+    expect(hub.get('[data-scope-card="system"]').findAll('.tag').map((t) => t.text())).toEqual(['일반', '시스템 에이전트', '사용자', '전체 프로젝트'])
     expect(net.requests).toEqual(['GET /api/v1/system/agents'])
   })
 })
