@@ -150,6 +150,9 @@ def test_0098_execution_uses_common_judgement_and_parks_specific_safety_errors(g
 
 
 def test_0098_rejected_push_keeps_local_merge_and_retries_only_the_same_applied_sha(git_env):
+    """0132 T#2 (NR §5.3-11): a non-fast-forward because only the remote went ahead is no longer parked. The push
+    phase merges the fetched remote tip into the local target once (``remote_sync``) and pushes that; the approved
+    merge is kept as it was (one attempt, the applied SHA unchanged)."""
     r = git_env
     env, g, _, run_id = _start_linear(r)
     branch = _0098_target(r)
@@ -162,16 +165,18 @@ def test_0098_rejected_push_keeps_local_merge_and_retries_only_the_same_applied_
     _git(["add", "."], cwd=r["seed"])
     _git(["commit", "-m", "remote advance"], cwd=r["seed"])
     _git(["push", "origin", branch], cwd=r["seed"])
+    remote = _rev(r["seed"], "HEAD")
     job, _ = _run_job(jid)
-    assert job["status"] == "recovery_required" and job["last_error_code"] == "push_remote_ahead"
-    assert _decision(env, did)["status"] == "recovery_required" and job["recovery_since"] is None
-    applied = _rev(r["base"], branch)
-    assert _effects(env, did)["push"]["status"] == "failed"
-    evidence = json.loads(_effects(env, did)["push"]["evidence_json"])
-    assert evidence["exit_code"] == 1 and evidence["diagnostic_tail"]
-    assert "remote_sync" not in _effects(env, did)  # 0132 T#1 parks; T#2 adds sync.
-    _act(env, run_id, g, did, "retry", {"request_id": "push-retry-0098", "expected_decision_version": _version(env, did)}, 202)
-    job, _ = _run_job(jid)
-    assert job["last_error_code"] == "push_remote_ahead" and _rev(r["base"], branch) == applied
-    assert _merges(r["base"], branch) == 0  # retry preserves the same fast-forward
-    assert json.loads(_effects(env, did)["push"]["evidence_json"])["sent_sha"] == applied
+    assert job["status"] == "succeeded", job
+    effects = _effects(env, did)
+    applied = effects["merge"]["sha_after"]
+    assert _decision(env, did)["status"] == "succeeded" and _decision(env, did)["target_sha"] == applied
+    sync = json.loads(effects["remote_sync"]["evidence_json"])
+    assert effects["remote_sync"]["status"] == "succeeded"
+    assert (sync["pre_head"], sync["remote_head"], sync["local_applied"]) == (applied, remote, applied)
+    evidence = json.loads(effects["push"]["evidence_json"])
+    assert evidence["rejections"][0]["code"] == "push_remote_ahead" and evidence["rejections"][0]["exit_code"] == 1
+    assert evidence["rejections"][0]["diagnostic_tail"] and evidence["rejections"][0]["sent_sha"] == applied
+    assert evidence["sent_sha"] == sync["sync_commit"] == _rev(r["base"], branch) == _rev(r["bare"], "refs/heads/" + branch)
+    assert evidence["applied_sha"] == applied and effects["merge"]["attempt_count"] == 1
+    assert _merges(r["base"], branch) == 1  # the sync commit only: the approved fast-forward is kept

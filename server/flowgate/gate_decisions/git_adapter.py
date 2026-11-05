@@ -38,7 +38,12 @@ REF_ARCHIVE = "refs/flowgate/gate-archive/"
 REF_RECOVERY = "refs/flowgate/gate-recovery/"
 ATTEMPT_ACTION = "merge_only"
 CONTEXT_KEY = "gate_decision_id"
+# 0132 T#2 (NR §4.2/§4.3): a push-phase remote sync attempt names its decision under its own key, so the decision's
+# original merge attempt (``_session_rows``: CONTEXT_KEY) is never confused with a sync attempt and never re-run.
+SYNC_CONTEXT_KEY = "gate_sync_decision_id"
 (MERGED, CONTAINED, CONFLICT) = ("merged", "contained", "conflict")
+# sync_state outcomes besides MERGED / CONFLICT
+(SYNC_ABORTED, SYNC_INTERRUPTED, SYNC_UNSETTLED, SYNC_MISSING) = ("aborted", "interrupted", "unsettled", "missing")
 # push outcomes
 (PUSHED, PUSH_TRANSIENT, PUSH_REJECTED, PUSH_UNKNOWN) = ("pushed", "transient", "rejected", "unknown")
 _TRANSIENT_MARKS = ("could not resolve host", "connection refused", "connection timed out", "timed out",
@@ -542,15 +547,17 @@ def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen:
         mt.invalidate_check_targets(slot.project_id)
 
 
-def _hand_off_conflict(slot: Slot, attempt, root: Path, target_branch: str, files: list, decision_id: str) -> None:
-    """finalize's conflict hand-off, unchanged in shape, with the gate's decision id in the session context."""
+def _hand_off_conflict(slot: Slot, attempt, root: Path, target_branch: str, files: list, decision_id: str,
+                       *, context_key: str = CONTEXT_KEY) -> None:
+    """finalize's conflict hand-off, unchanged in shape, with the gate's decision id in the session context (a remote
+    sync attempt names it under ``SYNC_CONTEXT_KEY``)."""
     gs, mt = _gs(), _mt()
     from modules.flow_gate.services.git import rerere_checkpoint
     context = {
         "review_state": None, "auto_authority": False,
         "resolver_baseline": {"base_head": gs._rev_parse(root, "HEAD"), "merge_head": gs._rev_parse(root, "MERGE_HEAD"),
                               "expected_remote_head": gs._rev_parse(root, f"refs/remotes/origin/{target_branch}")},
-        CONTEXT_KEY: decision_id, "conflict_handed_off": True,
+        context_key: decision_id, "conflict_handed_off": True,
     }
     mt.mark_conflict(attempt, files, context)
     gs.apply_eol_separation(attempt.merge_id, root)
@@ -561,3 +568,239 @@ def _hand_off_conflict(slot: Slot, attempt, root: Path, target_branch: str, file
         "project": slot.project_id, "group_id": slot.group_id, "merge_id": attempt.merge_id,
         "conflict_count": len(files), "conflict_since": session.get("created_at") if session else None,
         "gate_decision_id": decision_id})
+
+
+# ── 0132 T#2: the push phase's remote sync (NR §4.2 / §4.3) ───────────────────
+
+def target_checkout(slot: Slot, branch: str, is_base: bool):
+    """``C`` of NR §4.2: the checkout(s) of the local target branch, read under its B / W. READ_ERROR when Git cannot
+    tell, else ``{"checkouts", "head", "on_branch", "clean"}``. A project-base target is the base checkout itself: it
+    must be on ``refs/heads/<branch>`` with no tracked change. A non-base target has no checkout of its own between
+    attempts (the merge workspace exists only during one); every linked worktree that has the branch checked out must
+    be tracked-clean (its HEAD is the branch by definition)."""
+    gs = _gs()
+    ref = f"refs/heads/{branch}"
+    if is_base:
+        head = gs._rev_parse(slot.base_root, "HEAD")
+        if not head:
+            return READ_ERROR
+        sym = _git(slot.base_root, ["symbolic-ref", "-q", "HEAD"])
+        on_branch = sym.returncode == 0 and (sym.stdout or "").strip() == ref
+        return {"checkouts": 1, "head": head, "on_branch": on_branch,
+                "clean": not gs._dirty(slot.base_root, include_untracked=False)}
+    proc = _git(slot.base_root, ["worktree", "list", "--porcelain"])
+    if proc.returncode != 0:
+        return READ_ERROR
+    heads, clean = [], True
+    for block in (proc.stdout or "").replace("\r\n", "\n").split("\n\n"):
+        fields: dict = {}
+        for line in block.splitlines():
+            key, _, value = line.partition(" ")
+            fields[key] = value.strip()
+        if fields.get("branch") != ref or "prunable" in fields or not fields.get("worktree"):
+            continue
+        path = Path(fields["worktree"])
+        if not path.is_dir():
+            continue
+        heads.append(fields.get("HEAD"))
+        if gs._dirty(path, include_untracked=False):
+            clean = False
+    return {"checkouts": len(heads), "head": heads[0] if len(set(heads)) == 1 else None, "on_branch": True,
+            "clean": clean}
+
+
+def commits_between(repo: Path, older: str, newer: str, limit: int = 100) -> Optional[list]:
+    """``older..newer`` (newest first, at most ``limit``), None when Git cannot tell."""
+    proc = _git(repo, ["rev-list", f"--max-count={int(limit)}", f"{older}..{newer}"])
+    if proc.returncode != 0:
+        return None
+    return [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+
+
+def commits_excluding(repo: Path, tip: str, excluded: list, limit: int = 100) -> Optional[list]:
+    """The commits of ``tip`` not held by any of ``excluded`` (newest first, at most ``limit``), None when Git cannot
+    tell (an unknown SHA included)."""
+    proc = _git(repo, ["rev-list", f"--max-count={int(limit)}", tip, *[f"^{sha}" for sha in excluded if sha], "--"])
+    if proc.returncode != 0:
+        return None
+    return [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+
+
+def merge_of(repo: Path, first: str, second: str, tip: str, limit: int = 100) -> Optional[str]:
+    """The newest commit of ``first..tip`` whose parents are exactly ``[first, second]`` (a landed ``--no-ff`` merge
+    of ``second`` into ``first``), None when there is none or Git cannot tell. Read only."""
+    proc = _git(repo, ["rev-list", "--parents", f"--max-count={int(limit)}", f"{first}..{tip}", "--"])
+    if proc.returncode != 0:
+        return None
+    for line in (proc.stdout or "").splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[1:] == [first, second]:
+            return fields[0]
+    return None
+
+
+def sync_recorded_commit(slot: Slot, merge_id) -> Optional[str]:
+    """The merge commit the remote sync attempt ``merge_id`` recorded as its result (completed by itself, by its review
+    or by finalize's recovery), full SHA, else None. Read only: nothing is recovered or finished here."""
+    if merge_id is None:
+        return None
+    gs = _gs()
+    try:
+        session = gs.db_git.get_session(int(merge_id))
+    except (TypeError, ValueError):
+        return None
+    if session is None:
+        return None
+    context = gs.db_git.session_context(session)
+    result = context.get("attempt_result") or {}
+    sha = result.get("merge_commit_sha") or context.get("merge_commit") or result.get("merge_commit")
+    if sha and len(sha) < 40:
+        sha = gs._rev_parse(slot.base_root, sha)
+    return sha or None
+
+
+def remote_tracking_head(slot: Slot, branch: str):
+    """``refs/remotes/origin/<branch>`` after ``fetch_branch`` (the h1 a sync merges): SHA, None or READ_ERROR."""
+    return rev(slot.base_root, f"refs/remotes/origin/{branch}")
+
+
+def sync_merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, pre_head: str, remote_head: str,
+               on_started) -> dict:
+    """Merge the fetched remote tip ``remote_head`` (by SHA, ``--no-ff``, rerere off, the FlowGate identity) into the
+    local target at ``pre_head`` (under its B / W and R, the caller's). The attempt is finalize's record like the
+    decision's own merge (``open_attempt`` / ``record_merge_inputs`` before the merge, the landed-merge check of a
+    failed command, the existing conflict hand-off) but names the decision under ``SYNC_CONTEXT_KEY``.
+
+    ``{"outcome": contained}`` when the target already holds the remote tip (nothing to merge), ``merged`` with the
+    sync commit, or ``conflict`` (the review session). A refusal before the merge is a GitServiceError and leaves
+    nothing; ``on_started(evidence)`` is called right before ``git merge``. Never resets, never pushes."""
+    gs, mt = _gs(), _mt()
+    from modules.flow_gate.services.git.credentials import _author_env_from_cfg
+    from modules.flow_gate.services.git.finalize import _merge_commit_landed
+    target_ref = f"refs/heads/{target_branch}"
+    current = rev(slot.base_root, target_ref)
+    if current is READ_ERROR:
+        raise GitServiceError(503, "target_ref_unreadable", "the target branch cannot be read")
+    if current != pre_head:
+        raise GitServiceError(409, "target_moved", "the target moved before the remote sync",
+                              details={"stage": "sync_entry", "changed": False,
+                                       "observed_target_sha": current, "target_deleted": current is None})
+    if not commit_exists(slot.base_root, remote_head):
+        raise GitServiceError(503, "remote_head_missing", "the fetched remote tip is not available")
+    contained = is_ancestor(slot.base_root, remote_head, pre_head)
+    if contained is None:
+        raise GitServiceError(503, "ancestry_unreadable", "the target ancestry cannot be read")
+    if contained:
+        return {"outcome": CONTAINED, "pre_head": pre_head, "merge_commit": pre_head}
+    target = mt.plan_finalize_target(slot.group_id, slot.project_id, slot.cfg, target_branch)
+    if target.target_branch != target_branch:
+        raise GitServiceError(409, "target_branch_pinned", "another merge attempt pins a different target")
+    if getattr(target, "merge_id", None) is not None:
+        # The group still has an open attempt (``plan_finalize_target`` hands it back): never a second one beside it.
+        raise GitServiceError(409, "merge_target_busy", "another merge attempt of the group is open",
+                              details={"merge_id": target.merge_id, "changed": False})
+    if target.is_project_base:
+        gs.guard_base_free(slot.project_id)
+    attempt = mt.open_attempt(slot.group_id, target, ATTEMPT_ACTION, holder_of(job_id), uuid.uuid4().hex,
+                              origin=mt.ORIGIN_MANUAL_MERGE)
+    mt._update_context(attempt.merge_id, **{SYNC_CONTEXT_KEY: decision_id, "gate_remote_sync": True})
+    landed = False
+    try:
+        if not attempt.is_project_base:
+            mt.prepare_workspace(attempt)
+        root = attempt.root
+        if root is None:
+            raise GitServiceError(409, "target_checkout_unavailable", "the target checkout is not available")
+        if attempt.is_project_base:
+            mt.raise_if_base_checkout_off_branch(slot.project_id, attempt.base_branch)
+            if gs._dirty(slot.base_root, include_untracked=False):
+                raise GitServiceError(409, "target_checkout_mismatch", "the target checkout has local modifications")
+        head = gs._rev_parse(root, "HEAD")
+        if head != pre_head:
+            raise GitServiceError(409, "target_checkout_mismatch", "the target checkout is not at the target head",
+                                  details={"stage": "sync_checkout", "changed": False, "merge_id": attempt.merge_id})
+        mt.record_merge_inputs(attempt, pre_head=pre_head, source_head=remote_head, expected_remote_head=remote_head)
+        on_started({"merge_id": attempt.merge_id, "pre_head": pre_head})
+        proc = gs._run_git(
+            [*gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "-c", "rerere.enabled=false",
+             "-c", "rerere.autoupdate=false", "merge", "--no-ff", "-m",
+             f"Merge origin/{target_branch} into {target_branch} (gate remote sync)", remote_head],
+            cwd=root, author_env=_author_env_from_cfg(slot.cfg))
+        landed = proc.returncode == 0
+        files: list[str] = []
+        if not landed:
+            listed = gs._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=root)
+            files = [line.strip() for line in (listed.stdout or "").splitlines() if line.strip()]
+            if not files and _merge_commit_landed(root, pre_head, remote_head):
+                if gs._rev_parse(root, "MERGE_HEAD"):
+                    gs._run_git(["merge", "--quit"], cwd=root)
+                landed = True
+        if landed:
+            full = gs._rev_parse(root, "HEAD")
+            short = gs._rev_parse(root, "HEAD", short=True)
+            mt.finish_manual_attempt(attempt, merge_commit=short, merge_commit_sha=full, pushed=False)
+            return {"outcome": MERGED, "pre_head": pre_head, "merge_commit": full, "merge_id": attempt.merge_id}
+        if not files:
+            gs._run_git(["merge", "--abort"], cwd=root)
+            _log.warning("gate remote sync failed for %s: %s", slot.group_id, redact.scrub(proc.stderr, *slot.secrets))
+            raise GitServiceError(409, "sync_merge_failed", "the remote sync merge could not run")
+        _hand_off_conflict(slot, attempt, root, target_branch, files, decision_id, context_key=SYNC_CONTEXT_KEY)
+        return {"outcome": CONFLICT, "pre_head": pre_head, "merge_id": attempt.merge_id, "files": files}
+    except BaseException as exc:
+        # A sync commit that landed is never closed as failed: the attempt stays open for the recovery to read.
+        if not landed:
+            mt.fail_attempt(attempt, {"code": redact.safe_code(getattr(exc, "code", None) or type(exc).__name__)})
+        raise
+    finally:
+        mt.invalidate_check_targets(slot.project_id)
+
+
+def sync_state(slot: Slot, merge_id) -> dict:
+    """What the remote sync attempt ``merge_id`` left (under the target's B / W, the caller's): ``{"outcome": ...}``
+    with its recorded ``pre_head`` / ``source_head``. ``conflict`` (its review is open), ``merged`` (completed: by
+    itself, by its review, or a landed merge commit settled by finalize's own recovery - ``merge_commit``),
+    ``aborted`` (its review was aborted), ``interrupted`` (closed before any merge commit: a half merge was undone by
+    ``merge --abort``), ``unsettled`` (cannot be proven), ``missing`` (no such attempt). Never re-runs the merge."""
+    gs, mt = _gs(), _mt()
+    session = gs.db_git.get_session(int(merge_id)) if merge_id is not None else None
+    if session is None:
+        return {"outcome": SYNC_MISSING, "merge_id": merge_id}
+    merge_id = int(session["merge_id"])
+    context = gs.db_git.session_context(session)
+    inputs = context.get(mt.MERGE_INPUTS_KEY) or {}
+    base = {"merge_id": merge_id, "pre_head": inputs.get("pre_head"), "source_head": inputs.get("source_head")}
+    if session.get("status") == "open":
+        if context.get("review_state") == gs.REVIEW_STATE_COMPLETED:
+            mt.finish_completed_review(session)          # a review that ended inside its finish: finish it the same way
+        elif mt.attempt_phase(session) == mt.PHASE_CONFLICT:
+            return {"outcome": CONFLICT, **base}
+        else:
+            verdict = mt.recover_interrupted_attempt(session, "gate_sync_resume")
+            if verdict == mt.ATTEMPT_INTERRUPTED:
+                return {"outcome": SYNC_INTERRUPTED, **base}
+            if verdict != mt.ATTEMPT_COMPLETED:
+                return {"outcome": SYNC_UNSETTLED, **base}
+        session = gs.db_git.get_session(merge_id)
+        if session is None or session.get("status") == "open":
+            return {"outcome": SYNC_UNSETTLED, **base}
+        context = gs.db_git.session_context(session)
+    state = context.get(mt.ATTEMPT_STATE_KEY)
+    if state == mt.ATTEMPT_COMPLETED:
+        result = context.get("attempt_result") or {}
+        sha = result.get("merge_commit_sha") or context.get("merge_commit") or result.get("merge_commit")
+        if sha and len(sha) < 40:
+            sha = gs._rev_parse(slot.base_root, sha)
+        return {"outcome": MERGED, "merge_commit": sha, "reviewed": bool(context.get("conflict_handed_off")), **base}
+    if context.get("conflict_handed_off") or context.get("review_state") or state == mt.ATTEMPT_ABORTED:
+        return {"outcome": SYNC_ABORTED, **base}
+    if state in (mt.ATTEMPT_FAILED, mt.ATTEMPT_INTERRUPTED):
+        return {"outcome": SYNC_INTERRUPTED, **base}
+    return {"outcome": SYNC_UNSETTLED, **base}
+
+
+def parents(repo: Path, sha: str) -> Optional[list]:
+    """The parent SHAs of commit ``sha`` in order, None when Git cannot tell."""
+    proc = _git(repo, ["rev-list", "--parents", "-n", "1", sha])
+    if proc.returncode != 0 or not (proc.stdout or "").strip():
+        return None
+    return (proc.stdout or "").split()[1:]

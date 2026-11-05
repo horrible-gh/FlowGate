@@ -248,7 +248,10 @@ def _settle_gate_decisions(run_id: str) -> tuple[set, dict]:
     stay held and the run stays stopping: a running job is asked to cancel (it cancels itself at its next phase boundary
     when it did nothing outside, else it parks for recovery), a waiting job that already acted is parked for a person's
     retry / resolve (``recovery_required``), a conflict handed to the merge review waits for that review. Returns (the
-    gates still held, ``{node key: event note}`` linking the stop event of each canceled gate to its decision)."""
+    gates still held, ``{node key: event note}`` linking the stop event of each canceled gate to its decision).
+    0132 T#2: the effects (``publish.effects_now``) count the push phase's ``remote_sync`` row, and the open review is
+    the decision's active conflict (``recovery._conflict_open`` -> ``publish._conflict_merge_id``: a remote sync's
+    review first, else the merge's)."""
     from flowgate.gate_decisions import history, publish, recovery as gate_recovery, repository as gate_decisions
     from modules.flow_gate.db import operation_job as db_jobs
     from modules.flow_gate.services.git import job_store

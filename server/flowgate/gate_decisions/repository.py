@@ -455,8 +455,9 @@ def cleanup_of_job(job_id: str) -> Optional[dict]:
 # ── flowgate.v02.0085 T#3: what the effects say, and the recovery requests ────
 
 # The phases whose effect is outside the Flow's own records (D0007 §7.3): a target branch merge, a remote push, an
-# archive ref. The snapshot pin is the job's own internal ref and is no external effect.
-EXTERNAL_PHASES = ("merge", "push", "archive")
+# archive ref. The snapshot pin is the job's own internal ref and is no external effect. 0132 T#2 (NR §4.3): the push
+# phase's remote sync (``remote_sync``: a merge of the remote tip into the target, its own row) is one too.
+EXTERNAL_PHASES = ("merge", "remote_sync", "push", "archive")
 EFFECTS_NONE, EFFECTS_PRESENT, EFFECTS_UNKNOWN = "none", "present", "unknown"
 
 
@@ -465,17 +466,29 @@ def _changed(row: dict) -> bool:
     return evidence.get("changed", True) is not False
 
 
+def _sync_rounds_landed(row: dict) -> bool:
+    """0132 T#2 rework: a ``remote_sync`` row keeps every done round in ``evidence.rounds``; a later round that is
+    pending (conflict), failed (aborted, interrupted, refused) or rewritten never takes back an earlier round's sync
+    commit - the local target moved to it."""
+    if row.get("phase") != "remote_sync":
+        return False
+    rounds = (row.get("evidence") or {}).get("rounds") or []
+    return any(isinstance(r, dict) and r.get("sync_commit") for r in rounds)
+
+
 def effects_state(decision_id: str) -> str:
     """``unknown`` when a phase's outcome outside is not known (in flight, timed out, unprovable), else ``present``
-    when a phase changed something outside (a merge commit, a pushed ref, an archive ref), else ``none`` - the evidence
-    a cancel with no effect needs (D0007 §7.3.1). A phase that found its result already there changed nothing."""
+    when a phase changed something outside (a merge commit, a pushed ref, an archive ref, a sync commit of any done
+    remote sync round), else ``none`` - the evidence a cancel with no effect needs (D0007 §7.3.1). A phase that found
+    its result already there changed nothing. The decision's effects are cumulative: the ``remote_sync`` row's current
+    round and every round it recorded done are both judged (``_sync_rounds_landed``)."""
     state = EFFECTS_NONE
     for row in effects_of(decision_id):
         if row["phase"] not in EXTERNAL_PHASES:
             continue
         if row["status"] == UNKNOWN:
             return EFFECTS_UNKNOWN
-        if row["status"] == DONE and _changed(row):
+        if (row["status"] == DONE and _changed(row)) or _sync_rounds_landed(row):
             state = EFFECTS_PRESENT
     return state
 
