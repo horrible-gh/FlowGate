@@ -34,7 +34,7 @@
 // AI run owns the group. `/test-document` refuses with a FastAPI `detail` (404, 403).
 import { documentErrorOf } from '../documentError'
 import { normalizeApiInput, normalizeApiError } from '@shared/apiErrors'
-import { getRequest, postRequest, putRequest } from '@shared/api'
+import { getRequest, postRequest } from '@shared/api'
 
 const API = '/api/v1'
 
