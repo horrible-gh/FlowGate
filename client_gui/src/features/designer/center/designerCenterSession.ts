@@ -151,7 +151,7 @@ import {
 } from './run/flowRunControl'
 import { runV01Flow, type V01RunDeps, type V01RunMode, type V01RunOutcome } from './run/v01RunControl'
 import { flowCardMenu, type FlowCardMenuItem, type FlowCardMenuKey } from './run/flowCardMenu'
-import { NO_RUN_MARKS, flowRunMarks, isEdgeProtected, isRunLocked, type FlowEditLock, type FlowRunMarks } from './run/flowRunLock'
+import { NO_RUN_MARKS, flowRunMarks, isEdgeProtected, isRunLocked, type FlowEditLock, type FlowRunMarks, type GateActivitySource } from './run/flowRunLock'
 
 export type {
   ArrangeKind,
@@ -210,6 +210,12 @@ export interface FlowRunStatus {
   readonly run: FlowRunInfo | null
   /** Confirmed by the run read / a command's answer, or (that read pending or failed) by the Flow's Canvas read. */
   readonly known: boolean
+  /**
+   * flowgate.v02.0132 T#4 (review): which read tells whether a gate's Git work is going on — `canvas` while the Canvas
+   * read is the later one (the run read pending, failed, or older), else (absent) the run read. A gate moving between
+   * parked and active raises no run event, so the two reads are ordered by arrival, not by the run's event sequence.
+   */
+  readonly gateSource?: GateActivitySource
 }
 
 const KNOWN_NO_RUN: FlowRunStatus = Object.freeze({ run: null, known: true })
@@ -686,25 +692,32 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     const run = state.runs[flowId]
     const graph = readyGraph(flowId)
     const shown = graph?.run
-    if (!runControl.available) return shown ? { run: canvasRunInfo(shown, null), known: true } : KNOWN_NO_RUN
+    if (!runControl.available) return shown ? { run: canvasRunInfo(shown, null), known: true, gateSource: 'canvas' } : KNOWN_NO_RUN
     if (run?.readState === 'read') {
       const last = run.run
       // Conversely, a newer Canvas event must not be hidden by an older run response.
       if (shown && last?.runId === shown.runId && shown.lastEventSeq !== undefined &&
           last.lastEventSeq !== undefined && shown.lastEventSeq > last.lastEventSeq) {
-        return { run: canvasRunInfo(shown, last, graph), known: true }
+        return { run: canvasRunInfo(shown, last, graph), known: true, gateSource: 'canvas' }
       }
+      // The run read answered after the Canvas read it follows (every Canvas read starts one): it tells the gates.
       return { run: last, known: true }
     }
-    if (shown !== undefined) return { run: canvasRunInfo(shown, run?.run ?? null, graph), known: true }
+    if (shown !== undefined) {
+      const last = run?.run ?? null
+      // flowgate.v02.0132 T#4 (review): the run read is pending / failed, so the Canvas read is the later one — also
+      // for a gate's Git activity, which moves with no run event — unless the run last read is newer by sequence.
+      const runNewer = !!shown && last?.runId === shown.runId && last.lastEventSeq !== undefined && shown.lastEventSeq !== undefined && last.lastEventSeq > shown.lastEventSeq
+      return { run: canvasRunInfo(shown, last, graph), known: true, ...(runNewer ? {} : { gateSource: 'canvas' as const }) }
+    }
     return { run: run?.run ?? null, known: false }
   }
 
   // flowgate.v02.0061 T#14: the run's marks of a Flow's shown Graph (run/flowRunLock.ts); TR0031 rev1: the lock stays
   // whatever the Graph's load (no ready Graph: the lock alone).
   function runMarks(flowId: string): FlowRunMarks {
-    const { run, known } = runStatus(flowId)
-    return flowRunMarks(readyGraph(flowId), run, known)
+    const { run, known, gateSource } = runStatus(flowId)
+    return flowRunMarks(readyGraph(flowId), run, known, gateSource)
   }
 
   /** flowgate.v02.0061 TR0031 rev1: a run command goes only on a confirmed status (the phase's own buttons). */

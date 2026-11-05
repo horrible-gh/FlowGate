@@ -1013,7 +1013,7 @@ export default {
   },
   // flowgate.v02.0033 — Designer Git part (features/git).
   git: {
-    gate_job: {"job": "処理", "decision": "判断","title": "Git 処理失敗", "phase": "処理段階", "retry": "再試行", "cancel": "キャンセル", "reviewed": "各段階の証拠と残る影響を確認しました", "reason": "解決理由", "confirm_effects": "効果を確定", "abandon": "復旧を断念"}, 
+    gate_job: {"job": "処理", "decision": "判断","title": "Git 処理失敗", "phase": "処理段階", "retry": "再試行", "cancel": "キャンセル", "reviewed": "各段階の証拠と残る影響を確認しました", "reason": "解決理由", "confirm_effects": "効果を確定", "abandon": "復旧を断念", "retry_same": "再試行は受理されましたが、同じ理由で再び失敗しました", "retry_changed": "再試行は受理されましたが、別の理由で失敗しました"}, 
     header: {
       base: 'プロジェクトベース',
       flow_base: 'フローベース',

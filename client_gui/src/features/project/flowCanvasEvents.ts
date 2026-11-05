@@ -27,6 +27,13 @@ export const CANVAS_REFRESH_EVENTS = ['graph_canvas_changed', 'flow_ownership_ch
  * follows — not only the one the Inspector shows.
  */
 export const CANVAS_CARD_STEP_EVENTS = ['doc_review_status_changed', 'ai_invoke_started', 'ai_invoke_finished'] as const
+/**
+ * flowgate.v02.0132 T#4 (review): a confirm gate's Git work moves (a retry accepted, the automatic sync going on, parked
+ * again) with a job event of its own — no run or node event follows when the run stays idle (e.g. after a Stop). The
+ * Canvas read carries each gate's `git_active` / `parked`, and it locks the structure by them, so the job's frames read
+ * the Flow's Canvas (and its run) again too, coalesced like the card step frames.
+ */
+export const CANVAS_GATE_JOB_EVENTS = ['gate_publish_job_changed'] as const
 /** One Canvas read for a burst of card step frames of a Flow. */
 export const CANVAS_CARD_STEP_COALESCE_MS = 200
 /** Wait before a closed stream (e.g. a 401 on a rotated token) is opened again with a fresh token. */
@@ -75,11 +82,11 @@ export function subscribeFlowCanvasChanges(projectId: string, handlers: FlowCanv
     )
   }
   const stop = subscribeProjectEvents(projectId, {
-    events: [...CANVAS_REFRESH_EVENTS, ...CANVAS_CARD_STEP_EVENTS],
+    events: [...CANVAS_REFRESH_EVENTS, ...CANVAS_CARD_STEP_EVENTS, ...CANVAS_GATE_JOB_EVENTS],
     event: (frame: ProjectEventFrame) => {
       const flowId = changedFlowOfFrame(frame.payload, frame.groupId)
       if (flowId === null) return
-      if ((CANVAS_CARD_STEP_EVENTS as readonly string[]).includes(frame.type)) stepChanged(flowId)
+      if ((CANVAS_CARD_STEP_EVENTS as readonly string[]).includes(frame.type) || (CANVAS_GATE_JOB_EVENTS as readonly string[]).includes(frame.type)) stepChanged(flowId)
       else handlers.changed(flowId)
     },
     resync: () => handlers.resync(),

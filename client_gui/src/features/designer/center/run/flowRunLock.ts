@@ -3,6 +3,13 @@
 //
 // - Run lock: a run that is running, paused or stopping locks every structure edit of its Flow (Canvas: nodes and
 //   lines added / removed / changed; Inspector: card settings). Viewing, panning, zooming and moving cards stay.
+//   flowgate.v02.0113 and after (0132 NR §4.4.3): an idle run waiting for people never locks by itself — and neither
+//   does a confirm gate whose decision is parked for a recovery (`gate.parked`, no Git work going on). What locks
+//   besides the status is the server's `gate.git_active`: a gate decision whose Git work (the automatic sync) is going
+//   on now locks the structure like a running run (`run`), idle or not (server `graph_run_locked`, reason
+//   `gate_git_active`). A parked gate keeps only its own settings lock (`decision_reserved`). The gate's activity moves
+//   with its job events only (no run event, e.g. an idle run left by a Stop): the Center session says which read tells
+//   it (`GateActivitySource`) — the Canvas read while the run read is pending / failed / older, else the run read.
 // - Protected nodes: a node that is done, open or review — and every execution line into it — never changes, whatever
 //   the run's status (also when it is idle). The server judges it by the run's node states; the screen reads them from
 //   the Canvas node runs and from the run read, so a draft view (no node runs on its nodes) is protected the same.
@@ -42,9 +49,45 @@ export function isRunLocked(run: Pick<FlowRunInfo, 'status'> | null | undefined)
   return !!run && RUN_LOCKED_STATUSES.includes(run.status)
 }
 
-/** `known`: the run status is confirmed (`run` null = no run); a locked run locks even when it is not. */
-export function editLockOf(run: Pick<FlowRunInfo, 'status'> | null | undefined, known = true): FlowEditLock {
-  if (isRunLocked(run)) return 'run'
+/**
+ * flowgate.v02.0132 T#4: a gate of the run whose decision has Git work going on now (the node run's `gate.git_active`).
+ * A parked gate (`gate.parked`) is not active: its run is idle and editable.
+ */
+export function isGateGitActive(run: Pick<FlowRunInfo, 'nodeRuns'> | null | undefined): boolean {
+  return !!run?.nodeRuns?.some((nodeRun) => nodeRun.gate?.git_active === true)
+}
+
+/**
+ * Which read tells the gates' Git activity: the run read (`run`, the default) or the Canvas read (`canvas`).
+ * A gate decision moving between parked and active raises no run event (its own job event only), so the two reads
+ * cannot be ordered by the run's event sequence; the Center session says `canvas` while the Canvas read is the later
+ * one (the run read is still pending, failed, or older than the Canvas read) and `run` once the run read has answered.
+ */
+export type GateActivitySource = 'run' | 'canvas'
+
+/**
+ * Whether a gate has Git work going on, by the read that is the later one. From the Canvas, a node the Canvas tells a
+ * gate of (`nodeRun.gate`) is judged by that alone — a parked gate there unlocks even when the run read (older) still
+ * says active; a gate the Canvas tells nothing of (a draft view) stays with the run read's node runs.
+ */
+export function gateGitActiveBy(graph: FlowGraph | null | undefined, run: Pick<FlowRunInfo, 'nodeRuns'> | null | undefined, source: GateActivitySource = 'run'): boolean {
+  if (source === 'run' || !graph) return isGateGitActive(run)
+  const told = new Set<string>()
+  for (const node of graph.nodes) {
+    const gate = node.nodeRun?.gate
+    if (!gate) continue
+    if (gate.git_active === true) return true
+    if (typeof gate.git_active === 'boolean') told.add(node.id)
+  }
+  return !!run?.nodeRuns?.some((nodeRun) => nodeRun.gate?.git_active === true && !told.has(nodeRun.nodeKey))
+}
+
+/**
+ * `known`: the run status is confirmed (`run` null = no run); a locked run locks even when it is not.
+ * `gateActive`: whether a gate has Git work going on (see `gateGitActiveBy`); omitted, the run read's node runs tell it.
+ */
+export function editLockOf(run: Pick<FlowRunInfo, 'status' | 'nodeRuns'> | null | undefined, known = true, gateActive: boolean = isGateGitActive(run)): FlowEditLock {
+  if (isRunLocked(run) || gateActive) return 'run'
   return known ? null : 'unknown'
 }
 
@@ -110,10 +153,11 @@ export interface FlowRunMarks {
 
 /**
  * The marks of a Flow's run on its shown Graph (`graph` null: none shown — the lock alone). `known`: whether the run's
- * status is confirmed; until it is, the structure waits (`unknown`).
+ * status is confirmed; until it is, the structure waits (`unknown`). `gateSource`: which read tells the gates' Git
+ * activity (see `GateActivitySource`).
  */
-export function flowRunMarks(graph: FlowGraph | null, run: FlowRunInfo | null | undefined, known = true): FlowRunMarks {
-  const lock = editLockOf(run, known)
+export function flowRunMarks(graph: FlowGraph | null, run: FlowRunInfo | null | undefined, known = true, gateSource: GateActivitySource = 'run'): FlowRunMarks {
+  const lock = editLockOf(run, known, gateGitActiveBy(graph, run, gateSource))
   if (!graph) return lock === null ? NO_RUN_MARKS : { ...NO_RUN_MARKS, lock }
   return {
     lock,

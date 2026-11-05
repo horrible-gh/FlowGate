@@ -136,6 +136,15 @@ export interface RunGateState {
   readonly decision_in_progress: boolean
   readonly can_decide: boolean
   readonly settings_locked: boolean
+  /**
+   * flowgate.v02.0132 T#4: why the settings are locked (the server's `settings_lock_reason`: `decision_reserved`,
+   * `merge_conflict`, `time_machine`, `run_not_editable`, `gate_decided`, `recovery_reset_required`), kept only when sent.
+   */
+  readonly settings_lock_reason?: string | null
+  /** flowgate.v02.0132 T#4 (NR §4.4.3): the server's Git work on the decision is going on now (auto sync), kept only when sent. */
+  readonly git_active?: boolean
+  /** flowgate.v02.0132 T#4: the decision waits for a recovery (parked): no Git work, the run idle; kept only when sent. */
+  readonly parked?: boolean
   readonly archived: boolean
   readonly recovery_reset_required: boolean
   readonly recovery: RunGateRecovery | null
@@ -150,6 +159,9 @@ export function toRunGateState(raw: unknown): RunGateState | null {
     decision_in_progress: row.decision_in_progress === true,
     can_decide: row.can_decide === true,
     settings_locked: row.settings_locked === true,
+    ...('settings_lock_reason' in row ? { settings_lock_reason: typeof row.settings_lock_reason === 'string' ? row.settings_lock_reason : null } : {}),
+    ...(typeof row.git_active === 'boolean' ? { git_active: row.git_active } : {}),
+    ...(typeof row.parked === 'boolean' ? { parked: row.parked } : {}),
     archived: row.archived === true,
     recovery_reset_required: row.recovery_reset_required === true,
     recovery: (row.recovery ?? null) as RunGateRecovery | null,

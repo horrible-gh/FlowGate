@@ -41,6 +41,14 @@ export const CHECK_SCOPES: readonly CheckScope[] = ['merge', 'commit', 'hold']
 /** The card settings read (the `@/features/document` SettingsNode). */
 export interface CheckNodeFacts {
   readonly locked: boolean
+  /**
+   * flowgate.v02.0132 T#4: why it is locked, as the server tells it (the gate's `settings_lock_reason`, else the settings
+   * read's `lock_reason`), and the gate decision's Git state (`git_active`: auto sync going on, `parked`: waiting for a
+   * recovery). Absent = not told: the plain `reason.locked`.
+   */
+  readonly lockReason?: string | null
+  readonly gitActive?: boolean
+  readonly parked?: boolean
   readonly fields: Readonly<Record<string, { readonly value: unknown; readonly stored?: unknown }>>
   readonly mergeTargetOptions?: readonly string[]
   readonly defaultTargetBranch?: string | null
@@ -63,13 +71,30 @@ export interface CheckSettingsInput {
   readonly failure: { readonly field: string; readonly kind: CheckSettingsFailureKind; readonly key?: string | null } | null
 }
 
+/** The server's gate `settings_lock_reason` -> the message key of the lock (flowgate.v02.0132 T#4). */
+const LOCK_REASON_KEYS: Readonly<Record<string, string>> = {
+  decision_reserved: 'reason.lock_decision_reserved', merge_conflict: 'reason.lock_merge_conflict',
+  time_machine: 'reason.lock_time_machine', gate_decided: 'reason.lock_gate_decided',
+  recovery_reset_required: 'reason.lock_recovery_reset', run_not_editable: 'reason.locked',
+}
+
+/**
+ * Why a locked card cannot change: Git work going on now (auto sync) first, then a parked decision (waiting for a
+ * recovery), then the server's reason; an unknown or absent reason is the plain "running".
+ */
+export function checkLockedReason(node: Pick<CheckNodeFacts, 'lockReason' | 'gitActive' | 'parked'>): string {
+  if (node.gitActive) return 'reason.lock_git_active'
+  if (node.parked && (!node.lockReason || node.lockReason === 'decision_reserved')) return 'reason.lock_parked'
+  return (node.lockReason ? LOCK_REASON_KEYS[node.lockReason] : undefined) ?? 'reason.locked'
+}
+
 /** Why the card's settings cannot change now (message key), or null. */
 export function checkSettingsReason(input: Pick<CheckSettingsInput, 'card' | 'node' | 'readOnly' | 'placing' | 'disposed'>): string | null {
   if (!input.card) return 'git.unconnected'
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (input.disposed) return 'reason.disposed'
   if (input.placing) return 'reason.placing'
-  if (input.node?.locked) return 'reason.locked'
+  if (input.node?.locked) return checkLockedReason(input.node)
   if (input.node === null) return 'reason.not_read'
   return null
 }
@@ -192,6 +217,10 @@ export function checkOperationErrorKey(code: string | null | undefined, decision
     merge_conflict: 'merge_conflict', merge_conflict_aborted: 'merge_aborted', merge_failed: 'merge_aborted',
     merge_attempt_unsettled: 'target_check', target_moved: 'target_check', target_branch_missing: 'target_check',
     target_ref_unreadable: 'target_check', gate_git_unavailable: 'target_check',
+    // flowgate.v02.0132 T#4 (NR §4.2/§4.5): the remote sync and the parks that wait for a recovery
+    push_remote_ahead: 'remote_ahead', push_protected: 'push_protected', push_remote_race: 'remote_race',
+    target_checkout_mismatch: 'checkout_mismatch', target_diverged: 'diverged', sync_unsettled: 'sync_unsettled',
+    push_sync_conflict_aborted: 'sync_conflict_aborted',
     remote_head_unknown: 'remote_unknown', push_result_unknown: 'push_unknown', push_timeout: 'push_unknown',
     push_auth_failed: 'push_auth_failed', group_branch_missing: 'group_branch_missing',
   }

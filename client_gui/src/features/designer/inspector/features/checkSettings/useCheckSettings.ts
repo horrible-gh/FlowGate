@@ -11,7 +11,11 @@ export function useCheckSettings(target: () => InspectorTarget | null) {
   const node = computed(() => {
     const c = context.value
     const saved = c?.settings.value
-    return saved ? { ...saved, locked: saved.locked || c?.gate.value?.settings_locked === true || !!c?.busy.value || c?.hasRequest() === true } : null
+    if (!saved) return null
+    const gate = c?.gate.value
+    // flowgate.v02.0132 T#4: the lock keeps the server's reason (the gate's, else the settings read's) and the gate's Git state
+    return { ...saved, locked: saved.locked || gate?.settings_locked === true || !!c?.busy.value || c?.hasRequest() === true,
+      lockReason: gate?.settings_lock_reason ?? saved.lockReason ?? null, gitActive: gate?.git_active === true, parked: gate?.parked === true }
   })
   const failure = computed(() => {
     const last = context.value?.failure.value

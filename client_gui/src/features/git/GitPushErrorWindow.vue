@@ -32,6 +32,7 @@
             <button class="gx-btn danger" :disabled="locked || !reviewed || !reason.trim()" data-test="git-job-abandon" @click="recover('resolve', 'abandon')">{{ t('gui.git.gate_job.abandon') }}</button>
           </div>
         </template>
+        <p v-if="retryText" class="gx-notice" data-test="git-retry-outcome">{{ retryText }}</p>
         <p v-if="gateJobs?.notice.value" class="gx-notice" role="alert">{{ gateNoticeText }}</p>
       </template>
       <dl v-else-if="failure" class="gx-tech">
@@ -58,7 +59,7 @@ import { useI18n } from 'vue-i18n'
 import ModelessShell from '../../components/ui/ModelessShell.vue'
 import { checkOperationErrorKey } from '../designer/inspector/features/checkSettings/checkSettingsModel'
 import GateSettingsSummary from '../designer/inspector/features/gateCard/GateSettingsSummary.vue'
-import { useGitGateOperations, type GateOperation } from './gateOperations'
+import { retryOutcomeText, useGitGateOperations, type GateOperation } from './gateOperations'
 import { useGitPanel } from './gitSession'
 import type { GitWindowDescriptor } from './types'
 
@@ -72,6 +73,7 @@ const gateNoticeText = computed(() => {
   const key = checkOperationErrorKey(code, props.operation?.gate.decision)
   return key ? t(`gui.inspector.checkSettings.${key}`) : code ? t('gui.inspector.checkSettings.target.operation_unknown') : null
 })
+const retryText = computed(() => retryOutcomeText(gateJobs?.retryOutcomeOf(props.operation) ?? null, t))
 const reason = ref('')
 const reviewed = ref(false)
 const locked = computed(() => !!gateJobs?.busy.value || gateJobs?.readOnly() !== false)
