@@ -48,6 +48,8 @@ COMMAND = "claude --secret-flag-0129 -p"
 SCRATCH = "/srv/flowgate/scratch/run-0129"
 TOKEN_SCRATCH = "/srv/flowgate/scratch/token-0129"
 BASE = "https://flowgate.example.test/flowgate/api/v1"
+# flowgate.v02.0135 CH0006: the Agent's remote working directory setting.
+WORKDIR = "/tmp/flowgate/${AGENT_JOB_ID}"
 
 
 class Store:
@@ -115,14 +117,14 @@ def _real_stamp(delta=0):
     return (datetime.now(timezone.utc) + timedelta(seconds=delta)).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def add_agent(store, aid, *, capable=True, enabled=True, online=True, owner=None):
+def add_agent(store, aid, *, capable=True, enabled=True, online=True, owner=None, workdir=WORKDIR):
     ts = "2026-01-01T00:00:00Z"
     store._execute(
         """INSERT INTO agents(agent_id,name,enabled,location,connection_mode,
            configured_ai_cli,reported_ai_cli,reported_ai_api,reported_storage,
-           protocol_version,protocol_compatibility,created_at,updated_at,owner_user_id)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        [aid, aid, enabled, "remote", "agent_pull", capable, capable, 0, 0, 1, "compatible", ts, ts, owner],
+           protocol_version,protocol_compatibility,created_at,updated_at,owner_user_id,remote_workdir)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        [aid, aid, enabled, "remote", "agent_pull", capable, capable, 0, 0, 1, "compatible", ts, ts, owner, workdir],
     )
     credential = "agc_" + aid
     store._execute(
@@ -328,7 +330,9 @@ def test_remote_runs_only_on_target_agent_and_result_is_reflected(env, caplog):
     assert other.received == [] and other.polls > 0                # the other Agent never got it
     assert len(target.received) == 1
     job = target.received[0]
-    assert job["cwd"] == f"flowgate-runs/{job['job_id']}"
+    # flowgate.v02.0135 CH0006: the Agent's setting with ${AGENT_JOB_ID} replaced, no fixed path.
+    assert job["cwd"] == f"/tmp/flowgate/{job['job_id']}"
+    assert run["remote_job"]["workdir"] == job["cwd"]
     assert TOKEN in job["stdin_text"] and TOKEN_SCRATCH not in job["stdin_text"]
     assert job["command_line"] == COMMAND
     assert run["last_message"] == "line one\n\nfinal answer" and run["exit_code"] == 0
@@ -466,8 +470,108 @@ def test_agent_rejection_is_a_final_failure(env):
     run = make_run()
     status, detail = provider_cli._cli_execute(remote(), "p", run)
     agent.join(5)
-    assert (status, detail) == ("spawn_failed", "remote_agent_rejected: cwd_outside_workspace")
-    assert run["remote_final_failure"]["claimed_agent_id"] == "agt_a"
+    job_id = run["remote_job"]["job_id"]
+    assert (status, detail) == ("spawn_failed", "remote_agent_rejected: path_invalid: cwd_outside_workspace"
+                                f" (workdir: /tmp/flowgate/{job_id})")
+    failure = run["remote_final_failure"]
+    assert failure["claimed_agent_id"] == "agt_a"
+    assert (failure["cause"], failure["message"], failure["workdir"]) == (
+        "path_invalid", "cwd_outside_workspace", f"/tmp/flowgate/{job_id}")
+
+
+# ── flowgate.v02.0135 CH0006: remote working directory and the Agent's own failure cause ──
+
+def _rejecting(**fields):
+    def reject(svc, cred, job):
+        svc.report(cred, job["job_id"], job["attempt_id"], job["lease_token"],
+                   report("REJECTED", stdout="", **fields))
+    return reject
+
+
+def test_rejection_reason_in_diagnostics_reaches_the_failure_with_its_workdir(env):
+    # The incident: the Agent put its cause in diagnostics and left end_reason empty.
+    def reject(svc, cred, job):
+        svc.report(cred, job["job_id"], job["attempt_id"], job["lease_token"], report(
+            "REJECTED", stdout="", end_reason=None,
+            diagnostics=f'workspace: "{job["cwd"]}" is invalid: does not exist'))
+    agent = FakeAgent(env, "agt_a", reject)
+    agent.start()
+    started, run = _chain(env, [remote(), local_provider()])
+    agent.join(5)
+    workdir = run["remote_job"]["workdir"]
+    assert started is False and env.local_calls == []
+    final = run["fallback_history"][0]["remote_final"]
+    assert final["code"] == "remote_agent_rejected" and final["cause"] == "workdir_missing"
+    assert final["workdir"] == workdir and final["message"] == f'workspace: "{workdir}" is invalid: does not exist'
+    assert run["last_message"] == f'remote_agent_rejected: workdir_missing: workspace: "{workdir}" is invalid: does not exist'
+    assert "rejected" != run["last_message"].split(": ", 1)[1]
+
+
+@pytest.mark.parametrize("fields, cause", [
+    ({"end_reason": "workdir_create_failed", "diagnostics": "mkdir /tmp/flowgate/x: permission denied"},
+     "permission_denied"),
+    ({"diagnostics": "could not create working directory: disk full"}, "workdir_create_failed"),
+    ({"diagnostics": "cwd escapes the workspace through a symlink"}, "path_invalid"),
+    ({"end_reason": "rejected", "diagnostics": "unsupported protocol option"}, "agent_rejected"),
+    ({"end_reason": "rejected"}, "agent_rejected"),
+])
+def test_rejection_cause_is_classified_from_the_agent_words(env, fields, cause):
+    agent = FakeAgent(env, "agt_a", _rejecting(**fields))
+    agent.start()
+    run = make_run()
+    status, detail = provider_cli._cli_execute(remote(), "p", run)
+    agent.join(5)
+    assert status == "spawn_failed" and run["remote_final_failure"]["cause"] == cause
+    assert detail.startswith(f"remote_agent_rejected: {cause}: ")
+
+
+def test_a_command_not_found_is_not_reported_as_a_missing_directory():
+    assert provider_remote.classify_agent_failure("claude: command not found", "agent_failed") == "agent_failed"
+    assert provider_remote.classify_agent_failure("permission denied", "agent_failed") == "permission_denied"
+
+
+def test_failure_text_keeps_the_path_and_drops_secrets(env):
+    agent = FakeAgent(env, "agt_a", _rejecting(diagnostics=(
+        f"cannot create directory /tmp/flowgate/run: Authorization: Bearer abcdef123456 token={TOKEN} key agc_secretvalue1234")))
+    agent.start()
+    run = make_run()
+    status, detail = provider_cli._cli_execute(remote(), "p", run)
+    agent.join(5)
+    message = run["remote_final_failure"]["message"]
+    assert "/tmp/flowgate/run" in message and run["remote_final_failure"]["cause"] == "workdir_create_failed"
+    for secret in (TOKEN, "abcdef123456", "agc_secretvalue1234"):
+        assert secret not in message and secret not in detail
+
+
+def test_failed_before_start_reports_the_agent_cause(env):
+    def fail(svc, cred, job):
+        svc.report(cred, job["job_id"], job["attempt_id"], job["lease_token"], report(
+            "FAILED", stdout="", exit_code=None, end_reason="failed_before_start",
+            diagnostics="mkdir: cannot create directory '/opt/x': Permission denied"))
+    agent = FakeAgent(env, "agt_a", fail)
+    agent.start()
+    run = make_run()
+    status, detail = provider_cli._cli_execute(remote(), "p", run)
+    agent.join(5)
+    assert status == "spawn_failed" and detail.startswith("remote_agent_failed_before_start: permission_denied: ")
+    assert "/opt/x" in run["remote_final_failure"]["message"]
+
+
+def test_an_agent_without_a_remote_workdir_fails_before_any_job(env):
+    env.store._execute("UPDATE agents SET remote_workdir=NULL WHERE agent_id='agt_a'")
+    agent = FakeAgent(env, "agt_a", completes(), deadline=0.5)
+    agent.start()
+    started, run = _chain(env, [remote(), local_provider()])
+    agent.join(2)
+    assert started is False and jobs_rows(env) == [] and env.launches == [] and env.local_calls == []
+    final = run["fallback_history"][0]["remote_final"]
+    assert (final["code"], final["cause"]) == ("remote_agent_workdir_unset", "workdir_unset")
+    assert run["last_message"] == "remote_agent_workdir_unset: remote_workdir_not_set"
+
+
+def test_workdir_without_the_variable_is_sent_as_set():
+    assert provider_remote.job_workdir("/srv/agent/work", "job_x") == "/srv/agent/work"
+    assert provider_remote.job_workdir("C:\\fg\\${AGENT_JOB_ID}\\w", "job_x") == "C:\\fg\\job_x\\w"
 
 
 @pytest.mark.parametrize("revoke_ok", [True, False])

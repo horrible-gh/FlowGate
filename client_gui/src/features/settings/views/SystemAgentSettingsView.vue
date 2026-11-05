@@ -108,7 +108,7 @@
             </div>
           </form>
     </ModalShell>
-    <AgentEditDialog v-if="selected" :creating="false" :agent="selected" :name="mode === 'create' ? form.name : edit.name" :caps="mode === 'create' ? form.caps : edit.caps" :busy="busy" :can-save="mode === 'create' ? createCanSave : editCanSave" :name-problem="mode === 'create' ? createNameProblem : editNameProblem" :error="mode === 'create' ? formError : actionError" :saved="editSaved" :state-label="selected ? stateLabel(selected) : ''" @update:name="setName" @update:cap="setCap" @submit="mode === 'create' ? submitCreate() : saveEdit()" @close="closeEditor" />
+    <AgentEditDialog v-if="selected" :creating="false" :agent="selected" :name="mode === 'create' ? form.name : edit.name" :workdir="edit.workdir" :caps="mode === 'create' ? form.caps : edit.caps" :busy="busy" :can-save="mode === 'create' ? createCanSave : editCanSave" :name-problem="mode === 'create' ? createNameProblem : editNameProblem" :error="mode === 'create' ? formError : actionError" :saved="editSaved" :state-label="selected ? stateLabel(selected) : ''" @update:name="setName" @update:workdir="setWorkdir" @update:cap="setCap" @submit="mode === 'create' ? submitCreate() : saveEdit()" @close="closeEditor" />
     <AgentEnrollmentDialog v-if="enrollmentAgent" :agent="enrollmentAgent" :enrollment="enrollment" :busy="busy" :error="enrollmentError" :refresh-error="listError" :state-label="stateLabel(enrollmentAgent)" :expired="enrollmentExpired" @retry="retryEnrollment" @refresh="load" @close="closeEnrollment" @copied="onCopied" />
     <ModalShell :open="!!pending" size="sm" :aria-label="pending?.title" @close="closePending">
       <div v-if="pending" class="confirm" data-testid="agent-confirm" :data-action="pending.kind">
@@ -373,6 +373,7 @@ const createNameProblem = computed(() => nameProblem(form.name))
 const createCanSave = computed(() => mode.value === 'create' && !createNameProblem.value && !busy.value)
 
 function setName(value: string) { if (mode.value === 'create') form.name = value; else edit.name = value }
+function setWorkdir(value: string) { if (mode.value !== 'create') edit.workdir = value }
 function setCap(cap: 'ai_cli' | 'ai_api', value: boolean) {
   if (mode.value === 'create') form.caps[cap] = value
   else edit.caps[cap] = value
@@ -453,19 +454,20 @@ async function submitCreate() {
 }
 
 // ── 이름 · 실행 경로 · capability ──
-const edit = reactive<{ name: string; path: string; caps: AgentCapabilities }>({ name: '', path: '', caps: { ai_cli: false, ai_api: false, storage: false } })
+const edit = reactive<{ name: string; path: string; workdir: string; caps: AgentCapabilities }>({ name: '', path: '', workdir: '', caps: { ai_cli: false, ai_api: false, storage: false } })
 const editSaved = ref(false)
 
 /** The confirmed values the form stands on: the server's last answer for the Agent in the form. */
-interface EditValues { name: string; path: string | null; caps: AgentCapabilities }
+interface EditValues { name: string; path: string | null; workdir: string | null; caps: AgentCapabilities }
 const editBase = ref<{ agentId: string; values: EditValues } | null>(null)
 
 function confirmedValues(a: SystemAgent): EditValues {
-  return { name: a.name, path: a.local_executable_path, caps: { ...a.configured_capabilities } }
+  return { name: a.name, path: a.local_executable_path, workdir: a.remote_workdir ?? null, caps: { ...a.configured_capabilities } }
 }
 
 const nameTouched = (base: EditValues) => edit.name.trim() !== base.name
 const pathTouched = (base: EditValues) => (edit.path.trim() || null) !== base.path
+const workdirTouched = (base: EditValues) => (edit.workdir.trim() || null) !== base.workdir
 const capTouched = (base: EditValues, cap: AgentCapability) => edit.caps[cap] !== base.caps[cap]
 
 /** Which inputs differ from the confirmed values (marked as unsaved on screen). */
@@ -474,6 +476,7 @@ const touched = computed(() => {
   return {
     name: !!base && nameTouched(base),
     path: !!base && pathTouched(base),
+    workdir: !!base && workdirTouched(base),
     caps: Object.fromEntries(CAPS.map((cap) => [cap, !!base && capTouched(base, cap)])) as Record<AgentCapability, boolean>,
   }
 })
@@ -486,6 +489,7 @@ function syncEdit() {
   editBase.value = { agentId: a.agent_id, values }
   edit.name = values.name
   edit.path = values.path ?? ''
+  edit.workdir = values.workdir ?? ''
   edit.caps = { ...values.caps }
 }
 
@@ -494,6 +498,7 @@ function discardEdit() {
   editBase.value = null
   edit.name = ''
   edit.path = ''
+  edit.workdir = ''
   edit.caps = { ai_cli: false, ai_api: false, storage: false }
 }
 
@@ -511,6 +516,7 @@ function rebaseEdit(a: SystemAgent) {
   const fresh = confirmedValues(a)
   if (!nameTouched(base.values)) edit.name = fresh.name
   if (!pathTouched(base.values)) edit.path = fresh.path ?? ''
+  if (!workdirTouched(base.values)) edit.workdir = fresh.workdir ?? ''
   for (const cap of CAPS) {
     if (!capTouched(base.values, cap)) edit.caps[cap] = fresh.caps[cap]
   }
@@ -524,6 +530,7 @@ const editChanges = computed<SystemAgentChanges>(() => {
   const changes: SystemAgentChanges = {}
   if (!a || !base || base.agentId !== a.agent_id) return changes
   if (nameTouched(base.values)) changes.name = edit.name.trim()
+  if (workdirTouched(base.values)) changes.remote_workdir = edit.workdir.trim() || null
   if (CAPS.some((cap) => capTouched(base.values, cap))) changes.configured_capabilities = { ...edit.caps }
   return changes
 })
@@ -537,6 +544,7 @@ function applied(a: SystemAgent, changes: SystemAgentChanges): boolean {
   return (changes.name === undefined || a.name === changes.name)
     && (changes.enabled === undefined || a.enabled === changes.enabled)
     && (changes.local_executable_path === undefined || a.local_executable_path === changes.local_executable_path)
+    && (changes.remote_workdir === undefined || (a.remote_workdir ?? null) === changes.remote_workdir)
     && (changes.configured_capabilities === undefined
       || CAPS.every((cap) => a.configured_capabilities[cap] === changes.configured_capabilities![cap]))
 }

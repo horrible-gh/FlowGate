@@ -8,7 +8,18 @@
 // `code` only (draft_version_conflict, graph_validation_failed, flow_owned_by_v01, ...).
 
 import { getRequest, postRequest, putRequest } from '@shared/api'
-import { canvasHeaders, num, str, toAssignee, toCardDocuments, toOwnership, wrapError, type Raw } from './flowCanvasApi'
+import {
+  answeredCanvasDraft,
+  canvasHeaders,
+  markUnansweredCanvasWrite,
+  num,
+  str,
+  toAssignee,
+  toCardDocuments,
+  toOwnership,
+  wrapError,
+  type Raw,
+} from './flowCanvasApi'
 import type {
   FlowGraphConfirmResult,
   FlowGraphDefinition,
@@ -138,14 +149,20 @@ export async function saveFlowGraphDraft(flowId: string, input: FlowGraphDraftIn
     const cardDocuments = lines && typeof lines === 'object' && !Array.isArray(lines)
       ? Object.fromEntries(Object.entries(lines as Raw).map(([key, value]) => [key, toCardDocuments(value)]))
       : null
+    const draftVersion = num(data.draft_version) ?? input.draftVersion + 1
+    answeredCanvasDraft(flowId, draftVersion)
     return {
-      draftVersion: num(data.draft_version) ?? input.draftVersion + 1,
+      draftVersion,
       keyMap,
       removedNodeKeys: strings(data.removed_node_keys),
       removedEdgeIds: strings(data.removed_edge_ids),
       ...(cardDocuments ? { cardDocuments } : {}),
     }
   } catch (error) {
+    // flowgate.v02.0135 T#4: no answer (e.g. the 30 s timeout) — the server may still store this draft (as the next version).
+    if ((wrapError(error, '') as Error & { network?: boolean }).network) {
+      markUnansweredCanvasWrite(flowId, { kind: 'draft', draftVersion: input.draftVersion + 1 })
+    }
     throw toGraphError(error, 'Failed to save the flow graph draft.')
   }
 }

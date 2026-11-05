@@ -4,7 +4,8 @@ An AI connection whose ``exec_location`` is ``remote`` never spawns a process on
 server. It runs only as an Agent Job addressed to the connection's ``target_agent_id``:
 
   pre-check (no side effects) -> Graph launch approval (the same hook the local
-  boundary calls) -> re-check -> Job (server-chosen job_id, cwd flowgate-runs/<job_id>)
+  boundary calls) -> re-check -> Job (server-chosen job_id, cwd = the target Agent's
+  remote working directory with ${AGENT_JOB_ID} replaced by that job_id)
   -> watch (cancel / stage limits / progress watchdog) -> retrieve the result as its
   owner -> scrub.
 
@@ -29,6 +30,7 @@ a failure detail.
 from __future__ import annotations
 
 import ipaddress
+import re
 import secrets
 import time
 from pathlib import Path
@@ -50,12 +52,13 @@ REMOTE_PROGRESS_INTERVAL_SEC = STALL_POLL_INTERVAL_SEC
 REMOTE_COMMAND_FALLBACK = "remote_command_missing"
 
 # D0005 §9 (마): Job creation is gated on the deployed Agent honouring the working-directory
-# contract (relative ``flowgate-runs/<job_id>`` under its own workspace root, escape refusal
-# incl. links, creation, deletion after the report).
+# contract (create the directory it is sent when missing, report a concrete cause when it
+# cannot). flowgate.v02.0135 CH0006: the directory is no longer the fixed relative
+# ``flowgate-runs/<job_id>``; it is the Agent's own ``remote_workdir`` setting.
 # flowgate.v02.0131 CH0004 (admin instruction, 2026-11-04): opened by the operator so remote
 # CLI connections run. The deployed-Agent contract verification and the cross-path-system
 # acceptance run are still outstanding (the Agent is not in this repository); the server
-# side only ever sends a server-chosen relative cwd. Set back to False to close the
+# side only ever sends the Agent's configured directory. Set back to False to close the
 # boundary again -- every remote CLI request then ends at the pre-check as before.
 AGENT_WORKDIR_CONTRACT_VERIFIED = True
 
@@ -65,6 +68,7 @@ UNAVAILABLE = "remote_agent_unavailable"
 OFFLINE = "remote_agent_offline"
 API_BASE = "remote_api_base_unreachable"
 WORKDIR_UNVERIFIED = "remote_agent_workdir_unverified"
+WORKDIR_UNSET = "remote_agent_workdir_unset"
 PREVIOUS_UNSETTLED = "remote_previous_job_unsettled"
 JOB_REFUSED = "remote_job_refused"
 NO_CLAIM = "remote_agent_no_response"
@@ -76,6 +80,32 @@ AGENT_MISMATCH = "remote_agent_mismatch"
 CANCELLED = "remote_cancelled_before_start"
 NOT_STARTED = "remote_agent_failed_before_start"
 FAST_FAIL = "remote_fast_fail"
+
+# flowgate.v02.0135 CH0006: the Agent setting's placeholder for the Job id.
+JOB_ID_VARIABLE = "${AGENT_JOB_ID}"
+# Causes of an Agent's refusal / pre-start failure, read from its own end_reason and
+# diagnostics (first match wins). The GUI words each one; anything else stays the
+# generic agent_rejected / agent_failed with the Agent's own text.
+CAUSE_WORKDIR_UNSET = "workdir_unset"
+_CAUSES = (
+    ("permission_denied", ("permission denied", "access is denied", "access denied", "eacces", "eperm",
+                           "operation not permitted", "not permitted", "read-only file system", "erofs")),
+    ("workdir_create_failed", ("cannot create", "can't create", "could not create", "couldn't create",
+                               "failed to create", "unable to create", "create failed", "creation failed",
+                               "mkdir")),
+    ("workdir_missing", ("does not exist", "doesn't exist", "not exist", "no such file", "enoent",
+                         "not found", "missing")),
+    ("path_invalid", ("invalid", "outside", "escape", "symlink", "link", "not a directory", "enotdir",
+                      "absolute", "relative", "name too long", "enametoolong", "illegal")),
+)
+# A directory cause needs the text to be about the directory ("command not found" is not).
+_DIRECTORY_WORDS = ("workspace", "workdir", "working dir", "cwd", "directory", "folder", "path", "mkdir")
+_DIRECTORY_CAUSES = frozenset({"workdir_create_failed", "workdir_missing", "path_invalid"})
+_GENERIC_AGENT_REASONS = frozenset({"rejected", "failed", "failed_before_start", "error"})
+_AGENT_MESSAGE_MAX = 400
+_SECRET_VALUE_RE = re.compile(r"(?i)\b(agc|enr|fgt|tok)_[A-Za-z0-9_\-]{8,}")
+_SECRET_ASSIGN_RE = re.compile(
+    r"(?i)\b(password|passwd|secret|token|api[_-]?key|credential)(\s*[=:]\s*)[^\s,;\"']+")
 
 
 def is_remote_cli(provider: dict) -> bool:
@@ -156,18 +186,86 @@ def api_base_failure(api_base: Optional[str]) -> Optional[str]:
     return None
 
 
-def _final(run: dict, provider: dict, code: str, reason: str) -> tuple[str, str]:
-    """Mark a remote final failure: the chain must stop here (D0005 §3-3)."""
+def _final(run: dict, provider: dict, code: str, reason: str, *, cause: Optional[str] = None,
+           message: Optional[str] = None) -> tuple[str, str]:
+    """Mark a remote final failure: the chain must stop here (D0005 §3-3).
+
+    ``cause`` / ``message`` (flowgate.v02.0135 CH0006): the classified cause and the Agent's
+    own (secret-free) words, kept with the Job's working directory so the GUI can say what
+    actually went wrong instead of only ``all_providers_failed``.
+    """
     info = run.setdefault("remote_job", {})
     run["remote_final_failure"] = {
         "code": code, "reason": reason, "provider_id": provider.get("id"),
         "target_agent_id": info.get("target_agent_id"),
         "claimed_agent_id": info.get("claimed_agent_id"),
         "job_id": info.get("job_id"), "attempt_id": info.get("attempt_id"),
+        "cause": cause, "message": message, "workdir": info.get("workdir"),
     }
     info["failure_code"] = code
     logger.warning("ai-invoke %s: remote CLI final failure %s (%s)", run.get("run_id"), code, reason)
     return "spawn_failed", f"{code}: {reason}"
+
+
+def _agent_workdir(target_agent_id: Optional[str]) -> Optional[str]:
+    """The target Agent's ``remote_workdir`` setting (flowgate.v02.0135 CH0006); None = not set."""
+    from modules.flow_gate.services.agent_registry import AgentError, AgentService
+    try:
+        value = AgentService(_store()).get(target_agent_id).get("remote_workdir")
+    except AgentError:
+        return None
+    return (value or "").strip() or None
+
+
+def job_workdir(template: str, job_id: str) -> str:
+    """The Job cwd: the Agent's setting with ``${AGENT_JOB_ID}`` replaced by the Job id."""
+    return template.replace(JOB_ID_VARIABLE, job_id)
+
+
+def _redact(text: str, run: dict) -> str:
+    """No credential, run token or prompt echo leaves in a failure text; paths stay."""
+    from .runtime import _known_run_prompts, _known_run_raw_tokens, _redact_secrets
+    tokens = _known_run_raw_tokens(run) | {t for t in (run.get("raw_token"),) if t}
+    text = _redact_secrets(text, tokens, _known_run_prompts(run)) or ""
+    text = _SECRET_VALUE_RE.sub("[redacted]", text)
+    return _SECRET_ASSIGN_RE.sub(lambda m: m.group(1) + m.group(2) + "[redacted]", text)
+
+
+def classify_agent_failure(text: str, default: str, workdir: Optional[str] = None) -> str:
+    """The cause of an Agent refusal / pre-start failure from its own words."""
+    lowered = (text or "").lower()
+    about_directory = (any(word in lowered for word in _DIRECTORY_WORDS)
+                       or bool(workdir and workdir.lower() in lowered))
+    for cause, needles in _CAUSES:
+        if cause in _DIRECTORY_CAUSES and not about_directory:
+            continue
+        if any(needle in lowered for needle in needles):
+            return cause
+    return default
+
+
+def _agent_reported(run: dict, result: dict, default_cause: str, fallback: str) -> tuple[str, str, str]:
+    """(reason, cause, message) of an Agent's REJECTED / FAILED-before-start report.
+
+    The Agent may put its cause in ``end_reason``, in ``diagnostics`` or in both; the
+    server used to read ``end_reason`` only, so a cause in ``diagnostics`` ended as a bare
+    "rejected". Both are read, generic words dropped, secrets redacted, the working
+    directory kept.
+    """
+    parts = []
+    for key in ("end_reason", "diagnostics"):
+        value = " ".join(str(result.get(key) or "").split())
+        if value and value.lower() not in _GENERIC_AGENT_REASONS and value not in parts:
+            parts.append(value)
+    message = _redact(" · ".join(parts), run)
+    if len(message) > _AGENT_MESSAGE_MAX:
+        message = message[:_AGENT_MESSAGE_MAX - 1] + "…"
+    workdir = (run.get("remote_job") or {}).get("workdir")
+    cause = classify_agent_failure(message, default_cause, workdir)
+    reason = f"{cause}: {message or fallback}"
+    if workdir and workdir not in reason:
+        reason += f" (workdir: {workdir})"
+    return reason, cause, message or fallback
 
 
 def _sanitize_prompt(prompt: str, run: dict) -> str:
@@ -190,7 +288,7 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
     binding = _binding(provider)
     target, requester = binding["target_agent_id"], binding["requester"]
     info = {"provider_id": provider.get("id"), "target_agent_id": target, "claimed_agent_id": None,
-            "job_id": None, "attempt_id": None, "status": None}
+            "job_id": None, "attempt_id": None, "status": None, "workdir": None}
     run["remote_job"] = info
 
     # ① pre-check: no launch call, no Job.
@@ -216,6 +314,9 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
     # (마) is not active before the Agent working-directory contract is verified (§9).
     if not AGENT_WORKDIR_CONTRACT_VERIFIED:
         return _final(run, provider, WORKDIR_UNVERIFIED, "agent_workdir_contract_unverified")
+    # flowgate.v02.0135 CH0006: the Job runs in the Agent's own configured directory.
+    if _agent_workdir(target) is None:
+        return _final(run, provider, WORKDIR_UNSET, "remote_workdir_not_set", cause=CAUSE_WORKDIR_UNSET)
 
     # ② the same launch approval the local boundary asks for, before any Job exists.
     if graph_execution_hooks.call("launch", run) is False:
@@ -227,16 +328,21 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
     if failure is not None:
         return _final(run, provider, *failure)
 
+    template = _agent_workdir(target)     # read again: the setting may have changed meanwhile
+    if template is None:
+        return _final(run, provider, WORKDIR_UNSET, "remote_workdir_not_set", cause=CAUSE_WORKDIR_UNSET)
+
     svc = agent_jobs.AgentJobService()
     job_id = "job_" + secrets.token_urlsafe(20)
     attempt_id = "att_" + secrets.token_urlsafe(20)
     owner = agent_jobs.retrieval_owner_for(run.get("run_id"))
-    info.update(job_id=job_id, attempt_id=attempt_id)
+    workdir = job_workdir(template, job_id)
+    info.update(job_id=job_id, attempt_id=attempt_id, workdir=workdir)
     timeout_seconds = max(1, int(_absolute_remaining_sec(run)))
     try:
         svc.enqueue_remote_cli(
             command_line=command, stdin_text=_sanitize_prompt(prompt, run),
-            cwd=f"flowgate-runs/{job_id}", timeout_seconds=timeout_seconds,
+            cwd=workdir, timeout_seconds=timeout_seconds,
             job_id=job_id, attempt_id=attempt_id, target_agent_id=target,
             # The requester follows the connection's owner rule (§3-1); the project is the
             # run's own, for personal and shared connections alike (T0008 item 1).
@@ -449,14 +555,16 @@ def _settle(run, provider, kind, result, launched, role_invocations):
     if result.get("terminal_cause") == agent_jobs.CAUSE_SERVER_EXPIRED:
         return _final(run, provider, UNCONFIRMED, "no_terminal_report")
     if status == "REJECTED":
-        return _final(run, provider, REJECTED, str(result.get("end_reason") or "rejected")[:120])
+        reason, cause, message = _agent_reported(run, result, "agent_rejected", "rejected")
+        return _final(run, provider, REJECTED, reason, cause=cause, message=message)
     if not result.get("collected"):
         return _final(run, provider, RESULT_LOST, "retrieval_not_owned")
     if not result.get("started_at") and status in ("CANCELLED", "FAILED") and not cancelled:
         # Claimed but never started: stopped by the server's start limit, or the Agent
         # gave up before starting the CLI.
         if status == "FAILED":
-            return _final(run, provider, NOT_STARTED, str(result.get("end_reason") or "failed_before_start")[:120])
+            reason, cause, message = _agent_reported(run, result, "agent_failed", "failed_before_start")
+            return _final(run, provider, NOT_STARTED, reason, cause=cause, message=message)
         return _final(run, provider, NO_CLAIM, "not_started")
 
     out_text = result.get("stdout") or ""

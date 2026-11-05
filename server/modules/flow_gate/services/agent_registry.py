@@ -27,6 +27,9 @@ def pepper_id():
  return os.environ.get("FLOWGATE_AGENT_PEPPER_ID","primary")
 
 def _bool(v): return bool(v)
+def _workdir(v):
+ """flowgate.v02.0135 CH0006: the stored remote working directory; blank means not set."""
+ return (v or "").strip() or None
 def _row(s,agent_id):
  return s._fetch_one("""SELECT a.*,
  (SELECT COUNT(*) FROM agent_credentials c WHERE c.agent_id=a.agent_id) credential_count,
@@ -48,6 +51,8 @@ def detail(r,at=None):
   except ValueError: pass
  return {"agent_id":r["agent_id"],"owner_user_id":r.get("owner_user_id"),"scope":"personal" if r.get("owner_user_id") else "system","name":r["name"],"enabled":_bool(r["enabled"]),"location":r["location"],
  "connection_mode":r["connection_mode"],"local_executable_path":r["local_executable_path"],
+ # flowgate.v02.0135 CH0006: the working directory sent to this Agent's Jobs (None = not set).
+ "remote_workdir":r.get("remote_workdir"),
  "configured_capabilities":cfg,"reported_capabilities":rep,
  "effective_capabilities":{k:cfg[k] and rep[k] is True for k in CAPS},
  "registration_status":("registered" if active else "revoked" if history else "unregistered"),
@@ -80,6 +85,8 @@ class AgentService:
   with self.s.transaction():
    self.s._execute("""INSERT INTO agents(agent_id,name,enabled,location,connection_mode,local_executable_path,configured_ai_cli,configured_ai_api,configured_storage,created_at,updated_at,owner_user_id)
  VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",[aid,b["name"].strip(),b["enabled"],b["location"],b["connection_mode"],b["local_executable_path"],c["ai_cli"],c["ai_api"],c["storage"],ts,ts,None if self.owner_user_id is ALL_OWNERS else self.owner_user_id])
+   workdir=_workdir(b.get("remote_workdir"))
+   if workdir is not None: self.s._execute("UPDATE agents SET remote_workdir=? WHERE agent_id=?",[workdir,aid])
   return self.get(aid)
  def patch(self,aid,b):
   self.get(aid)
@@ -93,6 +100,7 @@ class AgentService:
   with self.s.transaction():
    self.s._execute("UPDATE agents SET name=?,enabled=?,connection_mode=?,local_executable_path=?,configured_ai_cli=?,configured_ai_api=?,configured_storage=?,updated_at=? WHERE agent_id=?",
    [merged["name"].strip(),merged["enabled"],merged["connection_mode"],merged["local_executable_path"],caps["ai_cli"],caps["ai_api"],caps["storage"],stamp(),aid])
+   if "remote_workdir" in b: self.s._execute("UPDATE agents SET remote_workdir=? WHERE agent_id=?",[_workdir(b["remote_workdir"]),aid])
   return self.get(aid)
  def issue(self,aid):
   self.get(aid)

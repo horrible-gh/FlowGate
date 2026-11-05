@@ -28,6 +28,7 @@ interface Rec {
   location: 'local' | 'remote'
   connection_mode: 'agent_pull' | null
   local_executable_path: string | null
+  remote_workdir?: string | null
   configured: Caps
   reported: Caps | null
   credentialActive: boolean
@@ -77,6 +78,7 @@ vi.mock('@shared/api', async (importOriginal) => {
     location: r.location,
     connection_mode: r.connection_mode,
     local_executable_path: r.local_executable_path,
+    remote_workdir: r.remote_workdir ?? null,
     configured_capabilities: { ...r.configured },
     reported_capabilities: r.reported ? { ...r.reported } : { ai_cli: null, ai_api: null, storage: null },
     effective_capabilities: {
@@ -146,7 +148,7 @@ vi.mock('@shared/api', async (importOriginal) => {
   }
 
   function patch(id: string, body: Record<string, unknown>) {
-    const fields = ['name', 'enabled', 'location', 'connection_mode', 'local_executable_path', 'configured_capabilities']
+    const fields = ['name', 'enabled', 'location', 'connection_mode', 'local_executable_path', 'remote_workdir', 'configured_capabilities']
     const extra = Object.keys(body).filter((k) => !fields.includes(k))
     if (extra.length) throw invalid(extra[0], 'extra_forbidden')
     if (!Object.keys(body).length) throw invalid('body', 'required')
@@ -162,6 +164,7 @@ vi.mock('@shared/api', async (importOriginal) => {
     r.connection_mode = mode as Rec['connection_mode']
     r.local_executable_path = path as string | null
     if ('configured_capabilities' in body) r.configured = caps(body.configured_capabilities)
+    if ('remote_workdir' in body) r.remote_workdir = (String(body.remote_workdir ?? '').trim() || null)
     return { data: detail(r) }
   }
 
@@ -384,13 +387,13 @@ describe('0120 — distinct personal and system menu entries', () => {
     const w = await open('/settings/system/agents')
     expect(w.get('.scope.open [data-scope]').attributes('data-scope')).toBe('system')
     const link = w.get('[data-subnav="agents"]')
-    expect(link.text()).toBe('시스템 Agent')
+    expect(link.text()).toBe('시스템 에이전트')
     expect(link.attributes('href')).toBe('/app/settings/system/agents')
     expect(link.attributes('aria-current')).toBe('page')
     await click(w, '.nav-home')
     await waitForPath('/settings')
     expect(w.get('[data-scope-card="me"]').text()).toContain('에이전트')
-    expect(w.get('[data-scope-card="system"]').text()).toContain('시스템 Agent')
+    expect(w.get('[data-scope-card="system"]').text()).toContain('시스템 에이전트')
     await router.push('/settings/system/agents')
     await flushPromises()
     await click(w, '[data-subnav="agents"]')
@@ -403,7 +406,7 @@ describe('0120 — distinct personal and system menu entries', () => {
     net.holdList = true
     const w = await open('/settings/system/agents')
     const release = net.release!
-    expect(w.get('[data-subnav="agents"]').text()).toBe('시스템 Agent')
+    expect(w.get('[data-subnav="agents"]').text()).toBe('시스템 에이전트')
     setCurrentUser(admin === null ? null : { ...ADMIN, isAdmin: false })
     await waitForPath('/settings')
     release()
@@ -421,7 +424,7 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
   it('one GET; only names, states, last seen and two named icon actions, without the old table, counts, search or drawer', async () => {
     const w = await open('/settings/system/agents')
     expect(net.requests).toEqual(['GET /api/v1/system/agents'])
-    expect(w.get('[data-panel="system-agents"]').text()).toContain('등록된 시스템 Agent')
+    expect(w.get('[data-panel="system-agents"]').text()).toContain('등록된 시스템 에이전트')
     expect(w.get('[data-testid="agent-new"]').text()).toContain('에이전트 등록')
     const rows = w.findAll('.agent-row')
     expect(rows.map((r) => r.attributes('data-agent'))).toEqual(fixtures().map((r) => r.agent_id))
@@ -508,6 +511,30 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     expect(server('agt_f_local')).toMatchObject({ enabled: false, location: 'local', connection_mode: null, local_executable_path: '/opt/flowgate-agent', configured: { storage: true } })
   })
 
+  it('flowgate.v02.0135 CH0006: the edit dialog shows 원격 작업 디렉터리 (label and input only), saves and reads it back', async () => {
+    const w = await open('/settings/system/agents')
+    await pick(w, 'agt_a_online')
+    const dialog = w.get('[data-testid="agent-detail"]')
+    expect(w.text()).toContain('에이전트 수정')
+    expect(dialog.text()).not.toContain('나중에 바꿀 수 있습니다')
+    expect(dialog.text()).not.toContain('heartbeat로 보고한')
+    const field = dialog.get('[data-testid="edit-remote-workdir"]')
+    expect(dialog.get('label[for="agent-dialog-workdir"]').text()).toBe('원격 작업 디렉터리')
+    expect(field.element.closest('.agent-form-group')!.textContent!.trim()).toBe('원격 작업 디렉터리')
+    expect(field.attributes('placeholder')).toBeUndefined()
+    await type(w, '[data-testid="edit-remote-workdir"]', '/tmp/flowgate/${AGENT_JOB_ID}')
+    await click(w, '[data-testid="edit-save"]')
+    expect(bodiesOf(/^PATCH /)).toEqual([{ remote_workdir: '/tmp/flowgate/${AGENT_JOB_ID}' }])
+    expect(server('agt_a_online')!.remote_workdir).toBe('/tmp/flowgate/${AGENT_JOB_ID}')
+    await pick(w, 'agt_a_online')
+    expect((w.get('[data-testid="edit-remote-workdir"]').element as HTMLInputElement).value).toBe('/tmp/flowgate/${AGENT_JOB_ID}')
+    await type(w, '[data-testid="edit-remote-workdir"]', '  ')
+    await click(w, '[data-testid="edit-save"]')
+    expect(bodiesOf(/^PATCH /).at(-1)).toEqual({ remote_workdir: null })
+    await pick(w, 'agt_f_local')
+    expect(w.find('[data-testid="edit-remote-workdir"]').exists()).toBe(false)
+  })
+
   it('empty/long names send nothing; create 403 keeps the form and input without reporting success', async () => {
     const w = await open('/settings/system/agents')
     await click(w, '[data-testid="agent-new"]')
@@ -552,8 +579,8 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
 describe('V17 — enrollment, failures and token lifetime in the new flow', () => {
   const REFUSALS = [
     { status: 403, data: { detail: 'Forbidden' }, text: '권한이 없습니다.' },
-    { status: 409, data: { ok: false, error: { code: 'enrollment_not_allowed', message: 'x', details: {} } }, text: '사용 중인 원격 Agent만 등록 토큰을 발급할 수 있습니다.' },
-    { status: 503, data: { ok: false, error: { code: 'temporarily_unavailable', message: 'x', details: {} } }, text: '서버에 Agent 비밀키(FLOWGATE_AGENT_PEPPER)가 설정되어 있지 않습니다. 다시 시도해도 해결되지 않으니 서버 관리자에게 비밀 설정 확인과 서버 재시작을 요청하세요.' },
+    { status: 409, data: { ok: false, error: { code: 'enrollment_not_allowed', message: 'x', details: {} } }, text: '사용 중인 원격 에이전트만 등록 토큰을 발급할 수 있습니다.' },
+    { status: 503, data: { ok: false, error: { code: 'temporarily_unavailable', message: 'x', details: {} } }, text: '서버에 에이전트 비밀키(FLOWGATE_AGENT_PEPPER)가 설정되어 있지 않습니다. 다시 시도해도 해결되지 않으니 서버 관리자에게 비밀 설정 확인과 서버 재시작을 요청하세요.' },
   ]
 
   it.each(REFUSALS)('issuance $status retains the created ID; retry issues only, never creates a duplicate', async ({status,data,text}) => {
@@ -741,7 +768,7 @@ describe('V17 — row deletion and failed mutation confirmation', () => {
     Object.assign(server('agt_e_new')!, { credentialActive: true, credentialHistory: true })
     await deleteRow(w)
     await click(w, '[data-testid="agent-confirm-ok"]')
-    expect(w.get('[data-testid="agent-action-error"]').text()).toBe('등록 이력이 있는 Agent는 삭제할 수 없습니다.')
+    expect(w.get('[data-testid="agent-action-error"]').text()).toBe('등록 이력이 있는 에이전트는 삭제할 수 없습니다.')
     expect(w.get('[data-delete-agent="agt_e_new"]').attributes('disabled')).toBeDefined()
     expect(server('agt_e_new')).toBeDefined()
     expect(toastText(w)).toBe('')

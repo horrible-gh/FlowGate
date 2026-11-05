@@ -92,11 +92,38 @@ def candidates(doc, reference=None):
     return list(storage_paths.storage_path_candidates(value, doc['project_id'], doc.get('branch') or 'main'))
 
 
+def candidate_paths(doc, roots, resolve=None):
+    """The resolved candidates of one row (as ``candidates``, without the jail) for a walk of every row.
+
+    ``roots`` is the walk's memo: each project's storage root is read and resolved once per walk (0135 T#3/T#4);
+    ``resolve`` the walk's shared resolver (``storage_paths.memo_resolver``).
+    """
+    project_id = doc['project_id']
+    if project_id not in roots:
+        roots[project_id] = storage_paths.get_storage_root(project_id).resolve()
+    extra = {} if resolve is None else {'resolve': resolve}
+    return storage_paths.storage_candidate_paths(doc.get('file_path'), roots[project_id], doc.get('branch') or 'main',
+                                                 **extra)
+
+
 def references(paths=(), trees=()):
     """Index normalized names and file identities once: O(documents + tree files).
 
     Containment checks walk a candidate's ancestors rather than comparing it with
     every file. The inode index additionally catches hard links outside the tree.
+
+    flowgate.v02.0135 T#3/T#4: this walks every document row, twice per gated write (the
+    second time under the path namespace mutex). It used to read the storage settings 4-8
+    times and resolve each path ~14 times per row: on the stg store (9,090 rows, PostgreSQL)
+    one walk took 237 s / 54,541 queries (29 s with the request cache), so every document
+    creation (a chat, a placed card's document) outlived the GUI's 30 s timeout. Now each
+    project's root is resolved once per walk, each candidate once, a file identity is read
+    only when a target file exists (none can match otherwise), and the jail is asked only
+    for a matched row. The matches are the same.
+    Review rework: a walk was still ~6 s on a 9,106-row store on Windows (~75 % of it
+    Path.resolve), several walks per creation: each parent directory is now resolved once
+    per walk (storage_paths.memo_resolver); a matched row is resolved in full again for its
+    result and jail answer.
     """
     paths = tuple(Path(p) for p in paths if p is not None)
     trees = tuple(Path(p).resolve() for p in trees if p is not None)
@@ -114,14 +141,17 @@ def references(paths=(), trees=()):
                             identities.add(identity)
         rows = connection.get_store()._fetch_all(
             "SELECT * FROM documents WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''")
+        roots = {}
+        resolve = storage_paths.memo_resolver()
         result = []
         for doc in rows:
-            for path, inside in candidates(doc):
-                resolved = Path(path).resolve()
-                if (path_key(resolved) in names or
-                        any(os.path.normcase(str(parent)) in tree_names for parent in (resolved, *resolved.parents)) or
-                        file_key(resolved) in identities):
-                    result.append((doc, inside))
+            for resolved in candidate_paths(doc, roots, resolve):
+                if (os.path.normcase(str(resolved)) in names or
+                        (tree_names and any(os.path.normcase(str(parent)) in tree_names
+                                            for parent in (resolved, *resolved.parents))) or
+                        (identities and file_key(resolved) in identities)):
+                    resolved = resolved.resolve(strict=False)  # a match: the exact path, as before
+                    result.append((doc, storage_paths.within_allowed_roots(resolved, doc['project_id'])))
                     break
         return result
     except Exception:

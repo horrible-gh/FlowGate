@@ -318,6 +318,26 @@ def test_v16_patch_changed_fields_only_location_immutable_and_enabled_toggle(env
     assert got["location"] == "remote" and got["connection_mode"] == "agent_pull"
 
 
+def test_remote_workdir_is_saved_read_back_and_cleared_0135(env):
+    # flowgate.v02.0135 CH0006: per-Agent remote working directory, set / re-read / cleared.
+    a = env.h("A")
+    created = _create(env, REMOTE_BODY)
+    aid = created["agent_id"]
+    assert created["remote_workdir"] is None
+    r = env.client.patch(f"{API}/system/agents/{aid}", json={"remote_workdir": " /tmp/flowgate/${AGENT_JOB_ID} "}, headers=a)
+    assert r.status_code == 200, r.text
+    assert r.json()["remote_workdir"] == "/tmp/flowgate/${AGENT_JOB_ID}"
+    assert env.agent(aid).json()["remote_workdir"] == "/tmp/flowgate/${AGENT_JOB_ID}"
+    assert any(x["agent_id"] == aid and x["remote_workdir"] == "/tmp/flowgate/${AGENT_JOB_ID}"
+               for x in env.client.get(f"{API}/system/agents", headers=a).json()["agents"])
+    r = env.client.patch(f"{API}/system/agents/{aid}", json={"name": "renamed"}, headers=a)
+    assert r.json()["remote_workdir"] == "/tmp/flowgate/${AGENT_JOB_ID}"       # untouched by other changes
+    r = env.client.patch(f"{API}/system/agents/{aid}", json={"remote_workdir": ""}, headers=a)
+    assert r.status_code == 200 and r.json()["remote_workdir"] is None
+    with_dir = _create(env, {**REMOTE_BODY, "name": "with-dir", "remote_workdir": "D:\fg\${AGENT_JOB_ID}"})
+    assert with_dir["remote_workdir"] == "D:\fg\${AGENT_JOB_ID}"
+
+
 def test_v16_online_offline_incompatible_revoked_and_disabled_as_the_get_reports_them(env):
     a = env.h("A")
     aid, credential = _registered(env, "status-probe")

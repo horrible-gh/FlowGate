@@ -948,6 +948,13 @@ export default {
     status: {
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',
+      remote_workdir_unset: 'No remote working directory is set. Set one in Edit Agent',
+      remote_permission_denied: 'The agent has no permission on the working directory. Check the permissions of the account the agent runs as',
+      remote_workdir_create_failed: 'The agent could not create the working directory. Check the path and its parent directory',
+      remote_workdir_missing: 'The working directory does not exist on the agent machine. Create it or change the remote working directory',
+      remote_path_invalid: 'The agent cannot use the working directory path. Check the remote working directory',
+      remote_agent_rejected: 'The agent rejected the run',
+      remote_agent_failed: 'The agent could not start the run',
     },
     participants: {
       label: 'With',
@@ -2500,6 +2507,7 @@ export default {
         version: 'Agent version',
         platform: 'OS / architecture',
         agent_id: 'Agent ID',
+        remote_workdir: 'Remote working directory',
       },
       connection: {
         agent_pull: 'Agent Pull',

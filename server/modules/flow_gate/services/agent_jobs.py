@@ -53,6 +53,12 @@ PROCESS_OWNER_PREFIX = "proc_" + uuid.uuid4().hex
 
 _AI_TERMINAL_SQL = "('DONE','FAILED','CANCELLED','TIMED_OUT','REJECTED')"
 
+# flowgate.v02.0135 T#1: cancel_requested / stdout_truncated / stderr_truncated are BOOLEAN on
+# PostgreSQL (INTEGER on SQLite, TINYINT(1) on MySQL). The SQL below writes and compares them
+# only with the TRUE / FALSE literals, which all three engines accept. Comparing one with an
+# integer literal (0 / 1) is a PostgreSQL parse error (boolean = integer) and failed every claim:
+# claim() -> _reclaim() -> _advance_ai() runs it even on an empty queue.
+
 
 def retrieval_owner_for(run_id):
     return f"{PROCESS_OWNER_PREFIX}:{run_id}"
@@ -171,7 +177,7 @@ class AgentJobService:
                     """INSERT INTO agent_jobs(job_id,attempt_id,execution_type,command_line,stdin_text,cwd,
                        timeout_seconds,status,target_agent_id,payload_digest,cancel_requested,
                        stdout_truncated,stderr_truncated,created_at,updated_at,requested_by_user_id,project_id)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,0,0,0,?,?,?,?) ON CONFLICT DO NOTHING""",
+                       VALUES(?,?,?,?,?,?,?,?,?,?,FALSE,FALSE,FALSE,?,?,?,?) ON CONFLICT DO NOTHING""",
                     [job_id, attempt_id, "remote_cli", command_line, stdin_text, cwd,
                      timeout_seconds, "NEW", target_agent_id, fingerprint, ts, ts, requested_by_user_id, project_id],
                 )
@@ -181,7 +187,7 @@ class AgentJobService:
                        timeout_seconds,status,target_agent_id,payload_digest,cancel_requested,
                        stdout_truncated,stderr_truncated,created_at,updated_at,requested_by_user_id,project_id,
                        ai_run_id,graph_exec_id,retrieval_state,retrieval_owner,ai_group_id,ai_token_id)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,0,0,0,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
+                       VALUES(?,?,?,?,?,?,?,?,?,?,FALSE,FALSE,FALSE,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
                     [job_id, attempt_id, "remote_cli", command_line, stdin_text, cwd,
                      timeout_seconds, "NEW", target_agent_id, fingerprint, ts, ts, requested_by_user_id, project_id,
                      ai_run_id, graph_exec_id, RETRIEVAL_PENDING, retrieval_owner, ai_group_id, ai_token_id],
@@ -254,14 +260,14 @@ class AgentJobService:
             [CAUSE_CLAIM_TIMEOUT, RETRIEVAL_HANDED_OVER, ts, ts, ts, claim_cut],
         )
         self.s._execute_affected(
-            """UPDATE agent_jobs SET cancel_requested=1,cancel_requested_at=?,updated_at=?
-                   WHERE ai_run_id IS NOT NULL AND status='CLAIMED' AND cancel_requested=0
+            """UPDATE agent_jobs SET cancel_requested=TRUE,cancel_requested_at=?,updated_at=?
+                   WHERE ai_run_id IS NOT NULL AND status='CLAIMED' AND cancel_requested=FALSE
                    AND claimed_at<=?""",
             [ts, ts, start_cut],
         )
         for row in self.s._fetch_all(
             """SELECT job_id,attempt_id,started_at,timeout_seconds FROM agent_jobs
-                   WHERE ai_run_id IS NOT NULL AND status='STARTED' AND cancel_requested=0""",
+                   WHERE ai_run_id IS NOT NULL AND status='STARTED' AND cancel_requested=FALSE""",
         ):
             try:
                 started = datetime.fromisoformat(str(row["started_at"]).replace("Z", "+00:00"))
@@ -270,8 +276,8 @@ class AgentJobService:
             limit = started + timedelta(seconds=int(row["timeout_seconds"]) + AI_RUN_GRACE_SECONDS)
             if limit <= now:
                 self.s._execute_affected(
-                    """UPDATE agent_jobs SET cancel_requested=1,cancel_requested_at=?,updated_at=?
-                           WHERE job_id=? AND attempt_id=? AND status='STARTED' AND cancel_requested=0""",
+                    """UPDATE agent_jobs SET cancel_requested=TRUE,cancel_requested_at=?,updated_at=?
+                           WHERE job_id=? AND attempt_id=? AND status='STARTED' AND cancel_requested=FALSE""",
                     [ts, ts, row["job_id"], row["attempt_id"]],
                 )
         self.s._execute_affected(
@@ -281,7 +287,7 @@ class AgentJobService:
                    finished_at=?,updated_at=?,lease_expires_at=NULL
                    WHERE ai_run_id IS NOT NULL AND status IN ('CLAIMED','STARTED')
                    AND (lease_expires_at IS NULL OR lease_expires_at<=?
-                        OR (cancel_requested=1 AND cancel_requested_at IS NOT NULL AND cancel_requested_at<=?))""",
+                        OR (cancel_requested=TRUE AND cancel_requested_at IS NOT NULL AND cancel_requested_at<=?))""",
             [CAUSE_SERVER_EXPIRED, RETRIEVAL_HANDED_OVER, ts, ts, ts, ts, cancel_cut],
         )
 
@@ -314,20 +320,20 @@ class AgentJobService:
         """Cancel an AI-run Job: a NEW Job ends at once; a claimed one is asked to stop.
 
         The NEW branch and claim() are both conditional on status='NEW' (claim also on
-        cancel_requested=0), so exactly one of them wins (D0005 §3-4).
+        cancel_requested=FALSE), so exactly one of them wins (D0005 §3-4).
         """
         with self.s.transaction():
             ts = _stamp(_now())
             won = self.s._execute_affected(
                 """UPDATE agent_jobs SET status='CANCELLED',end_reason='cancelled_before_claim',
-                       terminal_cause=?,cancel_requested=1,cancel_requested_at=?,stdin_text='',command_line='',
+                       terminal_cause=?,cancel_requested=TRUE,cancel_requested_at=?,stdin_text='',command_line='',
                        retrieval_state=?,scrubbed_at=?,finished_at=?,updated_at=?
                        WHERE job_id=? AND attempt_id=? AND ai_run_id IS NOT NULL AND status='NEW'""",
                 [CAUSE_SERVER_CANCELLED, ts, RETRIEVAL_HANDED_OVER, ts, ts, ts, job_id, attempt_id],
             )
             if won != 1:
                 self.s._execute_affected(
-                    """UPDATE agent_jobs SET cancel_requested=1,
+                    """UPDATE agent_jobs SET cancel_requested=TRUE,
                            cancel_requested_at=COALESCE(cancel_requested_at,?),updated_at=?
                            WHERE job_id=? AND attempt_id=? AND ai_run_id IS NOT NULL
                            AND status IN ('CLAIMED','STARTED')""",
@@ -363,7 +369,7 @@ class AgentJobService:
             result = {key: row.get(key) for key in (
                 "job_id", "attempt_id", "status", "target_agent_id", "lease_owner_agent_id",
                 "child_exit_code", "end_reason", "terminal_cause", "duration_seconds",
-                "claimed_at", "started_at", "finished_at")}
+                "claimed_at", "started_at", "finished_at", "diagnostics")}
             result["collected"] = won == 1
             result["stdout"] = row.get("stdout") if won == 1 else None
             result["stderr"] = row.get("stderr") if won == 1 else None
@@ -433,7 +439,7 @@ class AgentJobService:
                 if row["status"] == "NEW":
                     won = self.s._execute_affected(
                         """UPDATE agent_jobs SET status='CANCELLED',end_reason='cancelled_before_claim',
-                               terminal_cause=?,cancel_requested=1,cancel_requested_at=?,stdin_text='',
+                               terminal_cause=?,cancel_requested=TRUE,cancel_requested_at=?,stdin_text='',
                                command_line='',retrieval_state=?,scrubbed_at=?,finished_at=?,updated_at=?
                                WHERE job_id=? AND attempt_id=? AND status='NEW'""",
                         [CAUSE_SERVER_CANCELLED, ts, RETRIEVAL_HANDED_OVER, ts, ts, ts,
@@ -446,7 +452,7 @@ class AgentJobService:
                     # A claim that won against the NEW cancel above lands here: the claimed
                     # Job is asked to stop instead (one of the two always holds, §3-4).
                     touched += self.s._execute_affected(
-                        """UPDATE agent_jobs SET cancel_requested=1,
+                        """UPDATE agent_jobs SET cancel_requested=TRUE,
                                cancel_requested_at=COALESCE(cancel_requested_at,?),retrieval_state=?,updated_at=?
                                WHERE job_id=? AND attempt_id=? AND status IN ('CLAIMED','STARTED')
                                AND COALESCE(retrieval_owner,'')=COALESCE(?,'')""",
@@ -556,7 +562,7 @@ class AgentJobService:
                        lease_expires_at=?,claimed_at=?,updated_at=?
                        WHERE job_id=? AND attempt_id=? AND status='NEW'
                        AND (target_agent_id IS NULL OR target_agent_id=?)
-                       AND (ai_run_id IS NULL OR cancel_requested=0)""",
+                       AND (ai_run_id IS NULL OR cancel_requested=FALSE)""",
                     [agent_id, token, expiry, ts, ts, candidate["job_id"], candidate["attempt_id"], agent_id],
                 )
                 if won == 1:
@@ -642,7 +648,7 @@ class AgentJobService:
                 return {"status": row["status"], "cancel_requested": bool(row["cancel_requested"])}
             ts = _stamp(_now())
             self.s._execute_affected(
-                """UPDATE agent_jobs SET cancel_requested=1,cancel_requested_at=COALESCE(cancel_requested_at,?),
+                """UPDATE agent_jobs SET cancel_requested=TRUE,cancel_requested_at=COALESCE(cancel_requested_at,?),
                    updated_at=? WHERE job_id=? AND attempt_id=? AND status IN ('NEW','CLAIMED','STARTED')""",
                 [ts, ts, job_id, attempt_id],
             )

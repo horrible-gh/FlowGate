@@ -181,6 +181,24 @@ describe('AI run', () => {
     expect(await fetchActiveChatRun('flowgate.v02.0031.0003-CH')).toBeNull()
   })
 
+  it('flowgate.v02.0135 CH0006: a run that started no connection carries its last failure', async () => {
+    getRequest.mockResolvedValueOnce({ data: { status: 'finished', end_reason: 'all_providers_failed', fallback_history: [{
+      reason: 'spawn_failed',
+      detail: 'remote_agent_rejected: workdir_missing: workspace: "/tmp/flowgate/job_1" is invalid: does not exist',
+      remote_final: { code: 'remote_agent_rejected', cause: 'workdir_missing', workdir: '/tmp/flowgate/job_1',
+        message: 'workspace: "/tmp/flowgate/job_1" is invalid: does not exist' },
+    }] } })
+    expect(await fetchRun('r1')).toEqual({ runId: 'r1', status: 'finished', endReason: 'all_providers_failed', failure: {
+      cause: 'workdir_missing', workdir: '/tmp/flowgate/job_1',
+      message: 'workspace: "/tmp/flowgate/job_1" is invalid: does not exist',
+      detail: 'remote_agent_rejected: workdir_missing: workspace: "/tmp/flowgate/job_1" is invalid: does not exist',
+    } })
+    getRequest.mockResolvedValueOnce({ data: { status: 'finished', end_reason: 'all_providers_failed', fallback_history: [{ detail: 'exit 2 within 1s' }] } })
+    expect((await fetchRun('r2')).failure).toEqual({ cause: null, message: null, workdir: null, detail: 'exit 2 within 1s' })
+    getRequest.mockResolvedValueOnce({ data: { status: 'finished', end_reason: 'exited', fallback_history: [{ detail: 'x' }] } })
+    expect(await fetchRun('r3')).toEqual({ runId: 'r3', status: 'finished', endReason: 'exited' })
+  })
+
   it('carries code and run id of a 409 run_in_progress', async () => {
     postRequest.mockRejectedValue(Object.assign(new Error('x'), { response: { status: 409, data: { code: 'run_in_progress', run_id: 'r9' } } }))
     const error = await startChatRun('p.m.0001.0002-CH', null).catch((e) => e)

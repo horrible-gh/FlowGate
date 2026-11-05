@@ -8,7 +8,6 @@
         <label for="agent-dialog-name">{{ t('gui.settings.agents.fields.name') }} <span>*</span></label>
         <Input id="agent-dialog-name" :model-value="name" :maxlength="100" :disabled="busy" :invalid="!!name && !!nameProblem" autocomplete="off" data-modal-autofocus :data-testid="creating ? 'agent-name' : 'edit-name'" @update:model-value="emit('update:name', $event)" />
         <small v-if="name && nameProblem" class="fgs-error" data-testid="agent-name-invalid">{{ nameProblem }}</small>
-        <small v-else>{{ t('gui.settings.agents.name_hint', { max: 100 }) }}</small>
       </div>
       <dl v-if="agent && !creating" class="agent-info-grid" data-testid="agent-status">
         <div><dt>{{ t('gui.agent_screen.connection') }}</dt><dd data-field="connection">{{ stateLabel }}</dd></div>
@@ -21,8 +20,11 @@
           <input type="checkbox" :checked="caps[cap]" :disabled="busy" :data-cap="creating ? cap : undefined" :data-edit-cap="creating ? undefined : cap" @change="emit('update:cap', cap, ($event.target as HTMLInputElement).checked)" />
           <span><strong>{{ t(`gui.settings.agents.caps.${cap}`) }}</strong><small>{{ t(`gui.settings.agents.caps_desc.${cap}`) }}</small></span>
         </label>
-        <small>{{ t('gui.settings.agents.caps_hint') }}</small>
       </fieldset>
+      <div v-if="agent && !creating && agent.location === 'remote'" class="agent-form-group">
+        <label for="agent-dialog-workdir">{{ t('gui.settings.agents.fields.remote_workdir') }}</label>
+        <Input id="agent-dialog-workdir" :model-value="workdir" :disabled="busy" autocomplete="off" data-testid="edit-remote-workdir" @update:model-value="emit('update:workdir', $event)" />
+      </div>
       <p v-if="error" class="fgs-error" role="alert" :data-testid="creating ? 'agent-form-error' : 'agent-action-error'">{{ error }}</p>
       <p v-if="saved" role="status" data-testid="edit-saved">{{ t('gui.agent_screen.saved') }}</p>
     </form>
@@ -42,11 +44,11 @@ import Button from '@/components/ui/Button.vue'
 import SettingsIcon from '../SettingsIcon.vue'
 import type { AgentCapabilities, SystemAgent } from '../types'
 const props = defineProps<{
-  creating: boolean; agent: SystemAgent | null; name: string; caps: AgentCapabilities
+  creating: boolean; agent: SystemAgent | null; name: string; workdir: string; caps: AgentCapabilities
   busy: boolean; canSave: boolean; nameProblem: string; error: string; saved: boolean; stateLabel: string
 }>()
 const emit = defineEmits<{
-  'update:name': [name: string]; 'update:cap': [cap: 'ai_cli' | 'ai_api', value: boolean]
+  'update:name': [name: string]; 'update:workdir': [workdir: string]; 'update:cap': [cap: 'ai_cli' | 'ai_api', value: boolean]
   submit: []; close: []
 }>()
 const { t } = useI18n()

@@ -246,7 +246,11 @@ def _log_force_encoding_reason(doc_id: str, actor: dict[str, Any], reason: str) 
 
 def _provider_row(project_id: Optional[str], provider_id: str) -> Optional[dict]:
     row = ai_providers.get_row(project_id, provider_id) if project_id else None
-    return row or ai_providers.get_row(None, provider_id)
+    row = row or ai_providers.get_row(None, provider_id)
+    # A personal AI (owner_scope='user') is in neither scope above; without this the
+    # turn and the participant row were stored under the bare provider id
+    # (flowgate.v02.0135 CH0006). Name-only lookup, no secret columns.
+    return row or ai_providers.get_public_row(provider_id)
 
 
 def resolve_actor(actor: dict[str, Any], display_name_hint: Optional[str] = None) -> dict:

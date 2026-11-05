@@ -97,10 +97,10 @@ describe('remote CLI target Agent field (0129 T#3)', () => {
 
   it('shows one line for zero Agents and for a saved Agent that is gone', async () => {
     await open(remote(null), [])
-    expect(document.body.textContent).toContain('사용할 수 있는 Agent가 없습니다.')
+    expect(document.body.textContent).toContain('사용할 수 있는 에이전트가 없습니다.')
     document.body.innerHTML = ''
     await open(remote('gone'), [agent('a')])
-    expect(document.body.textContent).toContain('저장된 Agent를 찾을 수 없습니다.')
+    expect(document.body.textContent).toContain('저장된 에이전트를 찾을 수 없습니다.')
     expect(cells()[0].getAttribute('aria-checked')).toBe('false')
     expect(save().disabled).toBe(true)
   })

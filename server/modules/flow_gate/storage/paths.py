@@ -622,22 +622,79 @@ def storage_path_candidates(stored: str, project_id: Optional[str] = None, branc
     """
     if not stored:
         return
-    s = stored.strip().replace("\\", "/")
     root = get_storage_root(project_id).resolve()
+    for cand in storage_candidate_paths(stored, root, branch):
+        yield cand, _within_allowed_roots(cand, project_id)
+
+
+def _resolve_path(path: Path) -> Path:
+    return path.resolve(strict=False)
+
+
+def storage_candidate_paths(stored: str, root: Path, branch: str = "main", resolve=_resolve_path):
+    """The resolved paths ``storage_path_candidates`` yields, against an already resolved storage ``root``.
+
+    flowgate.v02.0135 T#3/T#4: a caller that walks every document row (the card document write gate) resolves
+    each project's root once for the walk instead of reading the storage settings per row, and asks the jail
+    only about a row it matched. Same paths, same order, same laziness as ``storage_path_candidates``.
+    ``resolve`` (default ``Path.resolve(strict=False)``) lets such a walk share work between rows
+    (``memo_resolver``).
+    """
+    if not stored:
+        return
+    s = stored.strip().replace("\\", "/")
     if s.startswith("/storage/"):
         cand = root / s[len("/storage/"):]
     elif Path(s).is_absolute() or _DRIVE_RE.match(s):
         cand = Path(s)
     else:
         cand = root / s
-    cand = cand.resolve(strict=False)
-    yield cand, _within_allowed_roots(cand, project_id)
+    yield resolve(cand)
     fb = _apply_branch_segment(s, branch)
     if fb:
-        fcand = (
-            Path(fb) if (Path(fb).is_absolute() or _DRIVE_RE.match(fb)) else root / fb
-        ).resolve(strict=False)
-        yield fcand, _within_allowed_roots(fcand, project_id)
+        yield resolve(Path(fb) if (Path(fb).is_absolute() or _DRIVE_RE.match(fb)) else root / fb)
+
+
+def memo_resolver():
+    """A ``Path.resolve(strict=False)`` for one walk over many paths that share their directories.
+
+    flowgate.v02.0135 T#3/T#4 (measured on a 9,106-row store on Windows): resolving every candidate of every
+    document row was ~75 % of a write gate walk (18k realpath calls, several filesystem calls each), and a walk
+    runs several times per document creation, so a chat create took ~17 s and a placed card's draft save ~34 s
+    — beyond the GUI's 30 s. Each distinct parent directory is now resolved once per walk and the file name is
+    joined to it; the name's directory entry (one listing per directory) says whether the name is itself a link,
+    and then — or for a name the join cannot keep as is ('.', '..', a trailing dot / space) — the path is resolved
+    in full, exactly as before. Paths compare by ``os.path.normcase``, so the name's on-disk case does not matter.
+    """
+    parents: dict = {}
+    listings: dict = {}
+
+    def links_in(directory: Path) -> set:
+        found = listings.get(directory)
+        if found is None:
+            found = set()
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        if entry.is_symlink() or getattr(entry, "is_junction", lambda: False)():
+                            found.add(os.path.normcase(entry.name))
+            except OSError:
+                pass  # missing / unreadable directory: nothing in it is a link we could follow
+            listings[directory] = found
+        return found
+
+    def resolve(path: Path) -> Path:
+        name = path.name
+        if not name or name in (".", "..") or name[-1] in ". ":
+            return path.resolve(strict=False)
+        parent = parents.get(path.parent)
+        if parent is None:
+            parent = parents[path.parent] = path.parent.resolve(strict=False)
+        if os.path.normcase(name) in links_in(parent):
+            return path.resolve(strict=False)
+        return parent / name
+
+    return resolve
 
 
 

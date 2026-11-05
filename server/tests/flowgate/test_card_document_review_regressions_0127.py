@@ -69,14 +69,15 @@ def test_reference_index_has_linear_filesystem_call_bound(env, tmp_path, monkeyp
     rows = [{'doc_id':str(i), 'project_id':'flowgate', 'file_path':str(tmp_path/'outside'/str(i))} for i in range(count)]
     calls = {'candidates':0, 'identity':0}
     monkeypatch.setattr(env.db, '_fetch_all', lambda *a: rows)
-    def candidates(doc):
+    def candidates(doc, roots, resolve=None):
         calls['candidates'] += 1
-        return [(Path(doc['file_path']), True)]
+        return [Path(doc['file_path'])]
     original = gate.file_key
     def identity(p):
         calls['identity'] += 1
         return original(p)
-    monkeypatch.setattr(gate, 'candidates', candidates)
+    # flowgate.v02.0135: the walk asks each row's candidates through candidate_paths (no jail per row).
+    monkeypatch.setattr(gate, 'candidate_paths', candidates)
     monkeypatch.setattr(gate, 'file_key', identity)
     monkeypatch.setattr(gate, 'same', lambda *a: pytest.fail('pairwise filesystem comparison'))
     assert gate.references(trees=[root]) == []

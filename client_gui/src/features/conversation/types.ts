@@ -204,9 +204,22 @@ export interface ChatSettingsPatch {
   source_access_mode?: SourceAccessMode
 }
 
+/** flowgate.v02.0135 CH0006: why the run's last connection failed (its fallback_history entry). */
+export interface AiRunFailure {
+  /** Remote Agent cause (permission_denied, workdir_missing, ...), null when not classified. */
+  cause: string | null
+  /** The Agent's own (secret-free) words. */
+  message: string | null
+  /** The Job's working directory on the Agent machine. */
+  workdir: string | null
+  /** The server's failure line for the connection. */
+  detail: string | null
+}
+
 /** One chat AI run as the composer tracks it. */
 export interface AiRunState {
   runId: string
   status: 'running' | 'finished'
   endReason: string | null
+  failure?: AiRunFailure | null
 }

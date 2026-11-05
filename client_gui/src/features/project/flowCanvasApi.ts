@@ -337,6 +337,60 @@ function newCanvasClientId(): string {
 export const CANVAS_CLIENT_ID = newCanvasClientId()
 export const canvasHeaders = () => ({ headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
 
+// flowgate.v02.0135 T#4: a Canvas write of this tab that got no answer (timeout, dropped connection) may still be
+// stored by the server later. Its change event then carries this tab's id and would be dropped as already applied
+// (flowCanvasEvents), so the Flow stayed as the re-read after the failure showed it — without the card that write
+// stored — until a reload. Each such write is kept by what it stores — a draft save by the draft version it makes,
+// a layout save by the cards it moves — until the own change event of exactly that write arrives (that event is
+// read again) or a later answered draft save of the Flow makes it moot. An own event of anything else (a title, a
+// layout while a draft is still open, an older draft version) is dropped as before and settles nothing, so several
+// lost writes of one Flow and events arriving in any order each get their own read.
+export type UnansweredCanvasWrite =
+  | { readonly kind: 'draft'; readonly draftVersion: number }
+  | { readonly kind: 'layout'; readonly nodeKeys: readonly string[] }
+const unansweredWrites = new Map<string, UnansweredCanvasWrite[]>()
+/** A write of this tab to `flowId`'s Canvas got no answer: the server may still store it. */
+export function markUnansweredCanvasWrite(flowId: string, write: UnansweredCanvasWrite): void {
+  unansweredWrites.set(flowId, [...(unansweredWrites.get(flowId) ?? []), write])
+}
+/** The writes of `flowId` still waiting for their own change event (for tests and diagnostics). */
+export function unansweredCanvasWrites(flowId: string): readonly UnansweredCanvasWrite[] {
+  return unansweredWrites.get(flowId) ?? []
+}
+function keepUnanswered(flowId: string, writes: UnansweredCanvasWrite[]): void {
+  if (writes.length) unansweredWrites.set(flowId, writes)
+  else unansweredWrites.delete(flowId)
+}
+/**
+ * An own change event of `flowId` (its `reason`, `draft_version`, `node_keys`): true when it is the commit of a
+ * write that got no answer — then the Flow is read again and that write (with the drafts it makes moot) is settled.
+ */
+export function settleUnansweredCanvasWrite(flowId: string, event: Raw): boolean {
+  const writes = unansweredWrites.get(flowId)
+  if (!writes?.length) return false
+  if (event.reason === 'draft') {
+    const version = num(event.draft_version)
+    // A stored draft version v: every lost draft save making v or an older version has landed or can no longer.
+    const rest = writes.filter((w) => w.kind !== 'draft' || (version !== null && w.draftVersion > version))
+    if (rest.length === writes.length) return false
+    keepUnanswered(flowId, rest)
+    return true
+  }
+  if (event.reason === 'layout') {
+    const moved = new Set(Array.isArray(event.node_keys) ? event.node_keys.filter((k: unknown) => typeof k === 'string') : [])
+    const at = writes.findIndex((w) => w.kind === 'layout' && (moved.size === 0 || w.nodeKeys.some((k) => moved.has(k))))
+    if (at < 0) return false
+    keepUnanswered(flowId, writes.filter((_, i) => i !== at))
+    return true
+  }
+  return false
+}
+/** A draft save of `flowId` was answered with `draftVersion`: a lost save making that version or an older one can no longer land. */
+export function answeredCanvasDraft(flowId: string, draftVersion: number): void {
+  const writes = unansweredWrites.get(flowId)
+  if (writes) keepUnanswered(flowId, writes.filter((w) => w.kind !== 'draft' || w.draftVersion > draftVersion))
+}
+
 /**
  * GET /api/v1/flows/{flowId}/canvas — the Flow's Canvas graph. `view` (`draft` | `revision`)
  * picks the Graph definition of a Graph Flow; omitted, the server picks (P0008 §3). `collapse`:
@@ -408,7 +462,12 @@ export async function saveFlowCanvasLayout(flowId: string, input: FlowCanvasLayo
         : [],
     }
   } catch (error) {
-    throw wrapError(error, 'Failed to save the flow canvas layout.')
+    const wrapped = wrapError(error, 'Failed to save the flow canvas layout.') as Error & { network?: boolean }
+    // Only moved cards make the server announce the layout (a viewport alone is not an event).
+    if (wrapped.network && input.positions.length) {
+      markUnansweredCanvasWrite(flowId, { kind: 'layout', nodeKeys: input.positions.map((p) => p.nodeKey) })
+    }
+    throw wrapped
   }
 }
 

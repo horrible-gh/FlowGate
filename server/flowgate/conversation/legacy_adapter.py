@@ -171,6 +171,16 @@ def get_document(doc_id: Optional[str]) -> Optional[dict]:
     return db_documents.get_by_id(doc_id)
 
 
+def owned_chats(project_id: str, group_id: str, owner_id: str) -> list[dict]:
+    """The CH rows ``owner_id`` made in a group (0135 T#3: a create intent's earlier result)."""
+    from modules.flow_gate.db.connection import get_store
+
+    return get_store()._fetch_all(
+        "SELECT * FROM documents WHERE project_id = ? AND group_id = ? AND type_code = 'CH' AND owner_id = ?",
+        [project_id, group_id, owner_id],
+    )
+
+
 def get_project(project_id: str) -> Optional[dict]:
     from modules.flow_gate.db import projects as db_projects
 
