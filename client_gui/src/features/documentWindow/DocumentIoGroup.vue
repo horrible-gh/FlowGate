@@ -6,7 +6,7 @@
     :download="view.download"
     :upload-title="uploadTitle"
     :data-doc="docId"
-    @upload="documentIoUpload(docId, { context: { projectId, groupId } })"
+    @upload="documentIoUpload(docId, { context: { projectId, groupId }, card: card ?? null })"
     @download="documentIoDownload(docId)"
   />
 </template>
@@ -19,6 +19,7 @@
 // that draws this group); its tooltip is the plan window's own wording — 「JSON 가져오기」 or why the import is off.
 import { computed, getCurrentInstance, onScopeDispose, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { CardDocumentContext } from '@/features/document'
 import { useProjectStore } from '@/features/project'
 import { workPlanWindowMessages } from '@/features/workPlanWindow/messages'
 import DocumentIoButtons from './DocumentIoButtons.vue'
@@ -40,6 +41,8 @@ const props = defineProps<{
   /** Stable parent context is available even when the first information read fails. */
   projectId?: string | null
   groupId?: string | null
+  /** flowgate.v02.0127 T#5 (§2.11 / §2.14): the card coordinates of the line this group belongs to (an upload needs them). */
+  card?: CardDocumentContext | null
 }>()
 
 const view = computed(() => documentIoButtons(props.docId))

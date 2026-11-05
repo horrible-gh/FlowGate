@@ -4,6 +4,8 @@ import { testSpecCasePayload, type TestSpecCaseDetail, type TestSpecCasePayload 
 import type ModelessShell from '@/components/ui/ModelessShell.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
 import { useTestCard, type TestCardWindowKind } from '../useTestCard'
+import type { CasesPin } from '../testCardSession'
+import type { TsBase } from '../tsEditSession'
 
 export const caseTextFields = ['title', 'requirement', 'precondition', 'procedure', 'expected', 'run_command'] as const
 export interface CaseDraft {
@@ -14,6 +16,9 @@ export interface CaseDraft {
   /** The automated Case's one execution input (0094 B0005); its target and cwd are not edited here. */
   run_command: string
   execution_mode: string; required: boolean
+  /** Review fix (§2.15.3): the v2 snapshot (docId, revision, coordinates, cases) this draft saves against; set once, never replaced by a reopen / another draft's ACK / a late GET. */
+  pin: CasesPin | null
+  pinState: 'idle' | 'loading' | 'failed'
 }
 export function scenarioSnapshot(cases: readonly TestSpecCaseDetail[], title: string | null): string {
   return JSON.stringify([title, cases.map(testSpecCasePayload)])
@@ -49,7 +54,7 @@ export function caseDraft(item: TestSpecCaseDetail, cases: readonly TestSpecCase
   return { original, docId, snapshot: scenarioSnapshot(cases, title),
     title: original.title, requirement: original.requirement ?? '', precondition: original.precondition ?? '',
     procedure: original.procedure ?? '', expected: original.expected ?? '', run_command: shownCommand(original),
-    execution_mode: original.execution_mode ?? '', required: original.required }
+    execution_mode: original.execution_mode ?? '', required: original.required, pin: null, pinState: 'idle' }
 }
 export function newCaseDraft(cases: readonly TestSpecCaseDetail[], title: string | null, docId: string | null): CaseDraft {
   const ids = new Set(cases.map(c => c.caseId.replace(/-0+(\d)/, '-$1')))
@@ -59,7 +64,7 @@ export function newCaseDraft(cases: readonly TestSpecCaseDetail[], title: string
     execution_mode: 'automated', required: false, precondition: '', input: '', procedure: '', expected: '',
     check_points: '', automation_ref: null, test_assets: null }
   return { original, docId, snapshot: scenarioSnapshot(cases, title), title: '', requirement: '', precondition: '',
-    procedure: '', expected: '', run_command: '', execution_mode: 'automated', required: false }
+    procedure: '', expected: '', run_command: '', execution_mode: 'automated', required: false, pin: null, pinState: 'idle' }
 }
 export function addedCase(cases: readonly TestSpecCaseDetail[], draft: CaseDraft): TestSpecCasePayload[] {
   return [...cases.map(testSpecCasePayload), { ...draft.original, title: draft.title, requirement: draft.requirement,
@@ -118,7 +123,13 @@ export function useScenarioWindow(target: () => InspectorTarget, kind: TestCardW
   return { card, shell, state, current, close, geometry }
 }
 
-export interface RawDraft { docId: string; baseline: string; text: string; loaded: boolean; open: boolean }
+export interface RawDraft {
+  docId: string; baseline: string; text: string; loaded: boolean; open: boolean
+  /** The raw draft's pinned base (doc, revision, coordinates) of the snapshot `baseline` was read from. */
+  tsBase: TsBase | null
+  /** The latest snapshot read apart on a conflict: its whole text (frontmatter included) and base. */
+  latest: string | null; latestBase: TsBase | null
+}
 export function sessionDraft<T>(store: Record<string, unknown>, key: string, create: () => T): T {
   if (!(key in store)) store[key] = create()
   return store[key] as T

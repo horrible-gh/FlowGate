@@ -22,7 +22,7 @@ import {
 } from '@/features/document'
 import { INSPECTOR_HOST } from '../../inspectorHost'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { openDocument } from '../../openDocument'
+import { cardDocumentContext, openDocument } from '../../openDocument'
 import { useInspectorResource, type InspectorEventMatch } from '../../useInspectorResource'
 import {
   checkApprovalRunning,
@@ -232,8 +232,9 @@ export function useCheck(target: () => InspectorTarget | null): CheckState {
     approve,
     openGit,
     open: () => {
-      const docId = target()?.docId
-      if (docId) openDocument(docId)
+      const current = target()
+      const docId = current?.docId
+      if (docId) openDocument(docId, 'view', { card: cardDocumentContext(current ?? null, docId) })
     },
     reload,
     clearFailure: () => {

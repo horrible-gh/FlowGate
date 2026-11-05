@@ -1,0 +1,151 @@
+{
+  "server/modules/flow_gate/api/inbox_routes.py": {
+    "_write_submission_body": "PORT",
+    "update_editable_source_content": "PORT",
+    "_handle_new": "PORT"
+  },
+  "server/modules/flow_gate/documents/routers/documents.py": {
+    "create_related_document": "PORT",
+    "create_next_approved_core": "PORT",
+    "_create_next_empty_document_for_auto_draft": "PORT",
+    "create_document": "PORT",
+    "create_next_empty_document": "PORT"
+  },
+  "server/modules/flow_gate/documents/document_service.py": {},
+  "server/modules/flow_gate/db/documents.py": {},
+  "server/modules/flow_gate/documents/routers/work_plan.py": {},
+  "server/modules/flow_gate/documents/body_recovery.py": {},
+  "server/modules/flow_gate/documents/tr2_service.py": {
+    "_write_bytes_atomically": "PORT"
+  },
+  "server/modules/flow_gate/documents/root_conversion.py": {},
+  "server/modules/flow_gate/documents/attachments/conversion.py": {},
+  "server/modules/flow_gate/services/test_run_service.py": {
+    "_start_service_step": "PORT"
+  },
+  "server/modules/flow_gate/process_service.py": {
+    "create_workflow_root": "PORT",
+    "create_answer": "PORT",
+    "create_review_request": "PORT",
+    "_create_ac_file": "PORT",
+    "_create_rj_file": "PORT",
+    "_create_inbox_result_file": "PORT",
+    "_create_auto_result_inbox_draft": "PORT",
+    "_write_test_report_file": "PORT",
+    "_create_rerun_t_inbox_draft": "PORT",
+    "_create_design_reopen_ds_draft": "PORT",
+    "_strip_status_header_inplace": "PORT",
+    "_move_test_report_to_archive": "PORT",
+    "resume_document": "PORT",
+    "_migrate_single_file": "PORT",
+    "cancel_document": "PORT",
+    "_cleanup_outbox_file": "PORT",
+    "create_storage_file": "PORT",
+    "create_tv": "PORT",
+    "create_tvr": "PORT"
+  },
+  "server/modules/flow_gate/service.py": {
+    "save_memo_template_to_inbox": "PORT",
+    "_move_to_error": "PORT",
+    "_move_to_conflict": "PORT",
+    "_move_file": "PORT",
+    "apply_file": "PORT"
+  },
+  "server/modules/flow_gate/numbering/migration_service.py": {
+    "_backup_db_snapshot": "PORT"
+  },
+  "server/modules/flow_gate/storage/migration.py": {
+    "_copy_storage": "PORT",
+    "_cleanup_dst": "PORT",
+    "delete_legacy": "PORT"
+  },
+  "server/modules/flow_gate/services/conversation_markdown_service.py": {
+    "snapshot_group_conversations": "PORT"
+  },
+  "server/modules/flow_gate/services/qa_service.py": {
+    "create_answer_doc": "PORT"
+  },
+  "server/modules/flow_gate/api/v1/tree_routes.py": {
+    "update_src_file_content": "PORT",
+    "delete_src_path": "PORT"
+  },
+  "server/modules/flow_gate/api/v1/file_transfer_routes.py": {
+    "_save_file": "PORT"
+  },
+  "server/modules/flow_gate/services/remote_tool_service.py": {
+    "_atomic_write_bytes": "PORT",
+    "_delete_file": "PORT",
+    "_delete_tree": "PORT"
+  },
+  "server/modules/flow_gate/documents/tr2_apply_adapter.py": {
+    "_atomic_bytes": "PORT",
+    "apply_all": "PORT",
+    "restore": "PORT"
+  },
+  "server/modules/flow_gate/services/git/conflict.py": {
+    "_write_resolved_file": "PORT",
+    "_eol_normalized_merge": "PORT",
+    "separate_eol_conflicts": "PORT"
+  },
+  "server/modules/flow_gate/services/git/rerere_checkpoint.py": {
+    "_record_replaced_cache_resolution": "PORT",
+    "_restore": "PORT"
+  },
+  "server/modules/flow_gate/storage/files.py": {
+    "restore": "IDENTITY",
+    "write_new_file": "PORT",
+    "overwrite_file": "PORT",
+    "replace_restorably": "PORT",
+    "remove_owned_file": "IDENTITY",
+    "release": "IDENTITY"
+  },
+  "server/modules/flow_gate/storage/filesystem.py": {
+    "safe_rename": "PORT",
+    "_cross_device_move": "PORT",
+    "write_journal": "PORT",
+    "remove_managed_tree": "PORT",
+    "_lock_file": "PORT",
+    "remove_journal": "PORT",
+    "_unlock_file": "PORT"
+  },
+  "server/modules/flow_gate/storage/safe_file_move.py": {},
+  "server/modules/flow_gate/services/work_plan_apply_service.py": {
+    "append_application": "PORT"
+  },
+  "server/modules/flow_gate/services/ai_evaluation_fingerprint.py": {
+    "_key": "PORT"
+  },
+  "server/modules/flow_gate/services/ai_evaluation_service.py": {
+    "write": "PORT",
+    "_worker": "PORT"
+  },
+  "server/modules/flow_gate/services/source_fingerprint.py": {
+    "_hash_file": "PORT"
+  },
+  "server/modules/flow_gate/services/test_asset_service.py": {
+    "_replace_bytes": "PORT"
+  },
+  "server/flowgate/card_documents/legacy_adapter.py": {},
+  "server/flowgate/work_plan_deploy/service.py": {},
+  "server/flowgate/work_plan_deploy/legacy_adapter.py": {},
+  "server/flowgate/conversation/chats.py": {
+    "create_chat": "PORT"
+  },
+  "server/flowgate/graph_run/workspace.py": {
+    "_write_marker": "PORT",
+    "_materialize": "PORT"
+  },
+  "server/flowgate/graph_time_machine/git_revert.py": {
+    "_mark": "PORT",
+    "_unmark": "PORT"
+  },
+  "server/flowgate/card_document_edit/store.py": {
+    "exclusive_snapshot": "EXCLUSIVE"
+  },
+  "server/flowgate/card_document_edit/inventory_gate.py": {
+    "restore_moves": "IDENTITY",
+    "batch_migrate": "PORT",
+    "dc_approve": "PORT"
+  },
+  "server/flowgate/card_document_edit/legacy_snapshots.py": {}
+}

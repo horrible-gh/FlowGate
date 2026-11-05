@@ -22,6 +22,7 @@ only what it owns (the file identity taken when the file was read or made, a roo
 under the durable lock of the guard the next writer of those paths takes (``flow_guard.run_cleanup``, 0064 T#3).
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import logging
 import os
@@ -157,15 +158,16 @@ def stage_attachment_room(doc: dict, new_id: str, new_file_path: Optional[str], 
             moves.append(Move(name, dict(row), None, dst))
         else:
             raise _unsafe(doc_id, name, "not_a_file")
-    if any(not m.ghost for m in moves):
-        _prepare_room(new_room, doc_id)
-    for m in moves:
-        if m.ghost:
-            continue
-        write_new_file(m.dst, m.src.read_bytes())         # bytes as they are; removed again on rollback
-        if m.dst.stat().st_size != m.src.stat().st_size:
-            raise ConversionRefused("attachment_copy_mismatch", doc_id=doc_id, filename=m.filename)
-    return AttachStage(snapshot, tuple(moves), old_room, new_room, project_id)
+    with document_write_ports.write_paths([p for m in moves for p in (m.src, m.dst) if p is not None]):
+        if any(not m.ghost for m in moves):
+            _prepare_room(new_room, doc_id)
+        for m in moves:
+            if m.ghost:
+                continue
+            write_new_file(m.dst, m.src.read_bytes())         # bytes as they are; removed again on rollback
+            if m.dst.stat().st_size != m.src.stat().st_size:
+                raise ConversionRefused("attachment_copy_mismatch", doc_id=doc_id, filename=m.filename)
+        return AttachStage(snapshot, tuple(moves), old_room, new_room, project_id)
 
 
 def reassign_attachment_rows(doc: dict, new_id: str, stage: AttachStage, mode: str) -> None:

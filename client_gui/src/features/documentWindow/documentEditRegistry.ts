@@ -54,6 +54,54 @@ const running = reactive(new Map<string, { token: DocumentIoToken; phase: Docume
 const guards = reactive(new Map<string, DocumentIoToken>())
 const inflight = reactive(new Map<string, DocumentIoToken>())
 const downloading = reactive(new Map<string, DocumentIoToken>())
+/**
+ * flowgate.v02.0127 T#5 (§2.14): documents with an upload request whose result is uncertain. One request per document
+ * is kept (single_inflight); a window's save and a new upload check it like an unsaved edit.
+ */
+const unresolved = reactive(new Map<string, string>())
+/** Review fix (§2.14 single_inflight): the TS card's request in flight per document, with its owner. */
+const tsActive = reactive(new Map<string, string>())
+
+/** The upload's default owner; the TS card passes its own owner so it never clears another owner's lock. */
+export const DOCUMENT_IO_UPLOAD_OWNER = 'upload'
+
+/** Marks / clears the uncertain request of the document. Clearing only takes effect for the owner that set it. */
+export function documentIoMarkUnresolved(docId: string, value: boolean, owner: string = DOCUMENT_IO_UPLOAD_OWNER): void {
+  if (value) {
+    unresolved.set(docId, owner)
+    return
+  }
+  if (unresolved.get(docId) === owner) unresolved.delete(docId)
+}
+
+export function documentIoUnresolvedOwner(docId: string): string | undefined {
+  return unresolved.get(docId)
+}
+
+/** An uncertain request, or a TS request in flight, holds the document's one request. */
+export function documentIoHasUnresolved(docId: string): boolean {
+  return unresolved.has(docId) || tsActive.has(docId)
+}
+
+/**
+ * The TS card claims the document's one request (INFLIGHT is registered before it is sent). Refused while an
+ * upload runs / guards the document, a window saves it, another owner's request is in flight, or another owner's
+ * uncertain request is kept. Returns false when refused.
+ */
+export function documentIoTsBegin(docId: string, owner: string): boolean {
+  if (tsActive.has(docId)) return false
+  const keeper = unresolved.get(docId)
+  if (keeper !== undefined && keeper !== owner) return false
+  if (running.has(docId) || guards.has(docId) || inflight.has(docId)) return false
+  if ([...entries.values()].some((entry) => entry.related().includes(docId) && entry.saving())) return false
+  tsActive.set(docId, owner)
+  return true
+}
+
+/** Releases the TS claim of `owner` only. */
+export function documentIoTsEnd(docId: string, owner: string): void {
+  if (tsActive.get(docId) === owner) tsActive.delete(docId)
+}
 
 /** The current Designer epoch. */
 export function documentIoEpoch(): number {
@@ -83,6 +131,7 @@ export function documentIoGuarded(docId: string): boolean {
 
 /** A window of the document holds unsaved text or saves it. */
 export function documentIoConflict(docId: string): boolean {
+  if (unresolved.has(docId) || tsActive.has(docId)) return true
   return [...entries.values()].some((entry) => entry.related().includes(docId) && (entry.dirty() || entry.saving()))
 }
 
@@ -259,4 +308,6 @@ export function resetDocumentEditRegistry(): void {
   guards.clear()
   inflight.clear()
   downloading.clear()
+  unresolved.clear()
+  tsActive.clear()
 }

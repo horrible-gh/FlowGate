@@ -1709,6 +1709,10 @@ def _written_by(doc_id: str, token_id: Optional[str]) -> dict:
         "SELECT id, event_type, document_id, actor_user_id, metadata, created_at FROM workflow_events "
         "WHERE group_id = ? AND event_type IN ('doc_created', 'action_taken', 'doc_edited', 'token_consumed') "
         "ORDER BY id", [doc.get("group_id")]) or []
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    evidence = card_document_ports.author_evidence(doc, rows, _token_author)
+    if evidence is not None:
+        return evidence
     writes: list = []
     boundary_at = None
     bounded = revision == 0         # revision 0: every write of the document is its creation's (no revision before)

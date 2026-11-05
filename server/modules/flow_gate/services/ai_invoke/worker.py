@@ -1397,6 +1397,13 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     # single direct send_chat_reply tool exactly as before.
     chat_tools = chat_run_hooks.chat_tools(run) if is_chat else []
     chat_tool_handlers = {tool["name"]: tool["handler"] for tool in chat_tools}
+    # flowgate.v02.0127 L#3 §2.1 W2/W3: optional descriptor keys. A tool with ``call_handler``
+    # receives only the server call context of its accepted call (never the model input);
+    # ``own_validation`` skips the generic schema validation below because the handler maps
+    # input errors itself. Tools without them (run_command) keep handler(run, input).
+    chat_tool_call_handlers = {tool["name"]: tool["call_handler"] for tool in chat_tools
+                               if callable(tool.get("call_handler"))}
+    chat_tool_own_validation = {tool["name"] for tool in chat_tools if tool.get("own_validation") is True}
     chat_tool_specs: Optional[list[dict]] = None
     if chat_tools:
         # The history/help reads of _chat_tool_definitions stay; the port's tools replace
@@ -1657,6 +1664,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if tool_specs is not None:
             exposed = {item["name"]: item for item in tool_specs}
             validation_errors = []
+            # flowgate.v02.0127 L#3 §2.1 W1/W3: every received call of a chat run is handed to the
+            # call acceptance port exactly once, right here -- before any normalization or schema
+            # validation, with the provider's original input. The answer (server call context or
+            # None) is only ever passed to a ``call_handler`` below.
+            call_contexts = [chat_run_hooks.accept_chat_call(run, call) if is_chat else None
+                             for call in tool_calls]
             for call in tool_calls:
                 try:
                     spec = exposed.get(call.get("name"))
@@ -1667,6 +1680,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         tool_input = api_server_tools.normalize_read_document_input(tool_input)
                     elif call["name"] == "read_help":
                         tool_input = api_server_tools.normalize_read_help_input(tool_input)
+                    elif call["name"] == "register_document" and _run_register_context(run).get("action") == "edit":
+                        pass  # T#2 ordered edit port receives original input, before schema/allowlist filtering.
+                    elif call["name"] in chat_tool_own_validation:
+                        pass  # 0127 L#3 W3: the tool maps its own input errors (P#2 §9.26).
                     else:
                         api_server_tools.validate(spec["schema"], tool_input)
                     call["input"] = tool_input
@@ -1679,7 +1696,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             # 0608 T0007: a tool the model asked for in this turn that did not succeed. The
             # model has not seen that failure yet, so a resolve sent alongside it is a guess.
             failed_tools: list[str] = []
-            for call, validation_error in zip(tool_calls, validation_errors):
+            for call, validation_error, call_context in zip(tool_calls, validation_errors, call_contexts):
                 if validation_error is not None:
                     _status, resp = api_server_tools.error_payload(
                         call.get("name") or "tool_call", validation_error
@@ -1746,7 +1763,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         # flowgate.v02.0032 T#1: blocks this same loop while a command waits
                         # for the user's decision and runs; the result returns to this
                         # conversation and the model continues from it.
-                        _status, resp = chat_tool_handlers[call["name"]](run, call["input"])
+                        if call["name"] in chat_tool_call_handlers:
+                            # flowgate.v02.0127 L#3 §2.1 W3: the call context only; the handler
+                            # reads the input from the frozen record of that accepted call.
+                            _status, resp = chat_tool_call_handlers[call["name"]](run, call_context)
+                        else:
+                            _status, resp = chat_tool_handlers[call["name"]](run, call["input"])
                     elif call["name"] == _CHAT_HISTORY_TOOL_NAME:
                         _status, resp = _conversation_history_read(
                             run, current_token, call["input"]
@@ -1850,7 +1872,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     try:
                         if call_name != tool_name:
                             raise api_server_tools.ToolError(422, "invalid_tool_call")
-                        api_server_tools.validate(tool_schema, call.get("input"))
+                        if not (call_name == "register_document" and _run_register_context(run).get("action") == "edit"):
+                            api_server_tools.validate(tool_schema, call.get("input"))
                     except api_server_tools.ToolError as exc:
                         _status, resp = api_server_tools.error_payload(call_name or "tool_call", exc)
                         conversation.append(_svc()._tool_result_msg(
@@ -1977,6 +2000,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             continue
 
         trace["register_attempted"] = True
+        edit_register = _run_register_context(run).get("action") == "edit"
         status, resp = _svc()._inbox_register(run, current_token, tool_call["input"])
         trace["dispatched"] += 1
         _api_trace_tool(trace, "register_document", status, registration=True)
@@ -1994,10 +2018,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 # The hop moved: adopt the new token AND its axes atomically, so a
                 # delayed call holding the previous one is refused at the next bind.
                 _adopt_continuation_token(run, next_token)
-            result_text = next_mention or json.dumps(
+            result_text = json.dumps(resp, ensure_ascii=False) if edit_register else (next_mention or json.dumps(
                 {k: resp.get(k) for k in ("ok", "doc_id", "message") if k in resp},
                 ensure_ascii=False,
-            )
+            ))
             conversation.append(_svc()._tool_result_msg(kind, tool_call, result_text))
             if run["mode"] == "single" or registered >= run["docs_target"] or not next_token:
                 break
@@ -2013,6 +2037,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 })
             conversation.append(_svc()._tool_result_msg(
                 kind, tool_call,
+                json.dumps(resp, ensure_ascii=False) if edit_register else
                 f"Registration failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
 
@@ -2493,7 +2518,7 @@ _REGISTER_SCOPES = ("new", "edit", "review", "test_run")
 # reshaped here; the title service judges it). review / test_run never carry it.
 _REGISTER_MODEL_FIELDS = {
     "new": ("doc_type", "title", "content", "node_title"),
-    "edit": ("content", "edit_reason", "rejection_response", "rejection_id",
+    "edit": ("content", "expected_revision", "edit_reason", "rejection_response", "rejection_id",
              "rejection_review_id", "node_title"),
     # 0474 T0007 §1.1: force_encoding_reason dropped -- review never lets a
     # model-authored value bypass the corruption guard.
@@ -2505,7 +2530,8 @@ _REGISTER_MODEL_FIELDS = {
 class _RegisterBindingRejected(Exception):
     """A register call refused before any side effect. Carries the 403 body to return."""
 
-    def __init__(self, response: dict, record: Optional[dict] = None):
+    def __init__(self, response: dict, record: Optional[dict] = None, *, source=None):
+        self.source = source
         self.response = response
         self.record = record
         super().__init__(response.get("error_message") or "register binding rejected")
@@ -2617,7 +2643,7 @@ def _bind_register_context(run: dict, raw_token: str) -> tuple[dict, dict]:
         raise _RegisterBindingRejected({
             "ok": False, "http_status": 422,
             "error_message": f"action_scope {expected['action']!r} cannot register a document",
-        })
+        }, source="action_scope")
     return expected, token_rec
 
 
@@ -2699,7 +2725,16 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
     except _RegisterBindingRejected as rejected:
         if rejected.record is not None:
             run.setdefault("register_errors", []).append(rejected.record)
-        return int(rejected.response.get("http_status") or 403), rejected.response
+        status = int(rejected.response.get("http_status") or 403)
+        if (_run_register_context(run).get("action") == "edit" or run.get("_register_edit_context")):
+            from modules.flow_gate.graph_workflow.services import card_document_ports
+            return card_document_ports.card_edit("normalize", status, rejected.response, source=rejected.source)
+        return status, rejected.response
+    if context["action"] == "edit":
+        from modules.flow_gate.graph_workflow.services import card_document_ports
+        refused = card_document_ports.card_edit("preflight", run, raw_token, tool_input, context)
+        if refused is not None:
+            return refused
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
         run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
@@ -2707,7 +2742,17 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
     # Assemble review meaning once. The two requests only add transport fields.
     body = _svc()._register_envelope(context, run, tool_input)
     if context["action"] != "review":
-        return _post_inbox_json(run, raw_token, body)
+        try:
+            status, result = _post_inbox_json(run, raw_token, body)
+        except Exception:
+            if context["action"] != "edit":
+                raise
+            logger.exception("Agent inbox transport failed")
+            status, result = 0, {"error": "inbox transport failed"}
+        if context["action"] == "edit":
+            from modules.flow_gate.graph_workflow.services import card_document_ports
+            return card_document_ports.card_edit("normalize", status, result)
+        return status, result
 
     dry_body = dict(body)
     dry_body["dry_run"] = True

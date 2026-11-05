@@ -30,6 +30,10 @@ DISPOSED = "Modification not allowed: the group has been disposed."
 
 @pytest.fixture(autouse=True)
 def recovery_routes(env, monkeypatch):
+    from modules.flow_gate.graph_workflow.services import card_document_ports as ports
+    from flowgate.card_document_edit import integration
+    monkeypatch.setattr(ports, "_handlers", dict(ports._handlers))
+    integration.register()
     app = env["client"].app
     app.include_router(console.router, prefix="/api/v1")
     app.include_router(token.router, prefix="/flowgate")
@@ -38,6 +42,11 @@ def recovery_routes(env, monkeypatch):
     monkeypatch.setattr(token, "verify_bearer", lambda request: {"_is_user_jwt": True})
     refreshed = []
     monkeypatch.setattr(console, "_broadcast_document_refresh", lambda doc: refreshed.append(doc["doc_id"]))
+    from flowgate.card_document_edit import contacts
+    def record_refresh(event):
+        if event.event_type == contacts.EventType.DOCUMENT_EXPLORER_REFRESH:
+            refreshed.append(event.doc_id)
+    monkeypatch.setattr(contacts, "broadcast_event_threadsafe", record_refresh)
     env["refreshed"] = refreshed
     env["client"] = TestClient(app, raise_server_exceptions=False)
 
@@ -340,7 +349,10 @@ def test_each_method_recovers_a_readable_body_and_changes_only_the_path(env, tmp
         "before_file_path": before["file_path"], "after_file_path": after}
     assert out["restored_from"] == body_recovery.RESTORED_FROM[method]
     row = documents.get_by_id(doc_id)
-    assert stable(row) == stable(before) and row["file_path"] == after and out["data"]["file_path"] == after
+    expected = dict(before)
+    if method == "regenerate_card_draft":
+        expected["revision_no"] += 1  # 0127: existing card bodies now use the common revision store.
+    assert stable(row) == stable(expected) and row["file_path"] == after and out["data"]["file_path"] == after
     state, content, outline = token_reads(env, doc_id)
     assert (state, outline) == ("readable", 200) and content == out["content"]
     [event] = recovered_events(doc_id)
@@ -409,7 +421,10 @@ def test_a_target_taken_after_the_check_is_still_refused(env, monkeypatch, lande
     def racing(path, data, **kwargs):
         if landed == "file":
             write(path, b"# landed meanwhile\n")
-        _doc(FB, 8, "D", status="draft", file_path=str(path))
+        # Simulate a legacy/external row taking the path after the precheck.
+        _doc(FB, 8, "D", status="draft", file_path="")
+        from modules.flow_gate.db.connection import get_store
+        get_store()._execute("UPDATE documents SET file_path = ? WHERE doc_id = ?", [str(path),f"{FB}.0008-D"])
         return real(path, data, **kwargs)
     monkeypatch.setattr(files, "write_new_file", racing)
     response = regenerate(env, doc_id)
@@ -704,19 +719,50 @@ def test_a_saved_card_draft_is_a_stub_and_an_unsaved_one_a_draft(env):
     """V-B1d-8 ①: a person's save is a body write whatever the line's author."""
     _key, (instruction, report) = card_docs(env, "N")
     response = env["client"].patch("/api/v1/documents/content", json={"doc_id": report, "content": ""})
-    assert response.status_code == 200, response.text
+    assert response.status_code == 409 and response.json()["detail"] == "card_document_edit_required"
+    _save_card_body(env, report, "")
     for doc_id in (instruction, report):
         unlink_body(doc_id)
     found = items_by_id(diagnose(env, group_id=FB))
+    assert (found[report]["method"], found[report]["body_loss"]) == ("restore_revision", "none")
+    _lose_revision_backups(report)
+    found = items_by_id(diagnose(env, group_id=FB))
     assert (found[report]["method"], found[report]["body_loss"]) == ("regenerate_stub", "lost")
     assert (found[instruction]["method"], found[instruction]["body_loss"]) == ("regenerate_card_draft", "none")
+
+
+def _lose_revision_backups(doc_id):
+    """Explicitly seed loss of every before-image as well as the live body."""
+    from modules.flow_gate.db import document_revisions
+    from modules.flow_gate.db.connection import get_store
+    for row in document_revisions.list_by_doc(doc_id):
+        backup = paths.resolve_storage_path(row["backup_path"], "flowgate")
+        if backup is not None:
+            backup.unlink(missing_ok=True)
+    get_store()._execute("DELETE FROM document_revisions WHERE doc_id = ?", [doc_id])
+
+
+def _save_card_body(env, doc_id, content):
+    from flowgate.card_document_edit.contracts import Actor, Origin, Built, DedicatedRequest
+    from flowgate.card_document_edit.dedicated_bridge import dedicated_save
+    doc = documents.get_by_id(doc_id)
+    class SaveFixture:
+        needs_current = False
+        def precheck(self, fresh):
+            assert fresh is not None
+        def conflict(self, fresh):
+            return RuntimeError("fixture revision conflict")
+        def build(self, fresh, body):
+            return Built(content.encode("utf-8"), body_saved_source="console_save")
+    return dedicated_save(DedicatedRequest(doc_id,doc["revision_no"],Actor("u_kim"),SaveFixture(),Origin("designer")))
 
 
 def _succeed_saved_root(env, version=0):
     """A card root R with a person's body (``doc_body_saved`` on R only), succeeded by B (it has a child)."""
     key, [root] = card_docs(env, "R", "요구", version=version, ref="tmp_r")
     response = env["client"].patch("/api/v1/documents/content", json={"doc_id": root, "content": "# 사람이 쓴 본문\n"})
-    assert response.status_code == 200, response.text
+    assert response.status_code == 409 and response.json()["detail"] == "card_document_edit_required"
+    _save_card_body(env, root, "# 사람이 쓴 본문\n")
     _doc(FB, 50, "N", status="draft", triggered_by=root, target_id=root)
     response = env["client"].patch(f"/api/v1/documents/{root}/root-type", json={"new_type": "B"})
     assert response.status_code == 200, response.text
@@ -741,8 +787,11 @@ def test_a_succeeded_card_root_is_never_proven_untouched(env):
     assert paths.resolve_storage_path(documents.get_by_id(root)["file_path"], "flowgate").read_bytes() == original
     assert _sql(env["db"], "SELECT * FROM events WHERE doc_id = ?", (root,)) == root_events
     response = env["client"].patch("/api/v1/documents/content", json={"doc_id": successor, "content": "# B 본문\n"})
-    assert response.status_code == 200, response.text
+    assert response.status_code == 409 and response.json()["detail"] == "card_document_edit_required"
+    _save_card_body(env, successor, "# B 본문\n")
     unlink_body(successor)
+    assert items_by_id(diagnose(env, group_id=FB))[successor]["method"] == "restore_revision"
+    _lose_revision_backups(successor)
     item = items_by_id(diagnose(env, group_id=FB))[successor]
     assert (item["method"], item["body_loss"]) == ("regenerate_stub", "lost")
 
@@ -864,14 +913,13 @@ _OWNERS = {"modules/flow_gate/documents/routers/documents.py", "modules/flow_gat
            "modules/flow_gate/documents/document_service.py"}
 # (file, function) -> what writes there. "save:*" must record ``doc_body_saved`` in the same function (2.4.1).
 EXPECTED_WRITERS = {
-    ("modules/flow_gate/documents/routers/documents.py", "update_document_content.save"): "save:console_save",
-    ("modules/flow_gate/documents/routers/work_plan.py", "save_work_plan"): "save:work_plan_save",
-    ("modules/flow_gate/documents/routers/work_plan.py", "restore_work_plan_revision"): "save:work_plan_save",
-    ("modules/flow_gate/documents/tr2_service.py", "_save"): "save:tr2_save",
+    ("modules/flow_gate/documents/routers/documents.py", "update_document_content.save.write_file"): "save:console_save",
     ("modules/flow_gate/api/inbox_routes.py", "_handle_new"): "inbox",
-    ("modules/flow_gate/api/inbox_routes.py", "_handle_edit"): "inbox",
+    ("flowgate/card_document_edit/store.py", "snapshot_policy_apply"): "revision snapshot",
+    ("flowgate/card_document_edit/store.py", "body_replace"): "guarded revision body",
+    ("flowgate/card_document_edit/generated_bridge.py", "conversion_stage"): "succession CREATE",
+    ("flowgate/card_document_edit/generated_bridge.py", "tsr.write"): "new TSR CREATE",
     ("flowgate/card_documents/legacy_adapter.py", "_write_file"): "card document creation",
-    ("modules/flow_gate/documents/root_conversion.py", "stage_converted_file"): "conversion",
     ("modules/flow_gate/documents/attachments/conversion.py", "stage_attachment_room"): "conversion",
     ("modules/flow_gate/documents/body_recovery.py", "_apply"): "recovery",
     # a new document's first file (not an existing document's body)
@@ -881,8 +929,6 @@ EXPECTED_WRITERS = {
     ("modules/flow_gate/documents/routers/documents.py", "create_next_approved_core"): "new document",
     ("modules/flow_gate/documents/routers/documents.py", "_create_next_empty_document_for_auto_draft"): "new document",
     ("modules/flow_gate/documents/routers/work_plan.py", "create_work_plan"): "new document",
-    # a plan file that never held a plan revived next to it (no person's content; the old file stays)
-    ("modules/flow_gate/documents/routers/work_plan.py", "_heal_unwritten_plan"): "plan revival",
 }
 
 
@@ -906,7 +952,7 @@ class _Calls(ast.NodeVisitor):
 
 def test_every_body_write_is_a_recorded_save_or_a_known_writer():
     """V-B1d-9: a new body write point fails here until it records ``doc_body_saved`` or is classified."""
-    found = {}
+    found, recorded, delegated = {}, set(), set()
     for path in sorted(_SERVER_DIR.rglob("*.py")):
         relative = path.relative_to(_SERVER_DIR).as_posix()
         parts = relative.split("/")
@@ -918,14 +964,23 @@ def test_every_body_write_is_a_recorded_save_or_a_known_writer():
         names = _WRITERS | (_RAW if relative in _OWNERS else set())
         if not any(name in text for name in names):
             continue
-        visitor = _Calls(names | {"record_body_saved"})
+        visitor = _Calls(names | {"record_body_saved", "stage_body_save"})
         visitor.visit(ast.parse(text))
         for function, calls in visitor.found.items():
+            if "record_body_saved" in calls:
+                recorded.add((relative, function))
+            if "stage_body_save" in calls:
+                delegated.add((relative, function))
             if calls & names and not function.endswith("write_body_atomically"):
                 found[(relative, function)] = calls
     assert set(found) == set(EXPECTED_WRITERS)
     for key, kind in EXPECTED_WRITERS.items():
-        assert ("record_body_saved" in found[key]) == kind.startswith("save:"), key
+        # A write_gate callback belongs to its enclosing save transaction.
+        evidence = key
+        if key[1].endswith(".write_file"):
+            assert (key[0], key[1].rsplit(".", 1)[0]) in delegated
+            evidence = (key[0], "_stage_body_save")
+        assert (evidence in recorded) == kind.startswith("save:"), key
 
 
 # ── shared pieces ────────────────────────────────────────────────────────────
@@ -949,3 +1004,12 @@ def test_the_card_generator_and_its_recovery_share_the_front_matter():
     assert legacy_adapter._front_matter(*args) == body_recovery.card_front_matter(*args) == (
         f"---\nproject: flowgate\nmodule: v02\ngroup: 0082\ngroup_id: {FB}\ntype: N\ndoc_number: 0002-N\n"
         "title: 조사 · 지시서\n---\n")
+
+
+@pytest.fixture(autouse=True)
+def dedicated_document_write_ports_0127(monkeypatch):
+    # Direct service/route fixtures reproduce the composition root's required ports.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration as document_edit
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    document_edit.register()

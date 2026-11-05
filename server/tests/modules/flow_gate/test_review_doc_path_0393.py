@@ -318,10 +318,15 @@ def test_sending_both_a_file_and_inline_content_is_refused(review_env):
 def test_the_error_wording_matches_the_document_paths(review_env):
     """T0005 §2-7: "new/edit 경로와 같은 문구를 쓴다". Two implementations of the same
     contract drift apart the moment their strings differ, so the strings are pinned here."""
+    from flowgate.card_document_edit import legacy_edit
     source = Path(inbox_routes.__file__).read_text(encoding="utf-8")
-    assert source.count('return _fail(400, "Exactly one of doc_path or content must be provided")') == 3
-    assert source.count('doc_path is not accessible: ') == 3
-    assert source.count('doc_path file does not exist: ') == 3
+    legacy = Path(legacy_edit.__file__).read_text(encoding="utf-8")
+    # L#2 §2.2/2.6: edit moved to its service; new and review remain in inbox.
+    assert source.count('return _fail(400, "Exactly one of doc_path or content must be provided")') == 2
+    assert 'inbox._fail(400, "Exactly one of doc_path or content must be provided")' in legacy
+    for wording in ('doc_path is not accessible: ', 'doc_path file does not exist: '):
+        assert source.count(wording) == 2
+        assert legacy.count(wording) == 1
 
 
 # ── the shape that must NOT change (T0005 §1: the copy-mention review path) ───────────

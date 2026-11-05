@@ -8,6 +8,7 @@ The results made on the old bytes become stale by identity (their Basis no longe
 the live source), so the screen offers [run again].
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import json
@@ -108,15 +109,16 @@ def _replace_bytes(target: Path, data: bytes) -> None:
     ``os.replace``; a write failure leaves the target untouched and the stage is removed.
     """
     staged = target.with_name("." + target.name + ".fg-asset-" + uuid.uuid4().hex)
-    try:
-        with staged.open("xb") as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        shutil.copymode(target, staged)
-        os.replace(staged, target)
-    finally:
-        staged.unlink(missing_ok=True)
+    with document_write_ports.write_paths([staged, target]):
+        try:
+            with document_write_ports.write_paths([staged]), staged.open("xb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            shutil.copymode(target, staged)
+            document_write_ports.write_gate("paths", [staged,target], lambda: os.replace(staged, target))
+        finally:
+            staged.unlink(missing_ok=True)
 
 
 def update(ts_id: str, path: str, *, expected_hash: str, content: str,

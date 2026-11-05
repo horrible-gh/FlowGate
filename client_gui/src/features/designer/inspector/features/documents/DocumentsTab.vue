@@ -15,7 +15,7 @@
         <span v-if="view.current.typeCode" class="inspector-documents-type" data-test="documents-current-type">{{ view.current.typeCode }}</span>
         <span v-if="view.current.seq !== null" class="inspector-documents-seq" data-test="documents-current-seq">#{{ view.current.seq }}</span>
         <span class="inspector-documents-title" :title="view.current.title" data-test="documents-current-title">{{ view.current.title }}</span>
-        <DocumentIoGroup :doc-id="view.current.docId"  :project-id="target.projectId" :group-id="target.flowId" />
+        <DocumentIoGroup :doc-id="view.current.docId"  :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, view.current.docId)" />
         <InspectorOpenButton
           v-if="availability.open.visible"
           :disabled="!availability.open.enabled"
@@ -90,7 +90,7 @@
             <span v-if="item.seq !== null" class="inspector-documents-seq">#{{ item.seq }}</span>
             <span class="inspector-documents-title" :title="item.title ?? item.docId">{{ item.title ?? item.docId }}</span>
             <InspectorStatusChip v-if="item.reviewStatus" :label="reviewText(item.reviewStatus)" :tone="item.reviewTone" />
-            <DocumentIoGroup v-if="item.state !== 'missing'" :doc-id="item.docId"  :project-id="target.projectId" :group-id="target.flowId" />
+            <DocumentIoGroup v-if="item.state !== 'missing'" :doc-id="item.docId"  :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, item.docId)" />
             <InspectorOpenButton
               v-if="availability.open.visible"
               :disabled="!availability.open.enabled"
@@ -108,7 +108,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { DocumentIoGroup } from '../../openDocument'
+import { cardDocumentContext, DocumentIoGroup } from '../../openDocument'
 import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'

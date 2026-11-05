@@ -518,7 +518,12 @@ class _MockDB:
 
     @contextmanager
     def begin_transaction(self):
-        yield _MockTxn(self._conn)
+        try:
+            yield _MockTxn(self._conn)
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def close(self):
         self._conn.close()
@@ -536,7 +541,7 @@ class _MockTxn:
 
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
-        self._conn.commit()
+        return self._last_cursor  # L#1/L#2: actual CAS count, inside the real transaction.
 
     def fetch_one(self):
         if self._last_cursor is None:
@@ -1420,12 +1425,11 @@ def _inbox_post(tmp_path, content, doc_code="0003-WP", doc_type="WP", locale=Non
 def _inbox_edit(tmp_path, doc_id, content, *, locale=None):
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
-        token = token_service.issue(
-            project=PROJECT, group_id=GROUP, action_scope="edit",
-            doc_ref=doc_id, issued_to="usr_wp_001",
-            continuation_locale=locale,
-        )["raw_token"]
+    token = token_service.issue(
+        project=PROJECT, group_id=GROUP, action_scope="edit",
+        doc_ref=doc_id, issued_to="usr_wp_001",
+        continuation_locale=locale,
+    )["raw_token"]
     return _inbox_client().post(
         "/api/v1/inbox",
         json={
@@ -1568,14 +1572,14 @@ def test_ai_inbox_edit_cas_loser_rolls_back_body_and_keeps_title_meta(
         project_id=PROJECT,
     ))
     store = get_store()
-    execute = store._execute
+    execute = store._execute_affected
 
     def lose_revision_cas(sql, params=None):
         if str(sql).startswith("UPDATE documents SET revision_no = revision_no + 1"):
-            return None
+            return 0
         return execute(sql, params)
 
-    with patch.object(store, "_execute", side_effect=lose_revision_cas):
+    with patch.object(store, "_execute_affected", side_effect=lose_revision_cas):
         rejected = _inbox_edit(
             tmp_path, doc_id, wp.dumps(uploaded), locale="ko",
         )
@@ -1976,9 +1980,11 @@ def test_an_already_broken_plan_heals_the_first_time_it_is_opened(seed, storage_
 
     # 두 번째로 열어도 같은 표가 나온다(되살리기는 한 번으로 끝난다).
     assert client.get(f"/api/v1/documents/{doc_id}/work-plan").status_code == 200
-    # 0599 T#2: self-heal is not evidence of the original creation bytes and must
-    # never fabricate a legacy r0 from today's settings.
-    assert db_revisions.list_by_doc(doc_id) == []
+    # 0127: preserve the actual raw r0 before-image, never today's generated plan.
+    [before] = db_revisions.list_by_doc(doc_id)
+    assert before["revision_no"] == 0
+    assert (storage_root / before["backup_path"]).read_bytes() == stub_path.read_bytes()
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 1
 
 
 def test_a_broken_plan_with_content_is_never_overwritten(seed, storage_root):
@@ -2251,7 +2257,7 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
     )
     published = []
     with patch(
-        "modules.flow_gate.api.v1.events.publisher.publish_event_threadsafe",
+        "flowgate.card_document_edit.contacts.broadcast_event_threadsafe",
         side_effect=published.append,
     ):
         saved_response = client.put(
@@ -2336,7 +2342,7 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
         failed_body["counted_types"], failed_body["quantities"],
     )
     with patch(
-        "modules.flow_gate.documents.routers.work_plan.wp.write_body_atomically",
+        "modules.flow_gate.storage.files.replace_restorably",
         side_effect=OSError("simulated write failure"),
     ):
         failed = client.put(
@@ -2578,7 +2584,7 @@ def test_created_r0_restores_before_first_save_and_preserves_broken_raw(
 
     restore_events = [
         event for event in db_events.list_by_project(PROJECT)
-        if (json.loads(event.get("metadata") or "{}").get("edit_reason")
+        if (json.loads(event.get("metadata") or "{}").get("event_reason")
             == "work_plan_revision_restore")
         and json.loads(event.get("metadata") or "{}").get("doc_id") == doc_id
     ]
@@ -2992,3 +2998,12 @@ def test_revision_brief_fails_closed_for_untrusted_backup(seed, storage_root):
         assert "backup_path" not in listed
     finally:
         canonical.write_text(original, encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def dedicated_document_write_ports_0127(monkeypatch):
+    # Direct service/route fixtures reproduce the composition root's required ports.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration as document_edit
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    document_edit.register()

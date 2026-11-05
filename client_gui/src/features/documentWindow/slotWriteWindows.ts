@@ -18,6 +18,8 @@ import type { CardLineRecord, CardLineWriteResult } from '@/features/document'
 export interface SlotWriteRequest {
   readonly flowId: string
   readonly nodeKey: string
+  /** The card's project (flowgate.v02.0127 T#5 §2.11: the card coordinates handed to the document window that opens). */
+  readonly projectId?: string | null
   /** The card line's slot (O3 §4-2 `slot`). */
   readonly slot: string
   /** The line's document type, when the card line names it. */
@@ -122,7 +124,7 @@ export function settleWrittenCardLines(
   flowId: string,
   nodeKey: string,
   lines: readonly { readonly slot: string; readonly docId: string | null }[],
-  open: (docId: string) => void,
+  open: (docId: string, slot: string) => void,
 ): void {
   for (const line of lines) {
     if (line.docId === null) continue
@@ -130,7 +132,7 @@ export function settleWrittenCardLines(
     if (written.has(key)) written.delete(key)
     if (pendingOpen.has(key)) {
       pendingOpen.delete(key)
-      open(line.docId)
+      open(line.docId, line.slot)
     }
   }
 }

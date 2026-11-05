@@ -37,6 +37,15 @@ def _body(content: dict) -> dict:
     return json.loads(json.dumps(content))  # defensive copy
 
 
+@pytest.fixture(autouse=True)
+def _edit_port_composition(monkeypatch):
+    # 0127 T#2: requests exercise the same registered edit service as startup.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    integration.register()
+
+
 # ── Common dep patching ────────────────────────────────────────────────────────────────
 
 def _token_rec(scope: str, doc_ref: str, dry_run_count: int = 0) -> dict:
@@ -292,12 +301,27 @@ def _edit_body(**over) -> dict:
 
 def _patch_edit_validation(monkeypatch, token_rec):
     from modules.flow_gate.api import inbox_routes
+    from flowgate.card_document_edit import target, legacy_edit, legacy_store, agent_rules, guards
+    from flowgate.card_document_edit.contracts import Body
+    from modules.flow_gate.graph_workflow.store import run_store
+    monkeypatch.setattr(run_store, "available", lambda: True)
+    monkeypatch.setattr(run_store, "node_run_by_token", lambda token_id: None)
+    # These counter/locale unit tests isolate the persistence boundary. The real store,
+    # token claim and rejection transaction are covered by test_card_document_edit_agent_0127.
+    monkeypatch.setattr(target, "classify_card_slot", lambda doc: target.NON_CARD)
+    monkeypatch.setattr(legacy_edit, "has_permission", lambda *a: True)
+    monkeypatch.setattr(guards, "check_writable", lambda *a: None)
+    monkeypatch.setattr(legacy_store.boundary, "enter", lambda doc, mode, stage: stage(None))
+    monkeypatch.setattr(legacy_store, "read_body_bytes", lambda doc: Body("readable", b"old", "old", Path("x.md")))
+    monkeypatch.setattr(agent_rules.document_revisions, "get_single_by_doc_revision", lambda *a: None)
+
     monkeypatch.setattr(inbox_routes, "_normalize_group_name", lambda p, m, g: g)
     monkeypatch.setattr(inbox_routes, "_normalize_doc_id", lambda g, d: d)
     monkeypatch.setattr(inbox_routes.token_service, "verify", lambda _raw: token_rec)
     monkeypatch.setattr(inbox_routes, "has_permission", lambda *a, **k: True)
     monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda _id: {
         "doc_id": _id, "status": "open", "revision_no": 1, "file_path": "x.md",
+        "project_id": "flowgate", "module": "default", "type_code": "NR", "owner_id": "user-1",
         # 0492 T0018: register_binding's group axis resolves the run side straight from
         # this row's group_id (never parsed out of the doc id) -- omitting it here reads
         # as "no group", so it mismatches a token that does carry one.

@@ -28,7 +28,7 @@
     </template>
     <template #actions>
       <!-- flowgate.v02.0068 T#1 — [업로드][다운로드] │ before the copy / edit icon; hidden while minimized. -->
-      <DocumentIoGroup v-if="!win.minimized" :doc-id="ioDocId" :project-id="record?.projectId ?? chain[0]?.projectId" :group-id="record?.groupId ?? chain[0]?.groupId" />
+      <DocumentIoGroup v-if="!win.minimized" :doc-id="ioDocId" :project-id="record?.projectId ?? chain[0]?.projectId" :group-id="record?.groupId ?? chain[0]?.groupId" :card="ioCard" />
       <span v-if="!editing" ref="copyTarget" class="document-window-copy-action" />
       <IconButton
         v-else
@@ -78,6 +78,24 @@
           @keydown.ctrl.s.prevent="save"
           @keydown.meta.s.prevent="save"
         />
+        <!-- flowgate.v02.0127 T#5 (§2.12): a conflict keeps the draft and base; the latest document is shown apart and
+             adopted only by the user's explicit [병합본으로 채택] of the text merged by hand. -->
+        <div v-if="conflicted" class="document-window-conflict" data-test="document-window-conflict">
+          <span class="document-window-conflict-title">{{ t(k('conflict.latest')) }}</span>
+          <textarea class="document-window-latest" readonly :value="latestText" :aria-label="t(k('conflict.latest'))" data-test="document-window-latest" />
+          <Button size="sm" variant="secondary" :disabled="session.latest === null" data-test="document-window-adopt-merge" @click="adoptMergedDraft">{{ t(k('conflict.adopt')) }}</Button>
+        </div>
+        <div v-if="blockedWithBase" class="document-window-conflict" data-test="document-window-blocked">
+          <span class="document-window-conflict-title">{{ t(k('conflict.latest')) }}</span>
+          <textarea v-if="latestReadable" class="document-window-latest" readonly :value="latestText" :aria-label="t(k('conflict.latest'))" data-test="document-window-blocked-latest" />
+          <Button size="sm" variant="secondary" data-test="document-window-reread" @click="rereadLatest">{{ t(k('conflict.reread')) }}</Button>
+          <Button size="sm" variant="secondary" :disabled="!latestReadable" data-test="document-window-adopt-blocked" @click="adoptMergedDraft">{{ t(k('conflict.adopt')) }}</Button>
+        </div>
+        <div v-if="needsRecovery" class="document-window-conflict" data-test="document-window-recovery">
+          <Button v-if="session.configBlocked" size="sm" variant="secondary" data-test="document-window-config-corrected" @click="correctConfig">{{ t(k('conflict.config_corrected')) }}</Button>
+          <Button v-if="session.needsNewIntent" size="sm" variant="secondary" data-test="document-window-new-intent" @click="startNewSaveIntent">{{ t(k('conflict.new_intent')) }}</Button>
+        </div>
+        <div v-if="remoteChanged && !conflicted" class="document-window-note document-window-remote" data-test="document-window-remote-changed">{{ t(k('remote_changed')) }}</div>
         <div class="document-window-editor-bar">
           <span
             v-if="saveErrorKey"
@@ -100,7 +118,7 @@
           <Button
             size="sm"
             variant="primary"
-            :disabled="editLoading || editLoadErrorKey !== null || guardedHere"
+            :disabled="editLoading || editLoadErrorKey !== null || guardedHere || saveBlocked"
             :loading="saving"
             :title="guardedHere ? t('gui.document_io.disabled.uploading') : undefined"
             data-test="document-window-save"
@@ -190,31 +208,51 @@
 // supersede chain, so the old id stays the shown one — and is read only: the footer has [닫기] alone (the T#3 rule
 // for a person who may not edit), the body diagnoses nothing to recover, and the editor never opens. Its opener's
 // part (`win.aside`) sits under the body.
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { normalizeApiInput } from '@shared/apiErrors'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import {
-  documentContentRead,
-  documentContentSave,
+  cardDocumentErrorOf,
+  cardDocumentRead,
+  cardDocumentRevise,
   documentErrorOf,
   documentRead,
   type DocumentRecord,
 } from '@/features/document'
+import {
+  adoptMerge,
+  baseRead,
+  baseReadFailed,
+  beginLoad,
+  beginSave,
+  configCorrected,
+  conflictLatestRead,
+  discard as discardSession,
+  externalEvent,
+  hasUnresolvedRequest,
+  hasUnsaved,
+  isEditBlocked,
+  latestRead,
+  newIdempotencyKey,
+  newSession,
+  requestOf,
+  saveAnswered,
+  saveFailed,
+  startNewIntent as startNewIntentSession,
+  typeDraft,
+  type EditSession,
+} from '@/features/document/cardEditSession'
 import Button from '@/components/ui/Button.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import DocumentIoGroup from './DocumentIoGroup.vue'
 import DocumentWindowBody from './DocumentWindowBody.vue'
-import { documentIoGuarded, registerDocumentEditEntry, type DocumentEditorState, type DocumentReflectResult } from './documentEditRegistry'
+import { documentIoGuarded, documentIoHasUnresolved, registerDocumentEditEntry, type DocumentEditorState, type DocumentReflectResult } from './documentEditRegistry'
 import {
   documentDot,
   documentReadErrorKey,
   documentViewerActions,
-  documentSaveErrorKey,
-  joinDocumentSource,
-  splitDocumentSource,
 } from './documentWindowModel'
 import {
   closeDocumentWindow,
@@ -279,81 +317,134 @@ const dot = computed(() => documentDot(record.value))
 // --- Editing ---------------------------------------------------------------------------------------
 
 const editing = computed(() => props.win.mode === 'edit')
-const frontmatter = ref('')
-const loadedBody = ref('')
+// flowgate.v02.0127 T#5 (0009-L §2.12 / §3.1): one card edit session holds base / pending / latest / state. The
+// textarea's `draft` ref is the typed text; the session never lets a read, an event or a conflict answer replace
+// its base (only the ACK of its own pending SAVED/REPLAY advances it).
+const session = shallowRef<EditSession>(newSession())
 const draft = ref('')
-const editLoading = ref(false)
-const editLoadErrorKey = ref<string | null>(null)
-const saving = ref(false)
-const saveErrorKey = ref<string | null>(null)
+const loadReadErrorKey = ref<string | null>(null)
 /** The document the editor's text was read from (and is saved to). */
 const editDocId = ref(props.win.shown)
-let editSequence = 0
-/** An editor read was deferred or dropped for an upload guard: read once the guard ends. */
-let needReload = false
+/** An editor read was deferred for an upload guard: read once the guard ends (the editor shows "불러오는 중"). */
+const needReloadFlag = ref(false)
+let latestSequence = 0
+
+const editLoading = computed(() => session.value.state === 'LOADING_BASE' || (needReloadFlag.value && editing.value))
+const BLOCK_KEYS: Readonly<Record<string, string>> = {
+  binding_required: 'binding_required',
+  body_unreadable: 'body_unreadable',
+}
+const editLoadErrorKey = computed<string | null>(() => {
+  if (loadReadErrorKey.value !== null) return loadReadErrorKey.value
+  const current = session.value
+  // Only an initial read that failed replaces the editor; a BLOCKED editor that has a base keeps its draft on screen.
+  if (current.state === 'BLOCKED' && !current.base) return BLOCK_KEYS[current.blockReason ?? ''] ?? 'body_unreadable'
+  return null
+})
+const saving = computed(() => session.value.state === 'SAVING')
+const saveErrorKey = computed<string | null>(() => session.value.failure?.errorKey ?? (session.value.state === 'DETACHED' ? 'slot_document_changed' : null))
+const conflicted = computed(() => session.value.state === 'CONFLICT')
+/** A save answered body_unreadable (or similar): the draft and the rejected request are kept; the latest read is shown apart. */
+const blockedWithBase = computed(() => isEditBlocked(session.value))
+const latestReadable = computed(() => session.value.latest?.bodyState === 'readable' && typeof session.value.latest.content === 'string')
+const needsRecovery = computed(() => session.value.configBlocked || session.value.needsNewIntent)
+/** §2.12 explicit transitions: the call setting was corrected / a new save intent starts (draft kept, new key at the next send). */
+function correctConfig(): void {
+  session.value = configCorrected(session.value)
+}
+function startNewSaveIntent(): void {
+  session.value = startNewIntentSession(session.value)
+}
+/** The latest document is read apart (latest only); the draft and base stay until the user adopts explicitly. */
+function rereadLatest(): void {
+  void readEditor(false, false)
+}
+const remoteChanged = computed(() => session.value.remoteChanged)
+const latestText = computed(() => session.value.latest?.content ?? '')
 
 /** What the upload buttons act on: the edited document while editing, else the one shown. */
 const ioDocId = computed(() => (editing.value ? editDocId.value : props.win.shown))
+/** The coordinates the header's upload uses: the active edit session's frozen ones, else the latest opener's. */
+const ioCard = computed(() => (editing.value ? session.value.context : null) ?? props.win.card)
 /** An upload guards this window's document (or a save the previous Designer sent has not answered). */
 const guardedHere = computed(() => documentIoGuarded(ioDocId.value))
 
-const dirty = computed(() => editing.value && !editLoading.value && editLoadErrorKey.value === null && draft.value !== loadedBody.value)
+const dirty = computed(() => editing.value && editLoadErrorKey.value === null && session.value.state !== 'LOADING_BASE' && hasUnsaved(session.value))
+/** No [저장]: conflict / detached / blocked / still loading, a 403 setting error or a key-reuse answer awaiting a new intent. */
+const saveBlocked = computed(() => {
+  const state = session.value.state
+  return state === 'CONFLICT' || state === 'DETACHED' || state === 'BLOCKED' || state === 'LOADING_BASE' || session.value.configBlocked || session.value.needsNewIntent
+})
+
+// The textarea feeds the session (CLEAN <-> DIRTY against the base).
+watch(draft, (value) => {
+  session.value = typeDraft(session.value, value)
+})
 
 function resetEditor(): void {
-  editSequence += 1
-  needReload = false
-  frontmatter.value = ''
-  loadedBody.value = ''
+  needReloadFlag.value = false
+  latestSequence += 1
+  session.value = discardSession(session.value)
   draft.value = ''
-  editLoading.value = false
-  editLoadErrorKey.value = null
-  saving.value = false
-  saveErrorKey.value = null
+  loadReadErrorKey.value = null
 }
 
 /**
- * Reads the stored body fresh for the editor (the v0.1 editor reads it again on every open). While the shown
- * document is guarded the read waits for the guard's end (the editor shows "불러오는 중").
+ * Reads the card's document fresh for the editor (every open reads it again). While the shown document is
+ * guarded the read waits for the guard's end (the editor shows "불러오는 중").
  */
 async function loadEditor(): Promise<void> {
   if (documentIoGuarded(props.win.shown)) {
-    editSequence += 1
     editDocId.value = props.win.shown
-    editLoading.value = true
-    needReload = true
+    needReloadFlag.value = true
     return
   }
   await readEditor(true)
 }
 
 /**
- * The editor read itself. From its first line the editor shows "불러오는 중" (no input, save disabled, not
- * dirty); only the latest read may fill it: frontmatter, base and text together, clean.
+ * The editor read itself: the card's v2 GET with the frozen opener coordinates. Only a read that starts a session
+ * (`adopt`) may fill the editor's base; any other read fills `latest` only (no automatic rebase).
  */
-async function readEditor(focus: boolean): Promise<'ok' | 'failed' | 'superseded'> {
-  const seq = ++editSequence
+async function readEditor(focus: boolean, adopt = true): Promise<'ok' | 'failed' | 'superseded'> {
   const docId = props.win.shown
+  needReloadFlag.value = false
+  if (!adopt) {
+    const ctx = session.value.context
+    if (!ctx) return 'superseded'
+    const seq = ++latestSequence
+    try {
+      const snapshot = await cardDocumentRead(ctx)
+      if (seq !== latestSequence || session.value.context !== ctx) return 'superseded'
+      const state = session.value.state
+      session.value = state === 'CONFLICT' || state === 'DETACHED' ? conflictLatestRead(session.value, snapshot) : latestRead(session.value, snapshot)
+      return 'ok'
+    } catch {
+      return 'failed'
+    }
+  }
   editDocId.value = docId
-  editLoading.value = true
-  editLoadErrorKey.value = null
-  saveErrorKey.value = null
+  loadReadErrorKey.value = null
+  const started = beginLoad(session.value, props.win.card, docId)
+  session.value = started.session
+  draft.value = ''
+  const ctx = started.session.context
+  if (ctx === null) return 'failed'
+  const seq = started.seq
   try {
-    const read = await documentContentRead(docId)
-    if (seq !== editSequence) return 'superseded'
-    const source = splitDocumentSource(read.content)
-    frontmatter.value = source.frontmatter
-    loadedBody.value = source.body
-    draft.value = source.body
-    editLoading.value = false
-    if (focus) {
+    const snapshot = await cardDocumentRead(ctx)
+    if (seq !== session.value.readSequence) return 'superseded'
+    session.value = baseRead(session.value, seq, snapshot)
+    if (session.value.state === 'CLEAN') draft.value = session.value.draft
+    if (focus && session.value.state === 'CLEAN') {
       await nextTick()
       editorRef.value?.focus()
     }
-    return 'ok'
+    return session.value.state === 'CLEAN' ? 'ok' : 'failed'
   } catch (error) {
-    if (seq !== editSequence) return 'superseded'
-    editLoading.value = false
-    editLoadErrorKey.value = documentReadErrorKey(documentErrorOf(error).kind)
+    if (seq !== session.value.readSequence) return 'superseded'
+    loadReadErrorKey.value = documentReadErrorKey(documentErrorOf(error).kind)
+    session.value = baseReadFailed(session.value, seq, loadReadErrorKey.value)
     return 'failed'
   }
 }
@@ -379,24 +470,41 @@ function toView(): void {
 }
 
 async function save(): Promise<void> {
-  if (!editing.value || saving.value || editLoading.value || editLoadErrorKey.value !== null || guardedHere.value) return
-  const docId = editDocId.value
-  saving.value = true
-  saveErrorKey.value = null
+  if (!editing.value || editLoading.value || editLoadErrorKey.value !== null || guardedHere.value) return
+  if (documentIoHasUnresolved(ioDocId.value)) return // an uncertain upload of this document holds the one request
+  const started = beginSave(session.value, newIdempotencyKey)
+  if (started.request === null) return
+  session.value = started.session
+  const pending = started.request
+  const context = pending.context
+  let outcome
   try {
-    await documentContentSave(docId, joinDocumentSource({ frontmatter: frontmatter.value, body: draft.value }))
-    saving.value = false
-    toView()
-    // The content save sends no server event; notify the Inspector using the document actually saved.
-    window.dispatchEvent(new CustomEvent('fg:document_content_changed', { detail: { doc_id: docId } }))
-    void readRecord()
+    const raw = await cardDocumentRevise(context, requestOf(pending))
+    outcome = saveAnswered(session.value, pending.key, context, raw)
   } catch (error) {
-    saving.value = false
-    const read = documentErrorOf(error)
-    saveErrorKey.value = read.status === 409 && normalizeApiInput(error).data.detail === 'file_exists_unrecorded'
-      ? 'file_exists_unrecorded'
-      : documentSaveErrorKey(read.kind, read.status)
+    outcome = saveFailed(session.value, pending.key, context, cardDocumentErrorOf(error))
   }
+  // An answer of an old window / another pending changes nothing (saveAnswered / saveFailed ignore it).
+  if (outcome.ignored) return
+  session.value = outcome.session
+  if (outcome.confirmed !== null) {
+    const savedDocId = outcome.confirmed.docId
+    if (outcome.toView) toView()
+    // The saved N+1 is an own, confirmed base; anything typed meanwhile stays in the draft (DIRTY).
+    window.dispatchEvent(new CustomEvent('fg:document_content_changed', { detail: { doc_id: savedDocId } }))
+    void readRecord()
+    return
+  }
+  if (outcome.session.state === 'CONFLICT' || outcome.session.state === 'DETACHED') {
+    // The latest document is read separately; it only fills `latest`, never the base.
+    void readEditor(false, false)
+  }
+}
+
+/** CONFLICT: the user compared and merged by hand; the current text is adopted on the latest document's base. */
+function adoptMergedDraft(): void {
+  if (!conflicted.value && !blockedWithBase.value) return
+  session.value = adoptMerge(session.value, draft.value)
 }
 
 // --- Leaving with unsaved text ---------------------------------------------------------------------
@@ -428,6 +536,7 @@ function confirmDiscard(): void {
 /** The view reads the body again; an open editor keeps its text (it is read fresh on the next ✎). */
 function refreshBody(change: DocumentContentChange): void {
   if (!editing.value) body.value?.refresh(change)
+  else session.value = externalEvent(session.value)
 }
 
 useDocumentWindowEvents(
@@ -445,7 +554,7 @@ useDocumentWindowEvents(
 )
 
 // Unsaved (or saving) editor text keeps the document it was read from; anything else follows the chain.
-const holdShown = computed(() => editing.value && (dirty.value || saving.value))
+const holdShown = computed(() => editing.value && (dirty.value || hasUnresolvedRequest(session.value)))
 
 // The chain reached another document: show it (the body reads it as its id changes), or give way to the
 // window that already has it.
@@ -472,13 +581,13 @@ function editorState(): DocumentEditorState {
 
 /** The upload asks this window to show the new stored body (its read starts before this returns). */
 function reflect(docId: string): Promise<DocumentReflectResult> {
-  if (editing.value && (dirty.value || saving.value)) {
+  if (editing.value && (dirty.value || hasUnresolvedRequest(session.value))) {
     // The guard keeps a window of the document clean; unsaved text is never replaced.
     console.warn('[documentIo] reflect skipped: the editor holds unsaved text', docId)
     return Promise.resolve('skipped')
   }
   if (editing.value) {
-    needReload = false
+    needReloadFlag.value = false
     return readEditor(false).then((result) => (result === 'superseded' ? 'skipped' : result))
   }
   body.value?.refresh({ docId: props.win.shown, revisionNo: null })
@@ -490,18 +599,18 @@ const unregisterEdit = registerDocumentEditEntry({
   related: () => (editing.value ? [...new Set([props.win.shown, editDocId.value])] : [props.win.shown]),
   editor: editorState,
   dirty: () => dirty.value,
-  saving: () => saving.value,
+  // A request in flight or uncertain keeps the document's save lock (single_inflight across the IO session).
+  saving: () => hasUnresolvedRequest(session.value),
   onGuard: () => {
     // A surviving clean editor must read after release even if the Designer leaves during saving.
     // Its old text stays read-only until release starts the deferred read synchronously.
-    if (!editing.value || dirty.value || saving.value) return
-    if (editLoading.value) editSequence += 1
-    needReload = true
+    if (!editing.value || dirty.value || hasUnresolvedRequest(session.value)) return
+    needReloadFlag.value = true
   },
   onRelease: () => {
-    if (!needReload || documentIoGuarded(ioDocId.value)) return
-    needReload = false
-    if (!editing.value || dirty.value || saving.value) return
+    if (!needReloadFlag.value || documentIoGuarded(ioDocId.value)) return
+    needReloadFlag.value = false
+    if (!editing.value || dirty.value || hasUnresolvedRequest(session.value)) return
     void loadEditor()
   },
   reflect,
@@ -669,6 +778,29 @@ defineExpose({ dirty })
   color: var(--fg2-status-warning-fg);
 }
 
+.document-window-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--fg2-line);
+}
+
+.document-window-latest {
+  min-height: 80px;
+  max-height: 160px;
+  resize: vertical;
+  background: var(--fg2-bg);
+  color: var(--fg2-muted);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.document-window-remote {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
 .document-window-save-error {
   flex: 1;
   min-width: 0;
@@ -679,3 +811,4 @@ defineExpose({ dirty })
   white-space: nowrap;
 }
 </style>
+

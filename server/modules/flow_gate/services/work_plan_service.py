@@ -18,6 +18,7 @@ Deliberately NOT here: apply/preview/fill (P0009 §7) and the applications journ
 (P0009 §8). Those need the workflow sequence and belong to the next task set.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import json
 import os
@@ -2119,20 +2120,21 @@ def write_body_atomically(path, body: dict) -> None:
     A half-written canonical file would make the document unopenable, and the
     review pipeline reads this very file to decide whether the document has a body.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, tmp_name = tempfile.mkstemp(
-        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(dumps(body))
-        os.replace(tmp_name, str(path))
-    except BaseException:
+    with document_write_ports.write_paths([path]):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle, tmp_name = tempfile.mkstemp(
+            dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+        )
         try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+            with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(dumps(body))
+            os.replace(tmp_name, str(path))
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
 
 def resolve_revision_snapshot(
@@ -2205,7 +2207,7 @@ def ensure_revision_snapshot(
         destination = destination.resolve(strict=False)
         if not storage_paths.within_allowed_roots(destination, project_id):
             raise RevisionSnapshotError("revision snapshot destination is outside storage")
-        with destination.open("xb") as fh:
+        with document_write_ports.write_paths([destination]), destination.open("xb") as fh:
             fh.write(source_bytes)
             fh.flush()
             os.fsync(fh.fileno())

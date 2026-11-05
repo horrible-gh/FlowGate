@@ -1,5 +1,6 @@
 """Canonical TR2 document domain: one validator, writer and fingerprint implementation."""
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import json
@@ -385,18 +386,19 @@ def _decode_canonical(raw: bytes, doc: dict, *, loc: str) -> dict:
 
 
 def _write_bytes_atomically(path, content: bytes) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp = tempfile.mkstemp(prefix=".tr2-", suffix=".json", dir=path.parent)
-    try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp, path)
-    finally:
-        if os.path.exists(temp):
-            os.unlink(temp)
+    with document_write_ports.write_paths([path]):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp = tempfile.mkstemp(prefix=".tr2-", suffix=".json", dir=path.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp, path)
+        finally:
+            if os.path.exists(temp):
+                os.unlink(temp)
 
 
 def write_body_atomically(path, body: dict) -> None:
@@ -685,14 +687,14 @@ def read(doc_id: str) -> dict:
 
 
 def create(doc_id: str, raw_body: str | dict, *, actor: str,
-           origin: str = ORIGIN_HUMAN) -> dict:
+           origin: str = ORIGIN_HUMAN, token_id: str | None = None) -> dict:
     """Create the canonical body after the workflow slot has been registered.
 
     Every creation path (AI inbox, the human "create next document" route) ends here,
     so revision 1 is written, snapshotted and registered by the same writer.
     """
-    return save(doc_id, raw_body, actor=actor, expected_revision=0, origin=origin,
-                operation="create")
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    return dedicated_write("tr2_create", doc_id, raw_body, actor=actor, origin=origin, token_id=token_id)
 
 
 def _lock(doc_id: str) -> threading.Lock:
@@ -756,12 +758,12 @@ def _assert_mutable(doc: dict) -> None:
 
 
 def save(doc_id: str, raw_body: str | dict, *, actor: str, expected_revision: int,
-         origin: str = ORIGIN_HUMAN, operation: str = "save") -> dict:
+         origin: str = ORIGIN_HUMAN, operation: str = "save", token_id: str | None = None) -> dict:
     # This is the only canonical writer for human PUT, AI inbox and direct API. A whole
     # replacement does not read the stored body, so it also replaces an unreadable one.
     return _save(doc_id, lambda _current: raw_body, actor=actor,
                  expected_revision=expected_revision, origin=origin,
-                 operation=operation, needs_current=False)
+                 operation=operation, needs_current=False, token_id=token_id)
 
 
 def revisions_dir(doc: dict) -> Path:
@@ -772,140 +774,14 @@ def snapshot_path(doc: dict, revision_no: int) -> Path:
     return revisions_dir(doc) / f"{doc['doc_id']}.r{int(revision_no)}.json"
 
 
-def _cas_bump(store, doc_id: str, current: int, now: str, rel: str, filename: str) -> None:
-    """DB-level revision CAS (T0030 §8): the UPDATE's own affected-row count decides.
-
-    Re-reading the row afterwards cannot tell our bump from a concurrent writer's
-    ``N+1``, so the count reported by the driver is the only authority.
-    """
-    affected = store._execute_affected(
-        "UPDATE documents SET revision_no = revision_no + 1, "
-        "updated_at = ?, file_path = ?, filename = ? "
-        "WHERE doc_id = ? AND revision_no = ?",
-        [now, rel, filename, doc_id, current])
-    if affected == 1:
-        return
-    if affected == 0:
-        fresh = db_docs.get_by_id(doc_id)
-        raise Tr2ValidationError("tr2_spec_changed", "expected_revision",
-                                 {"current_revision_no": (fresh or {}).get("revision_no"),
-                                  "updated_at": (fresh or {}).get("updated_at")})
-    raise Tr2ValidationError("tr2_history_invariant_error", "revision_no",
-                             {"reason": f"revision CAS matched {affected} rows"})
-
-
-def _record_snapshot(store, doc: dict, revision_no: int, content: bytes, *,
-                     actor: str, origin: str, now: str) -> Path:
-    """Keep the exact canonical bytes of ``revision_no`` as its recovery source.
-
-    Reuses the work-plan revision layout (``revisions/{doc_id}.r{n}{suffix}`` next to the
-    document, one ``document_revisions`` row per file). The row runs in the caller's
-    transaction, so a revision is never committed without its snapshot.
-    """
-    target = snapshot_path(doc, revision_no)
-    _write_bytes_atomically(target, content)
-    store._execute(
-        "INSERT INTO document_revisions "
-        "(doc_id, revision_no, backup_path, edit_reason, linked_doc_id, created_by, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [doc["doc_id"], int(revision_no),
-         storage_paths.to_storage_relative(target, doc["project_id"]),
-         origin if origin in (ORIGIN_HUMAN, ORIGIN_AI) else ORIGIN_HUMAN,
-         None, actor, now])
-    return target
 
 
 def _save(doc_id: str, build, *, actor: str, expected_revision: int,
           origin: str = ORIGIN_HUMAN, operation: str = "save",
-          needs_current: bool = True) -> dict:
-    """Validate and persist the body ``build`` returns under the per-document lock.
-
-    ``build`` receives the stored canonical body (None before creation, or when
-    ``needs_current`` is False) read after the revision check, so a partial mutation is
-    merged into exactly the revision it expected. The authoritative CAS is the
-    conditional UPDATE inside the transaction; the process lock only serialises writers
-    of this process.
-    """
-    doc = db_docs.get_by_id(doc_id)
-    if not doc or doc.get("type_code") != TR2_TYPE_CODE:
-        raise Tr2ValidationError("tr2_workflow_conflict", "doc_id")
-    path = canonical_path_for_doc(doc)
-    with _lock(doc_id):
-        fresh = db_docs.get_by_id(doc_id)
-        current = (fresh or {}).get("revision_no") or 0
-        if fresh is None or expected_revision != current:
-            raise Tr2ValidationError("tr2_spec_changed", "expected_revision",
-                                     {"current_revision_no": current,
-                                      "updated_at": (fresh or {}).get("updated_at")})
-        _assert_mutable(fresh)
-        raw_body = build(load_current(fresh) if needs_current and current else None)
-        body = parse(raw_body) if isinstance(raw_body, str) else raw_body
-        if not isinstance(body, dict):
-            _invalid("body", "object required")
-        dropped = [key for key in ("codebase_root", "source_honey") if key in body]
-        validated = validate(body, doc=doc)
-        verify_pair(doc_id, validated)
-        canonical = canonicalize(validated)
-        spec = canonical["edit_spec"]
-        target_set(spec)
-        root = resolve_source_root(doc["project_id"], doc["group_id"])
-        canonical["baseline_fingerprint"] = target_fingerprint(spec, root)
-        derived = {"files": derived_files(spec, root),
-                   "spec_fingerprint": spec_fingerprint(spec)}
-        content = dumps(canonical).encode("utf-8")
-        now = now_iso()
-        rel = storage_paths.to_storage_relative(path, doc["project_id"])
-        store = get_store()
-        # Keep the CAS, the file replacement and the revision snapshot in one DB
-        # transaction. If any of them fails, restore the previous bytes before returning.
-        previous = path.read_bytes() if path.is_file() else None
-        write_attempted = False
-        snapshot = None
-        try:
-            with store.transaction():
-                _cas_bump(store, doc_id, current, now, rel, path.name)
-                refreshed = db_docs.get_by_id(doc_id)
-                write_attempted = True
-                write_body_atomically(path, canonical)
-                snapshot = snapshot_path(doc, current + 1)
-                _record_snapshot(store, doc, current + 1, content, actor=actor,
-                                 origin=origin, now=now)
-                from modules.flow_gate.storage.body import record_body_saved
-
-                record_body_saved(fresh, source="tr2_save", file_path=rel, size=len(content))
-        except Exception:
-            if write_attempted:
-                try:
-                    if snapshot is not None:
-                        snapshot.unlink(missing_ok=True)
-                    if previous is None:
-                        path.unlink(missing_ok=True)
-                    else:
-                        _write_bytes_atomically(path, previous)
-                except OSError as restore_error:
-                    raise Tr2ValidationError(
-                        "tr2_history_invariant_error", "document.json",
-                        {"reason": "save rollback failed"}) from restore_error
-            raise
-    try:
-        # Every open screen of the project re-reads the new revision, not only the
-        # actor's: an AI inbox save must reach the reviewer looking at this TR2.
-        from modules.flow_gate.api.v1.events.publisher import broadcast_event_threadsafe, FlowEvent
-        from modules.flow_gate.api.v1.events.event_types import EventType
-        broadcast_event_threadsafe(FlowEvent(
-            event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
-            payload={"operation": "updated", "doc_id": doc_id, "type": TR2_TYPE_CODE,
-                     "revision_no": current + 1},
-            project=doc["project_id"], group_id=doc["group_id"], doc_id=doc_id,
-            audience="*"))
-    except Exception:
-        pass  # Save is durable; refresh delivery is best-effort.
-    return {"ok": True, "doc_id": doc_id, "new_revision": current + 1,
-            "operation": operation,
-            "body": canonical,
-            "derived": derived,
-            "dropped_keys": dropped, "updated_at": now, "updated_by": actor,
-            "doc_review_status": refreshed.get("doc_review_status")}
+          needs_current: bool = True, token_id: str | None = None) -> dict:
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    return dedicated_write("tr2_save", doc_id, build, actor=actor, expected_revision=expected_revision,
+                           origin=origin, operation=operation, needs_current=needs_current, token_id=token_id)
 
 
 ITEM_COLLECTIONS = ("edits", "deferred")
@@ -1076,27 +952,9 @@ def _backfill_current_snapshot(doc: dict) -> None:
     Only the exact bytes of the current revision are copied, under the document lock and
     only while the revision is unchanged — nothing is regenerated from current sources.
     """
-    revision = int(doc.get("revision_no") or 0)
-    if revision <= 0 or _snapshot_row(doc, revision) is not None:
-        return
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
     try:
-        with _lock(doc["doc_id"]):
-            fresh = db_docs.get_by_id(doc["doc_id"])
-            if not fresh or int(fresh.get("revision_no") or 0) != revision:
-                return
-            if _snapshot_row(fresh, revision) is not None:
-                return
-            raw = canonical_path_for_doc(fresh).read_bytes()
-            _decode_canonical(raw, fresh, loc="document.json")
-            store = get_store()
-            target = snapshot_path(fresh, revision)
-            try:
-                with store.transaction():
-                    _record_snapshot(store, fresh, revision, raw, actor=fresh["owner_id"],
-                                     origin=ORIGIN_HUMAN, now=now_iso())
-            except Exception:
-                target.unlink(missing_ok=True)
-                raise
+        return dedicated_write("tr2_backfill", doc)
     except Exception:
         log.warning("TR2 snapshot backfill skipped for %s", doc.get("doc_id"), exc_info=True)
 

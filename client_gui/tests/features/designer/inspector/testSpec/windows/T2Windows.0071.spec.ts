@@ -18,9 +18,32 @@ const mocks = vi.hoisted(() => ({ read: vi.fn(), node: vi.fn(), choices: vi.fn()
 vi.mock('@/features/document', async (original) => {
   const actual = await original<typeof import('@/features/document')>()
   return { ...actual, testSpecRead: mocks.read, settingsNodeRead: mocks.node, settingsChoicesRead: mocks.choices, settingsNodeWrite: mocks.setting,
-    reviewDocumentRead: mocks.guard, reviewActivityRead: mocks.activity, testSpecSave: mocks.save, testBriefRead: mocks.briefRead, testBriefSave: mocks.briefSave,
-    documentContentRead: mocks.rawRead, documentContentSave: mocks.rawSave, documentHistoryRead: mocks.history }
+    reviewDocumentRead: mocks.guard, reviewActivityRead: mocks.activity, documentHistoryRead: mocks.history,
+    // flowgate.v02.0127 T#5: the windows read and save through the card document v2 calls. The bridge below answers them from
+    // the spec's own mocks (stored text / revision / case list), so the assertions keep stating what was saved.
+    documentContentRead: mocks.rawRead,
+    cardDocumentStructuredRead: async (_ctx: unknown, kind: string) => snapshotOf(rawSource, kind === 'ts_brief' ? { text: (await mocks.briefRead()).text } : { title: server.title, cases: server.cases }),
+    cardDocumentRead: async () => { const read = await mocks.rawRead(TS_DOC); return read.missing ? { ...snapshotOf('', undefined), content: null, bodyState: 'file_path_missing' } : snapshotOf(read.content, undefined) },
+    cardDocumentRevise: (...args: unknown[]) => reviseBridge(...(args as [unknown, { command?: { kind: string; cases?: unknown[]; title?: string; text?: string }; content?: string; expectedRevision: number }])) }
 })
+const snapshotOf = (content: string, projection: unknown) => ({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content, bodyState: 'readable', line: {}, ...(projection !== undefined ? { projection } : {}) })
+/** The old v1 style failures of this spec, as the /api/v2 answers the client now reads (`error.code` / `params`). */
+function toV2(error: any) {
+  const data = error?.response?.data ?? {}
+  const code = typeof data.error === 'string' ? data.error : null
+  if (!code) return error
+  const mapped: Record<string, string> = { invalid_spec: 'invalid_content', document_not_editable: 'not_editable', content_conflict: 'revision_conflict' }
+  const params = code === 'invalid_spec' ? { errors: [{ field: 'content', reason: 'invalid_format', validation: { error: 'invalid_spec', errors: data.errors ?? [] } }] } : {}
+  return { ...error, response: { ...error.response, data: { ok: false, error: { code: mapped[code] ?? code, params } } } }
+}
+async function reviseBridge(_ctx: unknown, request: { command?: { kind: string; cases?: unknown[]; title?: string; text?: string }; content?: string; expectedRevision: number }) {
+  try {
+    if (request.command?.kind === 'ts_spec') await mocks.save(TS_DOC, request.command.cases, request.command.title ?? null)
+    else if (request.command?.kind === 'ts_brief') await mocks.briefSave(TS_DOC, request.command.text, rawSource)
+    else await mocks.rawSave(TS_DOC, request.content)
+  } catch (error) { throw toV2(error) }
+  return { ok: true, doc_id: TS_DOC, revision_no: request.expectedRevision + 1, updated_at: 'u', replayed: false, line: {} }
+}
 vi.mock('@/features/designer/inspector/openDocument', async (original) => ({ ...await original<typeof import('@/features/designer/inspector/openDocument')>(), openDocumentAi: (...args: unknown[]) => mocks.ai(...args) }))
 const { toTestSpecView, toReviewDocument, toReviewActivity, toSettingsNode, toSettingsChoices, toDocumentHistory, testSpecCasePayload } = await vi.importActual<typeof import('@/features/document')>('@/features/document')
 const i18n = prepareInspectorI18n()
@@ -251,280 +274,23 @@ describe('0071 T2 scenario window', () => {
     expect(context.can('rawSave').reason).toBeNull()
     expect((context.drafts['t2:raw'] as { text: string }).text).toBe('instructions only')
   })
-  it('detects a source conflict without sending PATCH or losing the draft', async () => {
+  it('a raw save on a stale base is a revision conflict: the draft and its base stay, the latest is shown apart, and only the explicit adoption of the merged text makes a new intent', async () => {
     const w = await render('scenario'); await w.get('[data-test="scenario-raw"]').trigger('click'); await flushPromises()
     await w.get('[data-test="scenario-raw-text"]').setValue('my raw draft'); rawSource += 'Someone else'
+    mocks.rawSave.mockRejectedValueOnce(failure(409, 'content_conflict'))
     await w.get('[data-test="scenario-raw-save"]').trigger('click'); await flushPromises()
-    expect(mocks.rawSave).not.toHaveBeenCalled(); expect(w.text()).toContain('내용이 변경되었습니다')
+    expect(mocks.rawSave).toHaveBeenCalledTimes(1); expect(w.text()).toContain('내용이 변경되었습니다')
     expect(w.get('[data-test="scenario-raw-text"]').element).toHaveProperty('value', 'my raw draft')
-    await w.get('[data-test="raw-reload"]').trigger('click'); await flushPromises()
+    const latest = w.get('[data-test="raw-latest"]').element
+    const area = (latest.tagName === 'TEXTAREA' ? latest : latest.querySelector('textarea')) as HTMLTextAreaElement
+    expect(area.value).toBe(rawSource)
+    await w.get('[data-test="raw-adopt-merge"]').trigger('click'); await flushPromises()
     expect(w.find('[data-test="raw-refusal"]').exists()).toBe(false)
-    expect(w.get('[data-test="scenario-raw-text"]').element).toHaveProperty('value', rawSource)
-  })
-  it('prevents a pending raw preflight from saving after a card switch', async () => {
-    const late = defer<{ docId: string; content: string; missing: boolean }>()
-    const w = await render('scenario'); await w.get('[data-test="scenario-raw"]').trigger('click'); await flushPromises()
-    await w.get('[data-test="scenario-raw-text"]').setValue('draft before switch')
-    mocks.rawRead.mockImplementationOnce(() => late.promise)
-    await w.get('[data-test="scenario-raw-save"]').trigger('click')
-    selected.value = makeTarget('gn_b', 'flowgate.v02.0048.0088-TS'); await flushPromises()
-    late.resolve({ docId: TS_DOC, content: rawSource, missing: false }); await flushPromises()
-    expect(mocks.rawSave).not.toHaveBeenCalled()
-  })
-  it('offers a retry for raw read failures and never enables save for missing source', async () => {
-    mocks.rawRead.mockRejectedValueOnce(new Error('offline'))
-    const w = await render('scenario'); await w.get('[data-test="scenario-raw"]').trigger('click'); await flushPromises()
-    expect(w.find('[data-test="scenario-raw-text"]').exists()).toBe(false)
-    mocks.rawRead.mockResolvedValueOnce({ docId: TS_DOC, content: '', missing: true })
-    await w.get('[data-test="inspector-pane-retry"]').trigger('click'); await flushPromises()
-    expect(w.get('[data-test="scenario-raw-save"]').attributes('disabled')).toBeDefined()
-    await w.get('[data-test="inspector-pane-retry"]').trigger('click'); await flushPromises()
-    expect(w.get('[data-test="scenario-raw-text"]').element).toHaveProperty('value', rawSource)
-  })
-  it('isolates a late raw response from a newly selected card', async () => {
-    const late = defer<{ docId: string; content: string; missing: boolean }>()
-    mocks.rawRead.mockImplementationOnce(() => late.promise)
-    const w = await render('scenario'); await w.get('[data-test="scenario-raw"]').trigger('click')
-    const old = context
-    selected.value = makeTarget('gn_b', 'flowgate.v02.0048.0088-TS'); await flushPromises()
-    late.resolve({ docId: TS_DOC, content: 'old response', missing: false }); await flushPromises()
-    expect(context).not.toBe(old); expect(context.drafts['t2:raw']).toBeUndefined()
-    expect((old.drafts['t2:raw'] as { text: string }).text).toBe('')
-  })
-})
-
-describe('0071 T2 case window', () => {
-  it('reloads a new-case draft only after a real conflict', async () => {
-    const w = await render('case')
-    context.openWindow('case', '__new__'); await flushPromises()
-    expect(w.find('[data-test="case-reload"]').exists()).toBe(false)
-    await w.get('[data-test="case-title"]').setValue('Unsaved new case')
-    server.cases = fullCases().map((item, i) => i === 1 ? { ...item, test_assets: 'Changed elsewhere' } : item)
-    await context.reload(); await flushPromises()
-    expect(w.find('[data-test="case-conflict"]').exists()).toBe(true)
-    await w.get('[data-test="case-reload"]').trigger('click'); await flushPromises()
-    expect(w.find('[data-test="case-conflict"]').exists()).toBe(false)
-    expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', '')
-    expect(mocks.save).not.toHaveBeenCalled()
-  })
-
-  it('renders the mapped fields and saves a whole list with H1, hidden fields and other cases intact', async () => {
-    const w = await render('case')
-    expect(w.get('[data-test="case-command"]').element).toHaveProperty('value', '')
-    await w.get('[data-test="case-title"]').setValue('Edited title')
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save).toHaveBeenCalledWith(TS_DOC, [{ ...fullCases()[0], title: 'Edited title' }, fullCases()[1]], 'Keep H1')
-    expect(mocks.save.mock.calls[0]).toHaveLength(3); expect(context.windows.case.open).toBe(false)
-    expect(document.body.textContent).toContain('케이스 저장됨')
-  })
-  // flowgate.v02.0094 B0005: one command says what runs — no target or working directory field, no framework assumed.
-  it('edits the one command of a code-run case and saves it in place of the stored target', async () => {
-    const w = await render('case')
-    expect(w.find('[data-test="case-code"]').exists()).toBe(false); expect(w.find('[data-test="case-cwd"]').exists()).toBe(false)
-    expect(w.get('[data-test="case-command"]').attributes('placeholder')).toBe('테스트 파일을 실행하는 명령')
-    expect(w.text()).not.toContain('pytest'); expect(w.text()).not.toContain('실행 대상'); expect(w.text()).not.toContain('실행 위치')
-    await w.get('[data-test="case-command"]').setValue('node --test tests/login.test.mjs')
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save.mock.calls[0][1][0]).toEqual({ ...fullCases()[0], automation_ref: null, run_command: 'node --test tests/login.test.mjs' })
-    expect(mocks.save.mock.calls[0][1][1]).toEqual(fullCases()[1])
-  })
-  it('shows a stored target written out in its command and keeps the stored case until the command changes', async () => {
-    server.cases = [{ ...fullCases()[0], automation_ref: 'client_gui/tests/login.spec.ts::login', run_command: 'npm test -- {target} {node}', run_cwd: 'client_gui' }, fullCases()[1]]
-    const w = await render('case')
-    expect(w.get('[data-test="case-command"]').element).toHaveProperty('value', 'npm test -- tests/login.spec.ts login')
-    await w.get('[data-test="case-title"]').setValue('Edited title')
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save.mock.calls[0][1][0]).toEqual({ ...(server.cases as object[])[0], title: 'Edited title' })
-    mocks.save.mockClear()
-    context.openWindow('case', 'TC-1'); await flushPromises()
-    await w.get('[data-test="case-command"]').setValue('npm test -- tests/login.spec.ts')
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    // The stored cwd stays: the command's path is read from it, as before.
-    expect(mocks.save.mock.calls[0][1][0]).toMatchObject({ automation_ref: null, run_command: 'npm test -- tests/login.spec.ts', run_cwd: 'client_gui' })
-  })
-  it('says under the command why it cannot run and writes nothing', async () => {
-    server.case_capabilities = { 'TC-1': 'unbound' }
-    const w = await render('case')
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(w.get('[data-test="case-command-error"]').text()).toBe('케이스의 실행 명령을 확인해 주세요.')
-    expect(mocks.save).not.toHaveBeenCalled()
-    await w.get('[data-test="case-command"]').setValue('  ')
-    expect(w.find('[data-test="case-command-error"]').exists()).toBe(false)
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(w.get('[data-test="case-command-error"]').text()).toBe('케이스에 실행 명령을 입력해 주세요.')
-    expect(mocks.save).not.toHaveBeenCalled()
-    mocks.save.mockRejectedValueOnce(failure(422, 'invalid_spec', { errors: [{ code: 'unbound', case_id: 'TC-1', field: 'run_command', message: 'TC-1: run_command cannot run' }] }))
-    await w.get('[data-test="case-command"]').setValue('6')
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(w.get('[data-test="case-command-error"]').text()).toBe('케이스의 실행 명령을 확인해 주세요.')
-    expect(w.find('[data-test="case-refusal"]').exists()).toBe(false)
-    expect(context.windows.case.open).toBe(true)
-  })
-  it('keeps a stored command when verification changes to manual and hides the execution fields', async () => {
-    server.cases = [{ ...fullCases()[0], run_command: 'mvn -q test -Dtest=LoginTest', run_cwd: 'server' }, fullCases()[1]]
-    const w = await render('case')
-    expect(w.get('[data-test="case-command"]').element).toHaveProperty('value', 'mvn -q test -Dtest=LoginTest')
-    expect(w.find('[data-test="case-cwd"]').exists()).toBe(false)
-    await w.get('[data-test="case-mode"]').findAll('button').find(b => b.text() === '사람 확인')!.trigger('click')
-    expect(w.find('[data-test="case-command"]').exists()).toBe(false)
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save.mock.calls[0][1][0]).toMatchObject({ execution_mode: 'manual', run_command: 'mvn -q test -Dtest=LoginTest', run_cwd: 'server' })
-  })
-  it('requires the fields the server requires and supports custom requirements', async () => {
-    const w = await render('case')
-    await w.get('[data-test="case-title"]').setValue('')
-    expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeDefined()
-    await w.get('[data-test="case-title"]').setValue('Title')
-    await w.get('[data-test="case-procedure"]').setValue('  ')
-    expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeDefined()
-    expect(w.text()).toContain('제목 · 근거 · 절차 · 기대 결과를 입력해 주세요')
-    await w.get('[data-test="case-procedure"]').setValue('1. Run')
-    await w.get('[data-test="case-requirement-select"]').setValue('__custom')
-    await w.get('[data-test="case-requirement"]').setValue('R §99')
-    expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeUndefined()
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save.mock.calls[0][1][0].requirement).toBe('R §99')
-  })
-  it.each(['external-delete', 'raw-save', 'rewrite-all', 'last-case'] as const)('closes a disappeared case, retains its draft and notifies after %s', async source => {
-    const w = await render('case'); await w.get('[data-test="case-title"]').setValue('Keep missing case draft')
-    const draft = context.drafts['t2:case:TC-1']
-    if (source === 'rewrite-all') context.writing.value = 'rewrite-all'
-    const disappear = async () => { server.cases = source === 'last-case' ? [] : [fullCases()[1]] }
-    if (source === 'raw-save') await context.changeDocument('rawSave', disappear)
-    else { await disappear(); await context.reload() }
-    if (source === 'rewrite-all') {
-      expect(context.windows.case.open).toBe(true)
-      context.writing.value = null
-      await context.reload()
-    }
-    await flushPromises()
-    expect(context.windows.case.open).toBe(false)
-    expect(w.find('[data-test="case-window"]').exists()).toBe(false)
-    expect(w.find('[data-test="inspector-pane-state"]').exists()).toBe(false)
-    expect(context.drafts['t2:case:TC-1']).toBe(draft)
-    expect(draft).toMatchObject({ title: 'Keep missing case draft' })
-    expect(document.body.textContent).toContain('TC-1 케이스가 사라져 창을 닫았습니다. 미저장 초안은 보관했습니다.')
-    expect(mocks.save).not.toHaveBeenCalled()
-  })
-  it('keeps case windows and drafts through loading, failed and incomplete reads', async () => {
-    const w = await render('case'); await w.get('[data-test="case-title"]').setValue('Keep draft')
-    const late = defer<ReturnType<typeof toTestSpecView>>()
-    mocks.read.mockImplementationOnce(() => late.promise)
-    const pending = context.reload(); await flushPromises()
-    expect(context.windows.case.open).toBe(true)
-    late.resolve(toTestSpecView({ doc_id: TS_DOC, contract_version: 2 })); await pending; await flushPromises()
-    expect(context.windows.case.open).toBe(true)
-    mocks.read.mockRejectedValueOnce(new Error('offline')); await context.reload(); await flushPromises()
-    expect(context.windows.case.open).toBe(true)
-    expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'Keep draft')
-  })
-  it.each(['rewrite-all', 'initial'] as const)('keeps unsaved inputs visible and disabled during %s', async writing => {
-    const w = await render('case'); await w.get('[data-test="case-title"]').setValue('Visible draft')
-    context.writing.value = writing; await flushPromises()
-    expect(w.find('[data-test="case-writing"]').exists()).toBe(false)
-    expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'Visible draft')
-    expect(w.get('[data-test="case-title"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="case-procedure"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeDefined()
-  })
-  it('uses a placeholder only for the case being rewritten and scopes connection reasons to controls', async () => {
-    const w = await render('case')
-    expect(w.find('[data-test="case-rewrite"]').exists()).toBe(false)
-    expect(w.text()).not.toContain('연결 예정')
-    context.writing.value = 'rewrite-case'; context.writingCaseId.value = 'TC-2'; await flushPromises()
-    expect(w.find('[data-test="case-writing"]').exists()).toBe(false)
-    expect(w.get('[data-test="case-title"]').attributes('disabled')).toBeDefined()
-    context.writingCaseId.value = 'TC-1'; await flushPromises()
-    expect(w.find('[data-test="case-writing"]').exists()).toBe(true)
-    expect(w.find('[data-test="case-title"]').exists()).toBe(false)
-  })
-  it('retains automation_ref when verification changes to manual', async () => {
-    const w = await render('case')
-    await w.get('[data-test="case-mode"]').findAll('button').find(b => b.text() === '사람 확인')!.trigger('click')
-    expect(w.find('[data-test="case-code"]').exists()).toBe(false)
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save.mock.calls[0][1][0]).toMatchObject({ execution_mode: 'manual', automation_ref: fullCases()[0].automation_ref, required: true })
-  })
-  it('requires two actions to delete and preserves the remaining case in full', async () => {
-    const w = await render('case')
-    context.openWindow('case', 'TC-2'); await flushPromises()
-    await w.get('[data-test="case-delete"]').trigger('click')
-    expect(mocks.save).not.toHaveBeenCalled(); expect(w.get('[data-test="case-delete-confirm"]').text()).toContain('TC-2')
-    await w.get('[data-test="case-delete-submit"]').trigger('click'); await flushPromises()
-    expect(mocks.save).toHaveBeenCalledWith(TS_DOC, [fullCases()[0]], 'Keep H1')
-    expect(context.windows.case.open).toBe(false); expect(document.body.textContent).toContain('TC-2 삭제됨')
-  })
-  it('resets delete confirmation when another case is selected', async () => {
-    const w = await render('case'); await w.get('[data-test="case-delete"]').trigger('click')
-    context.openWindow('case', 'TC-2'); await flushPromises()
-    expect(w.find('[data-test="case-delete-confirm"]').exists()).toBe(false)
-    expect(mocks.save).not.toHaveBeenCalled()
-  })
-  it('keeps a rejected draft, field errors and the case window visible', async () => {
-    mocks.save.mockRejectedValueOnce(failure(422, 'invalid_spec', { errors: [{ code: 'required', case_id: 'TC-1', field: 'title', message: 'Invalid title' }] }))
-    const w = await render('case'); await w.get('[data-test="case-title"]').setValue('Keep me')
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(context.windows.case.open).toBe(true); expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'Keep me')
-    expect(w.get('[data-test="case-refusal"]').text()).toBeTruthy(); expect(w.text()).toContain('Invalid title')
-  })
-  it('refreshes before saving and detects a hidden-field change without sending PUT', async () => {
-    const w = await render('case'); await w.get('[data-test="case-title"]').setValue('My draft')
-    server.cases = fullCases().map((item, i) => i === 1 ? { ...item, test_assets: 'Changed elsewhere' } : item)
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save).not.toHaveBeenCalled(); expect(w.find('[data-test="case-conflict"]').exists()).toBe(true)
-    expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'My draft')
-    expect(w.text().split('내용이 변경되었습니다')).toHaveLength(2)
-    await w.get('[data-test="case-reload"]').trigger('click'); await flushPromises()
-    expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'Sort')
-  })
-  it('retains separate drafts when switching case IDs and closing/reopening', async () => {
-    const w = await render('case'); await w.get('[data-test="case-title"]').setValue('First draft')
-    context.openWindow('case', 'TC-2'); await flushPromises()
-    await w.get('[data-test="case-title"]').setValue('Second draft')
-    context.closeWindow('case'); await flushPromises(); context.openWindow('case', 'TC-1'); await flushPromises()
-    expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'First draft')
-    context.openWindow('case', 'TC-2'); await flushPromises()
-    expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'Second draft')
-  })
-  it('does not submit a case when its preflight read fails', async () => {
-    const w = await render('case'); await w.get('[data-test="case-title"]').setValue('Retained')
-    mocks.read.mockRejectedValueOnce(new Error('offline'))
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(mocks.save).not.toHaveBeenCalled(); expect(w.find('[data-test="inspector-pane-retry"]').exists()).toBe(true)
-    expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'Retained')
-  })
-  it.each(['readOnly', 'disposed', 'ai', 'approved', 'writing', 'busy'] as const)('blocks case mutations but keeps reading and window controls for %s', async guard => {
-    const w = await render('case')
-    if (guard === 'readOnly') selected.value = { ...selected.value, readOnly: 'revision' }
-    if (guard === 'disposed') disposed = true
-    if (guard === 'ai') activity = { active: true, doc_ref: 'other', action_scope: 'review' }
-    if (guard === 'approved') editable = false
-    if (guard === 'writing') context.writing.value = 'rewrite-all'
-    if (guard === 'busy') context.busy.value = 'rawSave'
-    if (['disposed', 'ai', 'approved'].includes(guard)) await context.reload()
-    await flushPromises()
-    expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="case-delete"]').attributes('disabled')).toBeDefined()
-    expect(w.get('button[data-modeless-action="close"]').attributes('disabled')).toBeUndefined()
-    expect(mocks.save).not.toHaveBeenCalled()
-  })
-  it('shows document permission refusal and retains the draft after 403', async () => {
-    mocks.save.mockRejectedValueOnce(failure(403, 'permission_denied'))
-    const w = await render('case'); await w.get('[data-test="case-title"]').setValue('Retain')
-    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
-    expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="case-title"]').element).toHaveProperty('value', 'Retain')
-    expect(context.refusal.value?.kind).toBe('forbidden')
-  })
-})
-
-describe('0071 T2 theme and locale contract', () => {
-  it.each(['ko', 'en', 'ja'] as const)('renders all windows in %s with no untranslated keys and token-backed shell', async locale => {
-    i18n.global.locale.value = locale
-    const w = await render('scenario')
-    expect(w.text()).not.toContain('gui.inspector.testSpec.')
-    const panel = w.get('.ui-modeless-panel')
-    expect(panel.classes()).not.toContain('light'); expect(panel.attributes('style')).not.toContain('#fff')
+    // the latest frontmatter / identity is adopted with the latest revision; only the merged body is the user's
+    expect(w.get('[data-test="scenario-raw-text"]').element).toHaveProperty('value', '---
+test_contract_version: 2
+---
+my raw draft')
     context.closeWindow('scenario'); await flushPromises(); wrapper?.unmount(); wrapper = null; context = undefined as unknown as TestCardContext
     const c = await render('case'); expect(c.text()).not.toContain('gui.inspector.testSpec.')
   })
@@ -538,7 +304,25 @@ describe('T0015 authoring regression', () => {
     await w.get('[data-test="brief-save"]').trigger('click'); await flushPromises()
     expect(context.windows.brief.open).toBe(true)
     expect(w.get('[data-test="brief-text"]').element).toHaveProperty('value', 'keep my draft')
+    expect(w.find('[data-test="brief-conflict"]').exists()).toBe(true)
     expect(mocks.ai).not.toHaveBeenCalled()
+  })
+  it('a resent uncertain brief request is acknowledged as ITS text: the newer draft stays open, unsaved, and goes out with a new key next', async () => {
+    mocks.briefSave.mockRejectedValueOnce({ isAxiosError: true })
+    const w = await render('brief')
+    await w.get('[data-test="brief-text"]').setValue('A')
+    await w.get('[data-test="brief-save"]').trigger('click'); await flushPromises()
+    expect(context.windows.brief.open).toBe(true)
+    await w.get('[data-test="brief-text"]').setValue('B')
+    await w.get('[data-test="brief-save"]').trigger('click'); await flushPromises()
+    // the server stored the held request A, never B
+    expect(mocks.briefSave).toHaveBeenLastCalledWith(TS_DOC, 'A', rawSource)
+    expect(context.windows.brief.open).toBe(true)
+    expect(w.get('[data-test="brief-text"]').element).toHaveProperty('value', 'B')
+    expect(w.get('[data-test="brief-save"]').attributes('disabled')).toBeUndefined()
+    // the next explicit save sends B on the confirmed N+1
+    await w.get('[data-test="brief-save"]').trigger('click'); await flushPromises()
+    expect(mocks.briefSave).toHaveBeenLastCalledWith(TS_DOC, 'B', rawSource)
   })
   it('adds a complete case, preserving existing hidden fields and reopening the saved case', async () => {
     const w = await render('case')

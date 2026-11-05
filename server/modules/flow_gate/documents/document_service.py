@@ -161,6 +161,14 @@ def update_document(
 
     Use transition_state() for status changes.
     """
+    if {"file_path", "filename", "revision_no", "project_id", "branch"}.intersection(updates):
+        from modules.flow_gate.graph_workflow.services import card_document_ports
+        return card_document_ports.write_gate("row", doc_id, updates,
+            lambda: _update_document_fields(doc_id, updates, actor_user_id))
+    return _update_document_fields(doc_id, updates, actor_user_id)
+
+
+def _update_document_fields(doc_id, updates, actor_user_id):
     existing = db_docs.get_by_id(doc_id)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
@@ -567,7 +575,8 @@ def convert_by_number_swap(
     new_row["file_path"] = new_file_path
     new_row["filename"] = new_filename
     new_row["updated_at"] = now_iso()
-    inserted = db_docs.create(new_row)
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    inserted = dedicated_write("conversion_identity", doc, new_row)
     new_int_id = (inserted or {}).get("id")
 
     # Repoint every inbound / self reference keyed on the textual doc_id.

@@ -160,6 +160,8 @@ def standard_location(doc: dict) -> Path:
     """Where the document's file belongs: a card document where its generator files it (WP included),
     any other document where ``regenerate`` recomputes a missing path."""
     console = _console()
+    from flowgate.card_document_edit.recovery_bridge import draft_recovery_lineage
+
     card = _graph_card(doc)
     if card and card.get("slot"):
         return storage_paths.document_path(
@@ -271,6 +273,8 @@ def card_origin(doc: dict) -> dict:
     """Whether a card made this document, and whether its empty draft is proven never written since."""
     from modules.flow_gate.documents.live_root import in_succession_chain
 
+    from flowgate.card_document_edit.recovery_bridge import draft_recovery_lineage
+
     card = _graph_card(doc)
     if card is None:
         return {"card": False}
@@ -280,7 +284,7 @@ def card_origin(doc: dict) -> dict:
     except (TypeError, ValueError):
         revision_no = -1
     unsubmitted = (doc.get("status") == "draft" and not str(doc.get("doc_review_status") or "").strip()
-                   and revision_no == 0 and not _has_rows("document_revisions", doc_id)
+                   and draft_recovery_lineage(doc) and not _has_rows("document_revisions", doc_id)
                    and not _has_rows("document_reviews", doc_id) and _rejections(doc) == 0
                    and not str(doc.get("superseded_by") or "").strip())
     inherited = bool(_meta(doc).get("converted_from")) or in_succession_chain(doc)
@@ -490,6 +494,11 @@ def recover_write_checks(doc: dict) -> None:
 
 
 def recover_one(doc_id: str, expected_method: Optional[str], actor: str) -> dict:
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    return dedicated_write("recover", doc_id, expected_method, actor)
+
+
+def _recover_legacy(doc_id: str, expected_method: Optional[str], actor: str) -> dict:
     """Recover one document's body by the method its diagnosis gives now (L0005 2.12)."""
     from modules.flow_gate.documents import document_service
     from modules.flow_gate.graph_workflow.services.flow_guard import run_in_document_guard
@@ -507,6 +516,8 @@ def recover_one(doc_id: str, expected_method: Optional[str], actor: str) -> dict
         if fresh is None:
             raise not_found()
         recover_write_checks(fresh)
+        from modules.flow_gate.graph_workflow.services.card_document_ports import write_gate
+        write_gate("none", fresh)
         reason = read_state(fresh)
         if reason == "read_error":
             raise RecoveryRefused("read_error")
@@ -530,6 +541,8 @@ def _apply(doc: dict, reason: str, found: dict, actor: str) -> dict:
     from modules.flow_gate.db.events import insert_event
     from modules.flow_gate.storage.files import StorageUnwritable, document_using_file, write_new_file
 
+    from modules.flow_gate.graph_workflow.services.card_document_ports import write_gate
+    write_gate("none", db_documents.get_by_id(doc["doc_id"]) or doc)
     method, project_id = found["method"], doc.get("project_id")
     own = (doc["doc_id"],)
     data = content = None

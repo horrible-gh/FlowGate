@@ -3,6 +3,7 @@
 Mappings are rebuilt per request; the WP canonical body is never changed by apply.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import json
@@ -1469,7 +1470,7 @@ def _applications_path(plan_path: Path, doc_id: str) -> Path:
 def append_application(plan_path: Path, doc_id: str, row: dict) -> None:
     path = _applications_path(plan_path, doc_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
+    with document_write_ports.write_paths([path]), path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 

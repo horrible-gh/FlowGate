@@ -9,6 +9,7 @@ for the same turns. It is deliberately NOT part of ``conversation.py`` — that 
 T5's (size cap / carry-over removal), and this render path must survive T5 untouched.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import logging
@@ -108,7 +109,7 @@ def snapshot_group_conversations(project_id: str, group_id: str) -> dict:
                 raise RuntimeError("document has no resolvable file path")
             rendered = render_markdown(doc_id)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(rendered["content"], encoding="utf-8")
+            document_write_ports.write_gate("paths", [path], lambda: path.write_text(rendered["content"], encoding="utf-8"))
             stats["written"] += 1
         except Exception:
             _log.exception("conversation markdown snapshot failed for %s", doc_id)

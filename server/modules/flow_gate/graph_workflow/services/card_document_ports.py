@@ -14,8 +14,9 @@ calls and the composition root (``startup.py``) registers the handlers.
     card_line_documents  AI start (0064 T-B1e, read only): the live documents the lines of a card show --
                        the card ``node_key``, or the cards whose lines show ``doc_id`` -- for the body precheck
 
-* With no handler registered a port is a no-op (no lines, nothing hidden), so the Graph behaves
-  exactly as it did before the ports existed.
+* The historical Canvas/Graph ports remain optional. Edit, dedicated storage and body-write gates
+  require registration; absent write protection fails closed. New author evidence never falls back
+  to stale legacy evidence when its interpreter is unavailable.
 * A handler exception propagates: the write ports run inside the caller's Flow guard, so the
   documents commit with the draft / the node transition / the conversion or not at all.
 * One handler per port. Registering again replaces it (startup may run more than once in a process).
@@ -30,7 +31,13 @@ CARD_VIEW = "card_view"
 ON_RESULT_BOUND = "on_result_bound"
 ON_ROOT_CONVERTED = "on_root_converted"
 CARD_LINE_DOCUMENTS = "card_line_documents"
-PORT_NAMES = (ON_DRAFT_SAVED, CARD_VIEW, ON_RESULT_BOUND, ON_ROOT_CONVERTED, CARD_LINE_DOCUMENTS)
+CARD_DOCUMENT_EDIT = "card_document_edit"
+CARD_DOCUMENT_EDIT_BOUNDARY = "card_document_edit_boundary"
+DEDICATED_DOCUMENT_WRITE = "dedicated_document_write"
+DOCUMENT_WRITE_RELEASED = "document_write_released"
+DOCUMENT_WRITE_GATE = "document_write_gate"
+DOCUMENT_AUTHOR_EVIDENCE = "document_author_evidence"
+PORT_NAMES = (DOCUMENT_WRITE_GATE, DOCUMENT_AUTHOR_EVIDENCE, DEDICATED_DOCUMENT_WRITE, DOCUMENT_WRITE_RELEASED, ON_DRAFT_SAVED, CARD_VIEW, ON_RESULT_BOUND, ON_ROOT_CONVERTED, CARD_LINE_DOCUMENTS, CARD_DOCUMENT_EDIT, CARD_DOCUMENT_EDIT_BOUNDARY)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -74,6 +81,27 @@ def _handler(name: str) -> Optional[Callable[..., Any]]:
         return _handlers.get(name)
 
 
+def card_edit(operation, *args, **kwargs):
+    """Required edit/read port. Missing registration is an explicit unavailable failure."""
+    handler = _handler(CARD_DOCUMENT_EDIT) or _handler(CARD_DOCUMENT_EDIT_BOUNDARY)
+    if handler is None:
+        raise RuntimeError("card_edit_unavailable")
+    return handler(operation, *args, **kwargs)
+
+
+def dedicated_write(action, *args, **kwargs):
+    handler = _handler(DEDICATED_DOCUMENT_WRITE)
+    if handler is None:
+        raise RuntimeError("dedicated_document_write_unavailable")
+    return handler(action, *args, **kwargs)
+
+
+def document_write_released():
+    handler = _handler(DOCUMENT_WRITE_RELEASED)
+    if handler is not None:
+        handler()
+
+
 def draft_saved(group: dict, user_id: Optional[str], nodes: list[dict], removed_keys: Iterable[str],
                 registered_types: set[str], previous_nodes: Iterable[dict], locale: Optional[str] = None) -> dict:
     """``previous_nodes``: the nodes of the draft (or, for a new draft, the revision) the save replaces.
@@ -113,3 +141,41 @@ def card_line_doc_ids(flow_id: Optional[str], *, node_key: Optional[str] = None,
     if handler is None or not flow_id or not (node_key or doc_id):
         return []
     return [d for d in handler(flow_id, node_key, doc_id) or [] if d]
+
+
+def write_gate(operation, *args, **kwargs):
+    handler = _handler(DOCUMENT_WRITE_GATE)
+    if handler is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=409, detail="card_document_edit_required")
+    return handler(operation, *args, **kwargs)
+
+
+def write_paths(paths, *, trees=()):
+    paths, trees = tuple(p for p in paths if p is not None), tuple(trees)
+    if not paths and not trees:
+        from contextlib import nullcontext
+        return nullcontext()  # no file target: read-only fingerprinting, for example
+    return write_gate("paths_scope", paths, trees=trees)
+
+
+def author_evidence(doc, rows, token_author):
+    handler = _handler(DOCUMENT_AUTHOR_EVIDENCE)
+    if handler is None:
+        # Missing new-schema interpreter must never fall back to stale legacy author evidence.
+        import json
+        import re
+        for row in rows:
+            raw = row.get("metadata")
+            try:
+                meta = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+            except (TypeError, ValueError):
+                meta = None
+            if row.get("event_type") == "doc_edited" and (
+                    str(row.get("document_id")) == str(doc.get("id"))
+                    or isinstance(meta, dict) and meta.get("doc_id") == doc.get("doc_id")):
+                if (isinstance(meta, dict) and meta.get("schema") == "card_document_edit/v1"
+                        or isinstance(raw, str) and re.search(r'"schema"\s*:\s*"card_document_edit/v1"', raw)):
+                    return {"author": "unknown", "provider_id": None}
+        return None
+    return handler(doc, rows, token_author)

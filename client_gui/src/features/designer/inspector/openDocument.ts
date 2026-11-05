@@ -31,6 +31,7 @@
 // card's own plan is then locked only by that conflict or the card's own AI; the revision view and the run lock stay the
 // structure locks they are. A [제출] there reads the Flow's Canvas again (`submitted`).
 import { reactive, shallowRef } from 'vue'
+import type { CardDocumentContext } from '@/features/document'
 import {
   DocumentIoGroup,
   documentIoForget,
@@ -67,6 +68,32 @@ export interface OpenDocumentOptions {
    * questions under its body — the Q&A tab's list and ↗ windows read as history (no asking, answering or AI request).
    */
   readonly target?: InspectorTarget | null
+  /**
+   * flowgate.v02.0127 T#5 (0009-L §2.11): the card coordinates of the line the opener pressed, taken from its target
+   * and that line's slot when pressed (`cardDocumentContext`). Without them the window can view but not edit — there
+   * is no v1 save fallback and the current selection is never read again to fill them.
+   */
+  readonly card?: CardDocumentContext | null
+}
+
+/** A card line that shares another line's document is edited through the owner line (the test card's 시나리오 → 지시서). */
+const SHARED_SLOT_OWNER: Readonly<Record<string, string>> = { scenario: 'instruction' }
+
+/**
+ * flowgate.v02.0127 T#5 (§2.11) — the card coordinates of a document opened from `target`: its flow, the stored card's
+ * node key and the owner slot of the line the document sits on. `ownerSlot` is the pressed line's slot when the opener
+ * knows it; otherwise it is found by the document id among the target's lines, and a sharing line resolves to the line
+ * that owns the document. Null when the target is not a stored card or no line carries the document (never guessed).
+ */
+export function cardDocumentContext(target: InspectorTarget | null, docId: string, ownerSlot?: string | null): CardDocumentContext | null {
+  const nodeKey = inspectorCardNodeKey(target)
+  if (!target || !nodeKey || !docId) return null
+  let slot = ownerSlot ?? target.cardDocuments.find((line) => line.docId === docId)?.slot ?? null
+  if (slot !== null) {
+    const owner = SHARED_SLOT_OWNER[slot]
+    if (owner && target.cardDocuments.some((line) => line.slot === owner && line.docId === docId)) slot = owner
+  }
+  return slot ? { projectId: target.projectId, flowId: target.flowId, nodeKey, ownerSlot: slot, openedDocId: docId } : null
 }
 
 /**
@@ -76,7 +103,7 @@ export interface OpenDocumentOptions {
 export function openDocument(docId: string, mode: OpenDocumentMode = 'view', options?: OpenDocumentOptions): void {
   if (!docId) return
   if (!options?.exact) {
-    openDocumentWindow(docId, mode === 'edit' && documentIoGuarded(docId) ? 'view' : mode)
+    openDocumentWindow(docId, mode === 'edit' && documentIoGuarded(docId) ? 'view' : mode, { card: options?.card ?? null })
     return
   }
   const target = options.target ?? null
@@ -260,6 +287,7 @@ export function openCardLineAction(target: InspectorTarget, line: CardLineAction
     const card = target.cardDocuments.find((item) => item.slot === slot)
     openSlotWriteWindow({
       flowId: target.flowId,
+      projectId: target.projectId,
       nodeKey,
       slot,
       docType: card?.docType ?? null,
@@ -298,7 +326,7 @@ export function cardLinesWritten(target: InspectorTarget | null): readonly Inspe
  */
 export function settleCardLinesWritten(target: InspectorTarget | null): void {
   const nodeKey = inspectorCardNodeKey(target)
-  if (target && nodeKey) settleWrittenCardLines(target.flowId, nodeKey, target.cardDocuments, (docId) => openDocumentWindow(docId))
+  if (target && nodeKey) settleWrittenCardLines(target.flowId, nodeKey, target.cardDocuments, (docId, slot) => openDocumentWindow(docId, 'view', { card: cardDocumentContext(target, docId, slot) }))
 }
 
 

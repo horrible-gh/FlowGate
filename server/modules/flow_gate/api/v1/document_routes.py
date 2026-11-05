@@ -122,6 +122,8 @@ def _file_content(doc: dict) -> Optional[str]:
 
 
 def _content_state(doc: dict, content) -> str:
+    if "_snapshot_content_state" in doc:
+        return doc["_snapshot_content_state"]
     from modules.flow_gate.storage.body import body_path_state
 
     return "readable" if content is not None else body_path_state(doc)[1]
@@ -473,8 +475,9 @@ def get_document_by_path(
 
     file_path = document.get("file_path")
     try:
-        content = _resolve_live_content(document)
-    except (OSError, UnicodeError):
+        from modules.flow_gate.graph_workflow.services import card_document_ports
+        document, content, content_state = card_document_ports.card_edit("read", document)
+    except (OSError, UnicodeError, RuntimeError):
         return _fail(500, "An error occurred while reading the document content")
 
     resp: dict = {
@@ -490,7 +493,7 @@ def get_document_by_path(
         "project": document.get("project_id"),
         "branch": document.get("branch", branch) or branch or "main",
         "module": document.get("module"),
-        "stored_path": file_path,
+        "stored_path": document.get("file_path"),
         "content": content,
         "download_available": _download_available(document),
         "doc_review_status": document.get("doc_review_status"),
@@ -621,8 +624,10 @@ def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
         return _fail(404, f"Document {doc_id} does not exist"), None, None
 
     try:
-        text = _document_text(doc)
-    except (OSError, UnicodeError):
+        from modules.flow_gate.graph_workflow.services import card_document_ports
+        doc, content, content_state = card_document_ports.card_edit("read", doc)
+        text = outline_svc.DocumentText.from_raw(content) if content is not None else None
+    except (OSError, UnicodeError, RuntimeError):
         return _fail_with(500, "An error occurred while reading the document content"), None, None
     current = int(doc.get("revision_no", 0) or 0)
     if revision_no is not None and int(revision_no) != current:
@@ -1077,8 +1082,9 @@ def download_document(request: Request, doc_id: str):
     if not _download_available(doc):
         return _fail(404, "This document has no readable Markdown artifact")
     try:
-        content = _resolve_live_content(doc)
-    except (OSError, UnicodeError):
+        from modules.flow_gate.graph_workflow.services import card_document_ports
+        doc, content, content_state = card_document_ports.card_edit("read", doc)
+    except (OSError, UnicodeError, RuntimeError):
         return _fail(500, "An error occurred while reading the document content")
     if content is None:
         return _fail(500, "An error occurred while reading the document content")
@@ -1107,8 +1113,9 @@ def get_document(request: Request, doc_id: str):
 
     file_path = doc.get("file_path")
     try:
-        content = _resolve_live_content(doc)
-    except (OSError, UnicodeError):
+        from modules.flow_gate.graph_workflow.services import card_document_ports
+        doc, content, content_state = card_document_ports.card_edit("read", doc)
+    except (OSError, UnicodeError, RuntimeError):
         return _fail(500, "An error occurred while reading the document content")
 
     resp: dict = {
@@ -1124,9 +1131,9 @@ def get_document(request: Request, doc_id: str):
         "project": doc.get("project_id"),
         "module": doc.get("module"),
         "branch": doc.get("branch", "main"),
-        "stored_path": file_path,
+        "stored_path": doc.get("file_path"),
         "content": content,
-        "content_state": _content_state(doc, content),
+        "content_state": content_state,
         "download_available": _download_available(doc),
         "doc_review_status": doc.get("doc_review_status"),
         "rejection_reason": doc.get("rejection_reason"),

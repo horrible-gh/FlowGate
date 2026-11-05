@@ -16,6 +16,12 @@
       <textarea v-else v-model="draft.text" class="brief-textarea" spellcheck="false" :aria-label="t(k('additional'))" :maxlength="20000"
         :disabled="!savable" :placeholder="t(k('placeholder'))" data-test="brief-text"
         @keydown.ctrl.s.prevent="save" @keydown.meta.s.prevent="save" />
+      <div v-if="conflict" class="brief-note brief-note--danger" data-test="brief-conflict">
+        <span>{{ t('gui.inspector.testSpec.window.scenario.conflict') }}</span>
+        <textarea v-if="latest" class="brief-latest" :value="latest.text" readonly rows="4" data-test="brief-latest" />
+        <Button size="sm" variant="secondary" :disabled="!latest" data-test="brief-adopt-merge" @click="adoptMerge">{{ t('gui.inspector.testSpec.window.scenario.adopt_merge') }}</Button>
+        <Button size="sm" variant="secondary" data-test="brief-reload-latest" @click="loadLatest">{{ t('gui.inspector.testSpec.window.scenario.reload') }}</Button>
+      </div>
       <div class="brief-bar">
         <span v-if="error" class="brief-error" :title="error" data-test="brief-error">{{ error }}</span>
         <Button size="sm" variant="primary" :disabled="!savable" :loading="saving" :title="reason || undefined" data-test="brief-save" @click="save">{{ t(k('save')) }}</Button>
@@ -26,43 +32,72 @@
 </template>
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { testBriefRead, testBriefSave } from '@/features/document'
 import { useI18n } from 'vue-i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Button from '@/components/ui/Button.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
+import type { TsBase } from '../tsEditSession'
 import { sessionDraft, useScenarioWindow } from './scenarioWindowModel'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()
 const k = (key: string) => `gui.inspector.testSpec.window.brief.${key}`
 const { card, shell, state, close, geometry, current } = useScenarioWindow(() => props.target, 'brief')
 // Last read or saved text; closing retains the session draft.
-const draft = computed(() => sessionDraft(card.value!.drafts, 't2:brief', () => ({ text: '', content: '', base: '', loaded: false, docId: '' })))
+const draft = computed(() => sessionDraft(card.value!.drafts, 't2:brief', () => ({ text: '', base: '', loaded: false, docId: '', tsBase: null as TsBase | null })))
 const reason = computed(() => { const key = card.value?.can('briefSave').reason; return key ? t(`gui.inspector.testSpec.${key}`) : '' })
 const saving = computed(() => card.value?.busy.value === 'briefSave')
-const savable = computed(() => draft.value.loaded && !saving.value && !!card.value?.can('briefSave').enabled)
+const savable = computed(() => draft.value.loaded && !conflict.value && !saving.value && !!card.value?.can('briefSave').enabled)
 const loadError = ref(false), error = ref('')
+// A conflict keeps the draft and its base: the latest brief is read apart and adopted only by an explicit action.
+const conflict = ref(false)
+const latest = ref<{ text: string; base: TsBase } | null>(null)
 async function load() {
   const id = card.value?.view.value?.tsDocId
   if (!id) return
   loadError.value = false; error.value = ''
   try {
-    const data = await testBriefRead(id)
-    if (current()) Object.assign(draft.value, data, { base: data.text, loaded: true, docId: id })
+    // §2.15.3: the text and the revision come from one structured snapshot, and that revision is this draft's base.
+    const data = await card.value!.pinBrief()
+    if (!current()) return
+    if (data === null) { loadError.value = true; return }
+    Object.assign(draft.value, { text: data.text, base: data.text, loaded: true, docId: id, tsBase: data.base })
   } catch { if (current()) loadError.value = true }
+}
+async function loadLatest() {
+  const data = await card.value?.pinBrief().catch(() => null)
+  if (!current() || !data) return
+  latest.value = data
+}
+/** The user compared / merged by hand in the text: the latest document's revision becomes the base; the draft text stays (explicit). */
+function adoptMerge() {
+  const d = draft.value, l = latest.value
+  if (!l || !l.base.docId || l.base.docId !== d.docId) return
+  Object.assign(d, { base: l.text, tsBase: l.base })
+  latest.value = null; conflict.value = false; error.value = ''
 }
 onMounted(() => { if (!draft.value.loaded || draft.value.docId !== card.value?.view.value?.tsDocId) void load() })
 async function save() {
   const c = card.value, d = draft.value
-  if (!c || !savable.value || !current()) return
+  if (!c || !savable.value || !current() || !d.tsBase) return
   error.value = ''
+  const submittedText = d.text
+  let adopted = false
   const ok = await c.changeDocument('briefSave', async () => {
-    const saved = await testBriefSave(d.docId, d.text, d.content)
-    Object.assign(d, saved, { base: saved.text })
+    // The draft's own pinned base (with its card coordinates). Only the text the CONFIRMED request submitted becomes the
+    // N+1 base: when the document's kept (uncertain) request was resent instead, the current text stays an unsaved draft.
+    const answer = await c.reviseBrief(d.tsBase!, submittedText)
+    Object.assign(d, { base: answer.text, tsBase: answer.base })
+    adopted = answer.same
   })
   if (!current()) return
-  if (!ok) { error.value = c.refusal.value?.message || t('gui.inspector.testSpec.window.scenario.conflict'); return }
+  if (ok && !adopted) { error.value = t('gui.inspector.testSpec.failure.uncertain'); return }
+  if (!ok) {
+    const r = c.refusal.value
+    if (r?.kind === 'conflict') { conflict.value = true; await loadLatest() }
+    error.value = r?.kind === 'conflict' ? t('gui.inspector.testSpec.window.scenario.conflict') : r ? [t(`gui.inspector.testSpec.${r.key}`), r.message].filter(Boolean).join(' · ') : t('gui.inspector.testSpec.window.scenario.conflict')
+    return
+  }
   close()
 }
 </script>
@@ -77,5 +112,6 @@ async function save() {
 .brief-textarea:focus-visible { box-shadow: inset 0 0 0 1px var(--fg2-focus); }
 /* DocumentWindow's editor bar; at the narrowest window whole buttons wrap, still at the right end. */
 .brief-bar { display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--fg2-line); }
+.brief-latest { flex: 1 1 100%; min-width: 0; background: var(--fg2-bg); color: var(--fg2-text); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; }
 .brief-error { flex: 1; min-width: 0; overflow: hidden; color: var(--fg2-status-danger-fg); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 </style>

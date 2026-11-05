@@ -74,9 +74,12 @@ def _write_plan(wp_doc, quantities, texts=None, step_values=None, bump=False):
             step["pre_instruction_text"] = texts[step["key"]]
         step.update((step_values or {}).get(step["key"], {}))
     plan = wp.validate(body, project_id="flowgate", doc_id=wp_doc, action="save", enforce_provider_scope=False)
-    wp.write_body_atomically(wp.plan_path_for_doc(doc), plan)
+    # Seed the pre-deployment fixture directly; the production primitive now rejects card rewrites.
+    wp.plan_path_for_doc(doc).write_text(wp.dumps(plan), encoding="utf-8")
     if bump:
-        db_documents.update(wp_doc, {"revision_no": int(doc.get("revision_no") or 0) + 1})
+        from modules.flow_gate.db.connection import get_store
+        get_store()._execute("UPDATE documents SET revision_no = ? WHERE doc_id = ?",
+                             [int(doc.get("revision_no") or 0) + 1, wp_doc])
     return plan
 
 
@@ -440,7 +443,9 @@ def test_a_plan_changed_after_the_preview_is_refused(dep):
     _write_plan(wp_doc, {"T": 2})                                         # the file changed, the revision did not
     changed = _execute(dep, wp_doc, "first", expect=409, baseline=preview["baseline"])
     assert (changed["code"], changed.get("reason")) == ("wp_changed", "plan_digest")
-    db_documents.update(wp_doc, {"revision_no": 3})
+    # Seed the concurrent preview invalidation; generic UPDATE cannot rewrite a card revision.
+    from modules.flow_gate.db.connection import get_store
+    get_store()._execute("UPDATE documents SET revision_no = 3 WHERE doc_id = ?", [wp_doc])
     assert _execute(dep, wp_doc, "first", expect=409, baseline=preview["baseline"])["code"] == "wp_changed"
     assert _preview(dep, wp_doc, "first", expect=409, revision=0)["code"] == "wp_changed"
     assert _draft(dep)[0] and len(_draft(dep)[0]) == 2                     # R and WP only
@@ -673,24 +678,24 @@ def _snapshot(env, keys):
 
 
 def test_a_failed_file_replacement_leaves_everything_as_it_was_and_a_retry_writes_all(dep, monkeypatch):
-    from flowgate.work_plan_deploy import legacy_adapter as legacy
+    from modules.flow_gate.storage import files
 
     wp_doc, keys = _deployed_t(dep, 3)
     before, events = _snapshot(dep, keys), len(dep["events"])
-    real, calls = legacy.replace_file, []
+    real, calls = files.replace_restorably, []
 
-    def failing(path, data, identity):
+    def failing(path, data, *, expected_identity=None):
         calls.append(path)
         if len(calls) == 2:
             raise OSError("disk full")
-        return real(path, data, identity)
+        return real(path, data, expected_identity=expected_identity)
 
-    monkeypatch.setattr(legacy, "replace_file", failing)
+    monkeypatch.setattr(files, "replace_restorably", failing)
     res = dep["deploy"].post(f"/api/v1/documents/{wp_doc}/work-plan/deploy",
                              json={"mode": "add", **_preview(dep, wp_doc, "add")["baseline"]}, headers=_h())
     assert res.status_code == 500 and len(calls) == 2
     assert _snapshot(dep, keys) == before and len(dep["events"]) == events
-    monkeypatch.setattr(legacy, "replace_file", real)
+    monkeypatch.setattr(files, "replace_restorably", real)
     answer = _execute(dep, wp_doc, "add")
     assert [c["instruction"] for c in answer["cards"]] == ["instruction_write"] * 3
     assert all(_has_body(_line_doc(dep, k)) for k in keys)
@@ -740,21 +745,21 @@ def dep_storage(env):
 
 
 def test_a_line_changed_between_the_judgement_and_its_replacement_is_409(dep, monkeypatch):
-    from flowgate.work_plan_deploy import legacy_adapter as legacy
+    from modules.flow_gate.storage import files
 
     wp_doc, keys = _deployed_t(dep, 2)
-    real = legacy.replace_file
+    real = files.replace_restorably
     first_doc = _line_doc(dep, keys[0])
 
-    def meddling(path, data, identity):
+    def meddling(path, data, *, expected_identity=None):
         target = _file(first_doc)
         if path == target:
             tmp = target.with_name(target.name + ".other")
             tmp.write_bytes(target.read_bytes())
             tmp.replace(target)                                               # same bytes, another file
-        return real(path, data, identity)
+        return real(path, data, expected_identity=expected_identity)
 
-    monkeypatch.setattr(legacy, "replace_file", meddling)
+    monkeypatch.setattr(files, "replace_restorably", meddling)
     before = {k: len(_body_saves(dep, _line_doc(dep, k))) for k in keys}
     refused = _execute(dep, wp_doc, "add", expect=409)
     assert refused["code"] == "instruction_target_changed"
@@ -763,13 +768,13 @@ def test_a_line_changed_between_the_judgement_and_its_replacement_is_409(dep, mo
 
 
 def test_an_original_that_cannot_be_put_back_is_kept_and_reported(dep, monkeypatch):
-    from flowgate.work_plan_deploy import legacy_adapter as legacy
+    from modules.flow_gate.storage import files
 
     wp_doc, keys = _deployed_t(dep, 2)
-    real, calls = legacy.replace_file, []
+    real, calls = files.replace_restorably, []
     first_doc = _line_doc(dep, keys[0])
 
-    def failing(path, data, identity):
+    def failing(path, data, *, expected_identity=None):
         calls.append(path)
         if len(calls) == 2:
             target = _file(first_doc)
@@ -777,9 +782,9 @@ def test_an_original_that_cannot_be_put_back_is_kept_and_reported(dep, monkeypat
             tmp.write_bytes(b"someone else")
             tmp.replace(target)                                               # the first replacement is gone
             raise OSError("disk full")
-        return real(path, data, identity)
+        return real(path, data, expected_identity=expected_identity)
 
-    monkeypatch.setattr(legacy, "replace_file", failing)
+    monkeypatch.setattr(files, "replace_restorably", failing)
     res = dep["deploy"].post(f"/api/v1/documents/{wp_doc}/work-plan/deploy",
                              json={"mode": "add", **_preview(dep, wp_doc, "add")["baseline"]}, headers=_h())
     assert res.status_code == 500 and res.json()["code"] == "deploy_restore_incomplete"
@@ -1080,7 +1085,9 @@ def test_filling_a_card_whose_instruction_line_has_no_row_writes_the_empty_draft
     assert [c["instruction"] for c in answer["cards"]] == ["instruction_write"]
     line = _line_doc(dep, key)
     assert _group_docs(dep) - docs == {line} and line in _linked(dep)      # one document, the line's own
-    assert len(set(_storage_files(dep)) - set(files)) == 1                  # one file, no stray empty draft
+    created_files = set(_storage_files(dep)) - set(files)
+    assert len(created_files) == 2  # initial body is filled through JOIN, retaining its r0 snapshot.
+    assert len([p for p in created_files if "revisions" in p]) == 1
     assert _text(line).startswith("---\n") and _text(line).rstrip().endswith("줄이 없던 카드의 지시")
     assert _body_saves(dep, line) == ["work_plan_deploy"]
     source = _source(dep, key)
@@ -1343,3 +1350,12 @@ def test_a_work_plan_card_made_in_japanese_has_a_japanese_title_and_the_same_pla
     _write_plan(wp_doc, {"T": 1})                                                # the plan reads, saves and deploys
     assert _status(dep, wp_doc)["deployable"] is True
     assert _execute(dep, wp_doc, "first")["created_node_keys"]
+
+
+@pytest.fixture(autouse=True)
+def dedicated_document_write_ports_0127(monkeypatch):
+    # Direct service/route fixtures reproduce the composition root's required ports.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration as document_edit
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    document_edit.register()

@@ -1,5 +1,6 @@
 """Remote TS test execution service."""
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import contextlib
 import json
@@ -2708,7 +2709,7 @@ def _start_service_step(
     started = time.monotonic()
     cmd = _replace_placeholders(step["cmd"], port, scratch)
     log_path = scratch / f"{step['case_no'].lower()}-service.log"
-    log_handle = log_path.open("ab")
+    log_handle = document_write_ports.write_gate("paths", [log_path], lambda: log_path.open("ab"))
     eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, root)
     kwargs = _popen_kwargs(root, env)
     kwargs["cwd"] = eff_cwd
@@ -3070,35 +3071,7 @@ def assemble_tsr(
     if not doc.get("group_id") or not doc.get("project_id"):
         raise RuntimeError("TS document has no group/project")
 
-    title = _tsr_title(doc, locale)
-    if run.get("contract_version") == test_spec_service.CONTRACT_SPEC:
-        # 0549 T0008: a test report — every TS Case ID with its verdict, expected/actual,
-        # evidence and source identity, whatever the overall verdict is.
-        meta = test_spec_service.load_result_meta(run.get("result_meta"))
-        content = test_spec_service.render_report_markdown(
-            doc=doc,
-            run=run,
-            rows=[
-                test_spec_service.stored_case_to_row(case)
-                for case in cases
-                if (case.get("kind") or "case") == "case"
-            ],
-            summary={
-                "overall": run.get("overall"),
-                "counts": meta.get("counts") or {},
-                "required_counts": meta.get("required_counts") or {},
-                "optional_counts": meta.get("optional_counts") or {},
-            },
-            unmapped=meta.get("unmapped") or [],
-            conflicts=meta.get("conflicts") or [],
-            title=title,
-            locale=locale,
-        )
-        if meta.get("test_basis") or meta.get("live_verdict"):
-            content += _tsr_basis_section(meta, locale)
-    else:
-        content = _tsr_content(doc, run, cases, title, locale)
-    return _write_tsr(doc, content, title, run_chain=run_chain)
+    return _write_tsr(doc, run=run, locale=locale, run_chain=run_chain)
 
 
 _TSR_BASIS_VALIDITY = {
@@ -3145,50 +3118,11 @@ def _tsr_title(doc: dict, locale: str = "ko") -> str:
     return title_template.format(name=doc.get("title") or doc["doc_id"])
 
 
-def _write_tsr(doc: dict, content: str, title: str, *, run_chain: bool = True) -> str:
-    """Write ``content`` into the TS's single report slot: revise the active TSR or create it."""
-    group_id = doc.get("group_id")
-    project_id = doc.get("project_id")
-    module = doc.get("module") or "none"
-    branch = doc.get("branch") or "main"
-    if not group_id or not project_id:
-        raise RuntimeError("TS document has no group/project")
-    active = _active_tsr_for_ts(doc)
-    if active is not None:
-        return _revise_active_tsr(doc, active, content, title, run_chain=run_chain)
-
-    doc_code = numbering_service.reserve_document(group_id, "TSR", module=module)
-    tsr_doc_id = f"{group_id}.{doc_code}"
-    _type, seq = id_formatter.parse_doc_code(doc_code)
-    path = storage_paths.document_path(
-        project_id=project_id,
-        group_code=group_id,
-        doc_code=doc_code,
-        filename="document.md",
-        module=module,
-        branch=branch,
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    db_docs.create(
-        {
-            "doc_id": tsr_doc_id,
-            "project_id": project_id,
-            "branch": branch,
-            "module": module,
-            "group_id": group_id,
-            "type_code": "TSR",
-            "seq": seq,
-            "title": title,
-            "file_path": storage_paths.to_storage_relative(path, project_id),
-            "status": "open",
-            "owner_id": doc.get("owner_id"),
-            "target_id": doc["doc_id"],
-            "triggered_by": doc["doc_id"],
-        }
-    )
-    _register_tsr_result(doc, tsr_doc_id, path, run_chain)
-    return tsr_doc_id
+def _write_tsr(doc: dict, *, run: dict, kind="result", state=None, reason=None, cases=None,
+               locale="ko", run_chain=True) -> str:
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    return dedicated_write("tsr", doc, run=run, kind=kind, state=state, reason=reason, cases=cases,
+                           locale=locale, run_chain=run_chain)
 
 
 def _kept_verdicts(doc: dict, revision_no: int, selected_case_ids) -> dict:
@@ -3229,6 +3163,11 @@ def _pending_report(doc: dict, run: dict, cases: list[dict], *, state: str,
 
 
 def open_execution_tsr(doc: dict, cases: list[dict], run: dict, *, locale: str = "ko") -> str:
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    return dedicated_write("tsr_open", doc, cases, run, locale=locale)
+
+
+def _open_execution_tsr_in_guard(doc: dict, cases: list[dict], run: dict, *, locale: str = "ko") -> str:
     """Open (or reuse) the TS's report for a just-admitted spec run (0684 D#1 §3-4).
 
     The report says "test queued/running" with every selected Case PENDING -- a display
@@ -3239,36 +3178,18 @@ def open_execution_tsr(doc: dict, cases: list[dict], run: dict, *, locale: str =
     new one removed before the exception reaches the caller's rollback.
     """
     from modules.flow_gate.db import workflow_sequences as db_wfseq
-    existing = _active_tsr_for_ts(doc)
-    old_path = storage_paths.resolve_storage_path(
-        (existing or {}).get("file_path") or "", doc.get("project_id"),
-        branch=doc.get("branch") or "main",
-    ) if existing else None
-    old_body = old_path.read_bytes() if old_path and old_path.is_file() else None
-    ts_path = storage_paths.resolve_storage_path(
-        doc.get("file_path") or "", doc.get("project_id"), branch=doc.get("branch") or "main"
-    ) if doc.get("file_path") else None
-    report_files_before = set(ts_path.parent.glob("*-TSR_document.md")) if ts_path else set()
-    try:
-        content, title = _pending_report(doc, run, cases, state="queued", locale=locale)
-        tsr_doc_id = _write_tsr(doc, content, title, run_chain=False)
-        db_test_runs.set_run_tsr_doc(run["run_id"], tsr_doc_id)
-        paired = db_docs.get_by_id(tsr_doc_id)
-        if not paired or paired.get("target_id") != doc["doc_id"]:
-            raise RuntimeError("tsr_pair_missing")
-        slot = _tsr_slot_item(doc, db_wfseq)
-        if slot is not None and not db_wfseq.get_item_by_result_doc_id(tsr_doc_id):
-            raise RuntimeError("tsr_workflow_pair_missing")
-        from modules.flow_gate.services import spec_execution_service
-        spec_execution_service.merge_run_meta(run["run_id"], tsr_doc_id=tsr_doc_id)
-        return tsr_doc_id
-    except Exception:
-        if old_path and old_body is not None:
-            old_path.write_bytes(old_body)
-        if ts_path:
-            for path in set(ts_path.parent.glob("*-TSR_document.md")) - report_files_before:
-                path.unlink(missing_ok=True)
-        raise
+    tsr_doc_id = _write_tsr(doc, run=run, kind="pending", state="queued", cases=cases,
+                            locale=locale, run_chain=False)
+    db_test_runs.set_run_tsr_doc(run["run_id"], tsr_doc_id)
+    paired = db_docs.get_by_id(tsr_doc_id)
+    if not paired or paired.get("target_id") != doc["doc_id"]:
+        raise RuntimeError("tsr_pair_missing")
+    slot = _tsr_slot_item(doc, db_wfseq)
+    if slot is not None and not db_wfseq.get_item_by_result_doc_id(tsr_doc_id):
+        raise RuntimeError("tsr_workflow_pair_missing")
+    from modules.flow_gate.services import spec_execution_service
+    spec_execution_service.merge_run_meta(run["run_id"], tsr_doc_id=tsr_doc_id)
+    return tsr_doc_id
 
 
 def record_execution_progress(doc: dict, run_id: str, items: list[dict]) -> None:
@@ -3304,9 +3225,8 @@ def record_execution_progress(doc: dict, run_id: str, items: list[dict]) -> None
         if tsr is None or tsr.get("doc_review_status") == "approved":
             return
         ts_doc = db_docs.get_by_id(doc["doc_id"]) or doc
-        content, title = _pending_report(ts_doc, run, meta.get("spec_cases") or [],
-                                         state="running", locale=run.get("locale") or "ko")
-        _write_tsr(ts_doc, content, title, run_chain=False)
+        _write_tsr(ts_doc, run=run, kind="pending", state="running",
+                   locale=run.get("locale") or "ko", run_chain=False)
         _broadcast("group_view_refresh", ts_doc,
                    {"group_id": ts_doc.get("group_id"), "reason": "test_case_recorded"})
     except Exception:
@@ -3343,9 +3263,8 @@ def _settle_execution_tsr(doc: dict, run: dict) -> None:
         else:
             state, reason = "failed", run.get("error") or "no_results"
         ts_doc = db_docs.get_by_id(doc["doc_id"]) or doc
-        content, title = _pending_report(ts_doc, run, meta.get("spec_cases") or [], state=state,
-                                         reason=reason, locale=run.get("locale") or "ko")
-        _write_tsr(ts_doc, content, title, run_chain=False)
+        _write_tsr(ts_doc, run=run, kind="pending", state=state, reason=reason,
+                   locale=run.get("locale") or "ko", run_chain=False)
     except Exception:
         logger.warning("settling the report of %s failed", run.get("run_id"), exc_info=True)
 
@@ -3374,38 +3293,6 @@ def _active_tsr_for_ts(doc: dict) -> Optional[dict]:
     return existing[-1]
 
 
-def _revise_active_tsr(
-    doc: dict, active: dict, content: str, title: str, *, run_chain: bool = True
-) -> str:
-    """Rewrite the active TSR in place for a fresh run, keeping its doc_id and slot."""
-    if active.get("doc_review_status") == "approved":
-        raise _http_error(409, "tsr_already_approved", tsr_doc_id=active.get("doc_id"))
-    tsr_doc_id = str(active["doc_id"])
-    project_id = doc["project_id"]
-    group_id = doc["group_id"]
-    # Recompute rather than trust the stored file_path: it is the same deterministic path the
-    # create branch below writes, and rebuilding it repairs a row whose path went stale or
-    # empty — the "there is no linked MD file" preview of B0001.
-    path = storage_paths.document_path(
-        project_id=project_id,
-        group_code=group_id,
-        doc_code=tsr_doc_id[len(group_id) + 1:],
-        filename="document.md",
-        module=doc.get("module") or "none",
-        branch=doc.get("branch") or "main",
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    db_docs.update(
-        tsr_doc_id,
-        {
-            "title": title,
-            "file_path": storage_paths.to_storage_relative(path, project_id),
-            "revision_no": (active.get("revision_no") or 0) + 1,
-        },
-    )
-    _register_tsr_result(doc, tsr_doc_id, path, run_chain)
-    return tsr_doc_id
 
 
 _TSR_STRINGS = {

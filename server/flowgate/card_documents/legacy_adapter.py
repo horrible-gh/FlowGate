@@ -140,6 +140,10 @@ def create_document(group: dict, node: dict, slot: cs.CardSlot, user_id: Optiona
         text = _front_matter(project_id, module, flow_id, slot.doc_type, code, title)
         body = text + body if body else text
     file_path = _write_file(project_id, flow_id, module, code, slot.slot, body, node["node_key"])
+    from modules.flow_gate.storage.files import file_identity, remove_owned_file
+    from modules.flow_gate.storage.paths import resolve_storage_path
+    written_path = resolve_storage_path(file_path, project_id, repository.project_branch(project_id))
+    written_identity = file_identity(written_path) if written_path is not None else None
     try:
         document_service.create_document({
             "doc_id": doc_id, "project_id": project_id, "module": module, "group_id": flow_id,
@@ -154,7 +158,7 @@ def create_document(group: dict, node: dict, slot: cs.CardSlot, user_id: Optiona
             try:
                 path = resolve_storage_path(file_path, project_id, repository.project_branch(project_id))
                 if path is not None:
-                    path.unlink(missing_ok=True)
+                    remove_owned_file(path, written_identity)
             except OSError:
                 _log.warning("card document cleanup failed: %s", file_path, exc_info=True)
         raise
@@ -424,10 +428,6 @@ def discard_file(doc_id: str) -> None:
     doc = db_documents.get_by_id(doc_id) or {}
     if not doc.get("file_path"):
         return
-    try:
-        path = storage_paths.resolve_storage_path(doc["file_path"], doc.get("project_id") or "",
-                                                  branch=repository.project_branch(doc.get("project_id") or ""))
-        if path is not None:
-            path.unlink()
-    except Exception:  # noqa: BLE001 — a stray file is only untidy; the refusal still holds
-        _log.warning("card document file not discarded doc=%s", doc_id, exc_info=True)
+    # write_new_file registered the owned-file cleanup on this transaction.
+    # Deleting here would bypass that captured identity; rollback performs it.
+    return

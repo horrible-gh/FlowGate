@@ -42,7 +42,12 @@ class _MockDB:
 
     @contextmanager
     def begin_transaction(self):
-        yield _MockTxn(self._conn)
+        try:
+            yield _MockTxn(self._conn)
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def close(self):
         self._conn.close()
@@ -55,7 +60,7 @@ class _MockTxn:
 
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
-        self._conn.commit()
+        return self._last_cursor  # L#1/L#2: actual CAS count, inside the real transaction.
 
     def fetch_one(self) -> dict | None:
         if self._last_cursor is None:
@@ -177,14 +182,13 @@ def _build_client():
 def _issue_token(tmp_path, action_scope: str, doc_ref: str | None) -> str:
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
-        issued = token_service.issue(
-            project="testprj",
-            group_id="testprj-__ALL__-0001",
-            action_scope=action_scope,
-            doc_ref=doc_ref,
-            issued_to="usr_test_001",
-        )
+    issued = token_service.issue(
+        project="testprj",
+        group_id="testprj-__ALL__-0001",
+        action_scope=action_scope,
+        doc_ref=doc_ref,
+        issued_to="usr_test_001",
+    )
     return issued["raw_token"]
 
 
@@ -260,8 +264,11 @@ def test_inbox_edit_pushes_events(seed_data, tmp_path):
     client = _build_client()
     raw = _issue_token(tmp_path, "edit", "testprj-__ALL__-0001-NR0001")
     publish_event = AsyncMock()
+    broadcast_event = AsyncMock()
 
-    with patch("modules.flow_gate.api.v1.events.publisher.publish_event", publish_event):
+    with patch("modules.flow_gate.api.v1.events.publisher.publish_event", publish_event), patch(
+        "modules.flow_gate.api.v1.events.publisher.broadcast_event", broadcast_event,
+    ):
         resp = client.post(
             "/api/v1/inbox",
             json={
@@ -277,8 +284,10 @@ def test_inbox_edit_pushes_events(seed_data, tmp_path):
         )
 
     assert resp.status_code == 200
-    _wait_for_asyncmock(publish_event, 4)
-    event_types = [call.args[0].event_type for call in publish_event.await_args_list]
+    _wait_for_asyncmock(publish_event, 3)
+    _wait_for_asyncmock(broadcast_event, 1)
+    event_types = [call.args[0].event_type for call in publish_event.await_args_list + broadcast_event.await_args_list]
+    assert len(event_types) == len(set(event_types)) == 4
     assert "file_explorer_refresh" in event_types
     assert "document_explorer_refresh" in event_types
     assert "group_view_refresh" in event_types

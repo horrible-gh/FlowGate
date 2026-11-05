@@ -38,7 +38,19 @@ SERVER_DIR = Path(__file__).resolve().parents[2]
 
 @pytest.fixture()
 def env(fg_store, tmp_path, monkeypatch, clean_commands_state, clean_runs, clean_hooks):
+    from flowgate.card_document_edit import integration as edit_integration
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    edit_integration.register()  # The same required document write port as startup.
     seed(fg_store)
+    # Command routing now resolves its current source token from storage. Keep the
+    # real lookup and root checks; supply the live token the fixture run names.
+    from modules.flow_gate.db import tokens
+    tokens.create({"token_id": f"tok_{RUN_ID}", "hash": "integration-chat-token",
+                   "pepper_id": "test", "project": PROJECT, "group_id": GROUP,
+                   "doc_ref": CHAT_DOC, "action_scope": "chat", "ai_run_id": RUN_ID,
+                   "issued_to": USER, "source_access": "read_write",
+                   "created_at": "2026-01-01T00:00:00+00:00", "expires_at": "2099-01-01T00:00:00+00:00"})
     root = init_worktree(tmp_path / "wt")
     bind_worktree(monkeypatch, root)
     executor = FakeExecutor()
@@ -90,9 +102,11 @@ def test_register_connects_every_port_idempotently(clean_hooks):
     integration.register()
     assert all(chat_run_hooks.registered(name) for name in chat_run_hooks.HOOK_NAMES)
     tools = chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})
-    assert [t["name"] for t in tools] == ["run_command"]
-    # A run that was not admitted through the start hook has no command capability.
-    assert chat_run_hooks.chat_tools({"action_scope": "chat"}) == []
+    assert [t["name"] for t in tools] == ["run_command", "read_card_document", "revise_card_document",
+                                          "read_document_by_id", "revise_document_by_id", "create_new_document"]
+    # Document delegation is independent of command capability.
+    assert [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})] == [
+        "read_card_document", "revise_card_document", "read_document_by_id", "revise_document_by_id", "create_new_document"]
 
 
 # ── call sites in the existing engine (composition, order) ───────────────────
@@ -103,7 +117,7 @@ def _source(rel):
 
 def test_engine_call_sites_are_in_place():
     admission = _source("modules/flow_gate/services/ai_invoke/admission.py")
-    assert admission.index("chat_run_hooks.chat_run_start(run)") < admission.index("_svc()._runs[run_id] = run")
+    assert admission.index("chat_run_hooks.chat_run_start(run)") < admission.index("    _register_run(run, chain)")
     finalize = _source("modules/flow_gate/services/ai_invoke/finalize.py")
     steps = finalize[finalize.index("steps = ("):finalize.index("for name, action in steps")]
     assert steps.index('("source"') < steps.index('("chat_run"') < steps.index('("diagnostics"')
@@ -231,7 +245,9 @@ def test_api_worker_exposes_run_command_and_returns_the_result_to_the_same_run(e
     outcome = svc._api_execute({"id": "p", "kind": "openai", "api_base_url": "https://api.example",
                                 "api_model": "m"}, "prompt", run)
     assert outcome == ("started_ok", None)
-    assert calls[0]["tools"] == ["run_command", "send_chat_reply"]
+    assert calls[0]["tools"] == ["read_chat_history", "read_help", "run_command",
+                                 "read_card_document", "revise_card_document",
+                                 "read_document_by_id", "revise_document_by_id", "create_new_document", "send_chat_reply"]
     assert "`run_command`" in calls[0]["conversation"][2]["content"]
     tool_msg = next(m for m in calls[1]["conversation"] if m.get("role") == "tool")
     assert tool_msg["tool_call_id"] == "call_cmd"
@@ -272,7 +288,7 @@ def test_api_worker_input_error_result_stays_whole_json(env, monkeypatch):
     assert result["meta_truncated"] is True
 
 
-def test_api_worker_without_registration_keeps_the_single_reply_tool(clean_hooks, monkeypatch):
+def test_api_worker_without_registration_keeps_existing_chat_tools(clean_hooks, monkeypatch):
     seen = {}
     run = {"project_id": PROJECT, "run_id": "aiv_plain", "docs_target": 0, "raw_token": "raw",
            "token_id": "tok", "doc_ref": CHAT_DOC, "action_scope": "chat", "mode": "single",
@@ -290,7 +306,8 @@ def test_api_worker_without_registration_keeps_the_single_reply_tool(clean_hooks
     monkeypatch.setattr(svc, "_call_openai", fake_call)
     assert svc._api_execute({"id": "p", "kind": "openai", "api_base_url": "https://x", "api_model": "m"},
                             "prompt", run) == ("started_ok", None)
-    assert seen["tool_name"] == "send_chat_reply"
+    assert [t["name"] for t in seen["tool_name"]] == [
+        "read_chat_history", "read_help", "run_command", "send_chat_reply"]
 
 
 # ── the CLI mention ──────────────────────────────────────────────────────────
@@ -313,7 +330,9 @@ def test_cli_mention_section_only_for_a_live_run(env):
     assert "Authorization: Bearer raw-run-token" in live
     assert "## Command execution" not in _mention(False)
     chat_run_hooks.clear()
-    assert "## Command execution" not in _mention(True)
+    fallback = _mention(True)
+    assert "## Command execution" in fallback  # Existing command-service fallback.
+    assert "Card document read and edit" not in fallback
 
 
 # ── chat settings: the command policy ────────────────────────────────────────

@@ -85,7 +85,7 @@ def counting(monkeypatch):
         monkeypatch.setattr(owner, name, counted)
 
     wrap(numbering_service, "reserve_document", "reserve")
-    wrap(root_conversion, "stage_converted_file", "stage_body")
+    wrap(root_conversion, "prepare_converted_file", "stage_body")
     wrap(attachment_conversion, "stage_attachment_room", "stage_attachments")
     wrap(attachment_conversion, "finish_attachment_room", "finish_room")
     wrap(attachment_conversion, "cleanup_old_attachment_room", "cleanup_room")
@@ -1188,3 +1188,12 @@ def test_the_superseded_by_index_exists_in_every_dialect(env):
     assert statements["mysql"] == ["CREATE INDEX idx_documents_superseded_by ON documents (superseded_by(191));"]
     for d in ("postgres", "sqlite"):
         assert statements[d] == ["CREATE INDEX IF NOT EXISTS idx_documents_superseded_by ON documents (superseded_by);"]
+
+
+@pytest.fixture(autouse=True)
+def dedicated_document_write_ports_0127(env, monkeypatch):
+    # Direct service/route fixtures reproduce the composition root's required ports.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration as document_edit
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    document_edit.register()

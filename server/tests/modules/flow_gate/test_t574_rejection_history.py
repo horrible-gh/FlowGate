@@ -1002,7 +1002,12 @@ class _E2EMockDB:
 
     @_contextmanager
     def begin_transaction(self):
-        yield _E2EMockTxn(self._conn)
+        try:
+            yield _E2EMockTxn(self._conn)
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def close(self):
         self._conn.close()
@@ -1015,7 +1020,7 @@ class _E2EMockTxn:
 
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
-        self._conn.commit()
+        return self._last_cursor
 
     def fetch_one(self):
         if self._last_cursor is None:
@@ -1127,11 +1132,10 @@ def _e2e_client():
 
 def _e2e_make_edit_token(tmp_path, doc_id: str) -> str:
     from modules.flow_gate.services import token_service
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "s_edit"):
-        result = token_service.issue(
-            project=_E2E_PROJECT_ID, group_id=_E2E_GROUP_ID,
-            action_scope="edit", doc_ref=doc_id, issued_to=_E2E_USER_ID,
-        )
+    result = token_service.issue(
+        project=_E2E_PROJECT_ID, group_id=_E2E_GROUP_ID,
+        action_scope="edit", doc_ref=doc_id, issued_to=_E2E_USER_ID,
+    )
     return result["raw_token"]
 
 
@@ -1758,9 +1762,12 @@ class TestInboxForwardsTheReviewId:
 
         from modules.flow_gate.api import inbox_routes
 
-        source = inspect.getsource(inbox_routes._handle_edit)
+        from flowgate.card_document_edit import agent_adapter, agent_rules
+        assert 'card_edit("edit"' in inspect.getsource(inbox_routes._handle_edit)
+        assert 'revise(req)' in inspect.getsource(agent_adapter.handle)
+        source = inspect.getsource(agent_rules.rejection_history)
         assert "resolve_rejection_target(" in source
-        assert "_submitted_review_id(body)" in source, (
+        assert "_submitted_review_id(review_body)" in source, (
             "the whole body must go in — the boundary decides on the field's PRESENCE"
         )
         assert "record_rejection_response" not in source, (

@@ -50,6 +50,7 @@ from flowgate.work_plan_deploy import chain as deploy_chain
 from flowgate.work_plan_deploy import legacy_adapter as legacy
 from flowgate.work_plan_deploy import plan as deploy_plan
 from flowgate.work_plan_deploy import protection
+from flowgate.card_document_edit import deployment_bridge
 from flowgate.work_plan_deploy.plan import ADD, CLEANUP, FIRST, MODES
 
 SOURCE_FIELD = "wp_source"
@@ -313,7 +314,8 @@ def _plan_work(state: State, mode: str, instructions: dict[str, dict], registere
             return
         verdict = None
         if row is not None:
-            verdict = protection.judge(state.flow_id, row, docs_by_id, started=bool(is_started))
+            verdict = protection.judge(state.flow_id, row, docs_by_id, started=bool(is_started),
+                                       deploy_mark=state.sources.get(key))
             if verdict.state == protection.PROTECTED:
                 entry.update(instruction="instruction_kept", instruction_reason=verdict.reason)
                 return
@@ -321,6 +323,9 @@ def _plan_work(state: State, mode: str, instructions: dict[str, dict], registere
                 verdict = None
         elif is_started:
             entry.update(instruction="instruction_kept", instruction_reason=protection.STARTED)
+            return
+        if verdict is not None and _instruction_file(verdict.text, verdict.doc, instructions[target.card_id], locale) == verdict.text:
+            entry.update(instruction="instruction_kept", instruction_reason=protection.HAS_BODY)
             return
         entry.update(instruction="instruction_write")
         work.fills.append(Fill(key, target, verdict, slot))
@@ -610,6 +615,7 @@ def _mode_mismatch(mode: str, deployed: int) -> Optional[str]:
 
 @dataclass
 class _Run:
+    pending: list = field(default_factory=list)
     replaced: list = field(default_factory=list)       # (doc_id, ReplacedFile)
     restore_failed: list = field(default_factory=list)  # doc ids whose original stays kept
 
@@ -621,17 +627,20 @@ def execute(doc_id: str, request: dict, user_id: str, locale: str) -> dict:
     with legacy.plan_save_lock(doc_id):
         doc = _wp_document(doc_id)
         try:
-            return legacy.with_flow_guard(doc["group_id"], lambda: _execute(doc_id, mode, request, user_id, locale, run))
+            result = legacy.with_flow_guard(doc["group_id"], lambda: _execute(doc_id, mode, request, user_id, locale, run))
         except Exception as exc:
             if run.restore_failed:
                 raise DeployError(500, "deploy_restore_incomplete", {
                     "doc_id": doc_id, "doc_ids": sorted(set(run.restore_failed))}) from exc
             raise
+    deployment_bridge.finish(run)
+    return result
 
 
 def _execute(doc_id: str, mode: str, request: dict, user_id: str, locale: str, run: _Run) -> dict:
     legacy.lock_document_row(doc_id)                     # a WP save of another process waits for this commit
     state = _read_state(doc_id)
+    deployment_bridge.lock_rows(state.flow_id, doc_id)
     if state.refusal is not None:
         raise state.refusal
     current = int(state.doc.get("revision_no") or 0)
@@ -695,7 +704,7 @@ def _write(state: State, work: Work, instructions: dict, registered: set[str], u
             return
         verdict = _saved_line(state, key, slot)
         if verdict is None:
-            _create_line(state, key, node, slot, target, instructions, user_id, locale, revision)
+            _create_line(state, key, node, slot, target, instructions, user_id, locale, revision, run)
         elif verdict.state == protection.UNTOUCHED:
             written.append((key, target, verdict.doc, verdict.path, verdict.identity, verdict.text))
         else:
@@ -731,13 +740,8 @@ def _write(state: State, work: Work, instructions: dict, registered: set[str], u
             v = fill.verdict
             written.append((fill.node_key, fill.target, v.doc, v.path, v.identity, v.text))
 
-    replacements = []
-    for key, target, doc, path, identity, text in written:
-        data = _instruction_file(text, doc, instructions[target.card_id], locale).encode("utf-8")
-        legacy.stage_body_save(doc, legacy.storage_relative(path, doc.get("project_id")), len(data), user_id)
-        _mark_instruction(state, key, target, revision, doc["doc_id"], data, user_id)
-        replacements.append((doc, path, identity, data))
-    _replace_files(replacements, run)
+    for key, target, doc, path, identity, text in sorted(written, key=lambda entry: entry[2]["doc_id"]):
+        deployment_bridge.fill(state, key, target, doc, path, identity, text, instructions, user_id, locale, run)
     return {"draft_version": saved.get("draft_version"),
             "created_node_keys": [key_map[k] for k in work.new_keys], "removed_node_keys": list(work.removes),
             "key_map": {c.card_id: key_map[k] for k, c in zip(work.new_keys, work.creates)}}
@@ -778,7 +782,7 @@ def _instruction_file(text: str, doc: dict, document: dict, locale: str) -> str:
 
 
 def _create_line(state: State, key: str, node: dict, slot, target, instructions: dict, user_id: str, locale: str,
-                 revision: int) -> None:
+                 revision: int, run: _Run) -> None:
     """The instruction line has no document even after the draft save: one is made with the body (the card line
     write's own creation) and linked, with the deploy's body save evidence in the same transaction — so the cleanup
     may take it back like any line only the deploy wrote. Its file goes with a rollback (``write_new_file``).
@@ -793,46 +797,6 @@ def _create_line(state: State, key: str, node: dict, slot, target, instructions:
     doc = legacy.document(doc_id) or {}
     path = legacy.file_of(doc)
     data = path.read_bytes()
-    legacy.stage_body_save(doc, legacy.storage_relative(path, doc.get("project_id")), len(data), user_id)
+    deployment_bridge.created(doc, legacy.storage_relative(path, doc.get("project_id")), len(data), user_id, run)
     _mark_instruction(state, key, target, revision, doc_id, data, user_id)
 
-
-def _replace_files(replacements: list, run: _Run) -> None:
-    """The last step: each judged empty draft's file takes its instruction, restorably (D0006 §3.6.5 step 3)."""
-    for doc, path, identity, data in replacements:
-        try:
-            replaced = legacy.replace_file(path, data, identity)
-        except legacy.FileChanged as exc:
-            _restore_now(run)
-            raise DeployError(409, "instruction_target_changed", {"doc_id": doc["doc_id"]}) from exc
-        except BaseException:
-            _restore_now(run)
-            raise
-        run.replaced.append((doc["doc_id"], replaced))
-        _queue_restore(doc["doc_id"], replaced, run)
-        legacy.run_after(replaced.release, on_commit=True)
-
-
-def _restore_now(run: _Run) -> None:
-    for doc_id, replaced in reversed(run.replaced):
-        try:
-            ok = replaced.restore()
-        except OSError:
-            ok = False
-        if not ok:
-            run.restore_failed.append(doc_id)
-
-
-def _queue_restore(doc_id: str, replaced, run: _Run) -> None:
-    runner = legacy.cleanup_runner(f"work plan deploy restore {replaced.path}")
-
-    def restore() -> None:
-        try:
-            ok = replaced.restore()
-        except OSError:
-            ok = False
-        if not ok and doc_id not in run.restore_failed:
-            run.restore_failed.append(doc_id)
-            legacy.log_warning("work plan deploy: original of %s not restored (kept at %s)", doc_id, replaced.keep)
-
-    legacy.run_after(restore if runner is None else (lambda: runner(restore)), on_commit=False)

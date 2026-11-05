@@ -3,6 +3,7 @@
 Handles the business logic for the A registration endpoint (qa_routes.py).
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import json
 import pathlib
@@ -87,7 +88,7 @@ def create_answer_doc(
 
     try:
         stored_path.parent.mkdir(parents=True, exist_ok=True)
-        stored_path.write_text(answer_body, encoding="utf-8")
+        document_write_ports.write_gate("paths", [stored_path], lambda: stored_path.write_text(answer_body, encoding="utf-8"))
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"An error occurred while processing storage: {exc}")
 
@@ -112,7 +113,7 @@ def create_answer_doc(
         })
     except Exception as exc:
         try:
-            stored_path.unlink(missing_ok=True)
+            document_write_ports.write_gate("paths", [stored_path], lambda: stored_path.unlink(missing_ok=True))
         except OSError:
             pass
         raise HTTPException(status_code=500, detail=f"An error occurred during DB registration: {exc}")

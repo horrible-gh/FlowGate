@@ -12,7 +12,7 @@ import {
   type DocumentRelation,
 } from '@/features/document'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { openDocument } from '../../openDocument'
+import { cardDocumentContext, openDocument } from '../../openDocument'
 import { useInspectorResource, type InspectorResourceStatus } from '../../useInspectorResource'
 import { documentsAvailability, documentsErrorKey, documentsView, type DocumentsView } from './documentsModel'
 
@@ -67,7 +67,7 @@ export function useDocuments(target: () => InspectorTarget | null): DocumentsSta
     errorKey,
     reload: resource.reload,
     open: (docId) => {
-      if (docId) openDocument(docId)
+      if (docId) openDocument(docId, 'view', { card: cardDocumentContext(target(), docId) })
     },
   }
 }

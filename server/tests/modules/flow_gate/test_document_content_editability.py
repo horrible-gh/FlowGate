@@ -42,17 +42,18 @@ def test_closed_document_content_is_editable_before_final_approval(env):
     assert result["data"]["doc_review_status"] == "wf_in_progress"
 
 
-def test_document_content_is_locked_after_final_approval(monkeypatch, tmp_path):
+def test_document_content_is_locked_after_final_approval(env):
     from modules.flow_gate.documents.routers import documents as routes
 
-    doc = _r_document(tmp_path, "wf_done")
-    monkeypatch.setattr(routes.document_service, "get_document", lambda _doc_id: doc)
+    doc_id = _doc(FB, 1, "R", review="wf_done", status="closed",
+                  file_path=str(env["storage"] / "R0001.md"))
+    doc = routes.document_service.get_document(doc_id)
 
     with pytest.raises(HTTPException) as exc_info:
         routes.update_document_content(
             doc["doc_id"],
             routes.DocumentContentUpdate(content="updated"),
-            {"user_id": "user-1"},
+            {"user_id": "u_kim"},
         )
 
     assert exc_info.value.status_code == 422

@@ -312,6 +312,7 @@ def test_a_root_without_its_body_file_keeps_the_path_only_behaviour(env):
     data = convert()["data"]
     assert data["file_path"] == f"{GROUP_DIR}/0001-B_requirement.md"
     assert files_under(env["storage"]) == []                                   # nothing is created
+    assert data["revision_no"] == 1  # path-only identity change is still a common-store revision.
 
 
 # ── failures keep everything (V-B1b-1, V-B2-5, V-B1b-2c, V-B1b-2h) ─────────────
@@ -682,7 +683,10 @@ def test_files_other_rows_still_use_are_kept(env):
                     content_sha256=hashlib.sha256(b"alpha").hexdigest(), uploaded_by=USER)
     (old_room / "loose.txt").write_bytes(b"no row")
     absolute = str((env["storage"] / BODY_REL).resolve())
-    make_doc(env, doc_id=f"{FLOW}.0003-M", seq=3, body=None, rel=absolute)    # same body, another spelling
+    # Seed the pre-existing shared-reference defect; normal CREATE must refuse this alias.
+    make_doc(env, doc_id=f"{FLOW}.0003-M", seq=3, body=None, rel="")
+    from modules.flow_gate.db.connection import get_store
+    get_store()._execute("UPDATE documents SET file_path = ? WHERE doc_id = ?", [absolute,f"{FLOW}.0003-M"])
 
     convert()
     assert (old_room / "a.txt").read_bytes() == b"alpha"                        # another row's file
@@ -1424,12 +1428,11 @@ def test_a_cleanup_takes_the_durable_lock_without_a_bump(monkeypatch, dialect, s
 
 @pytest.mark.parametrize("flow", [True, False], ids=["flow_guard", "row_lock"])
 def test_a_commit_cleanup_never_removes_what_another_process_staged_next(env, monkeypatch, flow):
-    """Process A's R→B has committed and its cleanup of the old R body has not run yet when process B (sharing no
-    in-process lock) converts B→R and stages a new R body at that very path. A's cleanup waits on the durable lock
-    while B is inside its guard, then keeps B's file; B's row reads its body and its attachment, and A removed only
-    the old attachment it owned."""
+    """CREATE_FILE refuses a return conversion while the old file awaits committed cleanup.
+    Neither another document's current body nor the pending old file may be moved aside;
+    after the owner cleans its file, a fresh retry succeeds with the new revision/attachments.
+    """
     from modules.flow_gate.documents.attachments import delete_attachment
-
     procs = _Processes(monkeypatch)
     old_id, new_id = make_root(env, flow)
     body_path = env["storage"] / row(env, old_id)["file_path"]
@@ -1437,60 +1440,58 @@ def test_a_commit_cleanup_never_removes_what_another_process_staged_next(env, mo
     add_attachment(env, old_id, "a.txt", b"alpha")
     old_room = room_of(old_id)
     a_cleanup = _pause_cleanup(monkeypatch, procs, "A", body_path.name)
-    held = _in_guard(monkeypatch, procs, pauses=["B"])
-    results: dict = {}
-
+    results = {}
     a = procs.start(results, "A", lambda: convert(old_id))
-    assert a_cleanup.inside.wait(30)
-    assert row(env, old_id) is None and row(env, new_id) is not None and body_path.is_file()   # committed, not cleaned
-    # process C: the B document drops the moved a.txt and gets b.txt, so B's B→R stages into the old room as well
-    c = procs.start(results, "C", lambda: (delete_attachment(new_id, "a.txt", {"user_id": USER}),
-                                         _upload(new_id, "b.txt", b"bravo")))
-    _joined(c)
-    assert results["C"][0] == "ok", results["C"]
-    b = procs.start(results, "B", lambda: convert(new_id, "R"))
-    assert held["B"].inside.wait(30)
-    assert [p.read_bytes() for p in _orphans(body_path)] == [original]   # B moved A's old body aside, staged its own
-    a_cleanup.release.set()
-    time.sleep(1.5)
-    assert a.is_alive() and body_path.is_file()                      # A's cleanup waits for B's guard
-    held["B"].release.set()
-    _joined(a, b)
-
-    assert results["A"][0] == "ok" and results["B"][0] == "ok", results
-    assert row(env, new_id) is None and row(env, old_id) is not None
-    assert body_path.read_bytes() == original and _readable(old_id)  # B's row points at a readable body
+    try:
+        assert a_cleanup.inside.wait(30)
+        assert row(env, old_id) is None and row(env, new_id)["revision_no"] == 1 and body_path.is_file()
+        c = procs.start(results, "C", lambda: (delete_attachment(new_id, "a.txt", {"user_id": USER}),
+                                             _upload(new_id, "b.txt", b"bravo")))
+        _joined(c)
+        assert results["C"][0] == "ok", results["C"]
+        before = snapshot(env)
+        b = procs.start(results, "B", lambda: convert(new_id, "R"))
+        _joined(b)
+        assert results["B"][0] == "error", results["B"]
+        assert snapshot(env) == before and body_path.read_bytes() == original and not _orphans(body_path)
+    finally:
+        a_cleanup.release.set()
+        _joined(a)
+    assert results["A"][0] == "ok" and not body_path.exists()
+    assert not (old_room / "a.txt").exists()
+    converted = convert(new_id, "R")["data"]
+    assert converted["revision_no"] == 2 and row(env, new_id) is None
+    assert body_path.read_bytes() == original and _readable(old_id)
     assert _attachments_read(env, old_id) == {"b.txt": b"bravo"}
-    assert not (old_room / "a.txt").exists()                         # A removed the old file it owned, nothing else
 
 
 @pytest.mark.parametrize("flow", [True, False], ids=["flow_guard", "row_lock"])
 def test_a_rollback_cleanup_never_removes_what_a_retry_of_another_process_staged(env, monkeypatch, flow):
-    """Process A's R→B rolls back after staging; before its cleanup removes the staged B body, process B retries the
-    same conversion and stages a new B body at that path. A's cleanup waits on the durable lock while B is inside
-    its guard, then keeps B's file; B's row reads its body and its attachment."""
+    """A retry must refuse a staged file whose owning rollback has not cleaned it yet.
+    The refusal is before a new snapshot/file write, and retry after cleanup remains valid.
+    """
     procs = _Processes(monkeypatch)
     old_id, new_id = make_root(env, flow)
     new_body = (env["storage"] / row(env, old_id)["file_path"]).with_name("0001-B_requirement.md")
     add_attachment(env, old_id, "a.txt", b"alpha")
     a_cleanup = _pause_cleanup(monkeypatch, procs, "A", new_body.name)
-    held = _in_guard(monkeypatch, procs, pauses=["B"], fails=["A"])
-    results: dict = {}
-
+    _in_guard(monkeypatch, procs, fails=["A"])
+    results = {}
     a = procs.start(results, "A", lambda: convert(old_id))
-    assert a_cleanup.inside.wait(30)
-    assert row(env, new_id) is None and row(env, old_id) is not None and new_body.is_file()    # rolled back, not cleaned
-    b = procs.start(results, "B", lambda: convert(old_id))
-    assert held["B"].inside.wait(30)
-    assert len(_orphans(new_body)) == 1                              # B moved A's staged body aside, staged its own
-    a_cleanup.release.set()
-    time.sleep(1.5)
-    assert a.is_alive() and new_body.is_file()                       # A's cleanup waits for B's guard
-    held["B"].release.set()
-    _joined(a, b)
-
-    assert results["A"][0] == "error" and results["B"][0] == "ok", results
-    assert row(env, old_id) is None and row(env, new_id)["file_path"].endswith(new_body.name)
+    try:
+        assert a_cleanup.inside.wait(30)
+        assert row(env, new_id) is None and row(env, old_id)["revision_no"] == 0 and new_body.is_file()
+        before = snapshot(env)
+        b = procs.start(results, "B", lambda: convert(old_id))
+        _joined(b)
+        assert results["B"][0] == "error", results["B"]
+        assert snapshot(env) == before and not _orphans(new_body)
+    finally:
+        a_cleanup.release.set()
+        _joined(a)
+    assert results["A"][0] == "error" and not new_body.exists()
+    converted = convert(old_id)["data"]
+    assert converted["revision_no"] == 1 and row(env, old_id) is None
     assert new_body.read_bytes() == b"---\ntype: B\n---\nbody\n" and _readable(new_id)
     assert _attachments_read(env, new_id) == {"a.txt": b"alpha"}
 
@@ -1518,3 +1519,29 @@ def test_a_conversion_of_another_process_waits_for_a_cleanup_holding_the_durable
     assert results["A"][0] == "ok" and results["B"][0] == "ok", results
     assert row(env, new_id) is None and body_path.read_bytes() == original and _readable(old_id)
     assert _orphans(body_path) == []                                 # A removed its old body before B staged
+
+
+@pytest.fixture(autouse=True)
+def dedicated_document_write_ports_0127(env, monkeypatch):
+    # Direct service/route fixtures reproduce the composition root's required ports.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration as document_edit
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    document_edit.register()
+
+
+
+def test_conversion_identity_keeps_common_revision_backup_and_event(env):
+    import json
+    from modules.flow_gate.db import document_revisions
+    make_doc(env, body=ORIGINAL_BODY)
+    data = convert()["data"]
+    assert data["doc_id"] == ROOT_B and data["revision_no"] == 1 and row(env, ROOT) is None
+    [backup] = document_revisions.list_by_doc(ROOT_B)
+    assert backup["revision_no"] == 0
+    assert (env["storage"] / backup["backup_path"]).read_bytes() == ORIGINAL_BODY
+    [event] = _sql(env["db"], "SELECT * FROM workflow_events WHERE event_type='doc_edited'")
+    meta = json.loads(event["metadata"])
+    assert event["document_id"] == data["id"] and event["actor_user_id"] == USER
+    assert (meta["origin"], meta["old_doc_id"], meta["final_doc_id"], meta["base_revision_no"], meta["revision_no"]) == (
+        "root_conversion", ROOT, ROOT_B, 0, 1)

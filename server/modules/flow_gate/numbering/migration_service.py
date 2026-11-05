@@ -3,6 +3,7 @@
 Enqueue jobs into the numbering_jobs queue, and process them serially with a single worker.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import json
 import shutil
@@ -83,7 +84,7 @@ def _backup_db_snapshot(project_id: str, backup_dir: Path) -> Path:
     backup_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(_JST).strftime("%Y%m%d_%H%M%S")
     snap_path = backup_dir / f"snapshot_{project_id}_{ts}.json"
-    snap_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+    document_write_ports.write_gate("paths", [snap_path], lambda: snap_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8"))
     return snap_path
 
 
@@ -92,21 +93,22 @@ def _restore_from_snapshot(snapshot_path: Path) -> None:
     store = get_store()
     data = json.loads(snapshot_path.read_text(encoding="utf-8"))
 
-    for grp in data.get("groups", []):
-        store._execute(
-            "UPDATE groups SET group_id=?, updated_at=? WHERE group_id=?",
-            [grp["group_id"], now_iso(), grp["group_id"]],
-        )
-    for sg in data.get("sub_groups", []):
-        store._execute(
-            "UPDATE sub_groups SET sub_group_id=?, updated_at=? WHERE sub_group_id=?",
-            [sg["sub_group_id"], now_iso(), sg["sub_group_id"]],
-        )
-    for doc in data.get("documents", []):
-        store._execute(
-            "UPDATE documents SET doc_id=?, file_path=?, updated_at=? WHERE doc_id=?",
-            [doc["doc_id"], doc.get("file_path"), now_iso(), doc["doc_id"]],
-        )
+    with document_write_ports.write_gate("inventory", "scope", "restore_numbering", snapshot=data):
+        for grp in data.get("groups", []):
+            store._execute(
+                "UPDATE groups SET group_id=?, updated_at=? WHERE group_id=?",
+                [grp["group_id"], now_iso(), grp["group_id"]],
+            )
+        for sg in data.get("sub_groups", []):
+            store._execute(
+                "UPDATE sub_groups SET sub_group_id=?, updated_at=? WHERE sub_group_id=?",
+                [sg["sub_group_id"], now_iso(), sg["sub_group_id"]],
+            )
+        for doc in data.get("documents", []):
+            store._execute(
+                "UPDATE documents SET doc_id=?, file_path=?, updated_at=? WHERE doc_id=?",
+                [doc["doc_id"], doc.get("file_path"), now_iso(), doc["doc_id"]],
+            )
 
 
 def _apply_reformat(
@@ -122,6 +124,11 @@ def _apply_reformat(
     int
         Number of changed entities.
     """
+    return document_write_ports.write_gate("project", project_id,
+        lambda: _apply_non_card_reformat(project_id, target, from_width, to_width))
+
+
+def _apply_non_card_reformat(project_id, target, from_width, to_width):
     from ..storage import filesystem as fs
 
     store = get_store()
@@ -143,14 +150,11 @@ def _apply_reformat(
                 [new_id, now_iso(), old_id],
             )
             # Rename in the filesystem
-            try:
-                from ..storage.paths import project_root as get_proj_root
-                src = get_proj_root(project_id) / old_id
-                dst = get_proj_root(project_id) / new_id
-                if src.exists():
-                    fs.safe_rename(src, dst)
-            except Exception:
-                pass
+            from ..storage.paths import project_root as get_proj_root
+            src = get_proj_root(project_id) / old_id
+            dst = get_proj_root(project_id) / new_id
+            if src.exists():
+                fs.safe_rename(src, dst)
             affected += 1
 
     elif target == "subgroup":
@@ -204,11 +208,8 @@ def _apply_reformat(
                 new_fname = re.sub(r'\d+', lambda mo: str(int(mo.group(0))).zfill(to_width), src.name, count=1)
                 dst = src.parent / new_fname
                 new_path = to_storage_relative(dst, project_id)
-                try:
-                    if src.exists():
-                        fs.safe_rename(src, dst)
-                except Exception:
-                    new_path = old_path
+                if src.exists():
+                    fs.safe_rename(src, dst)
 
             store._execute(
                 "UPDATE documents SET doc_id=?, file_path=?, updated_at=? WHERE doc_id=?",

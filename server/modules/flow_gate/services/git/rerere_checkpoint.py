@@ -4,6 +4,7 @@ Rerere owns replay. The checkpoint ledger owns lineage and per-path provenance;
 the existing resolver/review gate decides whether a candidate can be accepted.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import os
@@ -137,10 +138,10 @@ def _record_replaced_cache_resolution(root: Path, rerere_id: str, content: bytes
         with tempfile.NamedTemporaryFile(dir=cache, prefix="postimage-flowgate-", delete=False) as output:
             temp_name = output.name
             output.write(content)
-        os.replace(temp_name, postimage)
+        document_write_ports.write_gate("paths", [temp_name,postimage], lambda: os.replace(temp_name, postimage))
     finally:
         if temp_name and os.path.exists(temp_name):
-            os.unlink(temp_name)
+            document_write_ports.write_gate("paths", [temp_name], lambda: os.unlink(temp_name))
 
 
 def _run(root: Path) -> None:
@@ -151,13 +152,14 @@ def _run(root: Path) -> None:
 
 
 def _restore(root: Path, originals: dict[str, bytes], keep: set[str]) -> None:
-    from modules.flow_gate.storage.safe_path import resolve_in_root
-    for name, raw in originals.items():
-        if name in keep:
-            continue
-        target = resolve_in_root(root, name)
-        if target is not None:
-            target.write_bytes(raw)
+    with document_write_ports.write_paths([root / name for name in originals if name not in keep]):
+        from modules.flow_gate.storage.safe_path import resolve_in_root
+        for name, raw in originals.items():
+            if name in keep:
+                continue
+            target = resolve_in_root(root, name)
+            if target is not None:
+                document_write_ports.write_gate("paths", [target], lambda: target.write_bytes(raw))
 
 
 def start_session(group_id: str, merge_id: int, root: Path) -> dict | None:

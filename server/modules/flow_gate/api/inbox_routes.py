@@ -5,6 +5,7 @@ Auth: Authorization: Bearer {raw_token}
 action: "new" | "edit"
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import hashlib
 import json
@@ -416,7 +417,7 @@ def update_editable_source_content(
         )
 
     encoded = body.content.encode("utf-8")
-    full_path.write_bytes(encoded)
+    document_write_ports.write_gate("paths", [full_path], lambda: full_path.write_bytes(encoded))
     _emit_source_edit_refresh(project_id, resolved_group_id, path)
 
     response: dict = {
@@ -1674,7 +1675,7 @@ def _write_submission_body(stored_path: pathlib.Path, body: str) -> None:
     bytes the guards checked and a no-op CRLF resubmission is corrupted. The
     read side (_submission_text) is symmetric: newline="" there too.
     """
-    with open(stored_path, "w", encoding="utf-8", newline="") as fh:
+    with document_write_ports.write_paths([stored_path]), open(stored_path, "w", encoding="utf-8", newline="") as fh:
         fh.write(body)
 
 
@@ -2538,13 +2539,28 @@ async def inbox(request: Request):
     # ── Step 1: Form validation ─────────────────────────────────────────────────────
     raw = _extract_bearer(request)
     if raw is None:
-        return _fail(401, "Authorization header is required")
+        from modules.flow_gate.graph_workflow.services import card_document_ports
+        status, payload = card_document_ports.card_edit("normalize", 401,
+            {"error_message": "Authorization header is required"})
+        return JSONResponse(status_code=status, content=payload)
 
     try:
         body = await request.json()
     except Exception:
+        body = None
+    try:
+        dispatch_token = token_service.verify(raw)
+    except HTTPException as exc:
+        if not isinstance(body, dict) or body.get("action") == "edit":
+            from modules.flow_gate.graph_workflow.services import card_document_ports
+            status, payload = card_document_ports.card_edit("normalize", exc.status_code,
+                {"error_message": str(exc.detail)})
+            return JSONResponse(status_code=status, content=payload)
+        dispatch_token = {}
+    if dispatch_token.get("action_scope") == "edit" or (isinstance(body, dict) and body.get("action") == "edit"):
+        return await anyio.to_thread.run_sync(_in_write_session, _handle_edit, request, raw, body)
+    if not isinstance(body, dict):
         return _fail(400, "Request body is not valid JSON")
-
     action = body.get("action", "")
     # "test_run" was dispatched below but missing from this allowlist, so the inbox
     # rejected every action:test_run POST with 400 before reaching _handle_test_run
@@ -2595,6 +2611,7 @@ def _check_context_binding(
     group: Optional[str] = None,
     prev_doc_id: Optional[str] = None,
     target_doc_id: Optional[str] = None,
+    check_graph: bool = True,
 ) -> Optional[JSONResponse]:
     """Return None when the request may proceed, or the 403 to return.
 
@@ -2616,8 +2633,9 @@ def _check_context_binding(
     """
     from modules.flow_gate.services import graph_source_hooks
     try:
-        graph_source_hooks.require_writable(
-            token_rec, "inbox_" + action_handler, report=action_handler == "review")
+        if check_graph:
+            graph_source_hooks.require_writable(
+                token_rec, "inbox_" + action_handler, report=action_handler == "review")
     except graph_source_hooks.GraphSourceError as exc:
         return _fail(409, exc.message, error={"code": exc.code, "details": exc.details})
     token_group = (token_rec.get("group_id") or "").strip() or register_binding.group_of_doc(
@@ -4927,7 +4945,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             work_plan_service.write_body_atomically(stored_path, wp_plan)
             if doc_path is not None:
                 try:
-                    os.unlink(doc_path)
+                    document_write_ports.write_gate("paths", [doc_path], lambda: os.unlink(doc_path))
                 except OSError:
                     pass
         else:
@@ -4948,7 +4966,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
             if doc_path is not None:
                 try:
-                    os.unlink(doc_path)
+                    document_write_ports.write_gate("paths", [doc_path], lambda: os.unlink(doc_path))
                 except OSError:
                     pass
     except OSError as exc:
@@ -5010,157 +5028,177 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # guessing "human" or a provider (TS0010 TC-7).
     _origin_run_id = token_rec.get("ai_run_id")
     _origin_provider_name = _resolve_origin_provider_name(_origin_run_id)
-    try:
-        created_doc = db_docs.create({
-            "doc_id": canonical_doc_id,
-            "project_id": project,
-            "module": module,
-            "group_id": group["group_id"],
-            "type_code": doc_type,
-            "seq": seq,
-            "title": extracted_title,
-            "file_path": to_storage_relative(stored_path, project),
-            "status": "open",
-            "owner_id": actor_user_id,
-            "triggered_by": prev_doc_id,
-            "revision_no": 0,
-            "created_at": now,
-            "updated_at": now,
-            "meta": meta_value,
-            "commit_message": commit_message_draft,
-            "origin_provider_name": _origin_provider_name,
-            "origin_ai_run_id": _origin_run_id,
-            # The TR2 canonical path is derived from the row (tr2_service.canonical_path_for_doc),
-            # so the row must name the branch directory its file is stored under.
-            **({"branch": branch} if tr2_body is not None else {}),
-        })
-        # group 0022 §5 / D0005 §3.4 type ①: create document + query together. The AI
-        # worker attaches low-confidence points as queries on that document
-        # (asker_kind='ai'). On failure, roll back the document and file.
-        new_questions = body.get("questions")
-        if new_questions:
-            from modules.flow_gate.services import q_service
-            q_service.add_questions(
-                doc_id=canonical_doc_id,
-                questions=new_questions,
-                asker_kind="ai",
-                project_id=project,
-                notify_audience=actor_user_id,
-            )
-        if wp_plan is not None:
-            # 0599 T#2: persist the exact canonical AI-created bytes as r0 only
-            # after the document row and any attached questions are registered.
-            work_plan_service.ensure_revision_snapshot(
-                created_doc,
-                stored_path,
-                created_by=actor_user_id,
-                revision_no=0,
-            )
-    except Exception as exc:
-        # storage/DB rollback: q_service validation failures must not leave a half-created
-        # document, and their client-facing 4xx status must survive this route boundary.
-        try:
-            stored_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        try:
-            db_docs.delete(canonical_doc_id)
-        except Exception:
-            pass
-        if isinstance(exc, HTTPException):
-            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
-            return _fail(exc.status_code, detail)
-        return _fail(500, f"DB registration error: {exc}")
+    from modules.flow_gate.storage.files import file_identity, remove_owned_file
+    submission_file_identity = file_identity(stored_path) if stored_path.exists() else None
 
-    if snapshot_provenance:
+    def register_new():
+        tr2_saved = None
         try:
-            snapshot_access_service.attach_tr(
-                str(token_rec.get("ai_run_id") or ""), canonical_doc_id
-            )
-        except Exception:
-            pass
-
-    db_events.create({
-        "event_type": "action_taken",
-        "project_id": project,
-        "group_id": group["group_id"],
-        "document_id": None,
-        "actor_user_id": actor_user_id,
-        "from_state": None,
-        "to_state": "open",
-        "metadata": json.dumps({"action_code": "doc_created", "doc_id": canonical_doc_id}),
-    })
-
-    # ── Step 7.5: Workflow head processing (M: auto-complete / others: pending-review transition) ──────
-    # T823: head-slot registration is best-effort (inside try/except);
-    #       doc_review_status transition is mandatory for non-M (outside try/except).
-    # L0044.0008 §3.1/§3.2: auto-complete types (M memo, CH conversation) are the
-    # single source of truth in AUTO_COMPLETE_TYPES; the literal "M" branches below
-    # generalize to set membership so CH takes the same non-gate path as M.
-    from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
-    try:
-        from modules.flow_gate.db import workflow_sequences as _db_wfseq
-        from modules.flow_gate.workflow.pipeline_service import register_workflow_result
-        head_item = _db_wfseq.get_pending_head_by_group(group["group_id"], project)
-        if head_item is not None and head_item.get("type") == doc_type.upper():
-            if doc_type.upper() in AUTO_COMPLETE_TYPES:
-                # M (memo) / CH (conversation): review step not needed — fill the
-                # result slot. Approval is set unconditionally below (L-AUTO §3.3).
-                _db_wfseq.set_item_result_doc_id(head_item["id"], canonical_doc_id)
-                # NOTE: do NOT silently finalize here even when this memo fills the
-                # last pending slot. AC (final approval) is an explicit review step
-                # (M042 §3.1 — PM rejected silent wf_done). With no pending slots
-                # left, head resolution surfaces AC/pending so the final-approval
-                # screen appears; wf_done is set only when AC is approved.
-                # NR0003: the inbox path previously called mark_sequence_done +
-                # set the parent R to wf_done here, bypassing the AC gate and the
-                # "all steps approved" guard (a memo as the final slot finalized the
-                # whole workflow without review). Aligned with documents.py:819-827.
-            else:
-                # Non-auto-complete with a matching head: register result slot.
-                # Status transition is handled unconditionally below (T823).
-                register_workflow_result(
-                    item_id=head_item["id"],
-                    registered_path=to_storage_relative(stored_path, project),
-                    registered_doc_id=canonical_doc_id,
-                    registered_at=now,
-                    actor_user_id=actor_user_id,
+            created_doc = db_docs.create({
+                "doc_id": canonical_doc_id,
+                "project_id": project,
+                "module": module,
+                "group_id": group["group_id"],
+                "type_code": doc_type,
+                "seq": seq,
+                "title": extracted_title,
+                "file_path": to_storage_relative(stored_path, project),
+                "status": "open",
+                "owner_id": actor_user_id,
+                "triggered_by": prev_doc_id,
+                "revision_no": 0,
+                "created_at": now,
+                "updated_at": now,
+                "meta": meta_value,
+                "commit_message": commit_message_draft,
+                "origin_provider_name": _origin_provider_name,
+                "origin_ai_run_id": _origin_run_id,
+                # The TR2 canonical path is derived from the row (tr2_service.canonical_path_for_doc),
+                # so the row must name the branch directory its file is stored under.
+                **({"branch": branch} if tr2_body is not None else {}),
+            })
+            # group 0022 §5 / D0005 §3.4 type ①: create document + query together. The AI
+            # worker attaches low-confidence points as queries on that document
+            # (asker_kind='ai'). On failure, roll back the document and file.
+            new_questions = body.get("questions")
+            if new_questions:
+                from modules.flow_gate.services import q_service
+                q_service.add_questions(
+                    doc_id=canonical_doc_id,
+                    questions=new_questions,
+                    asker_kind="ai",
+                    project_id=project,
+                    notify_audience=actor_user_id,
                 )
-    except Exception:
-        pass
+            if wp_plan is not None:
+                # 0599 T#2: persist the exact canonical AI-created bytes as r0 only
+                # after the document row and any attached questions are registered.
+                work_plan_service.ensure_revision_snapshot(
+                    created_doc,
+                    stored_path,
+                    created_by=actor_user_id,
+                    revision_no=0,
+                )
+        except Exception as exc:
+            # storage/DB rollback: q_service validation failures must not leave a half-created
+            # document, and their client-facing 4xx status must survive this route boundary.
+            try:
+                remove_owned_file(stored_path, submission_file_identity)
+            except OSError:
+                pass
+            try:
+                db_docs.delete(canonical_doc_id)
+            except Exception:
+                pass
+            if isinstance(exc, HTTPException):
+                detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                return _fail(exc.status_code, detail)
+            return _fail(500, f"DB registration error: {exc}")
 
-    # L0044.0008 §3.3 (L-AUTO): auto-complete types are created already-approved
-    # regardless of whether a matching pending head slot existed above. A standalone-
-    # opened conversation (CH) has no pre-seeded head, so without this its
-    # doc_review_status would leak NULL — violating "approved on creation"
-    # (D0044.0006 §4 / P0044.0007 §3). Idempotent for M (already approved above).
-    if doc_type.upper() in AUTO_COMPLETE_TYPES:
+        if snapshot_provenance:
+            try:
+                snapshot_access_service.attach_tr(
+                    str(token_rec.get("ai_run_id") or ""), canonical_doc_id
+                )
+            except Exception:
+                pass
+
+        db_events.create({
+            "event_type": "action_taken",
+            "project_id": project,
+            "group_id": group["group_id"],
+            "document_id": None,
+            "actor_user_id": actor_user_id,
+            "from_state": None,
+            "to_state": "open",
+            "metadata": json.dumps({"action_code": "doc_created", "doc_id": canonical_doc_id}),
+        })
+
+        # ── Step 7.5: Workflow head processing (M: auto-complete / others: pending-review transition) ──────
+        # T823: head-slot registration is best-effort (inside try/except);
+        #       doc_review_status transition is mandatory for non-M (outside try/except).
+        # L0044.0008 §3.1/§3.2: auto-complete types (M memo, CH conversation) are the
+        # single source of truth in AUTO_COMPLETE_TYPES; the literal "M" branches below
+        # generalize to set membership so CH takes the same non-gate path as M.
+        from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
         try:
-            from modules.flow_gate.db import documents as _db_docs_ac
-            _db_docs_ac.update(canonical_doc_id, {"doc_review_status": "approved"})
+            from modules.flow_gate.db import workflow_sequences as _db_wfseq
+            from modules.flow_gate.workflow.pipeline_service import register_workflow_result
+            head_item = _db_wfseq.get_pending_head_by_group(group["group_id"], project)
+            if head_item is not None and head_item.get("type") == doc_type.upper():
+                if doc_type.upper() in AUTO_COMPLETE_TYPES:
+                    # M (memo) / CH (conversation): review step not needed — fill the
+                    # result slot. Approval is set unconditionally below (L-AUTO §3.3).
+                    _db_wfseq.set_item_result_doc_id(head_item["id"], canonical_doc_id)
+                    # NOTE: do NOT silently finalize here even when this memo fills the
+                    # last pending slot. AC (final approval) is an explicit review step
+                    # (M042 §3.1 — PM rejected silent wf_done). With no pending slots
+                    # left, head resolution surfaces AC/pending so the final-approval
+                    # screen appears; wf_done is set only when AC is approved.
+                    # NR0003: the inbox path previously called mark_sequence_done +
+                    # set the parent R to wf_done here, bypassing the AC gate and the
+                    # "all steps approved" guard (a memo as the final slot finalized the
+                    # whole workflow without review). Aligned with documents.py:819-827.
+                else:
+                    # Non-auto-complete with a matching head: register result slot.
+                    # Status transition is handled unconditionally below (T823).
+                    register_workflow_result(
+                        item_id=head_item["id"],
+                        registered_path=to_storage_relative(stored_path, project),
+                        registered_doc_id=canonical_doc_id,
+                        registered_at=now,
+                        actor_user_id=actor_user_id,
+                    )
         except Exception:
             pass
+
+        # L0044.0008 §3.3 (L-AUTO): auto-complete types are created already-approved
+        # regardless of whether a matching pending head slot existed above. A standalone-
+        # opened conversation (CH) has no pre-seeded head, so without this its
+        # doc_review_status would leak NULL — violating "approved on creation"
+        # (D0044.0006 §4 / P0044.0007 §3). Idempotent for M (already approved above).
+        if doc_type.upper() in AUTO_COMPLETE_TYPES:
+            try:
+                from modules.flow_gate.db import documents as _db_docs_ac
+                _db_docs_ac.update(canonical_doc_id, {"doc_review_status": "approved"})
+            except Exception:
+                pass
+
+        if tr2_body is not None:
+            try:
+                tr2_saved = tr2_service.create(
+                    canonical_doc_id, tr2_body, actor=actor_user_id,
+                    origin=tr2_service.ORIGIN_AI, token_id=token_rec.get("token_id"))
+            except tr2_service.Tr2ValidationError as exc:
+                db_docs.delete(canonical_doc_id)
+                payload = error_payload(exc.code, details=exc.details)
+                payload["help_url"] = "/flowgate/api/v1/help/items/authoring_guide/TR2"
+                return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status, content=payload)
+
+        # T823: all non-auto-complete inbox docs must reach pending_review regardless of head.
+        if doc_type.upper() not in AUTO_COMPLETE_TYPES:
+            from modules.flow_gate.workflow.pipeline_service import transition_document_review
+            transition_document_review(
+                doc_id=canonical_doc_id,
+                action="submit",
+                actor_user_id=actor_user_id,
+                user_permissions={"document.update"},
+            )
+
+        return created_doc, tr2_saved
 
     if tr2_body is not None:
+        from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
         try:
-            tr2_saved = tr2_service.create(
-                canonical_doc_id, tr2_body, actor=actor_user_id,
-                origin=tr2_service.ORIGIN_AI)
-        except tr2_service.Tr2ValidationError as exc:
-            db_docs.delete(canonical_doc_id)
-            payload = error_payload(exc.code, details=exc.details)
-            payload["help_url"] = "/flowgate/api/v1/help/items/authoring_guide/TR2"
-            return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status, content=payload)
-
-    # T823: all non-auto-complete inbox docs must reach pending_review regardless of head.
-    if doc_type.upper() not in AUTO_COMPLETE_TYPES:
-        from modules.flow_gate.workflow.pipeline_service import transition_document_review
-        transition_document_review(
-            doc_id=canonical_doc_id,
-            action="submit",
-            actor_user_id=actor_user_id,
-            user_permissions={"document.update"},
-        )
+            registration = dedicated_write("tr2_registration", group["group_id"], canonical_doc_id,
+                                           stored_path, register_new)
+        except Exception:
+            return _fail(500, "TR2 registration failed.")
+    else:
+        registration = register_new()
+    if isinstance(registration, JSONResponse):
+        return registration
+    created_doc, tr2_saved = registration
 
     # flowgate.v02.0045 D0004 §4.3: a Graph-owned Flow hands the document to the result binder.
     from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact
@@ -5401,992 +5439,10 @@ def _attach_rejection_response(
 
 
 def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
-    """Processing flow for action: edit (D020 §3-4-2)."""
+    """T#2: ordered validation, decisions and storage belong to the registered edit service."""
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    return card_document_ports.card_edit("edit", request, raw_token, body)
 
-    # ── Step 1: Field validation ────────────────────────────────────────────────────
-    project = body.get("project")
-    module = body.get("module")
-    group_raw = body.get("group_name") or body.get("group")
-    doc_id_raw = body.get("doc_id")
-    edit_reason = body.get("edit_reason")
-
-    required_pairs = {
-        "project": project,
-        "module": module,
-        "group_name": group_raw,
-        "doc_id": doc_id_raw,
-        "edit_reason": edit_reason,
-    }
-    for field, value in required_pairs.items():
-        if not value:
-            return _fail(400, f"Required field missing: {field}")
-
-    valid_reasons = {"rejected", "qna_followup", "user_comment", "worker_self"}
-    if edit_reason not in valid_reasons:
-        return _fail(400, "edit_reason value is invalid")
-
-    has_path = body.get("doc_path") is not None
-    has_content = body.get("content") is not None
-    if has_path == has_content:
-        return _fail(400, "Exactly one of doc_path or content must be provided")
-
-    project = str(project)
-    module = str(module)
-    try:
-        group_name = _normalize_group_name(project, module, str(group_raw))
-        doc_id = _normalize_doc_id(group_name, str(doc_id_raw))
-    except ValueError as exc:
-        return _fail(422, str(exc))
-    edit_reason = str(edit_reason)
-    linked_doc_id: Optional[str] = body.get("linked_doc_id")
-    doc_path: Optional[str] = body.get("doc_path")
-    content: Optional[str] = body.get("content")
-    # P0005/T0006: when re-submitting a rejected document, the AI may include its
-    # response to the rejection alongside the body. The body stays the body; this
-    # text is recorded against a rejection so reviewers can see how the AI addressed
-    # their comment. Only meaningful for edit_reason="rejected".
-    rejection_response: Optional[str] = body.get("rejection_response")
-    # 0458 T0007 §2.2-2: and WHICH rejection it answers — the document_reviews row id the
-    # rework mention printed. Optional: an older mention omits the field entirely and the
-    # recorder falls back to its legacy latest-item policy. A field that IS there but names
-    # no row is a different case and records nothing; the boundary keeps the two apart, so
-    # the whole body goes in rather than the value.
-    rejection_review_id = _submitted_review_id(body)
-    rejection_id_value = _submitted_rejection_id(body)
-
-    # ── Step 2: Authentication ─────────────────────────────────────────────────────────
-    try:
-        token_rec = token_service.verify(raw_token)
-    except HTTPException as exc:
-        return _fail(exc.status_code, exc.detail)
-
-    # ── Step 3: Context binding (action, project, group, doc — in that order) ──
-    # This is the check B0001 died on with the axes the wrong way round: the request said
-    # action="new", so it never reached this handler at all. The group axis — the target
-    # document's DB group — is new in 0492 T0018 item 2; nothing compared it before.
-    binding_failure = _check_context_binding(
-        action_handler="edit", project=project, doc=doc_id,
-        token_rec=token_rec, target_doc_id=doc_id,
-    )
-    if binding_failure is not None:
-        return binding_failure
-
-    actor_user_id: str = token_rec["issued_to"]
-
-    # ── Step 4: Permission check (D020 §6-2) ────────────────────────────────────────
-    if not has_permission(actor_user_id, project, "perm_document_update"):
-        return _permission_denied("Insufficient permissions for this operation")
-
-    # ── Step 5: Referential integrity + body validation ──────────────────────────────────────
-    existing_doc = db_docs.get_by_id(doc_id)
-    if existing_doc is None:
-        return _fail(422, f"Referenced document {doc_id} does not exist")
-    final_approved = document_service.is_final_approved(existing_doc)
-    if not document_service.is_document_editable(
-        existing_doc,
-        final_approved=final_approved,
-    ):
-        if final_approved:
-            return _fail(422, "Modification not allowed after final approval.")
-        return _fail(
-            422,
-            f"Modification not allowed for status: {existing_doc.get('status')}",
-        )
-
-    # T0007: rejected resubmissions must prove both their response and target before
-    # any file, revision, workflow state, event, or token can change.  Prepare the
-    # updated history now; Step 7 folds it into the same CAS as the revision bump.
-    rejection_history_update: Optional[str] = None
-    if edit_reason == "rejected":
-        response_text = (rejection_response or "").strip()
-        if not response_text:
-            return _fail(422, "rejection_response is required for a rejected resubmission.")
-        history: list = []
-        raw_history = existing_doc.get("rejection_history")
-        if raw_history:
-            try:
-                history = json.loads(raw_history) if isinstance(raw_history, str) else raw_history
-                if not isinstance(history, list):
-                    history = []
-            except (json.JSONDecodeError, TypeError):
-                history = []
-        from modules.flow_gate.workflow.pipeline_service import (
-            AI_RESPONSE_MAX_LEN,
-            resolve_rejection_target,
-        )
-        target = resolve_rejection_target(
-            history,
-            rejection_id=rejection_id_value,
-            review_id=rejection_review_id,
-        )
-        if target is None:
-            return _fail(
-                409,
-                "The submitted rejection target does not match the current rejection history. "
-                "Refresh the document and retry.",
-            )
-        target["ai_response"] = response_text[:AI_RESPONSE_MAX_LEN]
-        target["responded_at"] = now_iso()
-        target["response_revision_no"] = existing_doc.get("revision_no", 0) + 1
-        # 0582 T0005 SSC: snapshot THIS rework submission's own effective run/provider --
-        # never the review's (a different run) and never a prior response's (a stale
-        # snapshot). action_scope="edit" matches how this very token was admitted;
-        # doc_id=None because a rejected resubmission may answer on behalf of a document
-        # whose doc_ref the run recorded before any anchor/rename, and a legacy/external
-        # token with no bound run degrades to {} exactly like _review_provenance does.
-        from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
-        _response_provenance = resolve_run_provenance(
-            token_rec.get("ai_run_id"), doc_id=None, allowed_action_scopes=("edit",)
-        )
-        target["response_ai_run_id"] = _response_provenance.get("ai_run_id")
-        target["response_actual_provider_id"] = _response_provenance.get("actual_provider_id")
-        target["response_actual_provider_name"] = _response_provenance.get("actual_provider_name")
-        # flowgate.v02.0119 T#2 (T-1): the response is recorded by the AI provider that wrote it (the token's issuer
-        # only as ``response_requested_by``); a response with no provider evidence keeps the issuer as before.
-        target["response_recorded_by"] = _response_provenance.get("actual_provider_id") or actor_user_id
-        target["response_requested_by"] = actor_user_id
-        rejection_history_update = json.dumps(history, ensure_ascii=False)
-
-    if linked_doc_id and db_docs.get_by_id(linked_doc_id) is None:
-        return _fail(422, f"Referenced document {linked_doc_id} does not exist")
-
-    group = _resolve_group(project, group_name)
-    if group is None:
-        return _fail(422, f"Group not found: {group_name}")
-
-    # Disposed-group guard (TR0079.0003 rework — the exact rejected symptom: "documents
-    # in a disposed group still get edited fine"). Editing a document in a discarded group is a forward
-    # action and must be rejected at the source, independent of any client state.
-    disposed = _disposed_group_fail(group["group_id"], "Modification")
-    if disposed is not None:
-        return disposed
-
-    # 0344 TR0008 후속 — 이관이 끝난 대화(CH)의 전체 본문 교체 차단 (0432.0003-NR §7-1,
-    # 0344.0005-L §2-16). 자리는 L §4-1 의 순서 원칙을 따른다: 그룹 차원의 사실(폐기)
-    # 다음, 본문을 들여다보는 검사(프론트매터 identity / 중복 본문 / 지문)보다 앞. 그래서
-    # 이관된 대화에 남의 프론트매터를 붙여 보낸 요청도 identity 오류가 아니라 이 409 를
-    # 받는다 — 워커에게는 "네 문서가 아니다"보다 "턴으로 보내라"가 실행 가능한 안내다.
-    # _maybe_dry_run 보다도 앞이므로 dry_run: true 로 물어도 같은 409 가 나온다.
-    conversation_blocked = _conversation_full_body_edit_fail(existing_doc)
-    if conversation_blocked is not None:
-        return conversation_blocked
-
-    if doc_path is not None:
-        scratch_dir = token_rec.get("scratch_dir") or _token_scratch_dir(
-            token_rec["project"], token_rec["token_id"]
-        )
-        if not validate_doc_path(doc_path, scratch_dir):
-            return _fail(422, f"doc_path is not accessible: {doc_path}")
-        if not os.path.isfile(doc_path):
-            return _fail(422, f"doc_path file does not exist: {doc_path}")
-
-    if content is not None:
-        if isinstance(content, str):
-            content_bytes = content.encode("utf-8")
-        else:
-            content_bytes = content
-        if len(content_bytes) > _content_max():
-            return _fail(422, f"content size exceeds the limit (max {_content_max()} bytes)")
-
-    # ── Step 5.5: Header normalization + frontmatter identity guards ─────────────
-    # Mirrors _handle_new's Step 5.5 (T0004 task 2.2): normalize once and use the
-    # single normalized string for every guard below and the eventual save.
-    edit_body_for_guards: Optional[str] = None
-    edit_normalizations: list[dict] = []
-    _edit_raw_submission_text: Optional[str] = None
-    try:
-        _edit_raw_submission_text = _submission_text(doc_path, content)
-    except OSError as exc:
-        return _fail(422, f"doc_path file could not be read: {exc}")
-    if _edit_raw_submission_text is not None:
-        edit_body_for_guards, edit_normalizations = _normalize_submission_body(
-            _edit_raw_submission_text, where="edit"
-        )
-    # 0672 T0004 stage 3: no Source Bundle provenance for TR (see _handle_new).
-    edit_snapshot_provenance: list[dict] = []
-    if (
-        str(existing_doc.get("type_code") or "").upper() == "TR"
-        and edit_body_for_guards is not None
-    ):
-        edit_body_for_guards, edit_snapshot_provenance = (
-            snapshot_access_service.inject_tr_provenance(
-                edit_body_for_guards, str(token_rec.get("ai_run_id") or "")
-            )
-        )
-    _edit_locale_for_guard = template_provision.normalize_locale(
-        token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
-    )
-    try:
-        frontmatter_fail = _frontmatter_submission_guard(
-            edit_body_for_guards,
-            expected_project=project,
-            expected_module=module,
-            expected_group_id=group["group_id"],
-            expected_doc_type=str(existing_doc.get("type_code") or ""),
-            expected_doc_id=doc_id,
-            expected_target_id=existing_doc.get("target_id") or existing_doc.get("triggered_by"),
-            locale=_edit_locale_for_guard,
-        )
-    except Exception as exc:  # noqa: BLE001 — reported, then rejected; never ignored
-        return _frontmatter_guard_internal_error("edit", exc)
-    if frontmatter_fail is not None:
-        return frontmatter_fail
-
-    # Rejected design-document edits are the same authoring operation and must not
-    # bypass the template structure check that applies to new submissions.
-    edit_doc_type = str(existing_doc.get("type_code") or existing_doc.get("type") or "").upper()
-    design_error = _design_template_submission_error(
-        project=project,
-        doc_type=edit_doc_type,
-        locale=token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko",
-        content=edit_body_for_guards or "",
-    )
-    if design_error is not None:
-        return design_error
-
-    # ── Work plan (WP) body interpretation — edit path (P0009 §5.4) ───────────────
-    # Attaching this to new alone makes edit a wholesale bypass. A rejected work plan
-    # comes back up through edit, and without validation there, a canonical body that
-    # does not match the rules gets saved as-is, and that document never opens as a
-    # table again afterward. The verdict and wording come from the same validator as
-    # new.
-    #
-    # Decision 11: no revision check is applied to edits. Inbox's edit still does not
-    # take a revision number today, and an AI worker fixes one document with the single
-    # token it was given — this is not a situation where two people have the same
-    # screen open. Instead, it returns what changed to what via the response's
-    # change_summary.changed, so the worker can immediately tell whether it overwrote
-    # someone else's value.
-    wp_plan: Optional[dict] = None
-    if edit_doc_type == WORK_PLAN_TYPE:
-        wp_locale = work_plan_service.normalize_locale(
-            token_rec.get("continuation_locale") or request.headers.get("x-locale")
-        )
-        wp_raw = edit_body_for_guards
-        if wp_raw is None:
-            wp_raw = _submission_text(doc_path, content) or ""
-        wp_parsed: object = None
-        try:
-            wp_parsed = json.loads(wp_raw)
-        except (json.JSONDecodeError, ValueError) as exc:
-            return _fail(
-                400,
-                work_plan_service.inbox_not_json_message(wp_raw, exc, wp_locale),
-                help_url=work_plan_service.HELP_TEMPLATE_PATH,
-            )
-        if not isinstance(wp_parsed, dict):
-            return _fail(
-                400,
-                work_plan_service.inbox_not_json_message(wp_raw, None, wp_locale),
-                help_url=work_plan_service.HELP_TEMPLATE_PATH,
-            )
-        try:
-            # 0649 T#1 (NR0003 §5.1): same card-id save checks as the human PUT — the AI
-            # path may not invent ids or drop an existing card's id either.
-            wp_previous = work_plan_service.load_previous_body(existing_doc)
-            wp_plan = work_plan_service.validate(
-                work_plan_service.assign_card_ids(
-                    wp_parsed,
-                    wp_previous,
-                    project_id=project,
-                    action="save",
-                ),
-                project_id=project,
-                doc_id=existing_doc.get("doc_id"),
-                action="save",
-                allow_pre_instruction_attachments=False,
-            )
-            # T0017: same as the human PUT — a started card (v0.1 or v0.2 Graph) keeps its
-            # instruction choice.
-            from modules.flow_gate.services import work_plan_apply_service
-
-            wp_locked = work_plan_apply_service.instruction_mode_lock_errors(existing_doc, wp_previous, wp_plan)
-            if wp_locked:
-                raise work_plan_service.WorkPlanValidationError(wp_locked, action="save")
-            wp_plan = work_plan_service.instruction_mode_defaults(wp_previous, wp_plan)
-        except work_plan_service.WorkPlanValidationError as exc:
-            return _fail(
-                400,
-                work_plan_service.inbox_error_message(exc, wp_locale),
-                help_url=work_plan_service.HELP_TEMPLATE_PATH,
-            )
-
-    if (edit_doc_type or "").upper() == "TS":
-        spec_failure = _spec_ts_submission_failure(
-            edit_body_for_guards
-            if edit_body_for_guards is not None
-            else _submission_text(doc_path, content)
-        )
-        if spec_failure is not None:
-            return spec_failure
-
-    wp_title_locale: Optional[str] = None
-    wp_derived_title: Optional[str] = None
-    wp_meta_value: Optional[str] = None
-    if wp_plan is not None:
-        wp_title_locale = work_plan_service.resolve_title_locale(
-            existing_doc.get("meta"), current_title=existing_doc.get("title"),
-        )
-        wp_derived_title = work_plan_service.derived_title(wp_plan, wp_title_locale)
-        wp_meta_value = json.dumps(
-            work_plan_service.metadata_with_title_locale(
-                existing_doc.get("meta"), wp_title_locale,
-            ),
-            ensure_ascii=False,
-        )
-
-    if edit_doc_type == "TR2":
-        try:
-            proposal = tr2_service.validate(
-                tr2_service.parse(edit_body_for_guards or ""), doc=existing_doc)
-            if body.get("dry_run"):
-                return JSONResponse(content={"ok": True, "dry_run": True, "doc_id": doc_id})
-            saved = tr2_service.save(
-                doc_id, proposal, actor=actor_user_id,
-                expected_revision=existing_doc.get("revision_no") or 0,
-                origin=tr2_service.ORIGIN_AI)
-        except tr2_service.Tr2ValidationError as exc:
-            payload = error_payload(exc.code, details=exc.details)
-            payload["help_url"] = "/flowgate/api/v1/help/items/authoring_guide/TR2"
-            return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status, content=payload)
-        if rejection_history_update is not None:
-            db_docs.update(doc_id, {"rejection_history": rejection_history_update})
-        if edit_reason == "rejected":
-            from modules.flow_gate.workflow.pipeline_service import transition_document_review
-            transition_document_review(
-                doc_id=doc_id, action="submit", actor_user_id=actor_user_id,
-                user_permissions={"document.update"})
-        token_service.consume(token_id=token_rec["token_id"], project_id=project, doc_id=doc_id)
-        spec = saved["body"]["edit_spec"]
-        summary = {"changed": f"edit {sum(e['kind'] == 'edit' for e in spec['edits'])}, "
-                   f"create_file {sum(e['kind'] == 'create_file' for e in spec['edits'])}, "
-                   f"deferred {len(spec['deferred'])}; {spec['termination']}; "
-                   f"gate commands {len(spec['gate']['commands'])}"}
-        return JSONResponse(content={
-            "ok": True, "doc_id": doc_id, "doc_type": "TR2",
-            "revision_no": saved["new_revision"], "body": saved["body"],
-            "change_summary": summary})
-
-    # Mirror _handle_new's cross-group duplicate guard on the edit path. B0106 only
-    # defended `new`, so the same contamination (correct title, stale/reused body from
-    # another group) recurred through inbox edit — most often on CH conversations, whose
-    # body the worker rewrites wholesale every turn (NR0003 §2a). Refuse a substantial
-    # body byte-identical to a document in a *different* group; the current group is
-    # excluded, so an edit that legitimately keeps or extends its own body is never
-    # blocked. The fingerprint is reused at Step 7.1 to (re)persist meta.content_sha256.
-    # Fail-open on any read/lookup error — the guard must never 500 a real edit.
-    edit_fingerprints: dict = {}
-    try:
-        body_for_fp = (
-            edit_body_for_guards
-            if edit_body_for_guards is not None
-            else _submission_text(doc_path, content)
-        )
-        edit_fingerprints = _content_fingerprints(body_for_fp)
-        # Work plans are excluded from this guard for the same reason as the new path:
-        # putting the same plan into another group as-is is the one copy path the
-        # design chose (P0009 DEFERRED).
-        twin = (
-            None if wp_plan is not None
-            else _find_body_twin(edit_fingerprints, exclude_group_id=group["group_id"])
-        )
-        if twin is not None:
-            return _fail(
-                409,
-                "Duplicate body: this content matches "
-                f"{twin['doc_id']} in another group. The submitted body looks like "
-                "stale/reused content (correct title, wrong body). Re-send with this "
-                "document's own content.",
-            )
-    except Exception:  # noqa: BLE001 — guard is defense-in-depth; never 500 a real edit
-        edit_fingerprints = {}  # unreadable doc_path / lookup error → skip; edit still proceeds
-
-    # ── Step 5.7: TR scope validation (0299 R0001) ─────────────────────────────
-    # Attaching this to _handle_new alone makes edit a wholesale bypass. A TR rejected
-    # in human review is resubmitted through edit, and without validation on that path,
-    # the Changed Files list can be rewritten to anything afterward
-    # with nobody cross-checking it. This is the same structure as the precedent where
-    # not attaching new's guard to edit let the same contamination recur (see B0106 in
-    # the dup-body guard comment above).
-    #
-    # The verdict timing differs, so how the result is recorded differs too. edit
-    # already has a document, so a pass/warning updates that document's meta in Step
-    # 7.1; a rejection returns without changing the document.
-    edit_tr_scope: Optional[dict] = None
-    edit_worktree_untracked: Optional[dict] = None
-    # T0004 task 1-5 / NR0003 finding 2,4,5: the normalized locale shared from this
-    # point through Step 5.9 — same rule as the new path (Step 5.7 above).
-    _locale = template_provision.normalize_locale(
-        token_rec.get("continuation_locale") or request.headers.get("x-locale")
-    )
-    if str(existing_doc.get("type_code") or "").upper() in tool_registry.MUTATING_STEP_TYPES:
-        try:
-            scope_body = edit_body_for_guards
-            if scope_body is None:
-                scope_body = _submission_text(doc_path, content)
-            edit_tr_scope = tr_scope_service.evaluate(
-                project_id=project, group_id=group["group_id"], body=scope_body or "",
-                locale=_locale,
-                prior_declared=_prior_tr_declared(group["group_id"], exclude_doc_id=doc_id),
-                attempt_scope=tr_scope_service.resolve_attempt_scope(
-                    token_rec, project, group["group_id"]),
-            )
-        except Exception:  # noqa: BLE001 — a validation failure must not block resubmission
-            edit_tr_scope = None
-        if edit_tr_scope and edit_tr_scope.get("verdict") == tr_scope_service.VERDICT_SKIPPED:
-            edit_tr_scope = None
-        if edit_tr_scope and edit_tr_scope.get("verdict") == tr_scope_service.VERDICT_REJECT:
-            try:
-                db_events.create({
-                    "event_type": "action_taken",
-                    "project_id": project,
-                    "group_id": group["group_id"],
-                    "document_id": None,
-                    "actor_user_id": actor_user_id,
-                    "from_state": None,
-                    "to_state": None,
-                    "metadata": json.dumps({
-                        "action_code": "tr_scope_rejected",
-                        "action": "edit",
-                        "doc_id": doc_id,
-                        "token_id": token_rec.get("token_id"),
-                        "dry_run": bool(_truthy(body.get("dry_run"))),
-                        "stage": edit_tr_scope.get("stage"),
-                        "codes": edit_tr_scope.get("codes"),
-                        "branch": edit_tr_scope.get("branch"),
-                        "scope_source": edit_tr_scope.get("scope_source"),
-                        "attempt_id": edit_tr_scope.get("attempt_id"),
-                        "input_commit": edit_tr_scope.get("input_commit"),
-                        "out_of_scope": edit_tr_scope.get("out_of_scope"),
-                        "unconfirmed": edit_tr_scope.get("unconfirmed"),
-                        "unreported": edit_tr_scope.get("unreported"),
-                    }, ensure_ascii=False),
-                })
-            except Exception:  # noqa: BLE001 — a logging failure must not swallow the rejection itself
-                pass
-            return _fail(
-                422,
-                edit_tr_scope.get("notice") or _TR_SCOPE_FALLBACK_COPY[_locale],
-            )
-
-    # ── Step 5.9: block real registration of corrupted text + body-fingerprint match
-    # (0391 B0001 proposal 3+4, T0005 §5-2/§6) ──
-        edit_worktree_untracked = git_service.worktree_untracked_summary(
-            project, group["group_id"]
-        )
-
-    _edit_encoding_fields: dict[str, Optional[str]] = {"body": _edit_raw_submission_text}
-    if edit_reason:
-        _edit_encoding_fields["edit_reason"] = edit_reason
-    if rejection_response:
-        _edit_encoding_fields["rejection_response"] = rejection_response
-    _edit_encoding_fail = _encoding_guard(
-        fields=_edit_encoding_fields,
-        fingerprint_field="body",
-        body_sha256=body.get("body_sha256"),
-        body_chars=body.get("body_chars"),
-        force_encoding_reason=body.get("force_encoding_reason"),
-        locale=_locale,
-    )
-    if _edit_encoding_fail is not None:
-        return _edit_encoding_fail
-
-    # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.2) ──
-    # All validation has passed; bail out before the first side effect (backup/CAS/consume/SSE).
-    # checks_passed reflects checks actually run on this path (L0007 §1.1/§4 principle):
-    # content_size only when content was supplied; linked/doc_path only when those inputs exist.
-    edit_checks = ["auth", "context_binding", "permission", "referential_integrity", "editable"]
-    if content is not None:
-        edit_checks.append("content_size")
-    if linked_doc_id:
-        edit_checks.append("linked")
-    if doc_path is not None:
-        edit_checks.append("doc_path")
-    if edit_body_for_guards is not None:
-        edit_checks.append("frontmatter_identity")
-    if edit_fingerprints:
-        edit_checks.append("dup_body")
-    if wp_plan is not None:
-        edit_checks.append("work_plan_body")
-    if edit_normalizations:
-        edit_checks.append("header_normalized")
-    edit_would_register: dict = {
-        "action": "edit",
-        "doc_id": doc_id,
-        "checks_passed": edit_checks,
-    }
-    # As with new, a rejection has already returned above, so what lands here is pass/warn.
-    if edit_tr_scope is not None:
-        edit_checks.append("tr_scope")
-        edit_would_register["tr_scope"] = edit_tr_scope
-    if edit_worktree_untracked is not None:
-        edit_would_register["worktree_untracked"] = edit_worktree_untracked
-    if edit_normalizations:
-        edit_would_register["normalizations"] = edit_normalizations
-    dry_resp = _maybe_dry_run(body, token_rec, edit_would_register, _locale)
-    if dry_resp is not None:
-        return dry_resp
-
-    # ── Step 6a: Back up existing file (D020 §4) ────────────────────────────────────
-    current_revision_no: int = existing_doc.get("revision_no", 0)
-    stored_path_str: str = existing_doc.get("file_path", "")
-    # file_path is persisted relative (L0054.0002) → resolve to an absolute Path for
-    # the filesystem operations below. None when the file cannot be located, which
-    # falls through to the recompute branch.
-    existing_branch = (existing_doc.get("branch") or "main") or "main"
-    stored_path = None
-    if stored_path_str:
-        # Prefer the jailed resolve (handles relative + branch drift, confirms the
-        # file exists); fall back to a soft resolve for trusted legacy DB values
-        # that live outside the storage jail (relative→root, absolute→passthrough).
-        stored_path = (
-            resolve_storage_path(stored_path_str, project, branch=existing_branch)
-            or resolve_storage_dir(stored_path_str, project)
-        )
-
-    # backup_path_str stays absolute for the in-request shutil rollback (below);
-    # backup_path_rel is the relative value persisted to document_revisions.
-    backup_path_str: Optional[str] = None
-    backup_path_rel: Optional[str] = None
-    existing_wp_revision: Optional[dict] = None
-    if wp_plan is not None:
-        try:
-            existing_wp_revision = db_revisions.get_single_by_doc_revision(
-                doc_id, current_revision_no,
-            )
-        except db_revisions.RevisionAmbiguityError as exc:
-            return _fail(500, str(exc))
-        if existing_wp_revision is not None:
-            try:
-                existing_wp_path = work_plan_service.resolve_revision_snapshot(
-                    existing_wp_revision,
-                    project_id=project,
-                    doc_id=doc_id,
-                )
-                # Reuse the immutable source for CAS rollback/change summary without
-                # copying over it or registering a second row.
-                backup_path_str = str(existing_wp_path)
-                backup_path_rel = existing_wp_revision.get("backup_path")
-            except work_plan_service.RevisionSnapshotError as exc:
-                return _fail(500, str(exc))
-    if existing_wp_revision is None and stored_path and stored_path.exists():
-        revisions_dir = stored_path.parent / "revisions"
-        revisions_dir.mkdir(parents=True, exist_ok=True)
-        # The backup uses the same extension as the original. A work plan's canonical
-        # body is .json, so hardcoding .md here would pile up the revert copies as text
-        # files (same reason as P0009 §2.6 decision 2).
-        backup_filename = f"{doc_id}.r{current_revision_no}{stored_path.suffix or '.md'}"
-        backup_path = revisions_dir / backup_filename
-        try:
-            if wp_plan is not None:
-                with stored_path.open("rb") as source_fh, backup_path.open("xb") as backup_fh:
-                    shutil.copyfileobj(source_fh, backup_fh)
-                    backup_fh.flush()
-                    os.fsync(backup_fh.fileno())
-            else:
-                shutil.copy2(str(stored_path), str(backup_path))
-            backup_path_str = str(backup_path)
-            backup_path_rel = to_storage_relative(backup_path, project)
-        except OSError as exc:
-            return _fail(500, f"Storage error: {exc}")
-
-    # ── Step 6b: Replace with new content ─────────────────────────────────────────────
-    if stored_path is None:
-        project_settings = db_projects.get_settings(project)
-        branch = (project_settings.get("branch") or "main").strip() if project_settings else "main"
-        stored_path = _resolve_storage_path(
-            project, module, group, doc_id, branch=branch, doc_type=edit_doc_type,
-        )
-
-    try:
-        stored_path.parent.mkdir(parents=True, exist_ok=True)
-        if wp_plan is not None:
-            # Same rule as new: atomically swaps in the standard form the validator
-            # returned, not the characters that were sent (P0009 §2.6 decision 3-4).
-            work_plan_service.write_body_atomically(stored_path, wp_plan)
-        else:
-            # T0004 task 2.2: same rule as _handle_new — write the single
-            # normalized string every guard above already checked, never the
-            # pre-normalization doc_path file / content bytes (see the matching
-            # comment in _handle_new's Step 6), and without newline translation
-            # so the stored bytes are the checked bytes.
-            _write_submission_body(
-                stored_path,
-                edit_body_for_guards if edit_body_for_guards is not None
-                else (_edit_raw_submission_text or ""),
-            )
-    except OSError as exc:
-            return _fail(500, f"Storage error: {exc}")
-
-    # ── Step 7: DB update (CAS) ────────────────────────────────────────────────
-    # Re-point file_path at the location we just wrote (NR0003 §3-A / B0001, T0004).
-    # Step 6b writes the new body to `stored_path`, which may be a *recomputed*
-    # canonical path when the DB's file_path was stale/unresolvable (e.g. after a
-    # time-machine rollback, or a Windows absolute path that broke on host move).
-    # Historically this UPDATE only bumped revision_no/updated_at, so file_path kept
-    # pointing at the old, unresolvable value — the reader (_document_file_path) then
-    # 404'd ("MD file not found") even though the AI had just
-    # rewritten the body. Persist
-    # the actual write location, mirroring _handle_new which records file_path on
-    # creation. to_storage_relative is idempotent and never raises, so this is safe
-    # to fold into the CAS update (stays atomic with the revision bump).
-    new_file_path_rel = to_storage_relative(stored_path, project)
-    store = get_store()
-    now = now_iso()
-    update_fields = ["revision_no = revision_no + 1", "updated_at = ?", "file_path = ?"]
-    update_values: list[object] = [now, new_file_path_rel]
-    if rejection_history_update is not None:
-        update_fields.append("rejection_history = ?")
-        update_values.append(rejection_history_update)
-    if wp_plan is not None:
-        update_fields.extend(["title = ?", "meta = ?"])
-        update_values.extend([wp_derived_title, wp_meta_value])
-    store._execute(
-        f"UPDATE documents SET {', '.join(update_fields)} "
-        "WHERE doc_id = ? AND revision_no = ?",
-        [*update_values, doc_id, current_revision_no],
-    )
-    refreshed = db_docs.get_by_id(doc_id)
-    if refreshed is None or refreshed.get("revision_no") != current_revision_no + 1:
-        # CAS conflict → rollback
-        if backup_path_str:
-            try:
-                shutil.copy2(backup_path_str, str(stored_path))
-            except OSError:
-                pass
-        return _fail(409, "Concurrent modification conflict. Please retry.")
-
-    new_revision_no: int = refreshed["revision_no"]
-
-    if edit_snapshot_provenance:
-        try:
-            snapshot_access_service.attach_tr(
-                str(token_rec.get("ai_run_id") or ""), doc_id
-            )
-        except Exception:
-            pass
-
-    # ── Step 7.1: Persist body fingerprint (NR0003 §4-2) ─────────────────────────────
-    # The dup-body guard can only catch a twin whose meta carries content_sha256.
-    # _handle_new persists it on creation, but an edited/grown body — notably an
-    # accumulating CH conversation — never updated it, so the *source* of a future
-    # contamination stayed invisible to the guard (NR0003 §2b: attaching the guard to
-    # edit still won't match without a source fingerprint). Refresh it on every body
-    # change: write the
-    # new hash for a substantial body, else drop a now-stale hash so the guard can never
-    # match an outdated body. Best-effort: a failure here must not break the edit that
-    # already committed (mirrors the other Step 7.x best-effort blocks).
-    try:
-        _existing_meta = existing_doc.get("meta")
-        _meta_obj = json.loads(_existing_meta) if _existing_meta else {}
-        if not isinstance(_meta_obj, dict):
-            _meta_obj = {}
-        if edit_fingerprints:
-            _meta_obj.update(edit_fingerprints)
-        else:
-            _meta_obj.pop("content_sha256", None)
-            _meta_obj.pop("content_sha256_norm", None)
-        # 0299: if the body changed, the reported list may have changed too, so the
-        # verdict is overwritten with a fresh one. When it changed to not-subject-to-
-        # validation (e.g. integration turned off), the old verdict is not left behind
-        # — leaving a card on screen that no longer matches the current state is worse
-        # than showing nothing.
-        if edit_tr_scope is not None:
-            _meta_obj["tr_scope"] = _tr_scope_meta(edit_tr_scope)
-        else:
-            _meta_obj.pop("tr_scope", None)
-        # 0391 T0005 §5-6: record the corruption/fingerprint bypass reason for audit purposes.
-        _edit_force_encoding_reason = str(body.get("force_encoding_reason") or "").strip()
-        if _edit_force_encoding_reason:
-            _meta_obj["force_encoding_reason"] = _edit_force_encoding_reason
-        if wp_plan is not None and wp_title_locale is not None:
-            _meta_obj = work_plan_service.metadata_with_title_locale(
-                _meta_obj, wp_title_locale,
-            )
-        db_docs.update(doc_id, {"meta": json.dumps(_meta_obj) if _meta_obj else None})
-    except Exception as _fp_exc:  # noqa: BLE001 — best-effort; edit already committed
-        import LogAssist.log as logger
-        logger.warning(f"[inbox edit] Step 7.1 fingerprint persist failed (ignored): {_fp_exc}")
-
-    # document_revisions INSERT
-    if backup_path_str:
-        db_revisions.create({
-            "doc_id": doc_id,
-            "revision_no": current_revision_no,
-            "backup_path": backup_path_rel,
-            "edit_reason": edit_reason,
-            "linked_doc_id": linked_doc_id,
-            "created_by": actor_user_id,
-            "created_at": now,
-        })
-
-    db_events.create({
-        "event_type": "doc_edited",
-        "project_id": project,
-        "group_id": group["group_id"],
-        "document_id": None,
-        "actor_user_id": actor_user_id,
-        "from_state": None,
-        "to_state": None,
-        "metadata": json.dumps({
-            "doc_id": doc_id,
-            "edit_reason": edit_reason,
-            "linked_doc_id": linked_doc_id,
-            "revision_no": new_revision_no,
-        }),
-    })
-
-    # ── Step 7.5: Transition doc_review_status → revised when edit_reason=rejected ──────
-    # B0046: the rejected→revised transition MUST NOT hang off the in-progress head
-    # matching this doc's type. A time-machine reopen restores doc_review_status but not
-    # sequence-head alignment, so the head can resolve to a trailing slot (or None). The
-    # old code nested the transition inside that head guard, so on a time-machine resubmit
-    # the transition was skipped, the doc stayed 'rejected', and — because the Step 9 SSE
-    # below is gated on doc_review_status == 'revised' — no DOC_REVIEW_STATUS_CHANGED was
-    # broadcast, leaving the reviewer's action bar stuck on the [Revision complete] rework toolbar
-    # instead of flipping back to Approve/Reject. Separate the transition out of the head guard
-    # so it always runs on a rejected resubmit (NR0003 candidate 2).
-    #
-    # 0457 B0001 / NR0003 §1: the other half — the re-registration — is no longer gated on
-    # the head either, because the head was the wrong question to ask. B0046 left it here
-    # reasoning that register_workflow_result "needs the head item id"; it needs *a slot
-    # id*, and the correct one is the slot this document is already in. Asking
-    # get_in_progress_head_by_group (the one selector ordered by updated_at DESC rather
-    # than sort_order) returned the most recently touched slot, and when a plan pours two
-    # sets the sequence holds two slots of the same type — so the `head.type == doc_type`
-    # check passed on a stranger's slot and the resubmit evicted the document sitting
-    # there. A resubmit belongs in its own slot or in none: get_item_by_result_doc_id is
-    # the reverse lookup that answers exactly that, and when it answers nothing (the doc
-    # was never registered, or a reopen detached it) the registration is simply skipped —
-    # the transition below still runs, so 'revised' and the Step 9 SSE are unaffected.
-    #
-    # The registration is deliberately NOT wrapped in a catch-all any more. A conflict
-    # here means something tried to take a slot that is not its own; swallowing it into a
-    # log line is how B0001 stayed invisible for a day. It fails the request.
-    if edit_reason == "rejected":
-        from modules.flow_gate.db import workflow_sequences as _db_wfseq
-        from modules.flow_gate.workflow.pipeline_service import (
-            TransitionError,
-            WorkflowSlotConflictError,
-            register_workflow_result,
-            transition_document_review,
-        )
-        import LogAssist.log as logger
-        own_item = _db_wfseq.get_item_by_result_doc_id(doc_id)
-        if own_item is not None:
-            try:
-                register_workflow_result(
-                    item_id=own_item["id"],
-                    registered_path=to_storage_relative(stored_path, project),
-                    registered_doc_id=doc_id,
-                    registered_at=now,
-                    actor_user_id=actor_user_id,
-                )
-            except WorkflowSlotConflictError as _slot_exc:
-                # Reached only if the slot changed hands between the reverse lookup and
-                # the claim. Answer 409 rather than letting it read as a server fault,
-                # and name both documents so the eviction attempt is legible without
-                # opening the log. The token is not consumed (Step 8 is below), so the
-                # worker can retry once the slot is sorted out.
-                return _fail(
-                    409,
-                    f"Cannot re-register {doc_id}: workflow slot item_id="
-                    f"{_slot_exc.item_id} is held by {_slot_exc.existing_doc_id}. "
-                    "The rejected document was not attached to another document's slot.",
-                )
-        # DB004 §6.1: the doc_review_status transition is the caller's responsibility and is
-        # INDEPENDENT of the workflow head — transition_document_review reads only the doc's
-        # own doc_review_status. Run it unconditionally so a rejected resubmit always advances
-        # rejected→revised (which fires the Step 9 SSE), even when the head is misaligned
-        # (time-machine) or absent.
-        try:
-            transition_document_review(
-                doc_id=doc_id,
-                action="submit",
-                actor_user_id=actor_user_id,
-                user_permissions={"document.update"},
-            )
-        except (TransitionError, ValueError, PermissionError) as _tr_exc:
-            logger.warning(f"[inbox edit] Step 7.5 transition skipped ({doc_id}): {_tr_exc}")
-        # T0007: the response was already written atomically with the revision CAS.
-
-    # flowgate.v02.0083 WP-4: a Graph-owned Flow hands the new revision to the result binder, as a registration's
-    # contact does (before the consume): a node's result revised in place is a new submission its card follows.
-    from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact
-    _graph_contact.after_inbox_edited(group["group_id"], doc_id, new_revision_no, token_rec.get("token_id"))
-
-    # ── Step 8: Token consumption ────────────────────────────────────────────────────
-    token_service.consume(
-        token_id=token_rec["token_id"],
-        project_id=project,
-        doc_id=doc_id,
-    )
-
-    # 0064 T-B4d (P0006 §4.2.5): the AI's card title candidate, read apart from the document, after the commit and
-    # the consume. It never changes this response, the document, the token or a review (never raises).
-    from modules.flow_gate.services import node_title_hooks
-    node_title_hooks.after_registration(group["group_id"], doc_id, token_rec.get("token_id"), body.get("node_title"),
-                                        "edit")
-
-    # ── Step 9: Screen push (Phase 2) ──────────────────────────────────────────
-    try:
-        from modules.flow_gate.api.v1.events.publisher import publish_event_threadsafe, FlowEvent
-        from modules.flow_gate.api.v1.events.event_types import EventType
-
-        def _push():
-            base = dict(project=project, group_id=group["group_id"],
-                        doc_id=doc_id, audience=actor_user_id)
-            publish_event_threadsafe(FlowEvent(
-                event_type=EventType.FILE_EXPLORER_REFRESH,
-                payload={"operation": "updated", "stored_path": str(stored_path)},
-                **base,
-            ))
-            refreshed_doc = db_docs.get_by_id(doc_id)
-            publish_event_threadsafe(FlowEvent(
-                event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
-                payload={"operation": "updated", "doc_id": doc_id,
-                         "type": refreshed_doc.get("type_code") if refreshed_doc else None,
-                         "title": refreshed_doc.get("title") if refreshed_doc else doc_id,
-                         "status": refreshed_doc.get("status") if refreshed_doc else None,
-                         "revision_no": new_revision_no},
-                **base,
-            ))
-            # L0044.0008 §8 (I-SSE): a conversation (CH) turn-append must reach the
-            # human owner's live view even when the AI/service token that submitted
-            # the edit is a different subject than the owner. The publishes above are
-            # audience=actor_user_id only; additionally deliver an owner-targeted
-            # DOCUMENT_EXPLORER_REFRESH so the chat view auto-updates regardless of
-            # which subject holds the edit token. Skipped when owner == actor (already
-            # delivered) and for non-conversation types (memo/M behaviour unchanged).
-            from modules.flow_gate.documents.routers.documents import CONVERSATION_TYPE_CODES
-            if refreshed_doc and (refreshed_doc.get("type_code") or "").upper() in CONVERSATION_TYPE_CODES:
-                _owner_id = refreshed_doc.get("owner_id")
-                if _owner_id and _owner_id != actor_user_id:
-                    publish_event_threadsafe(FlowEvent(
-                        event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
-                        payload={"operation": "updated", "doc_id": doc_id,
-                                 "type": refreshed_doc.get("type_code"),
-                                 "title": refreshed_doc.get("title"),
-                                 "status": refreshed_doc.get("status"),
-                                 "revision_no": new_revision_no},
-                        project=project, group_id=group["group_id"],
-                        doc_id=doc_id, audience=_owner_id,
-                    ))
-            publish_event_threadsafe(FlowEvent(
-                event_type=EventType.GROUP_VIEW_REFRESH,
-                payload={"group_id": group["group_id"], "reason": "document_updated"},
-                **base,
-            ))
-            publish_event_threadsafe(FlowEvent(
-                event_type=EventType.EDIT_MARKER_ADDED,
-                payload={"doc_id": doc_id, "revision_no": new_revision_no,
-                         "edit_reason": edit_reason, "linked_doc_id": linked_doc_id},
-                **base,
-            ))
-            # M026 Fix-4: SSE broadcast on rejected → revised transition
-            if edit_reason == "rejected":
-                edited_doc = db_docs.get_by_id(doc_id)
-                if edited_doc and edited_doc.get("doc_review_status") == "revised":
-                    from modules.flow_gate.api.v1.events.publisher import broadcast_event_threadsafe
-                    from modules.flow_gate.workflow.pipeline_service import (
-                        enrich_rejection_history_provenance,
-                        parse_rejection_history,
-                    )
-                    # flowgate.default.0561 T0004: the rework response (ai_response /
-                    # responded_at / response_revision_no) is already written into
-                    # rejection_history atomically with the revision CAS above (T0007),
-                    # but this payload used to carry only the status flip. DocHeader's
-                    # fg:doc_review_status_changed listener only overwrites
-                    # doc.rejection_history when the key is PRESENT on the payload, so
-                    # omitting it here left the sidebar's AI response thread blank until
-                    # a manual reload/reopen even though the row was already saved.
-                    #
-                    # 0582 TR0006 rev1: GET /document already runs this same list through
-                    # enrich_rejection_history_provenance (document_routes.py /
-                    # documents/routers/documents.py) before a browser ever sees it. This
-                    # broadcast is the OTHER path a browser's rejection_history can come
-                    # from, and DocHeader's listener replaces its whole enriched array with
-                    # whatever this payload carries -- an un-enriched list here showed the
-                    # just-recorded response's provider as undefined ("AI · 외부/미확인")
-                    # until the next manual GET.
-                    broadcast_event_threadsafe(FlowEvent(
-                        event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
-                        payload={
-                            "doc_id": doc_id,
-                            "prev_status": "rejected",
-                            "next_status": "revised",
-                            "rejection_reason": None,
-                            "rejection_history": enrich_rejection_history_provenance(
-                                parse_rejection_history(edited_doc.get("rejection_history"))
-                            ),
-                        },
-                        audience="*",
-                        doc_id=doc_id,
-                        project=project,
-                        group_id=group["group_id"],
-                    ))
-
-        # 0279 T0007: _push is now synchronous and the *_threadsafe publishers
-        # schedule onto the captured main loop themselves, so the old
-        # get_event_loop/ensure_future/asyncio.run dance is gone. That dance was
-        # also unsound from a worker thread: it would have built a NEW loop and
-        # published into queues owned by the main loop, delivering nothing —
-        # exactly the failure publish_event_threadsafe was written to fix.
-        _push()
-    except Exception as _push_exc:
-        import LogAssist.log as logger
-        logger.warning(f"[inbox edit] Step 9 SSE publish failed (ignored): {_push_exc}")
-
-    # ── Step 10: Response ─────────────────────────────────────────────────────────
-    resp_body = {
-        "ok": True,
-        "doc_id": doc_id,
-        "stored_path": str(stored_path),
-        "previous_revision_path": backup_path_str,
-        "revision_no": new_revision_no,
-        "message": f"{doc_id} registered. You may end the session.",
-    }
-    if edit_normalizations:
-        resp_body["normalizations"] = edit_normalizations
-    # 0370 set 4 (P0002 scenarios 14, 16): the "before save" to compare against is the
-    # backup file Step 6a already dropped. So there is nothing new to save for the
-    # summary's sake. If there is no backup (e.g. a copy failure), it just gives up on
-    # the summary and still treats the save as a success.
-    if wp_plan is not None:
-        # Decision 11: returns what changed to what. The "before save" to compare
-        # against is the backup Step 6a dropped. If the backup cannot be read (a copy
-        # failure, or a corrupted old canonical body), it just gives up on the
-        # comparison and still treats the save as a success — a save that already
-        # finished must never be turned into a failure over the summary.
-        wp_before: Optional[dict] = None
-        if backup_path_str:
-            try:
-                with open(backup_path_str, encoding="utf-8") as _wp_fh:
-                    _wp_prev = json.load(_wp_fh)
-                if isinstance(_wp_prev, dict):
-                    wp_before = _wp_prev
-            except Exception as _wp_exc:  # noqa: BLE001
-                import LogAssist.log as logger
-                logger.warning(f"[inbox edit] work plan before-image unreadable (ignored): {_wp_exc}")
-        resp_body["change_summary"] = work_plan_service.change_summary(wp_plan, wp_before, locale=_locale)
-        resp_body["doc_type"] = WORK_PLAN_TYPE
-        resp_body["title"] = refreshed.get("title")
-        resp_body["body"] = wp_plan
-    else:
-        resp_body["change_summary"] = _build_change_summary(
-            doc_id=doc_id,
-            after_path=stored_path,
-            after_revision_no=new_revision_no,
-            before_path=backup_path_str,
-            before_revision_no=current_revision_no,
-        )
-    if edit_worktree_untracked is not None:
-        resp_body["worktree_untracked"] = edit_worktree_untracked
-    _record_change_summary(doc_id, new_revision_no, resp_body["change_summary"], token_rec.get("issued_to"))
-    return JSONResponse(content=resp_body)
-
-
-# ── Internal helpers ─────────────────────────────────────────────────────────────────
 
 def _token_scratch_dir(project: str, token_id: str) -> str:
     """Return scratch directory path string (delegated to single source of truth, D10 fix).

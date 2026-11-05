@@ -22,12 +22,14 @@ import { documentIoGuarded, resetDocumentEditRegistry } from '@/features/documen
 import { documentIoReadFile, documentIoUpload, resetDocumentIo } from '@/features/documentWindow/documentIo'
 import { closeAllWorkPlanEditWindows, workPlanEditWindowList } from '@/features/workPlanWindow/workPlanEditWindows'
 import { prepareInspectorI18n, selectionOf } from './support/inspectorSupport'
+import { CARD, cardDocumentBridge } from '../../documentWindow/cardDocumentBridge'
 
 const settingsNodeRead = vi.hoisted(() => vi.fn())
 const infoRead = vi.hoisted(() => vi.fn())
 const download = vi.hoisted(() => vi.fn())
 const planEditRead = vi.hoisted(() => vi.fn())
 const contentSave = vi.hoisted(() => vi.fn())
+const cardBridge = cardDocumentBridge(vi.fn(), contentSave)
 
 vi.mock('@shared/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@shared/api')>()
@@ -44,6 +46,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentDownload: (...args: unknown[]) => download(...args),
     workPlanEditRead: (...args: unknown[]) => planEditRead(...args),
     documentContentSave: (...args: unknown[]) => contentSave(...args),
+    cardDocumentRead: (...args: unknown[]) => cardBridge.read(...(args as [never])),
+    cardDocumentRevise: (...args: unknown[]) => cardBridge.revise(...(args as [never, never])),
   }
 })
 
@@ -212,7 +216,7 @@ describe('card document lines on the Frame', () => {
     const id = doc('0009', 'T')
     const w = await mountFrame(taskNode([line('instruction', 'T', id, 'human')]))
     let finishRead: (text: string) => void = () => {}
-    const run = documentIoUpload(id, { pick: async () => new File(['x'], 'x.md'), read: () => new Promise((resolve) => (finishRead = resolve)) })
+    const run = documentIoUpload(id, { card: CARD(id), pick: async () => new File(['x'], 'x.md'), read: () => new Promise((resolve) => (finishRead = resolve)) })
     await flushPromises()
     expect(documentIoGuarded(id)).toBe(true)
     const row = rows(w)[0]

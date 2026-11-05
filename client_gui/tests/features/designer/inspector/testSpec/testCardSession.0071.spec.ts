@@ -14,12 +14,14 @@ import { installProjectEventStream, removeProjectEventStream } from '../support/
 import { INSPECTOR_REFRESH_COALESCE_MS } from '@/features/designer/inspector/useInspectorResource'
 import { TS_DOC, TSR_DOC, TS_NODE, testSelection, tsDocument, tsrDocument, liveRun, runRow } from './testSpecFixtures'
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), node: vi.fn(), choices: vi.fn(), setting: vi.fn(), guard: vi.fn(), activity: vi.fn(), run: vi.fn(), cancel: vi.fn(), save: vi.fn(), retry: vi.fn(), enter: vi.fn(), ai: vi.fn() }))
+const mocks = vi.hoisted(() => ({ read: vi.fn(), node: vi.fn(), choices: vi.fn(), setting: vi.fn(), guard: vi.fn(), activity: vi.fn(), run: vi.fn(), cancel: vi.fn(), save: vi.fn(), structured: vi.fn(), retry: vi.fn(), enter: vi.fn(), ai: vi.fn() }))
 vi.mock('@/features/document', async (original) => {
   const actual = await original<typeof import('@/features/document')>()
   return { ...actual, testSpecRead: mocks.read, settingsNodeRead: mocks.node, settingsChoicesRead: mocks.choices, settingsNodeWrite: mocks.setting,
     reviewDocumentRead: mocks.guard, reviewActivityRead: mocks.activity, testSpecRunStart: mocks.run, testSpecRunCancel: mocks.cancel,
-    testSpecSave: mocks.save, testSpecCaseRun: mocks.retry, testSpecResultEnter: mocks.enter,
+    cardDocumentRevise: (...args: unknown[]) => mocks.save(...args), testSpecCaseRun: mocks.retry,
+    // flowgate.v02.0127 T#5: the structured base snapshot (one read of the card's test-spec projection) and the v2 revise.
+    cardDocumentStructuredRead: async (...args: unknown[]) => (mocks.structured(...args) ?? ({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content: 'x', bodyState: 'readable', line: {}, projection: { cases: [] } })), testSpecResultEnter: mocks.enter,
     documentHistoryRead: async (id: string) => actual.toDocumentHistory({ doc_id: id }) }
 })
 vi.mock('@/features/designer/inspector/openDocument', async (original) => {
@@ -43,6 +45,10 @@ let editable: boolean, disposed: boolean, activity: Record<string, unknown>, loc
 let wrapper: VueWrapper | null = null
 let target = shallowRef(makeTarget())
 const failure = (status: number, error: string) => ({ isAxiosError: true, response: { status, data: { error } } })
+/** A /api/v2 error answer `{ ok: false, error: { code, params } }`. */
+const v2failure = (status: number, code: string) => ({ isAxiosError: true, response: { status, data: { ok: false, error: { code, params: {} } } } })
+/** A pin that belongs to no snapshot of this card (used where a command is refused before any request). */
+const NO_PIN = { base: { docId: 'none', revisionNo: 0, ctx: { projectId: 'p', flowId: 'f', nodeKey: 'n', ownerSlot: 'scenario', openedDocId: 'none' } }, title: null, cases: [] as never[] }
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>((done) => { resolve = done }); return { promise, resolve } }
 function settings(key: string) {
   const values = stored.get(key) ?? {}
@@ -79,7 +85,7 @@ beforeEach(() => {
   mocks.activity.mockImplementation(async () => toReviewActivity(activity))
   mocks.run.mockImplementation(async () => { const current = views.get(TS_DOC)!; current.active_run = liveRun('run-live'); current.last_execution = current.active_run; return { runId: 'run-live', status: 'running' } })
   mocks.cancel.mockImplementation(async () => { const current = views.get(TS_DOC)!; current.active_run = liveRun('run-live', { status: 'cancelling' }); return { runId: 'run-live', status: 'cancelling' } })
-  mocks.save.mockResolvedValue(undefined); mocks.retry.mockResolvedValue({ runId: 'retry', status: 'running' }); mocks.enter.mockResolvedValue(undefined)
+  mocks.save.mockResolvedValue({ ok: true, doc_id: TS_DOC, revision_no: 5, updated_at: 'u', replayed: false, line: {} }); mocks.retry.mockResolvedValue({ runId: 'retry', status: 'running' }); mocks.enter.mockResolvedValue(undefined)
 })
 afterEach(() => { wrapper?.unmount(); wrapper = null; removeProjectEventStream(); document.body.innerHTML = ''; vi.useRealTimers() })
 
@@ -172,7 +178,7 @@ describe('v8 shared test card session (0071 T1)', () => {
     expect(card.canOpen('scenario')).toBe(true)
     expect(card.canOpen('case')).toBe(false)
     expect(await card.run()).toBe(false)
-    expect(await card.saveCases([])).toBe(false)
+    expect(await card.saveCases(NO_PIN, () => [])).toBe(false)
     expect(await card.changeSetting('result_cause', 'human')).toBe(false)
     activity = { active: false }
     mocks.read.mockRejectedValue(new Error('offline'))
@@ -199,7 +205,7 @@ describe('v8 shared test card session (0071 T1)', () => {
     await render(); const card = contexts.one
     target.value = { ...target.value, readOnly: 'revision' }; await flushPromises()
     expect(card.can('caseSave').reason).toBe('reason.read_only_revision')
-    expect(await card.saveCases([])).toBe(false); expect(await card.run()).toBe(false)
+    expect(await card.saveCases(NO_PIN, () => [])).toBe(false); expect(await card.run()).toBe(false)
     expect(card.canOpen('scenario')).toBe(true)
     target.value = { ...target.value, readOnly: null }; disposed = true; await card.reload()
     expect(card.can('run').reason).toBe('reason.disposed')
@@ -218,14 +224,22 @@ describe('v8 shared test card session (0071 T1)', () => {
     original.title = 'Keep H1'; (original.cases as any[])[0] = { ...(original.cases as any[])[0], category: 'normal', requirement: 'R1', procedure: 'steps', expected: 'ok', check_points: 'keep', input: 'hidden', automation_ref: 'tests/test_x.py::test_x', test_assets: 'data/input.json' }
     views.set(TS_DOC, original); await render(); const card = contexts.one
     const payload = card.cases.value.map(testSpecCasePayload)
-    expect(await card.saveCases(payload)).toBe(true)
-    expect(mocks.save).toHaveBeenCalledWith(TS_DOC, payload, 'Keep H1')
+    // The case editing pins ONE v2 response (revision 4, its cases and title together); nothing is re-read before the save.
+    mocks.structured.mockResolvedValue({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content: 'x', bodyState: 'readable', line: {}, projection: { title: 'Keep H1', cases: original.cases } })
+    const pin = (await card.pinCases())!
+    expect(pin.base).toMatchObject({ docId: TS_DOC, revisionNo: 4, ctx: { flowId: base.flowId, nodeKey: 'gn_a' } })
+    expect(await card.saveCases(pin, (cases) => cases.map(testSpecCasePayload))).toBe(true)
+    expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ flowId: base.flowId, nodeKey: 'gn_a', ownerSlot: 'scenario' }),
+      expect.objectContaining({ expectedDocId: TS_DOC, expectedRevision: 4, command: { kind: 'ts_spec', cases: payload, title: 'Keep H1' } }))
+    expect((mocks.save.mock.calls[0][1] as { idempotencyKey: string }).idempotencyKey).toMatch(/^[0-9a-f-]{36}$/)
     expect(payload[0]).toMatchObject({ input: 'hidden', check_points: 'keep', automation_ref: 'tests/test_x.py::test_x', test_assets: 'data/input.json' })
-    mocks.save.mockRejectedValueOnce(failure(403, 'permission_denied'))
-    expect(await card.saveCases(payload)).toBe(false)
+    mocks.save.mockRejectedValueOnce(v2failure(403, 'permission_denied'))
+    expect(await card.saveCases(pin, (cases) => cases.map(testSpecCasePayload))).toBe(false)
+    // The second save uses the confirmed N+1 of the first (own ACK of this pin), not a re-read revision.
+    expect(mocks.save.mock.calls[1][1]).toMatchObject({ expectedRevision: 5 })
     expect(card.can('rawSave').reason).toBe('reason.forbidden')
     expect(card.can('run').enabled).toBe(true)
-    expect(await card.saveCases(payload)).toBe(false)
+    expect(await card.saveCases(pin, (cases) => cases.map(testSpecCasePayload))).toBe(false)
     expect(mocks.save).toHaveBeenCalledTimes(2)
   })
   it('case retry and manual entry use their existing endpoints and reject suite/server-run cases', async () => {
@@ -286,7 +300,7 @@ it('a direct raw save shares busy and refusal state with structured saves', asyn
   const wait = deferred()
   const save = card.changeDocument('rawSave', () => wait.promise)
   expect(card.can('caseSave').reason).toBe('reason.busy')
-  expect(await card.saveCases([])).toBe(false)
+  expect(await card.saveCases(NO_PIN, () => [])).toBe(false)
   wait.resolve(); expect(await save).toBe(true)
   expect(card.can('caseSave').enabled).toBe(true)
 })
@@ -309,7 +323,7 @@ it('a TSR document node uses the TS editability guard when saving scenario cases
   expect(mocks.read).toHaveBeenCalledWith(TSR_DOC)
   expect(mocks.guard).toHaveBeenCalledWith(TS_DOC)
   expect(contexts.one.can('caseSave').reason).toBe('guard.approved')
-  expect(await contexts.one.saveCases([])).toBe(false)
+  expect(await contexts.one.saveCases(NO_PIN, () => [])).toBe(false)
   expect(mocks.save).not.toHaveBeenCalled()
 })
 
@@ -481,9 +495,54 @@ it('review activity after a writer ends releases writing and the settings lock',
   expect(card.can('settingChange').enabled).toBe(true)
   expect(card.can('rawSave').reason).toBe('reason.ai_running')
 })
+it('a structured save whose pin is not this card's document is refused before any request, and an unreadable snapshot gives no pin', async () => {
+  await render(); const card = contexts.one
+  expect(await card.saveCases(NO_PIN, () => [])).toBe(false)
+  expect(mocks.save).not.toHaveBeenCalled()
+  expect(card.refusal.value).toMatchObject({ operation: 'caseSave', kind: 'binding', key: 'failure.binding' })
+  mocks.structured.mockResolvedValue({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content: null, bodyState: 'unreadable', line: {}, projection: null })
+  expect(await card.pinCases()).toBeNull()
+})
+it('each case draft keeps its own pinned snapshot: another draft's ACK and a later read never move it', async () => {
+  await render(); const card = contexts.one
+  mocks.structured.mockResolvedValueOnce({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content: 'x', bodyState: 'readable', line: {}, projection: { title: 'T', cases: [{ case_id: 'TC-1', title: 'one' }] } })
+  const first = (await card.pinCases())!
+  mocks.structured.mockResolvedValueOnce({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content: 'x', bodyState: 'readable', line: {}, projection: { title: 'T', cases: [{ case_id: 'TC-1', title: 'one' }] } })
+  const second = (await card.pinCases())!
+  expect(await card.saveCases(first, () => [])).toBe(true)
+  expect(first.base.revisionNo).toBe(5)
+  // the other draft still holds the revision it was shown at, so the server's CAS meets it as a conflict
+  expect(second.base.revisionNo).toBe(4)
+  mocks.save.mockRejectedValueOnce(v2failure(409, 'revision_conflict'))
+  expect(await card.saveCases(second, () => [])).toBe(false)
+  expect(mocks.save.mock.calls[1][1]).toMatchObject({ expectedRevision: 4 })
+  expect(second.base.revisionNo).toBe(4)
+})
+it('a 401 keeps the original request; the held request is resent as it is and only ITS submission becomes the pin's N+1', async () => {
+  await render(); const card = contexts.one
+  mocks.structured.mockResolvedValue({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content: 'x', bodyState: 'readable', line: {}, projection: { title: 'T', cases: [] } })
+  const pin = (await card.pinCases())!
+  mocks.save.mockRejectedValueOnce(v2failure(401, 'unauthorized'))
+  expect(await card.saveCases(pin, () => [])).toBe(false)
+  expect(card.refusal.value).toMatchObject({ kind: 'unauthorized', key: 'failure.unauthorized' })
+  mocks.save.mockRejectedValueOnce({ isAxiosError: true })
+  expect(await card.saveCases(pin, () => [])).toBe(false)
+  expect(card.refusal.value).toMatchObject({ kind: 'uncertain', key: 'failure.uncertain' })
+  const held = mocks.save.mock.calls[1][1] as { idempotencyKey: string; expectedRevision: number }
+  expect(held.idempotencyKey).toBe((mocks.save.mock.calls[0][1] as { idempotencyKey: string }).idempotencyKey)
+  // the user changed the draft meanwhile: the resend still carries the first command, and this save is NOT reported as saved
+  expect(await card.saveCases(pin, () => [{ case_id: 'TC-9' } as never])).toBe(false)
+  const resent = mocks.save.mock.calls[2][1] as { idempotencyKey: string; expectedRevision: number; command: { cases: unknown[] } }
+  expect(resent.idempotencyKey).toBe(held.idempotencyKey)
+  expect(resent.expectedRevision).toBe(held.expectedRevision)
+  expect(resent.command.cases).toEqual([])
+  expect(pin.base.revisionNo).toBe(5)
+  expect(pin.cases).toEqual([])
+})
 it('structured deletion preserves the deletion operation in its refusal', async () => {
   await render(); const card = contexts.one
-  mocks.save.mockRejectedValueOnce(failure(422, 'invalid_spec'))
-  expect(await card.saveCases([], 'caseDelete')).toBe(false)
+  mocks.save.mockRejectedValueOnce(v2failure(422, 'invalid_content'))
+  const pin = (await card.pinCases())!
+  expect(await card.saveCases(pin, () => [], 'caseDelete')).toBe(false)
   expect(card.refusal.value).toMatchObject({ operation: 'caseDelete', key: 'failure.caseDelete_invalid' })
 })

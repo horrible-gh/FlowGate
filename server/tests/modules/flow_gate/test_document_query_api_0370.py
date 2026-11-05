@@ -110,7 +110,12 @@ class _MockDB:
 
     @contextmanager
     def begin_transaction(self):
-        yield _MockTxn(self._conn)
+        try:
+            yield _MockTxn(self._conn)
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def close(self):
         self._conn.close()
@@ -123,7 +128,7 @@ class _MockTxn:
 
     def execute(self, sql: str, params=None):
         self._last_cursor = self._conn.execute(sql, params or [])
-        self._conn.commit()
+        return self._last_cursor  # L#1/L#2: actual CAS count, inside the real transaction.
 
     def fetch_one(self):
         if self._last_cursor is None:
@@ -693,7 +698,7 @@ def test_inbox_edit_response_carries_the_change_summary(tmp_path, storage_root):
 
     with patch("modules.flow_gate.rbac.permission_service.has_permission", return_value=True), \
             patch.object(token_service, "verify", return_value=token_rec), \
-            patch.object(token_service, "consume", return_value=None), \
+            patch.object(token_service, "consume", return_value=True), \
             patch.object(git_service, "worktree_untracked_summary", return_value={
                 "total_count": 3, "excluded_artifact_count": 2,
                 "staged_new_file_count": 1,
@@ -762,8 +767,8 @@ def test_inbox_edit_summary_failure_does_not_fail_the_save(tmp_path, storage_roo
 
     with patch("modules.flow_gate.rbac.permission_service.has_permission", return_value=True), \
             patch.object(token_service, "verify", return_value=token_rec), \
-            patch.object(token_service, "consume", return_value=None), \
-            patch.object(change_summary_service, "build", _boom):
+            patch.object(token_service, "consume", return_value=True), \
+            patch.object(change_summary_service, "build_text", _boom):
         app = FastAPI()
         app.include_router(inbox_routes.router)
         resp = TestClient(app).post(

@@ -21,10 +21,12 @@ import {
   openDocumentWindow,
 } from '@/features/documentWindow'
 import { setCurrentUser } from '@/core/auth/currentUser'
+import { CARD, cardDocumentBridge } from './cardDocumentBridge'
 
 const recordRead = vi.fn()
 const contentRead = vi.fn()
 const contentSave = vi.fn()
+const cardBridge = cardDocumentBridge(contentRead, contentSave)
 const diagnose = vi.fn()
 const recoverBody = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
@@ -34,6 +36,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentRead: (...args: unknown[]) => recordRead(...args),
     documentContentRead: (...args: unknown[]) => contentRead(...args),
     documentContentSave: (...args: unknown[]) => contentSave(...args),
+    cardDocumentRead: (...args: unknown[]) => cardBridge.read(...(args as [never])),
+    cardDocumentRevise: (...args: unknown[]) => cardBridge.revise(...(args as [never, never])),
     bodyRecoveryDiagnose: (...args: unknown[]) => diagnose(...args),
     bodyRecoveryRecover: (...args: unknown[]) => recoverBody(...args),
   }
@@ -67,6 +71,9 @@ const unreadable = new Set<string>()
 const failing = new Set<string>()
 
 const axiosError = (status: number) => ({ isAxiosError: true, response: { status, data: { detail: 'x' } } })
+/** A /api/v2 error answer: `{ ok: false, error: { code, params } }` (flowgate.v02.0127 T#5). */
+const v2Error = (status: number, code: string, params: Record<string, unknown> = {}) =>
+  ({ isAxiosError: true, response: { status, data: { ok: false, error: { code, params } } } })
 
 let wrapper: VueWrapper<any> | null = null
 
@@ -137,7 +144,7 @@ const footer = (panel: HTMLElement) =>
   [...q(panel, 'document-window-viewer-bar')!.querySelectorAll('button')].map((button) => button.getAttribute('data-test'))
 
 async function open(docId: string, mode: 'view' | 'edit' = 'view') {
-  openDocumentWindow(docId, mode)
+  openDocumentWindow(docId, mode, { card: CARD(docId) })
   await flushPromises()
   return panelOf(docId)
 }
@@ -281,19 +288,92 @@ describe('document window — ✎ editing (flowgate.v02.0053 T#3)', () => {
     expect(contentSave).not.toHaveBeenCalled()
   })
 
-  it('a refused save keeps the editor and its text with a short reason (422: not editable now)', async () => {
-    contentSave.mockRejectedValueOnce(axiosError(422))
+  it('a refused save keeps the editor and its text with a short reason (422 not_editable: final approval)', async () => {
+    contentSave.mockRejectedValueOnce(v2Error(422, 'not_editable', { reason: 'final_approved' }))
     const panel = await open(REPORT, 'edit')
     await type(q(panel, 'document-window-textarea'), '고친 글')
     await click(q(panel, 'document-window-save'))
     expect(windows()).toEqual([[REPORT, 'edit']])
-    expect(q(panel, 'document-window-save-error')!.textContent).toBe('지금은 수정할 수 없는 문서입니다')
+    expect(q(panel, 'document-window-save-error')!.textContent).toBe('최종 승인된 문서라 편집할 수 없습니다')
     expect((q(panel, 'document-window-textarea') as HTMLTextAreaElement).value).toBe('고친 글')
+  })
+
+  it('a 401 is REJECTED: the draft stays, the answer is shown, and after re-authentication the same request (same key) is sent again', async () => {
+    cardBridge.calls.length = 0
+    contentSave.mockRejectedValueOnce(v2Error(401, 'unauthorized'))
+    const panel = await open(REPORT, 'edit')
+    await type(q(panel, 'document-window-textarea'), '고친 글')
+    await click(q(panel, 'document-window-save'))
+    expect(windows()).toEqual([[REPORT, 'edit']])
+    expect(q(panel, 'document-window-save-error')!.getAttribute('data-key')).toBe('unauthorized')
+    expect((q(panel, 'document-window-textarea') as HTMLTextAreaElement).value).toBe('고친 글')
+    expect(q(panel, 'document-window-save')!.hasAttribute('disabled')).toBe(false)
+    await click(q(panel, 'document-window-save'))
+    expect(cardBridge.calls).toHaveLength(2)
+    expect(cardBridge.calls[1]).toEqual(cardBridge.calls[0])
+    expect(windows()).toEqual([[REPORT, 'view']])
+  })
+
+  it('a 403 token_kind_not_allowed is REJECTED and repeated sending stops until the setting is corrected', async () => {
+    cardBridge.calls.length = 0
+    contentSave.mockRejectedValueOnce(v2Error(403, 'token_kind_not_allowed'))
+    const panel = await open(REPORT, 'edit')
+    await type(q(panel, 'document-window-textarea'), '고친 글')
+    await click(q(panel, 'document-window-save'))
+    expect(q(panel, 'document-window-save-error')!.getAttribute('data-key')).toBe('token_kind_not_allowed')
+    expect(q(panel, 'document-window-save')!.hasAttribute('disabled')).toBe(true)
+    expect(cardBridge.calls).toHaveLength(1)
+    expect((q(panel, 'document-window-textarea') as HTMLTextAreaElement).value).toBe('고친 글')
+  })
+
+  it('a network failure is uncertain: the draft stays and an explicit save sends the very same request, never a new key', async () => {
+    cardBridge.calls.length = 0
+    contentSave.mockRejectedValueOnce({ isAxiosError: true })
+    const panel = await open(REPORT, 'edit')
+    await type(q(panel, 'document-window-textarea'), '고친 글')
+    await click(q(panel, 'document-window-save'))
+    expect(q(panel, 'document-window-save-error')!.getAttribute('data-key')).toBe('network')
+    await type(q(panel, 'document-window-textarea'), '고친 글을 또 고침')
+    await click(q(panel, 'document-window-save'))
+    expect(cardBridge.calls).toHaveLength(2)
+    expect(cardBridge.calls[1]).toEqual(cardBridge.calls[0])
+    expect(cardBridge.calls[1].content).toBe(`${FRONT}
+고친 글`)
+  })
+
+  it('a conflict keeps the draft and base, shows the latest apart, and only the explicit adoption of the merged text makes a new intent', async () => {
+    cardBridge.calls.length = 0
+    contentSave.mockRejectedValueOnce(v2Error(409, 'revision_conflict'))
+    const panel = await open(REPORT, 'edit')
+    await type(q(panel, 'document-window-textarea'), '내 초안')
+    await click(q(panel, 'document-window-save'))
+    expect(q(panel, 'document-window-conflict')).not.toBeNull()
+    expect((q(panel, 'document-window-textarea') as HTMLTextAreaElement).value).toBe('내 초안')
+    expect((q(panel, 'document-window-latest') as HTMLTextAreaElement).value).toContain('본문입니다.')
+    expect(q(panel, 'document-window-save')!.hasAttribute('disabled')).toBe(true)
+    await click(q(panel, 'document-window-adopt-merge'))
+    expect(q(panel, 'document-window-conflict')).toBeNull()
+    await click(q(panel, 'document-window-save'))
+    expect(cardBridge.calls).toHaveLength(2)
+    expect(cardBridge.calls[1].idempotencyKey).not.toBe(cardBridge.calls[0].idempotencyKey)
+  })
+
+  it('without card coordinates the window can view but the editor is blocked: no v1 save fallback', async () => {
+    cardBridge.calls.length = 0
+    closeAllDocumentWindows()
+    openDocumentWindow(REPORT, 'edit')
+    await flushPromises()
+    const panel = panels()[0]
+    expect(q(panel, 'document-window-textarea')).toBeNull()
+    expect(q(panel, 'document-window-editor-error')!.textContent).toContain('카드 연결이 없어 편집할 수 없습니다')
+    expect(q(panel, 'document-window-save')!.hasAttribute('disabled')).toBe(true)
+    expect(contentSave).not.toHaveBeenCalled()
+    expect(cardBridge.calls).toHaveLength(0)
   })
 
   it('opening with ✎ while the view is open turns that window to the editor', async () => {
     const panel = await open(REPORT)
-    openDocumentWindow(REPORT, 'edit')
+    openDocumentWindow(REPORT, 'edit', { card: CARD(REPORT) })
     await flushPromises()
     expect(panels()).toHaveLength(1)
     expect(q(panel, 'document-window-textarea')).not.toBeNull()
@@ -301,26 +381,23 @@ describe('document window — ✎ editing (flowgate.v02.0053 T#3)', () => {
 })
 
 describe('document window — a report before its run (flowgate.v02.0053 T#3)', () => {
-  it('opens as an empty document (no text at all) and ✎ / 저장 work the same: the save writes its file', async () => {
+  it('opens as an empty document in the view; a file not written yet is not a readable body, so the editor is blocked and nothing is sent (v2, no v1 fallback)', async () => {
     const panel = await open(EMPTY_REPORT)
     expect(q(panel, 'md-viewer-content')!.textContent).toBe('')
     expect(q(panel, 'document-window-body')!.textContent!.trim()).toBe('')
     expect(footer(panel)).toEqual(['document-window-edit', 'document-window-close'])
     expect(q(panel, 'document-window-dot')!.getAttribute('data-tone')).toBe('neutral')
     await click(q(panel, 'document-window-edit'))
-    const area = q(panel, 'document-window-textarea') as HTMLTextAreaElement
-    expect(area.value).toBe('')
-    await type(area, '# 첫 내용\n')
-    await click(q(panel, 'document-window-save'))
-    expect(contentSave).toHaveBeenCalledWith(EMPTY_REPORT, '# 첫 내용\n')
-    expect(windows()).toEqual([[EMPTY_REPORT, 'view']])
-    expect(q(panel, 'md-viewer-content')!.querySelector('h1')!.textContent).toBe('첫 내용')
+    expect(q(panel, 'document-window-textarea')).toBeNull()
+    expect(q(panel, 'document-window-editor-error')!.textContent).toContain('본문을 읽을 수 없어 편집할 수 없습니다')
+    expect(q(panel, 'document-window-save')!.hasAttribute('disabled')).toBe(true)
+    expect(contentSave).not.toHaveBeenCalled()
   })
 
-  it('✎ as the entry point opens the empty report straight in its editor', async () => {
+  it('✎ as the entry point on the empty report shows the blocked editor, never an empty string to save', async () => {
     const panel = await open(EMPTY_REPORT, 'edit')
-    expect((q(panel, 'document-window-textarea') as HTMLTextAreaElement).value).toBe('')
-    expect(q(panel, 'document-window-save')!.hasAttribute('disabled')).toBe(false)
+    expect(q(panel, 'document-window-textarea')).toBeNull()
+    expect(q(panel, 'document-window-save')!.hasAttribute('disabled')).toBe(true)
   })
 })
 

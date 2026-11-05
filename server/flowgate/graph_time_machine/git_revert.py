@@ -38,6 +38,7 @@ Durable evidence, for a resume after a crash:
   Any other dirty tree keeps the gate closed (``deferred``: nothing is removed).
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import json
 import logging
@@ -139,18 +140,19 @@ def _marker(wt, operation_id: str) -> Optional[dict]:
 
 
 def _mark(wt, operation_id: str, step: dict) -> None:
-    path = _marker_path(wt, operation_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + ".tmp")
-    with open(temp, "w", encoding="utf-8") as handle:
-        json.dump({"operation_id": operation_id, **step}, handle)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp, path)
+    with document_write_ports.write_paths([_marker_path(wt, operation_id), _marker_path(wt, operation_id).with_name(_marker_path(wt, operation_id).name + ".tmp")]):
+        path = _marker_path(wt, operation_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_name(path.name + ".tmp")
+        with document_write_ports.write_paths([temp]), open(temp, "w", encoding="utf-8") as handle:
+            json.dump({"operation_id": operation_id, **step}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        document_write_ports.write_gate("paths", [temp,path], lambda: os.replace(temp, path))
 
 
 def _unmark(wt, operation_id: str) -> None:
-    _marker_path(wt, operation_id).unlink(missing_ok=True)
+    document_write_ports.write_gate("paths", [_marker_path(wt, operation_id)], lambda: _marker_path(wt, operation_id).unlink(missing_ok=True))
 
 
 def _owned(operation_id: str):

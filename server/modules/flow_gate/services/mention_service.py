@@ -1904,6 +1904,7 @@ def build_mention(
     # token-record path always supplies a dict (possibly empty) and is authoritative.
     rejection_target: Optional[dict] = None,
     parent_revision_no: int = 0,
+    parent_content_state: Optional[str] = None,
     edit_reason: str = "user_comment",
     # flowgate.v02.0117: an edit that writes the FIRST content into an existing empty
     # document (a Graph card's instruction stage writing into its line's empty document,
@@ -1974,6 +1975,12 @@ def build_mention(
         )
         if resolved_review is not None:
             current_review = resolved_review
+
+    if is_edit and parent_content_state is not None:
+        snapshot_identity = (f"doc_id={parent_canonical_doc_id or parent_doc_id}, "
+                             f"revision_no={parent_revision_no}, content_state={parent_content_state}")
+    else:
+        snapshot_identity = None
 
     # ── Section 1: document information ──────────────────────────────────────
     # Anchor at the step's predecessor (head_doc_*) when supplied for a new hand-off;
@@ -2097,6 +2104,9 @@ def build_mention(
             f"Instruction authoring ({scope_type})", scope_type, locale, base
         )
 
+    if snapshot_identity is not None:
+        s2_body += "\n" + snapshot_identity + "\nUse this document revision as expected_revision; read again if the body is unreadable."
+
     # ── Section 3: reference documents ───────────────────────────────────────
     # Format: {dot-dash-path}: GET {url}  (use only the new format)
     s3_lines = []
@@ -2191,6 +2201,7 @@ def build_mention(
             "doc_id": prev_doc_id_value,
             "edit_reason": edit_reason,
             "content": "<Complete revised document content>",
+            **({"expected_revision": parent_revision_no} if parent_content_state is not None else {}),
             # 0391 T0005 §7-2: optional body fingerprint (proposal 4) + bypass door.
             "body_sha256": "<optional: sha256 hex of content, UTF-8 bytes>",
             "body_chars": "<optional: character count of content>",
@@ -2495,6 +2506,11 @@ def build_mention_from_token_rec(
         module = parent_doc.get("module", "none")
         group = group_id_full
 
+    parent_content_state = None
+    if action_scope == "edit":
+        from modules.flow_gate.graph_workflow.services import card_document_ports
+        parent_doc, parent_content_state = card_document_ports.card_edit("mention", parent_doc)
+
     parent_type = parent_doc.get("type_code", "")
     parent_seq = parent_doc.get("seq", 0)
     # parent_doc_id: short form (e.g. "R0001") — doc_id in the DB is canonical;
@@ -2555,6 +2571,7 @@ def build_mention_from_token_rec(
         current_review=current_review,
         rejection_target=rejection_target,
         parent_revision_no=int(parent_doc.get("revision_no") or 0),
+        parent_content_state=parent_content_state,
         edit_reason=edit_reason,
         first_write=first_write,
         locale=locale,

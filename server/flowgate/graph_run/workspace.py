@@ -29,6 +29,7 @@ prepared before keeps its ``graph_attempt_<key>`` branch (its marker names ``bra
 removed as it was: nothing is migrated or renamed.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import json
 import logging
@@ -311,9 +312,10 @@ def _start(row, group_root):
 
 
 def _write_marker(directory, marker):
-    temp = directory / (merge_target.OWNER_MARKER + ".tmp")
-    temp.write_text(json.dumps(marker, ensure_ascii=False), encoding="utf-8")
-    os.replace(temp, directory / merge_target.OWNER_MARKER)
+    with document_write_ports.write_paths([directory / merge_target.OWNER_MARKER, directory / (merge_target.OWNER_MARKER + ".tmp")]):
+        temp = directory / (merge_target.OWNER_MARKER + ".tmp")
+        document_write_ports.write_gate("paths", [temp], lambda: temp.write_text(json.dumps(marker, ensure_ascii=False), encoding="utf-8"))
+        document_write_ports.write_gate("paths", [temp,directory / merge_target.OWNER_MARKER], lambda: os.replace(temp, directory / merge_target.OWNER_MARKER))
 
 
 def _join(row, directory, root, branch, marker, group_root):
@@ -401,7 +403,7 @@ def _materialize(row, project_id):
                 marker.pop("join_inputs", None)
             directory.mkdir(parents=True, exist_ok=False)
             # Exclusive owner marker precedes branch/worktree creation, as in merge_target.
-            with (directory / merge_target.OWNER_MARKER).open("x", encoding="utf-8") as stream:
+            with document_write_ports.write_paths([directory / merge_target.OWNER_MARKER]), (directory / merge_target.OWNER_MARKER).open("x", encoding="utf-8") as stream:
                 json.dump(marker, stream, ensure_ascii=False)
         else:
             _marker(row, project_id)

@@ -1,5 +1,6 @@
 """FlowGate — process flow service (OutBox/InBox/approval/rejection/group)."""
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import json
 import logging
@@ -823,7 +824,7 @@ def create_workflow_root(
     outbox = db.outbox_dir(project)
     os.makedirs(outbox, exist_ok=True)
     filepath = os.path.join(outbox, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([filepath]), open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
 
     # Write the body file into the storage documents tree
@@ -837,10 +838,10 @@ def create_workflow_root(
     )
     try:
         storage_filepath.parent.mkdir(parents=True, exist_ok=True)
-        storage_filepath.write_text(content, encoding="utf-8")
+        document_write_ports.write_gate("paths", [storage_filepath], lambda: storage_filepath.write_text(content, encoding="utf-8"))
     except Exception:
         if os.path.exists(filepath):
-            os.remove(filepath)
+            document_write_ports.write_gate("paths", [filepath], lambda: os.remove(filepath))
         raise
 
     # Register in the DB
@@ -860,9 +861,9 @@ def create_workflow_root(
         )
     except Exception:
         if os.path.exists(filepath):
-            os.remove(filepath)
+            document_write_ports.write_gate("paths", [filepath], lambda: os.remove(filepath))
         if storage_filepath.exists():
-            storage_filepath.unlink()
+            document_write_ports.write_gate("paths", [storage_filepath], lambda: storage_filepath.unlink())
         raise
     db.insert_event(doc_id, "created", memo_file=filename)
 
@@ -988,7 +989,7 @@ def create_answer(doc_pk: int, answers: list[dict]) -> dict:
 
     os.makedirs(db.OUTBOX_DIR, exist_ok=True)
     filepath = os.path.join(db.OUTBOX_DIR, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([filepath]), open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
 
     doc_id = f"{group_id}-{doc_code}"
@@ -1000,7 +1001,7 @@ def create_answer(doc_pk: int, answers: list[dict]) -> dict:
         )
     except Exception:
         if os.path.exists(filepath):
-            os.remove(filepath)
+            document_write_ports.write_gate("paths", [filepath], lambda: os.remove(filepath))
         raise
     db.insert_event(doc_id, "answer_generated", memo_file=filename)
     if group_id:
@@ -1321,112 +1322,108 @@ def cancel_document(doc_pk: int, cancel_reason: str, followup_action: str) -> di
             return {"status": "error", "errors": ["Please select a valid follow-up action."]}
 
     source_memo = db.get_created_memo_file(doc["doc_id"]) or ""
-    migration_results: list[dict] = []
+    with document_write_ports.write_gate("inventory", "scope", "cancel", doc=doc, action=action, memo=source_memo) as cancel_destinations:
+        migration_results: list[dict] = []
 
-    if action in {"resubmit", "discard"}:
-        if not source_memo:
-            return {"status": "error", "message": "Original file information could not be found"}
+        if action in {"resubmit", "discard"}:
+            if not source_memo:
+                return {"status": "error", "message": "Original file information could not be found"}
 
-        accept_file_path = _find_file_in_accept(source_memo)
-        if not accept_file_path:
-            return {"status": "error", "message": "The original file could not be found in the accept repository"}
+            accept_file_path = _find_file_in_accept(source_memo)
+            if not accept_file_path:
+                return {"status": "error", "message": "The original file could not be found in the accept repository"}
 
-        if action == "resubmit":
-            os.makedirs(db.INBOX_DIR, exist_ok=True)
-            dest_path = os.path.join(db.INBOX_DIR, source_memo)
-            if os.path.exists(dest_path):
-                return {"status": "error", "message": f"An identical file already exists in InBox: {source_memo}"}
-            _strip_status_header_inplace(accept_file_path)
-            shutil.move(accept_file_path, dest_path)
-            migration_results.append({
-                "original": source_memo,
-                "migrated_to": os.path.abspath(dest_path),
-                "status": "cancelled",
-                "followup_action": action,
-            })
-        else:
-            os.makedirs(db.CANCELLED_DIR, exist_ok=True)
-            cancelled_name = _resolve_unique_filename(
-                db.CANCELLED_DIR,
-                os.path.basename(accept_file_path),
-            )
-            dest_path = os.path.join(db.CANCELLED_DIR, cancelled_name)
-            shutil.move(accept_file_path, dest_path)
-            migration_results.append({
-                "original": source_memo,
-                "migrated_to": os.path.abspath(dest_path),
-                "status": "cancelled",
-                "followup_action": action,
-            })
+            if action == "resubmit":
+                os.makedirs(db.INBOX_DIR, exist_ok=True)
+                dest_path = os.path.join(db.INBOX_DIR, source_memo)
+                if os.path.exists(dest_path):
+                    return {"status": "error", "message": f"An identical file already exists in InBox: {source_memo}"}
+                _strip_status_header_inplace(accept_file_path)
+                document_write_ports.write_gate("paths", [accept_file_path,dest_path], lambda: shutil.move(accept_file_path, dest_path))
+                migration_results.append({
+                    "original": source_memo,
+                    "migrated_to": os.path.abspath(dest_path),
+                    "status": "cancelled",
+                    "followup_action": action,
+                })
+            else:
+                os.makedirs(db.CANCELLED_DIR, exist_ok=True)
+                cancelled_name = cancel_destinations[str(accept_file_path)].name
+                dest_path = os.path.join(db.CANCELLED_DIR, cancelled_name)
+                document_write_ports.write_gate("paths", [accept_file_path,dest_path], lambda: shutil.move(accept_file_path, dest_path))
+                migration_results.append({
+                    "original": source_memo,
+                    "migrated_to": os.path.abspath(dest_path),
+                    "status": "cancelled",
+                    "followup_action": action,
+                })
 
-    db.update_document_status_by_pk(doc_pk, "cancelled")
-    db.insert_event(
-        doc["doc_id"],
-        "cancelled",
-        memo_file=source_memo or None,
-        reason=cancel_reason,
-        note=action,
-    )
-
-    # On N cancellation: cascade-cancel linked NR documents in accepted state
-    # (cascade_nr, D002)
-    # On T cancellation: cascade-cancel linked TR documents in accepted state
-    # (cascade_tr, fixed to discard, D005)
-    cascade_cancelled: list[dict] = []
-    if doc_type == "N":
-        nr_docs = db.get_documents_by_target_id(
-            doc["doc_id"], types=("NR",), statuses=("accepted",)
+        db.update_document_status_by_pk(doc_pk, "cancelled")
+        db.insert_event(
+            doc["doc_id"],
+            "cancelled",
+            memo_file=source_memo or None,
+            reason=cancel_reason,
+            note=action,
         )
-        for nr_doc in nr_docs:
-            db.update_document_status_by_pk(nr_doc["id"], "cancelled")
-            db.insert_event(
-                nr_doc["doc_id"],
-                "cancelled",
-                reason=f"N cancellation cascade ({doc['doc_id']})",
-                note="cascade_nr",
+
+        # On N cancellation: cascade-cancel linked NR documents in accepted state
+        # (cascade_nr, D002)
+        # On T cancellation: cascade-cancel linked TR documents in accepted state
+        # (cascade_tr, fixed to discard, D005)
+        cascade_cancelled: list[dict] = []
+        if doc_type == "N":
+            nr_docs = db.get_documents_by_target_id(
+                doc["doc_id"], types=("NR",), statuses=("accepted",)
             )
-            cascade_cancelled.append({"doc_id": nr_doc["doc_id"], "type": nr_doc["type"]})
+            for nr_doc in nr_docs:
+                db.update_document_status_by_pk(nr_doc["id"], "cancelled")
+                db.insert_event(
+                    nr_doc["doc_id"],
+                    "cancelled",
+                    reason=f"N cancellation cascade ({doc['doc_id']})",
+                    note="cascade_nr",
+                )
+                cascade_cancelled.append({"doc_id": nr_doc["doc_id"], "type": nr_doc["type"]})
 
-    elif doc_type == "T":
-        # T035: automatically cascade-cancel accepted TR on T cancellation
-        # (fixed to discard)
-        tr_docs = db.get_documents_by_target_id(
-            doc["doc_id"], types=("TR",), statuses=("accepted",)
-        )
-        for tr_doc in tr_docs:
-            # Move the TR file from accept/ → cancelled/ (fixed to discard)
-            tr_memo = db.get_created_memo_file(tr_doc["doc_id"])
-            if tr_memo:
-                tr_accept_path = _find_file_in_accept(tr_memo)
-                if tr_accept_path:
-                    os.makedirs(db.CANCELLED_DIR, exist_ok=True)
-                    cancelled_name = _resolve_unique_filename(
-                        db.CANCELLED_DIR, os.path.basename(tr_accept_path)
-                    )
-                    shutil.move(tr_accept_path, os.path.join(db.CANCELLED_DIR, cancelled_name))
-            db.update_document_status_by_pk(tr_doc["id"], "cancelled")
-            db.insert_event(
-                tr_doc["doc_id"],
-                "cancelled",
-                reason=f"T cancellation cascade ({doc['doc_id']})",
-                note="cascade_tr",
+        elif doc_type == "T":
+            # T035: automatically cascade-cancel accepted TR on T cancellation
+            # (fixed to discard)
+            tr_docs = db.get_documents_by_target_id(
+                doc["doc_id"], types=("TR",), statuses=("accepted",)
             )
-            cascade_cancelled.append({"doc_id": tr_doc["doc_id"], "type": "TR"})
+            for tr_doc in tr_docs:
+                # Move the TR file from accept/ → cancelled/ (fixed to discard)
+                tr_memo = db.get_created_memo_file(tr_doc["doc_id"])
+                if tr_memo:
+                    tr_accept_path = _find_file_in_accept(tr_memo)
+                    if tr_accept_path:
+                        os.makedirs(db.CANCELLED_DIR, exist_ok=True)
+                        cancelled_name = cancel_destinations[str(tr_accept_path)].name
+                        document_write_ports.write_gate("paths", [tr_accept_path,os.path.join(db.CANCELLED_DIR, cancelled_name)], lambda: shutil.move(tr_accept_path, os.path.join(db.CANCELLED_DIR, cancelled_name)))
+                db.update_document_status_by_pk(tr_doc["id"], "cancelled")
+                db.insert_event(
+                    tr_doc["doc_id"],
+                    "cancelled",
+                    reason=f"T cancellation cascade ({doc['doc_id']})",
+                    note="cascade_tr",
+                )
+                cascade_cancelled.append({"doc_id": tr_doc["doc_id"], "type": "TR"})
 
-    if group_id:
-        db.update_group_updated_at(group_id)
+        if group_id:
+            db.update_group_updated_at(group_id)
 
-    return {
-        "status": "success",
-        "action": "cancel",
-        "group_id": group_id,
-        "doc_id": doc["doc_id"],
-        "followup_action": action,
-        "followup_label": CANCEL_FOLLOWUP_ACTION_LABELS[action],
-        "migration": migration_results,
-        "cascade_cancelled": cascade_cancelled,
-        "message": "Approval cancellation completed.",
-    }
+        return {
+            "status": "success",
+            "action": "cancel",
+            "group_id": group_id,
+            "doc_id": doc["doc_id"],
+            "followup_action": action,
+            "followup_label": CANCEL_FOLLOWUP_ACTION_LABELS[action],
+            "migration": migration_results,
+            "cascade_cancelled": cascade_cancelled,
+            "message": "Approval cancellation completed.",
+        }
 
 
 def resume_document(doc_pk: int) -> dict:
@@ -1452,7 +1449,7 @@ def resume_document(doc_pk: int) -> dict:
     if reject_file_path:
         os.makedirs(db.INBOX_DIR, exist_ok=True)
         dest_path = os.path.join(db.INBOX_DIR, source_memo)
-        shutil.move(reject_file_path, dest_path)
+        document_write_ports.write_gate("paths", [reject_file_path,dest_path], lambda: shutil.move(reject_file_path, dest_path))
 
     # Restore the status to open
     db.update_document_status_by_pk(doc_pk, "open")
@@ -1554,7 +1551,7 @@ def create_review_request(
 
     os.makedirs(db.OUTBOX_DIR, exist_ok=True)
     filepath = os.path.join(db.OUTBOX_DIR, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([filepath]), open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
 
     doc_id = f"{group_id}-{doc_code}"
@@ -1566,7 +1563,7 @@ def create_review_request(
         )
     except Exception:
         if os.path.exists(filepath):
-            os.remove(filepath)
+            document_write_ports.write_gate("paths", [filepath], lambda: os.remove(filepath))
         raise
     db.insert_event(doc_id, "created", memo_file=filename)
     if group_id:
@@ -2523,30 +2520,31 @@ def _get_doc_memo_file(doc: dict) -> str | None:
 
 def _strip_status_header_inplace(file_path: str) -> None:
     """Remove the status line from the YAML header before re-inserting."""
-    with open(file_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
+    with document_write_ports.write_paths([file_path]):
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
 
-    if not lines or lines[0].strip() != "---":
-        return
+        if not lines or lines[0].strip() != "---":
+            return
 
-    closing_index = -1
-    for idx in range(1, len(lines)):
-        if lines[idx].strip() == "---":
-            closing_index = idx
-            break
-    if closing_index == -1:
-        return
+        closing_index = -1
+        for idx in range(1, len(lines)):
+            if lines[idx].strip() == "---":
+                closing_index = idx
+                break
+        if closing_index == -1:
+            return
 
-    header_lines = lines[1:closing_index]
-    filtered_lines = [
-        line for line in header_lines
-        if not re.match(r"^\s*status\s*:", line)
-    ]
-    if len(filtered_lines) == len(header_lines):
-        return
+        header_lines = lines[1:closing_index]
+        filtered_lines = [
+            line for line in header_lines
+            if not re.match(r"^\s*status\s*:", line)
+        ]
+        if len(filtered_lines) == len(header_lines):
+            return
 
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.writelines([lines[0], *filtered_lines, *lines[closing_index:]])
+        with document_write_ports.write_paths([file_path]), open(file_path, "w", encoding="utf-8") as f:
+            f.writelines([lines[0], *filtered_lines, *lines[closing_index:]])
 
 
 def _build_status_label(doc_status: str, location_key: str) -> str:
@@ -2974,7 +2972,7 @@ def _create_ac_file(
 
     os.makedirs(db.OUTBOX_DIR, exist_ok=True)
     filepath = os.path.join(db.OUTBOX_DIR, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([filepath]), open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
 
     return {"file_path": os.path.abspath(filepath), "filename": filename}
@@ -3048,7 +3046,7 @@ def _create_rj_file(
 
     os.makedirs(db.OUTBOX_DIR, exist_ok=True)
     filepath = os.path.join(db.OUTBOX_DIR, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([filepath]), open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
 
     doc_id = f"{group_id}-{doc_code}"
@@ -3060,7 +3058,7 @@ def _create_rj_file(
         )
     except Exception:
         if os.path.exists(filepath):
-            os.remove(filepath)
+            document_write_ports.write_gate("paths", [filepath], lambda: os.remove(filepath))
         raise
     db.insert_event(doc_id, "created", memo_file=filename, reason=reject_reason)
 
@@ -3089,7 +3087,7 @@ def _migrate_single_file(
 
     src_path = os.path.join(source_dir, filename)
     if os.path.exists(src_path):
-        shutil.move(src_path, os.path.join(dest_dir, final_name))
+        document_write_ports.write_gate("paths", [src_path,os.path.join(dest_dir, final_name)], lambda: shutil.move(src_path, os.path.join(dest_dir, final_name)))
 
     return {
         "original": filename,
@@ -3102,51 +3100,7 @@ def _batch_migrate(
     dest_base: str, action: str,
 ) -> dict:
     """Bulk transfer (L-002 §2-5 transaction)."""
-    results: list[dict] = []
-    rollback_stack: list[dict] = []
-
-    try:
-        for file_info in target_files:
-            filename = file_info["filename"]
-            doc_type = file_info["doc_type"]
-            source_dir = file_info["source_dir"]
-
-            parsed = linter.parse_group_id(group_id)
-            if not parsed:
-                continue
-
-            project = parsed["project"]
-            module = parsed["module"]
-            dest_dir = os.path.join(dest_base, project, module, doc_type)
-            os.makedirs(dest_dir, exist_ok=True)
-
-            seq = _get_migration_type_seq(group_id, doc_type, dest_dir)
-            prefixed = _build_migration_filename(group_id, module, doc_type, seq, filename)
-            final_name = _resolve_prefix_filename(dest_dir, prefixed)
-
-            src_path = os.path.join(source_dir, filename)
-            dst_path = os.path.join(dest_dir, final_name)
-            if os.path.exists(src_path):
-                shutil.move(src_path, dst_path)
-                rollback_stack.append({"src": dst_path, "dst": src_path})
-
-            results.append({
-                "original": filename,
-                "migrated_to": os.path.abspath(dst_path),
-                "status": action,
-            })
-
-        return {"success": True, "results": results}
-
-    except Exception as e:
-        # Roll back
-        for rb in reversed(rollback_stack):
-            try:
-                if os.path.exists(rb["src"]):
-                    shutil.move(rb["src"], rb["dst"])
-            except Exception:
-                pass
-        return {"success": False, "error": str(e), "results": results}
+    return document_write_ports.write_gate("inventory", "batch_migrate", group_id, target_files, dest_base, action)
 
 
 # ── DC bundle approval helpers ────────────────────────────────────────────────
@@ -3517,74 +3471,7 @@ def _dc_approve_artifacts(
 
     Roll back everything if transfer fails.
     """
-    bundle_set = set(bundle_files)
-    docs = db.get_documents_by_group_id(group_id)
-    migration_results: list[dict] = []
-    rollback_stack: list[dict] = []  # (doc_pk, prev_status, src_path, dst_path)
-
-    try:
-        for d in docs:
-            if d["type"] not in _DC_ARTIFACT_TYPES:
-                continue
-
-            memo_file = db.get_created_memo_file(d["doc_id"])
-            if not memo_file:
-                continue
-            if memo_file not in bundle_set:
-                continue
-
-            source_dir = _locate_file(memo_file)
-            if not source_dir:
-                continue
-
-            prev_status = d.get("status", "")
-            parsed = linter.parse_group_id(group_id)
-            if not parsed:
-                continue
-
-            proj = parsed["project"]
-            mod = parsed["module"]
-            dest_dir = os.path.join(db.ACCEPT_DIR, proj, mod, d["type"])
-            os.makedirs(dest_dir, exist_ok=True)
-
-            seq = _get_migration_type_seq(group_id, d["type"], dest_dir)
-            prefixed = _build_migration_filename(group_id, mod, d["type"], seq, memo_file)
-            final_name = _resolve_prefix_filename(dest_dir, prefixed)
-
-            src_path = os.path.join(source_dir, memo_file)
-            dst_path = os.path.join(dest_dir, final_name)
-            if os.path.exists(src_path):
-                shutil.move(src_path, dst_path)
-                rollback_stack.append({
-                    "doc_pk": d["id"],
-                    "prev_status": prev_status,
-                    "src": dst_path,
-                    "dst": src_path,
-                })
-
-            db.update_document_status_by_pk(d["id"], "accepted")
-            db.insert_event(
-                d["doc_id"], "accepted", memo_file=memo_file,
-                note=f"DC bundle approval (DC: {dc_doc_id})",
-            )
-
-            migration_results.append({
-                "original": memo_file,
-                "migrated_to": os.path.abspath(dst_path),
-                "action": "accepted",
-            })
-
-        return {"success": True, "migration": migration_results}
-
-    except Exception as e:
-        for rb in reversed(rollback_stack):
-            try:
-                if os.path.exists(rb["src"]):
-                    shutil.move(rb["src"], rb["dst"])
-                db.update_document_status_by_pk(rb["doc_pk"], rb["prev_status"])
-            except Exception:
-                pass
-        return {"success": False, "error": str(e), "migration": migration_results}
+    return document_write_ports.write_gate("inventory", "dc_approve", group_id, dc_doc_id, bundle_files)
 
 
 def _dc_reject_all_artifacts(group_id: str, reject_reason: str) -> dict:
@@ -3736,7 +3623,7 @@ def _create_inbox_result_file(
 
     os.makedirs(db.INBOX_DIR, exist_ok=True)
     filepath = os.path.join(db.INBOX_DIR, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([filepath]), open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
 
     return filename
@@ -3804,7 +3691,7 @@ def _create_auto_result_inbox_draft(
     content = "\n".join(header_lines) + "\n".join(body_lines) + "\n"
 
     filepath = os.path.join(db.INBOX_DIR, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([filepath]), open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
 
     return {
@@ -3880,7 +3767,7 @@ def _cleanup_outbox_file(filename: str, expected_group_id: str = "", expected_ty
     if expected_type and (header.get("type") or "") != expected_type:
         return ""
 
-    os.remove(path)
+    document_write_ports.write_gate("paths", [path], lambda: os.remove(path))
     return os.path.abspath(path)
 
 
@@ -4015,7 +3902,7 @@ def _write_test_report_file(doc_id: str, content: str) -> str:
     slug = _slugify(doc_id)
     filename = f"{doc_id}_{slug}.md" if slug != _slugify("") else f"{doc_id}.md"
     path = os.path.join(db.TEST_REPORTS_DIR, filename)
-    with open(path, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([path]), open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return filename
 
@@ -4062,7 +3949,7 @@ def _move_test_report_to_archive(filename: str) -> str | None:
             if not os.path.exists(cand_path):
                 dst = cand_path
                 break
-    shutil.move(src, dst)
+    document_write_ports.write_gate("paths", [src,dst], lambda: shutil.move(src, dst))
     return os.path.abspath(dst)
 
 
@@ -4335,7 +4222,7 @@ def create_tv(
     except Exception:
         archive_path = os.path.join(db.TEST_REPORTS_DIR, filename)
         if os.path.exists(archive_path):
-            os.remove(archive_path)
+            document_write_ports.write_gate("paths", [archive_path], lambda: os.remove(archive_path))
         raise
     db.update_document_fields(
         tv_doc_id,
@@ -4753,7 +4640,7 @@ def create_tvr(tv_doc_id: str, summary_status_override: str | None = None) -> di
     except Exception:
         p = os.path.join(db.TEST_REPORTS_DIR, filename)
         if os.path.exists(p):
-            os.remove(p)
+            document_write_ports.write_gate("paths", [p], lambda: os.remove(p))
         raise
     db.update_document_fields(tvr_doc_id, seq_num=tv_num)
     db.insert_event(tvr_doc_id, "created", memo_file=filename,
@@ -5009,7 +4896,7 @@ def _create_rerun_t_inbox_draft(
         "",
     ]
     path = os.path.join(db.INBOX_DIR, filename)
-    with open(path, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([path]), open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     return filename
 
@@ -5126,7 +5013,7 @@ def _create_design_reopen_ds_draft(
         "",
     ]
     path = os.path.join(db.DESIGN_REOPEN_DIR, filename)
-    with open(path, "w", encoding="utf-8") as f:
+    with document_write_ports.write_paths([path]), open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     return filename
 
@@ -5446,7 +5333,7 @@ def create_storage_file(
             return err
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.touch()
+            document_write_ports.write_gate("paths", [target], lambda: target.touch())
         except Exception as e:
             return {"status": "error", "message": str(e)}
         return {"status": "success"}
@@ -5476,7 +5363,7 @@ def create_storage_file(
                         "message": "Source mutation target changed during validation."}
             try:
                 guarded_target.parent.mkdir(parents=True, exist_ok=True)
-                guarded_target.touch()
+                document_write_ports.write_gate("paths", [guarded_target], lambda: guarded_target.touch())
             except Exception as e:
                 return {"status": "error", "message": str(e)}
     except tr2_policy.Tr2FilePolicyError as exc:

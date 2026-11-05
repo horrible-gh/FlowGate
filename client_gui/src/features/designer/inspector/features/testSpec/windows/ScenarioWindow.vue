@@ -37,7 +37,7 @@
         <InspectorPaneState v-if="reading" state="loading" />
         <InspectorPaneState v-else-if="readError" state="error" :message="readError" retryable @retry="loadRaw" />
         <Textarea v-else v-model="raw.text" class="mono raw-text" :rows="16" :disabled="!card.can('rawSave').enabled" data-test="scenario-raw-text" />
-        <template v-if="rawConflict"><InspectorReason tone="danger" :text="t(k('conflict'))" /><Button size="sm" variant="secondary" data-test="raw-reload" @click="loadRaw">{{ t(k('reload')) }}</Button></template>
+        <template v-if="rawConflict"><InspectorReason tone="danger" :text="t(k('conflict'))" /><Textarea v-if="raw.latest !== null" class="raw-text" :model-value="raw.latest" readonly :rows="6" data-test="raw-latest" /><Button size="sm" variant="secondary" :disabled="raw.latest === null" data-test="raw-adopt-merge" @click="adoptMerge">{{ t(k('adopt_merge')) }}</Button><Button size="sm" variant="secondary" data-test="raw-reload" @click="loadLatest">{{ t(k('reload')) }}</Button></template>
         <InspectorReason v-if="reason('rawSave')" :text="reason('rawSave')" />
         <InspectorReason v-if="!rawConflict && card.refusal.value?.operation === 'rawSave'" tone="danger" :text="refusalText" data-test="raw-refusal" />
         <footer><Button size="sm" variant="secondary" @click="raw.open = false">{{ t(k('close')) }}</Button>
@@ -56,13 +56,14 @@ import Dropdown from '@/components/ui/Dropdown.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import Textarea from '@/components/ui/Textarea.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
-import { documentContentRead, documentContentSave } from '@/features/document'
 import { TestMarkBadge, testVerdictMark, TEST_PENDING_MARK, documentHistoryVerdictKey, documentHistoryWhen } from '@/features/documentWindow'
 import InspectorReason from '../../../parts/InspectorReason.vue'
 import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
 import InspectorAiButton from '../../../parts/InspectorAiButton.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
 import type { TestCardCommand } from '../useTestCard'
+import { joinFrontmatter, splitFrontmatter } from '@/features/document/cardEditSession'
+import type { TsBase } from '../tsEditSession'
 import { sessionDraft, useScenarioWindow, type RawDraft } from './scenarioWindowModel'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()
@@ -70,7 +71,7 @@ const k = (key: string) => `gui.inspector.testSpec.window.scenario.${key}`
 const { card, shell, state, close, geometry, current } = useScenarioWindow(() => props.target, 'scenario')
 const reading = ref(false), readError = ref(''), rawConflict = ref(false)
 const toasts = ref<ToastHostItem[]>([])
-const raw = computed(() => sessionDraft<RawDraft>(card.value!.drafts, 't2:raw', () => ({ docId: '', baseline: '', text: '', loaded: false, open: false })))
+const raw = computed(() => sessionDraft<RawDraft>(card.value!.drafts, 't2:raw', () => ({ docId: '', baseline: '', text: '', loaded: false, open: false, tsBase: null, latest: null, latestBase: null })))
 const columns = ['result', 'id', 'case_title', 'requirement', 'mode', 'required', 'edit_column']
 const reviewCount = computed(() => (card.value?.reviewHistory.data.value?.reviews.length ?? 0) + (card.value?.reviewHistory.data.value?.rejections.length ?? 0))
 const summary = computed(() => {
@@ -109,10 +110,11 @@ async function loadRaw() {
   const sequence = ++readSequence
   reading.value = true; readError.value = ''
   try {
-    const data = await documentContentRead(id)
+    // §2.15: the whole text, its doc_id and its revision are one v2 snapshot; the revision is this draft's base.
+    const data = await card.value!.pinRaw()
     if (!current() || sequence !== readSequence) return
-    if (data.missing) { readError.value = t(k('read_failed')); return }
-    Object.assign(raw.value, { docId: id, baseline: data.content, text: data.content, loaded: true })
+    if (data === null) { readError.value = t(k('read_failed')); return }
+    Object.assign(raw.value, { docId: id, baseline: data.content, text: data.content, loaded: true, tsBase: data.base, latest: null, latestBase: null })
     rawConflict.value = false
     if (card.value?.refusal.value?.operation === 'rawSave') card.value.refusal.value = null
   } catch { if (current() && sequence === readSequence) readError.value = t(k('read_failed')) }
@@ -120,18 +122,42 @@ async function loadRaw() {
 }
 async function saveRaw() {
   const c = card.value, draft = raw.value
-  if (!current() || !c?.can('rawSave').enabled || !draft.loaded || reading.value || draft.text === draft.baseline || rawConflict.value) return
+  if (!current() || !c?.can('rawSave').enabled || !draft.loaded || !draft.tsBase || reading.value || draft.text === draft.baseline || rawConflict.value) return
   const text = draft.text
+  let answered: { base: TsBase; text: string; same: boolean } | null = null
   const ok = await c.changeDocument('rawSave', async () => {
-    const latest = await documentContentRead(draft.docId)
-    if (!current()) throw new Error('inactive')
-    if (latest.missing || latest.content !== draft.baseline) {
-      rawConflict.value = true
-      throw { response: { status: 409, data: { error: 'content_conflict' } } }
-    }
-    await documentContentSave(draft.docId, text)
+    // The draft's own pinned base: no re-read right before the save, the server's CAS judges any race.
+    answered = await c.reviseRaw(draft.tsBase!, text)
   })
-  if (ok && current()) { draft.baseline = text; toasts.value = [{ id: Date.now(), message: t(k('saved')), tone: 'success' }] }
+  if (ok && current() && answered) {
+    // Own confirmed SAVED / REPLAY only: the base moves to N+1 with the text the CONFIRMED request submitted. A resent
+    // earlier (uncertain) request makes that earlier text the baseline; the current text then stays an unsaved draft.
+    const done = answered as { base: TsBase; text: string; same: boolean }
+    draft.baseline = done.text; draft.tsBase = done.base
+    if (done.same) toasts.value = [{ id: Date.now(), message: t(k('saved')), tone: 'success' }]
+    else if (c.refusal.value === null) c.refusal.value = { operation: 'rawSave', key: 'failure.uncertain', kind: 'uncertain', status: null, code: null, message: null, fieldErrors: [], error: null }
+    return
+  }
+  if (current() && c.refusal.value?.kind === 'conflict') { rawConflict.value = true; await loadLatest() }
+}
+/** CONFLICT: the latest text is read apart; the draft and its base stay until the user adopts a merged text. */
+async function loadLatest() {
+  const data = await card.value?.pinRaw().catch(() => null)
+  if (!current() || !data) return
+  Object.assign(raw.value, { latest: data.content, latestBase: data.base })
+}
+/** The user merged by hand in the text: adopt it on the latest document's revision as the new base (explicit). */
+function adoptMerge() {
+  const draft = raw.value
+  if (draft.latest === null || !draft.latestBase) return
+  // The slot's document changed: never adopt an old draft as the new document's text (a separate edit session is needed).
+  if (draft.latestBase.docId !== draft.docId) { readError.value = t(k('conflict')); return }
+  // The latest frontmatter / identity is adopted with the latest revision; only the body the user merged is kept.
+  const merged = joinFrontmatter(splitFrontmatter(draft.latest).frontmatter, splitFrontmatter(draft.text).body)
+  draft.baseline = draft.latest; draft.tsBase = draft.latestBase; draft.text = merged
+  draft.latest = null; draft.latestBase = null
+  rawConflict.value = false
+  if (card.value?.refusal.value?.operation === 'rawSave') card.value.refusal.value = null
 }
 </script>
 <style scoped>

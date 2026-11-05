@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import pytest
 
 from modules.flow_gate.documents import tr2_service as tr2
+from tests.flowgate.test_card_document_edit_0127 import env  # noqa: F401 — real transactional store
 from modules.flow_gate.documents.constants import WORK_PLAN_PAIR_MAP, WORK_PLAN_SET_TYPES
 from modules.flow_gate.documents.type_code import (
     doc_code_seq_text, doc_id_type_code, is_valid_type_code, parse_doc_code,
@@ -112,57 +113,33 @@ def test_target_fingerprint_raw_bytes_and_absence(tmp_path):
 
 
 
-def test_single_writer_revision_cas_never_touches_file_on_stale_request(tmp_path, monkeypatch):
-    doc_id = "flowgate.default.0565.0006-TR2"
-    path = tmp_path / "0006-TR2_document.json"
-    root = tmp_path / "source"
+def test_single_writer_revision_cas_never_touches_file_on_stale_request(env, monkeypatch):
+    from modules.flow_gate.db import documents
+    from flowgate.card_document_edit import integration
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    integration.register()
+    doc_id = env.doc["doc_id"]
+    documents.update(doc_id, {"type_code": "TR2", "doc_review_status": "pending_review"})
+    path = env.path.with_suffix(".json")
+    root = env.root / "source"
     (root / "src").mkdir(parents=True)
     (root / "src" / "a.txt").write_bytes(b"a")
-    row = {"doc_id": doc_id, "type_code": "TR2", "project_id": "flowgate",
-           "group_id": "flowgate.default.0565", "module": "default",
-           "branch": "main", "revision_no": 0, "updated_at": "old",
-           "file_path": None, "filename": None, "doc_review_status": "pending_review"}
-
-    class Store:
-        @contextmanager
-        def transaction(self):
-            yield self
-
-        def _execute(self, sql, params):
-            if "revision_no = revision_no + 1" in sql:
-                if row["revision_no"] == params[-1]:
-                    row["revision_no"] += 1
-                    row["file_path"] = params[1]
-                    row["filename"] = params[2]
-            elif "SET revision_no = ?" in sql:
-                if row["revision_no"] == params[-1]:
-                    row["revision_no"] = params[0]
-
-        def _execute_affected(self, sql, params):
-            # The writer's CAS authority is the driver's affected-row count (T0030 §8).
-            before = row["revision_no"]
-            self._execute(sql, params)
-            return int(row["revision_no"] != before)
-
-    monkeypatch.setattr(tr2.db_docs, "get_by_id", lambda _doc_id: row.copy())
-    monkeypatch.setattr(tr2, "get_store", lambda: Store())
     monkeypatch.setattr(tr2, "verify_pair", lambda *_: None)
     monkeypatch.setattr(tr2, "mutation_block", lambda _doc: None)
     monkeypatch.setattr(tr2, "resolve_source_root", lambda *_: root)
     monkeypatch.setattr(tr2, "canonical_path_for_doc", lambda _: path)
-    monkeypatch.setattr(tr2.storage_paths, "to_storage_relative", lambda *_: str(path))
-    from modules.flow_gate.storage import body as body_storage
+    from modules.flow_gate.storage import body as body_storage, paths
     evidence = []
     monkeypatch.setattr(body_storage, "record_body_saved",
                         lambda doc, **fields: evidence.append((doc["doc_id"], fields)))
-    saved = tr2.save(doc_id, _body(), actor="tester", expected_revision=0)
+    saved = tr2.save(doc_id, _body(), actor="user", expected_revision=0)
     first_bytes = path.read_bytes()
-    assert saved["new_revision"] == row["revision_no"] == 1
+    assert saved["new_revision"] == documents.get_by_id(doc_id)["revision_no"] == 1
     assert json.loads(first_bytes)["baseline_fingerprint"].startswith("sha256:")
     with pytest.raises(tr2.Tr2ValidationError) as error:
-        tr2.save(doc_id, _body(), actor="tester", expected_revision=0)
+        tr2.save(doc_id, _body(), actor="user", expected_revision=0)
     assert error.value.code == "tr2_spec_changed"
-    assert row["revision_no"] == 1
-    assert path.read_bytes() == first_bytes
-    assert evidence == [(doc_id, {"source": "tr2_save", "file_path": str(path),
+    assert documents.get_by_id(doc_id)["revision_no"] == 1 and path.read_bytes() == first_bytes
+    assert evidence == [(doc_id, {"source": "tr2_save", "file_path": paths.to_storage_relative(path, "flowgate"),
                                  "size": len(first_bytes)})]

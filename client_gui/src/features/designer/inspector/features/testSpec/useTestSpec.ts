@@ -20,7 +20,7 @@ import {
   testSpecRunStart,
   type TestSpecView,
 } from '@/features/document'
-import { openDocument } from '../../openDocument'
+import { cardDocumentContext, openDocument } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
 import {
   useInspectorResource,
@@ -273,7 +273,7 @@ export function useTestSpec(target: () => InspectorTarget | null, writing: () =>
     failure,
     run,
     cancel,
-    open: (id) => openDocument(id),
+    open: (id) => openDocument(id, 'view', { card: cardDocumentContext(target(), id) }),
     reload: async () => {
       await Promise.all([read.reload(), guard.reload()])
     },

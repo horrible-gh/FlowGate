@@ -6,6 +6,7 @@ journal (flowgate.v02.0090 T#1, NR0003 §5.1/§5.2) shared by the Token, AI-run
 and snapshot scratch owners.
 """
 from __future__ import annotations
+from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import errno
 import hashlib
@@ -45,51 +46,52 @@ def safe_rename(
     - If dst already exists, back it up under a temporary name first.
     - Retries on Windows PermissionError.
     """
-    if not src.exists():
-        raise FileNotFoundError(f"Source not found: {src}")
+    with document_write_ports.write_paths([src, dst], trees=[src, dst]):
+        if not src.exists():
+            raise FileNotFoundError(f"Source not found: {src}")
 
-    ensure_dir(dst.parent)
+        ensure_dir(dst.parent)
 
-    # Handle dst collision
-    tmp_backup: Optional[Path] = None
-    if dst.exists():
-        tmp_backup = _tmp_name(dst)
-        dst.rename(tmp_backup)
+        # Handle dst collision
+        tmp_backup: Optional[Path] = None
+        if dst.exists():
+            tmp_backup = _tmp_name(dst)
+            dst.rename(tmp_backup)
 
-    last_exc: Optional[Exception] = None
-    for attempt in range(retries):
-        try:
-            src.rename(dst)
-            # Delete the collision backup
-            if tmp_backup and tmp_backup.exists():
-                if tmp_backup.is_dir():
-                    shutil.rmtree(tmp_backup, ignore_errors=True)
-                else:
-                    tmp_backup.unlink(missing_ok=True)
-            return
-        except PermissionError as exc:
-            last_exc = exc
-            time.sleep(delay * (attempt + 1))
-        except OSError as exc:
-            # Cross-device move → copy + delete
-            if exc.errno == errno_EXDEV():
-                _cross_device_move(src, dst)
+        last_exc: Optional[Exception] = None
+        for attempt in range(retries):
+            try:
+                src.rename(dst)
+                # Delete the collision backup
                 if tmp_backup and tmp_backup.exists():
                     if tmp_backup.is_dir():
                         shutil.rmtree(tmp_backup, ignore_errors=True)
                     else:
                         tmp_backup.unlink(missing_ok=True)
                 return
-            last_exc = exc
-            break
+            except PermissionError as exc:
+                last_exc = exc
+                time.sleep(delay * (attempt + 1))
+            except OSError as exc:
+                # Cross-device move → copy + delete
+                if exc.errno == errno_EXDEV():
+                    _cross_device_move(src, dst)
+                    if tmp_backup and tmp_backup.exists():
+                        if tmp_backup.is_dir():
+                            shutil.rmtree(tmp_backup, ignore_errors=True)
+                        else:
+                            tmp_backup.unlink(missing_ok=True)
+                    return
+                last_exc = exc
+                break
 
-    # Failed — restore backup
-    if tmp_backup and tmp_backup.exists():
-        try:
-            tmp_backup.rename(dst)
-        except Exception:
-            pass
-    raise OSError(f"Failed to rename: {src} → {dst}") from last_exc
+        # Failed — restore backup
+        if tmp_backup and tmp_backup.exists():
+            try:
+                tmp_backup.rename(dst)
+            except Exception:
+                pass
+        raise OSError(f"Failed to rename: {src} → {dst}") from last_exc
 
 
 def errno_EXDEV() -> int:
@@ -100,12 +102,13 @@ def errno_EXDEV() -> int:
 
 def _cross_device_move(src: Path, dst: Path) -> None:
     """Cross-device move: copy → delete."""
-    if src.is_dir():
-        shutil.copytree(str(src), str(dst))
-        shutil.rmtree(str(src))
-    else:
-        shutil.copy2(str(src), str(dst))
-        src.unlink()
+    with document_write_ports.write_paths([src, dst], trees=[src, dst]):
+        if src.is_dir():
+            shutil.copytree(str(src), str(dst))
+            shutil.rmtree(str(src))
+        else:
+            shutil.copy2(str(src), str(dst))
+            src.unlink()
 
 
 def move_subtree(
@@ -118,37 +121,38 @@ def move_subtree(
 
     Creates dst_dir if it does not exist. Overwrites existing files.
     """
-    if not src_dir.exists():
-        raise FileNotFoundError(f"Source directory not found: {src_dir}")
+    with document_write_ports.write_paths([], trees=[src_dir, dst_dir]):
+        if not src_dir.exists():
+            raise FileNotFoundError(f"Source directory not found: {src_dir}")
 
-    ensure_dir(dst_dir)
+        ensure_dir(dst_dir)
 
-    for item in src_dir.iterdir():
-        dst_item = dst_dir / item.name
-        last_exc: Optional[Exception] = None
-        for attempt in range(retries):
-            try:
-                if item.is_dir():
-                    if dst_item.exists():
-                        move_subtree(item, dst_item, retries=retries, delay=delay)
+        for item in src_dir.iterdir():
+            dst_item = dst_dir / item.name
+            last_exc: Optional[Exception] = None
+            for attempt in range(retries):
+                try:
+                    if item.is_dir():
+                        if dst_item.exists():
+                            move_subtree(item, dst_item, retries=retries, delay=delay)
+                        else:
+                            safe_rename(item, dst_item, retries=retries, delay=delay)
                     else:
                         safe_rename(item, dst_item, retries=retries, delay=delay)
-                else:
-                    safe_rename(item, dst_item, retries=retries, delay=delay)
-                last_exc = None
-                break
-            except PermissionError as exc:
-                last_exc = exc
-                time.sleep(delay * (attempt + 1))
+                    last_exc = None
+                    break
+                except PermissionError as exc:
+                    last_exc = exc
+                    time.sleep(delay * (attempt + 1))
 
-        if last_exc:
-            raise OSError(f"Failed to move subtree: {item}") from last_exc
+            if last_exc:
+                raise OSError(f"Failed to move subtree: {item}") from last_exc
 
-    # Remove src_dir when empty
-    try:
-        src_dir.rmdir()
-    except OSError:
-        pass  # ignore if not empty
+        # Remove src_dir when empty
+        try:
+            src_dir.rmdir()
+        except OSError:
+            pass  # ignore if not empty
 
 
 # ── Managed recursive delete (flowgate.v02.0090 T#1, NR0003 §5.1) ───────────
@@ -292,11 +296,12 @@ def remove_managed_tree(target, allowed_root, *, missing_ok: bool = False) -> No
     if (not _plain_chain(target.parent, root)
             or not _strictly_inside(os.path.realpath(target), os.path.realpath(root))):
         raise TreeDeleteRefused("unsafe_parent")
-    handler = _readonly_retry(target)
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(target, onexc=handler)
-    else:
-        shutil.rmtree(target, onerror=lambda func, path, info: handler(func, path, info[1]))
+    with document_write_ports.write_paths([], trees=[target]):
+        handler = _readonly_retry(target)
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(target, onexc=handler)
+        else:
+            shutil.rmtree(target, onerror=lambda func, path, info: handler(func, path, info[1]))
     if path_present(target):
         raise OSError(errno.ENOTEMPTY, "delete target is still present")
 
@@ -587,26 +592,27 @@ def write_journal(record: dict, *, extra_roots=()) -> dict:
                 or existing["target_identity"] != record["target_identity"]):
             raise DeleteJournalError("journal_conflict")
         return existing
-    payload = json.dumps(record, sort_keys=True, separators=(",", ":"),
-                         ensure_ascii=False).encode("utf-8")
-    tmp = directory / f".{record_id}.{uuid.uuid4().hex[:12]}.tmp"
-    try:
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_BINARY, 0o600)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-    except OSError:
+    with document_write_ports.write_paths([path]):
+        payload = json.dumps(record, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=False).encode("utf-8")
+        tmp = directory / f".{record_id}.{uuid.uuid4().hex[:12]}.tmp"
         try:
-            os.unlink(tmp)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_BINARY, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, path)
         except OSError:
-            pass
-        raise DeleteJournalError("journal_write_failed") from None
-    stored = _load(path, owner, project_id, record_id)
-    if stored != record:
-        raise DeleteJournalError("journal_verify_failed")
-    return stored
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise DeleteJournalError("journal_write_failed") from None
+        stored = _load(path, owner, project_id, record_id)
+        if stored != record:
+            raise DeleteJournalError("journal_verify_failed")
+        return stored
 
 
 def remove_journal(owner: str, project_id: str, record_id: str) -> None:
@@ -614,7 +620,7 @@ def remove_journal(owner: str, project_id: str, record_id: str) -> None:
     _check_owner(owner, record_id)
     path = _journal_dir(owner, project_id, create=False) / f"{record_id}.json"
     try:
-        os.unlink(path)
+        document_write_ports.write_gate("paths", [path], lambda: os.unlink(path))
     except FileNotFoundError:
         return
     except OSError:
@@ -673,7 +679,7 @@ _held: set[tuple[str, str, str]] = set()
 
 def _lock_file(path: Path) -> int:
     try:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | _O_BINARY, 0o600)
+        fd = document_write_ports.write_gate("paths", [path], lambda: os.open(path, os.O_RDWR | os.O_CREAT | _O_BINARY, 0o600))
     except OSError:
         raise DeleteJournalError("journal_lock_failed") from None
     try:
@@ -699,14 +705,14 @@ def _unlock_file(fd: int, path: Path) -> None:
             os.lseek(fd, 0, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         else:
-            os.unlink(path)  # while still locked; a waiter rechecks the inode
+            document_write_ports.write_gate("paths", [path], lambda: os.unlink(path))  # while still locked; a waiter rechecks the inode
     except OSError:
         pass
     finally:
         os.close(fd)
     if os.name == "nt":
         try:
-            os.unlink(path)  # refused harmlessly while another process has it open
+            document_write_ports.write_gate("paths", [path], lambda: os.unlink(path))  # refused harmlessly while another process has it open
         except OSError:
             pass
 

@@ -298,6 +298,7 @@ def _patch_edit_validation(monkeypatch):
         inbox_routes.db_docs,
         "get_by_id",
         lambda doc_id: {
+            "id": 1, "project_id": "flowgate", "revision_no": 0, "module": "default",
             "doc_id": doc_id, "type_code": "NR", "status": "open",
             "group_id": "flowgate.default.0391",
             "doc_review_status": "pending_review",
@@ -311,6 +312,25 @@ def _patch_edit_validation(monkeypatch):
     )
     monkeypatch.setattr(inbox_routes, "_disposed_group_fail", lambda *_a, **_k: None)
     monkeypatch.setattr(inbox_routes, "_find_body_twin", lambda *_a, **_k: None)
+    # This suite mocks persistence and exercises validation/dry-run only. The
+    # extracted service now reaches those validators through the legacy store port.
+    from pathlib import Path
+    from types import SimpleNamespace
+    from flowgate.card_document_edit import legacy_edit, legacy_store, target, guards
+    from modules.flow_gate.graph_workflow.store import run_store
+    from modules.flow_gate.db import document_revisions
+    monkeypatch.setattr(target, "classify_card_slot", lambda doc: target.NON_CARD)
+    monkeypatch.setattr(run_store, "available", lambda: True)
+    monkeypatch.setattr(run_store, "node_run_by_token", lambda token: None)
+    monkeypatch.setattr(legacy_edit, "has_permission", lambda *a: True)
+    monkeypatch.setattr(guards, "check_writable", lambda *a: None)
+    monkeypatch.setattr(document_revisions, "get_single_by_doc_revision", lambda *a: None)
+    def validate_only(req):
+        doc = inbox_routes.db_docs.get_by_id(req.doc_id)
+        req.rule_call.precheck(doc)
+        req.rule_call.build(doc, SimpleNamespace(path=Path("unpersisted.md"), text="", data=b""))
+        pytest.fail("a validation fixture must never persist a successful edit")
+    monkeypatch.setattr(legacy_store, "legacy_store", validate_only)
     increment = MagicMock()
     update = MagicMock()
     consume = MagicMock()
@@ -1110,6 +1130,7 @@ def test_edit_tr_scope_empty_notice_fallback_locale_has_no_korean(monkeypatch, l
     monkeypatch.setattr(
         inbox_routes.db_docs, "get_by_id",
         lambda doc_id: {
+            "id": 1, "project_id": "flowgate", "revision_no": 0, "module": "default",
             "doc_id": doc_id, "type_code": "TR", "status": "open",
             "group_id": "flowgate.default.0391",
             "doc_review_status": "pending_review",
@@ -1138,6 +1159,7 @@ def test_edit_tr_scope_notice_from_the_service_still_wins(monkeypatch):
     monkeypatch.setattr(
         inbox_routes.db_docs, "get_by_id",
         lambda doc_id: {
+            "id": 1, "project_id": "flowgate", "revision_no": 0, "module": "default",
             "doc_id": doc_id, "type_code": "TR", "status": "open",
             "group_id": "flowgate.default.0391",
             "doc_review_status": "pending_review",
@@ -1166,6 +1188,7 @@ def test_edit_tr_scope_empty_notice_fallback_ko_default_preserves_meaning(monkey
     monkeypatch.setattr(
         inbox_routes.db_docs, "get_by_id",
         lambda doc_id: {
+            "id": 1, "project_id": "flowgate", "revision_no": 0, "module": "default",
             "doc_id": doc_id, "type_code": "TR", "status": "open",
             "group_id": "flowgate.default.0391",
             "doc_review_status": "pending_review",

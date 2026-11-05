@@ -575,6 +575,8 @@ def create_work_plan(
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
 
+    from modules.flow_gate.storage.files import file_identity, remove_owned_file
+    written_identity = file_identity(path)
     now = now_iso()
     try:
         doc = document_service.create_document({
@@ -605,7 +607,7 @@ def create_work_plan(
         )
     except Exception as exc:  # noqa: BLE001 — roll the file and row back, never leave an orphan
         try:
-            path.unlink(missing_ok=True)
+            remove_owned_file(path, written_identity)
         except OSError:
             pass
         try:
@@ -706,45 +708,21 @@ def _workflow_items(doc: dict) -> list[dict]:
         return []
 
 
+def _dedicated_write(operation, *args):
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    from modules.flow_gate.services.mutation_policy import MutationPolicyError
+    try:
+        return dedicated_write(operation, *args)
+    except (HTTPException, MutationPolicyError):
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
 def _heal_unwritten_plan(
     doc: dict, exc: wp.WorkPlanUnreadable, actor_user_id: str,
 ) -> Optional[dict]:
-    """Revive a file that never held a plan into canonical JSON (0395 T0026 rework).
-
-    A work plan created via "make an empty document" has only a Markdown frontmatter skeleton,
-    which the reader cannot open. Answering "cannot be opened as a table" every time would
-    leave the user permanently unable to use a plan they already created. Only for a file that
-    never held a plan (``is_unwritten_plan``) a filled canonical file is created here and the document repointed at it.
-
-    The original Markdown file is not deleted — reviving means placing a canonical file
-    alongside, not overwriting, and the old file stays.
-    """
-    if exc.reason != "not_json" or not wp.is_unwritten_plan(exc.raw):
-        return None
-    path = _canonical_path(doc)
-    body = wp.auto_plan_body(doc.get("project_id"), _workflow_items(doc))
-    try:
-        wp.write_body_atomically(path, body)
-    except OSError:
-        return None
-    relative = storage_paths.to_storage_relative(path, doc.get("project_id"))
-    title_locale = wp.resolve_title_locale(doc.get("meta"), current_title=doc.get("title"))
-    updates = {
-        "file_path": relative,
-        "title": wp.derived_title(body, title_locale),
-        "meta": _json.dumps(
-            wp.metadata_with_title_locale(doc.get("meta"), title_locale),
-            ensure_ascii=False,
-        ),
-    }
-    try:
-        updated = db_docs.update(doc.get("doc_id") or "", updates)
-        if updated:
-            doc.update(updated)
-    except Exception as exc_update:  # noqa: BLE001 — the file has already been revived
-        import LogAssist.log as logger
-        logger.warning(f"[work-plan] canonical repoint skipped ({doc.get('doc_id')}): {exc_update}")
-    return body
+    return _dedicated_write("wp_heal", doc, exc, actor_user_id)
 
 
 @router.get("/{doc_id}/work-plan")
@@ -780,177 +758,7 @@ def restore_work_plan_revision(
     body: WorkPlanRestore,
     current_user: dict = Depends(get_current_user),
 ):
-    """Restore one validated snapshot while preserving the unreadable before-image.
-
-    main's own (0597 T0004) version of this route used a naive lookup (`next(item for
-    item in db_revisions.list_by_doc(doc_id) if item.get("revision_no") == revision_no)`,
-    no ambiguity handling), a non-exclusive before-image write
-    (`before.write_bytes(path.read_bytes())`), and no r0-immutability distinction (it
-    always inserted a fresh `document_revisions` row for `current_revision`, which is
-    the r0 duplication this task set forbids when revision 0 already owns a row from
-    `ensure_revision_snapshot`). The lookup and the before-image write below replace
-    those two pieces with fail-closed versions; the rest of the function keeps main's
-    original flow and formatting.
-    """
-    locale = _locale(request)
-    doc = _load_doc(doc_id)
-    from modules.flow_gate.documents.routers.documents import (
-        _reject_if_group_ai_running,
-        _reject_if_group_disposed,
-    )
-    _reject_if_group_disposed(doc)
-    _reject_if_group_ai_running(doc)
-    final_approved = document_service.is_final_approved(doc)
-    if doc.get("status") == "closed" or not document_service.is_document_editable(doc, final_approved=final_approved):
-        raise HTTPException(status_code=422, detail="Modification not allowed after final approval." if final_approved else f"Modification not allowed for status: {doc.get('status')}")
-
-    # 0599: a plain scan (main's `next(item for item in db_revisions.list_by_doc(doc_id)
-    # if item.get("revision_no") == revision_no)`) can silently pick the wrong backup once
-    # a revision_no can collide, so the lookup itself must fail closed on that collision.
-    try:
-        row = db_revisions.get_single_by_doc_revision(doc_id, revision_no)
-    except db_revisions.RevisionAmbiguityError:
-        return JSONResponse(status_code=422, content={
-            "code": "wp_revision_not_restorable",
-            "message": "The selected work plan revision cannot be restored.",
-            "reason": "revision_ambiguous",
-        })
-    if row is None:
-        raise HTTPException(status_code=404, detail="Work plan revision not found.")
-    _source_path, restored_body, unavailable = _revision_backup(doc, row)
-    if unavailable or restored_body is None:
-        return JSONResponse(status_code=422, content={
-            "code": "wp_revision_not_restorable",
-            "message": "The selected work plan revision cannot be restored.",
-            "reason": unavailable,
-        })
-
-    with _plan_save_lock(doc_id):
-        fresh = db_docs.get_by_id(doc_id) or doc
-        current_revision = fresh.get("revision_no", 0) or 0
-        if body.base_revision_no != current_revision:
-            return _revision_conflict_response(fresh, locale, body.base_revision_no, current_revision)
-        path = _plan_path(fresh)
-        if not path.exists():
-            raise HTTPException(status_code=422, detail="Current work plan body is missing.")
-        # T0017: a restore replaces the current body like a save does, so the same instruction choice rules
-        # apply before anything is written — a started card keeps its choice, a dropped choice is stored as use.
-        current_body = wp.load_previous_body(fresh)
-        locked_errors = wpa.instruction_mode_lock_errors(fresh, current_body, restored_body)
-        if locked_errors:
-            rendered = wp.render_errors(locked_errors, locale)
-            return JSONResponse(status_code=422, content={
-                "code": "wp_revision_not_restorable",
-                "message": rendered[0]["msg"],
-                "reason": "instruction_mode_started",
-                "errors": rendered,
-            })
-        restored_body = wp.instruction_mode_defaults(current_body, restored_body)
-
-        # 0599: revision 0 is immutable and, once this document has been saved at least
-        # once, already owns a `document_revisions` row from creation time
-        # (`ensure_revision_snapshot`). Restoring while still at revision 0 must not
-        # create a second row for revision 0 — main's unconditional insert further down
-        # would do exactly that — so this checks whether `current_revision` already has a
-        # row before deciding the before-image's shape.
-        try:
-            existing_current = db_revisions.get_single_by_doc_revision(doc_id, current_revision)
-        except db_revisions.RevisionAmbiguityError:
-            return JSONResponse(status_code=422, content={
-                "code": "wp_revision_not_restorable",
-                "message": "The current work plan revision is ambiguous.",
-                "reason": "revision_ambiguous",
-            })
-        before_has_revision_row = existing_current is None
-
-        revisions_dir = path.parent / "revisions"
-        try:
-            revisions_dir.mkdir(parents=True, exist_ok=True)
-            if before_has_revision_row:
-                # Normal 0597 before-image: revision N preserves the raw body that
-                # existed immediately before the restore advanced the document to N+1.
-                before = revisions_dir / f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
-            else:
-                # r0 is immutable. On a never-saved plan the baseline already owns
-                # revision 0, so preserve the broken raw in a provenance sidecar rather
-                # than overwriting or duplicating that recovery source.
-                before = revisions_dir / f"{doc_id}.r{current_revision}.unreadable-before-r{current_revision + 1}{path.suffix or '.json'}"
-            # 0599: an exclusive create — main's `before.write_bytes(path.read_bytes())`
-            # would silently clobber an existing backup file on a double call.
-            with before.open("xb") as before_fh:
-                before_fh.write(path.read_bytes())
-                before_fh.flush()
-                os.fsync(before_fh.fileno())
-            before_rel = storage_paths.to_storage_relative(before, doc.get("project_id"))
-        except OSError as exc:
-            raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
-
-        with get_store().transaction() as store:
-            now = now_iso()
-            store._execute(
-                "UPDATE documents SET revision_no = revision_no + 1, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
-                [now, doc_id, current_revision],
-            )
-            refreshed = db_docs.get_by_id(doc_id)
-            if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
-                try:
-                    before.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                return _revision_conflict_response(refreshed or fresh, locale, body.base_revision_no, current_revision)
-            try:
-                wp.write_body_atomically(path, restored_body)
-            except OSError as exc:
-                store._execute(
-                    "UPDATE documents SET revision_no = ?, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
-                    [current_revision, fresh.get("updated_at"), doc_id, current_revision + 1],
-                )
-                try:
-                    before.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
-            record_body_saved(fresh, source="work_plan_save",
-                              file_path=storage_paths.to_storage_relative(path, doc.get("project_id")),
-                              size=len(wp.dumps(restored_body).encode("utf-8")))
-
-    # 0599: only insert a new `document_revisions` row when the before-image is a real,
-    # unclaimed revision slot — main inserted this unconditionally, which for
-    # `current_revision == 0` would duplicate the row `ensure_revision_snapshot` already
-    # made for r0.
-    if before_has_revision_row:
-        db_revisions.create({
-            "doc_id": doc_id,
-            "revision_no": current_revision,
-            "backup_path": before_rel,
-            # document_revisions.edit_reason is a constrained document-edit category;
-            # the restore-specific provenance remains in the event metadata below.
-            "edit_reason": "user_comment",
-            "linked_doc_id": None,
-            "created_by": current_user["user_id"],
-            "created_at": now,
-        })
-    try:
-        db_events.create({
-            "event_type": "doc_edited", "project_id": doc.get("project_id"),
-            "group_id": doc.get("group_id"), "document_id": None,
-            "actor_user_id": current_user["user_id"], "from_state": None, "to_state": None,
-            "metadata": _json.dumps({
-                "doc_id": doc_id, "edit_reason": "work_plan_revision_restore",
-                "restored_revision_no": revision_no, "revision_no": current_revision + 1,
-                # 0599: extra provenance the audit trail needs to explain a restore that
-                # went through the sidecar path instead of an ordinary revision row.
-                "restored_revision_id": row.get("id"),
-                "restored_revision_created_by": row.get("created_by"),
-                "unreadable_backup_path": before_rel,
-                "unreadable_backup_is_sidecar": not before_has_revision_row,
-            }, ensure_ascii=False),
-        })
-    except Exception:  # noqa: BLE001 — restore is already durable
-        pass
-    refreshed = db_docs.get_by_id(doc_id) or refreshed
-    _emit(refreshed, "updated", {"doc_id": doc_id, "type": WORK_PLAN_TYPE, "revision_no": current_revision + 1}, current_user["user_id"])
-    return _read_view(refreshed, restored_body)
+    return _dedicated_write("wp_restore", request, doc_id, revision_no, body, current_user)
 
 
 # ── Save (P0009 §4.6 ~ §4.8) ─────────────────────────────────────────────────
@@ -963,226 +771,7 @@ def save_work_plan(
     body: WorkPlanSave,
     current_user: dict = Depends(get_current_user),
 ):
-    locale = _locale(request)
-    doc = _load_doc(doc_id)
-
-    from modules.flow_gate.documents.routers.documents import (
-        _reject_if_group_ai_running,
-        _reject_if_group_disposed,
-    )
-    _reject_if_group_disposed(doc)
-    _reject_if_group_ai_running(doc)
-
-    final_approved = document_service.is_final_approved(doc)
-    if (
-        doc.get("status") == "closed"
-        or not document_service.is_document_editable(
-            doc, final_approved=final_approved,
-        )
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail="Modification not allowed after final approval."
-            if final_approved else
-            f"Modification not allowed for status: {doc.get('status')}",
-        )
-
-    # Decision 6 (P0009 §4.8): validate BEFORE the revision check. The other order makes a
-    # user throw away their edits with [reload] only to be told the values were
-    # invalid anyway — two rounds of wasted work for one mistake.
-    try:
-        # 0649 T#1 (NR0003 §5.1): card ids are checked against the body this save replaces
-        # and new cards get a server-assigned id, before the single-body validator runs.
-        submitted = wp.assign_card_ids(
-            body.body,
-            wp.load_previous_body(doc),
-            project_id=doc.get("project_id"),
-            action="save",
-        )
-        plan = wp.validate(
-            submitted,
-            project_id=doc.get("project_id"),
-            doc_id=doc_id,
-            action="save",
-        )
-    except wp.WorkPlanValidationError as exc:
-        return _validation_response(exc, locale)
-    warnings = wp.capability_warning_findings(plan, doc.get("project_id") or "")
-    expected_acks = [row["step_key"] for row in warnings]
-    supplied_acks = body.capability_warning_acks
-    if len(supplied_acks) != len(set(supplied_acks)) or any(not isinstance(key, str) for key in supplied_acks):
-        return JSONResponse(status_code=422, content={"code": "validation_failed", "message": "Capability acknowledgement keys must be unique.", "errors": [{"loc": "capability_warning_acks", "msg": "duplicate or invalid acknowledgement"}]})
-    if set(supplied_acks) - set(expected_acks):
-        return JSONResponse(status_code=422, content={"code": "validation_failed", "message": "Capability acknowledgement is stale or not applicable.", "errors": [{"loc": "capability_warning_acks", "msg": "stale acknowledgement"}]})
-    if warnings and set(supplied_acks) != set(expected_acks):
-        return JSONResponse(status_code=422, content={"code": "provider_capability_confirmation_required", "message": "Confirm providers that cannot modify source or run tests.", "findings": warnings})
-    # 0403 NR0004 F1 — bind "read, check, write the file, bump the revision" into one unit.
-    #
-    # Before binding: two requests read the same revision, both passed the earlier checks, both
-    # wrote the same canonical file, and only one won the DB revision race at the end. If the
-    # loser wrote later, the user was told "save failed (409)" while the canonical file on disk
-    # held exactly their body. Every later read and pour reads this file, so the owner of the DB
-    # revision and the plan content actually applied stayed split apart.
-    #
-    # The locking scheme matches document-number reservation (numbering_service) — an in-process
-    # advisory lock per document. The revision is re-read inside the lock, so a request that
-    # waited learns its base_revision_no is already stale before touching the file.
-    with _plan_save_lock(doc_id):
-        fresh = db_docs.get_by_id(doc_id) or doc
-        current_revision = fresh.get("revision_no", 0) or 0
-        if body.base_revision_no != current_revision:
-            return _revision_conflict_response(
-                fresh, locale, body.base_revision_no, current_revision,
-            )
-        # T0017: a card that already started (v0.1 sequence or v0.2 Graph) keeps its instruction
-        # choice — the deploy could not apply the change, so the save does not take it either.
-        previous = wp.load_previous_body(fresh)
-        locked_errors = wpa.instruction_mode_lock_errors(fresh, previous, plan)
-        if locked_errors:
-            return _validation_response(wp.WorkPlanValidationError(locked_errors, action="save"), locale)
-        # A card whose choice the plan made and this body dropped is stored as ``use`` (what the editor shows).
-        plan = wp.instruction_mode_defaults(previous, plan)
-
-        title_locale = wp.resolve_title_locale(
-            fresh.get("meta"), current_title=fresh.get("title"),
-        )
-        derived_title = wp.derived_title(plan, title_locale)
-        updated_meta = _json.dumps(
-            wp.metadata_with_title_locale(fresh.get("meta"), title_locale),
-            ensure_ascii=False,
-        )
-        path = _plan_path(fresh)
-        backup_rel: Optional[str] = None
-        try:
-            existing_revision = db_revisions.get_single_by_doc_revision(
-                doc_id, current_revision,
-            )
-        except db_revisions.RevisionAmbiguityError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        if existing_revision is not None:
-            try:
-                wp.resolve_revision_snapshot(
-                    existing_revision,
-                    project_id=doc.get("project_id"),
-                    doc_id=doc_id,
-                )
-            except wp.RevisionSnapshotError as exc:
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
-        elif path.exists():
-            revisions_dir = path.parent / "revisions"
-            try:
-                revisions_dir.mkdir(parents=True, exist_ok=True)
-                backup = revisions_dir / f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
-                with backup.open("xb") as backup_fh:
-                    backup_fh.write(path.read_bytes())
-                    backup_fh.flush()
-                    os.fsync(backup_fh.fileno())
-                backup_rel = storage_paths.to_storage_relative(backup, doc.get("project_id"))
-            except OSError as exc:
-                raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
-
-        # Even inside the lock the revision bump precedes the file write, so that on the day
-        # this server runs as multiple processes, "a request that lost the revision never touches the file" still holds.
-        with get_store().transaction() as store:
-            now = now_iso()
-            store._execute(
-                "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
-                "file_path = ?, title = ?, meta = ? WHERE doc_id = ? AND revision_no = ?",
-                [now, storage_paths.to_storage_relative(path, doc.get("project_id")),
-                 derived_title, updated_meta, doc_id, current_revision],
-            )
-            refreshed = db_docs.get_by_id(doc_id)
-            if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
-                # The revision was not taken. This request has not touched the file and never will.
-                return _revision_conflict_response(
-                    refreshed or fresh, locale, body.base_revision_no, current_revision,
-                )
-            new_revision = refreshed["revision_no"]
-
-            try:
-                wp.write_body_atomically(path, plan)
-            except OSError as exc:
-                # Never leave the revision bumped with an old body. Even if the rollback fails the
-                # file still holds the previous body, so the data stays consistent — only the revision number runs one ahead.
-                try:
-                    store._execute(
-                        "UPDATE documents SET revision_no = ?, updated_at = ?, file_path = ?, "
-                        "title = ?, meta = ? WHERE doc_id = ? AND revision_no = ?",
-                        [current_revision, fresh.get("updated_at"), fresh.get("file_path"),
-                         fresh.get("title"), fresh.get("meta"), doc_id, new_revision],
-                    )
-                except Exception as revert_exc:  # noqa: BLE001
-                    import LogAssist.log as logger
-                    logger.warning(f"[work-plan] revision revert failed ({doc_id}): {revert_exc}")
-                raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
-            record_body_saved(fresh, source="work_plan_save",
-                              file_path=storage_paths.to_storage_relative(path, doc.get("project_id")),
-                              size=len(wp.dumps(plan).encode("utf-8")))
-
-    refreshed = db_docs.get_by_id(doc_id) or refreshed
-
-    lifecycle_warnings = wp_attach.cleanup_unreferenced(refreshed, plan)
-    if lifecycle_warnings:
-        import LogAssist.log as logger
-        logger.warning(
-            f"[work-plan] reserved attachment cleanup incomplete ({doc_id}): "
-            f"{lifecycle_warnings}"
-        )
-
-    if backup_rel:
-        try:
-            db_revisions.create({
-                "doc_id": doc_id,
-                "revision_no": current_revision,
-                "backup_path": backup_rel,
-                "edit_reason": "user_comment",
-                "linked_doc_id": None,
-                "created_by": current_user["user_id"],
-                "created_at": now,
-            })
-        except Exception as exc:  # noqa: BLE001 — the save already committed
-            import LogAssist.log as logger
-            logger.warning(f"[work-plan] revision row failed (ignored): {exc}")
-
-    try:
-        db_events.create({
-            "event_type": "doc_edited",
-            "project_id": doc.get("project_id"),
-            "group_id": doc.get("group_id"),
-            "document_id": None,
-            "actor_user_id": current_user["user_id"],
-            "from_state": None,
-            "to_state": None,
-            "metadata": _json.dumps({
-                "doc_id": doc_id, "edit_reason": "work_plan_saved",
-                "revision_no": new_revision,
-            }, ensure_ascii=False),
-        })
-    except Exception as exc:  # noqa: BLE001
-        import LogAssist.log as logger
-        logger.warning(f"[work-plan] event failed (ignored): {exc}")
-
-    _emit(refreshed, "updated",
-          {"doc_id": doc_id, "type": WORK_PLAN_TYPE, "title": refreshed.get("title"),
-           "status": refreshed.get("status"), "revision_no": new_revision},
-          current_user["user_id"])
-
-    providers = _providers(doc.get("project_id") or "")
-    # §4.6: saving never changes the review state — pending stays pending.
-    return {
-        "ok": True,
-        "doc_id": doc_id,
-        "revision_no": new_revision,
-        "updated_at": now,
-        "updated_by": current_user["user_id"],
-        "doc_review_status": refreshed.get("doc_review_status"),
-        "title": refreshed.get("title"),
-        "body": plan,
-        "unassigned_step_count": wp.unassigned_step_count(plan),
-        "assignment_summary": wp.assignment_summary(plan, providers),
-        "totals": wp.totals(plan),
-        "warnings": [*warnings, *lifecycle_warnings],
-    }
+    return _dedicated_write("wp_save", request, doc_id, body, current_user)
 
 
 @router.post("/{doc_id}/work-plan/pre-instruction-attachments", status_code=201)

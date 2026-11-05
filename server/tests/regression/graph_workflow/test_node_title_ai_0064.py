@@ -678,12 +678,12 @@ def test_an_attempt_token_is_mapped_as_attempt(kept_source_hooks, result_db):
 def test_the_register_tool_offers_a_lenient_node_title_to_new_and_edit_only():
     from modules.flow_gate.services import api_server_tools as tools
 
-    for scope, required in (("new", ["content", "doc_type"]), ("edit", ["content", "edit_reason"])):
+    for scope, required in (("new", ["content", "doc_type"]), ("edit", ["content", "expected_revision", "edit_reason"])):
         schema = tools.REGISTER_SCHEMAS[scope]
         assert schema["properties"]["node_title"] == {"type": "string", "x-flowgate-lenient": True}
         assert schema["required"] == required and schema["additionalProperties"] is False      # (f)
         for value in (GOOD, 12345, {"a": 1}, None, "", "가" * 300, ["x"]):
-            base = {"content": "# x", "doc_type": "N"} if scope == "new" else {"content": "# x", "edit_reason": "worker_self"}
+            base = {"content": "# x", "doc_type": "N"} if scope == "new" else {"content": "# x", "expected_revision": 0, "edit_reason": "worker_self"}
             tools.validate(schema, {**base, "node_title": value})                            # (d)(d2): no 422
     for scope in ("review", "test_run"):
         assert "node_title" not in tools.REGISTER_SCHEMAS[scope]["properties"]
@@ -714,11 +714,16 @@ def test_the_worker_copies_node_title_as_it_came_for_new_and_edit_only():
 
 
 def _handler_calls(name):
-    tree = ast.parse((_SERVER_DIR / "modules" / "flow_gate" / "api" / "inbox_routes.py").read_text(encoding="utf-8"))
+    path = _SERVER_DIR / "modules" / "flow_gate" / "api" / "inbox_routes.py"
+    if name == "_handle_edit":
+        assert 'card_edit("edit"' in path.read_text(encoding="utf-8")
+        path = _SERVER_DIR / "flowgate" / "card_document_edit" / "agent_adapter.py"
+        name = "finish"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
     consume = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "consume"]
     hooks = [n for n in ast.walk(fn) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "after_registration"]
-    nested = [w for w in ast.walk(fn) if isinstance(w, (ast.With, ast.Try))
+    nested = [w for w in ast.walk(fn) if isinstance(w, ast.With if name == "finish" else (ast.With, ast.Try))
               for h in hooks if w.lineno < h.lineno <= (w.end_lineno or 0)]
     return consume, hooks, nested
 
@@ -731,7 +736,8 @@ def test_the_inbox_hands_the_candidate_over_after_the_consume_outside_any_transa
     [hook] = hooks
     assert hook.lineno > max(consume) and nested == []
     src = ast.unparse(hook)
-    assert src.startswith("node_title_hooks.after_registration(") and "body.get('node_title')" in src
+    assert src.startswith("node_title_hooks.after_registration(")
+    assert ("req.transport_extras['submission'].get('node_title')" if action == "edit" else "body.get('node_title')") in src
     assert ast.unparse(hook.args[-1]) == repr(action)
 
 
@@ -779,3 +785,11 @@ def test_the_six_title_requests_and_their_choice(env):
     for i in range(hooks.REQUESTS_KEPT):
         hooks.request_title(f"raw-{i}")
     assert not hooks.title_requested("raw-ja") and len(hooks._requests) == hooks.REQUESTS_KEPT
+
+
+@pytest.fixture(autouse=True)
+def agent_document_ports(monkeypatch):
+    from modules.flow_gate.graph_workflow.services import card_document_ports as ports
+    from flowgate.card_document_edit import integration
+    monkeypatch.setattr(ports, "_handlers", dict(ports._handlers))
+    integration.register()
