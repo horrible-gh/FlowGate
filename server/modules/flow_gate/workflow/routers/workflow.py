@@ -518,6 +518,47 @@ def document_transition_rpc(
     )
 
 
+class ApprovalJobActionRequest(BaseModel):
+    doc_id: str
+
+
+@router.post("/documents/approval-jobs/{job_id}/{action}")
+def approval_job_action_rpc(
+    job_id: str, action: str, body: ApprovalJobActionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """0134 T#2: discard means safe freeze release; rejudge keeps this job's evidence."""
+    from modules.flow_gate.services.git import approval_publish as ap
+    from modules.flow_gate.services.git import job_store as jobs
+
+    if "document.approve" not in _get_user_permissions(current_user):
+        raise HTTPException(status_code=403, detail="document.approve permission required.")
+    if action not in ("cancel", "discard", "rejudge"):
+        raise HTTPException(status_code=422, detail="Unknown approval job action.")
+    doc = db_docs.get_by_id(body.doc_id)
+    job = jobs.get_job(job_id)
+    if doc is None or job is None or job.get("kind") != ap.KIND:
+        raise HTTPException(status_code=404, detail="Approval document or job not found.")
+    if (job.get("group_id") != doc.get("group_id")
+            or job.get("project_id") != doc.get("project_id")
+            or ap._payload(job).get("doc_id") != body.doc_id):
+        raise HTTPException(status_code=409, detail="approval_job_document_mismatch")
+    _guard_group_not_disposed(doc, body.doc_id)
+    if action == "rejudge" or (action == "discard" and job.get("status") == "recovery_required"
+                               and job.get("release_intent")):
+        # An existing release keeps its recorded outcome and bounded retry counter.
+        accepted = jobs.request_approval_rejudge(job_id)
+    else:
+        result = jobs.request_cancel(job_id, by=current_user["user_id"])
+        accepted = result in (jobs.CANCELLED, jobs.CANCEL_PENDING)
+    fresh = jobs.get_job(job_id) or job
+    ap.notify_progress(fresh)
+    return JSONResponse(status_code=202 if accepted else 409, content={
+        "ok": accepted, "job": ap.job_view(fresh),
+        **({} if accepted else {"error": {"code": "approval_job_not_actionable"}}),
+    })
+
+
 @router.post("/documents/review_transitions/{action}")
 async def document_review_transition_rpc(
     action: str,

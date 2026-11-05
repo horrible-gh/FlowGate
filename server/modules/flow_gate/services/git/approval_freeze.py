@@ -396,9 +396,18 @@ def finish_freeze_recovery(ctx: store.JobContext, code: str, expected=None) -> s
     """recovery_required with the claim KEPT (Group stays closed); G is released by the
     caller's finally. Operator: discard (freeze_release) or re-judge (L 2.22.4)."""
     now = now_iso()
-    since = ctx.job.get("recovery_since") if ctx.job.get("status") == "recovery_required" else None
+    intent = _json(ctx.job.get("release_intent"))
+    fields = {}
+    if intent:
+        # Only this release owns this window; an earlier publish/freeze recovery
+        # must not consume the automatic recovery window of a new release.
+        since = intent.get("recovery_since") or now
+        intent["recovery_since"] = since
+        fields["release_intent"] = intent
+    else:
+        since = ctx.job.get("recovery_since") if ctx.job.get("status") == "recovery_required" else None
     _write(ctx, expected, status="recovery_required", last_error_code=code[:64],
-           recovery_since=since or now,
+           recovery_since=since or now, **fields,
            available_at=registry.add_seconds(now, store.reconcile_retry_interval_sec()),
            **_LEASE_CLEARED)
     _log.error("approval_freeze_recovery_required: %s (%s)", ctx.job_id, code)
@@ -724,7 +733,12 @@ def freeze_release(ctx: store.JobContext, final_status: str, code: str) -> str:
     pin is confirmed gone, in one transaction. Takes G itself (re-entrant when the
     caller holds it). Status fence: ctx.expected_statuses (freezing for a RELEASE claim,
     recovery_required for the L 2.18 retry, running for a publish failure)."""
-    store.job_write(ctx, release_intent={"final_status": final_status, "code": code})
+    # Release owns its own durable retry budget; publish/freeze may already be exhausted.
+    intent = _json(ctx.job.get("release_intent"))
+    if not intent:
+        intent = {"final_status": final_status, "code": code}
+    final_status, code = intent["final_status"], intent["code"]
+    store.job_write(ctx, release_intent=intent)
     g = _acquire(ctx, "G", JOB)
     if g.ok:
         try:
@@ -748,15 +762,23 @@ def freeze_release(ctx: store.JobContext, final_status: str, code: str) -> str:
         _log.info("approval freeze released: %s -> %s (%s)", ctx.job_id, final_status, code)
         return RELEASED
     if r in (BUSY, RETRY):
-        a = int(job.get("attempt_count") or 0) + 1
-        if a <= store.retry_max_attempts():
-            now = now_iso()
-            store.job_write(ctx, status="freeze_wait", attempt_count=a, last_error_code=rcode[:64],
-                            available_at=registry.add_seconds(now, store.next_delay(a)),
-                            **_LEASE_CLEARED)
-            return QUEUED
-        rcode = "retry_exhausted"       # never terminal without a confirmed pin
+        return wait_release(ctx, rcode or r)
     return finish_freeze_recovery(ctx, ("freeze_release_" + (rcode or r))[:64])
+
+
+def wait_release(ctx: store.JobContext, code: str) -> str:
+    """Bounded release-only retries, including settlement lock waits. Never opens publish."""
+    intent = _json(ctx.job.get("release_intent"))
+    a = int(intent.get("retry_count") or 0) + 1
+    intent["retry_count"] = a
+    store.job_write(ctx, release_intent=intent)
+    if a > store.retry_max_attempts():
+        return finish_freeze_recovery(ctx, "freeze_release_retry_exhausted")
+    now = now_iso()
+    store.job_write(ctx, status="freeze_wait", last_error_code=code[:64],
+                    available_at=registry.add_seconds(now, store.next_delay(a)),
+                    **_LEASE_CLEARED)
+    return QUEUED
 
 
 # ── executor half and Runner hooks ───────────────────────────────────────────

@@ -181,8 +181,8 @@ def job_view(job: Optional[dict]) -> Optional[dict]:
         "attempt_count", "created_at", "updated_at", "finished_at")}
     view["cancel_requested"] = int(job.get("cancel_requested") or 0) == 1
     view["retryable"] = job.get("retryable") in (1, True, None)
-    view["cancelable"] = (job.get("status") in ("freeze_wait", "pending", "blocked", "retry_wait")
-                          and job.get("phase") in ("freeze_pending", "F1", "F3", "publish_pending"))
+    view["cancelable"] = store.approval_cancelable(job)
+    view["rejudgeable"] = store.approval_rejudgeable(job)
     view["outcome"] = job_outcome(job)
     view["stage"] = job_stage(job)
     view["doc_id"] = _payload(job).get("doc_id")
@@ -315,8 +315,13 @@ def _drive_request(ctx: store.JobContext) -> Outcome:
 # ── executor (Runner entry, L 4.5) ───────────────────────────────────────────
 
 def run(ctx: store.JobContext, entry: str) -> None:
-    if entry in (store.FREEZE, store.RELEASE):
+    if entry == store.FREEZE:
         return approval_freeze.run_entry(ctx, entry)
+    if entry == store.RELEASE:
+        intent = approval_freeze._json(ctx.job.get("release_intent"))
+        release(ctx, intent.get("final_status") or "cancelled",
+                intent.get("code") or "cancelled_by_user")
+        return None
     publish(ctx, JOB)
     return None
 
@@ -377,6 +382,58 @@ def publish(ctx: store.JobContext, origin: str) -> Outcome:
     if failure is not None:
         return _record_admission_failure(ctx, origin, failure)
     return _after_git(ctx, origin, git or {})
+
+
+def release(ctx: store.JobContext, final_status: str, code: str) -> None:
+    """No new commit/push: settle the preceding publish under W/B+R before release.
+
+    A landed Git result completes its DB transaction; ambiguity keeps the freeze.
+    Used for release claims and recovery retries, including after service restart.
+    """
+    phase = ctx.job.get("phase")
+    if phase == "db_finalize":
+        _db_finalize(ctx, JOB, _evidence(ctx.job).get("git") or {})
+        return
+    intent = approval_freeze._json(ctx.job.get("release_intent"))
+    if not intent:
+        store.job_write(ctx, release_intent={"final_status": final_status, "code": code})
+    if phase not in PUBLISH_PHASES or phase == "publish_pending":
+        approval_freeze.freeze_release(ctx, final_status, code)
+        return
+    held = []
+    git = None
+    failure = None
+    try:
+        failure = _admit(ctx, JOB, held)
+        if failure is None:
+            git = _resume(ctx)
+            if git is None:
+                from modules.flow_gate.services import git_service as _gs
+                # A foreign open attempt or a push crash without evidence proves nothing.
+                if (phase in ("push_started", "pushed")
+                        or _gs.db_git.get_open_session_by_group(ctx.job["group_id"]) is not None):
+                    git = {"ok": False, "recovery": True,
+                           "error": {"code": "approval_release_unsettled"}}
+    except GitServiceError:
+        git = {"ok": False, "recovery": True,
+               "error": {"code": "approval_release_check_failed"}}
+    finally:
+        for key in reversed(held):
+            if ctx.lock_ctx.find_held(key) is not None:
+                locks.release(ctx.lock_ctx, key)
+    if failure is not None:
+        domain, outcome = failure
+        if outcome.kind == locks.RECOVERY_REQUIRED:
+            approval_freeze.finish_freeze_recovery(ctx, f"release_{domain}_recovery_required")
+        else:
+            approval_freeze.wait_release(ctx, f"release_{domain}_{outcome.kind}")
+    elif git is not None:
+        if git.get("recovery"):
+            approval_freeze.finish_freeze_recovery(ctx, git["error"]["code"])
+        else:
+            _after_git(ctx, JOB, git)
+    else:
+        approval_freeze.freeze_release(ctx, final_status, code)
 
 
 def _admit(ctx: store.JobContext, origin: str, held: list) -> Optional[tuple]:
@@ -748,6 +805,7 @@ def _decide_resume(job: dict) -> "runner.Decision":
 def install() -> None:
     """Executor, deciders and the freeze hooks. Idempotent."""
     approval_freeze.install()
+    runner.register_freeze_hooks(approval_freeze.reconcile_freeze_expired, release)
     runner.register_executor(KIND, run)
     for phase in PUBLISH_PHASES:
         runner.register_decider(KIND, phase, _decide_resume)

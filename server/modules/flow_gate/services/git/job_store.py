@@ -829,4 +829,40 @@ def request_cancel(job_id: str, by: Optional[str] = None) -> str:
     if db.mark_cancel_requested(job_id, now) == 1:
         return CANCEL_PENDING       # executor checks at its next phase boundary
     job = _fresh_job(job_id)
+    if job and job.get("status") not in db.TERMINAL_STATUSES and job.get("cancel_requested"):
+        return CANCEL_PENDING
     return job["status"] if job else "not_found"
+
+
+# 0134 T#2: advisory view and authoritative CAS share these conservative boundaries.
+APPROVAL_CANCEL_PHASES = frozenset(("freeze_pending", "F1", "F3", "publish_pending", "admission", "fetched"))
+
+
+def approval_cancelable(job: dict) -> bool:
+    return (job.get("status") in (*db.WAITING_STATUSES, "recovery_required")
+            and job.get("phase") in APPROVAL_CANCEL_PHASES
+            and not any(job.get(k) for k in ("lease_token", "lease_owner", "lease_until"))
+            and not job.get("release_intent") and not job.get("cancel_requested"))
+
+
+def approval_rejudgeable(job: dict, *, threshold: Optional[str] = None) -> bool:
+    """Advisory view and requeue precondition; SQL repeats it atomically at CAS."""
+    if job.get("kind") != "final_approval_publish" or job.get("status") != "recovery_required":
+        return False
+    if all(job.get(k) is None for k in ("lease_token", "lease_owner", "lease_until")):
+        return True
+    threshold = threshold or registry.add_seconds(now_iso(), -registry.clock_skew_margin_sec())
+    until = job.get("lease_until")
+    return until is not None and until < threshold
+
+
+def request_approval_rejudge(job_id: str) -> bool:
+    """One CAS; never creates a new approval or resets its publish retry policy."""
+    now = now_iso()
+    threshold = registry.add_seconds(now, -registry.clock_skew_margin_sec())
+    if db.requeue_approval_recovery(job_id, now, threshold) != 1:
+        return False
+    job = _fresh_job(job_id)
+    if job:
+        notifier.job_publishable(job)
+    return True
