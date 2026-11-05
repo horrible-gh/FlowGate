@@ -2582,6 +2582,15 @@ export default {
       // 0674 T0004 §2-3 — Git 후처리가 대기/복구 상태로 남은 최종 승인(job 이 이어서 처리한다).
       approval_job_queued: '최종 승인의 Git 후처리가 대기 중입니다 ({stage}, 작업 {job}). 끝날 때까지 승인 버튼을 잠급니다.',
       approval_job_recovery: '최종 승인의 Git 후처리가 복구 필요 상태입니다 (작업 {job}). 서버가 다시 판정하며, 계속되면 관리자 확인이 필요합니다. 그동안 승인 버튼을 잠급니다.',
+      approval_job_retry_wait: '최종 승인의 Git 후처리가 재시도 대기 중입니다 (작업 {job}). 서버가 자동으로 다시 시도하며 그동안 승인 버튼을 잠급니다.',
+      approval_job_unknown: '서버가 이 그룹의 최종 승인 처리를 아직 진행 중입니다. 작업 정보를 확인하는 동안 승인 버튼을 잠급니다.',
+      approval_job_error: '마지막 오류: {code}{where}.',
+      approval_job_attempts: '시도 {count}/{max}.',
+      approval_job_next_at: '다음 시도 {time}.',
+      approval_job_next_check: '다음 자동 재평가 {time}.',
+      approval_job_cancel: '승인 작업 취소',
+      approval_job_cancel_accepted: '취소를 요청했습니다.',
+      approval_job_cancel_failed: '지금은 취소할 수 없습니다. 상태를 다시 확인합니다.',
       approval_job_blocker: '대기 원인: {domain} 잠금, 점유 {holder}.',
       approval_job_done: '대기 중이던 최종 승인이 완료되었습니다.',
       approval_job_stage: {

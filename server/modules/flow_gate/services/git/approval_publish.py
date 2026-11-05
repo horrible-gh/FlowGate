@@ -186,7 +186,29 @@ def job_view(job: Optional[dict]) -> Optional[dict]:
     view["outcome"] = job_outcome(job)
     view["stage"] = job_stage(job)
     view["doc_id"] = _payload(job).get("doc_id")
+    view.update(_retry_view(job))
     return view
+
+
+def _retry_view(job: dict) -> dict:
+    """T#3: what the screen needs to explain a waiting retry / recovery — the last error's
+    code and its stage/cause (never the diagnostic text or stderr), the attempt count with
+    its ceiling, and when the next attempt is due. Empty for any other status."""
+    if job.get("status") not in ("retry_wait", "recovery_required"):
+        return {}
+    attempt = _evidence(job).get("attempt_error")
+    attempt = attempt if isinstance(attempt, dict) else {}
+    # The evidence keeps the last *Git* attempt's error, but a DB-finalize failure or a
+    # recovery verdict only replaces ``last_error_code``. Show stage/cause only when they
+    # belong to the same error as the code on screen; never an older cause as the latest.
+    if str(attempt.get("code") or "")[:64] != str(job.get("last_error_code") or ""):
+        attempt = {}
+    return {
+        "error_stage": attempt.get("stage"),
+        "error_cause": attempt.get("cause"),
+        "max_attempts": store.retry_max_attempts(),
+        "available_at": job.get("available_at"),
+    }
 
 
 def blocker_of(job: Optional[dict]) -> Optional[dict]:

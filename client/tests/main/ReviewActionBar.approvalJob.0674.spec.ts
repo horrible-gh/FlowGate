@@ -237,6 +237,155 @@ describe('ReviewActionBar — queued / recovery_required final approval (0674 C1
     wrapper.unmount()
   })
 
+  it('T#3 in_flight=true & job=null keeps the lock, polls, and only an explicit false releases it', async () => {
+    server.git = gitState({ approval_in_flight: true, approval_job: null })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const wrapper = mountAc()
+    await flushPromises()
+    // locked on the server's word alone, with a message
+    expect(wrapper.find('button.btn-success').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="ab-approval-job"]').text())
+      .toContain(i18n.global.t('main.review_action_bar.approval_job_unknown'))
+    // an event re-read with the same answer must not release it
+    window.dispatchEvent(new CustomEvent('fg:git_approval_job_changed', { detail: { group_id: GROUP_ID } }))
+    await flushPromises()
+    expect(wrapper.find('button.btn-success').attributes('disabled')).toBeDefined()
+    // a failed lookup keeps the lock
+    getRequest.mockImplementation(async (url: string) => {
+      if (url.includes('/git/finalize')) throw new Error('boom')
+      return { data: { doc_id: DOC_ID, doc_review_status: server.doc } }
+    })
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    expect(wrapper.find('button.btn-success').attributes('disabled')).toBeDefined()
+    // polling alone (no event) releases on an explicit false
+    getRequest.mockImplementation(async (url: string) => {
+      if (url.includes('/documents/detail')) return { data: { doc_id: DOC_ID, doc_review_status: server.doc } }
+      return { data: { ok: true, state: gitState({ approval_in_flight: false }) } }
+    })
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ab-approval-job"]').exists()).toBe(false)
+    expect(wrapper.find('button.btn-success').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('T#3 polling alone follows null -> job -> failed lookup -> released and refreshes the approval state', async () => {
+    server.git = gitState({ approval_in_flight: true, approval_job: null })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const wrapper = mountAc()
+    await flushPromises()
+    const locked = () => wrapper.find('button.btn-success').attributes('disabled') !== undefined
+    expect(locked()).toBe(true)
+
+    // poll 1 (no event): the job shows up — the same polling life must carry on
+    server.git = gitState({ approval_in_flight: true, approval_job: liveJob() })
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ab-approval-job"]').text()).toContain(JOB_ID)
+    expect(locked()).toBe(true)
+
+    // poll 2: the lookup fails — still locked, and the timer keeps going
+    const defaultGet = getRequest.getMockImplementation()!
+    getRequest.mockImplementation(async (url: string) => {
+      if (url.includes('/git/finalize')) throw new Error('boom')
+      return defaultGet(url)
+    })
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    expect(locked()).toBe(true)
+    expect(wrapper.find('[data-testid="ab-approval-job"]').text()).toContain(JOB_ID)
+
+    // poll 3: lookup is back and says released + approved (no event ever arrives)
+    getRequest.mockImplementation(defaultGet)
+    server.git = gitState({ approval_in_flight: false, status: 'merged', approval_job: null })
+    server.doc = 'approved'
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ab-approval-job"]').exists()).toBe(false)
+    expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
+    expect(showToast).toHaveBeenCalledWith(i18n.global.t('main.review_action_bar.approval_job_done'), 'success')
+    wrapper.unmount()
+  })
+
+  it('T#3 a job that arrives by event keeps the polling alive, so polling alone ends the lock', async () => {
+    server.git = gitState({ approval_in_flight: true, approval_job: null })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const wrapper = mountAc()
+    await flushPromises()
+    const reads = () => getRequest.mock.calls.filter(([url]) => String(url).includes('/git/finalize')).length
+
+    server.git = gitState({ approval_in_flight: true, approval_job: liveJob() })
+    window.dispatchEvent(new CustomEvent('fg:git_approval_job_changed', { detail: { group_id: GROUP_ID } }))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ab-approval-job"]').text()).toContain(JOB_ID)
+
+    // the completion event is lost: only the timer can notice
+    const before = reads()
+    server.git = gitState({ approval_in_flight: false, status: 'merged', approval_job: null })
+    server.doc = 'approved'
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    await flushPromises()
+    expect(reads()).toBeGreaterThan(before)
+    expect(wrapper.find('[data-testid="ab-approval-job"]').exists()).toBe(false)
+    expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
+    wrapper.unmount()
+  })
+
+  it('T#3 recovery_required shows the last error, the attempt count and the next re-evaluation time', async () => {
+    const availableAt = '2026-11-05T04:00:00+00:00'
+    const job = liveJob({
+      status: 'recovery_required', stage: 'recovery_required', blocker: null,
+      last_error_code: 'approval_attempt_unsettled', error_stage: null, error_cause: null,
+      attempt_count: 8, max_attempts: 8, available_at: availableAt,
+    })
+    server.git = gitState({ approval_in_flight: true, approval_job: job })
+    const wrapper = mountAc()
+    await flushPromises()
+    const text = wrapper.find('[data-testid="ab-approval-job"]').text()
+    expect(text).toContain(i18n.global.t('main.review_action_bar.approval_job_recovery', { job: JOB_ID }))
+    expect(text).toContain('approval_attempt_unsettled')
+    expect(text).not.toMatch(/approval_attempt_unsettled \(/)   // no stage/cause borrowed from an older error
+    expect(text).toContain('8/8')
+    expect(text).toContain(i18n.global.t('main.review_action_bar.approval_job_next_check',
+      { time: new Date(availableAt).toLocaleTimeString() }))
+    wrapper.unmount()
+  })
+
+  it('T#3 retry_wait shows error code/stage, attempts and next time; cancelable exposes cancel', async () => {
+    const job = liveJob({
+      status: 'retry_wait', stage: 'retry_wait', blocker: null, last_error_code: 'target_diverged',
+      error_stage: 'merge', error_cause: 'conflict_other', attempt_count: 3, max_attempts: 8,
+      available_at: '2026-11-05T04:00:00+00:00', cancelable: true,
+    })
+    server.git = gitState({ approval_in_flight: true, approval_job: job })
+    const wrapper = mountAc()
+    await flushPromises()
+    const text = wrapper.find('[data-testid="ab-approval-job"]').text()
+    expect(text).toContain(i18n.global.t('main.review_action_bar.approval_job_retry_wait', { job: JOB_ID }))
+    expect(text).toContain('target_diverged')
+    expect(text).toContain('merge/conflict_other')
+    expect(text).toContain('3/8')
+    expect(wrapper.find('button.btn-success').attributes('disabled')).toBeDefined()
+
+    postRequest.mockResolvedValueOnce({ data: { ok: true } })
+    await wrapper.find('[data-testid="ab-approval-job-cancel"]').trigger('click')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      `/api/v1/documents/approval-jobs/${JOB_ID}/cancel`, { doc_id: DOC_ID })
+    wrapper.unmount()
+  })
+
+  it('T#3 a non-cancelable job shows no cancel button', async () => {
+    server.git = gitState({ approval_in_flight: true, approval_job: liveJob({ cancelable: false }) })
+    const wrapper = mountAc()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ab-approval-job-cancel"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('an executed approval keeps the old approved path', async () => {
     const wrapper = mountAc()
     await flushPromises()

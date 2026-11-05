@@ -2585,6 +2585,15 @@ export default {
       // 0674 T0004 §2-3 — a final approval whose Git post-step is waiting or needs recovery.
       approval_job_queued: 'The Git post-step of this final approval is queued ({stage}, job {job}). Approve stays locked until it finishes.',
       approval_job_recovery: 'The Git post-step of this final approval needs recovery (job {job}). The server re-checks it; if it stays, an operator has to look. Approve stays locked meanwhile.',
+      approval_job_retry_wait: 'The Git post-step of this final approval is waiting to retry (job {job}). The server retries automatically; Approve stays locked meanwhile.',
+      approval_job_unknown: 'The server is still processing the final approval of this group. Approve stays locked while the job details are confirmed.',
+      approval_job_error: 'Last error: {code}{where}.',
+      approval_job_attempts: 'Attempt {count}/{max}.',
+      approval_job_next_at: 'Next attempt {time}.',
+      approval_job_next_check: 'Next automatic re-check {time}.',
+      approval_job_cancel: 'Cancel approval job',
+      approval_job_cancel_accepted: 'Cancellation requested.',
+      approval_job_cancel_failed: 'It cannot be cancelled right now. Re-checking the state.',
       approval_job_blocker: 'Waiting on the {domain} lock, held by {holder}.',
       approval_job_done: 'The queued final approval has completed.',
       approval_job_stage: {
