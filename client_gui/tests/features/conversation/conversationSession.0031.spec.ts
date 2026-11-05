@@ -82,7 +82,7 @@ describe('scope and chat list', () => {
     const { session, source } = setup()
     await session.setScope(SCOPE)
     expect(await session.createChat('New talk')).toBe(true)
-    expect(source.createChat).toHaveBeenCalledWith(SCOPE, 'New talk')
+    expect(source.createChat).toHaveBeenCalledWith(SCOPE, 'New talk', { clientRequestId: expect.any(String) })
     expect(session.state.chats[0].title).toBe('New talk')
     expect(session.state.activeChatId).toBe(session.state.chats[0].id)
     expect(session.state.turns).toEqual([])

@@ -163,6 +163,12 @@ function isNoResponse(error: unknown): boolean {
   return error instanceof ConversationRequestError && error.status === null
 }
 
+/** flowgate.v02.0135 T#3: a fresh create intent id (`client_request_id`, 8..200 of [A-Za-z0-9._:-]). */
+function newCreateIntent(): string {
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  return `chat-${random}`
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -211,6 +217,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
   // Bumped on every scope / chat switch; a response for an older generation is dropped.
   let scopeGen = 0
   let chatGen = 0
+  // flowgate.v02.0135 T#3: the create intent of the open draft (one per Flow + draft): kept across its failed tries.
+  let createIntent: { key: string; scopeGen: number; chatGen: number } | null = null
   let providersProject: string | null = null
   let providersLoad: Promise<void> = Promise.resolve()
   let noticeSeq = 0
@@ -232,6 +240,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
   function notify(tone: StatusTone, code: string, detail: string | null = null): void {
     noticeSeq += 1
     state.notice = { id: noticeSeq, tone, code, detail }
+  }
+
+  // flowgate.v02.0135 T#2: the notice line belongs to the Flow and the chat (or draft) it was
+  // raised for. Moving to another Flow, another chat or a new draft clears it, and an answer that
+  // arrives after such a move (chat generation `gen` is gone) does not raise one on the new screen.
+  function notifyIfCurrent(gen: number, tone: StatusTone, code: string, detail: string | null = null): void {
+    if (!disposed && gen === chatGen) notify(tone, code, detail)
   }
 
   function addStatus(tone: StatusTone, code: string, text: string | null = null): void {
@@ -348,6 +363,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.chatsStatus = 'idle'
     state.chatsError = null
     state.activeChatId = null
+    state.notice = null
     clearChat()
     if (!scope) return
     void loadProviders(scope.projectId)
@@ -362,6 +378,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
   // ── Active chat ────────────────────────────────────────────────────────────────────
   async function selectChat(chatId: string): Promise<void> {
     if (chatId === state.activeChatId && state.turnsStatus !== 'error') return
+    // Another chat is not the one a shown notice was about (a reload of the same chat keeps it).
+    if (chatId !== state.activeChatId) state.notice = null
     chatGen += 1
     const gen = chatGen
     clearChat()
@@ -464,12 +482,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!chat || !next || next === chat.title || state.renaming) return false
     state.renaming = true
     const chatId = chat.id
+    const gen = chatGen
     try {
       const saved = await source.renameChat(chatId, next)
       state.chats = state.chats.map((c) => (c.id === chatId ? { ...c, title: saved.title } : c))
       return true
     } catch (error) {
-      notify('danger', 'rename_failed', messageOf(error))
+      notifyIfCurrent(gen, 'danger', 'rename_failed', messageOf(error))
       return false
     } finally {
       state.renaming = false
@@ -487,14 +506,26 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!scope || !next || state.creatingChat) return false
     state.creatingChat = true
     const gen = scopeGen
+    const draftGen = chatGen
+    // flowgate.v02.0135 T#3: a try of the same draft re-sends its intent; the server answers the chat an earlier try
+    // made (its answer lost, the chat committed late) instead of making another one.
+    if (!createIntent || createIntent.scopeGen !== gen || createIntent.chatGen !== draftGen) {
+      createIntent = { key: newCreateIntent(), scopeGen: gen, chatGen: draftGen }
+    }
+    const intent = createIntent.key
     try {
       let created: ChatSummary
       try {
-        created = options?.autoTitle ? await source.createChat(scope, next, { autoTitle: true }) : await source.createChat(scope, next)
+        created = await source.createChat(scope, next, { ...(options?.autoTitle ? { autoTitle: true } : {}), clientRequestId: intent })
       } catch (error) {
-        if (!disposed && gen === scopeGen) notifyCreateFailed(error)
+        // Only the Flow and the draft the create was for show its failure (0135 T#2).
+        if (!disposed && gen === scopeGen && draftGen === chatGen) notifyCreateFailed(error)
+        // flowgate.v02.0135 T#3: without an answer the server may still have made the chat (on stg it did, minutes
+        // later): the Flow's list is read again so that chat shows instead of the next try making another one.
+        if (!disposed && gen === scopeGen && isNoResponse(error)) void reloadChats()
         return false
       }
+      if (createIntent?.key === intent) createIntent = null
       if (disposed || gen !== scopeGen) return false
       await reloadChats()
       if (disposed || gen !== scopeGen) return false
@@ -510,6 +541,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   // flowgate.v02.0047: a new chat is a draft until its first send (chatStart.ts creates it then).
   function startDraft(): void {
     chatGen += 1
+    state.notice = null
     clearChat()
     state.activeChatId = null
   }
@@ -819,6 +851,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const runId = state.runId
     if (!runId || runId === 'starting' || state.cancelling) return
     state.cancelling = true
+    const gen = chatGen
     try {
       await source.cancelRun(runId)
       // pollRun observes the finish and releases the button exactly once.
@@ -826,7 +859,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       const status = error instanceof ConversationRequestError ? error.status : null
       if (status === 404 || status === 410) return
       state.cancelling = false
-      notify('danger', 'cancel_failed', messageOf(error))
+      notifyIfCurrent(gen, 'danger', 'cancel_failed', messageOf(error))
     }
   }
 
@@ -835,14 +868,15 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const chatId = state.activeChatId
     if (!chatId || state.copyingMention) return null
     state.copyingMention = true
+    const gen = chatGen
     try {
       const mention = await source.issueChatMention(chatId)
       // An edit_once one-shot may have just been consumed server-side (T0011 §8).
       void loadSettings()
       return mention
     } catch (error) {
-      if (isSourceLocked(error)) notify('warning', 'source_locked')
-      else notify('danger', 'mention_failed', messageOf(error))
+      if (isSourceLocked(error)) notifyIfCurrent(gen, 'warning', 'source_locked')
+      else notifyIfCurrent(gen, 'danger', 'mention_failed', messageOf(error))
       return null
     } finally {
       state.copyingMention = false

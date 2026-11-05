@@ -186,7 +186,7 @@ describe('[새 채팅] (D0006 §6.1, §6.3)', () => {
     await find('conv-input').setValue('다른 이야기')
     await find('conv-composer').trigger('submit')
     await flushPromises()
-    expect(source.createChat).toHaveBeenCalledWith({ projectId: 'p', groupId: 'p.m.0001' }, '새 대화', { autoTitle: true })
+    expect(source.createChat).toHaveBeenCalledWith({ projectId: 'p', groupId: 'p.m.0001' }, '새 대화', { autoTitle: true, clientRequestId: expect.any(String) })
   })
 
   it('keeps the draft text and shows a notice when the group is disposed', async () => {

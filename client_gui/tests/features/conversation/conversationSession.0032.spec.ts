@@ -347,7 +347,7 @@ describe('new chat recovery (D0006 §6.3)', () => {
     await session.invokeAi()
     expect(session.running.value).toBe(true)
     expect(await session.createChat('Side talk')).toBe(true)
-    expect(source.createChat).toHaveBeenCalledWith(SCOPE, 'Side talk')
+    expect(source.createChat).toHaveBeenCalledWith(SCOPE, 'Side talk', { clientRequestId: expect.any(String) })
     expect(session.state.chats[0].title).toBe('Side talk')
   })
 })

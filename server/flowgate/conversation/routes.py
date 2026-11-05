@@ -115,7 +115,9 @@ def chat_run_file_diff(doc_id: str, run_id: str, path: str = Query(...), user=De
 @router.post("/conversations", status_code=201)
 def create_conversation(body: Any = Body(default=None), user=Depends(get_current_user)):
     try:
-        return chats.create_chat(user, body)
+        created = chats.create_chat(user, body)
+        # 0135 T#3: the chat an earlier try of the same intent made is answered, not made again.
+        return JSONResponse(status_code=200, content=created) if created.get("replayed") else created
     except chats.ChatCreateForbidden:
         raise HTTPException(status_code=403, detail="Forbidden")
     except c.ConversationError as exc:

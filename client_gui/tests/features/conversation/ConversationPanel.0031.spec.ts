@@ -141,7 +141,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     await find('conv-input').setValue('첫 메시지')
     await find('conv-composer').trigger('submit')
     await flushPromises()
-    expect(source.createChat).toHaveBeenCalledWith({ projectId: 'p', groupId: 'p.m.0001' }, '새 대화', { autoTitle: true })
+    expect(source.createChat).toHaveBeenCalledWith({ projectId: 'p', groupId: 'p.m.0001' }, '새 대화', { autoTitle: true, clientRequestId: expect.any(String) })
     expect(source.postTurn).toHaveBeenCalledWith('p.m.0001.0012-CH', expect.objectContaining({ body: '첫 메시지' }))
   })
 

@@ -303,7 +303,7 @@ describe('Conversation production path (flowgate.v02.0032 T#2)', () => {
     await find('conv-composer').trigger('submit')
     await flushPromises()
     const [create] = calls('POST', /^\/api\/v1\/conversations$/)
-    expect(create.body).toEqual({ project_id: 'flowgate', group_id: GROUP, title: '새 대화', auto_title: true })
+    expect(create.body).toEqual({ project_id: 'flowgate', group_id: GROUP, title: '새 대화', auto_title: true, client_request_id: expect.stringMatching(/^chat-[A-Za-z0-9._:-]{8,}$/) })
     expect(transport.calls.some((c) => /next-empty/.test(c.path))).toBe(false)
     // The list is read again and the new chat opens with its own (empty) activity.
     expect(calls('GET', /^\/api\/v1\/documents$/).length).toBeGreaterThanOrEqual(2)

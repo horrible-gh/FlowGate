@@ -8,7 +8,7 @@
 // flowgate.v02.0048 T#2 (D#1 §7.1): an adapter over the project event hub (projectEvents.ts), so
 // the Canvas and the Inspector share one stream per project. The connection, its reconnects and
 // the resync live in the hub; the Canvas filter (own tab, Flow id) stays here.
-import { CANVAS_CLIENT_ID } from './flowCanvasApi'
+import { CANVAS_CLIENT_ID, settleUnansweredCanvasWrite } from './flowCanvasApi'
 import { PROJECT_STREAM_RETRY_MS, subscribeProjectEvents, type ProjectEventFrame } from './projectEvents'
 
 /**
@@ -43,9 +43,12 @@ type Raw = Record<string, any>
 
 /** The Flow a refresh frame is about, or null when it came from this tab. */
 function changedFlowOfFrame(payload: Raw, groupId: unknown): string | null {
-  if (payload.origin_client_id === CANVAS_CLIENT_ID) return null
-  const flowId = payload.flow_id ?? groupId
-  return typeof flowId === 'string' && flowId ? flowId : null
+  const raw = payload.flow_id ?? groupId
+  const flowId = typeof raw === 'string' && raw ? raw : null
+  // flowgate.v02.0135 T#4: this tab's own change was applied from its answer — unless it is the late commit of a
+  // write that got none (matched by draft version / moved cards, see settleUnansweredCanvasWrite).
+  if (payload.origin_client_id === CANVAS_CLIENT_ID && !(flowId && settleUnansweredCanvasWrite(flowId, payload))) return null
+  return flowId
 }
 
 /** The Flow a refresh event is about, or null when it came from this tab or is unreadable. */

@@ -170,10 +170,21 @@ export async function renameChat(chatId: string, title: string): Promise<ChatSum
 export interface CreateChatOptions {
   /** flowgate.v02.0047: the chat owes its one AI title on the title it is created with. */
   autoTitle?: boolean
+  /**
+   * flowgate.v02.0135 T#3: the create intent (`client_request_id`). Every try of one draft sends the same id, so a
+   * try whose answer was lost — the server still made the chat — gets that chat back instead of a second one.
+   */
+  clientRequestId?: string
 }
 
 export async function createChat(scope: ConversationScope, title: string, options: CreateChatOptions = {}): Promise<ChatSummary> {
-  const body = { project_id: scope.projectId, group_id: scope.groupId, title, ...(options.autoTitle ? { auto_title: true } : {}) }
+  const body = {
+    project_id: scope.projectId,
+    group_id: scope.groupId,
+    title,
+    ...(options.autoTitle ? { auto_title: true } : {}),
+    ...(options.clientRequestId ? { client_request_id: options.clientRequestId } : {}),
+  }
   const created = await call(
     () => postRequest<RawDocument>(`${API}/conversations`, body),
   )
