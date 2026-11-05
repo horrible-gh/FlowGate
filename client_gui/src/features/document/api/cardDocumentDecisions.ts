@@ -32,11 +32,11 @@ const path = (flowId: string, nodeKey: string) =>
   `/api/v1/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/documents`
 
 export async function cardDocumentDecisionsRead(flowId: string, nodeKey: string): Promise<CardDocumentDecisions> {
-  const response = await getRequest(`${path(flowId, nodeKey)}/decisions`)
+  const response = await getRequest<CardDocumentDecisions>(`${path(flowId, nodeKey)}/decisions`)
   return response.data
 }
 export async function cardDocumentDecisionWrite(flowId: string, nodeKey: string, slot: string,
   body: CardDocumentDecisionRequest): Promise<CardDocumentDecisions> {
-  const response = await postRequest(`${path(flowId, nodeKey)}/${encodeURIComponent(slot)}/decision`, body)
+  const response = await postRequest<CardDocumentDecisions>(`${path(flowId, nodeKey)}/${encodeURIComponent(slot)}/decision`, body)
   return response.data
 }
