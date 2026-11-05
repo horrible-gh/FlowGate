@@ -391,6 +391,12 @@ def test_a_push_timeout_is_judged_by_the_remote(git_env, monkeypatch, landed):
         return
     assert job["status"] == "retry_wait" and job["last_error_code"] == "push_result_unknown"
     assert _effects(env, did)["push"]["status"] == "unknown"
+    evidence = json.loads(_effects(env, did)["push"]["evidence_json"])
+    assert evidence["exit_code"] == -1 and evidence["diagnostic_tail"] == "timeout_expired"
+    assert evidence["remote"] == "origin" and evidence["branch"] == "main"
+    assert evidence["sent_sha"] == _rev(r["base"], "refs/heads/main")
+    assert evidence["remote_head_before"] == _rev(r["bare"], "refs/heads/main")
+    assert evidence["attempt_kind"] == "update"
     assert _decision(env, did)["status"] == "accepted" and _states(env)[g] == "open"
     refused = _act(env, run_id, g, did, "cancel", {"request_id": "x1", "expected_decision_version": _version(env, did)},
                    409)
@@ -576,7 +582,9 @@ def test_a_stop_during_the_job_cancels_without_effects_and_parks_with_them(git_e
         return
     assert (job["status"], job["last_error_code"]) == ("recovery_required", "stop_requested")
     assert _decision(env, did)["status"] == "recovery_required"
-    assert run["status"] == "stopping" and _states(env)[g] == "open"          # not a Stop end yet
+    # 0132 T#3: parked effects retain the gate while Stop itself finishes.
+    assert (run["status"], run["idle_reason"]) == ("idle", "stopped")
+    assert _states(env)[g] == "open"
     _act(env, run_id, g, did, "resolve", {"request_id": "ab1", "expected_decision_version": _version(env, did),
                                          "resolution": "abandon", "reason": "stopped after the merge",
                                          **_evidence(env, g)}, 200)
@@ -617,7 +625,7 @@ def _push_rejected_once(monkeypatch):
     def rejected(*args, **kwargs):
         calls.append(1)
         if len(calls) == 1:
-            return git_adapter.PUSH_REJECTED, "push_rejected"
+            return git_adapter.PUSH_REJECTED, "push_rejected", {}
         return real(*args, **kwargs)
 
     monkeypatch.setattr(git_adapter, "push", rejected)

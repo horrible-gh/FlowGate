@@ -48,9 +48,10 @@ yet (``_asks``) now waits for a person (``waiting_approval``), and its card show
 pre-feature attempt whose written instruction no AI judges any more is a person's wait too (``stage_view.waits_on_person``).
 
 flowgate.v02.0085 T#2 (D0007 §3.3): a confirm gate held by its accepted decision (its Git apply / archive job not
-finished: accepted, failed, recovery_required) is unfinished apply work, not a person's wait. It keeps a running /
-paused run working, like an integration in progress, so the run is never idle or completed meanwhile; an idle run with
-such a gate is idle with the reason ``gate_publish`` (never ``waiting_approval`` for it, never ``completed``).
+finished: accepted, failed, recovery_required) still owns the card and prevents completion. 0132 T#3 revises the
+working contract: only LIVE jobs (a writer/valid lease, or accepted queued work) keep a running/paused run working.
+PARKED reservations allow idle; ``gate_publish`` means parked reservations without another human wait. Human wait
+priority is unchanged. Resume uses recorded command intent, never the displayed idle reason.
 
 flowgate.v02.0119 T#3 (T-2, 0004-CH seq 9 T-2): ``waiting_approval`` is split. A confirm gate open for its decision is
 ``waiting_confirm`` (the only person's decision of v0.2); a general card a person must act on is ``needs_intervention`` —
@@ -243,10 +244,11 @@ def working(ctx, rows: list[dict]) -> bool:
     whose merge is pending or in progress (``result_merge.in_progress``). An idle run is woken by its integration
     itself (``result_merge._wake``), never by a settlement."""
     from flowgate.graph_run import execution_store, result_merge
+    from flowgate.gate_decisions.run_hold import gate_live
     if execution_store.working(ctx.run_id):
         return True
     return ctx.run.get("status") in (engine.RUNNING, engine.PAUSED) and (
-        execution_store.handing_off(ctx.run_id) or result_merge.in_progress(ctx.run_id) or bool(_gate_reserved(ctx)))
+        execution_store.handing_off(ctx.run_id) or result_merge.in_progress(ctx.run_id) or gate_live(ctx.run_id))
 
 
 def _completion(ctx, state) -> tuple[bool, Optional[str]]:
@@ -263,7 +265,8 @@ def _completion(ctx, state) -> tuple[bool, Optional[str]]:
 
 
 def idle_reason(ctx, rows: list[dict], state) -> str:
-    """Why a run with no work going on and nothing its command may open is idle (the order: module docstring)."""
+    """Why a run with no work going on and nothing its command may open is idle (the order: module docstring).
+    IDLE_GATE_PUBLISH means a parked reservation with no other human wait; priority stays unchanged."""
     complete, reason = _completion(ctx, state)
     if complete:
         return IDLE_COMPLETED

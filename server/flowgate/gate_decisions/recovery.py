@@ -221,6 +221,8 @@ def retry(run_id: str, node_key: str, decision_id: str, user_id: str, body: dict
             raise AssertionError("gate decision moved under the Flow guard")
         repo.insert_recovery_request(decision_id, user_id, repo.RETRY, body["request_id"], fp, 202,
                                      {"outcome": "resumed", "job_id": job["job_id"]})
+        from flowgate.gate_decisions.run_hold import gate_resume_wake
+        gate_resume_wake(legacy.load_context(run, job.get("project_id"), user_id, jobs), repo.get(decision_id))
         reopened = legacy.get_job(job["job_id"])
         jobs.append(lambda: legacy.notify_job(reopened))
         return answer(run_id, decision_id, 202)
@@ -379,8 +381,8 @@ def _remote_holds(slot, row: dict, branch: Optional[str], sha: str) -> bool:
 
 
 def _keep_recovery_refs(row: dict) -> dict:
-    """abandon: the frozen SHA and a local merge result become non-consuming recovery refs (create-only, never
-    deleted here). ``{phase: {"sha", "ref", "kept"}}`` - one entry per SHA, kept or not. A ref that cannot be written
+    """abandon: the frozen SHA, a local merge result and the last remote sync commit (``-sync``, 0132 T#2) become
+    non-consuming recovery refs (create-only, never deleted here). ``{phase: {"sha", "ref", "kept"}}`` - one entry per SHA, kept or not. A ref that cannot be written
     now (no slot, M busy, a ref error) is NOT stood in for by another ref: it is reported unkept and becomes a
     retention obligation (D0007 §7.3.2), and the abandon goes on."""
     from modules.flow_gate.services.git import lock_manager as locks
@@ -393,12 +395,18 @@ def _keep_recovery_refs(row: dict) -> dict:
         (merge_row or {}).get("sha_after") if (merge_row or {}).get("status") == repo.DONE else None)
     if merged and merged != frozen:
         wanted.append(("merge", git.recovery_ref(decision_id, "merge"), merged))
-    out = {phase: {"sha": sha, "ref": ref, "kept": False} for phase, ref, sha in wanted}
-    if not wanted:
-        return out
     try:
         slot = git.slot_of(row["group_id"])
     except git.git_error_type():
+        slot = None
+    # 0132 T#2 (NR §4.3): the newest sync commit of the push phase's remote sync is kept the same way - also one that
+    # landed while its round's row is still unknown / pending (``publish.sync_commit_to_keep``, read only).
+    from flowgate.gate_decisions.publish import SYNC_PHASE, sync_commit_to_keep
+    synced = sync_commit_to_keep(row, slot)
+    if synced and synced not in (frozen, merged):
+        wanted.append((SYNC_PHASE, git.recovery_ref(decision_id, "sync"), synced))
+    out = {phase: {"sha": sha, "ref": ref, "kept": False} for phase, ref, sha in wanted}
+    if not wanted or slot is None:
         return out
     ctx = locks.new_context("req")
     o = locks.acquire("M", slot.project_id, holder_kind="publish", mode="interactive", ctx=ctx)
@@ -467,6 +475,13 @@ def resolve(run_id: str, node_key: str, decision_id: str, user_id: str, body: di
                                    reviewed_evidence_version=reviewed,
                                    **({"evidence": {"verified_by": "server", "changed": True}} if how == "verified"
                                       else {}))
+            # 0132 T#2 (NR §4.3): the push phase's remote sync is no proof item (``_needed``) but its row is the
+            # decision's evidence too: recorded as the person confirmed it (a done sync confirmed, else as it stands).
+            sync_row = repo.effect(decision_id, "remote_sync")
+            if sync_row is not None:
+                repo.record_effect(decision_id, "remote_sync", reviewed_evidence_version=reviewed,
+                                   recovery_state={repo.DONE: "confirmed", repo.UNKNOWN: "unknown"}.get(
+                                       sync_row["status"], "abandoned"))
             if not repo.move(decision_id, current["decision_version"], repo.SUCCEEDED, **close):
                 raise AssertionError("gate decision moved under the Flow guard")
             from flowgate.gate_decisions import intake

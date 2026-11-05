@@ -291,14 +291,21 @@ def test_partial_failure_survives_other_operations_until_its_own_recovery(histor
 def test_require_safe_returns_same_contract_or_409_with_all_reasons(snapshot, monkeypatch):
     monkeypatch.setattr(service, "read_snapshot", lambda _flow: snapshot)
     monkeypatch.setattr(service, "in_transaction", lambda: True)
+    # 0132 T#3: the deciding entry reads the current run and gate activity before its impact.
+    from flowgate.gate_decisions import run_hold
+    monkeypatch.setattr(run_store, "current_run", lambda flow: dict(snapshot.run))
+    monkeypatch.setattr(run_hold, "gate_live", lambda rid: False)
     allowed = service.require_safe("flow", "A", "en")
     assert allowed["allowed"]
     snapshot.run["status"] = "paused"
     with pytest.raises(GraphApiError) as raised:
         service.require_safe("flow", "A", "ja")
-    assert (raised.value.status, raised.value.code) == (409, "graph_time_machine_blocked")
-    assert raised.value.params["impact"] == allowed["impact"]
-    assert raised.value.params["reasons"][0]["message"] == graph_messages.TIME_MACHINE_REASONS["run_not_idle"][2]
+    assert (raised.value.status, raised.value.code) == (409, "graph_run_locked")
+    assert raised.value.params["status"] == "paused"
+    # The read-only impact and its localized reason retain their original contract.
+    assessed = service._assess("flow", "A", "ja")
+    assert assessed["impact"] == allowed["impact"]
+    assert assessed["reasons"][0]["message"] == graph_messages.TIME_MACHINE_REASONS["run_not_idle"][2]
 
 
 @pytest.mark.parametrize("locale", ["ko", "en", "ja"])

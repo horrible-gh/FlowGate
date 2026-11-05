@@ -26,7 +26,8 @@ from modules.flow_gate.services import graph_execution_hooks, graph_source_hooks
 def fenced(result_db, monkeypatch):
     db = result_db
     # execution_store now anchors requests to the current command event.
-    db.db.execute("ALTER TABLE graph_runs ADD COLUMN last_event_seq INTEGER DEFAULT 0")
+    if "last_event_seq" not in {r["name"] for r in db._fetch_all("PRAGMA table_info(graph_runs)")}:
+        db.db.execute("ALTER TABLE graph_runs ADD COLUMN last_event_seq INTEGER DEFAULT 0")
     unfinished = {"busy": True}
     monkeypatch.setattr(operation, "busy", lambda flow_id: unfinished["busy"])
 

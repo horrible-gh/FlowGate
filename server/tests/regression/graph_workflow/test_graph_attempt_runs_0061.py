@@ -68,6 +68,9 @@ class Store:
 @pytest.fixture
 def db(monkeypatch):
     store = Store()
+    # 0132 T#3: gate activity and recovery stores must use this isolated catalog too.
+    from modules.flow_gate.db import connection
+    monkeypatch.setattr(connection, "STORE", store)
     # The parent tables' non-ledger behavior is supplied by mocks below.
     store.db.executescript("""
         CREATE TABLE graph_runs(run_id TEXT PRIMARY KEY, group_id TEXT, status TEXT,

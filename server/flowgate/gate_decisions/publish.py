@@ -4,7 +4,8 @@ A confirm that needs Git work is accepted with this job (``intake``); the gate s
 done. The job is a Runner executor (``job_runner``), so it uses the existing claim, lease, fenced writes, lock manager
 domains and their order (G, then W or B, then R, then M), backoff and reconcile. Phases, each recorded before its step:
 
-    start -> snapshot (G, M) -> merge (B or W) -> push (R) -> archive (M) -> db_finalize -> done
+    start -> snapshot (G, M) -> merge (B or W) -> push (merge: B or W, then R; commit: R) -> archive (M)
+          -> db_finalize -> done
 
 * order: the gate jobs of one group run in their acceptance order (``job_store.gate_publish_predecessor``: a job whose
   earlier job of the group is unfinished is not claimed), and from its acceptance until its snapshot is pinned a
@@ -19,7 +20,12 @@ domains and their order (G, then W or B, then R, then M), backoff and reconcile.
   waits (parked, going on by itself once the review closed). commit mode makes no commit: the frozen SHA is the result.
 * push (``push`` on): a plain push of the result to origin (merge: the work base branch, commit: the group branch). A
   failed or timed-out command is judged by reading the remote: holding our SHA (or a descendant) is pushed, unreadable
-  is unknown, a network failure retries with backoff, anything else needs recovery. Never forced.
+  is unknown, a network failure retries with backoff, anything else needs recovery. Never forced. 0132 T#2 (NR §4.2 /
+  §4.3): merge mode holds W(target) or B, then R, for the whole phase, checks the local target and its checkout
+  against the applied SHA (pushing the local target, another owner's result on top recorded as ``foreign_included``),
+  and a push refused because only the remote went ahead (``push_remote_ahead``) merges the fetched remote tip into the
+  target (the ``remote_sync`` effect, its own attempt) and pushes again, at most ``sync_round_limit()`` rounds. A sync
+  conflict goes to the merge review like a merge conflict; the decision's applied SHA stays its merge result.
 * archive (``archive`` on): the intent is stored first (the phase's effect ``unknown``), then
   ``refs/flowgate/gate-archive/<decision>`` at the frozen SHA (and ``-applied`` at a merge result), then the
   checkpoint row with the effect ``succeeded`` in one transaction - the same ref and SHA again is reused, another SHA
@@ -189,7 +195,8 @@ def _phase(ctx, phase: str, **evidence) -> None:
 def effects_now(decision: dict) -> str:
     """``repository.effects_state`` checked against the decision's own refs: an archive ref of this decision that
     exists while no phase says so (an archive cut off before its evidence) is an unknown effect, never none. A ref
-    that cannot be read is unknown too. Read only, no lock (a local ref read)."""
+    that cannot be read is unknown too. Read only, no lock (a local ref read). The push phase's ``remote_sync`` is one
+    of ``repository.EXTERNAL_PHASES`` (0132 T#2): a sync commit is an effect, a sync cut off is unknown."""
     state = repo.effects_state(decision["decision_id"])
     if state != repo.EFFECTS_NONE:
         return state
@@ -489,56 +496,378 @@ def _merge_outcome(ctx, plan: Plan, result: dict, frozen: str) -> str:
     raise _Recovery("merge_attempt_unsettled")
 
 
-def _push(ctx, plan: Plan, sha: str) -> None:
+SYNC_PHASE = "remote_sync"
+SYNC_ROUNDS_ENV = "FLOWGATE_GATE_SYNC_ROUNDS"
+SYNC_ROUNDS_DEFAULT = 3
+FOREIGN_LIST_MAX = 100
+
+
+def sync_round_limit() -> int:
+    """``N`` of 0132 NR §4.2: the remote sync rounds one push phase may run before it parks ``push_remote_race``."""
+    import os
+    try:
+        return max(1, int(os.environ.get(SYNC_ROUNDS_ENV, SYNC_ROUNDS_DEFAULT)))
+    except (TypeError, ValueError):
+        return SYNC_ROUNDS_DEFAULT
+
+
+def _target_is_base(plan: Plan, slot: git.Slot) -> bool:
+    """The target's lock slot exactly as ``_merge`` takes it: B for the project base, else W(target)."""
+    base_branch = (slot.cfg.get("base_branch") or "main").strip() or "main"
+    basis = ((repo.get(plan.decision_id) or {}).get("settings") or {}).get("target_basis") or {}
+    return bool(basis.get("is_project_base", plan.target_branch == base_branch))
+
+
+def _push(ctx, plan: Plan, applied: str) -> None:
+    """The push phase (0132 NR §4.2). commit mode: R, one plain push of the frozen SHA (a non-fast-forward parks
+    ``push_remote_ahead``). merge mode: W(target) or B, then R, held for the whole phase. Under them the remote sync
+    left by an earlier claim is settled first (``_settle_sync``), then ``A`` (the applied SHA: the sync commit of a
+    done sync, else the merge result ``A₀``), ``L`` (the local target ref) and ``C`` (its checkout) are read and
+    judged (``_target_check``); the push sends ``P = L``. A plain push refused as ``push_remote_ahead`` fetches the
+    remote tip ``h1`` and merges it into the target (``_sync_round``), then pushes again, at most ``N`` rounds
+    (``push_remote_race`` after). A conflict goes to the merge review (``gate_conflict``). The decision's applied SHA
+    stays ``A₀`` (the archive's ``-applied`` ref, the checkpoint, ``recovery._proof``); the SHA sent and the sync
+    commits are evidence only. Never forced, never reset."""
     done = repo.effect(plan.decision_id, "push")
     if done and done["status"] == repo.DONE:
         return
     slot = _slot(plan)
     branch = plan.push_branch
-    remote_ref = f"origin:refs/heads/{branch}"
     held: list = []
     try:
+        is_base = False
+        if plan.mode == "merge":
+            is_base = _target_is_base(plan, slot)
+            if is_base:
+                _acquire(ctx, "B", plan, held=held)
+            else:
+                _acquire(ctx, "W", plan, target_key=plan.target_branch, held=held)
         _acquire(ctx, "R", plan, held=held)
         _phase(ctx, "push")
-        h0 = git.remote_head(slot, branch)
-        if h0 is git.READ_ERROR:
-            if done is not None and done["status"] == repo.UNKNOWN:
-                raise _Transient("push_result_unknown")
-            raise _Transient("remote_head_unknown")
-        if h0:
-            there = git.remote_contains(slot, branch, sha)
-            if there is True:
-                pushed_before = done is not None and done["status"] in (repo.UNKNOWN, repo.EFFECT_FAILED)
-                _effect(ctx, plan, "push", status=repo.DONE, target_ref=remote_ref, sha_before=h0, sha_after=sha,
-                        evidence={"remote": "origin", "branch": branch, "remote_head": h0, "changed": pushed_before,
-                                  "remote_head_before": h0, "sent_sha": sha, "attempt_kind": "reconcile"})
-                return
-            if there is git.READ_ERROR:
-                raise _Transient("remote_head_unknown")
-        # Before the push: from here its effect is unknown until its outcome is written.
-        _effect(ctx, plan, "push", status=repo.UNKNOWN, target_ref=remote_ref, sha_before=h0 or None, sha_after=sha,
-                evidence={"remote": "origin", "branch": branch, "remote_head_before": h0 or None,
-                          "sent_sha": sha, "attempt_kind": "update" if h0 else "create"}, new_attempt=True)
-        _store().ensure_lease(ctx)
-        outcome, code = git.push(slot, sha, branch)
-        if outcome == git.PUSHED:
-            _effect(ctx, plan, "push", status=repo.DONE, target_ref=remote_ref, sha_after=sha,
-                    evidence={"remote": "origin", "branch": branch, "changed": True, "result": code,
-                              "remote_head_before": h0 or None, "sent_sha": sha,
-                              "attempt_kind": "update" if h0 else "create"})
+        if plan.mode != "merge":
+            refused = _push_attempt(ctx, plan, slot, branch, applied, {})
+            if refused is not None:
+                raise _Failure(refused)
             return
-        if outcome == git.PUSH_UNKNOWN:
-            _effect(ctx, plan, "push", status=repo.UNKNOWN, error_code=code)
-            raise _Transient(code)
-        _effect(ctx, plan, "push", status=repo.EFFECT_FAILED, error_code=code,
-                evidence={"remote": "origin", "branch": branch, "changed": False,
-                          "remote_head_before": h0 or None, "sent_sha": sha,
-                          "attempt_kind": "update" if h0 else "create"})
-        if outcome == git.PUSH_TRANSIENT:
-            raise _Transient(code)
-        raise _Failure(code)
+        _settle_sync(ctx, plan, slot, is_base)
+        sha, extra = _target_check(plan, slot, applied, is_base)
+        # The refusals of earlier claims stay in the evidence a later push writes (0132 T#2 rework: an audit trail
+        # across retries, like ``foreign_included``).
+        carried = ((repo.effect(plan.decision_id, "push") or {}).get("evidence") or {}).get("rejections")
+        if isinstance(carried, list) and carried:
+            extra["rejections"] = list(carried)
+        limit = sync_round_limit()
+        rounds = 0
+        while True:
+            refused = _push_attempt(ctx, plan, slot, branch, sha, extra)
+            if refused is None:
+                return
+            if refused != "push_remote_ahead":
+                raise _Failure(refused)
+            rounds += 1
+            refused_evidence = (repo.effect(plan.decision_id, "push") or {}).get("evidence") or {}
+            extra["rejected_rounds"] = rounds
+            extra["rejections"] = [*extra.get("rejections", []), {
+                "sent_sha": sha, "code": refused, "exit_code": refused_evidence.get("exit_code"),
+                "diagnostic_tail": refused_evidence.get("diagnostic_tail")}]
+            if rounds > limit:
+                row = repo.effect(plan.decision_id, "push") or {}
+                _effect(ctx, plan, "push", status=repo.EFFECT_FAILED, error_code="push_remote_race",
+                        evidence={**(row.get("evidence") or {}), "changed": False, "sync_round_limit": limit,
+                                  "rejected_rounds": rounds, "rejections": extra["rejections"]})
+                raise _Failure("push_remote_race")
+            sha = _sync_round(ctx, plan, slot, branch, sha, applied, is_base)
+            extra["sync_commit"] = sha
     finally:
+        if plan.mode == "merge":
+            git._mt().invalidate_check_targets(plan.project_id)
         _release(ctx, held)
+
+
+def _push_attempt(ctx, plan: Plan, slot: git.Slot, branch: str, sha: str, extra: dict) -> Optional[str]:
+    """One plain push of ``sha`` (the remote read first: holding it already is a reconcile). None once the push effect
+    is done; the refusal's code once it is recorded failed; ``_Transient`` for an unknown or transient outcome."""
+    remote_ref = f"origin:refs/heads/{branch}"
+    prior = repo.effect(plan.decision_id, "push")
+    h0 = git.remote_head(slot, branch)
+    if h0 is git.READ_ERROR:
+        if prior is not None and prior["status"] == repo.UNKNOWN:
+            raise _Transient("push_result_unknown")
+        raise _Transient("remote_head_unknown")
+    if h0:
+        there = git.remote_contains(slot, branch, sha)
+        if there is True:
+            pushed_before = prior is not None and prior["status"] in (repo.UNKNOWN, repo.EFFECT_FAILED)
+            _effect(ctx, plan, "push", status=repo.DONE, target_ref=remote_ref, sha_before=h0, sha_after=sha,
+                    evidence={"remote": "origin", "branch": branch, "remote_head": h0, "changed": pushed_before,
+                              "remote_head_before": h0, "sent_sha": sha, "attempt_kind": "reconcile", **extra})
+            return None
+        if there is git.READ_ERROR:
+            raise _Transient("remote_head_unknown")
+    evidence = {"remote": "origin", "branch": branch, "remote_head_before": h0 or None, "sent_sha": sha,
+                "attempt_kind": "update" if h0 else "create", **extra}
+    # Before the push: from here its effect is unknown until its outcome is written.
+    _effect(ctx, plan, "push", status=repo.UNKNOWN, target_ref=remote_ref, sha_before=h0 or None, sha_after=sha,
+            evidence=evidence, new_attempt=True)
+    _store().ensure_lease(ctx)
+    outcome, code, command_evidence = git.push(slot, sha, branch)
+    if outcome == git.PUSHED:
+        _effect(ctx, plan, "push", status=repo.DONE, target_ref=remote_ref, sha_after=sha,
+                evidence={**evidence, "changed": True, "result": code, **command_evidence})
+        return None
+    if outcome == git.PUSH_UNKNOWN:
+        _effect(ctx, plan, "push", status=repo.UNKNOWN, error_code=code, evidence={**evidence, **command_evidence})
+        raise _Transient(code)
+    _effect(ctx, plan, "push", status=repo.EFFECT_FAILED, error_code=code,
+            evidence={**evidence, "changed": False, **command_evidence})
+    if outcome == git.PUSH_TRANSIENT:
+        raise _Transient(code)
+    return code
+
+
+def _target_check(plan: Plan, slot: git.Slot, applied: str, is_base: bool) -> tuple[str, dict]:
+    """``A`` / ``L`` / ``C`` of 0132 NR §4.2 under the target's lock: ``(P, push evidence extra)``. ``L`` unreadable is
+    transient; a checkout off ``L`` or with tracked changes parks ``target_checkout_mismatch``; ``L`` holding ``A``
+    (the same or a descendant: another owner's result on top, recorded as ``foreign_included``) goes on with
+    ``P = L``; anything else (diverged, or ``L`` behind ``A``) parks ``target_diverged``.
+
+    ``foreign_included`` is always counted from the approved applied SHA ``A₀`` (WP0004 (1), NR §4.2), never from
+    the last sync commit: the commits of ``A₀..L`` that came neither from the remote (the fetched tips ``h`` of the
+    decision's sync rounds) nor from the decision's own sync commits. A retry after a sync round therefore still
+    records the other owners' results it sends (0132 T#2 rework)."""
+    synced = _last_sync_commit(plan.decision_id)
+    a = synced or applied
+    local = git.rev(slot.base_root, f"refs/heads/{plan.target_branch}")
+    if local is git.READ_ERROR:
+        raise _Transient("target_ref_unreadable")
+    if local is None:
+        raise _Failure("merge_target_not_found")
+    checkout = git.target_checkout(slot, plan.target_branch, is_base)
+    if checkout is git.READ_ERROR:
+        raise _Transient("target_checkout_unreadable")
+    if not checkout["clean"] or (is_base and not checkout["on_branch"]) or \
+            (checkout["checkouts"] and checkout["head"] != local):
+        raise _Failure("target_checkout_mismatch")
+    extra: dict = {"applied_sha": applied, "local_target": local}
+    if synced:
+        extra["sync_commit"] = synced
+    if local != a:
+        holds = git.is_ancestor(slot.base_root, a, local)
+        if holds is None:
+            raise _Transient("ancestry_unreadable")
+        if not holds:
+            raise _Failure("target_diverged")
+    if local != applied:
+        foreign = _foreign_included(plan.decision_id, slot, applied, local)
+        if foreign is None:
+            raise _Transient("ancestry_unreadable")
+        if foreign:
+            extra["foreign_included"] = foreign
+    return local, extra
+
+
+def _foreign_included(decision_id: str, slot: git.Slot, applied: str, local: str) -> Optional[list]:
+    """The other owners' results ``P = L`` carries (newest first, at most ``FOREIGN_LIST_MAX``): ``A₀..L`` without
+    what the remote already had (every ``h`` the decision's sync rounds merged) and without the decision's own sync
+    commits. None when Git cannot tell."""
+    evidence = (repo.effect(decision_id, SYNC_PHASE) or {}).get("evidence") or {}
+    rounds = [r for r in (evidence.get("rounds") or []) if isinstance(r, dict)]
+    remote_heads = {r.get("remote_head") for r in rounds} | {evidence.get("remote_head")}
+    own = {r.get("sync_commit") for r in rounds} | {evidence.get("sync_commit"), evidence.get("observed_sync_commit")}
+    remote_heads.discard(None)
+    own.discard(None)
+    listed = git.commits_excluding(slot.base_root, local, [applied, *sorted(remote_heads)],
+                                   FOREIGN_LIST_MAX + len(own))
+    if listed is None:
+        return None
+    return [sha for sha in listed if sha not in own][:FOREIGN_LIST_MAX]
+
+
+def _last_sync_commit(decision_id: str) -> Optional[str]:
+    """The sync commit of the decision's last completed sync round (a later failed / cut-off round keeps the list)."""
+    row = repo.effect(decision_id, SYNC_PHASE)
+    evidence = (row or {}).get("evidence") or {}
+    done = [r.get("sync_commit") for r in (evidence.get("rounds") or []) if r.get("sync_commit")]
+    return done[-1] if done else None
+
+
+def sync_commit_to_keep(decision: dict, slot: Optional[git.Slot]) -> Optional[str]:
+    """abandon's ``-sync`` recovery ref target (NR §4.3, 0132 T#2 rework): the newest sync commit of the decision that
+    is in Git - not only the rounds recorded done. A round whose row is still ``unknown`` / ``pending`` / ``failed``
+    (its commit landed and the claim ended before writing it, or the resume could not settle it) is judged from what
+    is read now, read only: the commit recorded for its own attempt (``observed_sync_commit``, the attempt's result)
+    holding both its ``pre_head`` and ``h1``, else the merge commit with exactly those parents on the local target.
+    Nothing landed of that round: the last done round's commit. No slot: the attempt's own recorded commit, unverified
+    (it becomes a retention obligation either way)."""
+    row = repo.effect(decision["decision_id"], SYNC_PHASE)
+    if row is None:
+        return None
+    evidence = row.get("evidence") or {}
+    last = _last_sync_commit(decision["decision_id"])
+    if row["status"] == repo.DONE:
+        return evidence.get("sync_commit") or last
+    if slot is None:
+        return evidence.get("observed_sync_commit") or last
+    return _landed_sync_commit(slot, decision.get("target_branch"), evidence) or last
+
+
+def _landed_sync_commit(slot: git.Slot, target_branch: Optional[str], evidence: dict) -> Optional[str]:
+    """The current round's sync commit if it landed (read only, no lock: object and ref reads), else None."""
+    pre_head, h1 = evidence.get("pre_head"), evidence.get("remote_head")
+    if not pre_head or not h1:
+        return None
+    root = slot.base_root
+    for sha in (evidence.get("observed_sync_commit"), git.sync_recorded_commit(slot, evidence.get("merge_id"))):
+        if sha and sha != pre_head and git.commit_exists(root, sha) and \
+                git.is_ancestor(root, pre_head, sha) is True and git.is_ancestor(root, h1, sha) is True:
+            return sha
+    if not target_branch:
+        return None
+    local = git.rev(root, f"refs/heads/{target_branch}")
+    if local in (None, git.READ_ERROR) or local == pre_head:
+        return None
+    return git.merge_of(root, pre_head, h1, local)
+
+
+def _sync_effect(ctx, plan: Plan, **fields) -> None:
+    _effect(ctx, plan, SYNC_PHASE, target_ref=f"refs/heads/{plan.target_branch}", **fields)
+
+
+def _sync_round(ctx, plan: Plan, slot: git.Slot, branch: str, pre_head: str, applied: str, is_base: bool) -> str:
+    """One remote sync round after a ``push_remote_ahead``: fetch ``h1``, record the round ``unknown`` (with the
+    attempt's merge id, before the merge), merge ``h1`` into the target and verify the result ``S`` (``S^1 = L``,
+    ``S^2 = h1``, the target ref and its checkout at ``S``). Returns the next ``P``: ``S``, or ``L`` when the remote tip
+    is already held. A conflict parks ``gate_conflict`` (the review has the attempt); anything unproven parks
+    ``sync_unsettled``."""
+    _store().ensure_lease(ctx)
+    if not git.fetch_branch(slot, branch):
+        raise _Transient("remote_fetch_failed")
+    h1 = git.remote_tracking_head(slot, branch)
+    if h1 is git.READ_ERROR or not h1:
+        raise _Transient("remote_head_unknown")
+    prior = repo.effect(plan.decision_id, SYNC_PHASE)
+    rounds = list(((prior or {}).get("evidence") or {}).get("rounds") or [])
+    current = {"round": len(rounds) + 1, "pre_head": pre_head, "remote_head": h1, "local_applied": applied}
+    started_ids: list = []
+
+    def started(evidence: dict) -> None:
+        started_ids.append(evidence.get("merge_id"))
+        _sync_effect(ctx, plan, status=repo.UNKNOWN, sha_before=pre_head, sha_after=None, error_code=None,
+                     evidence={**current, "merge_id": evidence.get("merge_id"), "status": repo.UNKNOWN,
+                               "changed": None, "rounds": rounds}, new_attempt=True)
+
+    target_ref = f"refs/heads/{plan.target_branch}"
+    try:
+        result = git.sync_merge(slot, plan.decision_id, ctx.job_id, plan.target_branch, pre_head, h1, started)
+    except git.git_error_type() as exc:
+        code = exc.code or "sync_merge_failed"
+        observed = git.rev(slot.base_root, target_ref)
+        if not started_ids:
+            if observed == pre_head:
+                if int(getattr(exc, "status", 409) or 409) >= 500:
+                    raise _Transient(code)
+                raise _Failure(code)
+            raise _Recovery("sync_unsettled")
+        evidence = {**current, "merge_id": started_ids[-1], "rounds": rounds}
+        if observed == pre_head:
+            _sync_effect(ctx, plan, status=repo.EFFECT_FAILED, error_code=code,
+                         evidence={**evidence, "status": repo.EFFECT_FAILED, "changed": False})
+            raise _Failure(code)
+        _sync_effect(ctx, plan, status=repo.UNKNOWN, error_code="sync_unsettled",
+                     evidence={**evidence, "status": repo.UNKNOWN, "changed": None})
+        raise _Recovery("sync_unsettled")
+    outcome = result.get("outcome")
+    if outcome == git.CONTAINED:
+        return pre_head
+    evidence = {**current, "merge_id": result.get("merge_id"), "rounds": rounds}
+    if outcome == git.CONFLICT:
+        _sync_effect(ctx, plan, status=repo.PENDING, error_code="merge_conflict",
+                     evidence={**evidence, "status": "conflict", "conflict": True, "changed": False,
+                               "conflict_count": len(result.get("files") or [])})
+        raise _Failure("merge_conflict", note=_store().GATE_PARKED_CONFLICT, auto=True)
+    s = result.get("merge_commit")
+    if not s or git.parents(slot.base_root, s) != [pre_head, h1] or not _target_at(slot, plan, is_base, s):
+        _sync_effect(ctx, plan, status=repo.UNKNOWN, error_code="sync_unsettled",
+                     evidence={**evidence, "status": repo.UNKNOWN, "changed": None, "observed_sync_commit": s})
+        raise _Recovery("sync_unsettled")
+    _sync_done(ctx, plan, evidence, pre_head, s, reviewed=False)
+    return s
+
+
+def _target_at(slot: git.Slot, plan: Plan, is_base: bool, sha: str, *, or_descendant: bool = False) -> bool:
+    """The target ref is ``sha`` (or holds it) and so is its checkout (a base checkout on the branch, clean)."""
+    local = git.rev(slot.base_root, f"refs/heads/{plan.target_branch}")
+    if local in (None, git.READ_ERROR):
+        return False
+    if local != sha and not (or_descendant and git.is_ancestor(slot.base_root, sha, local) is True):
+        return False
+    checkout = git.target_checkout(slot, plan.target_branch, is_base)
+    if checkout is git.READ_ERROR or not checkout["clean"] or (is_base and not checkout["on_branch"]):
+        return False
+    return not checkout["checkouts"] or checkout["head"] == local
+
+
+def _sync_done(ctx, plan: Plan, evidence: dict, pre_head: str, s: str, *, reviewed: bool) -> None:
+    rounds = list(evidence.get("rounds") or [])
+    rounds.append({"round": evidence.get("round"), "pre_head": pre_head, "remote_head": evidence.get("remote_head"),
+                   "merge_id": evidence.get("merge_id"), "sync_commit": s, "reviewed": reviewed})
+    _sync_effect(ctx, plan, status=repo.DONE, sha_before=pre_head, sha_after=s, error_code=None,
+                 evidence={**evidence, "status": repo.DONE, "sync_commit": s, "changed": True, "reviewed": reviewed,
+                           "rounds": rounds})
+
+
+def _settle_sync(ctx, plan: Plan, slot: git.Slot, is_base: bool) -> None:
+    """At the push phase's entry, under the target's lock: the remote sync an earlier claim left is judged from its
+    attempt (``git.sync_state``, read by its own merge id) before anything else - the decision's own merge is never
+    run again. A review that completed is verified (its result holds ``pre_head`` and ``h1``, the target holds the
+    result) and done; an aborted review with the target still at ``pre_head`` is failed and parks
+    ``push_sync_conflict_aborted``; an attempt cut off with no merge commit and the target clean at ``pre_head`` is
+    failed (the loop runs a new round); a landed merge commit is done; an open review parks again; anything else
+    parks ``sync_unsettled``."""
+    row = repo.effect(plan.decision_id, SYNC_PHASE)
+    if row is None or row["status"] in (repo.DONE, repo.EFFECT_FAILED):
+        return
+    evidence = dict(row.get("evidence") or {})
+    pre_head, h1 = evidence.get("pre_head"), evidence.get("remote_head")
+    state = git.sync_state(slot, evidence.get("merge_id"))
+    outcome = state.get("outcome")
+    if outcome == git.CONFLICT:
+        # A claim cut off between the conflict hand-off and its ``pending`` record left the row ``unknown``: the open
+        # review is recorded now as the decision's active conflict (``_conflict_merge_id``) before the job parks, so
+        # retry / cancel, the Sweeper and the Stop all wait for that review (0132 T#2 rework).
+        if row["status"] != repo.PENDING or not evidence.get("conflict"):
+            _sync_effect(ctx, plan, status=repo.PENDING, error_code="merge_conflict",
+                         evidence={**evidence, "merge_id": state.get("merge_id", evidence.get("merge_id")),
+                                   "status": "conflict", "conflict": True, "changed": False,
+                                   "hand_off_recovered": row["status"] == repo.UNKNOWN})
+        raise _Failure("merge_conflict", note=_store().GATE_PARKED_CONFLICT, auto=True)
+    if outcome == git.MERGED:
+        s = state.get("merge_commit")
+        reviewed = bool(state.get("reviewed")) or row["status"] == repo.PENDING
+        if reviewed:
+            ok = bool(s) and git.is_ancestor(slot.base_root, pre_head, s) is True and \
+                git.is_ancestor(slot.base_root, h1, s) is True
+        else:
+            ok = bool(s) and git.parents(slot.base_root, s) == [pre_head, h1]
+        if ok and _target_at(slot, plan, is_base, s, or_descendant=True):
+            _sync_done(ctx, plan, {**evidence, "conflict": evidence.get("conflict", False)}, pre_head, s,
+                       reviewed=reviewed)
+            return
+        _sync_effect(ctx, plan, status=repo.UNKNOWN, error_code="sync_unsettled",
+                     evidence={**evidence, "status": repo.UNKNOWN, "changed": None, "observed_sync_commit": s})
+        raise _Recovery("sync_unsettled")
+    at_pre_head = bool(pre_head) and _target_at(slot, plan, is_base, pre_head)
+    if outcome == git.SYNC_ABORTED and at_pre_head:
+        _sync_effect(ctx, plan, status=repo.EFFECT_FAILED, error_code="push_sync_conflict_aborted",
+                     evidence={**evidence, "status": "aborted", "changed": False})
+        raise _Failure("push_sync_conflict_aborted")
+    if outcome == git.SYNC_INTERRUPTED and at_pre_head:
+        _sync_effect(ctx, plan, status=repo.EFFECT_FAILED, error_code="sync_interrupted",
+                     evidence={**evidence, "status": "interrupted", "changed": False})
+        return
+    _sync_effect(ctx, plan, status=repo.UNKNOWN, error_code="sync_unsettled",
+                 evidence={**evidence, "status": repo.UNKNOWN, "changed": None, "sync_state": outcome})
+    raise _Recovery("sync_unsettled")
 
 
 def _archive(ctx, plan: Plan, frozen: str, applied: Optional[str]) -> None:
@@ -612,6 +941,11 @@ def _complete(ctx, plan: Plan) -> None:
         if not repo.move(plan.decision_id, decision["decision_version"], repo.SUCCEEDED):
             raise AssertionError("gate decision moved under its job's lease")
         stored = repo.get(plan.decision_id)
+        from flowgate.gate_decisions.run_hold import gate_resume_wake
+        gate_resume_wake(run_ctx, decision)
+        # An asynchronous publish must not use either generic approval wake/continuation hook to bypass intent.
+        run_ctx.gate_resume_deferred = run_ctx.run.get("status") != "running"
+        state = legacy.read_run_state(run_ctx)
         intake._apply(run_ctx, state, policies, legacy.GATE_EVENTS["confirmed"], plan.node_key,
                       decision["actor_user_id"], decision.get("decision_comment"), stored)
         return {"status": run["status"]}
@@ -705,6 +1039,15 @@ def run(ctx, entry: str):
         return None
     plan = plan_of(job, decision)
     try:
+        # All claims, including Sweeper and db_finalize-only retries, share the same command-intent fence.
+        from flowgate.gate_decisions.run_hold import gate_resume_wake
+        def wake(run, jobs):
+            store.ensure_lease(ctx)
+            current = repo.get(plan.decision_id)
+            if current is None or current.get("job_id") != ctx.job_id or current["status"] not in repo.RESERVING:
+                raise store.LeaseLost(ctx.job_id)
+            gate_resume_wake(legacy.load_context(run, plan.project_id, current["actor_user_id"], jobs), current)
+        _outside_job_context(ctx, lambda: legacy.guarded_run(plan.run_id, wake))
         if (job.get("phase") or "start") != "db_finalize":
             if decision["status"] != repo.ACCEPTED:
                 _guarded(ctx, plan, lambda current: current["status"] == repo.ACCEPTED or
@@ -766,9 +1109,23 @@ def _decide(job: dict):
 
 
 def _conflict_merge_id(job: dict) -> Optional[int]:
+    """The merge id of the decision's active conflict (0132 NR §4.3): a remote sync waiting for its review
+    (``remote_sync`` pending with ``conflict``) first, else the decision's own merge attempt. Every reader of "is the
+    conflict review still open" - the Sweeper's ``_decide``, ``recovery._conflict_open`` (retry / cancel) and the
+    Stop's ``_settle_gate_decisions`` (through it) - asks here. A sync row still ``unknown`` names the attempt of a
+    round not yet settled (a claim cut off after its conflict hand-off, before the ``pending`` record): that attempt
+    is the newest of the decision (the merge is done before any sync), so it is the one read too."""
     decision_id = _payload(job).get("decision_id")
-    row = repo.effect(decision_id, "merge") if decision_id else None
-    merge_id = ((row or {}).get("evidence") or {}).get("merge_id")
+    if not decision_id:
+        return None
+    sync = repo.effect(decision_id, SYNC_PHASE)
+    sync_evidence = (sync or {}).get("evidence") or {}
+    if sync is not None and sync_evidence.get("merge_id") is not None and (
+            sync["status"] == repo.UNKNOWN or (sync["status"] == repo.PENDING and sync_evidence.get("conflict"))):
+        merge_id = sync_evidence.get("merge_id")
+    else:
+        row = repo.effect(decision_id, "merge")
+        merge_id = ((row or {}).get("evidence") or {}).get("merge_id")
     try:
         return int(merge_id) if merge_id is not None else None
     except (TypeError, ValueError):

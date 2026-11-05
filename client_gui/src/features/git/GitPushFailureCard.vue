@@ -20,6 +20,8 @@
         {{ t('gui.git.push.retry') }}
       </button>
     </div>
+    <p v-if="stateText" class="gx-notice" data-test="git-state">{{ stateText }}</p>
+    <p v-if="retryText" class="gx-notice" data-test="git-retry-outcome">{{ retryText }}</p>
     <p v-if="noticeText" class="gx-notice" data-test="git-notice">{{ noticeText }}</p>
   </section>
 </template>
@@ -32,7 +34,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { checkOperationErrorKey } from '../designer/inspector/features/checkSettings/checkSettingsModel'
 import GateSettingsSummary from '../designer/inspector/features/gateCard/GateSettingsSummary.vue'
-import { useGitGateOperations, type GateOperation } from './gateOperations'
+import { retryOutcomeText, useGitGateOperations, type GateOperation } from './gateOperations'
 import { useGitPanel } from './gitSession'
 
 const props = defineProps<{ operation?: GateOperation }>()
@@ -49,6 +51,10 @@ const noticeText = computed(() => {
   const notice = session.state.notices.push
   return notice ? t(`gui.git.notice.${notice.code}`, { ...(notice.params ?? {}) }) : null
 })
+// flowgate.v02.0132 T#4: syncing automatically / waiting for a recovery, and how an accepted retry ended.
+const stateText = computed(() => props.operation?.gate.git_active ? t('gui.inspector.checkSettings.target.syncing')
+  : props.operation?.gate.parked ? t('gui.inspector.checkSettings.target.parked') : null)
+const retryText = computed(() => retryOutcomeText(gateJobs?.retryOutcomeOf(props.operation) ?? null, t))
 function detail() {
   if (props.operation) {
     gateJobs?.select(props.operation)

@@ -345,6 +345,10 @@ def db(monkeypatch):
     schema_store = SimpleNamespace(table_exists=lambda table: bool(connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", [table]).fetchone()))
     monkeypatch.setattr(completion_store, 'get_store', lambda: schema_store)
+    # The pre-gate schema has no decisions/jobs; gate reads must use its own catalog, never the application DB.
+    from flowgate.gate_decisions import repository as gate_store, rounds
+    monkeypatch.setattr(gate_store, "get_store", lambda: schema_store)
+    monkeypatch.setattr(rounds, "get_store", lambda: schema_store)
     connection.execute("INSERT INTO graph_runs (run_id, group_id, revision_no, status, active_group_id, "
                        "last_event_seq, run_mode, idle_reason) VALUES ('run','flow',1,'idle','flow',9,'full','completed')")
     nodes = {"R": "done", "A": "done", "B": "done", "J": "done", "C": "review", "D": "pending"}
