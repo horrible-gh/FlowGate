@@ -83,6 +83,7 @@ from .flow_guard import with_flow_guard
 from .graph_service import new_key, require_writable
 from .policy_snapshot import check_active_runs, policy_set_for_run
 from .run_apply import RunContext, apply_decision, dispatch_block, emit_node_state, emit_run_status, load_context
+from .run_apply import START_FAILURE_KEY, start_failure_of
 from .run_apply import read_run_state, settle_run
 
 _log = logging.getLogger(__name__)
@@ -596,6 +597,12 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
         detail = graph_execution_hooks.call("write_failure_detail", row) if failure == "ai_invoke_failed" else None
         if detail:
             dispatch["error_detail"] = detail
+    current_error = row.get("dispatch_error_code")
+    if dispatch is not None and current_error and dispatch.get("error_code") == current_error:
+        # flowgate.v02.0140 T#1-3: a refused AI start keeps its safe detail (code / message / phase / retryable / run_id)
+        start_failure = start_failure_of(row)
+        if start_failure:
+            dispatch = {**dispatch, START_FAILURE_KEY: start_failure}
     state = intervention(flow_id, row)                                                     # 0119 T-2
     reason = approval_wait_reason(flow_id, row) if state else None
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),

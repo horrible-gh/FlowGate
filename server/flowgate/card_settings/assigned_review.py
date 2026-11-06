@@ -264,8 +264,10 @@ def _start_loop(flow_id: str, a: dict, doc_id: str, issuer: str, loop: dict, cri
         # L-2 §2.10 / E-13: an admission refusal keeps its own code (``start_refused:<code>``), any other failure of
         # the start is ``start_failed``; no other AI is asked, and no read restarts it (E-40)
         cause = failure.get("cause") or sa.START_FAILED
+        # flowgate.v02.0140 T#1-3: the refusal's safe detail (code / message / phase / retryable) on its stage_failed
+        detail = {"detail": failure["detail"]} if failure.get("detail") else {}
         failed = legacy.with_flow_guard(flow_id, lambda: sa.fail(store.read(a["attempt_id"], a["stage"], a["seq"])
-                                                                 or a, cause))
+                                                                 or a, cause, **detail))
         _review_not_started(flow_id, failed, _doc(doc_id))
 
 

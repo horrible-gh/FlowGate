@@ -19,6 +19,7 @@ out of the openings the same way: only the next command's root bound start takes
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -259,3 +260,32 @@ def dispatch_block(row: dict) -> Optional[dict]:
     if row.get("dispatch_error_code"):
         out["error_code"] = row["dispatch_error_code"]
     return out
+
+
+# flowgate.v02.0140 T#1-3: the node wire's ``dispatch.start_failure`` — the safe detail of the admission refusal that
+# made the node's current start error (``node_dispatch._start_failure_info``: code, message, phase, retryable, run_id)
+START_FAILURE_KEY = "start_failure"
+_START_FAILURE_FIELDS = ("code", "message", "phase", "retryable", "run_id")
+
+
+def start_failure_of(row: dict) -> Optional[dict]:
+    """The stored refusal detail of an open node's current start error: read from its latest node event, only when
+    that event is the ``dispatch_failed`` that wrote the error the row still has (a later dispatch or event of the node
+    shows none). None when nothing was kept (another failure, a record made before 0140)."""
+    code = row.get("dispatch_error_code")
+    if not code or row.get("status") != "open":
+        return None
+    event = run_store.last_node_event(row["run_id"], row["node_key"])
+    if not event or event.get("cause") != "dispatch_failed":
+        return None
+    try:
+        payload = json.loads(event.get("payload_json") or "{}")
+    except ValueError:
+        return None
+    dispatch = payload.get("dispatch") if isinstance(payload, dict) else None
+    if not isinstance(dispatch, dict) or dispatch.get("error_code") != code:
+        return None
+    info = dispatch.get(START_FAILURE_KEY)
+    if not isinstance(info, dict) or not info.get("code"):
+        return None
+    return {key: info[key] for key in _START_FAILURE_FIELDS if key in info}
