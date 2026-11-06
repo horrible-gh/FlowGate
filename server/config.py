@@ -70,8 +70,20 @@ class Settings(BaseSettings):
     # Keep DB_POOL_MAX >= DB_MAX_PARALLEL_QUERIES when overriding either.
     # Ignored by the SQLite backend (no pool).
     DB_MAX_PARALLEL_QUERIES: int = 20
-    DB_POOL_MIN: int = 5
+    # flowgate.v02.0137 T0004 §4-3: pool_min below max_parallel_queries still churns.
+    # psycopg2 closes every returned connection once minconn idle ones are pooled, so
+    # with 5 kept and 20 permits each burst above 5 opened and closed TCP connections
+    # (isolated measurement on sqloader 0.2.17: 50 bursts of 10 -> 250, of 20 -> 750
+    # reconnects; pool_min 20 -> 0). Holding pool_min == max_parallel_queries removes
+    # the churn below the concurrency cap, which the semaphore never lets traffic pass.
+    DB_POOL_MIN: int = 20
     DB_POOL_MAX: int = 24
+    # T0004 §4-3: the whole-server connection budget this process must fit into.
+    # Boot checks DB_POOL_MAX * DB_SERVER_PROCESSES against PostgreSQL's
+    # max_connections - superuser_reserved_connections - DB_RESERVED_CONNECTIONS
+    # (other clients: migrations, psql, test runners) and logs ERROR when over.
+    DB_SERVER_PROCESSES: int = 3
+    DB_RESERVED_CONNECTIONS: int = 20
     DB_ACQUIRE_TIMEOUT: float = 30.0
     DB_POOL_MAX_LIFETIME: Optional[float] = None
     DB_POOL_MAX_IDLE: Optional[float] = None
@@ -171,6 +183,8 @@ class Settings(BaseSettings):
         "DB_ACQUIRE_TIMEOUT",
         "DB_POOL_MAX_LIFETIME",
         "DB_POOL_MAX_IDLE",
+        "DB_SERVER_PROCESSES",
+        "DB_RESERVED_CONNECTIONS",
         mode="before",
     )
     @classmethod

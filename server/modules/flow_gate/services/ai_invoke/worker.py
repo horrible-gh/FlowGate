@@ -49,9 +49,11 @@ from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
 # reaches admission/diagnostics/finalize/review, and finalize.py reaches admission, so a
 # direct `worker -> chain` import would close a cycle back through either path.
 from . import admission
+from . import carryover
 from . import oracle as oracle_module
 from . import provider_api
 from . import provider_remote
+from . import submission_ledger
 from . import terminal
 from . import review
 from .provenance import effective_action_scope
@@ -347,6 +349,16 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                     break
                 _svc()._reset_attempt_state(run)
                 run["hop_kind"] = loop["current_stage"]
+                # flowgate.v02.0137 T0004 §2-4: the admission-time judge measured the FIRST
+                # hop's scope from the FIRST hop's baseline, so a failed rework after a review
+                # verdict still read `complete`. Re-make it for this stage and this token now,
+                # after the token is issued and before the worker starts. run["action_scope"]
+                # stays the admission scope on purpose (oracle.refresh_hop_oracle).
+                oracle_module.refresh_hop_oracle(
+                    run, loop["current_stage"], prepared.get("token_id") or run.get("token_id"))
+                # TR0005 rev1: submissions from here on belong to THIS hop; finalize settles
+                # the scratch on this hop's ordered outcomes only (submission_ledger).
+                submission_ledger.start_hop(run)
                 run["provider"] = oracle_module._provider_brief(selected)
                 run["provider_id"] = selected_id
                 # 0582 TR0006 rev1: requested_provider_id is set once at admission (the
@@ -1069,6 +1081,7 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     # and FLOWGATE_SCRATCH (stale issue) point at two different token grants the
     # instant a mock or a future issuer ever omitted the key -- exactly the invariant
     # this field exists to protect.
+    previous_token_scratch = run.get("token_scratch_dir")
     run["token_scratch_dir"] = issue["scratch_dir"]
     _note_issued_raw_token(run, run.get("raw_token"))
     if run.get("document_review_loop") and not _adopt_continuation_token(
@@ -1108,6 +1121,17 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
         db_group_ai_leases.update_token(
             run["group_id"], run["run_id"], run["token_id"], action_scope=reissued_action_scope,
         )
+    # TR0005 rev1: the run scratch's owner record lists every token this run held, so a
+    # later run can prove the retained directory belongs to the row that names it (0138).
+    carryover.bind_run_token(run, issue.get("token_id"))
+    # flowgate.v02.0137 T0004 §3-3 (R2): the new token cannot submit files from the old
+    # token's scratch or the run's cwd. Copy those drafts into the new token's scratch and
+    # say so in the prompt; never moves, deletes or submits anything (carryover.py). After
+    # the token is fully adopted (lease re-pointed), so a refused reissue copies nothing.
+    mention = carryover.carry_into_reissued_token(
+        run, previous_token_id=before, previous_token_scratch=previous_token_scratch,
+        issue=issue, mention=mention,
+    )
     run["mention"] = mention
     _note_issued_prompt(run, mention)
     run["prompt_final_length"], run["prompt_final_sha256"] = prompt_digest(mention)
@@ -2002,6 +2026,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             status, resp = _svc()._conversation_turn_register(run, current_token, tool_call["input"])
             run["last_tool_name"] = "conversation_turn_register"
             run["last_tool_status"] = status
+            submission_ledger.record(run, ok=200 <= status < 300, status=status,
+                                     via="api_worker", action="chat")
             if 200 <= status < 300:
                 run["last_tool_error"] = None
                 registered += 1
@@ -2019,6 +2045,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             status, resp = _sequence_edit_register(run, current_token, tool_call["input"])
             run["last_tool_name"] = "sequence_edit_register"
             run["last_tool_status"] = status
+            submission_ledger.record(run, ok=200 <= status < 300, status=status,
+                                     via="api_worker", action="sequence_edit")
             if 200 <= status < 300:
                 run["last_tool_error"] = None
                 registered += 1
@@ -2040,6 +2068,16 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         _api_trace_tool(trace, "register_document", status, registration=True)
         run["last_tool_name"] = "inbox_register"
         run["last_tool_status"] = status
+        # TR0005 rev1: in-process refusals (binding / preflight) never reach the inbox hook;
+        # a duplicate of an inbox-recorded event changes no order.
+        _resp = resp if isinstance(resp, dict) else {}
+        submission_ledger.record(
+            run, ok=200 <= status < 300, status=status, via="api_worker",
+            action=(tool_call.get("input") or {}).get("action") if isinstance(tool_call.get("input"), dict) else None,
+            doc_id=_resp.get("doc_id") if 200 <= status < 300 else None,
+            revision_no=_resp.get("revision_no") if 200 <= status < 300 else None,
+            token_id=run.get("current_token_id") or run.get("token_id"),
+            token_doc_ref=(_run_register_context(run) or {}).get("doc"))
         if 200 <= status < 300:
             trace["register_succeeded"] = True
             trace["disposition"] = "registered"
@@ -2092,6 +2130,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         status, resp = _svc()._conversation_turn_register(run, current_token, {"body": last_text})
         run["last_tool_name"] = "conversation_turn_register"
         run["last_tool_status"] = status
+        submission_ledger.record(run, ok=200 <= status < 300, status=status,
+                                 via="api_worker", action="chat")
         if 200 <= status < 300:
             run["last_tool_error"] = None
             registered += 1

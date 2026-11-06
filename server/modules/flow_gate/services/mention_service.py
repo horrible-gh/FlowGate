@@ -2313,7 +2313,13 @@ def build_mention(
         "and notes) inside this token's scratch directory; never place them in the source tree, "
         "server cwd, or OS temp.\n\n"
         "For file-based inbox submissions, `{SCRATCH}` means this token's scratch directory. "
-        "Create the file inside it and send that file's absolute path as `doc_path`."
+        "Create the file inside it and send that file's absolute path as `doc_path`.\n\n"
+        # flowgate.v02.0137 T0004 §3-1: the CLI cwd/TMP is the RUN scratch, which is deleted
+        # when the run ends and is not a valid doc_path; drafts belong in FLOWGATE_SCRATCH.
+        "Write drafts and submission bodies in this token's scratch directory "
+        "(FLOWGATE_SCRATCH), not in the current working directory: the working directory is "
+        "a per-run temporary folder that may be deleted when the run ends and cannot be used "
+        "as `doc_path`."
     )
 
     # ── Section 7: doc_type guide — REMOVED (group 0372 set 3, D-0003 §3-2 "dropped") ──
@@ -3109,8 +3115,9 @@ def build_review_mention(
     # the same {SCRATCH} terminology used by task/test worker instructions.
     s6_body = (
         "`{SCRATCH}` means this token's scratch directory. Write every non-source artifact, "
-        "review dump, JSON, cache, and note inside this run scratch only; do not leave "
-        "them in the source tree, server cwd, or OS temp."
+        "review dump, JSON, cache, and note inside this token's scratch directory only; do not "
+        "leave them in the source tree, server cwd, or OS temp. The current working directory "
+        "is a per-run temporary folder that may be deleted when the run ends."
     )
 
     # ── Section 7: verdict guide (inline — no help endpoint for verdicts) ────

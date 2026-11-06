@@ -189,7 +189,11 @@ class TestPoolSettingsDefaults:
         s = self._settings()
         # The point of the change: not sqloader's 5 / 1 / 5.
         assert s.DB_MAX_PARALLEL_QUERIES == 20
-        assert s.DB_POOL_MIN == 5
+        # flowgate.v02.0137 T0004 §4-3: pool_min follows max_parallel_queries — any
+        # lower value still opened and closed a connection per query above it.
+        assert s.DB_POOL_MIN == 20
+        assert s.DB_SERVER_PROCESSES == 3
+        assert s.DB_RESERVED_CONNECTIONS == 20
         assert s.DB_POOL_MAX == 24
         assert s.DB_ACQUIRE_TIMEOUT == 30.0
         assert s.DB_POOL_MAX_LIFETIME is None

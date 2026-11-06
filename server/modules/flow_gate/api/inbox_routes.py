@@ -2535,7 +2535,51 @@ async def inbox(request: Request):
     Step 8: Token consumption
     Step 9: Screen push [Phase 2 deferred — leave hook empty]
     Step 10: Return response
+
+    flowgate.v02.0137 TR0005 rev1: every non-dry-run outcome for a token bound to a live
+    AI run is appended, in order, to that run's submission ledger (_note_run_submission),
+    so finalize can tell "the last submission failed" from "a later one landed".
     """
+    seen: dict = {}
+    response = await _inbox_dispatch(request, seen)
+    _note_run_submission(seen, response)
+    return response
+
+
+def _note_run_submission(seen: dict, response: Any) -> None:
+    """Feed one inbox outcome to the run ledger (submission_ledger). Never raises.
+
+    Only identifiers, status and the answered doc_id / revision are recorded; no body,
+    no raw token. A 401 (spent / expired token) has no verified record, so the token row
+    is looked up by its hash the same way verify() does.
+    """
+    try:
+        body = seen.get("body")
+        raw = seen.get("raw")
+        if not isinstance(body, dict) or not raw or _truthy(body.get("dry_run")):
+            return
+        token_rec = seen.get("token") or None
+        status = int(getattr(response, "status_code", 0) or 0)
+        if not token_rec and status == 401:
+            token_rec = token_service._find_token_by_raw(raw)
+        if not token_rec or not str(token_rec.get("ai_run_id") or "").strip():
+            return
+        payload: Any = {}
+        content = getattr(response, "body", None)
+        if isinstance(content, (bytes, bytearray)) and content:
+            try:
+                payload = json.loads(content.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                payload = {}
+        from modules.flow_gate.services.ai_invoke import submission_ledger
+
+        submission_ledger.note_inbox_response(token_rec, body, status, payload)
+    except Exception:
+        logging.getLogger(__name__).warning("inbox: run submission ledger update failed",
+                                            exc_info=True)
+
+
+async def _inbox_dispatch(request: Request, seen: dict):
     # ── Step 1: Form validation ─────────────────────────────────────────────────────
     raw = _extract_bearer(request)
     if raw is None:
@@ -2548,6 +2592,7 @@ async def inbox(request: Request):
         body = await request.json()
     except Exception:
         body = None
+    seen.update(raw=raw, body=body)
     try:
         dispatch_token = token_service.verify(raw)
     except HTTPException as exc:
@@ -2557,6 +2602,7 @@ async def inbox(request: Request):
                 {"error_message": str(exc.detail)})
             return JSONResponse(status_code=status, content=payload)
         dispatch_token = {}
+    seen["token"] = dispatch_token
     if dispatch_token.get("action_scope") == "edit" or (isinstance(body, dict) and body.get("action") == "edit"):
         return await anyio.to_thread.run_sync(_in_write_session, _handle_edit, request, raw, body)
     if not isinstance(body, dict):

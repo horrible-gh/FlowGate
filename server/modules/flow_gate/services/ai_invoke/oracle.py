@@ -216,6 +216,53 @@ def _scope_oracle(action_scope: str, token_id: Optional[str], doc_ref: str) -> O
     return _oracle
 
 
+# flowgate.v02.0137 T0004 §2-4: a document review loop alternates review <-> rework hops
+# inside ONE run, but the scope judge used to be built once, at admission, from the FIRST
+# hop's scope and baseline. A later hop was then judged by a stale question: after a review
+# hop had written its verdict, "review rows > admission baseline" stayed true for every
+# following rework hop, so a rework that registered nothing still settled `complete` and
+# its unsubmitted scratch was deleted. The judge is now re-made per hop from the STAGE's
+# own scope. `run["action_scope"]` is deliberately left alone: it keeps naming the scope
+# the run was admitted under (retry eligibility, provenance and the inbox stamping all
+# read it), only the per-hop judge follows the stage.
+_LOOP_STAGE_ORACLE_SCOPES: dict[str, str] = {
+    REVIEW_HOP_KIND: "review",
+    REWORK_HOP_KIND: "edit",
+}
+
+
+def loop_stage_oracle_scope(stage: Optional[str], fallback: Optional[str]) -> Optional[str]:
+    """The scope whose probe judges a review-loop hop of `stage` (else `fallback`)."""
+    return _LOOP_STAGE_ORACLE_SCOPES.get(stage or "", fallback)
+
+
+def refresh_hop_oracle(run: dict, stage: Optional[str], token_id: Optional[str]) -> bool:
+    """Re-make an ENGINE-planted scope judge for the hop that is about to start.
+
+    Only a run whose judge the engine planted (`scope_oracle_run`) is touched: a caller's
+    `completion_oracle` override defines success outside the engine and is never replaced.
+    The baseline is read now, after the hop's token was issued and before its worker
+    starts, so the new judge only credits this hop's own durable write. Returns True when
+    the judge was replaced. A probe that cannot be built leaves the run's judge as None
+    for the scope oracle path — which judges the hop `none` (retained), never `complete`.
+    """
+    if not run.get("scope_oracle_run"):
+        return False
+    scope = loop_stage_oracle_scope(stage, run.get("action_scope"))
+    if scope not in _SCOPE_PROBES:
+        return False
+    try:
+        judge = _scope_oracle(scope, token_id, run["doc_ref"])
+    except Exception:
+        logger.warning("ai-invoke %s: hop oracle refresh failed", run.get("run_id"), exc_info=True)
+        judge = None
+    run["completion_oracle"] = judge if judge is not None else (lambda: False)
+    run["oracle_scope"] = scope
+    run["oracle_hop_kind"] = stage
+    run["oracle_token_id"] = token_id
+    return True
+
+
 def _uses_scope_oracle(action_scope: str, mode: str, completion_oracle: Optional[Callable]) -> bool:
     """mode='single' only: a continuous run's scope is new/workflow_decide, and its
     docs_target is derived from the sequence's pending worker items, which do make

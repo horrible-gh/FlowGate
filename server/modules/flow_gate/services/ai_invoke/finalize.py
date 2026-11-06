@@ -451,18 +451,202 @@ def _finalize_stop(run: dict, respawn_pending: bool) -> None:
         run.update(stop_code=code, resumable=is_resumable(code), stop_reason=reason)
 
 
+# ── flowgate.v02.0137 T0004 §2 (A-1): delete a run scratch only once its submission settled ──
+# `outcome == "complete"` says the run's judge was satisfied; it never said the LAST thing
+# the worker produced reached the server. NR0003 §0-1 reproduced the gap: a run whose final
+# rework hop failed with a 403 still read `complete` (a stale review-count judge), so its
+# unsubmitted draft was deleted with the run scratch. The delete branch now additionally
+# needs a settled submission, read from durable state, and everything else takes the
+# existing retained path (`scratch_retained` + the system scratch TTL sweep).
+#
+# TR0005 rev1: "settled" is decided by ORDER, not by presence. rev0 accepted any reached
+# document (or a re-asked judge) as proof, so "submit OK -> revise -> last submit 403/422"
+# deleted the newest, unsubmitted draft. The run's submission ledger
+# (submission_ledger.py) keeps every attempt in order; the scratch goes only when the
+# current hop has no failure, or when a success that is still durable in the documents
+# table came AFTER the last failure.
+
+
+def _verified_success(run: dict, event: dict) -> tuple[bool, str]:
+    """Is this success event still true in durable state? `(ok, why_not)`."""
+    doc_id = event.get("doc_id")
+    if not doc_id:
+        # A chat turn / sequence edit carries no document. Its order is proven by the
+        # ledger; its durability only by the hop's own engine judge, re-asked now.
+        judge = run.get("completion_oracle")
+        if run.get("scope_oracle_run") and judge is not None and _oracle_hop_fresh(run):
+            return (True, "") if bool(judge()) else (False, "judge_not_satisfied")
+        return False, "success_without_document"
+    allowed = {d for d in (event.get("token_doc_ref"), run.get("doc_ref")) if d}
+    allowed.update(run.get("reached_doc_ids") or [])
+    if event.get("action") != "new" and allowed and doc_id not in allowed:
+        return False, "success_for_other_document"
+    doc = db_docs.get_by_id(doc_id)
+    if not doc:
+        return False, "success_document_missing"
+    recorded = event.get("revision_no")
+    if recorded is not None and int(doc.get("revision_no") or 0) < int(recorded):
+        return False, "success_revision_rolled_back"
+    return True, ""
+
+
+def _oracle_hop_fresh(run: dict) -> bool:
+    return (
+        run.get("oracle_hop_kind") is None
+        or run.get("hop_kind") is None
+        or run.get("oracle_hop_kind") == run.get("hop_kind")
+    )
+
+
+def _ordered_settlement(run: dict, evidence: dict, *, prefix: str = "") -> tuple[bool, str]:
+    """The ledger rule shared by single runs and review-loop hops."""
+    from . import submission_ledger
+
+    events = submission_ledger.hop_events(run)
+    failures = [e for e in events if not e.get("ok")]
+    successes = [e for e in events if e.get("ok")]
+    evidence["submission_events"] = len(events)
+    if run.get(submission_ledger.DROPPED_KEY):
+        evidence["submission_events_dropped"] = int(run.get(submission_ledger.DROPPED_KEY) or 0)
+    if failures:
+        last_failure = failures[-1]
+        evidence["last_failure_status"] = last_failure.get("status")
+        evidence["last_failure_seq"] = last_failure.get("seq")
+    if successes:
+        evidence["last_success_seq"] = successes[-1].get("seq")
+    register_errors = run.get("register_errors") or []
+    if not failures:
+        if register_errors:
+            # An error the ledger never saw (older caller, overflow): its place in the order
+            # is unknown, so nothing proves the newest draft went in.
+            return False, f"{prefix}registration_error_unordered"
+        if run.get(submission_ledger.DROPPED_KEY):
+            return False, f"{prefix}submission_ledger_overflow"
+        return True, f"{prefix}{'submitted' if successes else 'no_registration_error'}"
+    after = [e for e in successes if int(e.get("seq") or 0) > int(failures[-1].get("seq") or 0)]
+    if not after:
+        return False, f"{prefix}last_submission_failed"
+    ok, why_not = _verified_success(run, after[-1])
+    if not ok:
+        evidence["success_check"] = why_not
+        return False, f"{prefix}submission_after_error_unverified"
+    return True, f"{prefix}submitted_after_error"
+
+
+def _submission_settlement(run: dict) -> tuple[bool, str, dict]:
+    """`(settled, reason, evidence)` for a finished run. Never raises, never writes.
+
+    * not `complete`                       -> not settled (`non_complete_outcome`)
+    * a document review loop               -> the loop checkpoint for THIS hop must have
+      recorded durable progress (`last_hop_outcome == "succeeded"`); a failed or
+      unconfirmed last hop keeps the scratch whatever the run-level outcome says. Then the
+      ordered rule below runs on this hop's events as well.
+    * ordered rule (submission_ledger)     -> settled when this hop recorded no failed
+      submission (and no unordered `register_errors`), or when the LAST success came after
+      the LAST failure and is still true in the documents table (same document as the
+      token / run, revision not behind what the server answered). A success first and a
+      failure last is NOT settled — the newest draft is the one that did not go in.
+    """
+    register_errors = run.get("register_errors") or []
+    evidence: dict = {
+        "outcome": run.get("outcome"),
+        "hop_kind": run.get("hop_kind"),
+        "register_errors": len(register_errors),
+        "oracle_scope": run.get("oracle_scope"),
+    }
+    try:
+        if run.get("outcome") != "complete":
+            return False, "non_complete_outcome", evidence
+        loop = run.get("document_review_loop")
+        if loop:
+            evidence.update({
+                "loop_stage": loop.get("current_stage"),
+                "loop_last_hop_kind": loop.get("last_hop_kind"),
+                "loop_last_hop_outcome": loop.get("last_hop_outcome"),
+                "loop_stop_reason": loop.get("stop_reason"),
+            })
+            if not run.get("document_review_loop_checkpointed"):
+                return False, "review_loop_hop_unconfirmed", evidence
+            # `document_review_loop_checkpointed` is set right after THIS hop's checkpoint
+            # and cleared at every stage switch, so the row below describes the last hop.
+            if loop.get("last_hop_outcome") != "succeeded":
+                return False, "review_loop_hop_failed", evidence
+            settled, reason = _ordered_settlement(run, evidence, prefix="review_loop_")
+            return settled, ("review_loop_hop_succeeded" if reason in (
+                "review_loop_submitted", "review_loop_no_registration_error") else reason), evidence
+        settled, reason = _ordered_settlement(run, evidence)
+        return settled, reason, evidence
+    except Exception:
+        logger.warning("ai-invoke %s: submission settlement check failed", run.get("run_id"),
+                       exc_info=True)
+        return False, "settlement_check_failed", evidence
+
+
+def _retained_manifest_reason(run: dict, scratch: Path) -> str:
+    """Why `_mark_scratch_completed` refused, instead of the old `non_complete_outcome`.
+
+    NR0003 A-2/C4: a complete run whose manifest was missing was logged as if its outcome
+    had been the problem. Re-reading the validator is read-only and names the real cause.
+    """
+    try:
+        from .runtime import _validate_scratch_manifest
+
+        manifest, reason = _validate_scratch_manifest(run["project_id"], run["run_id"], scratch)
+    except Exception:
+        return "manifest_unreadable"
+    if manifest is None:
+        reason = str(reason)
+        return reason if reason.startswith("manifest") else f"manifest_{reason}"
+    # Valid manifest, yet the completion stamp was refused: a pending delete journal, a
+    # busy journal lock or a failed atomic replace (runtime logs which at WARNING).
+    return "manifest_update_failed"
+
+
+def _scratch_audit_log(run: dict, action: str, reason: str, evidence: dict,
+                       manifest_updated: bool) -> None:
+    """One durable line per run scratch decision (T0004 §2-5).
+
+    `_safe_scratch_log` writes at INFO, which the server's file log does not keep (NR0003
+    §0-5: zero `ai-invoke scratch` lines in a 22.7 MB day). This line is WARNING so the
+    deletion or retention and its reason survive the process. Identifiers and counters
+    only — no token, prompt, path outside the managed root or file content.
+    """
+    payload = {
+        "run_id": run.get("run_id"),
+        "action": action,
+        "reason": reason,
+        "manifest_updated": bool(manifest_updated),
+        "token_id": run.get("token_id"),
+        **{key: value for key, value in evidence.items() if value is not None},
+    }
+    run["scratch_cleanup"] = payload
+    try:
+        logger.warning("ai-invoke scratch audit %s", json.dumps(payload, ensure_ascii=True,
+                                                               sort_keys=True, default=str))
+    except Exception:
+        pass
+
+
 def _finalize_scratch(run: dict) -> None:
     if not terminal.check_owner(run):
         run["scratch_retained"] = run.get("scratch_dir")
         return
     scratch = Path(run["scratch_dir"])
     completed_at = datetime.now(timezone.utc).isoformat()
+    # Stamped whatever happens next: the retained sweep measures its TTL from it.
     manifest_updated = _mark_scratch_completed(
         run["project_id"], run["run_id"], scratch, completed_at, run.get("execution_nonce")
     )
+    settled, settle_reason, evidence = _submission_settlement(run)
+    evidence["submission"] = settle_reason
     deleted = False
-    cleanup_reason = "non_complete_outcome"
-    if run["outcome"] == "complete" and manifest_updated:
+    if run["outcome"] != "complete":
+        cleanup_reason = "non_complete_outcome"
+    elif not manifest_updated:
+        cleanup_reason = _retained_manifest_reason(run, scratch)
+    elif not settled:
+        cleanup_reason = settle_reason
+    else:
         deleted, cleanup_reason = _svc()._delete_owned_scratch(
             run["project_id"], run["run_id"], scratch, run.get("execution_nonce")
         )
@@ -474,6 +658,8 @@ def _finalize_scratch(run: dict) -> None:
         except Exception:
             run["scratch_retained"] = run["scratch_dir"]
         _safe_scratch_log(run["project_id"], run["run_id"], scratch, "retained", cleanup_reason)
+    _scratch_audit_log(run, "deleted" if deleted else "retained", cleanup_reason, evidence,
+                       manifest_updated)
 
 
 def _finalize_source(run: dict) -> None:
@@ -1403,6 +1589,10 @@ def mark_group_lease_denied(
                 "reason": f"{code}: {operation}",
                 "turn": run.get("turn"),
             })
+        # flowgate.v02.0137 TR0005 rev1: the same refusal, in order, for the settlement rule.
+        from . import submission_ledger
+        submission_ledger.record(run, ok=False, status=status_code, via="group_lease",
+                                 action=operation, token_id=run.get("token_id"))
         run["lease_denied_code"] = code
         run["lease_denied_operation"] = operation
         run["lease_denied_count"] = int(run.get("lease_denied_count") or 0) + 1
