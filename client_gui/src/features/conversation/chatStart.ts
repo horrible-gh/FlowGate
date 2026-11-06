@@ -69,13 +69,16 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     const typed = draftTitle.value
     const title = typed ?? defaultTitle()
     starting.value = true
+    // flowgate.v02.0142 T#1: the AI chosen now is the one of this first message, whatever the picker shows once the
+    // chat has been created.
+    const providerId = state.selectedProviderId
     try {
       if (!(await session.createChat(title, typed === null ? { autoTitle: true } : undefined))) return false
       draftTitle.value = null
       const chatId = state.activeChatId
       const projectId = state.scope?.projectId
       if (chatId && projectId && typed === null) owed.set(chatId, { title, projectId })
-      return settle(chatId, await session.send(text))
+      return settle(chatId, await session.send(text, { providerId }))
     } finally {
       starting.value = false
     }

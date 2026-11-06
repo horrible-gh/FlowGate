@@ -120,7 +120,11 @@ export interface ConversationSession {
   setChatTitle(chatId: string, title: string): void
   loadOlder(): Promise<void>
   catchUp(): Promise<void>
-  send(text: string): Promise<boolean>
+  /**
+   * flowgate.v02.0142 T#1: the AI of the message is pinned when it is sent: `options.providerId` when given (the first
+   * message of a new chat, whose AI was chosen before the chat was created), else the current selection.
+   */
+  send(text: string, intent?: { providerId?: string }): Promise<boolean>
   retry(localId: string): Promise<boolean>
   reportRead(seq: number): Promise<void>
   decideCommand(commandId: string, decision: CommandDecision): Promise<void>
@@ -609,21 +613,26 @@ export function createConversationSession(options: ConversationSessionOptions = 
    * D0005 §3-2: the send-time action runs once, only after the turn was accepted, and only
    * for the chat the turn went to. After a switch to another chat it is dropped: a mention
    * or an AI run must never land in a chat where no turn was just sent.
+   *
+   * flowgate.v02.0142 T#1: the AI run uses `providerId`, the AI pinned when the message was sent — never the picker's
+   * current value. Without a usable one startAiRun ends with the `no_provider` notice (the turn itself stays stored).
    */
-  function runSendAction(chatId: string, gen: number): void {
+  function runSendAction(chatId: string, gen: number, providerId: string): void {
     if (!isCurrentChat(chatId, gen)) return
     if (state.settings.sendAction === 'copy_mention') options.onAutoCopyMention?.()
-    else if (state.settings.sendAction === 'invoke_ai' && hasProviders.value) void invokeAi()
+    else if (state.settings.sendAction === 'invoke_ai') void startAiRun(providerId)
   }
 
-  async function send(text: string): Promise<boolean> {
+  async function send(text: string, intent?: { providerId?: string }): Promise<boolean> {
     const chatId = state.activeChatId
     const body = text.trim()
     // One turn at a time: no new send while a turn posts or a chat AI run is in flight.
     if (!chatId || !body || state.sending || running.value) return false
     const gen = chatGen
     const key = newIdempotencyKey()
-    const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq: state.headSeq, createdAt: new Date().toISOString(), failed: false }
+    // flowgate.v02.0142 T#1: pinned in the same synchronous step as chatId / gen / key, before the first await.
+    const providerId = intent?.providerId ?? state.selectedProviderId
+    const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq: state.headSeq, createdAt: new Date().toISOString(), failed: false, providerId }
     state.pending = [...state.pending, item]
     state.sending = true
     try {
@@ -633,7 +642,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         if (isCurrentChat(chatId, gen)) markPending(item.localId, true)
         return false
       }
-      runSendAction(chatId, gen)
+      runSendAction(chatId, gen, providerId)
       return true
     } finally {
       state.sending = false
@@ -653,8 +662,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
         if (isCurrentChat(chatId, gen)) markPending(localId, true)
         return false
       }
-      // The first attempt failed before its send action, so the accepted retry runs it once.
-      runSendAction(chatId, gen)
+      // The first attempt failed before its send action, so the accepted retry runs it once — on the AI pinned at the
+      // first send (flowgate.v02.0142 T#1), not on the selection of this moment.
+      runSendAction(chatId, gen, item.providerId)
       return true
     } finally {
       state.sending = false
@@ -800,17 +810,27 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
+  /** The [AI 호출] button: the AI selected at the moment of the press. */
   async function invokeAi(): Promise<void> {
+    await startAiRun(state.selectedProviderId)
+  }
+
+  /**
+   * flowgate.v02.0142 T#1: starts the chat AI run on `providerId` and on nothing else — it is not read from the
+   * selection again here, and an empty / unknown / unlisted id never falls back to the server default or to another
+   * connection: the run ends with the `no_provider` notice and no /start request.
+   */
+  async function startAiRun(providerId: string): Promise<void> {
     const chatId = state.activeChatId
     if (!chatId || running.value) return
-    if (!hasProviders.value) {
+    if (!providerId || !hasProviders.value || !state.providers.some((p) => p.id === providerId)) {
       notify('warning', 'no_provider')
       return
     }
     const gen = chatGen
     state.runId = 'starting'
     try {
-      const runId = await source.startChatRun(chatId, state.selectedProviderId || null)
+      const runId = await source.startChatRun(chatId, providerId)
       if (disposed || gen !== chatGen) return
       if (!runId) {
         state.runId = null
