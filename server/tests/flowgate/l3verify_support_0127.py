@@ -137,7 +137,7 @@ def l3(kind, monkeypatch, tmp_path, migrated_sqlite_db, caplog, request):
         'doc_ref':FLOW+'.0001-CH', 'issued_to':USER, 'source_access':'read_write', 'ai_run_id':RUN,
         'hash':'l3verify-hash', 'pepper_id':'l3verify', 'created_at':connection.now_iso(), 'expires_at':expires}
     tokens.create(chat_token)
-    user_chat_source_access.upsert(USER, 'read_only', connection.now_iso())
+    user_chat_source_access.upsert(USER, PROJECT, FLOW, 'read_only', connection.now_iso())
     run = {'run_id':RUN,'project_id':PROJECT,'group_id':FLOW,'action_scope':'chat','doc_ref':chat_token['doc_ref'],
         'issued_to':USER,'current_token_id':TOKEN,'token_id':TOKEN,'status':'running'}
     def verify(raw):

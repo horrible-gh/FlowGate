@@ -28,9 +28,9 @@ def _read_token(token_id: str) -> Optional[dict]:
     return db_tokens.get_by_id(token_id)
 
 
-def _read_access_row(user_id: str) -> Optional[dict]:
+def _read_access_row(user_id: str, project_id: str, group_id: str) -> Optional[dict]:
     from modules.flow_gate.db import user_chat_source_access
-    return user_chat_source_access.get(user_id)
+    return user_chat_source_access.get(user_id, project_id, group_id)
 
 
 def _kind_for_token(token_row: dict):
@@ -83,7 +83,8 @@ def effective_write_kind(token_row: dict) -> str:
 
 def claim_pending(token_row: dict) -> bool:
     """CLAIMED with this token's id still in the one-shot marker (read only; no row = no marker)."""
-    row = _guarded(_read_access_row, token_row.get("issued_to"))
+    row = _guarded(_read_access_row, token_row.get("issued_to"),
+                   token_row.get("project") or token_row.get("project_id"), token_row.get("group_id"))
     if row is None or _empty(row.get("one_shot_token_id")):
         return False
     return str(row.get("one_shot_token_id")) == str(token_row.get("token_id") or "")

@@ -32,7 +32,7 @@ def chat(env, monkeypatch):
     chat_gate.reset()
     token = make_token(project="flowgate", group_id=F, issued_to="user")
     tokens.create({**token, "hash": "chat-adapter-hash", "pepper_id": "test", "created_at": "t"})
-    user_chat_source_access.upsert("user", "read_only", "t")
+    user_chat_source_access.upsert("user", "flowgate", F, "read_only", "t")
     run = make_run(project_id="flowgate", group_id=F, issued_to="user")
     def verify(raw):
         row = tokens.get_by_id(TOKEN_ID)
@@ -428,7 +428,7 @@ def test_one_shot_consumed_run_can_save_repeatedly_without_rearming_or_mode_rere
     assert cli(chat, True).status_code == 200
     assert token_state(chat) == before
     # A user setting change affects the next token/run, never this issued token's kind.
-    user_chat_source_access.upsert("user", "edit_once", "new-setting")
+    user_chat_source_access.upsert("user", "flowgate", F, "edit_once", "new-setting")
     before = token_state(chat)
     r = cli(chat, True, request_body(chat, expected_revision=1, content=HEADER + "second", idempotency_key="second"))
     assert r.status_code == 200 and r.json()["revision_no"] == 2

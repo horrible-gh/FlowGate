@@ -172,7 +172,7 @@ def _normalize_turns(value: Any) -> int:
     return value
 
 
-def resolve_chat_settings(user_id: Optional[str]) -> tuple[dict, bool]:
+def resolve_chat_settings(user_id: Optional[str], scope: Optional[tuple[str, str]] = None) -> tuple[dict, bool]:
     """Return (settings, is_default) for a user (L0010 §2-1).
 
     Only the odd field is reverted -- a broken ``context_mode`` does not drag
@@ -186,7 +186,7 @@ def resolve_chat_settings(user_id: Optional[str]) -> tuple[dict, bool]:
     below is computed from that legacy row alone, exactly as before this T.
     """
     source_access_mode = (
-        source_access_store.resolve_source_access_mode(user_id) if user_id else SOURCE_ACCESS_DEFAULT
+        source_access_store.resolve_source_access_mode(user_id, *scope) if user_id and scope else SOURCE_ACCESS_DEFAULT
     )
     command_policy = resolve_command_policy(user_id)
 
@@ -219,7 +219,7 @@ def resolve_chat_settings(user_id: Optional[str]) -> tuple[dict, bool]:
     }, False
 
 
-def resolve_chat_settings_safe(user_id: Optional[str]) -> dict:
+def resolve_chat_settings_safe(user_id: Optional[str], scope: Optional[tuple[str, str]] = None) -> dict:
     """Settings for the mention paths, which must never fail because of a setting.
 
     A failed lookup here would surface to the user as "the chat stopped working", with
@@ -228,7 +228,7 @@ def resolve_chat_settings_safe(user_id: Optional[str]) -> dict:
     line that explains it.
     """
     try:
-        settings, _is_default = resolve_chat_settings(user_id)
+        settings, _is_default = resolve_chat_settings(user_id, scope)
         return settings
     except Exception:
         _log.warning("chat settings unavailable; falling back to defaults (user_id=%s)", user_id)
@@ -287,7 +287,7 @@ def validate_patch(patch: dict) -> None:
             )
 
 
-def save_chat_settings(user_id: Optional[str], patch: dict) -> dict:
+def save_chat_settings(user_id: Optional[str], patch: dict, scope: Optional[tuple[str, str]] = None) -> dict:
     """Validate, write the sent columns only, and answer with a fresh read (L0010 §2-2).
 
     An empty patch writes nothing and creates nothing -- an all-defaults row would flip
@@ -303,6 +303,8 @@ def save_chat_settings(user_id: Optional[str], patch: dict) -> dict:
     upsert call.
     """
     validate_patch(patch)
+    if "source_access_mode" in patch and scope is None:
+        raise ChatSettingsError("source_access_mode", "project_id and group_id are required.")
     if patch and user_id:
         # Hardcoded rather than read off chat_settings_store.SETTING_COLUMNS: this
         # function must keep working against a test double that stands in for that
@@ -323,24 +325,24 @@ def save_chat_settings(user_id: Optional[str], patch: dict) -> dict:
                         updated_at=now,
                     )
                 if source_mode is not None:
-                    source_access_store.upsert(user_id, source_mode, now)
+                    source_access_store.upsert(user_id, *scope, source_mode, now)
                 if command_policy is not None:
                     # 0670 T0004 / flowgate.v02.0032 T#1: own storage; a command-only PATCH leaves the legacy
                     # row (and therefore is_default) exactly as it was.
                     command_policy_store.upsert(user_id, command_policy, now)
-    return settings_response(user_id)
+    return settings_response(user_id, scope)
 
 
-def settings_response(user_id: Optional[str]) -> dict:
+def settings_response(user_id: Optional[str], scope: Optional[tuple[str, str]] = None) -> dict:
     """The envelope both /me/chat-settings verbs answer with (P0009 scenario 1).
 
     0515 T0009 §5.1: runs the stale/corrupted one-shot claim recovery sweep for this
     user before reading, so a claim nobody will ever commit (a dead worker, a crashed
     tab) does not keep blocking a fresh ``edit_once`` claim forever.
     """
-    if user_id:
-        recover_stale_claim(user_id)
-    settings, is_default = resolve_chat_settings(user_id)
+    if user_id and scope:
+        recover_stale_claim(user_id, *scope)
+    settings, is_default = resolve_chat_settings(user_id, scope)
     stored_defaults = defaults()
     stored_defaults.pop("updated_at", None)
     stored_defaults["source_access_mode"] = SOURCE_ACCESS_DEFAULT
@@ -348,6 +350,7 @@ def settings_response(user_id: Optional[str]) -> dict:
     return {
         "ok": True,
         "settings": settings,
+        "source_access_scope": {"project_id": scope[0], "group_id": scope[1]} if scope else None,
         "is_default": is_default,
         "defaults": stored_defaults,
         "domain": domain(),
@@ -370,7 +373,7 @@ def _is_stale(claimed_at: Optional[str]) -> bool:
     return age >= ONE_SHOT_CLAIM_STALE_SEC
 
 
-def recover_stale_claim(user_id: str) -> str:
+def recover_stale_claim(user_id: str, project_id: str, group_id: str) -> str:
     """Classify and repair one stale/corrupted ``edit_once`` claim marker (T0009 §5).
 
     Returns one of ``NOTHING_TO_DO``, ``B_TYPE_CLEANED``, ``MISSING_RECOVERED``,
@@ -382,7 +385,7 @@ def recover_stale_claim(user_id: str) -> str:
     pre-claim step (T0009 §5.1) -- no other call site should be added; both already
     reach every user who could be looking at a stuck claim.
     """
-    row = source_access_store.get(user_id)
+    row = source_access_store.get(user_id, project_id, group_id)
     if row is None:
         return "NOTHING_TO_DO"
 
@@ -394,7 +397,7 @@ def recover_stale_claim(user_id: str) -> str:
         # B-type corruption (DB0008 §5.2): no token identity survives, so this can
         # never re-arm edit_once -- fail-closed, marker-only cleanup.
         try:
-            source_access_store.clear_b_type_marker(user_id, now_iso())
+            source_access_store.clear_b_type_marker(user_id, project_id, group_id, now_iso())
         except Exception:
             _log.error(
                 "stale_one_shot_claim_recovery_failed user_id=%s recovery=b_type",
@@ -426,7 +429,7 @@ def recover_stale_claim(user_id: str) -> str:
         # edit_once must never be re-armed for a token that was genuinely used
         # (T0009 §5, DB0008 §5.2) -- clear the marker only, and flag the invariant
         # this should not normally reach (a CLAIMED row surviving past commit()).
-        source_access_store.commit(user_id, token_id, now_iso())
+        source_access_store.commit(user_id, project_id, group_id, token_id, now_iso())
         _log.warning(
             "one_shot_marker_on_consumed_token token_id=%s user_id=%s; "
             "marker cleared without re-arming edit_once",
@@ -461,7 +464,7 @@ def recover_stale_claim(user_id: str) -> str:
     refreshed = db_tokens.get_by_id(token_id)
     if refreshed is not None and refreshed.get("consumed_at"):
         # Lost the revoke race to a legitimate consume landing in the same window.
-        source_access_store.commit(user_id, token_id, now_iso())
+        source_access_store.commit(user_id, project_id, group_id, token_id, now_iso())
         _log.warning(
             "edit_once claim recovery raced a legitimate consume: token %s for user %s",
             token_id, user_id,

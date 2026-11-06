@@ -77,7 +77,7 @@ class Reads:
             row = self.tokens.get(token_id)
             return dict(row) if row else None
 
-        def read_access(user_id):
+        def read_access(user_id, project_id, group_id):
             self.access_reads += 1
             if self.fail == "access":
                 raise RuntimeError("db down")
@@ -1050,13 +1050,16 @@ def test_real_store_reads(monkeypatch, migrated_sqlite_db):
     error = refused(chat_authz.authorize_chat_run, chat_authz.API, None, run)          # live row; group axis empty
     assert (error.status, error.code) == (403, "chat_document_forbidden")
     assert chat_authz.claim_pending(row) is False                                       # no claim row
-    user_chat_source_access.upsert(USER, "edit_once", "2026-11-04T00:00:00Z")
+    db._execute("INSERT INTO groups (group_id, project_id, title, created_at, updated_at) VALUES ('fgp.v02.0001', 'fgp', 'test', 't', 't')")
+    db._execute("UPDATE tokens SET group_id='fgp.v02.0001' WHERE token_id=?", [TOKEN_ID])
+    row = tokens.get_by_id(TOKEN_ID)
+    user_chat_source_access.upsert(USER, "fgp", "fgp.v02.0001", "edit_once", "2026-11-04T00:00:00Z")
     assert chat_authz.claim_pending(row) is False
     db._execute("UPDATE user_chat_source_access SET one_shot_token_id = ?, one_shot_claimed_at = ? "
                 "WHERE user_id = ?", [TOKEN_ID, "2026-11-04T00:00:01Z", USER])
-    before = dict(user_chat_source_access.get(USER))
+    before = dict(user_chat_source_access.get(USER, "fgp", "fgp.v02.0001"))
     assert chat_authz.claim_pending(row) is True
-    assert user_chat_source_access.get(USER) == before                                 # E3: read only
+    assert user_chat_source_access.get(USER, "fgp", "fgp.v02.0001") == before                                 # E3: read only
     tokens.revoke(TOKEN_ID)
     error = refused(chat_authz.authorize_chat_run, chat_authz.API, None, run)
     assert (error.status, error.code) == (401, "unauthorized")

@@ -11,7 +11,9 @@
 // from the server — when a chat opens, on every AI-run polling tick, once right after the run
 // ends and once after each decision — and each read replaces them as a whole. A new chat is a
 // standalone CH; nothing is shown before the server has it.
-import { computed, reactive, readonly, type ComputedRef, type DeepReadonly } from 'vue'
+import { computed, reactive, readonly, watch, type ComputedRef, type DeepReadonly } from 'vue'
+import { draftUserId, type DraftSendSnapshot } from './drafts'
+import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, type CreateChatOptions } from './api'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import { buildTimeline, mergeTurns, replaceServerActivities, upsertActivity, type PendingTurn, type TimelineItem } from './timeline'
@@ -99,28 +101,47 @@ export interface ConversationState {
   notice: ConversationNotice | null
 }
 
+export interface CreatedChat {
+  status: 'created'
+  chatId: string
+  scope: ConversationScope
+  draftIntentId: string | null
+  createIntentId: string
+}
+export type CreateChatResult = CreatedChat | { status: 'cancelled' | 'failed'; chatId: string | null; scope: ConversationScope | null; draftIntentId: string | null; createIntentId: string | null }
+export interface CreateChatContext {
+  draftIntentId: string
+  createIntentId: string
+  isCurrent(): boolean
+  onCreated(result: CreatedChat): void
+  onLoading?(): void
+  trace?: SubmissionTrace
+}
+
 export interface ConversationSession {
   readonly state: DeepReadonly<ConversationState>
   readonly activeChat: ComputedRef<DeepReadonly<ChatSummary> | null>
   readonly timeline: ComputedRef<TimelineItem[]>
   readonly running: ComputedRef<boolean>
   readonly hasProviders: ComputedRef<boolean>
+  readonly submission: ComputedRef<SubmissionPhase | null>
   readonly supportsActivities: boolean
 
   setScope(scope: ConversationScope | null): Promise<void>
   /** Settles once the provider list of the current scope has loaded (or failed to). */
   providersLoaded(): Promise<void>
-  reloadChats(): Promise<void>
-  selectChat(chatId: string): Promise<void>
+  reloadChats(trace?: SubmissionTrace): Promise<void>
+  selectChat(chatId: string, trace?: SubmissionTrace): Promise<void>
   renameActiveChat(title: string): Promise<boolean>
   createChat(title: string, options?: CreateChatOptions): Promise<boolean>
+  createChat(title: string, options: CreateChatOptions | undefined, context: CreateChatContext): Promise<CreateChatResult>
   /** Leaves the open chat for an unsaved new one: nothing exists until its first send. */
   startDraft(): void
   /** Shows a title the server already stored (the AI title of a new chat). */
   setChatTitle(chatId: string, title: string): void
-  loadOlder(): Promise<void>
+  loadOlder(trace?: SubmissionTrace): Promise<void>
   catchUp(): Promise<void>
-  send(text: string): Promise<boolean>
+  send(text: string, target?: CreatedChat, trace?: SubmissionTrace, snapshot?: DraftSendSnapshot): Promise<boolean>
   retry(localId: string): Promise<boolean>
   reportRead(seq: number): Promise<void>
   decideCommand(commandId: string, decision: CommandDecision): Promise<void>
@@ -214,15 +235,39 @@ export function createConversationSession(options: ConversationSessionOptions = 
     notice: null,
   })
 
+  // Outbox and progress belong to the original user / Flow / CH, including while hidden.
+  const outbox = new Map<string, PendingTurn[]>()
+  const progress = reactive(new Map<string, SubmissionPhase>())
+  const traces = new Map<string, SubmissionTrace>()
+  // A receipt acknowledges only the unchanged draft that produced this failed turn.
+  // Re-entering the same text after an edit is a new submission, with a new revision.
+  const pendingDrafts = new Map<string, DraftSendSnapshot>()
+  const retryReceipts = new Map<string, DraftSendSnapshot>()
+  const ownerKey = (chatId: string) => JSON.stringify([draftUserId(), state.scope?.projectId, state.scope?.groupId, chatId])
+  const submission = computed(() => state.activeChatId ? progress.get(ownerKey(state.activeChatId)) ?? null : null)
+  const visibleOwner = (key: string) => state.activeChatId !== null && ownerKey(state.activeChatId) === key
+  function publishOutbox(key: string, items: PendingTurn[]): void {
+    if (items.length) outbox.set(key, items)
+    else outbox.delete(key)
+    if (visibleOwner(key)) state.pending = items
+  }
+  function publishProgress(key: string, value: SubmissionPhase | null): void {
+    if (value) progress.set(key, value)
+    else progress.delete(key)
+    if (visibleOwner(key)) state.sending = value?.phase === 'sending'
+  }
   let disposed = false
   // Bumped on every scope / chat switch; a response for an older generation is dropped.
   let scopeGen = 0
   let chatGen = 0
   // flowgate.v02.0135 T#3: the create intent of the open draft (one per Flow + draft): kept across its failed tries.
   let createIntent: { key: string; scopeGen: number; chatGen: number } | null = null
+  let createOperation = 0
   let providersProject: string | null = null
   let providersLoad: Promise<void> = Promise.resolve()
   let noticeSeq = 0
+  let chatsRequest = 0
+  const unlistedChats = new Map<string, ChatSummary>()
   let unsubscribe: (() => void) | null = null
   // Highest read seq already reported for the active chat; it belongs to that chat and is
   // reset with it (clearChat), so another chat's position never suppresses a report.
@@ -279,6 +324,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     unsubscribe = null
     state.turns = []
     state.pending = []
+    state.sending = false
     state.activities = []
     state.participants = []
     state.headSeq = 0
@@ -339,28 +385,55 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
-  async function loadSettings(): Promise<void> {
+  let settingsRequest = 0
+  function sameScope(left: ConversationScope | null, right: ConversationScope | null): boolean {
+    return left === null ? right === null : !!right && left.projectId === right.projectId && left.groupId === right.groupId
+  }
+
+  function settingsCurrent(gen: number, scope: ConversationScope | null): boolean {
+    return !disposed && gen === scopeGen && sameScope(scope, state.scope)
+  }
+
+  function applySettings(settings: ChatSettings, scope: ConversationScope | null): boolean {
+    if (!sameScope(settings.sourceAccessScope, scope)) return false
+    state.settings = { ...settings, sourceAccessMode: scope ? settings.sourceAccessMode : 'read_only' }
+    return true
+  }
+
+  async function loadSettings(requestScope: ConversationScope | null): Promise<void> {
+    const gen = scopeGen
+    const scope = requestScope ? { ...requestScope } : null
+    if (!settingsCurrent(gen, scope)) return
+    const request = ++settingsRequest
+    if (scope) state.pendingSourceMode = 'read_only'
     try {
-      const settings = await source.fetchChatSettings()
-      if (!disposed) state.settings = settings
+      const settings = await source.fetchChatSettings(scope ?? undefined)
+      if (settingsCurrent(gen, scope) && request === settingsRequest) applySettings(settings, scope)
     } catch {
       // D0008 §3-4: keep chatting on defaults, never block.
+    } finally {
+      if (settingsCurrent(gen, scope) && request === settingsRequest) state.pendingSourceMode = null
     }
   }
 
-  async function reloadChats(): Promise<void> {
+  async function reloadChats(trace?: SubmissionTrace): Promise<void> {
     const scope = state.scope
     if (!scope) return
     const gen = scopeGen
+    const request = ++chatsRequest
     state.chatsStatus = 'loading'
     state.chatsError = null
     try {
+      trace?.mark('list_start')
       const chats = await source.listChats(scope)
-      if (disposed || gen !== scopeGen) return
-      state.chats = chats
+      trace?.mark('list_end', { result: 'ok' })
+      if (disposed || gen !== scopeGen || request !== chatsRequest) return
+      for (const chat of chats) unlistedChats.delete(chat.id)
+      state.chats = [...unlistedChats.values(), ...chats]
       state.chatsStatus = 'ready'
     } catch (error) {
-      if (disposed || gen !== scopeGen) return
+      trace?.mark('list_end', { result: 'error' })
+      if (disposed || gen !== scopeGen || request !== chatsRequest) return
       state.chatsStatus = 'error'
       state.chatsError = messageOf(error)
     }
@@ -371,6 +444,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (same || (!scope && !state.scope)) return
     scopeGen += 1
     chatGen += 1
+    unlistedChats.clear()
     state.scope = scope ? { ...scope } : null
     state.chats = []
     state.chatsStatus = 'idle'
@@ -378,6 +452,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.activeChatId = null
     state.notice = null
     clearChat()
+    state.settings = { ...state.settings, sourceAccessMode: 'read_only', sourceAccessScope: null }
+    state.savingSettings = false
+    state.pendingSourceMode = scope ? 'read_only' : null
+    void loadSettings(scope)
     if (!scope) return
     void loadProviders(scope.projectId)
     const gen = scopeGen
@@ -388,8 +466,20 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (first) await selectChat(first.id)
   }
 
+  async function readTurns(chatId: string, query: Parameters<ConversationSource['fetchTurns']>[1], trace: SubmissionTrace | undefined, stage: 'history' | 'catchup' | 'older') {
+    trace?.mark(`${stage}_start`, { docId: chatId })
+    try {
+      const page = await source.fetchTurns(chatId, query)
+      trace?.mark(`${stage}_end`, { docId: chatId, result: 'ok' })
+      return page
+    } catch (error) {
+      trace?.mark(`${stage}_end`, { docId: chatId, result: 'error' })
+      throw error
+    }
+  }
+
   // ── Active chat ────────────────────────────────────────────────────────────────────
-  async function selectChat(chatId: string): Promise<void> {
+  async function selectChat(chatId: string, trace?: SubmissionTrace): Promise<void> {
     if (chatId === state.activeChatId && state.turnsStatus !== 'error') return
     // Another chat is not the one a shown notice was about (a reload of the same chat keeps it).
     if (chatId !== state.activeChatId) state.notice = null
@@ -397,21 +487,23 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const gen = chatGen
     clearChat()
     state.activeChatId = chatId
+    state.pending = outbox.get(ownerKey(chatId)) ?? []
+    state.sending = progress.get(ownerKey(chatId))?.phase === 'sending'
     state.turnsStatus = 'loading'
     try {
       // No cursor: the server resumes from the position it remembers (D0002 §3-4).
-      const first = await source.fetchTurns(chatId, { includeHead: true, limit: TURN_PAGE_SIZE })
+      const first = await readTurns(chatId, { includeHead: true, limit: TURN_PAGE_SIZE }, trace, 'history')
       if (disposed || gen !== chatGen) return
       applyPage(first)
       let cursor = first.nextAfterSeq
       for (let round = 0; cursor != null && round < CATCHUP_MAX_ROUNDS; round++) {
-        const page = await source.fetchTurns(chatId, { afterSeq: cursor, limit: TURN_PAGE_SIZE })
+        const page = await readTurns(chatId, { afterSeq: cursor, limit: TURN_PAGE_SIZE }, trace, 'catchup')
         if (disposed || gen !== chatGen) return
         applyPage(page)
         cursor = page.nextAfterSeq
       }
       state.hasMoreBefore = oldestSeq() > 1
-      if (state.hasMoreBefore && state.turns.length < PREPEND_PAGE_SIZE) await loadOlder()
+      if (state.hasMoreBefore && state.turns.length < PREPEND_PAGE_SIZE) await loadOlder(trace)
       if (disposed || gen !== chatGen) return
       state.turnsStatus = 'ready'
     } catch (error) {
@@ -448,7 +540,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
-  async function loadOlder(): Promise<void> {
+  async function loadOlder(trace?: SubmissionTrace): Promise<void> {
     const chatId = state.activeChatId
     if (!chatId || state.loadingOlder) return
     const before = oldestSeq()
@@ -459,7 +551,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const gen = chatGen
     state.loadingOlder = true
     try {
-      const page = await source.fetchTurns(chatId, { beforeSeq: before, limit: PREPEND_PAGE_SIZE })
+      const page = await readTurns(chatId, { beforeSeq: before, limit: PREPEND_PAGE_SIZE }, trace, 'older')
       if (disposed || gen !== chatGen) return
       applyPage(page)
       state.hasMoreBefore = page.prevBeforeSeq != null || oldestSeq() > 1
@@ -498,7 +590,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const gen = chatGen
     try {
       const saved = await source.renameChat(chatId, next)
-      state.chats = state.chats.map((c) => (c.id === chatId ? { ...c, title: saved.title } : c))
+      setChatTitle(chatId, saved.title)
       return true
     } catch (error) {
       notifyIfCurrent(gen, 'danger', 'rename_failed', messageOf(error))
@@ -513,41 +605,73 @@ export function createConversationSession(options: ConversationSessionOptions = 
    * list is read again and the new chat opens. A failure keeps the open chat, says why, and
    * never retries on its own — the button stays for another try.
    */
-  async function createChat(title: string, options?: CreateChatOptions): Promise<boolean> {
-    const scope = state.scope
+  async function createChat(title: string, options?: CreateChatOptions): Promise<boolean>
+  async function createChat(title: string, options: CreateChatOptions | undefined, context: CreateChatContext): Promise<CreateChatResult>
+  async function createChat(title: string, options?: CreateChatOptions, context?: CreateChatContext): Promise<boolean | CreateChatResult> {
+    const scope = state.scope ? { ...state.scope } : null
+    let createdId: string | null = null
+    let intent: string | null = null
+    const finish = (status: 'cancelled' | 'failed'): false | CreateChatResult => context
+      ? { status, chatId: createdId, scope, draftIntentId: context.draftIntentId, createIntentId: intent }
+      : false
     const next = title.trim()
-    if (!scope || !next || state.creatingChat) return false
+    if (!scope || !next || state.creatingChat) return finish('failed')
     state.creatingChat = true
     const gen = scopeGen
     const draftGen = chatGen
     // flowgate.v02.0135 T#3: a try of the same draft re-sends its intent; the server answers the chat an earlier try
     // made (its answer lost, the chat committed late) instead of making another one.
     if (!createIntent || createIntent.scopeGen !== gen || createIntent.chatGen !== draftGen) {
-      createIntent = { key: newCreateIntent(), scopeGen: gen, chatGen: draftGen }
+      createIntent = { key: context?.createIntentId ?? newCreateIntent(), scopeGen: gen, chatGen: draftGen }
     }
-    const intent = createIntent.key
+    intent = createIntent.key
+    const currentScope = () => !disposed && gen === scopeGen && state.scope?.projectId === scope.projectId && state.scope?.groupId === scope.groupId
+    const currentDraft = () => currentScope() && draftGen === chatGen && (!context || context.isCurrent())
+    const operation = ++createOperation
+    // Release only the departing owner's progress flag at the switch itself. An old
+    // continuation must not clear a new owner's in-flight creation when it completes.
+    const stopCreatingWatch = watch(
+      () => currentScope() && (context ? context.isCurrent() : (draftGen === chatGen || state.activeChatId === createdId)),
+      (current) => { if (!current && operation === createOperation) state.creatingChat = false },
+      { flush: 'sync' },
+    )
     try {
       let created: ChatSummary
       try {
+        context?.trace?.mark('create_start')
         created = await source.createChat(scope, next, { ...(options?.autoTitle ? { autoTitle: true } : {}), clientRequestId: intent })
+        context?.trace?.mark('create_end', { docId: created.id, result: 'ok' })
       } catch (error) {
+        context?.trace?.mark('create_end', { result: 'error' })
         // Only the Flow and the draft the create was for show its failure (0135 T#2).
         if (!disposed && gen === scopeGen && draftGen === chatGen) notifyCreateFailed(error)
         // flowgate.v02.0135 T#3: without an answer the server may still have made the chat (on stg it did, minutes
         // later): the Flow's list is read again so that chat shows instead of the next try making another one.
         if (!disposed && gen === scopeGen && isNoResponse(error)) void reloadChats()
-        return false
+        return finish('failed')
       }
+      createdId = created.id
       if (createIntent?.key === intent) createIntent = null
-      if (disposed || gen !== scopeGen) return false
-      await reloadChats()
-      if (disposed || gen !== scopeGen) return false
+      if (!currentDraft()) return finish('cancelled')
       // A list read that failed (or does not show it yet) still gets the chat the server made.
-      if (!state.chats.some((c) => c.id === created.id)) state.chats = [created, ...state.chats]
-      await selectChat(created.id)
-      return true
+      if (!state.chats.some((c) => c.id === created.id)) {
+        unlistedChats.set(created.id, created)
+        state.chats = [created, ...state.chats]
+      }
+      const result: CreatedChat = { status: 'created', chatId: created.id, scope, draftIntentId: context?.draftIntentId ?? null, createIntentId: intent }
+      context?.onCreated(result)
+      context?.onLoading?.()
+      const selection = selectChat(created.id, context?.trace)
+      const selectedGen = chatGen
+      await selection
+      if (!currentScope() || selectedGen !== chatGen || state.activeChatId !== created.id || (context && !context.isCurrent())) return finish('cancelled')
+      if (state.turnsStatus === 'error') return finish('failed')
+      // Standalone creation still refreshes; a first send refreshes only after POST starts.
+      if (!context) void reloadChats()
+      return context ? result : true
     } finally {
-      state.creatingChat = false
+      stopCreatingWatch()
+      if (operation === createOperation && currentScope() && (!context || context.isCurrent())) state.creatingChat = false
     }
   }
 
@@ -560,6 +684,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   function setChatTitle(chatId: string, title: string): void {
+    const unlisted = unlistedChats.get(chatId)
+    if (unlisted) unlistedChats.set(chatId, { ...unlisted, title })
     state.chats = state.chats.map((c) => (c.id === chatId ? { ...c, title } : c))
   }
 
@@ -578,21 +704,32 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return !disposed && gen === chatGen && chatId === state.activeChatId
   }
 
-  /** POST one turn; the same idempotency key on every retry, so a stored turn replays. */
-  async function postPending(chatId: string, gen: number, item: PendingTurn): Promise<boolean> {
+  /** POST one turn; every replay keeps its original CH, body, head and key. */
+  async function postPending(chatId: string, gen: number, key: string, item: PendingTurn, trace: SubmissionTrace, refresh = false): Promise<boolean> {
     for (let attempt = 0; attempt <= SEND_RETRY_MAX; attempt++) {
+      // An in-flight POST may finish off screen; no later POST is started there.
+      if (attempt > 0 && !isCurrentChat(chatId, gen)) return false
+      publishProgress(key, { phase: 'sending', stage: 'send', attempt: attempt + 1 })
       try {
-        const res = await source.postTurn(chatId, { body: item.body, idempotencyKey: item.idempotencyKey, basedOnSeq: item.basedOnSeq })
-        // Stored either way; the screen of another chat is not touched.
-        if (!isCurrentChat(chatId, gen)) return true
-        state.pending = state.pending.filter((p) => p.localId !== item.localId)
+        trace.mark('turn_start', { docId: chatId, attempt: attempt + 1 })
+        const posting = source.postTurn(chatId, { body: item.body, idempotencyKey: item.idempotencyKey, basedOnSeq: item.basedOnSeq, traceId: trace.id })
+        if (refresh && attempt === 0) void reloadChats(trace)
+        const res = await posting
+        trace.mark('turn_end', { docId: chatId, attempt: attempt + 1, result: 'ok' })
+        publishOutbox(key, (outbox.get(key) ?? []).filter((p) => p.localId !== item.localId))
+        traces.delete(item.localId)
+        if (!isCurrentChat(chatId, gen)) {
+          if (visibleOwner(key)) void catchUp()
+          return true
+        }
         if (res.turn) state.turns = mergeTurns(state.turns, [res.turn])
         state.headSeq = Math.max(state.headSeq, res.headSeq)
+        trace.frame('accepted_frame', chatId)
         return true
       } catch (error) {
         const status = error instanceof ConversationRequestError ? error.status : null
-        // 400/404/409/422 are decisions, not blips — retrying repeats the same answer.
-        if ((status != null && [400, 404, 409, 422].includes(status)) || attempt === SEND_RETRY_MAX) {
+        trace.mark('turn_end', { docId: chatId, attempt: attempt + 1, result: 'error', ...(status === null ? {} : { status }) })
+        if ((status != null && [400, 404, 409, 422].includes(status)) || attempt === SEND_RETRY_MAX || !isCurrentChat(chatId, gen)) {
           if (isCurrentChat(chatId, gen)) notify('danger', 'send_failed', messageOf(error))
           return false
         }
@@ -601,64 +738,71 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return false
   }
 
-  function markPending(localId: string, failed: boolean): void {
-    state.pending = state.pending.map((p) => (p.localId === localId ? { ...p, failed } : p))
-  }
-
-  /**
-   * D0005 §3-2: the send-time action runs once, only after the turn was accepted, and only
-   * for the chat the turn went to. After a switch to another chat it is dropped: a mention
-   * or an AI run must never land in a chat where no turn was just sent.
-   */
-  function runSendAction(chatId: string, gen: number): void {
+  function runSendAction(chatId: string, gen: number, trace: SubmissionTrace): void {
     if (!isCurrentChat(chatId, gen)) return
     if (state.settings.sendAction === 'copy_mention') options.onAutoCopyMention?.()
-    else if (state.settings.sendAction === 'invoke_ai' && hasProviders.value) void invokeAi()
+    else if (state.settings.sendAction === 'invoke_ai' && hasProviders.value) {
+      trace.mark('ai_start', { docId: chatId })
+      void invokeAi()
+    }
   }
 
-  async function send(text: string): Promise<boolean> {
-    const chatId = state.activeChatId
+  async function send(text: string, target?: CreatedChat, trace = createSubmissionTrace(), snapshot?: DraftSendSnapshot): Promise<boolean> {
+    // A first-send continuation can only address the CH bound to its original scope.
+    if (target && (disposed || state.scope?.projectId !== target.scope.projectId || state.scope?.groupId !== target.scope.groupId || state.activeChatId !== target.chatId)) return false
+    const chatId = target?.chatId ?? state.activeChatId
     const body = text.trim()
-    // One turn at a time: no new send while a turn posts or a chat AI run is in flight.
-    if (!chatId || !body || state.sending || running.value) return false
+    if (!chatId || !body || state.sending || running.value || state.turnsStatus !== 'ready') return false
+    const owner = ownerKey(chatId)
+    if (progress.get(owner)?.phase === 'sending') return false
+    const receipt = retryReceipts.get(owner)
+    retryReceipts.delete(owner)
+    if (receipt && snapshot && receipt.body.trim() === body && receipt.body === snapshot.body && receipt.revision === snapshot.revision &&
+      receipt.owner.userId === snapshot.owner.userId && receipt.owner.projectId === snapshot.owner.projectId &&
+      receipt.owner.groupId === snapshot.owner.groupId && receipt.owner.intentId === snapshot.owner.intentId) return true
+    // Composer resubmission of a failed body reuses its bubble, never a new key.
+    const failed = (outbox.get(owner) ?? []).find((p) => p.body === body)
+    if (failed) {
+      if (snapshot) pendingDrafts.set(failed.localId, { ...snapshot, owner: { ...snapshot.owner } })
+      return retry(failed.localId, true)
+    }
     const gen = chatGen
     const key = newIdempotencyKey()
     const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq: state.headSeq, createdAt: new Date().toISOString(), failed: false }
-    state.pending = [...state.pending, item]
-    state.sending = true
-    try {
-      const ok = await postPending(chatId, gen, item)
-      if (!ok) {
-        // The bubble stays with a retry that reuses the same key (P0003 scenario 17).
-        if (isCurrentChat(chatId, gen)) markPending(item.localId, true)
-        return false
-      }
-      runSendAction(chatId, gen)
-      return true
-    } finally {
-      state.sending = false
-    }
+    traces.set(key, trace)
+    if (snapshot) pendingDrafts.set(key, { ...snapshot, owner: { ...snapshot.owner } })
+    publishOutbox(owner, [...(outbox.get(owner) ?? []), item])
+    publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
+    trace.frame('pending_frame', chatId)
+    return finishSend(chatId, gen, owner, item, trace, !!target)
   }
 
-  async function retry(localId: string): Promise<boolean> {
+  async function finishSend(chatId: string, gen: number, owner: string, item: PendingTurn, trace: SubmissionTrace, refresh = false): Promise<boolean> {
+    const ok = await postPending(chatId, gen, owner, item, trace, refresh)
+    if (!ok) {
+      publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === item.localId ? { ...p, failed: true } : p))
+      publishProgress(owner, { phase: 'failed', stage: 'send', attempt: progress.get(owner)?.attempt ?? 1 })
+      return false
+    }
+    pendingDrafts.delete(item.localId)
+    publishProgress(owner, null)
+    runSendAction(chatId, gen, trace)
+    return true
+  }
+
+  async function retry(localId: string, fromComposer = false): Promise<boolean> {
     const chatId = state.activeChatId
     const item = state.pending.find((p) => p.localId === localId)
-    if (!chatId || !item || state.sending) return false
+    if (!chatId || !item || state.sending || running.value || state.turnsStatus !== 'ready') return false
+    const owner = ownerKey(chatId)
+    if (progress.get(owner)?.phase === 'sending') return false
+    publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === localId ? { ...p, failed: false } : p))
+    publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
     const gen = chatGen
-    markPending(localId, false)
-    state.sending = true
-    try {
-      const ok = await postPending(chatId, gen, item)
-      if (!ok) {
-        if (isCurrentChat(chatId, gen)) markPending(localId, true)
-        return false
-      }
-      // The first attempt failed before its send action, so the accepted retry runs it once.
-      runSendAction(chatId, gen)
-      return true
-    } finally {
-      state.sending = false
-    }
+    const snapshot = pendingDrafts.get(localId)
+    const ok = await finishSend(chatId, gen, owner, item, traces.get(localId) ?? createSubmissionTrace())
+    if (ok && !fromComposer && snapshot) retryReceipts.set(owner, snapshot)
+    return ok
   }
 
   async function reportRead(seq: number): Promise<void> {
@@ -785,7 +929,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       state.cancelling = false
       const delivered = state.turns.filter((t) => t.speaker === 'ai').length > baseline
       // A one-shot source mode is consumed by the delivered answer (0568 rev3).
-      if (delivered) void loadSettings()
+      if (delivered) void loadSettings(state.scope)
       // A delivered answer shows itself; only a run that ended without one says so.
       if (run.endReason === 'cancelled') addStatus('info', 'run_cancelled')
       else if (!delivered) addFailureStatus(run)
@@ -881,11 +1025,12 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const chatId = state.activeChatId
     if (!chatId || state.copyingMention) return null
     state.copyingMention = true
+    const settingsScope = state.scope ? { ...state.scope } : null
     const gen = chatGen
     try {
       const mention = await source.issueChatMention(chatId)
       // An edit_once one-shot may have just been consumed server-side (T0011 §8).
-      void loadSettings()
+      if (gen === chatGen) void loadSettings(settingsScope)
       return mention
     } catch (error) {
       if (isSourceLocked(error)) notifyIfCurrent(gen, 'warning', 'source_locked')
@@ -901,29 +1046,37 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   async function saveSettings(patch: ChatSettingsPatch): Promise<boolean> {
-    if (state.savingSettings) return false
+    if (state.savingSettings || state.pendingSourceMode) return false
+    const gen = scopeGen
+    const scope = state.scope ? { ...state.scope } : null
+    if ('source_access_mode' in patch && !scope) return false
+    const request = ++settingsRequest
     state.savingSettings = true
     try {
-      state.settings = await source.saveChatSettings(patch)
-      return true
+      const settings = await source.saveChatSettings(patch, scope ?? undefined)
+      return settingsCurrent(gen, scope) && request === settingsRequest && applySettings(settings, scope)
     } catch (error) {
-      notify('danger', 'settings_failed', messageOf(error))
+      if (settingsCurrent(gen, scope)) notify('danger', 'settings_failed', messageOf(error))
       return false
     } finally {
-      state.savingSettings = false
+      if (settingsCurrent(gen, scope)) state.savingSettings = false
     }
   }
 
   /** Server-confirmed only: the selection moves once the PATCH answers (0568 T0004 §2). */
   async function setSourceMode(mode: SourceAccessMode): Promise<void> {
-    if (state.pendingSourceMode || mode === state.settings.sourceAccessMode) return
+    if (state.pendingSourceMode || state.savingSettings || !state.scope || mode === state.settings.sourceAccessMode) return
+    const gen = scopeGen
+    const scope = { ...state.scope }
+    const request = ++settingsRequest
     state.pendingSourceMode = mode
     try {
-      state.settings = await source.saveChatSettings({ source_access_mode: mode })
+      const settings = await source.saveChatSettings({ source_access_mode: mode }, scope)
+      if (settingsCurrent(gen, scope) && request === settingsRequest) applySettings(settings, scope)
     } catch (error) {
-      notify('danger', 'source_mode_failed', messageOf(error))
+      if (settingsCurrent(gen, scope)) notify('danger', 'source_mode_failed', messageOf(error))
     } finally {
-      state.pendingSourceMode = null
+      if (settingsCurrent(gen, scope) && request === settingsRequest) state.pendingSourceMode = null
     }
   }
 
@@ -941,7 +1094,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     unsubscribe = null
   }
 
-  void loadSettings()
+  void loadSettings(state.scope)
 
   return {
     state: readonly(state) as DeepReadonly<ConversationState>,
@@ -949,6 +1102,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     timeline,
     running,
     hasProviders,
+    submission,
     supportsActivities: source.supportsActivities,
     setScope,
     providersLoaded,

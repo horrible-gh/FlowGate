@@ -51,8 +51,8 @@ export interface ConversationSource {
   cancelRun(runId: string): Promise<void>
   fetchActiveChatRun(chatId: string): Promise<string | null>
 
-  fetchChatSettings(): Promise<ChatSettings>
-  saveChatSettings(patch: ChatSettingsPatch): Promise<ChatSettings>
+  fetchChatSettings(scope?: ConversationScope): Promise<ChatSettings>
+  saveChatSettings(patch: ChatSettingsPatch, scope?: ConversationScope): Promise<ChatSettings>
   issueChatMention(chatId: string): Promise<string>
 }
 

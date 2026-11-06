@@ -112,6 +112,8 @@ def store(migrated_sqlite_db, monkeypatch, tmp_path):
         "'2026-10-05T00:00:00+09:00', '2026-10-05T00:00:00+09:00')",
         [GROUP, PROJECT],
     )
+    from modules.flow_gate.db import documents
+    monkeypatch.setattr(documents, "get_by_id", lambda doc_id: {"type_code": "CH", "project_id": PROJECT, "group_id": GROUP} if doc_id == DOC else None)
     return real
 
 
@@ -170,10 +172,10 @@ def _set_policy(value: str) -> None:
 def _set_mode(store, mode: str) -> None:
     """The user's UI source-access mode, stored through the real table."""
     store._execute(
-        "INSERT INTO user_chat_source_access (user_id, source_access_mode, created_at, updated_at) "
-        "VALUES (?, ?, '2026-10-05T00:00:00+09:00', '2026-10-05T00:00:00+09:00') "
-        "ON CONFLICT(user_id) DO UPDATE SET source_access_mode = excluded.source_access_mode",
-        [USER, mode],
+        "INSERT INTO user_chat_source_access (user_id, project_id, group_id, source_access_mode, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, '2026-10-05T00:00:00+09:00', '2026-10-05T00:00:00+09:00') "
+        "ON CONFLICT(user_id, project_id, group_id) DO UPDATE SET source_access_mode = excluded.source_access_mode",
+        [USER, PROJECT, GROUP, mode],
     )
 
 

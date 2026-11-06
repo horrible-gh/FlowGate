@@ -10,11 +10,13 @@ static guard in tests/test_event_loop_blocking_0279.py enforces this.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
+
+from flowgate.conversation import legacy_adapter
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.services import chat_settings_service
@@ -56,15 +58,38 @@ def _invalid_request(exc: chat_settings_service.ChatSettingsError) -> JSONRespon
     )
 
 
+def _settings_scope(user: dict, project_id: Optional[str], group_id: Optional[str]):
+    if project_id is None and group_id is None:
+        return None
+    if not project_id or not group_id:
+        raise chat_settings_service.ChatSettingsError("source_access_mode", "project_id and group_id must be supplied together.")
+    # Use the conversation adapters and its document-read permission, as activity does.
+    if not legacy_adapter.has_permission(user, "perm_document_read", project_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if legacy_adapter.get_project(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    group = legacy_adapter.get_group(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    if str(group.get("project_id") or "") != project_id:
+        raise chat_settings_service.ChatSettingsError("source_access_mode", "group does not belong to the project.")
+    return project_id, group_id
+
+
 @router.get("/me/chat-settings")
-def get_my_chat_settings(user=Depends(get_current_user)):
-    return chat_settings_service.settings_response(user["user_id"])
+def get_my_chat_settings(user=Depends(get_current_user), project_id: Optional[str] = None, group_id: Optional[str] = None):
+    try:
+        scope = _settings_scope(user, project_id, group_id)
+        return chat_settings_service.settings_response(user["user_id"], scope)
+    except chat_settings_service.ChatSettingsError as exc:
+        return _invalid_request(exc)
 
 
 @router.patch("/me/chat-settings")
-def patch_my_chat_settings(body: ChatSettingsPatch, user=Depends(get_current_user)):
+def patch_my_chat_settings(body: ChatSettingsPatch, user=Depends(get_current_user), project_id: Optional[str] = None, group_id: Optional[str] = None):
     patch = body.model_dump(exclude_unset=True)
     try:
-        return chat_settings_service.save_chat_settings(user["user_id"], patch)
+        scope = _settings_scope(user, project_id, group_id)
+        return chat_settings_service.save_chat_settings(user["user_id"], patch, scope)
     except chat_settings_service.ChatSettingsError as exc:
         return _invalid_request(exc)

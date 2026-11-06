@@ -57,6 +57,9 @@
     <ConversationComposer
       ref="composerEl"
       :chat-id="state.activeChatId"
+      :project-id="state.scope?.projectId ?? null"
+      :group-id="state.scope?.groupId ?? null"
+      :draft-intent-id="start.draftIntentId.value"
       :disabled="composerDisabled"
       :read-only="readOnly"
       :settings="state.settings"
@@ -68,6 +71,7 @@
       :providers-status="state.providersStatus"
       :has-providers="session.hasProviders.value"
       :sending="state.sending || start.starting.value"
+      :submission="start.phase.value"
       :running="session.running.value"
       :run-starting="state.runId === 'starting'"
       :cancelling="state.cancelling"

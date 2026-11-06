@@ -56,6 +56,8 @@ DIALECTS = ("sqlite", "mysql", "postgres")
 
 PROJECT = "flowgate"
 USER = "usr_0515"
+GROUP = "flowgate.default.0515"
+DOC = GROUP + ".0001-CH"
 OLD_TS = "2020-01-01T00:00:00+09:00"
 
 
@@ -162,6 +164,7 @@ def _build_db(path: str) -> LiveSqliteDB:
         "VALUES (?, ?, ?, ?, ?, ?)",
         (USER, "u0515", "u0515@test", "hashed", now, now),
     )
+    db.conn.execute("INSERT INTO groups (group_id, project_id, title, created_at, updated_at) VALUES (?, ?, '0515', ?, ?)", (GROUP, PROJECT, now, now))
     db.conn.commit()
     return db
 
@@ -188,6 +191,8 @@ def db_env(monkeypatch, tmp_path, migrated_sqlite_db):
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "storage"))
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", "v1")
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_v1", "test-pepper-0515")
+    from modules.flow_gate.db import documents
+    monkeypatch.setattr(documents, "get_by_id", lambda doc_id: {"type_code": "CH", "project_id": PROJECT, "group_id": GROUP} if doc_id == DOC else None)
     return db
 
 
@@ -198,8 +203,7 @@ class TestSchema:
         now = "T"
         with pytest.raises(sqlite3.IntegrityError):
             db_env.conn.execute(
-                "INSERT INTO user_chat_source_access (user_id, source_access_mode, created_at, updated_at) "
-                "VALUES (?, 'bogus', ?, ?)", (USER, now, now),
+                "INSERT INTO user_chat_source_access (user_id, project_id, group_id, source_access_mode, created_at, updated_at) VALUES (?, 'flowgate', 'flowgate.default.0515', 'bogus', ?, ?)", (USER, now, now),
             )
         db_env.conn.rollback()
 
@@ -208,9 +212,7 @@ class TestSchema:
         _insert_token(db_env, "tok-half")
         with pytest.raises(sqlite3.IntegrityError):
             db_env.conn.execute(
-                "INSERT INTO user_chat_source_access "
-                "(user_id, source_access_mode, one_shot_token_id, one_shot_claimed_at, created_at, updated_at) "
-                "VALUES (?, 'read_only', 'tok-half', NULL, ?, ?)", (USER, now, now),
+                "INSERT INTO user_chat_source_access (user_id, project_id, group_id, source_access_mode, one_shot_token_id, one_shot_claimed_at, created_at, updated_at) VALUES (?, 'flowgate', 'flowgate.default.0515', 'read_only', 'tok-half', NULL, ?, ?)", (USER, now, now),
             )
         db_env.conn.rollback()
 
@@ -218,9 +220,7 @@ class TestSchema:
         now = "T"
         with pytest.raises(sqlite3.IntegrityError):
             db_env.conn.execute(
-                "INSERT INTO user_chat_source_access "
-                "(user_id, source_access_mode, one_shot_token_id, one_shot_claimed_at, created_at, updated_at) "
-                "VALUES (?, 'read_only', 'tok-missing-fk', ?, ?, ?)", (USER, now, now, now),
+                "INSERT INTO user_chat_source_access (user_id, project_id, group_id, source_access_mode, one_shot_token_id, one_shot_claimed_at, created_at, updated_at) VALUES (?, 'flowgate', 'flowgate.default.0515', 'read_only', 'tok-missing-fk', ?, ?, ?)", (USER, now, now, now),
             )
         db_env.conn.rollback()
 
@@ -228,9 +228,7 @@ class TestSchema:
         now = "T"
         _insert_token(db_env, "tok-restrict")
         db_env.conn.execute(
-            "INSERT INTO user_chat_source_access "
-            "(user_id, source_access_mode, one_shot_token_id, one_shot_claimed_at, created_at, updated_at) "
-            "VALUES (?, 'read_only', 'tok-restrict', ?, ?, ?)", (USER, now, now, now),
+            "INSERT INTO user_chat_source_access (user_id, project_id, group_id, source_access_mode, one_shot_token_id, one_shot_claimed_at, created_at, updated_at) VALUES (?, 'flowgate', 'flowgate.default.0515', 'read_only', 'tok-restrict', ?, ?, ?)", (USER, now, now, now),
         )
         db_env.conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
@@ -240,8 +238,7 @@ class TestSchema:
     def test_deleting_the_user_cascades(self, db_env):
         now = "T"
         db_env.conn.execute(
-            "INSERT INTO user_chat_source_access (user_id, source_access_mode, created_at, updated_at) "
-            "VALUES (?, 'edit', ?, ?)", (USER, now, now),
+            "INSERT INTO user_chat_source_access (user_id, project_id, group_id, source_access_mode, created_at, updated_at) VALUES (?, 'flowgate', 'flowgate.default.0515', 'edit', ?, ?)", (USER, now, now),
         )
         db_env.conn.commit()
         db_env.conn.execute("DELETE FROM users WHERE user_id = ?", (USER,))
@@ -263,7 +260,7 @@ class TestSchema:
 
 class TestSourceAccessStoreCRUD:
     def test_resolve_default_is_read_only_with_no_row(self, db_env):
-        assert db_source_access.resolve_source_access_mode(USER) == "read_only"
+        assert db_source_access.resolve_source_access_mode(USER, PROJECT, GROUP) == "read_only"
 
     def test_invalid_persisted_mode_resolves_fail_closed(self, monkeypatch):
         # A corrupted row can bypass the database CHECK (for example after an
@@ -271,86 +268,86 @@ class TestSourceAccessStoreCRUD:
         monkeypatch.setattr(
             db_source_access,
             "get",
-            lambda _user_id: {"source_access_mode": "corrupted"},
+            lambda _user_id, _project, _group: {"source_access_mode": "corrupted"},
         )
-        assert db_source_access.resolve_source_access_mode(USER) == "read_only"
+        assert db_source_access.resolve_source_access_mode(USER, PROJECT, GROUP) == "read_only"
 
     def test_upsert_then_resolve(self, db_env):
-        db_source_access.upsert(USER, "edit", "T1")
-        assert db_source_access.resolve_source_access_mode(USER) == "edit"
-        row = db_source_access.get(USER)
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit", "T1")
+        assert db_source_access.resolve_source_access_mode(USER, PROJECT, GROUP) == "edit"
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["created_at"] == "T1"
         assert row["updated_at"] == "T1"
 
     def test_upsert_again_changes_mode_and_keeps_created_at(self, db_env):
-        db_source_access.upsert(USER, "edit", "T1")
-        db_source_access.upsert(USER, "edit_once", "T2")
-        row = db_source_access.get(USER)
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T2")
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["source_access_mode"] == "edit_once"
         assert row["created_at"] == "T1"
         assert row["updated_at"] == "T2"
 
     def test_upsert_clears_a_pending_claim(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-claim1")
-        result = db_source_access.claim(USER, "tok-claim1", "T2", "T2")
+        result = db_source_access.claim(USER, PROJECT, GROUP, "tok-claim1", "T2", "T2")
         assert result == {"source_access": "read_write", "one_shot_claimed": True}
-        db_source_access.upsert(USER, "read_only", "T3")
-        row = db_source_access.get(USER)
+        db_source_access.upsert(USER, PROJECT, GROUP, "read_only", "T3")
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["one_shot_token_id"] is None
         assert row["one_shot_claimed_at"] is None
-        assert db_source_access.commit(USER, "tok-claim1", "T4") == "ALREADY_CLEARED"
+        assert db_source_access.commit(USER, PROJECT, GROUP, "tok-claim1", "T4") == "ALREADY_CLEARED"
 
     def test_claim_wins_exactly_once(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-a")
         _insert_token(db_env, "tok-b")
-        first = db_source_access.claim(USER, "tok-a", "T2", "T2")
-        second = db_source_access.claim(USER, "tok-b", "T3", "T3")
+        first = db_source_access.claim(USER, PROJECT, GROUP, "tok-a", "T2", "T2")
+        second = db_source_access.claim(USER, PROJECT, GROUP, "tok-b", "T3", "T3")
         assert first == {"source_access": "read_write", "one_shot_claimed": True}
         assert second == {"source_access": "read", "one_shot_claimed": False}
-        row = db_source_access.get(USER)
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["one_shot_token_id"] == "tok-a"
         assert row["source_access_mode"] == "read_only"
 
     def test_commit_clears_marker_without_touching_mode(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-c")
-        db_source_access.claim(USER, "tok-c", "T2", "T2")
-        assert db_source_access.commit(USER, "tok-c", "T3") == "COMMITTED"
-        row = db_source_access.get(USER)
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-c", "T2", "T2")
+        assert db_source_access.commit(USER, PROJECT, GROUP, "tok-c", "T3") == "COMMITTED"
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["one_shot_token_id"] is None
         assert row["one_shot_claimed_at"] is None
         assert row["source_access_mode"] == "read_only"
 
     def test_commit_twice_is_already_cleared(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-d")
-        db_source_access.claim(USER, "tok-d", "T2", "T2")
-        assert db_source_access.commit(USER, "tok-d", "T3") == "COMMITTED"
-        assert db_source_access.commit(USER, "tok-d", "T4") == "ALREADY_CLEARED"
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-d", "T2", "T2")
+        assert db_source_access.commit(USER, PROJECT, GROUP, "tok-d", "T3") == "COMMITTED"
+        assert db_source_access.commit(USER, PROJECT, GROUP, "tok-d", "T4") == "ALREADY_CLEARED"
 
     def test_rollback_restores_edit_once_and_is_idempotent(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-e")
-        db_source_access.claim(USER, "tok-e", "T2", "T2")
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-e", "T2", "T2")
         assert db_source_access.rollback("tok-e", "T3") is True
-        row = db_source_access.get(USER)
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["source_access_mode"] == "edit_once"
         assert row["one_shot_token_id"] is None
         assert db_source_access.rollback("tok-e", "T4") is False
 
     def test_rollback_after_commit_is_a_no_op(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-f")
-        db_source_access.claim(USER, "tok-f", "T2", "T2")
-        db_source_access.commit(USER, "tok-f", "T3")
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-f", "T2", "T2")
+        db_source_access.commit(USER, PROJECT, GROUP, "tok-f", "T3")
         assert db_source_access.rollback("tok-f", "T4") is False
-        row = db_source_access.get(USER)
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["source_access_mode"] == "read_only"
 
     def test_clear_b_type_marker_is_fail_closed_and_idempotent(self, db_env):
-        db_source_access.upsert(USER, "read_only", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "read_only", "T1")
         # B-type cannot be produced by normal DML (the pair CHECK forbids it) --
         # simulate the damaged shape directly, bypassing the CHECK.
         db_env.conn.execute("PRAGMA ignore_check_constraints = 1")
@@ -360,93 +357,93 @@ class TestSourceAccessStoreCRUD:
         )
         db_env.conn.commit()
         db_env.conn.execute("PRAGMA ignore_check_constraints = 0")
-        assert db_source_access.clear_b_type_marker(USER, "T2") is True
-        row = db_source_access.get(USER)
+        assert db_source_access.clear_b_type_marker(USER, PROJECT, GROUP, "T2") is True
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["one_shot_claimed_at"] is None
         assert row["source_access_mode"] == "read_only"
-        assert db_source_access.clear_b_type_marker(USER, "T3") is False
+        assert db_source_access.clear_b_type_marker(USER, PROJECT, GROUP, "T3") is False
 
 
 # ── 4. stale-claim recovery ─────────────────────────────────────────────────────
 
 class TestRecoverStaleClaim:
     def test_no_row_is_nothing_to_do(self, db_env):
-        assert css.recover_stale_claim(USER) == "NOTHING_TO_DO"
+        assert css.recover_stale_claim(USER, PROJECT, GROUP) == "NOTHING_TO_DO"
 
     def test_available_row_is_nothing_to_do(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
-        assert css.recover_stale_claim(USER) == "NOTHING_TO_DO"
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
+        assert css.recover_stale_claim(USER, PROJECT, GROUP) == "NOTHING_TO_DO"
 
     def test_fresh_claim_is_left_alone(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-fresh")
-        db_source_access.claim(USER, "tok-fresh", now_iso(), now_iso())
-        assert css.recover_stale_claim(USER) == "NOTHING_TO_DO"
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-fresh", now_iso(), now_iso())
+        assert css.recover_stale_claim(USER, PROJECT, GROUP) == "NOTHING_TO_DO"
 
     def test_missing_token_is_rolled_back(self, db_env, monkeypatch):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-missing")
-        db_source_access.claim(USER, "tok-missing", OLD_TS, OLD_TS)
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-missing", OLD_TS, OLD_TS)
         monkeypatch.setattr(db_tokens, "get_by_id", lambda _tid: None)
-        assert css.recover_stale_claim(USER) == "MISSING_RECOVERED"
-        row = db_source_access.get(USER)
+        assert css.recover_stale_claim(USER, PROJECT, GROUP) == "MISSING_RECOVERED"
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["source_access_mode"] == "edit_once"
         assert row["one_shot_token_id"] is None
 
     def test_revoked_token_is_rolled_back(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-revoked", revoked_at=OLD_TS)
-        db_source_access.claim(USER, "tok-revoked", OLD_TS, OLD_TS)
-        assert css.recover_stale_claim(USER) == "REVOKED_RECOVERED"
-        row = db_source_access.get(USER)
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-revoked", OLD_TS, OLD_TS)
+        assert css.recover_stale_claim(USER, PROJECT, GROUP) == "REVOKED_RECOVERED"
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["source_access_mode"] == "edit_once"
         assert row["one_shot_token_id"] is None
 
     def test_consumed_token_marker_cleared_without_rearming(self, db_env, caplog):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-consumed", consumed_at=OLD_TS)
-        db_source_access.claim(USER, "tok-consumed", OLD_TS, OLD_TS)
-        assert css.recover_stale_claim(USER) == "CONSUMED_MARKER_CLEANED"
-        row = db_source_access.get(USER)
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-consumed", OLD_TS, OLD_TS)
+        assert css.recover_stale_claim(USER, PROJECT, GROUP) == "CONSUMED_MARKER_CLEANED"
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["source_access_mode"] == "read_only"
         assert row["one_shot_token_id"] is None
         assert "one_shot_marker_on_consumed_token" in caplog.text
 
     def test_live_stale_token_gets_revoked_and_rolled_back(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-live")
-        db_source_access.claim(USER, "tok-live", OLD_TS, OLD_TS)
-        assert css.recover_stale_claim(USER) == "LIVE_REVOKED"
-        row = db_source_access.get(USER)
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-live", OLD_TS, OLD_TS)
+        assert css.recover_stale_claim(USER, PROJECT, GROUP) == "LIVE_REVOKED"
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["source_access_mode"] == "edit_once"
         tok = db_env.rows("SELECT revoked_at FROM tokens WHERE token_id='tok-live'")[0]
         assert tok["revoked_at"] is not None
 
     def test_live_recovery_failure_is_logged_and_raised(self, db_env, monkeypatch, caplog):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-live-fail")
-        db_source_access.claim(USER, "tok-live-fail", OLD_TS, OLD_TS)
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-live-fail", OLD_TS, OLD_TS)
 
         def _boom(*_args, **_kwargs):
             raise RuntimeError("revoke failed")
 
         monkeypatch.setattr(token_service, "revoke", _boom)
         with pytest.raises(RuntimeError, match="revoke failed"):
-            css.recover_stale_claim(USER)
+            css.recover_stale_claim(USER, PROJECT, GROUP)
         assert "stale_one_shot_claim_recovery_failed" in caplog.text
         assert "tok-live-fail" in caplog.text
 
     def test_live_token_left_live_after_revoke_is_logged(self, db_env, monkeypatch, caplog):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         _insert_token(db_env, "tok-still-live")
-        db_source_access.claim(USER, "tok-still-live", OLD_TS, OLD_TS)
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-still-live", OLD_TS, OLD_TS)
         monkeypatch.setattr(token_service, "revoke", lambda *_args, **_kwargs: None)
-        assert css.recover_stale_claim(USER) == "LIVE_REVOKED"
+        assert css.recover_stale_claim(USER, PROJECT, GROUP) == "LIVE_REVOKED"
         assert "stale_one_shot_claim_still_live" in caplog.text
         assert "tok-still-live" in caplog.text
 
     def test_b_type_marker_is_cleaned_via_recover(self, db_env):
-        db_source_access.upsert(USER, "read_only", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "read_only", "T1")
         db_env.conn.execute("PRAGMA ignore_check_constraints = 1")
         db_env.conn.execute(
             "UPDATE user_chat_source_access SET one_shot_claimed_at = ? WHERE user_id = ?",
@@ -454,48 +451,48 @@ class TestRecoverStaleClaim:
         )
         db_env.conn.commit()
         db_env.conn.execute("PRAGMA ignore_check_constraints = 0")
-        assert css.recover_stale_claim(USER) == "B_TYPE_CLEANED"
+        assert css.recover_stale_claim(USER, PROJECT, GROUP) == "B_TYPE_CLEANED"
 
 
 # ── 5. token_service.issue() capability + claim transaction ────────────────────
 
 class TestChatTokenIssueCapability:
     def test_read_only_mode_issues_read(self, db_env):
-        db_source_access.upsert(USER, "read_only", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "read_only", "T1")
         result = token_service.issue(
-            project=PROJECT, group_id=None, action_scope="chat", doc_ref=None, issued_to=USER,
+            project=PROJECT, group_id=GROUP, action_scope="chat", doc_ref=DOC, issued_to=USER,
         )
         assert result["source_access"] == "read"
         assert result["one_shot_claimed"] is False
         assert db_tokens.get_by_id(result["token_id"])["source_access"] == "read"
 
     def test_edit_mode_issues_read_write_without_claiming(self, db_env):
-        db_source_access.upsert(USER, "edit", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit", "T1")
         result = token_service.issue(
-            project=PROJECT, group_id=None, action_scope="chat", doc_ref=None, issued_to=USER,
+            project=PROJECT, group_id=GROUP, action_scope="chat", doc_ref=DOC, issued_to=USER,
         )
         assert result["source_access"] == "read_write"
         assert result["one_shot_claimed"] is False
-        assert db_source_access.get(USER)["one_shot_token_id"] is None
+        assert db_source_access.get(USER, PROJECT, GROUP)["one_shot_token_id"] is None
 
     def test_edit_once_first_caller_wins_the_claim(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         result = token_service.issue(
-            project=PROJECT, group_id=None, action_scope="chat", doc_ref=None, issued_to=USER,
+            project=PROJECT, group_id=GROUP, action_scope="chat", doc_ref=DOC, issued_to=USER,
         )
         assert result["source_access"] == "read_write"
         assert result["one_shot_claimed"] is True
-        row = db_source_access.get(USER)
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["one_shot_token_id"] == result["token_id"]
         assert row["source_access_mode"] == "read_only"
 
     def test_edit_once_second_caller_gets_read(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         first = token_service.issue(
-            project=PROJECT, group_id=None, action_scope="chat", doc_ref=None, issued_to=USER,
+            project=PROJECT, group_id=GROUP, action_scope="chat", doc_ref=DOC, issued_to=USER,
         )
         second = token_service.issue(
-            project=PROJECT, group_id=None, action_scope="chat", doc_ref=None, issued_to=USER,
+            project=PROJECT, group_id=GROUP, action_scope="chat", doc_ref=DOC, issued_to=USER,
         )
         assert first["one_shot_claimed"] is True
         assert second["source_access"] == "read"
@@ -523,13 +520,13 @@ class TestChatTokenIssueCapability:
 
 class TestRevokeRollbackWiring:
     def test_revoking_a_claimed_token_restores_edit_once(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T1")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T1")
         result = token_service.issue(
-            project=PROJECT, group_id=None, action_scope="chat", doc_ref=None, issued_to=USER,
+            project=PROJECT, group_id=GROUP, action_scope="chat", doc_ref=DOC, issued_to=USER,
         )
         assert result["one_shot_claimed"] is True
         token_service.revoke(result["token_id"], reason="test")
-        row = db_source_access.get(USER)
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["source_access_mode"] == "edit_once"
         assert row["one_shot_token_id"] is None
 
@@ -680,18 +677,18 @@ class TestFinishChatHandoff:
         assert "chat_token_revoked_before_handoff" in caplog.text
 
     def test_committed_claim_returns_the_mention(self, monkeypatch):
-        monkeypatch.setattr(db_source_access, "commit", lambda user_id, token_id, updated_at: "COMMITTED")
-        result = {"token_id": "tok-y", "one_shot_claimed": True}
+        monkeypatch.setattr(db_source_access, "commit", lambda user_id, project_id, group_id, token_id, updated_at: "COMMITTED")
+        result = {"token_id": "tok-y", "one_shot_claimed": True, "project": PROJECT, "group_id": GROUP}
         assert token_routes._finish_chat_handoff(result, "## mention", USER) == "## mention"
 
     def test_already_cleared_revokes_and_returns_409(self, monkeypatch, caplog):
-        monkeypatch.setattr(db_source_access, "commit", lambda user_id, token_id, updated_at: "ALREADY_CLEARED")
+        monkeypatch.setattr(db_source_access, "commit", lambda user_id, project_id, group_id, token_id, updated_at: "ALREADY_CLEARED")
         revoked = []
         monkeypatch.setattr(
             token_routes.token_service, "revoke",
             lambda tid, reason=None: revoked.append((tid, reason)),
         )
-        result = {"token_id": "tok-z", "one_shot_claimed": True}
+        result = {"token_id": "tok-z", "one_shot_claimed": True, "project": PROJECT, "group_id": GROUP}
         with pytest.raises(HTTPException) as exc:
             token_routes._finish_chat_handoff(result, "## mention", USER)
         assert exc.value.status_code == 409
@@ -700,7 +697,7 @@ class TestFinishChatHandoff:
         assert "chat_one_shot_claim_superseded" in caplog.text
 
     def test_commit_exception_revokes_rolls_back_and_returns_500(self, monkeypatch, caplog):
-        def _boom(user_id, token_id, updated_at):
+        def _boom(user_id, project_id, group_id, token_id, updated_at):
             raise RuntimeError("db down")
 
         monkeypatch.setattr(db_source_access, "commit", _boom)
@@ -714,7 +711,7 @@ class TestFinishChatHandoff:
             token_routes.token_service, "revoke",
             lambda tid, reason=None: revoked.append((tid, reason)),
         )
-        result = {"token_id": "tok-w", "one_shot_claimed": True}
+        result = {"token_id": "tok-w", "one_shot_claimed": True, "project": PROJECT, "group_id": GROUP}
         with pytest.raises(HTTPException) as exc:
             token_routes._finish_chat_handoff(result, "## mention", USER)
         assert exc.value.status_code == 500
@@ -738,20 +735,20 @@ class TestFinishChatHandoff:
 
 class TestSaveChatSettingsRealDb:
     def test_source_only_patch_does_not_create_a_legacy_row(self, db_env):
-        css.save_chat_settings(USER, {"source_access_mode": "edit"})
+        css.save_chat_settings(USER, {"source_access_mode": "edit"}, (PROJECT, GROUP))
         assert legacy_settings_store.get(USER) is None
-        assert db_source_access.resolve_source_access_mode(USER) == "edit"
+        assert db_source_access.resolve_source_access_mode(USER, PROJECT, GROUP) == "edit"
 
     def test_mixed_patch_writes_both_stores_in_one_transaction(self, db_env):
-        css.save_chat_settings(USER, {"context_turns": 12, "source_access_mode": "edit_once"})
+        css.save_chat_settings(USER, {"context_turns": 12, "source_access_mode": "edit_once"}, (PROJECT, GROUP))
         assert legacy_settings_store.get(USER)["context_turns"] == 12
-        assert db_source_access.resolve_source_access_mode(USER) == "edit_once"
+        assert db_source_access.resolve_source_access_mode(USER, PROJECT, GROUP) == "edit_once"
 
     def test_saving_clears_a_pending_one_shot_claim(self, db_env):
-        db_source_access.upsert(USER, "edit_once", "T0")
+        db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "T0")
         _insert_token(db_env, "tok-clear")
-        db_source_access.claim(USER, "tok-clear", now_iso(), now_iso())
-        css.save_chat_settings(USER, {"source_access_mode": "read_only"})
-        row = db_source_access.get(USER)
+        db_source_access.claim(USER, PROJECT, GROUP, "tok-clear", now_iso(), now_iso())
+        css.save_chat_settings(USER, {"source_access_mode": "read_only"}, (PROJECT, GROUP))
+        row = db_source_access.get(USER, PROJECT, GROUP)
         assert row["one_shot_token_id"] is None
-        assert db_source_access.commit(USER, "tok-clear", now_iso()) == "ALREADY_CLEARED"
+        assert db_source_access.commit(USER, PROJECT, GROUP, "tok-clear", now_iso()) == "ALREADY_CLEARED"

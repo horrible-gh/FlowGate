@@ -976,6 +976,12 @@ export default {
       position: '{name} · #{seq} まで既読',
     },
     composer: {
+      creating: "会話を作成中…",
+      loading: "会話履歴を確認中…",
+      sending: "送信中…（試行 {attempt}）",
+      failed_create: "会話の作成に失敗しました — 入力は保持されています",
+      failed_load: "履歴の確認に失敗しました — 履歴を再読み込みしてください",
+      failed_send: "送信に失敗しました — 同じリクエストで再試行できます",
       placeholder: 'メッセージを入力',
       send: '送信',
       stop: 'AI 呼び出しを停止',

@@ -107,7 +107,7 @@ def _finish_chat_handoff(result: dict, mention: Optional[str], user_id: str) -> 
         from modules.flow_gate.db.connection import now_iso
 
         try:
-            outcome = db_source_access.commit(user_id, token_id, now_iso())
+            outcome = db_source_access.commit(user_id, result["project"], result["group_id"], token_id, now_iso())
         except Exception:
             _log.error(
                 "chat_one_shot_commit_failed token_id=%s user_id=%s",

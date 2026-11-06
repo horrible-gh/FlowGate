@@ -11,8 +11,10 @@
 // message beat it, so a list still loading does not lose it either. A title the user typed (on the draft or afterwards) wins: the draft's typed title
 // is used as is and owes nothing, and the server pays the debt once and drops it on any manual
 // rename.
-import { computed, readonly, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, readonly, ref, watch, type ComputedRef, type Ref } from 'vue'
+import { draftIntent, draftCreateIntent, draftUserId, type DraftSendSnapshot } from './drafts'
 import { ConversationRequestError } from './api'
+import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import type { ConversationSession } from './conversationSession'
 import type { ConversationSource } from './conversationSource'
 
@@ -23,10 +25,12 @@ export interface ChatStart {
   readonly draftTitle: Readonly<Ref<string | null>>
   /** The draft's chat is being created and its first message sent. */
   readonly starting: Readonly<Ref<boolean>>
+  readonly phase: ComputedRef<SubmissionPhase | null>
   /** [+]: leave the open chat for a new, unsaved one. */
+  readonly draftIntentId: Readonly<Ref<string | null>>
   startNew(): void
   rename(title: string): Promise<boolean>
-  send(text: string): Promise<boolean>
+  send(text: string, snapshot?: DraftSendSnapshot, trace?: SubmissionTrace): Promise<boolean>
   retry(localId: string): Promise<boolean>
 }
 
@@ -40,7 +44,24 @@ export interface ChatStartOptions {
 export function createChatStart({ session, source, defaultTitle }: ChatStartOptions): ChatStart {
   const state = session.state
   const draftTitle = ref<string | null>(null)
-  const starting = ref(false)
+  const draftIntentId = ref<string | null>(null)
+  const operations = ref<{ origin: DraftSendSnapshot; status: SubmissionPhase; active: boolean }[]>([])
+  const ownsScreen = (snapshot: DraftSendSnapshot) => snapshot.owner.userId === draftUserId() &&
+    snapshot.owner.projectId === state.scope?.projectId && snapshot.owner.groupId === state.scope?.groupId &&
+    snapshot.owner.intentId === draftIntentId.value &&
+    (state.activeChatId === snapshot.owner.chatId || state.activeChatId === snapshot.createdChatId)
+  const starting = computed(() => operations.value.some((op) => op.active && ownsScreen(op.origin)))
+  const phase = computed(() => session.submission.value ?? [...operations.value].reverse().find((op) => ownsScreen(op.origin))?.status ?? null)
+  function clearSettledFailures(): void {
+    operations.value = operations.value.filter((op) => op.active || (ownsScreen(op.origin) &&
+      !(op.status.phase === 'failed' && op.status.stage === 'load' && state.turnsStatus === 'ready')))
+  }
+  watch(() => [state.scope?.projectId, state.scope?.groupId, draftUserId(), draftIntentId.value, state.activeChatId, state.turnsStatus] as const,
+    clearSettledFailures, { flush: 'sync' })
+  watch(() => [state.scope?.projectId, state.scope?.groupId, draftUserId()] as const, () => {
+    draftIntentId.value = state.scope ? draftIntent({ ...state.scope, userId: draftUserId() }) : null
+    draftTitle.value = null
+  }, { immediate: true, flush: 'sync' })
   // Chats made on their first send whose AI title is still owed, with their provisional title
   // and the project whose AI picks it. Kept per chat: a first send that failed in one chat stays
   // owed while another chat is started.
@@ -49,6 +70,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
   const isDraft = computed(() => state.scope !== null && state.activeChatId === null)
 
   function startNew(): void {
+    if (state.scope) draftIntentId.value = draftIntent({ ...state.scope, userId: draftUserId() }, true)
     session.startDraft()
     draftTitle.value = null
   }
@@ -60,24 +82,54 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     return true
   }
 
-  async function send(text: string): Promise<boolean> {
+  async function send(text: string, snapshot?: DraftSendSnapshot, trace = createSubmissionTrace()): Promise<boolean> {
+    trace.mark('handler')
+    if (starting.value || (snapshot && !ownsScreen(snapshot))) return false
     if (!isDraft.value) {
       const chatId = state.activeChatId
-      return settle(chatId, await session.send(text))
+      operations.value = operations.value.filter((op) => !ownsScreen(op.origin))
+      return settle(chatId, await session.send(text, undefined, trace, snapshot))
     }
-    if (starting.value || !text.trim()) return false
+    if (starting.value || !text.trim() || !state.scope || !draftIntentId.value) return false
+    const origin: DraftSendSnapshot = snapshot ?? { owner: { ...state.scope, userId: draftUserId(), intentId: draftIntentId.value, chatId: null }, body: text, revision: 0 }
+    if (!ownsScreen(origin)) return false
+    origin.createIntentId = draftCreateIntent(origin.owner)
     const typed = draftTitle.value
     const title = typed ?? defaultTitle()
-    starting.value = true
+    operations.value = operations.value.filter((op) => !ownsScreen(op.origin))
+    const operation = { origin, status: { phase: 'creating', stage: 'create', attempt: 1 } as SubmissionPhase, active: true }
+    operations.value.push(operation)
+    const currentOperation = () => operations.value.find((op) => op.origin.createIntentId === origin.createIntentId)
+    const update = (status: SubmissionPhase) => { const op = currentOperation(); if (op) op.status = status }
     try {
-      if (!(await session.createChat(title, typed === null ? { autoTitle: true } : undefined))) return false
+      const result = await session.createChat(title, typed === null ? { autoTitle: true } : undefined, {
+        draftIntentId: origin.owner.intentId,
+        createIntentId: origin.createIntentId,
+        isCurrent: () => ownsScreen(origin),
+        onCreated: (created) => { origin.createdChatId = created.chatId },
+        onLoading: () => update({ phase: 'loading', stage: 'load', attempt: 1 }),
+        trace,
+      })
+      if (result.status !== 'created' || !ownsScreen(origin)) {
+        if (result.status === 'failed') {
+          const stage = currentOperation()?.status.stage ?? 'create'
+          update({ phase: 'failed', stage, attempt: 1 })
+        } else operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
+        return false
+      }
       draftTitle.value = null
-      const chatId = state.activeChatId
-      const projectId = state.scope?.projectId
-      if (chatId && projectId && typed === null) owed.set(chatId, { title, projectId })
-      return settle(chatId, await session.send(text))
+      if (typed === null) owed.set(result.chatId, { title, projectId: result.scope.projectId })
+      // No await between this ownership check and the explicitly addressed first send.
+      if (!ownsScreen(origin)) return false
+      update({ phase: 'sending', stage: 'send', attempt: 1 })
+      const ok = await session.send(text, result, trace, origin)
+      // Session owns send progress (and its retained failure bubble).
+      operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
+      return settle(result.chatId, ok)
     } finally {
-      starting.value = false
+      const op = currentOperation()
+      if (op) op.active = false
+      clearSettledFailures()
     }
   }
 
@@ -126,5 +178,5 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     }
   }
 
-  return { isDraft, draftTitle: readonly(draftTitle), starting: readonly(starting), startNew, rename, send, retry }
+  return { isDraft, phase, draftIntentId: readonly(draftIntentId), draftTitle: readonly(draftTitle), starting: readonly(starting), startNew, rename, send, retry }
 }

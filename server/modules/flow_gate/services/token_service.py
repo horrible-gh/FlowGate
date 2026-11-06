@@ -131,7 +131,7 @@ def scratch_dir_path(project_id: str, token_id: str) -> str:
     return str(_scratch_dir(project_id, token_id))
 
 
-def _resolve_chat_source_access(issued_to: str, token_id: str, created_at_str: str) -> tuple[Optional[str], bool]:
+def _resolve_chat_source_access(issued_to: str, project: str, group_id: Optional[str]) -> tuple[Optional[str], bool]:
     """Decide a chat (CH) token's capability (D0006 §2.3, L0007 §2.3, DB0008 §4.6).
 
     Returns ``(source_access, claim_deferred)``. ``claim_deferred`` is True only for
@@ -146,10 +146,13 @@ def _resolve_chat_source_access(issued_to: str, token_id: str, created_at_str: s
     from modules.flow_gate.db import user_chat_source_access as db_source_access
     from modules.flow_gate.services import chat_settings_service
 
+    if not group_id:
+        return "read", False
+
     # T0009 §5.1: run stale-claim recovery before judging eligibility so a
     # crashed/abandoned edit_once claim never blocks a fresh one.
-    chat_settings_service.recover_stale_claim(issued_to)
-    mode = db_source_access.resolve_source_access_mode(issued_to)
+    chat_settings_service.recover_stale_claim(issued_to, project, group_id)
+    mode = db_source_access.resolve_source_access_mode(issued_to, project, group_id)
     if mode == "edit":
         return "read_write", False
     if mode == "edit_once":
@@ -199,6 +202,15 @@ def issue(
     ``store.transaction()`` (T0009 §6): a claim that "won" must never be visible unless
     its token row also landed, and vice versa.
     """
+    if action_scope == "chat" and group_id:
+        from modules.flow_gate.db import documents as db_documents
+        chat = db_documents.get_by_id(doc_ref) if doc_ref else None
+        if (not chat or str(chat.get("type_code") or chat.get("type") or "").upper() != "CH"
+                or chat.get("project_id") != project or chat.get("group_id") != group_id):
+            raise HTTPException(status_code=403, detail="Chat token scope does not match its document.")
+        # Only the server-read CH affiliation selects the capability/claim row.
+        project, group_id = chat["project_id"], chat["group_id"]
+
     raw_token = secrets.token_urlsafe(32)
     pepper_id, pepper = _active_pepper()
     token_hash = _hash_token(raw_token, pepper)
@@ -269,7 +281,7 @@ def issue(
     try:
         if action_scope == "chat":
             source_access, claim_deferred = _resolve_chat_source_access(
-                issued_to, token_id, created_at_str
+                issued_to, project, group_id
             )
             if source_access == "read_write" or claim_deferred:
                 # flowgate.v02.0061 T#14 (WP answer 2): an edit / edit-once chat of a Flow whose Graph run is
@@ -289,7 +301,7 @@ def issue(
                 data["source_access"] = "read"
                 _create_and_log()
                 claim_result = db_source_access.claim(
-                    issued_to, token_id, created_at_str, created_at_str
+                    issued_to, project, group_id, token_id, created_at_str, created_at_str
                 )
                 source_access = claim_result["source_access"]
                 one_shot_claimed = claim_result["one_shot_claimed"]
@@ -307,6 +319,7 @@ def issue(
 
     return {
         "raw_token": raw_token,
+        "project": project,
         "token_id": token_id,
         "expires_at": expires_at_str,
         "scratch_dir": str(scratch_path),
