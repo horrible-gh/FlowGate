@@ -6,8 +6,9 @@
  * (`@shared/api`) is mocked, as in DesignerShell.0025. Assertions go through the DOM the user
  * sees. The parts' own events are checked by mounting each part alone.
  *
- * flowgate.v02.0053 T#9: the run buttons drive the server Graph run; the HTTP mock answers the run
- * requests from an in-memory run server (flowRunServer.ts).
+ * Current 0061/0083 contracts: runPhase + step/full commands, busy gating, and no toolbar status area.
+ * The HTTP fixture answers Canvas/current-run and first AI setup reads before accepting run commands.
+ * Only HTTP is mocked; Shell, Top, Toolbar, menu and run controller remain production components.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -26,12 +27,13 @@ import {
   DESIGNER_ARRANGE_GROUPS,
   DESIGNER_MENUS,
   isMenuCommandEnabled,
-  nextRunMode,
+  nextRunPhase,
   zoomPercent,
   type DesignerWindowState,
 } from '@/features/designer/top/designerTop'
 import { useProjectStore, type Project } from '@/features/project'
-import { createFlowRunServer, type FlowRunServer } from './flowRunServer'
+import { createPhaseRunServer, type PhaseRunServer } from './flowRunPhaseServer'
+import { flowCanvasResponse } from './flowCanvasResponse'
 
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())
@@ -85,14 +87,22 @@ beforeEach(() => {
   i18n.global.locale.value = 'ko'
   setCurrentUser({ username: 'test', email: null, isAdmin: false })
   getRequest.mockReset()
-  runServer = createFlowRunServer()
+  runServer = createPhaseRunServer()
   postRequest.mockReset()
-  postRequest.mockImplementation(async (url: string) => {
-    const answer = runServer.post(url)
+  postRequest.mockImplementation(async (url: string, body: Record<string, unknown>) => {
+    const answer = runServer.post(url, body)
     if (answer) return answer
     throw new Error(`unexpected request ${url}`)
   })
   getRequest.mockImplementation(async (url: string, params: Record<string, unknown> = {}) => {
+    const canvas = /^\/api\/v1\/flows\/([^/]+)\/canvas$/.exec(url)
+    if (canvas) {
+      const id = decodeURIComponent(canvas[1])
+      // A successful Canvas read confirms the current run; without it runUnknown disables commands.
+      return { data: { ...flowCanvasResponse(id, 'graph'), run: runServer.runs.get(id) ?? null } }
+    }
+    if (url === '/api/v1/me/ai-roles') return { data: { setup_completed: true, selectable_count: 0, roles: {} } }
+    if (url.endsWith('/archive')) return { data: { archived: false, eligible: false, reason: 'run_not_completed' } }
     const run = runServer.get(url)
     if (run) return run
     if (/^\/api\/v1\/projects\/[^/]+\/groups\/tree$/.test(url)) return { data: { data: { nodes: TREE } } }
@@ -105,7 +115,7 @@ beforeEach(() => {
 })
 
 let wrapper: VueWrapper<any> | null = null
-let runServer: FlowRunServer = createFlowRunServer()
+let runServer: PhaseRunServer = createPhaseRunServer()
 
 afterEach(() => {
   wrapper?.unmount()
@@ -355,7 +365,7 @@ describe('Designer top band — Toolbar', () => {
     const w = await mountShell()
     // flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons. flowgate.v02.0059 T#1:
     // [선택] (multi-selection toggle) is back next to 정렬 / 배치 ▾.
-    expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '화면 맞춤', '축소', '확대'])
+    expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '화면 맞춤', '축소', '확대', '아카이브'])
     expect(get(w, 'designer-toolbar').text()).not.toMatch(/노드 추가|연결/)
     // flowgate.v02.0059 0017-T: the zoom is one control showing the current zoom.
     expect((get(w, 'designer-tool-zoom').element as HTMLSelectElement).selectedOptions[0]?.text).toBe('100%')
@@ -366,7 +376,7 @@ describe('Designer top band — Toolbar', () => {
   })
 
   // flowgate.v02test.0001 B0001 §2 / T0004 T#2: a run starts from the Run menu only — the toolbar has no start button.
-  // flowgate.v02.0053 T#9: 전체 실행 starts the server run; the toolbar's run buttons then follow the run read back.
+  // 0061: step/full commands start the server run; the toolbar follows its current phase.
   const menuRun = async (w: VueWrapper<any>, command: string) => {
     await (await openMenu(w, 'run')).get(`[data-command="${command}"]`).trigger('click')
     await settle()
@@ -383,47 +393,38 @@ describe('Designer top band — Toolbar', () => {
     await clickOutside()
   })
 
-  it('전체 실행 from the menu starts the server run: the toolbar offers ■ 중지 (no start button), and ■ 중지 stops the run', async () => {
+  // The server contract is 0061: one full/step POST, busy gating, stop -> stopping.
+  // 0083 removed the toolbar status area. Verify the buttons and server state instead.
+  const writes = () => runServer.calls.filter((call) => call.startsWith('POST '))
+  it('전체 실행 from the menu exposes pause and stop; stop reaches the same server run', async () => {
     const w = await mountShell()
-    expect(w.find('[data-test="designer-run-status"]').exists()).toBe(false)
     await menuRun(w, 'run.all')
-
-    expect(runServer.calls).toEqual(['GET current p.ui.0001', 'POST start p.ui.0001'])
-    expect(toolStop(w).text()).toBe('중지')
+    expect(writes()).toEqual(['POST full p.ui.0001'])
+    expect(w.findAll('[data-test="designer-tool-run"]').map((b) => b.attributes('data-command'))).toEqual(['run.pause', 'run.stop'])
     expect(toolStop(w).attributes('disabled')).toBeUndefined()
-    expect(get(w, 'designer-run-status').attributes('data-status')).toBe('running')
-    expect(get(w, 'designer-run-status').attributes('title')).toBe('실행 중')
-
-    // The Run menu follows the same state.
+    expect(runServer.runs.get('p.ui.0001')?.status).toBe('running')
+    expect(w.find('[data-test="designer-run-status"]').exists()).toBe(false)
     const pop = await openMenu(w, 'run')
     expect(pop.get('[data-command="run.stop"]').attributes('disabled')).toBeUndefined()
     expect(pop.get('[data-command="run.next"]').attributes('disabled')).toBeDefined()
     expect(pop.get('[data-command="run.all"]').attributes('disabled')).toBeDefined()
     await clickOutside()
-
     await toolStop(w).trigger('click')
     await settle()
-    expect(runServer.calls.slice(2)).toEqual(['POST stop run_1'])
-    expect(runServer.runs.get('p.ui.0001')?.status).toBe('stopped')
-    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
-    expect(get(w, 'designer-run-status').attributes('data-status')).toBe('stopped')
-
-    // 전체 실행 again (menu) resumes the stopped run (never a second run).
-    await menuRun(w, 'run.all')
-    expect(runServer.calls.slice(3)).toEqual(['GET current p.ui.0001', 'POST resume run_1'])
-    expect(toolStop(w).text()).toBe('중지')
+    expect(writes()).toEqual(['POST full p.ui.0001', 'POST stop run_1'])
+    expect(runServer.runs.get('p.ui.0001')?.status).toBe('stopping')
+    expect(toolStop(w).text()).toBe('중지 중')
+    expect(toolStop(w).attributes('disabled')).toBeDefined()
   })
 
-  it('다음 단계 from the menu runs one step: the run starts (or resumes) and stops at once', async () => {
+  it('다음 단계 sends one step command and never an automatic stop', async () => {
     const w = await mountShell()
     await menuRun(w, 'run.next')
-    expect(runServer.calls).toEqual(['GET current p.ui.0001', 'POST start p.ui.0001', 'POST stop run_1'])
-    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
-    expect(get(w, 'designer-run-status').attributes('data-status')).toBe('stopped')
-
+    expect(writes()).toEqual(['POST step p.ui.0001'])
+    expect(runServer.runs.get('p.ui.0001')?.mode).toBe('step')
+    expect(toolStop(w).attributes('disabled')).toBeUndefined()
     await menuRun(w, 'run.next')
-    expect(runServer.calls.slice(3)).toEqual(['GET current p.ui.0001', 'POST resume run_1', 'POST stop run_1'])
-    expect(runServer.runs.size).toBe(1)
+    expect(writes()).toEqual(['POST step p.ui.0001'])
   })
 
   it('the Run menu starts and stops the same server run', async () => {
@@ -432,42 +433,44 @@ describe('Designer top band — Toolbar', () => {
     await openPop(w).get('[data-command="run.all"]').trigger('click')
     await settle()
     expect(toolStop(w).text()).toBe('중지')
-
     await (await openMenu(w, 'run')).get('[data-command="run.stop"]').trigger('click')
     await settle()
-    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
-    expect(runServer.runs.get('p.ui.0001')?.status).toBe('stopped')
+    expect(writes()).toEqual(['POST full p.ui.0001', 'POST stop run_1'])
+    expect(toolStop(w).text()).toBe('중지 중')
+    expect(toolStop(w).attributes('disabled')).toBeDefined()
   })
 
-  // The toolbar's ■ 중지 waiting for the start answer is enabled: its click is kept, not dropped.
-  it('■ 중지 clicked while the start is answered stops the run as soon as the start names it', async () => {
+  it('while a start is pending every run command waits; stop becomes available after its answer', async () => {
     const w = await mountShell()
     let release!: () => void
     const held = new Promise<void>((resolve) => (release = resolve))
-    postRequest.mockImplementationOnce(async (url: string) => {
+    postRequest.mockImplementationOnce(async (url: string, body: Record<string, unknown>) => {
       await held
-      return runServer.post(url)
+      return runServer.post(url, body)
     })
     await menuRun(w, 'run.all')
-    expect(toolStop(w).text()).toBe('중지')
-    expect(toolStop(w).attributes('disabled')).toBeUndefined()
-
-    await toolStop(w).trigger('click')
-    await settle()
-    expect(runServer.calls).toEqual(['GET current p.ui.0001'])
+    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
+    const pop = await openMenu(w, 'run')
+    for (const command of ['run.next', 'run.all', 'run.stop']) {
+      expect(pop.get(`[data-command="${command}"]`).attributes('disabled')).toBeDefined()
+      await pop.get(`[data-command="${command}"]`).trigger('click')
+    }
+    expect(postRequest).toHaveBeenCalledTimes(1)
     release()
     await settle()
-    expect(runServer.calls).toEqual(['GET current p.ui.0001', 'POST start p.ui.0001', 'POST stop run_1'])
-    expect(runServer.runs.get('p.ui.0001')?.status).toBe('stopped')
-    expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
-    expect(get(w, 'designer-run-status').attributes('data-status')).toBe('stopped')
+    expect(writes()).toEqual(['POST full p.ui.0001'])
+    await clickOutside()
+    expect(toolStop(w).attributes('disabled')).toBeUndefined()
+    await toolStop(w).trigger('click')
+    await settle()
+    expect(writes()).toEqual(['POST full p.ui.0001', 'POST stop run_1'])
   })
 
   it('a refused run shows one short toast in plain words and leaves the toolbar as it was', async () => {
     const w = await mountShell()
     runServer.refuse('run_policy_undecided')
     await menuRun(w, 'run.all')
-
+    expect(writes()).toEqual(['POST full p.ui.0001'])
     expect(w.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
     expect(w.find('[data-test="designer-run-status"]').exists()).toBe(false)
     const toasts = [...document.body.querySelectorAll('.ui-toast-host')].map((host) => host.textContent?.trim() ?? '')
@@ -589,7 +592,7 @@ describe('Designer top band — part events', () => {
 
   it('every Menu Bar command, panel, tab and density choice is emitted as an event', async () => {
     const menubar = mount(DesignerMenuBar, {
-      props: { runMode: null, density: 'normal', windowState: WINDOW },
+      props: { runPhase: 'idle', density: 'normal', windowState: WINDOW },
       attachTo: document.body,
       global: { plugins: [i18n] },
     })
@@ -613,7 +616,7 @@ describe('Designer top band — part events', () => {
   it('recent entries fed from outside are listed and emitted as open-recent', async () => {
     const menubar = mount(DesignerMenuBar, {
       props: {
-        runMode: null,
+        runPhase: 'idle',
         density: 'normal',
         windowState: WINDOW,
         recent: { project: [], group: [], flow: [{ id: 'p.ui.0002', name: 'Canvas' }] },
@@ -646,22 +649,28 @@ describe('Designer top band — part events', () => {
 })
 
 describe('designerTop model', () => {
-  it('run mode: a start sets the used button, a second start is ignored, stop clears', () => {
-    expect(nextRunMode(null, 'run.next')).toBe('next')
-    expect(nextRunMode(null, 'run.all')).toBe('all')
-    expect(nextRunMode('next', 'run.all')).toBe('next')
-    expect(nextRunMode('all', 'run.stop')).toBeNull()
-    expect(nextRunMode(null, 'run.stop')).toBeNull()
-    expect(nextRunMode(null, 'edit.undo')).toBeNull()
-    expect(createDesignerTopState()).toEqual({ runMode: null, density: 'normal' })
+  it('run phase follows start, pause, resume and stop, rejecting a second start', () => {
+    expect(nextRunPhase('idle', 'run.next')).toBe('running')
+    expect(nextRunPhase('idle', 'run.all')).toBe('running')
+    expect(nextRunPhase('running', 'run.all')).toBe('running')
+    expect(nextRunPhase('running', 'run.pause')).toBe('paused')
+    expect(nextRunPhase('paused', 'run.resume')).toBe('running')
+    expect(nextRunPhase('running', 'run.stop')).toBe('idle')
+    expect(nextRunPhase('idle', 'edit.undo')).toBe('idle')
+    expect(createDesignerTopState()).toEqual({ runPhase: 'idle', density: 'normal' })
   })
 
-  it('menu enablement follows the run mode only', () => {
-    expect(isMenuCommandEnabled('run.stop', null)).toBe(false)
-    expect(isMenuCommandEnabled('run.stop', 'all')).toBe(true)
-    expect(isMenuCommandEnabled('run.rerun', 'next')).toBe(false)
-    expect(isMenuCommandEnabled('run.validate', 'next')).toBe(true)
-    expect(isMenuCommandEnabled('project.new', null)).toBe(true)
+  it('menu enablement follows phase, busy and known status', () => {
+    expect(isMenuCommandEnabled('run.stop', 'idle')).toBe(false)
+    expect(isMenuCommandEnabled('run.stop', 'running')).toBe(true)
+    expect(isMenuCommandEnabled('run.stop', 'paused')).toBe(true)
+    expect(isMenuCommandEnabled('run.stop', 'stopping')).toBe(false)
+    expect(isMenuCommandEnabled('run.rerun', 'idle')).toBe(false)
+    expect(isMenuCommandEnabled('run.validate', 'running')).toBe(false)
+    expect(isMenuCommandEnabled('run.validate', 'idle')).toBe(true)
+    expect(isMenuCommandEnabled('project.new', 'idle')).toBe(true)
+    expect(isMenuCommandEnabled('run.all', 'idle', { ...ALL_MENU_TARGETS, runBusy: true })).toBe(false)
+    expect(isMenuCommandEnabled('run.all', 'idle', { ...ALL_MENU_TARGETS, runUnknown: true })).toBe(false)
   })
 
   it('zoom percent rounds the Canvas zoom and is 100 without one', () => {
@@ -669,5 +678,34 @@ describe('designerTop model', () => {
     expect(zoomPercent(null)).toBe(100)
     expect(zoomPercent(0.756)).toBe(76)
     expect(zoomPercent(2)).toBe(200)
+  })
+})
+
+
+describe('T-c archive toolbar', () => {
+  it('appends archive immediately after density, preserves idle buttons and emits once', async () => {
+    wrapper = mount(DesignerToolbar, { props: { runPhase: 'idle', density: 'free', zoom: 100, canArchive: true },
+      global: { plugins: [i18n] } })
+    const button = wrapper.get('[data-test="designer-tool-archive"]')
+    const density = wrapper.get('[data-test="designer-tool-density"]').element
+    expect(density.parentElement!.nextElementSibling).toBe(button.element.parentElement)
+    expect(wrapper.findAll('button.designer-tool').map((b) => b.text())).toEqual([
+      '실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '화면 맞춤', '축소', '확대', '아카이브',
+    ])
+    expect(wrapper.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
+    await button.trigger('click')
+    expect(wrapper.emitted('archive')).toEqual([[]])
+    await wrapper.setProps({ archiveBusy: true })
+    expect((button.element as HTMLButtonElement).disabled).toBe(true)
+    await button.trigger('click')
+    expect(wrapper.emitted('archive')).toHaveLength(1)
+  })
+  it('keeps the disabled reason in title, without a standing explanatory label', () => {
+    wrapper = mount(DesignerToolbar, { props: { runPhase: 'idle', density: 'free', zoom: 100,
+      canArchive: false, archiveReason: '확인 처리 작업이 남아 있습니다.' }, global: { plugins: [i18n] } })
+    const button = wrapper.get('[data-test="designer-tool-archive"]')
+    expect((button.element as HTMLButtonElement).disabled).toBe(true)
+    expect(button.attributes('title')).toBe('확인 처리 작업이 남아 있습니다.')
+    expect(button.text()).toBe('아카이브')
   })
 })

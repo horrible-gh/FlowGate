@@ -164,6 +164,12 @@ export interface DesignerContextMenuDeps {
   /** File › 새 Group (the top menu's dialog and create path). */
   readonly openFlowBaseBranch?: (projectId: string, flowId: string) => void
   readonly projectGitEnabled?: (projectId: string) => boolean | undefined
+  readonly archive?: {
+    read: (flowId: string) => Promise<{ archived: boolean; eligible: boolean }>
+    busy: (flowId: string) => boolean
+    archiveFlow: (flowId: string) => Promise<void>
+    restoreFlow: (flowId: string) => Promise<void>
+  }
   readonly openGroupCreate: () => void
   /** The 새 Flow dialog with this Group given explicitly (the selection is left as it is). */
   readonly openFlowCreate: (groupId: string) => void
@@ -198,7 +204,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   /** The menu the host shows now, with what it was built from (replaced on every open). */
   const open = shallowRef<OpenMenu | null>(null)
   /** What runs: the 2-B commands only while the Shell lends their server paths. */
-  const connected: readonly MenuCommand[] = [...(deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS), ...(deps.openFlowBaseBranch ? ['flow.baseBranch' as const] : [])]
+  const connected: readonly MenuCommand[] = [...(deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS), ...(deps.openFlowBaseBranch ? ['flow.baseBranch' as const] : []), ...(deps.archive ? ['flow.archive' as const, 'flow.restore' as const] : [])]
   /** T#2: the one 2-B window open now (a new one replaces it). */
   const pending = shallowRef<PendingMenuAction | null>(null)
   let actionSeq = 0
@@ -240,17 +246,22 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     const projectAt = deps.projectId()
     // The row must still be in the Explorer's tree (a re-read may have removed the Group / Flow) — §3.3, §3.4.
     const live = () => deps.projectId() === projectAt && (alive?.() ?? true)
+    let archive: { archived: boolean; eligible: boolean } | null = null
     const build = () => live() ? projectTreeMenu({
       target,
-      available: { currentProject: deps.projectId() === target.projectId, gitEnabled: deps.projectGitEnabled?.(target.projectId) },
+      available: { currentProject: deps.projectId() === target.projectId, gitEnabled: deps.projectGitEnabled?.(target.projectId),
+        archived: archive?.archived, archiveEligible: archive?.eligible,
+        archiveBusy: target.kind === 'flow' ? deps.archive?.busy(target.flowId) : false },
       connected,
     }) : null
-    return show(event, build, live, (request, recheck) => {
+    const opened = show(event, build, live, (request, recheck) => {
       const scope = request.target as ProjectTarget
       if (!live() || deps.projectId() !== scope.projectId) return
       if (request.command === 'project.newGroup') deps.openGroupCreate()
       else if (request.command === 'group.newFlow' && scope.kind === 'group') deps.openFlowCreate(scope.groupId)
       else if (request.command === 'flow.baseBranch' && scope.kind === 'flow') deps.openFlowBaseBranch?.(scope.projectId, scope.flowId)
+      else if (request.command === 'flow.archive' && scope.kind === 'flow' && recheck()) void deps.archive?.archiveFlow(scope.flowId)
+      else if (request.command === 'flow.restore' && scope.kind === 'flow' && recheck()) void deps.archive?.restoreFlow(scope.flowId)
       else if (!SERVER_SET.has(request.command)) return
       // T#2: 이름 변경 (Group / Flow) and Flow 삭제 (the existing dispose, DC) open their windows on this row.
       else if (request.command === 'group.rename' && scope.kind === 'group') {
@@ -259,6 +270,17 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
         openAction({ kind: request.command, projectId: scope.projectId, groupId: scope.groupId, flowId: scope.flowId }, recheck)
       }
     }, fallback)
+    const generation = host.current.value?.generation
+    // Read the clicked row, independently of the toolbar's open Flow. Late replies cannot replace another menu.
+    if (opened && generation !== undefined && target.kind === 'flow' && deps.archive) {
+      void deps.archive.read(target.flowId).then((state) => {
+        if (!live() || host.current.value?.generation !== generation) return
+        archive = state
+        const model = build()
+        if (model) host.update(model, generation)
+      }).catch(() => { /* The archive action stays disabled; opening the menu again retries. */ })
+    }
+    return opened
   }
 
   // ── ② file explorer ───────────────────────────────────────────────────────────────────────────

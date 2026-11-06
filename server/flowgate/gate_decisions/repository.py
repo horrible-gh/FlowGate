@@ -221,6 +221,16 @@ def of_node(group_id: str, node_key: str, *, after: Optional[tuple] = None, limi
     return [_decision(r) for r in _all(sql, params)]
 
 
+def decisions_of_run(group_id: str, run_id: str) -> list[dict]:
+    """Current-run scope for Flow archive; historical successes cannot qualify a rerun."""
+    if not available():
+        return []
+    return [_decision(r) for r in _all(
+        "SELECT * FROM gate_decisions WHERE group_id = ? AND run_id = ? ORDER BY accepted_at, decision_id",
+        [group_id, run_id],
+    )]
+
+
 def decisions_of_group(group_id: str) -> list[dict]:
     """flowgate.v02.0085 T#3: every decision of every gate and round of a group, in decision order (the end cleanup
     reads the keep-branch requests of all of them, D0007 §7.1)."""

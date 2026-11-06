@@ -47,6 +47,11 @@
       </IconButton>
     </div>
 
+    <label class="project-explorer-archive-filter">
+      <input v-model="includeArchived" type="checkbox" :disabled="!projectId" data-test="project-explorer-include-archived" />
+      {{ t('gui.designer.archive.include') }}
+    </label>
+
     <div class="project-explorer-body">
       <LoadingState
         v-if="projectId && loading"
@@ -205,6 +210,7 @@ const error = ref<string | null>(null)
 const refreshError = ref<string | null>(null)
 const shownRefreshError = computed(() => refreshError.value ?? props.restoreError)
 
+const includeArchived = ref(false)
 const query = ref('')
 const isSearching = computed(() => query.value.trim().length > 0)
 
@@ -367,6 +373,7 @@ function onContext(event: MouseEvent, row: { kind: 'project' } | { kind: 'group'
 // Double click / Enter. The Flow is also selected (the user pointed at it), but whether it
 // becomes the ACTIVE Flow is the Designer's call — it answers through `activeFlowId`.
 function onActivateFlow(flow: ExplorerFlow) {
+  if (flow.archived) return
   selection.value = { kind: 'flow', id: flow.id }
   const payload = flowEvent(flow)
   if (payload) emit('activate-flow', payload)
@@ -402,7 +409,7 @@ async function load(force: boolean) {
     error.value = null
   }
   try {
-    const next = await projectStore.fetchGroupTree(pid, { force, includeTerminal: props.includeTerminal })
+    const next = await projectStore.fetchGroupTree(pid, { force, includeTerminal: props.includeTerminal, includeArchived: includeArchived.value })
     if (seq !== requestSeq || pid !== projectId.value) return
     nodes.value = next
     loaded.value = true
@@ -425,7 +432,7 @@ function refresh() {
 }
 
 watch(
-  [projectId, () => props.includeTerminal],
+  [projectId, () => props.includeTerminal, includeArchived],
   ([pid], prev) => {
     const projectChanged = !prev || prev[0] !== pid
     if (projectChanged) {
@@ -441,6 +448,7 @@ watch(
       expanded.value = {}
       searchOverrides.value = {}
       query.value = ''
+      includeArchived.value = false
       // The Dialog's one-shot explicit-open signal: taken (and so cleared) here, and only a
       // signal for this very Project becomes the initial selection, which the selection watch
       // reports upward like a click. Without it the tree starts unselected (0039 T#3).
@@ -542,6 +550,15 @@ defineExpose({ refresh })
 .project-explorer-search.is-unavailable {
   opacity: 0.46;
   filter: saturate(0.55);
+}
+
+.project-explorer-archive-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 6px;
+  font-size: 11px;
+  color: var(--fg2-muted);
 }
 
 .project-explorer-body {

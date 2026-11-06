@@ -33,7 +33,7 @@ export function createDesignerMenuHost() {
   return {
     current: readonly(current),
     open(model: MenuModel, position: Point, fallbackFocus: HTMLElement | null = null): number | null {
-      const saved = makeMenu(model.target, model.items, [...COMMANDS, ...CARD_RUN_COMMANDS])
+      const saved = makeMenu(model.target, model.items, [...COMMANDS, ...CARD_RUN_COMMANDS, 'flow.baseBranch', 'flow.archive', 'flow.restore'])
       if (!saved.items.some((item) => item.kind !== 'separator')) { close(); return null }
       // A replacement must not capture the old menu button as its return target.
       const focused = captureFocusedElement()
@@ -43,6 +43,11 @@ export function createDesignerMenuHost() {
       const next = ++generation
       current.value = Object.freeze({ generation: next, model: saved, position: snapshot(position), zIndex: allocateOverlayZIndex(), focusOwner })
       return next
+    },
+    update(model: MenuModel, expected: number): boolean {
+      if (!current.value || current.value.generation !== expected) return false
+      current.value = Object.freeze({ ...current.value, model })
+      return true
     },
     close,
     invalidate: close,

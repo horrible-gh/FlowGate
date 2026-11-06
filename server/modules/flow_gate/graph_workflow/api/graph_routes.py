@@ -15,6 +15,27 @@ from .graph_messages import fill_issue_messages
 router = APIRouter(prefix="/api/v1", tags=["GraphDefinition"])
 
 
+@router.get("/flows/{flow_id}/archive")
+def get_flow_archive(flow_id: str, request: Request):
+    from modules.flow_gate.graph_workflow.services import flow_archive
+    return envelope.run(request, lambda: flow_archive.read(
+        flow_id, envelope.authenticate(request), envelope.authorize))
+
+
+@router.post("/flows/{flow_id}/archive")
+def archive_flow(flow_id: str, request: Request):
+    from modules.flow_gate.graph_workflow.services import flow_archive
+    return envelope.run(request, lambda: flow_archive.change(
+        flow_id, envelope.authenticate(request), True, envelope.authorize))
+
+
+@router.post("/flows/{flow_id}/restore")
+def restore_flow(flow_id: str, request: Request):
+    from modules.flow_gate.graph_workflow.services import flow_archive
+    return envelope.run(request, lambda: flow_archive.change(
+        flow_id, envelope.authenticate(request), False, envelope.authorize))
+
+
 @router.get("/flows/{flow_id}/nodes/{node_key}/ai-invocations")
 def get_ai_invocations(flow_id: str, node_key: str, request: Request):
     def handle():

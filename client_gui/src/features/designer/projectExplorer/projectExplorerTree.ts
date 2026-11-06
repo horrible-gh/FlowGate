@@ -15,6 +15,7 @@
 import type { GroupTreeNode } from '@/features/project'
 
 export interface ExplorerFlow {
+  archived?: boolean
   /** v0.1 group id — the id a Designer uses to open the Flow. */
   id: string
   /** v0.1 module node id of the owning Group. */
@@ -146,7 +147,8 @@ export function buildExplorerProject(
       if (visited.has(child.id)) continue
       visited.add(child.id)
       if (child.kind !== 'group' && child.kind !== 'subgroup') continue
-      group.flows.push({ id: child.id, groupId: moduleNode.id, name: child.label, number: child.number })
+      group.flows.push({ id: child.id, groupId: moduleNode.id, name: child.label, number: child.number,
+        ...(child.archivedAt ? { archived: true } : {}) })
       const grandchildren = byParent.get(child.id)
       if (grandchildren) stack.push(...[...grandchildren].reverse())
     }

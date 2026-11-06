@@ -31,6 +31,7 @@
 // (designerSessionStorage.ts, kept per signed-in user), the Project an F5 restore sets without it counting as an
 // opening (no recent entry, no explicit-open signal), and the HTTP status / network failure of a failed read.
 
+import { readFlowArchive, changeFlowArchive, type FlowArchiveState } from './flowArchiveApi'
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { useCurrentUser } from '../../core/auth/currentUser'
@@ -439,11 +440,11 @@ export const useProjectStore = defineStore('project', () => {
   const groupTreeCommitted = new Map<string, number>()
   let groupTreeOrder = 0
 
-  const groupTreeKey = (projectId: string, includeTerminal: boolean) =>
-    `${projectId}:${includeTerminal ? 'full' : 'pruned'}`
+  const groupTreeKey = (projectId: string, includeTerminal: boolean, includeArchived = false) =>
+    `${projectId}:${includeTerminal ? 'full' : 'pruned'}:${includeArchived ? 'archived' : 'visible'}`
 
-  function getCachedGroupTree(projectId: string, includeTerminal = false): GroupTreeNode[] | undefined {
-    return groupTrees.value[groupTreeKey(projectId, includeTerminal)]
+  function getCachedGroupTree(projectId: string, includeTerminal = false, includeArchived = false): GroupTreeNode[] | undefined {
+    return groupTrees.value[groupTreeKey(projectId, includeTerminal, includeArchived)]
   }
 
   // Answers from the cache unless `force`. A non-forced read joins any read already in flight
@@ -455,7 +456,8 @@ export const useProjectStore = defineStore('project', () => {
   function fetchGroupTree(projectId: string, options: FetchGroupTreeOptions = {}): Promise<GroupTreeNode[]> {
     const force = options.force ?? false
     const includeTerminal = options.includeTerminal ?? false
-    const key = groupTreeKey(projectId, includeTerminal)
+    const includeArchived = options.includeArchived ?? false
+    const key = groupTreeKey(projectId, includeTerminal, includeArchived)
     const cached = groupTrees.value[key]
     if (!force && cached) return Promise.resolve(cached)
     const inflight = groupTreeInflight.get(key)
@@ -466,7 +468,7 @@ export const useProjectStore = defineStore('project', () => {
     let promise!: Promise<GroupTreeNode[]>
     promise = (async () => {
       try {
-        const nodes = await fetchProjectGroupTreeApi(projectId, { includeTerminal, force })
+        const nodes = await fetchProjectGroupTreeApi(projectId, { includeTerminal, includeArchived, force })
         if (order >= (groupTreeCommitted.get(key) ?? 0)) {
           groupTreeCommitted.set(key, order)
           groupTrees.value = { ...groupTrees.value, [key]: nodes }
@@ -489,12 +491,34 @@ export const useProjectStore = defineStore('project', () => {
   function invalidateGroupTree(projectId: string): void {
     const next = { ...groupTrees.value }
     for (const includeTerminal of [false, true]) {
-      const key = groupTreeKey(projectId, includeTerminal)
-      delete next[key]
-      groupTreeInflight.delete(key)
-      groupTreeCommitted.set(key, ++groupTreeOrder)
+      for (const includeArchived of [false, true]) {
+        const key = groupTreeKey(projectId, includeTerminal, includeArchived)
+        delete next[key]
+        groupTreeInflight.delete(key)
+        groupTreeCommitted.set(key, ++groupTreeOrder)
+      }
     }
     groupTrees.value = next
+  }
+
+  const archiveBusy = ref<Record<string, boolean>>({})
+  const archiveRequests = new Map<string, Promise<FlowArchiveState>>()
+  function setFlowArchived(projectId: string, flowId: string, archived: boolean): Promise<FlowArchiveState> {
+    const existing = archiveRequests.get(flowId)
+    if (existing) return existing
+    archiveBusy.value = { ...archiveBusy.value, [flowId]: true }
+    const request = changeFlowArchive(flowId, archived).then((result) => {
+      invalidateGroupTree(projectId)
+      if (result.archived) forgetRecentFlow(flowId)
+      return result
+    }).finally(() => {
+      archiveRequests.delete(flowId)
+      const next = { ...archiveBusy.value }
+      delete next[flowId]
+      archiveBusy.value = next
+    })
+    archiveRequests.set(flowId, request)
+    return request
   }
 
   // Settings are deliberately uncached: opening/retrying always reads server authority.
@@ -768,7 +792,11 @@ export const useProjectStore = defineStore('project', () => {
     readFlowWorkBaseForDisplay,
     saveFlowWorkBase,
     invalidateWorkBaseOptions,
+    readFlowArchive,
+    setFlowArchived,
+    archiveBusy,
     getCachedGroupTree,
+    invalidateGroupTree,
     fetchGroupTree,
     createGroup,
     createFlow,
