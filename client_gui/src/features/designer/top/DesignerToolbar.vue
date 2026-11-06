@@ -178,6 +178,14 @@
         </button>
       </div>
     </div>
+    <div class="designer-tool-group" data-test="designer-tool-group">
+      <button type="button" class="designer-tool designer-tool-archive" data-test="designer-tool-archive"
+        :disabled="disabled || !canArchive || archiveBusy" :title="archiveReason || t('gui.designer.archive.action')"
+        @click="emit('archive')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="5" rx="1" /><path d="M5 8v12h14V8M10 12h4" /></svg>
+        <span>{{ t('gui.designer.archive.action') }}</span>
+      </button>
+    </div>
   </div>
 </template>
 
@@ -208,6 +216,9 @@ const props = withDefaults(
     disabled?: boolean
     /** flowgate.v02.0045 TR0020 rev2: the open Flow's edited structure can be checked now. */
     canValidate?: boolean
+    canArchive?: boolean
+    archiveBusy?: boolean
+    archiveReason?: string
     /** flowgate.v02.0059 T#2: the open Flow's structure edits can be undone / redone (Edit menu follows the same). */
     canUndo?: boolean
     canRedo?: boolean
@@ -222,6 +233,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
+  archive: []
   command: [command: DesignerTopCommand]
   'update:density': [density: DesignerDensity]
   /** A zoom preset was chosen, in percent. */
@@ -370,6 +382,31 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
   stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.designer-tool-archive {
+  box-sizing: border-box;
+  width: 60px;
+  min-width: 60px;
+  height: 46px;
+  border: 0;
+  border-radius: 5px;
+  color: #a4bed9;
+  font-size: 10px;
+  line-height: 12px;
+  padding: 2px 0 0;
+}
+
+.designer-tool-archive svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.7;
+}
+
+.designer-tool.designer-tool-archive:hover:not(:disabled) {
+  background: #1d344f;
+  color: #dceaff;
 }
 
 .designer-tool svg.is-run {

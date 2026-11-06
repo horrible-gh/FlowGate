@@ -31,6 +31,10 @@
       :zoom="zoom"
       :disabled="!targets.flow"
       :can-validate="canValidate"
+      :can-archive="canArchive"
+      :archive-busy="archiveBusy"
+      :archive-reason="archiveReason"
+      @archive="emit('archive')"
       :can-undo="targets.canUndo !== false"
       :can-redo="targets.canRedo !== false"
       :select-mode="selectMode"
@@ -76,6 +80,9 @@ withDefaults(
     recent?: DesignerRecentLists
     /** flowgate.v02.0045 TR0020 rev2: the Toolbar's 검증 is available. */
     canValidate?: boolean
+    canArchive?: boolean
+    archiveBusy?: boolean
+    archiveReason?: string
     /** flowgate.v02.0059 T#1: the Toolbar's [선택] mode is on (the Center session's). */
     selectMode?: boolean
     /** flowgate.v02.0061 T#14: the open Flow's run band (runBandView), or null. */
@@ -85,6 +92,7 @@ withDefaults(
 )
 
 const emit = defineEmits<{
+  archive: []
   command: [command: DesignerTopCommand]
   search: [request: DesignerSearchRequest]
   'toggle-panel': [panel: DesignerWindowPanel]

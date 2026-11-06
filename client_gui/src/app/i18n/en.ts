@@ -388,6 +388,19 @@ export default {
       },
     },
     // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
+    archive: {
+      action: 'Archive', restore: 'Restore', include: 'Include archived',
+      run_not_completed: 'Only completed flows can be archived.',
+      no_gate_decision: 'This run has no successful confirmation.',
+      gate_job_unfinished: 'Confirmation work is unfinished.',
+      recovery_reset_required: 'Recovery reset is required.',
+      time_machine: 'Time Machine is busy.',
+      work_unfinished: 'Work is still in progress.',
+      merge_session_open: 'A merge session is open.',
+      already_archived: 'This flow is already archived.',
+      unavailable: 'Archive status is unavailable.',
+      failed: 'Could not change archive status.',
+    },
     project_explorer: {
       title: 'Project',
       refresh: 'Refresh',

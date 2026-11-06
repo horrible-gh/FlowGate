@@ -96,8 +96,6 @@ def keep_requests(group_id: str) -> list[str]:
 
 def blocker(flow_id: str, run_id: Optional[str]) -> Optional[str]:
     """Why the end cleanup may not run now (None: it may). Read inside the cleanup's Flow guard, under its locks."""
-    from flowgate.graph_run import execution_store, result_merge
-    from flowgate.graph_time_machine.operation import busy
     from modules.flow_gate.graph_workflow.store import run_store
     run = run_store.run_by_id(run_id) if run_id else None
     if run is None or run["status"] != "idle" or run.get("idle_reason") != "completed":
@@ -105,13 +103,27 @@ def blocker(flow_id: str, run_id: Optional[str]) -> Optional[str]:
     decisions = repo.decisions_of_group(flow_id)
     if not decisions:
         return "no_gate_decision"
+    return activity_blocker(flow_id, run_id, decisions=decisions)
+
+
+def activity_blocker(flow_id: str, run_id: Optional[str], *, decisions=None) -> Optional[str]:
+    """Shared read-only blockers; no completion prerequisite, job creation or Git mutation.
+
+    A legacy Flow has no Graph run, but still has group reservations, recovery, Time Machine
+    and merge-session checks. Graph work checks apply only to an actual run id.
+    """
+    from flowgate.graph_run import execution_store, result_merge
+    from flowgate.graph_time_machine.operation import busy
+    from modules.flow_gate.graph_workflow.store import run_store
+    if decisions is None:
+        decisions = repo.decisions_of_group(flow_id)
     if repo.reservations_of_group(flow_id):
         return "gate_job_unfinished"
     if any(row["recovery_reset_required"] for row in decisions):
         return "recovery_reset_required"
     if busy(flow_id):
         return "time_machine"
-    if run_store.has_active_attempts(run_id) or execution_store.working(run_id) or result_merge.in_progress(run_id):
+    if run_id and (run_store.has_active_attempts(run_id) or execution_store.working(run_id) or result_merge.in_progress(run_id)):
         return "work_unfinished"
     if _gs().db_git.get_open_session_by_group(flow_id) is not None:
         return "merge_session_open"

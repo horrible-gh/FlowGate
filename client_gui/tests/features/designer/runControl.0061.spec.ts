@@ -458,10 +458,10 @@ describe('Center session — the run lock before the run status is confirmed (TR
 })
 
 describe('Canvas read — the run block reaches the Graph (TR0031 rev1)', () => {
-  it('keeps the run block's status; null is no run; absent says nothing', () => {
+  it("keeps the run block status; null is no run; absent says nothing", () => {
     const running = toFlowCanvas({ flow_id: F, run: { run_id: 'run_1', status: 'running', revision_no: 2, open_node_keys: [] } })
     expect(running.run).toEqual({ runId: 'run_1', status: 'running', revisionNo: 2 })
-    expect(toFlowGraph(running).run).toEqual({ runId: 'run_1', status: 'running' })
+    expect(toFlowGraph(running).run).toEqual({ runId: 'run_1', status: 'running', revisionNo: 2 })
     expect(toFlowGraph(toFlowCanvas({ flow_id: F, run: null })).run).toBeNull()
     expect('run' in toFlowGraph(toFlowCanvas({ flow_id: F }))).toBe(false)
   })

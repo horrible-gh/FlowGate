@@ -5494,7 +5494,7 @@ def create_storage_file(
 
 
 
-def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None) -> dict:
+def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *, include_archived: bool = False) -> dict:
     """Return the project's document tree.
 
     Following the prototype document-explorer structure, return the
@@ -5503,6 +5503,19 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None) -
     _tree_started = time.perf_counter()
     # Query the group list (based on the main DB)
     groups = db.get_groups_by_projects([project_id])
+    # Keep all ids known before filtering, so hidden documents never become orphans.
+    archive_hidden = set()
+    if not include_archived:
+        children = {}
+        for row in groups:
+            children.setdefault(dict(row).get("parent_id"), []).append(dict(row)["group_id"])
+        stack = [dict(row)["group_id"] for row in groups if dict(row).get("archived_at") is not None]
+        while stack:
+            gid = stack.pop()
+            if gid in archive_hidden:
+                continue
+            archive_hidden.add(gid)
+            stack.extend(children.get(gid, ()))
     if visible_group_ids is not None:
         perf_log.debug(f"group_tree_fast stage=groups_modules project_id={project_id} elapsed_ms={(time.perf_counter() - _tree_started) * 1000:.3f}")
     _stage_started = time.perf_counter()
@@ -5528,6 +5541,9 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None) -
         groups = [g for g in groups if dict(g)["group_id"] in visible_group_ids]
         group_ids = [dict(g)["group_id"] for g in groups]
         perf_log.debug(f"group_tree_fast stage=visible_docs project_id={project_id} rows={len(all_tree_docs)} elapsed_ms={(time.perf_counter() - _stage_started) * 1000:.3f}")
+    groups = [g for g in groups if dict(g)["group_id"] not in archive_hidden]
+    group_ids = [dict(g)["group_id"] for g in groups]
+    all_tree_docs = [d for d in all_tree_docs if d.get("group_id") not in archive_hidden]
     _stage_started = time.perf_counter()
     try:
         if visible_group_ids is None:
@@ -5553,7 +5569,8 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None) -
     for doc in all_tree_docs:
         doc_group_id = doc.get("group_id")
         if doc_group_id in known_group_ids:
-            docs_by_group[doc_group_id].append(doc)
+            if doc_group_id in docs_by_group:
+                docs_by_group[doc_group_id].append(doc)
         else:
             orphan_docs.append(doc)
     for _gid, _docs in docs_by_group.items():
@@ -5727,6 +5744,9 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None) -
             "md_path": None,
             "is_final_approved": False,
             "is_discarded": False,
+            "archived_at": group.get("archived_at"),
+            "archived_by": group.get("archived_by"),
+            "archive_restored_at": group.get("archive_restored_at"),
         }
         nodes.append(group_node)
 
@@ -5780,7 +5800,7 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None) -
     return {"nodes": nodes}
 
 
-def get_hidden_group_tree(project_id: str) -> dict:
+def get_hidden_group_tree(project_id: str, *, include_archived: bool = False) -> dict:
     """Build the legacy-pruned tree without materializing terminal documents."""
     started = time.perf_counter()
     groups_started = time.perf_counter()
@@ -5788,6 +5808,17 @@ def get_hidden_group_tree(project_id: str) -> dict:
     perf_log.debug(f"group_tree_fast stage=groups_for_closure project_id={project_id} rows={len(groups)} elapsed_ms={(time.perf_counter() - groups_started) * 1000:.3f}")
     terminal_started = time.perf_counter()
     terminal = db.get_terminal_group_ids(project_id)
+    # Restoring explicitly re-shows a completed Flow, even with include_terminal=false.
+    # Discarded groups keep their original visibility semantics.
+    restored = {g["group_id"] for g in groups if g.get("archive_restored_at") and not g.get("archived_at")}
+    archived = {g["group_id"] for g in groups if g.get("archived_at")}
+    if restored or (include_archived and archived):
+        from modules.flow_gate.db.connection import get_store
+        discarded = {r["group_id"] for r in get_store()._fetch_all(
+            "SELECT DISTINCT group_id FROM documents WHERE project_id = ? AND type_code = 'DC'", [project_id])}
+        terminal -= (restored | (archived if include_archived else set())) - discarded
+    if not include_archived:
+        terminal |= archived
     perf_log.debug(f"group_tree_fast stage=terminal_markers project_id={project_id} rows={len(terminal)} elapsed_ms={(time.perf_counter() - terminal_started) * 1000:.3f}")
     closure_started = time.perf_counter()
     children: dict[str, list[str]] = {}
@@ -5806,7 +5837,8 @@ def get_hidden_group_tree(project_id: str) -> dict:
     visible = {group["group_id"] for group in groups} - hidden
     perf_log.debug(f"group_tree_fast stage=closure project_id={project_id} hidden_groups={len(hidden)} visible_groups={len(visible)} elapsed_ms={(time.perf_counter() - closure_started) * 1000:.3f}")
     finalization_started = time.perf_counter()
-    result = get_group_tree(project_id, visible_group_ids=visible)
+    result = (get_group_tree(project_id, visible_group_ids=visible, include_archived=True)
+              if include_archived else get_group_tree(project_id, visible_group_ids=visible))
     perf_log.debug(f"group_tree_fast stage=finalization project_id={project_id} output_nodes={len(result.get('nodes') or [])} elapsed_ms={(time.perf_counter() - finalization_started) * 1000:.3f}")
     perf_log.debug(
         f"group_tree_fast project_id={project_id} include_terminal=false groups={len(groups)} "

@@ -158,6 +158,7 @@ export async function suggestProjectSlug(text: string): Promise<string | null> {
 
 // ── Group tree (flowgate.v02.0023) ───────────────────────────────────────────────────
 interface RawGroupTreeNode {
+  archived_at?: string | null
   id: string
   parent_id: string | null
   node_type: string
@@ -187,6 +188,7 @@ function toGroupTreeNode(raw: RawGroupTreeNode): GroupTreeNode | null {
     id: raw.id,
     parentId: raw.parent_id ?? null,
     kind,
+    ...('archived_at' in raw ? { archivedAt: raw.archived_at ?? null } : {}),
     label: raw.label || raw.id,
     title: raw.title || null,
     number: raw.number ?? null,
@@ -201,13 +203,14 @@ function toGroupTreeNode(raw: RawGroupTreeNode): GroupTreeNode | null {
  */
 export async function fetchProjectGroupTree(
   projectId: string,
-  options: { includeTerminal: boolean; force: boolean },
+  options: { includeTerminal: boolean; includeArchived?: boolean; force: boolean },
 ): Promise<GroupTreeNode[]> {
   try {
     const response = await getRequest<RawGroupTreeResponse>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/groups/tree`,
       {
         include_terminal: options.includeTerminal ? 'true' : 'false',
+        include_archived: options.includeArchived ? 'true' : 'false',
         force: options.force ? 'true' : 'false',
       },
     )

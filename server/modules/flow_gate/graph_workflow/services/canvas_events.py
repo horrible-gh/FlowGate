@@ -58,6 +58,16 @@ def publish_canvas_changed(
     ))
 
 
+def publish_archive_changed(*, project_id: str, flow_id: str, archived: bool, actor_user_id: str) -> None:
+    """Reuse the existing tree refresh stream after the display-state transaction commits."""
+    _queue(FlowEvent(
+        event_type=EventType.GROUP_VIEW_REFRESH.value,
+        payload={"group_id": flow_id, "reason": "flow_archived" if archived else "flow_restored",
+                 "actor_user_id": actor_user_id},
+        audience="*", project=project_id, group_id=flow_id,
+    ))
+
+
 def publish_ownership_changed(
     *,
     project_id: Optional[str],

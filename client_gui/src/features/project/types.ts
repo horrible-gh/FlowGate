@@ -45,6 +45,7 @@ export interface GroupTreeNode {
   id: string
   parentId: string | null
   kind: GroupTreeNodeKind
+  archivedAt?: string | null
   /** Server key/label (for a module, its key; for a group, its display name). */
   label: string
   /** Server display title, when the node has one separate from `label`. */
@@ -58,6 +59,7 @@ export interface FetchGroupTreeOptions {
   force?: boolean
   /** Keep final-approved/discarded groups. Defaults to false (the pruned variant). */
   includeTerminal?: boolean
+  includeArchived?: boolean
 }
 
 // ── Flow file context (flowgate.v02.0024 T0005) ─────────────────────────────────────────

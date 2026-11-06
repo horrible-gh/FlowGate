@@ -17,10 +17,11 @@ import { useProjectStore } from '@/features/project'
 import { ProjectExplorer } from '@/features/designer'
 
 const getRequest = vi.hoisted(() => vi.fn())
+const postRequest = vi.hoisted(() => vi.fn())
 
 vi.mock('@shared/api', () => ({
   getRequest,
-  postRequest: vi.fn(),
+  postRequest,
   extractApiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
 
@@ -107,6 +108,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.clear()
   getRequest.mockReset()
+  postRequest.mockReset()
   i18n.global.locale.value = 'ko'
 })
 
@@ -154,7 +156,7 @@ describe('ProjectExplorer — Project > Group > Flow', () => {
     getRequest.mockResolvedValueOnce(ok(NODES))
     const first = await mountExplorer()
     expect(getRequest).toHaveBeenCalledTimes(1)
-    expect(getRequest).toHaveBeenCalledWith('/api/v1/projects/p/groups/tree', { include_terminal: 'false', force: 'false' })
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/projects/p/groups/tree', { include_terminal: 'false', force: 'false', include_archived: 'false' })
     first.unmount()
     wrapper = null
 
@@ -422,7 +424,7 @@ describe('ProjectExplorer — loading and errors', () => {
     await flushPromises()
     expect(w.find('[data-test="project-explorer-error"]').exists()).toBe(false)
     expect(labels(w, 'group')).toEqual(['UI 개선', 'core', 'Empty group'])
-    expect(getRequest.mock.calls.at(-1)![1]).toEqual({ include_terminal: 'false', force: 'true' })
+    expect(getRequest.mock.calls.at(-1)![1]).toEqual({ include_terminal: 'false', force: 'true', include_archived: 'false' })
   })
 
   it('keeps the rendered tree on refresh failure, shows a notice and retries', async () => {
@@ -447,7 +449,7 @@ describe('ProjectExplorer — loading and errors', () => {
     expect(w.find('[data-test="project-explorer-refresh-error"]').exists()).toBe(false)
     expect(labels(w, 'flow')).toEqual(['Designer v0.2', 'Canvas', 'Inspector'])
     // The forced refresh bypasses the store cache.
-    expect(getRequest.mock.calls.at(-1)![1]).toEqual({ include_terminal: 'false', force: 'true' })
+    expect(getRequest.mock.calls.at(-1)![1]).toEqual({ include_terminal: 'false', force: 'true', include_archived: 'false' })
   })
 
   it('the header refresh button forces a fresh read', async () => {
@@ -457,7 +459,7 @@ describe('ProjectExplorer — loading and errors', () => {
     await w.find('[data-test="project-explorer-refresh"]').trigger('click')
     await flushPromises()
     expect(getRequest).toHaveBeenCalledTimes(2)
-    expect(getRequest.mock.calls[1][1]).toEqual({ include_terminal: 'false', force: 'true' })
+    expect(getRequest.mock.calls[1][1]).toEqual({ include_terminal: 'false', force: 'true', include_archived: 'false' })
   })
 
   it('resets to the new project when the project changes', async () => {
@@ -509,5 +511,48 @@ describe('ProjectExplorer — structure (T0006 §1-§3)', () => {
       }
       expect(src, file).not.toMatch(/defineStore|@shared\/api|client\/src/)
     }
+  })
+})
+
+
+describe('T-c archive visibility and independent tree caches', () => {
+  it('hides archives from search, reveals them dimmed with the toggle, then restores into the normal tree', async () => {
+    let archived = true
+    getRequest.mockImplementation(async (_url: string, params: any) => ok(NODES.filter((node: any) =>
+      node.id !== 'p.ui.0002' || !archived || params.include_archived === 'true').map((node: any) =>
+      node.id === 'p.ui.0002' ? { ...node, archived_at: archived ? '2026-01-01' : null } : node)))
+    postRequest.mockImplementation(async (url: string) => {
+      expect(url).toBe('/api/v1/flows/p.ui.0002/restore')
+      archived = false
+      return { data: { ok: true, archived: false, archived_at: null, archived_by: null, eligible: true, reason: null } }
+    })
+    const w = await mountExplorer()
+    await expandGroup(w, 'UI 개선')
+    expect(labels(w, 'flow')).not.toContain('Canvas')
+    await w.get('input[type="text"]').setValue('Canvas')
+    expect(labels(w, 'flow')).toEqual([])
+    await w.get('[data-test="project-explorer-include-archived"]').setValue(true)
+    await flushPromises()
+    expect(labels(w, 'flow')).toEqual(['Canvas'])
+    expect(row(w, 'Canvas').classes()).toContain('is-archived')
+    await doubleClickRow(w, 'Canvas')
+    expect(w.emitted('activate-flow')).toBeUndefined()
+    await useProjectStore().setFlowArchived('p', 'p.ui.0002', false)
+    await w.get('[data-test="project-explorer-include-archived"]').setValue(false)
+    await flushPromises()
+    expect(labels(w, 'flow')).toEqual(['Canvas'])
+    expect(getRequest.mock.calls.at(-1)?.[1]).toMatchObject({ include_terminal: 'false', include_archived: 'false', force: 'true' })
+  })
+  it('keeps all four cache variants distinct and invalidates all of them after a restore', async () => {
+    getRequest.mockResolvedValue(ok(NODES))
+    const store = useProjectStore()
+    for (const includeTerminal of [false, true]) for (const includeArchived of [false, true]) {
+      await store.fetchGroupTree('p', { includeTerminal, includeArchived })
+    }
+    expect(getRequest).toHaveBeenCalledTimes(4)
+    await store.fetchGroupTree('p', { includeTerminal: true, includeArchived: true })
+    expect(getRequest).toHaveBeenCalledTimes(4)
+    store.invalidateGroupTree('p')
+    for (const t of [false, true]) for (const a of [false, true]) expect(store.getCachedGroupTree('p', t, a)).toBeUndefined()
   })
 })
