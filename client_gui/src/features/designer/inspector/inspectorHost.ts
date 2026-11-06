@@ -8,6 +8,7 @@
 // session's saveNodeTitle; absent = titles are not saved here (no edit opens).
 import type { InjectionKey, Ref } from 'vue'
 import type { NodeTitleSaveOutcome } from '../center/graph/nodeTitle'
+import type { InspectorTarget } from './inspectorTarget'
 
 export type InspectorHostIntent =
   /** Select another Node of the same Flow ("→ 해당 카드"). */
@@ -39,3 +40,13 @@ export interface InspectorBody {
 }
 
 export const INSPECTOR_BODY: InjectionKey<InspectorBody> = Symbol('flowgate.inspectorBody')
+
+// flowgate.v02test.0002 T-b (review rej_01M6R14HCES8QJJ5) - the selection: the Frame also provides the target it shows
+// now, for a part whose state lives with the Inspector's selection of a card rather than with the part itself (a tab
+// change unmounts the part while the card stays selected). Reactive; null while nothing is selected, the Designer has no
+// work target, or the Frame is gone. A part mounted outside the Frame gets none.
+export interface InspectorSelection {
+  readonly target: InspectorTarget | null
+}
+
+export const INSPECTOR_SELECTION: InjectionKey<InspectorSelection> = Symbol('flowgate.inspectorSelection')

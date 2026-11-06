@@ -74,12 +74,20 @@ const indent = computed(() => 6 + (props.level - 1) * INDENT_STEP)
 // once, the second click of the same double click (detail>1) adds nothing, and dblclick adds
 // the activate intent on top of the selection already in place. Nothing waits on a timer, so
 // the contract does not depend on the OS double-click speed.
+//
+// flowgate.v02test.0002 R0001 #5 — an expandable row (Project, Group) opens/closes on the single
+// click itself: click(detail=1) = select + toggle, the second click is still ignored and dblclick
+// adds nothing, so one real double click toggles exactly once (never open-then-close). A Flow row
+// (not expandable) keeps the contract above: click = select, dblclick = activate (open) once.
+// Keys are unchanged: Enter still activates, Left/Right still toggle.
 function onRowClick(e: MouseEvent) {
   if (e.detail > 1) return
   emit('select')
+  if (props.expandable) emit('toggle')
 }
 
 function onRowDblclick() {
+  if (props.expandable) return
   emit('activate')
 }
 

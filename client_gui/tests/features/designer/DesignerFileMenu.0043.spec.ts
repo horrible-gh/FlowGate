@@ -253,7 +253,8 @@ describe('File menu availability (0043 0001-R §3)', () => {
     expect(commandStates(await openMenu(w, 'file')).disabled).toEqual(['flow.close'])
     expectUnselected(w)
 
-    await doubleClick(w, 'UI 개선')
+    // flowgate.v02test.0002 R0001 #5: that single click has already opened the Group.
+    expect(explorerRow(w, 'UI 개선').attributes('aria-expanded')).toBe('true')
     await doubleClick(w, 'Canvas')
     expect(commandStates(await openMenu(w, 'file')).disabled).toEqual(['group.close'])
     expect(leftDock(w).attributes('data-unselected')).toBe('false')
@@ -358,7 +359,7 @@ describe('Group commands', () => {
 
   it('Group 닫기 folds the chosen Group and clears the selection', async () => {
     const w = await mountShell()
-    await doubleClick(w, 'UI 개선')
+    // flowgate.v02test.0002 R0001 #5: one click chooses the Group and opens it (a second click would close it).
     await click(w, 'UI 개선')
     expect(rowLabels(w)).toEqual(['Alpha', 'UI 개선', 'Designer v0.2', 'Canvas', 'core'])
 
