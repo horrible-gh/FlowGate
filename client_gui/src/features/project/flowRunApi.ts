@@ -28,7 +28,7 @@ import { toRunGateState } from '@/features/document/api/run'
 // signals of the Canvas (flowCanvasEvents.ts), never state.
 import { getRequest, postRequest } from '@shared/api'
 import { canvasHeaders, num, str, toRoleRunFields, type Raw } from './flowCanvasApi'
-import { toGraphError } from './flowGraphApi'
+import { FlowGraphApiError, toGraphError } from './flowGraphApi'
 import type { FlowRun, FlowRunNode, FlowRunTimeMachine, FlowRunTimeMachineRefusal } from './types'
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [])
@@ -101,6 +101,22 @@ export async function fetchCurrentFlowRun(flowId: string): Promise<FlowRun | nul
     return toFlowRun(response.data?.run)
   } catch (error) {
     throw toGraphError(error, 'Failed to read the flow run.')
+  }
+}
+
+/** A refusal is a successful assessment; transport/server failures reject separately. */
+export async function checkFlowRevisionAdoption(flowId: string): Promise<FlowGraphApiError | null> {
+  try {
+    const response = await getRequest<Raw>(`${flowRunsPath(flowId)}/revision-adoption`, {}, canvasHeaders())
+    const data = response.data
+    if (data?.adoptable === true) return null
+    if (data?.adoptable === false && typeof data.error?.code === 'string') {
+      const error = data.error
+      return new FlowGraphApiError(str(error.message) ?? '', error.code, error.params ?? {}, num(error.status), null)
+    }
+    throw new Error('Invalid revision adoption assessment.')
+  } catch (error) {
+    throw toGraphError(error, 'Failed to check revision adoption.')
   }
 }
 

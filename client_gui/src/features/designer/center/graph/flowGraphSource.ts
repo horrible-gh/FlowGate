@@ -217,6 +217,9 @@ export interface FlowGraphSource {
    * flowgate.v02.0061 T#14: one step / full command — a new run of the Flow's latest revision, or its idle run going on
    * (`full` when omitted).
    */
+  /** Read-only assessment of the saved draft; null means allowed, an Error means refused.
+   * Rejection means the check failed and the command retains its existing fallback. */
+  checkRevisionAdoption?(projectId: string, flowId: string): Promise<FlowRunError | null>
   startRun?(projectId: string, flowId: string, mode?: FlowRunCommand): Promise<FlowRunInfo>
   /** flowgate.v02.0061 T#14: Stop (T#7) — the run is stopping, then idle (stopped) once its AI processes ended. */
   stopRun?(projectId: string, runId: string): Promise<FlowRunInfo>

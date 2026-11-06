@@ -218,6 +218,8 @@ export default {
   designer: {
     // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
     center: {
+      pinned_revision_notice: 'Showing run-pinned revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',
+      past_revision_notice: 'Showing revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',
       tabs_label: 'Open flows',
       close_tab: 'Close {name}',
       graph_loading: 'Loading graph',
