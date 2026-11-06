@@ -170,6 +170,8 @@ def append_conversation_turn(
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
+    timing = conversation_turn_service.TurnTiming(request.headers.get("X-Conversation-Trace", ""), doc_id)
+    timing.mark("received")
     try:
         result = conversation_turn_service.append_turn(
             doc_id=doc_id,
@@ -179,7 +181,11 @@ def append_conversation_turn(
             based_on_seq=body.based_on_seq,
             display_name_hint=body.display_name,
             force_encoding_reason=body.force_encoding_reason,
+            timing=timing,
         )
     except conversation_turn_service.ConversationTurnError as exc:
+        timing.mark("response", exc.status_code)
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return JSONResponse(status_code=200 if result["replayed"] else 201, content=result)
+    status = 200 if result["replayed"] else 201
+    timing.mark("response", status)
+    return JSONResponse(status_code=status, content=result)

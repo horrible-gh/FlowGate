@@ -987,6 +987,12 @@ export default {
       position: '{name} · #{seq}까지 읽음',
     },
     composer: {
+      creating: "대화 생성 중…",
+      loading: "대화 이력 확인 중…",
+      sending: "메시지 전송 중… (시도 {attempt})",
+      failed_create: "대화 생성 실패 — 입력이 보존되었습니다",
+      failed_load: "대화 이력 확인 실패 — 이력을 다시 조회해 주세요",
+      failed_send: "메시지 전송 실패 — 같은 요청으로 재시도할 수 있습니다",
       placeholder: '메시지 입력',
       send: '전송',
       stop: 'AI 호출 중지',

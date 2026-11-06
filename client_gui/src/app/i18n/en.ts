@@ -976,6 +976,12 @@ export default {
       position: '{name} · read up to #{seq}',
     },
     composer: {
+      creating: "Creating conversation…",
+      loading: "Loading conversation history…",
+      sending: "Sending message… (attempt {attempt})",
+      failed_create: "Conversation creation failed — input preserved",
+      failed_load: "History loading failed — reload the history",
+      failed_send: "Sending failed — retry the same request",
       placeholder: 'Type a message',
       send: 'Send',
       stop: 'Stop the AI call',

@@ -71,6 +71,7 @@
       :providers-status="state.providersStatus"
       :has-providers="session.hasProviders.value"
       :sending="state.sending || start.starting.value"
+      :submission="start.phase.value"
       :running="session.running.value"
       :run-starting="state.runId === 'starting'"
       :cancelling="state.cancelling"

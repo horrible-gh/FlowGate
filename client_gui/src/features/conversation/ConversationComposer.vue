@@ -45,6 +45,10 @@
       </button>
     </div>
 
+    <div v-if="submission" role="status" aria-live="polite" data-test="conv-submission">
+      {{ t(`gui.conversation.composer.${submission.phase === 'failed' ? `failed_${submission.stage}` : submission.phase}`, { attempt: submission.attempt }) }}
+    </div>
+
     <div class="conv-assist">
       <ComposerModelPicker
         :providers="providers"
@@ -89,6 +93,7 @@ import ComposerSettings from './ComposerSettings.vue'
 import ComposerSourceModes from './ComposerSourceModes.vue'
 import ComposerToolsMenu from './ComposerToolsMenu.vue'
 import { draftKey, draftUserId, loadDraft, saveDraft, type DraftOwner, type DraftSendSnapshot } from './drafts'
+import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import type { ChatProvider, ChatSettings, ChatSettingsPatch, SourceAccessMode } from './types'
 
 const props = defineProps<{
@@ -110,13 +115,14 @@ const props = defineProps<{
   providersStatus: string
   hasProviders: boolean
   sending: boolean
+  submission?: SubmissionPhase | null
   running: boolean
   runStarting: boolean
   cancelling: boolean
   copyingMention: boolean
   manualCopyText: string | null
   /** Sends one message; resolves true when the server accepted it (the draft clears then). */
-  onSend: (text: string, snapshot?: DraftSendSnapshot) => Promise<boolean>
+  onSend: (text: string, snapshot?: DraftSendSnapshot, trace?: SubmissionTrace) => Promise<boolean>
 }>()
 
 const emit = defineEmits<{
@@ -189,6 +195,8 @@ function onInput(): void {
 }
 
 async function submit(): Promise<void> {
+  const trace = createSubmissionTrace()
+  trace.mark('submit')
   const text = draft.value.trim()
   const owner = visibleOwner
   if (!owner || !text || props.disabled || props.readOnly || props.sending || props.running) return
@@ -200,7 +208,7 @@ async function submit(): Promise<void> {
   pending.add(send)
   let ok = false
   try {
-    ok = await props.onSend(text, snapshot)
+    ok = await props.onSend(text, snapshot, trace)
   } finally {
     pending.delete(send)
   }

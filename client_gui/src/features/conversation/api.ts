@@ -431,16 +431,16 @@ export interface PostTurnInput {
   body: string
   idempotencyKey: string
   basedOnSeq: number
+  traceId?: string
 }
 
 export async function postTurn(chatId: string, input: PostTurnInput): Promise<{ turn: ConversationTurn | null; headSeq: number }> {
-  const data = await call(
-    () => postRequest<{ turn?: RawTurn | null; head_seq?: number }>(`${doc(chatId)}/conversation/turn`, {
-      body: input.body,
-      idempotency_key: input.idempotencyKey,
-      based_on_seq: input.basedOnSeq,
-    }),
-  )
+  const payload = { body: input.body, idempotency_key: input.idempotencyKey, based_on_seq: input.basedOnSeq }
+  type Response = { turn?: RawTurn | null; head_seq?: number }
+  const path = `${doc(chatId)}/conversation/turn`
+  const data = await call(() => input.traceId
+    ? postRequest<Response>(path, payload, { headers: { 'X-Conversation-Trace': input.traceId } })
+    : postRequest<Response>(path, payload))
   return { turn: data?.turn ? toTurn(data.turn) : null, headSeq: Number(data?.head_seq) || 0 }
 }
 

@@ -506,6 +506,39 @@ def replay_turn(
     return None if existing is None else _replay_or_conflict(doc_id, existing, body_hash, resolved)
 
 
+class TurnTiming:
+    """Debug-only fixed-field timing. Never serializes a request, actor or body."""
+
+    def __init__(self, trace_id: str, doc_id: str):
+        self.trace_id = trace_id if re.fullmatch(r"ct-[a-zA-Z0-9-]{1,64}", trace_id or "") else None
+        self.doc_id = doc_id if re.fullmatch(r"[a-zA-Z0-9_.-]{1,200}", doc_id or "") else None
+        self.started = time.perf_counter()
+        self.previous = self.started
+
+    def mark(self, stage: str, status: Optional[int] = None) -> None:
+        try:
+            if not self.trace_id:
+                return
+            now = time.perf_counter()
+            record = timing_record(self.trace_id, self.doc_id, stage, self.started, self.previous, now, status)
+            self.previous = now
+            _log.debug("conversation_timing %s", record)
+        except Exception:
+            pass  # Diagnostic failures never alter acceptance or replay.
+
+
+def timing_record(trace_id, doc_id, stage, started, previous, now, status=None):
+    """Pure allowlisted record; callers supply monotonic times in seconds."""
+    trace_id = trace_id if isinstance(trace_id, str) and re.fullmatch(r"ct-[a-zA-Z0-9-]{1,64}", trace_id) else "ct-invalid"
+    doc_id = doc_id if isinstance(doc_id, str) and re.fullmatch(r"[a-zA-Z0-9_.-]{1,200}", doc_id) else None
+    if stage not in {"received", "commit", "replay", "hooks_end", "broadcast_end", "response"}:
+        stage = "response"
+    return {"trace_id": trace_id, "doc_id": doc_id, "stage": stage,
+            "ms": max(0.0, (now - started) * 1000),
+            "delta_ms": max(0.0, (now - previous) * 1000),
+            "status": status if isinstance(status, int) else None}
+
+
 def append_turn(
     *,
     doc_id: str,
@@ -519,6 +552,7 @@ def append_turn(
     body_chars: Optional[int] = None,
     force_encoding_reason: Optional[str] = None,
     locale: str = "ko",
+    timing: Optional[TurnTiming] = None,
 ) -> dict:
     """Append one turn for either a session user or a token-bound AI worker."""
     body, key, body_hash, idempotency_hash = _validate_input(body_raw, idempotency_key)
@@ -542,6 +576,8 @@ def append_turn(
     # where two requests both observe absence below.
     existing = turn_store.get_turn_by_idempotency_hash(doc_id, idempotency_hash)
     if existing is not None:
+        if timing is not None:
+            timing.mark("replay")
         return _replay_or_conflict(doc_id, existing, body_hash, resolved)
 
     last_exc: Optional[BaseException] = None
@@ -589,6 +625,8 @@ def append_turn(
                     seen_at=row["created_at"],
                 )
                 row["stale_since_seq"] = stale
+            if timing is not None:
+                timing.mark("commit")
             result = {
                 "ok": True,
                 "doc_id": doc_id,
@@ -619,8 +657,12 @@ def append_turn(
             else:
                 from modules.flow_gate.services import chat_activity_anchor_service
                 chat_activity_anchor_service.on_turn_appended(doc_id, row)
+            if timing is not None:
+                timing.mark("hooks_end")
             from modules.flow_gate.services import conversation_events
             conversation_events.broadcast_turn_appended(doc, result)
+            if timing is not None:
+                timing.mark("broadcast_end")
             if after_commit is not None:
                 try:
                     after_commit(result)
@@ -635,6 +677,8 @@ def append_turn(
                 raise
             existing = turn_store.get_turn_by_idempotency_hash(doc_id, idempotency_hash)
             if existing is not None:
+                if timing is not None:
+                    timing.mark("replay")
                 return _replay_or_conflict(doc_id, existing, body_hash, resolved)
             if attempt >= SEQ_RETRY_MAX:
                 break
