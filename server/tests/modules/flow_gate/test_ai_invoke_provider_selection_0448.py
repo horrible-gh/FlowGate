@@ -250,22 +250,22 @@ def test_an_override_for_another_hop_is_ignored(env):
 
 # ── §7-7: an unregistered / inactive stored provider ──────────────────────────
 
-def test_inactive_stored_provider_falls_back_and_warns_once(env, caplog):
+def test_inactive_stored_provider_refuses_without_fallback(env, caplog, monkeypatch):
+    # 0142 T#2: an unavailable persisted assignment must not degrade to the request.
+    from fastapi import HTTPException
+
+    # This admission refusal test has no database or open branch-merge claim.
+    monkeypatch.setattr(svc.git_service, "get_branch_merge_group_claim", lambda _gid: None)
     env["chain"]["providers"] = [provider("aip_header")]
-    with caplog.at_level(logging.WARNING):
-        result = start(env, continuation_provider_overrides=None)
-    expected = (
-        f"continuation hop provider fallback: aip_nr not active for {ROOT} "
-        "item_seq 2, falling back to aip_header"
-    )
-    # The request's own (unpinned) selection is what it degrades to, and the snapshot id is
-    # named in the log so the screen's "지금 쓸 수 없음" badge and the server agree on WHY.
-    assert result["provider"]["id"] == "aip_header"
-    assert result["selected_provider_source"] == "request"
-    assert result["fallback_allowed"] is False
-    assert svc.get_run_record(result["run_id"])["fallback_history"] == []
-    assert env["worker_chains"][-1] == ["aip_header"]
-    assert caplog.messages.count(expected) == 1
+    with caplog.at_level(logging.WARNING), pytest.raises(HTTPException) as caught:
+        start(env, continuation_provider_overrides=None)
+    assert caught.value.status_code == 422
+    assert caught.value.detail["code"] == "provider_unavailable"
+    assert caught.value.detail["requested_provider_id"] == "aip_nr"
+    assert caught.value.detail["selected_provider_source"] == "stored_sequence"
+    assert caught.value.detail["reason"] == "stored_provider_not_selectable"
+    assert env["worker_chains"] == []
+    assert any(getattr(record, "stored_provider_id", None) == "aip_nr" for record in caplog.records)
 
 
 def test_inactive_document_type_assignment_uses_project_default_without_execution_fallback(

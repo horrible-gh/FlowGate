@@ -14,6 +14,7 @@ calls, so the file reads as one policy instead of a service prologue.
 
 from __future__ import annotations
 
+import json
 import threading
 from modules.flow_gate.utils.provider_lifecycle import guard as provider_lifecycle_guard
 import time
@@ -1030,6 +1031,30 @@ def _bind_review_loop_first_hop(run: dict, *, holds_group_lease: bool) -> None:
 from flowgate.ai_roles import invocations as role_invocations
 
 
+def _refuse_unavailable_stored_provider(provider_id, doc_ref, item_seq, origin, graph_exec_id):
+    detail = {
+        "requested_provider_id": provider_id,
+        "stored_provider_id": provider_id,
+        "selected_provider_source": "stored_sequence",
+        "doc_ref": doc_ref,
+        "stored_provider_item_seq": item_seq,
+        "reason": "stored_provider_not_selectable",
+    }
+    exc = _http_error(422, PROVIDER_UNAVAILABLE_CODE, PROVIDER_UNAVAILABLE_MESSAGE, **detail)
+    logger.warning("stored provider admission refused: %s", detail, extra=detail)
+    refusal_origin = dict(origin or {})
+    refusal_origin["requested_ai_id"] = provider_id
+    # The journal stores the refusal message, so include its structured context there.
+    # Keep the public unavailable message unchanged and use the existing dedup marker.
+    role_invocations.refused(
+        refusal_origin,
+        _http_error(422, PROVIDER_UNAVAILABLE_CODE, json.dumps(exc.detail, ensure_ascii=False)),
+        graph_exec_id,
+    )
+    exc._role_refusal_recorded = True
+    raise exc
+
+
 @role_invocations.admission
 @graph_execution_hooks.admission
 def start_run(
@@ -1265,7 +1290,12 @@ def start_run(
             )
         chain = [selected]
         selected_provider_source = "force_all"
-    elif stored_provider_active:
+    elif stored_provider_id:
+        if not stored_provider_active:
+            _refuse_unavailable_stored_provider(
+                stored_provider_id, doc_ref, stored_provider_item_seq,
+                invocation_origin, graph_exec_id,
+            )
         # An unpinned run still follows the persisted sequence assignment (D0006 §6.2).
         selected = next(
             (provider for provider in chain if provider.get("id") == stored_provider_id),
@@ -1303,15 +1333,6 @@ def start_run(
     if chain is selectable_chain:
         # No tier named a provider: this is the fallback chain, which stays system AI only.
         chain = [p for p in chain if p.get("owner_scope") != "user"]
-    if mode == "continuous" and stored_provider_id and not stored_provider_active and chain:
-        logger.warning(
-            "continuation hop provider fallback: %s not active for %s item_seq %s, "
-            "falling back to %s",
-            stored_provider_id,
-            doc_ref,
-            stored_provider_item_seq,
-            chain[0].get("id"),
-        )
     if not chain:
         # 0292 T0003: "no provider was ever registered" used to be indistinguishable
         # from "the registered ones are all switched off" — both read as
