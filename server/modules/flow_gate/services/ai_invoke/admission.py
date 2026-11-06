@@ -397,6 +397,12 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     run_id = str(lease_row.get("run_id") or "")
     if not run_id:
         return
+    from modules.flow_gate.db import ai_run_identity
+    identity_owner = ai_run_identity.get_store()._fetch_one(
+        "SELECT * FROM ai_run_owners WHERE run_id = ?", [run_id])
+    if identity_owner and any(identity_owner.get(key) != lease_row.get(key)
+                              for key in ("project_id", "group_id")):
+        raise ai_run_identity.RunIdentityConflict()
     if end_reason == "orphaned_by_restart":
         from flowgate.ai_roles import invocations
         invocations.orphan(run_id)
@@ -422,8 +428,9 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
             mode = "continuous" if token.get("continuation_target_seq") is not None else "single"
             issued_to = token.get("issued_to")
     stamp = now_iso()
-    started = lease_row.get("acquired_at") or stamp
+    started = identity_owner["started_at"] if identity_owner else lease_row.get("acquired_at") or stamp
     db_runs.upsert({
+        "execution_nonce": identity_owner["execution_nonce"] if identity_owner else None,
         "run_id": run_id,
         "group_id": lease_row["group_id"],
         "project_id": lease_row["project_id"],
@@ -1380,8 +1387,24 @@ def start_run(
                           run_id=active["run_id"])
     # Claim the Graph launcher before preparing its worktree. A duplicate must
     # lose admission before it can touch or fail the winner's workspace.
+    from uuid import uuid4
+    from modules.flow_gate.db import ai_run_identity
+    from .runtime import admission_identity
+    execution_nonce = str(uuid4())
+    started_at = now_iso()
+
+    def claim_identity():
+        ai_run_identity.claim({"run_id": run_id, "execution_nonce": execution_nonce,
+                               "project_id": project_id, "group_id": group_id,
+                               "started_at": started_at})
+        admission_identity.set({"run_id": run_id, "execution_nonce": execution_nonce,
+                                "project_id": project_id, "group_id": group_id,
+                                "started_at": started_at, "action_scope": action_scope,
+                                "graph_exec_id": graph_exec_id, "graph_attempt_id": graph_attempt_id})
+
     if graph_exec_id:
         run_id = _svc()._next_run_id()
+        claim_identity()
         graph_attempt_id = graph_execution_hooks.call("admit", graph_exec_id, run_id, group_id, graph_attempt_id)
     # 0299 R0001: refuse before minting a token / creating scratch — a run that would
     # execute in the base tree must not start at all, and failing here keeps the
@@ -1465,6 +1488,7 @@ def start_run(
     # concurrent starts atomic across processes; an acquiring lease self-reclaims on expiry.
     if not graph_exec_id:
         run_id = _svc()._next_run_id()
+        claim_identity()
     lease_chain_id = chain_id or run_id
     lease = None
     if not project_scoped and not graph_exec_id:
@@ -1484,6 +1508,8 @@ def start_run(
             # this rare; a second hit is a real systemic problem, so it surfaces as a clean
             # 409 instead of retrying forever or falling through as a raw DB error.
             run_id = _svc()._next_run_id()
+            execution_nonce = str(uuid4())
+            claim_identity()
             lease_chain_id = chain_id or run_id
             try:
                 lease = graph_execution_hooks.call("legacy_acquire", db_group_ai_leases.acquire,
@@ -1778,7 +1804,9 @@ def start_run(
             chain_docs_target = docs_target
         if chain_docs_reached is None:
             chain_docs_reached = 0
-    scratch = _svc()._create_scratch(project_id, run_id)
+    admission_identity.get()["token_id"] = issue.get("token_id")
+    scratch = _svc()._create_scratch(project_id, run_id, execution_nonce)
+    admission_identity.get()["scratch_dir"] = str(scratch)
 
     doc = db_docs.get_by_id(doc_ref) or {}
     # 0187 rev2: same group-worktree routing as the test runner — the invoked AI's
@@ -1787,7 +1815,7 @@ def start_run(
         project_id, doc.get("branch") or "main", group_id=group_id
     )
 
-    started_at = now_iso()
+    # started_at is part of the immutable pre-admission identity.
     # 0414 P0007: what THIS hop's review selection resolves to, answered in the start
     # response rather than after the fact — "I picked a reviewer, did it take?" has to be
     # answerable while the run is going, not once it is over (0406 T0022 작업 3's reasoning
@@ -1847,6 +1875,7 @@ def start_run(
         "invocation_origin": dict(invocation_origin) if invocation_origin else None,
         "graph_review_run_ids": (graph_loop_state or {}).get("review_run_ids") or [],
         "run_id": run_id,
+        "execution_nonce": execution_nonce,
         "status": "running",
         "mode": mode,
         "project_id": project_id,

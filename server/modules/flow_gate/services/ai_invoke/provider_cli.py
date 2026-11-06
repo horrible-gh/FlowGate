@@ -329,7 +329,14 @@ def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Option
     project_id = run.get("project_id")
     run_id = str(run.get("run_id") or "")
     if project_id:
-        manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+        from modules.flow_gate.db import ai_run_identity
+        nonce = run.get("execution_nonce")
+        try:
+            if not ai_run_identity.scratch_owner(project_id, run_id, nonce):
+                return None, "scratch_owner_mismatch"
+        except Exception:
+            return None, "scratch_owner_unconfirmed"
+        manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch, nonce)
         if manifest is None:
             return None, f"scratch_{reason}"
     try:
@@ -619,7 +626,8 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
 
 def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], prompt: str,
                          timeout: float, handle, scratch: Optional[Path] = None,
-                         run_id: Optional[str] = None) -> ProbeOutcome:
+                         run_id: Optional[str] = None,
+                         execution_nonce: Optional[str] = None) -> ProbeOutcome:
     """One run-less prompt/response round trip (AI connection test / AI Evaluation), on the
     product CLI boundary.
 
@@ -638,13 +646,21 @@ def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], 
     if not command or not project_id:
         return ProbeOutcome(PROBE_LAUNCH_FAILED)
     owned = scratch is None
+    from uuid import uuid4
+    from modules.flow_gate.db import ai_run_identity
     if owned:
-        run_id = _next_run_id()
         try:
-            scratch = _create_scratch(project_id, run_id)
-        except (OSError, ValueError):
+            run_id = _next_run_id()
+            execution_nonce = str(uuid4())
+            ai_run_identity.claim({"run_id": run_id, "execution_nonce": execution_nonce,
+                                   "project_id": project_id, "group_id": "", "started_at": now_iso()})
+            scratch = _create_scratch(project_id, run_id, execution_nonce)
+        except Exception:
             return ProbeOutcome(PROBE_LAUNCH_FAILED)
-    elif not run_id:
+    elif not run_id or not ai_run_identity.scratch_owner(project_id, run_id, execution_nonce):
+        return ProbeOutcome(PROBE_LAUNCH_FAILED)
+    from .runtime import _validate_scratch_manifest
+    if _validate_scratch_manifest(project_id, run_id, scratch, execution_nonce)[0] is None:
         return ProbeOutcome(PROBE_LAUNCH_FAILED)
     try:
         provider = {"kind": kind}
@@ -687,8 +703,8 @@ def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], 
             kind, process_runner.safe_decode(stdout), last_message_file) or "")
     finally:
         if owned:
-            _mark_scratch_completed(project_id, run_id, scratch, now_iso())
-            deleted, why = _delete_owned_scratch(project_id, run_id, scratch)
+            _mark_scratch_completed(project_id, run_id, scratch, now_iso(), execution_nonce)
+            deleted, why = _delete_owned_scratch(project_id, run_id, scratch, execution_nonce)
             if not deleted:
                 logger.warning("ai-invoke %s: probe scratch retained (%s)", run_id, why)
 

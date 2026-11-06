@@ -400,13 +400,13 @@ def _advance(evaluation_id: str, lifecycle: str, **fields) -> bool:
     return True
 
 
-def _call(subject, prompt: str, handle, timeout: float, scratch: Path, run_id: str) -> str:
+def _call(subject, prompt: str, handle, timeout: float, scratch: Path, run_id: str, execution_nonce: str) -> str:
     if handle.cancelled:
         raise probe.ProbeCancelled()
     if not connection.still_effective(subject):
         raise _StageFailed("provider_became_unavailable")
     outcome = connection.execute_prompt(subject, prompt, handle, timeout, max_tokens=MODEL_MAX_TOKENS,
-                                        scratch=scratch, run_id=run_id)
+                                        scratch=scratch, run_id=run_id, execution_nonce=execution_nonce)
     if outcome.kind == probe.PROBE_CANCELLED:
         raise probe.ProbeCancelled()
     if outcome.kind != probe.PROBE_OK:
@@ -419,16 +419,21 @@ def _call(subject, prompt: str, handle, timeout: float, scratch: Path, run_id: s
 SCRATCH_ATTEMPTS = 5
 
 
-def _create_eval_scratch() -> tuple[str, Path]:
+def _create_eval_scratch() -> tuple[str, Path, str]:
     """Mint a run id and its Scratch folder. Another process can hold the same serial
     (the run-id counter is per process), so a folder that already exists just moves on
     to the next id instead of failing the evaluation.
     No project run start sweeps the evaluation Scratch root, so each evaluation sweeps it."""
+    from uuid import uuid4
+    from modules.flow_gate.db import ai_run_identity
     probe._cleanup_retained_scratches(SCOPE)
     for _ in range(SCRATCH_ATTEMPTS):
         run_id = probe._next_run_id()
         try:
-            return run_id, probe._create_scratch(SCOPE, run_id)
+            execution_nonce = str(uuid4())
+            ai_run_identity.claim({"run_id": run_id, "execution_nonce": execution_nonce,
+                                   "project_id": SCOPE, "group_id": "", "started_at": now_iso()})
+            return run_id, probe._create_scratch(SCOPE, run_id, execution_nonce), execution_nonce
         except FileExistsError:
             logger.warning("AI evaluation scratch %s already exists; trying the next id", run_id)
         except Exception as exc:
@@ -438,11 +443,11 @@ def _create_eval_scratch() -> tuple[str, Path]:
 
 def _worker(evaluation_id: str, state: dict) -> None:
     handle, target, judge = state["handle"], state["target"], state["judge"]
-    stage, scratch, run_id = "pending", None, None
+    stage, scratch, run_id, execution_nonce = "pending", None, None, None
     try:
         if handle.cancelled:
             return
-        run_id, scratch = _create_eval_scratch()
+        run_id, scratch, execution_nonce = _create_eval_scratch()
         root = _eval_dir_name(evaluation_id)
         workspace = scratch / root
         workspace.mkdir()
@@ -453,7 +458,7 @@ def _worker(evaluation_id: str, state: dict) -> None:
             return
         fixed = state.get("set")
         task = _parse_task(_call(judge, _prepare_prompt(state["language"], root, fixed), handle,
-                                 PREPARE_TIMEOUT_SEC, scratch, run_id), fixed=bool(fixed))
+                                 PREPARE_TIMEOUT_SEC, scratch, run_id, execution_nonce), fixed=bool(fixed))
         if fixed:
             # An evaluation set fixes the task; the judge only adds files and the standard.
             task["instruction"] = fixed["instruction"]
@@ -468,7 +473,7 @@ def _worker(evaluation_id: str, state: dict) -> None:
                         task_summary=task["summary"], task_instruction=task["instruction"]):
             return
         report = _call(target, _target_prompt(task, target.exec_type, root), handle,
-                       TARGET_TIMEOUT_SEC, scratch, run_id)
+                       TARGET_TIMEOUT_SEC, scratch, run_id, execution_nonce)
         if target.exec_type == "api":
             # An API connection has no file tools: its answer is its work product.
             document_write_ports.write_gate("paths", [workspace / OUTPUT_DIR / "RESPONSE.md"], lambda: (workspace / OUTPUT_DIR / "RESPONSE.md").write_text(report, encoding="utf-8"))
@@ -483,7 +488,7 @@ def _worker(evaluation_id: str, state: dict) -> None:
         # 6-9. The judge reviews, scores each criterion and writes the review.
         review = _parse_review(_call(judge, _review_prompt(task, report, workspace, root, artifacts,
                                                            judge.exec_type, state["language"]),
-                                     handle, REVIEW_TIMEOUT_SEC, scratch, run_id))
+                                     handle, REVIEW_TIMEOUT_SEC, scratch, run_id, execution_nonce))
         total = round(sum(item["score"] for item in review["scores"]) / len(review["scores"]))
         # 10. Persist as history.
         if repo.complete(evaluation_id, total_score=total, review_summary=review["review"],
@@ -504,7 +509,7 @@ def _worker(evaluation_id: str, state: dict) -> None:
         if scratch is not None:
             # Kept as the evaluation's work-product reference; the standard retention sweep
             # removes it once the retention window has passed.
-            probe._mark_scratch_completed(SCOPE, run_id, scratch, now_iso())
+            probe._mark_scratch_completed(SCOPE, run_id, scratch, now_iso(), execution_nonce)
 
 
 # ── Judge / target contracts ─────────────────────────────────────────────────────

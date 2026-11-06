@@ -55,6 +55,34 @@ import config  # noqa: E402,F401 — its import-time env export happens at colle
 
 pytestmark = pytest.mark.usefixtures("legacy_cards")
 
+@pytest.fixture(autouse=True)
+def document_write_port_0138(monkeypatch):
+    # This older harness seeds documents before its app lifespan. Register the
+    # current real write gate explicitly; do not depend on earlier test modules.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import write_gate
+    monkeypatch.setitem(card_document_ports._handlers, card_document_ports.DOCUMENT_WRITE_GATE, write_gate.dispatch)
+    # These old helpers load prior instruction/result fixture documents, not an
+    # agent's authorized card edit. Keep the real gate on the product path.
+    import test_fg_card_settings_review as review_harness
+    import sys
+    from modules.flow_gate.db import documents
+    real_update = documents.update
+    def seed_update(doc_id, updates):
+        if (set(updates) <= {"file_path", "doc_review_status"}
+                and updates.get("file_path") == f"docs/{doc_id}.md"):
+            return documents._update_document(doc_id, updates)
+        return real_update(doc_id, updates)
+    def seed_call(function):
+        def call(*args, **kwargs):
+            with monkeypatch.context() as m:
+                m.setattr(documents, "update", seed_update)
+                return function(*args, **kwargs)
+        return call
+    monkeypatch.setattr(review_harness, "_write_written", seed_call(review_harness._write_written))
+    monkeypatch.setattr(sys.modules[__name__], "_result", seed_call(_result))
+
+
 RETRY_RUN = "air_card_work_retry"
 # product-path AI run ids (the admission's own form, ``runtime._RUN_ID_RE``)
 FAILED_AI_RUN, RETRY_AI_RUN = "aiv_20261103_900001", "aiv_20261103_900002"
@@ -225,18 +253,24 @@ def _admit(monkeypatch, job, run_id):
 
     def start_run(**kw):
         exec_id, group_id, project_id = kw["graph_exec_id"], kw["group_id"], kw["project_id"]
+        from uuid import uuid4
+        from modules.flow_gate.db import ai_run_identity
+        started_at = admission.now_iso()
+        execution_nonce = str(uuid4())
+        ai_run_identity.initialize(scratch_roots=[], all_issuers_stopped=True)
+        ai_run_identity.claim({"run_id": run_id, "execution_nonce": execution_nonce,
+                               "project_id": project_id, "group_id": group_id, "started_at": started_at})
         baseline = max([int(d.get("seq") or 0) for d in db_docs.get_documents_by_group_id(group_id)] or [0])
         attempt_id = graph_execution_hooks.call("admit", exec_id, run_id, group_id, kw.get("graph_attempt_id"))
         root = admission._require_group_worktree(project_id, kw["module"], group_id, "main",
                                                  action_scope=kw["action_scope"], graph_exec_id=exec_id)
-        scratch = svc._create_scratch(project_id, run_id)
+        scratch = svc._create_scratch(project_id, run_id, execution_nonce)
         issue = kw["issue_builder"](ai_run_id=run_id)
-        started_at = admission.now_iso()
         restart = kw.get("node_restart_max_attempts")
         made.append({
             "graph_exec_id": exec_id, "graph_attempt_id": attempt_id,
             "invocation_origin": dict(kw["invocation_origin"]) if kw.get("invocation_origin") else None,
-            "run_id": run_id, "status": "running", "mode": "single", "project_id": project_id, "module": kw["module"],
+            "run_id": run_id, "execution_nonce": execution_nonce, "status": "running", "mode": "single", "project_id": project_id, "module": kw["module"],
             "group_id": group_id, "doc_ref": kw["doc_ref"], "action_scope": kw["action_scope"],
             "issued_to": kw["issued_to"], "docs_target": 1, "chain_id": run_id, "chain_docs_target": 1,
             "chain_docs_reached": 0, "chain_docs_accounted": False, "baseline_seq": baseline, "timeout_sec": 3600,
@@ -295,7 +329,7 @@ def _ai_failed(env, monkeypatch, *, run_id=FAILED_AI_RUN, work=None, stdout=STDO
 def _stale_copy(run):
     """The same AI run's end told again later by another holder (a second finalizer, a recovery): the durable facts of
     ``run`` and its old lease token, none of this process' in-memory terminal marks."""
-    keep = ("graph_exec_id", "graph_attempt_id", "invocation_origin", "run_id", "mode", "project_id", "module", "group_id",
+    keep = ("graph_exec_id", "graph_attempt_id", "invocation_origin", "run_id", "execution_nonce", "mode", "project_id", "module", "group_id",
             "doc_ref", "action_scope", "issued_to", "docs_target", "chain_id", "chain_docs_target", "baseline_seq",
             "timeout_sec", "provider", "provider_id", "requested_provider_id", "attempt_no", "started_at", "started_mono",
             "end_reason", "exit_code", "stdout_tail", "stderr_tail", "outcome", "docs_reached", "scratch_dir",

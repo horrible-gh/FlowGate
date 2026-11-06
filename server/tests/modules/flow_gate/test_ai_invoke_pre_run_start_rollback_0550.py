@@ -5,6 +5,13 @@ import pytest
 from fastapi import HTTPException
 
 from modules.flow_gate.services import ai_invoke_service as svc
+from tests.integration.ai_run_identity.test_ai_run_identity_0138 import identity_db
+
+
+@pytest.fixture(autouse=True)
+def execution_store(identity_db):
+    # Real ownership claims are now part of admission, including failure paths.
+    return identity_db
 
 
 def _kwargs():
@@ -188,7 +195,7 @@ def _real_admission_stub(monkeypatch):
     monkeypatch.setattr(admission.db_group_ai_leases, "release", release)
     monkeypatch.setattr(admission.token_service, "revoke",
                         lambda token_id, reason=None: revokes.append((token_id, reason)))
-    ids = iter(["aiv_first", "aiv_retry", "aiv_third"])
+    ids = iter(["aiv_20261106_000101", "aiv_20261106_000102", "aiv_third"])
     monkeypatch.setattr(admission._svc(), "_next_run_id", lambda: next(ids))
     kwargs = {**_kwargs(), "action_scope": "review",
               "issue_builder": lambda **k: None}
@@ -217,7 +224,7 @@ def test_real_admission_failure_releases_only_own_lease_and_allows_retry(monkeyp
     with pytest.raises(expected):
         admission.start_run(**kwargs)
     assert leases["row"] is None
-    assert any(run_id == "aiv_first" for run_id, _ in releases)
+    assert any(run_id == "aiv_20261106_000101" for run_id, _ in releases)
     if failure == "mention_builder":
         assert [token for token, _ in revokes] == ["tok_owned"]
     else:
@@ -273,3 +280,30 @@ def test_api_maps_storage_unsafe_to_safe_code(monkeypatch):
     assert payload["code"] == "token_scratch_storage_unsafe"
     assert "private" not in payload["message"]
     assert "C:/" not in payload["message"]
+
+
+@pytest.mark.parametrize("scope", ["ordinary", "graph", "project"])
+def test_allocator_failure_precedes_admission_resources_0138(monkeypatch, scope):
+    from modules.flow_gate.db import ai_run_identity
+    admission, _, _, _, _, kwargs = _real_admission_stub(monkeypatch)
+    monkeypatch.setattr(admission._svc(), "_next_run_id", ai_run_identity.allocate)
+    monkeypatch.setattr(admission._svc(), "_require_group_worktree", lambda *a, **k: None)
+    monkeypatch.setattr(admission._svc(), "_ensure_initial_source_sync", lambda *a, **k: None)
+    if scope == "graph":
+        kwargs["graph_exec_id"] = "graph-isolated-0138"
+        from modules.flow_gate.services import graph_execution_hooks
+        def graph_boundary(action, *args, **kw):
+            assert action == "admission", "Graph resource created before allocation"
+            return args[0]()
+        monkeypatch.setattr(graph_execution_hooks, "_handler", graph_boundary)
+    if scope == "project":
+        monkeypatch.setattr(admission, "_is_project_scoped_run", lambda *a, **k: True)
+    def forbidden(*a, **k):
+        pytest.fail("resource created before committed allocation")
+    kwargs["issue_builder"] = forbidden
+    monkeypatch.setattr(admission.db_group_ai_leases, "acquire", forbidden)
+    monkeypatch.setattr(admission._svc(), "_create_scratch", forbidden)
+    monkeypatch.setattr(admission, "_register_run", forbidden)
+    ai_run_identity.get_store()._execute("UPDATE ai_run_id_contract SET version = 0")
+    with pytest.raises(RuntimeError, match="cutover_required"):
+        admission.start_run(**kwargs)

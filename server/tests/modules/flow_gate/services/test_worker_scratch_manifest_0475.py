@@ -8,6 +8,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from tests.integration.ai_run_identity.scratch_contract_fixture import (
+    identity_db, scratch_identity, nonce as _nonce, owned_nonce as _owned_nonce,
+)
 
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -33,7 +36,7 @@ def _root(monkeypatch, tmp_path, project="project-0475"):
 def _new(monkeypatch, tmp_path, serial=1):
     _root(monkeypatch, tmp_path)
     run_id = f"aiv_20260828_{serial:06d}"
-    return run_id, svc._create_scratch("project-0475", run_id)
+    return run_id, svc._create_scratch("project-0475", run_id, execution_nonce=_owned_nonce("project-0475", run_id))
 
 
 def _manifest(path):
@@ -53,7 +56,7 @@ def test_create_scratch_has_atomic_manifest_and_owned_subdirs(monkeypatch, tmp_p
     assert not (scratch / (svc.SCRATCH_MANIFEST_NAME + ".tmp")).exists()
     assert manifest == {
         "schema": 1, "owner": "flowgate.ai-invoke", "project_id": "project-0475",
-        "run_id": run_id, "scratch_path": str(scratch.resolve()),
+        "run_id": run_id, "execution_nonce": _nonce("project-0475", run_id), "scratch_path": str(scratch.resolve()),
         "created_at": manifest["created_at"], "completed_at": None,
         "policy": {"retention_source": "system_settings", "delete_on_complete": True},
     }
@@ -66,7 +69,7 @@ def test_create_rejects_path_injection(monkeypatch, tmp_path):
     _root(monkeypatch, tmp_path)
     for value in ("../escape", "aiv_20260828_000001/escape", "C:\\escape"):
         with pytest.raises(ValueError):
-            svc._create_scratch("project-0475", value)
+            svc._create_scratch("project-0475", value, execution_nonce=_nonce("project-0475", value))
 
 
 def test_cli_env_is_fully_run_owned(monkeypatch, tmp_path):
@@ -152,15 +155,15 @@ def test_delete_requires_exact_manifest_identity(monkeypatch, tmp_path, mutation
         (scratch / svc.SCRATCH_MANIFEST_NAME).write_text(json.dumps(data), encoding="utf-8")
     called = []
     monkeypatch.setattr(svc.shutil, "rmtree", lambda *_a, **_k: called.append(True))
-    deleted, _ = svc._delete_owned_scratch("project-0475", run_id, scratch)
+    deleted, _ = svc._delete_owned_scratch("project-0475", run_id, scratch, execution_nonce=_nonce("project-0475", run_id))
     assert not deleted and not called and scratch.exists()
 
 
 def test_valid_success_delete_and_idempotent_absent(monkeypatch, tmp_path):
     run_id, scratch = _new(monkeypatch, tmp_path)
-    assert svc._delete_owned_scratch("project-0475", run_id, scratch)[0]
+    assert svc._delete_owned_scratch("project-0475", run_id, scratch, execution_nonce=_nonce("project-0475", run_id))[0]
     assert not scratch.exists()
-    assert not svc._delete_owned_scratch("project-0475", run_id, scratch)[0]
+    assert not svc._delete_owned_scratch("project-0475", run_id, scratch, execution_nonce=_nonce("project-0475", run_id))[0]
 
 
 def test_sweep_seven_day_boundary_and_legacy_preservation(monkeypatch, tmp_path):
@@ -185,10 +188,10 @@ def test_sweep_rechecks_identity_before_delete(monkeypatch, tmp_path):
     run_id, scratch = _new(monkeypatch, tmp_path)
     _complete(scratch, datetime.now(timezone.utc) - timedelta(days=8))
     original = svc._delete_owned_scratch
-    def corrupt_then_delete(project_id, candidate_run_id, candidate):
+    def corrupt_then_delete(project_id, candidate_run_id, candidate, execution_nonce=None):
         data = _manifest(candidate); data["run_id"] = "aiv_20260828_999999"
         (candidate / svc.SCRATCH_MANIFEST_NAME).write_text(json.dumps(data), encoding="utf-8")
-        return original(project_id, candidate_run_id, candidate)
+        return original(project_id, candidate_run_id, candidate, execution_nonce)
     monkeypatch.setattr(svc, "_delete_owned_scratch", corrupt_then_delete)
     svc._cleanup_retained_scratches("project-0475")
     assert scratch.exists()
@@ -198,7 +201,7 @@ def test_symlink_candidate_never_deletes_external_sentinel(monkeypatch, tmp_path
     root = _root(monkeypatch, tmp_path); root.mkdir(parents=True)
     external = tmp_path / "external"; external.mkdir(); sentinel = external / "keep"; sentinel.write_text("safe")
     candidate = root / "aiv_20260828_000099"
-    forged = svc._manifest_for("project-0475", candidate.name, external)
+    forged = svc._manifest_for("project-0475", candidate.name, external, _nonce("project-0475", candidate.name))
     forged["scratch_path"] = str(external.resolve())
     forged["completed_at"] = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
     (external / svc.SCRATCH_MANIFEST_NAME).write_text(json.dumps(forged), encoding="utf-8")
@@ -224,7 +227,7 @@ def test_delete_exception_and_partial_failure_are_retained(monkeypatch, tmp_path
     run_id, scratch = _new(monkeypatch, tmp_path)
     monkeypatch.setattr("modules.flow_gate.storage.filesystem.remove_managed_tree",
                         lambda *_a, **_k: (_ for _ in ()).throw(OSError("secret")))
-    assert svc._delete_owned_scratch("project-0475", run_id, scratch) == (False, "delete_failed")
+    assert svc._delete_owned_scratch("project-0475", run_id, scratch, execution_nonce=_nonce("project-0475", run_id)) == (False, "delete_failed")
     assert scratch.exists()
 
 

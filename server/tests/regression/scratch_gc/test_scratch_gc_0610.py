@@ -9,6 +9,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from tests.integration.ai_run_identity.scratch_contract_fixture import (
+    identity_db, scratch_identity, nonce as _nonce, owned_nonce as _owned_nonce, record_nonce,
+)
 
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -58,6 +61,7 @@ def _row(run_id, *, project=PROJECT, finished=None, end_reason="orphaned_by_rest
         "started_at": run_day.isoformat(),
         "finished_at": (finished or run_day + timedelta(hours=1)).isoformat(),
         "end_reason": end_reason,
+        "execution_nonce": record_nonce(project, run_id),
     }
 
 
@@ -71,7 +75,7 @@ def _legacy(root, run_id=OLD):
 
 
 def _crash(run_id, created):
-    child = svc._create_scratch(PROJECT, run_id)
+    child = svc._create_scratch(PROJECT, run_id, execution_nonce=_owned_nonce(PROJECT, run_id))
     manifest_path = child / svc.SCRATCH_MANIFEST_NAME
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["created_at"] = created.isoformat()
@@ -187,11 +191,11 @@ def test_startup_bootstrap_sweeps_legacy_crash_and_retained_without_new_admissio
     crash = _crash(run_id, started)
     rows[run_id] = _row(run_id, finished=now - timedelta(days=8))
     retained_id = f"aiv_{started:%Y%m%d}_000107"
-    retained = svc._create_scratch(PROJECT, retained_id)
-    svc._mark_scratch_completed(PROJECT, retained_id, retained, (now - timedelta(days=8)).isoformat())
+    retained = svc._create_scratch(PROJECT, retained_id, execution_nonce=_owned_nonce(PROJECT, retained_id))
+    svc._mark_scratch_completed(PROJECT, retained_id, retained, (now - timedelta(days=8)).isoformat(), execution_nonce=_nonce(PROJECT, retained_id))
     young_id = f"aiv_{started:%Y%m%d}_000108"
-    young = svc._create_scratch(PROJECT, young_id)
-    svc._mark_scratch_completed(PROJECT, young_id, young, (now - timedelta(days=6)).isoformat())
+    young = svc._create_scratch(PROJECT, young_id, execution_nonce=_owned_nonce(PROJECT, young_id))
+    svc._mark_scratch_completed(PROJECT, young_id, young, (now - timedelta(days=6)).isoformat(), execution_nonce=_nonce(PROJECT, young_id))
     for hook in ("configure_console_encoding", "record_deployment", "preload_singletons",
                  "recover_git_sessions", "encrypt_ai_provider_keys"):
         monkeypatch.setattr(startup, hook, lambda: None)

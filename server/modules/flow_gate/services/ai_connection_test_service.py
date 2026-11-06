@@ -202,7 +202,8 @@ def start(project_id: str, provider_id: str, created_by: str | None) -> dict:
 
 
 def execute_prompt(subject: ConnectionSubject, prompt: str, handle: probe.ProbeHandle, timeout: float, *,
-                   max_tokens: int = 100, scratch=None, run_id: str | None = None) -> probe.ProbeOutcome:
+                   max_tokens: int = 100, scratch=None, run_id: str | None = None,
+                   execution_nonce: str | None = None) -> probe.ProbeOutcome:
     """One prompt on the shared ai_invoke transports; no socket or process is opened here.
     `scratch`/`run_id` let a caller (AI Evaluation) run a CLI inside its own managed scratch."""
     if subject.exec_type == "api":
@@ -213,7 +214,8 @@ def execute_prompt(subject: ConnectionSubject, prompt: str, handle: probe.ProbeH
     if subject.exec_type == "cli":
         return provider_cli.probe_cli_completion(
             project_id=subject.project_id, kind=subject.kind, command=subject.cli_command,
-            prompt=prompt, timeout=timeout, handle=handle, scratch=scratch, run_id=run_id)
+            prompt=prompt, timeout=timeout, handle=handle, scratch=scratch, run_id=run_id,
+            execution_nonce=execution_nonce)
     return probe.ProbeOutcome(probe.PROBE_LAUNCH_FAILED)
 
 

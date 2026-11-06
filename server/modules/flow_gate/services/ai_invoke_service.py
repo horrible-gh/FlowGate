@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from .ai_invoke.runtime import admission_run_id
+from .ai_invoke.runtime import admission_run_id, admission_identity
 
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.services import token_service
@@ -40,6 +40,13 @@ def _rollback_partial_group_admission(kwargs: dict, active_before: dict | None,
     """
     if not expected_run_id or active_before is not None or kwargs.get("action_scope") == "resolve_base_dirty":
         return
+    execution = admission_identity.get()
+    if execution:
+        from modules.flow_gate.db import ai_run_identity
+        try:
+            ai_run_identity.assert_owner(execution)
+        except Exception:
+            return
     group_id = str(kwargs.get("group_id") or "")
     if not group_id:
         return
@@ -97,6 +104,40 @@ def _rollback_partial_group_admission(kwargs: dict, active_before: dict | None,
         )
 
 
+def _rollback_owned_admission_context(run):
+    if not run:
+        return
+    from .ai_invoke import runtime
+    from modules.flow_gate.db import ai_run_identity, project_ai_leases
+    from pathlib import Path
+    try:
+        ai_run_identity.assert_owner(run)
+        with _facade._runs_lock:
+            if run["run_id"] in _facade._runs:
+                return
+    except Exception:
+        _facade.logger.warning("ai-invoke admission rollback ownership unconfirmed run_id=%s", run.get("run_id"))
+        return
+    actions = []
+    if run.get("token_id"):
+        actions.append(("token", lambda: token_service.revoke(run["token_id"], reason="ai_invoke_admission_rollback")))
+    if run.get("scratch_dir"):
+        actions.append(("scratch", lambda: runtime._delete_owned_scratch(
+            run["project_id"], run["run_id"], Path(run["scratch_dir"]), run["execution_nonce"])))
+    if run.get("action_scope") == "resolve_base_dirty":
+        actions.append(("project_lease", lambda: project_ai_leases.release(run["project_id"], run["run_id"])))
+    elif not run.get("graph_exec_id"):
+        actions.append(("group_lease", lambda: db_group_ai_leases.release(
+            run["group_id"], run["run_id"], reason="admission_rollback")))
+    for stage, action in actions:
+        try:
+            result = action()
+            if stage == "scratch" and not result[0]:
+                raise RuntimeError("scratch retained")
+        except Exception:
+            _facade.logger.warning("ai-invoke admission rollback incomplete run_id=%s stage=%s", run.get("run_id"), stage)
+
+
 def start_run(*args, **kwargs):
     """Compatibility entry point with a fail-closed partial-admission rollback.
 
@@ -121,8 +162,12 @@ def start_run(*args, **kwargs):
             active_before = None
 
     identity_token = admission_run_id.set(None)
+    execution_token = admission_identity.set(None)
+    admitted = False
     try:
-        return _admission_start_run(**kwargs)
+        result = _admission_start_run(**kwargs)
+        admitted = True
+        return result
     except (HTTPException, LookupError, ValueError):
         raise
     except Exception as exc:
@@ -147,4 +192,7 @@ def start_run(*args, **kwargs):
             },
         ) from exc
     finally:
+        if not admitted:
+            _rollback_owned_admission_context(admission_identity.get())
+        admission_identity.reset(execution_token)
         admission_run_id.reset(identity_token)

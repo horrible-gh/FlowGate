@@ -9,6 +9,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from tests.integration.ai_run_identity.scratch_contract_fixture import (
+    identity_db, scratch_identity, nonce as _nonce, owned_nonce as _owned_nonce,
+)
 
 import startup
 from modules.flow_gate.db import ai_invoke_runs as db_runs
@@ -110,11 +113,12 @@ def _run_all_and_wait():
 def _run_row(run_id, finished):
     started = datetime.strptime(run_id[4:12], "%Y%m%d").replace(tzinfo=timezone.utc)
     return {"run_id": run_id, "project_id": PROJECT, "status": "finished",
-            "started_at": started.isoformat(), "finished_at": finished.isoformat()}
+            "started_at": started.isoformat(), "finished_at": finished.isoformat(),
+            "execution_nonce": _nonce(PROJECT, run_id) if run_id != "aiv_20260822_000461" else None}
 
 
 def _run(run_id, completed_at, *, legacy_policy=False):
-    path = ai._create_scratch(PROJECT, run_id)
+    path = ai._create_scratch(PROJECT, run_id, execution_nonce=_owned_nonce(PROJECT, run_id))
     data_path = path / ai.SCRATCH_MANIFEST_NAME
     data = json.loads(data_path.read_text(encoding="utf-8"))
     data["completed_at"] = completed_at.isoformat() if completed_at else None

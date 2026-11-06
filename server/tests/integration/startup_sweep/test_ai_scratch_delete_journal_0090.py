@@ -7,6 +7,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from tests.integration.ai_run_identity.scratch_contract_fixture import (
+    identity_db, scratch_identity, nonce as _nonce, owned_nonce as _owned_nonce,
+)
 
 from tests.integration.startup_sweep.test_token_scratch_delete_journal_0090 import owned, PROJECT
 from modules.flow_gate.services import ai_invoke_service as svc
@@ -35,7 +38,7 @@ def ai_owned(owned, monkeypatch, tmp_path):
 
 def _new(serial=1):
     run_id = f"aiv_20260828_{serial:06d}"
-    path = runtime._create_scratch(PROJECT, run_id)
+    path = runtime._create_scratch(PROJECT, run_id, execution_nonce=_owned_nonce(PROJECT, run_id))
     manifest_path = path / runtime.SCRATCH_MANIFEST_NAME
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest.update(created_at=CREATED, completed_at=COMPLETED)
@@ -67,11 +70,11 @@ def test_owned_delete_uses_global_journal_and_excludes_completion(ai_owned, monk
         assert record["manifest"]["created_at"] == CREATED
         assert record["completed_at"] == COMPLETED
         assert record["eligibility"]["project_storage_root"] == str(project_storage)
-        assert not runtime._mark_scratch_completed(PROJECT, run_id, path, CREATED)
+        assert not runtime._mark_scratch_completed(PROJECT, run_id, path, CREATED, execution_nonce=_nonce(PROJECT, run_id))
         return real_remove(target, root)
 
     monkeypatch.setattr(storage_fs, "remove_managed_tree", observe)
-    assert runtime._delete_owned_scratch(PROJECT, run_id, path) == (True, "deleted")
+    assert runtime._delete_owned_scratch(PROJECT, run_id, path, execution_nonce=_nonce(PROJECT, run_id)) == (True, "deleted")
     assert len(records) == 1 and records[0]["owner"] == "ai-run"
     assert not path.exists() and not _journal(storage, run_id).exists()
     assert not (project_storage / ".flowgate-gc").exists()
@@ -89,7 +92,7 @@ def test_pending_precedes_missing_manifest_and_rechecks_retention_and_owners(ai_
         raise PermissionError(13, "injected")
 
     monkeypatch.setattr(storage_fs, "remove_managed_tree", partial)
-    assert runtime._delete_owned_scratch(PROJECT, run_id, path) == (False, "delete_failed")
+    assert runtime._delete_owned_scratch(PROJECT, run_id, path, execution_nonce=_nonce(PROJECT, run_id)) == (False, "delete_failed")
     assert path.is_dir() and _journal(storage, run_id).is_file()
     monkeypatch.setattr(storage_fs, "remove_managed_tree", real_remove)
     monkeypatch.setattr(runtime, "_validate_scratch_manifest",
@@ -156,41 +159,16 @@ def test_legacy_resume_keeps_predelete_eligible_time(ai_owned, monkeypatch):
     assert not path.exists() and not _journal(storage, run_id).exists()
 
 
-def test_create_and_complete_when_global_journal_is_unavailable(ai_owned, monkeypatch, caplog):
+def test_create_and_complete_fail_closed_when_global_journal_is_unavailable(ai_owned):
     storage, _, _, _, _ = ai_owned
-    # A repository marker makes the real common journal guard reject G.
+    run_id, path = _new(5)
+    before = (path / runtime.SCRATCH_MANIFEST_NAME).read_bytes()
     (storage / ".git").mkdir()
-    run_id = "aiv_20261023_000005"
-    with pytest.raises(storage_fs.DeleteJournalError) as unavailable:
-        with storage_fs.journal_file_lock("ai-run", PROJECT, run_id):
-            pytest.fail("G must be unavailable")
-    assert unavailable.value.code == "journal_in_repository"
-    path = runtime._create_scratch(PROJECT, run_id)
-    assert path.is_dir() and not (storage / ".flowgate-gc").exists()
-    with pytest.raises(FileExistsError):
-        runtime._create_scratch(PROJECT, run_id)
-    assert runtime._mark_scratch_completed(PROJECT, run_id, path, COMPLETED)
-    assert json.loads((path / runtime.SCRATCH_MANIFEST_NAME).read_text(encoding="utf-8"))["completed_at"] == COMPLETED
-    assert not (storage / ".flowgate-gc").exists()
-    # An unavailable rollback journal must preserve the original creation error.
-    original = OSError("original creation error")
-    monkeypatch.setattr(runtime, "_atomic_write_manifest", lambda *_a: (_ for _ in ()).throw(original))
-    monkeypatch.setattr(storage_fs, "remove_managed_tree", lambda *_a: pytest.fail("delete before journal"))
-    with pytest.raises(OSError) as caught:
-        runtime._create_scratch(PROJECT, "aiv_20261023_000006")
-    assert caught.value is original
-    # Completion failures use a distinct, safe event even when G is unavailable.
-    caplog.clear()
-    real_replace = Path.replace
-    def fail_update(candidate, target):
-        if candidate.name.endswith(".update"):
-            raise PermissionError(13, "SECRET_SENTINEL")
-        return real_replace(candidate, target)
-    monkeypatch.setattr(Path, "replace", fail_update)
-    assert not runtime._mark_scratch_completed(PROJECT, run_id, path, CREATED)
-    message = "\n".join(record.getMessage() for record in caplog.records)
-    assert "ai scratch completion update failed:" in message
-    assert "ai scratch delete failed:" not in message and "SECRET_SENTINEL" not in message
+    with pytest.raises(storage_fs.DeleteJournalError):
+        runtime._create_scratch(PROJECT, "aiv_20261023_000006",
+                                _owned_nonce(PROJECT, "aiv_20261023_000006"))
+    assert not runtime._mark_scratch_completed(PROJECT, run_id, path, CREATED, _nonce(PROJECT, run_id))
+    assert (path / runtime.SCRATCH_MANIFEST_NAME).read_bytes() == before
 
 
 def test_rollback_keeps_creation_exception_and_delays_resume(ai_owned, monkeypatch):
@@ -201,7 +179,7 @@ def test_rollback_keeps_creation_exception_and_delays_resume(ai_owned, monkeypat
     real_remove = storage_fs.remove_managed_tree
     monkeypatch.setattr(storage_fs, "remove_managed_tree", lambda *_a: (_ for _ in ()).throw(PermissionError(13, "injected")))
     with pytest.raises(OSError) as caught:
-        runtime._create_scratch(PROJECT, run_id)
+        runtime._create_scratch(PROJECT, run_id, execution_nonce=_owned_nonce(PROJECT, run_id))
     assert caught.value is original
     record = json.loads(_journal(storage, run_id).read_text(encoding="utf-8"))
     assert record["kind"] == "rollback" and record["planned"]["id"] == run_id
@@ -212,7 +190,7 @@ def test_rollback_keeps_creation_exception_and_delays_resume(ai_owned, monkeypat
     runtime._cleanup_retained_scratches(PROJECT)
     assert path.exists() and _journal(storage, run_id).exists()
     with pytest.raises(ValueError, match="pending delete"):
-        runtime._create_scratch(PROJECT, run_id)
+        runtime._create_scratch(PROJECT, run_id, execution_nonce=_owned_nonce(PROJECT, run_id))
     with monkeypatch.context() as m:
         m.setattr(scratch_retention, "effective_retention", lambda: timedelta(0))
         rows[run_id] = {"status": "running"}

@@ -47,6 +47,8 @@ from modules.flow_gate.api.v1 import ai_invoke_routes  # noqa: E402
 from modules.flow_gate.db import group_ai_leases as db_leases  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
 from modules.flow_gate.services import mutation_policy as policy  # noqa: E402
+from tests.integration.ai_run_identity.test_ai_run_identity_0138 import identity_db
+from modules.flow_gate.db import ai_run_identity
 
 GROUP = "flowgate.default.0401"
 OTHER_GROUP = "flowgate.default.9999"
@@ -108,7 +110,7 @@ def fake_runs(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def clean_state():
+def clean_state(identity_db):
     db_leases._memory.clear()
     with svc._runs_lock:
         svc._runs.clear()
@@ -366,59 +368,59 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d")
 
 
-def test_next_run_id_floors_against_finished_runs_and_open_leases(fake_runs):
-    date_str = _today()
-    fake_runs.rows[f"aiv_{date_str}_000005"] = {"run_id": f"aiv_{date_str}_000005"}
-    _seed_lease(group_id=OTHER_GROUP, run_id=f"aiv_{date_str}_000009")
-    minted = svc._next_run_id()
-    assert minted == f"aiv_{date_str}_000010"
+@pytest.mark.parametrize("table,column,serial", [
+    ("ai_invoke_runs", "run_id", 5), ("group_ai_leases", "run_id", 9),
+    ("project_ai_leases", "run_id", 11), ("tokens", "ai_run_id", 13),
+    ("ai_evaluations", "scratch_ref", 7),
+])
+def test_next_run_id_seeds_every_legacy_source(identity_db, monkeypatch, table, column, serial):
+    _, store = identity_db
+    original = store._fetch_all
+    def inventory(sql, params=None):
+        if sql == f"SELECT {column} AS run_id FROM {table}":
+            return [{"run_id": f"aiv_{_today()}_{serial:06d}"}]
+        return original(sql, params)
+    monkeypatch.setattr(store, "_fetch_all", inventory)
+    ai_run_identity.initialize(scratch_roots=[], all_issuers_stopped=True)
+    assert svc._next_run_id() == f"aiv_{_today()}_{serial + 1:06d}"
 
 
-def test_next_run_id_floors_against_evaluation_scratch_refs(fake_runs, monkeypatch):
-    """AI evaluations take their Scratch folder from this counter but leave no run row or
-    lease behind; after a restart the first evaluation used to get a serial whose folder
-    already existed and failed at once."""
-    from modules.flow_gate.db import ai_evaluations as db_evaluations
-
-    date_str = _today()
-    fake_runs.rows[f"aiv_{date_str}_000001"] = {"run_id": f"aiv_{date_str}_000001"}
-    monkeypatch.setattr(db_evaluations, "max_serial_for_date", lambda d: 7 if d == date_str else 0)
-    assert svc._next_run_id() == f"aiv_{date_str}_000008"
-
-
-def test_next_run_id_keeps_other_floors_when_one_lookup_fails(fake_runs, monkeypatch):
-    from modules.flow_gate.db import ai_evaluations as db_evaluations
-
-    def _boom(_date_str):
+def test_next_run_id_refuses_incomplete_seed_inventory(identity_db, monkeypatch):
+    _, store = identity_db
+    store._execute("UPDATE ai_run_id_contract SET version = 0")
+    def unavailable(*_a, **_k):
         raise RuntimeError("db down")
+    monkeypatch.setattr(store, "_fetch_all", unavailable)
+    with pytest.raises(RuntimeError, match="db down"):
+        ai_run_identity.initialize(scratch_roots=[], all_issuers_stopped=True)
+    with pytest.raises(RuntimeError, match="cutover_required"):
+        svc._next_run_id()
 
-    date_str = _today()
-    fake_runs.rows[f"aiv_{date_str}_000005"] = {"run_id": f"aiv_{date_str}_000005"}
-    monkeypatch.setattr(db_evaluations, "max_serial_for_date", _boom)
-    assert svc._next_run_id() == f"aiv_{date_str}_000006"
 
-
-def test_evaluation_scratch_skips_a_folder_that_already_exists(monkeypatch):
+def test_evaluation_scratch_skips_a_folder_that_already_exists(monkeypatch, identity_db):
     from modules.flow_gate.services import ai_evaluation_service as evaluation
 
     ids = iter(["aiv_20261001_000001", "aiv_20261001_000002"])
     monkeypatch.setattr(evaluation.probe, "_next_run_id", lambda: next(ids))
 
-    def _create(_project_id, run_id):
+    def _create(_project_id, run_id, execution_nonce):
         if run_id.endswith("000001"):
             raise FileExistsError(run_id)
         return Path("/scratch") / run_id
 
     monkeypatch.setattr(evaluation.probe, "_create_scratch", _create)
-    assert evaluation._create_eval_scratch() == ("aiv_20261001_000002", Path("/scratch/aiv_20261001_000002"))
+    result = evaluation._create_eval_scratch()
+    assert result[:2] == ("aiv_20261001_000002", Path("/scratch/aiv_20261001_000002"))
+    assert result[2]
 
 
-def test_evaluation_scratch_failure_has_its_own_reason(monkeypatch):
+def test_evaluation_scratch_failure_has_its_own_reason(monkeypatch, identity_db):
     from modules.flow_gate.services import ai_evaluation_service as evaluation
 
-    monkeypatch.setattr(evaluation.probe, "_next_run_id", lambda: "aiv_20261001_000001")
+    ids = iter(f"aiv_20261001_{n:06d}" for n in range(1, 6))
+    monkeypatch.setattr(evaluation.probe, "_next_run_id", lambda: next(ids))
 
-    def _create(_project_id, run_id):
+    def _create(_project_id, run_id, execution_nonce):
         raise FileExistsError(run_id)
 
     monkeypatch.setattr(evaluation.probe, "_create_scratch", _create)
@@ -427,26 +429,20 @@ def test_evaluation_scratch_failure_has_its_own_reason(monkeypatch):
     assert caught.value.reason_code == "scratch_unavailable"
 
 
-def test_next_run_id_does_not_reflor_within_the_same_process(fake_runs):
-    date_str = _today()
-    fake_runs.rows[f"aiv_{date_str}_000005"] = {"run_id": f"aiv_{date_str}_000005"}
+def test_next_run_id_continues_after_local_counter_reset(identity_db):
     first = svc._next_run_id()
-    # A new row appears afterwards (another process finalizing) -- this process already
-    # floored today and must not re-query, so its next id is simply first+1.
-    fake_runs.rows[f"aiv_{date_str}_000099"] = {"run_id": f"aiv_{date_str}_000099"}
+    svc._run_counter = 0
+    svc._run_counter_floor_date = None
     second = svc._next_run_id()
     assert int(second.rsplit("_", 1)[-1]) == int(first.rsplit("_", 1)[-1]) + 1
 
 
-def test_next_run_id_falls_back_to_the_bare_counter_on_lookup_failure(monkeypatch):
-    from modules.flow_gate.db import ai_invoke_runs as db_runs
-
-    def _boom(_date_str):
+def test_next_run_id_refuses_database_failure(monkeypatch):
+    def unavailable():
         raise RuntimeError("db down")
-
-    monkeypatch.setattr(db_runs, "max_serial_for_date", _boom)
-    run_id = svc._next_run_id()  # must not raise
-    assert run_id.startswith(f"aiv_{_today()}_")
+    monkeypatch.setattr(ai_run_identity, "get_store", unavailable)
+    with pytest.raises(RuntimeError, match="db down"):
+        svc._next_run_id()
 
 
 def test_acquire_raises_run_id_collision_when_another_group_holds_that_run_id():

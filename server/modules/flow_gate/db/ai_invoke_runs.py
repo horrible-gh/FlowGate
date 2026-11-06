@@ -347,7 +347,8 @@ def upsert(row: dict[str, Any]) -> None:
     store = get_store()
     links = tuple(col for col in _LINK_COLUMNS
                   if row.get(col) is not None and store.column_exists("ai_invoke_runs", col))
-    bound = (*_BOUND_COLUMNS, *links)
+    bound = (*_BOUND_COLUMNS, *links, "execution_nonce")
+    values["execution_nonce"] = row.get("execution_nonce")
     values.update({col: row[col] for col in links})
     if isinstance(row.get("remote_job"), dict) and store.column_exists("ai_invoke_runs", _REMOTE_JOB_COLUMN):
         bound = (*bound, _REMOTE_JOB_COLUMN)
@@ -364,11 +365,31 @@ def upsert(row: dict[str, Any]) -> None:
     update_clause = ", ".join(
         f"{col} = excluded.{col}" for col in bound if col not in ("run_id", "created_at")
     )
-    store._execute(
-        f"INSERT INTO ai_invoke_runs ({columns_sql}) VALUES ({placeholders_sql}) "
-        f"ON CONFLICT(run_id) DO UPDATE SET {update_clause}",
-        ordered_values,
-    )
+    from . import ai_run_identity as identity
+    with store.transaction():
+        if row.get("execution_nonce"):
+            identity.assert_owner(row, store=store)
+        elif store._fetch_one("SELECT run_id FROM ai_run_owners WHERE run_id = ?", [row["run_id"]]):
+            raise identity.RunIdentityConflict()
+        inserted = store.insert_isolated(
+            f"INSERT INTO ai_invoke_runs ({columns_sql}) VALUES ({placeholders_sql})",
+            ordered_values, "ai_run_record_insert")
+        if not inserted:
+            # Legacy rows are readable, but no caller may adopt or overwrite them.
+            if not row.get("execution_nonce"):
+                raise identity.RunIdentityConflict()
+            mutable = tuple(c for c in bound if c not in (
+                "run_id", "created_at", *identity.IDENTITY_FIELDS))
+            guard = ("run_id", *identity.IDENTITY_FIELDS)
+            affected = store._execute_affected(
+                "UPDATE ai_invoke_runs SET " + ", ".join(f"{c} = ?" for c in mutable)
+                + " WHERE " + " AND ".join(f"{c} = ?" for c in guard),
+                [values[c] for c in mutable] + [values[c] for c in guard])
+            if affected != 1:
+                # MySQL may report zero for an identical, valid retry.
+                existing = store._fetch_one("SELECT * FROM ai_invoke_runs WHERE run_id = ?", [row["run_id"]])
+                if affected != 0 or existing is None or any(existing.get(c) != values[c] for c in (*guard, *mutable)):
+                    raise identity.RunIdentityConflict()
 
 
 def max_serial_for_date(date_str: str) -> int:

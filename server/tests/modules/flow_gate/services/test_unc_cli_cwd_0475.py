@@ -10,6 +10,9 @@ import uuid
 from pathlib import Path
 
 import pytest
+from tests.integration.ai_run_identity.scratch_contract_fixture import (
+    identity_db, scratch_identity, nonce as _nonce, owned_nonce as _owned_nonce,
+)
 
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -39,12 +42,12 @@ def _decision(caplog):
     return json.loads(record.getMessage().split("decision ", 1)[1])
 
 
-def test_windows_unc_cli_uses_managed_scratch_and_safe_observation(monkeypatch, caplog):
+def test_windows_unc_cli_uses_managed_scratch_and_safe_observation(monkeypatch, caplog, tmp_path):
     run_id = "aiv_20260828_999998"
-    managed_base = Path.home() / ".flowgate-test-managed-0475" / run_id
+    managed_base = tmp_path / "managed-0475" / run_id
     monkeypatch.setattr(svc.db_projects, "get_by_id", lambda _project_id: {"project_name": "p0475"})
     monkeypatch.setattr(svc.storage_paths, "get_storage_root", lambda *_a, **_kw: managed_base)
-    scratch = svc._create_scratch("project-0475", run_id)
+    scratch = svc._create_scratch("project-0475", run_id, execution_nonce=_owned_nonce("project-0475", run_id))
     unc = r"\\server\share with space\한글"
     real_is_dir = Path.is_dir
     monkeypatch.setattr(Path, "is_dir", lambda self: True if str(self) == unc else real_is_dir(self))
