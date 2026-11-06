@@ -88,6 +88,8 @@ export function toFlowRun(raw: unknown): FlowRun | null {
     ...(run.viewer && typeof run.viewer === 'object' && typeof (run.viewer as Raw).can_approve === 'boolean'
       ? { viewerCanApprove: (run.viewer as Raw).can_approve as boolean }
       : {}),
+    // flowgate.v02.0143 T#1 (W1): an automatic Q&A responder answers now — kept only when sent.
+    ...(typeof run.qa_responding === 'boolean' ? { qaResponding: run.qa_responding } : {}),
   }
 }
 

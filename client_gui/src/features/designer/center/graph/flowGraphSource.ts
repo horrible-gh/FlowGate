@@ -139,6 +139,11 @@ export interface FlowRunInfo {
    * (`viewer.can_approve`). Absent = not told (an older server, a run the Canvas read alone tells): no [승인].
    */
   readonly viewerCanApprove?: boolean
+  /**
+   * flowgate.v02.0143 T#1 (W1): the server's `qa_responding` — an automatic Q&A responder answers a question of the idle
+   * run's card now (designerTop `runCommandHold`). Absent = not told (an older server, a sample source): never held.
+   */
+  readonly qaResponding?: boolean
 }
 
 /**

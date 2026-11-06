@@ -628,6 +628,8 @@ export interface FlowCanvasRun {
   requestedExecutionCount?: number
   executionLimit?: number | null
   pendingPropagationCount?: number
+  /** flowgate.v02.0143 T#1 (W1): the same read's `qa_responding` (FlowRun's), absent when not sent. */
+  qaResponding?: boolean
   pendingNodeKeys?: string[]
 }
 
@@ -826,6 +828,11 @@ export interface FlowRun {
    * route's own judgement). Absent when not sent (an older server): no [승인].
    */
   viewerCanApprove?: boolean
+  /**
+   * flowgate.v02.0143 T#1 (W1): an automatic Q&A responder answers a question of the idle run's card now (`qa_responding`,
+   * the server's word; the header holds 다음 단계 / 전체 실행 on it). Absent when not sent (an older server).
+   */
+  qaResponding?: boolean
 }
 
 /**

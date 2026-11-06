@@ -41,6 +41,27 @@ export interface DesignerSessionSnapshot {
    * meanwhile; the next restore takes them over the fields above. An absent active Flow / panel tab is the user's.
    */
   pending?: DesignerSessionPending
+  /**
+   * flowgate.v02.0143 T#1: the run result watches of the open Flows (runResultWatch `persisted`) and the results already
+   * shown in each, so an F5 watches the same command again and never shows a shown result again. Absent when none; an
+   * entry that does not read is left out alone (the rest of the snapshot stays).
+   */
+  runWatches?: DesignerSessionRunWatch[]
+  runSeen?: DesignerSessionRunSeen[]
+}
+
+/** flowgate.v02.0143 T#1: one watched command — its Flow, run, start sequence once known and the run's event before it. */
+export interface DesignerSessionRunWatch {
+  flowId: string
+  runId: string | null
+  commandSeq: number | null
+  afterSeq: number
+}
+
+/** flowgate.v02.0143 T#1: the results shown in a Flow (`runId`, `commandSeq`, `endSeq` keys), the latest few. */
+export interface DesignerSessionRunSeen {
+  flowId: string
+  keys: string[]
 }
 
 export interface DesignerSessionPending {
@@ -110,7 +131,39 @@ export function parseDesignerSession(raw: string | null): DesignerSessionSnapsho
     if (!pending) return null
     snapshot.pending = pending
   }
+  const runWatches = toRunWatches(value.runWatches)
+  if (runWatches.length > 0) snapshot.runWatches = runWatches
+  const runSeen = toRunSeen(value.runSeen)
+  if (runSeen.length > 0) snapshot.runSeen = runSeen
   return snapshot
+}
+
+const isWholeOrNull = (value: unknown): value is number | null =>
+  value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 0)
+
+/** flowgate.v02.0143 T#1: the watches that read; one that does not is left out alone. */
+function toRunWatches(value: unknown): DesignerSessionRunWatch[] {
+  if (!Array.isArray(value)) return []
+  const watches: DesignerSessionRunWatch[] = []
+  for (const entry of value) {
+    if (!isRecord(entry) || !isText(entry.flowId) || (entry.runId !== null && !isText(entry.runId))) continue
+    if (!isWholeOrNull(entry.commandSeq) || !isWholeOrNull(entry.afterSeq) || entry.afterSeq === null) continue
+    if (entry.commandSeq !== null && entry.runId === null) continue
+    watches.push({ flowId: entry.flowId, runId: entry.runId, commandSeq: entry.commandSeq, afterSeq: entry.afterSeq })
+  }
+  return watches
+}
+
+/** flowgate.v02.0143 T#1: the shown results that read; one that does not is left out alone. */
+function toRunSeen(value: unknown): DesignerSessionRunSeen[] {
+  if (!Array.isArray(value)) return []
+  const seen: DesignerSessionRunSeen[] = []
+  for (const entry of value) {
+    if (!isRecord(entry) || !isText(entry.flowId) || !Array.isArray(entry.keys)) continue
+    const keys = entry.keys.filter(isText)
+    if (keys.length > 0) seen.push({ flowId: entry.flowId, keys })
+  }
+  return seen
 }
 
 function toPending(value: unknown): DesignerSessionPending | undefined {

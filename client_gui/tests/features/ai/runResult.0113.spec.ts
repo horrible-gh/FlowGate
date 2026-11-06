@@ -78,12 +78,24 @@ describe('when the 1st window opens', () => {
     expect(watch.state.resultOpen).toBe(true)
   })
 
-  it('a failed read and another Project drop the watch with no window', async () => {
+  // flowgate.v02.0143 T#1 (NR 0143.0003 §5-4, §7): a read refused for good (the command gone: 404, refused: 401 / 403)
+  // drops the watch with no window, and another Project (`clear`) drops every watch; a passing read failure no longer
+  // drops it (it is read again: runResultWatch.0143.spec.ts R3 / R3b).
+  it('a gone or refused read (404 / 403) and another Project drop the watch with no window', async () => {
+    for (const status of [404, 403]) {
+      const watch = createRunResultWatch({ load: vi.fn(async () => { throw Object.assign(new Error('x'), { status }) }) })
+      watch.arm('f', null)
+      watch.observe('f', { runId: 'run_1', status: 'idle', lastEventSeq: 1 })
+      await flushPromises()
+      expect(watch.state.resultOpen).toBe(false)
+      expect(Object.keys(watch.pending)).toEqual([])
+    }
     const watch = createRunResultWatch({ load: vi.fn(async () => { throw new Error('x') }) })
     watch.arm('f', null)
     watch.observe('f', { runId: 'run_1', status: 'idle', lastEventSeq: 1 })
     await flushPromises()
     expect(watch.state.resultOpen).toBe(false)
+    expect(Object.keys(watch.pending)).toEqual(['f'])                       // a passing failure keeps it
     watch.arm('g', null)
     watch.clear()
     expect(Object.keys(watch.pending)).toEqual([])

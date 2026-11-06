@@ -189,6 +189,8 @@ function toRunBand(raw: Raw): Partial<FlowCanvasRun> {
     ...(Array.isArray(raw.pending_node_keys)
       ? { pendingNodeKeys: raw.pending_node_keys.filter((key: unknown): key is string => typeof key === 'string') }
       : {}),
+    // flowgate.v02.0143 T#1 (W1): the same read's automatic Q&A responder fact, kept only when sent.
+    ...(typeof raw.qa_responding === 'boolean' ? { qaResponding: raw.qa_responding } : {}),
   }
 }
 

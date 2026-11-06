@@ -313,6 +313,28 @@ export function runPhaseOf(status: string | null | undefined): DesignerRunPhase 
   return DESIGNER_RUN_PHASES.find((phase) => phase === status) ?? 'idle'
 }
 
+/** flowgate.v02.0143 T#1: what the run commands' hold reads of the open Flow's run (FlowRunInfo fits). */
+export interface DesignerRunHoldFacts {
+  readonly status: string
+  /** The server's `qa_responding`: an automatic Q&A responder answers a question of this run's card now (absent: not told). */
+  readonly qaResponding?: boolean
+}
+
+/**
+ * flowgate.v02.0143 T#1 (NR flowgate.v02.0143.0003 §4.2) — the server's Graph is idle (`needs_intervention`, …) while an
+ * automatic Q&A responder answers its card's question, and the card goes on by itself once answered: 다음 단계 / 전체 실행
+ * wait while that is so (`DesignerMenuTargets.runHold`). Only on the server's word (`qaResponding === true` on an idle
+ * run): an idle reason, a card's question mark or an older server (absent) never holds, so a person's wait stays open;
+ * a responder that ended, failed or handed its question to a person is told false by the next run read, which releases
+ * it at once. The phase stays the server's (`runPhaseOf`): no 일시정지 / 중지 is offered for a responder.
+ */
+export function runCommandHold(run: DesignerRunHoldFacts | null | undefined): boolean {
+  return run?.status === 'idle' && run.qaResponding === true
+}
+
+/** flowgate.v02.0143 T#1: the run commands an automatic Q&A responder's hold keeps waiting (Flow 검증 starts nothing). */
+const HELD_RUN_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopCommand>(['run.next', 'run.all'])
+
 /**
  * Screen state of the top band, owned by one DesignerShell like its layout. Never persisted, so every Designer —
  * a newly created Project's too — starts at the density 보통 (flowgate.v02.0059 0018-TR rev2).
@@ -445,6 +467,8 @@ export interface DesignerMenuTargets {
   runBusy?: boolean
   /** flowgate.v02.0061 TR0031 rev1: the open Flow's run status is not confirmed yet (every run command waits). */
   runUnknown?: boolean
+  /** flowgate.v02.0143 T#1: an automatic Q&A responder answers the open Flow's idle run (`runCommandHold`): 다음 단계 / 전체 실행 wait. */
+  runHold?: boolean
 }
 
 export const ALL_MENU_TARGETS: DesignerMenuTargets = Object.freeze({ project: true, group: true, flow: true })
@@ -497,7 +521,10 @@ export function isMenuCommandEnabled(
   if (cmd === 'edit.redo') return targets.canRedo !== false
   const minimum = arrangeSelectionMinimum(cmd)
   if (minimum !== null) return (targets.selectedCount ?? 0) >= minimum
-  if (cmd.startsWith('run.')) return targets.runBusy !== true && targets.runUnknown !== true && isRunCommandEnabled(cmd, runPhase)
+  if (cmd.startsWith('run.')) {
+    if (targets.runHold === true && HELD_RUN_COMMANDS.has(cmd)) return false             // flowgate.v02.0143 T#1
+    return targets.runBusy !== true && targets.runUnknown !== true && isRunCommandEnabled(cmd, runPhase)
+  }
   return true
 }
 

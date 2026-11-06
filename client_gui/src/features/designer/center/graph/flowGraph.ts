@@ -301,6 +301,8 @@ export interface FlowGraphRun {
   readonly executionLimit?: number | null
   readonly pendingPropagationCount?: number
   readonly pendingNodeKeys?: readonly string[]
+  /** flowgate.v02.0143 T#1 (W1): the same read's automatic Q&A responder fact (FlowRunInfo's), absent when not sent. */
+  readonly qaResponding?: boolean
 }
 
 /** flowgate.v02.0048 T#1: the selected Node with the Flow and project it belongs to (Center session -> Inspector). */
