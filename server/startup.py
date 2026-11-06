@@ -453,9 +453,28 @@ def recover_graph_time_machine():
         logger.warning(f"[startup] graph time machine recovery failed: {exc}")
 
 
+def check_runtime_dependencies():
+    """flowgate.v02.0137 T0004 §4-2/§4-3: make dependency drift and pool shortfall loud.
+
+    The pin check may raise ``runtime_checks.DependencyPinError`` — only when the operator
+    set FLOWGATE_DEPENDENCY_PIN_POLICY=fail and sqloader/psycopg2-binary is off-pin — and
+    that refusal is deliberately not swallowed. The pool/budget report never raises.
+    """
+    import runtime_checks
+
+    runtime_checks.check_dependency_pins(logger=logger)
+    try:
+        from config import DatabaseSetting, settings
+
+        runtime_checks.check_database_pool(settings, DatabaseSetting().db_instance, logger=logger)
+    except Exception as exc:
+        logger.warning(f"[startup] db pool check failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
+    check_runtime_dependencies()
     record_deployment()
     preload_singletons()
     recover_ai_invoke_leases()

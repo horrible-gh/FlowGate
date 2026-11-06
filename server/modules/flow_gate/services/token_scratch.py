@@ -486,6 +486,341 @@ def sweep_on_issue(project_id: str) -> threading.Thread | None:
     return thread
 
 
+# ── flowgate.v02.0137 T0004 §3 (A-2): copy unsubmitted drafts into the NEXT token's scratch ──
+# A worker may only submit `doc_path` files from its OWN token scratch (inbox
+# `validate_doc_path`). When a run changes token (review-loop stage switch, reissue) or a
+# follow-up run starts, the previous drafts sit in a directory the new token cannot submit
+# from. This copies them — never moves, never deletes the source — into
+# `<new token scratch>/carryover/<label>/`, where the new worker can read, edit and
+# resubmit them through the ordinary checks. Nothing is submitted on the worker's behalf.
+CARRYOVER_DIR = "carryover"
+CARRYOVER_MANIFEST = "CARRYOVER.json"
+CARRYOVER_SCHEMA = 1
+CARRYOVER_MAX_FILE_BYTES = 10 * 1024 * 1024
+CARRYOVER_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+CARRYOVER_MAX_FILES = 200
+CARRYOVER_MAX_DEPTH = 8
+_CARRYOVER_LABEL = re.compile(r"[^A-Za-z0-9_\-]")
+_CARRYOVER_SECRET_NAMES = re.compile(r"(?i)\A(\.env(\..*)?|.*\.(pem|key|pfx|p12)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?)\Z")
+_COPY_CHUNK = 1024 * 1024
+# TR0005 rev1 (T0004 §3-5): a file is refused on its CONTENT, not only on the raw tokens
+# this run handed out. A follow-up run's sources were written under an EARLIER run's token,
+# which the new run never saw. Two layers, no raw token stored anywhere new:
+#   * credential shapes — an Authorization/Bearer header value, a FLOWGATE_TOKEN=... line;
+#   * token-shaped strings (43 url-safe chars, secrets.token_urlsafe(32)) that the token
+#     table recognizes (hash lookup through the caller's `token_probe`), whatever their
+#     state — a spent token is still a credential in a file someone may share.
+_CREDENTIAL_PATTERNS = (
+    re.compile(rb"(?i)authorization[\"'\s]*[:=][\"'\s]*bearer\s+[A-Za-z0-9._~+/=\-]{8,}"),
+    re.compile(rb"(?i)\bbearer\s+[A-Za-z0-9_\-]{24,}"),
+    re.compile(rb"(?i)flowgate_token[\"'\s]*[:=][\"'\s]*[A-Za-z0-9_\-]{16,}"),
+)
+_TOKEN_SHAPE = re.compile(rb"(?<![A-Za-z0-9_\-])[A-Za-z0-9_\-]{43}(?![A-Za-z0-9_\-])")
+_TOKEN_PROBES_PER_FILE = 256
+_SCAN_OVERLAP = 512
+
+
+def _carryover_part_ok(part: str) -> bool:
+    return bool(part) and part not in (".", "..") and ":" not in part and "\\" not in part \
+        and "/" not in part and not part.endswith((" ", "."))
+
+
+def _carryover_candidates(source: dict, skipped: list[dict], top: Path | None = None,
+                          shown_prefix: str = ""):
+    """Yield `(relative_posix, path, size, mtime)` for one validated tree, depth-first, sorted.
+
+    Symlinks / reparse points (files and directories) are refused, as are names that
+    could re-resolve (`..`, ADS `:`, trailing dot/space) and anything deeper than
+    CARRYOVER_MAX_DEPTH. Top-level names in `exclude_top` and every FlowGate manifest are
+    infrastructure, not drafts.
+    """
+    top = Path(source["path"]) if top is None else top
+    exclude_top = set() if shown_prefix else {name.lower() for name in source.get("exclude_top") or ()}
+    for current, dirs, files in os.walk(top, topdown=True, followlinks=False):
+        here = Path(current)
+        rel_dir = here.relative_to(top)
+        depth = len(rel_dir.parts)
+        kept = []
+        for name in sorted(dirs):
+            rel = (rel_dir / name).as_posix()
+            if depth == 0 and name.lower() in exclude_top:
+                continue
+            if not _carryover_part_ok(name) or _unsafe_link(here / name):
+                skipped.append({"path": shown_prefix + rel, "reason": "unsafe_directory"})
+                continue
+            if depth + 1 >= CARRYOVER_MAX_DEPTH:
+                skipped.append({"path": shown_prefix + rel, "reason": "too_deep"})
+                continue
+            kept.append(name)
+        dirs[:] = kept
+        for name in sorted(files):
+            rel = (rel_dir / name).as_posix()
+            lowered = name.lower()
+            if depth == 0 and lowered in exclude_top:
+                continue
+            if lowered.startswith(".flowgate-") or lowered == CARRYOVER_MANIFEST.lower() \
+                    or lowered.endswith(".carry-tmp"):
+                continue
+            if _CARRYOVER_SECRET_NAMES.fullmatch(name):
+                skipped.append({"path": shown_prefix + rel, "reason": "secret_like_name"})
+                continue
+            path = here / name
+            if not _carryover_part_ok(name) or _unsafe_link(path):
+                skipped.append({"path": shown_prefix + rel, "reason": "unsafe_file"})
+                continue
+            try:
+                info = path.lstat()
+            except OSError:
+                skipped.append({"path": shown_prefix + rel, "reason": "unreadable"})
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                skipped.append({"path": shown_prefix + rel, "reason": "not_regular_file"})
+                continue
+            yield rel, path, int(info.st_size), float(info.st_mtime)
+
+
+def _relayed_carryovers(source: dict, skipped: list[dict]):
+    """TR0005 rev1: what an earlier carry-over left in a SOURCE token scratch, flattened.
+
+    A worker edits a carried draft where it was put (`carryover/<label>/<origin>/...`). The
+    next token must receive that newest content, but never `carryover/<l1>/<origin>/
+    carryover/<l2>/...` growth. So only folders the server itself wrote for THIS source
+    token (their CARRYOVER.json names it as target) are read, and each file is re-keyed to
+    `<origin>/<rest>` — the origin prefix it was first carried under. A file a worker put
+    straight into the label folder becomes `carried_<label>/<name>`. Yields
+    `(dest_relative, path, size, mtime, via)`.
+    """
+    root = Path(source["path"]) / CARRYOVER_DIR
+    if not root.exists():
+        return
+    if _unsafe_link(root) or not root.is_dir():
+        skipped.append({"path": CARRYOVER_DIR, "reason": "carryover_root_unsafe"})
+        return
+    for label_dir in sorted(root.iterdir(), key=lambda p: p.name):
+        name = label_dir.name
+        shown = f"{CARRYOVER_DIR}/{name}"
+        if not _carryover_part_ok(name) or _unsafe_link(label_dir) or not label_dir.is_dir():
+            skipped.append({"path": shown, "reason": "carryover_unverified"})
+            continue
+        manifest = label_dir / CARRYOVER_MANIFEST
+        try:
+            record = json.loads(manifest.read_text(encoding="utf-8")) \
+                if manifest.is_file() and not _unsafe_link(manifest) else None
+        except (OSError, ValueError):
+            record = None
+        if not isinstance(record, dict) or record.get("target_token_id") != source.get("id") \
+                or record.get("schema") != CARRYOVER_SCHEMA:
+            skipped.append({"path": shown, "reason": "carryover_unverified"})
+            continue
+        for rel, path, size, mtime in _carryover_candidates(source, skipped, top=label_dir,
+                                                           shown_prefix=shown + "/"):
+            parts = rel.split("/")
+            if len(parts) >= 2:
+                dest = "/".join(parts)
+            else:
+                dest = f"carried_{_CARRYOVER_LABEL.sub('_', name)[:120]}/{parts[0]}"
+            yield dest, path, size, mtime, shown
+
+
+def _scan_refusal(window: bytes, secrets: tuple[bytes, ...], token_probe, probed: set) -> str | None:
+    if any(secret in window for secret in secrets):
+        return "contains_token"
+    if any(pattern.search(window) for pattern in _CREDENTIAL_PATTERNS):
+        return "contains_credential"
+    if token_probe is not None:
+        for match in _TOKEN_SHAPE.finditer(window):
+            candidate = match.group(0)
+            if candidate in probed:
+                continue
+            if len(probed) >= _TOKEN_PROBES_PER_FILE:
+                return "secret_check_incomplete"
+            probed.add(candidate)
+            try:
+                if token_probe(candidate.decode("ascii")):
+                    return "contains_token"
+            except Exception:
+                return "secret_check_failed"
+    return None
+
+
+def _copy_one(src: Path, dst: Path, size_limit: int, secrets: tuple[bytes, ...],
+              token_probe=None) -> tuple[str, int, str | None]:
+    """Copy with a running sha256; `(sha256, bytes, refusal)` — refusal leaves no file."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    total = 0
+    tail = b""
+    keep = max([len(s) for s in secrets] + [_SCAN_OVERLAP])
+    probed: set = set()
+    tmp = dst.with_name(dst.name + ".carry-tmp")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    refusal = None
+    try:
+        with src.open("rb") as reader, tmp.open("xb") as writer:
+            while True:
+                chunk = reader.read(_COPY_CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > size_limit:
+                    refusal = "file_too_large"
+                    break
+                window = tail + chunk
+                refusal = _scan_refusal(window, secrets, token_probe, probed)
+                if refusal is not None:
+                    break
+                tail = window[-keep:]
+                digest.update(chunk)
+                writer.write(chunk)
+        if refusal is None:
+            os.replace(tmp, dst)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+    return digest.hexdigest(), total, refusal
+
+
+def carry_over(project_id: str, *, target_token_id: str, target_scratch: Path, label: str,
+               sources: list[dict], meta: dict | None = None,
+               secrets: tuple[str, ...] = (), token_probe=None) -> dict:
+    """Copy validated draft sources into `<target>/carryover/<label>/`. Never raises.
+
+    `sources`: `[{"kind", "id", "path", "exclude_top", "relay_carryover"}]`, each ALREADY
+    ownership-checked by the caller (token scratches are re-checked here against their own
+    manifest). The target must be this project's managed `tok_*` child with a valid
+    manifest. A label that already exists is left untouched (same hop asked twice).
+    Limits: per file CARRYOVER_MAX_FILE_BYTES, per carry CARRYOVER_MAX_TOTAL_BYTES /
+    CARRYOVER_MAX_FILES; anything refused is listed under `skipped` with its reason, both
+    in the returned summary and in CARRYOVER.json, and is logged at WARNING (paths and
+    reasons only). A file is refused when it contains one of the raw `secrets`, a
+    credential shape, or a string `token_probe` recognizes as a FlowGate token.
+
+    TR0005 rev1: a token source with `relay_carryover` also hands on what earlier
+    carry-overs put into it (`_relayed_carryovers`), flattened to `<origin>/<rest>`, so a
+    chain of reissues / failed runs keeps the newest draft without nesting. When two
+    candidates land on the same destination the newest file wins; the other is listed
+    as `superseded_by_newer`.
+    """
+    summary: dict = {"status": "skipped", "label": label, "files": [], "skipped": [],
+                     "bytes": 0}
+    try:
+        target = _checked_child(project_id, target_token_id, Path(target_scratch))
+        if target is None or _manifest(project_id, target_token_id, target) is None:
+            summary["reason"] = "target_scratch_unowned"
+            return summary
+        safe_label = _CARRYOVER_LABEL.sub("_", label)[:120] or "carry"
+        carry_root = target / CARRYOVER_DIR
+        if carry_root.exists() and (_unsafe_link(carry_root) or not carry_root.is_dir()):
+            summary["reason"] = "carryover_root_unsafe"
+            return summary
+        dest = carry_root / safe_label
+        if dest.exists():
+            summary.update(status="already_present", dest=str(dest))
+            return summary
+        usable = []
+        for source in sources:
+            path = Path(source["path"])
+            if source.get("kind") == "token_scratch":
+                if _manifest(project_id, str(source.get("id")), path) is None:
+                    summary["skipped"].append({"path": str(source.get("id")),
+                                               "reason": "source_unowned"})
+                    continue
+            if not path.is_dir() or _unsafe_link(path):
+                summary["skipped"].append({"path": str(source.get("id")), "reason": "source_missing"})
+                continue
+            if _same_path(path.resolve(strict=False), target):
+                continue  # the same token scratch: its files are already submittable
+            usable.append(source)
+        secret_bytes = tuple(s.encode("utf-8") for s in secrets if s)
+        # Gather first, then de-duplicate by destination (newest wins), then copy.
+        chosen: dict[str, dict] = {}
+        for source in usable:
+            prefix = _CARRYOVER_LABEL.sub("_", f"{source.get('kind')}_{source.get('id')}")[:120]
+            found = [(f"{prefix}/{rel}", path, size, mtime, None)
+                     for rel, path, size, mtime in _carryover_candidates(source, summary["skipped"])]
+            if source.get("kind") == "token_scratch" and source.get("relay_carryover"):
+                found.extend(_relayed_carryovers(source, summary["skipped"]))
+            for dest_rel, path, size, mtime, via in found:
+                entry = {"dest": dest_rel, "path": path, "size": size, "mtime": mtime,
+                         "via": via, "source_kind": source.get("kind"),
+                         "source_id": source.get("id")}
+                key = dest_rel.lower()
+                previous = chosen.get(key)
+                if previous is None:
+                    chosen[key] = entry
+                    continue
+                newer, older = (entry, previous) if mtime > previous["mtime"] else (previous, entry)
+                chosen[key] = newer
+                summary["skipped"].append({"path": older["dest"], "reason": "superseded_by_newer",
+                                           "via": older["via"] or older["source_id"]})
+        files: list[dict] = summary["files"]
+        total = 0
+        for key in sorted(chosen):
+            entry = chosen[key]
+            shown, path, size = entry["dest"], entry["path"], entry["size"]
+            if size > CARRYOVER_MAX_FILE_BYTES:
+                summary["skipped"].append({"path": shown, "bytes": size, "reason": "file_too_large"})
+                continue
+            if len(files) >= CARRYOVER_MAX_FILES:
+                summary["skipped"].append({"path": shown, "bytes": size, "reason": "file_count_limit"})
+                continue
+            if total + size > CARRYOVER_MAX_TOTAL_BYTES:
+                summary["skipped"].append({"path": shown, "bytes": size, "reason": "total_size_limit"})
+                continue
+            dst = dest.joinpath(*shown.split("/"))
+            try:
+                sha, copied, refusal = _copy_one(
+                    path, dst, min(CARRYOVER_MAX_FILE_BYTES, CARRYOVER_MAX_TOTAL_BYTES - total),
+                    secret_bytes, token_probe)
+            except OSError as exc:
+                summary["skipped"].append({"path": shown, "reason": f"copy_failed:{type(exc).__name__}"})
+                continue
+            if refusal is not None:
+                summary["skipped"].append({"path": shown, "bytes": size, "reason": refusal})
+                continue
+            total += copied
+            files.append({"path": shown, "bytes": copied, "sha256": sha,
+                          "source_kind": entry["source_kind"], "source_id": entry["source_id"],
+                          "origin": shown.split("/", 1)[0], "via": entry["via"]})
+        summary["bytes"] = total
+        summary["relayed"] = sum(1 for f in files if f.get("via"))
+        if not files and not dest.exists():
+            summary["status"] = "nothing_to_copy"
+        else:
+            dest.mkdir(parents=True, exist_ok=True)
+            record = {
+                "schema": CARRYOVER_SCHEMA,
+                "copied_at": datetime.now(timezone.utc).isoformat(),
+                "target_token_id": target_token_id,
+                "label": safe_label,
+                "sources": [{"kind": s.get("kind"), "id": s.get("id")} for s in usable],
+                "files": files,
+                "skipped": summary["skipped"],
+                "limits": {"file_bytes": CARRYOVER_MAX_FILE_BYTES,
+                           "total_bytes": CARRYOVER_MAX_TOTAL_BYTES,
+                           "files": CARRYOVER_MAX_FILES},
+                **(meta or {}),
+            }
+            manifest_tmp = dest / (CARRYOVER_MANIFEST + ".tmp")
+            with manifest_tmp.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump(record, handle, ensure_ascii=False, indent=1, sort_keys=True)
+            manifest_tmp.replace(dest / CARRYOVER_MANIFEST)
+            summary.update(status="copied" if files else "nothing_to_copy", dest=str(dest))
+    except Exception as exc:  # noqa: BLE001 — a carry-over is an aid, never a run failure
+        summary.update(status="failed", reason=type(exc).__name__)
+        _log.warning("token scratch carry-over failed: target=%s label=%s", target_token_id,
+                     label, exc_info=True)
+    if summary["skipped"]:
+        _log.warning("token scratch carry-over skipped entries: target=%s label=%s skipped=%s",
+                     target_token_id, label,
+                     json.dumps(summary["skipped"][:50], ensure_ascii=True, default=str))
+    return summary
+
+
 def startup_sweep() -> int:
     projects = db_projects.list_projects()
     for project in projects:

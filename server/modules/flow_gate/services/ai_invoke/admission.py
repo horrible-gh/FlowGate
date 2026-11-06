@@ -48,6 +48,7 @@ from modules.flow_gate.storage import paths as storage_paths
 # (`_provider_brief`, `_absolute_cap_sec`) now lives on their real owner -- `oracle`
 # (a pure formatter, §16) and `runtime` (the parameter block, §13) -- neither of which
 # admission's own callers create a path back through.
+from . import carryover
 from . import oracle
 from . import terminal
 from . import provider_api
@@ -1678,12 +1679,29 @@ def start_run(
                 "WorkPlan pre-instruction attachment is not valid for this step.",
                 source_doc_id=exc.source_doc_id,
             )
+    # flowgate.v02.0137 T0004 §3-4 (R3): a follow-up run on the same document after a run
+    # that left a retained scratch gets that run's drafts COPIED into its own token scratch
+    # (and a prompt note), after every ownership / time cross-check in carryover.py. Before
+    # the digest below, so the audit hash matches what the worker actually reads.
+    carryover_record = None
+    if not project_scoped and not graph_exec_id and mode == "single":
+        mention, carryover_record = carryover.carry_into_new_run(
+            project_id=project_id, group_id=group_id, doc_ref=doc_ref, issued_to=issued_to,
+            run_id=run_id, action_scope=action_scope, issue=issue, mention=mention,
+            run_live=_svc().is_run_live,
+        )
     _prompt_final_length, _prompt_final_sha256 = prompt_digest(mention)
 
+    oracle_scope = action_scope if scope_oracle_run else None
     if scope_oracle_run:
         # After issue() (the judge target comes from the token) but before the worker is
         # launched below, so the baseline cannot include the work this run is about to do.
-        completion_oracle = oracle._scope_oracle(action_scope, issue.get("token_id"), doc_ref)
+        # flowgate.v02.0137 T0004 §2-4: a review loop's first hop is judged by ITS stage's
+        # scope (review rows / document revision), which is the admission scope for every
+        # loop the UI starts today; the worker re-makes the judge at each later hop.
+        if document_review_loop is not None:
+            oracle_scope = oracle.loop_stage_oracle_scope(initial_stage, action_scope)
+        completion_oracle = oracle._scope_oracle(oracle_scope, issue.get("token_id"), doc_ref)
 
     # 0090 T0015 (NR0014 2.6): the retained-scratch sweep runs on its own thread; a
     # request -- or the bootstrap's Graph recovery replay -- never waits for a backlog.
@@ -1713,6 +1731,13 @@ def start_run(
     scratch = _svc()._create_scratch(project_id, run_id)
 
     doc = db_docs.get_by_id(doc_ref) or {}
+    # flowgate.v02.0137 TR0005 rev1 (0138 guard): bind this directory to its run's
+    # DB-unique token, document, group and requester, so a later run can prove a retained
+    # scratch is the one its row names before carrying anything out of it (carryover.py).
+    carryover.bind_run_scratch(
+        project_id, run_id, scratch, group_id=group_id, doc_ref=doc_ref, issued_to=issued_to,
+        token_id=(issue or {}).get("token_id"),
+    )
     # 0187 rev2: same group-worktree routing as the test runner — the invoked AI's
     # cwd and the pollution diff must watch the tree the group's CRUD writes to.
     source_root = graph_source_root if graph_exec_id else storage_paths.resolve_project_src_root(
@@ -1904,6 +1929,18 @@ def start_run(
         # which left `completion_oracle is not None` an unconditional retry block for every
         # scoped run. That is the fourth gate NR0003 §6-2 did not name.
         "scope_oracle_run": scope_oracle_run,
+        # flowgate.v02.0137 T0004 §2-4/§2-5: which judge the CURRENT hop is measured by and
+        # for which token it took its baseline. The worker re-makes the judge at each loop
+        # hop (oracle.refresh_hop_oracle) and finalize reads these to tell a hop-fresh
+        # verdict from a stale one before it lets a run scratch be deleted.
+        "oracle_scope": oracle_scope,
+        "oracle_hop_kind": (
+            initial_stage if document_review_loop is not None else hop_kind
+        ) if scope_oracle_run else None,
+        "oracle_token_id": issue.get("token_id") if scope_oracle_run else None,
+        # flowgate.v02.0137 T0004 §3-6: what was (or was not, and why) carried into this
+        # run's token scratch — counts and reasons only, never file contents.
+        "carryovers": [carryover_record] if carryover_record else [],
         "target_to_end": target_to_end,
         "continuation_instruction_mode": (
             continuation_instruction_mode if mode == "continuous" else None
