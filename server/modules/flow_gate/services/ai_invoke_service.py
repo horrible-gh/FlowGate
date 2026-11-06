@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from .ai_invoke.runtime import admission_run_id, admission_identity
+from .ai_invoke.runtime import admission_run_id, admission_identity, ScratchPathConflict
 
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.services import token_service
@@ -170,6 +170,29 @@ def start_run(*args, **kwargs):
         return result
     except (HTTPException, LookupError, ValueError):
         raise
+    except ScratchPathConflict as exc:
+        # flowgate.v02.0140 T0004 T#1-T#2: the run's scratch path is held by another execution.
+        # Nothing was registered as this run's scratch and no worker/provider exists; undo only
+        # what this admission acquired (the lease/token here, the owned context in finally) and
+        # answer a structured conflict the operator can act on by starting again (new run id).
+        _rollback_partial_group_admission(kwargs, active_before, admission_run_id.get())
+        _facade.logger.warning(
+            "ai-invoke start refused: scratch path conflict group_id=%s action_scope=%s run_id=%s "
+            "phase=%s errno=%s winerror=%s",
+            group_id, kwargs.get("action_scope"), exc.run_id, exc.phase, exc.os_errno, exc.os_winerror,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "message": "This run's scratch folder already exists for another run, so nothing was "
+                           "started. Start the run again.",
+                "phase": exc.phase,
+                "run_id": exc.run_id,
+                "retryable": True,
+            },
+        ) from exc
     except Exception as exc:
         _rollback_partial_group_admission(kwargs, active_before, admission_run_id.get())
         _facade.logger.exception(
@@ -179,7 +202,9 @@ def start_run(*args, **kwargs):
         )
         # The route already preserves HTTPException detail through its normal _err() path.
         # Keep the detail bounded and never include token/prompt/provider-secret material.
-        detail = str(exc).strip()
+        # 0140 T#1-4: an OS error's str() names the absolute server path; show errno/strerror only.
+        detail = (f"[Errno {exc.errno}] {exc.strerror}" if isinstance(exc, OSError) and exc.strerror
+                  else str(exc)).strip()
         if len(detail) > 300:
             detail = detail[:300] + "..."
         message = type(exc).__name__ + (f": {detail}" if detail else "")

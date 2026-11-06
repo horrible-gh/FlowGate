@@ -239,13 +239,18 @@ def move(a: dict, to_state: str, *, fail_cause: Optional[str] = None, verdict: O
     return store.read(a["attempt_id"], a["stage"], a["seq"]) or a
 
 
-def fail(a: dict, cause: str, ctx=None) -> dict:
-    """``a`` failed with ``cause`` (``stage_failed`` once, P-1 §7.1). DONE / FAILED rows stay as they are."""
+def fail(a: dict, cause: str, ctx=None, *, detail: Optional[dict] = None) -> dict:
+    """``a`` failed with ``cause`` (``stage_failed`` once, P-1 §7.1). DONE / FAILED rows stay as they are.
+    flowgate.v02.0140 T#1-3: ``detail`` — the safe detail of a refused start (``node_dispatch._start_failure_info``) —
+    is kept on the ``stage_failed`` event as ``fail_detail``."""
     if a["stage_state"] in (DONE, FAILED):
         return a
     moved = move(a, FAILED, fail_cause=cause)
     if moved.get("stage_state") == FAILED and moved.get("fail_cause") == cause:
-        _event(moved, EV_FAILED, cause, {**_assigned_keys(moved), "fail_cause": cause}, ctx)
+        extra = {**_assigned_keys(moved), "fail_cause": cause}
+        if isinstance(detail, dict) and detail:
+            extra["fail_detail"] = dict(detail)
+        _event(moved, EV_FAILED, cause, extra, ctx)
     return moved
 
 
@@ -1046,5 +1051,5 @@ def start_failed(job: dict) -> Optional[str]:
     if a is None or a["actor"] != AI:
         return None
     cause = job.get("start_failure") or START_FAILED
-    failed = fail(a, cause)
+    failed = fail(a, cause, detail=job.get("start_failure_info"))     # flowgate.v02.0140 T#1-3
     return "ai_unavailable:" + str(failed.get("fail_cause") or cause)

@@ -532,6 +532,12 @@ def events(run_id: str) -> list[dict]:
     return _all("SELECT * FROM graph_run_events WHERE run_id = ? ORDER BY event_seq", [run_id])
 
 
+def last_node_event(run_id: str, node_key: str) -> Optional[dict]:
+    """flowgate.v02.0140 T#1-3: the latest event of one node (a node state event; run events carry no node key)."""
+    return _one("SELECT * FROM graph_run_events WHERE run_id = ? AND node_key = ? ORDER BY event_seq DESC LIMIT 1",
+                [run_id, node_key])
+
+
 def insert_propagation(run_id: str, seq: int, node_key: str, outcome: str, status: str) -> None:
     """Q-W15 — after the event it points at."""
     now = utc_now_ms()

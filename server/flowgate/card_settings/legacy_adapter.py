@@ -796,6 +796,9 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
             return None
         if failure is not None:
             failure["cause"] = node_dispatch._start_failure(exc)
+            info = node_dispatch._start_failure_info(exc)      # flowgate.v02.0140 T#1-3: its safe detail too
+            if info:
+                failure["detail"] = info
         execution.start_failed(graph_exec_id, exc)
         _log.warning("card review loop start failed flow=%s doc=%s", flow_id, doc_id, exc_info=True)
         return None

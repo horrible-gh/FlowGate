@@ -71,6 +71,7 @@ binder's evidence) and, for an AI assignee, queues the AI start after the commit
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator, Optional
 
@@ -245,7 +246,11 @@ def start_ai(job: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         _log.warning("graph AI start failed run=%s node=%s: %s", job["run_id"], job["node_key"], exc)
         if not graph_execution_hooks.call("start_failed", job.get("graph_exec_id"), exc):
-            record_ai_failure({**job, "start_failure": _start_failure(exc)})
+            failure = {"start_failure": _start_failure(exc)}
+            info = _start_failure_info(exc)
+            if info:
+                failure["start_failure_info"] = info            # flowgate.v02.0140 T#1-3: kept by the failure record
+            record_ai_failure({**job, **failure})
 
 
 def _start_failure(exc: BaseException) -> str:
@@ -254,6 +259,40 @@ def _start_failure(exc: BaseException) -> str:
     detail = getattr(exc, "detail", None)
     code = detail.get("code") if isinstance(detail, dict) else getattr(exc, "code", None)
     return "start_refused:" + str(code) if isinstance(code, str) and code else "start_failed"
+
+
+# flowgate.v02.0140 T#1-3 / T#1-4: what a Graph failure keeps of an admission refusal besides its code — the safe
+# fields the admission answered (``scratch_path_conflict``: its message, ``phase`` ``scratch_create`` and ``retryable``).
+# A message that looks like it carries a server path, a credential or a stack is left out (the code still tells it).
+START_FAILURE_MESSAGE_MAX = 300
+_AI_RUN_ID = re.compile(r"\Aaiv_[0-9]{8}_[0-9]{6}\Z")
+_SHORT_CODE = re.compile(r"\A[A-Za-z0-9_.:\-]{1,64}\Z")
+_UNSAFE_MESSAGE = re.compile(r"[A-Za-z]:[\/]|\\|(?:^|[\s'\"(=])/\S|traceback|token|nonce|secret|password|"
+                             r"manifest|winerror", re.IGNORECASE)
+
+
+def _start_failure_info(exc: BaseException) -> Optional[dict]:
+    """The safe detail of an admission refusal (``code``, and when given ``message`` / ``phase`` / ``retryable`` /
+    ``run_id``); None for any other failure of the start (nothing is guessed)."""
+    detail = getattr(exc, "detail", None)
+    if not isinstance(detail, dict):
+        return None
+    code = detail.get("code")
+    if not isinstance(code, str) or not _SHORT_CODE.match(code):
+        return None
+    info: dict = {"code": code}
+    message = detail.get("message")
+    if isinstance(message, str) and message.strip() and not _UNSAFE_MESSAGE.search(message):
+        info["message"] = message.strip()[:START_FAILURE_MESSAGE_MAX]
+    phase = detail.get("phase")
+    if isinstance(phase, str) and _SHORT_CODE.match(phase):
+        info["phase"] = phase
+    if isinstance(detail.get("retryable"), bool):
+        info["retryable"] = detail["retryable"]
+    run_id = detail.get("run_id")
+    if isinstance(run_id, str) and _AI_RUN_ID.match(run_id):
+        info["run_id"] = run_id
+    return info
 
 
 def _instruction_job(job: dict) -> Optional[dict]:
@@ -565,9 +604,13 @@ def record_ai_failure(job: dict) -> None:
         run_store.set_dispatch(run["run_id"], job["node_key"], dispatch)
         if row.get("stage") == INSTRUCTION_STAGE:              # T#2: a person's result binds, not the stage's
             run_store.mark_result_floor(run["run_id"], job["node_key"])
+        # flowgate.v02.0140 T#1-3: the refusal's safe detail rides the node's ``dispatch_failed`` event (stored in the
+        # run event log, read back by the node wire: ``run_apply.start_failure_of``) and its SSE payload
+        info = job.get("start_failure_info")
+        event_dispatch = {**dispatch, run_apply.START_FAILURE_KEY: dict(info)} if isinstance(info, dict) else dispatch
         ctx = run_apply.load_context(run, job.get("project_id"), None, jobs)
         run_apply.emit_node_state(ctx, job["node_key"], "open", "open", "dispatch_failed",
-                                  row.get("result_doc_id"), dispatch)
+                                  row.get("result_doc_id"), event_dispatch)
         run_apply.settle_run(ctx)                             # 0061 T#2: nothing else works -> idle (error)
 
     try:

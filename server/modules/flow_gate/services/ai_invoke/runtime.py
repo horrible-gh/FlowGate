@@ -805,6 +805,29 @@ def _manifest_for(project_id: str, run_id: str, scratch: Path, execution_nonce: 
     }
 
 
+class ScratchPathConflict(FileExistsError):
+    """flowgate.v02.0140 T0004 T#1: this run's scratch directory already exists.
+
+    The exclusive ``mkdir`` refused a path some other execution created (a retained folder
+    of a run that held the same id, or a concurrent creator). Nothing of that folder is
+    touched, adopted or renamed; the start fails with this one domain code instead of an
+    opaque internal error. It stays a ``FileExistsError`` so callers that already move on
+    to a whole new id (the AI evaluation's bounded retry) keep working unchanged.
+
+    The message carries no path: the original OS error is chained as ``__cause__`` for the
+    server log, and only the run id, phase and errno/winerror are kept as attributes.
+    """
+
+    code = "scratch_path_conflict"
+    phase = "scratch_create"
+
+    def __init__(self, run_id: str, *, os_errno=None, os_winerror=None):
+        super().__init__(17, self.code)  # errno.EEXIST; strerror is the code, never a path
+        self.run_id = str(run_id) if _RUN_ID_RE.fullmatch(str(run_id)) else "<invalid>"
+        self.os_errno = os_errno
+        self.os_winerror = os_winerror
+
+
 def _create_scratch(project_id: str, run_id: str, execution_nonce: str | None = None) -> Path:
     if not _RUN_ID_RE.fullmatch(str(run_id)):
         raise ValueError("invalid ai-invoke run id")
@@ -819,7 +842,17 @@ def _create_scratch(project_id: str, run_id: str, execution_nonce: str | None = 
         if storage_fs.journal_exists("ai-run", project_id, run_id):
             raise ValueError("ai-invoke scratch has a pending delete record")
         created_at = datetime.now(timezone.utc).isoformat()
-        scratch.mkdir(exist_ok=False)
+        try:
+            scratch.mkdir(exist_ok=False)
+        except FileExistsError as exc:
+            # 0140 T#1: never exist_ok/reuse/rename/suffix. The existing folder belongs to
+            # someone else; this run did not create it and must not register or clean it.
+            conflict = ScratchPathConflict(run_id, os_errno=getattr(exc, "errno", None),
+                                           os_winerror=getattr(exc, "winerror", None))
+            logger.warning("ai-invoke scratch path conflict: run_id=%s phase=%s errno=%s winerror=%s",
+                           conflict.run_id, conflict.phase, conflict.os_errno, conflict.os_winerror)
+            _safe_scratch_log(project_id, run_id, scratch, "conflict", "path_exists")
+            raise conflict from exc
         identity = None
         try:
             identity = storage_fs.path_identity(scratch)
