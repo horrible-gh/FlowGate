@@ -2270,7 +2270,7 @@ def start_run(
             # (§10.1 "CAS 승자만 admission 대신 cleanup한다").
             raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
         try:
-            commit_outcome = db_source_access.commit(issued_to, issue["token_id"], now_iso())
+            commit_outcome = db_source_access.commit(issued_to, run["project_id"], run["group_id"], issue["token_id"], now_iso())
         except Exception:
             # Admission itself hits the failure here, so admission itself claims ABORT
             # and runs cleanup (unlike the two races above, where the worker got there

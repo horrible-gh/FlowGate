@@ -1,6 +1,6 @@
 """CRUD for the user_chat_source_access table (group 0515, DB0008).
 
-One row per user, holding the per-user source-editing mode
+One row per (user, project, group), holding the group source-editing mode
 (``read_only``/``edit``/``edit_once``) and the ``edit_once`` one-shot claim marker
 (DB0008 §2.1). The absence of a row is itself the answer "this user has never
 chosen" -- it means ``read_only`` (D0006 §2.2, L0007 §2.1.1) -- so nothing here
@@ -23,17 +23,17 @@ SOURCE_ACCESS_DOMAIN = ("read_only", "edit", "edit_once")
 SOURCE_ACCESS_DEFAULT = "read_only"
 
 _SELECT = (
-    "SELECT user_id, source_access_mode, one_shot_token_id, one_shot_claimed_at, "
-    "created_at, updated_at FROM user_chat_source_access WHERE user_id = ?"
+    "SELECT user_id, project_id, group_id, source_access_mode, one_shot_token_id, one_shot_claimed_at, "
+    "created_at, updated_at FROM user_chat_source_access WHERE user_id = ? AND project_id = ? AND group_id = ?"
 )
 
 
-def get(user_id: str) -> Optional[dict]:
+def get(user_id: str, project_id: str, group_id: str) -> Optional[dict]:
     """Return this user's stored row, or None when they have never saved (DB0008 §4.1)."""
-    return get_store()._fetch_one(_SELECT, [user_id])
+    return get_store()._fetch_one(_SELECT, [user_id, project_id, group_id])
 
 
-def resolve_source_access_mode(user_id: str) -> str:
+def resolve_source_access_mode(user_id: str, project_id: str, group_id: str) -> str:
     """Resolve persisted mode fail-closed (DB0008 §4.1, L0007 §2.1.1).
 
     A missing row and any value outside :data:`SOURCE_ACCESS_DOMAIN` both mean
@@ -41,12 +41,12 @@ def resolve_source_access_mode(user_id: str) -> str:
     and CH-token issuance share this resolver, so a corrupted stored value cannot be
     exposed by one path or granted by another.
     """
-    row = get(user_id)
+    row = get(user_id, project_id, group_id)
     mode = row.get("source_access_mode") if row else None
     return mode if mode in SOURCE_ACCESS_DOMAIN else SOURCE_ACCESS_DEFAULT
 
 
-def upsert(user_id: str, mode: str, updated_at: str) -> None:
+def upsert(user_id: str, project_id: str, group_id: str, mode: str, updated_at: str) -> None:
     """Save the user's explicit choice (DB0008 §4.5, L0007 §2.2.3).
 
     The marker pair is unconditionally set to NULL on every call -- not merely left
@@ -60,19 +60,19 @@ def upsert(user_id: str, mode: str, updated_at: str) -> None:
     """
     get_store()._execute(
         "INSERT INTO user_chat_source_access "
-        "(user_id, source_access_mode, one_shot_token_id, one_shot_claimed_at, "
+        "(user_id, project_id, group_id, source_access_mode, one_shot_token_id, one_shot_claimed_at, "
         "created_at, updated_at) "
-        "VALUES (?, ?, NULL, NULL, ?, ?) "
-        "ON CONFLICT (user_id) DO UPDATE SET "
+        "VALUES (?, ?, ?, ?, NULL, NULL, ?, ?) "
+        "ON CONFLICT (user_id, project_id, group_id) DO UPDATE SET "
         "source_access_mode = excluded.source_access_mode, "
         "one_shot_token_id = NULL, "
         "one_shot_claimed_at = NULL, "
         "updated_at = excluded.updated_at",
-        [user_id, mode, updated_at, updated_at],
+        [user_id, project_id, group_id, mode, updated_at, updated_at],
     )
 
 
-def claim(user_id: str, token_id: str, claimed_at: str, updated_at: str) -> dict:
+def claim(user_id: str, project_id: str, group_id: str, token_id: str, claimed_at: str, updated_at: str) -> dict:
     """AVAILABLE -> CLAIMED (DB0008 §4.2, L0007 §2.4.1). One guarded UPDATE, CAS.
 
     Returns ``{"source_access": "read_write"|"read", "one_shot_claimed": bool}`` --
@@ -84,16 +84,16 @@ def claim(user_id: str, token_id: str, claimed_at: str, updated_at: str) -> dict
         "one_shot_token_id = ?, "
         "one_shot_claimed_at = ?, "
         "updated_at = ? "
-        "WHERE user_id = ? "
+        "WHERE user_id = ? AND project_id = ? AND group_id = ? "
         "AND source_access_mode = 'edit_once' "
         "AND one_shot_token_id IS NULL",
-        [token_id, claimed_at, updated_at, user_id],
+        [token_id, claimed_at, updated_at, user_id, project_id, group_id],
     )
     won = affected == 1
     return {"source_access": "read_write" if won else "read", "one_shot_claimed": won}
 
 
-def commit(user_id: str, token_id: str, updated_at: str) -> str:
+def commit(user_id: str, project_id: str, group_id: str, token_id: str, updated_at: str) -> str:
     """CLAIMED -> CONSUMED (DB0008 §4.3, L0007 §2.4.2). Marker-only; mode stays read_only.
 
     Returns ``"COMMITTED"`` (this call cleared the marker) or ``"ALREADY_CLEARED"``
@@ -104,8 +104,8 @@ def commit(user_id: str, token_id: str, updated_at: str) -> str:
         "SET one_shot_token_id = NULL, "
         "one_shot_claimed_at = NULL, "
         "updated_at = ? "
-        "WHERE user_id = ? AND one_shot_token_id = ?",
-        [updated_at, user_id, token_id],
+        "WHERE user_id = ? AND project_id = ? AND group_id = ? AND one_shot_token_id = ?",
+        [updated_at, user_id, project_id, group_id, token_id],
     )
     return "COMMITTED" if affected == 1 else "ALREADY_CLEARED"
 
@@ -131,7 +131,7 @@ def rollback(token_id: str, updated_at: str) -> bool:
     return affected == 1
 
 
-def clear_b_type_marker(user_id: str, updated_at: str) -> bool:
+def clear_b_type_marker(user_id: str, project_id: str, group_id: str, updated_at: str) -> bool:
     """Fail-closed repair for a B-type corrupted marker (DB0008 §4.7, §5.2).
 
     B-type: ``one_shot_token_id IS NULL`` but ``one_shot_claimed_at IS NOT NULL`` --
@@ -146,9 +146,9 @@ def clear_b_type_marker(user_id: str, updated_at: str) -> bool:
         "UPDATE user_chat_source_access "
         "SET one_shot_claimed_at = NULL, "
         "updated_at = ? "
-        "WHERE user_id = ? "
+        "WHERE user_id = ? AND project_id = ? AND group_id = ? "
         "AND one_shot_token_id IS NULL "
         "AND one_shot_claimed_at IS NOT NULL",
-        [updated_at, user_id],
+        [updated_at, user_id, project_id, group_id],
     )
     return affected == 1

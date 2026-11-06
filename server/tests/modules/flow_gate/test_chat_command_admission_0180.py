@@ -126,7 +126,7 @@ def edges(store, repo, monkeypatch):
                         lambda project: {"ok": True, "source": "test", "providers": [provider],
                                          "registered_count": 1})
     monkeypatch.setattr(provider_capability_service, "capability_finding", lambda *args: None)
-    monkeypatch.setattr(admission.db_docs, "get_by_id", lambda doc_id: {"type": "CH", "branch": "main"})
+    monkeypatch.setattr(admission.db_docs, "get_by_id", lambda doc_id: {"type": "CH", "branch": "main", "project_id": PROJECT, "group_id": GROUP})
     monkeypatch.setattr(admission.db_docs, "get_group_max_seq", lambda group_id: 0)
     monkeypatch.setattr(admission, "_refuse_frozen_group", lambda group_id: None)
     monkeypatch.setattr(ai_invoke_service, "_require_group_worktree", lambda *a, **k: None)
@@ -229,7 +229,7 @@ def _finish(worker: Worker, run_id: str) -> None:
 def test_edit_once_run_repeats_commands_under_every_policy_with_no_extra_claim(
         store, edges, monkeypatch, spawns, command_policy, statuses):
     # Given: a stored edit_once mode whose claim this admission wins, and a command policy.
-    db_source_access.upsert(USER, "edit_once", "2026-10-05T00:00:00+09:00")
+    db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "2026-10-05T00:00:00+09:00")
     css.save_chat_settings(USER, {"command_policy": command_policy})
     counts, worker = Counts(monkeypatch), Worker(monkeypatch)
     stop = threading.Event()
@@ -250,7 +250,7 @@ def test_edit_once_run_repeats_commands_under_every_policy_with_no_extra_claim(
     assert after_admission == {"claim": 1, "commit": 1, "rollback": 0}
     assert counts.calls == after_admission
     assert worker.gate_state == runtime.OPEN
-    mode_row = db_source_access.get(USER)
+    mode_row = db_source_access.get(USER, PROJECT, GROUP)
     assert mode_row["source_access_mode"] == "read_only" and mode_row["one_shot_token_id"] is None
     assert db_tokens.get_by_id(token_id)["source_access"] == "read_write"
     assert [status for status, _ in worker.outcomes] == [200] * 3
@@ -262,7 +262,7 @@ def test_edit_once_run_repeats_commands_under_every_policy_with_no_extra_claim(
 def test_edit_once_claim_loser_run_gets_read_and_every_command_is_refused(
         store, edges, monkeypatch, spawns):
     # Given: another invocation already won the one-shot claim and has not committed yet.
-    db_source_access.upsert(USER, "edit_once", "2026-10-05T00:00:00+09:00")
+    db_source_access.upsert(USER, PROJECT, GROUP, "edit_once", "2026-10-05T00:00:00+09:00")
     css.save_chat_settings(USER, {"command_policy": "always_approve"})
     counts, worker = Counts(monkeypatch), Worker(monkeypatch, count=2)
     winner = {}
@@ -270,8 +270,8 @@ def test_edit_once_claim_loser_run_gets_read_and_every_command_is_refused(
     monkeypatch.setattr(token_service, "_next_token_id", lambda: next(token_ids))
     real_resolve = token_service._resolve_chat_source_access
 
-    def resolve_with_competing_issue(issued_to, token_id, created_at):
-        resolved = real_resolve(issued_to, token_id, created_at)
+    def resolve_with_competing_issue(issued_to, project, group_id):
+        resolved = real_resolve(issued_to, project, group_id)
         if resolved[1] and not winner:
             winner["started"] = True
             winner.update(token_service.issue(
@@ -296,4 +296,4 @@ def test_edit_once_claim_loser_run_gets_read_and_every_command_is_refused(
     assert spawns == [] and commands.db.list_for_doc(DOC) == []
     assert winner["one_shot_claimed"] is True
     assert counts.calls == {"claim": 2, "commit": 0, "rollback": 0}
-    assert db_source_access.get(USER)["one_shot_token_id"] == winner["token_id"]
+    assert db_source_access.get(USER, PROJECT, GROUP)["one_shot_token_id"] == winner["token_id"]

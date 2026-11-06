@@ -531,6 +531,7 @@ export async function fetchActiveChatRun(chatId: string): Promise<string | null>
 
 // ── Chat settings ────────────────────────────────────────────────────────────────────
 interface RawChatSettings {
+  source_access_scope?: { project_id?: unknown; group_id?: unknown } | null
   settings?: {
     send_action?: string
     context_mode?: string
@@ -553,6 +554,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   contextMode: 'recent',
   contextTurns: 20,
   sourceAccessMode: 'read_only',
+  sourceAccessScope: null,
   contextTurnsPresets: [5, 10, 15, 20, 30],
   contextTurnsMin: 1,
   contextTurnsMax: 200,
@@ -570,6 +572,9 @@ export function toChatSettings(raw: RawChatSettings | null | undefined): ChatSet
     contextMode,
     contextTurns: Number.isInteger(s.context_turns) ? Number(s.context_turns) : DEFAULT_CHAT_SETTINGS.contextTurns,
     sourceAccessMode,
+    sourceAccessScope: typeof raw?.source_access_scope?.project_id === 'string' && typeof raw?.source_access_scope?.group_id === 'string'
+      ? { projectId: raw.source_access_scope.project_id, groupId: raw.source_access_scope.group_id }
+      : null,
     contextTurnsPresets: Array.isArray(d.context_turns_presets) ? d.context_turns_presets : DEFAULT_CHAT_SETTINGS.contextTurnsPresets,
     contextTurnsMin: d.context_turns_min ?? DEFAULT_CHAT_SETTINGS.contextTurnsMin,
     contextTurnsMax: d.context_turns_max ?? DEFAULT_CHAT_SETTINGS.contextTurnsMax,
@@ -580,12 +585,16 @@ export function toChatSettings(raw: RawChatSettings | null | undefined): ChatSet
   }
 }
 
-export async function fetchChatSettings(): Promise<ChatSettings> {
-  return toChatSettings(await call(() => getRequest<RawChatSettings>(`${API}/me/chat-settings`)))
+function chatSettingsUrl(scope?: ConversationScope): string {
+  return `${API}/me/chat-settings${scope ? `?project_id=${encodeURIComponent(scope.projectId)}&group_id=${encodeURIComponent(scope.groupId)}` : ''}`
 }
 
-export async function saveChatSettings(patch: ChatSettingsPatch): Promise<ChatSettings> {
-  return toChatSettings(await call(() => patchRequest<RawChatSettings>(`${API}/me/chat-settings`, patch)))
+export async function fetchChatSettings(scope?: ConversationScope): Promise<ChatSettings> {
+  return toChatSettings(await call(() => getRequest<RawChatSettings>(chatSettingsUrl(scope))))
+}
+
+export async function saveChatSettings(patch: ChatSettingsPatch, scope?: ConversationScope): Promise<ChatSettings> {
+  return toChatSettings(await call(() => patchRequest<RawChatSettings>(chatSettingsUrl(scope), patch)))
 }
 
 // ── Mention copy ─────────────────────────────────────────────────────────────────────

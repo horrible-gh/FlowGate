@@ -191,6 +191,7 @@ export interface ChatSettings {
   contextMode: ContextMode
   contextTurns: number
   sourceAccessMode: SourceAccessMode
+  sourceAccessScope: ConversationScope | null
   contextTurnsPresets: number[]
   contextTurnsMin: number
   contextTurnsMax: number

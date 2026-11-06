@@ -356,12 +356,34 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
-  async function loadSettings(): Promise<void> {
+  let settingsRequest = 0
+  function sameScope(left: ConversationScope | null, right: ConversationScope | null): boolean {
+    return left === null ? right === null : !!right && left.projectId === right.projectId && left.groupId === right.groupId
+  }
+
+  function settingsCurrent(gen: number, scope: ConversationScope | null): boolean {
+    return !disposed && gen === scopeGen && sameScope(scope, state.scope)
+  }
+
+  function applySettings(settings: ChatSettings, scope: ConversationScope | null): boolean {
+    if (!sameScope(settings.sourceAccessScope, scope)) return false
+    state.settings = { ...settings, sourceAccessMode: scope ? settings.sourceAccessMode : 'read_only' }
+    return true
+  }
+
+  async function loadSettings(requestScope: ConversationScope | null): Promise<void> {
+    const gen = scopeGen
+    const scope = requestScope ? { ...requestScope } : null
+    if (!settingsCurrent(gen, scope)) return
+    const request = ++settingsRequest
+    if (scope) state.pendingSourceMode = 'read_only'
     try {
-      const settings = await source.fetchChatSettings()
-      if (!disposed) state.settings = settings
+      const settings = await source.fetchChatSettings(scope ?? undefined)
+      if (settingsCurrent(gen, scope) && request === settingsRequest) applySettings(settings, scope)
     } catch {
       // D0008 §3-4: keep chatting on defaults, never block.
+    } finally {
+      if (settingsCurrent(gen, scope) && request === settingsRequest) state.pendingSourceMode = null
     }
   }
 
@@ -395,6 +417,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.activeChatId = null
     state.notice = null
     clearChat()
+    state.settings = { ...state.settings, sourceAccessMode: 'read_only', sourceAccessScope: null }
+    state.savingSettings = false
+    state.pendingSourceMode = scope ? 'read_only' : null
+    void loadSettings(scope)
     if (!scope) return
     void loadProviders(scope.projectId)
     const gen = scopeGen
@@ -834,7 +860,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       state.cancelling = false
       const delivered = state.turns.filter((t) => t.speaker === 'ai').length > baseline
       // A one-shot source mode is consumed by the delivered answer (0568 rev3).
-      if (delivered) void loadSettings()
+      if (delivered) void loadSettings(state.scope)
       // A delivered answer shows itself; only a run that ended without one says so.
       if (run.endReason === 'cancelled') addStatus('info', 'run_cancelled')
       else if (!delivered) addFailureStatus(run)
@@ -930,11 +956,12 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const chatId = state.activeChatId
     if (!chatId || state.copyingMention) return null
     state.copyingMention = true
+    const settingsScope = state.scope ? { ...state.scope } : null
     const gen = chatGen
     try {
       const mention = await source.issueChatMention(chatId)
       // An edit_once one-shot may have just been consumed server-side (T0011 §8).
-      void loadSettings()
+      if (gen === chatGen) void loadSettings(settingsScope)
       return mention
     } catch (error) {
       if (isSourceLocked(error)) notifyIfCurrent(gen, 'warning', 'source_locked')
@@ -950,29 +977,37 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   async function saveSettings(patch: ChatSettingsPatch): Promise<boolean> {
-    if (state.savingSettings) return false
+    if (state.savingSettings || state.pendingSourceMode) return false
+    const gen = scopeGen
+    const scope = state.scope ? { ...state.scope } : null
+    if ('source_access_mode' in patch && !scope) return false
+    const request = ++settingsRequest
     state.savingSettings = true
     try {
-      state.settings = await source.saveChatSettings(patch)
-      return true
+      const settings = await source.saveChatSettings(patch, scope ?? undefined)
+      return settingsCurrent(gen, scope) && request === settingsRequest && applySettings(settings, scope)
     } catch (error) {
-      notify('danger', 'settings_failed', messageOf(error))
+      if (settingsCurrent(gen, scope)) notify('danger', 'settings_failed', messageOf(error))
       return false
     } finally {
-      state.savingSettings = false
+      if (settingsCurrent(gen, scope)) state.savingSettings = false
     }
   }
 
   /** Server-confirmed only: the selection moves once the PATCH answers (0568 T0004 §2). */
   async function setSourceMode(mode: SourceAccessMode): Promise<void> {
-    if (state.pendingSourceMode || mode === state.settings.sourceAccessMode) return
+    if (state.pendingSourceMode || state.savingSettings || !state.scope || mode === state.settings.sourceAccessMode) return
+    const gen = scopeGen
+    const scope = { ...state.scope }
+    const request = ++settingsRequest
     state.pendingSourceMode = mode
     try {
-      state.settings = await source.saveChatSettings({ source_access_mode: mode })
+      const settings = await source.saveChatSettings({ source_access_mode: mode }, scope)
+      if (settingsCurrent(gen, scope) && request === settingsRequest) applySettings(settings, scope)
     } catch (error) {
-      notify('danger', 'source_mode_failed', messageOf(error))
+      if (settingsCurrent(gen, scope)) notify('danger', 'source_mode_failed', messageOf(error))
     } finally {
-      state.pendingSourceMode = null
+      if (settingsCurrent(gen, scope) && request === settingsRequest) state.pendingSourceMode = null
     }
   }
 
@@ -990,7 +1025,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     unsubscribe = null
   }
 
-  void loadSettings()
+  void loadSettings(state.scope)
 
   return {
     state: readonly(state) as DeepReadonly<ConversationState>,

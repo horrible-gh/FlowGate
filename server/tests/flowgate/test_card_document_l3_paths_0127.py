@@ -405,18 +405,18 @@ def test_X6_first_commit_failure_releases_gate_and_second_wins(l3,monkeypatch,vi
 
 @pytest.mark.parametrize('via',['C-API','C-CLI'])
 def test_CM05_simultaneous_claim_only_winner_can_save(l3,via):
-    user_chat_source_access.upsert(USER,'edit_once','l3verify-t0')
+    user_chat_source_access.upsert(USER, PROJECT, FLOW,'edit_once','l3verify-t0')
     barrier=threading.Barrier(2)
     def claim(token):
         barrier.wait(10)
-        return token,user_chat_source_access.claim(USER,token,'l3verify-t1','l3verify-t1')
+        return token,user_chat_source_access.claim(USER, PROJECT, FLOW,token,'l3verify-t1','l3verify-t1')
     with ThreadPoolExecutor(max_workers=2) as pool:
         a=pool.submit(claim,TOKEN)
         b=pool.submit(claim,l3.issued['token_id'])
         results=[a.result(10),b.result(10)]
     assert sorted(row['source_access'] for _,row in results)==['read','read_write']
     winner=next(token for token,row in results if row['one_shot_claimed'])
-    assert user_chat_source_access.commit(USER,winner,'l3verify-t2')=='COMMITTED'
+    assert user_chat_source_access.commit(USER, PROJECT, FLOW,winner,'l3verify-t2')=='COMMITTED'
     before=l3.observe()
     for _,claim_result in results:
         l3.db._execute('UPDATE tokens SET source_access=? WHERE token_id=?',[claim_result['source_access'],TOKEN])
@@ -426,11 +426,11 @@ def test_CM05_simultaneous_claim_only_winner_can_save(l3,via):
 
 
 def test_CM08_upsert_clears_pending_handoff_without_rearming(l3):
-    user_chat_source_access.upsert(USER,'edit_once','l3verify-t0')
-    assert user_chat_source_access.claim(USER,TOKEN,'l3verify-t1','l3verify-t1')['one_shot_claimed']
-    user_chat_source_access.upsert(USER,'read_only','l3verify-t2')
+    user_chat_source_access.upsert(USER, PROJECT, FLOW,'edit_once','l3verify-t0')
+    assert user_chat_source_access.claim(USER, PROJECT, FLOW,TOKEN,'l3verify-t1','l3verify-t1')['one_shot_claimed']
+    user_chat_source_access.upsert(USER, PROJECT, FLOW,'read_only','l3verify-t2')
     before=l3.observe()
-    assert user_chat_source_access.commit(USER,TOKEN,'l3verify-t3')=='ALREADY_CLEARED'
+    assert user_chat_source_access.commit(USER, PROJECT, FLOW,TOKEN,'l3verify-t3')=='ALREADY_CLEARED'
     assert user_chat_source_access.rollback(TOKEN,'l3verify-t4') is False
     unchanged(before,l3.observe())
 
@@ -571,9 +571,9 @@ def test_R1_R4_read_never_invents_or_truncates_body(l3,via,body_state):
 @pytest.mark.parametrize('via',['C-API','C-CLI'])
 def test_CM03_same_winning_run_edits_two_documents(l3,monkeypatch,via):
     from l3verify_support_0127 import Harness
-    user_chat_source_access.upsert(USER,'edit_once','l3verify-t0')
-    assert user_chat_source_access.claim(USER,TOKEN,'l3verify-t1','l3verify-t1')['one_shot_claimed']
-    assert user_chat_source_access.commit(USER,TOKEN,'l3verify-t2')=='COMMITTED'
+    user_chat_source_access.upsert(USER, PROJECT, FLOW,'edit_once','l3verify-t0')
+    assert user_chat_source_access.claim(USER, PROJECT, FLOW,TOKEN,'l3verify-t1','l3verify-t1')['one_shot_claimed']
+    assert user_chat_source_access.commit(USER, PROJECT, FLOW,TOKEN,'l3verify-t2')=='COMMITTED'
     second_doc=FLOW+'.0003-N'
     second_path=l3.root/'l3verify-second.md'
     second_header=l3.header.replace('0002-N','0003-N')
