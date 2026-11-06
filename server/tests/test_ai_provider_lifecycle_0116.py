@@ -324,6 +324,12 @@ def test_real_start_run_checks_other_loop_role_before_launch(world,monkeypatch,t
     monkeypatch.setattr(service,'_create_scratch',lambda *a:tmp_path)
     monkeypatch.setattr(service,'compute_review_baseline',lambda _:dict(
         starts_with_rework=bool(first),review_baseline_id=0,baseline_revision_no=0))
+    # flowgate.v02.0136 T0004 T#1: start_run now binds a review loop's first token to the run
+    # before registration and refuses the start when it cannot (fail-closed). The tokens here are
+    # fakes ('fake'/'token') the real token_service cannot verify, so that binding is stubbed like
+    # the rest of this test's token world (revoke is stubbed in `world`). The binding itself is
+    # covered with real tokens by tests/flowgate/test_review_loop_rework_binding_0136.py.
+    monkeypatch.setattr(service,'_adopt_continuation_token',lambda run,raw,**_kw:True)
     monkeypatch.setattr(admission.db_group_ai_leases,'get_active',lambda _:None)
     monkeypatch.setattr(admission.db_group_ai_leases,'acquire',lambda **kw:dict(run_id=kw['run_id']))
     monkeypatch.setattr(admission.db_group_ai_leases,'activate',lambda *a,**kw:dict(run_id=a[1]))

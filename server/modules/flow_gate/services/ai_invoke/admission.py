@@ -945,6 +945,74 @@ def _register_run(run: dict, chain: list[dict]) -> None:
         _svc()._runs[run_id] = run
 
 
+def _bind_review_loop_first_hop(run: dict, *, holds_group_lease: bool) -> None:
+    """Bind a document review loop's FIRST token to the run's register context.
+
+    flowgate.v02.0136 T0004 T#1 (NR0003 rev2 §6.2-1). A review loop keeps
+    run["action_scope"] at the loop's start scope ("review") -- the scope oracle, the
+    completion oracle and the retry gates read it -- while its first token is whatever the
+    stage-aware issue_builder minted for the starting stage: review, or edit when the loop
+    starts with rework. Left alone, worker._run_register_context seeds the register context
+    lazily from run["action_scope"] at the first /inbox call, so the CLI edit boundary
+    (agent_adapter.check_boundary -> worker._bind_register_context) refused a correct edit
+    token with 403 axis=action. The first hop never passes the stage-transition block or the
+    reissue branch of worker._prepare_retry_token (which binds every later token), so this is
+    its only initialization point: register_context and current_token_id move to the first
+    token here, run["action_scope"] stays untouched.
+
+    The loop's target document is pinned (T0004 §2-4): a first token naming another document
+    of the same project/group is refused like one outside the group, never adopted.
+
+    The group lease moves with the token (rejection rej_01M6Q2T0KPHYGK8M finding 1). start_run
+    activated it with the RUN's scope ("review"), which is right for a review-first loop but
+    not for one that starts with rework: its first token is edit, and
+    mutation_policy.assert_group_mutation_allowed's owner match (token scope == lease scope)
+    refused that token's very first write with 403 GROUP_AI_RUN_OWNER_MISMATCH. The lease
+    therefore takes the verified token's own scope here -- the same re-pointing
+    worker._prepare_retry_token does for every later hop (update_token). Only a run that
+    actually holds a group lease does this (``holds_group_lease``: not project-scoped, no
+    Graph execution); a Graph execution has an execution lease and gets no group-lease write.
+
+    Fail closed: a token that cannot be verified, that would leave the run's project/group/
+    document, or whose lease cannot be re-pointed refuses the start -- the handoff gate is
+    aborted, the lease released and the unused token revoked, as the loop-persist rollback in
+    _register_run does -- before the run is registered or a worker thread exists.
+    """
+    group_id, run_id = run.get("group_id"), run.get("run_id")
+    bound = False
+    try:
+        bound = bool(_svc()._adopt_continuation_token(
+            run, run.get("raw_token"), pinned_doc=str(run.get("doc_ref") or ""),
+        ))
+        if bound and holds_group_lease:
+            db_group_ai_leases.update_token(
+                group_id, run_id, run.get("token_id"),
+                action_scope=(run.get("register_context") or {}).get("action"),
+            )
+    except Exception:
+        logger.warning("ai-invoke %s: review-loop first-hop binding raised", run_id, exc_info=True)
+        bound = False
+    if bound:
+        return
+    logger.error("ai-invoke %s: review-loop first token could not be bound to the run", run_id)
+    gate = run.get("handoff_gate")
+    if gate is not None:
+        gate.abort()
+    if holds_group_lease:
+        try:
+            db_group_ai_leases.release(
+                group_id, run_id, reason="admission_rollback_review_loop_context_init_failed"
+            )
+        except Exception:
+            logger.warning("review-loop lease rollback failed for %s", run_id, exc_info=True)
+    try:
+        token_service.revoke(run["token_id"], reason="document_review_loop_context_init_failed")
+    except Exception:
+        logger.warning("review-loop token rollback failed for %s", run_id, exc_info=True)
+    raise _http_error(500, "document_review_loop_context_init_failed",
+                      "Could not bind the document review loop's first token to its run.")
+
+
 from flowgate.ai_roles import invocations as role_invocations
 
 
@@ -2103,6 +2171,12 @@ def start_run(
     run["handoff_gate"] = gate
     _note_issued_raw_token(run, run.get("raw_token"))
     _note_issued_prompt(run, mention)
+    if document_review_loop is not None:
+        # flowgate.v02.0136 T0004 T#1: the loop's first token is bound to the run before the
+        # run is registered or its worker exists (see _bind_review_loop_first_hop).
+        _bind_review_loop_first_hop(
+            run, holds_group_lease=bool(not project_scoped and not graph_exec_id),
+        )
     _register_run(run, chain)
 
     thread = threading.Thread(

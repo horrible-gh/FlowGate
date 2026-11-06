@@ -1071,6 +1071,29 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     # this field exists to protect.
     run["token_scratch_dir"] = issue["scratch_dir"]
     _note_issued_raw_token(run, run.get("raw_token"))
+    if run.get("document_review_loop") and not _adopt_continuation_token(
+        run, run.get("raw_token"), pinned_doc=str(run.get("doc_ref") or ""),
+    ):
+        # flowgate.v02.0136 T0004 T#2 (NR0003 rev2 §6.2-2): a review loop's reissued token --
+        # a stage switch (review <-> edit, worker.py transition block) or a same-stage retry --
+        # moves register_context and current_token_id with it, so the /inbox edit boundary and
+        # the API provider dispatch compare against THIS token, not the run's start scope or the
+        # previous hop's token. run["action_scope"] (oracle/judge) is left as it was. A token the
+        # run may not adopt -- unverifiable, outside its project/group, or naming another
+        # document than the loop's own (run["doc_ref"], §2-4) -- is revoked and the reissue
+        # fails explicitly: both callers already stop on None
+        # (document_review_loop_transition_failed / retry_block_reason=token_unavailable), so
+        # no next hop starts on a half-moved token/context pair. This runs BEFORE the group
+        # lease is re-pointed below, so a refused token never reaches the lease either: the
+        # lease, register_context and current_token_id all still name the previous token.
+        logger.error("ai-invoke %s: reissued review-loop token could not be bound to the run",
+                     run["run_id"])
+        try:
+            token_service.revoke(run["token_id"], reason="document_review_loop_context_adopt_failed")
+        except Exception:
+            logger.warning("ai-invoke %s: unbound review-loop token revoke failed",
+                           run["run_id"], exc_info=True)
+        return None
     if run.get("group_id"):
         # 0417 T0013: a document_review_loop hop's reissued token can carry a DIFFERENT
         # action_scope than the run started with (review <-> edit as the loop alternates
@@ -1192,6 +1215,14 @@ def _reset_attempt_state(run: dict) -> None:
     run["last_message_received"] = False
     run["stdout_tail"] = None
     run["stderr_tail"] = None
+    # flowgate.v02.0136 T0004 T#3 (§4-1/§7): register_errors stays the per-ATTEMPT list the
+    # judges read (_no_output_detail, the API diagnosis, finalize's ending), so it is still
+    # emptied here. The axis-classified binding rejections it holds (1st-stage inbox and
+    # 2nd-stage register_dispatch records) are a per-RUN diagnosis, though, and finalize
+    # flushes them to register_context_failures only once, at the end -- so a review loop's
+    # stage switch or a same-stage retry used to drop every earlier hop's 403s before they
+    # reached the DB. They move to the run-lifetime register_failures_carried list first.
+    register_binding.carry_failures(run)
     run["register_errors"] = []
     run["tool_call_misses"] = 0
     run["turn_limit_exhausted"] = False
@@ -2558,13 +2589,21 @@ def _run_register_context(run: dict) -> dict:
     return context
 
 
-def _adopt_continuation_token(run: dict, raw_token: str) -> bool:
+def _adopt_continuation_token(run: dict, raw_token: str, *,
+                              pinned_doc: Optional[str] = None) -> bool:
     """Move the run's current token and its four axes together, or not at all.
 
     L0010 §2.1: after a hop change only the refreshed pair is honoured, so a delayed call
     holding the previous token fails the ownership check below before it can do anything.
     A continuation that would leave the run's project or group is refused outright — those
     two axes are immutable for the life of a run.
+
+    ``pinned_doc`` (flowgate.v02.0136 T0004 §2-4/§5-4) additionally fixes the document axis.
+    An ordinary continuation leaves it None and keeps moving to the token's own doc, as it
+    always has; a document review loop reviews and reworks ONE document, so its hop tokens
+    pass the loop's target here and a token naming any other document of the same
+    project/group is refused before the run's context moves. An empty pin is unresolved and
+    therefore refuses too (fail closed), never "no pin".
     """
     try:
         token_rec = token_service.verify(raw_token)
@@ -2574,11 +2613,16 @@ def _adopt_continuation_token(run: dict, raw_token: str) -> bool:
         return False
     context, _group_db, _group_resolved = register_binding.token_axes(token_rec)
     pinned = register_binding.canonical_context(
-        context["action"], run.get("project_id"), run.get("group_id"), context["doc"],
+        context["action"], run.get("project_id"), run.get("group_id"),
+        context["doc"] if pinned_doc is None else pinned_doc,
     )
     if context["project"] != pinned["project"] or context["group"] != pinned["group"]:
         logger.warning("ai-invoke %s: continuation token leaves the run's project/group",
                        run.get("run_id"))
+        return False
+    if context["doc"] != pinned["doc"]:
+        logger.warning("ai-invoke %s: continuation token names another document than the "
+                       "run's pinned one", run.get("run_id"))
         return False
     run["register_context"] = context
     run["current_token_id"] = token_rec.get("token_id")

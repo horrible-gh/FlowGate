@@ -41,6 +41,30 @@ def edit_schema(run, schema):
     return value
 
 
+def _record_run_rejection(run, record):
+    """Keep a token <-> run-context (2nd stage) rejection on the run it was judged against.
+
+    flowgate.v02.0136 T0004 T#3 (NR0003 rev2 §2.1/§6.2-4). The 1st stage
+    (inbox._check_context_binding) already lands in run["register_errors"] through
+    register_binding.record_for_run; this stage only logged, so its 403s never reached the run
+    diagnostics or, at finalize, register_context_failures. `run` is the live record the binder
+    just read (the token's ai_run_id lookup, or the API provider loop's own run), and
+    worker._bind_register_context has already written the structured log line -- so this only
+    appends, once: a record already present (same object or correlation id, e.g. appended by
+    worker._inbox_register) is not stacked again. Nothing secret is added; the record carries
+    hashes and fingerprints only.
+    """
+    errors = run.get("register_errors")
+    if not isinstance(errors, list):
+        errors = run["register_errors"] = []
+    correlation_id = record.get("correlation_id")
+    for item in errors:
+        if item is record or (correlation_id and isinstance(item, dict)
+                              and item.get("correlation_id") == correlation_id):
+            return
+    errors.append(record)
+
+
 def check_boundary(raw, body, *, run=None, model=False):
     from modules.flow_gate.api import inbox_routes as inbox
     try:
@@ -78,6 +102,8 @@ def check_boundary(raw, body, *, run=None, model=False):
         try:
             worker._bind_register_context(run, raw)
         except worker._RegisterBindingRejected as exc:
+            if exc.record is not None:
+                _record_run_rejection(run, exc.record)
             raise BoundaryRejected(exc.response.get("http_status", 403), exc.response, source=exc.source) from exc
         if token.get("ai_run_id") and run.get("run_id") != token["ai_run_id"]:
             raise BoundaryRejected(403, {"error_message": register_binding.BINDING_MESSAGE,
