@@ -1,8 +1,18 @@
 """0138: committed daily serials and immutable ownership, independent of run purge.
 
-No request-time MAX, local fallback, automatic migration or live cutover. Version
-1 is enabled only by initialize(), with all issuers drained and scratch inventoried.
-Old binaries do not understand this gate: deployment MUST fence them separately.
+No request-time MAX or local fallback.
+
+flowgate.v02.0139: v0.2 issues its own run-ID namespace, ``aiv2_YYYYMMDD_NNNNNN``.
+FlowGate v0.1 shares this DB and scratch root and keeps minting ``aiv_YYYYMMDD_NNNNNN``
+from an in-process counter that only reads ``aiv_<date>_%`` rows, so neither side can
+ever produce, read as its floor, or overwrite the other's IDs. Both versions run side
+by side; no issuer has to be stopped.
+
+Every ``aiv2_`` issuer is a v0.2 server using the committed counter below, so the
+contract activates itself on the first allocation (version 0 or 1 -> 2) with the
+floors of every ``aiv2_`` ID already recorded. Version 2 also keeps refusing the
+0138-era binaries, which would otherwise mint ``aiv_`` IDs inside v0.1's namespace.
+Both shapes stay readable (``RUN_ID``) for legacy rows and scratch entries.
 """
 from __future__ import annotations
 
@@ -14,9 +24,24 @@ from uuid import UUID
 from .connection import get_store, in_transaction
 from . import dialect
 
-VERSION = 1
-RUN_ID = re.compile(r"aiv_([0-9]{8})_([0-9]{6})\Z")
+VERSION = 2
+ISSUED_PREFIX = "aiv2"          # v0.2-only namespace; v0.1 owns "aiv"
+RUN_ID = re.compile(r"aiv2?_([0-9]{8})_([0-9]{6})\Z")       # readable: legacy/v0.1 and v0.2
+ISSUED_RUN_ID = re.compile(ISSUED_PREFIX + r"_([0-9]{8})_([0-9]{6})\Z")
+V01_RUN_ID = re.compile(r"aiv_([0-9]{8})_([0-9]{6})\Z")     # what FlowGate v0.1 mints
+_ACTIVATABLE = (0, 1)           # 0: never activated, 1: 0138 shared-namespace contract
 IDENTITY_FIELDS = ("execution_nonce", "project_id", "group_id", "started_at")
+
+
+def foreign_run_id(run_id) -> bool:
+    """0139: True for an ``aiv_YYYYMMDD_NNNNNN`` ID, i.e. one FlowGate v0.1 mints.
+
+    v0.1 shares the lease/run/question tables and keeps running beside v0.2, so v0.2's
+    restart recovery must leave such rows alone: they may be live v0.1 runs. (v0.2 runs
+    from before 0139 had the same shape; none are open, and v0.1 restarts or the
+    lease TTL still clear them.)
+    """
+    return V01_RUN_ID.fullmatch(str(run_id or "")) is not None
 
 
 class RunIdentityConflict(RuntimeError):
@@ -36,21 +61,20 @@ def _require_version(store):
         raise RuntimeError("ai_run_allocator_cutover_required")
 
 
-def initialize(*, scratch_roots, all_issuers_stopped: bool) -> dict[str, int]:
-    """Explicit offline cutover. Roots are each issuer's project/evaluation scratch roots.
+def initialize(*, scratch_roots=(), all_issuers_stopped: bool = True) -> dict[str, int]:
+    """Activate the ``aiv2_`` contract with floors from every recorded ``aiv2_`` ID.
 
-    A missing/unreadable root or source aborts initialization. An empty list is
-    allowed only for a fresh installation with no scratch roots. The caller owns
-    the cross-server admission fence; this function never stops a server itself.
-    Repeating initialization can only raise floors, never lower them.
+    allocate() calls this itself; no server has to be stopped because only v0.2
+    issues ``aiv2_`` and it does so through the committed counter
+    (``all_issuers_stopped`` is accepted for old callers and ignored). ``scratch_roots``
+    is optional extra inventory; a missing/unreadable root aborts. Repeating
+    initialization can only raise floors, never lower them.
     """
     _standalone()
-    if all_issuers_stopped is not True:
-        raise RuntimeError("ai_run_issuers_must_be_stopped")
     floors: dict[str, int] = {}
 
     def include(value):
-        match = RUN_ID.fullmatch(str(value or ""))
+        match = ISSUED_RUN_ID.fullmatch(str(value or ""))
         if match:
             day, serial = match.groups()
             datetime.strptime(day, "%Y%m%d")
@@ -71,7 +95,7 @@ def initialize(*, scratch_roots, all_issuers_stopped: bool) -> dict[str, int]:
         contract = store._fetch_one("SELECT version FROM ai_run_id_contract WHERE singleton = 1")
         if contract is None:
             raise RuntimeError("ai_run_contract_missing")
-        if contract["version"] not in (0, VERSION):
+        if contract["version"] not in (*_ACTIVATABLE, VERSION):
             raise RuntimeError("ai_run_allocator_incompatible_version")
         for table, column in (
             ("ai_invoke_runs", "run_id"), ("tokens", "ai_run_id"),
@@ -98,6 +122,7 @@ def allocate(*, at: datetime | None = None) -> str:
         raise ValueError("ai_run_allocation_requires_aware_time")
     day = stamp.astimezone(timezone.utc).strftime("%Y%m%d")
     store = get_store()
+    _activate_if_needed(store)
     with store.transaction():
         _require_version(store)
         if store.dialect in (dialect.SQLITE, dialect.POSTGRESQL):
@@ -120,7 +145,20 @@ def allocate(*, at: datetime | None = None) -> str:
         if row is None:
             raise RuntimeError("ai_run_id_exhausted")
         serial = int(row["serial"])
-    return f"aiv_{day}_{serial:06d}"
+    return f"{ISSUED_PREFIX}_{day}_{serial:06d}"
+
+
+def _activate_if_needed(store) -> None:
+    """0139: first allocation on a never-activated (0) or 0138 (1) contract activates it.
+
+    An unknown (e.g. newer) version is left untouched and refused.
+    """
+    row = store._fetch_one("SELECT version FROM ai_run_id_contract WHERE singleton = 1")
+    if row is None or row["version"] == VERSION:
+        return  # a missing contract row is refused by _require_version
+    if row["version"] not in _ACTIVATABLE:
+        raise RuntimeError("ai_run_allocator_incompatible_version")
+    initialize()
 
 
 def _matches(owner, run):

@@ -282,6 +282,35 @@ def test_api_maps_storage_unsafe_to_safe_code(monkeypatch):
     assert "C:/" not in payload["message"]
 
 
+def test_allocator_cutover_required_surfaces_its_own_code_0139(monkeypatch):
+    monkeypatch.setattr(svc.db_group_ai_leases, "get_active", lambda group_id: None)
+    monkeypatch.setattr(svc._facade, "_runs", {})
+
+    def _refuse(**kwargs):
+        raise RuntimeError("ai_run_allocator_cutover_required")
+
+    monkeypatch.setattr(svc, "_admission_start_run", _refuse)
+    with pytest.raises(HTTPException) as caught:
+        svc.start_run(**_kwargs())
+    assert caught.value.status_code == 500
+    assert caught.value.detail["code"] == "ai_run_allocator_cutover_required"
+    assert caught.value.detail["phase"] == "pre_run_admission"
+
+
+def test_allocator_incompatible_version_surfaces_allocator_code_0139(monkeypatch):
+    monkeypatch.setattr(svc.db_group_ai_leases, "get_active", lambda group_id: None)
+    monkeypatch.setattr(svc._facade, "_runs", {})
+
+    def _refuse(**kwargs):
+        raise RuntimeError("ai_run_allocator_incompatible_version")
+
+    monkeypatch.setattr(svc, "_admission_start_run", _refuse)
+    with pytest.raises(HTTPException) as caught:
+        svc.start_run(**_kwargs())
+    assert caught.value.detail["code"] == "ai_run_allocator_cutover_required"
+    assert "incompatible_version" in caught.value.detail["message"]
+
+
 @pytest.mark.parametrize("scope", ["ordinary", "graph", "project"])
 def test_allocator_failure_precedes_admission_resources_0138(monkeypatch, scope):
     from modules.flow_gate.db import ai_run_identity
@@ -304,6 +333,7 @@ def test_allocator_failure_precedes_admission_resources_0138(monkeypatch, scope)
     monkeypatch.setattr(admission.db_group_ai_leases, "acquire", forbidden)
     monkeypatch.setattr(admission._svc(), "_create_scratch", forbidden)
     monkeypatch.setattr(admission, "_register_run", forbidden)
-    ai_run_identity.get_store()._execute("UPDATE ai_run_id_contract SET version = 0")
-    with pytest.raises(RuntimeError, match="cutover_required"):
+    # 0139: version 0 now self-activates (aiv2_ namespace); an unknown version still refuses.
+    ai_run_identity.get_store()._execute("UPDATE ai_run_id_contract SET version = 99")
+    with pytest.raises(RuntimeError, match="incompatible_version"):
         admission.start_run(**kwargs)

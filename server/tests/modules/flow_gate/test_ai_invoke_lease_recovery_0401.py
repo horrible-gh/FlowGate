@@ -53,7 +53,8 @@ from modules.flow_gate.db import ai_run_identity
 GROUP = "flowgate.default.0401"
 OTHER_GROUP = "flowgate.default.9999"
 PROJECT = "flowgate"
-RUN_ID = "aiv_20260810_000099"
+RUN_ID = "aiv2_20260810_000099"  # 0139: v0.2 namespace (aiv_ is v0.1's)
+V01_RUN_ID = "aiv_20260810_000098"
 PAST = "2000-01-01T00:00:00+00:00"
 FUTURE = "2999-01-01T00:00:00+00:00"
 
@@ -194,6 +195,18 @@ def test_startup_recover_leases_is_best_effort_against_a_broken_runs_table(fake_
     count = svc.startup_recover_leases()
     assert count == 1
     assert GROUP not in db_leases._memory
+
+
+def test_startup_recover_leases_leaves_v01_leases_alone_0139(fake_runs):
+    """v0.1 shares group_ai_leases and keeps running: a stg restart must not reclaim
+    (and end-record) v0.1's live aiv_ runs, only v0.2's own leases."""
+    _seed_lease(acquired_at=PAST)
+    _seed_lease(group_id=OTHER_GROUP, run_id=V01_RUN_ID, acquired_at=PAST)
+    count = svc.startup_recover_leases()
+    assert count == 1
+    assert GROUP not in db_leases._memory
+    assert db_leases._memory[OTHER_GROUP]["run_id"] == V01_RUN_ID
+    assert V01_RUN_ID not in fake_runs.rows
 
 
 def test_startup_hook_is_wired_into_run_all():
@@ -378,11 +391,12 @@ def test_next_run_id_seeds_every_legacy_source(identity_db, monkeypatch, table, 
     original = store._fetch_all
     def inventory(sql, params=None):
         if sql == f"SELECT {column} AS run_id FROM {table}":
-            return [{"run_id": f"aiv_{_today()}_{serial:06d}"}]
+            return [{"run_id": f"aiv2_{_today()}_{serial:06d}"},
+                    {"run_id": f"aiv_{_today()}_{serial + 500:06d}"}]   # v0.1's: never a floor
         return original(sql, params)
     monkeypatch.setattr(store, "_fetch_all", inventory)
     ai_run_identity.initialize(scratch_roots=[], all_issuers_stopped=True)
-    assert svc._next_run_id() == f"aiv_{_today()}_{serial + 1:06d}"
+    assert svc._next_run_id() == f"aiv2_{_today()}_{serial + 1:06d}"
 
 
 def test_next_run_id_refuses_incomplete_seed_inventory(identity_db, monkeypatch):
@@ -393,8 +407,10 @@ def test_next_run_id_refuses_incomplete_seed_inventory(identity_db, monkeypatch)
     monkeypatch.setattr(store, "_fetch_all", unavailable)
     with pytest.raises(RuntimeError, match="db down"):
         ai_run_identity.initialize(scratch_roots=[], all_issuers_stopped=True)
-    with pytest.raises(RuntimeError, match="cutover_required"):
+    # 0139: the first allocation self-activates; an incomplete inventory still refuses it.
+    with pytest.raises(RuntimeError, match="db down"):
         svc._next_run_id()
+    assert store._fetch_one("SELECT version FROM ai_run_id_contract")["version"] == 0
 
 
 def test_evaluation_scratch_skips_a_folder_that_already_exists(monkeypatch, identity_db):

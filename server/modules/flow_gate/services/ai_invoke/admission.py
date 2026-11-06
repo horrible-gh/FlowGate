@@ -23,6 +23,7 @@ from typing import Callable, Optional
 
 from fastapi import HTTPException
 from modules.flow_gate import template_provision
+from modules.flow_gate.db import ai_run_identity
 from modules.flow_gate.db import connection as db_connection
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import document_reviews as db_document_reviews
@@ -524,6 +525,8 @@ def _startup_recover_graph_leases(held: frozenset = frozenset()) -> None:
         "SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
         "WHERE e.status IN ('requested', 'running') AND e.ai_run_id IS NOT NULL", [])
     for row in rows:
+        if ai_run_identity.foreign_run_id(row["ai_run_id"]):
+            continue  # 0139: a v0.1 run on the shared DB is never this process's orphan
         if _svc().get_run_record(row["ai_run_id"]) is not None:
             continue
         if row["ai_run_id"] in held:
@@ -606,7 +609,10 @@ def startup_recover_leases() -> int:
         logger.warning("[ai_invoke] startup lease reclaim skipped: remote Job holds unknown")
         victims = []
     else:
-        victims = db_group_ai_leases.reclaim_orphaned(before, keep_run_ids=held)
+        # 0139: v0.1 (aiv_) leases on the shared table are live v0.1 runs, not our orphans.
+        victims = db_group_ai_leases.reclaim_orphaned(
+            before, keep_run_ids=held,
+            owns_run_id=lambda run_id: not ai_run_identity.foreign_run_id(run_id))
     for row in victims:
         _recover_orphan_group_lease_row(row)
     if victims:

@@ -59,7 +59,7 @@ from modules.flow_gate.db import workflow_events as db_events  # noqa: E402
 
 GROUP = "flowgate.default.0447"
 PROJECT = "flowgate"
-RUN_ID = "aiv_20260828_000099"
+RUN_ID = "aiv2_20260828_000099"  # 0139: v0.2 namespace; aiv_ leases are v0.1's
 TOKEN_ID = "tok_20260828_000001"
 PAST = "2000-01-01T00:00:00+00:00"
 
