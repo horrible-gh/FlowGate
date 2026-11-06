@@ -238,6 +238,7 @@
 //
 // flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4, Q #510 E-1) — an F5 brings the working screen back. See
 // "F5 restore" below.
+import { createRunFailurePublisher, runErrorText as requestErrorText } from './runFailureToast'
 import { AiRoleSetupModeless } from '@/features/ai'
 import { createFirstRunAiSetup } from '@/features/ai'
 import { RunResultDetailWindow, RunResultWindow, createRunResultWatch, runWaitText } from '@/features/ai'
@@ -460,19 +461,6 @@ function dismissToast(id: string | number) {
   toasts.value = toasts.value.filter((item) => item.id !== id)
 }
 
-/**
- * flowgate.v02.0061 T#14: refusals whose wording is the server's (sent in the request's x-locale): their message as
- * sent, when it says something.
- */
-const SERVER_WORDED_ERRORS: ReadonlySet<string> = new Set([
-  'graph_run_locked',
-  'graph_git_required',
-  'graph_attempt_inactive',
-  'graph_hold_done_node',
-  'graph_time_machine_blocked',
-  'graph_engine_owned',
-])
-
 /** flowgate.v02test.0001 B0001 §2: the one short sentence of a v0.1 command that did not go (null: nothing to tell). */
 function v01RunErrorKey(outcome: V01RunOutcome): string | null {
   if (outcome.kind === 'busy') return 'gui.designer.top.run_errors.run_already_active'
@@ -484,13 +472,8 @@ function v01RunErrorKey(outcome: V01RunOutcome): string | null {
   return 'gui.designer.top.run_errors.other'
 }
 
-/** A refused run in plain words: the server's message for its 0061 codes, else the code's own sentence or the common one. */
 function runErrorText(error: FlowRunFailure): string {
-  const { code } = error
-  const message = error.message.trim()
-  if (code && SERVER_WORDED_ERRORS.has(code) && message && message !== code) return message
-  const key = code ? `gui.designer.top.run_errors.${code}` : ''
-  return key && te(key) ? t(key) : t('gui.designer.top.run_errors.other')
+  return requestErrorText(error, (key, values) => values ? t(key, values) : t(key), te)
 }
 
 /**
@@ -518,11 +501,14 @@ function holdErrorText(error: FlowRunFailure): string {
   return key && te(key) ? `${head} — ${t(key)}` : head
 }
 
+const runFailurePublisher = createRunFailurePublisher()
+// Tab round trips and session replacement retain their existing reappearance policy.
+watch([projectId, () => center.state.activeFlowId, () => projectStore.designerSessionOwner], () => runFailurePublisher.clear(), { flush: 'sync' })
 watch(
-  () => center.activeRun.value?.error?.seq ?? 0,
-  (seq) => {
+  () => center.activeRun.value?.error,
+  () => {
     const error = center.activeRun.value?.error
-    if (!seq || !error) return
+    if (!error || !runFailurePublisher.accept(error)) return
     toastSeq += 1
     const text = () => (error.kind === 'approval' ? approvalErrorText(error) : error.kind === 'hold' ? holdErrorText(error) : runErrorText(error))
     const tone = error.kind === 'approval' && error.approval?.keepButton ? 'warning' : 'danger'

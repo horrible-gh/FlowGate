@@ -142,13 +142,14 @@ describe('flowRunControl — one server call per button (T#14)', () => {
     expect(source.calls.filter((call) => !call.startsWith('current'))).toEqual(['pause run_1', 'resume run_1', 'stop run_1'])
   })
 
-  it('a refusal keeps the server code and message', async () => {
+  it('a refusal keeps the server code without copying response text', async () => {
     const source = fakeSource()
     source.refuse = { code: 'graph_run_locked', message: 'A running, paused or stopping flow cannot be edited.' }
     const { ctl, runs } = control(source)
     expect(await ctl.run(F, 'next')).toBe(false)
     expect(runs[F].error?.code).toBe('graph_run_locked')
-    expect(runs[F].error?.message).toBe('A running, paused or stopping flow cannot be edited.')
+    expect(runs[F].error?.message).toBe('')
+    expect(runs[F].error?.stage).toBe('start')
   })
 })
 

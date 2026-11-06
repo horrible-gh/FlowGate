@@ -280,7 +280,7 @@ describe('전체 실행 on a v0.1 Flow', () => {
   })
 })
 
-describe('a started run's own record (GET /ai-invoke/{run_id}) is what tells failure', () => {
+describe("a started run's own record (GET /ai-invoke/{run_id}) is what tells failure", () => {
   it('reads succeeded only from a finished run; a live run says nothing yet', () => {
     expect(toReviewRunResult('r1', { status: 'finished', succeeded: false, outcome: 'failed', end_reason: 'error' })).toMatchObject({ finished: true, succeeded: false, endReason: 'error' })
     expect(toReviewRunResult('r1', { status: 'finished', succeeded: true, outcome: 'complete' })).toMatchObject({ finished: true, succeeded: true })

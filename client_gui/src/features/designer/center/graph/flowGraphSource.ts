@@ -160,6 +160,7 @@ export interface FlowDocumentLink {
 
 /** A refused run operation rejects with an Error carrying the server's `code` (e.g. `run_policy_undecided`). */
 export interface FlowRunError extends Error {
+  readonly serverRequestId?: string | null
   readonly code?: string | null
   /** flowgate.v02.0056 F2-1: the HTTP status and the server's params (a refused approval names its document). */
   readonly status?: number | null

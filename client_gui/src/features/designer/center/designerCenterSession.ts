@@ -647,6 +647,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   const runControl = createFlowRunControl({
     source,
+    flowLabel: (flowId) => state.tabs.find(tab => tab.flowId === flowId)?.name ?? null,
     projectId: () => state.projectId,
     isOpen,
     beforePrepare: options.beforeRunPrepare,

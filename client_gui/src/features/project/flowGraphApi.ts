@@ -31,19 +31,30 @@ import type {
   FlowGraphValidation,
 } from './types'
 
+/** Only correlation IDs supplied by the server; a Canvas client ID is never a request ID. */
+export function serverRequestIdOf(response: { headers?: unknown; data?: Raw } | null | undefined): string | null {
+  const headers = response?.headers as Record<string, unknown> & { get?: (name: string) => unknown } | undefined
+  const values = [headers?.get?.('x-request-id'), headers?.['x-request-id'], headers?.['X-Request-ID'],
+    headers?.get?.('x-correlation-id'), headers?.['x-correlation-id'], response?.data?.error?.request_id, response?.data?.request_id]
+  return values.find((v): v is string => typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(v)
+    && !/bearer|authorization|cookie|secret|password|token/i.test(v)) ?? null
+}
+
 export class FlowGraphApiError extends Error {
+  readonly serverRequestId: string | null
   readonly code: string | null
   readonly params: Record<string, unknown>
   readonly status: number | null
   /** The structure / root binding issues of a `graph_validation_failed` refusal, else []. */
   readonly issues: FlowGraphIssue[]
 
-  constructor(message: string, code: string | null, params: Record<string, unknown>, status: number | null, cause: unknown) {
+  constructor(message: string, code: string | null, params: Record<string, unknown>, status: number | null, cause: unknown, serverRequestId: string | null = null) {
     super(message)
     this.name = 'FlowGraphApiError'
     this.code = code
     this.params = params
     this.status = status
+    this.serverRequestId = serverRequestId
     const raw = code === 'graph_validation_failed' ? params.issues : null
     this.issues = Array.isArray(raw) ? raw.filter((i) => i && typeof i === 'object').map((i) => toIssue(i as Raw)) : []
     ;(this as Error & { cause?: unknown }).cause = cause
@@ -52,14 +63,15 @@ export class FlowGraphApiError extends Error {
 
 /** A refused request -> FlowGraphApiError (the server's envelope code / params). Also the run transport's (flowRunApi.ts). */
 export function toGraphError(error: unknown, fallback: string): FlowGraphApiError {
-  const response = (error as { response?: { status?: number; data?: Raw } } | null)?.response
+  if (error instanceof FlowGraphApiError) return error
+  const response = (error as { response?: { status?: number; data?: Raw; headers?: unknown } } | null)?.response
   const envelope = response?.data?.error
   const code = envelope && typeof envelope.code === 'string' ? envelope.code : null
   const params = envelope && envelope.params && typeof envelope.params === 'object' ? { ...envelope.params } : {}
   const message = envelope && typeof envelope.message === 'string' && envelope.message
     ? envelope.message
     : wrapError(error, fallback).message
-  return new FlowGraphApiError(message, code, params, typeof response?.status === 'number' ? response.status : null, error)
+  return new FlowGraphApiError(message, code, params, typeof response?.status === 'number' ? response.status : null, error, serverRequestIdOf(response))
 }
 
 const graphPath = (flowId: string) => `/api/v1/flows/${encodeURIComponent(flowId)}/graph`

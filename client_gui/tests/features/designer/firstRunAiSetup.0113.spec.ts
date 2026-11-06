@@ -64,7 +64,7 @@ describe('D §8 first modeless and run lifecycle', () => {
   })
   it('a read failure never prepares or runs and keeps the run failure', async () => {
     const h = harness(); h.get.mockRejectedValue(new Error('read failed'))
-    expect(await h.control.run('f','all')).toBe(false); expect(h.prepare).not.toHaveBeenCalled(); expect(h.start).not.toHaveBeenCalled(); expect(h.runs.f.error?.message).toBe('read failed')
+    expect(await h.control.run('f','all')).toBe(false); expect(h.prepare).not.toHaveBeenCalled(); expect(h.start).not.toHaveBeenCalled(); expect(h.runs.f.error?.message).toBe(''); expect(h.runs.f.error?.stage).toBe('before_prepare')
   })
   it('incomplete values do not save; save failure keeps the modeless and never runs', async () => {
     const h = harness(), result = h.control.run('f','next'); await flushPromises()

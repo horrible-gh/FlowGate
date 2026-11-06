@@ -61,7 +61,7 @@ describe('pre-confirm adoption assessment', () => {
     expect(await ctl.run('f', mode)).toBe(false)
     expect(prepare).not.toHaveBeenCalled()
     expect(source.startRun).not.toHaveBeenCalled()
-    expect(runs.f.error).toMatchObject({ kind: 'run', code: 'run_policy_undecided', status: 409, message: 'Execution rules are undecided.' })
+    expect(runs.f.error).toMatchObject({ kind: 'run', code: 'run_policy_undecided', status: 409, message: '', action: 'start', mode, stage: 'revision', outcome: 'rejected' })
     ctl.clear()
   })
   it('saves, assesses, confirms and then starts when allowed', async () => {
