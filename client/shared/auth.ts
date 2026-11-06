@@ -34,25 +34,13 @@ export function isAdminFromToken(): boolean {
   return !!p?.is_admin
 }
 
-// T0005 §5 / T0009 §6: the only allow-listed internal prefixes a post-login `next`
-// query param (or a GUI-generation switch) may point at. Anything outside this
-// (external origin, protocol-relative, or a path this list doesn't cover) is rejected
-// so /login never becomes an open redirect.
-const SAFE_RETURN_PREFIXES = ['/app', '/main', '/settings']
+// Only v0.1 entry points may receive a post-login return redirect.
+const SAFE_RETURN_PREFIXES = ['/main', '/settings']
 
 /**
- * Validate a post-login return target carried in `next`. Returns the original value
- * only when it is a same-origin absolute path under an allow-listed prefix; otherwise
- * null, so the caller falls back to its own default (e.g. `/main`).
- *
- * The check runs against the *normalized* destination, not the raw string: a raw
- * prefix check on `rawNext` alone would accept `/app/../settings` or
- * `/app/%2e%2e/main` (both start with `/app/`) even though `window.location.replace`
- * resolves dot-segments — including percent-encoded ones, per the WHATWG URL spec —
- * before navigating, landing outside `/app` entirely. A leading backslash is worse:
- * `/\evil.example.com/app` parses with an `http://evil.example.com` origin (a
- * protocol-relative redirect `rawNext.startsWith('//')` alone would miss), so the
- * parsed `origin` is checked too, not just the path prefix.
+ * Validate a post-login `next` path. Only same-origin paths under /main or
+ * /settings may be used; unsafe or removed /app destinations fall back to /main.
+ * Compare normalized URLs to reject protocol-relative and cross-origin redirects.
  */
 export function resolveSafeReturnPath(rawNext: string | null | undefined): string | null {
   if (!rawNext) return null

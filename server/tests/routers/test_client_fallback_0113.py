@@ -26,5 +26,5 @@ def test_existing_route_and_spa_method_contracts(client):
     response = client.post("/flowgate/api/v1/existing")
     assert response.status_code == 405 and response.headers["allow"] == "GET"
     assert client.get("/flowgate/api/v1/existing").json() == {"ok": True}
-    assert client.get("/app/designer").json() == {"shell": True}
-    assert client.post("/app/designer").status_code == 405
+    assert client.get("/main/documents").json() == {"shell": True}
+    assert client.post("/main/documents").status_code == 405

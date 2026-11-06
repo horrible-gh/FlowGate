@@ -24,7 +24,6 @@ pytest-cache-files-*
 node_modules
 **/node_modules
 client/dist
-client_gui/dist
 
 # Host-only runtime state — must never leak into the image
 storage
