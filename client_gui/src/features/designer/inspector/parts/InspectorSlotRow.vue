@@ -179,15 +179,17 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 <style scoped>
 .inspector-slot {
   display: grid;
+  /* The same 72..120px name track for documents and memos, independent of button count. */
+  --slot-name-width: clamp(72px, 20cqi, 120px);
   /* T#4: the buttons column may shrink below its content on a narrow Inspector (264px); the line's
      nav label then ellipsises (InspectorSlotList) and the document icon / ✎ keep their place. */
-  grid-template-columns: minmax(72px, 120px) minmax(0, 1fr) minmax(0, max-content);
+  grid-template-columns: var(--slot-name-width) minmax(min-content, 1fr) minmax(0, max-content);
   gap: 9px;
-  align-items: center;
+  align-items: start;
   box-sizing: border-box;
-  height: 38px;
+  min-height: 38px;
   min-width: 0;
-  padding: 0 9px 0 12px;
+  padding: 4px 9px 4px 12px;
   border: 1px solid var(--fg2-line);
   border-radius: 8px;
   background: #0e2034;
@@ -196,14 +198,15 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 /* A narrow slot list (264px Inspector): the name column stays at its minimum so the buttons keep the room. */
 @container (max-width: 360px) {
   .inspector-slot {
-    grid-template-columns: 72px minmax(0, 1fr) minmax(0, max-content);
+    --slot-name-width: 72px;
+    grid-template-columns: var(--slot-name-width) minmax(min-content, 1fr) minmax(0, max-content);
   }
 
   /* flowgate.v02.0070 T#2 (B2): a warning line keeps its badge ⚠ and [AI 호출] · 이력 · 열기 · ✎ whole; the name
      ellipsises below 72px. Whatever follows the badge and ⚠ (the summary, its slot, the progress bar) gives way
      first: it takes no room of its own (no gap, zero width), only what is left after the name. */
   .inspector-slot.is-state-first {
-    grid-template-columns: minmax(0, 72px) minmax(min-content, 1fr) max-content;
+    grid-template-columns: minmax(0, var(--slot-name-width)) minmax(min-content, 1fr) max-content;
   }
 
   .inspector-slot.is-state-first .inspector-slot-value {
@@ -239,7 +242,12 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 
 /* flowgate.v02.0068 T#1 — a line with the [업로드][다운로드] group: its own column before the buttons. */
 .inspector-slot.has-io {
-  grid-template-columns: minmax(72px, 120px) minmax(0, 1fr) max-content minmax(0, max-content);
+  grid-template-columns: var(--slot-name-width) minmax(min-content, 1fr) max-content minmax(0, max-content);
+}
+
+/* A warning still reserves its badge, mark and controls before shrinking the name. */
+.inspector-slot.has-io.is-state-first:not(.has-decision) {
+  grid-template-columns: minmax(0, var(--slot-name-width)) minmax(min-content, 1fr) max-content max-content;
 }
 
 .inspector-slot-io {
@@ -252,12 +260,16 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
    and the line grows; the buttons keep their place in the first row. */
 @container (max-width: 360px) {
   .inspector-slot.has-io {
-    grid-template-columns: 72px minmax(0, 1fr) minmax(0, max-content);
+    grid-template-columns: var(--slot-name-width) minmax(min-content, 1fr) minmax(0, max-content);
     row-gap: 4px;
     height: auto;
     min-height: 38px;
     padding-top: 4px;
     padding-bottom: 4px;
+  }
+
+  .inspector-slot.has-io.is-state-first:not(.has-decision) {
+    grid-template-columns: minmax(0, var(--slot-name-width)) minmax(min-content, 1fr) max-content;
   }
 
   .inspector-slot.has-io .inspector-slot-io {
@@ -272,6 +284,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 }
 
 .inspector-slot-name {
+  height: 28px;
   min-width: 0;
   overflow: hidden;
   padding: 0;
@@ -280,6 +293,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   color: #dbe7f2;
   font: inherit;
   font-size: 12px;
+  line-height: 28px;
   font-weight: 750;
   text-align: left;
   text-overflow: ellipsis;
@@ -301,6 +315,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 }
 
 .inspector-slot-value {
+  height: 28px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -327,6 +342,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 /* The state badge (0056 F1): a short word with the tone colours of InspectorStatusChip; drawn only when
    the state says something. */
 .inspector-slot-state {
+  box-sizing: border-box;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -398,6 +414,9 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 }
 
 .inspector-slot-summary {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
   overflow: hidden;
   color: #9cb1c7;
   font-size: 11.5px;
@@ -470,12 +489,13 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   white-space: nowrap;
 }
 
-/* flowgate.v02.0070 T#2 (B2): the 264px Inspector (a 236px list) — tighter gaps on every line, so the buttons keep
+/* Keep compact spacing through 280px: restoring wide gaps at 241px overlaps memo badges and controls.
+   flowgate.v02.0070 T#2 (B2): the 264px Inspector (a 236px list) — tighter gaps on every line, so the buttons keep
    lining up from line to line and a warning line with all its buttons still shows the start of its name. */
-@container (max-width: 240px) {
+@container (max-width: 280px) {
   .inspector-slot {
     column-gap: 4px;
-    padding: 0 6px 0 8px;
+    padding: 4px 6px 4px 8px;
   }
 
   .inspector-slot-buttons {
@@ -488,7 +508,7 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
 }
 /* 0126: keep the file/info/decision groups together and in reading order at every width. */
 .inspector-slot.has-decision {
-  grid-template-columns: minmax(45px, 112px) minmax(0, 1fr) max-content;
+  grid-template-columns: var(--slot-name-width) minmax(min-content, 1fr) minmax(0, max-content);
   height: auto;
   min-height: 38px;
   padding-top: 4px;
@@ -500,14 +520,14 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   display: block; width: 1px; height: 20px; flex: 0 0 1px; margin: 0 3px; background: #34465b; opacity: .9;
 }
 @media (max-width: 520px) {
-  .inspector-slot.has-decision { column-gap: 4px; padding-left: 8px; }
+  .inspector-slot { column-gap: 4px; padding-left: 8px; }
   .inspector-slot.has-decision .inspector-slot-buttons,
   .inspector-slot.has-decision :deep(.document-io-group) { gap: 4px; }
   .inspector-slot.has-decision :deep(.ui-icon-btn--sm) { width: 26px; height: 26px; }
   .inspector-slot.has-decision .inspector-slot-io :deep(.document-io-divider) { height: 18px; margin: 0 2px; }
 }
 @container (max-width: 360px) {
-  .inspector-slot.has-decision { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .inspector-slot.has-decision { grid-template-columns: var(--slot-name-width) minmax(min-content, 1fr); }
   .inspector-slot.has-decision .inspector-slot-buttons { grid-column: 1 / -1; }
 }
 </style>
