@@ -223,6 +223,7 @@ function onAdd(item: CustomPaletteItem) {
 /* Two compact columns fit the right panel width (03-designer-shell `.pal-grid`). */
 .designer-palette-grid {
   display: grid;
+  max-width: 278px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-auto-rows: 52px;
   gap: 7px;
