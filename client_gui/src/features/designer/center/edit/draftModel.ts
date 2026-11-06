@@ -19,6 +19,7 @@ import type {
   FlowGraphNodeDocument,
 } from '../graph/flowGraph'
 import type { FlowDraftContent } from '../graph/flowGraphSource'
+import { isNonLatestRevision } from '../graph/revisionView'
 
 export const CLIENT_KEY_PREFIX = 'tmp_'
 
@@ -117,7 +118,7 @@ export function remapDraft(model: DraftModel, keyMap: Readonly<Record<string, st
 export function editableRevision(graph: FlowGraph): FlowGraph | null {
   const latest = graph.latestRevisionNo ?? null
   if (graph.ownership !== 'graph' || graph.viewMode !== 'revision' || graph.draft || latest === null) return null
-  if ((graph.viewRevisionNo ?? latest) !== latest) return null
+  if (isNonLatestRevision(graph)) return null
   return {
     ...graph,
     nodes: graph.nodes.map((node) => (node.definition ? { ...node, structureEditable: true } : node)),

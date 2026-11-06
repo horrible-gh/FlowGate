@@ -111,6 +111,9 @@ export interface FlowRunControlDeps {
   readonly isOpen: (projectId: string, flowId: string) => boolean
   /** Confirms the edited draft first (an idle Flow only); whether the command may go (FlowCenter `prepareRun`). */
   readonly prepare: (flowId: string) => boolean | Promise<boolean>
+  readonly hasDraftToConfirm?: (flowId: string) => boolean
+  /** Finish pending draft saves before the server reads the candidate; never confirms. */
+  readonly saveDraftBeforeCheck?: (flowId: string) => Promise<boolean>
   /** Reads the Flow's Canvas again in the background. */
   readonly refresh: (flowId: string) => void
 }
@@ -284,6 +287,19 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
       if (isRunLocked(state.run)) return false
       if (deps.beforePrepare && !(await deps.beforePrepare(flowId, mode))) return false
       if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
+      if (state.run?.status === 'idle' && deps.hasDraftToConfirm?.(flowId) && source.checkRevisionAdoption) {
+        if (deps.saveDraftBeforeCheck && !(await deps.saveDraftBeforeCheck(flowId))) return false
+        if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
+        // A negative assessment is a run refusal. Only failure to obtain an assessment falls back (T A-2.3).
+        let refusal: FlowRunError | null = null
+        try {
+          refusal = await source.checkRevisionAdoption(projectId, flowId)
+        } catch {
+          // The command still enforces adoption; the revision notice explains a pinned view if it refuses.
+        }
+        if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
+        if (refusal) throw refusal
+      }
       if (!(await deps.prepare(flowId))) return false
       if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || deps.canProceed?.(flowId) === false) return false
       // One server call: the step / full command. Nothing is stopped from here after it (T#2 settles the step).

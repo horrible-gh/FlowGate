@@ -652,6 +652,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     beforePrepare: options.beforeRunPrepare,
     canProceed: (flowId) => !disposed && (options.runSetupCurrent?.() ?? true) && whenKnown(flowId, run => !isRunLocked(run)),
     prepare: (flowId) => prepareRunTold(flowId),
+    hasDraftToConfirm: willConfirmDraft,
+    saveDraftBeforeCheck: (flowId) => drafts.saveBeforeRunCheck(flowId),
     refresh: (flowId) => refreshFlow(flowId),
   }, state.runs)
 
@@ -1262,9 +1264,13 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   // server's run unit) first, and the run starts only if that succeeds (refused: its issues show).
   // Nothing to confirm is a go at once (not through a promise), so the run state changes in the
   // same tick.
-  function prepareRun(flowId: string): boolean | Promise<boolean> {
+  function willConfirmDraft(flowId: string): boolean {
     const draft = readyGraph(flowId)?.draft
-    if (!draft?.editable || !draft.confirmable || !drafts.drawn(flowId)) return true
+    return !!draft?.editable && draft.confirmable && drafts.drawn(flowId)
+  }
+
+  function prepareRun(flowId: string): boolean | Promise<boolean> {
+    if (!willConfirmDraft(flowId)) return true
     if (state.edits[flowId]?.action) return false
     return drafts.confirm(flowId).then(() => state.edits[flowId]?.notice?.kind === 'confirmed')
   }

@@ -86,6 +86,7 @@
           :holds="holds"
           @node-menu="chooseCardMenu"
         />
+        <RevisionNotice v-if="load?.status === 'ready'" :graph="load.graph" />
         <p
           v-if="edit?.status === 'error' && edit.errorCode === 'document_storage_unwritable'"
           class="designer-storage-error" role="alert" data-test="designer-storage-error"
@@ -110,6 +111,7 @@ import LoadingState from '../../../components/ui/LoadingState.vue'
 import FlowCanvas from './canvas/FlowCanvas.vue'
 import type { DesignerCenterSession, FlowCardMenuKey } from './designerCenterSession'
 import FlowTabStrip from './FlowTabStrip.vue'
+import RevisionNotice from './RevisionNotice.vue'
 import GraphTimeMachineDialog from './run/GraphTimeMachineDialog.vue'
 
 const props = withDefaults(defineProps<{
