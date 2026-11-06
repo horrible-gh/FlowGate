@@ -103,8 +103,8 @@ describe('buildTimeline', () => {
 
   it('appends unsent messages last, pending or failed', () => {
     const pending: PendingTurn[] = [
-      { localId: 'a', idempotencyKey: 'a', body: 'hi', basedOnSeq: 1, createdAt: '2026-10-06T07:00:00Z', failed: false },
-      { localId: 'b', idempotencyKey: 'b', body: 'oops', basedOnSeq: 1, createdAt: '2026-10-06T07:00:01Z', failed: true },
+      { localId: 'a', idempotencyKey: 'a', body: 'hi', basedOnSeq: 1, createdAt: '2026-10-06T07:00:00Z', failed: false, providerId: '' },
+      { localId: 'b', idempotencyKey: 'b', body: 'oops', basedOnSeq: 1, createdAt: '2026-10-06T07:00:01Z', failed: true, providerId: '' },
     ]
     const items = buildTimeline([turn(1, '2026-10-06T08:00:00Z')], [command('k', at(1, 'after'))], pending)
     expect(items.map((i) => i.key)).toEqual(['turn:1', 'command:k', 'local:a', 'local:b'])

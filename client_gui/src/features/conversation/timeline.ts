@@ -19,6 +19,12 @@ export interface PendingTurn {
   basedOnSeq: number
   createdAt: string
   failed: boolean
+  /**
+   * flowgate.v02.0142 T#1: the AI (`selectedProviderId`) chosen at the moment the message was sent. Empty = no
+   * selection. Set once when the pending turn is made and never changed: the send action of the first try and of
+   * every retry runs on this AI, whatever the picker shows later.
+   */
+  providerId: string
 }
 
 export type TimelineItem =

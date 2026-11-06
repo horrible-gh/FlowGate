@@ -101,6 +101,9 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     operations.value.push(operation)
     const currentOperation = () => operations.value.find((op) => op.origin.createIntentId === origin.createIntentId)
     const update = (status: SubmissionPhase) => { const op = currentOperation(); if (op) op.status = status }
+    // flowgate.v02.0142 T#1: the AI chosen now is the one of this first message, whatever the picker shows once the
+    // chat has been created.
+    const providerId = state.selectedProviderId
     try {
       const result = await session.createChat(title, typed === null ? { autoTitle: true } : undefined, {
         draftIntentId: origin.owner.intentId,
@@ -122,7 +125,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
       // No await between this ownership check and the explicitly addressed first send.
       if (!ownsScreen(origin)) return false
       update({ phase: 'sending', stage: 'send', attempt: 1 })
-      const ok = await session.send(text, result, trace, origin)
+      const ok = await session.send(text, { ...result, providerId }, trace, origin)
       // Session owns send progress (and its retained failure bubble).
       operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
       return settle(result.chatId, ok)

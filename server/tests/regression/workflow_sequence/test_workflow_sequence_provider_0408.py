@@ -387,17 +387,37 @@ def test_override_beats_stored_and_stored_beats_request_default(monkeypatch, rea
     assert second["provider"]["id"] == PROVIDER
 
 
-def test_inactive_stored_provider_falls_back_once_with_warning(monkeypatch, real_sequence, caplog):
+def test_inactive_stored_provider_refuses_without_fallback(monkeypatch, real_sequence, caplog):
+    from fastapi import HTTPException
+    from unittest.mock import Mock
+
     save_item(provider_id="inactive-provider", provider_display_name="Inactive Snapshot")
     prepare_start(monkeypatch, providers=[provider("header-default", "Header Default")])
-    expected = (
-        f"continuation hop provider fallback: inactive-provider not active for {ROOT} "
-        "item_seq 1, falling back to header-default"
-    )
-    with caplog.at_level(logging.WARNING):
-        result = start_continuous(continuation_provider_overrides=None)
-    assert result["provider"]["id"] == "header-default"
-    assert caplog.messages.count(expected) == 1
+    worker = Mock()
+    issue_token = Mock()
+    monkeypatch.setattr(ai_svc, "_worker", worker)
+    monkeypatch.setattr(ai_svc.token_service, "issue", issue_token)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(HTTPException) as caught:
+        start_continuous(continuation_provider_overrides=None)
+
+    assert caught.value.status_code == 422
+    detail = caught.value.detail
+    assert detail["code"] == "provider_unavailable"
+    assert detail["requested_provider_id"] == "inactive-provider"
+    assert detail["stored_provider_id"] == "inactive-provider"
+    assert detail["selected_provider_source"] == "stored_sequence"
+    assert detail["doc_ref"] == ROOT
+    assert detail["stored_provider_item_seq"] == 1
+    assert detail["reason"] == "stored_provider_not_selectable"
+    assert ai_svc._runs == {}
+    worker.assert_not_called()
+    issue_token.assert_not_called()
+    diagnostics = [record for record in caplog.records
+                   if getattr(record, "stored_provider_id", None) == "inactive-provider"]
+    assert len(diagnostics) == 1
+    assert diagnostics[0].reason == "stored_provider_not_selectable"
+    assert "continuation hop provider fallback" not in caplog.text
 
 
 def test_old_null_row_falls_back_without_provider_warning(monkeypatch, real_sequence, caplog):

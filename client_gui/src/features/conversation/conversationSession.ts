@@ -108,6 +108,11 @@ export interface CreatedChat {
   draftIntentId: string | null
   createIntentId: string
 }
+/**
+ * flowgate.v02.0142 T#1: what `send` addresses — the chat just made by a first send (`CreatedChat`), the AI the
+ * message is pinned to (`providerId`), both, or neither (the open chat on the current selection).
+ */
+export type SendTarget = (CreatedChat & { providerId?: string }) | { providerId?: string }
 export type CreateChatResult = CreatedChat | { status: 'cancelled' | 'failed'; chatId: string | null; scope: ConversationScope | null; draftIntentId: string | null; createIntentId: string | null }
 export interface CreateChatContext {
   draftIntentId: string
@@ -141,7 +146,11 @@ export interface ConversationSession {
   setChatTitle(chatId: string, title: string): void
   loadOlder(trace?: SubmissionTrace): Promise<void>
   catchUp(): Promise<void>
-  send(text: string, target?: CreatedChat, trace?: SubmissionTrace, snapshot?: DraftSendSnapshot): Promise<boolean>
+  /**
+   * flowgate.v02.0142 T#1: the AI of the message is pinned when it is sent: `target.providerId` when given (the first
+   * message of a new chat, whose AI was chosen before the chat was created), else the current selection.
+   */
+  send(text: string, target?: SendTarget, trace?: SubmissionTrace, snapshot?: DraftSendSnapshot): Promise<boolean>
   retry(localId: string): Promise<boolean>
   reportRead(seq: number): Promise<void>
   decideCommand(commandId: string, decision: CommandDecision): Promise<void>
@@ -738,19 +747,28 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return false
   }
 
-  function runSendAction(chatId: string, gen: number, trace: SubmissionTrace): void {
+  /**
+   * D0005 §3-2: the send-time action runs once, only after the turn was accepted, and only
+   * for the chat the turn went to. After a switch to another chat it is dropped: a mention
+   * or an AI run must never land in a chat where no turn was just sent.
+   *
+   * flowgate.v02.0142 T#1: the AI run uses `providerId`, the AI pinned when the message was sent — never the picker's
+   * current value. Without a usable one startAiRun ends with the `no_provider` notice (the turn itself stays stored).
+   */
+  function runSendAction(chatId: string, gen: number, trace: SubmissionTrace, providerId: string): void {
     if (!isCurrentChat(chatId, gen)) return
     if (state.settings.sendAction === 'copy_mention') options.onAutoCopyMention?.()
-    else if (state.settings.sendAction === 'invoke_ai' && hasProviders.value) {
+    else if (state.settings.sendAction === 'invoke_ai') {
       trace.mark('ai_start', { docId: chatId })
-      void invokeAi()
+      void startAiRun(providerId)
     }
   }
 
-  async function send(text: string, target?: CreatedChat, trace = createSubmissionTrace(), snapshot?: DraftSendSnapshot): Promise<boolean> {
+  async function send(text: string, target?: SendTarget, trace = createSubmissionTrace(), snapshot?: DraftSendSnapshot): Promise<boolean> {
+    const created = target && 'status' in target ? target : undefined
     // A first-send continuation can only address the CH bound to its original scope.
-    if (target && (disposed || state.scope?.projectId !== target.scope.projectId || state.scope?.groupId !== target.scope.groupId || state.activeChatId !== target.chatId)) return false
-    const chatId = target?.chatId ?? state.activeChatId
+    if (created && (disposed || state.scope?.projectId !== created.scope.projectId || state.scope?.groupId !== created.scope.groupId || state.activeChatId !== created.chatId)) return false
+    const chatId = created?.chatId ?? state.activeChatId
     const body = text.trim()
     if (!chatId || !body || state.sending || running.value || state.turnsStatus !== 'ready') return false
     const owner = ownerKey(chatId)
@@ -768,13 +786,15 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
     const gen = chatGen
     const key = newIdempotencyKey()
-    const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq: state.headSeq, createdAt: new Date().toISOString(), failed: false }
+    // flowgate.v02.0142 T#1: pinned in the same synchronous step as chatId / gen / key, before the first await.
+    const providerId = target?.providerId ?? state.selectedProviderId
+    const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq: state.headSeq, createdAt: new Date().toISOString(), failed: false, providerId }
     traces.set(key, trace)
     if (snapshot) pendingDrafts.set(key, { ...snapshot, owner: { ...snapshot.owner } })
     publishOutbox(owner, [...(outbox.get(owner) ?? []), item])
     publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
     trace.frame('pending_frame', chatId)
-    return finishSend(chatId, gen, owner, item, trace, !!target)
+    return finishSend(chatId, gen, owner, item, trace, !!created)
   }
 
   async function finishSend(chatId: string, gen: number, owner: string, item: PendingTurn, trace: SubmissionTrace, refresh = false): Promise<boolean> {
@@ -800,6 +820,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
     const gen = chatGen
     const snapshot = pendingDrafts.get(localId)
+    // The first attempt failed before its send action, so the accepted retry runs it once — on the AI pinned at the
+    // first send (flowgate.v02.0142 T#1, `item.providerId` in finishSend), not on the selection of this moment.
     const ok = await finishSend(chatId, gen, owner, item, traces.get(localId) ?? createSubmissionTrace())
     if (ok && !fromComposer && snapshot) retryReceipts.set(owner, snapshot)
     return ok
@@ -944,17 +966,27 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
+  /** The [AI 호출] button: the AI selected at the moment of the press. */
   async function invokeAi(): Promise<void> {
+    await startAiRun(state.selectedProviderId)
+  }
+
+  /**
+   * flowgate.v02.0142 T#1: starts the chat AI run on `providerId` and on nothing else — it is not read from the
+   * selection again here, and an empty / unknown / unlisted id never falls back to the server default or to another
+   * connection: the run ends with the `no_provider` notice and no /start request.
+   */
+  async function startAiRun(providerId: string): Promise<void> {
     const chatId = state.activeChatId
     if (!chatId || running.value) return
-    if (!hasProviders.value) {
+    if (!providerId || !hasProviders.value || !state.providers.some((p) => p.id === providerId)) {
       notify('warning', 'no_provider')
       return
     }
     const gen = chatGen
     state.runId = 'starting'
     try {
-      const runId = await source.startChatRun(chatId, state.selectedProviderId || null)
+      const runId = await source.startChatRun(chatId, providerId)
       if (disposed || gen !== chatGen) return
       if (!runId) {
         state.runId = null
