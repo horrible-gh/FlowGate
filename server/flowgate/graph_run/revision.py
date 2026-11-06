@@ -18,12 +18,14 @@ from modules.flow_gate.graph_workflow.store import definition_store, layout_stor
 from flowgate.graph_run.editing import protect_definition
 
 
-def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
+def check_revision_adoption(group: dict, run: dict, record: dict, latest: int) -> tuple:
+    """Check a candidate definition without writes; draft and confirmed adoption use this same path.
+
+    The number only labels refusal params. Policy requirements use the candidate's nodes/edges
+    and root binding, so an unconfirmed draft needs no stored revision.
+    """
     flow_id, run_id = run["group_id"], run["run_id"]
-    latest = definition_store.latest_revision_no(flow_id)
     old_no = int(run["revision_no"])
-    if latest is None or latest <= old_no:
-        return False
     rows = run_store.node_runs(run_id)
     # Pre-151 open/review rows have no attempt record: do not migrate their live work either.
     if run_store.has_active_attempts(run_id) or any(r["status"] in ("open", "review") for r in rows):
@@ -32,18 +34,15 @@ def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
             "from_revision_no": old_no, "to_revision_no": latest})
     _refuse_unresolved_gates(flow_id, run_id, rows, old_no, latest)
     from flowgate.gate_decisions import rounds, repository as gate_decisions
-    jobs = rounds.unfinished(flow_id)
+    gate_jobs = rounds.unfinished(flow_id)
     reservations = gate_decisions.reservations_of_group(flow_id)
-    if jobs or reservations:
+    if gate_jobs or reservations:
         raise GraphApiError(409, "graph_revision_migration_blocked", {
             "flow_id": flow_id, "run_id": run_id, "reason": "gate_jobs_in_progress",
-            "jobs": jobs, "decision_ids": [r["decision_id"] for r in reservations]})
-    record = definition_store.revision(flow_id, latest)
-    if record is None:
-        raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": latest})
+            "jobs": gate_jobs, "decision_ids": [r["decision_id"] for r in reservations]})
     protect_definition(flow_id, record["nodes"], record["edges"], run)
     candidate = {**run, "revision_no": latest}
-    ctx = load_context(candidate, group.get("project_id"), actor, jobs)
+    ctx = load_context(candidate, group.get("project_id"), None, definition=record)
     targets = run_scope(ctx.revision).targets
     snapshot = policy_snapshot.policy_set_for_run(flow_id)
     missing = undecided_for(required_policies(ctx.revision, (ctx.binding or {}).get("node_key")),
@@ -52,6 +51,37 @@ def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
         raise GraphApiError(409, "run_policy_undecided", {
             "flow_id": flow_id, "revision_no": latest, "undecided_policies": missing})
     policies_of(snapshot["entries"])  # Restore/implementation check before any write.
+    return rows, targets, snapshot
+
+
+def check_draft_adoption(group: dict) -> dict:
+    """Read only: no run reconciliation, policy snapshot write, or draft confirmation."""
+    flow_id = group["group_id"]
+    run = run_store.current_run(flow_id)
+    if run is None:
+        return {"adoptable": True, "target": None}
+    if run["status"] != run_store.IDLE:
+        raise GraphApiError(409, "run_already_active",
+                            {"flow_id": flow_id, "run_id": run["run_id"], "status": run["status"]})
+    draft = definition_store.draft(flow_id)
+    if draft is None:
+        return {"adoptable": True, "target": None}
+    latest = (definition_store.latest_revision_no(flow_id) or 0) + 1
+    check_revision_adoption(group, run, draft, latest)
+    return {"adoptable": True, "target": "draft"}
+
+
+def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:
+    flow_id, run_id = run["group_id"], run["run_id"]
+    latest = definition_store.latest_revision_no(flow_id)
+    old_no = int(run["revision_no"])
+    if latest is None or latest <= old_no:
+        return False
+    record = definition_store.revision(flow_id, latest)
+    if record is None:
+        raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": latest})
+    rows, targets, snapshot = check_revision_adoption(group, run, record, latest)
+    candidate = {**run, "revision_no": latest}
     store, now = get_store(), layout_store.utc_now_ms()
     existing = {r["node_key"] for r in rows}
     for row in rows:

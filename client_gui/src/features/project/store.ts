@@ -106,6 +106,7 @@ import {
 } from './flowGraphApi'
 import {
   fetchCurrentFlowRun,
+  checkFlowRevisionAdoption,
   pauseFlowRun as pauseFlowRunApi,
   resumeFlowRun as resumeFlowRunApi,
   startFlowRun as startFlowRunApi,
@@ -796,6 +797,7 @@ export const useProjectStore = defineStore('project', () => {
     validateFlowGraphDraft,
     confirmFlowGraphRevision,
     loadFlowRun,
+    checkFlowRevisionAdoption,
     startFlowRun,
     pauseFlowRun,
     stopFlowRun,

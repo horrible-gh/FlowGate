@@ -282,6 +282,8 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     placed: (flowId: string, placements: readonly NodePlacement[]) => editors.get(flowId)?.place(placements),
     validate,
     confirm,
+    /** Save the current candidate without confirming or altering its structure. */
+    saveBeforeRunCheck: (flowId: string) => editors.get(flowId)?.settled() ?? Promise.resolve(false),
     /** Reads the Flow again (after a refused save: the stored draft replaces the local edits). */
     reload: (flowId: string) => host.reread(flowId),
     close,

@@ -49,6 +49,7 @@ import type {
   FlowLayoutChange,
   FlowLayoutSaveResult,
   FlowRunCommand,
+  FlowRunError,
   FlowRunInfo,
 } from './flowGraphSource'
 
@@ -65,6 +66,7 @@ export interface FlowCanvasLoaders {
   confirmFlowGraphRevision?(flowId: string, draftVersion: number, baseRevisionNo: number | null): Promise<FlowGraphConfirmResult>
   /** flowgate.v02.0053 T#9: the Graph run (P0008 §7 S5); absent = the Designer runs nothing. */
   loadFlowRun?(flowId: string): Promise<FlowRun | null>
+  checkFlowRevisionAdoption?(flowId: string): Promise<FlowRunError | null>
   startFlowRun?(flowId: string, mode?: FlowRunCommand): Promise<FlowRun>
   stopFlowRun?(runId: string): Promise<FlowRun>
   resumeFlowRun?(runId: string): Promise<FlowRun>
@@ -311,6 +313,9 @@ export function createServerFlowGraphSource(
           const run = await loaders.loadFlowRun!(flowId)
           return run ? toRunInfo(run) : null
         }
+      : undefined,
+    checkRevisionAdoption: loaders.checkFlowRevisionAdoption
+      ? (_projectId, flowId) => loaders.checkFlowRevisionAdoption!(flowId)
       : undefined,
     startRun: runLoaders ? async (_projectId, flowId, mode) => toRunInfo(await loaders.startFlowRun!(flowId, mode)) : undefined,
     stopRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.stopFlowRun!(runId)) : undefined,

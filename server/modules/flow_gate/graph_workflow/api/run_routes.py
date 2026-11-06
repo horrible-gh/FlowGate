@@ -37,6 +37,25 @@ def post_flow_run(flow_id: str, request: Request, body: Any = Body(default=None)
     return envelope.run(request, handle, status=201)
 
 
+@router.get("/flows/{flow_id}/runs/revision-adoption")
+def get_flow_revision_adoption(flow_id: str, request: Request):
+    """Read-only pre-confirm assessment; refusals keep the command's error code and params."""
+    def handle() -> dict:
+        from flowgate.graph_run.revision import check_draft_adoption
+        user_id = envelope.authenticate(request)
+        envelope.client_id_of(request)
+        group = canvas_service.load_flow(flow_id)
+        envelope.authorize(user_id, group, "read")
+        try:
+            return check_draft_adoption(group)
+        except GraphApiError as exc:
+            return {"adoptable": False, "error": {
+                "code": exc.code, "params": exc.params, "status": exc.status,
+                "message": exc.message or envelope.message(exc.message_key or exc.code, request)}}
+
+    return envelope.run(request, handle)
+
+
 @router.get("/flows/{flow_id}/runs/current")
 def get_flow_current_run(flow_id: str, request: Request):
     def handle() -> dict:

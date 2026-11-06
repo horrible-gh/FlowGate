@@ -73,8 +73,10 @@ class RunContext:
 
 
 def load_context(run: dict, project_id: Optional[str], actor: Optional[str],
-                 jobs: Optional[list] = None) -> RunContext:
-    record = definition_store.revision(run["group_id"], int(run["revision_no"])) or {"nodes": [], "edges": []}
+                 jobs: Optional[list] = None, *, definition: Optional[dict] = None) -> RunContext:
+    # A pre-confirm check supplies the draft; no revision row is needed for graph/binding construction.
+    record = definition if definition is not None else (
+        definition_store.revision(run["group_id"], int(run["revision_no"])) or {"nodes": [], "edges": []})
     binding = assignment_store.root_binding(run["group_id"])
     rows = {n["node_key"]: n for n in record["nodes"]}
     if binding and binding["node_key"] not in rows:

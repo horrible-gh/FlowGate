@@ -16,6 +16,7 @@
 //   open node is locked on screen. The server judges it again in any case.
 // - Which cards the AI names is the server's alone; the screen never judges it.
 import type { FlowGraph, FlowGraphNode, FlowGraphNodeRun, FlowGraphTitleState } from './flowGraph'
+import { isNonLatestRevision } from './revisionView'
 
 export const NODE_TITLE_MAX_CHARS = 30
 /** A raw text longer than this is refused before it is normalized (the server's human raw limit). */
@@ -129,9 +130,7 @@ export function nodeRunsNow(run: NodeTitleRunFacts | null | undefined): boolean 
 export function nodeTitleEdit(graph: FlowGraph, node: FlowGraphNode, runNode?: NodeTitleRunFacts | null): NodeTitleEdit {
   if (!node.titleState) return CLOSED
   if (graph.ownership !== 'graph' && graph.ownership !== 'unassigned') return CLOSED
-  const latest = graph.latestRevisionNo ?? null
-  const viewed = graph.viewRevisionNo ?? null
-  if (graph.viewMode === 'revision' && latest !== null && viewed !== null && viewed !== latest) return CLOSED
+  if (isNonLatestRevision(graph)) return CLOSED
   return nodeRunsNow(runNode ?? node.nodeRun) ? { editable: false, lock: 'running' } : { editable: true, lock: null }
 }
 
