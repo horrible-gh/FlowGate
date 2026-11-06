@@ -11,7 +11,7 @@
 // from the server — when a chat opens, on every AI-run polling tick, once right after the run
 // ends and once after each decision — and each read replaces them as a whole. A new chat is a
 // standalone CH; nothing is shown before the server has it.
-import { computed, reactive, readonly, type ComputedRef, type DeepReadonly } from 'vue'
+import { computed, reactive, readonly, watch, type ComputedRef, type DeepReadonly } from 'vue'
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, type CreateChatOptions } from './api'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import { buildTimeline, mergeTurns, replaceServerActivities, upsertActivity, type PendingTurn, type TimelineItem } from './timeline'
@@ -99,6 +99,21 @@ export interface ConversationState {
   notice: ConversationNotice | null
 }
 
+export interface CreatedChat {
+  status: 'created'
+  chatId: string
+  scope: ConversationScope
+  draftIntentId: string | null
+  createIntentId: string
+}
+export type CreateChatResult = CreatedChat | { status: 'cancelled' | 'failed'; chatId: string | null; scope: ConversationScope | null; draftIntentId: string | null; createIntentId: string | null }
+export interface CreateChatContext {
+  draftIntentId: string
+  createIntentId: string
+  isCurrent(): boolean
+  onCreated(result: CreatedChat): void
+}
+
 export interface ConversationSession {
   readonly state: DeepReadonly<ConversationState>
   readonly activeChat: ComputedRef<DeepReadonly<ChatSummary> | null>
@@ -114,13 +129,14 @@ export interface ConversationSession {
   selectChat(chatId: string): Promise<void>
   renameActiveChat(title: string): Promise<boolean>
   createChat(title: string, options?: CreateChatOptions): Promise<boolean>
+  createChat(title: string, options: CreateChatOptions | undefined, context: CreateChatContext): Promise<CreateChatResult>
   /** Leaves the open chat for an unsaved new one: nothing exists until its first send. */
   startDraft(): void
   /** Shows a title the server already stored (the AI title of a new chat). */
   setChatTitle(chatId: string, title: string): void
   loadOlder(): Promise<void>
   catchUp(): Promise<void>
-  send(text: string): Promise<boolean>
+  send(text: string, target?: CreatedChat): Promise<boolean>
   retry(localId: string): Promise<boolean>
   reportRead(seq: number): Promise<void>
   decideCommand(commandId: string, decision: CommandDecision): Promise<void>
@@ -220,6 +236,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   let chatGen = 0
   // flowgate.v02.0135 T#3: the create intent of the open draft (one per Flow + draft): kept across its failed tries.
   let createIntent: { key: string; scopeGen: number; chatGen: number } | null = null
+  let createOperation = 0
   let providersProject: string | null = null
   let providersLoad: Promise<void> = Promise.resolve()
   let noticeSeq = 0
@@ -513,19 +530,36 @@ export function createConversationSession(options: ConversationSessionOptions = 
    * list is read again and the new chat opens. A failure keeps the open chat, says why, and
    * never retries on its own — the button stays for another try.
    */
-  async function createChat(title: string, options?: CreateChatOptions): Promise<boolean> {
-    const scope = state.scope
+  async function createChat(title: string, options?: CreateChatOptions): Promise<boolean>
+  async function createChat(title: string, options: CreateChatOptions | undefined, context: CreateChatContext): Promise<CreateChatResult>
+  async function createChat(title: string, options?: CreateChatOptions, context?: CreateChatContext): Promise<boolean | CreateChatResult> {
+    const scope = state.scope ? { ...state.scope } : null
+    let createdId: string | null = null
+    let intent: string | null = null
+    const finish = (status: 'cancelled' | 'failed'): false | CreateChatResult => context
+      ? { status, chatId: createdId, scope, draftIntentId: context.draftIntentId, createIntentId: intent }
+      : false
     const next = title.trim()
-    if (!scope || !next || state.creatingChat) return false
+    if (!scope || !next || state.creatingChat) return finish('failed')
     state.creatingChat = true
     const gen = scopeGen
     const draftGen = chatGen
     // flowgate.v02.0135 T#3: a try of the same draft re-sends its intent; the server answers the chat an earlier try
     // made (its answer lost, the chat committed late) instead of making another one.
     if (!createIntent || createIntent.scopeGen !== gen || createIntent.chatGen !== draftGen) {
-      createIntent = { key: newCreateIntent(), scopeGen: gen, chatGen: draftGen }
+      createIntent = { key: context?.createIntentId ?? newCreateIntent(), scopeGen: gen, chatGen: draftGen }
     }
-    const intent = createIntent.key
+    intent = createIntent.key
+    const currentScope = () => !disposed && gen === scopeGen && state.scope?.projectId === scope.projectId && state.scope?.groupId === scope.groupId
+    const currentDraft = () => currentScope() && draftGen === chatGen && (!context || context.isCurrent())
+    const operation = ++createOperation
+    // Release only the departing owner's progress flag at the switch itself. An old
+    // continuation must not clear a new owner's in-flight creation when it completes.
+    const stopCreatingWatch = watch(
+      () => currentScope() && (context ? context.isCurrent() : (draftGen === chatGen || state.activeChatId === createdId)),
+      (current) => { if (!current && operation === createOperation) state.creatingChat = false },
+      { flush: 'sync' },
+    )
     try {
       let created: ChatSummary
       try {
@@ -536,18 +570,25 @@ export function createConversationSession(options: ConversationSessionOptions = 
         // flowgate.v02.0135 T#3: without an answer the server may still have made the chat (on stg it did, minutes
         // later): the Flow's list is read again so that chat shows instead of the next try making another one.
         if (!disposed && gen === scopeGen && isNoResponse(error)) void reloadChats()
-        return false
+        return finish('failed')
       }
+      createdId = created.id
       if (createIntent?.key === intent) createIntent = null
-      if (disposed || gen !== scopeGen) return false
+      if (!currentDraft()) return finish('cancelled')
       await reloadChats()
-      if (disposed || gen !== scopeGen) return false
+      if (!currentDraft()) return finish('cancelled')
       // A list read that failed (or does not show it yet) still gets the chat the server made.
       if (!state.chats.some((c) => c.id === created.id)) state.chats = [created, ...state.chats]
-      await selectChat(created.id)
-      return true
+      const result: CreatedChat = { status: 'created', chatId: created.id, scope, draftIntentId: context?.draftIntentId ?? null, createIntentId: intent }
+      context?.onCreated(result)
+      const selection = selectChat(created.id)
+      const selectedGen = chatGen
+      await selection
+      if (!currentScope() || selectedGen !== chatGen || state.activeChatId !== created.id || (context && !context.isCurrent())) return finish('cancelled')
+      return context ? result : true
     } finally {
-      state.creatingChat = false
+      stopCreatingWatch()
+      if (operation === createOperation && currentScope() && (!context || context.isCurrent())) state.creatingChat = false
     }
   }
 
@@ -616,8 +657,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
     else if (state.settings.sendAction === 'invoke_ai' && hasProviders.value) void invokeAi()
   }
 
-  async function send(text: string): Promise<boolean> {
-    const chatId = state.activeChatId
+  async function send(text: string, target?: CreatedChat): Promise<boolean> {
+    // A first-send continuation can only address the CH bound to its original scope.
+    if (target && (disposed || state.scope?.projectId !== target.scope.projectId || state.scope?.groupId !== target.scope.groupId || state.activeChatId !== target.chatId)) return false
+    const chatId = target?.chatId ?? state.activeChatId
     const body = text.trim()
     // One turn at a time: no new send while a turn posts or a chat AI run is in flight.
     if (!chatId || !body || state.sending || running.value) return false
@@ -626,6 +669,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq: state.headSeq, createdAt: new Date().toISOString(), failed: false }
     state.pending = [...state.pending, item]
     state.sending = true
+    const stopSendingWatch = target ? watch(
+      () => isCurrentChat(chatId, gen),
+      (current) => { if (!current) state.sending = false },
+      { flush: 'sync' },
+    ) : () => {}
     try {
       const ok = await postPending(chatId, gen, item)
       if (!ok) {
@@ -636,7 +684,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
       runSendAction(chatId, gen)
       return true
     } finally {
-      state.sending = false
+      stopSendingWatch()
+      if (!target || isCurrentChat(chatId, gen)) state.sending = false
     }
   }
 

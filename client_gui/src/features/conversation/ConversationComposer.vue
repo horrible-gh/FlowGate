@@ -88,12 +88,15 @@ import ComposerModelPicker from './ComposerModelPicker.vue'
 import ComposerSettings from './ComposerSettings.vue'
 import ComposerSourceModes from './ComposerSourceModes.vue'
 import ComposerToolsMenu from './ComposerToolsMenu.vue'
-import { loadDraft, saveDraft } from './drafts'
+import { draftKey, draftUserId, loadDraft, saveDraft, type DraftOwner, type DraftSendSnapshot } from './drafts'
 import type { ChatProvider, ChatSettings, ChatSettingsPatch, SourceAccessMode } from './types'
 
 const props = defineProps<{
   /** The open chat; null while a new chat is a draft (its first send creates it). */
   chatId: string | null
+  projectId?: string | null
+  groupId?: string | null
+  draftIntentId?: string | null
   /** Nothing can be sent now (no Flow, the chat is loading). */
   disabled: boolean
   readOnly?: boolean
@@ -113,7 +116,7 @@ const props = defineProps<{
   copyingMention: boolean
   manualCopyText: string | null
   /** Sends one message; resolves true when the server accepted it (the draft clears then). */
-  onSend: (text: string) => Promise<boolean>
+  onSend: (text: string, snapshot?: DraftSendSnapshot) => Promise<boolean>
 }>()
 
 const emit = defineEmits<{
@@ -130,16 +133,34 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const inputEl = ref<HTMLTextAreaElement | null>(null)
-const draft = ref(loadDraft(props.chatId))
-// A draft's first send creates its chat, so chatId changes while the text is on its way: the
-// text stays with the message instead of being swapped for the new chat's (empty) draft.
-let carrying = false
+function currentOwner(): DraftOwner | null {
+  if (!props.chatId && (!props.projectId || !props.groupId || !props.draftIntentId)) return null
+  return { userId: draftUserId(), projectId: props.projectId ?? '', groupId: props.groupId ?? '',
+    intentId: props.draftIntentId ?? '', chatId: props.chatId }
+}
+
+let visibleOwner = currentOwner()
+const draft = ref(loadDraft(visibleOwner))
+const revisions = new Map<string, number>()
+const pending = new Set<{ snapshot: DraftSendSnapshot; owners: DraftOwner[] }>()
+const sameScope = (a: DraftOwner, b: DraftOwner) => a.userId === b.userId && a.projectId === b.projectId && a.groupId === b.groupId && a.intentId === b.intentId
 
 watch(
-  () => props.chatId,
-  (chatId) => {
-    if (carrying) return
-    draft.value = loadDraft(chatId)
+  () => [props.projectId, props.groupId, props.draftIntentId, props.chatId, draftUserId()] as const,
+  () => {
+    const owner = currentOwner()
+    // Only this send's explicitly bound null -> CH transition may carry its input.
+    const transfer = owner && [...pending].find(({ snapshot }) => snapshot.owner.chatId === null &&
+      snapshot.createdChatId === owner.chatId && sameScope(snapshot.owner, owner) &&
+      visibleOwner && draftKey(visibleOwner) === draftKey(snapshot.owner))
+    if (transfer && owner && visibleOwner && !loadDraft(owner)) {
+      revisions.set(draftKey(owner), revisions.get(draftKey(visibleOwner)) ?? 0)
+      saveDraft(owner, draft.value)
+      transfer.owners.push(owner)
+    } else {
+      draft.value = loadDraft(owner)
+    }
+    visibleOwner = owner
     void nextTick(autoGrow)
   },
 )
@@ -158,31 +179,44 @@ function autoGrow(): void {
 }
 
 function onInput(): void {
-  saveDraft(props.chatId, draft.value)
+  const owner = visibleOwner
+  if (owner) {
+    const key = draftKey(owner)
+    revisions.set(key, (revisions.get(key) ?? 0) + 1)
+    saveDraft(owner, draft.value)
+  }
   autoGrow()
 }
 
 async function submit(): Promise<void> {
   const text = draft.value.trim()
-  if (!text || props.disabled || props.readOnly || props.sending || props.running) return
-  const chatId = props.chatId
-  carrying = chatId === null
+  const owner = visibleOwner
+  if (!owner || !text || props.disabled || props.readOnly || props.sending || props.running) return
+  if ([...pending].some((p) => draftKey(p.snapshot.owner) === draftKey(owner))) return
+  const snapshot: DraftSendSnapshot = { owner: { ...owner }, body: draft.value, revision: revisions.get(draftKey(owner)) ?? 0 }
+  const send = { snapshot, owners: [snapshot.owner] }
+  // Persist before the first await, even if this owner is hidden by the time it fails.
+  saveDraft(owner, snapshot.body)
+  pending.add(send)
   let ok = false
   try {
-    ok = await props.onSend(text)
+    ok = await props.onSend(text, snapshot)
   } finally {
-    carrying = false
+    pending.delete(send)
   }
-  const now = props.chatId
-  // The chat a draft's send created keeps the text of a send that did not go through.
-  if (chatId === null && now !== null && !ok) saveDraft(now, draft.value)
-  // The draft survives a failed send (P0003 scenario 17); a sent one is cleared.
-  if (!ok || (chatId !== null && chatId !== now)) return
-  draft.value = ''
-  saveDraft(now, '')
-  await nextTick()
-  autoGrow()
-  inputEl.value?.focus()
+  if (!ok) return
+  for (const target of send.owners) {
+    const key = draftKey(target)
+    if ((revisions.get(key) ?? 0) !== snapshot.revision || loadDraft(target) !== snapshot.body) continue
+    saveDraft(target, '')
+    if (!visibleOwner || draftKey(visibleOwner) !== key || draft.value !== snapshot.body) continue
+    draft.value = ''
+    await nextTick()
+    if (visibleOwner && draftKey(visibleOwner) === key) {
+      autoGrow()
+      inputEl.value?.focus()
+    }
+  }
 }
 
 defineExpose({ focus: () => inputEl.value?.focus() })

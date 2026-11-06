@@ -57,6 +57,9 @@
     <ConversationComposer
       ref="composerEl"
       :chat-id="state.activeChatId"
+      :project-id="state.scope?.projectId ?? null"
+      :group-id="state.scope?.groupId ?? null"
+      :draft-intent-id="start.draftIntentId.value"
       :disabled="composerDisabled"
       :read-only="readOnly"
       :settings="state.settings"
