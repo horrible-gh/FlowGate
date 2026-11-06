@@ -312,13 +312,14 @@ def _finalize_run(run: dict) -> None:
     if run.get("post_process_recovered"):
         terminal.cleanup(run, reason="post_process_timeout")
         return
+    if not terminal.check_owner(run):
+        return
     respawn_pending = _svc().peek_auto_resume(run.get("group_id")) is not None
     if run.get("_terminal_abandoned"):
         respawn_pending = False
     steps = (
         ("messages", lambda: _finalize_messages(run)),
         ("stop", lambda: _finalize_stop(run, respawn_pending)),
-        ("scratch", lambda: _finalize_scratch(run)),
         ("source", lambda: _finalize_source(run)),
         # flowgate.v02.0032 T#1 (D0006 §2.3, §3.8.2): chat runs close their open command
         # requests, then record the run change. Chat-only. With no port handler registered
@@ -362,7 +363,12 @@ def _finalize_run(run: dict) -> None:
     graph_exec = bool(run.get("graph_exec_id"))
     if graph_exec and not run.get("graph_lease_lost"):
         run["graph_run_end_pending"] = True
+    # Persist the terminal row successfully BEFORE any destructive scratch cleanup.
+    run["scratch_retained"] = run.get("scratch_dir")
     terminal.cleanup(run, handoff=respawn_pending, reason="normal_finish")
+    if run.get("_record_persisted") and terminal.check_owner(run):
+        terminal.attempt(run, "prepare_scratch", lambda: _finalize_scratch(run))
+        _svc()._persist_run_record(run)
     # T#2: an AI responder POSTs while it still owns this lease, so the answer-path
     # attempt necessarily defers. Retry after finalization/release; human answers and
     # restart recovery already use the same helper directly from register_answer.
@@ -446,17 +452,22 @@ def _finalize_stop(run: dict, respawn_pending: bool) -> None:
 
 
 def _finalize_scratch(run: dict) -> None:
+    if not terminal.check_owner(run):
+        run["scratch_retained"] = run.get("scratch_dir")
+        return
     scratch = Path(run["scratch_dir"])
     completed_at = datetime.now(timezone.utc).isoformat()
     manifest_updated = _mark_scratch_completed(
-        run["project_id"], run["run_id"], scratch, completed_at
+        run["project_id"], run["run_id"], scratch, completed_at, run.get("execution_nonce")
     )
     deleted = False
     cleanup_reason = "non_complete_outcome"
     if run["outcome"] == "complete" and manifest_updated:
         deleted, cleanup_reason = _svc()._delete_owned_scratch(
-            run["project_id"], run["run_id"], scratch
+            run["project_id"], run["run_id"], scratch, run.get("execution_nonce")
         )
+    if deleted:
+        run["scratch_retained"] = None
     if not deleted:
         try:
             run["scratch_retained"] = storage_paths.to_storage_relative(scratch, run["project_id"])
@@ -1672,6 +1683,7 @@ def _persist_run_record(run: dict) -> bool:
         stamp = now_iso()
         db_runs.upsert({
             "run_id": run["run_id"],
+            "execution_nonce": run.get("execution_nonce"),
             "invocation_origin_kind": (run.get("invocation_origin") or {}).get("origin_kind"),
             "graph_exec_id": run.get("graph_exec_id"),
             "group_id": run["group_id"],

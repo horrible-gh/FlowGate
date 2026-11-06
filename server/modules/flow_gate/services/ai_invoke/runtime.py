@@ -42,6 +42,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Optional
 
 from fastapi import HTTPException
+from modules.flow_gate.db import ai_run_identity
 from modules.flow_gate.db import ai_invoke_runs as db_ai_invoke_runs
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import projects as db_projects
@@ -85,6 +86,7 @@ if not any(isinstance(handler, _AppFileLogForwarder) for handler in logger.handl
 
 # Request-local identity used by the compatibility rollback if admission fails unexpectedly.
 admission_run_id: ContextVar[str | None] = ContextVar("ai_admission_run_id", default=None)
+admission_identity: ContextVar[dict | None] = ContextVar("ai_admission_identity", default=None)
 
 
 # ── Parameters (L0006 §1) ─────────────────────────────────────────────────────
@@ -729,43 +731,9 @@ def _http_error(status_code: int, code: str, message: str, **payload) -> HTTPExc
 
 
 def _next_run_id() -> str:
-    """Mint this process's next run id, floored against today's durable serials.
-
-    The counter and its floor date are read and written through the compatibility shim
-    rather than as this module's own globals, for the same reason the registry is (see
-    the module docstring): `test_ai_invoke_lease_recovery_0401.py` resets both with a
-    plain `svc._run_counter = 0` / `svc._run_counter_floor_date = None` between cases,
-    and a module-global here would not observe that reset -- the counter would keep
-    climbing across cases and the floored id would be whatever the previous one left
-    behind. A `global` statement cannot follow a name the way the rest of the seam does,
-    so this one function spells the indirection out.
-    """
-    svc = _svc()
-    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
-    with _runs_lock:
-        if svc._run_counter_floor_date != date_str:
-            # 0401 NR0003 §4 / T0004 work item 7: this counter starts at 0 per process, so
-            # the first run_id a fresh process mints today can already belong to a run
-            # an earlier process issued -- ai_invoke_runs.upsert() is keyed on run_id, so
-            # that earlier row would be silently overwritten the next time THIS process's
-            # same-numbered run finalizes. Floor once per date against whatever the
-            # durable stores already show as today's highest serial: finished runs AND
-            # leases still open on one (an open lease has no ai_invoke_runs row yet).
-            # AI evaluations draw their Scratch folder from this counter too, so their
-            # recorded scratch_ref serials count as well.
-            # Best-effort per source -- a lookup failure skips that source rather than
-            # blocking a run from starting at all.
-            from modules.flow_gate.db import ai_evaluations as db_evaluations
-            from modules.flow_gate.db import ai_invoke_runs as db_runs
-
-            for source in (db_runs, db_group_ai_leases, db_evaluations):
-                try:
-                    svc._run_counter = max(svc._run_counter, source.max_serial_for_date(date_str))
-                except Exception:
-                    logger.warning("run_id floor lookup failed for %s", date_str, exc_info=True)
-            svc._run_counter_floor_date = date_str
-        svc._run_counter += 1
-        return f"aiv_{date_str}_{svc._run_counter:06d}"
+    """One committed allocator for ordinary, Graph, project and probe callers."""
+    from modules.flow_gate.db.ai_run_identity import allocate
+    return allocate()
 
 
 # ── Scratch lifecycle (L0006 §2.7) ───────────────────────────────────────────
@@ -823,9 +791,10 @@ def _atomic_write_manifest(scratch: Path, manifest: dict) -> None:
     temporary.replace(target)
 
 
-def _manifest_for(project_id: str, run_id: str, scratch: Path) -> dict:
+def _manifest_for(project_id: str, run_id: str, scratch: Path, execution_nonce: str) -> dict:
     return {
         "schema": SCRATCH_MANIFEST_SCHEMA,
+        "execution_nonce": execution_nonce,
         "owner": "flowgate.ai-invoke",
         "project_id": project_id,
         "run_id": run_id,
@@ -836,15 +805,17 @@ def _manifest_for(project_id: str, run_id: str, scratch: Path) -> dict:
     }
 
 
-def _create_scratch(project_id: str, run_id: str) -> Path:
+def _create_scratch(project_id: str, run_id: str, execution_nonce: str | None = None) -> Path:
     if not _RUN_ID_RE.fullmatch(str(run_id)):
         raise ValueError("invalid ai-invoke run id")
+    if not ai_run_identity.scratch_owner(project_id, run_id, execution_nonce):
+        raise ai_run_identity.RunIdentityConflict()
     root = _project_scratch_root(project_id)
     root.mkdir(parents=True, exist_ok=True)
     root_resolved = root.resolve(strict=True)
     scratch = root / run_id
-    # mkdir(exist_ok=False) excludes other creators without requiring writable G.
-    with storage_fs.journal_lock("ai-run", project_id, run_id, interprocess=False):
+    # Serialize creation with deletion across processes, including the journal gap.
+    with storage_fs.journal_lock("ai-run", project_id, run_id):
         if storage_fs.journal_exists("ai-run", project_id, run_id):
             raise ValueError("ai-invoke scratch has a pending delete record")
         created_at = datetime.now(timezone.utc).isoformat()
@@ -856,18 +827,18 @@ def _create_scratch(project_id: str, run_id: str) -> Path:
                 raise ValueError("scratch is not a direct managed child")
             (scratch / "tmp").mkdir()
             (scratch / "cache").mkdir()
-            _atomic_write_manifest(scratch, _manifest_for(project_id, run_id, scratch))
+            _atomic_write_manifest(scratch, _manifest_for(project_id, run_id, scratch, execution_nonce))
         except Exception:
             try:
                 if identity is None or not storage_fs.same_identity(scratch, identity):
                     raise storage_fs.DeleteJournalError("identity_mismatch")
-                with storage_fs.journal_file_lock("ai-run", project_id, run_id):
-                    record = _scratch_delete_record(project_id, run_id, scratch,
-                        kind="rollback", reason="create_rollback",
-                        eligibility={"basis": "created_at", "at": created_at},
-                        planned={"owner": "flowgate.ai-invoke", "id": run_id, "created_at": created_at},
-                        target_identity=identity)
-                    _remove_journaled_scratch(project_id, run_id, record)
+                record = _scratch_delete_record(project_id, run_id, scratch,
+                    kind="rollback", reason="create_rollback",
+                    eligibility={"basis": "created_at", "at": created_at},
+                    planned={"owner": "flowgate.ai-invoke", "id": run_id, "created_at": created_at,
+                             "execution_nonce": execution_nonce},
+                    target_identity=identity)
+                _remove_journaled_scratch(project_id, run_id, record)
             except Exception as exc:
                 _scratch_delete_failure(run_id, "rollback", exc)
             raise
@@ -875,7 +846,8 @@ def _create_scratch(project_id: str, run_id: str) -> Path:
     return scratch
 
 
-def _validate_scratch_manifest(project_id: str, run_id: str, scratch: Path) -> tuple[Optional[dict], str]:
+def _validate_scratch_manifest(project_id: str, run_id: str, scratch: Path,
+                               execution_nonce: str | None = None) -> tuple[Optional[dict], str]:
     if not _RUN_ID_RE.fullmatch(str(run_id)):
         return None, "invalid_run_id"
     try:
@@ -901,23 +873,23 @@ def _validate_scratch_manifest(project_id: str, run_id: str, scratch: Path) -> t
             return None, "manifest_owner_mismatch"
         if manifest.get("scratch_path") != str(resolved) or manifest.get("policy") not in valid_policies:
             return None, "manifest_path_or_policy_mismatch"
+        if execution_nonce is not None and (
+                not execution_nonce or manifest.get("execution_nonce") != execution_nonce):
+            return None, "execution_owner_mismatch"
         return manifest, "valid"
     except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
         return None, "manifest_unreadable"
 
 
-def _mark_scratch_completed(project_id: str, run_id: str, scratch: Path, completed_at: str) -> bool:
+def _mark_scratch_completed(project_id: str, run_id: str, scratch: Path, completed_at: str,
+                            execution_nonce: str | None = None) -> bool:
     try:
-        with storage_fs.journal_lock("ai-run", project_id, run_id, interprocess=False), ExitStack() as locks:
-            try:
-                locks.enter_context(storage_fs.journal_file_lock("ai-run", project_id, run_id))
-            except storage_fs.DeleteJournalError as exc:
-                # An unusable G also prevents deletion. A held OS lock still excludes us.
-                if exc.code == "journal_busy":
-                    raise
+        with storage_fs.journal_lock("ai-run", project_id, run_id):
             if storage_fs.journal_exists("ai-run", project_id, run_id):
                 return False
-            manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+            if not ai_run_identity.scratch_owner(project_id, run_id, execution_nonce):
+                return False
+            manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch, execution_nonce)
             if manifest is None:
                 _safe_scratch_log(project_id, run_id, scratch, "retained", reason)
                 return False
@@ -933,10 +905,13 @@ def _mark_scratch_completed(project_id: str, run_id: str, scratch: Path, complet
         return False
 
 
-def _delete_owned_scratch(project_id: str, run_id: str, scratch: Path) -> tuple[bool, str]:
+def _delete_owned_scratch(project_id: str, run_id: str, scratch: Path,
+                          execution_nonce: str | None = None) -> tuple[bool, str]:
     try:
         with storage_fs.journal_lock("ai-run", project_id, run_id):
-            manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+            if not ai_run_identity.scratch_owner(project_id, run_id, execution_nonce):
+                return False, "execution_owner_mismatch"
+            manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch, execution_nonce)
             if manifest is None:
                 return False, reason
             # A previous failure is resumed only by the retained sweep's policy.
@@ -1004,6 +979,16 @@ def _check_scratch_record_target(project_id: str, run_id: str, record: dict) -> 
 
 def _remove_journaled_scratch(project_id: str, run_id: str, record: dict) -> None:
     if _check_scratch_record_target(project_id, run_id, record):
+        manifest_path = Path(record["target"]) / SCRATCH_MANIFEST_NAME
+        if storage_fs.path_present(manifest_path):
+            current = json.loads(manifest_path.read_text(encoding="utf-8"))
+            expected = record.get("manifest")
+            if expected is None:
+                expected_nonce = (record.get("planned") or {}).get("execution_nonce")
+                if not expected_nonce or current.get("execution_nonce") != expected_nonce:
+                    raise storage_fs.DeleteJournalError("manifest_conflict")
+            elif current != expected:
+                raise storage_fs.DeleteJournalError("manifest_conflict")
         storage_fs.remove_managed_tree(record["target"], record["managed_root"])
     if storage_fs.path_present(record["target"]):
         raise storage_fs.DeleteJournalError("delete_incomplete")
@@ -1088,6 +1073,9 @@ def _delete_legacy_scratch(project_id: str, run_id: str, child: Path, now: datet
             row, reason = _terminal_scratch_run(project_id, run_id, now)
             if row is None:
                 return False, reason
+            if row.get("execution_nonce") or ai_run_identity.get_store()._fetch_one(
+                    "SELECT run_id FROM ai_run_owners WHERE run_id = ?", [run_id]):
+                return False, "legacy_owner_conflict"
             if storage_fs.journal_exists("ai-run", project_id, run_id):
                 return False, "delete_failed"
             modified = datetime.fromtimestamp(child.stat().st_mtime, timezone.utc).isoformat()
@@ -1110,9 +1098,14 @@ def _recorded_scratch_eligible(project_id: str, run_id: str, record: dict, now: 
         planned = record["planned"] or {}
         created = _aware_time(planned.get("created_at"))
         return (planned.get("owner") == "flowgate.ai-invoke" and planned.get("id") == run_id
+                and ai_run_identity.scratch_owner(project_id, run_id, planned.get("execution_nonce"))
                 and row is None and created is not None
                 and now - created >= scratch_retention.effective_retention())
     manifest = record["manifest"]
+    if manifest is not None and (not ai_run_identity.scratch_owner(
+            project_id, run_id, manifest.get("execution_nonce"))
+            or row is not None and row.get("execution_nonce") != manifest.get("execution_nonce")):
+        return False
     if manifest is None:
         modified = _aware_time(record["eligibility"].get("at"))
         if (record["reason"] != "legacy_terminal" or record["eligibility"].get("basis") != "legacy_mtime"
@@ -1123,7 +1116,10 @@ def _recorded_scratch_eligible(project_id: str, run_id: str, record: dict, now: 
         for name in (SCRATCH_MANIFEST_NAME, SCRATCH_MANIFEST_NAME + ".tmp", SCRATCH_MANIFEST_NAME + ".update"):
             if storage_fs.path_present(Path(record["target"]) / name):
                 return False
-        return _terminal_scratch_run(project_id, run_id, now)[0] is not None
+        terminal, _ = _terminal_scratch_run(project_id, run_id, now)
+        return (terminal is not None and not terminal.get("execution_nonce")
+                and ai_run_identity.get_store()._fetch_one(
+                    "SELECT run_id FROM ai_run_owners WHERE run_id = ?", [run_id]) is None)
     valid_policies = (
         {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True},
         {"retention_source": "system_settings", "delete_on_complete": True},
@@ -1208,6 +1204,14 @@ def _cleanup_retained_scratches(project_id: str) -> None:
                         continue
                 _safe_scratch_log(project_id, run_id, child, "skipped", reason)
                 continue
+            expected_nonce = manifest.get("execution_nonce")
+            if not ai_run_identity.scratch_owner(project_id, run_id, expected_nonce):
+                _safe_scratch_log(project_id, run_id, child, "retained", "execution_owner_mismatch")
+                continue
+            durable = db_ai_invoke_runs.get(run_id)
+            if durable is not None and durable.get("execution_nonce") != expected_nonce:
+                _safe_scratch_log(project_id, run_id, child, "retained", "record_owner_mismatch")
+                continue
             completed = _aware_time(manifest.get("completed_at"))
             if completed is None:
                 if manifest.get("completed_at") is not None:
@@ -1235,7 +1239,7 @@ def _cleanup_retained_scratches(project_id: str) -> None:
             except Exception:
                 _safe_scratch_log(project_id, run_id, child, "retained", "durable_state_unavailable")
                 continue
-            deleted, delete_reason = _svc()._delete_owned_scratch(project_id, run_id, child)
+            deleted, delete_reason = _svc()._delete_owned_scratch(project_id, run_id, child, expected_nonce)
             if not deleted:
                 _safe_scratch_log(project_id, run_id, child, "retained", delete_reason)
     except Exception as exc:

@@ -23,6 +23,10 @@ def fail(*args, **kwargs):
 
 @pytest.fixture
 def env(monkeypatch):
+    # This suite isolates cleanup convergence using a fake record writer. Real
+    # nonce/DB guards are exercised by integration/ai_run_identity/0138.
+    from modules.flow_gate.db import ai_run_identity
+    monkeypatch.setattr(ai_run_identity, "assert_owner", lambda *_a, **_k: None)
     run = {
         "run_id": "aiv_terminal_0573", "group_id": "flowgate.default.0573",
         "project_id": "flowgate", "doc_ref": "flowgate.default.0573.0001-B",
@@ -415,3 +419,15 @@ def test_group_lease_sql_handoff_and_release_in_memory_sqlite(env, monkeypatch):
         assert leases.get(run["group_id"]) is None
     finally:
         conn.close()
+
+
+def test_record_failure_precedes_scratch_destruction_0138(env, monkeypatch):
+    run, _, _, _ = env
+    updates = []
+    monkeypatch.setattr(svc, "_persist_run_record", lambda _: False)
+    monkeypatch.setattr(finalize, "_mark_scratch_completed", lambda *a: updates.append(a) or True)
+    run["_record_persisted"] = True  # even a stale publication flag cannot authorize cleanup
+    finalize._finalize_run(run)
+    assert not updates
+    assert not run["_record_persisted"]
+    assert run["scratch_retained"] == run["scratch_dir"]

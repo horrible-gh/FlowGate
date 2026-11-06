@@ -12,6 +12,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from tests.integration.ai_run_identity.scratch_contract_fixture import (
+    identity_db, scratch_identity, nonce as _nonce, owned_nonce as _owned_nonce,
+)
 
 from inbox_client import post_inbox as route_post_inbox
 from modules.flow_gate.services import ai_invoke_service as svc
@@ -95,7 +98,7 @@ def test_windows_real_cli_process_posts_only_doc_path_and_preserves_unicode(
         # directories here -- the old shared-directory setup made this E2E green even though
         # production FLOWGATE_SCRATCH pointed at run scratch while inbox validated token
         # scratch, which is exactly the 422 this group fixes.
-        run_scratch = svc._create_scratch(project_id, run_id)
+        run_scratch = svc._create_scratch(project_id, run_id, execution_nonce=_owned_nonce(project_id, run_id))
         token_scratch = tmp_path / "storage root 日本語" / "work" / "p0474" / "tok-review-0393"
         token_scratch.mkdir(parents=True, exist_ok=True)
         worktree = tmp_path / "work tree 한글"
@@ -122,7 +125,7 @@ def test_windows_real_cli_process_posts_only_doc_path_and_preserves_unicode(
         command = subprocess.list2cmdline([sys.executable, str(script)])
         assert KOREAN not in command and EXPECTED["comment"] not in command
         run = {
-            "project_id": project_id, "group_id": "flowgate.default.0474",
+            "project_id": project_id, "execution_nonce": _nonce(project_id, run_id), "group_id": "flowgate.default.0474",
             "run_id": run_id, "scratch_dir": str(run_scratch),
             "token_scratch_dir": str(token_scratch), "source_root": str(worktree),
             "raw_token": "raw", "api_base_url": f"http://127.0.0.1:{server.server_port}",

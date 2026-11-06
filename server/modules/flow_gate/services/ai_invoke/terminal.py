@@ -15,6 +15,21 @@ from modules.flow_gate.db import project_ai_leases
 from .runtime import _svc, logger
 
 
+def check_owner(run: dict) -> bool:
+    """Fail before cleanup/publication effects when execution ownership is uncertain."""
+    from modules.flow_gate.db.ai_run_identity import assert_owner
+    try:
+        assert_owner(run)
+    except Exception:
+        run["identity_conflict"] = True
+        run["scratch_retained"] = run.get("scratch_dir")
+        run.setdefault("terminal_cleanup_errors", {})["identity"] = "ownership_unconfirmed"
+        logger.warning("ai-invoke %s: ownership unconfirmed; preserving records and scratch",
+                       run.get("run_id"))
+        return False
+    return True
+
+
 def attempt(run: dict, name: str, action) -> bool:
     """Run a cleanup effect once on success; leave failures available for retry."""
     lock = run.setdefault("_terminal_lock", threading.RLock())
@@ -91,6 +106,8 @@ def cleanup(run: dict, *, handoff: bool = False, reason: str = "normal_finish") 
     It never claims the DB was fixed. The dead worker still becomes non-live, so
     the existing manual recovery remains usable during an actual DB outage.
     """
+    if not check_owner(run):
+        return False
     if not provider_stopped(run):
         run["lease_cleanup_pending"] = True
         return False
@@ -136,9 +153,14 @@ def cleanup(run: dict, *, handoff: bool = False, reason: str = "normal_finish") 
 
 def publish(run: dict) -> None:
     """At most one successful publication per verdict, including a later park."""
+    if not check_owner(run):
+        return
+    run["_record_persisted"] = False
     version = str((run.get("stop_code"), run.get("end_reason"), run.get("outcome")))
-    attempt(run, "persist:" + version, lambda:
-        require_success(_svc()._persist_run_record(run), "run record persist"))
+    if not attempt(run, "persist:" + version, lambda:
+            require_success(_svc()._persist_run_record(run), "run record persist")):
+        return
+    run["_record_persisted"] = True
     attempt(run, "finished_event:" + version, lambda: _svc()._broadcast(
         run, "ai_invoke_finished", _svc().finished_payload(run)))
     attempt(run, "refresh_event:" + version, lambda: _svc()._broadcast(
