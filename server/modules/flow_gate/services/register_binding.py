@@ -297,7 +297,11 @@ def log_failure(record: dict) -> None:
 
 def forbidden_details(record: dict) -> dict:
     """The 403 ``error`` object. Deliberately omits expected/actual, raw token, token id and
-    any absolute path — a correlation id is what ties a report back to the server row."""
+    any absolute path — a correlation id is what ties a report back to the server row.
+
+    ``boundary`` (flowgate.v02.0136 T0004 T#3) tells the two stages apart for the caller:
+    ``inbox`` = the request's action/project/group/doc vs the token, ``register_dispatch`` =
+    the token vs the run's server-owned hop context (worker._bind_register_context)."""
     return {
         "code": CODE_FORBIDDEN,
         "message": BINDING_MESSAGE,
@@ -305,6 +309,7 @@ def forbidden_details(record: dict) -> dict:
             "reason": REASON_BINDING,
             "axis": record.get("axis"),
             "axes": record.get("axes"),
+            "boundary": record.get("boundary"),
             "correlation_id": record.get("correlation_id"),
         },
     }
@@ -380,3 +385,67 @@ def record_for_run(run_id: Optional[str], record: dict) -> None:
     if run is None:
         return
     run.setdefault("register_errors", []).append(record)
+
+
+# flowgate.v02.0136 T0004 T#3 (§4-1/§7): the run-lifetime ledger of axis-classified binding
+# rejections. run["register_errors"] is reset per attempt (worker._reset_attempt_state), and a
+# document review loop resets it on every stage switch and same-stage retry -- yet
+# register_context_failures is written only once, when the run is finalized. Records move
+# here before each reset so finalize still sees every hop's rejections.
+CARRIED_FAILURES_KEY = "register_failures_carried"
+
+
+def failure_key(element: Any) -> Optional[tuple[str, str]]:
+    """``(correlation_id, boundary)`` of a binding-failure record, or None for anything else.
+
+    The same pair is the register_context_failures UNIQUE key, so "already kept" here and
+    "already stored" in the DB mean the same thing. Only records built by
+    :func:`failure_record` (they carry a ``telemetry`` block) qualify -- an ordinary 409/422
+    registration error or a lease-denial note has no axis and is not a binding failure.
+    """
+    if not isinstance(element, dict):
+        return None
+    telemetry = element.get("telemetry")
+    if not isinstance(telemetry, dict):
+        return None
+    correlation_id = _text(telemetry.get("correlation_id"))
+    if not correlation_id:
+        return None
+    return correlation_id, str(telemetry.get("boundary") or "")
+
+
+def run_failures(run: dict) -> list[dict]:
+    """Every binding failure of the run, oldest first, each (correlation_id, boundary) once:
+    what earlier attempts/hops carried, then what the current attempt still holds."""
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for source in (run.get(CARRIED_FAILURES_KEY), run.get("register_errors")):
+        for element in source or []:
+            key = failure_key(element)
+            if key is None or key in seen:
+                continue
+            seen.add(key)
+            out.append(element)
+    return out
+
+
+def carry_failures(run: dict) -> int:
+    """Move the current attempt's binding failures onto the run-lifetime list, once each.
+
+    Called right before register_errors is emptied for the next attempt. Returns how many
+    records were newly carried. Non-binding elements are left to the per-attempt list (they
+    are judged and archived per attempt already, see worker._archive_attempt).
+    """
+    carried = run.get(CARRIED_FAILURES_KEY)
+    if not isinstance(carried, list):
+        carried = run[CARRIED_FAILURES_KEY] = []
+    seen = {key for key in (failure_key(item) for item in carried) if key is not None}
+    added = 0
+    for element in run.get("register_errors") or []:
+        key = failure_key(element)
+        if key is None or key in seen:
+            continue
+        seen.add(key)
+        carried.append(element)
+        added += 1
+    return added

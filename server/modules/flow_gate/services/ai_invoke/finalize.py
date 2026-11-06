@@ -1823,12 +1823,20 @@ def _persist_register_context_failures(run: dict, stamp: str) -> None:
     Idempotent on (correlation_id, boundary): a re-settled run upserts twice and still
     leaves one row per failure. Storage trouble is logged, never raised — telemetry must
     not be able to turn a finished hop into a crashed one.
+
+    flowgate.v02.0136 T0004 T#3 (§4-1/§7): the source is the run's WHOLE ledger, not only the
+    last attempt's register_errors. worker._reset_attempt_state empties that list between
+    attempts and on every review-loop stage switch, after moving its binding failures to
+    run["register_failures_carried"]; register_binding.run_failures joins the two and keeps
+    each (correlation_id, boundary) once, so an earlier hop's 403 reaches the table exactly
+    once as well (the DB's ON CONFLICT stays the second guard across re-settlements).
     """
     try:
         from modules.flow_gate.db import register_context_failures as db_register_failures
+        from modules.flow_gate.services import register_binding
 
         rows = db_register_failures.rows_from_run_errors(
-            run["run_id"], run.get("register_errors") or [],
+            run["run_id"], register_binding.run_failures(run),
             recorded_at=stamp,
             fallback={
                 "project_id": run.get("project_id"),
