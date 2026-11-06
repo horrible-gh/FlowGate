@@ -17,10 +17,11 @@ import { useProjectStore } from '@/features/project'
 import { ProjectExplorer } from '@/features/designer'
 
 const getRequest = vi.hoisted(() => vi.fn())
+const postRequest = vi.hoisted(() => vi.fn())
 
 vi.mock('@shared/api', () => ({
   getRequest,
-  postRequest: vi.fn(),
+  postRequest,
   extractApiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
 
@@ -98,14 +99,16 @@ async function doubleClickRow(w: VueWrapper<any>, label: string) {
   await flushPromises()
 }
 
+/** flowgate.v02test.0002 R0001 #5: one click on a Group opens (or closes) it. */
 async function expandGroup(w: VueWrapper<any>, label: string) {
-  await doubleClickRow(w, label)
+  await clickRow(w, label)
 }
 
 beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.clear()
   getRequest.mockReset()
+  postRequest.mockReset()
   i18n.global.locale.value = 'ko'
 })
 
@@ -153,7 +156,7 @@ describe('ProjectExplorer — Project > Group > Flow', () => {
     getRequest.mockResolvedValueOnce(ok(NODES))
     const first = await mountExplorer()
     expect(getRequest).toHaveBeenCalledTimes(1)
-    expect(getRequest).toHaveBeenCalledWith('/api/v1/projects/p/groups/tree', { include_terminal: 'false', force: 'false' })
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/projects/p/groups/tree', { include_terminal: 'false', force: 'false', include_archived: 'false' })
     first.unmount()
     wrapper = null
 
@@ -231,10 +234,10 @@ describe('ProjectExplorer — selection vs activation', () => {
     await mouse(w, 'core', 'click', 1)
     expect(w.emitted('select-group')).toEqual([[{ projectId: 'p', groupId: 'module:p:core' }]])
     expect(row(w, 'core').attributes('aria-selected')).toBe('true')
-    // A single click selects without opening.
-    expect(row(w, 'core').attributes('aria-expanded')).toBe('false')
+    // flowgate.v02test.0002 R0001 #5: a single click selects and opens the Group.
+    expect(row(w, 'core').attributes('aria-expanded')).toBe('true')
 
-    // A double click on a Group selects it (first click only) and toggles it open.
+    // A double click on a Group selects it (first click only) and toggles it exactly once.
     await doubleClickRow(w, 'UI 개선')
     expect(row(w, 'UI 개선').attributes('aria-expanded')).toBe('true')
     expect(row(w, 'UI 개선').attributes('aria-selected')).toBe('true')
@@ -242,6 +245,82 @@ describe('ProjectExplorer — selection vs activation', () => {
       [{ projectId: 'p', groupId: 'module:p:core' }],
       [{ projectId: 'p', groupId: 'module:p:ui' }],
     ])
+    // Neither a Group click nor a Group double click opens a Flow.
+    expect(w.emitted('activate-flow')).toBeUndefined()
+  })
+
+  it('flowgate.v02test.0002 R0001 #5: one click opens/closes a Project or Group; a real double click toggles once', async () => {
+    getRequest.mockResolvedValueOnce(ok(NODES))
+    const w = await mountExplorer()
+    const expanded = (label: string) => row(w, label).attributes('aria-expanded')
+
+    // Group: click 1 opens, the second click and dblclick of the same double click add nothing.
+    await mouse(w, 'UI 개선', 'click', 1)
+    expect(expanded('UI 개선')).toBe('true')
+    await mouse(w, 'UI 개선', 'click', 2)
+    expect(expanded('UI 개선')).toBe('true')
+    await mouse(w, 'UI 개선', 'dblclick', 2)
+    await flushPromises()
+    expect(expanded('UI 개선')).toBe('true')
+    expect(labels(w, 'flow')).toEqual(['Designer v0.2', 'Canvas'])
+    // Another single click closes it; a full double click opens it again (once).
+    await clickRow(w, 'UI 개선')
+    expect(expanded('UI 개선')).toBe('false')
+    await doubleClickRow(w, 'UI 개선')
+    expect(expanded('UI 개선')).toBe('true')
+
+    // Project root (open by default): one click closes it, one click opens it again.
+    await clickRow(w, 'Alpha')
+    expect(expanded('Alpha')).toBe('false')
+    expect(labels(w, 'group')).toEqual([])
+    expect(row(w, 'Alpha').attributes('aria-selected')).toBe('true')
+    await doubleClickRow(w, 'Alpha')
+    expect(expanded('Alpha')).toBe('true')
+    expect(labels(w, 'group')).toEqual(['UI 개선', 'core', 'Empty group'])
+    expect(row(w, 'Alpha').attributes('aria-selected')).toBe('true')
+
+    // A Flow click inside the Group never toggles its Group or Project.
+    await clickRow(w, 'Canvas')
+    await doubleClickRow(w, 'Designer v0.2')
+    expect(expanded('UI 개선')).toBe('true')
+    expect(expanded('Alpha')).toBe('true')
+    expect(w.emitted('activate-flow')).toEqual([[{ projectId: 'p', groupId: 'module:p:ui', flowId: 'p.ui.0001', flowName: 'Designer v0.2' }]])
+  })
+
+  it('flowgate.v02test.0002 R0001 #5: the caret toggles once without a row click; a right click neither selects nor toggles', async () => {
+    getRequest.mockResolvedValueOnce(ok(NODES))
+    const w = await mountExplorer()
+    const caret = () => row(w, 'core').find('[data-test="project-explorer-caret"]')
+    await caret().trigger('click')
+    expect(row(w, 'core').attributes('aria-expanded')).toBe('true')
+    // The caret stops its click: the row's own click (select + toggle) does not run as well.
+    expect(row(w, 'core').attributes('aria-selected')).toBe('false')
+    expect(w.emitted('select-group')).toBeUndefined()
+    await caret().trigger('click')
+    expect(row(w, 'core').attributes('aria-expanded')).toBe('false')
+
+    line(w, 'UI 개선').element.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }))
+    await flushPromises()
+    expect(row(w, 'UI 개선').attributes('aria-expanded')).toBe('false')
+    expect(row(w, 'UI 개선').attributes('aria-selected')).toBe('false')
+    expect(w.emitted('select-group')).toBeUndefined()
+  })
+
+  it('flowgate.v02test.0002 R0001 #5: a Flow single click selects without opening; a real double click opens it once', async () => {
+    getRequest.mockResolvedValueOnce(ok(NODES))
+    const w = await mountExplorer()
+    await expandGroup(w, 'UI 개선')
+    const canvas = { projectId: 'p', groupId: 'module:p:ui', flowId: 'p.ui.0002', flowName: 'Canvas' }
+    await mouse(w, 'Canvas', 'click', 1)
+    await flushPromises()
+    expect(w.emitted('select-flow')).toEqual([[canvas]])
+    expect(w.emitted('activate-flow')).toBeUndefined()
+    await mouse(w, 'Canvas', 'click', 2)
+    expect(w.emitted('activate-flow')).toBeUndefined()
+    await mouse(w, 'Canvas', 'dblclick', 2)
+    await flushPromises()
+    expect(w.emitted('select-flow')).toEqual([[canvas]])
+    expect(w.emitted('activate-flow')).toEqual([[canvas]])
   })
 
   it('a slow double click (gap longer than 500ms) gives the same select + activate', async () => {
@@ -345,7 +424,7 @@ describe('ProjectExplorer — loading and errors', () => {
     await flushPromises()
     expect(w.find('[data-test="project-explorer-error"]').exists()).toBe(false)
     expect(labels(w, 'group')).toEqual(['UI 개선', 'core', 'Empty group'])
-    expect(getRequest.mock.calls.at(-1)![1]).toEqual({ include_terminal: 'false', force: 'true' })
+    expect(getRequest.mock.calls.at(-1)![1]).toEqual({ include_terminal: 'false', force: 'true', include_archived: 'false' })
   })
 
   it('keeps the rendered tree on refresh failure, shows a notice and retries', async () => {
@@ -370,7 +449,7 @@ describe('ProjectExplorer — loading and errors', () => {
     expect(w.find('[data-test="project-explorer-refresh-error"]').exists()).toBe(false)
     expect(labels(w, 'flow')).toEqual(['Designer v0.2', 'Canvas', 'Inspector'])
     // The forced refresh bypasses the store cache.
-    expect(getRequest.mock.calls.at(-1)![1]).toEqual({ include_terminal: 'false', force: 'true' })
+    expect(getRequest.mock.calls.at(-1)![1]).toEqual({ include_terminal: 'false', force: 'true', include_archived: 'false' })
   })
 
   it('the header refresh button forces a fresh read', async () => {
@@ -380,7 +459,7 @@ describe('ProjectExplorer — loading and errors', () => {
     await w.find('[data-test="project-explorer-refresh"]').trigger('click')
     await flushPromises()
     expect(getRequest).toHaveBeenCalledTimes(2)
-    expect(getRequest.mock.calls[1][1]).toEqual({ include_terminal: 'false', force: 'true' })
+    expect(getRequest.mock.calls[1][1]).toEqual({ include_terminal: 'false', force: 'true', include_archived: 'false' })
   })
 
   it('resets to the new project when the project changes', async () => {
@@ -432,5 +511,48 @@ describe('ProjectExplorer — structure (T0006 §1-§3)', () => {
       }
       expect(src, file).not.toMatch(/defineStore|@shared\/api|client\/src/)
     }
+  })
+})
+
+
+describe('T-c archive visibility and independent tree caches', () => {
+  it('hides archives from search, reveals them dimmed with the toggle, then restores into the normal tree', async () => {
+    let archived = true
+    getRequest.mockImplementation(async (_url: string, params: any) => ok(NODES.filter((node: any) =>
+      node.id !== 'p.ui.0002' || !archived || params.include_archived === 'true').map((node: any) =>
+      node.id === 'p.ui.0002' ? { ...node, archived_at: archived ? '2026-01-01' : null } : node)))
+    postRequest.mockImplementation(async (url: string) => {
+      expect(url).toBe('/api/v1/flows/p.ui.0002/restore')
+      archived = false
+      return { data: { ok: true, archived: false, archived_at: null, archived_by: null, eligible: true, reason: null } }
+    })
+    const w = await mountExplorer()
+    await expandGroup(w, 'UI 개선')
+    expect(labels(w, 'flow')).not.toContain('Canvas')
+    await w.get('input[type="text"]').setValue('Canvas')
+    expect(labels(w, 'flow')).toEqual([])
+    await w.get('[data-test="project-explorer-include-archived"]').setValue(true)
+    await flushPromises()
+    expect(labels(w, 'flow')).toEqual(['Canvas'])
+    expect(row(w, 'Canvas').classes()).toContain('is-archived')
+    await doubleClickRow(w, 'Canvas')
+    expect(w.emitted('activate-flow')).toBeUndefined()
+    await useProjectStore().setFlowArchived('p', 'p.ui.0002', false)
+    await w.get('[data-test="project-explorer-include-archived"]').setValue(false)
+    await flushPromises()
+    expect(labels(w, 'flow')).toEqual(['Canvas'])
+    expect(getRequest.mock.calls.at(-1)?.[1]).toMatchObject({ include_terminal: 'false', include_archived: 'false', force: 'true' })
+  })
+  it('keeps all four cache variants distinct and invalidates all of them after a restore', async () => {
+    getRequest.mockResolvedValue(ok(NODES))
+    const store = useProjectStore()
+    for (const includeTerminal of [false, true]) for (const includeArchived of [false, true]) {
+      await store.fetchGroupTree('p', { includeTerminal, includeArchived })
+    }
+    expect(getRequest).toHaveBeenCalledTimes(4)
+    await store.fetchGroupTree('p', { includeTerminal: true, includeArchived: true })
+    expect(getRequest).toHaveBeenCalledTimes(4)
+    store.invalidateGroupTree('p')
+    for (const t of [false, true]) for (const a of [false, true]) expect(store.getCachedGroupTree('p', t, a)).toBeUndefined()
   })
 })

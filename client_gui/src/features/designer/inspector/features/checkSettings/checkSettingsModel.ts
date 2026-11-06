@@ -5,6 +5,13 @@ import type { InspectorReadOnly } from '../../inspectorTarget'
 
 export type CheckUsage = 'mid' | 'end'
 export type CheckScope = 'merge' | 'commit' | 'hold'
+/** The candidate lookup's own status as the server answered it (`merge_target_state.status`). */
+export type CheckLookupStatus = 'ok' | 'empty' | 'timeout' | 'failed' | 'git_unavailable'
+/** Where the shown candidates come from: this answer, the kept confirmed list (0006-T §2), or nowhere. */
+export type CheckOptionsSource = 'live' | 'cache' | 'none'
+export const CHECK_LOOKUP_STATUSES: readonly CheckLookupStatus[] = ['ok', 'empty', 'timeout', 'failed', 'git_unavailable']
+/** Lookups after which the kept confirmed list may stand in for the missing candidates. */
+const CACHE_USABLE_LOOKUPS: readonly CheckLookupStatus[] = ['timeout', 'failed']
 
 export interface CheckSettingsView {
   /** The card's usage, or null when not set. */
@@ -18,10 +25,13 @@ export interface CheckSettingsView {
   readonly defaultTarget?: string | null
   readonly targetEnabled?: boolean
   readonly targetError?: string | null
+  /** Display only (0006-T §3.2): never a reason the target cannot be chosen. */
   readonly lookupError?: string | null
+  readonly lookupStatus?: CheckLookupStatus | null
+  readonly optionsSource?: CheckOptionsSource
   readonly canRefreshTargets?: boolean
   readonly pushCheckRequired?: boolean
-  /** Only the branch names admitted by the server. */
+  /** Only the branch names admitted by the server: this answer's, else the kept confirmed list's — never both. */
   readonly targetOptions: readonly string[]
   readonly push: boolean | null
   readonly keepBranch: boolean | null
@@ -69,6 +79,11 @@ export interface CheckSettingsInput {
   readonly placing: boolean
   readonly disposed: boolean
   readonly failure: { readonly field: string; readonly kind: CheckSettingsFailureKind; readonly key?: string | null } | null
+  /**
+   * 0006-T §2: the last candidates the server confirmed (lookup ok / empty) for this very project, flow, card and work
+   * base, still inside their validity; null when there is none. Used only while the live lookup timed out / failed.
+   */
+  readonly cachedTargets?: readonly string[] | null
 }
 
 /** The server's gate `settings_lock_reason` -> the message key of the lock (flowgate.v02.0132 T#4). */
@@ -115,7 +130,14 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
   const defaultTarget = input.node?.defaultTargetBranch ?? null
   // T0012: the saved or inherited branch name is always shown; why it cannot be used is its error, never a blank.
   const target = targetStored ? field!.value as string : defaultTarget
-  const targetOptions = input.node?.mergeTargetOptions ?? []
+  const lookupStatus = oneOf(state?.status, CHECK_LOOKUP_STATUSES)
+  // Only a confirmed lookup (or an answer without lookup facts) lists live candidates; names beside a failure are not.
+  const liveOptions = !state || lookupStatus === 'ok' || lookupStatus === 'empty' ? input.node?.mergeTargetOptions ?? [] : []
+  // 0006-T §3.3: the live answer's candidates when it has any, else the kept confirmed list after a timeout / failure.
+  const cached = lookupStatus !== null && CACHE_USABLE_LOOKUPS.includes(lookupStatus) ? input.cachedTargets ?? [] : []
+  const optionsSource: CheckOptionsSource = liveOptions.length > 0 ? 'live' : cached.length > 0 ? 'cache' : 'none'
+  const targetOptions = optionsSource === 'live' ? liveOptions : optionsSource === 'cache' ? cached : []
+  const reason = checkSettingsReason(input)
   const scope = oneOf(valueOf('merge_mode'), CHECK_SCOPES)
   const lookupError = state?.status === 'git_unavailable' ? 'target.git_unavailable'
     : state?.status === 'failed' ? 'target.lookup_failed'
@@ -131,9 +153,12 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
     target,
     targetStored,
     defaultTarget,
-    targetEnabled: scope === 'merge' && lookupError === null && targetOptions.length > 0,
+    // 0006-T §3.2: a valid candidate (live or kept) and no safety lock; a lookup error alone never locks the choice.
+    targetEnabled: scope === 'merge' && targetOptions.length > 0 && reason === null && Object.keys(input.pending).length === 0,
     targetError: scope === 'merge' ? targetError : null,
     lookupError: scope === 'merge' ? lookupError : null,
+    lookupStatus,
+    optionsSource,
     canRefreshTargets: state?.status === 'failed' || state?.status === 'timeout',
     pushCheckRequired: input.node?.pushRemoteCheckRequired === true,
     targetOptions,
@@ -141,7 +166,7 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
     push: flag(input.node?.fields.push?.value),
     keepBranch: flag(valueOf('keep_branch')),
     connected: input.card,
-    reason: checkSettingsReason(input),
+    reason,
     failures,
   }
 }

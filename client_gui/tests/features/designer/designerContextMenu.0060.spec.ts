@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { nextTick } from 'vue'
+import { nextTick, defineComponent, h, reactive } from 'vue'
+import { useDesignerContextMenu } from '@/features/designer/contextMenu/attach/designerMenuConnector'
 import DesignerContextMenu from '@/features/designer/contextMenu/DesignerContextMenu.vue'
 import { createDesignerMenuHost } from '@/features/designer/contextMenu/host'
 import { openContextMenu } from '@/features/designer/contextMenu/entry'
@@ -383,5 +384,84 @@ describe('the 11 kinds against the mockup menuDefs (T#1)', () => {
       await flushPromises()
       shown(1).forEach(check)
     }
+  })
+})
+
+
+describe('T-c clicked Flow archive menu', () => {
+  async function connect(read: ReturnType<typeof vi.fn>) {
+    const archiveFlow = vi.fn(async () => {})
+    const restoreFlow = vi.fn(async () => {})
+    let connector!: ReturnType<typeof useDesignerContextMenu>
+    const scope = reactive({ alive: true, busy: false })
+    const Harness = defineComponent({ setup() {
+      connector = useDesignerContextMenu({
+        center: reactive({ state: { projectId: 'p', activeFlowId: 'open-flow', tabs: [] } }) as any,
+        projectId: () => 'p', canSelectAll: () => false, selectAll: vi.fn(), openGroupCreate: vi.fn(),
+        openFlowCreate: vi.fn(), selectPalette: vi.fn(), arrange: { groups: [], enabled: () => false, run: vi.fn() },
+        archive: { read, busy: () => scope.busy, archiveFlow, restoreFlow },
+      })
+      return () => h(DesignerContextMenu, { host: connector.host, onRequest: connector.run })
+    } })
+    wrapper = mount(Harness, { attachTo: document.body, global: { plugins: [createI18n({ legacy: false, locale: 'ko' })] } })
+    const open = (flowId: string) => connector.api.project(new MouseEvent('contextmenu', { cancelable: true }),
+      { kind: 'flow', projectId: 'p', groupId: 'module:p:ui', flowId }, null, () => scope.alive)
+    return { connector, open, scope, archiveFlow, restoreFlow }
+  }
+  it('reads the clicked row and archives it once, without using the open Flow', async () => {
+    const read = vi.fn(async () => ({ archived: false, eligible: true }))
+    const c = await connect(read)
+    c.open('other-flow')
+    await flushPromises()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(read).toHaveBeenCalledWith('other-flow')
+    const item = button('flow.archive')
+    item.click(); item.click()
+    await flushPromises()
+    expect(c.archiveFlow).toHaveBeenCalledTimes(1)
+    expect(c.archiveFlow).toHaveBeenCalledWith('other-flow')
+  })
+  it('restores archived rows and keeps project/group menus unchanged', async () => {
+    const read = vi.fn(async () => ({ archived: true, eligible: false }))
+    const c = await connect(read)
+    c.open('archived')
+    await flushPromises()
+    expect(document.querySelector('[data-key="flow.archive"]')).toBeNull()
+    button('flow.restore').click()
+    await flushPromises()
+    expect(c.restoreFlow).toHaveBeenCalledTimes(1)
+    expect(c.restoreFlow).toHaveBeenCalledWith('archived')
+    c.connector.api.project(new MouseEvent('contextmenu', { cancelable: true }), { kind: 'project', projectId: 'p' })
+    await flushPromises()
+    expect(document.querySelector('[data-key="flow.restore"]')).toBeNull()
+    expect(c.connector.host.current.value!.model.items.map((i) => i.key)).toEqual(['project.newGroup', 'project-info', 'project.info'])
+    c.connector.api.project(new MouseEvent('contextmenu', { cancelable: true }), { kind: 'group', projectId: 'p', groupId: 'g' })
+    await flushPromises()
+    expect(c.connector.host.current.value!.model.items.map((i) => i.key)).toEqual(['group.newFlow', 'group-info', 'group.rename', 'group.info'])
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+  it('discards late reads and rechecks alive/busy at execution', async () => {
+    let answer!: (state: { archived: boolean; eligible: boolean }) => void
+    const read = vi.fn(() => new Promise<{ archived: boolean; eligible: boolean }>((resolve) => { answer = resolve }))
+    const c = await connect(read)
+    c.open('old')
+    c.connector.api.project(new MouseEvent('contextmenu', { cancelable: true }), { kind: 'project', projectId: 'p' })
+    answer({ archived: false, eligible: true })
+    await flushPromises()
+    expect(c.connector.host.current.value!.model.target.kind).toBe('project')
+    c.open('new')
+    answer({ archived: false, eligible: true })
+    await flushPromises()
+    c.scope.busy = true
+    button('flow.archive').click()
+    await flushPromises()
+    expect(c.archiveFlow).not.toHaveBeenCalled()
+    c.scope.busy = false
+    c.open('gone')
+    answer({ archived: false, eligible: true })
+    await flushPromises()
+    c.scope.alive = false
+    await nextTick()
+    expect(c.connector.host.current.value).toBeNull()
   })
 })

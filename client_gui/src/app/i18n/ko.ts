@@ -466,6 +466,19 @@ export default {
       },
     },
     // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
+    archive: {
+      action: '아카이브', restore: '복원', include: '아카이브 포함',
+      run_not_completed: '확인 완료된 플로우만 아카이브할 수 있습니다.',
+      no_gate_decision: '현재 실행의 성공한 확인 결정이 없습니다.',
+      gate_job_unfinished: '확인 처리 작업이 남아 있습니다.',
+      recovery_reset_required: '복구 후 재설정이 필요합니다.',
+      time_machine: '타임머신 작업 중입니다.',
+      work_unfinished: '진행 중인 작업이 있습니다.',
+      merge_session_open: '열린 병합 세션이 있습니다.',
+      already_archived: '이미 아카이브된 플로우입니다.',
+      unavailable: '아카이브 상태를 확인할 수 없습니다.',
+      failed: '아카이브 상태를 변경하지 못했습니다.',
+    },
     project_explorer: {
       title: '프로젝트',
       refresh: '새로고침',

@@ -5,6 +5,7 @@
        The active (Designer-opened) state is row styling only — no badge or text
        (0025 T0006 §5); ExplorerRowFrame draws it and exposes it as aria-current. -->
   <ExplorerRowFrame
+    :class="{ 'is-archived': flow.archived }"
     :row-id="flow.id"
     :level="3"
     :label="flow.name"
@@ -39,6 +40,7 @@ const emit = defineEmits<{
 </script>
 
 <style scoped>
+.is-archived { opacity: 0.5; }
 .row-icon {
   color: var(--fg2-cyan);
 }

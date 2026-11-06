@@ -59,6 +59,19 @@ def update(group_id: str, updates: dict[str, Any]) -> Optional[dict]:
     return get_by_id(group_id)
 
 
+def set_archive(group_id: str, archived: bool, actor: str) -> bool:
+    """Conditional display-only write. The caller serializes eligibility in the Flow guard."""
+    if archived:
+        return get_store()._execute_affected(
+            "UPDATE groups SET archived_at = ?, archived_by = ?, archive_restored_at = NULL "
+            "WHERE group_id = ? AND archived_at IS NULL", [now_iso(), actor, group_id],
+        ) > 0
+    return get_store()._execute_affected(
+        "UPDATE groups SET archived_at = NULL, archived_by = NULL, archive_restored_at = ? "
+        "WHERE group_id = ? AND archived_at IS NOT NULL", [now_iso(), group_id],
+    ) > 0
+
+
 def delete(group_id: str) -> None:
     get_store()._execute("DELETE FROM groups WHERE group_id = ?", [group_id])
 

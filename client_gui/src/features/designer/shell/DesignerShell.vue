@@ -26,6 +26,10 @@
       :targets="menuTargets"
       :recent="recent"
       :can-validate="center.activeCanValidate.value"
+      :can-archive="archiveState?.eligible === true && runPhase === 'idle'"
+      :archive-busy="!!projectStore.archiveBusy[center.state.activeFlowId ?? '']"
+      :archive-reason="archiveReason"
+      @archive="archiveActiveFlow"
       :select-mode="center.selectMode.value"
       :run-band="runBand"
       @command="onTopCommand"
@@ -241,6 +245,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useI18n } from 'vue-i18n'
 import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
+import type { FlowArchiveState } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
@@ -685,6 +690,7 @@ const flowCreateGroupId = computed<string | null>(() => {
 // the name the create dialog showed, since the tree cache is being re-read at that moment). The
 // Center session ignores an activation for another Project.
 function openFlow(payload: ProjectExplorerFlowEvent, reveal: boolean, groupName?: string, seedNode?: CanvasNodeSpec) {
+  if (archivedFlows.value.has(payload.flowId)) return
   center.openFlow(payload, seedNode ? { seedNode } : undefined)
   projectStore.recordRecentFlow({ id: payload.flowId, name: payload.flowName, projectId: payload.projectId, groupId: payload.groupId })
   projectStore.recordRecentGroup({ id: payload.groupId, name: groupNameOf(payload.projectId, payload.groupId, groupName), projectId: payload.projectId })
@@ -1136,7 +1142,7 @@ function applyRestore(run: RestoreRun, nodes: GroupTreeNode[]) {
   const { target, touched, closed, pid } = run
   // Ended first, so nothing the restore changes below is taken for the user's.
   endRestore()
-  const groups = buildExplorerProject(nodes, projectNodeId(pid))?.groups ?? []
+  const groups = buildExplorerProject(nodes.filter((node) => !node.archivedAt && !archivedFlows.value.has(node.id)), projectNodeId(pid))?.groups ?? []
   const flows = new Map(groups.flatMap((group) => group.flows.map((flow) => [flow.id, flow] as const)))
   const groupIds = new Set(groups.map((group) => group.id))
   const userActive = center.state.activeFlowId
@@ -1279,6 +1285,99 @@ watch(
   },
 )
 
+// Display archive: toolbar and clicked-row menu share this action. Server rechecks under its Flow guard.
+const archiveState = ref<FlowArchiveState | null>(null)
+const archivedFlows = ref(new Set<string>())
+let archiveReadSeq = 0
+const archiveReason = computed(() => {
+  const reason = archiveState.value?.reason
+  const key = `gui.designer.archive.${reason ?? 'unavailable'}`
+  return archiveState.value?.eligible ? '' : t(te(key) ? key : 'gui.designer.archive.unavailable')
+})
+async function refreshArchiveState() {
+  const flowId = center.state.activeFlowId
+  const seq = ++archiveReadSeq
+  archiveState.value = null
+  if (!flowId) return
+  try {
+    const state = await projectStore.readFlowArchive(flowId)
+    if (seq === archiveReadSeq && center.state.activeFlowId === flowId) archiveState.value = state
+  } catch { /* Fail closed; a run change, tree event or reopening retries. */ }
+}
+watch(() => [center.state.activeFlowId, center.activeRunStatus.value.run?.runId,
+  center.activeRunStatus.value.run?.status, center.activeRunStatus.value.run?.idleReason,
+  center.activeRunStatus.value.run?.lastEventSeq], () => { void refreshArchiveState() }, { immediate: true })
+
+function removeArchivedFlow(flowId: string) {
+  archivedFlows.value = new Set([...archivedFlows.value, flowId])
+  if (restoring) restoring.closed.add(flowId)
+  center.closeFlow(flowId)
+  projectStore.forgetRecentFlow(flowId)
+  if (explorerSelection.value?.kind === 'flow' && explorerSelection.value.id === flowId) requestExplorer({ select: null })
+  save()
+}
+
+async function changeArchive(flowId: string, archived: boolean) {
+  const pid = projectId.value
+  if (!pid || projectStore.archiveBusy[flowId]) return
+  try {
+    const result = await projectStore.setFlowArchived(pid, flowId, archived)
+    if (projectId.value !== pid) return
+    if (result.archived) removeArchivedFlow(flowId)
+    else {
+      const next = new Set(archivedFlows.value)
+      next.delete(flowId)
+      archivedFlows.value = next
+    }
+    explorerRefreshToken.value += 1
+    // Both variants must be fresh; restored completed Flows have a server-side display exception.
+    await projectStore.fetchGroupTree(pid, { force: true })
+    void refreshArchiveState()
+  } catch {
+    menuToast(() => t('gui.designer.archive.failed'), 'warning')
+    void refreshArchiveState()
+  }
+}
+async function archiveFlow(flowId: string) { await changeArchive(flowId, true) }
+function archiveActiveFlow() {
+  const flowId = center.state.activeFlowId
+  if (flowId && archiveState.value?.eligible) void archiveFlow(flowId)
+}
+
+let archiveEvents: (() => void) | null = null
+let archiveTreeSeq = 0
+async function refreshArchiveTree(pid: string) {
+  const seq = ++archiveTreeSeq
+  projectStore.invalidateGroupTree(pid)
+  explorerRefreshToken.value += 1
+  try {
+    const nodes = await projectStore.fetchGroupTree(pid, { includeTerminal: true, force: true })
+    if (seq !== archiveTreeSeq || projectId.value !== pid) return
+    const visible = new Set(nodes.filter((n) => n.kind === 'group' && !n.archivedAt).map((n) => n.id))
+    const ids = new Set([...center.state.tabs.map((t) => t.flowId),
+      ...projectStore.recentFlows.filter((f) => f.projectId === pid).map((f) => f.id),
+      ...(restoring?.target.tabs.map((t) => t.flowId) ?? [])])
+    for (const id of ids) if (!visible.has(id)) removeArchivedFlow(id)
+    archivedFlows.value = new Set([...archivedFlows.value].filter((id) => !visible.has(id)))
+  } catch { /* A failed read cannot remove tabs or recent entries. */ }
+  void refreshArchiveState()
+}
+watch(projectId, (pid) => {
+  archiveEvents?.()
+  archiveEvents = null
+  archiveTreeSeq += 1
+  archivedFlows.value = new Set()
+  if (pid) {
+    if (projectStore.recentFlows.some((flow) => flow.projectId === pid)) void refreshArchiveTree(pid)
+    archiveEvents = projectStore.subscribeProjectEvents(pid, {
+      events: ['group_view_refresh'],
+      event: () => { void refreshArchiveTree(pid) },
+      resync: () => { void refreshArchiveTree(pid) },
+    })
+  }
+}, { immediate: true })
+onBeforeUnmount(() => { archiveEvents?.(); archiveReadSeq += 1; archiveTreeSeq += 1 })
+
 // flowgate.v02.0060 T#2: the Designer context menu and what its commands run through (see the head comment).
 // flowgate.v02.0060 T#1 (WP 0012): its 정렬 · 배치 / 정렬 are this Edit menu's 정렬 / 배치 — the same commands, rule and path.
 // flowgate.v02.0060 T#2: the 2-B server paths (see the head comment). Each answers a result; a refusal is the store's.
@@ -1393,6 +1492,12 @@ const contextMenu = useDesignerContextMenu({
   canSelectAll: () => isMenuCommandEnabled('edit.select-all', runPhase.value, menuTargets.value),
   selectAll: (flowId) => {
     if (center.state.activeFlowId === flowId) onTopCommand('edit.select-all')
+  },
+  archive: {
+    read: (flowId) => projectStore.readFlowArchive(flowId),
+    busy: (flowId) => !!projectStore.archiveBusy[flowId],
+    archiveFlow,
+    restoreFlow: (flowId) => changeArchive(flowId, false),
   },
   projectGitEnabled: (pid) => projectStore.knownGitEnabled?.[pid],
   openFlowBaseBranch: (pid, flowId) => {

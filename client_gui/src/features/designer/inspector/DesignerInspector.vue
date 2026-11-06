@@ -99,7 +99,7 @@ import EmptyState from '../../../components/ui/EmptyState.vue'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import type { FlowGraphSelection } from '../center/graph/flowGraph'
 import InspectorHeader from './InspectorHeader.vue'
-import { INSPECTOR_BODY, INSPECTOR_HOST, type InspectorHost, type InspectorHostIntent } from './inspectorHost'
+import { INSPECTOR_BODY, INSPECTOR_HOST, INSPECTOR_SELECTION, type InspectorHost, type InspectorHostIntent } from './inspectorHost'
 import {
   contributionsFor,
   inspectorRegistry,
@@ -182,6 +182,17 @@ provide(INSPECTOR_BODY, { element: bodyElement })
 // shows its document; every read shown settles them (and opens a document a refused [작성] waits for).
 const readTarget = computed(() => toInspectorTarget(props.selection))
 const target = computed(() => withWrittenCardLines(readTarget.value, cardLinesWritten(readTarget.value)))
+// flowgate.v02test.0002 T-b (rej_01M6R14HCES8QJJ5): the shown target for the parts, also between their tabs; null once
+// the Frame ends. The Frame still knows no feature: a part decides what the selection means for it.
+const frameAlive = ref(true)
+provide(INSPECTOR_SELECTION, {
+  get target() {
+    return frameAlive.value && !props.unselected ? target.value : null
+  },
+})
+onBeforeUnmount(() => {
+  frameAlive.value = false
+})
 // flowgate.v02.0072 T#3: and the shown target's read-only verdict for the work plan windows of its Flow.
 watch(
   readTarget,

@@ -462,6 +462,19 @@ export default {
       },
     },
     // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
+    archive: {
+      action: 'アーカイブ', restore: '復元', include: 'アーカイブを含める',
+      run_not_completed: '完了したフローのみアーカイブできます。',
+      no_gate_decision: '現在の実行に成功した確認決定がありません。',
+      gate_job_unfinished: '確認処理が残っています。',
+      recovery_reset_required: '復旧後のリセットが必要です。',
+      time_machine: 'タイムマシンが実行中です。',
+      work_unfinished: '処理が進行中です。',
+      merge_session_open: 'マージセッションが開いています。',
+      already_archived: 'アーカイブ済みです。',
+      unavailable: 'アーカイブ状態を確認できません。',
+      failed: 'アーカイブ状態を変更できませんでした。',
+    },
     project_explorer: {
       title: 'プロジェクト',
       refresh: '再読み込み',
