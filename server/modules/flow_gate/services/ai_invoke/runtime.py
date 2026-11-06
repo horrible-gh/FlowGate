@@ -752,7 +752,8 @@ SCRATCH_MANIFEST_NAME = ".flowgate-ai-scratch.json"
 
 SCRATCH_MANIFEST_SCHEMA = 1
 
-_RUN_ID_RE = re.compile(r"\Aaiv_[0-9]{8}_[0-9]{6}\Z")
+# 0139: v0.2 issues ``aiv2_``; ``aiv_`` (v0.1 / pre-0139 rows) stays recognisable.
+_RUN_ID_RE = re.compile(r"\Aaiv2?_[0-9]{8}_[0-9]{6}\Z")
 
 
 def _safe_scratch_log(project_id: str, run_id: str, scratch: Path, action: str, reason: str) -> None:

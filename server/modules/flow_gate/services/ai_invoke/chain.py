@@ -594,9 +594,13 @@ def startup_recover_handoffs() -> int:
     try:
         from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
 
+        from modules.flow_gate.db import ai_run_identity
+
         rows = [
             row for row in db_paused.list_all_system_stops()
             if (row.get("stop_code") or "") == HOP_HANDOFF_STOP_CODE
+            # 0139: a handoff stamped with a v0.1 (aiv_) run is v0.1's to recover.
+            and not ai_run_identity.foreign_run_id(row.get("stop_run_id"))
         ]
         for row in rows:
             db_paused.mark_stop_code(

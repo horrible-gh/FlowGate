@@ -106,7 +106,7 @@ def identity_db(migrated_sqlite_db, monkeypatch, tmp_path):
                    ["flowgate.v02.0138", "flowgate", "v02", "Identity", DAY.isoformat(), DAY.isoformat()])
     monkeypatch.setattr(connection, "STORE", store)
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "storage"))
-    identity.initialize(scratch_roots=[], all_issuers_stopped=True)
+    identity.initialize(scratch_roots=[])
     yield path, store
     store._db.close()
 
@@ -121,7 +121,7 @@ def owner(run_id=None, **overrides):
 def _allocate_process(path, result_path, count, initialize=False):
     connection.STORE = open_store(path)
     if initialize:
-        identity.initialize(scratch_roots=[], all_issuers_stopped=True)
+        identity.initialize(scratch_roots=[])
     try:
         ids = [identity.allocate(at=DAY) for _ in range(count)]
         Path(result_path).write_text(json.dumps(ids), encoding="utf-8")
@@ -137,9 +137,9 @@ def test_environment_and_committed_identity(identity_db):
     # Another connection observes the committed reservation immediately.
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT serial FROM ai_run_id_counters").fetchone()[0] == 1
-    assert first == "aiv_20261106_000001"
-    assert identity.allocate(at=DAY + timedelta(days=1)) == "aiv_20261107_000001"
-    assert identity.allocate(at=DAY) == "aiv_20261106_000002"
+    assert first == "aiv2_20261106_000001"
+    assert identity.allocate(at=DAY + timedelta(days=1)) == "aiv2_20261107_000001"
+    assert identity.allocate(at=DAY) == "aiv2_20261106_000002"
 
 
 @pytest.mark.parametrize("workers", [2, 4])
@@ -173,10 +173,11 @@ def test_multiprocess_10000_each_and_restart(identity_db, tmp_path, workers):
 
 def test_disabled_cutover_commit_failure_exhaustion_and_nested_transaction(identity_db):
     _, store = identity_db
-    store._execute("UPDATE ai_run_id_contract SET version = 0")
-    with pytest.raises(RuntimeError, match="cutover_required"):
+    store._execute("UPDATE ai_run_id_contract SET version = 99")  # unknown (newer) contract
+    with pytest.raises(RuntimeError, match="incompatible_version"):
         identity.allocate(at=DAY)
-    identity.initialize(scratch_roots=[], all_issuers_stopped=True)
+    assert store._fetch_one("SELECT version FROM ai_run_id_contract")["version"] == 99
+    store._execute("UPDATE ai_run_id_contract SET version = 0")
     store._db.fail_commit = True
     with pytest.raises(OSError, match="commit failure"):
         identity.allocate(at=DAY)
@@ -195,17 +196,15 @@ def test_offline_seed_inventory_and_burned_number_survive_purge(identity_db, tmp
     _, store = identity_db
     scratch = tmp_path / "legacy-scratch"
     scratch.mkdir()
-    (scratch / "aiv_20261106_000999").mkdir()
-    with pytest.raises(RuntimeError, match="must_be_stopped"):
-        identity.initialize(scratch_roots=[scratch], all_issuers_stopped=False)
-    identity.initialize(scratch_roots=[scratch], all_issuers_stopped=True)
+    (scratch / "aiv2_20261106_000999").mkdir()
+    identity.initialize(scratch_roots=[scratch])
     assert identity.allocate(at=DAY).endswith("001000")
     # Simulate a crash immediately after commit: no token/lease/finished row exists.
     store._execute("DELETE FROM ai_invoke_runs")
-    identity.initialize(scratch_roots=[scratch], all_issuers_stopped=True)
+    identity.initialize(scratch_roots=[scratch])
     assert identity.allocate(at=DAY).endswith("001001")
     with pytest.raises(RuntimeError, match="inventory_unavailable"):
-        identity.initialize(scratch_roots=[scratch / "missing"], all_issuers_stopped=True)
+        identity.initialize(scratch_roots=[scratch / "missing"])
 
 
 def test_claim_rejects_same_id_different_nonce_and_identity(identity_db):
@@ -426,8 +425,8 @@ def test_process_crash_after_commit_burns_id(identity_db, tmp_path):
         proc.join(30)
         assert proc.exitcode == 73
         committed = output.read_text(encoding="utf-8")
-        assert committed == "aiv_20261106_000001"
-        assert identity.allocate(at=DAY) == "aiv_20261106_000002"
+        assert committed == "aiv2_20261106_000001"
+        assert identity.allocate(at=DAY) == "aiv2_20261106_000002"
     finally:
         if proc.is_alive():
             proc.terminate()
@@ -552,3 +551,61 @@ def test_cli_launch_rejects_another_execution_before_spawn(scratch_case):
     decision, reason = provider_cli._resolve_cli_launch(provider, {**run, "execution_nonce": str(uuid4())}, "worker")
     assert decision is None and reason == "scratch_owner_mismatch"
     assert tree_hash(scratch) == before
+
+
+# ── flowgate.v02.0139: v0.2 issues its own namespace next to a live v0.1 ──────────
+
+def _version(store):
+    return store._fetch_one("SELECT version FROM ai_run_id_contract WHERE singleton = 1")["version"]
+
+
+@pytest.mark.parametrize("start_version", [0, 1])
+def test_first_allocation_activates_aiv2_namespace_without_fence_0139(identity_db, start_version):
+    """No operator step and no stopped v0.1: version 0 (never cut over) or 1 (0138
+    contract) activates on the first allocation, floored only by earlier aiv2_ IDs."""
+    _, store = identity_db
+    store._execute("DELETE FROM ai_run_id_counters")
+    store._execute("UPDATE ai_run_id_contract SET version = ?", [start_version])
+    # v0.1 keeps writing its own aiv_ rows into the same tables; they never floor v0.2.
+    for serial in (3670, 3675):
+        v01_row = record(owner(f"aiv_20261106_{serial:06d}"))
+        v01_row.pop("execution_nonce")
+        records.upsert(v01_row)
+    store._execute("INSERT INTO ai_run_owners (run_id, execution_nonce, project_id, group_id, started_at) "
+                   "VALUES (?, ?, ?, ?, ?)",
+                   ["aiv2_20261106_000041", str(uuid4()), "flowgate", "flowgate.v02.0138", DAY.isoformat()])
+    assert identity.allocate(at=DAY) == "aiv2_20261106_000042"
+    assert _version(store) == identity.VERSION == 2
+    assert identity.allocate(at=DAY) == "aiv2_20261106_000043"   # activation runs once
+
+
+def test_v01_namespace_is_never_claimed_or_floored_0139(identity_db):
+    """v0.1 floors its in-memory counter with ``LIKE 'aiv_<date>_%'``; aiv2_ IDs never
+    match it, and v0.2's restart recovery treats aiv_ IDs as v0.1's."""
+    _, store = identity_db
+    issued = identity.allocate(at=DAY)
+    row = owner(issued)
+    identity.claim(row)
+    records.upsert(record(row))
+    v01_floor = store._fetch_all("SELECT run_id FROM ai_invoke_runs WHERE run_id LIKE ?", ["aiv_20261106_%"])
+    assert issued.startswith("aiv2_") and v01_floor == []
+    assert identity.RUN_ID.fullmatch("aiv_20261106_003675") and identity.RUN_ID.fullmatch(issued)
+    assert identity.ISSUED_RUN_ID.fullmatch(issued)
+    assert identity.foreign_run_id("aiv_20261106_003675") and not identity.foreign_run_id(issued)
+
+
+def test_old_0138_binary_stays_refused_after_activation_0139(identity_db):
+    """A 0138 binary checks ``version == 1``; activation moves the contract to 2 so it can
+    never resume minting aiv_ IDs inside v0.1's namespace."""
+    _, store = identity_db
+    identity.allocate(at=DAY)
+    assert _version(store) == 2 != 1
+
+
+def test_runtime_allocators_issue_aiv2_0139(identity_db):
+    from modules.flow_gate.services.ai_invoke import runtime
+    _, store = identity_db
+    store._execute("UPDATE ai_run_id_contract SET version = 0")
+    run_id = runtime._next_run_id()
+    assert identity.ISSUED_RUN_ID.fullmatch(run_id) and runtime._RUN_ID_RE.fullmatch(run_id)
+    assert runtime._RUN_ID_RE.fullmatch("aiv_20261106_003675")  # legacy rows stay readable

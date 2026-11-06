@@ -969,8 +969,11 @@ def startup_recover_question_responders() -> int:
     for row in rows:
         run_id = row.get("responder_run_id")
         try:
+            from modules.flow_gate.db import ai_run_identity
             from modules.flow_gate.services.ai_invoke import runtime as ai_runtime
 
+            if ai_run_identity.foreign_run_id(run_id):
+                continue  # 0139: dispatched by FlowGate v0.1 on the shared DB, not ours
             if run_id and ai_runtime.is_run_live(run_id):
                 continue
             if int(row.get("answer_count") or 0) > 0:

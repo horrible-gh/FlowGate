@@ -179,7 +179,7 @@ def recover_expired(group_id: Optional[str] = None) -> int:
     return len(rows)
 
 
-def reclaim_orphaned(before: str, keep_run_ids=frozenset()) -> list[dict]:
+def reclaim_orphaned(before: str, keep_run_ids=frozenset(), owns_run_id=None) -> list[dict]:
     """Reclaim every lease acquired before *before* -- the startup dead-lease sweep
     (flowgate.default.0401 NR0003 SS6-1 / T0004 item 1).
 
@@ -194,8 +194,16 @@ def reclaim_orphaned(before: str, keep_run_ids=frozenset()) -> list[dict]:
 
     flowgate.v02.0129 T#2: a lease whose run is in *keep_run_ids* (its remote Job is
     not settled yet) is not reclaimed; the remote supervisor releases it later.
+
+    flowgate.v02.0139: *owns_run_id* (``run_id -> bool``) limits the sweep to leases this
+    server issued. FlowGate v0.1 shares the table, and its leases are not this
+    process's orphans even though they predate its start.
     """
     keep = {str(run_id) for run_id in (keep_run_ids or ())}
+
+    def _reclaimable(row: dict) -> bool:
+        run_id = str(row.get("run_id") or "")
+        return run_id not in keep and (owns_run_id is None or owns_run_id(run_id))
     def _log_startup_reclaim(row: dict) -> None:
         _append_event(
             event_type="lease_startup_reclaimed", group_id=row["group_id"],
@@ -213,7 +221,7 @@ def reclaim_orphaned(before: str, keep_run_ids=frozenset()) -> list[dict]:
         with _memory_lock:
             _sync_test_scope()
             victims = [dict(row) for row in _memory.values()
-                       if str(row.get("acquired_at") or "") < before and str(row.get("run_id")) not in keep]
+                       if str(row.get("acquired_at") or "") < before and _reclaimable(row)]
             for row in victims:
                 _memory.pop(row["group_id"], None)
             for row in victims:
@@ -221,8 +229,8 @@ def reclaim_orphaned(before: str, keep_run_ids=frozenset()) -> list[dict]:
             return victims
     store = get_store()
     rows = store._fetch_all("SELECT * FROM group_ai_leases WHERE acquired_at < ?", [before])
-    if keep:
-        rows = [row for row in rows if str(row.get("run_id")) not in keep]
+    if keep or owns_run_id is not None:
+        rows = [row for row in rows if _reclaimable(row)]
         for row in rows:
             store._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND run_id = ? AND acquired_at < ?",
                            [row["group_id"], row["run_id"], before])

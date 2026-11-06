@@ -208,10 +208,14 @@ def start_run(*args, **kwargs):
         if len(detail) > 300:
             detail = detail[:300] + "..."
         message = type(exc).__name__ + (f": {detail}" if detail else "")
+        # 0139: a refused run-ID allocator (contract at an unknown version, e.g. a newer
+        # binary activated it) is not a random internal error. Name it on the card.
+        cutover = isinstance(exc, RuntimeError) and detail in (
+            "ai_run_allocator_cutover_required", "ai_run_allocator_incompatible_version")
         raise HTTPException(
             status_code=500,
             detail={
-                "code": "ai_invoke_start_internal_error",
+                "code": "ai_run_allocator_cutover_required" if cutover else "ai_invoke_start_internal_error",
                 "message": message,
                 "phase": "pre_run_admission",
             },
