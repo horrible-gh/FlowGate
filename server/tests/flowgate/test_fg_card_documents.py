@@ -67,6 +67,12 @@ def env(db_path, monkeypatch, tmp_path):
 
     from flowgate.card_documents import integration
 
+    # flowgate.v02.0146 T#2: the real document write gate, as the server startup registers it, instead of whatever an
+    # earlier test module left in the process-wide port table (alone, ``_seed`` was refused with 409).
+    import fg_harness_write_gate
+
+    fg_harness_write_gate.install(monkeypatch, dedicated=True)
+
     storage = tmp_path / "storage"
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(storage))
     monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
@@ -627,15 +633,58 @@ def test_a_run_result_line_stays_when_the_next_draft_retypes_the_node(env, decid
     token = _sql(env["db"], "SELECT token_id FROM graph_run_token_map WHERE node_key = ?", (key,))[0]["token_id"]
     result = _doc(FA, 90, "D")
     v01_contact.after_inbox_registered(FA, result, "D", token)
-    retyped = put_draft(env, FA, 0, [node(km["tmp_r"], "R"), node(key, "P", "설계")])
-    assert lines(retyped, key) == [("instruction", "DS"), ("report", "P")]
-    assert retyped["card_documents"][key][0]["doc_id"] == ds
+    # flowgate.v02.0146 T#2: binding a person's result moves the card to ``review``, a protected state
+    # (``editing.PROTECTED``: done / open / review). The current API contract is that the Graph refuses a draft that
+    # retypes it: 409 ``graph_node_protected`` (``editing.protect_definition``). The node's state is left as the real
+    # binding made it; nothing here overwrites it.
+    assert _sql(env["db"], "SELECT status FROM graph_node_runs WHERE node_key = ?", (key,))[0]["status"] == "review"
+    before_rows = line_rows(env, FA, key)
+    refused = env["client"].put(f"/api/v1/flows/{FA}/graph/draft", headers=_h(), json={
+        "draft_version": 0, "nodes": [node(km["tmp_r"], "R"), node(key, "P", "설계")], "edges": []})
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "graph_node_protected", refused.text
+    # the refused retype changed nothing: the result line, the instruction line and the superseded placeholder stay
+    assert line_rows(env, FA, key) == before_rows
     assert ("report", "D", result, 0) in {(r["slot"], r["doc_type"], r["doc_id"], r["owned"])
                                           for r in line_rows(env, FA, key)}
     assert doc(result) is not None and doc(placeholder)["superseded_by"] == result
     shown = {n["node_key"]: n for n in canvas(env, FA, "?view=revision")["nodes"]}[key]
     assert [line["doc_id"] for line in shown["card_documents"]] == [ds, result]
     assert shown["document"]["doc_id"] == result and shown["node_run"]["result_doc_id"] == result
+
+
+
+def test_a_bound_result_line_stays_when_the_card_lines_follow_a_retype(env, decided):
+    """The line-binding intent of the retype scenario, at the layer that owns it (``lines.sync_draft``). The Graph's
+    guard in front of it (``protect_definition``) refuses a retype of a protected node (previous test), so this drives
+    the card document layer itself: the confirmed revision still shows the D card, the person's result is bound."""
+    from flowgate.card_documents import lines as card_lines
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.graph_workflow.api import v01_contact
+
+    lee = {"kind": "human", "user_id": "u_lee", "provider_id": None}
+    first = put_draft(env, FA, 0, [node("tmp_r", "R"), node("tmp_d", "D", "설계", assignee=lee)],
+                      [edge("tmp_e", "tmp_r", "tmp_d")])
+    km = first["key_map"]
+    key = km["tmp_d"]
+    ds, placeholder = (line["doc_id"] for line in first["card_documents"][key])
+    assert env["client"].post(f"/api/v1/flows/{FA}/graph/revisions", json={"draft_version": 1},
+                              headers=_h()).status_code == 201
+    assert env["client"].post(f"/api/v1/flows/{FA}/runs", json={"revision_no": 1}, headers=_h()).status_code == 201
+    token = _sql(env["db"], "SELECT token_id FROM graph_run_token_map WHERE node_key = ?", (key,))[0]["token_id"]
+    result = _doc(FA, 90, "D")
+    v01_contact.after_inbox_registered(FA, result, "D", token)
+    cards = [{"node_key": km["tmp_r"], "node_type": "document", "doc_type": "R"},
+             {"node_key": key, "node_type": "document", "doc_type": "D"}]
+    retyped_cards = [cards[0], {**cards[1], "doc_type": "P"}]
+    shown = card_lines.sync_draft(db_groups.get_by_id(FA), "u_kim", retyped_cards, [], set(), previous_nodes=cards)
+    # the new P report line has no document yet (an empty line is not returned here); the instruction line is kept
+    assert [(line["slot"], line["doc_type"], line["doc_id"]) for line in shown[key]] == [("instruction", "DS", ds)]
+    assert ("report", "D", result, 0) in {(r["slot"], r["doc_type"], r["doc_id"], r["owned"])
+                                          for r in line_rows(env, FA, key)}
+    assert doc(result) is not None and doc(placeholder)["superseded_by"] == result
+    view = {n["node_key"]: n for n in canvas(env, FA, "?view=revision")["nodes"]}[key]
+    assert [line["doc_id"] for line in view["card_documents"]] == [ds, result]
+    assert view["document"]["doc_id"] == result and view["node_run"]["result_doc_id"] == result
 
 
 # ── migration 145 ────────────────────────────────────────────────────────────
@@ -691,8 +740,14 @@ def test_startup_registers_the_card_document_ports():
     try:
         assert not any(ports.registered(name) for name in ports.PORT_NAMES)
         startup.start_card_document_integration()
+        # ``startup.run_all`` registers the document edit ports (write gate, edit boundary, ...) right after the card
+        # documents' own; together they are every port name.
+        from flowgate.card_document_edit import integration as card_document_edit_integration
+        card_document_edit_integration.register()
         assert all(ports.registered(name) for name in ports.PORT_NAMES)
-        assert "start_card_document_integration()" in (_SERVER_DIR / "startup.py").read_text(encoding="utf-8")
+        startup_source = (_SERVER_DIR / "startup.py").read_text(encoding="utf-8")
+        assert "start_card_document_integration()" in startup_source
+        assert "card_document_edit_integration.register()" in startup_source
     finally:
         integration.unregister()
 
@@ -710,8 +765,10 @@ def test_the_feature_code_is_in_the_v02_package_and_the_graph_holds_only_ports()
                      if any(how in p.read_text(encoding="utf-8")
                             for how in ("import card_document_ports", "from .card_document_ports"))
                      and p.name != "card_document_ports.py")
-    assert callers == ["services/canvas_service.py", "services/graph_service.py",
-                       "services/run_apply.py", "services/v01_contact.py"]
+    # 0127 (the write gate's release in ``flow_guard``) and the root conversion cards also reach the feature through the
+    # ports only; the list follows the graph package as it is now.
+    assert callers == ["services/canvas_service.py", "services/flow_guard.py", "services/graph_service.py",
+                       "services/root_conversion_cards.py", "services/run_apply.py", "services/v01_contact.py"]
 
 
 

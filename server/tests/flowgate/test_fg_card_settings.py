@@ -149,6 +149,14 @@ def env(db_path, monkeypatch, tmp_path, request):
 
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "storage"))
     monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
+    # flowgate.v02.0146 T#2: this shared harness seeds documents before any app lifespan registers the document write
+    # gate. Register the real gate (``fg_harness_write_gate``: only the harness's own direct row writes bypass it)
+    # instead of inheriting whatever an earlier test module leaked into the process-wide port table; run on its own
+    # (or in another order, as ``--dist loadfile`` does), the suites that use this harness otherwise error on setup
+    # with 409 card_document_edit_required.
+    import fg_harness_write_gate
+
+    fg_harness_write_gate.install(monkeypatch)
     state = {"events": [], "db": db_path, "jobs": []}
 
     def fake_verify(request):
@@ -1086,87 +1094,7 @@ def git_flow(env, tmp_path, monkeypatch, git_repositories):
     svc.delete_config("flowgate")
 
 
-def test_the_merge_target_branch_is_saved_only_for_a_target_the_judgement_allows(env, git_flow):
-    from modules.flow_gate.db import groups as db_groups
-
-    work_base_before = db_groups.get_by_id(FB).get("work_base_ref")
-    g = _gate_key(env)
-    body = get_settings(env, FB, g)
-    # only the names the judgement passes: not the groups' own slots, not a remote, not a branch lacking history
-    assert body["merge_target_options"] == ["feature/v0.2.0", "main", "release/local"], body["merge_target_state"]
-    assert body["default_target_branch"] == "main"
-    state = body["merge_target_state"]
-    assert (state["status"], state["code"], state["reason"]) == ("ok", None, None)
-    assert state["current"] == {"branch": "main", "inherited": True, "checked": True, "error": None,
-                                "unmerge_supported": True, "warnings": []}
-    assert state["default"]["branch"] == "main" and state["default"]["error"] is None
-    for name, status, code in (("nope", 404, "merge_target_not_found"),
-                               ("remote-only", 409, "merge_target_remote_only"),
-                               (git_flow["other"], 409, "merge_target_internal_slot"),
-                               (git_flow["own"], 409, "merge_target_same_branch"),
-                               ("a..b", 422, "merge_target_invalid"), ("-x", 422, "merge_target_invalid"),
-                               ("HEAD", 422, "merge_target_invalid"),
-                               ("old", 409, "merge_target_incoming_work_base")):
-        refused = setting(env, FB, g, "merge_target_branch", name, expect=status)
-        assert refused["error"]["code"] == code, (name, refused["error"])
-        assert "\\" not in json.dumps(refused["error"]["params"])                # no worktree path
-    assert stored_rows(env, FB, g) == {} and get_settings(env, FB, g)["settings_version"] == 0
-    # every candidate is a target the save allows (one judgement), whatever the merge mode
-    setting(env, FB, g, "merge_mode", "commit")
-    for name in reversed(body["merge_target_options"]):
-        saved = setting(env, FB, g, "merge_target_branch", name)
-        assert saved["fields"]["merge_target_branch"] == {"value": name, "stored": True, "default": None,
-                                                          "choices": None}
-        assert (saved["merge_target_state"]["current"]["branch"], saved["merge_target_state"]["current"]["inherited"]) \
-            == (name, False)
-    picked = get_settings(env, FB, g)["merge_target_state"]["current"]
-    assert (picked["error"], picked["unmerge_supported"]) == (None, False)          # a non-base target: no unmerge
-    assert picked["warnings"] == ["target_differs_from_work_base", "unmerge_unsupported_for_non_base_target"]
-    # saving the target touched neither push nor the remote; the group's work base never moves
-    assert {field for (_key, field) in stored_rows(env, FB, g)} == {"merge_mode", "merge_target_branch"}
-    assert db_groups.get_by_id(FB).get("work_base_ref") == work_base_before
-    # the stored target disappears: its name stays, it is no candidate and the state says why (the refresh read
-    # option skips the at most 5 s old cache); the save judges the name again, never from the cache
-    for name, status, code in (("release/local", 404, "merge_target_not_found"),
-                               ("feature/v0.2.0", 409, "merge_target_remote_only")):   # its origin copy is left
-        setting(env, FB, g, "merge_target_branch", name)
-        _git_cmd(["branch", "-D", name], git_flow["base"])
-        gone = _get_refreshed(env, FB, g)
-        assert gone["fields"]["merge_target_branch"]["value"] == name
-        assert name not in gone["merge_target_options"] and "main" in gone["merge_target_options"]
-        assert gone["merge_target_state"]["current"]["error"] == code
-        assert setting(env, FB, g, "merge_target_branch", name, expect=status)["error"]["code"] == code
-    cleared = setting(env, FB, g, "merge_target_branch", None)                   # null: back to the work base
-    assert cleared["merge_target_state"]["current"]["inherited"] is True
-    assert cleared["merge_target_state"]["current"]["branch"] == "main"
-
-
-def test_a_group_without_its_worktree_yet_lists_and_saves_real_branch_names(env, git_flow):
-    """flowgate.v02.0098 T0012: a check card is set up before its group's work starts (no worktree yet). Its candidates
-    are the real local branch names judged from where its branch will fork, each saved by the same judgement; an
-    internal Graph attempt branch is never one. The confirm and the run still need the group's worktree."""
-    from modules.flow_gate.db import git_integration as db_git
-    from modules.flow_gate.db import groups as db_groups
-    from modules.flow_gate.services.git import merge_target as mt
-    from modules.flow_gate.services.git.credentials import GitServiceError
-
-    fc = "flowgate.v02.0093"
-    db_groups.create({"group_id": fc, "project_id": "flowgate", "module": "v02", "title": fc, "status": "OPEN"})
-    assert db_git.get_state(fc) is None
-    _git_cmd(["branch", "graph_attempt_att_x", "main"], git_flow["base"])
-    g = put_draft(env, fc, 0, [node("tmp_g", None, "gate")])["key_map"]["tmp_g"]
-    body = get_settings(env, fc, g)
-    assert body["merge_target_options"] == ["feature/v0.2.0", "main", "release/local"], body["merge_target_state"]
-    assert body["default_target_branch"] == "main"
-    state = body["merge_target_state"]
-    assert (state["status"], state["code"]) == ("ok", None)
-    assert (state["current"]["branch"], state["current"]["inherited"], state["current"]["error"]) == ("main", True, None)
-    for name in body["merge_target_options"]:
-        assert setting(env, fc, g, "merge_target_branch", name)["fields"]["merge_target_branch"]["value"] == name
-    for name, code in (("old", "merge_target_incoming_work_base"), (git_flow["own"], "merge_target_internal_slot"),
-                       ("graph_attempt_att_x", "merge_target_internal_slot")):
-        assert setting(env, fc, g, "merge_target_branch", name, expect=409)["error"]["code"] == code, name
-    with pytest.raises(GitServiceError) as strict:
-        mt.judge_check_target("flowgate", fc, "main")
-    assert (strict.value.code, strict.value.details["reason"]) == ("gate_git_unavailable", "group_slot_missing")
-    assert db_git.get_state(fc) is None                                          # nothing provisioned or recorded
+# flowgate.v02.0146 T#2: the two Git-heavy tests that ended this file (``test_the_merge_target_branch_is_saved_only_for_a_target_the_judgement_allows``,
+# ``test_a_group_without_its_worktree_yet_lists_and_saves_real_branch_names``) were moved verbatim to
+# ``test_fg_card_settings_merge_target_git_0146.py`` / ``test_fg_card_settings_no_worktree_git_0146.py`` (they used the ``git_flow``
+# fixture above) so ``--dist loadfile`` can run them on different workers; the 255 s they took here was the long pole of this file.
