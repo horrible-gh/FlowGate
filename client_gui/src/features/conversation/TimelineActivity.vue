@@ -172,6 +172,9 @@ const statusText = computed(() => {
   border-radius: var(--fg2-control-radius);
   background: var(--fg2-control-surface-flat);
   overflow: hidden;
+  /* flowgate.v02.0147 T0005: a direct child of the column-flex .conv-log must never be
+     shrunk below its content height (overflow:hidden would clip it to ~2px). */
+  flex-shrink: 0;
 }
 
 .tl-act--command {

@@ -972,6 +972,11 @@ export default {
     status: {
       run_cancelled: 'AI 呼び出しを停止しました',
       run_no_reply: 'AI 呼び出しが返信なしで終了しました',
+      run_query_unconfirmed: 'AI 呼び出しは終了しましたが、保存された返信の照会を確認できませんでした',
+      run_attribution_unconfirmed: '保存された返信の実行への帰属を確認できませんでした',
+      run_result_unconfirmed: 'AI 呼び出しの終了結果を確認できませんでした',
+      run_history_unconfirmed: '実行履歴の照会が不完全なため、過去の結果をすべて確認できませんでした',
+      run_failed: 'AI 呼び出しが失敗しました。保存された返信は保持されます',
       remote_workdir_unset: 'リモート作業ディレクトリが設定されていません。Agent を編集で設定してください',
       remote_permission_denied: 'Agent に作業ディレクトリの権限がありません。Agent を実行するアカウントの権限を確認してください',
       remote_workdir_create_failed: 'Agent が作業ディレクトリを作成できませんでした。パスと親ディレクトリを確認してください',

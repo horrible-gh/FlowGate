@@ -233,7 +233,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(buttons[0].attributes('aria-pressed')).toBe('true')
     await buttons[2].trigger('click')
     await flushPromises()
-    expect(source.saveChatSettings).toHaveBeenCalledWith({ source_access_mode: 'edit_once' })
+    expect(source.saveChatSettings).toHaveBeenCalledWith({ source_access_mode: 'edit_once' }, { projectId: 'p', groupId: 'p.m.0001' })
     expect(find('conv-source-mode').findAll('button')[2].attributes('aria-pressed')).toBe('true')
   })
 
@@ -244,7 +244,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     await find('conv-setting-context').setValue('all')
     await find('conv-settings-save').trigger('click')
     await flushPromises()
-    expect(source.saveChatSettings).toHaveBeenCalledWith({ send_action: 'copy_mention', context_mode: 'all' })
+    expect(source.saveChatSettings).toHaveBeenCalledWith({ send_action: 'copy_mention', context_mode: 'all' }, { projectId: 'p', groupId: 'p.m.0001' })
     expect(find('conv-settings').exists()).toBe(false)
   })
 

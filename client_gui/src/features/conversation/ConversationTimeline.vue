@@ -225,6 +225,13 @@ defineExpose({ scrollToBottom })
   gap: 8px;
 }
 
+/* flowgate.v02.0147 T0005: .conv-log is a column flex container with overflow:auto; keep every
+   direct child (message, card, boundary, state) at its content height so the log scrolls
+   instead of squeezing overflow:hidden cards. */
+.conv-log > * {
+  flex-shrink: 0;
+}
+
 .conv-log-state {
   margin: 0;
   padding: 24px 8px;

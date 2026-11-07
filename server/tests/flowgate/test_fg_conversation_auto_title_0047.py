@@ -241,6 +241,12 @@ def test_permissions_and_group_state(env):
 
 @pytest.fixture()
 def create_env(monkeypatch, tmp_path):
+    # Unit fixture: all storage ports below are in-memory; execute the file callback
+    # only for this fixture's scratch path, without requiring the application DB.
+    def fixture_write(operation, paths, callback):
+        assert operation == 'paths' and paths == [tmp_path / 'document.md']
+        return callback()
+    monkeypatch.setattr(chats.document_write_ports, 'write_gate', fixture_write)
     created = []
     monkeypatch.setattr(legacy_adapter, "has_permission", lambda user, perm, project: True)
     monkeypatch.setattr(legacy_adapter, "get_project", lambda project_id: {"project_id": project_id})

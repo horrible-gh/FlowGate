@@ -972,6 +972,11 @@ export default {
     status: {
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',
+      run_query_unconfirmed: 'The AI call ended, but the saved reply could not be verified',
+      run_attribution_unconfirmed: 'The run associated with the saved reply could not be verified',
+      run_result_unconfirmed: 'The AI call result could not be verified',
+      run_history_unconfirmed: 'Run history is incomplete; earlier results could not all be verified',
+      run_failed: 'The AI call failed. Saved replies are preserved',
       remote_workdir_unset: 'No remote working directory is set. Set one in Edit Agent',
       remote_permission_denied: 'The agent has no permission on the working directory. Check the permissions of the account the agent runs as',
       remote_workdir_create_failed: 'The agent could not create the working directory. Check the path and its parent directory',

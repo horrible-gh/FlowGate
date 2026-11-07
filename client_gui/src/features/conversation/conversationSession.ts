@@ -17,12 +17,14 @@ import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } fro
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, type CreateChatOptions } from './api'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import { buildTimeline, mergeTurns, replaceServerActivities, upsertActivity, type PendingTurn, type TimelineItem } from './timeline'
+import { runBelongsToChat, runBodyState, runStatusLines, type TurnReadResult } from './runAssessment'
 import type {
   AiRunState,
   ChatProvider,
   ChatSettings,
   ChatSettingsPatch,
   ChatSummary,
+  ChatAutoTitle,
   CommandDecision,
   CommandRequestActivity,
   ConversationActivity,
@@ -41,6 +43,10 @@ export const CATCHUP_MAX_ROUNDS = 20
 export const SEND_RETRY_MAX = 2
 export const RUN_POLL_MS = 2500
 export const RUN_POLL_MAX = 480
+export const FINAL_TURN_READ_ATTEMPTS = 3
+export const RUN_HISTORY_INITIAL_LIMIT = 20
+export const RUN_HISTORY_MAX_LIMIT = 100 // server services/ai_invoke/runtime.py
+export const RUN_HISTORY_DETAIL_LIMIT = 50 // sequential reads: concurrency = 1
 // flowgate.v02.0084 T#2: a run adopted before the server has registered it (409 right after the
 // lease, or a /start that timed out) reads 404 for a while; it is polled this long before giving up.
 export const RUN_ADOPT_GRACE_MS = 60_000
@@ -131,6 +137,9 @@ export interface ConversationSession {
   readonly hasProviders: ComputedRef<boolean>
   readonly submission: ComputedRef<SubmissionPhase | null>
   readonly supportsActivities: boolean
+  /** Title-only lifetime/revision guard; no second title store. */
+  readonly titleGuard: DeepReadonly<{ disposed: boolean; revision: number; listRevision: number; userId: string }>
+  titleRevision(chatId: string): number
 
   setScope(scope: ConversationScope | null): Promise<void>
   /** Settles once the provider list of the current scope has loaded (or failed to). */
@@ -143,7 +152,7 @@ export interface ConversationSession {
   /** Leaves the open chat for an unsaved new one: nothing exists until its first send. */
   startDraft(): void
   /** Shows a title the server already stored (the AI title of a new chat). */
-  setChatTitle(chatId: string, title: string): void
+  setChatTitle(chatId: string, title: string, marker?: ChatAutoTitle): void
   loadOlder(trace?: SubmissionTrace): Promise<void>
   catchUp(): Promise<void>
   /**
@@ -273,10 +282,17 @@ export function createConversationSession(options: ConversationSessionOptions = 
   let createIntent: { key: string; scopeGen: number; chatGen: number } | null = null
   let createOperation = 0
   let providersProject: string | null = null
+  let providersRequest = 0
   let providersLoad: Promise<void> = Promise.resolve()
   let noticeSeq = 0
   let chatsRequest = 0
   const unlistedChats = new Map<string, ChatSummary>()
+  const titleGuard = reactive({ disposed: false, revision: 0, listRevision: 0, userId: draftUserId() })
+  const titleRevisions = new Map<string, number>()
+  const manualTitlesPending = new Set<string>()
+  function titleRevision(chatId: string): number { return titleRevisions.get(chatId) ?? 0 }
+  function touchTitle(chatId: string): void { titleRevisions.set(chatId, ++titleGuard.revision) }
+  const titleTerminal = (chat: ChatSummary) => ['done', 'manual', 'failed'].includes(chat.autoTitle?.state ?? '')
   let unsubscribe: (() => void) | null = null
   // Highest read seq already reported for the active chat; it belongs to that chat and is
   // reset with it (clearChat), so another chat's position never suppresses a report.
@@ -286,6 +302,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
   let activityReads = 0
   let activityApplied = 0
   let activityStaleUpTo = 0
+  // Rebuilt from the server on every entry; this cache only supports a later catch-up repair.
+  const terminalRuns = new Map<string, AiRunState>()
+  const runChecks = new Map<string, number>()
+  const settingsRefreshedRuns = new Set<string>()
+  let trackedRunId: string | null = null
+  let historyRequest = 0
+
 
   const activeChat = computed(() => state.chats.find((c) => c.id === state.activeChatId) ?? null)
   const timeline = computed(() => buildTimeline(state.turns, state.activities, state.pending, state.readSeq))
@@ -304,31 +327,49 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!disposed && gen === chatGen) notify(tone, code, detail)
   }
 
-  function addStatus(tone: StatusTone, code: string, text: string | null = null): void {
-    noticeSeq += 1
-    state.activities = upsertActivity(state.activities, {
-      kind: 'status',
-      id: `local-status-${noticeSeq}`,
-      createdAt: new Date().toISOString(),
-      tone,
-      code,
-      text,
-    })
+  function runStatusPrefix(chatId: string, runId: string): string {
+    return `local-status-run:${encodeURIComponent(chatId)}:${encodeURIComponent(runId)}:`
   }
 
-  /** flowgate.v02.0135 CH0006: a run that started no connection says why, not only `all_providers_failed`. */
-  function addFailureStatus(run: AiRunState): void {
-    const failure = run.failure
-    if (failure?.cause) {
-      const { workdir, message } = failure
-      const parts = workdir && message?.includes(workdir) ? [message] : [workdir, message]
-      addStatus('danger', `remote_${failure.cause}`, parts.filter(Boolean).join(' · ') || null)
-    } else {
-      addStatus('danger', 'run_no_reply', failure?.detail ?? run.endReason)
+  function renderTerminal(chatId: string, run: AiRunState, read: TurnReadResult): void {
+    const prefix = runStatusPrefix(chatId, run.runId)
+    const body = runBodyState(state.turns, run.runId, read.status)
+    state.activities = state.activities.filter((a) => !a.id.startsWith(prefix))
+    for (const line of runStatusLines(run, body, read.status)) {
+      state.activities = upsertActivity(state.activities, {
+        kind: 'status', id: prefix + line.slot, chatId, runId: run.runId, runResult: { ...run },
+        createdAt: run.finishedAt ?? null, tone: line.tone, code: line.code, text: line.text,
+      })
+    }
+    if (body === 'present' && trackedRunId === run.runId && !settingsRefreshedRuns.has(run.runId)) {
+      settingsRefreshedRuns.add(run.runId)
+      const gen = chatGen
+      void loadSettings(state.scope, () => isCurrentChat(chatId, gen) && trackedRunId === run.runId &&
+        (state.runId == null || state.runId === run.runId))
     }
   }
 
+  function showRunUnconfirmed(chatId: string, runId: string): void {
+    const id = runStatusPrefix(chatId, runId) + 'result'
+    state.activities = upsertActivity(state.activities, {
+      kind: 'status', id, chatId, runId, createdAt: null, tone: 'warning', code: 'run_result_unconfirmed', text: null,
+    })
+  }
+
+  function showHistoryUnconfirmed(chatId: string, unconfirmed: boolean): void {
+    const id = `local-status-history:${encodeURIComponent(chatId)}`
+    state.activities = state.activities.filter((a) => a.id !== id)
+    if (unconfirmed) state.activities = upsertActivity(state.activities, {
+      kind: 'status', id, chatId, createdAt: null, tone: 'warning', code: 'run_history_unconfirmed', text: null,
+    })
+  }
+
   function clearChat(): void {
+    terminalRuns.clear()
+    runChecks.clear()
+    settingsRefreshedRuns.clear()
+    trackedRunId = null
+    historyRequest += 1
     unsubscribe?.()
     unsubscribe = null
     state.turns = []
@@ -375,9 +416,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   async function fetchProviders(projectId: string): Promise<void> {
+    const request = ++providersRequest
+    const userId = draftUserId()
     try {
       const list = await source.listProviders(projectId)
-      if (disposed || providersProject !== projectId) return
+      if (disposed || providersProject !== projectId || request !== providersRequest || userId !== draftUserId()) return
       state.providers = list.providers
       const keep = list.providers.some((p) => p.id === state.selectedProviderId)
       state.selectedProviderId = keep
@@ -387,7 +430,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
           : list.providers[0]?.id ?? ''
       state.providersStatus = 'ready'
     } catch {
-      if (disposed || providersProject !== projectId) return
+      if (disposed || providersProject !== projectId || request !== providersRequest || userId !== draftUserId()) return
       state.providers = []
       state.selectedProviderId = ''
       state.providersStatus = 'error'
@@ -409,15 +452,15 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return true
   }
 
-  async function loadSettings(requestScope: ConversationScope | null): Promise<void> {
+  async function loadSettings(requestScope: ConversationScope | null, current: () => boolean = () => true): Promise<void> {
     const gen = scopeGen
     const scope = requestScope ? { ...requestScope } : null
-    if (!settingsCurrent(gen, scope)) return
+    if (!settingsCurrent(gen, scope) || !current()) return
     const request = ++settingsRequest
     if (scope) state.pendingSourceMode = 'read_only'
     try {
       const settings = await source.fetchChatSettings(scope ?? undefined)
-      if (settingsCurrent(gen, scope) && request === settingsRequest) applySettings(settings, scope)
+      if (settingsCurrent(gen, scope) && request === settingsRequest && current()) applySettings(settings, scope)
     } catch {
       // D0008 §3-4: keep chatting on defaults, never block.
     } finally {
@@ -430,15 +473,27 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!scope) return
     const gen = scopeGen
     const request = ++chatsRequest
+    const revisions = new Map(titleRevisions)
+    const userId = draftUserId()
     state.chatsStatus = 'loading'
     state.chatsError = null
     try {
       trace?.mark('list_start')
       const chats = await source.listChats(scope)
       trace?.mark('list_end', { result: 'ok' })
-      if (disposed || gen !== scopeGen || request !== chatsRequest) return
-      for (const chat of chats) unlistedChats.delete(chat.id)
-      state.chats = [...unlistedChats.values(), ...chats]
+      if (disposed || gen !== scopeGen || request !== chatsRequest || userId !== draftUserId()) return
+      const merged = chats.map((chat) => {
+        const current = state.chats.find((item) => item.id === chat.id)
+        if (current && (manualTitlesPending.has(chat.id) || (revisions.get(chat.id) ?? 0) !== titleRevision(chat.id) ||
+          (titleTerminal(current) && !titleTerminal(chat)))) return current
+        // Creation/rename responses do not all carry meta. Keep only previously known data.
+        const next = current && chat.autoTitle === undefined ? { ...chat, autoTitle: current.autoTitle } : chat
+        if (current && (current.title !== next.title || (next.autoTitle?.state === 'manual' && current.autoTitle?.state !== 'manual'))) touchTitle(chat.id)
+        return next
+      })
+      for (const chat of merged) unlistedChats.delete(chat.id)
+      state.chats = [...unlistedChats.values(), ...merged]
+      titleGuard.listRevision++
       state.chatsStatus = 'ready'
     } catch (error) {
       trace?.mark('list_end', { result: 'error' })
@@ -454,6 +509,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     scopeGen += 1
     chatGen += 1
     unlistedChats.clear()
+    state.renaming = false
     state.scope = scope ? { ...scope } : null
     state.chats = []
     state.chatsStatus = 'idle'
@@ -489,7 +545,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   // ── Active chat ────────────────────────────────────────────────────────────────────
   async function selectChat(chatId: string, trace?: SubmissionTrace): Promise<void> {
-    if (chatId === state.activeChatId && state.turnsStatus !== 'error') return
+    if (chatId === state.activeChatId && state.turnsStatus !== 'error') {
+      if (state.turnsStatus === 'ready') await catchUp()
+      return
+    }
     // Another chat is not the one a shown notice was about (a reload of the same chat keeps it).
     if (chatId !== state.activeChatId) state.notice = null
     chatGen += 1
@@ -521,7 +580,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       state.turnsError = messageOf(error)
       return
     }
-    void openActivities(chatId, gen)
+    void openActivities(chatId, gen).then(() => restoreRuns(chatId, gen))
     void adoptActiveRun(chatId, gen)
   }
 
@@ -571,41 +630,139 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
-  /** Fill the gap after the last confirmed seq (P0003 scenario 7). */
-  async function catchUp(): Promise<void> {
-    const chatId = state.activeChatId
-    if (!chatId || disposed) return
-    const gen = chatGen
-    let cursor: number | null = state.headSeq
-    for (let round = 0; cursor != null && round < CATCHUP_MAX_ROUNDS; round++) {
+  /** Explicit completion contract: errors / a remaining cursor are never a completed read. */
+  async function readTurnPages(chatId: string, afterSeq: number, current: () => boolean): Promise<TurnReadResult> {
+    let cursor: number | null = afterSeq
+    for (let round = 0; round < CATCHUP_MAX_ROUNDS; round++) {
+      if (!current()) return { status: 'discarded', nextAfterSeq: cursor }
       let page
       try {
         page = await source.fetchTurns(chatId, { afterSeq: cursor, limit: TURN_PAGE_SIZE })
       } catch {
-        return
+        return { status: current() ? 'failed' : 'discarded', nextAfterSeq: cursor }
       }
-      if (disposed || gen !== chatGen) return
+      if (!current()) return { status: 'discarded', nextAfterSeq: cursor }
       applyPage(page)
-      cursor = page.nextAfterSeq
+      const next = page.nextAfterSeq
+      if (next == null) return { status: 'complete', nextAfterSeq: null }
+      if (next <= cursor) return { status: 'limited', nextAfterSeq: next }
+      cursor = next
     }
+    return { status: 'limited', nextAfterSeq: cursor }
+  }
+
+  async function finalTurnRead(chatId: string, current: () => boolean, afterSeq = 0): Promise<TurnReadResult> {
+    // A known attributed body only needs a final tail read. Otherwise start at zero to
+    // cover replies before the saved read position. Only that full range certifies absence.
+    for (let attempt = 0; attempt < FINAL_TURN_READ_ATTEMPTS; attempt++) {
+      if (!current()) return { status: 'discarded', nextAfterSeq: null }
+      const result = await readTurnPages(chatId, afterSeq, current)
+      if (!current()) return { status: 'discarded', nextAfterSeq: result.nextAfterSeq }
+      if (result.status !== 'failed' || attempt === FINAL_TURN_READ_ATTEMPTS - 1) return result
+      await sleep(RUN_POLL_MS)
+      if (!current()) return { status: 'discarded', nextAfterSeq: result.nextAfterSeq }
+    }
+    return { status: 'failed', nextAfterSeq: null }
+  }
+
+  /** Fill a tail gap, then repair terminal evidence / a failed history lookup on reconnect. */
+  async function catchUp(): Promise<void> {
+    const chatId = state.activeChatId
+    if (!chatId || disposed) return
+    const gen = chatGen
+    const current = () => isCurrentChat(chatId, gen)
+    const result = await readTurnPages(chatId, state.turns.at(-1)?.seq ?? 0, current)
+    if (!current() || result.status === 'discarded') return
+    await restoreRuns(chatId, gen)
+  }
+
+  /** Existing group history has no cursor. At most two windows and fifty detail reads. */
+  async function restoreRuns(chatId: string, gen: number): Promise<void> {
+    if (!isCurrentChat(chatId, gen) || !state.scope) return
+    const request = ++historyRequest
+    const scope = { ...state.scope }
+    const current = () => isCurrentChat(chatId, gen) && request === historyRequest
+    let uncertain = false
+    const candidates = new Set<string>()
+    const listedLiveChats = new Map<string, string>()
+    try {
+      let list = await source.listRuns(scope, RUN_HISTORY_INITIAL_LIMIT)
+      if (!current()) return
+      if (list.hasMore) {
+        list = await source.listRuns(scope, RUN_HISTORY_MAX_LIMIT)
+        if (!current()) return
+      }
+      uncertain = list.hasMore
+      for (const item of list.items) if (item.docRef === chatId) {
+        candidates.add(item.runId)
+        listedLiveChats.set(item.runId, item.docRef)
+      }
+    } catch {
+      if (!current()) return
+      uncertain = true
+    }
+    // Include referenced runs outside the list window, without guessing an id from a badge / time.
+    for (const turn of state.turns) if (turn.sourceRunId) candidates.add(turn.sourceRunId)
+    for (const activity of state.activities) if (activity.runId) candidates.add(activity.runId)
+    for (const runId of terminalRuns.keys()) candidates.add(runId)
+    if (candidates.size > RUN_HISTORY_DETAIL_LIMIT) uncertain = true
+    const confirmed: AiRunState[] = []
+    for (const runId of [...candidates].slice(0, RUN_HISTORY_DETAIL_LIMIT)) {
+      if (!current()) return
+      if (runId === state.runId) continue // history never owns the active-run lock
+      const check = (runChecks.get(runId) ?? 0) + 1
+      runChecks.set(runId, check)
+      try {
+        const run = await source.fetchRun(runId)
+        if (!current()) return
+        if (runId === state.runId || check !== runChecks.get(runId)) continue
+        if (!runBelongsToChat(run, runId, chatId, listedLiveChats.get(runId) ?? null)) { uncertain = true; continue }
+        if (run.status === 'running') continue
+        terminalRuns.set(runId, run)
+        confirmed.push(run)
+      } catch {
+        if (!current()) return
+        uncertain = true
+      }
+    }
+    // Do not make an already-proven reply depend on covering unrelated older history.
+    // Each run belongs to exactly one read group, so its failed reads still total at most 3.
+    const withBody = confirmed.filter((run) => runBodyState(state.turns, run.runId, 'failed') === 'present')
+    const withoutBody = confirmed.filter((run) => !withBody.includes(run))
+    for (const group of [withBody, withoutBody]) {
+      if (!group.length) continue
+      const afterSeq = group === withBody ? state.turns.at(-1)?.seq ?? 0 : 0
+      const result = await finalTurnRead(chatId, current, afterSeq)
+      if (!current() || result.status === 'discarded') return
+      for (const run of group) {
+        if (run.runId !== state.runId && terminalRuns.get(run.runId) === run) renderTerminal(chatId, run, result)
+      }
+    }
+    if (current()) showHistoryUnconfirmed(chatId, uncertain)
   }
 
   async function renameActiveChat(title: string): Promise<boolean> {
     const chat = activeChat.value
     const next = title.trim()
-    if (!chat || !next || next === chat.title || state.renaming) return false
+    if (!chat || !next || (next === chat.title && chat.autoTitle?.state !== 'owed') || state.renaming) return false
     state.renaming = true
     const chatId = chat.id
     const gen = chatGen
+    const scope = scopeGen
+    const userId = draftUserId()
+    touchTitle(chatId) // A manual intent invalidates an already pending automatic response.
+    manualTitlesPending.add(chatId)
     try {
       const saved = await source.renameChat(chatId, next)
-      setChatTitle(chatId, saved.title)
+      if (disposed || scope !== scopeGen || userId !== draftUserId()) return false
+      setChatTitle(chatId, saved.title, { state: 'manual', provisionalTitle: chat.autoTitle?.provisionalTitle ?? chat.title })
       return true
     } catch (error) {
       notifyIfCurrent(gen, 'danger', 'rename_failed', messageOf(error))
       return false
     } finally {
-      state.renaming = false
+      manualTitlesPending.delete(chatId)
+      if (!disposed && scope === scopeGen && userId === draftUserId()) state.renaming = false
     }
   }
 
@@ -659,6 +816,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
         if (!disposed && gen === scopeGen && isNoResponse(error)) void reloadChats()
         return finish('failed')
       }
+      if (options?.autoTitle && created.autoTitle === undefined) {
+        created = { ...created, autoTitle: { state: 'owed', provisionalTitle: next } }
+      }
       createdId = created.id
       if (createIntent?.key === intent) createIntent = null
       if (!currentDraft()) return finish('cancelled')
@@ -692,10 +852,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.activeChatId = null
   }
 
-  function setChatTitle(chatId: string, title: string): void {
+  function setChatTitle(chatId: string, title: string, marker?: ChatAutoTitle): void {
+    if (disposed) return
+    touchTitle(chatId)
+    const update = (chat: ChatSummary): ChatSummary => ({ ...chat, title,
+      autoTitle: marker ?? { state: 'done', provisionalTitle: chat.autoTitle?.provisionalTitle ?? chat.title } })
     const unlisted = unlistedChats.get(chatId)
-    if (unlisted) unlistedChats.set(chatId, { ...unlisted, title })
-    state.chats = state.chats.map((c) => (c.id === chatId ? { ...c, title } : c))
+    if (unlisted) unlistedChats.set(chatId, update(unlisted))
+    state.chats = state.chats.map((chat) => chat.id === chatId ? update(chat) : chat)
   }
 
   function notifyCreateFailed(error: unknown): void {
@@ -914,52 +1078,80 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   async function pollRun(chatId: string, runId: string, gen: number): Promise<void> {
+    if (!isCurrentChat(chatId, gen)) return
     state.runId = runId
-    const baseline = state.turns.filter((t) => t.speaker === 'ai').length
-    // flowgate.v02.0084 T#2: until the run has been read once, 404 / 410 may only mean the server
-    // has not registered it yet, so it is polled through RUN_ADOPT_GRACE_MS before being let go.
+    trackedRunId = runId
+    runChecks.set(runId, (runChecks.get(runId) ?? 0) + 1)
+    const current = () => isCurrentChat(chatId, gen) && state.runId === runId
+    // 0084 registration grace remains independent of response / completion evidence.
     let seen = false
+    // The server's running detail has group/action scope but no doc_ref. Only its
+    // active endpoint can prove the exact CH/run binding until finished detail arrives.
+    let liveMembershipConfirmed = false
     let unseenGone = 0
     const unseenGoneMax = Math.ceil(RUN_ADOPT_GRACE_MS / RUN_POLL_MS)
     for (let i = 0; i < RUN_POLL_MAX; i++) {
+      if (!current()) return
       await sleep(RUN_POLL_MS)
-      if (disposed || gen !== chatGen) return
+      if (!current()) return
       let run
       try {
         run = await source.fetchRun(runId)
       } catch (error) {
+        if (!current()) return
         const status = error instanceof ConversationRequestError ? error.status : null
-        // Only a gone run is terminal; a blip keeps polling (L0008 §3).
         if (status === 404 || status === 410) {
           unseenGone += 1
           if (seen || unseenGone >= unseenGoneMax) break
           continue
         }
         await loadActivities(chatId, gen)
+        if (!current()) return
         continue
       }
+      if (!current()) return
       seen = true
-      // No server push in v0.2 yet: the reply lands through the same catch-up as a gap, and
-      // the run's command requests through an activity read on the same tick (D0006 §3.9.2).
-      await catchUp()
-      if (disposed || gen !== chatGen) return
-      if (run.status !== 'finished') {
+      if (!runBelongsToChat(run, runId, chatId)) {
+        const liveWithoutDoc = run.status === 'running' && run.runId === runId && run.docRef == null &&
+          run.actionScope === 'chat' && run.groupId === chatId.split('.').slice(0, 3).join('.')
+        if (!liveWithoutDoc) {
+          showRunUnconfirmed(chatId, runId)
+          break
+        }
+        if (!liveMembershipConfirmed) {
+          let active: string | null
+          try {
+            active = await source.fetchActiveChatRun(chatId)
+          } catch {
+            if (!current()) return
+            continue
+          }
+          if (!current()) return
+          // A null answer can mean it finished between the two reads. Do not apply an
+          // unowned detail; the next poll verifies the finished payload's own doc_ref.
+          if (active !== runId) continue
+          liveMembershipConfirmed = true
+        }
+      }
+      if (run.status === 'running') {
+        await readTurnPages(chatId, state.turns.at(-1)?.seq ?? 0, current)
+        if (!current()) return
         await loadActivities(chatId, gen)
+        if (!current()) return
         continue
       }
+      const afterSeq = runBodyState(state.turns, runId, 'failed') === 'present' ? state.turns.at(-1)?.seq ?? 0 : 0
+      const result = await finalTurnRead(chatId, current, afterSeq)
+      if (!current() || result.status === 'discarded') return
+      terminalRuns.set(runId, run)
+      renderTerminal(chatId, run, result)
       state.runId = null
       state.cancelling = false
-      const delivered = state.turns.filter((t) => t.speaker === 'ai').length > baseline
-      // A one-shot source mode is consumed by the delivered answer (0568 rev3).
-      if (delivered) void loadSettings(state.scope)
-      // A delivered answer shows itself; only a run that ended without one says so.
-      if (run.endReason === 'cancelled') addStatus('info', 'run_cancelled')
-      else if (!delivered) addFailureStatus(run)
-      // Right after the end: the run change and the closed requests (D0006 §3.9.2-3).
       await loadActivities(chatId, gen)
       return
     }
-    if (isCurrentChat(chatId, gen)) {
+    if (current()) {
+      showRunUnconfirmed(chatId, runId)
       state.runId = null
       state.cancelling = false
       await loadActivities(chatId, gen)
@@ -1027,9 +1219,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   async function adoptActiveRun(chatId: string, gen: number): Promise<void> {
+    if (!isCurrentChat(chatId, gen)) return
     try {
       const runId = await source.fetchActiveChatRun(chatId)
-      if (!runId || disposed || gen !== chatGen || running.value) return
+      if (!runId || !isCurrentChat(chatId, gen) || running.value) return
       void pollRun(chatId, runId, gen)
     } catch {
       // Best effort — a manual [AI 호출] still adopts the run through 409.
@@ -1038,13 +1231,15 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   async function stopRun(): Promise<void> {
     const runId = state.runId
-    if (!runId || runId === 'starting' || state.cancelling) return
+    const chatId = state.activeChatId
+    if (!chatId || !runId || runId === 'starting' || state.cancelling) return
     state.cancelling = true
     const gen = chatGen
     try {
       await source.cancelRun(runId)
       // pollRun observes the finish and releases the button exactly once.
     } catch (error) {
+      if (!isCurrentChat(chatId, gen) || state.runId !== runId) return
       const status = error instanceof ConversationRequestError ? error.status : null
       if (status === 404 || status === 410) return
       state.cancelling = false
@@ -1122,6 +1317,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   function dispose(): void {
     disposed = true
+    titleGuard.disposed = true
     unsubscribe?.()
     unsubscribe = null
   }
@@ -1136,6 +1332,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     hasProviders,
     submission,
     supportsActivities: source.supportsActivities,
+    titleGuard: readonly(titleGuard),
+    titleRevision,
     setScope,
     providersLoaded,
     reloadChats,

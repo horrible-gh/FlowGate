@@ -983,6 +983,11 @@ export default {
     status: {
       run_cancelled: 'AI 호출을 중지했습니다',
       run_no_reply: 'AI 호출이 답변 없이 끝났습니다',
+      run_query_unconfirmed: 'AI 실행은 종료되었지만 저장 답변 조회를 확인하지 못했습니다',
+      run_attribution_unconfirmed: '저장된 답변의 실행 귀속을 확인하지 못했습니다',
+      run_result_unconfirmed: 'AI 실행의 종료 결과를 확인하지 못했습니다',
+      run_history_unconfirmed: '실행 이력 조회가 불완전하여 이전 실행 결과를 모두 확인하지 못했습니다',
+      run_failed: 'AI 실행이 실패했습니다. 저장된 답변은 유지됩니다',
       remote_workdir_unset: '원격 작업 디렉터리가 설정되지 않았습니다. 에이전트 수정에서 원격 작업 디렉터리를 지정하세요',
       remote_permission_denied: '에이전트에 작업 디렉터리 권한이 없습니다. 에이전트 실행 계정의 권한을 확인하세요',
       remote_workdir_create_failed: '에이전트가 작업 디렉터리를 만들지 못했습니다. 경로와 상위 디렉터리를 확인하세요',

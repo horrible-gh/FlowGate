@@ -26,12 +26,15 @@ provider selected in the composer. No model or provider is fixed here.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Optional
 
 from flowgate.conversation import activity
 from flowgate.conversation import contracts as c
 from flowgate.conversation import legacy_adapter
+
+logger = logging.getLogger(__name__)
 
 UPDATE_PERMISSION = "perm_document_update"
 META_KEY = "chat_auto_title"
@@ -146,12 +149,27 @@ def generate(doc_id: str, user: dict, body: Any) -> dict:
     claimed = _with_state(meta, CLAIMED)
     if not legacy_adapter.update_meta_cas(doc_id, owed_text, claimed):
         raise _not_owed()
-    answer, reason = legacy_adapter.complete_prompt(
-        project_id, provider_id, build_prompt(message), timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
+    try:
+        answer, reason = legacy_adapter.complete_prompt(
+            project_id, provider_id, build_prompt(message), timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
+    except Exception as exc:
+        # Execution may already have happened. Leave claimed intact; never log prompt,
+        # raw exception text, command arguments, credentials or the model's answer.
+        logger.error("auto_title stage=exception doc=%s project=%s provider=%s exception_type=%s",
+                     doc_id, project_id, provider_id, type(exc).__name__)
+        raise
     title = clean_title(answer, min(TITLE_MAX_CHARS, legacy_adapter.title_max_len())) if answer is not None else None
     if title is None:
         # Nothing was asked when the provider could not be used: the debt goes back.
         unavailable = answer is None and reason in legacy_adapter.PROMPT_UNAVAILABLE_REASONS
+        safe_reasons = legacy_adapter.PROMPT_UNAVAILABLE_REASONS | {
+            "timeout", "transport_failed", "provider_launch_failed", "execution_failed", "internal_error",
+            "remote_cli_unsupported", "cancelled_by_user",
+        }
+        logger.warning("auto_title stage=%s doc=%s project=%s provider=%s reason=%s answer_present=%s valid_title=false",
+                       "provider_unavailable" if unavailable else "model_result" if answer is None else "empty_title",
+                       doc_id, project_id, provider_id,
+                       reason if reason in safe_reasons else "unknown" if reason else "none", answer is not None)
         legacy_adapter.update_meta_cas(doc_id, claimed, owed_text if unavailable else _with_state(meta, FAILED))
         raise c.ConversationError(
             409 if unavailable else 502,

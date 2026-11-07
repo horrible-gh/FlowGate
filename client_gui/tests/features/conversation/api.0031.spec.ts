@@ -118,7 +118,7 @@ describe('turns', () => {
     const page = await fetchTurns('p.m.0001.0002-CH', { includeHead: true, limit: 50 })
     expect(getRequest).toHaveBeenCalledWith('/api/v1/documents/p.m.0001.0002-CH/conversation/turns', { include_head: 1, limit: 50 })
     expect(page).toEqual({
-      turns: [{ seq: 4, speaker: 'ai', participantKey: 'ai:opus', displayName: 'Opus', body: 'hi', basedOnSeq: null, staleSinceSeq: 3, createdAt: 'T' }],
+      turns: [{ seq: 4, speaker: 'ai', participantKey: 'ai:opus', displayName: 'Opus', body: 'hi', sourceRunId: null, basedOnSeq: null, staleSinceSeq: 3, createdAt: 'T' }],
       participants: [{ key: 'u:test', kind: 'user', displayName: 'test', lastReadSeq: 4 }],
       myReadSeq: 4,
       headSeq: 4,
@@ -170,7 +170,7 @@ describe('AI run', () => {
       provider_id: 'a',
     })
     getRequest.mockResolvedValueOnce({ data: { status: 'finished', end_reason: 'cancelled' } })
-    expect(await fetchRun('r1')).toEqual({ runId: 'r1', status: 'finished', endReason: 'cancelled' })
+    expect(await fetchRun('r1')).toEqual({ runId: 'r1', status: 'finished', endReason: 'cancelled', outcome: null, exitCode: null, docRef: null, actionScope: null, groupId: null, finishedAt: null })
     postRequest.mockResolvedValueOnce({ data: {} })
     await cancelRun('r1')
     expect(postRequest).toHaveBeenLastCalledWith('/api/v1/ai-invoke/r1/cancel', {})
@@ -188,7 +188,7 @@ describe('AI run', () => {
       remote_final: { code: 'remote_agent_rejected', cause: 'workdir_missing', workdir: '/tmp/flowgate/job_1',
         message: 'workspace: "/tmp/flowgate/job_1" is invalid: does not exist' },
     }] } })
-    expect(await fetchRun('r1')).toEqual({ runId: 'r1', status: 'finished', endReason: 'all_providers_failed', failure: {
+    expect(await fetchRun('r1')).toEqual({ runId: 'r1', status: 'finished', endReason: 'all_providers_failed', outcome: null, exitCode: null, docRef: null, actionScope: null, groupId: null, finishedAt: null, failure: {
       cause: 'workdir_missing', workdir: '/tmp/flowgate/job_1',
       message: 'workspace: "/tmp/flowgate/job_1" is invalid: does not exist',
       detail: 'remote_agent_rejected: workdir_missing: workspace: "/tmp/flowgate/job_1" is invalid: does not exist',
@@ -196,7 +196,7 @@ describe('AI run', () => {
     getRequest.mockResolvedValueOnce({ data: { status: 'finished', end_reason: 'all_providers_failed', fallback_history: [{ detail: 'exit 2 within 1s' }] } })
     expect((await fetchRun('r2')).failure).toEqual({ cause: null, message: null, workdir: null, detail: 'exit 2 within 1s' })
     getRequest.mockResolvedValueOnce({ data: { status: 'finished', end_reason: 'exited', fallback_history: [{ detail: 'x' }] } })
-    expect(await fetchRun('r3')).toEqual({ runId: 'r3', status: 'finished', endReason: 'exited' })
+    expect(await fetchRun('r3')).toEqual({ runId: 'r3', status: 'finished', endReason: 'exited', outcome: null, exitCode: null, docRef: null, actionScope: null, groupId: null, finishedAt: null })
   })
 
   it('carries code and run id of a 409 run_in_progress', async () => {
@@ -219,6 +219,7 @@ describe('chat settings / mention', () => {
       contextMode: 'all',
       contextTurns: 15,
       sourceAccessMode: 'edit_once',
+      sourceAccessScope: null,
       contextTurnsPresets: [10, 20],
       contextTurnsMin: 1,
       contextTurnsMax: 100,

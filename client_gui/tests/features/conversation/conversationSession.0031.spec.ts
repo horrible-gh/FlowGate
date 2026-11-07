@@ -101,6 +101,7 @@ describe('scope and chat list', () => {
 describe('timeline', () => {
   it('merges command requests and work changes into the message flow at their server anchors', async () => {
     const { session } = setup({
+      turns: { [A]: [turn(1, 'user', 'look'), turn(2, 'ai', 'fixture answer', null, { sourceRunId: 'c1' })] },
       activities: {
         [A]: [
           { kind: 'command', id: 'k1', createdAt: null, command: 'git diff', state: 'pending_approval', anchor: { seq: 2, position: 'before', state: 'reply' } },
@@ -377,7 +378,7 @@ describe('settings and mention', () => {
     await session.setSourceMode('edit')
     expect(session.state.settings.sourceAccessMode).toBe('read_only')
     await session.setSourceMode('edit')
-    expect(source.saveChatSettings).toHaveBeenLastCalledWith({ source_access_mode: 'edit' })
+    expect(source.saveChatSettings).toHaveBeenLastCalledWith({ source_access_mode: 'edit' }, SCOPE)
     expect(session.state.settings.sourceAccessMode).toBe('edit')
   })
 
