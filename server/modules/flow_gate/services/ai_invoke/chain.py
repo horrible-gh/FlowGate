@@ -100,6 +100,11 @@ def cancel_run(run_id: str) -> dict:
             process_runner.kill_process_tree(proc)
         except Exception:
             logger.warning("ai-invoke cancel kill failed for %s", run_id, exc_info=True)
+    from modules.flow_gate.services import tr_self_check_progress
+    try:
+        tr_self_check_progress.end_owned(run, boundary="run", reason="user_cancel")
+    except Exception:
+        logger.warning("ai-invoke %s: Self-check cleanup unconfirmed", run_id)
     return {"ok": True, "run_id": run_id, "status": "cancelling"}
 
 

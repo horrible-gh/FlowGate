@@ -273,10 +273,14 @@ def create_pending(
     try:
         with store.transaction():
             reservation = None
+            # One short SQL fence for scope closure and admission, before G-run insert.
+            if host_capacity is not None or progress_owner is not None:
+                _lock_host_capacity(store)
+            if progress_owner is not None:
+                _require_progress_owner(store, progress_owner, project_id, group_id)
             if host_capacity is not None:
                 limit, serial_reserve = host_capacity
                 desired = min(max(1, int(cpu_share_requested or 1)), limit)
-                _lock_host_capacity(store)
                 existing = get_active(project_id, group_id)
                 if existing:
                     raise SelfCheckAlreadyRunningError(
@@ -993,3 +997,103 @@ def observe_effective_progress(scope_id: str) -> dict:
 def _progress_stamp() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+# 0146 T#3. All scope writes share the capacity row with create_pending.
+# No registry lock is held for this transaction, and no process operation is done here.
+_OWNER_KEYS = ("scope_id", "ai_run_id", "hop_id", "provider_attempt_id",
+               "owner_token_id", "project_id", "group_id")
+
+
+class ProgressOwnerClosedError(Exception):
+    """A managed provider scope ended; it must never become an independent run."""
+
+
+def _ensure_owner_scope(store, owner: dict) -> dict:
+    row = store._fetch_one("SELECT * FROM tr_self_check_owner_scopes WHERE scope_id = ?",
+                           [owner["scope_id"]])
+    if row is None:
+        store._execute(
+            "INSERT INTO tr_self_check_owner_scopes (" + ", ".join(_OWNER_KEYS)
+            + ") VALUES (?, ?, ?, ?, ?, ?, ?)", [owner[k] for k in _OWNER_KEYS])
+        row = dict(owner)
+    if any(row[k] != owner[k] for k in _OWNER_KEYS):
+        raise ValueError("self-check scope ownership mismatch")
+    return row
+
+
+def _require_progress_owner(store, owner: dict, project_id: str, group_id: str) -> None:
+    if owner["project_id"] != project_id or owner["group_id"] != group_id:
+        raise ValueError("self-check progress owner leaves project/group")
+    if _ensure_owner_scope(store, owner).get("closed_at"):
+        raise ProgressOwnerClosedError("self-check owner scope is closed")
+
+
+def managed_owner_token(token_id: str, project_id: str, group_id: str) -> bool:
+    return get_store()._fetch_one(
+        "SELECT scope_id FROM tr_self_check_owner_scopes"
+        " WHERE owner_token_id = ? AND project_id = ? AND group_id = ? LIMIT 1",
+        [token_id, project_id, group_id]) is not None
+
+
+def close_owner_scopes(scopes: list[dict], *, boundary: str, reason: str,
+                       cancel: bool) -> list[str]:
+    if not scopes:
+        return []
+    owner = scopes[-1]
+    if boundary not in ("scope", "attempt", "hop", "run"):
+        raise ValueError("unknown owner boundary")
+    keys = ["project_id", "group_id", "ai_run_id"]
+    if boundary == "hop":
+        keys.append("hop_id")
+    if boundary == "attempt":
+        keys.append("provider_attempt_id")
+    if boundary == "scope":
+        keys.append("scope_id")
+    where = " AND ".join(k + " = ?" for k in keys)
+    store = get_store()
+    with store.transaction():
+        _lock_host_capacity(store)
+        # Include scopes with no children: a copied owner cannot insert after this commit.
+        for scope in scopes:
+            _ensure_owner_scope(store, scope)
+        store._execute(
+            "UPDATE tr_self_check_owner_scopes SET closed_at = COALESCE(closed_at, ?),"
+            " close_reason = CASE WHEN cancel_requested = 1 THEN close_reason ELSE ? END,"
+            " cancel_requested = CASE WHEN cancel_requested = 1 THEN 1 ELSE ? END"
+            " WHERE " + where, [now_iso(), reason, int(cancel), *(owner[k] for k in keys)])
+        return [r["scope_id"] for r in store._fetch_all(
+            "SELECT scope_id FROM tr_self_check_owner_scopes WHERE " + where,
+            [owner[k] for k in keys])]
+
+
+def owned_cancel_runs(scope_ids: list[str] | None = None) -> list[dict]:
+    sql = ("SELECT r.*, p.scope_id AS parent_scope_id, s.ai_run_id, s.hop_id,"
+           " s.provider_attempt_id, s.close_reason"
+           " FROM tr_self_check_runs r"
+           " JOIN tr_self_check_run_progress p ON p.self_check_run_id = r.self_check_run_id"
+           " JOIN tr_self_check_owner_scopes s ON s.scope_id = p.scope_id"
+           " AND s.ai_run_id = p.ai_run_id AND s.hop_id = p.hop_id"
+           " AND s.provider_attempt_id = p.provider_attempt_id"
+           " AND s.owner_token_id = p.owner_token_id"
+           " AND s.project_id = r.project_id AND s.group_id = r.group_id"
+           " WHERE s.cancel_requested = 1 AND r.status IN ('pending', 'running')")
+    params = []
+    if scope_ids is not None:
+        if not scope_ids:
+            return []
+        sql += " AND s.scope_id IN (" + ", ".join("?" for _ in scope_ids) + ")"
+        params.extend(scope_ids)
+    return [_normalize_row(row) for row in get_store()._fetch_all(sql, params)]
+
+
+def owned_cancel_run(run_id: str, scope_id: str) -> dict | None:
+    return next((r for r in owned_cancel_runs([scope_id])
+                 if r["self_check_run_id"] == run_id), None)
+
+
+def register_owner_scope(owner: dict) -> None:
+    store = get_store()
+    with store.transaction():
+        _lock_host_capacity(store)
+        _require_progress_owner(store, owner, owner["project_id"], owner["group_id"])

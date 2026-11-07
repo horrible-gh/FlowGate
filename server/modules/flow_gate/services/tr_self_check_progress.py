@@ -13,6 +13,7 @@ from modules.flow_gate.db import tr_self_check_runs as db_runs
 
 _lock = threading.RLock()
 _bindings: dict[str, dict] = {}
+_managed: dict[str, dict] = {}  # detached tokens cannot silently become independent
 # One optional metadata query in flight for this server; no queue and no unbounded
 # per-poll threads. A wedged DB read cannot hold the watchdog or token-adoption lock.
 _probe = None
@@ -20,17 +21,25 @@ _samples: dict[str, dict | None] = {}
 PROBE_DEADLINE_SEC = 1.0
 
 
-def open_attempt(run: dict) -> None:
-    close_attempt(run)
-    run["self_check_attempt_id"] = uuid.uuid4().hex
-    bind_token(run, run.get("token_id") or run.get("current_token_id"))
-
-
-def bind_token(run: dict, token_id: str | None) -> None:
-    """Called only at the engine's verified current-token adoption boundary."""
-    if not run.get("self_check_attempt_id") or not token_id:
-        return
+def open_attempt(run: dict, *, durable: bool = False) -> None:
     with _lock:
+        close_attempt(run)
+        if run.get("_self_check_ending") or (run.get("cancel_event") is not None
+                                             and run["cancel_event"].is_set()):
+            raise db_runs.ProgressOwnerClosedError("parent execution is ending")
+        run["self_check_attempt_id"] = uuid.uuid4().hex
+        run["_self_check_durable"] = durable
+        bind_token(run, run.get("token_id") or run.get("current_token_id"), persist=False)
+        scope = run.get("self_check_scope") if run.get("self_check_attempt_id") else None
+    if durable and scope:
+        db_runs.register_owner_scope(scope)
+
+
+def bind_token(run: dict, token_id: str | None, *, persist: bool = True) -> None:
+    """Called only at the engine's verified current-token adoption boundary."""
+    with _lock:
+        if not run.get("self_check_attempt_id") or not token_id or run.get("_self_check_ending"):
+            return
         previous = run.get("self_check_scope")
         if (previous and previous["owner_token_id"] == token_id
                 and previous["provider_attempt_id"] == run["self_check_attempt_id"]
@@ -52,11 +61,20 @@ def bind_token(run: dict, token_id: str | None) -> None:
             "group_id": run["group_id"],
         }
         _bindings[token_id] = scope
+        _managed[token_id] = scope
+        run.setdefault("self_check_scopes", []).append(scope)
         run["self_check_scope"] = scope
         # This scope was just created: no historical child can belong to it.
         run["self_check_watermark"] = 0
         run["self_check_observation"] = "none"
         run["last_self_check_progress"] = None
+    if persist and run.get("_self_check_durable"):
+        if previous:
+            db_runs.close_owner_scopes([previous], boundary="scope",
+                                       reason="token_replaced", cancel=False)
+        # Persist even before the first child: restart must not downgrade a late
+        # managed token into an independent admission. Never reopen a closed row.
+        db_runs.register_owner_scope(scope)
 
 
 def close_attempt(run: dict) -> None:
@@ -153,3 +171,59 @@ def poll(run: dict, observed_at: str) -> bool:
             run["self_check_observation"] = "unavailable"
             return False
         return consume(run, observed_at, sample)
+
+
+def admission_owner(token: dict | None, project_id: str, group_id: str) -> dict | None:
+    """Only an active server binding grants ownership. A detached/durable managed
+    token is refused, including on another server; it is never treated as independent."""
+    if not token or token.get("_is_user_jwt"):
+        return None
+    token_id = token.get("token_id")
+    with _lock:
+        owner = owner_for(token, project_id, group_id)
+        if owner is not None:
+            return owner
+        managed = _managed.get(token_id)
+        if (managed and managed["project_id"] == project_id
+                and managed["group_id"] == group_id):
+            raise db_runs.ProgressOwnerClosedError("managed token has no active binding")
+    if token_id and db_runs.managed_owner_token(token_id, project_id, group_id):
+        raise db_runs.ProgressOwnerClosedError("managed token has no active binding")
+    return None
+
+
+def end_owned(run: dict, *, boundary: str = "attempt", cancel: bool = True,
+              reason: str = "provider_return", owner: dict | None = None,
+              keep_attempt: bool = False) -> None:
+    """Close admission before asking existing cancellation/proof machinery to stop.
+    No SQL, process wait or cancellation runs under the progress registry lock.
+    An explicit owner snapshot makes delayed attempt cleanup safe after token reuse.
+    """
+    with _lock:
+        owner = owner or run.get("self_check_scope")
+        if boundary == "run":
+            run["_self_check_ending"] = True
+        if not owner:
+            return
+        scopes = [s for s in run.get("self_check_scopes", [owner])
+                  if s["ai_run_id"] == owner["ai_run_id"]
+                  and (boundary != "hop" or s["hop_id"] == owner["hop_id"])
+                  and (boundary != "attempt"
+                       or s["provider_attempt_id"] == owner["provider_attempt_id"])]
+        for scope in scopes:
+            if _bindings.get(scope["owner_token_id"]) is scope:
+                del _bindings[scope["owner_token_id"]]
+            _samples.pop(scope["scope_id"], None)
+        current_scope = run.get("self_check_scope")
+        if (not keep_attempt and current_scope in scopes
+                and run.get("self_check_attempt_id") == owner["provider_attempt_id"]):
+            run.pop("self_check_attempt_id", None)
+    scope_ids = db_runs.close_owner_scopes(scopes, boundary=boundary, reason=reason, cancel=cancel)
+    # Durable fences now replace the short-lived tombstones. Reused token bindings stay.
+    with _lock:
+        for scope in scopes:
+            if _managed.get(scope["owner_token_id"]) is scope:
+                _managed.pop(scope["owner_token_id"], None)
+    if cancel:
+        from modules.flow_gate.services import tr_self_check_service
+        tr_self_check_service.cancel_owned_scopes(scope_ids)

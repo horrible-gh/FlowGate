@@ -340,7 +340,7 @@ def test_diagnosis_preserves_separate_progress_and_legacy_unmarked_data(harness)
     assert finalize._resolve_timeout_diagnostics({"duration_ms":100}) == (None,None)
 
 
-def test_verified_service_admission_captures_current_scope(monkeypatch):
+def test_verified_service_admission_captures_current_scope(monkeypatch, store):
     from contextlib import nullcontext
     from modules.flow_gate.services import graph_source_hooks
     token = {"token_id":"t", "project":"p", "group_id":"g"}

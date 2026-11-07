@@ -687,6 +687,11 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
     try:
         try:
             # 0114 T#4: the reservation stored with the row limits the whole tree (D 3.5 (2)).
+            # A pending child cancelled before its worker starts never spawns.
+            if db_runs.get_run(run_id)["cancel_requested"]:
+                terminal = db_runs.finish_cancelled(run_id, exit_code=None,
+                                                    stdout_tail="", stderr_tail="")
+                return
             cpu_limit = _reserved_cpus(run_id)
             limit = {"cpu_limit": cpu_limit} if cpu_limit is not None else {}
             control, ownership = executor.spawn([command.executable, *command.argv_prefix, *args], cwd, env, timeout,
@@ -733,7 +738,7 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
             terminal = db_runs.finish_failed(run_id, error_code="selfcheck_cpu_limit_violation",
                                              exit_code=result.exit_code, timed_out=result.timed_out,
                                              **tails, **fields)
-        elif result.cancelled or db_runs.get_run(run_id)["cancel_requested"]:
+        elif result.cancelled and not result.timed_out:
             terminal = db_runs.finish_cancelled(run_id, exit_code=result.exit_code, **tails, **fields)
         else:
             terminal = db_runs.finish_completed(run_id, exit_code=result.exit_code,
@@ -858,8 +863,11 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
         if target.get("attempt_id") and judged.get("attempt_id") != target["attempt_id"]:
             raise SelfCheckError(409, "selfcheck_worktree_unavailable",
                                  details={"attempt_id": target["attempt_id"], "reason": "attempt_changed"})
-        owner = progress.owner_for(token, target["project_id"], target["group_id"])
-        return _admit({**target, **judged, "progress_owner": owner}, request, requested_by)
+        try:
+            owner = progress.admission_owner(token, target["project_id"], target["group_id"])
+            return _admit({**target, **judged, "progress_owner": owner}, request, requested_by)
+        except db_runs.ProgressOwnerClosedError as exc:
+            raise SelfCheckError(409, "selfcheck_owner_scope_closed") from exc
 
 
 def _await_spawn(worker: threading.Thread, spawned: threading.Event) -> None:
@@ -1391,6 +1399,11 @@ def reap() -> int:
     is alive or unproven is not written at all. Then the protected G rows of ended runs.
     One failing row never stops the others."""
     reaped = 0
+    # Retry durable parent intent after a crash between the fence and request_cancel.
+    try:
+        cancel_owned_scopes()
+    except Exception:
+        _log.warning("selfcheck parent cleanup: durable intent read unavailable")
     for row in db_runs.list_orphan_active_runs():
         try:
             outcome, reason = _reprove(row)
@@ -1442,3 +1455,21 @@ def reverify(run_id: str) -> dict:
     raise SelfCheckError(409, code, details={"self_check_run_id": run_id,
                                              "reverify": {"released": False, "reason": reason},
                                              "run": summary(current)})
+
+
+def cancel_owned_scopes(scope_ids: list[str] | None = None) -> None:
+    """Internal durable outbox drain. No public arbitrary-id cancellation authority.
+    Each lookup repeats the immutable ownership join and uses the real run status.
+    The ordinary worker/watcher/proof paths retain all resource-release authority."""
+    for row in db_runs.owned_cancel_runs(scope_ids):
+        rid, scope_id = row["self_check_run_id"], row["parent_scope_id"]
+        try:
+            result = _cancel(rid, lambda: db_runs.owned_cancel_run(rid, scope_id))
+            state = result["cancel"]["state"]
+        except SelfCheckError as exc:
+            state = exc.code
+        except Exception:
+            state = "cleanup_unconfirmed"
+        _log.info("selfcheck parent cleanup ai=%s hop=%s provider_attempt=%s child=%s reason=%s state=%s",
+                  row["ai_run_id"], row["hop_id"], row["provider_attempt_id"], rid,
+                  row["close_reason"], state)

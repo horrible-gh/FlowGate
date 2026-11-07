@@ -515,7 +515,6 @@ def _execute_local(exec_id, cwd, prompt, env, *, command, run, decision, started
         raise ValueError("execution identity mismatch")
     if graph_execution_hooks.call("launch", run) is False:
         return None, None
-    selfcheck_progress.open_attempt(run)
     cli = _CliProcess(run.get("run_id"))
     try:
         kwargs = _cli_popen_kwargs(decision, env)
@@ -537,7 +536,6 @@ def _execute_local(exec_id, cwd, prompt, env, *, command, run, decision, started
             try:
                 cli.close()
             finally:
-                selfcheck_progress.close_attempt(run)
                 if run.get("proc") is cli.proc:
                     run["proc"] = None
 

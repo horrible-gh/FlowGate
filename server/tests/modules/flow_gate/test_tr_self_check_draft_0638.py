@@ -429,7 +429,7 @@ def test_start_draft_reuses_the_one_start_path_with_the_token_as_owner(admitted,
     assert request == {"program": "pytest"} and by == "u_0638"
 
 
-def test_start_draft_keeps_every_existing_admission_gate(admitted, monkeypatch):
+def test_start_draft_keeps_every_existing_admission_gate(admitted, monkeypatch, store):
     monkeypatch.setattr(service.db_projects, "tr_self_check_enabled", lambda _p: False)
     with pytest.raises(service.SelfCheckError) as caught:
         service.start_draft(TOKEN, {"program": "pytest"})

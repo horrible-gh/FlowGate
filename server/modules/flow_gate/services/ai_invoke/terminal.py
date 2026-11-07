@@ -111,6 +111,9 @@ def cleanup(run: dict, *, handoff: bool = False, reason: str = "normal_finish") 
     if not provider_stopped(run):
         run["lease_cleanup_pending"] = True
         return False
+    from modules.flow_gate.services import tr_self_check_progress
+    children_ok = attempt(run, "self_check_end", lambda: tr_self_check_progress.end_owned(
+        run, boundary="run", reason=reason))
     from modules.flow_gate.services import graph_execution_hooks
     graph_ok = attempt(run, "graph_execution_end", lambda: graph_execution_hooks.call("finish", run))
     # Once abandoned/released, a late finalizer must never reopen handoff.
@@ -120,7 +123,7 @@ def cleanup(run: dict, *, handoff: bool = False, reason: str = "normal_finish") 
         lease_ok = attempt(run, "lease_handoff", lambda: _handoff(run))
     else:
         lease_ok = attempt(run, "lease_release", lambda: release_owned_lease(run, reason))
-    lease_ok = lease_ok and graph_ok
+    lease_ok = lease_ok and graph_ok and children_ok
     run["lease_cleanup_pending"] = not lease_ok
 
     def _cleanup_run_snapshots() -> None:
