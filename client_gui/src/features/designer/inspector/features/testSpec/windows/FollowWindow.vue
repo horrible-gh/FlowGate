@@ -1,7 +1,7 @@
 <template>
   <ModelessShell v-if="card && state" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
     :initial-x="geometry('x', 300)" :initial-y="geometry('y', 110)" :initial-width="geometry('width', 760)" :initial-height="geometry('height', 560)"
-    @update:minimized="state.minimized = $event" @close="close">
+    :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">
     <template #header>{{ t(k('title')) }} <small>{{ t(k('to_next')) }}</small></template>
     <div class="follow" data-test="follow-window">
       <section>

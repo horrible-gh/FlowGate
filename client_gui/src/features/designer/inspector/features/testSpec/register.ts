@@ -9,6 +9,7 @@ import TestSpecTab from './TestSpecTab.vue'
 import messages from './messages'
 import TestCardHeaderState from './TestCardHeaderState.vue'
 import TestCardMenu from './TestCardMenu.vue'
+import TestCardWindowHost from './TestCardWindowHost.vue'
 
 const registration: InspectorRegistration = {
   key: 'testSpec',
@@ -19,6 +20,8 @@ const registration: InspectorRegistration = {
   tab: { key: 'documents', component: TestSpecTab },
   headerState: TestCardHeaderState,
   headerMenu: TestCardMenu,
+  // flowgate.v02.0150: the windows of every test card with one open, drawn whatever is selected.
+  windows: TestCardWindowHost,
   messages,
 }
 

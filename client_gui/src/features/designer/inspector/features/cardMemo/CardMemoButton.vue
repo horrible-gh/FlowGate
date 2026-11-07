@@ -1,7 +1,9 @@
 <template>
   <!-- flowgate.v02.0056 (0017-CH) — the header ✎ 메모 of a Graph card: opens a new card memo window (what the
-       documents tab's memo [+] did). The memo windows are drawn here, so they stay whichever tab is shown. A card not
-       stored yet, or a read-only view, keeps the button disabled with the reason as its tooltip. -->
+       documents tab's memo [+] did). A card not stored yet, or a read-only view, keeps the button disabled with the
+       reason as its tooltip.
+       flowgate.v02.0150: the memo windows are not drawn here (the header goes with the selection) but by the Frame's
+       windows host (CardMemoWindows), so a selection change or a click elsewhere never closes them. -->
   <button
     type="button"
     class="inspector-card-memo-button"
@@ -12,14 +14,12 @@
     :aria-expanded="target.nodeType === 'gate' ? gateMemoPanel(target).open : undefined"
     @click="openNew"
   >✎ <span class="inspector-card-memo-button-label">{{ t(k('label')) }}</span></button>
-  <CardMemoWindows :target="target" />
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { InspectorTarget } from '../../inspectorTarget'
-import CardMemoWindows from './CardMemoWindows.vue'
 import { cardMemoLockedReason } from './cardMemoModel'
 import { openCardMemoWindow } from './useCardMemoWindows'
 import { gateMemoPanel } from './useGateMemo'

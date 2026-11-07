@@ -35,7 +35,9 @@
        ellipsis), its state, who asked and [열기] — no options, answer field, send or AI line. The ↗ window is where a
        question is answered: the document id (full), who asked and when, the full question, the answers, then the
        stored options, the answer field, send and the AI line. While the body cannot be checked (unreadable, not known,
-       history) the window shows one line instead of them (history: the 읽기 전용 badge); reading stays. -->
+       history) the window shows one line instead of them (history: the 읽기 전용 badge); reading stays.
+       flowgate.v02.0150 — the ↗ windows moved to QnaWindows (drawn by the Frame's QnaWindowHost): a window keeps its
+       document whatever is selected and closes only by its own ×. -->
   <div class="inspector-qna" data-test="inspector-qna" :data-status="status">
     <div v-if="availability.ask.visible" class="inspector-qna-ask" data-test="qna-ask">
       <Input
@@ -111,146 +113,27 @@
       </ul>
     </template>
 
-    <!-- v7 ↗ (0035 insp.js openQA / openWin): one modeless window per opened question — the full
-         question, every answer and the full answer form; several may be open at once.
-         flowgate.v02.0070 T#5: the only place a question is answered, after its context above the form. -->
-    <ModelessShell
-      v-for="(win, index) in windows"
-      :key="win.id"
-      :open="true"
-      :initial-x="win.x"
-      :initial-y="win.y"
-      :initial-width="520"
-      :initial-height="380"
-      :min-width="320"
-      :min-height="200"
-      @close="closeWindow(win.id)"
-    >
-      <template #header>
-        <span class="inspector-qna-window-heading">
-          <span class="inspector-qna-window-title">{{ t(k('window.title')) }}</span>
-          <span v-if="windowItem(win.id)" class="inspector-qna-window-sub" :title="windowSub(windowItem(win.id)!)" data-test="qna-window-sub">{{ windowSub(windowItem(win.id)!) }}</span>
-          <span
-            v-if="readOnlyReason"
-            class="inspector-qna-window-mode"
-            data-mode="view"
-            :title="t(k(readOnlyReason))"
-            data-test="qna-window-mode"
-          >{{ t(k('window.view')) }}</span>
-        </span>
-      </template>
-      <div class="inspector-qna-window" data-test="qna-window" :data-item="win.id" :data-index="index" :data-state="windowItem(win.id)?.state ?? ''">
-        <template v-if="windowItem(win.id)">
-          <div class="inspector-qna-window-head">
-            <InspectorStatusChip :label="t(k(stateKey(windowItem(win.id)!.state)))" :tone="toneOf(windowItem(win.id)!.state)" data-test="qna-window-state" />
-            <span class="inspector-qna-sub" data-test="qna-window-asker">{{ t(k('asked_by'), { side: sideText(windowItem(win.id)!.asker) }) }}</span>
-            <span v-if="windowItem(win.id)!.createdAt" class="inspector-qna-sub" data-test="qna-window-asked-at">{{ t(k('detail.asked_at'), { at: formatAt(windowItem(win.id)!.createdAt!) }) }}</span>
-            <InspectorStatusChip v-if="awaiting.has(win.id)" :label="t(k('ai_waiting'))" tone="running" dot data-test="qna-window-ai-waiting" />
-          </div>
-          <span v-if="windowItem(win.id)!.docId" class="inspector-qna-sub inspector-qna-window-doc" data-test="qna-window-doc">{{ t(k('detail.doc'), { docId: windowItem(win.id)!.docId }) }}</span>
-          <p v-if="windowItem(win.id)!.title" class="inspector-qna-window-q">{{ windowItem(win.id)!.title }}</p>
-          <p class="inspector-qna-text" data-test="qna-window-body">{{ windowItem(win.id)!.body }}</p>
-          <!-- flowgate.v02.0070 T#5: the stored options stay readable where they cannot be picked. -->
-          <span
-            v-if="windowItem(win.id)!.options.length && !(windowItem(win.id)!.answerable && availability.answer.visible)"
-            class="inspector-qna-sub"
-            data-test="qna-window-options"
-          >{{ t(k('options_list'), { labels: windowItem(win.id)!.options.map((option) => option.label).join(', ') }) }}</span>
-
-          <ul v-if="windowItem(win.id)!.answers.length" class="inspector-qna-answers">
-            <li v-for="answer in windowItem(win.id)!.answers" :key="answer.key" data-test="qna-window-answer" :data-side="answer.side.kind" :data-side-class="answer.side.sideClass">
-              <span class="inspector-qna-sub" data-test="qna-window-answer-side">{{ t(k('answered_by'), { side: sideText(answer.side) }) }}</span>
-              <span v-if="answer.detail.answeredAt" class="inspector-qna-sub" data-test="qna-window-answer-at">{{ t(k('detail.answered_at'), { at: formatAt(answer.detail.answeredAt) }) }}</span>
-              <span v-if="answer.detail.runId" class="inspector-qna-sub" data-test="qna-window-answer-run">{{ t(k('detail.run_id'), { runId: answer.detail.runId }) }}</span>
-              <span v-if="answer.picked.length" class="inspector-qna-sub">{{ t(k('picked'), { labels: answer.picked.join(', ') }) }}</span>
-              <p class="inspector-qna-text">{{ answer.body }}</p>
-            </li>
-          </ul>
-
-          <div v-if="windowItem(win.id)!.answerable && availability.answer.visible" class="inspector-qna-answer" data-test="qna-window-form">
-            <div v-if="windowItem(win.id)!.options.length" class="inspector-qna-options" role="group" :aria-label="t(k('options'))">
-              <Button
-                v-for="option in windowItem(win.id)!.options"
-                :key="option.id"
-                size="sm"
-                :variant="pickedId(win.id) === option.id ? 'primary' : 'secondary'"
-                :aria-pressed="pickedId(win.id) === option.id"
-                :disabled="!availability.answer.enabled"
-                data-test="qna-window-option"
-                :data-option="option.id"
-                @click="pick(win.id, option.id)"
-              >{{ option.label }}</Button>
-            </div>
-            <Textarea
-              :model-value="bodyOf(win.id)"
-              :rows="4"
-              :placeholder="t(k('answer_placeholder'))"
-              :disabled="!availability.answer.enabled"
-              data-test="qna-window-body-input"
-              @update:model-value="(value: string) => setBody(win.id, value)"
-            />
-            <div class="inspector-qna-line">
-              <Button
-                size="sm"
-                variant="primary"
-                :disabled="!availability.answer.enabled || !canSend(win.id)"
-                :loading="busy === win.id"
-                :title="answerTitle"
-                data-test="qna-window-submit"
-                @click="submit(win.id)"
-              >{{ t(k('answer')) }}</Button>
-            </div>
-            <div v-if="availability.ai_request.visible" class="inspector-qna-ai" data-test="qna-window-ai">
-              <Select
-                class="inspector-qna-ai-pick"
-                :model-value="aiPickOf(win.id)"
-                :options="providerOptions"
-                :placeholder="providerPlaceholder"
-                :disabled="!availability.ai_request.enabled || !providers.length"
-                :aria-label="t(k('ai_provider'))"
-                data-test="qna-window-ai-provider"
-                @update:model-value="(value: string) => setAiPick(win.id, value)"
-              />
-              <Button
-                size="sm"
-                variant="secondary"
-                :disabled="!availability.ai_request.enabled || !aiPickOf(win.id)"
-                :loading="requesting === win.id"
-                :title="aiTitle"
-                data-test="qna-window-ai-request"
-                @click="requestAiFor(win.id)"
-              >{{ t(k('ai_request')) }}</Button>
-              <InspectorFailureIcon v-if="aiFailure && aiFailure.itemId === win.id" :name="t(k('ai_failed'))" :reason="t(k(aiFailure.key))" data-test="qna-window-ai-failure" />
-            </div>
-            <div v-if="failure && failure.itemId === win.id" data-test="qna-window-failure">
-              <InspectorReason tone="danger" :text="t(k(failure.key))" />
-            </div>
-          </div>
-          <p v-else-if="windowItem(win.id)!.answerable && bodyLine" class="inspector-qna-text inspector-qna-sub" data-test="qna-window-blocked">{{ t(k(bodyLine)) }}</p>
-        </template>
-        <InspectorPaneState v-else state="empty" :message="t(k('window.gone'))" />
-      </div>
-    </ModelessShell>
+    <!-- flowgate.v02.0150 — the ↗ windows are not drawn here: the Frame's window host (QnaWindowHost) draws them with the
+         target they were opened for, so a selection change, a tab change or a click elsewhere never closes them. A history
+         Q&A (a document window's aside) draws its own, which live with that document window. -->
+    <QnaWindows v-if="history" :key="historyKey" :target="target" :windows="historyWindows" history @close="closeHistoryWindow" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Button from '../../../../../components/ui/Button.vue'
 import Input from '../../../../../components/ui/Input.vue'
-import ModelessShell from '../../../../../components/ui/ModelessShell.vue'
-import Select, { type SelectOption } from '../../../../../components/ui/Select.vue'
-import Textarea from '../../../../../components/ui/Textarea.vue'
 import InspectorAddButton from '../../parts/InspectorAddButton.vue'
 import InspectorFailureIcon from '../../parts/InspectorFailureIcon.vue'
 import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
-import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorStatusChip, { type InspectorChipTone } from '../../parts/InspectorStatusChip.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { qnaAskReady, qnaBodyLine, type QnaAvailability, type QnaItemState, type QnaItemView, type QnaSide } from './qnaModel'
+import QnaWindows from './QnaWindows.vue'
+import { qnaAskReady, type QnaAvailability, type QnaItemState, type QnaSide } from './qnaModel'
 import { useQna } from './useQna'
+import { nextQnaWindowPlace, openQnaWindow, qnaWindowKey, type QnaWindow } from './useQnaWindows'
 
 const props = defineProps<{
   target: InspectorTarget
@@ -258,7 +141,7 @@ const props = defineProps<{
   history?: boolean
 }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const k = (key: string) => `gui.inspector.qna.${key}`
 
@@ -267,20 +150,10 @@ const {
   availability: liveAvailability,
   status,
   errorKey,
-  busy,
-  failure,
-  ready,
-  answer,
   asking,
   askFailure,
   ask,
-  requesting,
   awaiting,
-  aiFailure,
-  requestAi,
-  providers,
-  defaultProviderId,
-  providersStatus,
   reload,
 } = useQna(() => props.target, { history: () => props.history === true })
 
@@ -292,9 +165,6 @@ const HISTORY_CLOSED = { visible: false, enabled: false, reason: null } as const
 const availability = computed<QnaAvailability>(() =>
   props.history ? { ...liveAvailability.value, ask: HISTORY_CLOSED } : liveAvailability.value,
 )
-
-/** flowgate.v02.0070 T#5: the window's one line while the body cannot be checked, or null. */
-const bodyLine = computed(() => qnaBodyLine(availability.value))
 
 // --- The question line (0053 T#6) ------------------------------------------------------------------
 
@@ -317,40 +187,6 @@ function onAskEnter(event: KeyboardEvent) {
   if (event.isComposing || event.keyCode === 229) return
   event.preventDefault()
   if (availability.value.ask.enabled && askReady.value) void submitAsk()
-}
-
-// --- The AI line (0056 F1) ------------------------------------------------------------------------
-
-const providerOptions = computed<SelectOption[]>(() => providers.value.map((provider) => ({ value: provider.id, label: provider.name })))
-
-/** The picker's empty wording: the list is on its way, or the project has no AI. */
-const providerPlaceholder = computed(() => (providersStatus.value === 'loading' ? t(k('ai_provider_loading')) : t(k('ai_provider_none'))))
-
-/** [AI 답변 요청]'s tooltip: why it is closed, else nothing beyond its label. */
-const aiTitle = computed(() => {
-  const reason = availability.value.ai_request.reason
-  if (reason) return t(k(reason))
-  return providers.value.length ? undefined : t(k('ai_reason.no_provider'))
-})
-
-// The AI picked per question (written by the picker only); the project's default until the user picks.
-const aiPicks = reactive<Record<number, string>>({})
-
-function aiPickOf(itemId: number): string {
-  const picked = aiPicks[itemId]
-  if (picked && providers.value.some((provider) => provider.id === picked)) return picked
-  const fallback = defaultProviderId.value ?? providers.value[0]?.id ?? ''
-  return providers.value.some((provider) => provider.id === fallback) ? fallback : ''
-}
-
-function setAiPick(itemId: number, providerId: string) {
-  aiPicks[itemId] = providerId
-}
-
-async function requestAiFor(itemId: number) {
-  const providerId = aiPickOf(itemId)
-  if (!providerId) return
-  await requestAi(itemId, providerId)
 }
 
 // --- The folded "완료" group (v7 qaPane: open when nothing is pending) ------------------------------
@@ -376,110 +212,38 @@ watch(doneOpen, () => {
 
 // --- The ↗ windows ---------------------------------------------------------------------------------
 
-interface QnaWindow {
-  readonly id: number
-  readonly x: number
-  readonly y: number
-}
-
-const windows = ref<QnaWindow[]>([])
-let cascade = 0
+// flowgate.v02.0150: a question's window is opened with this target and drawn by the Frame's window host, which keeps
+// it whatever is selected. A history Q&A keeps its windows here: they belong to its document window.
+const historyWindows = ref<QnaWindow[]>([])
+const historyKey = computed(() => qnaWindowKey(props.target) ?? '')
 
 /** Opens the question's window; a window already open stays where it is. */
 function openWindow(itemId: number) {
-  if (windows.value.some((win) => win.id === itemId)) return
-  const offset = (cascade++ % 6) * 28
-  windows.value = [...windows.value, { id: itemId, x: 160 + offset, y: 140 + offset }]
+  if (!props.history) {
+    openQnaWindow(props.target, itemId)
+    return
+  }
+  if (historyWindows.value.some((win) => win.itemId === itemId)) return
+  historyWindows.value = [...historyWindows.value, { id: String(itemId), itemId, ...nextQnaWindowPlace() }]
 }
 
-function closeWindow(itemId: number) {
-  windows.value = windows.value.filter((win) => win.id !== itemId)
+function closeHistoryWindow(itemId: number) {
+  historyWindows.value = historyWindows.value.filter((win) => win.itemId !== itemId)
 }
 
-// --- Drafts ----------------------------------------------------------------------------------------
-
-interface Draft {
-  body: string
-  picked: string | null
-}
-
-// Unsent answers per question of the shown document (written by the handlers only, never in render).
-// flowgate.v02.0070 T#5: only the ↗ window writes one.
-const drafts = reactive<Record<number, Draft>>({})
-
-function draftOf(itemId: number): Draft {
-  if (!drafts[itemId]) drafts[itemId] = { body: '', picked: null }
-  return drafts[itemId]
-}
-
+// The question being written belongs to the shown document; a history Q&A's windows to the document it shows.
 watch(
   () => props.target.docId,
   () => {
-    for (const id of Object.keys(drafts)) delete drafts[Number(id)]
-    for (const id of Object.keys(aiPicks)) delete aiPicks[Number(id)]
-    windows.value = []
+    historyWindows.value = []
     askBody.value = ''
   },
 )
-
-const bodyOf = (itemId: number) => drafts[itemId]?.body ?? ''
-const pickedId = (itemId: number) => drafts[itemId]?.picked ?? null
-const pickedOf = (itemId: number) => {
-  const picked = pickedId(itemId)
-  return picked === null ? [] : [picked]
-}
-
-function setBody(itemId: number, value: string) {
-  draftOf(itemId).body = value
-}
-
-/** Picks an option of the question; picking it again takes it back. */
-function pick(itemId: number, optionId: string) {
-  const draft = draftOf(itemId)
-  draft.picked = draft.picked === optionId ? null : optionId
-}
-
-function canSend(itemId: number): boolean {
-  return ready(itemId, bodyOf(itemId), pickedOf(itemId))
-}
-
-/** The send button's tooltip: why answering is closed, else nothing beyond its label. */
-const answerTitle = computed(() => (availability.value.answer.reason ? t(k(availability.value.answer.reason)) : undefined))
-
-async function submit(itemId: number) {
-  if (await answer(itemId, bodyOf(itemId), pickedOf(itemId))) delete drafts[itemId]
-}
-
-// --- The window's question -------------------------------------------------------------------------
-
-const windowItem = (itemId: number): QnaItemView | null => items.value?.find((item) => item.id === itemId) ?? null
-
-/** `Q# · title` of the window's title line (the first body line without a title). */
-function windowSub(item: QnaItemView): string {
-  const title = item.title ?? firstLine(item.body)
-  return item.seq === null ? title : `${t(k('question'), { seq: item.seq })} · ${title}`
-}
-
-/**
- * The Flow is read only (the first reason answering is closed on), or the questions are history (T#4; 0070 T#5: a
- * superseded document too): the window says so.
- */
-const readOnlyReason = computed(() => {
-  if (props.history) return 'window.view'
-  const reason = availability.value.answer.reason
-  return reason !== null && (reason.startsWith('reason.read_only_') || reason === 'reason.history') ? reason : null
-})
 
 // --- Display ---------------------------------------------------------------------------------------
 
 function sideText(side: QnaSide): string {
   return t(k(side.key), side.params)
-}
-
-/** The answer time of the window's answer detail (0064 T-B5), in the UI locale; the raw value if unreadable. */
-function formatAt(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale.value)
 }
 
 /** The first line of a question without a title. */
@@ -521,8 +285,7 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   font-size: 12px;
 }
 
-.inspector-qna-list,
-.inspector-qna-answers {
+.inspector-qna-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -602,39 +365,6 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   flex: 0 0 auto;
 }
 
-/* The window's answer form: the options, the field, send, the AI line. */
-.inspector-qna-answer {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-/* The AI line (0056 F1): the picker, [AI 답변 요청], then the waiting chip or the refusal icon. */
-.inspector-qna-ai {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.inspector-qna-ai-pick {
-  flex: 0 1 160px;
-  min-width: 96px;
-  height: 28px;
-  font-size: 11.5px;
-}
-
-.inspector-qna-line,
-.inspector-qna-options {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
 /* v7 `.qa-grp.tg`: the fold line of the answered questions. */
 .inspector-qna-group-row {
   margin-top: 2px;
@@ -668,92 +398,5 @@ function toneOf(state: QnaItemState): InspectorChipTone {
 
 .inspector-qna-caret.is-open {
   transform: rotate(90deg);
-}
-
-.inspector-qna-sub {
-  color: var(--fg2-muted);
-  font-size: 11.5px;
-}
-
-.inspector-qna-text {
-  margin: 0;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-/* The ↗ window (v7 `.mw-tb`): title line [Q&A · Q# title (ellipsis) · 읽기 전용], the question, the
-   answers, the form. Only the title shrinks; the badge and the shell's buttons keep their width. */
-.inspector-qna-window-heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.inspector-qna-window-title {
-  flex: 0 0 auto;
-  font-weight: 700;
-}
-
-.inspector-qna-window-sub {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: #8fa7c0;
-  font-size: 11px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.inspector-qna-window-mode {
-  flex: 0 0 auto;
-  padding: 1px 8px;
-  border: 1px solid #4a4f9a;
-  border-radius: var(--fg2-control-radius-pill);
-  background: #1a1d3e;
-  color: #cfcbff;
-  font-size: 10.5px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.inspector-qna-window {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-
-.inspector-qna-window-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-/* The full document id, wrapped rather than cut. */
-.inspector-qna-window-doc {
-  overflow-wrap: anywhere;
-}
-
-.inspector-qna-window-q {
-  margin: 0;
-  color: var(--fg2-text);
-  font-weight: 700;
-}
-
-.inspector-qna-answers {
-  padding-left: 10px;
-  border-left: 2px solid var(--fg2-line);
-}
-
-.inspector-qna-answers li {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
 }
 </style>

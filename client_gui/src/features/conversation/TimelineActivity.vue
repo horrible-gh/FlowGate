@@ -19,25 +19,78 @@
       <div class="tl-command-line" :title="commandTitle">{{ activity.command }}</div>
       <p v-if="commandReason" class="tl-act-detail" data-test="tl-command-reason">{{ commandReason }}</p>
       <p v-if="activity.detail" class="tl-act-detail">{{ activity.detail }}</p>
-      <div v-if="decidable || busy" class="tl-act-actions">
+      <div class="tl-act-actions">
+        <!-- flowgate.v02.0150 — every command card opens its detail in place (one column),
+             whatever its state and also read-only: the full command, its output and exit. -->
         <button
           type="button"
-          class="tl-act-btn tl-act-btn--reject"
-          data-test="tl-command-reject"
-          :disabled="busy || readOnly"
-          @click="emit('decide', 'reject')"
+          class="tl-act-btn tl-act-btn--detail"
+          data-test="tl-command-detail-toggle"
+          :aria-expanded="detailOpen"
+          :aria-controls="detailId"
+          @click="detailOpen = !detailOpen"
         >
-          {{ t('gui.conversation.command.reject') }}
+          {{ detailOpen ? t('gui.conversation.command.detail.hide') : t('gui.conversation.command.detail.show') }}
         </button>
-        <button
-          type="button"
-          class="tl-act-btn tl-act-btn--ok"
-          data-test="tl-command-approve"
-          :disabled="busy || readOnly"
-          @click="emit('decide', 'approve')"
-        >
-          {{ t('gui.conversation.command.approve') }}
-        </button>
+        <template v-if="decidable || busy">
+          <button
+            type="button"
+            class="tl-act-btn tl-act-btn--reject"
+            data-test="tl-command-reject"
+            :disabled="busy || readOnly"
+            @click="emit('decide', 'reject')"
+          >
+            {{ t('gui.conversation.command.reject') }}
+          </button>
+          <button
+            type="button"
+            class="tl-act-btn tl-act-btn--ok"
+            data-test="tl-command-approve"
+            :disabled="busy || readOnly"
+            @click="emit('decide', 'approve')"
+          >
+            {{ t('gui.conversation.command.approve') }}
+          </button>
+        </template>
+      </div>
+      <div v-if="detailOpen" :id="detailId" class="tl-cmd-detail" data-test="tl-command-detail">
+        <dl class="tl-cmd-meta">
+          <dt>{{ t('gui.conversation.command.detail.command') }}</dt>
+          <dd><pre class="tl-cmd-pre" data-test="tl-command-detail-command">{{ activity.command }}</pre></dd>
+          <template v-if="activity.cwd">
+            <dt>{{ t('gui.conversation.command.detail.cwd') }}</dt>
+            <dd class="tl-cmd-mono" data-test="tl-command-detail-cwd">{{ activity.cwd }}</dd>
+          </template>
+          <dt>{{ t('gui.conversation.command.detail.state') }}</dt>
+          <dd data-test="tl-command-detail-state">{{ commandStateText }}</dd>
+          <dt>{{ t('gui.conversation.command.detail.exit_code') }}</dt>
+          <dd class="tl-cmd-mono" data-test="tl-command-detail-exit">
+            {{ activity.exitCode != null ? activity.exitCode : t('gui.conversation.command.detail.none') }}
+          </dd>
+          <template v-if="activity.durationMs != null">
+            <dt>{{ t('gui.conversation.command.detail.duration') }}</dt>
+            <dd data-test="tl-command-detail-duration">{{ formatDuration(activity.durationMs) }}</dd>
+          </template>
+          <template v-if="errorLines.length">
+            <dt>{{ t('gui.conversation.command.detail.error') }}</dt>
+            <dd class="tl-cmd-error" data-test="tl-command-detail-error">
+              <div v-for="line in errorLines" :key="line">{{ line }}</div>
+            </dd>
+          </template>
+        </dl>
+        <p v-if="outputNotice" class="tl-cmd-notice" data-test="tl-command-detail-no-output">{{ outputNotice }}</p>
+        <template v-else>
+          <section v-for="stream in streams" :key="stream.name" class="tl-cmd-stream" :data-test="`tl-command-detail-${stream.name}`">
+            <div class="tl-cmd-stream-head">
+              <span>{{ stream.name }}</span>
+              <span v-if="stream.truncated" class="tl-cmd-cut" :data-test="`tl-command-detail-${stream.name}-truncated`">
+                {{ t('gui.conversation.command.detail.truncated') }}
+              </span>
+            </div>
+            <pre v-if="stream.text" class="tl-cmd-pre tl-cmd-out">{{ stream.text }}</pre>
+            <p v-else class="tl-cmd-empty">{{ t('gui.conversation.command.detail.empty') }}</p>
+          </section>
+        </template>
       </div>
     </div>
   </div>
@@ -90,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import RunChangeDiff from './RunChangeDiff.vue'
 import type { OpenFileDiff } from './conversationSession'
@@ -136,6 +189,50 @@ const commandStateText = computed(() => {
   const key = `gui.conversation.command.state.${a.state}`
   return te(key) ? t(key) : a.state
 })
+
+const detailOpen = ref(false)
+const detailId = computed(() => `tl-command-detail-${props.activity.id}`)
+
+/** Every reason the server gave for the outcome, the raw code next to its wording. */
+const errorLines = computed(() => {
+  const a = props.activity
+  if (a.kind !== 'command') return []
+  const lines: string[] = []
+  if (a.state === 'rejected' && a.rejectedBy) lines.push(t(`gui.conversation.command.rejected_by.${a.rejectedBy}`))
+  if (a.timedOut) lines.push(t('gui.conversation.command.detail.timed_out'))
+  if (a.errorCode) {
+    const key = `gui.conversation.command.reason.${a.errorCode}`
+    lines.push(te(key) ? `${t(key)} (${a.errorCode})` : a.errorCode)
+  }
+  return lines
+})
+
+/** A command that never started has no output, which is not the same as an empty output. */
+const outputNotice = computed(() => {
+  const a = props.activity
+  if (a.kind !== 'command') return ''
+  if (a.state === 'running') return t('gui.conversation.command.detail.running')
+  if (a.startedAt) return ''
+  if (a.state === 'pending_approval' || a.state === 'approving' || a.state === 'rejecting' || a.state === 'approved') {
+    return t('gui.conversation.command.detail.not_started')
+  }
+  // A failure before the start can still have stored its message on stderr.
+  if (a.stdout || a.stderr) return ''
+  return t('gui.conversation.command.detail.not_run')
+})
+
+const streams = computed(() => {
+  const a = props.activity
+  if (a.kind !== 'command') return []
+  return [
+    { name: 'stdout', text: a.stdout ?? '', truncated: !!a.stdoutTruncated },
+    { name: 'stderr', text: a.stderr ?? '', truncated: !!a.stderrTruncated },
+  ]
+})
+
+function formatDuration(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`
+}
 
 /** The card's wording comes from the server's state and reason code, never from a guess. */
 const commandReason = computed(() => {
@@ -266,6 +363,104 @@ const statusText = computed(() => {
 .tl-act-btn:focus-visible {
   outline: 2px solid var(--fg2-focus);
   outline-offset: 1px;
+}
+
+.tl-act-btn--detail {
+  margin-right: auto;
+  border-color: var(--fg2-line-strong);
+  background: var(--fg2-bg);
+  color: var(--fg2-text);
+}
+
+.tl-act-btn--detail[aria-expanded='true'] {
+  border-color: var(--fg2-status-info-border);
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
+}
+
+.tl-cmd-detail {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--fg2-line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tl-cmd-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 8px;
+  align-items: baseline;
+}
+
+.tl-cmd-meta dt {
+  font-weight: 600;
+  color: var(--fg2-muted);
+  white-space: nowrap;
+}
+
+.tl-cmd-meta dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--fg2-text);
+  overflow-wrap: anywhere;
+}
+
+.tl-cmd-mono,
+.tl-cmd-pre {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10.5px;
+}
+
+.tl-cmd-pre {
+  margin: 0;
+  padding: 5px 6px;
+  border: 1px solid var(--fg2-line);
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-bg);
+  color: var(--fg2-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tl-cmd-out {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.tl-cmd-meta dd.tl-cmd-error {
+  color: var(--fg2-status-danger-fg);
+}
+
+.tl-cmd-stream {
+  min-width: 0;
+}
+
+.tl-cmd-stream-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fg2-muted);
+}
+
+.tl-cmd-cut {
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--fg2-status-warning-fg);
+}
+
+.tl-cmd-empty,
+.tl-cmd-notice {
+  margin: 0;
+  color: var(--fg2-muted);
+  font-style: italic;
 }
 
 .tl-act-btn--ok {

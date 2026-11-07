@@ -23,11 +23,11 @@ import { createPinia, type Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FlowGraph, FlowGraphCardDocument, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
-import QnaTab from '@/features/designer/inspector/features/qna/QnaTab.vue'
 import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import { INSPECTOR_REFRESH_COALESCE_MS } from '@/features/designer/inspector/useInspectorResource'
 import { SELECTIONS, V01_GRAPH, V01_TASK_NODE, prepareInspectorI18n, selectionOf, targetOf } from '../support/inspectorSupport'
 import { installProjectEventStream, removeProjectEventStream, type ProjectEventStream } from '../support/projectEventStream'
+import { QnaTabWithWindows, closeAllQnaWindows } from '../support/qnaWindowsSupport'
 
 // The calls are mocked; normalization and error reading stay real.
 const qaReadCall = vi.fn()
@@ -235,13 +235,15 @@ beforeEach(() => {
 afterEach(() => {
   wrapper?.unmount()
   wrapper = null
+  closeAllQnaWindows()
   removeProjectEventStream()
   vi.useRealTimers()
   document.body.innerHTML = ''
 })
 
+// flowgate.v02.0150: the tab with the Frame's window host, which draws its ↗ windows.
 async function mountTab(target: InspectorTarget) {
-  wrapper = mount(QnaTab, { props: { target }, global: { plugins: [i18n, pinia] }, attachTo: document.body })
+  wrapper = mount(QnaTabWithWindows, { props: { target }, global: { plugins: [i18n, pinia] }, attachTo: document.body })
   await flushPromises()
   return wrapper
 }
@@ -716,7 +718,8 @@ describe('asking and requesting: closed with the reason as the tooltip', () => {
     expect(isDisabled(aiButton(w, 10))).toBe(false)
   })
 
-  it('the unsent question and the AI picks belong to their document', async () => {
+  // flowgate.v02.0150: an open ↗ window stays whatever is selected, and its AI pick with it; closed, the pick goes.
+  it('the unsent question belongs to its document; an AI pick stays with its open window and goes with it', async () => {
     const w = await mountTab(v01Target())
     await askInput(w).setValue('쓰던 질문')
     await open(w, 10)
@@ -724,7 +727,10 @@ describe('asking and requesting: closed with the reason as the tooltip', () => {
     await w.setProps({ target: emptyTarget() })
     await flushPromises()
     expect(inputValue(w)).toBe('')
+    expect((aiPicker(w, 10).element as HTMLSelectElement).value).toBe('p2')
     await w.setProps({ target: v01Target() })
+    await flushPromises()
+    windowOf(10)!.closest('.ui-modeless-panel')!.querySelector<HTMLButtonElement>('[data-modeless-action="close"]')!.click()
     await flushPromises()
     await open(w, 10)
     expect((aiPicker(w, 10).element as HTMLSelectElement).value).toBe('p1')
