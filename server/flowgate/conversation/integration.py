@@ -41,7 +41,11 @@ def provide_chat_tools(run) -> list[dict]:
     ``run=None``, the description for the CLI mention built before the run exists)."""
     from flowgate.card_document_edit import chat_tools, chat_adapter, chat_documents
 
-    tools = [commands.tool_descriptor()] if run is None or run.get("chat_command_capability") else []
+    from flowgate.graph_read import tools as graph_read_tools
+
+    tools = graph_read_tools.descriptors()
+    if run is None or run.get("chat_command_capability"):
+        tools.append(commands.tool_descriptor())
     return tools + chat_tools.descriptors({
         chat_tools.READ_TOOL: chat_adapter.read_card_document_call_handler,
         chat_tools.REVISE_TOOL: chat_adapter.revise_card_document_call_handler,

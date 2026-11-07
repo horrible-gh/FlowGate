@@ -176,7 +176,7 @@ def read_canvas(group: dict, user_id: Optional[str], *, view: Optional[str], col
     return with_read_snapshot(lambda: _read(group, user_id, ident, view, collapse))
 
 
-def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], collapse: Optional[str]) -> dict:
+def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], collapse: Optional[str], *, lookup=None) -> dict:
     """The Canvas response, read in one snapshot after the identity step (the definition with its title states)."""
     flow_id, project_id = group["group_id"], group.get("project_id")
     snap = ident.snapshot
@@ -185,7 +185,8 @@ def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], colla
     mode = _pick_mode(flow_id, own.state, view, d)
     run = _flow_run(flow_id, d.latest_no) if own.state in ("graph", "conflict") else None
     proj = _project(flow_id, own.state, snap, ident.row_keys, ident.protected, d, mode,
-                    lambda ids: lookup_documents(ids), run, latest_definition=view == "latest")
+                    lookup if lookup is not None else lambda ids: lookup_documents(ids),
+                    run, latest_definition=view == "latest")
     _place(proj, layout_store.positions(flow_id))
     for node in proj.nodes:
         node.setdefault("title_state", None)                      # free documents, v0.1 slots (P0006 §4.2.1)

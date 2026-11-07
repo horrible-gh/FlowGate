@@ -238,7 +238,7 @@ def _followed_node(flow_id: str, run: dict) -> Optional[str]:
         instruction = legacy.instruction_node_of_document(flow_id, run.get("doc_ref"))
         node = (instruction[0] if instruction else legacy.node_of_result(flow_id, run.get("doc_ref"))) if loop.get("stop_reason") == PASSED else None
         return node["node_key"] if node else None
-    if run.get("mode") != "single" or run.get("action_scope") != "new" or not ended_cleanly(run):
+    if run.get("mode") != "single" or not legacy.is_result_writer(run) or not ended_cleanly(run):
         return None
     if legacy.instruction_node_of_ai_run(flow_id, run["run_id"]) is not None:
         return None                             # the instruction stage: the node stays open
@@ -276,7 +276,7 @@ def on_run_ended(run: dict) -> None:
             stage = legacy.instruction_node_of_ai_run(flow_id, run["run_id"])
             if stage is not None:
                 _after_instruction(flow_id, run, *stage)
-            elif run.get("action_scope") == "new":
+            elif legacy.is_result_writer(run):
                 _after_work(flow_id, run)
     finally:
         if _clear_handoffs(run.get("run_id")):
