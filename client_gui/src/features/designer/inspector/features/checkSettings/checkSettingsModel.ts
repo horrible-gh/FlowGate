@@ -41,7 +41,11 @@ export interface CheckSettingsView {
   readonly reason?: string | null
   /** Field -> message key of why its last change was refused. */
   readonly failures?: Readonly<Record<string, string>>
+  /** Field -> its own save state while it has one (flowgate.v02.0148 T#2): `saving`, `saved` (only after the answer confirmed it), `failed`. */
+  readonly fieldStates?: Readonly<Record<string, FieldSaveState>>
 }
+
+export type FieldSaveState = 'saving' | 'saved' | 'failed'
 
 // Server contract: flowgate/gate_decisions/repository.py DONE (effect success, not node done).
 export const GATE_EFFECT_SUCCEEDED = 'succeeded'
@@ -79,6 +83,10 @@ export interface CheckSettingsInput {
   readonly placing: boolean
   readonly disposed: boolean
   readonly failure: { readonly field: string; readonly kind: CheckSettingsFailureKind; readonly key?: string | null } | null
+  /** flowgate.v02.0148 T#2: the refusal of each field's own last write (a field keeps its refusal until its next input). */
+  readonly fieldFailures?: Readonly<Record<string, { readonly kind: CheckSettingsFailureKind; readonly key?: string | null }>>
+  /** flowgate.v02.0148 T#2: each field's save state (the context's `fieldStates`). */
+  readonly fieldStates?: Readonly<Record<string, FieldSaveState>>
   /**
    * 0006-T §2: the last candidates the server confirmed (lookup ok / empty) for this very project, flow, card and work
    * base, still inside their validity; null when there is none. Used only while the live lookup timed out / failed.
@@ -129,7 +137,10 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
   const current = targetStored ? state?.current : state?.default
   const defaultTarget = input.node?.defaultTargetBranch ?? null
   // T0012: the saved or inherited branch name is always shown; why it cannot be used is its error, never a blank.
-  const target = targetStored ? field!.value as string : defaultTarget
+  // flowgate.v02.0148 T#2: the branch being saved is shown at once (like every other field); a refusal brings the confirmed one back.
+  const pendingTarget = 'merge_target_branch' in input.pending
+  const requested = input.pending.merge_target_branch
+  const target = pendingTarget ? (typeof requested === 'string' && requested ? requested : defaultTarget) : targetStored ? field!.value as string : defaultTarget
   const lookupStatus = oneOf(state?.status, CHECK_LOOKUP_STATUSES)
   // Only a confirmed lookup (or an answer without lookup facts) lists live candidates; names beside a failure are not.
   const liveOptions = !state || lookupStatus === 'ok' || lookupStatus === 'empty' ? input.node?.mergeTargetOptions ?? [] : []
@@ -147,6 +158,7 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
   const targetError = current?.error && state?.status !== 'git_unavailable' ? checkTargetErrorKey(current.error) : null
   const failures: Record<string, string> = {}
   if (input.failure) failures[input.failure.field] = input.failure.key ?? `failure.${input.failure.kind}`
+  for (const [name, item] of Object.entries(input.fieldFailures ?? {})) failures[name] = item.key ?? `failure.${item.kind}`
   return {
     usage: null, // legacy fixture shape only; never read or written by this UI
     scope,
@@ -154,8 +166,9 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
     targetStored,
     defaultTarget,
     // 0006-T §3.2: a valid candidate (live or kept) and no safety lock; a lookup error alone never locks the choice.
-    targetEnabled: scope === 'merge' && targetOptions.length > 0 && reason === null && Object.keys(input.pending).length === 0,
-    targetError: scope === 'merge' ? targetError : null,
+    // flowgate.v02.0148 T#2: a save of another field on its way is no lock (the writes are queued).
+    targetEnabled: scope === 'merge' && targetOptions.length > 0 && reason === null,
+    targetError: scope === 'merge' && !pendingTarget ? targetError : null,
     lookupError: scope === 'merge' ? lookupError : null,
     lookupStatus,
     optionsSource,
@@ -163,11 +176,12 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
     pushCheckRequired: input.node?.pushRemoteCheckRequired === true,
     targetOptions,
     archive: valueOf('archive') === true,
-    push: flag(input.node?.fields.push?.value),
+    push: flag(valueOf('push')),
     keepBranch: flag(valueOf('keep_branch')),
     connected: input.card,
     reason,
     failures,
+    fieldStates: input.fieldStates ?? {},
   }
 }
 

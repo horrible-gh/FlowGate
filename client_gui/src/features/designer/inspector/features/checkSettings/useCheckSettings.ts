@@ -1,7 +1,7 @@
 import { computed } from 'vue'
 import { settingsNodeErrorOf } from '@/features/document'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { checkControlFailure } from './checkSettingsModel'
+import { checkControlFailure, type CheckSettingsFailureKind } from './checkSettingsModel'
 import { useGateContext, GATE_RUN_EVENTS } from '../gateCard/useGateContext'
 export const CHECK_SETTINGS_EVENTS = GATE_RUN_EVENTS
 
@@ -26,6 +26,17 @@ export function useCheckSettings(target: () => InspectorTarget | null) {
     const kind = settingsNodeErrorOf(last.error)
     return { field: last.field, kind, key: last.field === 'merge_target_branch' && kind === 'invalid' ? 'target.invalid' : null }
   })
+  // flowgate.v02.0148 T#2: each field keeps the refusal of its own last write (the single `failure` is the latest one).
+  const fieldFailures = computed(() => {
+    const out: Record<string, { kind: CheckSettingsFailureKind; key: string | null }> = {}
+    for (const [field, error] of Object.entries(context.value?.failures.value ?? {})) {
+      const kind = settingsNodeErrorOf(error)
+      const specific = checkControlFailure(error)
+      if (specific) out[specific.field] = { kind, key: specific.key }
+      else out[field] = { kind, key: field === 'merge_target_branch' && kind === 'invalid' ? 'target.invalid' : null }
+    }
+    return out
+  })
   return {
     node,
     branches: computed(() => node.value?.mergeTargetOptions ?? []),
@@ -42,9 +53,13 @@ export function useCheckSettings(target: () => InspectorTarget | null) {
     }),
     errorKind: computed(() => node.value === null && context.value?.error.value ? settingsNodeErrorOf(context.value.error.value) : null),
     failure,
+    fieldFailures,
+    /** Per field: `saving` / `saved` / `failed` (flowgate.v02.0148 T#2). */
+    fieldStates: computed(() => context.value?.fieldStates.value ?? {}),
     disposed: computed(() => failure.value?.kind === 'disposed'),
     placing: computed(() => target()?.nodeId.startsWith('tmp_') === true),
     change: async (field: string, value: unknown) => await context.value?.change(field, value) ?? false,
     reload: async () => { await context.value?.reload(true) },
+    retry: async (field: string) => await context.value?.retry(field) ?? false,
   }
 }

@@ -56,8 +56,9 @@ describe('check settings branch contract — 0098', () => {
       for (const key of ['use_default', 'use_default_named', 'unmerge_unsupported']) expect(messages[locale].target).not.toHaveProperty(key)
     }
   })
-  it('shows confirmed push until the complete server response arrives', () => {
-    expect(checkSettingsView({ ...base, pending: { push: true } }).push).toBe(false)
+  it('shows the requested push and target at once and the confirmed ones again after a refusal (flowgate.v02.0148 T#2)', () => {
+    expect(checkSettingsView({ ...base, pending: { push: true } }).push).toBe(true)
+    expect(checkSettingsView({ ...base, pending: {} }).push).toBe(false)
     expect(checkSettingsView({ ...base, pending: { archive: true } }).archive).toBe(true)
     expect(checkSettingsView({ ...base, failure: { field: 'archive', kind: 'network' } })).toMatchObject({ archive: false, failures: { archive: 'failure.network' } })
   })

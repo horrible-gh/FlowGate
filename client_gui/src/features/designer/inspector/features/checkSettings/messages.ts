@@ -82,6 +82,8 @@ export default {
       unconnected: '이 플로우에는 카드 설정이 없습니다',
     },
     failed: '저장 실패',
+    // flowgate.v02.0148 T#2: a field's own save state (next to its control) and the retry of a refused one.
+    fieldState: { saving: '저장 중…', saved: '저장됨', retry: '다시 시도' },
     reason: {
       read_only_conflict: '플로우 소유 충돌 · 읽기 전용',
       read_only_revision: '확정된 리비전 보기 · 읽기 전용',
@@ -197,6 +199,7 @@ export default {
       unconnected: 'This Flow has no card settings',
     },
     failed: 'Not saved',
+    fieldState: { saving: 'Saving…', saved: 'Saved', retry: 'Retry' },
     reason: {
       read_only_conflict: 'Ownership conflict · read only',
       read_only_revision: 'Confirmed revision view · read only',
@@ -311,6 +314,7 @@ export default {
       unconnected: 'このフローにはカード設定がありません',
     },
     failed: '保存失敗',
+    fieldState: { saving: '保存中…', saved: '保存済み', retry: '再試行' },
     reason: {
       read_only_conflict: '所有の競合 · 読み取り専用',
       read_only_revision: '確定リビジョンの表示 · 読み取り専用',
