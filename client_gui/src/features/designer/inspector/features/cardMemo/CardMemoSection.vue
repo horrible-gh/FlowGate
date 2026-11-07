@@ -16,10 +16,13 @@
         <InspectorSlotRow
           v-for="memo in memos"
           :key="memo.memoId"
+          class="inspector-card-memo-item"
+          :class="{ 'has-ai-ref': memo.aiRef }"
           :name="t(k('label'))"
           :openable="true"
           :state="memo.aiRef ? { label: t(k('ai_ref_on')), tone: 'info' } : null"
-          :summary="memo.title"
+          :summary="cardMemoTitlePreview(memo.title)"
+          :summary-title="memo.title"
           :test-ids="{ state: 'card-memo-ai-ref', summary: 'card-memo-title' }"
           data-test="card-memo-item"
           :data-memo="memo.memoId"
@@ -75,7 +78,7 @@ import IconButton from '../../../../../components/ui/IconButton.vue'
 import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorSlotRow from '../../parts/InspectorSlotRow.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import type { CardMemoFacts, CardMemoFailure } from './cardMemoModel'
+import { cardMemoTitlePreview, type CardMemoFacts, type CardMemoFailure } from './cardMemoModel'
 import { closeCardMemoWindowsOf, openCardMemoWindow } from './useCardMemoWindows'
 import { useCardMemo } from './useCardMemo'
 
@@ -138,6 +141,58 @@ async function confirmRemove(): Promise<void> {
   gap: 6px;
   min-width: 0;
   container-type: inline-size;
+}
+
+/* Let the preview give up space before the fixed action icons, even for an unbroken title.
+   InspectorSlotRow already ellipsises its summary; this removes its min-content track floor for memos. */
+.inspector-card-memo .inspector-card-memo-item {
+  grid-template-columns: var(--slot-name-width) minmax(0, 1fr) max-content;
+}
+
+/* A narrow list (360px or less) with the [AI 참조] badge: name, badge and the icons would leave the title no room at
+   all (236px list: the badge and its gap took the whole value column, so neither the title nor its … was drawn).
+   The icons stay at the right of the first row; the title goes to a second row under them, over the whole width of
+   the line, where its 30-character preview and the … are drawn (CSS ellipsis only beyond the line's width). */
+@container (max-width: 360px) {
+  .inspector-card-memo .inspector-card-memo-item.has-ai-ref {
+    grid-template-columns: var(--slot-name-width) minmax(0, 1fr) max-content;
+    row-gap: 2px;
+  }
+
+  .inspector-card-memo-item.has-ai-ref :deep(.inspector-slot-value) {
+    display: contents;
+  }
+
+  .inspector-card-memo-item.has-ai-ref :deep(.inspector-slot-name),
+  .inspector-card-memo-item.has-ai-ref :deep(.inspector-slot-state),
+  .inspector-card-memo-item.has-ai-ref :deep(.inspector-slot-buttons) {
+    grid-row: 1;
+  }
+
+  .inspector-card-memo-item.has-ai-ref :deep(.inspector-slot-name) {
+    grid-column: 1;
+  }
+
+  .inspector-card-memo-item.has-ai-ref :deep(.inspector-slot-state) {
+    grid-column: 2;
+    justify-self: start;
+    align-self: center;
+  }
+
+  .inspector-card-memo-item.has-ai-ref :deep(.inspector-slot-buttons) {
+    grid-column: 3;
+  }
+
+  .inspector-card-memo-item.has-ai-ref :deep(.inspector-slot-summary) {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    width: auto;
+    min-width: 0;
+    overflow: hidden;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .inspector-card-memo-note {

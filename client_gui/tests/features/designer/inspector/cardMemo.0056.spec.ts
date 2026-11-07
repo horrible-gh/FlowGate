@@ -25,12 +25,14 @@ import {
   CARD_MEMO_BODY_MAX,
   CARD_MEMO_FAILURE_KEYS,
   CARD_MEMO_TITLE_MAX,
+  CARD_MEMO_TITLE_PREVIEW_MAX,
   cardMemoBodyProblem,
   cardMemoChanges,
   cardMemoDraftOf,
   cardMemoFailure,
   cardMemoLength,
   cardMemoLockedReason,
+  cardMemoTitlePreview,
   cardMemoTitleProblem,
 } from '@/features/designer/inspector/features/cardMemo/cardMemoModel'
 import { toInspectorTarget } from '@/features/designer/inspector/inspectorTarget'
@@ -210,6 +212,35 @@ describe('the card memo lines and windows (flowgate.v02.0056 F2-2 · 0017-CH)', 
     expect(q('card-memo-count')).toBeNull()
     expect(q('card-memo-add')).toBeNull()
     expect(document.body.textContent).not.toContain('8000')
+  })
+
+  it('the line preview of a title: at most 30 characters (code points) and … for the rest; the title itself is untouched', () => {
+    expect(CARD_MEMO_TITLE_PREVIEW_MAX).toBe(30)
+    expect(cardMemoTitlePreview('배경')).toBe('배경')
+    expect(cardMemoTitlePreview('a'.repeat(30))).toBe('a'.repeat(30))
+    expect(cardMemoTitlePreview('a'.repeat(31))).toBe(`${'a'.repeat(30)}…`)
+    expect(cardMemoTitlePreview(EMOJI.repeat(30))).toBe(EMOJI.repeat(30))
+    // An emoji is one character: the cut never splits its surrogate pair.
+    expect(cardMemoTitlePreview(EMOJI.repeat(31))).toBe(`${EMOJI.repeat(30)}…`)
+    expect(cardMemoTitlePreview('a'.repeat(200))).toBe(`${'a'.repeat(30)}…`)
+  })
+
+  it('keeps the whole title and body in the tooltip, the editor and the stored memo; the line shows 30 characters and …', async () => {
+    const title = '긴메모😀'.repeat(35)
+    const preview = `${Array.from(title).slice(0, 30).join('')}…`
+    const body = '원문을 보존합니다.\n'.repeat(1500)
+    stored = [memo('long', title, { body, ai_ref: true })]
+    await mountSection()
+    const item = qa('card-memo-item')[0]!
+    expect(q('card-memo-title', item)!.textContent).toBe(preview)
+    expect(Array.from(q('card-memo-title', item)!.textContent!).length).toBe(31)
+    expect(q('card-memo-title', item)!.getAttribute('title')).toBe(title)
+    expect(['card-memo-open', 'card-memo-edit', 'card-memo-remove'].every((id) => q(id, item))).toBe(true)
+    await click(q('card-memo-edit', item))
+    expect((q('card-memo-title-input') as HTMLInputElement).value).toBe(title)
+    expect((q('card-memo-body-input') as HTMLTextAreaElement).value).toBe(body)
+    expect(api.patchRequest).not.toHaveBeenCalled()
+    expect(stored[0]).toMatchObject({ title, body })
   })
 
   it('no memo: nothing is drawn in the documents tab', async () => {

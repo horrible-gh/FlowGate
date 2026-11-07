@@ -8,8 +8,8 @@ On a real SQLite DB (all migrations, TestClient over the Graph routes and the ca
 placed in a draft and a card whose run is done both read and write their settings; every value is saved by
 its own PATCH; the items the v0.1 sequence row never stored (instruction use / omit, restart, time limit,
 review basis) are stored (after review is gone, flowgate.v02.0056 T#1: no setting, never read, migration 147); values outside a setting are refused; a running card is locked; and an
-AI node starts with its card's run AI, time limit and restarts (the AI invoke start receives them), or exactly
-as before when the card stores nothing. Auth, RBAC and SSE delivery are stubbed.
+AI node starts with its card's run AI, time limit and restarts (the AI invoke start receives them), or with the shared execution
+defaults when the card stores nothing. Auth, RBAC and SSE delivery are stubbed.
 """
 from __future__ import annotations
 
@@ -365,10 +365,10 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
     }
 
 
-def test_the_run_plan_hands_on_only_what_the_card_stores():
+def test_the_run_plan_hands_on_stored_values_and_execution_defaults():
     from flowgate.card_settings import fields as f
 
-    assert f.run_plan(f.RUN, {}) == {"settings": {}}
+    assert f.run_plan(f.RUN, {}) == {"settings": {}, "step_timeout_sec": 14400, "restart_max": 3}
     # flowgate.v02.0056 T#1: a stored after review value is no setting any more, so it is not handed on
     plan = f.run_plan(f.RUN, {"run_ai": "aip_card", "time_limit": 120, "restart": 0, "after_review": "follow"})
     assert plan == {"settings": {"run_ai": "aip_card", "time_limit": 120, "restart": 0},
@@ -384,8 +384,10 @@ def test_the_time_limit_choices_and_default_are_the_engine_budget():
     from flowgate.card_settings import fields as f
 
     assert all(runtime.STEP_TIMEOUT_MIN_SEC <= m * 60 <= runtime.STEP_TIMEOUT_MAX_SEC for m in f.TIME_LIMIT_MINUTES)
-    # No pick: a single node run's own budget (one document) is the default the card shows.
-    assert admission._resolve_timeout_sec("single", 1, False, None) == f.DEFAULT_TIME_LIMIT_MINUTES * 60
+    # The card explicitly supplies its shared default instead of using the generic single-run budget.
+    plan = f.run_plan(f.RUN, {})
+    assert plan["step_timeout_sec"] == f.DEFAULT_TIME_LIMIT_MINUTES * 60 == 14400
+    assert admission._resolve_timeout_sec("single", 1, False, plan["step_timeout_sec"]) == 14400
     # A pick: the single run takes it as its budget (0446 T0010).
     assert admission._resolve_timeout_sec("single", 1, False, 120 * 60) == 7200
 
@@ -396,8 +398,8 @@ def test_a_new_card_reads_its_defaults_and_saves_each_value_at_once(env):
     key = placed(env, FB, "T")
     body = get_settings(env, FB, key)
     assert (body["card_kind"], body["locked"], list(body["fields"])) == ("run", False, RUN_FIELDS + ["hold"])
-    assert shown(body) == {"instruction": "use", "instruction_ai": None, "run_ai": None, "restart": 0,
-                           "review_ai": None, "review_count": 0, "time_limit": 60, "review_basis": "type",
+    assert shown(body) == {"instruction": "use", "instruction_ai": None, "run_ai": None, "restart": 3,
+                           "review_ai": None, "review_count": 0, "time_limit": 240, "review_basis": "type",
                            "instruction_review_ai": None, "instruction_review_count": 0,
                            "instruction_note": "", "run_note": "", "run_pre_instruction": "", "hold": False}
     assert not any(f["stored"] for f in body["fields"].values())
@@ -406,14 +408,14 @@ def test_a_new_card_reads_its_defaults_and_saves_each_value_at_once(env):
     assert stored_rows(env, FB) == {}
 
     one = setting(env, FB, key, "restart", 2)
-    assert one["fields"]["restart"] == {"value": 2, "stored": True, "default": 0,
+    assert one["fields"]["restart"] == {"value": 2, "stored": True, "default": 3,
                                         "choices": one["fields"]["restart"]["choices"]}
     assert stored_rows(env, FB) == {(key, "restart"): "2"}               # exactly the one value
     two = setting(env, FB, key, "instruction", "omit")
     assert (shown(two)["restart"], shown(two)["instruction"]) == (2, "omit")
     assert stored_rows(env, FB) == {(key, "instruction"): '"omit"', (key, "restart"): "2"}
     back = setting(env, FB, key, "restart", None)                        # null: the default again
-    assert back["fields"]["restart"]["stored"] is False and shown(back)["restart"] == 0
+    assert back["fields"]["restart"]["stored"] is False and shown(back)["restart"] == 3
     assert stored_rows(env, FB) == {(key, "instruction"): '"omit"'}
     assert shown(get_settings(env, FB, key)) == shown(back)
 
@@ -611,15 +613,15 @@ def test_an_ai_node_starts_with_its_card_run_ai_time_limit_and_restarts(env, dec
         "continuation_step_timeout_sec": 7200, "node_restart_max_attempts": 2}
 
 
-def test_a_card_that_stores_nothing_starts_exactly_as_before(env, decided, monkeypatch):
+def test_a_card_that_stores_nothing_starts_with_shared_defaults(env, decided, monkeypatch):
     key = _run_one_card(env, AI)
     _start(env)
     [job] = env["jobs"]
     assert (job["node_key"], job["provider_id"], job["step_timeout_sec"], job["restart_max"],
-            job["card_settings"]) == (key, "aip_assignee", None, None, {})
+            job["card_settings"]) == (key, "aip_assignee", 14400, 3, {})
     call = _start_job(env, monkeypatch, job)
     assert (call["provider_id"], call["continuation_step_timeout_sec"], call["node_restart_max_attempts"]) == (
-        "aip_assignee", None, None)
+        "aip_assignee", 14400, 3)
 
 
 def test_without_the_port_handler_a_node_ignores_its_card(env, decided):
@@ -687,7 +689,7 @@ def test_after_review_is_no_setting_and_a_stored_value_is_not_read(env):
                     "VALUES (?, ?, 'after_review', '\"human\"', 't')", (FB, key))
     body = get_settings(env, FB, key)                                     # a row left from before: not read
     assert "after_review" not in body["fields"] and list(body["fields"]) == RUN_FIELDS + ["hold"]
-    assert f.run_plan(f.RUN, {"after_review": "human"}) == {"settings": {}}
+    assert f.run_plan(f.RUN, {"after_review": "human"}) == {"settings": {}, "step_timeout_sec": 14400, "restart_max": 3}
     # what follows a result is the former follow, whatever was stored
     assert [f.after_result(kind, {"after_review": "human"}) for kind in (f.RUN, f.TEST)] == [f.APPROVE, f.APPROVE]
     assert all(f.field_of(kind, "after_review") is None for kind in f.CARD_KINDS)

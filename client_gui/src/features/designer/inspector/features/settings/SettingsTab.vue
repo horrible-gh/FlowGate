@@ -70,7 +70,7 @@
         </InspectorControlRow>
       </InspectorBlock>
       <InspectorBlock
-        v-if="panel === 'ai' && !card.node.value?.aiRoles && instructionAiShown"
+        v-if="panel === 'ai' && legacyAiShown && instructionAiShown"
         :locked="locked"
         class="inspector-settings-line"
         data-test="settings-instruction-ai"
@@ -149,7 +149,7 @@
           </InspectorBlock>
         </template>
       </template>
-      <InspectorRunSettings v-if="(panel === 'ai' && !card.node.value?.aiRoles) || source === 'sequence'"
+      <InspectorRunSettings v-if="(panel === 'ai' && legacyAiShown) || source === 'sequence'"
         :layout="kind === 'test' ? 'scenario' : 'run'"
         :fields="runFields"
         :hide-missing="!!card.node.value?.aiRoles"
@@ -159,7 +159,7 @@
         @update:advanced-open="advancedOpen = $event"
         @update:field="onChange"
       />
-      <InspectorBlock v-if="panel === 'ai' && !card.node.value?.aiRoles && kind === 'run' && card.node.value?.fields.instruction?.value !== 'omit'" data-test="instruction-review">
+      <InspectorBlock v-if="panel === 'ai' && legacyAiShown && kind === 'run' && card.node.value?.fields.instruction?.value !== 'omit'" data-test="instruction-review">
         <InspectorControlRow v-for="field in instructionReviewFields" :key="field" :label="t(`gui.inspector.ai.${field}`)">
           <Select :model-value="views[field].value" :options="views[field].options.map(option => ({ value: option.value, label: labelOf(option) }))" :disabled="views[field].disabled" :data-field="field" @update:model-value="value => onChange(field, value)" />
           <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
@@ -404,6 +404,13 @@ const instructionAiShown = computed(() => {
   const shownKind = kind.value
   return source.value === 'card' && shownKind !== 'plan' && cardSettingsInstructionAiShown(shownKind, cardSettingsValue(card.node.value, card.pending.value, 'instruction'))
 })
+
+/**
+ * flowgate.v02.0144 T-B (0003-NR §4.2a(6)(7)): the older AI form (지시 AI row, 실행 설정 block, 지시서 검수 block) is
+ * drawn only for a Graph card whose settings answer has come without AI roles (`ai_roles` null or missing). Before
+ * the answer (loading, a re-read after the settings context moved, a card just placed) none of it is drawn.
+ */
+const legacyAiShown = computed(() => source.value === 'card' && card.node.value !== null && !card.node.value.aiRoles)
 
 /**
  * Why the server refused the field's last change (the ! icon's tooltip), or null. flowgate.v02.0056 F2-1: on the

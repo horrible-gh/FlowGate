@@ -806,7 +806,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
     pendingDrafts.delete(item.localId)
     publishProgress(owner, null)
-    runSendAction(chatId, gen, trace)
+    runSendAction(chatId, gen, trace, item.providerId)
     return true
   }
 
