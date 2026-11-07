@@ -79,7 +79,7 @@ def test_a_work_plan_card_has_the_plan_settings_and_its_run_takes_the_run_block_
     # still no instruction stage and no result type (the AI writes the WP itself).
     assert f.run_plan(f.PLAN, stored, "document", "WP") == {
         "settings": stored, "provider_id": "aip_card", "step_timeout_sec": 7200, "restart_max": 1}
-    assert f.run_plan(f.PLAN, {}, "document", "WP") == {"settings": {}}
+    assert f.run_plan(f.PLAN, {}, "document", "WP") == {"settings": {}, "step_timeout_sec": 14400, "restart_max": 3}
     assert f.after_result(f.PLAN, stored) == f.REVIEW
     assert f.after_result(f.PLAN, {"run_ai": "aip_card"}) == f.APPROVE
     assert f.after_result(f.REQUIREMENT, {"review_count": 1}) is None and f.after_result(f.CHECK, {}) is None
@@ -108,8 +108,8 @@ def test_a_work_plan_card_reads_its_defaults_and_saves_each_value_at_once(env):
     key = _plan_card(env)
     body = get_settings(env, FB, key)
     assert (body["card_kind"], body["locked"], list(body["fields"])) == ("plan", False, PLAN_FIELDS)
-    assert shown(body) == {"pre_instruction_auto": False, "run_ai": None, "restart": 0, "review_ai": None,
-                           "review_count": 0, "time_limit": 60, "review_basis": "type", "hold": False}
+    assert shown(body) == {"pre_instruction_auto": False, "run_ai": None, "restart": 3, "review_ai": None,
+                           "review_count": 0, "time_limit": 240, "review_basis": "type", "hold": False}
     assert body["fields"]["pre_instruction_auto"]["choices"] == [True, False]
     assert not any(f["stored"] for f in body["fields"].values())
 

@@ -220,12 +220,19 @@ function onAdd(item: CustomPaletteItem) {
   outline-offset: 1px;
 }
 
-/* Two compact columns fit the right panel width (03-designer-shell `.pal-grid`). */
+/* Fixed-width cards that wrap like text: a wider panel never stretches a card, the next card simply takes
+   the free space on the right. 135px + 7px gap + 135px fits the 278px content of the default 300px panel
+   (the former two columns). A panel narrower than one card shrinks the card instead of overflowing. */
 .designer-palette-grid {
-  display: grid;
-  max-width: 278px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: 52px;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
   gap: 7px;
+}
+
+.designer-palette-grid :deep(.palette-card) {
+  flex: 0 0 135px;
+  width: 135px;
+  max-width: 100%;
 }
 </style>

@@ -35,8 +35,8 @@ answer what a node's AI start takes from its card.
   (revised): the run block is read by a run now. ``uses_ai`` judges the plan card's writer (an explicit person assignee,
   else the card's work AI, else an explicit AI assignee, else a person) and ``run_settings`` hands an AI writer its
   work AI, time limit and restarts (``fields.run_plan``).
-- ``run_settings`` is the Graph's ``card_settings_ports.run_settings`` handler: only stored values are
-  handed on, so a card with nothing stored starts exactly as before. ``result_type`` is its
+- ``run_settings`` is the Graph's ``card_settings_ports.run_settings`` handler: stored values and the
+  run/plan execution defaults are handed on, matching the values shown in the Inspector. ``result_type`` is its
   ``result_type`` handler: the type an AI node's result is bound as (the dispatch told the AI the same).
 - ``token_step_type`` is the source tools' ``worker_step_type_hooks`` handler: the token of an open AI
   node whose card changes what it writes is judged by that type (an omitted instruction's report),

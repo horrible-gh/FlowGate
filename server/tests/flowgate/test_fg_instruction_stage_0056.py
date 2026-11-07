@@ -191,7 +191,8 @@ def test_the_instruction_ai_is_a_setting_of_the_run_cards_only():
         None, "r", "i"]
     # instruction omitted: no instruction stage, the instruction AI is not read
     plan = f.run_plan(f.RUN, {"instruction": "omit", "instruction_ai": "i"}, "document", "T")
-    assert plan == {"settings": {"instruction": "omit", "instruction_ai": "i"}, "result_doc_type": "TR"}
+    assert plan == {"settings": {"instruction": "omit", "instruction_ai": "i"}, "result_doc_type": "TR",
+                    "step_timeout_sec": 14400, "restart_max": 3}
 
 
 def test_the_instruction_ai_is_read_and_written_like_any_card_setting(env):

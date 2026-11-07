@@ -238,12 +238,13 @@ def test_the_result_type_follows_the_card_only_for_instruction_led_ai_cards():
     assert [f.instruction_stage("document", t, omit) for t in ("N", "T", "D")] == [None, None, None]
     # flowgate.v02.0053 T#8: a Custom card runs as a work instruction, so it folds like a work card
     assert f.result_doc_type("custom", None, omit) == "TR"
-    assert f.run_plan(f.RUN, omit, "custom", None) == {"settings": omit, "result_doc_type": "TR"}
-    assert f.run_plan(f.RUN, omit, "document", "T") == {"settings": omit, "result_doc_type": "TR"}
-    assert f.run_plan(f.RUN, omit, "document", "D") == {"settings": omit}
-    assert f.run_plan(f.RUN, omit, "document", "T2") == {"settings": omit}
+    assert f.run_plan(f.RUN, omit, "custom", None) == {"settings": omit, "result_doc_type": "TR", "step_timeout_sec": 14400, "restart_max": 3}
+    assert f.run_plan(f.RUN, omit, "document", "T") == {"settings": omit, "result_doc_type": "TR", "step_timeout_sec": 14400, "restart_max": 3}
+    assert f.run_plan(f.RUN, omit, "document", "D") == {"settings": omit, "step_timeout_sec": 14400, "restart_max": 3}
+    assert f.run_plan(f.RUN, omit, "document", "T2") == {"settings": omit, "step_timeout_sec": 14400, "restart_max": 3}
     assert f.run_plan(f.RUN, {}, "document", "T") == {
-        "settings": {}, "result_doc_type": "TR", "instruction": {"doc_type": "T", "provider_id": None}}
+        "settings": {}, "result_doc_type": "TR", "instruction": {"doc_type": "T", "provider_id": None},
+        "step_timeout_sec": 14400, "restart_max": 3}
 
 
 # 0113 T#3 (T §6.4) pre-feature contract: a person card's result type was its own; an assigned attempt's is its stage plan's (L-2 §2.5.1/§2.14, K-2) — test_fg_ai_roles_l2_manual.py::test_k2_*
@@ -444,7 +445,7 @@ def test_the_review_loop_request_follows_the_card_within_the_loop_ranges():
 
     base = f.review_loop({"review_count": -1}, reviewer="r", reworker="w")
     assert (base["review_count"], base["review_criteria"], base["rework_timeout_sec"],
-            base["failure_restart_max_attempts"]) == (-1, "document_type_default", 3600, 0)
+            base["failure_restart_max_attempts"]) == (-1, "document_type_default", 7200, 2)
     assert f.review_loop({"review_count": 1, "time_limit": 30}, reviewer="r", reworker="w")["rework_timeout_sec"] == 1800
     assert f.review_loop({"review_count": 1, "restart": 5}, reviewer="r", reworker="w")[
         "failure_restart_max_attempts"] == 2

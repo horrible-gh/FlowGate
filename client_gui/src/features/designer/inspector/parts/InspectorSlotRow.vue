@@ -67,7 +67,7 @@
       <span v-if="warns" class="inspector-slot-unreadable" role="img" :aria-label="t('gui.document.bodyState.unreadable')" :title="t(`gui.document.bodyState.${bodyState}`)" data-test="inspector-slot-unreadable">⚠</span>
       <template v-if="!empty">
         <slot name="summary">
-          <span v-if="summary" class="inspector-slot-summary" :title="summary" :data-test="testIds?.summary ?? 'inspector-slot-summary'">{{ summary }}</span>
+          <span v-if="summary" class="inspector-slot-summary" :title="summaryTitle ?? summary" :data-test="testIds?.summary ?? 'inspector-slot-summary'">{{ summary }}</span>
         </slot>
         <span
           v-if="progress !== null && progress !== undefined"
@@ -121,6 +121,8 @@ const props = withDefaults(
     emptyText?: string | null
     state?: InspectorSlotState | null
     summary?: string | null
+    /** The summary's tooltip when it is a shortened preview: the whole text (default: the summary itself). */
+    summaryTitle?: string | null
     /** 0..100: a progress bar after the summary (a running result). */
     progress?: number | null
     focus?: boolean
@@ -139,6 +141,7 @@ const props = withDefaults(
     emptyText: null,
     state: null,
     summary: null,
+    summaryTitle: null,
     progress: null,
     focus: false,
     danger: false,

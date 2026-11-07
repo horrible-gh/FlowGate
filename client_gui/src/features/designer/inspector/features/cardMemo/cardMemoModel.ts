@@ -19,6 +19,19 @@ export function cardMemoLength(text: string): number {
   return text.length - (text.match(SURROGATE_PAIR)?.length ?? 0)
 }
 
+/**
+ * flowgate.v02.0144 — the memo line shows at most this many characters of a title (code points, as the server
+ * counts) and an ellipsis for the rest, whatever the width of the panel. Display only: the stored title, the
+ * line's tooltip, the open and edit windows and every PATCH keep the whole title.
+ */
+export const CARD_MEMO_TITLE_PREVIEW_MAX = 30
+
+/** The title as the memo line shows it: its first 30 characters, then … when there is more. */
+export function cardMemoTitlePreview(title: string): string {
+  const characters = Array.from(title)
+  return characters.length > CARD_MEMO_TITLE_PREVIEW_MAX ? `${characters.slice(0, CARD_MEMO_TITLE_PREVIEW_MAX).join('')}…` : title
+}
+
 /** How the memo windows read: as written, or in the editor. */
 export type CardMemoWindowMode = 'view' | 'edit'
 

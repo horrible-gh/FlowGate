@@ -32,8 +32,8 @@ Pure. The 0053 CH agreement (§4 "settings as drawn") and the v7 settings blocks
   (``provider_id`` / ``reviewer_provider_id``), which nothing here reads or changes. Turning the switch off deletes no
   Step's pre-instruction.
 
-A field with no stored value shows its default. The default is what the engine does without the
-setting today, so storing nothing and storing the default run the same way. ``None`` as a default
+A field with no stored value shows its default. Run and plan cards also pass their execution defaults
+to the engine, so storing nothing and storing the default run the same way. ``None`` as a default
 means "decided elsewhere": the node's assignee AI, the project's default reviewer, or the final
 approval dialog that asks the Git choice.
 
@@ -88,8 +88,9 @@ LOCAL_BRANCH = "local_branch"
 # The run time limit choices (minutes): the AI invoke dialogs' list, inside the engine's
 # STEP_TIMEOUT_MIN_SEC..STEP_TIMEOUT_MAX_SEC (checked by the tests against the engine).
 TIME_LIMIT_MINUTES = (30, 45, 60, 90, 120, 180, 240)
-# A single run's own budget with no pick: RUN_TIMEOUT_BASE_SEC x 1 document = 60 minutes.
-DEFAULT_TIME_LIMIT_MINUTES = 60
+# flowgate.v02.0144 T0013: card execution defaults, shared by display and dispatch.
+DEFAULT_TIME_LIMIT_MINUTES = 240
+DEFAULT_RESTART_COUNT = 3
 LIMIT_MIN, LIMIT_MAX = 1, 999
 TEXT_MAX_LEN = 191
 # The v0.1 document review loop names of the two review bases.
@@ -134,7 +135,7 @@ _INSTRUCTION_AI = Field("instruction_ai", AI)    # None: the run AI, else the no
 _RUN_AI = Field("run_ai", AI)                    # None: the node's assignee AI
 _REVIEW_AI = Field("review_ai", AI)              # None: the project's default reviewer
 _REVIEW_COUNT = Field("review_count", REPEAT, 0)
-_RESTART = Field("restart", REPEAT, 0)           # a single node run is one-shot today
+_RESTART = Field("restart", REPEAT, DEFAULT_RESTART_COUNT)
 _TIME_LIMIT = Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES)
 _REVIEW_BASIS = Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA))
 # flowgate.v02.0072 T#3: the work plan card's AI pre-instruction writing switch. Off by default: nothing writes a
@@ -391,7 +392,7 @@ def review_loop(stored: dict, *, reviewer: str, reworker: Optional[str]) -> dict
     limit = (stored.get("time_limit") if stored.get("time_limit") in TIME_LIMIT_MINUTES
              else DEFAULT_TIME_LIMIT_MINUTES) * 60
     rework = max([s for s in LOOP_REWORK_TIMEOUTS_SEC if s <= limit] or [LOOP_REWORK_TIMEOUTS_SEC[0]])
-    restart = _count(stored.get("restart"))
+    restart = _count(stored.get("restart", _RESTART.default))
     if restart is None or restart < -1:
         restart = 0
     elif restart > LOOP_FAILURE_RESTARTS[-1]:
@@ -429,8 +430,9 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
              doc_type: Optional[str] = None) -> dict:
     """What a node's AI start takes from its card (``card_settings_ports.run_settings``).
 
-    Only stored values are handed on, except the two stages of instruction use (flowgate.v02.0056 T#2), which
-    is the default: ``instruction`` (the instruction stage's type and AI) and the report as ``result_doc_type``.
+    Stored values are handed on, with the run/plan execution defaults when those fields are absent.
+    The two stages of instruction use (flowgate.v02.0056 T#2) are also the default: ``instruction``
+    (the instruction stage's type and AI) and the report as ``result_doc_type``.
     flowgate.v02.0083 T#1 (0072 T#3 개정): a work plan card hands on its work AI, time limit and restarts as a run card
     does; it has no instruction stage and no result type of its own (``instruction_stage`` / ``result_doc_type`` are
     None for WP), so its AI runs the result stage alone and writes the WP the result binder binds.
@@ -446,8 +448,12 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
         plan["instruction"] = {"doc_type": instruction, "provider_id": instruction_provider(stored)}
     if stored.get("run_ai"):
         plan["provider_id"] = stored["run_ai"]
-    if kind in (RUN, PLAN) and stored.get("time_limit") in TIME_LIMIT_MINUTES:
-        plan["step_timeout_sec"] = int(stored["time_limit"]) * 60
-    if kind in (RUN, PLAN) and isinstance(stored.get("restart"), int) and not isinstance(stored.get("restart"), bool):
-        plan["restart_max"] = stored["restart"]
+    if kind in (RUN, PLAN):
+        # Do not persist defaults or replace explicit values (including zero / unlimited restarts).
+        limit = stored.get("time_limit", _TIME_LIMIT.default)
+        restart = stored.get("restart", _RESTART.default)
+        if limit in TIME_LIMIT_MINUTES:
+            plan["step_timeout_sec"] = int(limit) * 60
+        if isinstance(restart, int) and not isinstance(restart, bool):
+            plan["restart_max"] = restart
     return plan
