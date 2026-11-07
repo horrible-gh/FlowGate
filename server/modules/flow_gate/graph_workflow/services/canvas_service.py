@@ -219,8 +219,9 @@ def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], colla
 # flowgate.v02.0083 T#4 rev1: the run band's facts of the same run read (``run_payload``) — command, idle reason,
 # AI executions and waiting cards — so a Canvas read newer than the client's last run read tells them as of itself,
 # never beside an older read's. Only what that read carries (no execution hook: no counts).
+# flowgate.v02.0143 T#1 (W1): and whether an automatic Q&A responder answers the idle run's card now (the header's hold).
 _RUN_BAND_KEYS = ("mode", "idle_reason", "running_execution_count", "requested_execution_count", "execution_limit",
-                  "pending_propagation_count", "pending_node_keys")
+                  "pending_propagation_count", "pending_node_keys", "qa_responding", "qa_responding_node_keys")
 
 
 def _run_block(run: dict) -> dict:

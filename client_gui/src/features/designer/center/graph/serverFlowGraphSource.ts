@@ -112,6 +112,8 @@ const toRunInfo = (run: FlowRun): FlowRunInfo => ({
   lastEventSeq: run.lastEventSeq ?? 0,
   // flowgate.v02.0105 T#2 (B-6): only what the server said; absent = not told (no [승인]).
   ...(typeof run.viewerCanApprove === 'boolean' ? { viewerCanApprove: run.viewerCanApprove } : {}),
+  // flowgate.v02.0143 T#1 (W1): only what the server said; absent = not told (never held).
+  ...(typeof run.qaResponding === 'boolean' ? { qaResponding: run.qaResponding } : {}),
 })
 
 /**

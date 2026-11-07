@@ -818,6 +818,14 @@ export default {
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: '멈춤 · 다음 카드 {n}개 대기',
       run_pending_keys: '다음으로 넘어갈 카드: {keys}',
+      run_request_actions: {
+        start: '시작',
+        prepare: '실행 준비',
+        revision: 'revision 평가',
+        target_read: '제어 대상 조회',
+      },
+      run_request_failed: '{action} 요청을 처리하지 못했습니다.',
+      run_request_unconfirmed: '{action} 요청의 처리 결과를 확인하지 못했습니다.',
       run_errors: {
         run_policy_undecided: '실행 규칙이 아직 정해지지 않아 실행할 수 없습니다.',
         run_already_active: '이미 실행 중입니다.',

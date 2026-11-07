@@ -28,7 +28,7 @@ import { toRunGateState } from '@/features/document/api/run'
 // signals of the Canvas (flowCanvasEvents.ts), never state.
 import { getRequest, postRequest } from '@shared/api'
 import { canvasHeaders, num, str, toRoleRunFields, type Raw } from './flowCanvasApi'
-import { FlowGraphApiError, toGraphError } from './flowGraphApi'
+import { FlowGraphApiError, toGraphError, serverRequestIdOf } from './flowGraphApi'
 import type { FlowRun, FlowRunNode, FlowRunTimeMachine, FlowRunTimeMachineRefusal } from './types'
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [])
@@ -88,6 +88,8 @@ export function toFlowRun(raw: unknown): FlowRun | null {
     ...(run.viewer && typeof run.viewer === 'object' && typeof (run.viewer as Raw).can_approve === 'boolean'
       ? { viewerCanApprove: (run.viewer as Raw).can_approve as boolean }
       : {}),
+    // flowgate.v02.0143 T#1 (W1): an automatic Q&A responder answers now — kept only when sent.
+    ...(typeof run.qa_responding === 'boolean' ? { qaResponding: run.qa_responding } : {}),
   }
 }
 
@@ -112,7 +114,7 @@ export async function checkFlowRevisionAdoption(flowId: string): Promise<FlowGra
     if (data?.adoptable === true) return null
     if (data?.adoptable === false && typeof data.error?.code === 'string') {
       const error = data.error
-      return new FlowGraphApiError(str(error.message) ?? '', error.code, error.params ?? {}, num(error.status), null)
+      return new FlowGraphApiError(str(error.message) ?? '', error.code, error.params ?? {}, num(error.status), null, serverRequestIdOf(response))
     }
     throw new Error('Invalid revision adoption assessment.')
   } catch (error) {

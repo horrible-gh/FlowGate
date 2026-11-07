@@ -507,6 +507,10 @@ def run_payload(run_id: str, with_nodes: bool) -> Optional[dict]:
         "pending_node_keys": sorted({p["node_key"] for p in pending}),
         "mode": run.get("run_mode") or MODE_FULL, "idle_reason": idle_reason_read(run),        # 0061 T#2, 0119 T-2
     }
+    # flowgate.v02.0143 T#1 (W1): an idle run whose card's question an automatic Q&A responder answers now.
+    responding = qa_responding_nodes(run_id, run["group_id"]) if run["status"] == run_store.IDLE else frozenset()
+    out["qa_responding"] = bool(responding)
+    out["qa_responding_node_keys"] = sorted(responding)
     from modules.flow_gate.services import graph_execution_hooks
     out.update(graph_execution_hooks.call("execution_wire", run_id, run["group_id"]))
     if with_nodes:
@@ -572,6 +576,35 @@ def node_asks(flow_id: str, row: dict) -> bool:
 
     return any(open_questions_raised_by_run(flow_id, ai_run_id)
                for ai_run_id in run_store.ai_runs_of_node(row["run_id"], row["node_key"]))
+
+
+def qa_responding_nodes(run_id: str, flow_id: str) -> frozenset:
+    """flowgate.v02.0143 T#1 (W1, NR flowgate.v02.0143.0003 §4.2): the open nodes of the run whose own AI — a run of its
+    live attempt (``run_store.ai_runs_of_node``) — asked a question (``finalize.open_questions_raised_by_run``) that an
+    automatic Q&A responder answers now: the item's ``responder_state`` is ``dispatched`` and its ``responder_run_id`` is an
+    AI run still live (``ai_invoke.runtime.is_run_live``, the responder's own liveness probe). ``question``
+    (``question_nodes``) cannot tell it: a person's wait (``failed`` / ``user_decision`` / none) carries the same mark.
+    An item failed, handed to a person, answered or never dispatched, another run's or attempt's question, and a failed
+    read tell none (a hold that never locks). The run read calls it for an idle run only. Reads only."""
+    from modules.flow_gate.db import question_items as db_question_items  # noqa: PLC0415
+    from modules.flow_gate.services.ai_invoke import runtime as ai_runtime  # noqa: PLC0415
+    from modules.flow_gate.services.ai_invoke.finalize import open_questions_raised_by_run  # noqa: PLC0415
+
+    try:
+        nodes: set[str] = set()
+        for row in run_store.node_runs(run_id):
+            if row.get("status") != "open":
+                continue
+            for ai_run_id in run_store.ai_runs_of_node(run_id, row["node_key"]):
+                if any(item.get("responder_state") == db_question_items.RESPONDER_DISPATCHED
+                       and item.get("responder_run_id") and ai_runtime.is_run_live(item["responder_run_id"])
+                       for item in open_questions_raised_by_run(flow_id, ai_run_id)):
+                    nodes.add(row["node_key"])
+                    break
+        return frozenset(nodes)
+    except Exception:  # noqa: BLE001 — the run read goes on; nothing is held
+        _log.warning("graph qa responding read failed run=%s", run_id, exc_info=True)
+        return frozenset()
 
 
 def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, held: Optional[frozenset] = None,

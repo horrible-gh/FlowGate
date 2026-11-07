@@ -86,6 +86,10 @@ ROLE_OF_INVOCATION = {"instruction": "instruction", "execution": "execution", "r
                       "instruction_review": "review", "rework": "execution"}
 WAIT_OF_ACTOR = {"person": "manual_write_wait", "wait_setup": "ai_setup_required", "wait_unavailable": "ai_unavailable"}
 BODY_LAUNCH, BODY_RUN, BODY_NOT_PRESERVED, BODY_NONE = "launch", "run", "not_preserved", "none"
+# flowgate.v02.0143 T#1 (W6): an automatic Q&A responder's launch (``ai_roles.qa_adapter``) and the states of its item
+# once its question went to a person (``failed`` / ``user_decision``) or was answered since (by that person).
+QA_RESPONSE = "qa_response"
+QA_HANDED_TO_PERSON = ("failed", "user_decision", "answered")
 
 
 class CommandNotFound(LookupError):
@@ -222,6 +226,21 @@ class _Titles:
 
 def _invocation_failure(record: dict) -> bool:
     return record.get("result") in FAILED_RESULTS
+
+
+def _handed_to_person(record: dict) -> bool:
+    """flowgate.v02.0143 T#1 (W6, NR flowgate.v02.0143.0003 §4.2): a failed automatic Q&A responder launch
+    (``purpose=qa_response``; it carries the asker's target, so it is the asker's command's) whose question item, as read
+    now, went to a person — ``responder_state`` ``failed`` / ``user_decision``, or ``answered`` since. The card waits for
+    that person: no failure of the command (its message stays). Any other responder state, a record without its item and
+    a failed read: no (the failure counts as before). Not any other role's launch, never a whole Q&A card."""
+    if record.get("purpose") != QA_RESPONSE or record.get("qa_item_id") in (None, ""):
+        return False
+    try:
+        return engine.question_responder_state(record["qa_item_id"]) in QA_HANDED_TO_PERSON
+    except Exception:  # noqa: BLE001 — not told: the failure counts
+        log.warning("command result question item read failed inv=%s", record.get("inv_id"), exc_info=True)
+        return False
 
 
 def duplicate_starts(records: list[dict]) -> set[str]:
@@ -573,7 +592,8 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
                          "result": record.get("result"), "result_detail": record.get("result_detail"),
                          "body": body, "body_source": source, "attribution": owner[record["inv_id"]][1],
                          "error_text": error, "error": error is not None})
-        if _invocation_failure(record) and succeeded_after.get((key, role), -1) < i:
+        if (_invocation_failure(record) and succeeded_after.get((key, role), -1) < i
+                and not _handed_to_person(record)):                                       # flowgate.v02.0143 T#1 (W6)
             fail(key, record["result"], record.get("result_detail"), at, role, message=False)
 
     # The run's idle reason as the command left it. The latest command still holding the run reads it now (a read may

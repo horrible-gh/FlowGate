@@ -46,6 +46,7 @@
 import { cardApprovalFailureView, cardApprovalRefusalOf, type CardApprovalFailureView, type CardApprovalRefusal } from '../graph/cardStateView'
 import type { FlowGraphSource, FlowRunError, FlowRunInfo, FlowTimeMachineRefusal, FlowTimeMachineResult } from '../graph/flowGraphSource'
 import { isRunLocked } from './flowRunLock'
+import { diagnosticId, safeFlowLabel, recordRunFailureDiagnostic, type RunFailureDiagnostic } from './runFailureDiagnostic'
 
 export type FlowRunMode = 'next' | 'all'
 
@@ -66,7 +67,26 @@ export type FlowTimeMachineOutcome =
   | { readonly kind: 'failed'; readonly code: string | null; readonly status: number | null; readonly message: string }
   | { readonly kind: 'skipped' }
 
-export interface FlowRunFailure {
+export type FlowRunFailureStage = 'before_prepare' | 'save_draft' | 'revision' | 'prepare' | 'start' | 'target_read' | 'pause' | 'resume' | 'stop'
+export interface FlowRunFailureContext {
+  readonly scope: string
+  readonly publicationId: string
+  readonly localRequestId: string
+  readonly serverRequestId: string | null
+  readonly action: 'start' | 'pause' | 'resume' | 'stop'
+  readonly mode: FlowRunMode | null
+  readonly stage: FlowRunFailureStage
+  readonly projectId: string
+  readonly flowId: string
+  readonly flowLabel: string | null
+  /** A start POST addresses a Flow, never a run inferred from a later GET. */
+  readonly targetRunId: string | null
+  readonly baselineRunId: string | null
+  readonly outcome: 'rejected' | 'unconfirmed' | 'failed'
+  readonly observation: { readonly state: 'pending' | 'read' | 'failed'; readonly runId: string | null; readonly status: string | null }
+}
+
+export interface FlowRunFailure extends Partial<FlowRunFailureContext> {
   /**
    * What was refused: a run button (`run`), a card's [승인] (`approval`, flowgate.v02.0056 F2-1) or a card's Hold
    * 설정 / 해제 (`hold`, flowgate.v02.0061 T#15).
@@ -103,6 +123,8 @@ export interface FlowRunState {
 }
 
 export interface FlowRunControlDeps {
+  readonly flowLabel?: (flowId: string) => string | null
+  readonly diagnose?: (record: RunFailureDiagnostic) => void
   readonly beforePrepare?: (flowId: string, mode: FlowRunMode) => Promise<boolean>
   readonly canProceed?: (flowId: string) => boolean
   readonly source: FlowGraphSource
@@ -182,7 +204,7 @@ function timeMachineFailure(error: unknown): FlowTimeMachineOutcome {
 }
 
 /** A refused request as the state keeps it (the server's code and status, its message as sent, its params' names). */
-function failureOf(kind: FlowRunFailure['kind'], error: unknown, seq: number): FlowRunFailure {
+function failureOf(kind: FlowRunFailure['kind'], error: unknown, seq: number, context?: FlowRunFailureContext): FlowRunFailure {
   const refused = error as FlowRunError | null
   const code = typeof refused?.code === 'string' ? refused.code : null
   const status = typeof refused?.status === 'number' ? refused.status : null
@@ -190,7 +212,8 @@ function failureOf(kind: FlowRunFailure['kind'], error: unknown, seq: number): F
     kind,
     code,
     status,
-    message: error instanceof Error ? error.message : '',
+    message: kind === 'run' ? '' : error instanceof Error ? error.message : '',
+    ...context,
     approval: kind === 'approval' ? cardApprovalFailureView(code, status, code === null && status === null) : null,
     refusal: kind === 'approval' ? cardApprovalRefusalOf(refused?.params) : null,
     seq,
@@ -204,6 +227,27 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
   const reads = new Map<string, number>()
   let seq = 0
   let failures = 0
+  const scope = `run-control-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
+  let requests = 0
+
+  function diagnose(failure: FlowRunFailure) {
+    const id = diagnosticId
+    const record: RunFailureDiagnostic = Object.freeze({
+      publicationId: id(failure.publicationId), scope: id(failure.scope), seq: failure.seq,
+      localRequestId: id(failure.localRequestId), serverRequestId: id(failure.serverRequestId),
+      action: id(failure.action), stage: id(failure.stage), mode: id(failure.mode),
+      projectId: id(failure.projectId), flowId: id(failure.flowId), targetRunId: id(failure.targetRunId),
+      baselineRunId: id(failure.baselineRunId), status: failure.status, code: id(failure.code), outcome: id(failure.outcome),
+      observation: failure.observation ? Object.freeze({state:failure.observation.state,runId:id(failure.observation.runId),status:id(failure.observation.status)}) : null,
+    })
+    try { (deps.diagnose ?? recordRunFailureDiagnostic)(record) } catch { /* Diagnostics cannot break a command or its notice. */ }
+  }
+
+  function observed(state: FlowRunState, failure: FlowRunFailure | undefined, run: FlowRunInfo | null, failed = false) {
+    if (!failure || state.error?.publicationId !== failure.publicationId) return
+    state.error = { ...failure, observation: { state: failed ? 'failed' : 'read', runId: failed ? null : run?.runId ?? null, status: failed ? null : run?.status ?? null } }
+    diagnose(state.error)
+  }
   // flowgate.v02.0083 T#4 rev1: the next read of a Flow whose run read showed a requested execution.
   const rereads = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -228,7 +272,7 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     return runs[flowId]
   }
 
-  function read(flowId: string) {
+  function read(flowId: string, failure?: FlowRunFailure) {
     const projectId = deps.projectId()
     if (!available || projectId === null || runs[flowId]?.action) return
     const token = ++seq
@@ -242,36 +286,63 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
         if (state.action) return
         state.run = run
         state.readState = 'read'
+        observed(state, failure, run)
         rereadWhileRequested(flowId, run)
       },
       () => {
         if (reads.get(flowId) !== token) return
         reads.delete(flowId)
         // Not "no run": the run stays unconfirmed (the session keeps its lock) until a later read answers.
-        if (deps.isOpen(projectId, flowId) && runs[flowId]) runs[flowId].readState = 'failed'
+        if (deps.isOpen(projectId, flowId) && runs[flowId]) {
+          runs[flowId].readState = 'failed'
+          observed(runs[flowId], failure, null, true)
+        }
       },
     )
   }
 
-  /** Runs one action; a refusal is kept and the run read again. */
-  async function act(flowId: string, action: FlowRunState['action'], body: (projectId: string, state: FlowRunState) => Promise<boolean>) {
+  /** The context belongs to this opening of this Flow; late answers cannot migrate to a reopened tab. */
+  async function act(flowId: string, action: FlowRunMode | 'pause' | 'resume' | 'stop', body: (projectId: string, state: FlowRunState, request: {stage: FlowRunFailureStage; targetRunId: string | null; alive: () => boolean}) => Promise<boolean>) {
     const projectId = deps.projectId()
     if (!available || projectId === null) return false
     const state = stateOf(flowId)
     if (state.action) return false
+    const alive = () => deps.projectId() === projectId && deps.isOpen(projectId, flowId) && runs[flowId] === state
+    const starting = action === 'next' || action === 'all'
+    const localRequestId = `${scope}:request:${++requests}`
+    const baselineRunId = state.run?.runId ?? null
+    const flowLabel = safeFlowLabel(deps.flowLabel?.(flowId))
+    const request = { stage: (starting ? 'before_prepare' : 'target_read') as FlowRunFailureStage, targetRunId: null as string | null, alive }
     state.action = action
     state.error = null
     reads.delete(flowId)
     let ok = false
+    let failure: FlowRunFailure | undefined
     try {
-      ok = await body(projectId, state)
+      ok = await body(projectId, state, request)
     } catch (error) {
-      if (deps.isOpen(projectId, flowId)) state.error = failureOf('run', error, ++failures)
+      if (alive()) {
+        const refused = error as FlowRunError | null
+        const status = typeof refused?.status === 'number' ? refused.status : null
+        const sent = request.stage === 'start' || request.stage === 'pause' || request.stage === 'resume' || request.stage === 'stop'
+        const outcome = sent && (status === null || status >= 500 || status === 408) ? 'unconfirmed'
+          : request.stage === 'revision' || (status !== null && status >= 400 && status < 500) ? 'rejected' : 'failed'
+        const n = ++failures
+        failure = failureOf('run', error, n, {
+          scope, publicationId: `${scope}:failure:${n}`, localRequestId,
+          serverRequestId: diagnosticId(refused?.serverRequestId),
+          action: starting ? 'start' : action, mode: starting ? action : null,
+          stage: request.stage, projectId, flowId, flowLabel, targetRunId: request.targetRunId,
+          baselineRunId, outcome, observation: {state:'pending',runId:null,status:null},
+        })
+        state.error = failure
+        diagnose(failure)
+      }
     } finally {
       state.action = null
     }
-    if (!deps.isOpen(projectId, flowId)) return false
-    if (!ok) read(flowId)
+    if (!alive()) return false
+    if (!ok) read(flowId, failure)
     deps.refresh(flowId)
     return ok
   }
@@ -282,15 +353,18 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
   }
 
   function run(flowId: string, mode: FlowRunMode): Promise<boolean> {
-    return act(flowId, mode, async (projectId, state) => {
+    return act(flowId, mode, async (projectId, state, request) => {
       // A locked run takes no command (its buttons are 일시정지 / 재개 / 중지); the draft is confirmed on an idle Flow only.
       if (isRunLocked(state.run)) return false
+      request.stage = 'before_prepare'
       if (deps.beforePrepare && !(await deps.beforePrepare(flowId, mode))) return false
       if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
       if (state.run?.status === 'idle' && deps.hasDraftToConfirm?.(flowId) && source.checkRevisionAdoption) {
+        request.stage = 'save_draft'
         if (deps.saveDraftBeforeCheck && !(await deps.saveDraftBeforeCheck(flowId))) return false
         if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
         // A negative assessment is a run refusal. Only failure to obtain an assessment falls back (T A-2.3).
+        request.stage = 'revision'
         let refusal: FlowRunError | null = null
         try {
           refusal = await source.checkRevisionAdoption(projectId, flowId)
@@ -300,10 +374,14 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
         if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
         if (refusal) throw refusal
       }
+      request.stage = 'prepare'
       if (!(await deps.prepare(flowId))) return false
       if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || deps.canProceed?.(flowId) === false) return false
       // One server call: the step / full command. Nothing is stopped from here after it (T#2 settles the step).
-      state.run = await source.startRun!(projectId, flowId, mode === 'next' ? 'step' : 'full')
+      request.stage = 'start'
+      const answer = await source.startRun!(projectId, flowId, mode === 'next' ? 'step' : 'full')
+      if (!request.alive()) return false
+      state.run = answer
       state.readState = 'read'
       return true
     })
@@ -311,10 +389,14 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
 
   /** Pause / resume / stop of the Flow's run: one server call on the run this tab knows (or the current one). */
   function control(flowId: string, action: 'pause' | 'resume' | 'stop', call: (projectId: string, runId: string) => Promise<FlowRunInfo>) {
-    return act(flowId, action, async (projectId, state) => {
+    return act(flowId, action, async (projectId, state, request) => {
       const runId = await runIdOf(projectId, flowId, state)
-      if (!runId) return false
-      state.run = await call(projectId, runId)
+      if (!runId || !request.alive()) return false
+      request.targetRunId = runId
+      request.stage = action
+      const answer = await call(projectId, runId)
+      if (!request.alive()) return false
+      state.run = answer
       state.readState = 'read'
       return true
     })

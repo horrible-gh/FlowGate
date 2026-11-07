@@ -238,6 +238,7 @@
 //
 // flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4, Q #510 E-1) — an F5 brings the working screen back. See
 // "F5 restore" below.
+import { createRunFailurePublisher, runErrorText as requestErrorText } from './runFailureToast'
 import { AiRoleSetupModeless } from '@/features/ai'
 import { createFirstRunAiSetup } from '@/features/ai'
 import { RunResultDetailWindow, RunResultWindow, createRunResultWatch, runWaitText } from '@/features/ai'
@@ -275,6 +276,7 @@ import {
   isMenuCommandEnabled,
   nextRunPhase,
   runBandView,
+  runCommandHold,
   runPhaseOf,
   zoomPercent,
   type DesignerArrangeCommand,
@@ -387,15 +389,38 @@ const runResult = createRunResultWatch({
   load: (runId, commandSeq) => projectStore.loadFlowCommandResult(runId, commandSeq),
   tell: (result) => tellRunWait(result),
 })
+// flowgate.v02.0143 T#1: every run observation of a watched Flow goes to its watch (running too: the watch keeps the
+// latest), and a Flow whose tab closed drops its watch (`forget`).
+const isOpenTab = (flowId: string) => center.state.tabs.some((tab) => tab.flowId === flowId)
 watch(
   () => Object.keys(runResult.pending).map((flowId) => {
     const run = center.runStatus(flowId).run
-    return [flowId, run?.runId ?? '', run?.status ?? '', run?.lastEventSeq ?? ''].join('|')
+    return [flowId, isOpenTab(flowId), run?.runId ?? '', run?.status ?? '', run?.lastEventSeq ?? ''].join('|')
   }).join('\n'),
   () => {
-    for (const flowId of Object.keys(runResult.pending)) runResult.observe(flowId, center.runStatus(flowId).run)
+    for (const flowId of Object.keys(runResult.pending)) {
+      if (isOpenTab(flowId)) runResult.observe(flowId, center.runStatus(flowId).run)
+      else runResult.forget(flowId)
+    }
   },
 )
+// flowgate.v02.0143 T#1: a watch whose reads ran out of retries (`stalled`) reads again when its run is read again — a
+// reconnect's resync reads every open Canvas and run (projectEvents → flowCanvasEvents), even when nothing changed — and
+// when this browser tab is shown again.
+function recheckRunResults() {
+  for (const flowId of Object.keys(runResult.pending)) {
+    if (runResult.pending[flowId]?.stalled) runResult.recheck(flowId, center.runStatus(flowId).run)
+  }
+}
+watch(() => Object.keys(runResult.pending).map((flowId) => center.runStatus(flowId).run), recheckRunResults)
+function onVisibilityRecheck() {
+  if (document.visibilityState === 'visible') recheckRunResults()
+}
+document.addEventListener('visibilitychange', onVisibilityRecheck)
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibilityRecheck)
+  runResult.dispose()
+})
 watch([projectId, () => projectStore.designerSessionOwner], () => runResult.clear())
 watch([() => center.state.activeFlowId, projectId, () => projectStore.designerSessionOwner], () => aiSetup.cancel(), { flush: 'sync' })
 onBeforeUnmount(() => aiSetup.cancel())
@@ -436,19 +461,6 @@ function dismissToast(id: string | number) {
   toasts.value = toasts.value.filter((item) => item.id !== id)
 }
 
-/**
- * flowgate.v02.0061 T#14: refusals whose wording is the server's (sent in the request's x-locale): their message as
- * sent, when it says something.
- */
-const SERVER_WORDED_ERRORS: ReadonlySet<string> = new Set([
-  'graph_run_locked',
-  'graph_git_required',
-  'graph_attempt_inactive',
-  'graph_hold_done_node',
-  'graph_time_machine_blocked',
-  'graph_engine_owned',
-])
-
 /** flowgate.v02test.0001 B0001 §2: the one short sentence of a v0.1 command that did not go (null: nothing to tell). */
 function v01RunErrorKey(outcome: V01RunOutcome): string | null {
   if (outcome.kind === 'busy') return 'gui.designer.top.run_errors.run_already_active'
@@ -460,13 +472,8 @@ function v01RunErrorKey(outcome: V01RunOutcome): string | null {
   return 'gui.designer.top.run_errors.other'
 }
 
-/** A refused run in plain words: the server's message for its 0061 codes, else the code's own sentence or the common one. */
 function runErrorText(error: FlowRunFailure): string {
-  const { code } = error
-  const message = error.message.trim()
-  if (code && SERVER_WORDED_ERRORS.has(code) && message && message !== code) return message
-  const key = code ? `gui.designer.top.run_errors.${code}` : ''
-  return key && te(key) ? t(key) : t('gui.designer.top.run_errors.other')
+  return requestErrorText(error, (key, values) => values ? t(key, values) : t(key), te)
 }
 
 /**
@@ -494,11 +501,14 @@ function holdErrorText(error: FlowRunFailure): string {
   return key && te(key) ? `${head} — ${t(key)}` : head
 }
 
+const runFailurePublisher = createRunFailurePublisher()
+// Tab round trips and session replacement retain their existing reappearance policy.
+watch([projectId, () => center.state.activeFlowId, () => projectStore.designerSessionOwner], () => runFailurePublisher.clear(), { flush: 'sync' })
 watch(
-  () => center.activeRun.value?.error?.seq ?? 0,
-  (seq) => {
+  () => center.activeRun.value?.error,
+  () => {
     const error = center.activeRun.value?.error
-    if (!seq || !error) return
+    if (!error || !runFailurePublisher.accept(error)) return
     toastSeq += 1
     const text = () => (error.kind === 'approval' ? approvalErrorText(error) : error.kind === 'hold' ? holdErrorText(error) : runErrorText(error))
     const tone = error.kind === 'approval' && error.approval?.keepButton ? 'warning' : 'danger'
@@ -624,6 +634,8 @@ const menuTargets = computed<DesignerMenuTargets>(() => ({
   runBusy: !!center.activeRun.value?.action,
   // flowgate.v02.0061 TR0031 rev1: the open Flow's run status is not confirmed yet (being read, or the read failed).
   runUnknown: center.canRun && !center.activeRunStatus.value.known,
+  // flowgate.v02.0143 T#1: an automatic Q&A responder answers the open Flow's idle run — 다음 단계 / 전체 실행 wait.
+  runHold: center.canRun && runCommandHold(center.activeRunStatus.value.run),
   // flowgate.v02.0059 T#2: 정렬 (2+) / 균등 분배 (3+) need that many selected cards.
   selectedCount: center.activeView.value?.selectedNodeIds.length ?? 0,
 }))
@@ -998,6 +1010,9 @@ interface RestoreTarget {
   readonly expandedGroupIds: string[]
   readonly leftMode: string
   readonly rightTool: string
+  /** flowgate.v02.0143 T#1: the run result watches and the results shown, armed again for the Flows it restores. */
+  readonly runWatches: NonNullable<DesignerSessionSnapshot['runWatches']>
+  readonly runSeen: NonNullable<DesignerSessionSnapshot['runSeen']>
 }
 
 function restoreTarget(saved: DesignerSessionSnapshot): RestoreTarget {
@@ -1009,6 +1024,8 @@ function restoreTarget(saved: DesignerSessionSnapshot): RestoreTarget {
     expandedGroupIds: [...new Set([...saved.explorer.expandedGroupIds, ...(pending?.explorer.expandedGroupIds ?? [])])],
     leftMode: pending?.leftMode ?? saved.leftMode,
     rightTool: pending?.rightTool ?? saved.rightTool,
+    runWatches: saved.runWatches ?? [],
+    runSeen: saved.runSeen ?? [],
   }
 }
 
@@ -1181,6 +1198,12 @@ function applyRestore(run: RestoreRun, nodes: GroupTreeNode[]) {
   layout.activeLeftMode = touched.has('left') ? userLeft : (savedLeft ?? userLeft)
   if (!touched.has('right') && savedRight) layout.activeRightTool = savedRight
 
+  // flowgate.v02.0143 T#1: the run result watches of the Flows restored here (the same Project's tree only; a Flow whose
+  // Graph read is refused closes, and its watch goes with the tab) — a result shown before the F5 is not shown again.
+  const restored = new Set(tabs.map((tab) => tab.flowId))
+  runResult.restore(target.runWatches.filter((entry) => restored.has(entry.flowId)),
+    target.runSeen.filter((entry) => restored.has(entry.flowId)))
+
   saving = true
   save()
 }
@@ -1250,6 +1273,18 @@ function save() {
     leftMode: layout.activeLeftMode,
     rightTool: layout.activeRightTool,
   }
+  // flowgate.v02.0143 T#1: the run result watches of the open Flows and the results shown in them (only when any); a
+  // restore still waiting keeps the saved ones of the Flows it has not brought back yet.
+  const open = new Set(snapshot.tabs.map((tab) => tab.flowId))
+  const results = runResult.persisted()
+  let runWatches = results.watches.filter((entry) => open.has(entry.flowId))
+  let runSeen = results.seen.filter((entry) => open.has(entry.flowId))
+  if (restoring && restoring.pid === pid) {
+    runWatches = [...runWatches, ...restoring.target.runWatches.filter((entry) => !runWatches.some((w) => w.flowId === entry.flowId))]
+    runSeen = [...runSeen, ...restoring.target.runSeen.filter((entry) => !runSeen.some((w) => w.flowId === entry.flowId))]
+  }
+  if (runWatches.length > 0) snapshot.runWatches = runWatches.map((entry) => ({ ...entry }))
+  if (runSeen.length > 0) snapshot.runSeen = runSeen.map((entry) => ({ flowId: entry.flowId, keys: [...entry.keys] }))
   // A restore still waiting: what it has not confirmed stays for the next entry, except what the user changed.
   const run = restoring
   if (run && run.pid === pid) {
@@ -1273,7 +1308,7 @@ function save() {
 // Every change of a restorable item (tab names included) is saved; while a restore waits, only from the user's first
 // change on.
 watch(
-  () => JSON.stringify([projectId.value, screenItems(), center.state.tabs.map((tab) => tab.name)]),
+  () => JSON.stringify([projectId.value, screenItems(), center.state.tabs.map((tab) => tab.name), runResult.persisted()]),
   () => {
     const run = restoring
     if (run && run.pid === projectId.value) {

@@ -139,6 +139,11 @@ export interface FlowRunInfo {
    * (`viewer.can_approve`). Absent = not told (an older server, a run the Canvas read alone tells): no [승인].
    */
   readonly viewerCanApprove?: boolean
+  /**
+   * flowgate.v02.0143 T#1 (W1): the server's `qa_responding` — an automatic Q&A responder answers a question of the idle
+   * run's card now (designerTop `runCommandHold`). Absent = not told (an older server, a sample source): never held.
+   */
+  readonly qaResponding?: boolean
 }
 
 /**
@@ -155,6 +160,7 @@ export interface FlowDocumentLink {
 
 /** A refused run operation rejects with an Error carrying the server's `code` (e.g. `run_policy_undecided`). */
 export interface FlowRunError extends Error {
+  readonly serverRequestId?: string | null
   readonly code?: string | null
   /** flowgate.v02.0056 F2-1: the HTTP status and the server's params (a refused approval names its document). */
   readonly status?: number | null

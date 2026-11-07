@@ -807,6 +807,14 @@ export default {
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: '停止中 · 次のカード {n} 件待ち',
       run_pending_keys: '次に進むカード: {keys}',
+      run_request_actions: {
+        start: '開始',
+        prepare: '実行準備',
+        revision: 'revision 評価',
+        target_read: '制御対象の確認',
+      },
+      run_request_failed: '{action}リクエストを処理できませんでした。',
+      run_request_unconfirmed: '{action}リクエストの処理結果を確認できませんでした。',
       run_errors: {
         run_policy_undecided: '実行ルールがまだ決まっていないため実行できません。',
         run_already_active: 'すでに実行中です。',

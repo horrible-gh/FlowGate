@@ -807,6 +807,14 @@ export default {
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: 'Stopped · {n} next card(s) waiting',
       run_pending_keys: 'Cards to go on from: {keys}',
+      run_request_actions: {
+        start: 'Start',
+        prepare: 'Run preparation',
+        revision: 'Revision assessment',
+        target_read: 'Control target lookup',
+      },
+      run_request_failed: 'Could not process the {action} request.',
+      run_request_unconfirmed: 'Could not confirm the outcome of the {action} request.',
       run_errors: {
         run_policy_undecided: 'The run rules are not decided yet, so it cannot run.',
         run_already_active: 'It is already running.',

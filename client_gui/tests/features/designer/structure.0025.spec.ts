@@ -26,6 +26,7 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       'ExplorerModeTabs.vue',
       'ShellPlaceholder.vue',
       'designerLayout.ts',
+      'runFailureToast.ts',
     ].sort())
   })
 
@@ -76,7 +77,8 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
         // 0113 D §6.2: only the Shell hosts the shared first-run role surface/coordinator; 0113 T#5 (D 개정 §6.5): and the
         // run result windows with their watch, from the same features/ai surface.
         const firstRunRoles = name === 'DesignerShell.vue' && spec === '@/features/ai'
-        expect(firstRunRoles || allowed.some((re) => re.test(spec)), `${name}: ${spec}`).toBe(true)
+        const runFailureParts = name === 'runFailureToast.ts' && /^\.\.\/center\/run\/(flowRunControl|runFailureDiagnostic)$/.test(spec)
+        expect(firstRunRoles || runFailureParts || allowed.some((re) => re.test(spec)), `${name}: ${spec}`).toBe(true)
       }
     }
   })
