@@ -58,8 +58,9 @@ def is_system_error(reason: Optional[str]) -> bool:
 
 def retry_due(reasons: Iterable[str]) -> bool:
     """May the reconciliation try the automatic path again for a submission whose recorded reasons are ``reasons``
-    (oldest first)? None recorded: yes (the first try). A needs_intervention reason recorded: no — the card waits for a
-    memo rework / re-review or the Time Machine. Only system errors: while fewer than ``SYSTEM_ERROR_RETRY_LIMIT``."""
+    (oldest first)? None recorded: yes (the first try). A needs_intervention reason recorded: no automatic retry.
+    A general review card is not a direct Time Machine target (impact requires a done node).
+    Only system errors: while fewer than ``SYSTEM_ERROR_RETRY_LIMIT``."""
     found = [r for r in reasons if r]
     if not found:
         return True

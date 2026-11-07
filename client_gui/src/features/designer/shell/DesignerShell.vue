@@ -39,6 +39,12 @@
       @update:zoom="onZoomSelect"
       @open-recent="onOpenRecent"
     />
+    <aside v-if="center.activeRun.value?.commandRecovery" class="run-command-recovery" role="status" data-test="run-command-recovery">
+      <span>{{ t(`gui.designer.top.run_command_recovery.${center.activeRun.value?.commandRecovery?.key}`) }}</span>
+      <button type="button" :disabled="!!center.activeRun.value?.action" @click="center.activeRun.value?.commandRecovery?.retry()">{{ t('gui.designer.top.run_command_recovery.retry') }}</button>
+      <button v-if="center.activeRun.value?.commandRecovery?.voidPrevious" type="button" :disabled="!!center.activeRun.value?.action" @click="center.activeRun.value?.commandRecovery?.voidPrevious?.()">{{ t('gui.designer.top.run_command_recovery.void') }}</button>
+      <button v-if="center.activeRun.value?.commandRecovery?.discardCorrupt" type="button" :disabled="!!center.activeRun.value?.action" @click="discardCorruptRunCommand">{{ t('gui.designer.top.run_command_recovery.discard') }}</button>
+    </aside>
     <DesignerBody
       :left-width="leftColumnWidth(layout)"
       :right-width="rightColumnWidth(layout)"
@@ -392,6 +398,16 @@ const runResult = createRunResultWatch({
 // flowgate.v02.0143 T#1: every run observation of a watched Flow goes to its watch (running too: the watch keeps the
 // latest), and a Flow whose tab closed drops its watch (`forget`).
 const isOpenTab = (flowId: string) => center.state.tabs.some((tab) => tab.flowId === flowId)
+// The recovery signal has a server-provided sequence; observations never create it.
+watch(() => center.state.tabs.map(tab => [tab.flowId, center.state.runs[tab.flowId]?.confirmedCommand] as const), (entries, previous) => {
+  for (const [flowId, command] of entries) {
+    if (command && previous?.find(([id]) => id === flowId)?.[1] !== command) runResult.armCommand(flowId, command)
+  }
+}, { flush: 'sync' })
+function discardCorruptRunCommand() {
+  const recovery = center.activeRun.value?.commandRecovery
+  if (recovery?.discardCorrupt && window.confirm(t('gui.designer.top.run_command_recovery.discard_warning'))) void recovery.discardCorrupt()
+}
 watch(
   () => Object.keys(runResult.pending).map((flowId) => {
     const run = center.runStatus(flowId).run
@@ -473,7 +489,10 @@ function v01RunErrorKey(outcome: V01RunOutcome): string | null {
 }
 
 function runErrorText(error: FlowRunFailure): string {
-  return requestErrorText(error, (key, values) => values ? t(key, values) : t(key), te)
+  return requestErrorText(error, (key, values) => values ? t(key, values) : t(key), te, (key) => {
+    const load = error.flowId ? center.state.graphs[error.flowId] : null
+    return load?.status === 'ready' ? load.graph.nodes.find((node) => node.id === key)?.title ?? null : null
+  })
 }
 
 /**
@@ -922,7 +941,7 @@ function onTopCommand(command: DesignerTopCommand) {
         const known = center.runStatus(flowId).run
         const before = known ? { runId: known.runId, status: known.status, lastEventSeq: known.lastEventSeq } : null
         void center.runFlow(flowId, command === 'run.next' ? 'next' : 'all').then((taken) => {
-          if (!taken) return
+          if (!taken || center.state.runs[flowId]?.run?.command) return
           runResult.arm(flowId, before)
           runResult.observe(flowId, center.runStatus(flowId).run)
         })
@@ -1571,6 +1590,16 @@ const contextMenu = useDesignerContextMenu({
   overflow: hidden;
   color: var(--fg2-text);
   font-family: var(--fg2-font);
+}
+
+.run-command-recovery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  border-bottom: 1px solid var(--fg2-border);
 }
 
 /* ≤1120px the App Shell scrolls as a page and gives no height; keep the Body usable. The

@@ -10,7 +10,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Request
 
 from modules.flow_gate.graph_workflow.domain.run_request import (
-    parse_command_seq, parse_gate_decision, parse_gate_intent, parse_mode, parse_page, parse_reason, parse_start,
+    parse_command_request_id, parse_command_seq, parse_gate_decision, parse_gate_intent, parse_mode, parse_page, parse_reason, parse_start,
 )
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.graph_workflow.services import canvas_service, gate_service, run_service
@@ -27,14 +27,43 @@ def post_flow_run(flow_id: str, request: Request, body: Any = Body(default=None)
         envelope.client_id_of(request)
         revision_no, errors = parse_start(body)
         mode, mode_errors = parse_mode(body)                    # flowgate.v02.0061 T#2: step / full
-        errors = errors or mode_errors
+        command_request_id, cid_errors = parse_command_request_id(body)
+        errors = errors or mode_errors  # Preserve legacy validation precedence without an ID.
+        errors = errors + [e for e in cid_errors if e not in errors]
         if errors:
             raise envelope.invalid(request, errors)
         group = canvas_service.load_flow(flow_id)
         envelope.authorize(user_id, group, "write")
-        return run_service.start_run(group, user_id, revision_no, mode)
+        return run_service.start_run(group, user_id, revision_no, mode, command_request_id)
 
     return envelope.run(request, handle, status=201)
+
+
+def _command_access(flow_id: str, cid: str, request: Request, permission: str):
+    user_id = envelope.authenticate(request)
+    envelope.client_id_of(request)
+    normalized, errors = parse_command_request_id({"command_request_id": cid})
+    if errors:
+        raise envelope.invalid(request, errors)
+    group = canvas_service.load_flow(flow_id)
+    envelope.authorize(user_id, group, permission)
+    return user_id, normalized
+
+
+@router.get("/flows/{flow_id}/runs/commands/{command_request_id}")
+def get_flow_command(flow_id: str, command_request_id: str, request: Request):
+    def handle() -> dict:
+        _, cid = _command_access(flow_id, command_request_id, request, "read")
+        return run_service.command_lookup(flow_id, cid)
+    return envelope.run(request, handle)
+
+
+@router.post("/flows/{flow_id}/runs/commands/{command_request_id}/void")
+def post_flow_command_void(flow_id: str, command_request_id: str, request: Request):
+    def handle() -> dict:
+        user_id, cid = _command_access(flow_id, command_request_id, request, "write")
+        return run_service.void_command(flow_id, cid, user_id)
+    return envelope.run(request, handle)
 
 
 @router.get("/flows/{flow_id}/runs/revision-adoption")

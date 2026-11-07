@@ -25,6 +25,7 @@
 // call the Shell hands in (`cardHold`, features/document); a done card's Graph Time Machine goes through the run transport.
 //
 // flowgate.v02.0064 T#4: each node keeps its card title state; a card's title is saved through the store loader.
+import type { FlowRunAnswer, RunCommandLookup } from '@/features/project/flowRunApi'
 import type {
   FlowCanvas,
   FlowCanvasChangeHandlers,
@@ -67,7 +68,9 @@ export interface FlowCanvasLoaders {
   /** flowgate.v02.0053 T#9: the Graph run (P0008 §7 S5); absent = the Designer runs nothing. */
   loadFlowRun?(flowId: string): Promise<FlowRun | null>
   checkFlowRevisionAdoption?(flowId: string): Promise<FlowRunError | null>
-  startFlowRun?(flowId: string, mode?: FlowRunCommand): Promise<FlowRun>
+  startFlowRun?(flowId: string, mode?: FlowRunCommand, commandRequestId?: string): Promise<FlowRunAnswer>
+  lookupFlowRunCommand?(flowId: string, cid: string): Promise<RunCommandLookup>
+  voidFlowRunCommand?(flowId: string, cid: string): Promise<RunCommandLookup>
   stopFlowRun?(runId: string): Promise<FlowRun>
   resumeFlowRun?(runId: string): Promise<FlowRun>
   /** flowgate.v02.0061 T#14: Pause; absent = the Designer cannot pause. */
@@ -93,7 +96,8 @@ export function toCardHolds(definition: FlowGraphDefinition): Record<string, boo
   return holds
 }
 
-const toRunInfo = (run: FlowRun): FlowRunInfo => ({
+const toRunInfo = (run: FlowRunAnswer): FlowRunInfo => ({
+  ...(run.command ? { command: run.command } : {}),
   runId: run.runId,
   status: run.status,
   openNodeKeys: run.openNodeKeys,
@@ -319,7 +323,9 @@ export function createServerFlowGraphSource(
     checkRevisionAdoption: loaders.checkFlowRevisionAdoption
       ? (_projectId, flowId) => loaders.checkFlowRevisionAdoption!(flowId)
       : undefined,
-    startRun: runLoaders ? async (_projectId, flowId, mode) => toRunInfo(await loaders.startFlowRun!(flowId, mode)) : undefined,
+    startRun: runLoaders ? async (_projectId, flowId, mode, commandRequestId) => toRunInfo(await (commandRequestId ? loaders.startFlowRun!(flowId, mode, commandRequestId) : loaders.startFlowRun!(flowId, mode))) : undefined,
+    ...(loaders.lookupFlowRunCommand ? { lookupCommand: (_projectId: string, flowId: string, cid: string) => loaders.lookupFlowRunCommand!(flowId, cid) } : {}),
+    ...(loaders.voidFlowRunCommand ? { voidCommand: (_projectId: string, flowId: string, cid: string) => loaders.voidFlowRunCommand!(flowId, cid) } : {}),
     stopRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.stopFlowRun!(runId)) : undefined,
     resumeRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.resumeFlowRun!(runId)) : undefined,
     pauseRun: runLoaders && loaders.pauseFlowRun ? async (_projectId, runId) => toRunInfo(await loaders.pauseFlowRun!(runId)) : undefined,

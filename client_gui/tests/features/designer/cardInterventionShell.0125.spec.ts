@@ -309,7 +309,7 @@ describe('Designer Shell: the exhausted-review card as the user sees it (0125 T#
     await command(via, cmd)
 
     // One request: POST /flows/{id}/runs with the step / full mode — no stop, no resume, nothing else.
-    expect(sentRuns()).toEqual([[RUNS_URL, { revision_no: null, mode }]])
+    expect(sentRuns()).toEqual([[RUNS_URL, { revision_no: null, mode, command_request_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/) }]])
     // The run is locked: the toolbar shows 일시정지 / 중지, the Run menu's 다음 단계 / 전체 실행 are disabled.
     expect(toolbarRunCommands()).toEqual(['run.pause', 'run.stop'])
     const pop = await openMenu('run')
@@ -320,7 +320,7 @@ describe('Designer Shell: the exhausted-review card as the user sees it (0125 T#
     await pop.get(`[data-command="${cmd}"]`).trigger('click')
     await settle()
     await closeMenu()
-    expect(sentRuns()).toEqual([[RUNS_URL, { revision_no: null, mode }]])
+    expect(sentRuns()).toEqual([[RUNS_URL, { revision_no: null, mode, command_request_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/) }]])
   })
 
   it('전체 실행 then the run moves on: done clears the sentence on the same card; the next command that ends exhausted shows it again', async () => {
@@ -355,8 +355,8 @@ describe('Designer Shell: the exhausted-review card as the user sees it (0125 T#
     await closeMenu()
 
     expect(sentRuns()).toEqual([
-      [RUNS_URL, { revision_no: null, mode: 'full' }],
-      [RUNS_URL, { revision_no: null, mode: 'step' }],
+      [RUNS_URL, { revision_no: null, mode: 'full', command_request_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/) }],
+      [RUNS_URL, { revision_no: null, mode: 'step', command_request_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/) }],
     ])
   })
 
@@ -368,7 +368,7 @@ describe('Designer Shell: the exhausted-review card as the user sees it (0125 T#
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     server.onStart = runningRun
     await command('menu', 'run.next')
-    expect(sentRuns()).toEqual([[RUNS_URL, { revision_no: null, mode: 'step' }]])
+    expect(sentRuns()).toEqual([[RUNS_URL, { revision_no: null, mode: 'step', command_request_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/) }]])
     server.run = stepDoneRun()
     await vi.advanceTimersByTimeAsync(REQUESTED_REREAD_MS)
     await settle()

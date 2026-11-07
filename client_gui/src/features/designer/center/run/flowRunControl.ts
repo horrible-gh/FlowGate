@@ -45,8 +45,11 @@
 // again after REQUESTED_REREAD_MS, so the band's executions and a card's running lock (its WP window) follow it.
 import { cardApprovalFailureView, cardApprovalRefusalOf, type CardApprovalFailureView, type CardApprovalRefusal } from '../graph/cardStateView'
 import type { FlowGraphSource, FlowRunError, FlowRunInfo, FlowTimeMachineRefusal, FlowTimeMachineResult } from '../graph/flowGraphSource'
+import { useCurrentUser } from '@/core/auth/currentUser'
+import type { RunCommandIdentity, RunCommandLookup } from '@/features/project/flowRunApi'
+import { createRunCommandStore, STALE_AFTER_MS, type RunCommandStore, type RunCommandScope, type RunCommandRecord } from './runCommandStore'
 import { isRunLocked } from './flowRunLock'
-import { diagnosticId, safeFlowLabel, recordRunFailureDiagnostic, type RunFailureDiagnostic } from './runFailureDiagnostic'
+import { diagnosticId, safeFlowLabel, recordRunFailureDiagnostic, runBlockageOf, type RunBlockage, type RunFailureDiagnostic } from './runFailureDiagnostic'
 
 export type FlowRunMode = 'next' | 'all'
 
@@ -67,8 +70,18 @@ export type FlowTimeMachineOutcome =
   | { readonly kind: 'failed'; readonly code: string | null; readonly status: number | null; readonly message: string }
   | { readonly kind: 'skipped' }
 
-export type FlowRunFailureStage = 'before_prepare' | 'save_draft' | 'revision' | 'prepare' | 'start' | 'target_read' | 'pause' | 'resume' | 'stop'
+export type FlowRunFailureStage = 'command_lookup' | 'before_prepare' | 'save_draft' | 'revision' | 'prepare' | 'start' | 'target_read' | 'pause' | 'resume' | 'stop'
+export interface RunCommandRecovery {
+  readonly key: 'unconfirmed' | 'stale' | 'legacy' | 'corrupt' | 'storage_failed' | 'confirmed' | 'flow_gone' | 'legacy_stale'
+  readonly retry: () => Promise<void>
+  readonly voidPrevious: (() => Promise<void>) | null
+  readonly discardCorrupt: (() => Promise<void>) | null
+}
 export interface FlowRunFailureContext {
+  readonly responseStatus?: number | null
+  readonly transport?: 'no_response' | 'http_error' | 'unreadable_2xx'
+  readonly commandRequestId?: string | null
+  readonly baseline?: { readonly state: 'run' | 'none' | 'unread'; readonly runId: string | null; readonly status: string | null; readonly lastEventSeq: number | null }
   readonly scope: string
   readonly publicationId: string
   readonly localRequestId: string
@@ -83,7 +96,7 @@ export interface FlowRunFailureContext {
   readonly targetRunId: string | null
   readonly baselineRunId: string | null
   readonly outcome: 'rejected' | 'unconfirmed' | 'failed'
-  readonly observation: { readonly state: 'pending' | 'read' | 'failed'; readonly runId: string | null; readonly status: string | null }
+  readonly observation: { readonly state: 'pending' | 'read' | 'failed'; readonly runId: string | null; readonly status: string | null; readonly lastEventSeq?: number | null }
 }
 
 export interface FlowRunFailure extends Partial<FlowRunFailureContext> {
@@ -101,6 +114,8 @@ export interface FlowRunFailure extends Partial<FlowRunFailureContext> {
   readonly approval: CardApprovalFailureView | null
   /** flowgate.v02.0056 F2-1: what a refused [승인] names in its params (cardApprovalRefusalOf), else null. */
   readonly refusal: CardApprovalRefusal | null
+  /** Safe server-named adoption blockers; absent for legacy producers. */
+  readonly blocked?: RunBlockage | null
   /** Grows with every refusal, so the same refusal twice is still told apart. */
   readonly seq: number
 }
@@ -109,6 +124,9 @@ export interface FlowRunFailure extends Partial<FlowRunFailureContext> {
 export type FlowRunReadState = 'unread' | 'reading' | 'read' | 'failed'
 
 export interface FlowRunState {
+  /** Only a command block or registry found writes this signal. The Shell arms its result directly. */
+  confirmedCommand?: RunCommandIdentity
+  commandRecovery?: RunCommandRecovery
   /** The Flow's run as last read (flowgate.v02.0061 T#14: running / paused / stopping / idle), or null. */
   run: FlowRunInfo | null
   /** flowgate.v02.0061 TR0031 rev1: whether `run` is the confirmed run (`read`) — null then means no run. */
@@ -123,6 +141,8 @@ export interface FlowRunState {
 }
 
 export interface FlowRunControlDeps {
+  readonly commandStore?: RunCommandStore
+  readonly username?: () => string | null
   readonly flowLabel?: (flowId: string) => string | null
   readonly diagnose?: (record: RunFailureDiagnostic) => void
   readonly beforePrepare?: (flowId: string, mode: FlowRunMode) => Promise<boolean>
@@ -216,12 +236,18 @@ function failureOf(kind: FlowRunFailure['kind'], error: unknown, seq: number, co
     ...context,
     approval: kind === 'approval' ? cardApprovalFailureView(code, status, code === null && status === null) : null,
     refusal: kind === 'approval' ? cardApprovalRefusalOf(refused?.params) : null,
+    blocked: kind === 'run' ? runBlockageOf(code, refused?.params) : null,
     seq,
   }
 }
 
 export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<string, FlowRunState>): FlowRunControl {
   const { source } = deps
+  const currentUser = useCurrentUser()
+  const commandStore = deps.commandStore ?? (source.lookupCommand ? createRunCommandStore() : undefined)
+  const username = deps.username ?? (() => currentUser.user.value?.username ?? null)
+  const commandTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const commandBackoff = new Map<string, number>()
   const available = !!(source.loadRun && source.startRun && source.stopRun && source.resumeRun)
   // Latest read per Flow: an older read answering later is dropped, and an action outdates every read.
   const reads = new Map<string, number>()
@@ -238,14 +264,17 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
       action: id(failure.action), stage: id(failure.stage), mode: id(failure.mode),
       projectId: id(failure.projectId), flowId: id(failure.flowId), targetRunId: id(failure.targetRunId),
       baselineRunId: id(failure.baselineRunId), status: failure.status, code: id(failure.code), outcome: id(failure.outcome),
-      observation: failure.observation ? Object.freeze({state:failure.observation.state,runId:id(failure.observation.runId),status:id(failure.observation.status)}) : null,
+      blocked: failure.blocked ?? null,
+      responseStatus: failure.responseStatus ?? failure.status, transport: failure.transport,
+      commandRequestId: id(failure.commandRequestId), baseline: failure.baseline ? Object.freeze({ ...failure.baseline, runId: id(failure.baseline.runId), status: id(failure.baseline.status) }) : undefined,
+      observation: failure.observation ? Object.freeze({state:failure.observation.state,runId:id(failure.observation.runId),status:id(failure.observation.status),lastEventSeq:failure.observation.lastEventSeq ?? null}) : null,
     })
     try { (deps.diagnose ?? recordRunFailureDiagnostic)(record) } catch { /* Diagnostics cannot break a command or its notice. */ }
   }
 
   function observed(state: FlowRunState, failure: FlowRunFailure | undefined, run: FlowRunInfo | null, failed = false) {
     if (!failure || state.error?.publicationId !== failure.publicationId) return
-    state.error = { ...failure, observation: { state: failed ? 'failed' : 'read', runId: failed ? null : run?.runId ?? null, status: failed ? null : run?.status ?? null } }
+    state.error = { ...failure, observation: { state: failed ? 'failed' : 'read', runId: failed ? null : run?.runId ?? null, status: failed ? null : run?.status ?? null, lastEventSeq: failed ? null : run?.lastEventSeq ?? null } }
     diagnose(state.error)
   }
   // flowgate.v02.0083 T#4 rev1: the next read of a Flow whose run read showed a requested execution.
@@ -272,6 +301,121 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     return runs[flowId]
   }
 
+  function commandScope(projectId: string, flowId: string): RunCommandScope {
+    const user = username()
+    if (!user) throw Object.assign(new Error(''), { code: 'run_command_storage_unavailable' })
+    return { username: user, projectId, flowId }
+  }
+  function stopCommandTimer(flowId: string) {
+    const timer = commandTimers.get(flowId)
+    if (timer !== undefined) clearTimeout(timer)
+    commandTimers.delete(flowId)
+  }
+  function notice(flowId: string, key: RunCommandRecovery['key'], record?: RunCommandRecord) {
+    const state = stateOf(flowId)
+    const stale = !!record && commandStore!.now() - record.createdAt >= STALE_AFTER_MS
+    if ((key === 'corrupt' || key === 'storage_failed') && state.commandRecovery?.key !== key) {
+      const n = ++failures
+      state.error = failureOf('run', { code: key === 'corrupt' ? 'run_command_record_corrupt' : 'run_command_storage_unavailable' }, n, {
+        scope, publicationId: `${scope}:storage:${n}`, localRequestId: `${scope}:lookup:${++requests}`,
+        serverRequestId: null, action: 'start', mode: null, stage: 'command_lookup', projectId: deps.projectId() ?? '',
+        flowId, flowLabel: safeFlowLabel(deps.flowLabel?.(flowId)), targetRunId: null, baselineRunId: state.run?.runId ?? null,
+        outcome: 'failed', observation: { state: 'pending', runId: null, status: null },
+      })
+      diagnose(state.error)
+    }
+    state.commandRecovery = {
+      key: stale && key === 'unconfirmed' ? 'stale' : stale && key === 'legacy' ? 'legacy_stale' : key,
+      retry: () => recoverPending(flowId),
+      voidPrevious: stale ? () => recoverPending(flowId, true) : null,
+      discardCorrupt: key === 'corrupt' ? async () => {
+        const project = deps.projectId()
+        if (!project || !commandStore || state.action) return
+        const owner = commandScope(project, flowId)
+        await commandStore.withLock(owner, async () => {
+          commandStore.discardCorrupt(owner)
+          if (runs[flowId] === state) state.commandRecovery = undefined
+        })
+      } : null,
+    }
+  }
+  function waitForCommand(flowId: string, record: RunCommandRecord) {
+    stopCommandTimer(flowId)
+    const age = commandStore!.now() - record.createdAt
+    const backoff = commandBackoff.get(flowId) ?? 15_000
+    const delay = age < STALE_AFTER_MS ? STALE_AFTER_MS - age : backoff
+    if (age >= STALE_AFTER_MS) commandBackoff.set(flowId, Math.min(300_000, backoff * 2))
+    commandTimers.set(flowId, setTimeout(() => {
+      commandTimers.delete(flowId)
+      void recoverPending(flowId)
+    }, delay))
+  }
+  function pendingFailure(flowId: string, record: RunCommandRecord) {
+    const state = stateOf(flowId)
+    if (state.error?.commandRequestId === record.commandRequestId) return
+    const n = ++failures
+    state.error = failureOf('run', null, n, {
+      scope, publicationId: `${scope}:pending:${record.commandRequestId}`, localRequestId: `${scope}:lookup:${++requests}`,
+      serverRequestId: null, action: 'start', mode: record.mode === 'step' ? 'next' : 'all', stage: 'command_lookup',
+      projectId: record.projectId, flowId, flowLabel: safeFlowLabel(deps.flowLabel?.(flowId)), targetRunId: null,
+      baselineRunId: state.run?.runId ?? null, commandRequestId: record.commandRequestId,
+      responseStatus: null, transport: 'no_response', outcome: 'unconfirmed',
+      observation: { state: 'read', runId: state.run?.runId ?? null, status: state.run?.status ?? null, lastEventSeq: state.run?.lastEventSeq ?? null },
+    })
+    diagnose(state.error)
+  }
+  function applyLookup(flowId: string, record: RunCommandRecord, result: RunCommandLookup): 'found' | 'cleared' | 'pending' {
+    const state = stateOf(flowId)
+    const current = commandStore!.read(record)
+    if (current.kind !== 'pending' || current.record.commandRequestId !== record.commandRequestId) return 'pending'
+    if (result.kind === 'found') {
+      // This signal is consumed synchronously by the Shell before the pending identity is cleared.
+      state.confirmedCommand = { commandRequestId: record.commandRequestId, runId: result.runId, commandSeq: result.commandSeq, replayed: true }
+      state.error = null
+      notice(flowId, 'confirmed')
+      commandStore!.clear(record, record.commandRequestId)
+      stopCommandTimer(flowId)
+      commandBackoff.delete(flowId)
+      return 'found'
+    }
+    if (result.kind === 'voided' || result.kind === 'flow_gone') {
+      commandStore!.clear(record, record.commandRequestId)
+      state.error = null
+      state.commandRecovery = undefined
+      if (result.kind === 'flow_gone') notice(flowId, 'flow_gone')
+      stopCommandTimer(flowId)
+      commandBackoff.delete(flowId)
+      return 'cleared'
+    }
+    commandStore!.retain(record, result.kind === 'legacy')
+    notice(flowId, result.kind === 'legacy' ? 'legacy' : 'unconfirmed', record)
+    pendingFailure(flowId, record)
+    waitForCommand(flowId, record)
+    return 'pending'
+  }
+  async function queryCommand(projectId: string, flowId: string, record: RunCommandRecord, voiding = false): Promise<RunCommandLookup> {
+    try {
+      return await (voiding ? source.voidCommand?.(projectId, flowId, record.commandRequestId)
+        : source.lookupCommand?.(projectId, flowId, record.commandRequestId)) ?? { kind: 'legacy' }
+    } catch { return { kind: 'failed' } }
+  }
+  async function recoverPending(flowId: string, voiding = false): Promise<void> {
+    const projectId = deps.projectId()
+    const state = runs[flowId]
+    if (!commandStore || !projectId || !state || state.action || !deps.isOpen(projectId, flowId)) return
+    let owner: RunCommandScope
+    try { owner = commandScope(projectId, flowId) } catch { notice(flowId, 'storage_failed'); return }
+    await commandStore.withLock(owner, async () => {
+      if (state.action) return
+      const current = commandStore.read(owner)
+      if (current.kind === 'empty') { if (state.commandRecovery?.key !== 'confirmed') state.commandRecovery = undefined; return }
+      if (current.kind !== 'pending') { notice(flowId, current.kind === 'corrupt' ? 'corrupt' : 'storage_failed'); return }
+      const result = await queryCommand(projectId, flowId, current.record, voiding)
+      if (deps.projectId() !== projectId || username() !== owner.username || !deps.isOpen(projectId, flowId) || runs[flowId] !== state || state.action) return
+      applyLookup(flowId, current.record, result)
+    }).catch(() => { if (runs[flowId] === state) notice(flowId, 'storage_failed') })
+  }
+
   function read(flowId: string, failure?: FlowRunFailure) {
     const projectId = deps.projectId()
     if (!available || projectId === null || runs[flowId]?.action) return
@@ -288,6 +432,8 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
         state.readState = 'read'
         observed(state, failure, run)
         rereadWhileRequested(flowId, run)
+        // A fresh opening (including sending at F5) only looks up; it never resends.
+        if (!failure) void recoverPending(flowId)
       },
       () => {
         if (reads.get(flowId) !== token) return
@@ -302,17 +448,21 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
   }
 
   /** The context belongs to this opening of this Flow; late answers cannot migrate to a reopened tab. */
-  async function act(flowId: string, action: FlowRunMode | 'pause' | 'resume' | 'stop', body: (projectId: string, state: FlowRunState, request: {stage: FlowRunFailureStage; targetRunId: string | null; alive: () => boolean}) => Promise<boolean>) {
+  async function act(flowId: string, action: FlowRunMode | 'pause' | 'resume' | 'stop', body: (projectId: string, state: FlowRunState, request: {stage: FlowRunFailureStage; targetRunId: string | null; alive: () => boolean; pending?: RunCommandRecord; lookupOnly?: boolean; legacy?: boolean}) => Promise<boolean>) {
     const projectId = deps.projectId()
     if (!available || projectId === null) return false
     const state = stateOf(flowId)
     if (state.action) return false
+    const actingUsername = username()
     const alive = () => deps.projectId() === projectId && deps.isOpen(projectId, flowId) && runs[flowId] === state
+      && (!commandStore || username() === actingUsername)
     const starting = action === 'next' || action === 'all'
     const localRequestId = `${scope}:request:${++requests}`
     const baselineRunId = state.run?.runId ?? null
+    const baseline = { state: state.readState === 'read' ? (state.run ? 'run' as const : 'none' as const) : 'unread' as const,
+      runId: state.run?.runId ?? null, status: state.run?.status ?? null, lastEventSeq: state.run?.lastEventSeq ?? null }
     const flowLabel = safeFlowLabel(deps.flowLabel?.(flowId))
-    const request = { stage: (starting ? 'before_prepare' : 'target_read') as FlowRunFailureStage, targetRunId: null as string | null, alive }
+    const request = { stage: (starting ? 'before_prepare' : 'target_read') as FlowRunFailureStage, targetRunId: null as string | null, alive, pending: undefined as RunCommandRecord | undefined, lookupOnly: false, legacy: false }
     state.action = action
     state.error = null
     reads.delete(flowId)
@@ -325,7 +475,8 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
         const refused = error as FlowRunError | null
         const status = typeof refused?.status === 'number' ? refused.status : null
         const sent = request.stage === 'start' || request.stage === 'pause' || request.stage === 'resume' || request.stage === 'stop'
-        const outcome = sent && (status === null || status >= 500 || status === 408) ? 'unconfirmed'
+        const outcome = refused?.code === 'run_response_unreadable' ? 'unconfirmed'
+          : sent && (status === null || status >= 500 || status === 408) ? 'unconfirmed'
           : request.stage === 'revision' || (status !== null && status >= 400 && status < 500) ? 'rejected' : 'failed'
         const n = ++failures
         failure = failureOf('run', error, n, {
@@ -333,17 +484,40 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
           serverRequestId: diagnosticId(refused?.serverRequestId),
           action: starting ? 'start' : action, mode: starting ? action : null,
           stage: request.stage, projectId, flowId, flowLabel, targetRunId: request.targetRunId,
-          baselineRunId, outcome, observation: {state:'pending',runId:null,status:null},
+          baselineRunId, baseline, outcome, observation: {state:'pending',runId:null,status:null,lastEventSeq:null},
+          commandRequestId: request.pending?.commandRequestId ?? null, responseStatus: status,
+          transport: refused?.code === 'run_response_unreadable' ? 'unreadable_2xx' : status === null ? 'no_response' : 'http_error',
         })
         state.error = failure
         diagnose(failure)
+        if (request.pending && commandStore) {
+          const record = request.pending
+          try {
+            if (refused?.code === 'command_request_voided' || (record.attempts === 1 && status !== null && status >= 400 && status < 500 && status !== 408 && refused?.code !== 'command_request_conflict')) {
+              commandStore.clear(record, record.commandRequestId)
+              state.commandRecovery = undefined
+              stopCommandTimer(flowId)
+            } else {
+              commandStore.retain(record, request.legacy)
+              notice(flowId, request.legacy ? 'legacy' : 'unconfirmed', record)
+              waitForCommand(flowId, record)
+              // A later 4xx never proves what happened to an earlier transmission.
+              if ((status !== null && status >= 400 && status < 500 && status !== 408) || refused?.code === 'command_request_conflict') {
+                const result = await queryCommand(projectId, flowId, record)
+                if (alive()) applyLookup(flowId, record, result)
+              }
+            }
+          } catch { notice(flowId, 'storage_failed') }
+        }
       }
     } finally {
       state.action = null
     }
     if (!alive()) return false
-    if (!ok) read(flowId, failure)
-    deps.refresh(flowId)
+    if (!request.lookupOnly) {
+      if (!ok) read(flowId, failure)
+      deps.refresh(flowId)
+    }
     return ok
   }
 
@@ -354,36 +528,81 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
 
   function run(flowId: string, mode: FlowRunMode): Promise<boolean> {
     return act(flowId, mode, async (projectId, state, request) => {
-      // A locked run takes no command (its buttons are 일시정지 / 재개 / 중지); the draft is confirmed on an idle Flow only.
-      if (isRunLocked(state.run)) return false
-      request.stage = 'before_prepare'
-      if (deps.beforePrepare && !(await deps.beforePrepare(flowId, mode))) return false
-      if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
-      if (state.run?.status === 'idle' && source.checkRevisionAdoption) {
-        request.stage = 'save_draft'
-        if (deps.hasDraftToConfirm?.(flowId) && deps.saveDraftBeforeCheck && !(await deps.saveDraftBeforeCheck(flowId))) return false
-        if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
-        // A negative assessment is a run refusal. Only failure to obtain an assessment falls back (T A-2.3).
-        request.stage = 'revision'
-        let refusal: FlowRunError | null = null
-        try {
-          refusal = await source.checkRevisionAdoption(projectId, flowId)
-        } catch {
-          // The command still enforces adoption; the revision notice explains a pinned view if it refuses.
+      const execute = async () => {
+        if (!request.alive()) return false
+        const owner = commandStore ? commandScope(projectId, flowId) : null
+        const requestedMode = mode === 'next' ? 'step' : 'full'
+        if (commandStore && owner) {
+          request.stage = 'command_lookup'
+          const current = commandStore.read(owner)
+          if (current.kind === 'corrupt' || current.kind === 'unavailable') {
+            notice(flowId, current.kind === 'corrupt' ? 'corrupt' : 'storage_failed')
+            request.lookupOnly = true
+            return false
+          }
+          if (current.kind === 'pending') {
+            const record = current.record
+            let result = await queryCommand(projectId, flowId, record)
+            if (!request.alive()) return false
+            if ((result.kind === 'not_found' || result.kind === 'legacy') && record.mode !== requestedMode) {
+              result = await queryCommand(projectId, flowId, record, true)
+              if (!request.alive()) return false
+            }
+            request.legacy = result.kind === 'legacy'
+            const applied = applyLookup(flowId, record, result)
+            if (applied === 'found' || result.kind === 'flow_gone' || (applied === 'pending' && !['not_found', 'legacy'].includes(result.kind))) {
+              request.lookupOnly = true
+              return false // found consumes this click, including when the run is running.
+            }
+            if (record.mode !== requestedMode && applied === 'pending') { request.lookupOnly = true; return false }
+          }
         }
+        // A locked run takes no command (its buttons are 일시정지 / 재개 / 중지); the draft is confirmed on an idle Flow only.
+        if (isRunLocked(state.run)) return false
+        request.stage = 'before_prepare'
+        if (deps.beforePrepare && !(await deps.beforePrepare(flowId, mode))) return false
         if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
-        if (refusal) throw refusal
+        if (state.run?.status === 'idle' && source.checkRevisionAdoption) {
+          request.stage = 'save_draft'
+          if (deps.hasDraftToConfirm?.(flowId) && deps.saveDraftBeforeCheck && !(await deps.saveDraftBeforeCheck(flowId))) return false
+          if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
+          // A negative assessment is a run refusal. Only failure to obtain an assessment falls back (T A-2.3).
+          request.stage = 'revision'
+          let refusal: FlowRunError | null = null
+          try {
+            refusal = await source.checkRevisionAdoption(projectId, flowId)
+          } catch {
+            // The command still enforces adoption; the revision notice explains a pinned view if it refuses.
+          }
+          if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
+          if (refusal) throw refusal
+        }
+        request.stage = 'prepare'
+        if (!(await deps.prepare(flowId))) return false
+        if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || deps.canProceed?.(flowId) === false) return false
+        // One server call: the step / full command. Nothing is stopped from here after it (T#2 settles the step).
+        if (!request.alive()) return false
+        if (commandStore && owner) {
+          // Re-read immediately before sending; another tab may have resolved the prior record.
+          request.pending = commandStore.sending(owner, requestedMode)
+          state.commandRecovery = undefined
+        }
+        request.stage = 'start'
+        const answer = await (request.pending ? source.startRun!(projectId, flowId, requestedMode, request.pending.commandRequestId) : source.startRun!(projectId, flowId, requestedMode))
+        if (!request.alive()) return false
+        state.run = answer
+        state.readState = 'read'
+        if (answer.command) state.confirmedCommand = answer.command
+        if (request.pending && commandStore) {
+          commandStore.clear(request.pending, request.pending.commandRequestId)
+          stopCommandTimer(flowId)
+          commandBackoff.delete(flowId)
+          state.commandRecovery = undefined
+        }
+        return true
       }
-      request.stage = 'prepare'
-      if (!(await deps.prepare(flowId))) return false
-      if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || deps.canProceed?.(flowId) === false) return false
-      // One server call: the step / full command. Nothing is stopped from here after it (T#2 settles the step).
-      request.stage = 'start'
-      const answer = await source.startRun!(projectId, flowId, mode === 'next' ? 'step' : 'full')
-      if (!request.alive()) return false
-      state.run = answer
-      state.readState = 'read'
-      return true
+      if (!commandStore) return execute()
+      return commandStore.withLock(commandScope(projectId, flowId), execute)
     })
   }
 
@@ -489,10 +708,14 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     forget: (flowId) => {
       reads.delete(flowId)
       dropReread(flowId)
+      stopCommandTimer(flowId)
+      commandBackoff.delete(flowId)
       delete runs[flowId]
     },
     clear: () => {
       reads.clear()
+      for (const flowId of [...commandTimers.keys()]) stopCommandTimer(flowId)
+      commandBackoff.clear()
       for (const flowId of [...rereads.keys()]) dropReread(flowId)
       for (const flowId of Object.keys(runs)) delete runs[flowId]
     },

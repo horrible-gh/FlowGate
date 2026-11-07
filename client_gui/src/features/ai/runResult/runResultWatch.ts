@@ -245,6 +245,16 @@ export function createRunResultWatch(deps: RunResultWatchDeps) {
     pending[flowId] = freshPending(before?.runId ?? null, before?.lastEventSeq ?? 0)
   }
 
+  /** A server-confirmed logical command, including recovery without a known current run. */
+  function armCommand(flowId: string, command: { runId: string; commandSeq: number }) {
+    cancelTimer(flowId)
+    const watch = freshPending(command.runId, 0)
+    watch.commandRunId = command.runId
+    watch.commandSeq = command.commandSeq
+    pending[flowId] = watch
+    observe(flowId, { runId: command.runId, status: 'idle', lastEventSeq: command.commandSeq })
+  }
+
   /** flowgate.v02.0143 T#1: the run as observed, whatever its status; a non-idle one during a read is the run going on. */
   function note(watch: Pending, run: RunResultRun, seq: number) {
     if (watch.latestRunId !== run.runId || seq >= watch.latestSeq) {
@@ -443,6 +453,7 @@ export function createRunResultWatch(deps: RunResultWatchDeps) {
     pending,
     seen,
     arm,
+    armCommand,
     observe: (flowId: string, run: RunResultRun | null | undefined) => observe(flowId, run),
     recheck,
     persisted,

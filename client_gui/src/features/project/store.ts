@@ -110,6 +110,8 @@ import {
   checkFlowRevisionAdoption,
   pauseFlowRun as pauseFlowRunApi,
   resumeFlowRun as resumeFlowRunApi,
+  lookupFlowRunCommand, voidFlowRunCommand,
+  type FlowRunAnswer,
   startFlowRun as startFlowRunApi,
   stopFlowRun as stopFlowRunApi,
   timeMachineFlowRunNode as timeMachineFlowRunNodeApi,
@@ -690,8 +692,8 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   // flowgate.v02.0061 T#14: the step / full command (다음 단계 / 전체 실행) and Pause.
-  function startFlowRun(flowId: string, mode?: FlowRunCommand): Promise<FlowRun> {
-    return startFlowRunApi(flowId, mode)
+  function startFlowRun(flowId: string, mode?: FlowRunCommand, commandRequestId?: string): Promise<FlowRunAnswer> {
+    return startFlowRunApi(flowId, mode, commandRequestId)
   }
 
   function pauseFlowRun(runId: string): Promise<FlowRun> {
@@ -827,6 +829,8 @@ export const useProjectStore = defineStore('project', () => {
     loadFlowRun,
     checkFlowRevisionAdoption,
     startFlowRun,
+    lookupFlowRunCommand,
+    voidFlowRunCommand,
     pauseFlowRun,
     stopFlowRun,
     resumeFlowRun,

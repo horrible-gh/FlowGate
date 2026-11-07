@@ -53,7 +53,7 @@ describe('toFlowCommandResult reads end_seq and blocking', () => {
 
 describe('runWaitText: the blocking card first (ko, T#2 §4)', () => {
   beforeEach(() => { i18n.global.locale.value = 'ko' })
-  const memo = '해제: 메모 후 재검수 요청 또는 Graph Time Machine'
+  const memo = '카드에 개입 필요 상태가 기록되어 있습니다.'
 
   it.each([
     ['memo_rereview', {}, `개입 필요 — 작업 A: ${HOLD} · ${memo}`],
@@ -80,11 +80,11 @@ describe('runWaitText: the blocking card first (ko, T#2 §4)', () => {
   it('en and ja: the head, the others and the release words', () => {
     const two = result({ blocking: [blockingOf('작업 A', HOLD, 'memo_rereview'), blockingOf('작업 B', HOLD, 'memo_rereview', 'gn_b')] })
     i18n.global.locale.value = 'en'
-    expect(runWaitText(two, t, te)).toBe(`Intervention needed — 작업 A: ${HOLD} (+1 more) · Release: memo and re-review request, or Graph Time Machine`)
+    expect(runWaitText(two, t, te)).toBe(`Intervention needed — 작업 A: ${HOLD} (+1 more) · The card has a recorded intervention state.`)
     expect(runWaitText(result({ blocking: [blockingOf('작업 A', EXHAUSTED, 'new_submission')] }), t, te))
       .toBe(`Intervention needed — 작업 A: ${EXHAUSTED} · Release: edit the document and submit it again`)
     i18n.global.locale.value = 'ja'
-    expect(runWaitText(two, t, te)).toBe(`介入が必要 — 작업 A: ${HOLD} (他1件) · 解除: メモ後に再レビュー依頼、または Graph Time Machine`)
+    expect(runWaitText(two, t, te)).toBe(`介入が必要 — 작업 A: ${HOLD} (他1件) · カードに介入が必要な状態が記録されています。`)
     expect(runWaitText(result({ blocking: [blockingOf('작업 A', 'issuer_lacks_approve', 'issuer_permission')] }), t, te))
       .toBe('介入が必要 — 작업 A: issuer_lacks_approve · 解除: 発行者の承認権限を補う')
     i18n.global.locale.value = 'ko'
