@@ -19,8 +19,6 @@
         <span v-else-if="turn.createdAt" class="tl-time" :title="turn.createdAt">{{ formatTimelineTime(turn.createdAt) }}</span>
       </div>
       <div class="tl-text">{{ turn.body }}</div>
-      <!-- Crossed talk (P0003 scenario 12): written without having seen the turn above. -->
-      <p v-if="turn.staleSinceSeq" class="tl-note">{{ t('gui.conversation.message.stale', { seq: turn.staleSinceSeq }) }}</p>
       <p v-if="failed" class="tl-note tl-note--failed">
         {{ t('gui.conversation.message.failed') }}
         <button v-if="!readOnly" type="button" class="tl-retry" data-test="tl-retry" @click="emit('retry')">{{ t('gui.conversation.retry') }}</button>

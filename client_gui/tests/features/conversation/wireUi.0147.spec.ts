@@ -42,19 +42,19 @@ function installHttp() {
     if (url.includes('/me/chat-settings')) return { data: { settings: {}, source_access_scope: { project_id: 'p', group_id: 'p.m.0001' } } }
     if (url === '/api/v1/ai-invoke/providers') return { data: { providers: [{ id: 'fixture', name: 'isolated provider' }] } }
     if (url === '/api/v1/ai-invoke/active') {
-      const active = raw.runs.find((run) => run.status === 'running')
-      return { data: active ? { active: true, run_id: active.run_id, doc_ref: active.doc_ref, status: 'running' } : { active: false } }
+      const active = raw.runs.find((run) => ['running', 'cancelling', 'pause_requested'].includes(run.status))
+      return { data: active ? { active: true, run_id: active.run_id, doc_ref: active.doc_ref, status: active.status } : { active: false } }
     }
     if (url === '/api/v1/ai-invoke/runs') return { data: { items: raw.runs.map(({ run_id, doc_ref }) => ({ run_id, doc_ref })), total: raw.runs.length, has_more: false } }
     if (url.startsWith('/api/v1/ai-invoke/')) {
       const run = raw.runs.find((r) => url.endsWith('/' + r.run_id))
-      return { data: run?.status === 'running' ? { run_id: run.run_id, status: 'running', action_scope: 'chat', group_id: run.group_id } : run }
+      return { data: run && ['running', 'cancelling', 'pause_requested'].includes(run.status) ? { run_id: run.run_id, status: run.status, action_scope: 'chat', group_id: run.group_id } : run }
     }
     if (url.startsWith('/api/v1/chat-activity/')) return { data: { commands: url.endsWith(A) ? raw.commands : [], changes: [] } }
     throw new Error(`Unexpected isolated GET: ${url}`)
   })
   http.postRequest.mockImplementation(async (url: string) => {
-    if (url.endsWith('/conversation/read')) return { data: {} }
+    if (url.endsWith('/conversation/read') || url.endsWith('/cancel')) return { data: {} }
     throw new Error(`Unexpected mutating request: ${url}`)
   })
 }
@@ -149,5 +149,33 @@ describe('0147 isolated server wire -> real adapter -> session -> ConversationPa
     expect(statuses()[0]).toContain('timeout')
     expect(wrapper!.text()).toContain('isolated partial reply')
     console.log('0147_DOM_recovered', JSON.stringify(statuses()))
+  })
+})
+
+describe('0151 V9/V9b: live server wire through adapter and session', () => {
+  it.each(['cancelling', 'pause_requested'])('%s keeps the composer locked until terminal cancellation', async (status) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    raw.runs = [{ ...raw.runs[0], status: 'running', end_reason: '', outcome: '', exit_code: null }]
+    raw.commands = []
+    const session = await open()
+    await session.stopRun()
+    expect(session.state.cancelling).toBe(true)
+    raw.runs[0] = { ...raw.runs[0], status }
+    for (let tick = 0; tick < 2; tick++) {
+      await vi.advanceTimersByTimeAsync(2500); await flushPromises()
+      expect(session.state.runId).toBe('partial')
+      expect(session.running.value).toBe(true)
+      expect(session.state.cancelling).toBe(true)
+      expect(statuses()).toEqual([])
+      expect(session.timeline.value.map((item) => item.key)).toEqual(['turn:1', 'turn:2'])
+      expect(wrapper!.get('[data-test="conv-send"]').attributes('disabled')).toBeDefined()
+    }
+    expect(http.getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/active', { group_id: 'p.m.0001' })
+    raw.runs[0] = { ...raw.runs[0], status: 'finished', end_reason: 'cancelled', outcome: 'none' }
+    await vi.advanceTimersByTimeAsync(2500); await flushPromises()
+    expect(session.state.runId).toBeNull()
+    expect(session.state.cancelling).toBe(false)
+    expect(statuses()).toEqual([String(i18n.global.t('gui.conversation.status.run_cancelled'))])
+    expect(session.state.activities.filter((a) => a.kind === 'status')).toMatchObject([{ tone: 'info', code: 'run_cancelled', runId: 'partial' }])
   })
 })

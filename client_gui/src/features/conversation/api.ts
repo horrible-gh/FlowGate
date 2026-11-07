@@ -525,18 +525,30 @@ function runFailure(history: unknown): AiRunFailure | null {
   return failure.cause || failure.detail ? failure : null
 }
 
-export async function fetchRun(runId: string): Promise<AiRunState> {
+/** Extra detail fields stay optional for sources speaking the older run contract. */
+export interface ChatRunState extends AiRunState {
+  succeeded?: boolean | null
+  stopCode?: string | null
+  apiTurnsUsed?: number | null
+  providerId?: string | null
+}
+
+export async function fetchRun(runId: string): Promise<ChatRunState> {
   const data = await call(
     () => getRequest<{ run_id?: string; status?: string; end_reason?: string | null; outcome?: string | null;
       exit_code?: number | null; doc_ref?: string | null; action_scope?: string | null; group_id?: string | null;
-      finished_at?: string | null; fallback_history?: unknown }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
+      finished_at?: string | null; fallback_history?: unknown; succeeded?: boolean | null; stop_code?: string | null;
+      api_turns_used?: number | null; provider_id?: string | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
   )
   const endReason = data?.end_reason ?? null
   const failure = endReason === 'all_providers_failed' ? runFailure(data?.fallback_history) : null
   return {
     runId: textOrNull(data?.run_id) ?? runId,
-    status: data?.status === 'finished' ? 'finished' : data?.status === 'running' ? 'running' : 'unknown',
+    status: data?.status === 'finished' ? 'finished' :
+      ['running', 'cancelling', 'pause_requested'].includes(data?.status ?? '') ? 'running' : 'unknown',
     endReason, outcome: data?.outcome ?? null, exitCode: nullableNumber(data?.exit_code),
+    succeeded: typeof data?.succeeded === 'boolean' ? data.succeeded : null,
+    stopCode: textOrNull(data?.stop_code), apiTurnsUsed: nullableNumber(data?.api_turns_used), providerId: textOrNull(data?.provider_id),
     docRef: textOrNull(data?.doc_ref), actionScope: textOrNull(data?.action_scope), groupId: textOrNull(data?.group_id),
     finishedAt: textOrNull(data?.finished_at), ...(failure ? { failure } : {}),
   }

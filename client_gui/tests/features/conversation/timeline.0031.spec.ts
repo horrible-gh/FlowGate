@@ -1,3 +1,9 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import i18n from '@shared/i18n'
+import { registerAppMessages } from '@/app/i18n'
+import { ConversationPanel } from '@/features/conversation'
+import type { ConversationSession } from '@/features/conversation/conversationSession'
+import { createFakeSource, turn as fakeTurn } from './fakeConversationSource'
 import { describe, expect, it } from 'vitest'
 import {
   buildTimeline,
@@ -192,5 +198,45 @@ describe('time labels', () => {
     expect(chatListDate(new Date(2026, 9, 5, 9, 5).toISOString(), now)).toEqual({ kind: 'yesterday', text: '' })
     expect(chatListDate(new Date(2026, 9, 4, 9, 5).toISOString(), now)).toEqual({ kind: 'date', text: '10/04' })
     expect(chatListDate(null, now)).toBeNull()
+  })
+})
+
+describe('0151 V13: stale display removal keeps attribution and server placement', () => {
+  it.each(['ko', 'en', 'ja'] as const)('hides stale text and preserves metadata/attribution warning in %s', async (lang) => {
+    registerAppMessages(i18n)
+    const beforeLocale = i18n.global.locale.value
+    i18n.global.locale.value = lang
+    const chatId = 'p.m.0001.0002-CH'
+    for (const sourceRunId of ['r1', null]) {
+      const reply = fakeTurn(3, 'ai', 'saved late answer', null, { sourceRunId, basedOnSeq: 1, staleSinceSeq: 2 })
+      const run = { runId: 'r1', status: 'finished' as const, endReason: 'exited', outcome: 'complete',
+        exitCode: null, succeeded: true, docRef: chatId, actionScope: 'chat' }
+      const card = { ...change('r1', at(3, 'after')), runId: 'r1' }
+      const init = { chats: [{ id: chatId, title: 'fixture', updatedAt: null }],
+        turns: { [chatId]: [fakeTurn(1, 'user', 'initial question'), fakeTurn(2, 'user', 'follow-up'), reply] },
+        runDetails: { r1: run }, activities: { [chatId]: [card] } }
+      const stored = JSON.stringify(init)
+      const fake = createFakeSource(init)
+      const wrapper = mount(ConversationPanel, { props: { projectId: 'p', groupId: 'p.m.0001', source: fake.source },
+        global: { plugins: [i18n] } })
+      try {
+        await flushPromises(); await flushPromises()
+        const session = (wrapper.vm as unknown as { session: ConversationSession }).session
+        const message = wrapper.get('[data-test="tl-message"][data-seq="3"]')
+        expect(message.get('.tl-text').text()).toBe('saved late answer')
+        expect(message.find('.tl-note').exists()).toBe(false)
+        expect(wrapper.text()).not.toContain(String(i18n.global.t('gui.conversation.message.stale', { seq: 2 })))
+        expect(session.state.turns.find((t) => t.seq === 3)).toMatchObject(reply)
+        expect(session.state.activities.filter((a) => a.kind === 'status').map((a) => a.code))
+          .toEqual(sourceRunId ? [] : ['run_attribution_unconfirmed'])
+        if (!sourceRunId) expect(wrapper.text()).toContain(String(i18n.global.t('gui.conversation.status.run_attribution_unconfirmed')))
+        expect(session.timeline.value.filter((item) => item.kind !== 'status').map((item) => item.key))
+          .toEqual(['turn:1', 'turn:2', 'turn:3', 'change:r1'])
+        expect(JSON.stringify(init)).toBe(stored)
+      } finally {
+        wrapper.unmount()
+      }
+    }
+    i18n.global.locale.value = beforeLocale
   })
 })
