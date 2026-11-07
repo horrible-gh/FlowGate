@@ -1893,7 +1893,9 @@ def test_0098_the_candidate_budget_ends_git_and_discards_a_partial_list(proj, mo
         "timeout", mt.CHECK_OPTIONS_TIMEOUT)
     assert view["merge_target_state"]["current"]["checked"] is False
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
-    assert _check_view(proj, gid, refresh=False)["merge_target_options"] == ["develop", "main"]   # not cached
+    # 0148: a timeout is now negative-cached for 5 s; explicit refresh must bypass and replace it.
+    assert _check_view(proj, gid, refresh=False)["merge_target_state"]["status"] == "timeout"
+    assert _check_view(proj, gid, refresh=True)["merge_target_options"] == ["develop", "main"]
     # one name's judgement failing for a reason of its own basis drops the whole list, never a partial one
     real = mt.inspect_workspace
     monkeypatch.setattr(mt, "inspect_workspace", lambda project_id, branch: (
@@ -2097,12 +2099,16 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
     assert (state["status"], state["code"]) == ("timeout", mt.CHECK_OPTIONS_TIMEOUT)
     assert (state["current"]["branch"], state["current"]["checked"], state["default"]["checked"]) == (
         "gone", False, False)
-    # the cached list stays as it was; the unfinished judgement was not kept
+    # 0148: an unfinished added judgement also replaces the candidate view with a short timeout cache.
     again = _check_view(proj, gid, "gone", refresh=False)
+    assert again["merge_target_options"] == []
+    assert (again["merge_target_state"]["status"], again["merge_target_state"]["current"]["checked"]) == (
+        "timeout", False)
+    again = _check_view(proj, gid, "gone", refresh=True)
     assert again["merge_target_options"] == ["develop", "main"]
     assert (again["merge_target_state"]["current"]["checked"], again["merge_target_state"]["current"]["error"]) == (
         True, "merge_target_not_found")
-    # a miss: the basis read spends the budget the computation then runs under; the timeout is not cached
+    # A basis miss spends the same budget and is cached too; hits do no new computation, refresh does.
     computed = []
     monkeypatch.setattr(mt, "_compute_snapshot", lambda *a: computed.append(1) or real_compute(*a))
     mt.invalidate_check_targets()
@@ -2113,8 +2119,13 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
     assert missed["merge_target_options"] == []
     assert (missed["merge_target_state"]["status"], missed["merge_target_state"]["current"]["checked"]) == (
         "timeout", False)
-    assert _check_view(proj, gid, refresh=False)["merge_target_options"] == ["develop", "main"]
-    assert len(computed) == 2
+    timeout_calls = len(computed)
+    cached = _check_view(proj, gid, refresh=False)
+    assert cached["merge_target_options"] == []
+    assert cached["merge_target_state"]["status"] == "timeout"
+    assert len(computed) == timeout_calls
+    assert _check_view(proj, gid, refresh=True)["merge_target_options"] == ["develop", "main"]
+    assert len(computed) == timeout_calls + 1
     mt.invalidate_check_targets()
 
 

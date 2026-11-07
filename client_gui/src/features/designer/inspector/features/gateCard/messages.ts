@@ -15,7 +15,7 @@ export default {
       before: '확인 전',
       after_run: '실행 후',
     },
-    confirm: '✓ 확인',
+    confirm: '승인',
     reject: '✕ 반려',
     reason: {
       not_running: '실행 중이거나 대기 중인 확인 차례에 확인할 수 있습니다',
@@ -56,7 +56,7 @@ export default {
       before: 'Before check',
       after_run: 'After run',
     },
-    confirm: '✓ Confirm',
+    confirm: 'Approve',
     reject: '✕ Reject',
     reason: {
       not_running: 'It can be checked while the flow runs',
@@ -97,7 +97,7 @@ export default {
       before: '確認前',
       after_run: '実行後',
     },
-    confirm: '✓ 確認',
+    confirm: '承認',
     reject: '✕ 差し戻し',
     reason: {
       not_running: '実行中に確認できます',

@@ -154,3 +154,34 @@ export function flowNodeStateDisplay(state: string | null | undefined): FlowNode
   if (!state || !isKnown(FLOW_NODE_STATES, state)) return null
   return { key: state, tone: STATE_TONES[state] }
 }
+
+/** 0148: only an initial wait is unmarked. Unknown warning/danger states always retain a glyph. */
+export const NO_ICON_KEYS: readonly string[] = ['draft', 'pending']
+export const HEADER_GLYPHS = {
+  clock: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 7v5l3 2',
+  check: 'M5 12l4 4L19 6',
+  error: 'M4 4l16 16 M20 4L4 20 M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20',
+  warning: 'M8 3h8l5 5v8l-5 5H8l-5-5V8z M12 7v6 M12 17h.01',
+  intervention: 'M12 3L2 21h20L12 3z M12 9v5 M12 17h.01',
+  rejected: 'M9 5l-6 6 6 6 M3 11h10a7 7 0 0 1 7 7v2',
+  revised: 'M4 16v4h4L20 8l-4-4L4 16z M13 7l4 4',
+  hand: FLOW_NODE_HOLD_ICON,
+  conflict: 'M6 3v5l12 8v5 M18 3v5L6 16v5 M3 3h6 M15 3h6',
+} as const
+export const HEADER_ICON_KEYS: Readonly<Record<string, keyof typeof HEADER_GLYPHS>> = {
+  instruction_write_wait: 'clock', result_write_wait: 'clock', waiting: 'clock', manual_write_wait: 'clock',
+  ai_setup_required: 'warning', ai_unavailable: 'error', no_result: 'error', incomplete: 'error',
+  waiting_answer: 'clock', waiting_writer: 'clock', writing_instruction: 'clock', writing_result: 'clock',
+  working: 'clock', needs_intervention: 'intervention', system_error: 'error', approved: 'check',
+  rejected: 'rejected', revised: 'revised', closed: 'clock', waiting_confirm: 'hand', publishing: 'clock',
+  conflict_review: 'conflict', recovery_required: 'error', confirmed: 'check',
+  in_progress: 'clock', review: 'clock', done: 'check', blocked: 'error',
+}
+export function flowNodeHeaderIcon(state: { key: string; tone: FlowNodeStateTone } | null | undefined) {
+  if (!state) return null
+  if (NO_ICON_KEYS.includes(state.key) && !['warning', 'danger'].includes(state.tone)) return null
+  const glyph = HEADER_ICON_KEYS[state.key] ?? (state.tone === 'danger' ? 'error' : state.tone === 'warning' ? 'warning' : state.tone === 'success' ? 'check' : 'clock')
+  const tone: FlowNodeStateTone = glyph === 'error' ? 'danger' : state.key === 'revised' ? 'info'
+    : ['working', 'writing_instruction', 'writing_result', 'in_progress', 'publishing', 'rejected'].includes(state.key) ? 'warning' : state.tone
+  return { path: HEADER_GLYPHS[glyph], tone }
+}

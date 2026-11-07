@@ -357,6 +357,11 @@ export interface SettingsNode {
   readonly mergeTargetState?: SettingsMergeTargetState | null
   readonly pushRemoteCheckRequired?: boolean
   readonly settingsVersion?: number
+  /**
+   * flowgate.v02.0148 T#2: the PATCH answer left the three merge target values out on purpose (`merge_targets_kept: true`,
+   * the answer to `keep_merge_targets=true`). Only then may the caller carry its earlier views over; absent = a full answer.
+   */
+  readonly mergeTargetsKept?: boolean
   readonly lockReason?: string | null
   readonly cardKind: string | null
   /** A running card: its settings cannot change now. */
@@ -387,6 +392,7 @@ export function toSettingsNode(raw: unknown): SettingsNode {
     ...('merge_target_state' in data ? { mergeTargetState: data.merge_target_state && typeof data.merge_target_state === 'object' ? data.merge_target_state as SettingsMergeTargetState : null } : {}),
     ...('push_remote_check_required' in data ? { pushRemoteCheckRequired: data.push_remote_check_required === true } : {}),
     ...(typeof data.settings_version === 'number' ? { settingsVersion: data.settings_version } : {}),
+    ...(data.merge_targets_kept === true ? { mergeTargetsKept: true } : {}),
     ...('lock_reason' in data ? { lockReason: text(data.lock_reason) } : {}) }
 }
 
@@ -412,9 +418,18 @@ export function settingsInstructionOmitted(node: SettingsNode | null | undefined
 //   teams     GET   /api/v1/ai-groups -> { items: [{ ai_group_id, name, enabled, supervisor: { provider_name } | null }] }
 //             The AI Team choices of a requirement card (the server takes the ids of this table only).
 
-/** Changes one setting; gate callers pass the confirmed version for the server's concurrency check. */
-export async function settingsNodeWrite(flowId: string, nodeKey: string, field: string, value: unknown, expectedSettingsVersion?: number, expectedContext?: SettingsContext): Promise<SettingsNode> {
-  const response = await patchRequest<unknown>(`${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`, {
+/** Query signal of flowgate.v02.0148 T#1: the PATCH answer may leave the merge target views out (`merge_targets_kept: true`). */
+export const KEEP_MERGE_TARGETS_QUERY = 'keep_merge_targets=true'
+
+/**
+ * Changes one setting; gate callers pass the confirmed version for the server's concurrency check. `keepMergeTargets` opts in
+ * to an answer without the merge target options / work base / lookup state (flowgate.v02.0148 T#2): the caller then carries
+ * its earlier views over, and only when the answer says `mergeTargetsKept`. A server that does not know the signal answers in
+ * full, so nothing changes for it.
+ */
+export async function settingsNodeWrite(flowId: string, nodeKey: string, field: string, value: unknown, expectedSettingsVersion?: number, expectedContext?: SettingsContext, options?: { readonly keepMergeTargets?: boolean }): Promise<SettingsNode> {
+  const url = `${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/settings`
+  const response = await patchRequest<unknown>(options?.keepMergeTargets ? `${url}?${KEEP_MERGE_TARGETS_QUERY}` : url, {
     field,
     value: value ?? null,
     ...(expectedSettingsVersion === undefined ? {} : { expected_settings_version: expectedSettingsVersion }),

@@ -106,6 +106,8 @@
 // flowgate.v02.0070 T#1 (B1): the title is edited in the Inspector header, not on the card — `activeSelection` says
 // whether the selected card's title opens now (`titleEdit`, the rule the card had: graph/nodeTitle.ts nodeTitleEdit with
 // the run read's node run of the card) and the header saves through `saveNodeTitle` for the card it opened on.
+import { approveGateTarget } from '../inspector/features/gateCard/gateApproval'
+import { toInspectorTarget } from '../inspector/inspectorTarget'
 import { cardNodeRun } from './graph/cardStateView'
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'
 import type { FlowRef } from '@/features/project'
@@ -433,6 +435,7 @@ export interface DesignerCenterSession {
    * confirmed run read says so (`viewer.can_approve` true). Not told, not read or false: no [승인].
    */
   canApproveFlow(flowId: string): boolean
+  approveNode(flowId: string, nodeId: string): Promise<boolean>
 
   // flowgate.v02.0061 T#15 — a card's context menu (run/flowCardMenu.ts).
   /** The items of the card's context menu now (empty: none). */
@@ -732,6 +735,17 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   const editLock = (flowId: string): FlowEditLock => runMarks(flowId).lock
 
   // flowgate.v02.0105 T#2 (B-6): only a confirmed run read (or a command's answer) of the Flow tells it.
+  async function approveNode(flowId: string, nodeId: string): Promise<boolean> {
+    const graph = readyGraph(flowId)
+    const node = graph?.nodes.find(item => item.id === nodeId)
+    const projectId = state.projectId
+    if (!graph || !node || !projectId || !canApproveFlow(flowId)) return false
+    const target = toInspectorTarget({ projectId, graph, node: { ...node, nodeRun: cardNodeRun(node.nodeRun, runMarks(flowId).nodeRuns.get(nodeId)) } })
+    if (!target) return false
+    const ok = await approveGateTarget(target)
+    if (state.projectId === projectId) refreshFlow(flowId)
+    return ok
+  }
   function canApproveFlow(flowId: string): boolean {
     const run = state.runs[flowId]
     return runControl.canApprove && run?.readState === 'read' && run.run?.viewerCanApprove === true
@@ -1469,6 +1483,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     }),
     canApprove: runControl.canApprove,
     canApproveFlow,
+    approveNode,
     cardMenu,
     chooseCardMenu,
     cardHold,

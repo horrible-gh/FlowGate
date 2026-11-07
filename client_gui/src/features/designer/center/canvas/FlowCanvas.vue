@@ -113,6 +113,7 @@
           :id="nodeProps.id"
           :data="nodeProps.data"
           @conflict="emit('node-conflict', $event)"
+          @approve="emit('node-approve', $event)"
         />
       </template>
       <template #edge-flowgate="edgeProps">
@@ -294,6 +295,7 @@ const emit = defineEmits<{
   'edge-remove': [edgeId: string]
   undo: []
   /** flowgate.v02.0056 F2-1: a card's [승인]. */
+  'node-approve': [nodeId: string]
   /** flowgate.v02.0061 T#14: a card's 병합 충돌 (its result's merge conflict) was pressed. */
   'node-conflict': [nodeId: string]
   /** flowgate.v02.0061 T#15: an item of a card's context menu was chosen. */

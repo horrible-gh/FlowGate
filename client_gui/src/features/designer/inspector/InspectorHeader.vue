@@ -133,11 +133,13 @@
         >✎ <span class="inspector-header-memo-label">{{ t('gui.designer.inspector.header.memo') }}</span></button>
       </slot>
       <slot name="state">
+      <GateHeader v-if="target.nodeType === 'gate'" :target="target" />
       <span
-        v-if="pill"
+        v-else-if="pill"
         class="inspector-header-pill"
         :class="[`inspector-header-pill--${pill.tone}`, { 'is-intervention': cardState?.key === 'needs_intervention' || cardState?.key === 'system_error' }]"
         :title="pill.title"
+        :aria-label="[pill.label, pill.title].filter(Boolean).join(' · ')"
         data-test="designer-inspector-pill"
         :data-tone="pill.tone"
         :data-state="target.canvasState ?? ''"
@@ -204,6 +206,7 @@ import { computed, inject, nextTick, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Dropdown from '../../../components/ui/Dropdown.vue'
 import IconButton from '../../../components/ui/IconButton.vue'
+import GateHeader from './features/gateCard/GateHeader.vue'
 import { flowNodeKindView, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
 import { cardStateReasonText } from '../center/graph/cardStateView'
 import { INSPECTOR_HOST } from './inspectorHost'

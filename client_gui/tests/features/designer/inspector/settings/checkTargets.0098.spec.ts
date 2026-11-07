@@ -201,11 +201,13 @@ describe('check card target and push controls — 0098', () => {
     expect(context.value!.settings.value?.settingsVersion).toBe(7)
     expect(http.post).not.toHaveBeenCalled()
   })
-  it('does not optimistically confirm push ON and restores OFF after a refusal', async () => {
+  it('shows push ON at once as saving (flowgate.v02.0148 T#2), never as saved before the answer, and restores OFF after a refusal', async () => {
     const w = await show(); let reject!: (e: any) => void
     http.patch.mockImplementationOnce(() => new Promise((_a, b) => { reject = b }))
     await w.get('[data-test="check-settings-push"]').trigger('click')
-    expect(w.get('[data-test="check-settings-push"]').attributes('aria-checked')).toBe('false')
+    expect(w.get('[data-test="check-settings-push"]').attributes('aria-checked')).toBe('true')
+    expect(w.get('[data-field-state="saving"][data-mark-field="push"]').exists()).toBe(true)
+    expect(w.find('[data-field-state="saved"]').exists()).toBe(false)
     reject(refusal('gate_settings_invalid', 'origin_not_configured')); await flushPromises()
     expect(w.get('[data-test="check-settings-push"]').attributes('aria-checked')).toBe('false')
     expect(w.get('[data-field="push"]').attributes('title')).toContain('원격 반영 사용 불가')

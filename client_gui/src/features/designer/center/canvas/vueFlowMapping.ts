@@ -45,6 +45,7 @@
 // flowgate.v02.0070 T#1 (B1): a card no longer edits its title (the Inspector header does), so the card data carries
 // no title edit state.
 import type { Edge, Node } from '@vue-flow/core'
+import { gateApprovalView } from '../../inspector/features/gateCard/gateApproval'
 import { gateHeaderState, type GateHeaderState } from './gateHeaderState'
 import { cardNodeRun, cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'
@@ -75,6 +76,8 @@ export interface FlowGateNodeData {
   approvable?: boolean
   /** flowgate.v02.0056 F2-1: this card's [승인] is being answered. */
   approving?: boolean
+  approvalBlocked?: boolean
+  approvalReason?: string | null
   /**
    * flowgate.v02.0061 T#14: the card attempt's result integration when it needs a look — `conflict` | `failed` |
    * `pending` | `integrating` (open key); absent otherwise.
@@ -152,9 +155,15 @@ export function toVueFlowNodes(
     }
     // Gates keep their own decision/job/recovery presentation; general card state is excluded.
     if (node.definition?.nodeType === 'gate') {
-      data.gateState = gateHeaderState(cardNodeRun(node.nodeRun, marks.nodeRuns.get(node.id))?.gate)
+      const current = cardNodeRun(node.nodeRun, marks.nodeRuns.get(node.id))
+      data.gateState = gateHeaderState(current?.gate, current)
+      data.approvable = options.canApprove === true && graph.ownership !== 'conflict' && data.gateState.key === 'waiting_confirm'
+      const approval = gateApprovalView(graph.flowId, node.id, current?.attemptId)
+      data.approving = options.approvingNodeId === node.id || approval.busy
+      data.approvalBlocked = approval.blocked
+      data.approvalReason = approval.reason
     }
-    const cardState = node.definition?.nodeType !== 'gate' ? cardStateView(cardNodeRun(node.nodeRun, marks.nodeRuns.get(node.id))) : null
+    const cardState = node.definition?.nodeType !== 'gate' ? cardStateView(cardNodeRun(node.nodeRun, marks.nodeRuns.get(node.id)), node.cardDocuments?.find(line => line.slot === 'report')?.docReviewStatus ?? node.document?.docReviewStatus) : null
     if (cardState) {
       data.cardState = cardState
     }

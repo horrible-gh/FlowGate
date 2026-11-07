@@ -241,9 +241,9 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
  * one rule the Canvas card uses too (center/graph/cardStateView.ts); null on a gate (✓ 확인 · ✕ 반려 is its own),
  * a card not saved yet, a Node without a definition or without a run.
  */
-export function inspectorCardState(target: Pick<InspectorTarget, 'nodeType' | 'nodeId' | 'nodeRun'> | null): CardStateView | null {
+export function inspectorCardState(target: Pick<InspectorTarget, 'nodeType' | 'nodeId' | 'nodeRun'> & Partial<Pick<InspectorTarget, 'docReviewStatus' | 'cardDocuments'>> | null): CardStateView | null {
   if (!target || target.nodeType === 'gate' || inspectorCardNodeKey(target) === null) return null
-  return cardStateView(target.nodeRun)
+  return cardStateView(target.nodeRun, target.cardDocuments?.find(line => line.slot === 'report')?.docReviewStatus ?? target.docReviewStatus)
 }
 
 /** flowgate.v02.0056 F2-1 — how a refused [승인] is worded and handled (the Canvas' grouping, cardStateView.ts). */

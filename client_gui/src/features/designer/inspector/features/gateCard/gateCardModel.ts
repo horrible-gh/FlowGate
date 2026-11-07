@@ -1,4 +1,5 @@
 // D0007 §6: gate result and document-tab actions; custom/document card lines retain their existing behavior.
+import { gateHeaderState } from '../../../center/canvas/gateHeaderState'
 import type { RunGateState } from '@/features/document'
 import type { InspectorTarget } from '../../inspectorTarget'
 
@@ -157,9 +158,6 @@ export function gateFailureKey(error: { readonly kind: string; readonly status: 
   return 'failure.other'
 }
 
-// Server job_store GATE_PARKED_CONFLICT / GATE_PARKED_FAILED / GATE_PARKED_RECOVERY.
-const GATE_PHASE_NOTES = { conflict: 'gate_conflict', failed: 'gate_failed', recovery: 'gate_recovery' } as const
-
 /** Only the current successful decision's own completed archive receipt can light the chip. */
 export function gateResult(node: { status: string; attemptId?: string | null; gate?: RunGateState | null } | null) {
   const gate = node?.gate
@@ -168,12 +166,10 @@ export function gateResult(node: { status: string; attemptId?: string | null; ga
   const confirmed = finished && node?.status === 'done'
   const rejected = finished && node?.status === 'rejected'
   const current = !!result && (result.attempt_id === node?.attemptId || result.attempt_id === null)
-  const note = gate?.job?.phase_note
-  const conflict = note === GATE_PHASE_NOTES.conflict
-  const recovery = note === GATE_PHASE_NOTES.failed || note === GATE_PHASE_NOTES.recovery
+  const state = gateHeaderState(gate, node)
   return {
-    key: confirmed ? 'confirmed' : rejected ? 'rejected' : conflict ? 'conflict_review' : recovery ? 'recovery_required' : gate?.decision_in_progress ? 'publishing' : 'before',
-    tone: confirmed ? 'success' : rejected ? 'danger' : conflict ? 'warning' : recovery ? 'danger' : gate?.decision_in_progress ? 'running' : 'neutral',
+    key: state.key === 'pending' || state.key === 'waiting_confirm' ? 'before' : state.key,
+    tone: state.tone,
     archived: !!(confirmed && current && gate?.archived && result?.archived && result.archive_id && result.result === 'confirmed' && result.status === 'succeeded'),
     description: current && (confirmed || rejected) ? [result.actor_user_id, result.completed_at ?? result.decided_at, result.comment].filter(Boolean).join(' · ') : '',
   }

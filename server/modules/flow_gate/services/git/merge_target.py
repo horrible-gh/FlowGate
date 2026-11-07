@@ -1121,7 +1121,8 @@ def _judge_local_target(basis: CheckTargetBasis, name: str, sha: str, incoming_o
     }
 # The candidate cache: (project, group) -> snapshot, at most CHECK_TARGET_CACHE_SEC old. Concurrent misses of one key
 # share one computation; ``invalidate_check_targets`` moves the epoch, so a computation that began before it is
-# neither cached nor joined afterwards.
+# neither cached nor joined afterwards. Timeout views also use this TTL (with no partial candidates or basis),
+# checked before any new basis probe; they never serve as a save/confirm judgement.
 _check_cache: dict[tuple, dict] = {}
 _check_inflight: dict[tuple, "_CheckFlight"] = {}
 _check_lock = threading.Lock()
@@ -1435,6 +1436,14 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
     """The (cached) snapshot of one group's candidates, read under the view's ``budget``: the basis, the shared
     computation and the wait for another request's computation all spend the same deadline."""
     trace = _check_trace.get()                    # 0119 T#1: diagnostics only
+    key = (project_id, group_id)
+    with _check_lock:
+        hit = _check_cache.get(key)
+        if (not refresh and hit is not None and hit["status"] == CHECK_STATUS_TIMEOUT
+                and time.monotonic() - hit["at"] < CHECK_TARGET_CACHE_SEC):
+            if trace is not None:
+                trace.source = "cache"
+            return hit
     _trace_stage(trace, "basis")
     started = time.monotonic()
     try:
@@ -1454,13 +1463,12 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
     finally:
         if trace is not None:
             trace.basis_ms = _ms(time.monotonic() - started)
-    key = (project_id, group_id)
     fingerprint = (basis.base_branch, basis.work_base_ref, basis.source_branch, basis.slot_registered,
                    str(basis.base_root))
     with _check_lock:
         epoch = _check_epoch
         hit = _check_cache.get(key)
-        if (not refresh and hit is not None and hit["fingerprint"] == fingerprint
+        if (not refresh and hit is not None and hit.get("fingerprint") == fingerprint
                 and time.monotonic() - hit["at"] < CHECK_TARGET_CACHE_SEC):
             if trace is not None:
                 trace.source = "cache"
@@ -1552,15 +1560,20 @@ def check_target_view(project_id: Optional[str], group_id: str, selected: Option
              "current": {branch, inherited, checked, error, unmerge_supported, warnings},
              "default": {branch, checked, error, unmerge_supported, warnings}}}
 
-    ``selected`` is the stored ``merge_target_branch`` (None: the work base is inherited). ``refresh`` skips the
-    cache. One CHECK_TARGET_BUDGET_SEC budget covers the whole view -- the basis, the candidates and the current /
-    default states; when it runs out the view is ``timeout`` with no candidates and unchecked states, and that is
-    never cached. Never raises for a Git / ledger read: the status says what failed. Saving, confirming and running
+    ``selected`` is the stored ``merge_target_branch`` (None: the work base is inherited). ``refresh`` invalidates
+    the cache. One CHECK_TARGET_BUDGET_SEC budget covers the whole view -- the basis, the candidates and the current /
+    default states; when it runs out the view is ``timeout`` with no candidates and unchecked states. That negative
+    snapshot is cached for CHECK_TARGET_CACHE_SEC, without renewing its age on hits. Never raises for a Git / ledger
+    read: the status says what failed. Saving, confirming and running
     never read this (they call ``judge_check_target``)."""
     from .command import git_budget
 
     trace = _CheckTrace()                         # 0119 T#1: the failed / timed-out view's one diagnostic line
     token = _check_trace.set(trace)
+    if refresh:
+        invalidate_check_targets(project_id, group_id)
+    with _check_lock:
+        epoch = _check_epoch
     try:
         with git_budget(CHECK_TARGET_BUDGET_SEC) as budget:
             snapshot = _check_snapshot(project_id, group_id, refresh, budget, selected)
@@ -1576,6 +1589,15 @@ def check_target_view(project_id: Optional[str], group_id: str, selected: Option
                                             default_branch=default_branch, basis=None)
                 default = _entry(default_branch, checked=False) if default_branch else _entry(None, checked=True)
                 current = dict(default) if selected is None else _entry(selected, checked=False)
+            if snapshot["status"] == CHECK_STATUS_TIMEOUT and trace.source != "joined":
+                # Cover basis, candidate and entry timeouts. A waiter spending its own budget must not
+                # poison the owner's result; invalidation/refresh fences late results, and hits never renew TTL.
+                with _check_lock:
+                    key = (project_id, group_id)
+                    if epoch == _check_epoch and _check_cache.get(key) is not snapshot:
+                        _check_cache[key] = {**_failed_snapshot(
+                            CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, default_branch=default_branch, basis=None),
+                            "at": time.monotonic()}
     finally:
         _check_trace.reset(token)
     current["inherited"] = selected is None

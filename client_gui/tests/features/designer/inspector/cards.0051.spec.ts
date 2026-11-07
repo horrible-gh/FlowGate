@@ -153,7 +153,7 @@ describe('Graph gate (gateCardModel)', () => {
     expect(gateCardSlots(GATE)).toEqual([{ key: 'result', kind: 'result', id: null, empty: true, emptyKey: 'empty.before', state: null, focus: false, open: 'none' }])
     expect(gateActions(GATE)).toEqual({
       confirm: { visible: true, enabled: false, reason: 'reason.not_running' },
-      reject: { visible: true, enabled: false, reason: 'reason.not_running' },
+      reject: { visible: false, enabled: false, reason: null },
     })
   })
 
@@ -161,7 +161,7 @@ describe('Graph gate (gateCardModel)', () => {
   it('a gate decides while it is open in a running run; a stopped run, another turn, a decision in flight or a conflict wait', () => {
     const open = { status: 'running', nodes: [{ nodeKey: GATE.nodeId, status: 'open', gate: { can_decide: true } as any }] }
     expect(gateActions(GATE, open).confirm).toEqual({ visible: true, enabled: true, reason: null })
-    expect(gateActions(GATE, open).reject.enabled).toBe(true)
+    expect(gateActions(GATE, open).reject.enabled).toBe(false)
     expect(gateActions(GATE, { ...open, status: 'stopped' }).confirm.reason).toBe('reason.not_running')
     expect(gateActions(GATE, { status: 'running', nodes: [{ nodeKey: GATE.nodeId, status: 'pending' }] }).confirm.reason).toBe('reason.not_open')
     expect(gateActions(GATE, { status: 'running', nodes: [] }).confirm.reason).toBe('reason.not_open')
@@ -350,8 +350,9 @@ describe('card documents tab parts', () => {
   it('GateSlots / GateActions: the result box and disabled decisions before a run', () => {
     const slots = mount(GateSlots, { props: { target: GATE }, global })
     expect(slots.get('[data-test="gate-result"]').text()).toContain('확인 결과')
-    expect(slots.get('[data-test="gate-result-value"]').text()).toBe('확인 전')
-    expect(slots.get('[data-test="gate-confirm"]').attributes('disabled')).toBeDefined()
+    expect(slots.find('[data-test="gate-result-value"]').exists()).toBe(false)
+    expect(slots.find('[data-test="gate-confirm"]').exists()).toBe(false)
+    expect(mount(GateActions, { props: { target: GATE }, global }).get('[data-test="gate-confirm"]').attributes('disabled')).toBeDefined()
     const none = facts(GATE, null, { ...NO_DOCUMENT, nodeType: null })
     expect(mount(GateSlots, { props: { target: none }, global }).find('[data-test="inspector-gate-card"]').exists()).toBe(false)
   })
@@ -470,7 +471,7 @@ describe('card settings parts', () => {
   it('follows the locale', () => {
     i18n.global.locale.value = 'en'
     expect(mount(ResearchSlots, { props: { target: facts(V01_TR, 'NR') }, global }).findAll('[data-test="inspector-slot-name"]').map((n) => n.text())).toEqual(['Instruction', 'Report'])
-    expect(mount(GateActions, { props: { target: GATE }, global }).get('[data-test="gate-confirm"]').text()).toBe('✓ Confirm')
+    expect(mount(GateActions, { props: { target: GATE }, global }).get('[data-test="gate-confirm"]').text()).toBe('Approve')
     expect(mount(InspectorRunMenu, { global }).findAll('[role="menuitem"]').map((item) => item.text())).toEqual(['Run history'])
   })
 })

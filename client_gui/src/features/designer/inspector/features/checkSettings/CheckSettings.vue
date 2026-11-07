@@ -7,6 +7,7 @@
         <InspectorControlRow :label="t(k('archive'))" :hint="reasonText">
           <Toggle :model-value="shown.archive ?? false" :disabled="off" :aria-label="t(k('archive'))" data-test="check-settings-archive-value" @update:model-value="(value: boolean) => onChange('archive', value)" />
           <InspectorFailureIcon v-if="failureOf('archive')" :name="t(k('failed'))" :reason="failureOf('archive')!" data-field="archive" />
+          <FieldSaveMark :field="'archive'" :state="card.fieldStates.value['archive']" :saving="t(k('fieldState.saving'))" :saved="t(k('fieldState.saved'))" :retry="t(k('fieldState.retry'))" :disabled="off" @retry="retry('archive')" />
         </InspectorControlRow>
       </InspectorBlock>
 
@@ -25,6 +26,7 @@
             @update:model-value="(value: string) => onChange('merge_mode', value)"
           />
           <InspectorFailureIcon v-if="failureOf('merge_mode')" :name="t(k('failed'))" :reason="failureOf('merge_mode')!" data-field="merge_mode" />
+          <FieldSaveMark :field="'merge_mode'" :state="card.fieldStates.value['merge_mode']" :saving="t(k('fieldState.saving'))" :saved="t(k('fieldState.saved'))" :retry="t(k('fieldState.retry'))" :disabled="off" @retry="retry('merge_mode')" />
         </InspectorControlRow>
         <InspectorControlRow :label="t(k('git.target'))" :hint="reasonText" wrap>
           <div class="inspector-check-settings-target-group">
@@ -44,6 +46,7 @@
           />
           <span v-if="missingTarget && shown.target" class="inspector-check-settings-missing" data-test="check-settings-target-display">{{ shown.target }}</span>
             </div>
+          <FieldSaveMark :field="'merge_target_branch'" :state="card.fieldStates.value['merge_target_branch']" :saving="t(k('fieldState.saving'))" :saved="t(k('fieldState.saved'))" :retry="t(k('fieldState.retry'))" :disabled="off" @retry="retry('merge_target_branch')" />
           <span v-if="targetFailure" class="inspector-check-settings-target-help" role="alert" data-test="check-settings-target-error">{{ targetFailure }}</span>
           <span v-else-if="shown.lookupError" class="inspector-check-settings-target-help" role="status" data-test="check-settings-target-state">{{ t(k(shown.lookupError)) }}</span>
           </div>
@@ -73,6 +76,7 @@
             />
           </label>
           <InspectorFailureIcon v-for="field in GIT_FIELDS.filter((name) => failureOf(name))" :key="field" :name="t(k('failed'))" :reason="failureOf(field)!" :data-field="field" />
+          <FieldSaveMark v-for="field in GIT_FIELDS.filter((name) => card.fieldStates.value[name])" :key="field" :field="field" :state="card.fieldStates.value[field]" :saving="t(k('fieldState.saving'))" :saved="t(k('fieldState.saved'))" :retry="t(k('fieldState.retry'))" :disabled="off" @retry="retry(field)" />
           </div>
         </InspectorControlRow>
       </InspectorBlock>
@@ -87,6 +91,7 @@ import Button from '../../../../../components/ui/Button.vue'
 import Select from '../../../../../components/ui/Select.vue'
 import Toggle from '../../../../../components/ui/Toggle.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
+import FieldSaveMark from './FieldSaveMark.vue'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
 import InspectorControlRow from '../../parts/InspectorControlRow.vue'
 import InspectorFailureIcon from '../../parts/InspectorFailureIcon.vue'
@@ -131,6 +136,8 @@ const shown = computed<CheckSettingsView>(
       placing: card.placing.value,
       disposed: card.disposed.value,
       failure: card.failure.value,
+      fieldFailures: card.fieldFailures.value,
+      fieldStates: card.fieldStates.value,
       cachedTargets: card.cachedTargets.value,
     }),
 )
@@ -145,13 +152,16 @@ const readFailure = computed(() => {
  * The safety lock (0006-T §3.1): a lock reason, a pending change, or settings / run not read (never read, or the read
  * itself failed). A candidate lookup error is never part of it: the server answers it inside a read that succeeded.
  */
-const safetyLock = computed(() => props.view ? !props.view.connected : (shown.value.reason ?? null) !== null || Object.keys(card.pending.value).length > 0 || card.status.value === 'idle' || card.status.value === 'error')
+const safetyLock = computed(() => props.view ? !props.view.connected : (shown.value.reason ?? null) !== null || card.status.value === 'idle' || card.status.value === 'error')
 
-/** A read or a candidate re-read is in flight: the controls wait for its answer and no second re-read is sent. */
+/** A read or a candidate re-read is in flight: no second re-read is sent. It is the refresh button's wait only, never a lock. */
 const refreshing = computed(() => !props.view && (card.status.value === 'loading' || card.refreshing.value))
 
-/** Nothing can change now (a safety lock, or a read in flight): the controls are off, the lock reason their tooltip. */
-const off = computed(() => safetyLock.value || refreshing.value)
+/**
+ * Nothing can change now (a safety lock): the controls are off, the lock reason their tooltip. flowgate.v02.0148 T#2: a save
+ * on its way (the changes are queued) or a read in flight (the shown values stay) does not switch any control off.
+ */
+const off = computed(() => safetyLock.value)
 
 const reasonText = computed(() => (safetyLock.value && shown.value.reason ? t(k(shown.value.reason)) : null))
 
@@ -180,6 +190,12 @@ function onChange(field: string, value: unknown) {
 function reload() {
   if (refreshing.value) return
   void card.reload()
+}
+
+/** Sends again the value a refused field was left with. */
+function retry(field: string) {
+  if (off.value) return
+  void card.retry(field)
 }
 </script>
 

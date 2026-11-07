@@ -81,6 +81,7 @@
           @undo="center.undoEdit(activeTab.flowId)"
           :can-approve="center.canApproveFlow(activeTab.flowId)"
           :approving-node-id="center.activeRun.value?.approving ?? null"
+          @node-approve="center.approveNode(activeTab.flowId, $event)"
           @node-conflict="emit('show-tool', 'git')"
           :card-menu="cardMenuOf"
           :holds="holds"

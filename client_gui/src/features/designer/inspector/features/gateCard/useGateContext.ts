@@ -2,7 +2,7 @@
 import { normalizeApiError } from '@shared/apiErrors'
 import { randomUuid } from '@shared/utils/uuid'
 import { computed, effectScope, hasInjectionContext, inject, nextTick, onScopeDispose, ref, shallowRef, watch, type EffectScope } from 'vue'
-import { documentErrorOf, runCurrentRead, runGateReceiptsRead, runGateDecide, settingsNodeRead, settingsNodeWrite, type RunCurrent, type RunGateDecision, type RunGateIntent, type SettingsNode } from '@/features/document'
+import { documentErrorOf, runCurrentRead, runGateReceiptsRead, runGateDecide, settingsNodeRead, settingsNodeWrite, type RunCurrent, type RunGateDecision, type RunGateIntent, type SettingsContext, type SettingsNode } from '@/features/document'
 import { INSPECTOR_SELECTION } from '../../inspectorHost'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { useInspectorEvents } from '../../useInspectorResource'
@@ -33,6 +33,15 @@ export interface MergeTargetCache {
   /** Date.now() when the confirming answer arrived. */
   readonly at: number
 }
+/** flowgate.v02.0148 T#2: the settings a card lets the Inspector change one value at a time. */
+const CHANGEABLE_FIELDS = ['archive', 'merge_mode', 'merge_target_branch', 'push', 'keep_branch']
+/** How long a field shows `saved` after the server's answer carried its requested value. */
+export const FIELD_SAVED_MS = 2000
+/** A field's own save state: queued / on its way, confirmed by the answer, or refused (the shown value is back to the confirmed one). */
+export type FieldState = 'saving' | 'saved' | 'failed'
+interface QueuedChange { field: string; value: unknown; keeps: number; waiters: Array<(ok: boolean) => void> }
+const sameContext = (a: SettingsContext | undefined, b: SettingsContext | undefined) =>
+  a === undefined || b === undefined ? a === b : a.run_id === b.run_id && a.graph_revision_no === b.graph_revision_no && a.draft_version === b.draft_version
 function refusesTarget(cause: unknown): boolean {
   const normalized = normalizeApiError(cause)
   const reason = typeof normalized.params.reason === 'string' ? normalized.params.reason : null
@@ -52,6 +61,20 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
   /** A refresh_merge_targets read is asked for or in flight (the candidate re-read, not a lock). */
   const refreshing = ref(false)
   const targetCache = shallowRef<MergeTargetCache | null>(null)
+  /** Per field: `saving` while queued / in flight, `saved` for FIELD_SAVED_MS after a confirming answer, `failed` until the next input. */
+  const fieldStates = shallowRef<Readonly<Record<string, FieldState>>>({})
+  /** Per field: the refusal of its last write (the value that was refused is kept for a retry). */
+  const failures = shallowRef<Readonly<Record<string, unknown>>>({})
+  const failedValues = new Map<string, unknown>()
+  const savedTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  // One serial writer: a card's settings are versioned, so PATCHes go out one at a time in the order of the input; a value
+  // typed again for a field still waiting replaces the waiting one (latest wins).
+  const queue: QueuedChange[] = []
+  let draining: Promise<void> | null = null
+  /** Date.now() when the merge target views of `settings` were read (a GET or a full PATCH answer); a carried-over view keeps it. */
+  let viewAt = 0
+  /** The right (`keeps`) of the request that read the views of `settings`: only views read in the current targetEpoch may stand in for an answer. */
+  let viewEpoch = NO_RIGHTS
   const node = computed(() => run.value?.nodes.find(n => n.nodeKey === nodeKey) ?? null)
   const gate = computed(() => node.value?.gate ?? null)
   let reading: Promise<boolean> | null = null
@@ -60,6 +83,11 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
   let replaying: Promise<boolean> | null = null
   // A read started while a write / decision was answered is dropped; the writer reads once more afterwards.
   let dropped = false
+  // The recovery read after the queue (flowgate.v02.0148 T#2 rework): it runs beside the queue, never inside `draining`, so a
+  // change typed while a slow GET is still on its way is written at once.
+  let recovering: Promise<void> | null = null
+  let recoverAgain = false
+  let recoverKeeps = NO_RIGHTS
   let cacheTimer: ReturnType<typeof setTimeout> | null = null
   // 0006-T §2 / §3.6: bumped when the Inspector leaves this card. An answer to a GET / PATCH sent before that may still
   // set the values it carries, but it can no longer keep candidates: only a request sent after the return can.
@@ -133,22 +161,28 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
    * `keeps` is the right to keep candidates the read carries: by default the one of this moment; a follow-up read of a
    * write / decision carries the right of that write / decision (sent before a move, it keeps nothing).
    */
-  async function reload(refreshMergeTargets = false, keeps: number = rights()): Promise<boolean> {
+  function reload(refreshMergeTargets = false, keeps: number = rights()): Promise<boolean> {
+    return read(refreshMergeTargets, keeps, false)
+  }
+  /** `own`: the read of the writer itself (the only one that may land while the queue is still being written). */
+  async function read(refreshMergeTargets: boolean, keeps: number, own: boolean): Promise<boolean> {
     if (reading) {
       if (!refreshMergeTargets) return reading
       refreshing.value = true
       await reading
-      return reload(true, keeps)
+      return read(true, keeps, own)
     }
     const at = epoch
     const before = status.value
-    status.value = 'loading'
+    // flowgate.v02.0148 T#2: stale-while-revalidate - only the first read (nothing confirmed yet) puts the context in 'loading';
+    // a later read keeps the controls usable while it is on its way.
+    if (status.value !== 'ready') status.value = 'loading'
     if (refreshMergeTargets) refreshing.value = true
     reading = (async () => {
       try {
         const [current, saved] = await Promise.allSettled([runCurrentRead(flowId).then(current => runGateReceiptsRead(current, nodeKey)), settingsNodeRead(flowId, nodeKey, refreshMergeTargets)])
-        if (at !== epoch) {
-          // Stale (a write / decision answered meanwhile): neither the values nor the kept candidates change, and the
+        if (at !== epoch || (draining !== null && !own)) {
+          // Stale (a write / decision answered meanwhile, or the queue is still writing): neither the values nor the kept candidates change, and the
           // read does not leave the controls in 'loading'.
           dropped = true
           if (status.value === 'loading') status.value = before
@@ -157,7 +191,7 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
         // Keep each confirmed read even when the other request fails; actions stay locked.
         if (current.status === 'fulfilled') run.value = current.value
         // A read sent before the Inspector left this card keeps no candidates (sent before the switch).
-        if (saved.status === 'fulfilled') { settings.value = saved.value; if (keeps === targetEpoch) noteTargets(saved.value) }
+        if (saved.status === 'fulfilled') { settings.value = saved.value; if (saved.value.mergeTargetState !== undefined) { viewAt = Date.now(); viewEpoch = keeps }; if (keeps === targetEpoch) noteTargets(saved.value) }
         if (saved.status === 'rejected') throw saved.reason
         if (current.status === 'rejected') throw current.reason
         error.value = null
@@ -225,43 +259,163 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
       return false
     } finally { busy.value = null }
   }
-  async function change(field: string, value: unknown): Promise<boolean> {
-    if (!['archive', 'merge_mode', 'merge_target_branch', 'push', 'keep_branch'].includes(field)) return false
-    if (settings.value?.settingsVersion === undefined || status.value !== 'ready' || settings.value?.locked || gate.value?.settings_locked || busy.value || request || Object.keys(pending.value).length) return false
+  /** The earlier merge target views can stand in for a PATCH answer that leaves them out (flowgate.v02.0148 T#2). */
+  function canKeepViews(prev: SettingsNode | null, keeps: number): prev is SettingsNode {
+    return !!prev && keeps === targetEpoch && viewEpoch === targetEpoch && prev.mergeTargetOptions !== undefined && prev.defaultTargetBranch !== undefined && !!prev.mergeTargetState
+      && Date.now() - viewAt < MERGE_TARGET_CACHE_MS
+  }
+  /**
+   * The merge contract: only an answer marked `merge_targets_kept` takes the earlier options / work base / lookup state over,
+   * and only while the same context holds, the Inspector did not leave the card and the views are younger than
+   * MERGE_TARGET_CACHE_MS. Any other key of the answer (values, version, lock, context) stays the answer's. Null = not
+   * mergeable: the caller reads the full view instead of leaving the candidates empty.
+   */
+  function mergeKept(prev: SettingsNode | null, saved: SettingsNode, keeps: number): SettingsNode | null {
+    if (!canKeepViews(prev, keeps) || !sameContext(prev.context, saved.context)) return null
+    const { mergeTargetsKept: _kept, ...rest } = saved
+    return { ...rest, mergeTargetOptions: prev.mergeTargetOptions, defaultTargetBranch: prev.defaultTargetBranch, mergeTargetState: prev.mergeTargetState }
+  }
+  function setFieldState(field: string, state: FieldState | null) {
+    const next = { ...fieldStates.value }
+    if (state) next[field] = state; else delete next[field]
+    fieldStates.value = next
+  }
+  function setFailure(field: string, cause: unknown | null) {
+    const next = { ...failures.value }
+    if (cause === null) delete next[field]; else next[field] = cause
+    failures.value = next
+  }
+  function setPending(field: string, value: unknown | undefined) {
+    const next = { ...pending.value }
+    if (value === undefined) delete next[field]; else next[field] = value
+    pending.value = next
+  }
+  /** One PATCH of the queue; true = saved. The follow-up read is the caller's (`state.again`). */
+  async function writeOne(entry: QueuedChange, state: { again: boolean }): Promise<boolean> {
+    const { field, value, keeps } = entry
+    const prev = settings.value
     epoch++
-    const keeps = rights()
-    let refreshAfterFailure = false
-    pending.value = { [field]: value }
-    failure.value = null
     try {
-      const saved = await settingsNodeWrite(flowId, nodeKey, field, value, settings.value?.settingsVersion)
-      settings.value = saved
-      // The saved answer is authoritative, also for the candidates it carries - unless the Inspector left the card
-      // while it was on its way: then its value still holds, but it keeps no candidates.
-      if (keeps === targetEpoch) noteTargets(saved)
+      // The answer may leave the merge target views out only when the earlier ones could be carried over.
+      const optIn = field !== 'merge_target_branch' && canKeepViews(prev, keeps)
+      const saved = await settingsNodeWrite(flowId, nodeKey, field, value, prev?.settingsVersion, undefined, optIn ? { keepMergeTargets: true } : undefined)
+      if (saved.mergeTargetsKept) {
+        const merged = mergeKept(prev, saved, keeps)
+        // Not mergeable any more (context, card left, expired): the values hold, the candidates are read in full right after.
+        if (merged) settings.value = merged
+        else { settings.value = saved; state.again = true }
+      } else {
+        settings.value = saved
+        // The saved answer is authoritative, also for the candidates it carries - unless the Inspector left the card
+        // while it was on its way: then its value still holds, but it keeps no candidates.
+        if (saved.mergeTargetState !== undefined) { viewAt = Date.now(); viewEpoch = keeps }
+        if (keeps === targetEpoch) noteTargets(saved)
+      }
       decisionError.value = null
+      setFailure(field, null)
+      failedValues.delete(field)
+      if (failure.value?.field === field) failure.value = null
+      const confirmed = value === null || saved.fields[field]?.value === value
+      const waiting = queue.some(q => q.field === field)
+      if (!waiting) setFieldState(field, confirmed ? 'saved' : null)
+      if (confirmed && !waiting) {
+        clearTimeout(savedTimers.get(field))
+        savedTimers.set(field, setTimeout(() => { savedTimers.delete(field); if (fieldStates.value[field] === 'saved') setFieldState(field, null) }, FIELD_SAVED_MS))
+      }
       return true
     } catch (cause) {
       failure.value = { field, error: cause }
-      refreshAfterFailure = normalizeApiError(cause).params.reason !== 'legacy_merge_target_conflict'
+      setFailure(field, cause)
+      failedValues.set(field, value)
+      // A newer value of this field still waiting is the user's next input: it stays `saving` and is sent.
+      setFieldState(field, queue.some(q => q.field === field) ? 'saving' : 'failed')
+      // Re-read refused targets/versions; legacy conflicts preserve all saved fields.
+      if (normalizeApiError(cause).params.reason !== 'legacy_merge_target_conflict') state.again = true
       // 0006-T §2: a refusal saying the target itself is unusable drops the kept candidates (version / lock / busy keep them).
       if (field === 'merge_target_branch' && refusesTarget(cause)) dropTargets()
       return false
     } finally {
-      pending.value = {}
       // Invalidates reads started before the write's answer; failed writes keep the confirmed value.
       epoch++
-      if (reading) await reading
-      // A successful PATCH is authoritative. Re-read refused targets/versions; legacy conflicts preserve all saved fields.
-      // A read dropped as stale meanwhile (an event's) is read once more after the write. It carries the write's right
-      // to keep candidates: a write sent before the Inspector left the card keeps nothing through its follow-up read.
-      const again = refreshAfterFailure || dropped
-      dropped = false
-      if (again) await reload(false, keeps)
+      if (!queue.some(q => q.field === field)) setPending(field, undefined)
     }
   }
-  return { run, settings, node, gate, pending, status, error, failure, busy, decisionError, refreshing, targetCache, cachedTargets, dropTargets,
-    leave, acquire, release, active: shown, reload, decide, change, replay, hasRequest: () => request !== null }
+  function drain(): Promise<void> {
+    if (draining) return draining
+    draining = (async () => {
+      const state = { again: false }
+      let keeps = rights()
+      try {
+        while (queue.length) {
+          const entry = queue.shift()!
+          keeps = entry.keeps
+          const ok = await writeOne(entry, state)
+          entry.waiters.forEach(done => done(ok))
+          // A refused version / lock leaves the next write with a stale version: read before it (the read of the queue itself).
+          if (!ok && state.again && queue.length) { state.again = false; if (reading) await reading; await read(false, keeps, true) }
+        }
+      } finally {
+        // The queue ends here, without waiting for any read: a change typed meanwhile starts its own drain at once. What
+        // is left to read (a refused write, a read dropped as stale) goes to `recover`, which runs beside the queue.
+        // The follow-up carries the right of the last write to keep candidates: a write sent before the Inspector left
+        // the card keeps nothing.
+        draining = null
+        recoverAgain = recoverAgain || state.again
+        recoverKeeps = keeps
+        recover()
+      }
+    })()
+    return draining
+  }
+  /**
+   * A read dropped as stale (an event's, also one still in flight when the last write was answered) is read once more
+   * after the writes. The reads in flight are awaited first: they decide `dropped` only when they land. While the queue
+   * is writing again the read waits: the end of that queue comes back here.
+   */
+  function recover() {
+    if (recovering) return
+    // The body may finish synchronously (nothing left to read): its `finally` then runs before the assignment below, so
+    // the handle is only stored while the body is still pending - a finished promise must never stay in `recovering`.
+    let finished = false
+    const running = (async () => {
+      try {
+        for (;;) {
+          if (reading) await reading
+          if (draining) return
+          const again = recoverAgain || dropped
+          dropped = false; recoverAgain = false
+          if (!again) return
+          await read(false, recoverKeeps, true)
+        }
+      } finally { finished = true; recovering = null }
+    })()
+    if (!finished) recovering = running
+  }
+  /**
+   * Queues one change. Each field has its own state (`fieldStates`); changes of different fields are written one after the
+   * other in input order, a newer value of a field still waiting replaces the waiting one. True = this value (or the one that
+   * replaced it) was saved.
+   */
+  function change(field: string, value: unknown): Promise<boolean> {
+    if (!CHANGEABLE_FIELDS.includes(field)) return Promise.resolve(false)
+    if (settings.value?.settingsVersion === undefined || status.value !== 'ready' || settings.value?.locked || gate.value?.settings_locked || busy.value || request) return Promise.resolve(false)
+    clearTimeout(savedTimers.get(field)); savedTimers.delete(field)
+    setFailure(field, null)
+    if (failure.value?.field === field) failure.value = null
+    setPending(field, value)
+    setFieldState(field, 'saving')
+    return new Promise<boolean>(resolve => {
+      const waiting = queue.find(q => q.field === field)
+      if (waiting) { waiting.value = value; waiting.waiters.push(resolve) } else queue.push({ field, value, keeps: rights(), waiters: [resolve] })
+      void drain()
+    })
+  }
+  /** Sends again the value a field's write was refused for. */
+  function retry(field: string): Promise<boolean> {
+    return failedValues.has(field) ? change(field, failedValues.get(field)) : Promise.resolve(false)
+  }
+  return { run, settings, node, gate, pending, status, error, failure, failures, fieldStates, busy, decisionError, refreshing, targetCache, cachedTargets, dropTargets,
+    leave, acquire, release, active: shown, reload, decide, change, retry, replay, hasRequest: () => request !== null }
 }
 const NO_RIGHTS = -1
 const contexts = new Map<string, ReturnType<typeof createContext>>()

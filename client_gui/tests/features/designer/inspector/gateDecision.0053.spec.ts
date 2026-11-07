@@ -11,6 +11,12 @@ vi.mock('@/features/document', async original => ({
   settingsNodeWrite: (...a: unknown[]) => mocks.write(...a), runGateDecide: (...a: unknown[]) => mocks.decide(...a),
   cardMemoList: (...a: unknown[]) => mocks.memos(...a), cardMemoUpdate: (...a: unknown[]) => mocks.update(...a), cardMemoCreate: (...a: unknown[]) => mocks.create(...a),
 }))
+import GateActions from '@/features/designer/inspector/features/gateCard/GateActions.vue'
+import { approveGateTarget, gateApprovalView } from '@/features/designer/inspector/features/gateCard/gateApproval'
+import FlowNodeCard from '@/features/designer/center/canvas/FlowNodeCard.vue'
+import { gateHeaderState } from '@/features/designer/center/canvas/gateHeaderState'
+import { useGateDecision } from '@/features/designer/inspector/features/gateCard/useGateDecision'
+import { gateContextOf } from '@/features/designer/inspector/features/gateCard/useGateContext'
 import GateSlots from '@/features/designer/inspector/features/gateCard/GateSlots.vue'
 import CheckSettings from '@/features/designer/inspector/features/checkSettings/CheckSettings.vue'
 import CardMemoButton from '@/features/designer/inspector/features/cardMemo/CardMemoButton.vue'
@@ -38,7 +44,8 @@ function gate(status = 'open', runStatus = 'idle', extra = {}) {
   } }] }
 }
 function result(archived = true) { return { decision_id: 'd1', attempt_id: `attempt_${id}`, result: 'confirmed', status: 'succeeded', archived, archive_id: archived ? 'a1' : null, actor_user_id: 'kim', completed_at: '2026-10-24T12:00:00Z', comment: 'reviewed', effects: [] } }
-async function show(component: any = GateSlots, props: any = { target }) {
+const GateView = defineComponent({ props: ['target'], setup: props => { const state = useGateDecision(() => props.target); return () => h('div', [h(GateActions, { target: props.target, state }), h(GateSlots, { target: props.target, state })]) } })
+async function show(component: any = GateView, props: any = { target }) {
   const w = mount(component, { props, global: { plugins: [i18n, createPinia()] }, attachTo: document.body })
   wrappers.push(w)
   await flushPromises()
@@ -63,9 +70,10 @@ describe('gate Inspector — D §8-10', () => {
   it.each(['running', 'idle'])('open + can_decide in %s enables the document actions', async status => {
     current = gate('open', status)
     const w = await show()
-    expect(w.get('[data-test="gate-result-value"]').text()).toBe('확인 전')
+    expect(w.find('[data-test="gate-result-value"]').exists()).toBe(false)
     expect(w.get('[data-test="gate-confirm"]').attributes('disabled')).toBeUndefined()
-    expect(registration).not.toHaveProperty('headerAction')
+    expect(registration.headerAction).toBe(GateActions)
+    expect(registration).not.toHaveProperty('headerState')
   })
   it('has no reject action and sends no reject request', async () => {
     const w = await show()
@@ -90,15 +98,16 @@ describe('gate Inspector — D §8-10', () => {
     current = gate('done', 'idle', { archived: true, settings_locked: true, decision: result() })
     stream.open(); stream.emit('gate_publish_job_changed', { groupId: target.flowId })
     await new Promise(r => setTimeout(r, 240)); await flushPromises()
-    expect(w.get('[data-test="gate-result-value"]').text()).toBe('확인 완료')
-    expect(w.get('[data-test="gate-result-value"]').attributes('aria-label')).toContain('kim · 2026-10-24T12:00:00Z · reviewed')
-    expect(w.find('[data-test="gate-archived"]').exists()).toBe(true)
+    expect(w.find('[data-test="gate-result-value"]').exists()).toBe(false)
+    expect(w.get('[data-test="gate-result-description"]').text()).toContain('kim · 2026-10-24T12:00:00Z · reviewed')
+    expect(w.find('[data-test="gate-archived"]').exists()).toBe(false)
     expect(w.find('[data-test="gate-confirm"]').exists()).toBe(false)
   })
   it.each([['pending', 'idle', {}], ['pending', 'idle', { recovery_reset_required: true }], ['open', 'paused', {}], ['open', 'stopping', {}]])('disables %s/%s without a decision request', async (status, run, flags) => {
     current = gate(status as string, run as string, { can_decide: false, ...flags })
     const w = await show()
-    expect(w.get('[data-test="gate-result-value"]').text()).toBe('확인 전')
+    if ((flags as any).recovery_reset_required) expect(w.get('[data-test="gate-result-value"]').text()).toBe('복구 필요')
+    else expect(w.find('[data-test="gate-result-value"]').exists()).toBe(false)
     expect(w.get('[data-test="gate-confirm"]').attributes('disabled')).toBeDefined()
     await w.get('[data-test="gate-confirm"]').trigger('click')
     expect(mocks.decide).not.toHaveBeenCalled()
@@ -114,7 +123,7 @@ describe('gate Inspector — D §8-10', () => {
     expect(w.text()).toContain('아카이브'); expect(w.text()).toContain('Git 반영'); expect(w.text()).toContain('원격 반영')
     for (const name of ['usage', 'summary', 'hold-block']) expect(w.find(`[data-test="check-settings-${name}"]`).exists()).toBe(false)
     await w.get('[data-test="check-settings-archive-value"]').trigger('click'); await flushPromises()
-    expect(mocks.write).toHaveBeenCalledWith(target.flowId, target.nodeId, 'archive', true, 3)
+    expect(mocks.write).toHaveBeenCalledWith(target.flowId, target.nodeId, 'archive', true, 3, undefined, { keepMergeTargets: true })
     mocks.write.mockRejectedValueOnce(error('gate_settings_locked'))
     await w.get('[data-test="check-settings-archive-value"]').trigger('click'); await flushPromises()
     expect(w.get('[data-test="check-settings-archive-value"]').attributes('aria-checked')).toBe('true')
@@ -129,7 +138,7 @@ describe('gate Inspector — D §8-10', () => {
     mocks.settings.mockRejectedValue(network)
     mocks.run.mockRejectedValue(network)
     await w.get('[data-test="check-settings-archive-value"]').trigger('click'); await flushPromises()
-    expect(mocks.write).toHaveBeenCalledWith(target.flowId, target.nodeId, 'archive', true, 3)
+    expect(mocks.write).toHaveBeenCalledWith(target.flowId, target.nodeId, 'archive', true, 3, undefined, { keepMergeTargets: true })
     expect(w.get('[data-test="check-settings-archive-value"]').attributes('aria-checked')).toBe('false')
     expect(w.find('[data-test="check-settings-scope"]').exists()).toBe(true)
     expect(w.find('[data-field="archive"]').exists()).toBe(true)
@@ -158,14 +167,14 @@ describe('gate Inspector — D §8-10', () => {
       throw error('gate_context_changed')
     })
     await w.get('[data-test="check-settings-archive-value"]').trigger('click'); await flushPromises()
-    expect(mocks.write).toHaveBeenCalledWith(target.flowId, target.nodeId, 'archive', true, 3)
+    expect(mocks.write).toHaveBeenCalledWith(target.flowId, target.nodeId, 'archive', true, 3, undefined, { keepMergeTargets: true })
     expect(mocks.settings).toHaveBeenCalledTimes(2)
     expect(mocks.run).toHaveBeenCalledTimes(2)
     expect(w.get('[data-test="check-settings-archive-value"]').attributes('aria-checked')).toBe('false')
     expect((w.get('[data-test="check-settings-target"]').element as HTMLSelectElement).value).toBe('main')
     expect(w.find('[data-field="archive"]').exists()).toBe(true)
     await w.get('[data-test="check-settings-archive-value"]').trigger('click'); await flushPromises()
-    expect(mocks.write).toHaveBeenLastCalledWith(target.flowId, target.nodeId, 'archive', true, 4)
+    expect(mocks.write).toHaveBeenLastCalledWith(target.flowId, target.nodeId, 'archive', true, 4, undefined, { keepMergeTargets: true })
     expect(w.get('[data-test="check-settings-archive-value"]').attributes('aria-checked')).toBe('true')
   })
   it.each([
@@ -233,7 +242,7 @@ describe('gate Inspector — D §8-10', () => {
     await w.get('[data-test="gate-confirm"]').trigger('click'); await flushPromises()
     expect(order.slice(0, 3)).toEqual(['post', 'get', 'replay'])
     expect(mocks.decide.mock.calls[1]).toEqual(mocks.decide.mock.calls[0])
-    expect(w.get('[data-test="gate-result-value"]').text()).toBe('확인 완료')
+    expect(w.find('[data-test="gate-result-value"]').exists()).toBe(false)
   })
   it('shows no guessed values on failed GET and retries both contexts', async () => {
     mocks.settings.mockRejectedValueOnce(error('forbidden', 403))
@@ -265,7 +274,7 @@ describe('gate Inspector — D §8-10', () => {
     const selection = SELECTIONS.graphGate
     const w = await show(DesignerInspector, { selection })
     const header = w.get('[data-test="designer-inspector-header"]')
-    expect(header.find('[data-test="gate-confirm"]').exists()).toBe(false)
+    expect(header.find('[data-test="gate-confirm"]').exists()).toBe(true)
     expect(header.find('[data-test="designer-inspector-kind"]').exists()).toBe(true)
     expect(header.find('[data-test="designer-inspector-memo"]').exists()).toBe(true)
     expect(header.find('[data-test="designer-inspector-title"]').exists()).toBe(true)
@@ -273,5 +282,74 @@ describe('gate Inspector — D §8-10', () => {
     expect(header.text()).not.toContain('시안 상태 초기화')
     expect(w.text()).toContain('Q&A'); expect(w.text()).toContain('첨부')
     expect(w.find('[data-test="gate-result"]').exists()).toBe(true)
+  })
+})
+
+describe('0148 card/header shared approval', () => {
+  it('acquires an unselected gate, reloads version/attempt, and suppresses rapid duplicate presses', async () => {
+    const slow = deferred<any>(); mocks.settings.mockReturnValueOnce(slow.promise)
+    const first = approveGateTarget(target)
+    expect(await approveGateTarget(target)).toBe(false)
+    expect(mocks.decide).not.toHaveBeenCalled()
+    saved.settingsVersion = 17; slow.resolve(saved)
+    mocks.decide.mockImplementation(async () => current = gate('open', 'idle', { decision_in_progress: true, recovery: { status: 'accepted' } }))
+    expect(await first).toBe(true)
+    expect(mocks.decide).toHaveBeenCalledTimes(1)
+    expect(mocks.decide.mock.calls[0][4]).toMatchObject({ expected_attempt_id: `attempt_${id}`, expected_settings_version: 17 })
+    expect(gateHeaderState(current.nodes[0].gate, current.nodes[0]).key).toBe('publishing')
+    expect(await approveGateTarget(target)).toBe(false)
+    expect(mocks.decide).toHaveBeenCalledTimes(1)
+  })
+  it('shares the in-flight request with the Inspector header and never changes selection on the card press', async () => {
+    const actions = await show(GateActions)
+    const answer = deferred<any>(); mocks.decide.mockReturnValueOnce(answer.promise)
+    const card = mount(FlowNodeCard, { props: { id: target.nodeId, data: { kind: 'approval', title: 'Gate', selected: false, state: null, gateState: gateHeaderState(current.nodes[0].gate, current.nodes[0]), approvable: true }, onApprove: () => { void approveGateTarget(target) } }, global: { plugins: [i18n], stubs: { Handle: true } } }); wrappers.push(card)
+    let clicks = 0; card.element.addEventListener('click', () => clicks++)
+    await card.get('button').trigger('pointerdown'); await card.get('button').trigger('click'); await flushPromises()
+    await actions.get('[data-test="gate-confirm"]').trigger('click')
+    expect(mocks.decide).toHaveBeenCalledTimes(1)
+    expect(card.emitted('approve')).toEqual([[target.nodeId]])
+    expect(clicks).toBe(0)
+    expect(card.get('button').classes()).toContain('nodrag')
+    answer.resolve(current = gate('open', 'idle', { decision_in_progress: true, recovery: { status: 'accepted' } })); await flushPromises()
+  })
+  it('blocks approval after a refused setting until that field is saved successfully', async () => {
+    const actions = await show(GateActions); const c = gateContextOf(target)!
+    mocks.write.mockRejectedValueOnce(error('gate_context_changed'))
+    await c.change('archive', true); await flushPromises()
+    expect(actions.get('[data-test="gate-confirm"]').attributes('disabled')).toBeDefined()
+    expect(await approveGateTarget(target)).toBe(false); expect(mocks.decide).not.toHaveBeenCalled()
+    await c.retry('archive'); await flushPromises()
+    expect(actions.get('[data-test="gate-confirm"]').attributes('disabled')).toBeUndefined()
+  })
+  it('reads another tab / F5 accepted decision without sending another approval', async () => {
+    current = gate('open', 'idle', { can_decide: false, decision_in_progress: true, recovery: { status: 'accepted' } })
+    expect(await approveGateTarget(target)).toBe(false); expect(mocks.decide).not.toHaveBeenCalled()
+    const w = await show(DesignerInspector, { selection: { ...SELECTIONS.graphGate, node: { ...SELECTIONS.graphGate.node, id: target.nodeId } } })
+    expect(w.get('[data-test="gate-header-state"]').attributes('data-state')).toBe('publishing')
+    expect(w.find('[data-test="designer-inspector-pill"]').exists()).toBe(false)
+  })
+})
+
+describe('0148 approval read failures and independent flows', () => {
+  it('leaves a failed initial card read retryable and explains its cause', async () => {
+    mocks.settings.mockRejectedValueOnce(error('forbidden', 403))
+    expect(await approveGateTarget(target)).toBe(false)
+    const view = gateApprovalView(target.flowId, target.nodeId, `attempt_${id}`)
+    expect(view.blocked).toBe(false)
+    expect(view.reason).toBeTruthy()
+    mocks.decide.mockImplementationOnce(async () => current = gate('done', 'idle', { decision: result() }))
+    expect(await approveGateTarget(target)).toBe(true)
+    expect(mocks.decide).toHaveBeenCalledTimes(1)
+  })
+  it('does not reuse one flow context for a gate with the same node key in another flow', async () => {
+    const first = { ...target }
+    const other = { ...target, flowId: `${target.flowId}_other` }
+    const original = current
+    mocks.run.mockImplementation(async (flow: string) => flow === first.flowId ? original : { ...original, runId: 'other_run' })
+    mocks.decide.mockImplementation(async (runId: string) => ({ ...original, runId, nodes: original.nodes.map((n: any) => ({ ...n, status: 'done', gate: { ...n.gate, can_decide: false, decision: result() } })) }))
+    expect(await approveGateTarget(first)).toBe(true)
+    expect(await approveGateTarget(other)).toBe(true)
+    expect(mocks.decide.mock.calls.map(call => call[0])).toEqual([original.runId, 'other_run'])
   })
 })

@@ -21,7 +21,7 @@ export interface CardRunFacts {
   readonly nodeRunning?: boolean
 }
 
-export const CARD_STATE_KEYS = ['instruction_write_wait', 'result_write_wait', 'waiting', 'manual_write_wait', 'ai_setup_required', 'ai_unavailable', 'no_result', 'incomplete', 'waiting_answer', 'waiting_writer', 'writing_instruction', 'writing_result', 'working', 'needs_intervention', 'system_error', 'approved', 'rejected', 'pending', 'closed'] as const
+export const CARD_STATE_KEYS = ['instruction_write_wait', 'result_write_wait', 'waiting', 'manual_write_wait', 'ai_setup_required', 'ai_unavailable', 'no_result', 'incomplete', 'waiting_answer', 'waiting_writer', 'writing_instruction', 'writing_result', 'working', 'needs_intervention', 'system_error', 'approved', 'rejected', 'revised', 'pending', 'closed'] as const
 
 export type CardStateKey = (typeof CARD_STATE_KEYS)[number]
 
@@ -95,7 +95,7 @@ export function cardStateReasonText(
 }
 
 /** The card state of a node run, or null (no run, or a status this screen does not know). */
-export function cardStateView(run: CardRunFacts | null | undefined): CardStateView | null {
+function runCardStateView(run: CardRunFacts | null | undefined): CardStateView | null {
   const status = run?.status?.trim() ?? ''
   const wait = run?.waitReason
   if ((status === 'open' || status === 'review') && run?.intervention) {
@@ -243,4 +243,12 @@ export function cardApprovalRefusalOf(params: unknown): CardApprovalRefusal {
 export function cardNodeRun(canvas: import('./flowGraph').FlowGraphNodeRun | null | undefined, run: import('./flowGraphSource').FlowRunNodeInfo | undefined): import('./flowGraph').FlowGraphNodeRun | null {
   if (!run) return canvas ?? null
   return { openedAt: null, finishedAt: null, resultDocId: null, ...canvas, ...run }
+}
+
+/** Document review is a display fact, without altering the run's status or wait-reason priority. */
+export function cardStateView(run: CardRunFacts | null | undefined, reviewStatus?: string | null): CardStateView | null {
+  const state = runCardStateView(run)
+  if (state && (state.phase === 'working' || state.phase === 'approved' || ['needs_intervention', 'system_error', 'ai_setup_required', 'ai_unavailable', 'no_result', 'incomplete', 'rejected'].includes(state.key))) return state
+  if (reviewStatus === 'rejected' || reviewStatus === 'revised') return view(reviewStatus, 'other', reviewStatus === 'rejected' ? 'warning' : 'info')
+  return state
 }
