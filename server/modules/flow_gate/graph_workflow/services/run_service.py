@@ -134,7 +134,8 @@ def _missing(ctx: RunContext, entries: dict, extra: frozenset = frozenset()) -> 
     return undecided_for(required | set(extra), entries)
 
 
-def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optional[str] = None) -> dict:
+def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optional[str] = None,
+              command_request_id: Optional[str] = None) -> dict:
     """``POST /flows/{flow_id}/runs`` -> 201 ``{"run": …}`` (P0008 S5-1~S5-3, L0009 §2.6.5).
 
     0061 T#2: the step / full command (``mode``; a new run: ``full`` when not given). The Flow's paused or idle run
@@ -150,6 +151,16 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
         own = read_ownership(flow_id)                                             # 1~3 담당
         if own.state != "graph":
             raise _ownership_error(flow_id, own)
+        if command_request_id is not None:
+            prior = run_store.command_request_of(flow_id, command_request_id)
+            if prior is not None:
+                params = {"flow_id": flow_id, "command_request_id": command_request_id}
+                if prior["state"] == "void":
+                    raise GraphApiError(409, "command_request_voided", params)
+                if prior["mode"] != mode or prior["actor_user_id"] != user_id:
+                    raise GraphApiError(409, "command_request_conflict", params)
+                return {"run": run_payload(prior["run_id"], with_nodes=True),
+                        "command": _command_identity(prior, replayed=True)}
         _refuse_time_machine(flow_id)                                             # 0061 T#13
         active = run_store.current_run(flow_id)                                    # 4 진행 중 실행
         if active is not None:
@@ -159,8 +170,9 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
                 raise GraphApiError(409, "run_already_active",
                                     {"flow_id": flow_id, "run_id": active["run_id"], "status": active["status"]})
             _hold_flow(active)
-            _go_on(group, active, user_id, mode, "user_command", None, jobs)
-            return {"run": run_payload(active["run_id"], with_nodes=True)}
+            command_seq = _go_on(group, active, user_id, mode, "user_command", None, jobs)
+            result = {"run": run_payload(active["run_id"], with_nodes=True)}
+            return record(result, active["run_id"], command_seq, "user_command")
         number = revision_no if revision_no is not None else definition_store.latest_revision_no(flow_id)
         if number is None or definition_store.revision(flow_id, number) is None:  # 5 개정
             raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": revision_no})
@@ -179,7 +191,7 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
         run = run_store.create_run(new_key(RUN_ID_PREFIX, set()), flow_id, number, user_id, snapshot,
                                    probe.revision, command)
         ctx = load_context(run, project_id, user_id, jobs)
-        emit_run_status(ctx, None, "running", "user_start")
+        command_seq = emit_run_status(ctx, None, "running", "user_start")
         try:
             _take_root_binding(ctx, policies, root)
             d = resolve(ctx.revision, read_run_state(ctx), RunEvent("start"), policies)
@@ -187,12 +199,48 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
             apply_decision(ctx, d)
         except PolicyUndecided as exc:                                            # E-21 (defence)
             raise _undecided(flow_id, number, [{"policy": exc.key, "rule_ref": RULE_REF[exc.key]}])
-        return {"run": run_payload(ctx.run_id, with_nodes=True)}
+        return record({"run": run_payload(ctx.run_id, with_nodes=True)}, ctx.run_id, command_seq, "user_start")
+
+    def record(result: dict, run_id: str, command_seq: int, cause: str) -> dict:
+        if command_request_id is not None:
+            run_store.insert_command_request(flow_id, command_request_id, run_id, command_seq, mode, cause, user_id)
+            result["command"] = {"command_request_id": command_request_id, "run_id": run_id,
+                                 "command_seq": command_seq, "replayed": False}
+        return result
 
     with _command_fence(flow_id):
         result = with_flow_guard(flow_id, body)
     run_jobs(jobs)
     return answer_after_jobs(result, project_id, jobs, with_nodes=True)
+
+
+def _command_identity(row: dict, *, replayed: bool) -> dict:
+    return {"command_request_id": row["command_request_id"], "run_id": row["run_id"],
+            "command_seq": row["command_seq"], "replayed": replayed}
+
+
+def command_lookup(group_id: str, cid: str) -> dict:
+    """Registry SELECT only: no guard, reconciliation, settlement or run read."""
+    row = run_store.command_request_of(group_id, cid)
+    if row is None:
+        return {"found": False}
+    if row["state"] == "void":
+        return {"found": False, "voided": True}
+    return {"found": True, "run_id": row["run_id"], "command_seq": row["command_seq"],
+            "mode": row["mode"], "cause": row["cause"], "accepted_at": row["created_at"]}
+
+
+def void_command(group_id: str, cid: str, user_id: str) -> dict:
+    def body() -> dict:
+        row = run_store.command_request_of(group_id, cid)
+        if row is None:
+            run_store.insert_command_void(group_id, cid, user_id)
+        elif row["state"] == "accepted":
+            return {"voided": False, **command_lookup(group_id, cid)}
+        elif row["actor_user_id"] != user_id:
+            raise GraphApiError(409, "command_request_conflict", {"flow_id": group_id, "command_request_id": cid})
+        return {"voided": True}
+    return with_flow_guard(group_id, body)
 
 
 def answer_after_jobs(result: dict, project_id: Optional[str], jobs: list, with_nodes: bool) -> dict:
@@ -223,7 +271,7 @@ def _command_fence(flow_id: str):
 
 
 def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str, reason: Optional[str],
-           jobs: list) -> None:
+           jobs: list) -> int:
     """A paused or idle run goes on (L0009 §2.6.7, 0061 T#2): reconcile -> running (its new command recorded first,
     so the run status event tells it) -> re-dispatch -> drain -> run candidates. The command is
     ``run_state_ports.command_of``'s: a new one (``mode`` given, or an idle run) or, for a paused run with no mode,
@@ -239,8 +287,7 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
     if not adopted and from_status == run_store.IDLE and run.get("idle_reason") == "completed":
         # 0085 T#4: a completed definition only acknowledges the command. Do not reconcile,
         # re-dispatch, settle/cleanup or reapply a gate's already recorded result.
-        emit_run_status(ctx, run_store.IDLE, run_store.IDLE, cause, reason)
-        return
+        return emit_run_status(ctx, run_store.IDLE, run_store.IDLE, cause, reason)
     command = run_state_ports.command_of(run, mode)                              # None: the paused command goes on
     if adopted and command is None:
         command = run.get("run_mode") or MODE_FULL
@@ -282,11 +329,12 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
                 if run_store.set_run_command(run_id, MODE_STEP, targets) != 1:
                     raise AssertionError("completion repair missed its step")
                 ctx.run["step_node_keys"] = targets
-        emit_run_status(ctx, from_status, run_store.RUNNING, cause, reason)
+        command_seq = emit_run_status(ctx, from_status, run_store.RUNNING, cause, reason)
         if held:
             graph_execution_hooks.call("hold_command", ctx, command)
-            return
+            return command_seq
         go_on_command(ctx, command, policies)
+        return command_seq
     except PolicyUndecided as exc:                                                # E-21 (defence)
         raise _undecided(run["group_id"], int(run["revision_no"]),
                          [{"policy": exc.key, "rule_ref": RULE_REF[exc.key]}])

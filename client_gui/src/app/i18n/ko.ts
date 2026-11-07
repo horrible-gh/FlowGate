@@ -819,6 +819,21 @@ export default {
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: '멈춤 · 다음 카드 {n}개 대기',
       run_pending_keys: '다음으로 넘어갈 카드: {keys}',
+      run_command_recovery: {
+        unconfirmed: "이전 실행 요청의 결과를 확인하지 못했습니다. 확인을 다시 시도하세요.",
+        stale: "오래된 미확인 요청입니다. 결과를 다시 확인하거나 이전 요청을 무효화하세요.",
+        legacy: "이전 결과를 확인할 수 없어 추가 실행이 될 수 있습니다.",
+        corrupt: "이전 요청 기록을 읽을 수 없습니다. 기록 폐기는 추가 실행을 일으킬 수 있습니다.",
+        storage_failed: "실행 요청 기록에 접근할 수 없습니다. 이전 결과를 확인한 후 다시 시도하세요.",
+        legacy_stale: "오래된 미확인 요청입니다. 이전 결과를 확인할 수 없어 추가 실행이 될 수 있습니다.",
+        confirmed: "이전 요청이 처리된 것으로 확인했습니다. 추가 실행하려면 다시 누르세요.",
+        flow_gone: "이 Flow를 찾을 수 없습니다.",
+        retry: "확인 다시 시도",
+        void: "이전 요청 무효화",
+        discard: "기록 폐기",
+        discard_warning: "이전 요청의 결과를 확인할 수 없습니다. 기록을 폐기하면 다음 실행이 추가 실행이 될 수 있습니다. 기록을 폐기할까요?",
+        observation: "현재 실행 상태: {status} (이 요청의 결과인지는 확인되지 않음)",
+      },
       run_request_actions: {
         start: '시작',
         prepare: '실행 준비',

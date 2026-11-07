@@ -808,6 +808,21 @@ export default {
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: '停止中 · 次のカード {n} 件待ち',
       run_pending_keys: '次に進むカード: {keys}',
+      run_command_recovery: {
+        unconfirmed: "前の実行要求の結果を確認できません。確認を再試行してください。",
+        stale: "古い未確認の要求があります。再確認するか、前の要求を無効化してください。",
+        legacy: "前の結果を確認できないため、追加実行になる可能性があります。",
+        corrupt: "前の要求記録を読めません。破棄すると追加実行になる可能性があります。",
+        storage_failed: "実行要求の記録にアクセスできません。前の結果を確認してから再試行してください。",
+        legacy_stale: "古い未確認の要求です。前の結果を確認できないため、追加実行になる可能性があります。",
+        confirmed: "前の要求が受理されたことを確認しました。追加実行する場合はもう一度押してください。",
+        flow_gone: "このフローが見つかりません。",
+        retry: "確認を再試行",
+        void: "前の要求を無効化",
+        discard: "記録を破棄",
+        discard_warning: "前の結果を確認できません。記録を破棄すると、次の操作で追加実行になる可能性があります。破棄しますか？",
+        observation: "現在の実行状態: {status}（この要求の結果かは未確認）",
+      },
       run_request_actions: {
         start: '開始',
         prepare: '実行準備',

@@ -236,7 +236,8 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
       || GIT_MERGE_APPROVE_PATH.test(path)
     ) {
       config.timeout = GIT_APPROVAL_TIMEOUT_MS
-    } else if (LONG_RUNNING_PATHS.some((re) => re.test(path))) {
+    } else if ((config.method?.toUpperCase() === 'POST' && /^\/api\/v1\/flows\/[^/?]+\/runs(?:$|\?)/.test(path))
+      || LONG_RUNNING_PATHS.some((re) => re.test(path))) {
       config.timeout = LONG_TIMEOUT_MS
     }
   }

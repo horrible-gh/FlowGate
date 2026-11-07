@@ -51,5 +51,7 @@ export function runErrorText(error: FlowRunFailure, t: (key: string, values?: Re
   const more = Math.max(0, (blocked?.total ?? blocked?.nodeKeys.length ?? 0) - cards.length)
   const listed = cards.length ? t(`${root}run_errors.blocked_cards`, {cards: cards.join(', ')})
     + (more ? ` ${t(`${root}run_errors.blocked_more`, {n: String(more)})}` : '') : ''
-  return `${target}${head}${reason ? ` ${reason}` : ''}${detail ? ` ${detail}` : ''}${listed ? ` ${listed}` : ''}`
+  const observation = error.outcome === 'unconfirmed' && error.observation?.status
+    ? ` ${t(`${root}run_command_recovery.observation`, { status: error.observation.status })}` : ''
+  return `${target}${head}${reason ? ` ${reason}` : ''}${detail ? ` ${detail}` : ''}${listed ? ` ${listed}` : ''}${observation}`
 }

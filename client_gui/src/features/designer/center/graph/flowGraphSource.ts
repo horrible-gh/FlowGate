@@ -5,6 +5,7 @@
 // passes the server source (serverFlowGraphSource.ts, flowgate.v02.0045). A server source goes
 // through the features/project public surface (store loaders), never @shared/api or axios
 // directly (structure.0024).
+import type { RunCommandIdentity, RunCommandLookup } from '@/features/project/flowRunApi'
 import type { CardRunFacts } from './cardStateView'
 import type { RoleRunFields } from '@/features/project'
 import type { FlowGraph, FlowGraphCardDocument, FlowGraphNodeDefinition, FlowGraphTitleState, FlowGraphViewport } from './flowGraph'
@@ -109,6 +110,7 @@ export type FlowRunCommand = 'step' | 'full'
  * open key — flowgate.v02.0061 T#14: `running` | `paused` | `stopping` | `idle` (one run per Flow).
  */
 export interface FlowRunInfo {
+  readonly command?: RunCommandIdentity
   readonly runId: string
   readonly status: string
   readonly openNodeKeys: readonly string[]
@@ -226,7 +228,9 @@ export interface FlowGraphSource {
   /** Read-only assessment of the saved draft or newer confirmed revision; null means allowed, an Error means refused.
    * Rejection means the check failed and the command retains its existing fallback. */
   checkRevisionAdoption?(projectId: string, flowId: string): Promise<FlowRunError | null>
-  startRun?(projectId: string, flowId: string, mode?: FlowRunCommand): Promise<FlowRunInfo>
+  startRun?(projectId: string, flowId: string, mode?: FlowRunCommand, commandRequestId?: string): Promise<FlowRunInfo>
+  lookupCommand?(projectId: string, flowId: string, cid: string): Promise<RunCommandLookup>
+  voidCommand?(projectId: string, flowId: string, cid: string): Promise<RunCommandLookup>
   /** flowgate.v02.0061 T#14: Stop (T#7) — the run is stopping, then idle (stopped) once its AI processes ended. */
   stopRun?(projectId: string, runId: string): Promise<FlowRunInfo>
   /** Resumes a paused run with its own command. */

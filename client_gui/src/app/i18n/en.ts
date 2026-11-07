@@ -808,6 +808,21 @@ export default {
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: 'Stopped · {n} next card(s) waiting',
       run_pending_keys: 'Cards to go on from: {keys}',
+      run_command_recovery: {
+        unconfirmed: "The previous run request is unconfirmed. Retry the check.",
+        stale: "An old request remains unconfirmed. Check again or void the previous request.",
+        legacy: "The previous result cannot be checked. Another click may execute an extra step.",
+        corrupt: "The previous request record cannot be read. Discarding it may allow an extra execution.",
+        storage_failed: "The run request record is unavailable. Check the previous result before retrying.",
+        legacy_stale: "An old request remains unconfirmed. The previous result cannot be checked; another click may execute an extra step.",
+        confirmed: "The previous request was accepted. Click again for an additional execution.",
+        flow_gone: "This flow could not be found.",
+        retry: "Retry check",
+        void: "Void previous request",
+        discard: "Discard record",
+        discard_warning: "The previous result cannot be checked. Discarding its record may allow an extra execution on the next click. Discard it?",
+        observation: "Current run status: {status} (acceptance of this request is unconfirmed)",
+      },
       run_request_actions: {
         start: 'Start',
         prepare: 'Run preparation',

@@ -122,11 +122,56 @@ export async function checkFlowRevisionAdoption(flowId: string): Promise<FlowGra
   }
 }
 
-function runOf(data: Raw | undefined, fallback: string): FlowRun {
+function runOf(data: Raw | undefined, fallback: string, response?: { status?: number; headers?: unknown }): FlowRun {
   const run = toFlowRun(data?.run)
-  if (!run) throw new Error(fallback)
+  if (!run) throw new FlowGraphApiError(fallback, 'run_response_unreadable', {}, response?.status ?? 200, null, serverRequestIdOf(response))
   return run
 }
+
+export interface RunCommandIdentity {
+  readonly commandRequestId: string
+  readonly runId: string
+  readonly commandSeq: number
+  readonly replayed: boolean
+}
+export type RunCommandLookup =
+  | { kind: 'found'; runId: string; commandSeq: number; mode: FlowRunCommand | null; cause: 'user_start' | 'user_command' }
+  | { kind: 'not_found' | 'voided' | 'flow_gone' | 'legacy' | 'failed' }
+export type FlowRunAnswer = FlowRun & { command?: RunCommandIdentity }
+export const commandUuid = (v: unknown): v is string => typeof v === 'string'
+  && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)
+const runIdentifier = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(v)
+const positiveSeq = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v > 0
+export function commandIdentityOf(raw: unknown): RunCommandIdentity | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const c = raw as Raw
+  if (!commandUuid(c.command_request_id) || !runIdentifier(c.run_id) || !positiveSeq(c.command_seq) || typeof c.replayed !== 'boolean') return undefined
+  return { commandRequestId: c.command_request_id.toLowerCase(), runId: c.run_id, commandSeq: c.command_seq, replayed: c.replayed }
+}
+
+async function readCommand(flowId: string, cid: string, voiding: boolean): Promise<RunCommandLookup> {
+  const path = `${flowRunsPath(flowId)}/commands/${encodeURIComponent(cid)}`
+  try {
+    const response = voiding ? await postRequest<Raw>(`${path}/void`, {}, canvasHeaders()) : await getRequest<Raw>(path, {}, canvasHeaders())
+    const d = response.data
+    if (!d || typeof d !== 'object' || ('voided' in d && typeof d.voided !== 'boolean') || ('found' in d && typeof d.found !== 'boolean')) return { kind: 'failed' }
+    if (d.voided === true && d.found !== true) return { kind: 'voided' }
+    if (d.found === true && d.voided !== true && runIdentifier(d.run_id) && positiveSeq(d.command_seq)
+      && (d.mode === null || d.mode === 'step' || d.mode === 'full') && ['user_start', 'user_command'].includes(d.cause)) {
+      return { kind: 'found', runId: d.run_id, commandSeq: d.command_seq, mode: d.mode, cause: d.cause }
+    }
+    return !voiding && d.found === false ? { kind: 'not_found' } : { kind: 'failed' }
+  } catch (error) {
+    const response = (error as { response?: { status?: number; data?: Raw } })?.response
+    const data = response?.data
+    const enveloped = data?.ok === false && typeof data?.error?.code === 'string'
+    if (enveloped && response?.status === 404 && data?.error?.code === 'flow_not_found') return { kind: 'flow_gone' }
+    if ([404, 405].includes(response?.status ?? 0) && !enveloped) return { kind: 'legacy' }
+    return { kind: 'failed' }
+  }
+}
+export const lookupFlowRunCommand = (flowId: string, cid: string) => readCommand(flowId, cid, false)
+export const voidFlowRunCommand = (flowId: string, cid: string) => readCommand(flowId, cid, true)
 
 /** The server's step / full command (flowgate.v02.0061 T#2). */
 export type FlowRunCommand = 'step' | 'full'
@@ -135,10 +180,12 @@ export type FlowRunCommand = 'step' | 'full'
  * POST /api/v1/flows/{flowId}/runs — flowgate.v02.0061 T#14: one step / full command. The server starts a run of the
  * latest revision, or lets the Flow's idle run go on with the command; nothing else is called after it.
  */
-export async function startFlowRun(flowId: string, mode: FlowRunCommand = 'full'): Promise<FlowRun> {
+export async function startFlowRun(flowId: string, mode: FlowRunCommand = 'full', commandRequestId?: string): Promise<FlowRunAnswer> {
   try {
-    const response = await postRequest<Raw>(flowRunsPath(flowId), { revision_no: null, mode }, canvasHeaders())
-    return runOf(response.data, 'The run did not start.')
+    const response = await postRequest<Raw>(flowRunsPath(flowId), { revision_no: null, mode, ...(commandRequestId ? { command_request_id: commandRequestId } : {}) }, canvasHeaders())
+    const run = runOf(response.data, 'The run did not start.', response)
+    const command = commandIdentityOf(response.data?.command)
+    return command && (!commandRequestId || command.commandRequestId === commandRequestId.toLowerCase()) && command.runId === run.runId ? { ...run, command } : run
   } catch (error) {
     throw toGraphError(error, 'Failed to start the flow run.')
   }
@@ -148,7 +195,7 @@ export async function startFlowRun(flowId: string, mode: FlowRunCommand = 'full'
 export async function pauseFlowRun(runId: string, reason?: string): Promise<FlowRun> {
   try {
     const response = await postRequest<Raw>(`${runPath(runId)}/pause`, reason ? { reason } : {}, canvasHeaders())
-    return runOf(response.data, 'The run did not pause.')
+    return runOf(response.data, 'The run did not pause.', response)
   } catch (error) {
     throw toGraphError(error, 'Failed to pause the flow run.')
   }
@@ -161,7 +208,7 @@ export async function pauseFlowRun(runId: string, reason?: string): Promise<Flow
 export async function stopFlowRun(runId: string, reason?: string): Promise<FlowRun> {
   try {
     const response = await postRequest<Raw>(`${runPath(runId)}/stop`, reason ? { reason } : {}, canvasHeaders())
-    return runOf(response.data, 'The run did not stop.')
+    return runOf(response.data, 'The run did not stop.', response)
   } catch (error) {
     throw toGraphError(error, 'Failed to stop the flow run.')
   }
@@ -171,7 +218,7 @@ export async function stopFlowRun(runId: string, reason?: string): Promise<FlowR
 export async function resumeFlowRun(runId: string, reason?: string): Promise<FlowRun> {
   try {
     const response = await postRequest<Raw>(`${runPath(runId)}/resume`, reason ? { reason } : {}, canvasHeaders())
-    return runOf(response.data, 'The run did not resume.')
+    return runOf(response.data, 'The run did not resume.', response)
   } catch (error) {
     throw toGraphError(error, 'Failed to resume the flow run.')
   }

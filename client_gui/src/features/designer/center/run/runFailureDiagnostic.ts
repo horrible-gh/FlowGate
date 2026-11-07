@@ -38,6 +38,10 @@ export function runBlockageOf(code: string | null, params: unknown): RunBlockage
 }
 
 export interface RunFailureDiagnostic {
+  readonly responseStatus?: number | null
+  readonly transport?: 'no_response' | 'http_error' | 'unreadable_2xx'
+  readonly commandRequestId?: string | null
+  readonly baseline?: { readonly state: 'run' | 'none' | 'unread'; readonly runId: string | null; readonly status: string | null; readonly lastEventSeq: number | null }
   readonly publicationId: string | null
   readonly scope: string | null
   readonly seq: number
@@ -54,7 +58,7 @@ export interface RunFailureDiagnostic {
   readonly code: string | null
   readonly outcome: string | null
   readonly blocked?: RunBlockage | null
-  readonly observation: { readonly state: string; readonly runId: string | null; readonly status: string | null } | null
+  readonly observation: { readonly state: string; readonly runId: string | null; readonly status: string | null; readonly lastEventSeq?: number | null } | null
 }
 
 const recent: RunFailureDiagnostic[] = []

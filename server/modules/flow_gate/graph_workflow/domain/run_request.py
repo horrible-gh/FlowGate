@@ -6,6 +6,7 @@ request key and expected round / settings version (``parse_gate_intent``).
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 RUN_REASON_MAX_LEN = 500
@@ -48,6 +49,20 @@ def parse_mode(body: Any) -> tuple[Optional[str], list[dict]]:
     if value is not None and value not in RUN_MODES:
         return None, [{"field": "mode", "reason": "not_one_of:" + ",".join(RUN_MODES)}]
     return value, []
+
+
+def parse_command_request_id(body: Any) -> tuple[Optional[str], list[dict]]:
+    """Optional UUID v4. Normalize case, never infer an identity from other fields."""
+    raw, errors = _body(body)
+    if raw is None:
+        return None, errors
+    value = raw.get("command_request_id")
+    if value is None:
+        return None, []
+    if not isinstance(value, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}", value):
+        return None, [{"field": "command_request_id", "reason": "not_uuid_v4"}]
+    return value.lower(), []
 
 
 def parse_reason(body: Any) -> tuple[Optional[str], list[dict]]:
