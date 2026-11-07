@@ -11,7 +11,7 @@
 // message beat it, so a list still loading does not lose it either. A title the user typed (on the draft or afterwards) wins: the draft's typed title
 // is used as is and owes nothing, and the server pays the debt once and drops it on any manual
 // rename.
-import { computed, readonly, ref, watch, type ComputedRef, type Ref } from 'vue'
+import { computed, readonly, ref, watch, getCurrentScope, onScopeDispose, type ComputedRef, type Ref } from 'vue'
 import { draftIntent, draftCreateIntent, draftUserId, type DraftSendSnapshot } from './drafts'
 import { ConversationRequestError } from './api'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
@@ -65,7 +65,34 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
   // Chats made on their first send whose AI title is still owed, with their provisional title
   // and the project whose AI picks it. Kept per chat: a first send that failed in one chat stays
   // owed while another chat is started.
-  const owed = new Map<string, { title: string; projectId: string }>()
+  type Debt = { title: string; projectId: string; groupId: string; userId: string; accepted: boolean;
+    status: 'owed' | 'unknown' | 'claimed'; lastTrigger?: string; lastWatch?: string; checkRevision?: number }
+  const owed = new Map<string, Debt>()
+  const inFlight = new Map<string, { waiting: boolean }>()
+  const ended = new Set<string>()
+  let acceptance = 0
+  let lifetime = 0
+  let stopped = false
+  const keyOf = (chatId: string) => JSON.stringify([draftUserId(), state.scope?.projectId, state.scope?.groupId, chatId])
+  const listed = (chatId: string) => state.chats.find((chat) => chat.id === chatId)
+  const sameOwner = (due: Debt) => !stopped && !session.titleGuard.disposed && due.userId === draftUserId() &&
+    due.userId === session.titleGuard.userId && due.projectId === state.scope?.projectId && due.groupId === state.scope?.groupId
+  function observe(chatId: string): Debt | undefined {
+    const key = keyOf(chatId)
+    const chat = listed(chatId)
+    const marker = chat?.autoTitle
+    if (marker && ['done', 'manual', 'failed'].includes(marker.state)) { owed.delete(key); ended.add(key); return }
+    if (ended.has(key)) return
+    let due = owed.get(key)
+    if (!due && marker?.state === 'owed' && state.scope) {
+      due = { title: marker.provisionalTitle, ...state.scope, userId: draftUserId(), accepted: false, status: 'owed' }
+      owed.set(key, due)
+    }
+    if (due && marker?.state === 'claimed') { due.status = 'claimed'; due.checkRevision = session.titleGuard.listRevision }
+    if (due && due.status !== 'owed' && marker?.state === 'owed' && state.chatsStatus === 'ready' &&
+      session.titleGuard.listRevision > (due.checkRevision ?? -1)) { due.status = 'owed'; due.lastTrigger = undefined; due.lastWatch = undefined }
+    return due
+  }
 
   const isDraft = computed(() => state.scope !== null && state.activeChatId === null)
 
@@ -121,7 +148,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
         return false
       }
       draftTitle.value = null
-      if (typed === null) owed.set(result.chatId, { title, projectId: result.scope.projectId })
+      if (typed === null && !ended.has(keyOf(result.chatId))) owed.set(keyOf(result.chatId), { title, ...result.scope, userId: origin.owner.userId, accepted: false, status: 'owed' })
       // No await between this ownership check and the explicitly addressed first send.
       if (!ownsScreen(origin)) return false
       update({ phase: 'sending', stage: 'send', attempt: 1 })
@@ -141,45 +168,120 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     return settle(chatId, await session.retry(localId))
   }
 
-  /** `chatId` is the chat the message was sent to, which may no longer be the one on screen. */
+  /** A successful send is never held for title generation. */
   function settle(chatId: string | null, ok: boolean): boolean {
-    const due = chatId ? owed.get(chatId) : undefined
-    if (ok && chatId && due) {
-      owed.delete(chatId)
-      void requestTitle(chatId, due.title, due.projectId)
+    if (ok && chatId) {
+      const due = observe(chatId)
+      if (due) { due.accepted = true; void requestTitle(chatId, due, `send:${++acceptance}`) }
     }
     return ok
   }
 
-  const titleOf = (chatId: string) => state.chats.find((c) => c.id === chatId)?.title
-
-  // A title typed before the ask stops it. A chat no longer listed (another Flow is open) is
-  // still asked: the server keeps a renamed chat from the AI title anyway.
-  const renamed = (chatId: string, expected: string) => {
-    const shown = titleOf(chatId)
-    return shown !== undefined && shown !== expected
+  // One reconciliation read per ambiguous request, never a timer/finally retry loop.
+  async function reconcile(chatId: string, due: Debt, current: () => boolean): Promise<void> {
+    if (!current()) return
+    due.status = 'unknown'
+    due.checkRevision = session.titleGuard.listRevision
+    await session.reloadChats()
+    if (!current() || state.chatsStatus !== 'ready') return
+    const marker = listed(chatId)?.autoTitle
+    if (marker?.state === 'owed') due.status = 'owed'
+    else if (marker?.state === 'claimed') due.status = 'claimed'
+    observe(chatId)
   }
 
-  async function requestTitle(chatId: string, expected: string, projectId: string): Promise<void> {
-    if (!source.autoTitleChat) return
-    await session.providersLoaded()
-    // The selected AI is the one of the project the chat was made in.
-    if (state.scope?.projectId !== projectId) return
-    const providerId = state.selectedProviderId
-    if (!session.hasProviders.value || !providerId || renamed(chatId, expected)) return
+  async function requestTitle(chatId: string, due: Debt, trigger: string): Promise<void> {
+    const key = keyOf(chatId)
+    if (trigger.startsWith('watch:')) {
+      if (due.lastWatch === trigger) return
+      due.lastWatch = trigger // Also consume identical observations made during an in-flight request.
+    }
+    if (!source.autoTitleChat || !sameOwner(due) || !due.accepted || due.status !== 'owed' || ended.has(key) ||
+      inFlight.has(key) || due.lastTrigger === trigger) return
+    due.lastTrigger = trigger
+    const flight = { waiting: true }
+    inFlight.set(key, flight) // Includes provider wait, not just the HTTP request.
+    const generation = lifetime
+    const revision = session.titleRevision(chatId)
+    const current = () => sameOwner(due) && generation === lifetime
     try {
+      await session.providersLoaded()
+      if (!current() || session.titleRevision(chatId) !== revision) return
+      const chat = listed(chatId)
+      if (!chat || state.chatsStatus === 'error' || (chat.autoTitle && chat.autoTitle.state !== 'owed') || chat.title !== due.title) return
+      const providerId = state.selectedProviderId
+      if (state.providersStatus !== 'ready' || !providerId || !state.providers.some((p) => p.id === providerId)) return
+      flight.waiting = false
       const saved = await source.autoTitleChat(chatId, providerId)
-      // A title typed while the AI was answering stays on screen as well.
-      if (titleOf(chatId) === expected) session.setChatTitle(chatId, saved.title)
+      if (!current()) return
+      if (session.titleRevision(chatId) !== revision) { await reconcile(chatId, due, current); return }
+      if (saved.id !== chatId || typeof saved.title !== 'string' || !saved.title.trim()) {
+        await reconcile(chatId, due, current)
+        return
+      }
+      if (listed(chatId)?.autoTitle?.state === 'manual') return
+      session.setChatTitle(saved.id, saved.title)
+      owed.delete(key)
+      ended.add(key)
     } catch (error) {
-      // R0001 §2.2-4: no AI title — the chat and its messages stay as they are. Without an
-      // answer at all (the request timed out or the connection dropped) the server may still
-      // have written it: the list is read again, as its [☰] would.
-      if (error instanceof ConversationRequestError && error.status === null && state.scope?.projectId === projectId) {
-        void session.reloadChats()
+      if (!current()) return
+      const code = error instanceof ConversationRequestError ? error.code : null
+      if (code === 'conversation_auto_title_unavailable') return // Server returned the unexecuted debt.
+      if (code === 'conversation_auto_title_no_message') { due.accepted = false; return }
+      if (code === 'conversation_title_changed' || code === 'conversation_auto_title_failed' ||
+        (error instanceof ConversationRequestError && (error.status === 403 || error.status === 404 || code === 'conversation_group_disposed'))) {
+        owed.delete(key); ended.add(key); return
+      }
+      await reconcile(chatId, due, current)
+    } finally {
+      if (inFlight.get(key) === flight) inFlight.delete(key)
+      // A distinct scope reentry that happened during HTTP waits for that request,
+      // then reads once before recovering. This is not a failure/finally retry loop.
+      if (generation !== lifetime && sameOwner(due) && state.activeChatId === chatId &&
+        owed.get(key) === due && !ended.has(key) && !inFlight.has(key)) {
+        const reentry = lifetime
+        const returned = () => sameOwner(due) && reentry === lifetime
+        await reconcile(chatId, due, returned)
+        if (returned() && listed(chatId)?.autoTitle?.state === 'owed' && due.status === 'owed') {
+          void requestTitle(chatId, due, `reentry:${reentry}`)
+        }
       }
     }
   }
+
+  const stopLifetime = watch(() => [state.scope?.projectId, state.scope?.groupId, draftUserId(), session.titleGuard.disposed] as const,
+    (now, before) => {
+      lifetime++
+      for (const [key, flight] of inFlight) if (flight.waiting) inFlight.delete(key)
+      if (!state.scope || now[2] !== before?.[2] || session.titleGuard.disposed) { owed.clear(); ended.clear() }
+      if (session.titleGuard.disposed) cleanup()
+    }, { flush: 'sync' })
+  // Fingerprint values, not array identity/loading/finally. Identical reloads cannot retry.
+  const stopRecovery = watch(() => JSON.stringify([
+    state.scope, draftUserId(), state.activeChatId, state.chatsStatus === 'ready', state.providersStatus, state.selectedProviderId,
+    state.providers.map((p) => p.id), state.turnsStatus === 'ready' && state.turns.some((t) => t.speaker === 'user' && t.body.trim()),
+    state.chats.map((chat) => [chat.id, chat.title, chat.autoTitle]),
+  ]), (trigger) => {
+    if (stopped || session.titleGuard.disposed || !state.scope || state.chatsStatus !== 'ready') return
+    const active = state.activeChatId
+    if (active) {
+      const due = observe(active)
+      if (due && state.turnsStatus === 'ready' && state.turns.some((t) => t.speaker === 'user' && t.body.trim())) due.accepted = true
+    }
+    for (const [key, due] of owed) {
+      if (sameOwner(due)) {
+        const chatId = JSON.parse(key)[3] as string
+        if (chatId === active && (state.sending || starting.value)) continue
+        observe(chatId)
+        if (owed.has(key)) void requestTitle(chatId, due, `watch:${trigger}`)
+      }
+    }
+  }, { immediate: true, flush: 'post' })
+  function cleanup(): void {
+    stopped = true; lifetime++; owed.clear(); ended.clear()
+    stopRecovery(); stopLifetime()
+  }
+  if (getCurrentScope()) onScopeDispose(cleanup)
 
   return { isDraft, phase, draftIntentId: readonly(draftIntentId), draftTitle: readonly(draftTitle), starting: readonly(starting), startNew, rename, send, retry }
 }

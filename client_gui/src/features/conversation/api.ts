@@ -31,6 +31,7 @@ import type {
   ChatSettings,
   ChatSettingsPatch,
   ChatSummary,
+  ChatAutoTitle,
   CommandDecision,
   CommandRejectedBy,
   CommandRequestActivity,
@@ -131,6 +132,7 @@ export function splitGroupId(groupId: string): { project: string; module: string
 
 // ── Chat list / title / new chat ──────────────────────────────────────────────────────
 interface RawDocument {
+  meta?: unknown
   doc_id: string
   title?: string | null
   type_code?: string | null
@@ -138,8 +140,21 @@ interface RawDocument {
   updated_at?: string | null
 }
 
+function autoTitleMeta(value: unknown): ChatAutoTitle | null {
+  try {
+    const meta = typeof value === 'string' ? JSON.parse(value) : value
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return null
+    const marker = (meta as Record<string, unknown>).chat_auto_title
+    if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return null
+    const { state, title } = marker as Record<string, unknown>
+    if (typeof state !== 'string' || !['owed', 'claimed', 'done', 'manual', 'failed'].includes(state) || typeof title !== 'string') return null
+    return { state: state as ChatAutoTitle['state'], provisionalTitle: title }
+  } catch { return null }
+}
+
 function toChatSummary(raw: RawDocument): ChatSummary {
-  return { id: raw.doc_id, title: raw.title || raw.doc_id, updatedAt: raw.updated_at ?? raw.created_at ?? null }
+  return { id: raw.doc_id, title: raw.title || raw.doc_id, updatedAt: raw.updated_at ?? raw.created_at ?? null,
+    ...(raw.meta === undefined ? {} : { autoTitle: autoTitleMeta(raw.meta) }) }
 }
 
 function rawDocuments(data: unknown): RawDocument[] {
@@ -204,7 +219,8 @@ export async function autoTitleChat(chatId: string, providerId: string): Promise
   const data = await call(
     () => postRequest<RawDocument>(`${API}/conversations/${encodeURIComponent(chatId)}/auto-title`, { provider_id: providerId }),
   )
-  return toChatSummary({ ...data, doc_id: data?.doc_id || chatId, title: data?.title ?? '' })
+  if (data?.doc_id !== chatId || typeof data?.title !== 'string' || !data.title.trim()) throw clientCheckFailure()
+  return toChatSummary(data)
 }
 
 // ── Command requests / run changes (D0006 §5.1, §5.5) ─────────────────────────────────

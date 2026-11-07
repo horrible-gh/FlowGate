@@ -2,8 +2,15 @@
 // document whose body is a list of turns (v0.1 ConversationView, P0003 §0-2); the part keeps
 // those turns as they are and adds the frontend shapes it needs to show one timeline.
 
+/** Validated server title obligation. Missing/invalid metadata never implies owed. */
+export interface ChatAutoTitle {
+  state: 'owed' | 'claimed' | 'done' | 'manual' | 'failed'
+  provisionalTitle: string
+}
+
 /** One conversation (a CH document) the chat list can switch to. */
 export interface ChatSummary {
+  autoTitle?: ChatAutoTitle | null
   id: string
   title: string
   updatedAt: string | null

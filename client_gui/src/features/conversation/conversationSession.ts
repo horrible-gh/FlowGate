@@ -24,6 +24,7 @@ import type {
   ChatSettings,
   ChatSettingsPatch,
   ChatSummary,
+  ChatAutoTitle,
   CommandDecision,
   CommandRequestActivity,
   ConversationActivity,
@@ -136,6 +137,9 @@ export interface ConversationSession {
   readonly hasProviders: ComputedRef<boolean>
   readonly submission: ComputedRef<SubmissionPhase | null>
   readonly supportsActivities: boolean
+  /** Title-only lifetime/revision guard; no second title store. */
+  readonly titleGuard: DeepReadonly<{ disposed: boolean; revision: number; listRevision: number; userId: string }>
+  titleRevision(chatId: string): number
 
   setScope(scope: ConversationScope | null): Promise<void>
   /** Settles once the provider list of the current scope has loaded (or failed to). */
@@ -148,7 +152,7 @@ export interface ConversationSession {
   /** Leaves the open chat for an unsaved new one: nothing exists until its first send. */
   startDraft(): void
   /** Shows a title the server already stored (the AI title of a new chat). */
-  setChatTitle(chatId: string, title: string): void
+  setChatTitle(chatId: string, title: string, marker?: ChatAutoTitle): void
   loadOlder(trace?: SubmissionTrace): Promise<void>
   catchUp(): Promise<void>
   /**
@@ -278,10 +282,17 @@ export function createConversationSession(options: ConversationSessionOptions = 
   let createIntent: { key: string; scopeGen: number; chatGen: number } | null = null
   let createOperation = 0
   let providersProject: string | null = null
+  let providersRequest = 0
   let providersLoad: Promise<void> = Promise.resolve()
   let noticeSeq = 0
   let chatsRequest = 0
   const unlistedChats = new Map<string, ChatSummary>()
+  const titleGuard = reactive({ disposed: false, revision: 0, listRevision: 0, userId: draftUserId() })
+  const titleRevisions = new Map<string, number>()
+  const manualTitlesPending = new Set<string>()
+  function titleRevision(chatId: string): number { return titleRevisions.get(chatId) ?? 0 }
+  function touchTitle(chatId: string): void { titleRevisions.set(chatId, ++titleGuard.revision) }
+  const titleTerminal = (chat: ChatSummary) => ['done', 'manual', 'failed'].includes(chat.autoTitle?.state ?? '')
   let unsubscribe: (() => void) | null = null
   // Highest read seq already reported for the active chat; it belongs to that chat and is
   // reset with it (clearChat), so another chat's position never suppresses a report.
@@ -405,9 +416,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   async function fetchProviders(projectId: string): Promise<void> {
+    const request = ++providersRequest
+    const userId = draftUserId()
     try {
       const list = await source.listProviders(projectId)
-      if (disposed || providersProject !== projectId) return
+      if (disposed || providersProject !== projectId || request !== providersRequest || userId !== draftUserId()) return
       state.providers = list.providers
       const keep = list.providers.some((p) => p.id === state.selectedProviderId)
       state.selectedProviderId = keep
@@ -417,7 +430,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
           : list.providers[0]?.id ?? ''
       state.providersStatus = 'ready'
     } catch {
-      if (disposed || providersProject !== projectId) return
+      if (disposed || providersProject !== projectId || request !== providersRequest || userId !== draftUserId()) return
       state.providers = []
       state.selectedProviderId = ''
       state.providersStatus = 'error'
@@ -460,15 +473,27 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!scope) return
     const gen = scopeGen
     const request = ++chatsRequest
+    const revisions = new Map(titleRevisions)
+    const userId = draftUserId()
     state.chatsStatus = 'loading'
     state.chatsError = null
     try {
       trace?.mark('list_start')
       const chats = await source.listChats(scope)
       trace?.mark('list_end', { result: 'ok' })
-      if (disposed || gen !== scopeGen || request !== chatsRequest) return
-      for (const chat of chats) unlistedChats.delete(chat.id)
-      state.chats = [...unlistedChats.values(), ...chats]
+      if (disposed || gen !== scopeGen || request !== chatsRequest || userId !== draftUserId()) return
+      const merged = chats.map((chat) => {
+        const current = state.chats.find((item) => item.id === chat.id)
+        if (current && (manualTitlesPending.has(chat.id) || (revisions.get(chat.id) ?? 0) !== titleRevision(chat.id) ||
+          (titleTerminal(current) && !titleTerminal(chat)))) return current
+        // Creation/rename responses do not all carry meta. Keep only previously known data.
+        const next = current && chat.autoTitle === undefined ? { ...chat, autoTitle: current.autoTitle } : chat
+        if (current && (current.title !== next.title || (next.autoTitle?.state === 'manual' && current.autoTitle?.state !== 'manual'))) touchTitle(chat.id)
+        return next
+      })
+      for (const chat of merged) unlistedChats.delete(chat.id)
+      state.chats = [...unlistedChats.values(), ...merged]
+      titleGuard.listRevision++
       state.chatsStatus = 'ready'
     } catch (error) {
       trace?.mark('list_end', { result: 'error' })
@@ -484,6 +509,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     scopeGen += 1
     chatGen += 1
     unlistedChats.clear()
+    state.renaming = false
     state.scope = scope ? { ...scope } : null
     state.chats = []
     state.chatsStatus = 'idle'
@@ -718,19 +744,25 @@ export function createConversationSession(options: ConversationSessionOptions = 
   async function renameActiveChat(title: string): Promise<boolean> {
     const chat = activeChat.value
     const next = title.trim()
-    if (!chat || !next || next === chat.title || state.renaming) return false
+    if (!chat || !next || (next === chat.title && chat.autoTitle?.state !== 'owed') || state.renaming) return false
     state.renaming = true
     const chatId = chat.id
     const gen = chatGen
+    const scope = scopeGen
+    const userId = draftUserId()
+    touchTitle(chatId) // A manual intent invalidates an already pending automatic response.
+    manualTitlesPending.add(chatId)
     try {
       const saved = await source.renameChat(chatId, next)
-      setChatTitle(chatId, saved.title)
+      if (disposed || scope !== scopeGen || userId !== draftUserId()) return false
+      setChatTitle(chatId, saved.title, { state: 'manual', provisionalTitle: chat.autoTitle?.provisionalTitle ?? chat.title })
       return true
     } catch (error) {
       notifyIfCurrent(gen, 'danger', 'rename_failed', messageOf(error))
       return false
     } finally {
-      state.renaming = false
+      manualTitlesPending.delete(chatId)
+      if (!disposed && scope === scopeGen && userId === draftUserId()) state.renaming = false
     }
   }
 
@@ -784,6 +816,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
         if (!disposed && gen === scopeGen && isNoResponse(error)) void reloadChats()
         return finish('failed')
       }
+      if (options?.autoTitle && created.autoTitle === undefined) {
+        created = { ...created, autoTitle: { state: 'owed', provisionalTitle: next } }
+      }
       createdId = created.id
       if (createIntent?.key === intent) createIntent = null
       if (!currentDraft()) return finish('cancelled')
@@ -817,10 +852,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.activeChatId = null
   }
 
-  function setChatTitle(chatId: string, title: string): void {
+  function setChatTitle(chatId: string, title: string, marker?: ChatAutoTitle): void {
+    if (disposed) return
+    touchTitle(chatId)
+    const update = (chat: ChatSummary): ChatSummary => ({ ...chat, title,
+      autoTitle: marker ?? { state: 'done', provisionalTitle: chat.autoTitle?.provisionalTitle ?? chat.title } })
     const unlisted = unlistedChats.get(chatId)
-    if (unlisted) unlistedChats.set(chatId, { ...unlisted, title })
-    state.chats = state.chats.map((c) => (c.id === chatId ? { ...c, title } : c))
+    if (unlisted) unlistedChats.set(chatId, update(unlisted))
+    state.chats = state.chats.map((chat) => chat.id === chatId ? update(chat) : chat)
   }
 
   function notifyCreateFailed(error: unknown): void {
@@ -1278,6 +1317,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   function dispose(): void {
     disposed = true
+    titleGuard.disposed = true
     unsubscribe?.()
     unsubscribe = null
   }
@@ -1292,6 +1332,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     hasProviders,
     submission,
     supportsActivities: source.supportsActivities,
+    titleGuard: readonly(titleGuard),
+    titleRevision,
     setScope,
     providersLoaded,
     reloadChats,
