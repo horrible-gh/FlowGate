@@ -5,10 +5,13 @@
 // `graph`, and `conflict` — listed read only): a v0.1 Flow's Node keeps its documents tab as it was.
 // flowgate.v02.0056 (0017-CH) — the header ✎ 메모 of these cards opens a new card memo (CardMemoButton) and draws the
 // memo windows; the v0.1 M document memo (features/memo) stays with v0.1 Flows.
+// flowgate.v02.0150 — the memo windows are the Frame's windows host (CardMemoWindows): drawn whatever is selected, so a
+// selection change never closes them; the header ✎ 메모 only opens one.
 import type { InspectorRegistration } from '../../inspectorRegistry'
 import GateMemoPanel from './GateMemoPanel.vue'
 import CardMemoButton from './CardMemoButton.vue'
 import CardMemoSection from './CardMemoSection.vue'
+import CardMemoWindows from './CardMemoWindows.vue'
 import messages from './messages'
 
 const registration: InspectorRegistration = {
@@ -19,6 +22,7 @@ const registration: InspectorRegistration = {
   tab: { key: 'documents', component: CardMemoSection },
   headerMemo: CardMemoButton,
   headerPanel: GateMemoPanel,
+  windows: CardMemoWindows,
   messages,
 }
 

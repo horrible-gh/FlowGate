@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FlowGraph, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
 import CardMemoButton from '@/features/designer/inspector/features/cardMemo/CardMemoButton.vue'
 import CardMemoSection from '@/features/designer/inspector/features/cardMemo/CardMemoSection.vue'
+import CardMemoWindows from '@/features/designer/inspector/features/cardMemo/CardMemoWindows.vue'
 import { closeAllCardMemoWindows } from '@/features/designer/inspector/features/cardMemo/useCardMemoWindows'
 import messages from '@/features/designer/inspector/features/cardMemo/messages'
 import {
@@ -109,10 +110,17 @@ function targetOf(viewMode = 'draft', id = 'gn_t', ownership = 'graph') {
   return toInspectorTarget(selectionOf(graph, id))!
 }
 
-/** The header ✎ 메모 (with the memo windows) and the documents tab lines of one card, as the Frame lays them out. */
+/**
+ * The header ✎ 메모 and the documents tab lines of the selected card, and the memo windows (flowgate.v02.0150: the Frame's
+ * windows host, drawn whatever is selected — `target` null is no selection), as the Frame lays them out.
+ */
 const Harness = defineComponent({
-  props: { target: { type: Object, required: true } },
-  setup: (props) => () => h('div', [h(CardMemoButton, { target: props.target as never }), h(CardMemoSection, { target: props.target as never })]),
+  props: { target: { type: Object, default: null } },
+  setup: (props) => () =>
+    h('div', [
+      ...(props.target ? [h(CardMemoButton, { target: props.target as never }), h(CardMemoSection, { target: props.target as never })] : []),
+      h(CardMemoWindows, { target: props.target as never }),
+    ]),
 })
 
 async function mountSection(viewMode = 'draft', id = 'gn_t', ownership = 'graph') {
@@ -538,6 +546,30 @@ describe('the card memo lines and windows (flowgate.v02.0056 F2-2 · 0017-CH)', 
     expect((q('card-memo-window-edit') as HTMLButtonElement).disabled).toBe(true)
     expect((q('card-memo-delete') as HTMLButtonElement).disabled).toBe(true)
     expect((q('card-memo-close') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  // flowgate.v02.0150: a modeless window closes only by its own × / [닫기] — never by a selection change or Esc.
+  it('a memo window stays with its draft when the card is unselected or another is selected; Esc keeps it; it saves to its own card', async () => {
+    const w = await mountSection()
+    await click(q('designer-inspector-memo'))
+    await type('card-memo-title-input', '남길 메모')
+    await w.setProps({ target: null })
+    await flushPromises()
+    expect(q('designer-inspector-memo')).toBeNull()
+    expect(memoWindows()).toHaveLength(1)
+    expect((q('card-memo-title-input') as HTMLInputElement).value).toBe('남길 메모')
+    await w.setProps({ target: targetOf('draft', 'gn_u') })
+    await flushPromises()
+    expect(memoWindows()).toHaveLength(1)
+    q('card-memo-title-input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(memoWindows()).toHaveLength(1)
+    api.postRequest.mockImplementation(async () => ({ data: { ok: true, memo: memo('m3', '남길 메모') } }))
+    await click(q('card-memo-save'))
+    expect(api.postRequest).toHaveBeenCalledWith(PATH, { title: '남길 메모', body: '', ai_ref: false })
+    expect(memoWindows().map((win) => win.getAttribute('data-memo'))).toEqual(['m3'])
+    await click(q('card-memo-close'))
+    expect(memoWindows()).toEqual([])
   })
 
   it('a card not saved yet draws nothing, reads nothing, and its ✎ 메모 is disabled', async () => {

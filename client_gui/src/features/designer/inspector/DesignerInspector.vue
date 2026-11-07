@@ -24,7 +24,10 @@
        flowgate.v02.0053 T#9: one more header place — the ✎ 메모 part (`headerMemo`, the first that applies);
        without one the header keeps its dim, disabled ✎ 메모.
        flowgate.v02.0070 T#1 (B1): the host also carries the card title save (`save-title`, the Center column's) — the
-       header edits the card's title in its title area and saves it through the host. -->
+       header edits the card's title in its title area and saves it through the host.
+       flowgate.v02.0150: the features' modeless windows hosts (`windows`) are drawn outside the selection branches, for
+       as long as the Frame lives: a selection change (a click on the Canvas, another card, no card) or a tab change never
+       unmounts a window; only its own close / save / cancel closes it. -->
   <section
     class="designer-inspector"
     data-test="designer-inspector"
@@ -89,6 +92,7 @@
         </div>
       </template>
     </template>
+    <component :is="entry.windows" v-for="entry in windowHosts" :key="entry.key" :target="windowTarget" />
   </section>
 </template>
 
@@ -269,6 +273,9 @@ watch(
 onBeforeUnmount(leaveDocumentIo)
 
 const contributions = computed(() => contributionsFor(registry, target.value))
+// flowgate.v02.0150: every windows host of the registry, whatever applies to the selection; each hears the selection.
+const windowHosts = registry.entries.filter((entry) => entry.windows)
+const windowTarget = computed(() => (props.unselected ? null : target.value))
 const headerMetas = computed(() => contributions.value.filter((entry) => entry.headerMeta))
 const headerActions = computed(() => contributions.value.filter((entry) => entry.headerAction))
 const headerKind = computed(() => contributions.value.find((entry) => entry.headerKind) ?? null)

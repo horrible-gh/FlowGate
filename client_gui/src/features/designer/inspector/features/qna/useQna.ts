@@ -20,7 +20,22 @@
 // document read. No other read is added. The guard's AI activity and its document are read apart: until the document
 // read is back (or while its last read failed) the document is not confirmed current and nothing is answered, and a
 // failed activity read does not drop a `superseded_by` the document read gave.
-import { computed, reactive, ref, watch, type ComputedRef, type Ref } from 'vue'
+// flowgate.v02.0150 — one Q&A state per document at a time, shared by all its consumers: the Q&A tab and the ↗ windows the
+// Frame draws apart from it (QnaWindowHost). The questions are read once for them, and what a window sends (an answer, an
+// AI request) is the list's too — who is awaited, what was sent. The last consumer to leave a document ends its state.
+import {
+  computed,
+  effectScope,
+  getCurrentInstance,
+  reactive,
+  ref,
+  shallowRef,
+  watch,
+  type ComputedRef,
+  type EffectScope,
+  type Ref,
+  type ShallowRef,
+} from 'vue'
 import {
   cardLineWarns,
   qaAnswer,
@@ -36,7 +51,12 @@ import {
   type SettingsProvider,
 } from '@/features/document'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { useInspectorResource, type InspectorEventMatch, type InspectorResourceStatus } from '../../useInspectorResource'
+import {
+  captureInspectorResourceContext,
+  useInspectorResource,
+  type InspectorEventMatch,
+  type InspectorResourceStatus,
+} from '../../useInspectorResource'
 import {
   qnaAiFailureKey,
   qnaAnswerReady,
@@ -122,7 +142,7 @@ export interface QnaState {
   reload(): Promise<void>
 }
 
-export function useQna(target: () => InspectorTarget | null, options: QnaOptions = {}): QnaState {
+function createQna(target: () => InspectorTarget | null, options: QnaOptions = {}): QnaState {
   const thread = useInspectorResource<QaThread>({ target, read: qaRead, events: QNA_EVENTS })
   const activityGuard = useInspectorResource<QnaActivityGuard>({
     target,
@@ -342,6 +362,94 @@ export function useQna(target: () => InspectorTarget | null, options: QnaOptions
     reload: async () => {
       await Promise.all([thread.reload(), reloadGuard()])
     },
+  }
+}
+
+interface SharedQna {
+  readonly state: QnaState
+  /** The latest target of the document given by any of its consumers. */
+  readonly target: ShallowRef<InspectorTarget | null>
+  readonly scope: EffectScope
+  users: number
+}
+
+// Per app (a test mounts each case in an app of its own); an entry ends with its last consumer.
+const sharedQna = new WeakMap<object, Map<string, SharedQna>>()
+const appless = {}
+let unshared = 0
+
+/**
+ * The Q&A state of the target's document (see createQna), shared with every other consumer of the same document and
+ * mode (live / history) in this app. A target without a document has a state of its own. It must run in a component
+ * setup or an effect scope; leaving it leaves the document.
+ */
+export function useQna(target: () => InspectorTarget | null, options: QnaOptions = {}): QnaState {
+  const app = getCurrentInstance()?.appContext ?? appless
+  const inResourceContext = captureInspectorResourceContext()
+  let entries = sharedQna.get(app)
+  if (!entries) {
+    entries = new Map()
+    sharedQna.set(app, entries)
+  }
+  const shared = entries
+  const own = `own:${++unshared}`
+  const keyOf = () => {
+    const current = target()
+    if (!current?.docId) return own
+    return [options.history?.() === true ? 'history' : 'live', current.projectId, current.flowId, current.docId].join('\n')
+  }
+  const current = shallowRef<SharedQna | null>(null)
+  watch(
+    keyOf,
+    (key, _before, onCleanup) => {
+      let entry = shared.get(key)
+      if (!entry) {
+        const selected = shallowRef(target())
+        const scope = effectScope(true)
+        const state = inResourceContext(() => scope.run(() => createQna(() => selected.value, options))!)
+        entry = { state, target: selected, scope, users: 0 }
+        shared.set(key, entry)
+      }
+      const mine = entry
+      mine.users++
+      mine.target.value = target()
+      current.value = mine
+      onCleanup(() => {
+        if (--mine.users > 0) return
+        mine.scope.stop()
+        if (shared.get(key) === mine) shared.delete(key)
+      })
+    },
+    { immediate: true, flush: 'sync' },
+  )
+  // The same document given again (its read-only verdict, its card lines): the shared state follows it.
+  watch(target, (value) => {
+    if (current.value) current.value.target.value = value
+  }, { flush: 'sync' })
+
+  const state = () => current.value!.state
+  const follow = <T>(read: (from: QnaState) => Readonly<Ref<T>>): ComputedRef<T> => computed(() => read(state()).value)
+  return {
+    items: follow((from) => from.items),
+    availability: follow((from) => from.availability),
+    status: follow((from) => from.status),
+    stale: follow((from) => from.stale),
+    errorKey: follow((from) => from.errorKey),
+    busy: follow((from) => from.busy),
+    failure: follow((from) => from.failure),
+    ready: (itemId, body, picked) => state().ready(itemId, body, picked),
+    answer: (itemId, body, picked) => state().answer(itemId, body, picked),
+    asking: follow((from) => from.asking),
+    askFailure: follow((from) => from.askFailure),
+    ask: (body) => state().ask(body),
+    requesting: follow((from) => from.requesting),
+    awaiting: follow((from) => from.awaiting),
+    aiFailure: follow((from) => from.aiFailure),
+    requestAi: (itemId, providerId) => state().requestAi(itemId, providerId),
+    providers: follow((from) => from.providers),
+    defaultProviderId: follow((from) => from.defaultProviderId),
+    providersStatus: follow((from) => from.providersStatus),
+    reload: () => state().reload(),
   }
 }
 

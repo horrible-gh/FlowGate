@@ -21,12 +21,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope } from 'vue'
 import type { FlowGraphSelection } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
-import QnaTab from '@/features/designer/inspector/features/qna/QnaTab.vue'
 import { QNA_EVENTS, QNA_GUARD_EVENTS, useQna } from '@/features/designer/inspector/features/qna/useQna'
 import type { InspectorCardDocument, InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import { INSPECTOR_REFRESH_COALESCE_MS } from '@/features/designer/inspector/useInspectorResource'
 import { SELECTIONS, V01_GRAPH, V01_TASK_NODE, prepareInspectorI18n, selectionOf, targetOf } from '../support/inspectorSupport'
 import { installProjectEventStream, removeProjectEventStream, type ProjectEventStream } from '../support/projectEventStream'
+import { QnaTabWithWindows, closeAllQnaWindows } from '../support/qnaWindowsSupport'
 
 // The calls are mocked; normalization and error reading stay real.
 const qaReadCall = vi.fn()
@@ -185,12 +185,14 @@ beforeEach(() => {
 afterEach(() => {
   wrapper?.unmount()
   wrapper = null
+  closeAllQnaWindows()
   removeProjectEventStream()
   vi.useRealTimers()
 })
 
+// flowgate.v02.0150: the tab with the Frame's window host, which draws its ↗ windows.
 async function mountTab(target: InspectorTarget) {
-  wrapper = mount(QnaTab, { props: { target }, global: { plugins: [i18n, pinia] } })
+  wrapper = mount(QnaTabWithWindows, { props: { target }, global: { plugins: [i18n, pinia] } })
   await flushPromises()
   return wrapper
 }
@@ -400,7 +402,8 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       expect(win.querySelector('[data-test="qna-window-ai"]')).not.toBeNull()
     })
 
-    it('a read-only Flow opens the window read only with the reason; closing removes it; a Node change closes every window', async () => {
+    // flowgate.v02.0150: only the window's own × closes it — a Node change and Esc do not; it stays on its document.
+    it('a read-only Flow opens the window read only with the reason; closing removes it; a Node change and Esc keep it on its document', async () => {
       const w = await mountTab(v01Target({ readOnly: 'conflict' }))
       const win = await open(w, 13)
       expect(document.body.querySelector('[data-test="qna-window-mode"]')?.textContent).toBe('읽기 전용')
@@ -412,6 +415,15 @@ describe('Q&A tab — the questions of the target document (flowgate.v02.0048 T#
       expect(windowOf(13)).toBeNull()
       await open(w, 10)
       await w.setProps({ target: v01Target({ readOnly: 'conflict', docId: OTHER_DOC, nodeId: `doc:${OTHER_DOC}` }) })
+      await flushPromises()
+      expect(order(w)).toEqual([[20, 'waiting']])
+      expect([...document.body.querySelectorAll('[data-test="qna-window"]')].map((el) => el.getAttribute('data-item'))).toEqual(['10'])
+      expect(windowText(10, 'qna-window-doc')).toBe(`문서: ${V01_DOC}`)
+      expect(windowText(10, 'qna-window-body')).toBe('어느 범위를 조사할까요?')
+      windowOf(10)!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await flushPromises()
+      expect(windowOf(10)).not.toBeNull()
+      windowOf(10)!.closest('.ui-modeless-panel')!.querySelector<HTMLButtonElement>('[data-modeless-action="close"]')!.click()
       await flushPromises()
       expect(document.body.querySelectorAll('[data-test="qna-window"]')).toHaveLength(0)
     })
@@ -687,6 +699,7 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     expect(threads.get(V01_DOC)!.find((entry) => entry.id === 13)!.answers).toHaveLength(1)
   })
 
+  // flowgate.v02.0150: the window it was sent from stays on its document and shows it there.
   it('a late refusal of the previous Node is not shown on the new one', async () => {
     let reject: (error: unknown) => void = () => {}
     qaAnswerCall.mockImplementationOnce(() => new Promise((_resolve, fail) => (reject = fail)))
@@ -698,7 +711,8 @@ describe('Q&A tab — answering (flowgate.v02.0048 T#7)', () => {
     await flushPromises()
     expect(order(w)).toEqual([[20, 'waiting']])
     await open(w, 20)
-    expect(document.body.querySelector('[data-test="qna-window-failure"]')).toBeNull()
+    expect(windowOf(20)!.querySelector('[data-test="qna-window-failure"]')).toBeNull()
+    expect(windowOf(13)!.querySelector('[data-test="qna-window-failure"]')).not.toBeNull()
   })
 })
 
@@ -939,15 +953,22 @@ describe('Q&A tab — Node change (flowgate.v02.0048 T#7)', () => {
     expect(order(w)).toEqual([[20, 'waiting']])
   })
 
-  it('unsent drafts belong to their document', async () => {
+  // flowgate.v02.0150: the window and its unsent draft stay whatever is selected; closing the window drops the draft.
+  it('an unsent draft stays with its open window across Node changes, is sent to its own document, and goes with the window', async () => {
     const w = await mountTab(v01Target())
     await write(w, 13, '초안')
     await w.setProps({ target: v01Target({ docId: OTHER_DOC, nodeId: `doc:${OTHER_DOC}` }) })
     await flushPromises()
+    expect(fieldOf(13).value).toBe('초안')
+    await send(w, 13)
+    expect(qaAnswerCall).toHaveBeenCalledWith(expect.objectContaining({ docId: V01_DOC, itemId: 13, body: '초안' }))
     await w.setProps({ target: v01Target() })
     await flushPromises()
-    await open(w, 13)
-    expect(fieldOf(13).value).toBe('')
+    await write(w, 12, '다른 초안')
+    windowOf(12)!.closest('.ui-modeless-panel')!.querySelector<HTMLButtonElement>('[data-modeless-action="close"]')!.click()
+    await flushPromises()
+    await open(w, 12)
+    expect(fieldOf(12).value).toBe('')
   })
 })
 

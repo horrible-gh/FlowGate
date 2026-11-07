@@ -110,6 +110,16 @@ export interface CommandRequestActivity {
   exitCode?: number | null
   timedOut?: boolean
   durationMs?: number | null
+  /** When the process started; null while it never ran (pending, rejected, withdrawn). */
+  startedAt?: string | null
+  /**
+   * The stored stdout / stderr tails (the server keeps the last 64 KiB of each, redacted).
+   * They are only meaningful once `startedAt` is set; the `*Truncated` flags say the start was cut.
+   */
+  stdout?: string | null
+  stderr?: string | null
+  stdoutTruncated?: boolean
+  stderrTruncated?: boolean
   /** Extra text a source supplies (not used by the HTTP source). */
   detail?: string | null
   anchor?: ActivityAnchor | null

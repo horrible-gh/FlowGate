@@ -1,7 +1,7 @@
 <template>
   <ModelessShell v-if="card && state && mode" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
     :initial-x="geometry('x', 120)" :initial-y="geometry('y', 64)" :initial-width="geometry('width', 1080)" :initial-height="geometry('height', 680)"
-    @update:minimized="state.minimized = $event" @close="close">
+    :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">
     <template #header>{{ t(k('title')) }} · {{ target.title }} <small data-test="report-tag" :data-mode="mode">{{ tag }}</small></template>
     <template #actions>
       <span class="window-actions" @mousedown.stop>

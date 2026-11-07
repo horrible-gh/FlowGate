@@ -6,7 +6,7 @@
   <ModelessShell v-if="card && state" ref="shell" :open="state.open" :minimized="state.minimized" :title="t(k('title'))"
     :initial-x="geometry('x', 180)" :initial-y="geometry('y', 150)" :initial-width="geometry('width', 680)" :initial-height="geometry('height', 560)"
     :min-width="360" :min-height="240"
-    @update:minimized="state.minimized = $event" @close="close">
+    :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">
     <div class="brief" data-test="brief-window">
       <p v-if="reason" class="brief-note" data-test="brief-reason">{{ reason }}</p>
       <div v-if="loadError" class="brief-note brief-note--danger" data-test="brief-load-error">

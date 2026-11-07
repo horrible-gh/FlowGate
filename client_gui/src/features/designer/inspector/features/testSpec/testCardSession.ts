@@ -1,5 +1,5 @@
 // v8: one live controller per selected card; data and window drafts survive tab/card changes.
-import { computed, effectScope, getCurrentInstance, onScopeDispose, reactive, ref, shallowRef, watch, type ComputedRef } from 'vue'
+import { computed, effectScope, getCurrentInstance, onScopeDispose, reactive, ref, shallowReactive, shallowRef, watch, type ComputedRef } from 'vue'
 import {
   cardDocumentRead,
   cardDocumentStructuredRead,
@@ -234,7 +234,10 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (!canOpen(kind)) return false
     const window = windows[kind]
     window.open = true; window.minimized = false; window.caseId = caseId; window.zIndex = ++front
-        return true
+    // flowgate.v02.0150: the Frame's window host draws the card's windows from now on, whatever is selected.
+    const current = target()
+    if (current) pinTestCardWindows(current)
+    return true
   }
   function closeWindow(kind: TestCardWindowKind) { windows[kind].open = false }
 
@@ -386,6 +389,23 @@ interface SessionEntry { context: TestCardContext; target: ReturnType<typeof sha
 const apps = new WeakMap<object, Map<string, SessionEntry>>()
 const fallbackApp = {}
 export const testCardSessionKey = (target: InspectorTarget) => [target.projectId, target.flowId, target.nodeType ? target.nodeId : target.docId ?? target.nodeId].join('\n')
+
+/**
+ * flowgate.v02.0150 — the test cards with an open window, each with the target it was last selected as (by session key).
+ * The Frame's window host (TestCardWindowHost) draws their windows whatever is selected — no card, another card, another
+ * tab — so a window closes only by its own close / save / cancel; its card's session stays live while it is drawn.
+ */
+export const testCardWindowCards = shallowReactive(new Map<string, InspectorTarget>())
+export function pinTestCardWindows(target: InspectorTarget): void {
+  const key = testCardSessionKey(target)
+  if (testCardWindowCards.get(key) !== target) testCardWindowCards.set(key, target)
+}
+/** The card selected again: its open windows follow its latest target (read-only verdict, documents). */
+export function followTestCardWindows(target: InspectorTarget | null): void {
+  if (target && testCardWindowCards.has(testCardSessionKey(target))) pinTestCardWindows(target)
+}
+/** No window of the card is open any more. */
+export function releaseTestCardWindows(key: string): void { testCardWindowCards.delete(key) }
 
 /** Consumers share refs, settings writes and event subscriptions. Inactive cards retain only their memory. */
 export function useTestCardSession(target: () => InspectorTarget | null): ComputedRef<TestCardContext | null> {

@@ -89,6 +89,13 @@ export interface InspectorRegistration {
   readonly headerMemo?: Component
   /** Inline editor below the header, independent of the selected tab. */
   readonly headerPanel?: Component
+  /**
+   * flowgate.v02.0150 — the feature's modeless windows host. The Frame draws it for as long as the Frame lives, whatever
+   * is selected and whether the registration applies or not (no card, another card, another tab), so a window opened
+   * from the feature closes only by its own close / save / cancel, never by a click elsewhere or a selection change. Its
+   * one input is `target`: the selected target, or null. A window keeps the target it was opened for.
+   */
+  readonly windows?: Component
   readonly messages: InspectorMessages
 }
 

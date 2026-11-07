@@ -45,8 +45,8 @@
       </button>
     </div>
 
-    <div v-if="submission" role="status" aria-live="polite" data-test="conv-submission">
-      {{ t(`gui.conversation.composer.${submission.phase === 'failed' ? `failed_${submission.stage}` : submission.phase}`, { attempt: submission.attempt }) }}
+    <div v-if="submission?.phase === 'failed'" role="status" aria-live="polite" data-test="conv-submission">
+      {{ t(`gui.conversation.composer.failed_${submission.stage}`, { attempt: submission.attempt }) }}
     </div>
 
     <div class="conv-assist">

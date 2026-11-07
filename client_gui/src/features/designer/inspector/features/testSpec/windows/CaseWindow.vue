@@ -1,7 +1,7 @@
 <template>
   <ModelessShell v-if="card && state && draft" ref="shell" :open="state.open" :minimized="state.minimized"
     :title="`${t(k('name'))} · ${caseLabel}`" :initial-x="geometry('x', 220)" :initial-y="geometry('y', 130)" :initial-width="geometry('width', 720)" :initial-height="geometry('height', 660)"
-    @update:minimized="state.minimized = $event" @close="close">
+    :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">
     <!-- flowgate.v02.0094: the kind, then — muted, as the write window names its card — which case: its id and title once. -->
     <template #header><span class="heading" data-test="case-heading"><span class="heading-kind">{{ t(k('name')) }}</span><span class="heading-case" :title="caseLabel" data-test="case-window-id">{{ caseLabel }}</span></span></template>
     <div class="case" data-test="case-window">

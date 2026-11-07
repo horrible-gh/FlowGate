@@ -11,7 +11,7 @@
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { computed, defineComponent, h, inject } from 'vue'
+import { computed, defineComponent, h, inject, onBeforeUnmount, onMounted } from 'vue'
 import { toFlowCanvas } from '@/features/project/flowCanvasApi'
 import { createDesignerCenterSession } from '@/features/designer/center/designerCenterSession'
 import { createServerFlowGraphSource, toFlowGraph } from '@/features/designer/center/graph/serverFlowGraphSource'
@@ -316,6 +316,40 @@ describe('DesignerInspector — registry layout', () => {
     await w.setProps({ selection: SELECTIONS.unassigned })
     expect(activeTabLabel(w)).toBe('Q&A (3)')
     expect(sections(w)).toEqual(['qna'])
+  })
+
+  // flowgate.v02.0150: a feature's windows host lives with the Frame — no selection, another Node (one the registration does
+  // not apply to) or an unselected Designer never unmounts it, so a modeless window closes only by its own close / save /
+  // cancel. It hears the selection, null included.
+  it('draws every windows host whatever is selected and gives it the selection or null', async () => {
+    let mounted = 0
+    let unmounted = 0
+    const Host = defineComponent({
+      props: { target: { type: Object, default: null } },
+      setup(props) {
+        onMounted(() => mounted++)
+        onBeforeUnmount(() => unmounted++)
+        return () => h('div', { 'data-test': 'probe-windows', 'data-doc': (props.target as InspectorTarget | null)?.docId ?? 'none' })
+      },
+    })
+    const registry = fixtureRegistry([
+      registration({ key: 'documents', order: 500, tab: { key: 'documents', component: probePart('documents') } }),
+      registration({ key: 'planWindows', order: 580, cardKinds: ['plan'], tab: { key: 'documents', component: probePart('plan') }, windows: Host }),
+    ])
+    const w = mountFrame({ selection: SELECTIONS.v01 }, registry)
+    expect(w.find('[data-test="probe-plan"]').exists()).toBe(false)
+    expect(get(w, 'probe-windows').attributes('data-doc')).toBe('flowgate.v02.0048.0011-TR')
+    await w.setProps({ selection: null })
+    expect(get(w, 'designer-inspector').attributes('data-selected')).toBe('false')
+    expect(get(w, 'probe-windows').attributes('data-doc')).toBe('none')
+    await w.setProps({ selection: SELECTIONS.graphGate })
+    expect(get(w, 'probe-windows').attributes('data-doc')).toBe('none')
+    await w.setProps({ selection: SELECTIONS.v01 })
+    await clickTab(w, '설정')
+    expect(get(w, 'probe-windows').attributes('data-doc')).toBe('flowgate.v02.0048.0011-TR')
+    await w.setProps({ unselected: true })
+    expect(get(w, 'probe-windows').attributes('data-doc')).toBe('none')
+    expect([mounted, unmounted]).toEqual([1, 0])
   })
 
   it('gives a tab number supplier the target only while its registration applies', async () => {

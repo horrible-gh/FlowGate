@@ -2,15 +2,15 @@
   <template v-if="card">
     <InspectorStatusChip :label="label" :tone="card.presentation.value.tone" dot data-test="test-card-header-state" :data-stage="card.presentation.value.stage" />
     <InspectorStatusChip v-if="card.presentation.value.resultState.key === 'unchecked'" :label="t(k('stage.unchecked'))" tone="neutral" />
-    <TestCardWindows :target="target" />
   </template>
 </template>
 <script setup lang="ts">
+// flowgate.v02.0150: the test card windows are not drawn here (the header goes with the selection) but by the Frame's
+// windows host (TestCardWindowHost), so a selection change or a click elsewhere never closes them.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorStatusChip from '../../parts/InspectorStatusChip.vue'
-import TestCardWindows from './TestCardWindows.vue'
 import { useTestCard } from './useTestCard'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()

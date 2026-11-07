@@ -30,6 +30,7 @@ import { INSPECTOR_HOST, type InspectorHostIntent } from '@/features/designer/in
 import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import { SELECTIONS, UNASSIGNED_GRAPH, UNASSIGNED_REQ_NODE, prepareInspectorI18n, selectionOf, targetOf } from '../support/inspectorSupport'
 import { installProjectEventStream, removeProjectEventStream } from '../support/projectEventStream'
+import { QnaTabWithWindows, closeAllQnaWindows } from '../support/qnaWindowsSupport'
 
 const convertCall = vi.fn()
 const previewRead = vi.fn()
@@ -405,12 +406,14 @@ describe('the document a succeeded root came from (P0006 §3.3, in the Frame wit
     // The same tab of the live document keeps its forms — in the ↗ window, with its document's body there (0070 T#5).
     wrapper.unmount()
     const live = { ...target, cardDocuments: [{ slot: 'requirement', docType: 'R', author: 'human', docId: ROOT_R, title: ROOT_R, status: 'open', docReviewStatus: null, hasBody: true, bodyState: null }] }
-    wrapper = mount(QnaTab, { attachTo: document.body, props: { target: live }, global: { plugins: [i18n, pinia] } })
+    // flowgate.v02.0150: a live tab's ↗ windows are drawn by the Frame's window host (mounted with it here).
+    wrapper = mount(QnaTabWithWindows, { attachTo: document.body, props: { target: live }, global: { plugins: [i18n, pinia] } })
     await flushPromises()
     expect(find('qna-ask').exists()).toBe(true)
     await wrapper.get('[data-test="qna-item"][data-item="11"] [data-test="qna-open"]').trigger('click')
     await flushPromises()
     expect(document.body.querySelector('[data-test="qna-window"][data-item="11"] [data-test="qna-window-form"]')).not.toBeNull()
+    closeAllQnaWindows()
   })
 })
 

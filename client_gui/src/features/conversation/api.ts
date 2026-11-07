@@ -243,6 +243,11 @@ export interface RawCommand extends RawAnchor {
   exit_code?: number | null
   timed_out?: boolean | null
   duration_ms?: number | null
+  started_at?: string | null
+  stdout_tail?: string | null
+  stderr_tail?: string | null
+  stdout_truncated?: boolean | null
+  stderr_truncated?: boolean | null
   created_at?: string | null
 }
 
@@ -298,6 +303,11 @@ export function toCommand(raw: RawCommand): CommandRequestActivity {
     exitCode: nullableNumber(raw.exit_code),
     timedOut: Boolean(raw.timed_out),
     durationMs: nullableNumber(raw.duration_ms),
+    startedAt: raw.started_at ?? null,
+    stdout: typeof raw.stdout_tail === 'string' ? raw.stdout_tail : null,
+    stderr: typeof raw.stderr_tail === 'string' ? raw.stderr_tail : null,
+    stdoutTruncated: Boolean(raw.stdout_truncated),
+    stderrTruncated: Boolean(raw.stderr_truncated),
     anchor: toAnchor(raw),
   }
 }
