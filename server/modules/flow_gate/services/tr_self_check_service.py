@@ -18,6 +18,7 @@ from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import tr_self_check_runs as db_runs
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_self_check_executor as executor
+from modules.flow_gate.services import tr_self_check_progress as progress
 from modules.flow_gate.services import tr_self_check_gate as gate
 from modules.flow_gate.services import tr_self_check_proof as proof
 from modules.flow_gate.services import tr_self_check_result as result_block
@@ -60,6 +61,7 @@ def _cleanup_runtime(runtime: Path, run_id: str, *, tracked: bool = True) -> Non
 
 def _emit(row: dict | None) -> None:
     if row:
+        progress.publish(row["self_check_run_id"], status=row["status"])
         git_service._emit("self_check_run_updated", row["project_id"], row["group_id"], {
             "project_id": row["project_id"], "group_id": row["group_id"],
             "tr_doc_id": row["tr_doc_id"], "self_check_run_id": row["self_check_run_id"],
@@ -706,6 +708,7 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, root
             cancelled.set()
             control.cancel()
         watch = _watch_cancel(run_id, control, cancelled)
+        control.progress = lambda count: progress.publish(run_id, output_bytes=count)
         result = executor.wait(control, timeout, cancelled)
         if not _settle_tree(run_id, row, ownership):
             _hold_unsettled(ctx, lock_key, run_id, ownership, attempt_lock=attempt_lock)
@@ -855,7 +858,8 @@ def _start(target: dict, request: dict, requested_by: str | None) -> dict:
         if target.get("attempt_id") and judged.get("attempt_id") != target["attempt_id"]:
             raise SelfCheckError(409, "selfcheck_worktree_unavailable",
                                  details={"attempt_id": target["attempt_id"], "reason": "attempt_changed"})
-        return _admit({**target, **judged}, request, requested_by)
+        owner = progress.owner_for(token, target["project_id"], target["group_id"])
+        return _admit({**target, **judged, "progress_owner": owner}, request, requested_by)
 
 
 def _await_spawn(worker: threading.Thread, spawned: threading.Event) -> None:
@@ -936,7 +940,8 @@ def _admit(target: dict, request: dict, requested_by: str | None) -> dict:
             owner_token_id=target.get("owner_token_id"), draft_doc_ref=target.get("draft_doc_ref"),
             owner_instance_id=instance_registry.current_instance_id(), owner_marker=proof.owner_marker(run_id),
             attempt_id=target.get("attempt_id"), input_commit=target.get("input_commit"),
-            host_node_key=instance_registry.node_key(), host_capacity=capacity, cpu_share_requested=share)
+            host_node_key=instance_registry.node_key(), host_capacity=capacity, cpu_share_requested=share,
+            **({"progress_owner": target["progress_owner"]} if target.get("progress_owner") else {}))
         spawned = threading.Event() if attempt_lock is not None else None
         try:
             # The run's worker slot pool, R slots in its runtime folder, named to every process of

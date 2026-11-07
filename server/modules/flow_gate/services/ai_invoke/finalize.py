@@ -245,6 +245,9 @@ def _resolve_timeout_diagnostics(run: dict) -> tuple[Optional[str], Optional[str
         return None, None
     total_sec = max(0, int(run.get("duration_ms") or 0) // 1000)
     stalled_sec = min(max(0, int(kill.get("stalled_sec") or 0)), total_sec)
+    evidence = kill.get("progress_evidence")
+    detail = (" Progress evidence: " + json.dumps(evidence, ensure_ascii=True, sort_keys=True)
+              if isinstance(evidence, dict) else "")
     if kind == "absolute_cap":
         # §2-2: a run that was still producing when it hit the ceiling must NOT be filed as
         # stalled. The observation count is the evidence, and it is honest about the blind
@@ -253,11 +256,11 @@ def _resolve_timeout_diagnostics(run: dict) -> tuple[Optional[str], Optional[str
         return kind, (
             f"Reached the {_format_span(cap_sec)} absolute run ceiling after "
             f"{_format_span(total_sec)}; not a no-progress stop "
-            f"(progress observations: {int(kill.get('progress_observations') or 0)})."
+            f"(progress observations: {int(kill.get('progress_observations') or 0)})." + detail
         )
     return kind, (
-        f"No document registration or source change during the last "
-        f"{_format_span(stalled_sec)} of {_format_span(total_sec)} total."
+        f"No document registration, source change or effective Self-check progress during the last "
+        f"{_format_span(stalled_sec)} of {_format_span(total_sec)} total." + detail
     )
 
 

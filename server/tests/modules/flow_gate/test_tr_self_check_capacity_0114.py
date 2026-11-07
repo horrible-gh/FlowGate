@@ -57,20 +57,17 @@ def _doc(group_id: str) -> str:
 
 
 @pytest.fixture
-def store(db_path):
+def store(db_path, monkeypatch):
     from sqloader.sqlite3 import SQLiteWrapper
 
     real = object.__new__(connection.FlowGateStore)
     real._db, real._sq = SQLiteWrapper(db_path), None
-    previous = [module.get_store for module in _STORE_MODULES]
     for module in _STORE_MODULES:
-        module.get_store = lambda real=real: real
+        monkeypatch.setattr(module, "get_store", lambda real=real: real)
     _seed(real)
     try:
         yield real
     finally:
-        for module, value in zip(_STORE_MODULES, previous):
-            module.get_store = value
         try:
             real._db.close()
         except Exception:

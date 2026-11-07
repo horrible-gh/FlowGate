@@ -123,26 +123,7 @@ class TestMigration086:
 
 # ── A real database, the real CRUD module on top of it ───────────────────────
 
-class _SqliteStore:
-    """The three methods `db/ai_invoke_runs.py` actually calls, over one connection.
-
-    Deliberately NOT a mock of `ai_invoke_runs`: the module under test runs unmodified,
-    including its `ON CONFLICT(run_id) DO UPDATE` upsert and its JSON (de)serialization.
-    """
-
-    def __init__(self, conn):
-        self.conn = conn
-
-    def _execute(self, sql, params=None):
-        self.conn.execute(sql, list(params or []))
-        self.conn.commit()
-
-    def _fetch_one(self, sql, params=None):
-        row = self.conn.execute(sql, list(params or [])).fetchone()
-        return dict(row) if row is not None else None
-
-    def _fetch_all(self, sql, params=None):
-        return [dict(r) for r in self.conn.execute(sql, list(params or []))]
+# 0146: use FlowGateStore below; a three-method double omitted transactions and SQL lookup.
 
 
 def _seed_parents(conn):
@@ -172,15 +153,18 @@ def _seed_parents(conn):
 
 
 @pytest.fixture
-def live_db(monkeypatch):
-    conn = sqlite3.connect(":memory:")
+def live_db(monkeypatch, migrated_sqlite_db):
+    from sqloader.sqlite3 import SQLiteWrapper
+    path = migrated_sqlite_db("diagnostics0146.db")
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    for path in sorted((MIGRATIONS / "sqlite").glob("*.sql")):
-        conn.executescript(path.read_text(encoding="utf-8"))
     conn.execute("PRAGMA foreign_keys = ON")
     _seed_parents(conn)
-    monkeypatch.setattr(db_connection, "STORE", _SqliteStore(conn))
+    real = object.__new__(db_connection.FlowGateStore)
+    real._db, real._sq = SQLiteWrapper(path), None
+    monkeypatch.setattr(db_connection, "STORE", real)
     yield conn
+    real._db.close()
     conn.close()
 
 
@@ -209,7 +193,7 @@ class TestRunRowRoundTrip:
             "aiv_20260821_000001",
             end_reason="timeout", stop_code="timeout",
             timeout_kind="no_progress",
-            timeout_diagnosis=("No document registration or source change during the last "
+            timeout_diagnosis=("No document registration, source change or effective Self-check progress during the last "
                                "41 min of 78 min total."),
             stdout_tail=stdout, stderr_tail=stderr,
             source_dirty=True, source_dirty_files=files,
@@ -364,7 +348,7 @@ class TestTimeoutDiagnosis:
         kind, line = svc._resolve_timeout_diagnostics(run)
 
         assert kind == "no_progress"
-        assert line == ("No document registration or source change during the last "
+        assert line == ("No document registration, source change or effective Self-check progress during the last "
                         "41 min of 78 min total.")
 
     def test_absolute_cap_is_not_filed_as_a_stall(self):
@@ -400,7 +384,7 @@ class TestTimeoutDiagnosis:
 
         _kind, line = svc._resolve_timeout_diagnostics(run)
 
-        assert line == ("No document registration or source change during the last "
+        assert line == ("No document registration, source change or effective Self-check progress during the last "
                         "29 min of 29 min total.")
 
     def test_second_level_boundaries_read_in_seconds_then_minutes(self):
@@ -415,14 +399,14 @@ class TestTimeoutDiagnosis:
         run = {"duration_ms": 45_400, "watchdog_kill": _kill("no_progress", stalled_sec=30)}
 
         assert svc._resolve_timeout_diagnostics(run)[1] == (
-            "No document registration or source change during the last 30 sec of 45 sec total."
+            "No document registration, source change or effective Self-check progress during the last 30 sec of 45 sec total."
         )
 
 
 # ── §5-3/§5-4. finalize -> real row -> restart, end to end ───────────────────
 
 @pytest.fixture
-def finalize_env(monkeypatch, tmp_path):
+def finalize_env(monkeypatch, tmp_path, live_db):
     """Everything `_finalize_run` reaches outside the record it is writing."""
     monkeypatch.setattr(svc, "peek_auto_resume", lambda _g: None)
     monkeypatch.setattr(svc, "_broadcast", lambda *_a, **_k: None)
@@ -465,6 +449,12 @@ def _live_run(tmp_path, run_id="aiv_20260821_000011", **over):
         "continuation_target_seq": None,
     }
     run.update(over)
+    # Production finalization now requires the immutable execution owner (0138).
+    from modules.flow_gate.db import ai_run_identity
+    import uuid
+    ai_run_identity.initialize()
+    run["execution_nonce"] = str(uuid.uuid4())
+    ai_run_identity.claim(run)
     return run
 
 
@@ -484,7 +474,7 @@ class TestFinalizeWritesTheDiagnosticsRow:
         assert stored["end_reason"] == "timeout" and stored["stop_code"] == "timeout"
         assert stored["timeout_kind"] == "no_progress"
         assert stored["timeout_diagnosis"] == (
-            "No document registration or source change during the last 41 min of 78 min total."
+            "No document registration, source change or effective Self-check progress during the last 41 min of 78 min total."
         )
         assert stored["stdout_tail"] == "마지막 출력\ntail"
         assert stored["stderr_tail"] == "warn: nothing to commit"
@@ -568,7 +558,7 @@ class TestTheRowSurvivesARestart:
         for key in self.DIAGNOSTIC_KEYS:
             assert before[key] == after[key], f"{key} moved across the restart"
         assert after["timeout_diagnosis"] == (
-            "No document registration or source change during the last 41 min of 78 min total."
+            "No document registration, source change or effective Self-check progress during the last 41 min of 78 min total."
         )
         assert after["source_dirty_files"] == ["client/b.ts", "server/a.py"]
 
@@ -695,7 +685,7 @@ def _handoff(**over):
     base = {
         "run_id": "aiv_20260821_000003", "finished_at": "2026-08-21T11:18:00+09:00",
         "timeout_kind": "no_progress",
-        "timeout_diagnosis": ("No document registration or source change during the last "
+        "timeout_diagnosis": ("No document registration, source change or effective Self-check progress during the last "
                               "41 min of 78 min total."),
         "source_dirty": True,
         "source_dirty_files": ["server/modules/flow_gate/services/ai_invoke_service.py"],
@@ -1300,7 +1290,7 @@ class TestConversationContextTransportContract:
         monkeypatch.setattr(svc, "_conversation_context",
                              lambda *_: (200, {"head_seq": 1, "turns": []}))
         monkeypatch.setattr(svc, "_call_openai", lambda *_: (
-            "reply", {"id": "c1", "input": {"body": "hi"}}, {"role": "assistant"},
+            "reply", {"id": "c1", "name": "send_chat_reply", "input": {"body": "hi"}}, {"role": "assistant"},
         ))
         monkeypatch.setattr(svc, "_conversation_turn_register", lambda *_: (201, {"ok": True}))
 
@@ -1410,3 +1400,31 @@ class TestGetStatusExposesWatchdogProgress:
         assert "last_progress_at" not in status
         assert "last_progress_signal" not in status
         assert "progress_observations" not in status
+
+
+def test_0146_live_watchdog_evidence_survives_finalization_and_restart(live_db, finalize_env):
+    document = {"at":"2026-11-07T10:00:00+09:00", "kind":"document"}
+    source = {"at":"2026-11-07T10:01:00+09:00", "kind":"source"}
+    child = {"self_check_run_id":"scr_0146", "status":"running", "progress_seq":8,
+             "output_bytes":131072, "event_kind":"output", "observed_at":"2026-11-07T10:37:00+09:00"}
+    evidence = {"document":document, "source":source, "self_check":child,
+                "self_check_observation":"ok", "stall_basis":"self_check"}
+    kill = {**_kill("no_progress", stalled_sec=2460), "progress_evidence":evidence}
+    run = _live_run(finalize_env, watchdog_kill=kill, last_document_progress=document,
+                    last_source_progress=source, last_self_check_progress=child,
+                    self_check_observation="ok", stall_basis="self_check")
+    with svc._runs_lock:
+        svc._runs[run["run_id"]] = run
+    live = svc.get_status(run["run_id"])
+    assert live["last_document_progress"]==document and live["last_source_progress"]==source
+    assert live["last_self_check_progress"]==child and live["stall_basis"]=="self_check"
+    svc._finalize_run(run)
+    stored = db_runs.get(run["run_id"])
+    assert stored["timeout_kind"]=="no_progress"
+    assert "41 min of 78 min total" in stored["timeout_diagnosis"]
+    assert '"self_check_run_id": "scr_0146"' in stored["timeout_diagnosis"]
+    assert '"output_bytes": 131072' in stored["timeout_diagnosis"]
+    with svc._runs_lock:
+        svc._runs.clear()
+    restored=svc.get_run_detail(run["run_id"])
+    assert restored["persisted"] and restored["timeout_diagnosis"]==stored["timeout_diagnosis"]

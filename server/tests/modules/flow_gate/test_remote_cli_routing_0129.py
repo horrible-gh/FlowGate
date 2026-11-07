@@ -1249,8 +1249,14 @@ def test_absolute_ceiling_cancels_the_job(env, monkeypatch):
 def test_successful_run_record_links_the_job_and_the_agents(env, monkeypatch):
     from modules.flow_gate.db import ai_invoke_runs as db_runs
     from modules.flow_gate.services.ai_invoke import finalize
-    env.store.db.execute("PRAGMA foreign_keys=OFF")   # the record's group/project rows are not under test
-    monkeypatch.setattr(db_runs, "get_store", lambda: env.store)
+    # Use the production transaction/savepoint implementation for the durable row.
+    from sqloader.sqlite3 import SQLiteWrapper
+    path = env.store.db.execute("PRAGMA database_list").fetchone()[2]
+    real = object.__new__(db_connection.FlowGateStore)
+    real._db, real._sq = SQLiteWrapper(path), None
+    env.store._execute("INSERT INTO projects(project_id,project_name,created_at,updated_at) VALUES ('prj_r','P','now','now')")
+    env.store._execute("INSERT INTO groups(group_id,project_id,module,title,created_at,updated_at) VALUES ('grp_r','prj_r','v02','G','now','now')")
+    monkeypatch.setattr(db_runs, "get_store", lambda: real)
     agent = FakeAgent(env, "agt_a", completes())
     agent.start()
     run = make_run(group_id="grp_r", project_id="prj_r", doc_ref="flowgate.v02.0129.0009-TR", mode="single",
@@ -1270,6 +1276,7 @@ def test_successful_run_record_links_the_job_and_the_agents(env, monkeypatch):
     assert record["target_agent_id"] == record["claimed_agent_id"] == row["lease_owner_agent_id"] == "agt_a"
     assert row["ai_run_id"] == run["run_id"] and record["status"] == "DONE"
     assert TOKEN not in raw and COMMAND not in raw
+    real._db.close()
 
 
 # ── P2-8: the Job keeps the run's project for shared and personal connections ───

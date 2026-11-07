@@ -127,10 +127,23 @@ def _lockable(pool_dir: Path, index: int) -> bool:
     return True
 
 
+_session_plugins = ()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def session_conftest_plugins(pytestconfig):
+    global _session_plugins
+    previous = _session_plugins
+    _session_plugins = tuple(pytestconfig.pluginmanager.get_plugins())
+    yield
+    _session_plugins = previous
+
+
 def _live_conftest():
     """The module pytest loaded from server/tests/conftest.py in this session."""
     target = _CONFTEST.resolve()
-    for module in list(sys.modules.values()):
+    # A nested conftest can replace sys.modules["conftest"]; pytest retains both plugins.
+    for module in [*_session_plugins, *list(sys.modules.values())]:
         path = getattr(module, "__file__", None)
         if path and Path(path).resolve() == target:
             return module

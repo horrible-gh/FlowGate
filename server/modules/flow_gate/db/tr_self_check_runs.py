@@ -219,6 +219,7 @@ def create_pending(
     host_node_key: str | None = None,
     host_capacity: tuple[int, int] | None = None,
     cpu_share_requested: int | None = None,
+    progress_owner: dict | None = None,
 ) -> dict:
     """Atomically insert a pending self-check run row with active_key set.
 
@@ -306,6 +307,16 @@ def create_pending(
                 env_keys_json, active_key, now, now, owner_instance_id, owner_marker,
             ],
         )
+            if progress_owner is not None:
+                keys = ("scope_id", "ai_run_id", "hop_id", "provider_attempt_id",
+                        "owner_token_id", "project_id", "group_id")
+                if progress_owner["project_id"] != project_id or progress_owner["group_id"] != group_id:
+                    raise ValueError("self-check progress owner leaves project/group")
+                store._execute(
+                    "INSERT INTO tr_self_check_run_progress (self_check_run_id, "
+                    + ", ".join(keys) + ", progress_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [rid, *(progress_owner[k] for k in keys), _progress_stamp()],
+                )
             if draft and not lock_first:
                 _require_open_owner(store, owner_token_id)
             if source_lock_holder is not None:
@@ -938,3 +949,47 @@ def purge_old_terminal(cutoff_iso: str, batch_size: int = 500) -> int:
         " AND active_key IS NULL",
         [*ids, cutoff_iso],
     )
+
+
+# 0146: immutable parent scope is written in create_pending's transaction. Reads do
+# not join tokens/documents, so consuming a token or linking a draft cannot replay it.
+_PROGRESS_RANK = {"pending": 0, "running": 1, "completed": 2, "failed": 2, "cancelled": 2}
+
+
+def record_effective_progress(run_id: str, *, status: str | None = None,
+                              output_bytes: int | None = None) -> None:
+    store = get_store()
+    for _ in range(3):
+        row = store._fetch_one("SELECT * FROM tr_self_check_run_progress WHERE self_check_run_id = ?", [run_id])
+        if not row or row["state_rank"] >= 2:
+            return
+        rank = _PROGRESS_RANK.get(status, -1)
+        advanced = rank > row["state_rank"]
+        count = max(int(output_bytes or 0), int(row["output_bytes"]))
+        if not advanced and count == row["output_bytes"]:
+            return
+        changed = store._execute_affected(
+            "UPDATE tr_self_check_run_progress SET progress_seq = progress_seq + 1, "
+            "output_bytes = ?, state_rank = ?, status = ?, event_kind = ?, progress_at = ? "
+            "WHERE self_check_run_id = ? AND progress_seq = ?",
+            [count, rank if advanced else row["state_rank"], status if advanced else row["status"],
+             "state:" + status if advanced else "output", _progress_stamp(), run_id, row["progress_seq"]],
+        )
+        if changed:
+            return
+
+
+def observe_effective_progress(scope_id: str) -> dict:
+    store = get_store()
+    total = store._fetch_one(
+        "SELECT COALESCE(SUM(progress_seq), 0) AS seq FROM tr_self_check_run_progress WHERE scope_id = ?", [scope_id])
+    last = store._fetch_one(
+        "SELECT self_check_run_id, status, progress_seq, output_bytes, event_kind, progress_at "
+        "FROM tr_self_check_run_progress WHERE scope_id = ? ORDER BY progress_at DESC, self_check_run_id DESC LIMIT 1",
+        [scope_id])
+    return {"seq": int(total["seq"]), "last": last}
+
+
+def _progress_stamp() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")

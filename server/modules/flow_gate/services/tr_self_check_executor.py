@@ -152,12 +152,48 @@ def identity_state(pid: int | None, expected: str | None) -> str:
     return ABSENT if status == _EXITED else MATCH
 
 
-def _read_tail(pipe, target: bytearray) -> None:
+class OutputProgress:
+    """Cumulative bytes, coalesced to at most five callbacks/sec plus the final flush.
+
+    read1 returns short flushed writes immediately; BufferedReader.read(size) may
+    wait for a full buffer until process exit. Neither reporter ever reads CLI pipes.
+    """
+    def __init__(self, callback=None):
+        self.callback = callback
+        self.total = 0
+        self.sent = 0
+        self.last_sent = float("-inf")
+        self.lock = threading.Lock()
+
+    def add(self, count: int) -> None:
+        with self.lock:
+            self.total += count
+            self._send(False)
+
+    def flush(self) -> None:
+        with self.lock:
+            self._send(True)
+
+    def _send(self, force: bool) -> None:
+        now = time.monotonic()
+        if self.total <= self.sent or (not force and now - self.last_sent < .2):
+            return
+        if self.callback:
+            try:
+                self.callback(self.total)
+            except Exception:
+                pass  # optional telemetry cannot alter timeout/cancel/result handling
+        self.sent, self.last_sent = self.total, now
+
+
+def _read_tail(pipe, target: bytearray, progress: OutputProgress | None = None) -> None:
     while True:
-        data = pipe.read(8192)
+        data = getattr(pipe, "read1", pipe.read)(8192)
         if not data:
             break
         target.extend(data)
+        if progress is not None:
+            progress.add(len(data))
         if len(target) > 65536:
             del target[:-65536]
 
@@ -167,6 +203,7 @@ class ProcessControl:
         self.proc = proc
         self.owner = owner
         self._lock = threading.Lock()
+        self.progress = None
 
     def cancel(self) -> bool:
         """Deliver the stop. False = it could not be delivered (0080 T#2: reported to the
@@ -325,9 +362,10 @@ def _windows_unwind(proc, owner: WindowsProcessOwner) -> None:
 
 def wait(control: ProcessControl, timeout_seconds: int, cancelled: threading.Event) -> ExecutionResult:
     proc = control.proc
+    progress = OutputProgress(getattr(control, "progress", None))
     if control.owner:
         out, err = bytearray(), bytearray()
-        threads = [threading.Thread(target=_read_tail, args=(pipe, dest), daemon=True)
+        threads = [threading.Thread(target=_read_tail, args=(pipe, dest, progress), daemon=True)
                    for pipe, dest in ((proc.stdout, out), (proc.stderr, err))]
         for thread in threads:
             thread.start()
@@ -340,10 +378,21 @@ def wait(control: ProcessControl, timeout_seconds: int, cancelled: threading.Eve
             proc.wait(timeout=5)
         for thread in threads:
             thread.join(timeout=5)
+        progress.flush()
         return ExecutionResult(proc.returncode, timed_out, cancelled.is_set(),
                                out.decode("utf-8", "ignore"), err.decode("utf-8", "ignore"))
     try:
-        result = json.loads(proc.stdout.readline())
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                raise OwnershipError("selfcheck_process_owner_unavailable")
+            result = json.loads(line)
+            if result.get("event") != "progress":
+                break
+            count = result.get("output_bytes")
+            if isinstance(count, int) and not isinstance(count, bool) and count > progress.total:
+                progress.add(count - progress.total)
+        progress.flush()
         proc.wait(timeout=timeout_seconds + 10)
         if result.get("event") != "result":
             raise OwnershipError("selfcheck_process_owner_unavailable")

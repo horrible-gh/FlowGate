@@ -17,12 +17,32 @@ LIMIT = 65536
 EMPTY, OWNED, UNPROVEN = "empty", "owned", "unproven"
 
 
-def _tail(pipe, output: bytearray) -> None:
+def _progress_frame(count: int) -> bool:
+    """A small atomic pipe write, or a dropped optional sample under backpressure.
+
+    The timeout/cancel loop must never block behind a server that stopped reading
+    telemetry. Later frames are cumulative; handshake/final result stay unchanged.
+    """
+    frame = (json.dumps({"event": "progress", "output_bytes": count}) + "\n").encode("utf-8")
+    fd = sys.stdout.fileno()
+    blocking = os.get_blocking(fd)
+    try:
+        os.set_blocking(fd, False)
+        return os.write(fd, frame) == len(frame)
+    except BlockingIOError:
+        return False
+    finally:
+        os.set_blocking(fd, blocking)
+
+
+def _tail(pipe, output: bytearray, progress=None) -> None:
     while True:
-        chunk = pipe.read(8192)
+        chunk = getattr(pipe, "read1", pipe.read)(8192)
         if not chunk:
             return
         output.extend(chunk)
+        if progress is not None:
+            progress.add(len(chunk))
         if len(output) > LIMIT:
             del output[:-LIMIT]
 
@@ -163,18 +183,30 @@ def main() -> None:
     # against, and the one the server records (its own read could meet a reused PID).
     leader_start = executor.start_identity(proc.pid)
     out, err = bytearray(), bytearray()
-    threads = [threading.Thread(target=_tail, args=(pipe, dest), daemon=True)
+    def report(count):
+        _progress_frame(count)
+    # Threads only count bytes. The main thread emits protocol frames after started,
+    # so concurrent stdout/stderr can never interleave JSON or overtake the handshake.
+    class Counter(executor.OutputProgress):
+        def add(self, count):
+            with self.lock:
+                self.total += count
+    progress = Counter()
+    threads = [threading.Thread(target=_tail, args=(pipe, dest, progress), daemon=True)
                for pipe, dest in ((proc.stdout, out), (proc.stderr, err))]
     for thread in threads:
         thread.start()
     sys.stdout.write(json.dumps({"event": "started", "pid": proc.pid, "start_identity": leader_start}) + "\n")
     sys.stdout.flush()
+    progress.callback = report
+    progress.sent = 0
     selector = selectors.DefaultSelector()
     selector.register(sys.stdin.buffer, selectors.EVENT_READ)
     deadline = time.monotonic() + payload["timeout_seconds"]
     reason = None
     try:
         while not _leader_exited(proc):
+            progress.flush()
             if time.monotonic() >= deadline:
                 reason = "timeout"
                 break
@@ -197,6 +229,7 @@ def main() -> None:
             pass
         for thread in threads:
             thread.join(timeout=5)
+        progress.flush()
         result = {"event": "result", "exit_code": proc.returncode,
                   "timed_out": reason == "timeout", "cancelled": reason == "cancel",
                   "cpu_limit_violated": reason == "cpu_limit",

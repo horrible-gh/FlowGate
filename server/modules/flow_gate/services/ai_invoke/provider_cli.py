@@ -27,6 +27,8 @@ from modules.flow_gate.settings import ai_settings_service
 # there -- the absolute-ceiling clock and the progress probes -- are pure/constant-only,
 # so they now live on `runtime` (the parameter block) and `oracle` (the progress probes,
 # §16) instead.
+from modules.flow_gate.services import tr_self_check_progress as selfcheck_progress
+
 from . import oracle
 from . import provider_remote
 from .runtime import (
@@ -106,6 +108,13 @@ def _claim_watchdog_kill(run: dict, proc, stop_event: threading.Event,
             "last_progress_at": run.get("last_progress_at"),
             "progress_observations": int(run.get("progress_observations") or 0),
             "attempt_no": int(run.get("attempt_no") or 0),
+            "progress_evidence": {
+                "document": run.get("last_document_progress"),
+                "source": run.get("last_source_progress"),
+                "self_check": run.get("last_self_check_progress"),
+                "self_check_observation": run.get("self_check_observation", "none"),
+                "stall_basis": run.get("stall_basis") or run.get("last_progress_signal") or "attempt_start",
+            },
         }
         # The same flag an expired `communicate()` raises, so this ends as end_reason
         # "timeout" / stop_code "timeout" and NEVER as a provider spawn_failed or
@@ -164,6 +173,12 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
                 run, proc, stop_event, "absolute_cap", now) else None
 
         moved: list[str] = []
+        # Independent optional observer: an error cannot disable document/Git guards.
+        try:
+            if selfcheck_progress.poll(run, now_iso()):
+                moved.append("self_check")
+        except Exception:
+            run["self_check_observation"] = "unavailable"
         readable = True
         seq = oracle._observe_group_max_seq(run)
         if seq is None:
@@ -201,6 +216,10 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
                 process_watermark = snapshot
                 process_moved = True
 
+        for signal in ("document", "source"):
+            if signal in moved:
+                run["last_" + signal + "_progress"] = {"at": now_iso(), "kind": signal}
+
         if moved or process_moved:
             # §6: a document/source tick is strong progress AND weak activity at once;
             # a process-only tick is activity alone. Either way `last_activity_*` is the
@@ -219,6 +238,7 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
             run["last_progress_mono"] = now
             run["last_progress_at"] = now_iso()
             run["last_progress_signal"] = ",".join(moved)
+            run["stall_basis"] = run["last_progress_signal"]
             run["progress_observations"] = int(run.get("progress_observations") or 0) + 1
             continue
         if not readable:
@@ -245,6 +265,7 @@ def _start_progress_watchdog(run: dict, proc,
     # for the silence of the one before it. The ABSOLUTE ceiling deliberately does NOT
     # reset: it is measured from started_mono, which `_reset_attempt_state` keeps (§2-4).
     run["stall_anchor_mono"] = _svc()._now_mono()
+    run["stall_basis"] = "attempt_start"
     run["watchdog_kill"] = None
     thread = threading.Thread(
         target=_progress_watchdog_loop, args=(run, proc, stop_event, interval),
@@ -494,6 +515,7 @@ def _execute_local(exec_id, cwd, prompt, env, *, command, run, decision, started
         raise ValueError("execution identity mismatch")
     if graph_execution_hooks.call("launch", run) is False:
         return None, None
+    selfcheck_progress.open_attempt(run)
     cli = _CliProcess(run.get("run_id"))
     try:
         kwargs = _cli_popen_kwargs(decision, env)
@@ -515,6 +537,7 @@ def _execute_local(exec_id, cwd, prompt, env, *, command, run, decision, started
             try:
                 cli.close()
             finally:
+                selfcheck_progress.close_attempt(run)
                 if run.get("proc") is cli.proc:
                     run["proc"] = None
 

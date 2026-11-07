@@ -2666,6 +2666,8 @@ def _adopt_continuation_token(run: dict, raw_token: str, *,
         return False
     run["register_context"] = context
     run["current_token_id"] = token_rec.get("token_id")
+    from modules.flow_gate.services import tr_self_check_progress
+    tr_self_check_progress.bind_token(run, token_rec.get("token_id"))
     return True
 
 
