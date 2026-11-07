@@ -356,6 +356,13 @@ def has_active_attempts(run_id: str) -> bool:
     return int(row.get("n") or 0) > 0
 
 
+def active_attempt_node_keys(run_id: str) -> list[str]:
+    """Diagnostic keys only; has_active_attempts remains the adoption predicate."""
+    return [r["node_key"] for r in _all(
+        "SELECT DISTINCT node_key FROM graph_node_attempts WHERE run_id = ? AND status = 'active' ORDER BY node_key",
+        [run_id])]
+
+
 def current_attempts(run_id: str) -> dict[str, str]:
     """``{node_key: attempt_id}``: the node's active attempt, else its last ended one (none: not opened since 151)."""
     rows = _all("SELECT attempt_id, node_key, status FROM graph_node_attempts WHERE run_id = ? "

@@ -803,7 +803,7 @@ export default {
       run_wait_release: {
         new_submission: 'Release: edit the document and submit it again',
         issuer_permission: 'Release: give the issuer approval rights',
-        memo_rereview: 'Release: memo and re-review request, or Graph Time Machine',
+        memo_rereview: 'The card has a recorded intervention state.',
       },
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: 'Stopped · {n} next card(s) waiting',
@@ -817,6 +817,18 @@ export default {
       run_request_failed: 'Could not process the {action} request.',
       run_request_unconfirmed: 'Could not confirm the outcome of the {action} request.',
       run_errors: {
+        graph_revision_migration_blocked: 'The current run state prevents adoption of the new definition.',
+        graph_node_protected: 'Changed protected cards prevent adoption.',
+        graph_node_key_reused: 'Reused card keys prevent adoption.',
+        blocked_reason_active_attempts: 'There are open cards, cards in review, or active card attempts.',
+        blocked_reason_gate_rejected: 'A confirmation card is rejected.',
+        blocked_reason_gate_recovery_reset_required: 'A confirmation card has a pending round split after recovery.',
+        blocked_reason_gate_jobs_in_progress: 'Confirmation card jobs or reservations remain.',
+        blocked_card_active: 'card with an active attempt',
+        blocked_card_review: 'card in review without an active attempt',
+        blocked_card_other: 'card blocking adoption',
+        blocked_cards: 'Target cards: {cards}.',
+        blocked_more: '{n} more.',
         run_policy_undecided: 'The run rules are not decided yet, so it cannot run.',
         run_already_active: 'It is already running.',
         run_not_running: 'It is not running.',

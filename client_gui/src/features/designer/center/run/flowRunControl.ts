@@ -46,7 +46,7 @@
 import { cardApprovalFailureView, cardApprovalRefusalOf, type CardApprovalFailureView, type CardApprovalRefusal } from '../graph/cardStateView'
 import type { FlowGraphSource, FlowRunError, FlowRunInfo, FlowTimeMachineRefusal, FlowTimeMachineResult } from '../graph/flowGraphSource'
 import { isRunLocked } from './flowRunLock'
-import { diagnosticId, safeFlowLabel, recordRunFailureDiagnostic, type RunFailureDiagnostic } from './runFailureDiagnostic'
+import { diagnosticId, safeFlowLabel, recordRunFailureDiagnostic, runBlockageOf, type RunBlockage, type RunFailureDiagnostic } from './runFailureDiagnostic'
 
 export type FlowRunMode = 'next' | 'all'
 
@@ -101,6 +101,8 @@ export interface FlowRunFailure extends Partial<FlowRunFailureContext> {
   readonly approval: CardApprovalFailureView | null
   /** flowgate.v02.0056 F2-1: what a refused [승인] names in its params (cardApprovalRefusalOf), else null. */
   readonly refusal: CardApprovalRefusal | null
+  /** Safe server-named adoption blockers; absent for legacy producers. */
+  readonly blocked?: RunBlockage | null
   /** Grows with every refusal, so the same refusal twice is still told apart. */
   readonly seq: number
 }
@@ -216,6 +218,7 @@ function failureOf(kind: FlowRunFailure['kind'], error: unknown, seq: number, co
     ...context,
     approval: kind === 'approval' ? cardApprovalFailureView(code, status, code === null && status === null) : null,
     refusal: kind === 'approval' ? cardApprovalRefusalOf(refused?.params) : null,
+    blocked: kind === 'run' ? runBlockageOf(code, refused?.params) : null,
     seq,
   }
 }
@@ -238,6 +241,7 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
       action: id(failure.action), stage: id(failure.stage), mode: id(failure.mode),
       projectId: id(failure.projectId), flowId: id(failure.flowId), targetRunId: id(failure.targetRunId),
       baselineRunId: id(failure.baselineRunId), status: failure.status, code: id(failure.code), outcome: id(failure.outcome),
+      blocked: failure.blocked ?? null,
       observation: failure.observation ? Object.freeze({state:failure.observation.state,runId:id(failure.observation.runId),status:id(failure.observation.status)}) : null,
     })
     try { (deps.diagnose ?? recordRunFailureDiagnostic)(record) } catch { /* Diagnostics cannot break a command or its notice. */ }

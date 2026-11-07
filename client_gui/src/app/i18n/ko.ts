@@ -814,7 +814,7 @@ export default {
       run_wait_release: {
         new_submission: '해제: 문서 수정 후 새 제출',
         issuer_permission: '해제: 발행자 승인 권한 보완',
-        memo_rereview: '해제: 메모 후 재검수 요청 또는 Graph Time Machine',
+        memo_rereview: '카드에 개입 필요 상태가 기록되어 있습니다.',
       },
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: '멈춤 · 다음 카드 {n}개 대기',
@@ -828,6 +828,18 @@ export default {
       run_request_failed: '{action} 요청을 처리하지 못했습니다.',
       run_request_unconfirmed: '{action} 요청의 처리 결과를 확인하지 못했습니다.',
       run_errors: {
+        graph_revision_migration_blocked: '현재 실행 상태로는 새 구성을 채택할 수 없습니다.',
+        graph_node_protected: '보호된 카드가 변경되어 구성을 채택할 수 없습니다.',
+        graph_node_key_reused: '이미 사용된 카드 키가 다시 포함되어 구성을 채택할 수 없습니다.',
+        blocked_reason_active_attempts: '열려 있거나 검수 상태인 카드 또는 진행 중인 카드 실행이 있습니다.',
+        blocked_reason_gate_rejected: '거절된 확인 카드가 있습니다.',
+        blocked_reason_gate_recovery_reset_required: '복구 후 라운드 분리가 남아 있는 확인 카드가 있습니다.',
+        blocked_reason_gate_jobs_in_progress: '확인 카드의 작업 또는 예약이 남아 있습니다.',
+        blocked_card_active: '활성 실행이 있는 카드',
+        blocked_card_review: '활성 실행 없이 검수 상태인 카드',
+        blocked_card_other: '채택을 차단하는 카드',
+        blocked_cards: '대상 카드: {cards}.',
+        blocked_more: '그 밖 {n}개.',
         run_policy_undecided: '실행 규칙이 아직 정해지지 않아 실행할 수 없습니다.',
         run_already_active: '이미 실행 중입니다.',
         run_not_running: '실행 중이 아닙니다.',

@@ -803,7 +803,7 @@ export default {
       run_wait_release: {
         new_submission: '解除: 文書を修正して再提出',
         issuer_permission: '解除: 発行者の承認権限を補う',
-        memo_rereview: '解除: メモ後に再レビュー依頼、または Graph Time Machine',
+        memo_rereview: 'カードに介入が必要な状態が記録されています。',
       },
       // flowgate.v02.0056 F2-1 — a stopped run with cards approved meanwhile (O1 0005-TR §4-2).
       run_pending: '停止中 · 次のカード {n} 件待ち',
@@ -817,6 +817,18 @@ export default {
       run_request_failed: '{action}リクエストを処理できませんでした。',
       run_request_unconfirmed: '{action}リクエストの処理結果を確認できませんでした。',
       run_errors: {
+        graph_revision_migration_blocked: '現在の実行状態では新しい構成を採用できません。',
+        graph_node_protected: '保護されたカードの変更により構成を採用できません。',
+        graph_node_key_reused: '使用済みのカードキーが再び含まれているため構成を採用できません。',
+        blocked_reason_active_attempts: '開いているカード、検証中のカード、または進行中のカード実行があります。',
+        blocked_reason_gate_rejected: '拒否された確認カードがあります。',
+        blocked_reason_gate_recovery_reset_required: '復旧後のラウンド分割が残っている確認カードがあります。',
+        blocked_reason_gate_jobs_in_progress: '確認カードのジョブまたは予約が残っています。',
+        blocked_card_active: '有効な実行があるカード',
+        blocked_card_review: '有効な実行がなく検証中のカード',
+        blocked_card_other: '採用を妨げるカード',
+        blocked_cards: '対象カード: {cards}。',
+        blocked_more: 'ほか{n}件。',
         run_policy_undecided: '実行ルールがまだ決まっていないため実行できません。',
         run_already_active: 'すでに実行中です。',
         run_not_running: '実行中ではありません。',

@@ -473,7 +473,10 @@ function v01RunErrorKey(outcome: V01RunOutcome): string | null {
 }
 
 function runErrorText(error: FlowRunFailure): string {
-  return requestErrorText(error, (key, values) => values ? t(key, values) : t(key), te)
+  return requestErrorText(error, (key, values) => values ? t(key, values) : t(key), te, (key) => {
+    const load = error.flowId ? center.state.graphs[error.flowId] : null
+    return load?.status === 'ready' ? load.graph.nodes.find((node) => node.id === key)?.title ?? null : null
+  })
 }
 
 /**

@@ -29,17 +29,28 @@ def check_revision_adoption(group: dict, run: dict, record: dict, latest: int) -
     rows = run_store.node_runs(run_id)
     # Pre-151 open/review rows have no attempt record: do not migrate their live work either.
     if run_store.has_active_attempts(run_id) or any(r["status"] in ("open", "review") for r in rows):
+        active = set(run_store.active_attempt_node_keys(run_id))
+        statuses = {r["node_key"]: r["status"] for r in rows}
+        keys = sorted(k for k in active | {r["node_key"] for r in rows if r["status"] in ("open", "review")}
+                      if isinstance(k, str) and k.strip())
+        node_keys = keys[:50]
         raise GraphApiError(409, "graph_revision_migration_blocked", {
             "flow_id": flow_id, "run_id": run_id, "reason": "active_attempts",
-            "from_revision_no": old_no, "to_revision_no": latest})
+            "from_revision_no": old_no, "to_revision_no": latest,
+            "node_keys": node_keys, "node_keys_total": len(keys),
+            "blockers": [{"node_key": k, "row_status": statuses.get(k), "active_attempt": k in active}
+                         for k in node_keys]})
     _refuse_unresolved_gates(flow_id, run_id, rows, old_no, latest)
     from flowgate.gate_decisions import rounds, repository as gate_decisions
     gate_jobs = rounds.unfinished(flow_id)
     reservations = gate_decisions.reservations_of_group(flow_id)
     if gate_jobs or reservations:
+        keys = sorted({k for k in [j.get("target_key") for j in gate_jobs] + [r.get("node_key") for r in reservations]
+                       if isinstance(k, str) and k.strip()})
         raise GraphApiError(409, "graph_revision_migration_blocked", {
             "flow_id": flow_id, "run_id": run_id, "reason": "gate_jobs_in_progress",
-            "jobs": gate_jobs, "decision_ids": [r["decision_id"] for r in reservations]})
+            "jobs": gate_jobs, "decision_ids": [r["decision_id"] for r in reservations],
+            "node_keys": keys[:50], "node_keys_total": len(keys)})
     protect_definition(flow_id, record["nodes"], record["edges"], run)
     candidate = {**run, "revision_no": latest}
     ctx = load_context(candidate, group.get("project_id"), None, definition=record)
