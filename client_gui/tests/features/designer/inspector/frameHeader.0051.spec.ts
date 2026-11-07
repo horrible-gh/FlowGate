@@ -130,9 +130,10 @@ describe('the header line (flowgate.v02.0051 stage 2)', () => {
     const node = { ...UNASSIGNED_REQ_NODE, id: 'gn_bare', state: null, document: null }
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [node] }, node.id), none)
     expect(w.find('[data-test="designer-inspector-pill"]').exists()).toBe(false)
-    // The support gate has the Canvas state 'draft': the pill holds that state alone.
+    // 0148: an unreached draft gate has neither a generic pill nor a state icon.
     const gate = mountFrame(SELECTIONS.graphGate, none)
-    expect(gate.get('[data-test="designer-inspector-pill-label"]').text()).toBe('작성 중')
+    expect(gate.find('[data-test="designer-inspector-pill-label"]').exists()).toBe(false)
+    expect(gate.find('[data-test="gate-header-state"]').exists()).toBe(false)
     expect(gate.find('[data-test="designer-inspector-pill-sub"]').exists()).toBe(false)
   })
 
@@ -158,8 +159,8 @@ describe('the real registry on Nodes without a document', () => {
     expect(sections(w)).toEqual(['gateCard', 'cardMemo'])
     expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
     expect(get(w, 'gate-result').text()).toContain('확인 결과')
-    expect(get(w, 'designer-inspector-header').find('[data-test="gate-confirm"]').exists()).toBe(false)
-    const confirm = get(w, 'gate-result').get('[data-test="gate-confirm"]')
+    expect(get(w, 'designer-inspector-header').find('[data-test="gate-confirm"]').exists()).toBe(true)
+    const confirm = get(w, 'designer-inspector-header').get('[data-test="gate-confirm"]')
     expect(confirm.attributes('disabled')).toBeDefined()
   })
 

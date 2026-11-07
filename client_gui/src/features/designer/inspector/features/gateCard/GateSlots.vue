@@ -3,11 +3,10 @@
   <section v-if="lines.length" class="inspector-gate-card" data-test="inspector-gate-card" :data-shape="shape">
     <div v-if="shape === 'gate'" class="inspector-gate-result" data-test="gate-result" :aria-busy="decision.busy.value !== null">
       <strong>{{ t(k('slot.result')) }}</strong>
-      <span class="inspector-gate-result-value" :data-tone="decision.result.value.tone" :title="decision.result.value.description" :aria-label="[t(k(`result.${decision.result.value.key}`)), decision.result.value.description].filter(Boolean).join(' · ')" data-test="gate-result-value">
+      <span v-if="!['before', 'confirmed'].includes(decision.result.value.key)" class="inspector-gate-result-value" :data-tone="decision.result.value.tone" :title="decision.result.value.description" :aria-label="[t(k(`result.${decision.result.value.key}`)), decision.result.value.description].filter(Boolean).join(' · ')" data-test="gate-result-value">
         <i aria-hidden="true" />{{ t(k(`result.${decision.result.value.key}`)) }}
       </span>
-      <span v-if="decision.result.value.archived" class="inspector-gate-archive" data-test="gate-archived">{{ t(k('result.archived')) }}</span>
-      <GateActions :target="target" :state="decision" />
+      <span v-if="decision.result.value.description" data-test="gate-result-description">{{ decision.result.value.description }}</span>
     </div>
     <GateSettingsSummary v-if="shape === 'gate'" :node="decision.settings.value" :decision="decision.receipt.value" :error-code="decision.errorCode.value" hide-target />
     <InspectorSlotList :target="target" v-if="shape !== 'gate'" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
@@ -25,13 +24,13 @@ import { cardDocumentContext, cardLineRow, DocumentIoGroup, openCardLineAction, 
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import { gateCardShape, gateCardSlots, type GateSlot } from './gateCardModel'
-import GateActions from './GateActions.vue'
 import GateSettingsSummary from './GateSettingsSummary.vue'
-import { useGateDecision } from './useGateDecision'
+import { useGateDecision, type GateDecisionState } from './useGateDecision'
 import { useGateCard } from './useGateCard'
 
 const props = defineProps<{
   target: InspectorTarget
+  state?: GateDecisionState
 }>()
 
 const { t, te } = useI18n()
@@ -41,7 +40,7 @@ const host = inject(INSPECTOR_HOST, null)
 const k = (key: string) => `gui.inspector.gateCard.${key}`
 
 const shape = computed(() => gateCardShape(props.target))
-const decision = useGateDecision(() => shape.value === 'gate' ? props.target : null)
+const decision = props.state ?? useGateDecision(() => shape.value === 'gate' ? props.target : null)
 
 const { instructionOmitted } = useGateCard(() => (shape.value === 'custom' ? props.target : null))
 

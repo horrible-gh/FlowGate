@@ -340,6 +340,7 @@ export default {
         auto_approval_failed: '자동 승인 실패',
         approved: '완료',
         rejected: '반려됨',
+        revised: '수정됨',
         pending: '준비',
         closed: '닫힘',
       },

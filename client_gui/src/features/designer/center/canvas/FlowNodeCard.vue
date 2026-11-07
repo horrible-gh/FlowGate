@@ -50,11 +50,11 @@
         </svg>
       </span>
       <span class="flow-node-kind" data-test="designer-canvas-node-kind">{{ t(kindLabelKey) }}</span>
-      <span v-if="!data.hold && headerState" class="flow-node-state is-card is-icon"
-        :class="`flow-node-state--${headerState.tone}`" role="img" :aria-label="t(headerState.labelKey)"
+      <span v-if="!data.hold && headerState && headerGlyph" class="flow-node-state is-card is-icon"
+        :class="`flow-node-state--${headerGlyph!.tone}`" role="img" :aria-label="headerTitle"
         :title="headerTitle" :data-test="data.gateState ? 'designer-canvas-node-gate-state' : data.cardState ? 'designer-canvas-node-card-state' : 'designer-canvas-node-state'"
         :data-state="headerState.key" :data-phase="data.cardState?.phase">
-        <svg viewBox="0 0 24 24" :class="{ 'is-spinning': headerSpinning }" aria-hidden="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
           <path :d="headerIcon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </span>
@@ -86,6 +86,11 @@
         :title="data.title"
         data-test="designer-canvas-node-title"
       >{{ data.title }}</p>
+      <button v-if="data.gateState?.key === 'waiting_confirm' && data.approvable" type="button"
+        class="flow-node-approve nodrag nopan" :disabled="data.approving || data.approvalBlocked" :title="data.approvalReason ? t(data.approvalReason) : undefined"
+        data-test="designer-canvas-node-approve" @pointerdown.stop @mousedown.stop @click.stop="emit('approve', id)">
+        {{ t('gui.inspector.gateCard.confirm') }}
+      </button>
       <div v-if="data.integration" class="flow-node-flags" data-test="designer-canvas-node-flags">
         <button
           v-if="data.integration === 'conflict'"
@@ -123,7 +128,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
-import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay } from './flowNodeKinds'
+import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay, flowNodeHeaderIcon } from './flowNodeKinds'
 import type { FlowGateNodeData } from './vueFlowMapping'
 import { cardStateReasonText } from '../graph/cardStateView'
 
@@ -135,6 +140,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** flowgate.v02.0061 T#14: the card's 병합 충돌 was pressed (the Git tool panel resolves it). */
   conflict: [nodeId: string]
+  approve: [nodeId: string]
 }>()
 
 /** The four start strips of a connectable card, one source handle per side. */
@@ -155,16 +161,8 @@ const state = computed(() => flowNodeStateDisplay(props.data.state))
 const headerState = computed(() => props.data.gateState ?? (props.data.cardState ? props.data.cardState.key === 'pending' ? null : props.data.cardState : state.value ? {
   ...state.value, labelKey: `gui.designer.center.node_states.${state.value.key}`, reason: null,
 } : null))
-const headerSpinning = computed(() => props.data.gateState?.key === 'publishing' || (!props.data.gateState && props.data.cardState?.phase === 'working'))
-const headerIcon = computed(() => {
-  const key = headerState.value?.key
-  if (key === 'confirmed' || key === 'approved' || key === 'done') return 'M5 12l4 4L19 6'
-  if (key === 'needs_intervention') return 'M12 3L2 21h20L12 3z M12 9v5 M12 17h.01'
-  if (key === 'system_error' || key === 'recovery_required' || key === 'rejected') return 'M4 4l16 16 M20 4L4 20 M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20'
-  if (key === 'conflict_review') return 'M6 3v5l12 8v5 M18 3v5L6 16v5 M3 3h6 M15 3h6'
-  if (headerSpinning.value) return 'M21 12a9 9 0 1 1-9-9'
-  return 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 7v5l3 2'
-})
+const headerGlyph = computed(() => flowNodeHeaderIcon(headerState.value))
+const headerIcon = computed(() => headerGlyph.value?.path)
 const headerTitle = computed(() => {
   const shown = headerState.value
   if (!shown) return undefined

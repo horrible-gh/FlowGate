@@ -132,7 +132,8 @@ describe('the Canvas card (vueFlowMapping, FlowNodeCard)', () => {
     wrapper.unmount()
     const working: FlowGateNodeData = { ...data, cardState: cardStateView(run('open', { stage: 'result', runningExecutionCount: 1 }))! }
     wrapper = mount(FlowNodeCard, { props: { id: 'gn_ai', data: working }, global: { plugins: [i18n], stubs: { Handle: true } } })
-    expect(wrapper.get('[data-test="designer-canvas-node-card-state"] svg').classes()).toContain('is-spinning')
+    expect(wrapper.get('[data-test="designer-canvas-node-card-state"] svg').classes()).not.toContain('is-spinning')
+    expect(wrapper.get('[data-test="designer-canvas-node-card-state"]').classes()).toContain('flow-node-state--warning')
   })
 })
 

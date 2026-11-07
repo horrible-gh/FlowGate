@@ -1,6 +1,7 @@
-// D0007 §6: the gate owns the document result box. No confirm/reject header action.
+// 0148: the gate keeps its result details and contributes the shared approval header action.
 import type { InspectorRegistration } from '../../inspectorRegistry'
 import GateSlots from './GateSlots.vue'
+import GateActions from './GateActions.vue'
 import messages from './messages'
 
 const registration: InspectorRegistration = {
@@ -9,6 +10,7 @@ const registration: InspectorRegistration = {
   cardKinds: ['other'],
   requiresDocument: false,
   tab: { key: 'documents', component: GateSlots },
+  headerAction: GateActions,
   messages,
 }
 

@@ -4,18 +4,21 @@ import type { InspectorTarget } from '../../inspectorTarget'
 import { INSPECTOR_HOST } from '../../inspectorHost'
 import { gateActions, gateFailureKey, gateResult } from './gateCardModel'
 import { checkControlFailure } from '../checkSettings/checkSettingsModel'
+import { observeGateApproval } from './gateApproval'
 import { useGateContext } from './useGateContext'
 export { GATE_RUN_EVENTS, gateRunEventMatches } from './useGateContext'
 
 export function useGateDecision(target: () => InspectorTarget | null) {
   const context = useGateContext(target)
+  watch(context, value => observeGateApproval(target(), value), { immediate: true })
   const host = inject(INSPECTOR_HOST, null)
   const busy = computed<RunGateDecision | null>(() => {
     const c = context.value
     return c?.busy.value ?? (c?.gate.value?.decision_in_progress && !c.gate.value.job?.last_error_code ? 'confirm' : null)
   })
   const failureKey = computed(() => {
-    const error = context.value?.decisionError.value ?? context.value?.error.value
+    const c = context.value
+    const error = c?.decisionError.value ?? c?.error.value ?? Object.values(c?.failures.value ?? {})[0]
     const specific = error ? checkControlFailure(error) : null
     return specific && documentErrorOf(error).code !== 'gate_git_unavailable' ? `settings:${specific.key}` : error ? gateFailureKey(documentErrorOf(error)) : null
   })
@@ -23,7 +26,7 @@ export function useGateDecision(target: () => InspectorTarget | null) {
     const current = target()
     const c = context.value
     return gateActions(current ?? { docId: null, docType: null, docReviewStatus: null, docStatus: null, nodeType: null, cardDocuments: [] },
-      c?.run.value ?? null, busy.value !== null || c?.status.value !== 'ready' || Object.keys(c?.pending.value ?? {}).length > 0 || !c?.node.value?.attemptId || c?.settings.value?.settingsVersion === undefined)
+      c?.run.value ?? null, busy.value !== null || c?.status.value !== 'ready' || Object.keys(c?.pending.value ?? {}).length > 0 || Object.keys(c?.failures.value ?? {}).length > 0 || !c?.node.value?.attemptId || c?.settings.value?.settingsVersion === undefined)
   })
   const result = computed(() => gateResult(context.value?.node.value ?? null))
   watch(() => context.value?.gate.value?.job?.last_error_code, error => {

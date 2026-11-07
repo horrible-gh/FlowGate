@@ -336,6 +336,7 @@ export default {
         auto_approval_failed: 'Auto-approval failed',
         approved: 'Done',
         rejected: 'Rejected',
+        revised: 'Revised',
         pending: 'Ready',
         closed: 'Closed',
       },

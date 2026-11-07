@@ -336,6 +336,7 @@ export default {
         auto_approval_failed: '自動承認失敗',
         approved: '完了',
         rejected: '差し戻し',
+        revised: '修正済み',
         pending: '準備',
         closed: 'クローズ',
       },

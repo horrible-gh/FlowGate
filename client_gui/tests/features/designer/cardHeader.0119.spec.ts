@@ -1,7 +1,7 @@
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import FlowNodeCard from '@/features/designer/center/canvas/FlowNodeCard.vue'
-import { gateHeaderState } from '@/features/designer/center/canvas/gateHeaderState'
+import { gateHeaderState as rawGateHeaderState } from '@/features/designer/center/canvas/gateHeaderState'
 import { cardStateView, CARD_STATE_KEYS } from '@/features/designer/center/graph/cardStateView'
 import { toFlowCanvas } from '@/features/project/flowCanvasApi'
 import { toFlowRun } from '@/features/project/flowRunApi'
@@ -12,9 +12,10 @@ const i18n = prepareInspectorI18n()
 const wrappers: VueWrapper[] = []
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); i18n.global.locale.value = 'ko' })
 const render = (data: any) => { const w = mount(FlowNodeCard, { props: { id: 'n1', data: { kind: 'task', title: 'Card', selected: false, state: null, ...data } }, global: { plugins: [i18n], stubs: { Handle: true } } }); wrappers.push(w); return w }
+const gateHeaderState = (gate: any) => rawGateHeaderState(gate, { status: gate?.decision?.status === 'succeeded' ? 'done' : 'open', attemptId: 'a1' })
 const gate = (extra = {}) => ({ decision: null, job: null, recovery: null, can_decide: true, decision_in_progress: false, recovery_reset_required: false, settings_locked: false, archived: false, ...extra })
 describe('0119 Canvas header accessibility', () => {
-  it.each(['draft', 'in_progress', 'review', 'done', 'blocked'])('generic fallback %s is an icon with the existing text as its name and tooltip', state => {
+  it.each(['in_progress', 'review', 'done', 'blocked'])('generic fallback %s is an icon with the existing text as its name and tooltip', state => {
     const w = render({ state }); const icon = w.get('[data-test="designer-canvas-node-state"]')
     expect(icon.attributes('role')).toBe('img')
     expect(icon.attributes('aria-label')).toBe(i18n.global.t(`gui.designer.center.node_states.${state}`))
@@ -27,7 +28,8 @@ describe('0119 Canvas header accessibility', () => {
       const w = render({ cardState: cardStateView({ status: 'review', intervention: { kind, reason: 'recorded_reason' } }), approvable: true })
       const icon = w.get('[data-test="designer-canvas-node-card-state"]')
       expect(icon.attributes('role')).toBe('img')
-      expect(icon.attributes('aria-label')).toBe(i18n.global.t(`gui.designer.center.card_states.${kind}`))
+      expect(icon.attributes('aria-label')).toContain(i18n.global.t(`gui.designer.center.card_states.${kind}`))
+      expect(icon.attributes('aria-label')).toContain('recorded_reason')
       expect(icon.attributes('title')).toContain('recorded_reason')
       expect(icon.text()).toBe(''); expect(w.find('button').exists()).toBe(false)
     }
@@ -68,7 +70,7 @@ describe('0119 Canvas header accessibility', () => {
         [
           "recovery_required",
           "img",
-          "복구 필요",
+          "복구 필요 (probe_failed)",
           "복구 필요 (probe_failed)",
           "",
         ],
@@ -99,7 +101,7 @@ describe('0119 gate evidence and transport', () => {
     [gate({ job: { status: 'running', phase_note: 'gate_conflict' } }), 'conflict_review'],
     [gate({ job: { status: 'running', phase_note: 'gate_failed' } }), 'recovery_required'],
     [gate({ recovery_reset_required: true }), 'recovery_required'],
-    [gate({ decision: { status: 'succeeded', result: 'confirmed' } }), 'confirmed'],
+    [gate({ decision: { status: 'succeeded', result: 'confirmed', attempt_id: 'a1' } }), 'confirmed'],
   ])('reads only gate evidence (%j)', (facts, key) => { expect(gateHeaderState(facts as any).key).toBe(key) })
   it('run and Canvas reads preserve intervention/gate through graph mapping; null clears stale evidence', () => {
     const facts = { kind: 'needs_intervention', reason: 'review_not_passed:hold' }

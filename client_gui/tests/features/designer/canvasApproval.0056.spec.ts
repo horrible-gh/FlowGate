@@ -23,6 +23,6 @@ describe('v0.2 Canvas state mapping: no human approval', () => {
     const data = toVueFlowNodes(graph, null, new Map(), { marks: marks as any, canApprove: true })[0].data
     expect(data.cardState).toBeUndefined()
     expect(data.gateState?.key).toBe('conflict_review')
-    expect(data.approvable).toBeUndefined()
+    expect(data.approvable).toBe(false)
   })
 })
