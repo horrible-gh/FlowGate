@@ -239,9 +239,10 @@ def test_s1_6_failures(env):
     assert res.status_code == 404
     assert res.json()["error"] == {"code": "flow_not_found", "message": "Flow를 찾을 수 없습니다.",
                                    "params": {"flow_id": "flowgate.v02.9999"}}
-    res = _get(env, F51, query="?view=latest")
+    # 0145 T#2 added latest; retain the malformed-view case with an unsupported value.
+    res = _get(env, F51, query="?view=unknown")
     assert res.status_code == 422
-    assert res.json()["error"]["params"] == {"errors": [{"field": "view", "reason": "not_one_of:revision,draft"}]}
+    assert res.json()["error"]["params"] == {"errors": [{"field": "view", "reason": "not_one_of:revision,draft,latest"}]}
     _sql(env["db"], "UPDATE groups SET deleted_at = 'x' WHERE group_id = ?", (F51,))
     assert _get(env, F51).status_code == 404
     res = _get(env, F48, client_id="bad id!")

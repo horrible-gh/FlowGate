@@ -172,6 +172,8 @@ def prepare(raw, body, *, model_input=_CLI, run=None):
             raise invalid("expected_revision_missing", "expected_revision", "invalid_type")
         if expected < 0:
             raise invalid("expected_revision_missing", "expected_revision", "invalid_format")
+    from modules.flow_gate.graph_workflow.services import result_slot_binding
+    result_slot_binding.validate(token, expected)
     if kind == target.NON_CARD:
         from .legacy_edit import read_submission
         submission = read_submission(source, token, body)
@@ -205,6 +207,7 @@ def prepare(raw, body, *, model_input=_CLI, run=None):
         inbox._truthy(source.get("dry_run")), locale=inbox.template_provision.normalize_locale(locale))
     def recheck():
         check_boundary(raw, body, run=run)
+        result_slot_binding.validate(token, expected)
         if binding and agent_binding.bind(token, doc) != binding:
             raise agent_binding.missing()
     return replace(req, recheck=recheck), token, binding

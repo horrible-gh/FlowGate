@@ -1172,12 +1172,28 @@ def _work_run(record: dict) -> bool:
     return record.get("mode") == "single" and not record.get("document_review_loop")
 
 
+def is_result_writer(run: dict) -> bool:
+    """0145: an edit of the pre-created report is a result writer only through its own
+    result execution. Ordinary edits, review-loop reworks and foreign ledgers never qualify.
+    The callers still require the writer's consumed result, clean end and active-attempt fence.
+    """
+    if run.get("action_scope") == "new":
+        return True
+    if run.get("action_scope") != "edit" or not _work_run(run) or not run.get("graph_exec_id"):
+        return False
+    row = get_store()._fetch_one(
+        "SELECT e.ai_run_id, e.kind, e.assignment_stage, r.group_id FROM graph_attempt_runs e "
+        "JOIN graph_runs r ON r.run_id = e.run_id WHERE e.exec_id = ?", [run["graph_exec_id"]])
+    return bool(row and row["ai_run_id"] == run.get("run_id") and row["group_id"] == run.get("group_id")
+                and row["kind"] == "write" and row.get("assignment_stage") == "result")
+
+
 def result_ai_run(flow_id: str, run_id: str, node_key: str, doc_id: str) -> Optional[dict]:
-    """The latest ``new`` AI run of the node that registered its result ``doc_id`` with its own token (its durable row,
+    """The latest result writer (new or ledger-bound report edit) that registered ``doc_id`` with its own token (its durable row,
     ``ai_run_record``), or None — a result a person registered has none."""
     found = None
     for token_id, record in _node_ai_runs(flow_id, run_id, node_key):
-        if _work_run(record) and record.get("action_scope") == "new" and _registered_with(flow_id, doc_id, [token_id]):
+        if _work_run(record) and is_result_writer(record) and _registered_with(flow_id, doc_id, [token_id]):
             found = record
     return found
 
@@ -1432,15 +1448,17 @@ def run_node_row(flow_id: str, run_row: dict, node_key: str) -> Optional[dict]:
 
 
 def issue_node_token(flow_id: str, project_id: Optional[str], root_doc_id: Optional[str], issued_to: str,
-                     provider_id: Optional[str]) -> Optional[dict]:
-    """A node token as the dispatch issues it (``action_scope`` new, the root as ``doc_ref``), under a savepoint; None
+                     provider_id: Optional[str], *, run_id=None, node=None, stage=None) -> Optional[dict]:
+    """A result-slot edit token (legacy nodes keep new), under a savepoint; None
     when the issue failed (rolled back to the savepoint, L0009 E-22)."""
     from modules.flow_gate.services import token_service  # noqa: PLC0415
 
     try:
         with node_dispatch._savepoint("graph_stage_token"):
-            return token_service.issue(project=project_id or "", group_id=flow_id, action_scope="new",
-                                       doc_ref=root_doc_id, issued_to=issued_to, provider_id=provider_id,
+            from modules.flow_gate.graph_workflow.services import result_slot_binding
+            binding = result_slot_binding.snapshot(flow_id, run_id, node) if stage == "result" else None
+            return token_service.issue(project=project_id or "", group_id=flow_id, action_scope="edit" if binding else "new",
+                                       doc_ref=binding["doc_id"] if binding else root_doc_id, issued_to=issued_to, provider_id=provider_id,
                                        continuation_target_seq=None)
     except Exception:  # noqa: BLE001 — L-2 §2.6: the caller records the failure of its stage
         _log.warning("graph stage token issue failed flow=%s", flow_id, exc_info=True)

@@ -178,7 +178,12 @@ def locate(ctx: RunContext, kind: str, payload: dict) -> Optional[RunEvent]:
     if doc is None:
         return None
     rows = run_store.node_runs(ctx.run_id)
-    if kind == "inbox_registered":
+    # 0145 T#1: the first in-place result write has the same registration contact as
+    # a newly allocated result. Later revisions still keep their existing review path.
+    from . import result_slot_binding
+    bound = result_slot_binding.issued_binding({"group_id": ctx.flow_id, "token_id": payload["token_id"]}) \
+        if kind == EDITED and payload.get("token_id") else None
+    if kind == "inbox_registered" or (bound and bound["doc_id"] == doc["doc_id"]):
         docs = ctx.docs()
         for row in rows:                                          # 1) revision of a node's result
             current = row.get("result_doc_id")

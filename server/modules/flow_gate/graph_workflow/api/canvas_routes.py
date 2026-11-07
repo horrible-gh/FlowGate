@@ -19,7 +19,7 @@ def get_flow_canvas(flow_id: str, request: Request, view: Optional[str] = None, 
         user_id = envelope.authenticate(request)
         client_id = envelope.client_id_of(request)
         if view is not None and view not in canvas_service.VIEW_MODES:
-            raise envelope.invalid(request, [{"field": "view", "reason": "not_one_of:revision,draft"}])
+            raise envelope.invalid(request, [{"field": "view", "reason": "not_one_of:revision,draft,latest"}])
         group = canvas_service.load_flow(flow_id)
         envelope.authorize(user_id, group, "read")
         return canvas_service.read_canvas(group, user_id, view=view, collapse=collapse, client_id=client_id)

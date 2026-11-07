@@ -46,7 +46,7 @@ from .errors import FlowNotFound, GraphApiError
 from .flow_guard import with_read_snapshot
 from .identity_keeper import ensure_identity, keys_from_record
 
-VIEW_MODES = ("revision", "draft")
+VIEW_MODES = ("revision", "draft", "latest")
 
 
 def load_flow(flow_id: str) -> dict:
@@ -126,7 +126,7 @@ def _pick_mode(flow_id: str, state: str, view: Optional[str], d: _Definition) ->
         if d.draft is None:
             raise GraphApiError(404, "draft_not_found", {"flow_id": flow_id})
         return "draft"
-    if view == "revision":
+    if view in ("revision", "latest"):
         if d.latest_no is None:
             raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": None})
         return "revision"
@@ -148,9 +148,11 @@ def _flow_run(flow_id: str, latest_no: Optional[int]) -> Optional[dict]:
 
 
 def _project(flow_id: str, state: str, snap: FlowSnapshot, row_keys, protected, d: _Definition,
-             mode: Optional[str], lookup=lambda _ids: {}, run: Optional[dict] = None) -> Projection:
+             mode: Optional[str], lookup=lambda _ids: {}, run: Optional[dict] = None,
+             latest_definition: bool = False) -> Projection:
     if state in ("graph", "conflict") and mode is not None:
-        view = d.view(mode, run["revision_no"] if mode == "revision" and run is not None else None)
+        view = d.view(mode, run["revision_no"] if mode == "revision" and run is not None
+                      and not latest_definition else None)
         if mode == "revision" and run is not None:
             view.node_runs = {r["node_key"]: {k: v for k, v in r.items() if k not in ("node_key", "root_bound")}
                               for r in run["node_runs"]}
@@ -174,7 +176,7 @@ def read_canvas(group: dict, user_id: Optional[str], *, view: Optional[str], col
     return with_read_snapshot(lambda: _read(group, user_id, ident, view, collapse))
 
 
-def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], collapse: Optional[str]) -> dict:
+def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], collapse: Optional[str], *, lookup=None) -> dict:
     """The Canvas response, read in one snapshot after the identity step (the definition with its title states)."""
     flow_id, project_id = group["group_id"], group.get("project_id")
     snap = ident.snapshot
@@ -183,7 +185,8 @@ def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], colla
     mode = _pick_mode(flow_id, own.state, view, d)
     run = _flow_run(flow_id, d.latest_no) if own.state in ("graph", "conflict") else None
     proj = _project(flow_id, own.state, snap, ident.row_keys, ident.protected, d, mode,
-                    lambda ids: lookup_documents(ids), run)
+                    lookup if lookup is not None else lambda ids: lookup_documents(ids),
+                    run, latest_definition=view == "latest")
     _place(proj, layout_store.positions(flow_id))
     for node in proj.nodes:
         node.setdefault("title_state", None)                      # free documents, v0.1 slots (P0006 §4.2.1)
@@ -191,7 +194,7 @@ def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], colla
     hidden_counts = _collapse(proj, applied)
     view_block = None
     if mode == "revision":
-        view_block = {"mode": "revision", "revision_no": run["revision_no"] if run else d.latest_no,
+        view_block = {"mode": "revision", "revision_no": run["revision_no"] if run and view != "latest" else d.latest_no,
                       "draft_version": None}
     elif mode == "draft":
         view_block = {"mode": "draft", "revision_no": None, "draft_version": d.draft["draft_version"]}

@@ -67,7 +67,7 @@ describe('server Graph source (S1)', () => {
     await source.loadGraph('p', 'f9', 'draft')
     // TR0020 rev5: every Canvas read leaves conversations out (no memo card for a new conversation).
     expect(CANVAS_COLLAPSE).toEqual(['conversation'])
-    expect(reads).toEqual([['f9', undefined, ['conversation']], ['f9', 'draft', ['conversation']]])
+    expect(reads).toEqual([['f9', 'latest', ['conversation']], ['f9', 'draft', ['conversation']]])
     const result = await source.saveLayout!('p', 'f9', { positions: [{ nodeId: 'doc:a', x: 1, y: 2 }], viewport: { x: 0, y: 0, zoom: 1 } })
     expect(saved).toEqual([['f9', { positions: [{ nodeKey: 'doc:a', x: 1, y: 2 }], viewport: { x: 0, y: 0, zoom: 1 } }]])
     expect(result).toEqual({ ignoredNodeIds: ['slot_old'] })

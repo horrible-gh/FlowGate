@@ -197,7 +197,7 @@ export interface FlowGraphSource {
   readonly isSample: boolean
   /**
    * Reads the Graph of one Flow. Rejects with an Error whose `message` is safe to show to the
-   * user when the Graph cannot be read. `view` ('draft' | 'revision') picks the definition a
+   * user when the Graph cannot be read. `view` ('draft' | 'revision' | 'latest') picks the definition a
    * Graph Flow shows; omitted, the source's default. flowgate.v02.0061 T#15: with the card Holds (`holds`) when the
    * source keeps Holds.
    */
@@ -223,7 +223,7 @@ export interface FlowGraphSource {
    * flowgate.v02.0061 T#14: one step / full command — a new run of the Flow's latest revision, or its idle run going on
    * (`full` when omitted).
    */
-  /** Read-only assessment of the saved draft; null means allowed, an Error means refused.
+  /** Read-only assessment of the saved draft or newer confirmed revision; null means allowed, an Error means refused.
    * Rejection means the check failed and the command retains its existing fallback. */
   checkRevisionAdoption?(projectId: string, flowId: string): Promise<FlowRunError | null>
   startRun?(projectId: string, flowId: string, mode?: FlowRunCommand): Promise<FlowRunInfo>

@@ -314,11 +314,16 @@ def test_integration_registers_every_port_including_call_acceptance(clean_hooks)
     assert all(chat_run_hooks.registered(name) for name in chat_run_hooks.HOOK_NAMES)
     ctx = chat_run_hooks.accept_chat_call(make_run(), {"id": "call_0", "name": "x", "input": {}})
     assert isinstance(ctx, call_ledger.CallContext) and ctx.run_id == RUN_ID and ctx.tool_call_id == "call_0"
-    # run_command keeps its (run, input) descriptor alongside the T#7 card tools.
+    # 0145 adds scoped Graph reads; run_command and the T#7 card ports retain their handlers.
     tools = chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})
-    assert [t["name"] for t in tools] == ["run_command", "read_card_document", "revise_card_document",
+    assert [t["name"] for t in tools] == ["read_flow_canvas", "read_flow_current_run",
+                                          "run_command", "read_card_document", "revise_card_document",
                                           "read_document_by_id", "revise_document_by_id", "create_new_document"]
-    assert "call_handler" not in tools[0] and all(callable(t["call_handler"]) for t in tools[1:])
+    by_name = {t["name"]: t for t in tools}
+    assert "call_handler" not in by_name["run_command"]
+    assert all(callable(t["call_handler"]) for t in tools if t["name"] != "run_command")
+    assert all(by_name[name]["own_validation"] and not by_name[name]["completion"]
+               for name in ("read_flow_canvas", "read_flow_current_run"))
 
 
 # ── §2.2 effective kind, claim state, liveness ───────────────────────────────

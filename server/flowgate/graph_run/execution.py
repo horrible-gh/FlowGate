@@ -122,6 +122,13 @@ def _guarded_request(flow_id, doc_id, kind, payload, existing, attempt_id, opera
             if (prior.get("job", {}).get("stage") == "instruction" and row.get("stage") == "instruction"
                     and row.get("instruction_doc_id") == doc_id):
                 ledger.cancel(pending["exec_id"], None, "requested")
+    # 0145 T#2: only an explicit, real re-review can recover a missing legacy handoff.
+    recovery = None
+    if not assignment and not existing and kind == "review" and payload.get("type") == "loop":
+        from flowgate.card_settings.result_recovery import prepare_explicit_review
+        recovery = prepare_explicit_review(flow_id, attempt, doc_id, payload)
+        if recovery is not None:
+            assignment = (recovery["stage"], recovery["seq"])
     if not payload.get("invocation_origin"):
         from modules.flow_gate.db import documents
         doc = documents.get_by_id(doc_id) or {}
@@ -137,6 +144,10 @@ def _guarded_request(flow_id, doc_id, kind, payload, existing, attempt_id, opera
                        "attempt_id": attempt["attempt_id"], "stage": base + "_review", "seq": None,
                        "doc_id": doc_id, "doc_revision_no": int(doc.get("revision_no") or 0)}}
     result = ledger.request(attempt["attempt_id"], attempt["run_id"], kind, payload, assignment=assignment)
+    if recovery is not None:
+        from flowgate.card_settings import stage_assignment as sa
+        sa.store.set_intent(recovery["attempt_id"], recovery["stage"], recovery["seq"],
+                            sa.store.INTENT_EXECUTION, result)
     # An explicit review may start while its card was idle awaiting a person.
     run = run_store.run_by_id(attempt["run_id"])
     if run and run["status"] == "idle":
@@ -171,6 +182,30 @@ def request_hop(flow_id, bundle, gate, kind):
     return _request_document(flow_id, gate["slot"]["doc_id"], kind,
                              {"type": "hop", "flow_id": flow_id, "bundle": clean, "gate": gate, "kind": kind},
                              bundle.get("_graph_exec_id"))
+
+
+def request_result_recovery(project_id, flow_id, doc_id, issued_to, loop):
+    """0145: the existing user's re-review route, before AI admission or token issuance.
+
+    Only a legacy AI result missing its assigned review takes this path. Every
+    proof is repeated under request_loop's normal fences and Flow transaction.
+    """
+    if not graph_execution_hooks.explicit():
+        return None
+    from flowgate.card_settings import legacy_adapter as legacy, stage_assignment as sa
+    attempt = _attempt_for_document(flow_id, doc_id)
+    if not attempt or sa.is_legacy_attempt(attempt["attempt_id"]):
+        return None
+    row = legacy.node_run(attempt["run_id"], attempt["node_key"])
+    writer = sa.store.read(attempt["attempt_id"], sa.RESULT, 0)
+    doc = legacy.document_row(doc_id)
+    if (not row or row.get("status") != "review" or row.get("result_doc_id") != doc_id
+            or not writer or writer.get("actor") != sa.AI
+            or not str((doc or {}).get("origin_ai_run_id") or "").startswith("aiv_")
+            or sa.current_review_assignment(attempt["attempt_id"], sa.RESULT_REVIEW) is not None):
+        return None
+    return request_loop(project_id, flow_id, doc_id, issued_to, loop, "Explicit legacy result re-review",
+                        attempt["node_key"], attempt_id=attempt["attempt_id"])
 
 
 def request_loop(project_id, flow_id, doc_id, issued_to, loop, basis, node_key, existing=None, attempt_id=None):
@@ -957,7 +992,8 @@ _ACTIONS = {
     "map_token": map_token, "validate_write": validate_write, "loop_state": loop_state,
     "settle": settle, "request_write": request_write, "request_hop": request_hop, "request_loop": request_loop,
     # flowgate.v02.0113 T#3: the review assignment's locked loop request and the explicit command's new attempt.
-    "request_loop_locked": request_loop_locked, "reopen_attempt": reopen_attempt, "command_fence": command_fence,
+    "request_loop_locked": request_loop_locked, "request_result_recovery": request_result_recovery,
+    "reopen_attempt": reopen_attempt, "command_fence": command_fence,
     # flowgate.v02.0124 T#1: an explicit command requests a card's spent result review again (``run_service``).
     "rerequest_review": command.rerequest_review,
     "launch": launch, "finish": finish, "transition": transition, "heartbeat": heartbeat,

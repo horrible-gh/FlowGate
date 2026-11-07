@@ -332,10 +332,11 @@ _HELP_INDEX_TEXT: dict[str, str] = {
 
 def _help_index_section(base: str, raw_token: str, locale: str = "ko") -> str:
     loc = template_provision.normalize_locale(locale)
+    from flowgate.graph_read.tools import cli_mention
     return _section(
         _HELP_INDEX_HEADER[loc],
         _HELP_INDEX_TEXT[loc].format(base=base, token=raw_token),
-    )
+    ) + "\n\n" + cli_mention(base, None)
 
 
 # ── Clarification / no-choices guide (B0001 group 0063; NR0003) ───────────────

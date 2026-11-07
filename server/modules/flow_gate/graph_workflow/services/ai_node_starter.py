@@ -95,6 +95,8 @@ def _map_if_open(job: dict, token_id: str, ai_run_id: Optional[str] = None) -> b
             raise NodeNotStartable(f"node {job['node_key']} already has a registered result")
         from .node_title_ai import claim_on_ai_start                  # noqa: PLC0415 - 0064 T-B4d, never raises
         requested = claim_on_ai_start(job, token_id, ai_run_id)
+        from . import result_slot_binding
+        result_slot_binding.check_job(job)
         run_store.map_token(token_id, job["run_id"], job["node_key"], job.get("stage"), map_kind=run_store.MAP_AI_START)
         return requested
 
@@ -145,7 +147,8 @@ def start_ai_invoke(job: dict) -> dict:
             api_base_url=api_base_url(), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
             # flowgate.v02.0117: the instruction stage's edit writes the line's empty document for the first time —
             # no revision, no review feedback, and it keeps the document's own header (``first_write``).
-            **({"first_write": True} if scope == "edit" and job.get("stage") == "instruction" else {}),
+            **({"first_write": True} if scope == "edit" and (job.get("stage") == "instruction"
+                                                          or job.get("result_first_write")) else {}),
         )
         from modules.flow_gate.services import invoke_mention_service
         stored = job.get("card_settings") or {}

@@ -218,6 +218,7 @@ export default {
   designer: {
     // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
     center: {
+      latest_definition_notice: '最新定義 {latest} を表示中。実行はリビジョン {revision} を維持します。保護されたカードと入力は変更できません。',
       pinned_revision_notice: '実行に固定されたリビジョン {revision} を表示中（最新 {latest}）。この画面では編集できません。最新リビジョンに追加されたカードは表示されません。',
       past_revision_notice: 'リビジョン {revision} を表示中（最新 {latest}）。この画面では編集できません。最新リビジョンに追加されたカードは表示されません。',
       tabs_label: '開いているフロー',

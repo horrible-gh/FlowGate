@@ -87,10 +87,11 @@ describe('pre-confirm adoption assessment', () => {
     expect(prepare).toHaveBeenCalledTimes(status === null ? 1 : 0)
     ctl.clear()
   })
-  it('does not assess when no draft will be confirmed', async () => {
-    const { ctl, source } = control('idle', false)
+  it('assesses a confirmed latest candidate even when no draft will be confirmed', async () => {
+    const { ctl, source, save } = control('idle', false)
     expect(await ctl.run('f', 'next')).toBe(true)
-    expect(source.checkRevisionAdoption).not.toHaveBeenCalled()
+    expect(source.checkRevisionAdoption).toHaveBeenCalledOnce()
+    expect(save).not.toHaveBeenCalled()
     ctl.clear()
   })
   it('never assesses or confirms an unsaved candidate', async () => {
@@ -105,6 +106,18 @@ describe('pre-confirm adoption assessment', () => {
 
 const sessions: DesignerCenterSession[] = []
 afterEach(() => { sessions.splice(0).forEach(center => center.dispose()); i18n.global.locale.value = 'ko' })
+
+describe('confirmed latest candidate', () => {
+  it('refuses before start without creating or confirming a draft', async () => {
+    const { ctl, source, prepare, save } = control('idle', false)
+    vi.mocked(source.checkRevisionAdoption!).mockResolvedValue(refusal())
+    expect(await ctl.run('f', 'next')).toBe(false)
+    expect(prepare).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+    expect(source.startRun).not.toHaveBeenCalled()
+    ctl.clear()
+  })
+})
 
 describe('Center draft preservation', () => {
   it.each(['all', 'next'] as const)('keeps cards, edges, editing and saved draft after refused %s and re-entry', async mode => {
@@ -186,12 +199,22 @@ describe('non-latest revision notice and shared edit lock', () => {
     wrapper.unmount()
   })
   it.each([
-    { viewRevisionNo: 2 }, { viewMode: 'draft' }, { viewRevisionNo: null }, { latestRevisionNo: null },
+    { viewMode: 'draft' }, { viewRevisionNo: null }, { latestRevisionNo: null },
   ])('does not show a notice for %j', extra => {
     const current = past(extra)
     expect(isNonLatestRevision(current)).toBe(false)
     const wrapper = mount(RevisionNotice, { props: { graph: current }, global: { plugins: [i18n] } })
     expect(wrapper.find('[role="status"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+  it.each(['ko', 'en', 'ja'] as const)('explains latest editing with the original run revision in %s', locale => {
+    i18n.global.locale.value = locale
+    const latest = past({ viewRevisionNo: 2 })
+    const wrapper = mount(RevisionNotice, { props: { graph: latest }, global: { plugins: [i18n] } })
+    expect(wrapper.get('[role="status"]').text()).toContain('1')
+    expect(wrapper.text()).toContain('2')
+    expect(wrapper.text()).not.toContain('gui.designer')
+    expect(editableRevision(latest)?.run?.revisionNo).toBe(1)
     wrapper.unmount()
   })
   it('keeps structure and title editing locked for a past revision', () => {
