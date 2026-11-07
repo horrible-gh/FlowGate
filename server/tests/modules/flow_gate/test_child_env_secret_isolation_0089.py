@@ -265,6 +265,11 @@ def test_cli_execute_spawns_with_cli_allowlist(fake_server_env, monkeypatch, tmp
 
 
 def test_evaluation_probe_spawns_with_cli_allowlist(fake_server_env, monkeypatch, tmp_path):
+    # This test isolates spawn environment; model a server-owned evaluation scratch.
+    from modules.flow_gate.db import ai_run_identity
+    from modules.flow_gate.services.ai_invoke import runtime
+    monkeypatch.setattr(ai_run_identity, "scratch_owner", lambda *a: True)
+    monkeypatch.setattr(runtime, "_validate_scratch_manifest", lambda *a: ({}, None))
     _patch_cli_launch(monkeypatch, tmp_path)
     recorder = _record_popen(monkeypatch)
     handle = SimpleNamespace(bind=lambda _kill: True, cancelled=False)

@@ -24,6 +24,13 @@ _REPO_ROOT = _SERVER_DIR.parent
 # Some suites import `modules.*` without adding server/ themselves; make single-file runs work.
 if str(_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVER_DIR))
+# flowgate.v02.0146 T#2: the tests/test_fg_gate_*_0085-style suites import the shared harness of tests/flowgate/
+# (``from test_fg_card_settings import ...``) by module name. That only resolved once pytest had already collected a
+# file of tests/flowgate, so the same selection errored at collection ("No module named 'test_fg_card_settings'")
+# or not depending on the order of its arguments. Appended, never prepended: nothing that resolves today changes.
+_FLOWGATE_TESTS_DIR = str(Path(__file__).resolve().parent / "flowgate")
+if _FLOWGATE_TESTS_DIR not in sys.path:
+    sys.path.append(_FLOWGATE_TESTS_DIR)
 
 
 # ── 저장소 오염 감시자 (0382 B0001 / NR0003 제안 2-b) ─────────────────────────
@@ -501,6 +508,15 @@ def pytest_configure(config):
     # 0114 T#4: the worker slot pool (above). Runs before xdist's own (trylast) configure, so a
     # lowered worker count is what xdist starts.
     _apply_slot_pool(config)
+
+    # flowgate.v02.0146 T#2: a per-test hang limit (tests/hang_guard.py), so one hanging test fails by name
+    # instead of consuming the whole Self-check ceiling. Missing in a synthetic tree (test_repo_scratch_guard_0382).
+    try:
+        import hang_guard
+    except ImportError:
+        hang_guard = None
+    if hang_guard is not None:
+        hang_guard.install(config)
 
 
 def pytest_report_header(config):

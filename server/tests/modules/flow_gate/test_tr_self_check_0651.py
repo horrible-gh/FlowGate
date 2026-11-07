@@ -121,6 +121,7 @@ def test_executor_cancel_reaps(tmp_path):
 
 
 def test_worker_tool_exposure_splits_tr_edit_and_review(monkeypatch):
+    monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _: None)
     monkeypatch.setattr(tools, "_step_type", lambda run: run["step_type"])
     monkeypatch.setattr(tools.tool_registry, "kind_for_step", lambda *_: ("read_write", None))
     monkeypatch.setattr(tools.tool_registry, "tool_names", lambda *_: [])

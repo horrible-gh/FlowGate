@@ -122,6 +122,46 @@ Self-check 는 호스트 전체에 처리기(논리 프로세서) 상한을 둔�
 선택은 병렬로 돌리지 않는다. 기준선과 최종 회귀는 같은 호스트·같은 `parallel_share`·같은 `-n`
 으로 돌린다 — 적용 worker 나 처리기 한정 수가 다르면 기준선을 재사용할 수 없다.
 
+### 큰 회귀를 1800초 안에 넣는 법 — 분할·`parallel_share`·시험 단위 timeout (flowgate.v02.0146 T#2)
+
+Self-check 상한(1800초)은 올리지 않는다. 19~21개 파일 회귀가 상한을 넘은 까닭은 세 가지가 겹쳤기 때문이다
+(2026-11-07 측정, Windows, Python 3.14, pytest 8.3.4 / xdist 3.6.1, 호스트 처리기 예약 1~3).
+
+1. **`-n 4` 만 주고 `parallel_share` 를 안 주면 처리기 1개에서 worker 1개로 돈다.** 결과 블록의
+   `parallel` 은 `requested 4 / applied 1` 이다. 같은 4개 파일 묶음이 `-n 4`(share 1) 264초, `-n 2`(share 2)
+   203초, `-n 4`(share 4 → 예약 3) 193초였다. `-n` 과 `parallel_share` 는 반드시 같은 수로 준다.
+2. **시간은 git 서브프로세스가 쓴다.** 직렬 1처리기에서 `test_fg_gate_publish_0085` 13건 499초,
+   `test_fg_document_rejection_0126` 29건 388초, `test_fg_card_settings` 의 git 시험 2건 약 255초,
+   `test_fg_provider_failure_retry_0121` 29건 150초다. 느린 시험을 지워도 줄지 않고, `--dist loadfile` 은
+   파일 하나를 한 worker 에 주므로 큰 파일이 최소 시간을 정한다. 그래서 git 시험 2건을
+   `test_fg_card_settings_merge_target_git_0146.py`, `test_fg_card_settings_no_worktree_git_0146.py` 로 옮겼다(본문 동일).
+3. **일부 파일은 다른 파일이 먼저 남긴 전역 상태(문서 쓰기 게이트·포트 등록, run id allocator 계약, `tests/flowgate` import 경로)에 기댔다.**
+   혼자 돌리거나 `--dist loadfile` 로 worker 배정이 달라지면 setup error 가 났다. 이제 각 시험 harness 가 자기 전제를
+   스스로 만든다(제품 계약·단언은 그대로): 공유 harness(`test_fg_card_settings.env`)와 `test_fg_card_documents` 는
+   `fg_harness_write_gate.install`(실제 게이트, harness 자신의 시드 행 쓰기만 통과), `tr2_approval` 은 서버 시작이 등록하는
+   문서 쓰기 포트 4개, `card_settings_restart` 는 자기 SQLite 저장소와 초기화된 run id 계약 + 실제 게이트, `0136` 은
+   자기 저장소의 run id 계약 초기화, `tests/conftest.py` 는 `tests/flowgate` import 경로.
+
+권장 실행 계획(각 실행은 `pytest -q -rEf -n 3 --dist loadfile <파일들>` + `parallel_share 3`, `timeout_seconds` 1200):
+
+| 묶음 | 파일 | 실측(2026-11-07, 마지막 변경 뒤, 예약 2 — 요청 3) |
+|---|---|---|
+| G1 카드 설정 | `test_fg_card_settings*.py`(7), `test_fg_settings_{capability_0126,context_0130,retry_0126,retry_completion_0126}.py` | 199 통과, 실패·error 0, 528초 |
+| G2 git 게이트·반려 | `tests/test_fg_gate_intake_0085.py`, `tests/test_fg_gate_publish_0085.py`, `test_fg_document_rejection_0126.py` | 108 통과, 실패·error 0, 708초 |
+| G3 검수·재작업 | `test_fg_provider_failure_retry_0121.py`, `test_review_loop_rework_binding_0136.py`, `test_fg_review_{duplicate_start,retry_verdict}_0128.py`, `test_fg_rewind_rework_0118.py`, `test_fg_rejection_history_0126.py`, `test_fg_card_documents.py` | 161 통과, 실패·error 0, 242초 |
+
+한 Self-check 가 한 hop 에서 쓰는 시간은 가장 긴 G2 도 708초(상한의 39%)다. 재작업 hop 예산(`rework_timeout_sec` 3600)에는
+1800초 상한이 2번밖에 들어가지 않으므로, 전체를 한 번에 돌리지 말고 변경과 직접 관련된 묶음부터 돌린다.
+고정 `parallel_share` 를 요청해도 호스트가 바쁘면 예약이 더 적게 나온다(`cpu_reservation` 을 본다. 위 실측은 3을 요청해
+2를 받았다. 예약 3일 때는 더 짧았다: G1 271초, G2 726초 → 예약에 따라 편차가 크므로 상한 대비 여유를 본다).
+
+**시험 단위 timeout:** `tests/hang_guard.py` 가 모든 시험에 `FLOWGATE_TEST_TIMEOUT`(기본 900초, `0` 이면 끔) 또는
+`@pytest.mark.timeout(초)` 를 적용한다. 한계를 넘기면 시험 id 와 모든 스레드 스택을 stderr 에 찍고 종료 상태 70 으로
+끝난다(통과로 처리되지 않는다. xdist 에서는 worker 가 죽은 시험으로 실패 보고되고 나머지는 계속된다).
+`pytest-timeout` 이 설치·로드돼 있어도 이 guard 는 물러나지 않는다: 그 플러그인은 `--timeout` / ini `timeout` /
+`PYTEST_TIMEOUT` 으로 한계를 따로 주지 않으면 아무 시험도 끊지 않기 때문이다(물러나면 위 환경값·기본값·0 계약이 조용히
+사라진다). 둘 다 켜져 있으면 먼저 닿는 한계가 이긴다. 한계는 가장 느린 정상 시험(약 200초)보다 높게만 두고, 느린 시험을 가리려고 올리지 않는다.
+
 ---
 
 ## 2. 새 테스트 정책 (v0.2 이후)

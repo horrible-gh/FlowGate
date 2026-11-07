@@ -44,7 +44,7 @@ def db_path(migrated_sqlite_db):
 
 
 @pytest.fixture
-def store(db_path):
+def store(db_path, monkeypatch):
     from sqloader.sqlite3 import SQLiteWrapper
 
     real = object.__new__(connection.FlowGateStore)
@@ -54,7 +54,7 @@ def store(db_path):
     previous = _conn.get_store
     patched = [importlib.import_module(n) for n in _STORE_MODULES]
     for module in patched:
-        module.get_store = lambda real=real: real
+        monkeypatch.setattr(module, "get_store", lambda real=real: real)
     now = datetime.now(timezone.utc).isoformat()
     real._execute("DELETE FROM tr_self_check_runs WHERE project_id = ?", [P])
     real._execute("INSERT INTO users (user_id, username, email, password, is_active, created_at, updated_at) "
@@ -74,8 +74,6 @@ def store(db_path):
     try:
         yield real
     finally:
-        for module in patched:
-            module.get_store = previous
         try:
             real._db.close()
         except Exception:
@@ -431,7 +429,7 @@ def test_start_draft_reuses_the_one_start_path_with_the_token_as_owner(admitted,
     assert request == {"program": "pytest"} and by == "u_0638"
 
 
-def test_start_draft_keeps_every_existing_admission_gate(admitted, monkeypatch):
+def test_start_draft_keeps_every_existing_admission_gate(admitted, monkeypatch, store):
     monkeypatch.setattr(service.db_projects, "tr_self_check_enabled", lambda _p: False)
     with pytest.raises(service.SelfCheckError) as caught:
         service.start_draft(TOKEN, {"program": "pytest"})
@@ -453,8 +451,11 @@ def test_read_and_cancel_draft_see_only_the_tokens_runs(admitted, monkeypatch):
     monkeypatch.setattr(service.db_runs, "get_run_for_owner", lambda rid, owner: rows.get((rid, owner)))
     monkeypatch.setattr(service.db_runs, "request_cancel", lambda rid: None)
     monkeypatch.setattr(service, "_emit", lambda row: None)
+    cancel_event = threading.Event()
+    monkeypatch.setitem(service._controls, "scr_1", (SimpleNamespace(cancel=lambda: True), cancel_event))
     assert service.read_draft(TOKEN, "scr_1")["self_check_run_id"] == "scr_1"
     assert service.cancel_draft(TOKEN, "scr_1")["status"] == "running"
+    assert cancel_event.is_set()
     other = {**TOKEN, "token_id": "tok_new_2"}
     for call in (service.read_draft, service.cancel_draft):
         with pytest.raises(service.SelfCheckError) as caught:

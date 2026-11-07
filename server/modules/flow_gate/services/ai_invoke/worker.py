@@ -52,6 +52,7 @@ from . import admission
 from . import carryover
 from . import oracle as oracle_module
 from . import provider_api
+from modules.flow_gate.services import tr_self_check_progress as selfcheck_progress
 from . import provider_remote
 from . import submission_ledger
 from . import terminal
@@ -332,6 +333,7 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 # ("Context binding mismatch") on every rework attempt, so the loop could
                 # never reach review_passed. See ai_invoke_routes._issue_review.
                 from modules.flow_gate.services import graph_execution_hooks
+                selfcheck_progress.end_owned(run, boundary="hop", reason="hop_transition")
                 graph_execution_hooks.call("transition", run, loop)
                 loop_issue_builder = run.get("issue_builder")
                 if loop_issue_builder is not None:
@@ -620,6 +622,12 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
         if policy and index > 0:
             _reset_attempt_state(run)
         provider_prompt = _provider_prompt(run, provider, prompt)
+        # Close the previous provider attempt before any retry can create a child.
+        if run.get("self_check_scope"):
+            selfcheck_progress.end_owned(run, reason="provider_replaced")
+        selfcheck_progress.open_attempt(run, durable=True)
+        attempt_owner = run.get("self_check_scope")
+        classification = "provider_exception"
         role_invocations.begin(run, provider)
         try:
             if provider.get("exec_type") == "api":
@@ -633,6 +641,15 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
         except BaseException:
             role_invocations.finish(run, "launch_outcome_missing")
             raise
+        finally:
+            failed = (classification != "started_ok" or run.get("timed_out")
+                      or run["cancel_event"].is_set() or run.get("exit_code") not in (None, 0))
+            selfcheck_progress.end_owned(
+                run, owner=attempt_owner, cancel=bool(failed),
+                reason=(("parent_" + (run.get("watchdog_kill") or {}).get("kind", "timeout"))
+                        if run.get("timed_out") else
+                        "parent_cancelled" if run["cancel_event"].is_set() else
+                        "provider_failed" if failed else "provider_return"))
 
         if classification == "started_ok" and policy:
             # Output zero is a startup failure only while this run still owns an
@@ -2664,8 +2681,18 @@ def _adopt_continuation_token(run: dict, raw_token: str, *,
         logger.warning("ai-invoke %s: continuation token names another document than the "
                        "run's pinned one", run.get("run_id"))
         return False
+    from modules.flow_gate.services import tr_self_check_progress
+    previous = run.get("self_check_scope")
+    previous_context = run.get("register_context") or {
+        "doc": run.get("doc_ref"), "action": run.get("action_scope")}
+    # A verified context switch ends the former hop without replacing the provider.
+    if previous and previous_context and (
+            previous_context.get("doc"), previous_context.get("action")) != (context["doc"], context["action"]):
+        tr_self_check_progress.end_owned(
+            run, boundary="hop", reason="token_hop_transition", keep_attempt=True)
     run["register_context"] = context
     run["current_token_id"] = token_rec.get("token_id")
+    tr_self_check_progress.bind_token(run, token_rec.get("token_id"))
     return True
 
 

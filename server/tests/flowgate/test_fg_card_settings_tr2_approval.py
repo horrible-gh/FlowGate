@@ -33,7 +33,25 @@ from tests.e2e.tr2.test_tr2_connected_e2e_0565 import (  # noqa: F401 — fixtur
 )
 
 pytestmark = [pytest.mark.skipif(shutil.which("git") is None, reason="git binary unavailable"),
-              pytest.mark.usefixtures("token_scratch_in_storage")]
+              pytest.mark.usefixtures("card_document_write_gate", "token_scratch_in_storage")]
+
+
+@pytest.fixture
+def card_document_write_gate(monkeypatch):
+    """flowgate.v02.0146 T#2: the document write ports the server startup registers
+    (``card_document_edit.integration.register``: write gate, author evidence, dedicated writes such as the TR2
+    registration, write-released flush), wired here for this test only so the file does not rely on an earlier test
+    module having left them in the process-wide port table (alone, ``make_group``'s document creation was refused with
+    409 card_document_edit_required and the inbox's TR2 registration with 500). The real handlers, not pass-throughs."""
+    from flowgate.card_document_edit import author_evidence, integration, write_gate
+    from flowgate.card_document_edit.pending import flush
+    from modules.flow_gate.graph_workflow.services import card_document_ports as ports
+
+    for name, handler in ((ports.DOCUMENT_WRITE_GATE, write_gate.dispatch),
+                          (ports.DOCUMENT_AUTHOR_EVIDENCE, author_evidence.current),
+                          (ports.DEDICATED_DOCUMENT_WRITE, integration.dedicated),
+                          (ports.DOCUMENT_WRITE_RELEASED, flush)):
+        monkeypatch.setitem(ports._handlers, name, handler)
 
 
 def _issue_token(group: dict, scope: str, doc_ref: str) -> str:

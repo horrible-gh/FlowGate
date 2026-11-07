@@ -81,6 +81,11 @@ def world(env, monkeypatch):
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", "test")
     monkeypatch.setenv("FLOWGATE_TOKEN_PEPPER_test", "agent-test-pepper-0136")
     integration.register()
+    # flowgate.v02.0146 T#2: ``start_run`` claims its run id through the run-id allocator contract, which a freshly
+    # migrated store has not activated. Run on its own it stopped at ``ai_run_allocator_cutover_required`` and only
+    # passed when an earlier module had activated a store; activate this test's own store (real contract, no stub).
+    from modules.flow_gate.db import ai_run_identity
+    ai_run_identity.initialize(scratch_roots=[])
     monkeypatch.setattr(legacy_edit, "has_permission", lambda *a: True)
     monkeypatch.setattr(inbox, "has_permission", lambda *a, **k: True)
     monkeypatch.setattr(graph_source_hooks, "_fence_handler", None)
@@ -360,6 +365,17 @@ def test_same_stage_rework_reissue_submits_with_the_new_token(world):
     submit_and_check(world, run)
 
 
+def assert_init_failed_release(released):
+    """The lease is released first with the init-failed reason. With the run id claimed in the identity store (as in
+    production), the start's own partial-admission rollback (``ai_invoke_service._rollback_owned_admission_context``)
+    then releases the already released lease once more under the generic ``admission_rollback`` reason; that second
+    release is idempotent and the only one allowed after the first. (Without a claimed identity that rollback found
+    the ownership unconfirmed and did nothing, which is what the earlier ``released[-1]`` assertion depended on.)"""
+    reasons = [kwargs.get("reason") for _args, kwargs in released]
+    assert reasons and reasons[0] == "admission_rollback_review_loop_context_init_failed", reasons
+    assert set(reasons[1:]) <= {"admission_rollback"}, reasons
+
+
 # ── 4. initialization / transition failure ─────────────────────────────────────────────
 
 def test_first_hop_token_outside_the_run_group_fails_admission_and_cleans_up(world):
@@ -372,8 +388,7 @@ def test_first_hop_token_outside_the_run_group_fails_admission_and_cleans_up(wor
     assert "document_review_loop_context_init_failed" in str(exc.value.detail)
     [token_id] = builder.minted
     assert token_row(token_id).get("revoked_at")          # the unused token is discarded
-    assert world.released and world.released[-1][1].get("reason") == \
-        "admission_rollback_review_loop_context_init_failed"
+    assert_init_failed_release(world.released)
     with svc._runs_lock:
         assert not [k for k in svc._runs if str(k).startswith(RUN_PREFIX)]
     assert world.started == []                             # no worker thread for a half-seeded run
@@ -632,7 +647,7 @@ def test_first_hop_lease_sync_failure_fails_closed_and_cleans_up(gated):
     assert "document_review_loop_context_init_failed" in str(exc.value.detail)
     [token_id] = builder.minted
     assert token_row(token_id).get("revoked_at")                     # the unused edit token is discarded
-    assert gated.released[-1][1].get("reason") == "admission_rollback_review_loop_context_init_failed"
+    assert_init_failed_release(gated.released)
     assert db_leases.get(F) is None                                  # the lease is really gone
     with svc._runs_lock:
         assert not [k for k in svc._runs if str(k).startswith(RUN_PREFIX)]
@@ -676,7 +691,7 @@ def test_first_hop_token_for_another_document_of_the_group_is_refused(gated):
     assert "document_review_loop_context_init_failed" in str(exc.value.detail)
     [token_id] = builder.minted
     assert token_row(token_id)["doc_ref"] == OTHER_DOC and token_row(token_id).get("revoked_at")
-    assert gated.released[-1][1].get("reason") == "admission_rollback_review_loop_context_init_failed"
+    assert_init_failed_release(gated.released)
     assert db_leases.get(F) is None
     with svc._runs_lock:
         assert not [k for k in svc._runs if str(k).startswith(RUN_PREFIX)]
@@ -764,7 +779,8 @@ def test_rejections_of_every_hop_survive_resets_and_transitions_and_persist_once
     assert register_binding.carry_failures(run) == 1 and register_binding.carry_failures(run) == 0
 
     db_runs.upsert({"run_id": run_id, "group_id": F, "project_id": "flowgate", "doc_ref": D,
-                    "mode": "single", "started_at": "2026-11-06T00:00:00+09:00",
+                    "mode": "single", "started_at": run["started_at"],
+                    "execution_nonce": run["execution_nonce"],
                     "finished_at": "2026-11-06T00:01:00+09:00",
                     "created_at": "2026-11-06T00:00:00+09:00", "updated_at": "2026-11-06T00:01:00+09:00"})
     svc._persist_register_context_failures(run, "2026-11-06T00:02:00+09:00")

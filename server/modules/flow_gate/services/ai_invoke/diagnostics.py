@@ -134,6 +134,11 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         # any other field this run has not reached.
         "last_progress_at": run.get("last_progress_at"),
         "last_progress_signal": run.get("last_progress_signal"),
+        "stall_basis": run.get("stall_basis") or "attempt_start",
+        "last_document_progress": run.get("last_document_progress"),
+        "last_source_progress": run.get("last_source_progress"),
+        "last_self_check_progress": run.get("last_self_check_progress"),
+        "self_check_observation": run.get("self_check_observation", "none"),
         "progress_observations": int(run.get("progress_observations") or 0),
         # T0004 §7: the weaker liveness watermark (document/source progress OR subprocess
         # churn) -- a run whose process snapshot is unsupported still gets this from

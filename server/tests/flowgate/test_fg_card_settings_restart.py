@@ -35,10 +35,50 @@ from tests.modules.flow_gate.test_ai_invoke_no_output_retry_0359 import (  # noq
 
 
 @pytest.fixture
-def engine(env, monkeypatch):
+def run_identity_db(migrated_sqlite_db, monkeypatch):
+    """flowgate.v02.0146 T#2: the 0359 harness has no database, but ``start_run`` allocates its run id from the run-id
+    allocator contract and claims it (``ai_run_identity``), both of which read the database. Run on its own (or in
+    another order, as ``--dist loadfile`` does) it used to fail with ``'NoneType' ... 'execute'`` and only passed when
+    an earlier module had left a store behind. Give it its own migrated SQLite store with the contract initialized, the
+    real allocator and claim path unchanged (the same setup ``integration/ai_run_identity`` uses)."""
+    from datetime import datetime, timezone
+
+    import sqlite3
+
+    from modules.flow_gate.db import ai_run_identity, connection
+    from tests.integration.ai_run_identity.test_ai_run_identity_0138 import open_store
+
+    path = migrated_sqlite_db("restart-run-identity.db")
+    with sqlite3.connect(path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+    store = open_store(path)
+    now = datetime.now(timezone.utc).isoformat()
+    store._execute("INSERT INTO projects (project_id, project_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                   ["flowgate", "FlowGate", now, now])
+    store._execute("INSERT INTO groups (group_id, project_id, module, title, created_at, updated_at) "
+                   "VALUES (?, ?, ?, ?, ?, ?)", [GROUP, "flowgate", "default", "Restart", now, now])
+    monkeypatch.setattr(connection, "STORE", store)
+    ai_run_identity.initialize(scratch_roots=[])
+    yield store
+    store._db.close()
+
+
+@pytest.fixture
+def engine(env, run_identity_db, monkeypatch):
+    from flowgate.card_document_edit import write_gate
     from modules.flow_gate.db import operation_job as db_jobs
+    from modules.flow_gate.graph_workflow.services import card_document_ports
     from modules.flow_gate.services import git_service
 
+    # The run scratch's journal lock goes through the document write gate, which the server startup registers; wire
+    # the real one here (as 0121 / 0143 do) instead of relying on an earlier module to have left it registered.
+    monkeypatch.setitem(card_document_ports._handlers, card_document_ports.DOCUMENT_WRITE_GATE, write_gate.dispatch)
+    # The admission's final fence asks the providers table whether each chain provider is runnable; the 0359 harness
+    # keeps its providers in memory (``env["chain"]``), so answer from there with the same enabled rule.
+    from modules.flow_gate.db import ai_providers
+
+    monkeypatch.setattr(ai_providers, "get_runnable_row", lambda pid, issued_to=None: next(
+        (p for p in env["chain"]["providers"] if p["id"] == pid), None))
     monkeypatch.setattr(git_service, "get_branch_merge_group_claim", lambda group_id: None)
     monkeypatch.setattr(db_jobs, "get_group_freeze_claim", lambda group_id: None)
     return env
