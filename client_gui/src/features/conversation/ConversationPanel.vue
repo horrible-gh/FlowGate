@@ -98,7 +98,7 @@
 // (`open-change`); one file of it opens its stored diff right under the card (flowgate.v02.0032,
 // D0006 §6.1). flowgate.v02.0047: with no chat open the composer starts one — [+] only leaves
 // the open chat, and the chat is created by its first send (chatStart.ts).
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Alert from '../../components/ui/Alert.vue'
 import { copyToClipboard } from '../../core/interaction/clipboard'
@@ -107,7 +107,7 @@ import ConversationComposer from './ConversationComposer.vue'
 import ConversationHeader from './ConversationHeader.vue'
 import ConversationParticipants from './ConversationParticipants.vue'
 import ConversationTimeline from './ConversationTimeline.vue'
-import { createConversationSession } from './conversationSession'
+import { REVISIT_CATCHUP_MIN_MS, createConversationSession } from './conversationSession'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import type { ChatSettingsPatch, ChatSummary, WorkChangeActivity } from './types'
 
@@ -204,6 +204,35 @@ async function copyManualAgain(): Promise<void> {
   if (!text) return
   if (await copyToClipboard(text)) session.setManualCopyText(null)
 }
+
+// flowgate.v02.0151 T-A2 (NR §2.6-3 ②): there is no push channel for activities, so coming back to the panel — the
+// tab visible again, the window focused again — catches the open chat up (turns, activities, run history). At most
+// once per REVISIT_CATCHUP_MIN_MS (both events fire on one return), never while hidden, and not while an AI run is
+// tracked: its polling ticks already read all of that.
+let lastRevisitCatchUp = Number.NEGATIVE_INFINITY
+
+function onRevisit(): void {
+  if (document.visibilityState === 'hidden') return
+  if (!state.activeChatId || state.turnsStatus !== 'ready' || session.running.value) return
+  const now = Date.now()
+  if (now - lastRevisitCatchUp < REVISIT_CATCHUP_MIN_MS) return
+  lastRevisitCatchUp = now
+  void session.catchUp()
+}
+
+function onVisibilityChange(): void {
+  if (document.visibilityState === 'visible') onRevisit()
+}
+
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('focus', onRevisit)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('focus', onRevisit)
+})
 
 onBeforeUnmount(() => session.dispose())
 
