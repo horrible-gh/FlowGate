@@ -19,6 +19,7 @@ import type {
   ConversationScope,
   ConversationTurn,
   AiRunState,
+  AiRunList,
   ProviderList,
   RunFileDiff,
   TurnsPage,
@@ -48,6 +49,7 @@ export interface ConversationSource {
   listProviders(projectId: string): Promise<ProviderList>
   startChatRun(chatId: string, providerId: string | null): Promise<string | null>
   fetchRun(runId: string): Promise<AiRunState>
+  listRuns(scope: ConversationScope, limit: number): Promise<AiRunList>
   cancelRun(runId: string): Promise<void>
   fetchActiveChatRun(chatId: string): Promise<string | null>
 
@@ -72,6 +74,7 @@ export function createHttpConversationSource(): ConversationSource {
     listProviders: api.fetchProviders,
     startChatRun: api.startChatRun,
     fetchRun: api.fetchRun,
+    listRuns: api.fetchChatRuns,
     cancelRun: api.cancelRun,
     fetchActiveChatRun: api.fetchActiveChatRun,
     fetchChatSettings: api.fetchChatSettings,

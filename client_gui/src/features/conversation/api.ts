@@ -26,6 +26,7 @@ import type {
   ActivityAnchor,
   AiRunFailure,
   AiRunState,
+  AiRunList,
   ChatProvider,
   ChatSettings,
   ChatSettingsPatch,
@@ -351,6 +352,7 @@ export async function fetchRunFileDiff(chatId: string, runId: string, path: stri
 
 // ── Turns ────────────────────────────────────────────────────────────────────────────
 interface RawTurn {
+  source_run_id?: string | null
   seq: number
   speaker: string
   participant_key?: string | null
@@ -384,6 +386,7 @@ export function toTurn(raw: RawTurn): ConversationTurn {
     participantKey: raw.participant_key ?? null,
     displayName: raw.display_name ?? null,
     body: raw.body ?? '',
+    sourceRunId: textOrNull(raw.source_run_id),
     basedOnSeq: raw.based_on_seq ?? null,
     staleSinceSeq: raw.stale_since_seq ?? null,
     createdAt: raw.created_at ?? null,
@@ -508,11 +511,30 @@ function runFailure(history: unknown): AiRunFailure | null {
 
 export async function fetchRun(runId: string): Promise<AiRunState> {
   const data = await call(
-    () => getRequest<{ status?: string; end_reason?: string | null; fallback_history?: unknown }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
+    () => getRequest<{ run_id?: string; status?: string; end_reason?: string | null; outcome?: string | null;
+      exit_code?: number | null; doc_ref?: string | null; action_scope?: string | null; group_id?: string | null;
+      finished_at?: string | null; fallback_history?: unknown }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
   )
   const endReason = data?.end_reason ?? null
   const failure = endReason === 'all_providers_failed' ? runFailure(data?.fallback_history) : null
-  return { runId, status: data?.status === 'finished' ? 'finished' : 'running', endReason, ...(failure ? { failure } : {}) }
+  return {
+    runId: textOrNull(data?.run_id) ?? runId,
+    status: data?.status === 'finished' ? 'finished' : data?.status === 'running' ? 'running' : 'unknown',
+    endReason, outcome: data?.outcome ?? null, exitCode: nullableNumber(data?.exit_code),
+    docRef: textOrNull(data?.doc_ref), actionScope: textOrNull(data?.action_scope), groupId: textOrNull(data?.group_id),
+    finishedAt: textOrNull(data?.finished_at), ...(failure ? { failure } : {}),
+  }
+}
+
+/** The server clamps this existing API at 100 and has no cursor / CH filter. */
+export async function fetchChatRuns(scope: ConversationScope, limit: number): Promise<AiRunList> {
+  const data = await call(() => getRequest<{ items?: Array<{ run_id?: string; doc_ref?: string | null }>;
+    total?: number; has_more?: boolean }>(`${API}/ai-invoke/runs`, { group_id: scope.groupId, limit: Math.min(100, Math.max(1, limit)) }))
+  const items = (data?.items ?? []).filter((item) => typeof item?.run_id === 'string' && item.run_id.trim()).map((item) => ({
+    runId: item.run_id!, docRef: textOrNull(item.doc_ref),
+  }))
+  const total = nullableNumber(data?.total)
+  return { items, total, hasMore: data?.has_more !== false || total == null || total > items.length }
 }
 
 export async function cancelRun(runId: string): Promise<void> {

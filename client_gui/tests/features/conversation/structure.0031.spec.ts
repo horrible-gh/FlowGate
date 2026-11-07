@@ -50,6 +50,8 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'drafts.ts',
         'index.ts',
         'popover.ts',
+        'runAssessment.ts',
+        'submissionTrace.ts',
         'timeline.ts',
         'types.ts',
       ].sort(),
@@ -86,7 +88,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
   })
 
   it('keeps the model, rules, source and session free of screens', () => {
-    for (const name of ['types.ts', 'timeline.ts', 'api.ts', 'conversationSource.ts', 'conversationSession.ts', 'chatStart.ts', 'drafts.ts', 'changeDiff.ts']) {
+    for (const name of ['types.ts', 'timeline.ts', 'api.ts', 'conversationSource.ts', 'conversationSession.ts', 'chatStart.ts', 'drafts.ts', 'changeDiff.ts', 'runAssessment.ts']) {
       for (const spec of importsOf(read(join(CONV, name)))) expect(spec, name).not.toMatch(/\.vue$/)
     }
   })

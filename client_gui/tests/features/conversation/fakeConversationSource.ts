@@ -2,11 +2,13 @@ import { vi } from 'vitest'
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS } from '@/features/conversation/api'
 import type { ConversationSource } from '@/features/conversation/conversationSource'
 import type {
+  AiRunState,
   ChatSettings,
   ChatSummary,
   CommandRequestActivity,
   ConversationActivity,
   ConversationParticipant,
+  ConversationScope,
   ConversationTurn,
   RunFileDiff,
 } from '@/features/conversation/types'
@@ -25,6 +27,7 @@ export interface FakeData {
   /** A turn that lands in a chat once fetchRun for this run reports finished. */
   replies: Record<string, { chatId: string; turn: ConversationTurn }>
   activeRun: string | null
+  runDetails: Record<string, AiRunState>
   /** `${runId}\n${path}` → stored run change file diff. */
   diffs: Record<string, RunFileDiff>
 }
@@ -43,12 +46,14 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
     runs: init.runs ?? {},
     replies: init.replies ?? {},
     activeRun: init.activeRun ?? null,
+    runDetails: init.runDetails ?? {},
     diffs: init.diffs ?? {},
   }
   let nextSeq = 100
   const owedTitles = new Map<string, string>()
   let runCounter = 0
   const runCalls: Record<string, number> = {}
+  const runChats: Record<string, string> = {}
 
   const source = {
     listChats: vi.fn(async () => data.chats.map((c) => ({ ...c }))),
@@ -108,9 +113,10 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
       return { ...diff }
     }),
     listProviders: vi.fn(async () => ({ providers: [{ id: 'opus', name: 'Opus 5' }, { id: 'sonnet', name: 'Sonnet 5' }], defaultProviderId: 'opus' })),
-    startChatRun: vi.fn(async () => {
+    startChatRun: vi.fn(async (chatId: string) => {
       runCounter += 1
       const id = `run-${runCounter}`
+      runChats[id] = chatId
       data.runs[id] ??= ['running', 'finished']
       return id
     }),
@@ -122,19 +128,29 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
       const reply = data.replies[runId]
       if (status === 'finished' && reply) {
         const list = (data.turns[reply.chatId] ??= [])
-        if (!list.some((t) => t.seq === reply.turn.seq)) list.push(reply.turn)
+        if (!list.some((t) => t.seq === reply.turn.seq)) list.push({ ...reply.turn, sourceRunId: reply.turn.sourceRunId ?? runId })
       }
-      return { runId, status, endReason: null }
+      if (data.runDetails[runId]) return { ...data.runDetails[runId] }
+      return { runId, status, endReason: status === 'finished' ? 'exited' : null,
+        outcome: status === 'finished' ? 'complete' : null, exitCode: status === 'finished' ? 0 : null,
+        docRef: reply?.chatId ?? runChats[runId] ?? data.chats.find((chat) =>
+          (data.activities[chat.id] ?? []).some((activity) => activity.runId === runId))?.id ?? data.chats[0]?.id ?? null,
+        actionScope: 'chat', groupId: null }
+
+    }),
+    listRuns: vi.fn(async (_scope: unknown, limit: number) => {
+      const all = Object.values(data.runDetails).map((run) => ({ runId: run.runId, docRef: run.docRef ?? null }))
+      return { items: all.slice(0, limit), total: all.length, hasMore: all.length > limit }
     }),
     cancelRun: vi.fn(async () => undefined),
     fetchActiveChatRun: vi.fn(async () => data.activeRun),
-    fetchChatSettings: vi.fn(async () => ({ ...data.settings })),
-    saveChatSettings: vi.fn(async (patch: Record<string, unknown>) => {
+    fetchChatSettings: vi.fn(async (scope?: ConversationScope) => ({ ...data.settings, sourceAccessScope: scope ?? null })),
+    saveChatSettings: vi.fn(async (patch: Record<string, unknown>, scope?: ConversationScope) => {
       if (patch.send_action) data.settings.sendAction = patch.send_action as ChatSettings['sendAction']
       if (patch.context_mode) data.settings.contextMode = patch.context_mode as ChatSettings['contextMode']
       if (patch.context_turns) data.settings.contextTurns = patch.context_turns as number
       if (patch.source_access_mode) data.settings.sourceAccessMode = patch.source_access_mode as ChatSettings['sourceAccessMode']
-      return { ...data.settings }
+      return { ...data.settings, sourceAccessScope: scope ?? null }
     }),
     issueChatMention: vi.fn(async (chatId: string) => `@mention ${chatId}`),
   }

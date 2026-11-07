@@ -42,6 +42,7 @@ const GROUP = 'flowgate.v02.0032'
 const CHAT = `${GROUP}.0011-CH`
 
 interface ServerTurn {
+  source_run_id?: string | null
   seq: number
   speaker: string
   body: string
@@ -89,7 +90,15 @@ function createServer() {
       server.run = { id: 'run-1', status: 'running' }
       return { run_id: 'run-1' }
     }
-    if (method === 'GET' && path.startsWith('/api/v1/ai-invoke/run-')) return { status: server.run?.status ?? 'finished', end_reason: null }
+    if (method === 'GET' && path === '/api/v1/ai-invoke/runs') return {
+      items: server.run ? [{ run_id: server.run.id, doc_ref: CHAT }] : [], total: server.run ? 1 : 0, has_more: false,
+    }
+    if (method === 'GET' && path.startsWith('/api/v1/ai-invoke/run-')) {
+      const base = { run_id: path.split('/').pop(), action_scope: 'chat', group_id: GROUP }
+      // diagnostics.get_status omits doc_ref and terminal fields while running.
+      return server.run?.status === 'running' ? { ...base, status: 'running' } :
+        { ...base, doc_ref: CHAT, status: 'finished', end_reason: 'exited', outcome: 'complete', exit_code: 0 }
+    }
     if (method === 'GET' && /^\/api\/v1\/chat-activity\/[^/]+$/.test(path)) {
       const doc = decodeURIComponent(path.split('/').pop()!)
       return {
@@ -232,7 +241,7 @@ describe('Conversation production path (flowgate.v02.0032 T#2)', () => {
 
     // The run answers and ends; its change lands after the reply.
     Object.assign(server.commands[0], { status: 'succeeded', exit_code: 0, anchor_seq: 2, anchor_position: 'before', anchor_state: 'reply' })
-    server.turns[CHAT].push({ seq: 2, speaker: 'ai', body: '빌드가 통과했습니다', created_at: '2026-10-06T08:05:00Z' })
+    server.turns[CHAT].push({ seq: 2, speaker: 'ai', source_run_id: 'run-1', body: '빌드가 통과했습니다', created_at: '2026-10-06T08:05:00Z' })
     server.changes.push({
       run_id: 'run-1',
       doc_id: CHAT,

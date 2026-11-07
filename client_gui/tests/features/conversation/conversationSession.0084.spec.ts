@@ -107,7 +107,7 @@ describe('run adoption on a slow server (flowgate.v02.0084 T#2)', () => {
     seen.source.startChatRun.mockResolvedValueOnce('run-1')
     seen.source.fetchRun.mockImplementation(async () => {
       if (seen.source.fetchRun.mock.calls.length > 1) throw httpError(404, 'gone')
-      return { runId: 'run-1', status: 'running', endReason: null }
+      return { runId: 'run-1', docRef: A, actionScope: 'chat', status: 'running', endReason: null, outcome: null, exitCode: null }
     })
     await seen.session.invokeAi()
     await flushPromises()

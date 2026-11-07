@@ -24,6 +24,8 @@ export interface ConversationTurn {
   /** The AI / model badge (0293 R0001: a badge only, identity is participantKey). */
   displayName?: string | null
   body: string
+  /** Server attribution only; null / missing is unknown. */
+  sourceRunId?: string | null
   basedOnSeq?: number | null
   staleSinceSeq?: number | null
   createdAt: string | null
@@ -158,6 +160,10 @@ export interface StatusActivity {
   id: string
   createdAt: string | null
   tone: StatusTone
+  /** Read-derived run status; never treated as a durable server event. */
+  runId?: string
+  chatId?: string
+  runResult?: AiRunState
   /** A known event (`gui.conversation.status.<code>`), or null when `text` says it all. */
   code: string | null
   /** Source-supplied text, or extra detail appended to a known event. */
@@ -220,7 +226,20 @@ export interface AiRunFailure {
 /** One chat AI run as the composer tracks it. */
 export interface AiRunState {
   runId: string
-  status: 'running' | 'finished'
+  status: 'running' | 'finished' | 'unknown'
   endReason: string | null
+  outcome?: string | null
+  exitCode?: number | null
+  docRef?: string | null
+  actionScope?: string | null
+  groupId?: string | null
+  finishedAt?: string | null
   failure?: AiRunFailure | null
+}
+
+/** Existing group run-history window (no CH filter or pagination cursor). */
+export interface AiRunList {
+  items: Array<{ runId: string; docRef: string | null }>
+  total: number | null
+  hasMore: boolean
 }
