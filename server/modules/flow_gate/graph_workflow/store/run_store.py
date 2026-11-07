@@ -386,6 +386,8 @@ def map_token(token_id: str, run_id: str, node_key: str, stage: Optional[str] = 
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         [token_id, run_id, node_key, stage, active_attempt_id(run_id, node_key), map_kind, utc_now_ms()],
     )
+    from modules.flow_gate.graph_workflow.services import result_slot_binding
+    result_slot_binding.capture_mapped(token_id, run_id, node_key, stage)
 
 
 def mark_token_stage(token_id: str, stage: str) -> int:

@@ -4528,6 +4528,15 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if binding_failure is not None:
         return binding_failure
 
+    # 0145 T#1: old mapped new tokens must be reissued, never silently converted to edits.
+    from modules.flow_gate.graph_workflow.services import result_slot_binding
+    from flowgate.card_document_edit.errors import GraphApiError
+    from flowgate.card_document_edit import agent_errors
+    try:
+        result_slot_binding.reject_legacy_new(token_rec)
+    except GraphApiError as exc:
+        return agent_errors.response(exc)
+
     actor_user_id: str = token_rec["issued_to"]
 
     # ── Step 4: Permission check ────────────────────────────────────────────────────

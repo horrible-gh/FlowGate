@@ -181,11 +181,14 @@ def dispatch_document(ctx, row: dict) -> dict:
     issued_to = user or ctx.run.get("started_by") or ctx.actor or ""
     shown = provider if ai and provider else issued_to
     root = ctx.root_document()
+    from . import result_slot_binding
+    stage = INSTRUCTION_STAGE if plan.get("instruction") else RESULT_STAGE
+    binding = result_slot_binding.snapshot(ctx.flow_id, ctx.run_id, row) if stage == RESULT_STAGE else None
     try:
         with _savepoint():
             token = token_service.issue(
-                project=ctx.project_id or "", group_id=ctx.flow_id, action_scope="new",
-                doc_ref=(root or {}).get("doc_id"), issued_to=issued_to, provider_id=provider,
+                project=ctx.project_id or "", group_id=ctx.flow_id, action_scope="edit" if binding else "new",
+                doc_ref=binding["doc_id"] if binding else (root or {}).get("doc_id"), issued_to=issued_to, provider_id=provider,
                 continuation_target_seq=None,                       # no unmanned chain (D0004 §3.5, Q-9)
             )
     except Exception as exc:  # noqa: BLE001 — L0009 E-22: the run goes on, the node stays open
@@ -204,15 +207,16 @@ def dispatch_document(ctx, row: dict) -> dict:
 def _ai_job(ctx, row: dict, plan: dict, provider: Optional[str], issued_to: str, token: dict, stage: str,
             ref_doc_ids: Optional[list] = None) -> dict:
     """The AI start job of a node (``start_ai``): the node row, its card's run plan and the stage."""
+    from . import result_slot_binding
     root = ctx.root_document()
-    return {"flow_id": ctx.flow_id, "project_id": ctx.project_id, "run_id": ctx.run_id,
+    return result_slot_binding.apply_job({"flow_id": ctx.flow_id, "project_id": ctx.project_id, "run_id": ctx.run_id,
             "node_key": row["node_key"], "node": dict(row), "provider_id": provider, "token": token,
             "issued_to": issued_to, "doc_ref": (root or {}).get("doc_id"), "doc_type": row.get("doc_type"),
             "result_doc_type": plan.get("result_doc_type") or row.get("doc_type"),
             "step_timeout_sec": plan.get("step_timeout_sec"), "restart_max": plan.get("restart_max"),
             "card_settings": plan.get("settings") or {}, "stage": stage,
             "instruction": plan.get("instruction") if stage == INSTRUCTION_STAGE else None,
-            "action_scope": "new", "target_doc_id": None, "ref_doc_ids": ref_doc_ids}
+            "action_scope": "new", "target_doc_id": None, "ref_doc_ids": ref_doc_ids})
 
 
 def dispatch_custom(ctx, row: dict) -> dict:

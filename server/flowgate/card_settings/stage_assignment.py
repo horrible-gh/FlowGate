@@ -656,7 +656,8 @@ def dispatch_role_card(ctx, node: dict) -> Optional[dict]:
         legacy.fill_line(ctx, key, reuse)
     provider = a["provider_id"] if a["actor"] == AI and not reuse and taken is None else None
     shown = provider or issued_to
-    token = legacy.issue_node_token(flow_id, ctx.project_id, legacy.root_doc_id(ctx), issued_to, provider)   # T-1
+    token = legacy.issue_node_token(flow_id, ctx.project_id, legacy.root_doc_id(ctx), issued_to, provider,
+                                    run_id=ctx.run_id, node=node, stage=first)   # T-1
     if token is None:
         fail(a, TOKEN_ISSUE_FAILED, ctx)
         token_failed(ctx.run_id, key, attempt_id, first, 0, TOKEN_NODE, issued_to, ctx)
@@ -778,7 +779,8 @@ def take_written_result(ctx, node: dict, a: dict, issued_to: str, doc: dict, pla
     key, flow_id, run_id = node["node_key"], ctx.flow_id, ctx.run_id
     token_id = legacy.live_dispatch_token(run_id, key)
     if token_id is None:                                                  # T-3
-        fresh = legacy.issue_node_token(flow_id, ctx.project_id, legacy.root_doc_id(ctx), issued_to, None)
+        fresh = legacy.issue_node_token(flow_id, ctx.project_id, legacy.root_doc_id(ctx), issued_to, None,
+                                            run_id=run_id, node=node, stage=RESULT)
         if fresh is None:
             fail(a, TOKEN_ISSUE_FAILED, ctx)
             token_failed(run_id, key, a["attempt_id"], RESULT, 0, TOKEN_RESULT, issued_to, ctx)
@@ -825,7 +827,8 @@ def act_result_stage(ctx, node: dict, a: dict, issued_to: str, instruction_doc_i
     if a["actor"] == PERSON:
         token_id = legacy.live_dispatch_token(run_id, key)
         if token_id is None:                                              # T-3
-            fresh = legacy.issue_node_token(flow_id, ctx.project_id, legacy.root_doc_id(ctx), issued_to, None)
+            fresh = legacy.issue_node_token(flow_id, ctx.project_id, legacy.root_doc_id(ctx), issued_to, None,
+                                            run_id=run_id, node=node, stage=RESULT)
             if fresh is None:
                 fail(a, TOKEN_ISSUE_FAILED, ctx)
                 token_failed(run_id, key, a["attempt_id"], RESULT, 0, TOKEN_RESULT, issued_to, ctx)
@@ -1007,7 +1010,8 @@ def _redispatch(ctx, node: dict, attempt_id: str, issued_to: str) -> dict:
         return _row_dispatch(row)
     token_id = legacy.live_dispatch_token(ctx.run_id, key)
     if token_id is None:
-        fresh = legacy.issue_node_token(ctx.flow_id, ctx.project_id, legacy.root_doc_id(ctx), issued_to, a["provider_id"])
+        fresh = legacy.issue_node_token(ctx.flow_id, ctx.project_id, legacy.root_doc_id(ctx), issued_to, a["provider_id"],
+                                        run_id=ctx.run_id, node=node, stage=a["stage"])
         if fresh is None:
             token_failed(ctx.run_id, key, attempt_id, RESULT, 0, TOKEN_NODE, issued_to, ctx)
             return {**_row_dispatch(row), "token_issued": False, "error_code": TOKEN_ISSUE_FAILED}
