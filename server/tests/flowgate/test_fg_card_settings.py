@@ -146,7 +146,12 @@ def env(db_path, monkeypatch, tmp_path, request):
 
     from flowgate.card_documents import integration as card_documents
     from flowgate.card_settings import integration, routes
+    from flowgate.card_document_edit import write_gate
+    from modules.flow_gate.graph_workflow.services import card_document_ports
 
+    # 0148: this isolated app has no startup lifespan. Register the current real document write gate
+    # before seeding, as the 0121/0143 harnesses do; keep production write protection enabled.
+    monkeypatch.setitem(card_document_ports._handlers, card_document_ports.DOCUMENT_WRITE_GATE, write_gate.dispatch)
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path / "storage"))
     monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
     state = {"events": [], "db": db_path, "jobs": []}
@@ -1172,3 +1177,146 @@ def test_a_group_without_its_worktree_yet_lists_and_saves_real_branch_names(env,
         mt.judge_check_target("flowgate", fc, "main")
     assert (strict.value.code, strict.value.details["reason"]) == ("gate_git_unavailable", "group_slot_missing")
     assert db_git.get_state(fc) is None                                          # nothing provisioned or recorded
+
+
+# flowgate.v02.0148 T#1: a client explicitly keeps only the merge target view.
+_TARGET_VIEW_KEYS_0148 = {"merge_target_options", "default_target_branch", "merge_target_state"}
+
+
+@pytest.mark.parametrize("field,value", [("archive", True), ("keep_branch", True), ("merge_mode", "merge"),
+                                         ("merge_target", "origin"), ("push", True)])
+def test_0148_opted_in_patch_saves_without_reading_targets(env, monkeypatch, field, value):
+    from flowgate.card_settings import legacy_adapter as legacy
+
+    g = _gate_key(env)
+    before = get_settings(env, FB, g)
+    calls = []
+
+    def forbidden(*args):
+        calls.append(args)
+        raise AssertionError("unrelated PATCH must not read Git candidates")
+
+    monkeypatch.setattr(legacy, "merge_target_view", forbidden)
+    res = env["client"].patch(f"/api/v1/flows/{FB}/nodes/{g}/settings?keep_merge_targets=true", headers=_h(),
+                              json={"field": field, "value": value,
+                                    "expected_settings_version": before["settings_version"],
+                                    "expected_context": before["context"]})
+    assert res.status_code == 200, res.text
+    saved = res.json()
+    assert calls == []
+    assert saved["merge_targets_kept"] is True
+    assert not _TARGET_VIEW_KEYS_0148.intersection(saved)
+    assert saved["push_remote_check_required"] is False
+    assert saved["fields"][field]["value"] == value
+    assert saved["settings_version"] == before["settings_version"] + 1
+    assert saved["context"] == before["context"]
+    assert set(saved) == (set(before) - _TARGET_VIEW_KEYS_0148) | {"merge_targets_kept"}
+    assert (g, field) in stored_rows(env, FB, g)
+
+
+def test_0148_default_false_and_unknown_query_keep_identical_full_responses(env, monkeypatch):
+    from modules.flow_gate.graph_workflow.api import envelope
+    monkeypatch.setattr(envelope, "server_ts", lambda: "2026-11-07T00:00:00.000+00:00")
+    g = _gate_key(env)
+    url = f"/api/v1/flows/{FB}/nodes/{g}/settings"
+    body = {"field": "archive", "value": True}
+    first = env["client"].patch(url, headers=_h(), json=body)
+    assert first.status_code == 200
+    assert _TARGET_VIEW_KEYS_0148.issubset(first.json())
+    assert "merge_targets_kept" not in first.json()
+    for query in ("", "?keep_merge_targets=false", "?keep_merge_targets=0", "?keep_merge_targets=invalid",
+                  "?future_response_option=true"):
+        again = env["client"].patch(url + query, headers=_h(), json=body)
+        assert again.status_code == 200 and again.content == first.content
+
+
+@pytest.mark.parametrize("query", ["true", "1", "yes", "%20TRUE%20"])
+def test_0148_query_opt_in_does_not_extend_the_patch_body(env, query):
+    g = _gate_key(env)
+    url = f"/api/v1/flows/{FB}/nodes/{g}/settings?keep_merge_targets={query}"
+    body = {"field": "archive", "value": True}
+    saved = env["client"].patch(url, headers=_h(), json=body)
+    assert saved.status_code == 200 and saved.json()["merge_targets_kept"] is True
+    refused = env["client"].patch(url, headers=_h(), json={**body, "keep_merge_targets": True})
+    assert refused.status_code == 422
+    assert refused.json()["error"]["params"]["errors"] == [
+        {"field": "keep_merge_targets", "reason": "unknown_field"}]
+    stale = env["client"].patch(url, headers=_h(), json={**body, "expected_settings_version": 0})
+    assert stale.status_code == 409 and stale.json()["error"]["code"] == "gate_context_changed"
+
+
+def test_0148_kept_targets_still_report_missing_push_remote(env):
+    g = _gate_key(env)
+    _put_raw(env, FB, g, "push", "true")
+    res = env["client"].patch(f"/api/v1/flows/{FB}/nodes/{g}/settings?keep_merge_targets=true", headers=_h(),
+                              json={"field": "archive", "value": True})
+    assert res.status_code == 200 and res.json()["push_remote_check_required"] is True
+    assert res.json()["merge_targets_kept"] is True
+
+
+def test_0148_opt_in_is_only_a_check_card_response_option(env, monkeypatch):
+    from modules.flow_gate.graph_workflow.api import envelope
+    monkeypatch.setattr(envelope, "server_ts", lambda: "2026-11-07T00:00:00.000+00:00")
+    key = put_draft(env, FB, 0, [node("tmp_t")])["key_map"]["tmp_t"]
+    url = f"/api/v1/flows/{FB}/nodes/{key}/settings"
+    body = {"field": "time_limit", "value": None}
+    plain = env["client"].patch(url, headers=_h(), json=body)
+    opted = env["client"].patch(url + "?keep_merge_targets=true", headers=_h(), json=body)
+    assert plain.status_code == opted.status_code == 200 and plain.content == opted.content
+    assert "merge_targets_kept" not in opted.json()
+
+
+def test_0148_opted_in_patch_does_not_wait_for_the_three_second_lookup(env, monkeypatch):
+    import time
+    from flowgate.card_settings import legacy_adapter as legacy
+
+    g = _gate_key(env)
+    real = legacy.merge_target_view
+    calls = []
+
+    def slow(*args):
+        calls.append(args)
+        time.sleep(3.0)
+        return real(*args)
+
+    monkeypatch.setattr(legacy, "merge_target_view", slow)
+    url = f"/api/v1/flows/{FB}/nodes/{g}/settings"
+    body = {"field": "archive", "value": True}
+    started = time.perf_counter()
+    plain = env["client"].patch(url, headers=_h(), json=body)
+    plain_seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    opted = env["client"].patch(url + "?keep_merge_targets=true", headers=_h(), json=body)
+    opted_seconds = time.perf_counter() - started
+    assert plain.status_code == opted.status_code == 200
+    assert len(calls) == 1 and opted_seconds < 2.0 <= plain_seconds
+    assert opted.json()["merge_targets_kept"] is True
+    print(f"PATCH0148_EVIDENCE plain_seconds={plain_seconds:.3f} opted_seconds={opted_seconds:.3f} lookup_calls=1")
+
+
+@pytest.mark.parametrize("action", ["refresh", "target", "clear"])
+def test_0148_refresh_and_target_patch_discard_negative_cache(env, git_flow, monkeypatch, action):
+    from modules.flow_gate.services.git import merge_target as mt
+
+    g = _gate_key(env)
+    setting(env, FB, g, "merge_target_branch", "main")
+    mt.invalidate_check_targets()
+    with monkeypatch.context() as m:
+        m.setattr(mt, "_compute_snapshot", lambda basis, *_a: mt._failed_snapshot(
+            mt.CHECK_STATUS_TIMEOUT, mt.CHECK_OPTIONS_TIMEOUT, default_branch=basis.work_base_ref, basis=None))
+        assert get_settings(env, FB, g)["merge_target_state"]["status"] == "timeout"
+    assert get_settings(env, FB, g)["merge_target_state"]["status"] == "timeout"
+    if action == "refresh":
+        saved = _get_refreshed(env, FB, g)
+    else:
+        value = "release/local" if action == "target" else None
+        res = env["client"].patch(f"/api/v1/flows/{FB}/nodes/{g}/settings?keep_merge_targets=true", headers=_h(),
+                                  json={"field": "merge_target_branch", "value": value})
+        assert res.status_code == 200, res.text
+        saved = res.json()
+        assert saved["fields"]["merge_target_branch"]["value"] == value
+    assert "merge_targets_kept" not in saved
+    assert _TARGET_VIEW_KEYS_0148.issubset(saved)
+    assert saved["merge_target_state"]["status"] == "ok"
+    assert "release/local" in saved["merge_target_options"]
+    assert "push_remote_check_required" in saved

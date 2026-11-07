@@ -8,6 +8,8 @@ A PATCH changes exactly one value and answers the card's settings as they are no
 0061 T#11: ``{"field": "hold", "value": true | false | null}`` sets / releases the card's Hold (``settings.write``).
 flowgate.v02.0098 T#1: ``GET ...?refresh_merge_targets=true`` judges a check card's merge target candidates again instead
 of reading their cache (a read option only: nothing is written).
+flowgate.v02.0148 T#1: ``PATCH ...?keep_merge_targets=true`` omits the target view only for an unrelated
+check setting and answers ``merge_targets_kept: true``. Without that opt-in the full response is unchanged.
 """
 from __future__ import annotations
 
@@ -28,6 +30,11 @@ _TRUE = {"1", "true", "yes"}
 def refresh_requested(request: Request) -> bool:
     """flowgate.v02.0098 T#1: the GET's ``refresh_merge_targets`` read option (true / 1 / yes; anything else: off)."""
     return str(request.query_params.get("refresh_merge_targets") or "").strip().lower() in _TRUE
+
+
+def keep_targets_requested(request: Request) -> bool:
+    """PATCH response option, outside the strict body schema; unknown queries are ignored by older routes."""
+    return str(request.query_params.get("keep_merge_targets") or "").strip().lower() in _TRUE
 
 
 def parse_change(body: Any) -> tuple[str, Any, list[dict]]:
@@ -94,6 +101,7 @@ def patch_card_settings(flow_id: str, node_key: str, request: Request, body: Any
         group = legacy.load_flow(flow_id)
         legacy.authorize(user_id, group, "write")
         return settings.write(group, node_key, name, value, user_id, legacy.locale_of(request),
-                              expected_version=expected_version, expected_context=expected_context)
+                              expected_version=expected_version, expected_context=expected_context,
+                              keep_merge_targets=keep_targets_requested(request))
 
     return legacy.run(request, handle)

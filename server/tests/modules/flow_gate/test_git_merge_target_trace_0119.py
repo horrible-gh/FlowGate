@@ -176,7 +176,8 @@ def test_0119_a_spent_budget_says_where_it_went(mt, monkeypatch, caplog):
     state = view["merge_target_state"]
     assert (state["status"], state["code"], state["reason"]) == ("timeout", "merge_target_options_timeout", None)
     assert view["merge_target_options"] == []
-    assert not mt._check_cache                               # a timeout is never cached (unchanged)
+    # 0148: the timeout is cached briefly; the diagnostic line below keeps the 0119 contract.
+    assert mt._check_cache[("p1", "g1")]["status"] == "timeout"
     lines = _lines(caplog, mt)
     assert len(lines) == 1
     line = lines[0]
@@ -219,7 +220,8 @@ def test_0119_the_single_judgement_is_not_traced(mt, monkeypatch):
 # A cached snapshot (or another request's computation this view joined) holds the verdicts of its own computation; a
 # stored target outside them is judged by ``_entry_of`` under what is left of this view's budget. That judgement is
 # traced as ``entries`` (its name and ms), its error as ``failed_name`` / ``error``; the response and the cache stay as
-# they were (a spent budget: ``timeout``, unchecked states, the cached snapshot unchanged).
+# they were for 0119. 0148 adds short negative caching of timeout views, including an added judgement
+# on a cached snapshot; a joined request still cannot replace its owner's cached result.
 NEW = "new_selected"
 
 
@@ -272,8 +274,9 @@ def test_0119_a_cached_snapshots_added_judgement_that_spends_the_budget_is_named
     view = _view(mt, NEW, refresh=False)
     _contract(view)
     assert view == _timed_out_view(NEW)
-    snap = next(iter(mt._check_cache.values()))                         # the cache is as it was: nothing added
-    assert snap["status"] == "ok" and set(snap["verdicts"]) == set(cached)
+    snap = next(iter(mt._check_cache.values()))                         # 0148: no partial verdicts kept
+    assert snap["status"] == "timeout" and snap["verdicts"] == {}
+    assert snap["options"] == [] and snap["basis"] is None
     lines = _lines(caplog, mt)
     assert len(lines) == 1
     line = lines[0]
@@ -357,3 +360,68 @@ def test_0119_an_added_judgement_inside_the_budget_writes_no_line_and_is_kept(mt
     assert calls == [NEW] and NEW in next(iter(mt._check_cache.values()))["verdicts"]
     assert _view(mt, NEW, refresh=False) == view and calls == [NEW]
     assert _lines(caplog, mt) == []
+
+
+@pytest.mark.parametrize("phase", ["basis", "candidates", "entry"])
+@pytest.mark.parametrize("clear", ["refresh", "invalidate", "expiry"])
+def test_0148_timeout_is_cached_briefly_without_extending_its_age(mt, monkeypatch, phase, clear):
+    """All timeout exits share a short negative snapshot; each request still describes its own selected name."""
+    with monkeypatch.context() as m:
+        if phase == "basis":
+            def unavailable(*_a, **_k):
+                raise mt._git_unavailable("probe_failed")
+            m.setattr(mt, "check_target_basis", unavailable)
+            m.setattr(mt, "_spent", lambda _budget: True)
+        elif phase == "candidates":
+            m.setattr(mt, "_spent", lambda _budget: True)
+        else:
+            def outlived(*_a):
+                raise mt._BudgetSpent()
+            m.setattr(mt, "_entry_of", outlived)
+        first = _view(mt, refresh=False)
+    assert first["merge_target_state"]["status"] == "timeout"
+    assert first["merge_target_options"] == []
+    at = mt._check_cache[("p1", "g1")]["at"]
+    with monkeypatch.context() as m:
+        def forbidden(*_a, **_k):
+            pytest.fail("negative cache should avoid even the basis/Git probe")
+        m.setattr(mt, "check_target_basis", forbidden)
+        assert _view(mt, refresh=False) == first
+        other = _view(mt, selected="release", refresh=False)
+        assert other["merge_target_state"]["current"]["branch"] == "release"
+        assert other["merge_target_state"]["current"]["checked"] is False
+        assert other["merge_target_state"]["current"]["inherited"] is False
+    assert mt._check_cache[("p1", "g1")]["at"] == at
+    if clear == "invalidate":
+        mt.invalidate_check_targets("p1", "g1")
+    elif clear == "expiry":
+        monkeypatch.setattr(mt, "CHECK_TARGET_CACHE_SEC", 0.0)
+    refreshed = _view(mt, refresh=clear == "refresh")
+    assert refreshed["merge_target_state"]["status"] == "ok"
+    assert refreshed["merge_target_options"] == ["develop", "main", "release"]
+
+
+def test_0148_invalidation_during_timeout_prevents_late_cache_repopulation(mt, monkeypatch):
+    real = mt._compute_snapshot
+
+    def late(basis, *_a):
+        mt.invalidate_check_targets("p1", "g1")
+        return mt._failed_snapshot(mt.CHECK_STATUS_TIMEOUT, mt.CHECK_OPTIONS_TIMEOUT,
+                                   default_branch=basis.work_base_ref, basis=None)
+
+    monkeypatch.setattr(mt, "_compute_snapshot", late)
+    assert _view(mt, refresh=False)["merge_target_state"]["status"] == "timeout"
+    monkeypatch.setattr(mt, "_compute_snapshot", real)
+    assert _view(mt, refresh=False)["merge_target_state"]["status"] == "ok"
+
+
+def test_0148_failed_refresh_does_not_leave_an_old_timeout(mt, monkeypatch):
+    with monkeypatch.context() as m:
+        m.setattr(mt, "_spent", lambda _budget: True)
+        assert _view(mt, refresh=False)["merge_target_state"]["status"] == "timeout"
+    with monkeypatch.context() as m:
+        m.setattr(mt, "_compute_snapshot", lambda basis, *_a: mt._failed_snapshot(
+            mt.CHECK_STATUS_FAILED, mt.CHECK_OPTIONS_UNAVAILABLE, "probe_failed",
+            default_branch=basis.work_base_ref, basis=None))
+        assert _view(mt, refresh=True)["merge_target_state"]["status"] == "failed"
+    assert _view(mt, refresh=False)["merge_target_state"]["status"] == "ok"

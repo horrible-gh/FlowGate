@@ -147,22 +147,26 @@ def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=Non
     return payload
 
 
-def _with_merge_targets(group: dict, payload: dict, refresh: bool = False) -> dict:
+def _with_merge_targets(group: dict, payload: dict, refresh: bool = False, *, keep: bool = False) -> dict:
     """flowgate.v02.0098 T#1 (D0004 §3.1 / §5): a check card's answer + the merge target outputs -
     ``merge_target_options``, ``default_target_branch``, ``merge_target_state`` (``merge_target.check_target_view``) and
     ``push_remote_check_required`` (push on with no remote chosen). Read-only: nothing stored changes, and a Git read
-    failure is a state, never a failed response."""
+    failure is a state, never a failed response. An opted-in unrelated PATCH keeps the client's previous
+    target view: omit only those three keys, mark that omission, and still compute the push warning."""
     if payload.get("card_kind") != fields.CHECK:
         return payload
     shown = payload["fields"]
     branch = shown.get(fields.MERGE_TARGET_BRANCH.name) or {}
     selected = branch.get("value") if branch.get("stored") else None
-    try:
-        view = legacy.merge_target_view(group, selected if isinstance(selected, str) else None, refresh)
-    except Exception:  # noqa: BLE001 - the settings answer stands without the candidates
-        view = {"merge_target_options": [], "default_target_branch": None,
-                "merge_target_state": {"status": "failed", "code": "merge_target_options_unavailable",
-                                       "reason": "probe_failed", "current": None, "default": None}}
+    if keep:
+        view = {"merge_targets_kept": True}
+    else:
+        try:
+            view = legacy.merge_target_view(group, selected if isinstance(selected, str) else None, refresh)
+        except Exception:  # noqa: BLE001 - the settings answer stands without the candidates
+            view = {"merge_target_options": [], "default_target_branch": None,
+                    "merge_target_state": {"status": "failed", "code": "merge_target_options_unavailable",
+                                           "reason": "probe_failed", "current": None, "default": None}}
     push = (shown.get(PUSH_FIELD) or {}).get("value") is True
     return {**payload, **view,
             "push_remote_check_required": push and (shown.get(MERGE_TARGET_FIELD) or {}).get("value") != ORIGIN}
@@ -178,10 +182,12 @@ def read(group: dict, node_key: str, refresh_merge_targets: bool = False, *, vie
 
 
 def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[str],
-          locale: Optional[str] = None, expected_version: Optional[int] = None, expected_context=None) -> dict:
+          locale: Optional[str] = None, expected_version: Optional[int] = None, expected_context=None, *,
+          keep_merge_targets: bool = False) -> dict:
     """``PATCH /flows/{flow_id}/nodes/{node_key}/settings`` — one field, saved at once. ``locale`` (the request's)
     titles an AI delegation line document the change makes (flowgate.v02.0088). ``expected_version`` is the
-    settings version the screen was drawn from (None: not checked)."""
+    settings version the screen was drawn from (None: not checked). ``keep_merge_targets`` opts in to omitting
+    the target view only for a check card writing a field other than ``merge_target_branch``."""
     flow_id = group["group_id"]
     legacy.require_writable(flow_id)
     if not repository.available():
@@ -255,7 +261,8 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             legacy.invalidate_merge_targets(group)
         return _payload(flow_id, node, stored, user_id, group.get("project_id"))
 
-    return _with_merge_targets(group, legacy.with_flow_guard(flow_id, body))
+    return _with_merge_targets(group, legacy.with_flow_guard(flow_id, body),
+                               keep=keep_merge_targets and name != fields.MERGE_TARGET_BRANCH.name)
 
 
 def _check_merge_target(group: dict, node_key: str, branch: str) -> None:
