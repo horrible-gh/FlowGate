@@ -65,7 +65,14 @@ def check_draft_adoption(group: dict) -> dict:
                             {"flow_id": flow_id, "run_id": run["run_id"], "status": run["status"]})
     draft = definition_store.draft(flow_id)
     if draft is None:
-        return {"adoptable": True, "target": None}
+        latest = definition_store.latest_revision_no(flow_id)
+        if latest is None or latest <= int(run["revision_no"]):
+            return {"adoptable": True, "target": None}
+        record = definition_store.revision(flow_id, latest)
+        if record is None:
+            raise GraphApiError(404, "revision_not_found", {"flow_id": flow_id, "revision_no": latest})
+        check_revision_adoption(group, run, record, latest)
+        return {"adoptable": True, "target": "revision"}
     latest = (definition_store.latest_revision_no(flow_id) or 0) + 1
     check_revision_adoption(group, run, draft, latest)
     return {"adoptable": True, "target": "draft"}

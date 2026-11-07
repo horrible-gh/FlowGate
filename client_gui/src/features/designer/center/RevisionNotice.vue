@@ -4,6 +4,12 @@
       ? 'gui.designer.center.pinned_revision_notice' : 'gui.designer.center.past_revision_notice',
       { revision: graph.viewRevisionNo, latest: graph.latestRevisionNo }) }}
   </p>
+  <p v-else-if="graph.viewMode === 'revision' && graph.viewRevisionNo === graph.latestRevisionNo
+    && graph.run?.revisionNo != null && graph.latestRevisionNo != null
+    && graph.run.revisionNo !== graph.latestRevisionNo" class="revision-notice" role="status">
+    {{ t('gui.designer.center.latest_definition_notice',
+      { revision: graph.run.revisionNo, latest: graph.latestRevisionNo }) }}
+  </p>
 </template>
 
 <script setup lang="ts">

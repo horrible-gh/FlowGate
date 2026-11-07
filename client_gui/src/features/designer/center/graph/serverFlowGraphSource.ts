@@ -258,7 +258,7 @@ export function createServerFlowGraphSource(
     isSample: false,
     // The Flow id is the global v0.1 group id; the project id is not part of the address.
     loadGraph: async (_projectId: string, flowId: string, view?: string) => {
-      const [canvas, holds] = await Promise.all([loaders.loadFlowCanvas(flowId, view, CANVAS_COLLAPSE), readHolds(flowId)])
+      const [canvas, holds] = await Promise.all([loaders.loadFlowCanvas(flowId, view ?? 'latest', CANVAS_COLLAPSE), readHolds(flowId)])
       const graph = toFlowGraph(canvas)
       return holds ? { ...graph, holds } : graph
     },
@@ -324,7 +324,7 @@ export function createServerFlowGraphSource(
     resumeRun: runLoaders ? async (_projectId, runId) => toRunInfo(await loaders.resumeFlowRun!(runId)) : undefined,
     pauseRun: runLoaders && loaders.pauseFlowRun ? async (_projectId, runId) => toRunInfo(await loaders.pauseFlowRun!(runId)) : undefined,
     loadLayoutGraph: async (_projectId: string, flowId: string, view?: string) =>
-      toFlowGraph(await loaders.loadFlowCanvas(flowId, view)),
+      toFlowGraph(await loaders.loadFlowCanvas(flowId, view ?? 'latest')),
     readDocumentLink: readDocument ? (_projectId, docId) => readDocument(docId) : undefined,
     writeCardHold: cardHold ? (_projectId, flowId, nodeKey, on) => cardHold.write(flowId, nodeKey, on) : undefined,
     timeMachine:

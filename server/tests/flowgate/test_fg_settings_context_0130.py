@@ -6,6 +6,16 @@ tests build the context exactly as ``inspectorTarget.ts`` does, from the actual 
 PATCH / re-GET the card settings through the real routes.
 """
 import json
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def document_write_ports(monkeypatch):
+    # Register the same write gate as startup before the shared fixture seeds documents.
+    from flowgate.card_document_edit import integration
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    integration.register()
 
 from test_fg_ai_roles_l2_assignment import (  # noqa: F401
     FA, X, B, _sql, db_path, decided, env, flow, ledger, line_doc, node_run, roles, start, starts, wired,

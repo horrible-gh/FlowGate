@@ -1001,7 +1001,14 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     if result is not None:
         return JSONResponse(status_code=200, content=result)
 
+    recovery_exec_id = None
     try:
+        # 0145 T#2: an explicit legacy-result re-review first proves its original
+        # attribution and binds a real review assignment/execution atomically.
+        if body.document_review_loop and body.action_scope == "review":
+            recovery_exec_id = graph_execution_hooks.call(
+                "request_result_recovery", body.project, group_id, body.doc_ref, user_id,
+                body.document_review_loop.dict())
         result = ai_invoke_service.start_run(
             project_id=body.project,
             module=body.module,
@@ -1034,20 +1041,27 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             # mode="continuous", so the single / workflow_decide paths keep passing None.
             continuation_review_count_overrides=continuation_review_count_overrides,
             continuation_reviewer_overrides=continuation_reviewer_overrides,
+            graph_exec_id=recovery_exec_id,
             document_review_loop=(body.document_review_loop.dict() if body.document_review_loop else None),
             review_intent=(body.review_intent if body.action_scope == "review" else None),
             capability_warning_ack=body.capability_warning_ack,
         )
     except HTTPException as exc:
+        if recovery_exec_id:
+            graph_execution_hooks.call("start_failed", recovery_exec_id, RuntimeError("explicit_review_start_failed"))
         if project_lease_owner:
             db_project_ai_leases.release(body.project, project_lease_owner)
         return _err(exc)
     except LookupError as exc:
+        if recovery_exec_id:
+            graph_execution_hooks.call("start_failed", recovery_exec_id, RuntimeError("explicit_review_start_failed"))
         if project_lease_owner:
             db_project_ai_leases.release(body.project, project_lease_owner)
         return JSONResponse(status_code=404, content={
             "code": "workflow_decision_unavailable", "message": str(exc)})
     except token_scratch.TokenScratchStorageUnsafe:
+        if recovery_exec_id:
+            graph_execution_hooks.call("start_failed", recovery_exec_id, RuntimeError("explicit_review_start_failed"))
         if project_lease_owner:
             db_project_ai_leases.release(body.project, project_lease_owner)
         return JSONResponse(status_code=409, content={

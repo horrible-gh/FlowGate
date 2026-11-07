@@ -221,6 +221,7 @@ export default {
   designer: {
     // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
     center: {
+      latest_definition_notice: '최신 정의 {latest} 표시 중. 실행은 개정 {revision}을 유지합니다. 보호된 카드와 입력은 변경할 수 없습니다.',
       pinned_revision_notice: '실행에 고정된 개정 {revision} 표시 중 (최신 {latest}). 이 화면에서는 편집할 수 없습니다. 최신 개정에 추가된 카드는 표시되지 않습니다.',
       past_revision_notice: '개정 {revision} 표시 중 (최신 {latest}). 이 화면에서는 편집할 수 없습니다. 최신 개정에 추가된 카드는 표시되지 않습니다.',
       tabs_label: '열린 플로우',

@@ -359,9 +359,9 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
       request.stage = 'before_prepare'
       if (deps.beforePrepare && !(await deps.beforePrepare(flowId, mode))) return false
       if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
-      if (state.run?.status === 'idle' && deps.hasDraftToConfirm?.(flowId) && source.checkRevisionAdoption) {
+      if (state.run?.status === 'idle' && source.checkRevisionAdoption) {
         request.stage = 'save_draft'
-        if (deps.saveDraftBeforeCheck && !(await deps.saveDraftBeforeCheck(flowId))) return false
+        if (deps.hasDraftToConfirm?.(flowId) && deps.saveDraftBeforeCheck && !(await deps.saveDraftBeforeCheck(flowId))) return false
         if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
         // A negative assessment is a run refusal. Only failure to obtain an assessment falls back (T A-2.3).
         request.stage = 'revision'
