@@ -607,7 +607,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   sourceAccessScope: null,
   contextTurnsPresets: [5, 10, 15, 20, 30],
   contextTurnsMin: 1,
-  contextTurnsMax: 200,
+  contextTurnsMax: 999,
   sourceAccessModes: [...SOURCE_MODES],
 }
 

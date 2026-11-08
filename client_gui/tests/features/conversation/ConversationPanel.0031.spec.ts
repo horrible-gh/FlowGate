@@ -251,6 +251,242 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(find('conv-settings').exists()).toBe(false)
   })
 
+  it('saves a typed last-N-turns value from 1 to 999 and keeps the select and input in step', async () => {
+    const { source } = await mountPanel()
+    await find('conv-settings-btn').trigger('click')
+    expect(find('conv-setting-turns').exists()).toBe(false) // a preset is selected: no number box
+    await find('conv-setting-context').setValue('custom')
+    const input = find('conv-setting-turns')
+    await input.setValue('999')
+    expect(find('conv-setting-turns-error').exists()).toBe(false)
+    await find('conv-settings-save').trigger('click')
+    await flushPromises()
+    expect(source.saveChatSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ context_mode: 'recent', context_turns: 999 }),
+      { projectId: 'p', groupId: 'p.m.0001' },
+    )
+    // reopened: 사용자 입력 with 999; choosing a preset hides the box and saves the preset
+    await find('conv-settings-btn').trigger('click')
+    expect((find('conv-setting-context').element as HTMLSelectElement).value).toBe('custom')
+    expect((find('conv-setting-turns').element as HTMLInputElement).value).toBe('999')
+    await find('conv-setting-context').setValue('10')
+    expect(find('conv-setting-turns').exists()).toBe(false)
+    await find('conv-settings-save').trigger('click')
+    await flushPromises()
+    expect(source.saveChatSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ context_mode: 'recent', context_turns: 10 }),
+      { projectId: 'p', groupId: 'p.m.0001' },
+    )
+  })
+
+  it('lists 사용자 입력 and shows the number box only while it is selected', async () => {
+    await mountPanel()
+    await find('conv-settings-btn').trigger('click')
+    const select = find('conv-setting-context')
+    const options = select.findAll('option')
+    const values = options.map((o) => o.attributes('value'))
+    expect(values).toContain('custom')
+    expect(options.find((o) => o.attributes('value') === 'custom')!.text()).toBe('사용자 입력')
+    expect(values.at(-1)).toBe('all')
+    for (const preset of values.filter((v) => v !== 'custom' && v !== 'all') as string[]) {
+      await select.setValue(preset)
+      expect(find('conv-setting-turns').exists()).toBe(false)
+      expect(find('conv-setting-turns-error').exists()).toBe(false)
+    }
+    await select.setValue('all')
+    expect(find('conv-setting-turns').exists()).toBe(false)
+    await select.setValue('custom')
+    expect(find('conv-setting-turns').exists()).toBe(true)
+    await select.setValue('10')
+    expect(find('conv-setting-turns').exists()).toBe(false)
+  })
+
+  it('starts the number box from the preset that was selected when 사용자 입력 is chosen', async () => {
+    await mountPanel()
+    await find('conv-settings-btn').trigger('click')
+    await find('conv-setting-context').setValue('15')
+    await find('conv-setting-context').setValue('custom')
+    expect((find('conv-setting-turns').element as HTMLInputElement).value).toBe('15')
+  })
+
+  it.each(['0', '-3', '1.5', 'abc', '', '  ', '1000', '12345'])(
+    'rejects %j: save is disabled, a short error shows, and nothing is sent or corrected',
+    async (bad) => {
+      const { source } = await mountPanel()
+      await find('conv-settings-btn').trigger('click')
+      await find('conv-setting-context').setValue('custom')
+      await find('conv-setting-turns').setValue(bad)
+      expect(find('conv-setting-turns-error').exists()).toBe(true)
+      const save = find('conv-settings-save')
+      expect(save.attributes('disabled')).toBeDefined()
+      await save.trigger('click')
+      await find('conv-setting-turns').trigger('keydown', { key: 'Enter' })
+      await flushPromises()
+      expect(source.saveChatSettings).not.toHaveBeenCalled()
+      expect((find('conv-setting-turns').element as HTMLInputElement).value).toBe(bad)
+      expect(find('conv-settings').exists()).toBe(true)
+    },
+  )
+
+  it('keeps "all" saveable even after an invalid typed value', async () => {
+    const { source } = await mountPanel()
+    await find('conv-settings-btn').trigger('click')
+    await find('conv-setting-context').setValue('custom')
+    await find('conv-setting-turns').setValue('0')
+    await find('conv-setting-context').setValue('all')
+    expect(find('conv-setting-turns').exists()).toBe(false)
+    expect(find('conv-settings-save').attributes('disabled')).toBeUndefined()
+    await find('conv-settings-save').trigger('click')
+    await flushPromises()
+    expect(source.saveChatSettings).toHaveBeenCalledWith(expect.objectContaining({ context_mode: 'all' }), { projectId: 'p', groupId: 'p.m.0001' })
+  })
+
+  // NR0003 Rev.4 §4 (T0011): the saved last-N-turns value is the one the server confirmed, and
+  // it is what every later screen shows. The fake source plays the server: a save answers with
+  // the stored settings and every later fetch returns them.
+  describe('last-N-turns: server-confirmed value across reopen, remount and navigation', () => {
+    const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
+    const sel = () => find('conv-setting-context').element as HTMLSelectElement
+    const turnsInput = () => find('conv-setting-turns').element as HTMLInputElement
+
+    // The ⚙ button toggles, so only click it when the popover is closed.
+    async function openSettings() {
+      if (!find('conv-settings').exists()) await find('conv-settings-btn').trigger('click')
+    }
+
+    async function saveTyped(text: string) {
+      await openSettings()
+      await find('conv-setting-context').setValue('custom')
+      await find('conv-setting-turns').setValue(text)
+      await find('conv-settings-save').trigger('click')
+      await flushPromises()
+    }
+
+    it.each([1, 999])('shows the saved %i again when the popover is reopened, from the server answer', async (n) => {
+      const { source, data } = await mountPanel()
+      await saveTyped(String(n))
+      expect(source.saveChatSettings).toHaveBeenCalledTimes(1)
+      expect(source.saveChatSettings).toHaveBeenCalledWith(expect.objectContaining({ context_mode: 'recent', context_turns: n }), SCOPE)
+      expect(data.settings.contextTurns).toBe(n) // the "server" now holds exactly what was typed
+      expect(find('conv-settings').exists()).toBe(false)
+
+      await openSettings()
+      expect(sel().value).toBe('custom') // neither is a preset: reopens as 사용자 입력
+      expect(turnsInput().value).toBe(String(n))
+      expect(find('conv-setting-turns-error').exists()).toBe(false)
+      expect(find('conv-settings-save').attributes('disabled')).toBeUndefined()
+    })
+
+    it('keeps preset → typed → all → typed saves in step with the server, and keeps the number through "all"', async () => {
+      const { source, data } = await mountPanel()
+      const lastPatch = () => source.saveChatSettings.mock.calls.at(-1)![0] as Record<string, unknown>
+
+      // preset
+      await openSettings()
+      await find('conv-setting-context').setValue('10')
+      expect(find('conv-setting-turns').exists()).toBe(false)
+      await find('conv-settings-save').trigger('click')
+      await flushPromises()
+      expect(lastPatch()).toMatchObject({ context_mode: 'recent', context_turns: 10 })
+      expect(data.settings).toMatchObject({ contextMode: 'recent', contextTurns: 10 })
+
+      // typed
+      await saveTyped('777')
+      expect(lastPatch()).toMatchObject({ context_mode: 'recent', context_turns: 777 })
+      expect(data.settings).toMatchObject({ contextMode: 'recent', contextTurns: 777 })
+
+      // all: the number is not sent, so it is not overwritten
+      await openSettings()
+      expect(sel().value).toBe('custom')
+      expect(turnsInput().value).toBe('777')
+      await find('conv-setting-context').setValue('all')
+      expect(find('conv-setting-turns').exists()).toBe(false)
+      await find('conv-settings-save').trigger('click')
+      await flushPromises()
+      expect(lastPatch()).toMatchObject({ context_mode: 'all' })
+      expect(lastPatch()).not.toHaveProperty('context_turns')
+      expect(data.settings).toMatchObject({ contextMode: 'all', contextTurns: 777 })
+      await openSettings()
+      expect(sel().value).toBe('all')
+      expect(find('conv-setting-turns').exists()).toBe(false)
+
+      // typed again, starting from "all": choose 사용자 입력 to bring the input back
+      await find('conv-setting-context').setValue('custom')
+      expect(turnsInput().value).toBe('777') // the kept number
+      await find('conv-setting-turns').setValue('250')
+      await find('conv-settings-save').trigger('click')
+      await flushPromises()
+      expect(lastPatch()).toMatchObject({ context_mode: 'recent', context_turns: 250 })
+      expect(data.settings).toMatchObject({ contextMode: 'recent', contextTurns: 250 })
+      expect(source.saveChatSettings).toHaveBeenCalledTimes(4)
+      await openSettings()
+      expect(sel().value).toBe('custom')
+      expect(turnsInput().value).toBe('250')
+    })
+
+    it('survives a remount (F5): a fresh panel reads the stored value from the server', async () => {
+      const first = await mountPanel()
+      await saveTyped('999')
+      const stored = { ...first.data.settings }
+      expect(stored.contextTurns).toBe(999)
+      wrapper!.unmount()
+      wrapper = null
+
+      const { source } = await mountPanel({ settings: stored })
+      expect(source.fetchChatSettings).toHaveBeenCalledWith(SCOPE)
+      await openSettings()
+      expect(sel().value).toBe('custom')
+      expect(turnsInput().value).toBe('999')
+      expect(source.saveChatSettings).not.toHaveBeenCalled() // reading never writes
+
+      // the same for "all" with the number kept underneath
+      wrapper!.unmount()
+      wrapper = null
+      await mountPanel({ settings: { ...stored, contextMode: 'all' } })
+      await openSettings()
+      expect(sel().value).toBe('all')
+      expect(find('conv-setting-turns').exists()).toBe(false)
+    })
+
+    it('keeps the saved value when the conversation is switched', async () => {
+      const { source } = await mountPanel()
+      await saveTyped('999')
+      await find('conv-list-btn').trigger('click')
+      await findAll('conv-list-item')[1].trigger('click')
+      await flushPromises()
+      expect(source.fetchTurns).toHaveBeenCalledWith(B, expect.anything())
+      await openSettings()
+      expect(sel().value).toBe('custom')
+      expect(turnsInput().value).toBe('999')
+    })
+
+    it('keeps the saved value when the Flow changes, asking the server for the new Flow', async () => {
+      const { source, wrapper: w } = await mountPanel()
+      await saveTyped('1')
+      source.fetchChatSettings.mockClear()
+      await w.setProps({ groupId: 'p.m.0002' })
+      await flushPromises()
+      expect(source.fetchChatSettings).toHaveBeenLastCalledWith({ projectId: 'p', groupId: 'p.m.0002' })
+      await openSettings()
+      expect(sel().value).toBe('custom')
+      expect(turnsInput().value).toBe('1')
+    })
+
+    it('does not adopt a value the server did not confirm: a failed save leaves the old one', async () => {
+      const { source, data } = await mountPanel()
+      await saveTyped('40')
+      expect(data.settings.contextTurns).toBe(40)
+      source.saveChatSettings.mockRejectedValueOnce(new Error('boom'))
+      await saveTyped('999')
+      expect(data.settings.contextTurns).toBe(40)
+      expect(find('conv-settings').exists()).toBe(true) // not closed as if it had saved
+      await find('conv-settings-btn').trigger('click') // close without saving
+      await openSettings() // reopen redraws the last confirmed settings
+      expect(sel().value).toBe('custom')
+      expect(turnsInput().value).toBe('40')
+    })
+  })
+
   it('copies the chat mention, and falls back to an inline manual copy', async () => {
     const { source } = await mountPanel()
     await find('conv-more-btn').trigger('click')

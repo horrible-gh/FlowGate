@@ -1034,6 +1034,8 @@ export default {
       context: 'コンテキスト',
       context_turns: '直近 {n} ターン',
       context_all: 'すべて',
+      context_custom: 'ユーザー入力',
+      context_invalid: '{min}〜{max} の整数を入力してください',
     },
     notice: {
       rename_failed: 'チャットタイトルを変更できませんでした',

@@ -31,15 +31,35 @@
       </label>
       <label class="csx-row">
         <span>{{ t('gui.conversation.settings.context') }}</span>
-        <select v-model="draftRange" class="csx-select" data-test="conv-setting-context">
+        <select v-model="draftRange" class="csx-select" data-test="conv-setting-context" @change="onRangeChange">
           <option v-for="n in settings.contextTurnsPresets" :key="n" :value="String(n)">{{ t('gui.conversation.settings.context_turns', { n }) }}</option>
-          <option v-if="customTurns" :value="String(customTurns)">{{ t('gui.conversation.settings.context_turns', { n: customTurns }) }}</option>
+          <option value="custom">{{ t('gui.conversation.settings.context_custom') }}</option>
           <option value="all">{{ t('gui.conversation.settings.context_all') }}</option>
         </select>
       </label>
+      <div v-if="draftRange === 'custom'" class="csx-row csx-turns">
+        <span></span>
+        <div>
+          <input
+            v-model="draftTurnsText"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            class="csx-select csx-num"
+            :class="{ 'is-invalid': !turnsValid }"
+            data-test="conv-setting-turns"
+            :aria-label="t('gui.conversation.settings.context')"
+            :aria-invalid="!turnsValid"
+            @keydown.enter.prevent="saveSettings"
+          />
+          <div v-if="!turnsValid" class="csx-err" role="alert" data-test="conv-setting-turns-error">
+            {{ t('gui.conversation.settings.context_invalid', { min: settings.contextTurnsMin, max: settings.contextTurnsMax }) }}
+          </div>
+        </div>
+      </div>
       <div class="csx-foot">
         <button type="button" class="csx-link" @click="close">{{ t('gui.conversation.cancel') }}</button>
-        <button type="button" class="csx-save" data-test="conv-settings-save" :disabled="saving" @click="saveSettings">
+        <button type="button" class="csx-save" data-test="conv-settings-save" :disabled="saving || !turnsValid" @click="saveSettings">
           {{ t('gui.conversation.save') }}
         </button>
       </div>
@@ -69,13 +89,23 @@ const { t } = useI18n()
 const rootEl = ref<HTMLElement | null>(null)
 const { open, close } = usePopover(rootEl)
 const draftSendAction = ref<SendAction>('none')
+// A preset's number as text, 'custom' (사용자 입력) or 'all'.
 const draftRange = ref('20')
+// The typed "last N turns", used only while 'custom' is selected. It is raw text on
+// purpose: 0, -3, 1.5, "abc", "" and anything over the server cap are rejected as
+// typed -- never rounded or clamped into a value the person did not write.
+const draftTurnsText = ref('20')
+// The select's value before the person's latest pick.
+let shownRange = draftRange.value
 
-const customTurns = computed(() =>
-  props.settings.contextMode === 'recent' && !props.settings.contextTurnsPresets.includes(props.settings.contextTurns)
-    ? props.settings.contextTurns
-    : null,
-)
+const turnsValid = computed(() => {
+  // A preset and 'all' carry no typed text, so only 'custom' can be invalid.
+  if (draftRange.value !== 'custom') return true
+  const text = draftTurnsText.value.trim()
+  if (!/^\d+$/.test(text)) return false
+  const n = Number(text)
+  return Number.isSafeInteger(n) && n >= props.settings.contextTurnsMin && n <= props.settings.contextTurnsMax
+})
 
 function toggleSettings(): void {
   if (open.value) {
@@ -83,8 +113,24 @@ function toggleSettings(): void {
     return
   }
   draftSendAction.value = props.settings.sendAction
-  draftRange.value = props.settings.contextMode === 'all' ? 'all' : String(props.settings.contextTurns)
+  // A saved number that is not a preset reopens as 사용자 입력 with that number filled in.
+  draftRange.value =
+    props.settings.contextMode === 'all'
+      ? 'all'
+      : props.settings.contextTurnsPresets.includes(props.settings.contextTurns)
+        ? String(props.settings.contextTurns)
+        : 'custom'
+  draftTurnsText.value = String(props.settings.contextTurns)
+  shownRange = draftRange.value
   open.value = true
+}
+
+// Only a person's own pick runs this (not the reopen redraw): choosing 사용자 입력 right
+// after a preset starts the input from that preset's number.
+function onRangeChange(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  if (value === 'custom' && shownRange !== 'custom' && shownRange !== 'all') draftTurnsText.value = shownRange
+  shownRange = value
 }
 
 function saveSettings(): void {
@@ -93,8 +139,9 @@ function saveSettings(): void {
     // L0010 §2-7-4: never send context_turns with 'all' — the number must survive.
     patch.context_mode = 'all'
   } else {
+    if (!turnsValid.value) return
     patch.context_mode = 'recent'
-    patch.context_turns = Number(draftRange.value)
+    patch.context_turns = Number(draftRange.value === 'custom' ? draftTurnsText.value.trim() : draftRange.value)
   }
   emit('save', patch, (ok) => {
     if (ok) close()
@@ -178,6 +225,20 @@ function saveSettings(): void {
   color: var(--fg2-text);
   font: inherit;
   padding: 0 5px;
+}
+
+.csx-num {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.csx-num.is-invalid {
+  border-color: var(--fg2-status-danger-fg, #d33);
+}
+
+.csx-err {
+  margin-top: 3px;
+  color: var(--fg2-status-danger-fg, #d33);
 }
 
 .csx-foot {

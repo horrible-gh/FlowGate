@@ -1045,6 +1045,8 @@ export default {
       context: '컨텍스트',
       context_turns: '최근 {n}턴',
       context_all: '전체',
+      context_custom: '사용자 입력',
+      context_invalid: '{min}~{max} 사이의 정수를 입력하세요',
     },
     notice: {
       rename_failed: '채팅 제목을 바꾸지 못했습니다',

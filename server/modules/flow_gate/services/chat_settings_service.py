@@ -48,16 +48,15 @@ from modules.flow_gate.db import user_chat_command_policy as command_policy_stor
 from modules.flow_gate.db import user_chat_settings as chat_settings_store
 from modules.flow_gate.db import user_chat_source_access as source_access_store
 from modules.flow_gate.db.connection import get_store, now_iso
-from modules.flow_gate.services.conversation_query_service import TURN_LIMIT_MAX
 
 _log = logging.getLogger(__name__)
 
 # -- L0010 §1-1 numeric parameters -------------------------------------------
 CONTEXT_TURNS_MIN = 1
-# L0010 §1-4: derived, not copied.  A range the user can pick but the server cannot
-# hand over in one read would show up as "I narrowed it to 200 turns, so why is it
-# still calling twice" -- a difference with no explanation available to them.
-CONTEXT_TURNS_MAX = TURN_LIMIT_MAX
+# NR0003 Rev.4 §4: no longer derived from TURN_LIMIT_MAX (the per-read page size of the
+# conversation query).  Context turns are a *selection* range, so the cap is its own
+# number; a stored column has no CHECK on it, so raising it needs no migration.
+CONTEXT_TURNS_MAX = 999
 CONTEXT_TURNS_DEFAULT = 20
 # Drawn in the list; never used to decide anything (L0010 §1-1).
 CONTEXT_TURNS_PRESETS = (5, 10, 15, 20, 30)

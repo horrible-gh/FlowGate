@@ -296,8 +296,21 @@ class TestFoldedMention:
 # ── 3. reading the settings ───────────────────────────────────────────────────
 
 class TestResolveSettings:
-    def test_maximum_is_derived_from_the_read_page_cap_not_typed_twice(self):
-        assert css.CONTEXT_TURNS_MAX == conversation_query_service.TURN_LIMIT_MAX
+    def test_maximum_is_999_and_independent_of_the_read_page_cap(self):
+        # NR0003 Rev.4 §4: a selection range, not a page size.  The worker pages
+        # through next_after_seq, so a value above one page still delivers N turns.
+        assert css.CONTEXT_TURNS_MAX == 999
+        assert css.CONTEXT_TURNS_MAX > conversation_query_service.TURN_LIMIT_MAX
+        assert css.domain()["context_turns_max"] == 999
+
+    @pytest.mark.parametrize("value", [1, 200, 201, 999])
+    def test_save_accepts_the_whole_range(self, value):
+        css.validate_patch({"context_turns": value})  # raises on a refusal
+
+    @pytest.mark.parametrize("value", [0, -1, 1000, 1.5, "20", None, True])
+    def test_out_of_range_or_non_integer_is_refused_not_corrected(self, value):
+        with pytest.raises(css.ChatSettingsError):
+            css.validate_patch({"context_turns": value})
 
     def test_never_saved_is_the_defaults_and_says_so(self, memory_store):
         settings, is_default = css.resolve_chat_settings("u1")
@@ -508,6 +521,167 @@ class TestChatSettingsEndpoint:
         assert paths == {"/me/chat-settings"}
 
 
+# ── 5b. a saved 1..999 reaches the invocation (NR0003 Rev.4 §4, T0011) ───────
+
+class _WindowRoute:
+    """Stands in for ``conversation_routes._list_authenticated`` with the real paging rules.
+
+    A page is capped at ``TURN_LIMIT_MAX`` (a request above it is trimmed, not refused) and
+    ``next_after_seq`` is the last delivered seq whenever more rows follow the page --
+    the same two rules ``conversation_query_service.list_turns`` applies.
+    """
+
+    def __init__(self, head_seq):
+        self.head_seq = head_seq
+        self.calls: list[tuple] = []
+
+    def __call__(self, _doc, _raw, after_seq, before_seq, limit, include_head):
+        import json as _json
+        from types import SimpleNamespace
+
+        self.calls.append((after_seq, before_seq, limit, include_head))
+        effective = min(
+            conversation_query_service.TURN_LIMIT_DEFAULT if limit is None else int(limit),
+            conversation_query_service.TURN_LIMIT_MAX,
+        )
+        rows = list(range(after_seq + 1, self.head_seq + 1))
+        picked = rows[:effective]
+        more = len(rows) > effective
+        body = {
+            "ok": True,
+            "head_seq": self.head_seq,
+            "limit": effective,
+            "next_after_seq": picked[-1] if (more and picked) else None,
+            "has_more": more,
+            "truncated_by": "limit" if more else None,
+            "turns": [{"seq": s, "role": "user", "body": str(s)} for s in picked],
+            "head": {"opening_turns": []} if include_head else None,
+        }
+        return SimpleNamespace(status_code=200, body=_json.dumps(body).encode("utf-8"))
+
+
+class TestSavedTurnCountReachesTheInvocation:
+    """Save N through the endpoint, read it back with GET, then check that BOTH consumers
+    of the stored setting -- the copied mention and the API-provider context read -- start
+    at after_seq = max(0, head - N) and the API read really delivers the N turns."""
+
+    DOC = "flowgate.default.0362.0006-CH"
+
+    @staticmethod
+    def _save_and_reread(client, n):
+        saved = client.patch("/me/chat-settings", json={"context_mode": "recent", "context_turns": n})
+        assert saved.status_code == 200
+        assert saved.json()["settings"]["context_turns"] == n
+        reread = client.get("/me/chat-settings").json()
+        assert reread["is_default"] is False
+        assert reread["settings"]["context_mode"] == "recent"
+        assert reread["settings"]["context_turns"] == n  # not corrected on the way out
+        return reread["settings"]
+
+    def _mention_after_seq(self, monkeypatch, head_seq):
+        monkeypatch.setattr(ims, "_chat_lookup_sections", lambda **_kwargs: [])
+        monkeypatch.setattr(ims.conversation_turns, "current_head_seq", lambda _doc: head_seq)
+        text = ims.build_conversation_mention(
+            doc_id=self.DOC, project="flowgate", module="default",
+            group_name="flowgate.default.0362", raw_token="RAW",
+            token_id="tok_0012", api_base_url="http://h:1/api/v1", user_id="u1",
+        )
+        marker = f"/conversation/{self.DOC}/turns?after_seq="
+        return int(text.split(marker)[1].split("&")[0]), text
+
+    def _api_window(self, monkeypatch, head_seq):
+        from modules.flow_gate.api.v1 import conversation_routes
+        from modules.flow_gate.services.ai_invoke import worker as ai_worker
+
+        route = _WindowRoute(head_seq)
+        monkeypatch.setattr(conversation_routes, "_authenticate", lambda *_a: ({}, None))
+        monkeypatch.setattr(ai_worker.conversation_turns, "current_head_seq", lambda _doc: head_seq)
+        monkeypatch.setattr(conversation_routes, "_list_authenticated", route)
+        status, payload = ai_worker._conversation_context(
+            {"doc_ref": self.DOC, "issued_to": "u1"}, "raw-token"
+        )
+        assert status == 200
+        return payload, route
+
+    @pytest.mark.parametrize(
+        "n,head_seq",
+        [
+            (1, 40),       # lower bound
+            (10, 23),      # a preset
+            (200, 1000),   # exactly one page
+            (201, 1000),   # first value that needs a second page
+            (250, 1000),   # N > 200: page cap, then continuation
+            (999, 1500),   # upper bound over five pages
+            (999, 999),    # head == N: nothing folded
+            (999, 40),     # head < N: starts at 0, delivers what exists
+            (5, 3),        # head < N with a small N
+        ],
+    )
+    def test_saved_value_is_what_both_paths_use(self, memory_store, monkeypatch, n, head_seq):
+        client = _client()
+        self._save_and_reread(client, n)
+        expected_after = max(0, head_seq - n)
+
+        mention_after, text = self._mention_after_seq(monkeypatch, head_seq)
+        payload, route = self._api_window(monkeypatch, head_seq)
+
+        assert mention_after == expected_after
+        assert payload["context_window"] == {
+            "mode": "recent", "context_turns": n,
+            "after_seq": expected_after, "folded": expected_after,
+        }
+        # The mention and the API read agree on the start of the window.
+        assert payload["context_window"]["after_seq"] == mention_after
+
+        delivered = [turn["seq"] for turn in payload["turns"]]
+        assert delivered == list(range(expected_after + 1, head_seq + 1))
+        assert len(delivered) == min(n, head_seq)
+        assert route.calls[0][0] == expected_after
+        assert route.calls[0][2] == n  # the saved N is what the worker asks for first
+        assert [call[3] for call in route.calls] == [True] + [False] * (len(route.calls) - 1)
+        assert ("folded" in text) is (expected_after > 0)
+
+    def test_above_one_page_the_cap_splits_the_read_and_still_delivers_n(self, memory_store, monkeypatch):
+        self._save_and_reread(_client(), 999)
+        payload, route = self._api_window(monkeypatch, 1500)
+        assert conversation_query_service.TURN_LIMIT_MAX < 999
+        # 999 = 4 * 200 + 199: each follow-up asks only for what is still missing.
+        assert [call[2] for call in route.calls] == [999, 799, 599, 399, 199]
+        assert [call[0] for call in route.calls] == [501, 701, 901, 1101, 1301]
+        assert len(payload["turns"]) == 999
+        assert payload["turns"][0]["seq"] == 502  # after_seq=501 is exclusive
+        assert payload["turns"][-1]["seq"] == 1500
+
+    def test_all_mode_ignores_the_saved_count_and_starts_at_zero(self, memory_store, monkeypatch):
+        client = _client()
+        self._save_and_reread(client, 999)
+        assert client.patch("/me/chat-settings", json={"context_mode": "all"}).status_code == 200
+        reread = client.get("/me/chat-settings").json()["settings"]
+        assert (reread["context_mode"], reread["context_turns"]) == ("all", 999)  # count kept
+        mention_after, text = self._mention_after_seq(monkeypatch, 1500)
+        assert mention_after == 0
+        assert "folded" not in text
+
+    def test_preset_then_direct_value_then_all_then_direct_value_again(self, memory_store, monkeypatch):
+        client = _client()
+        for n in (10, 999, 1, 250):
+            self._save_and_reread(client, n)
+            mention_after, _text = self._mention_after_seq(monkeypatch, 1500)
+            assert mention_after == 1500 - n
+        client.patch("/me/chat-settings", json={"context_mode": "all"})
+        assert self._mention_after_seq(monkeypatch, 1500)[0] == 0
+        self._save_and_reread(client, 999)
+        assert self._mention_after_seq(monkeypatch, 1500)[0] == 501
+
+    def test_a_refused_value_leaves_the_last_saved_one_in_force(self, memory_store, monkeypatch):
+        client = _client()
+        self._save_and_reread(client, 999)
+        for bad in (0, 1000):
+            assert client.patch("/me/chat-settings", json={"context_turns": bad}).status_code == 422
+        assert client.get("/me/chat-settings").json()["settings"]["context_turns"] == 999
+        assert self._mention_after_seq(monkeypatch, 1500)[0] == 501
+
+
 # ── 6. the store's SQL ────────────────────────────────────────────────────────
 
 class TestStoreSql:
@@ -615,7 +789,7 @@ class TestMigration:
         chat_settings_db.rollback()
 
     def test_the_upper_bound_is_left_to_the_code(self, chat_settings_db):
-        # The cap is derived from TURN_LIMIT_MAX and moves. A CHECK here would turn
+        # The cap (CONTEXT_TURNS_MAX) is code, not schema, and moves. A CHECK here would turn
         # lowering that constant into a table-rebuild migration that fails on old rows.
         _insert(chat_settings_db, context_turns=100_000)
         chat_settings_db.rollback()

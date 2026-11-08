@@ -1034,6 +1034,8 @@ export default {
       context: 'Context',
       context_turns: 'Last {n} turns',
       context_all: 'All',
+      context_custom: 'Custom',
+      context_invalid: 'Enter a whole number from {min} to {max}',
     },
     notice: {
       rename_failed: 'Could not rename the chat',
