@@ -44,7 +44,9 @@ def test_browser_archive_restore_and_mockup(env, tmp_path):
         measured = json.loads((out / "results.json").read_text(encoding="utf-8"))
         assert measured["actions"] == ["archive", "restore"]
         assert measured["adjacent"] and measured["normalTreeHidden"] and measured["restoredTerminalVisible"]
-        assert measured["idleRunButtons"] == 0
+        assert measured["archivedRunCommandsDisabled"]
+        assert measured["archivedOpenedReadOnly"] and measured["restoredOpenTab"]
+        assert measured["layoutWrites"] == 0
         row = sql(env, "SELECT archived_at,archived_by,archive_restored_at FROM groups WHERE group_id=?", [FLOW])[0]
         assert row["archived_at"] is None and row["archived_by"] is None and row["archive_restored_at"]
         assert len(env["events"]) == 2

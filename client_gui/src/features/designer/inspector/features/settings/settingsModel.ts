@@ -212,6 +212,7 @@ const HIDDEN: SettingsAvailabilityItem = { visible: false, enabled: false, reaso
 
 /** Why the settings cannot be changed: one reason, in the order of D#1 §8.3 rule 6-1, then this feature's own. */
 export function settingsDisabledReason(input: SettingsInput): string | null {
+  if (input.readOnly === 'archived') return 'reason.read_only_archived'
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (input.readOnly === 'revision') return 'reason.read_only_revision'
   if (input.groupDisposed || input.blocked === 'disposed') return 'reason.disposed'

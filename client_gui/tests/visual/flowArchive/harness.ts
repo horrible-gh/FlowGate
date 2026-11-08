@@ -1,10 +1,15 @@
 // T-c browser harness: real Toolbar, Explorer, context menu and HTTP APIs; no archive HTTP mocks.
-import { createApp, h, nextTick, reactive, ref } from 'vue'
+import { createApp, h, nextTick, ref } from 'vue'
 import { createPinia } from 'pinia'
 import api from '@shared/api'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import { useProjectStore } from '@/features/project'
+import DesignerCenter from '@/features/designer/center/DesignerCenter.vue'
+import { createDesignerCenterSession } from '@/features/designer/center/designerCenterSession'
+import type { FlowGraph } from '@/features/designer/center/graph/flowGraph'
+import '@vue-flow/core/dist/style.css'
+import '@vue-flow/core/dist/theme-default.css'
 import DesignerToolbar from '@/features/designer/top/DesignerToolbar.vue'
 import ProjectExplorer from '@/features/designer/projectExplorer/ProjectExplorer.vue'
 import DesignerContextMenu from '@/features/designer/contextMenu/DesignerContextMenu.vue'
@@ -25,9 +30,27 @@ const eligible = ref(false)
 const refresh = ref(0)
 const actions: string[] = []
 let actionError: unknown
+let writes = 0
+// The graph fixture makes editing possible when live; archive/tree requests use the real server.
+const graph = {
+  flowId: FLOW, ownership: 'graph', viewMode: 'draft', latestRevisionNo: 1,
+  draft: { version: 1, editable: true, confirmable: true, blockedReason: null, baseRevisionNo: 1 },
+  nodes: [{ id: 'a', kind: 'task', title: '보관된 카드', x: 0, y: 0, movable: true, structureEditable: true,
+    definition: { nodeType: 'document', docType: 'T', rootBound: false, assignee: null, paletteItemId: null } }],
+  edges: [], run: { runId: 'current', status: 'idle', lastEventSeq: 1 },
+} as unknown as FlowGraph
+const center = createDesignerCenterSession({
+  source: { isSample: false, loadGraph: async () => graph,
+    loadRun: async () => ({ runId: 'current', status: 'idle', openNodeKeys: [], nodeRuns: [], viewerCanApprove: true }),
+    saveLayout: async () => { writes++; return { ignoredNodeIds: [] } },
+  },
+  readArchive: store.readFlowArchive,
+})
+center.setProject('archive')
 async function change(id: string, archived: boolean) {
   try {
     await store.setFlowArchived('archive', id, archived)
+    center.setFlowArchived(id, archived)
     actions.push(archived ? 'archive' : 'restore')
     eligible.value = !archived
     refresh.value++
@@ -35,7 +58,7 @@ async function change(id: string, archived: boolean) {
 }
 const app = createApp({ setup() {
   const connector = useDesignerContextMenu({
-    center: reactive({ state: { projectId: 'archive', activeFlowId: FLOW, tabs: [] } }) as never,
+    center,
     projectId: () => 'archive', canSelectAll: () => false, selectAll() {}, openGroupCreate() {},
     openFlowCreate() {}, selectPalette() {}, arrange: { groups: [], enabled: () => false, run() {} },
     archive: { read: store.readFlowArchive, busy: (id) => !!store.archiveBusy[id],
@@ -43,10 +66,13 @@ const app = createApp({ setup() {
   })
   return () => h('div', [
     h(DesignerToolbar, { runPhase: 'idle', density: 'normal', zoom: 100,
+      targets: { project: true, group: true, flow: center.state.tabs.length > 0, readOnly: center.isFlowReadOnly(FLOW) },
       canArchive: eligible.value, archiveBusy: !!store.archiveBusy[FLOW], onArchive: () => change(FLOW, true) }),
     h('div', { style: 'width:340px;height:260px;margin-top:12px' }, [h(ProjectExplorer, {
       projectId: 'archive', refreshToken: refresh.value, includeTerminal: false,
+      onActivateFlow: (flow: { flowId: string; flowName: string }) => center.openFlow({ projectId: 'archive', ...flow }),
     })]),
+    h('div', { style: 'width:840px;height:310px;position:absolute;left:378px;top:240px;display:flex' }, [h(DesignerCenter, { center })]),
     h(DesignerContextMenu, { host: connector.host, onRequest: connector.run }),
   ])
 } })
@@ -88,7 +114,7 @@ async function run() {
   for (const key of ['font', 'gap', 'lineHeight', 'padding', 'border', 'radius', 'color', 'strokeWidth', 'svg'] as const) {
     if (real[key] !== mock[key]) throw Error(`Archive style mismatch: ${key}`)
   }
-  if (q('[data-test="designer-tool-run"]')) throw Error('Idle start buttons reappeared')
+  const idleRunButtons = document.querySelectorAll('[data-test="designer-tool-run"]').length
   button.click()
   await until(() => actions.length === 1 && !store.archiveBusy[FLOW], 'archive POST')
   const hidden = await store.fetchGroupTree('archive', { force: true, includeTerminal: true })
@@ -107,10 +133,21 @@ async function run() {
   const row = q('[data-test="project-explorer-flow"]')!
   const archivedOpacity = getComputedStyle(row).opacity
   if (!(Number(archivedOpacity) < 1)) throw Error('Archived row is not dimmed')
+  row.querySelector<HTMLElement>('.explorer-row')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+  await until(() => q('[data-test="designer-flow-tab"]') && q('.vue-flow__node'), 'archived tab and canvas')
+  if (!center.isFlowReadOnly(FLOW) || center.runMarks(FLOW).lock !== 'archived') throw Error('Archived canvas unlocked')
+  if (q('.vue-flow__node')!.classList.contains('draggable')) throw Error('Archived card can be dragged')
+  if ([...document.querySelectorAll<HTMLButtonElement>('[data-test="designer-tool-run"]')].some(button => !button.disabled)) throw Error('Archived run command enabled')
+  center.selectNode(FLOW, 'a')
+  if (center.activeSelection.value?.titleEdit) throw Error('Archived title editable')
+  center.commitViewport(FLOW, { x: 30, y: 40, zoom: 1.2 })
+  await new Promise(resolve => setTimeout(resolve, 600))
+  if (writes) throw Error('Read-only viewport wrote to server')
   row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 170, clientY: 240 }))
   await until(() => q('[data-key="flow.restore"]')?.getAttribute('aria-disabled') === 'false', 'restore context menu')
   q('[data-key="flow.restore"]')!.click()
   await until(() => actions.length === 2 && !store.archiveBusy[FLOW], 'restore POST')
+  if (center.isFlowReadOnly(FLOW) || center.state.tabs.length !== 1) throw Error('Restore did not retain and unlock tab')
   toggle.click()
   const restored = await store.fetchGroupTree('archive', { force: true, includeTerminal: false })
   if (!restored.some((n) => n.id === FLOW && !n.archivedAt)) throw Error('Restored terminal flow hidden')
@@ -120,7 +157,7 @@ async function run() {
   if (!reread.some((n) => n.id === FLOW)) throw Error('Restore did not persist')
   await until(() => q('[data-test="project-explorer-flow"]') && !q('.is-archived'), 'restored explorer')
   return { adjacent, real, mock, archivedOpacity, actions, normalTreeHidden: true, restoredTerminalVisible: true,
-    idleRunButtons: 0, ua: navigator.userAgent, dpr: devicePixelRatio }
+    archivedOpenedReadOnly: true, restoredOpenTab: true, layoutWrites: writes, idleRunButtons, archivedRunCommandsDisabled: true, ua: navigator.userAgent, dpr: devicePixelRatio }
 }
 run().then((result) => {
   document.getElementById('fg-measure')!.textContent = `FGMEASURE${JSON.stringify(result)}FGMEASURE`

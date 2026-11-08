@@ -51,7 +51,7 @@ describe('0142 chat send pins the AI of the message', () => {
     expect(await session.send('a')).toBe(true)
     await flushPromises()
     expect(source.startChatRun).toHaveBeenCalledTimes(1)
-    expect(source.startChatRun).toHaveBeenCalledWith(A, 'opus')
+    expect(source.startChatRun).toHaveBeenCalledWith(A, 'opus', expect.any(String))
   })
 
   it('2: a change of the AI while the turn is stored does not change the run', async () => {
@@ -65,8 +65,8 @@ describe('0142 chat send pins the AI of the message', () => {
     expect(await sending).toBe(true)
     await flushPromises()
     expect(source.startChatRun).toHaveBeenCalledTimes(1)
-    expect(source.startChatRun).toHaveBeenCalledWith(A, 'opus')
-    expect(source.startChatRun).not.toHaveBeenCalledWith(expect.anything(), 'sonnet')
+    expect(source.startChatRun).toHaveBeenCalledWith(A, 'opus', expect.any(String))
+    expect(source.startChatRun).not.toHaveBeenCalledWith(expect.anything(), 'sonnet', expect.anything())
     // The picker keeps what the user chose afterwards; only the message's own run is pinned.
     expect(session.state.selectedProviderId).toBe('sonnet')
   })
@@ -84,7 +84,7 @@ describe('0142 chat send pins the AI of the message', () => {
     await flushPromises()
     expect(source.postTurn.mock.calls[1][1].idempotencyKey).toBe(failed.idempotencyKey)
     expect(source.startChatRun).toHaveBeenCalledTimes(1)
-    expect(source.startChatRun).toHaveBeenCalledWith(A, 'opus')
+    expect(source.startChatRun).toHaveBeenCalledWith(A, 'opus', expect.any(String))
   })
 
   it('4: leaving the chat before the turn is stored drops the run (generation guard kept)', async () => {
@@ -124,7 +124,7 @@ describe('0142 chat send pins the AI of the message', () => {
     const chatId = session.state.activeChatId!
     expect(source.postTurn).toHaveBeenCalledWith(chatId, expect.objectContaining({ body: 'hello' }))
     expect(source.startChatRun).toHaveBeenCalledTimes(1)
-    expect(source.startChatRun).toHaveBeenCalledWith(chatId, 'opus')
+    expect(source.startChatRun).toHaveBeenCalledWith(chatId, 'opus', expect.any(String))
     expect(session.state.selectedProviderId).toBe('sonnet')
   })
 
@@ -167,7 +167,7 @@ describe('0142 chat send pins the AI of the message', () => {
       const { session, source } = await setup()
       session.selectProvider('sonnet')
       await session.invokeAi()
-      expect(source.startChatRun).toHaveBeenCalledWith(A, 'sonnet')
+      expect(source.startChatRun).toHaveBeenCalledWith(A, 'sonnet', expect.any(String))
     })
   })
 })

@@ -147,6 +147,7 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
     jobs: list = []
 
     def body() -> dict:
+        require_writable(flow_id)
         own = read_ownership(flow_id)                                             # 1~3 담당
         if own.state != "graph":
             raise _ownership_error(flow_id, own)
@@ -410,6 +411,7 @@ def _guarded_run(run_id: str, body_of, command: bool = False, project_id: Option
     jobs: list = []
 
     def body() -> dict:
+        require_writable(flow_id)
         run = run_store.run_by_id(run_id)                                        # re-read after the bump
         if run is None:
             raise GraphApiError(404, "run_not_found", {"run_id": run_id})
@@ -695,6 +697,9 @@ def settle_if_needed(flow_id: str, project_id: Optional[str]) -> None:
     no node event to judge it (a card review that ended without passing) goes idle or opens what its command may, an
     idle run whose existing work goes on again (a card review started) is running again, and an idle run's reason
     follows its nodes (``run_state_ports.settle``). A failure only skips it; the read goes on."""
+    from modules.flow_gate.db.groups import is_archived
+    if is_archived(flow_id):
+        return
     run = run_store.active_run(flow_id)
     if run is None:
         return
@@ -707,7 +712,7 @@ def settle_if_needed(flow_id: str, project_id: Optional[str]) -> None:
     jobs: list = []
 
     def body() -> None:
-        if read_ownership(flow_id).state != "graph":
+        if is_archived(flow_id) or read_ownership(flow_id).state != "graph":
             return
         again = run_store.active_run(flow_id)
         if again is not None:
@@ -723,9 +728,11 @@ def settle_if_needed(flow_id: str, project_id: Optional[str]) -> None:
 
 def current_run(group: dict) -> dict:
     flow_id = group["group_id"]
-    result_binder.reconcile_if_needed(flow_id, group.get("project_id"))
-    card_settings_ports.reconcile_stage(flow_id)                    # 0105 T#2 B-3: a lost run-end stage, once
-    settle_if_needed(flow_id, group.get("project_id"))
+    from modules.flow_gate.db.groups import is_archived
+    if not is_archived(flow_id):
+        result_binder.reconcile_if_needed(flow_id, group.get("project_id"))
+        card_settings_ports.reconcile_stage(flow_id)                # 0105 T#2 B-3: a lost run-end stage, once
+        settle_if_needed(flow_id, group.get("project_id"))
     run = run_store.current_run(flow_id)
     return {"run": run_payload(run["run_id"], with_nodes=True) if run else None}
 

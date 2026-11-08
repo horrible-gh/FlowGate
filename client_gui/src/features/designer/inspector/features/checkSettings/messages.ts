@@ -84,6 +84,7 @@ export default {
     failed: '저장 실패',
     reason: {
       read_only_conflict: '플로우 소유 충돌 · 읽기 전용',
+      read_only_archived: '읽기 전용입니다. 보관 상태를 확인하거나 복원한 뒤 변경하세요.',
       read_only_revision: '확정된 리비전 보기 · 읽기 전용',
       disposed: '폐기된 그룹',
       placing: '카드를 저장하는 중',
@@ -199,6 +200,7 @@ export default {
     failed: 'Not saved',
     reason: {
       read_only_conflict: 'Ownership conflict · read only',
+      read_only_archived: 'Read only. Check the archive status or restore the Flow before making changes.',
       read_only_revision: 'Confirmed revision view · read only',
       disposed: 'Disposed group',
       placing: 'Saving the card',
@@ -313,6 +315,7 @@ export default {
     failed: '保存失敗',
     reason: {
       read_only_conflict: '所有の競合 · 読み取り専用',
+      read_only_archived: '読み取り専用です。保管状態を確認するか、フローを復元してから変更してください。',
       read_only_revision: '確定リビジョンの表示 · 読み取り専用',
       disposed: '破棄されたグループ',
       placing: 'カードを保存中',

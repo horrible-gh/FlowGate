@@ -26,6 +26,7 @@ def save_layout(group: dict, user_id: str, req: LayoutRequest, client_id: Option
     ensure_identity(flow_id, project_id, user_id, client_id)
 
     def body() -> dict:
+        require_writable(flow_id)
         keys = current_node_keys(flow_id)
         retired = layout_store.retired_keys(flow_id)
         saved: list[str] = []

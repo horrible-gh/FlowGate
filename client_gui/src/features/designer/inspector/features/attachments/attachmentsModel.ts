@@ -116,6 +116,7 @@ export type AttachmentsAvailability = Readonly<Record<AttachmentsOperation, Atta
 
 /** Why a change is disabled: one reason, in the order of D#1 §8.3 rule 6-1. */
 export function attachmentsDisabledReason(input: AttachmentsInput, operation: 'add' | 'delete'): string | null {
+  if (input.readOnly === 'archived') return 'reason.read_only_archived'
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (input.readOnly === 'revision') return 'reason.read_only_revision'
   if (input.groupDisposed || input.blocked === 'group_disposed') return 'reason.disposed'

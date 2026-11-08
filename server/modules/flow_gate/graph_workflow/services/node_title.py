@@ -70,6 +70,7 @@ def save_human_title(group: dict, node_key: str, raw_title: str, user_id: str, c
         raise GraphApiError(409, "feature_not_enabled", {"flow_id": flow_id, "feature": "node_title"})
 
     def body() -> dict:
+        require_writable(flow_id)
         if flow_disposed_strict(flow_id):
             raise GraphApiError(409, "flow_disposed", {"flow_id": flow_id})
         own = read_ownership(flow_id)

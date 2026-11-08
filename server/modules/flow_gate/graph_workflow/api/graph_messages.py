@@ -6,6 +6,11 @@ Keys the domain attaches for wording (``_`` prefix) are used here and never sent
 from __future__ import annotations
 
 SOURCE_MESSAGES = {
+    "flow_archived": {
+        "ko": "보관된 플로우입니다. 변경하려면 먼저 복원하세요.",
+        "en": "This Flow is archived. Restore it before making changes.",
+        "ja": "保管されたフローです。変更するには先に復元してください。",
+    },
     "graph_git_required": {
         "ko": "문서 전용 Graph attempt의 소스 작업에는 Git 통합이 필요합니다.",
         "en": "Source access for a document-only Graph attempt requires Git integration.",

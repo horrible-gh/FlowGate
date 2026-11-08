@@ -47,7 +47,8 @@ export interface ConversationSource {
   subscribeActivities?(chatId: string, listener: (activity: ConversationActivity) => void): () => void
 
   listProviders(projectId: string): Promise<ProviderList>
-  startChatRun(chatId: string, providerId: string | null): Promise<string | null>
+  /** flowgate.v02.0152: `clientRequestId` names the press; a resend with the same id gets the run already admitted. */
+  startChatRun(chatId: string, providerId: string | null, clientRequestId?: string): Promise<string | null>
   fetchRun(runId: string): Promise<AiRunState>
   listRuns(scope: ConversationScope, limit: number): Promise<AiRunList>
   cancelRun(runId: string): Promise<void>

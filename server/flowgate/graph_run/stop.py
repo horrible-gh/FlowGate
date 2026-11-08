@@ -89,6 +89,8 @@ def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> d
     launchers: list[str] = []
 
     def begin() -> None:
+        from modules.flow_gate.graph_workflow.services.graph_service import require_writable
+        require_writable(flow_id)
         run = run_store.run_by_id(run_id)
         if run is None or run["group_id"] != flow_id:
             raise GraphApiError(404, "run_not_found", {"run_id": run_id})

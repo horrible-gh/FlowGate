@@ -315,7 +315,8 @@ export interface FlowGraphSelection {
    * running, paused or stopping (center/run/flowRunLock.ts); TR0031 rev1: `unknown` while its run status is not
    * confirmed (being read, or the read failed). Absent / null = not locked.
    */
-  readonly editLock?: 'run' | 'unknown' | null
+  readonly editLock?: 'run' | 'unknown' | 'archived' | null
+  readonly flowReadOnly?: boolean
   /**
    * flowgate.v02.0070 T#1: whether the card's own title may be edited now (graph/nodeTitle.ts nodeTitleEdit) and, when it
    * may not because the card runs, `lock: 'running'`. Absent / null = not editable (the source saves no titles).

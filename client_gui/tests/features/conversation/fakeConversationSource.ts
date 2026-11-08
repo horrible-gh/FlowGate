@@ -30,6 +30,8 @@ export interface FakeData {
   runDetails: Record<string, AiRunState>
   /** `${runId}\n${path}` → stored run change file diff. */
   diffs: Record<string, RunFileDiff>
+  /** flowgate.v02.0152: client_request_id → the run the "server" admitted for that press (a resend gets it back). */
+  admitted: Record<string, string>
 }
 
 export function turn(seq: number, speaker: 'user' | 'ai', body: string, createdAt: string | null = null, extra: Partial<ConversationTurn> = {}): ConversationTurn {
@@ -48,6 +50,7 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
     activeRun: init.activeRun ?? null,
     runDetails: init.runDetails ?? {},
     diffs: init.diffs ?? {},
+    admitted: init.admitted ?? {},
   }
   let nextSeq = 100
   const owedTitles = new Map<string, string>(data.chats.filter((c) => c.autoTitle?.state === 'owed').map((c) => [c.id, c.autoTitle!.provisionalTitle]))
@@ -118,11 +121,14 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
       return { ...diff }
     }),
     listProviders: vi.fn(async () => ({ providers: [{ id: 'opus', name: 'Opus 5' }, { id: 'sonnet', name: 'Sonnet 5' }], defaultProviderId: 'opus' })),
-    startChatRun: vi.fn(async (chatId: string) => {
+    // flowgate.v02.0152: like the server, a press it has already admitted gets its run back, never a second one.
+    startChatRun: vi.fn(async (chatId: string, _providerId?: string | null, clientRequestId?: string) => {
+      if (clientRequestId && data.admitted[clientRequestId]) return data.admitted[clientRequestId]
       runCounter += 1
       const id = `run-${runCounter}`
       runChats[id] = chatId
       data.runs[id] ??= ['running', 'finished']
+      if (clientRequestId) data.admitted[clientRequestId] = id
       return id
     }),
     fetchRun: vi.fn(async (runId: string) => {

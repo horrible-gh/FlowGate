@@ -93,6 +93,9 @@ def _doc_project_or_403(
     if doc is None:
         return _fail(404, f"Document {doc_id} does not exist")
     if reject_disposed:
+        from modules.flow_gate.db import groups as db_groups
+        if db_groups.is_archived(doc.get("group_id")):
+            return _fail(409, "Restore the archived Flow before making changes.", {"code": "flow_archived"})
         from modules.flow_gate import process_service as _process_service
         if _process_service.is_group_disposed(doc.get("group_id")):
             return _fail(409, "Modification not allowed: the group has been disposed.")
@@ -315,6 +318,27 @@ def _resolve_ai_provenance(ai_run_id: Optional[str]) -> dict:
     return snapshot
 
 
+def _in_document_write(handler):
+    """Order the Designer's Q&A writes with archive/restore, including human sessions."""
+    @functools.wraps(handler)
+    def wrapped(doc_id, *args, **kwargs):
+        from modules.flow_gate.graph_workflow.services.flow_guard import run_in_document_guard
+        from modules.flow_gate.graph_workflow.services.graph_service import require_writable
+        from modules.flow_gate.graph_workflow.services.errors import GraphApiError
+
+        def write():
+            doc = db_documents.get_by_id(doc_id)
+            if doc and doc.get("group_id"):
+                require_writable(doc["group_id"])
+            return handler(doc_id, *args, **kwargs)
+        try:
+            return run_in_document_guard(doc_id, write)
+        except GraphApiError as exc:
+            return _fail(exc.status, exc.message or exc.code, {"code": exc.code})
+    return wrapped
+
+
+@_in_document_write
 def _add_questions_response(
     doc_id: str, body: AddQuestionsRequest, user_id: str, ai_run_id: Optional[str] = None,
 ) -> JSONResponse:
@@ -337,6 +361,7 @@ def _add_questions_response(
     return JSONResponse(content={"ok": True, **result})
 
 
+@_in_document_write
 def _register_answer_response(
     doc_id: str, item_id: int, body: RegisterAnswerRequest, user_id: str,
     request: Request,
@@ -545,6 +570,9 @@ def _resolve_dispatch_target(doc_id: str, item_id: int, user_id: str):
     doc = db_documents.get_by_id(doc_id)
     if doc is None:
         return None, None, _fail(404, f"Document {doc_id} does not exist")
+    from modules.flow_gate.db import groups as db_groups
+    if db_groups.is_archived(doc.get("group_id")):
+        return None, None, _fail(409, "Restore the archived Flow before making changes.", {"code": "flow_archived"})
     # TR0079.0003 rework (3rd pass): do not hand out a token for a disposed group — that
     # would let an AI worker answer into the discarded group's Q&A.
     from modules.flow_gate import process_service as _process_service

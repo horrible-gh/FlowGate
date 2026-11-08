@@ -21,6 +21,7 @@ export default {
       not_running: '실행 중이거나 대기 중인 확인 차례에 확인할 수 있습니다',
       not_open: '이 확인 차례가 오면 확인할 수 있습니다',
       read_only_conflict: '담당이 겹친 흐름이라 확인할 수 없습니다',
+      read_only_archived: '읽기 전용입니다. 보관 상태를 확인하거나 복원한 뒤 변경하세요.',
       busy: '처리 중',
     },
     failure: {
@@ -62,6 +63,7 @@ export default {
       not_running: 'It can be checked while the flow runs',
       not_open: 'It can be checked when its turn comes',
       read_only_conflict: 'This flow has two owners, so it cannot be checked',
+      read_only_archived: 'Read only. Check the archive status or restore the Flow before making changes.',
       busy: 'Working',
     },
     failure: {
@@ -103,6 +105,7 @@ export default {
       not_running: '実行中に確認できます',
       not_open: 'この確認の順番が来たら確認できます',
       read_only_conflict: '担当が重なったフローのため確認できません',
+      read_only_archived: '読み取り専用です。保管状態を確認するか、フローを復元してから変更してください。',
       busy: '処理中',
     },
     failure: {

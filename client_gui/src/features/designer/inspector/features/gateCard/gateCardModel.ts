@@ -106,6 +106,7 @@ export function gateDecisionReason(
   run: GateRunFacts | null,
   busy: boolean,
 ): string | null {
+  if (target.readOnly === 'archived') return 'reason.read_only_archived'
   if (target.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (!run || !['running', 'idle'].includes(run.status)) return 'reason.not_running'
   if (run.nodes.find((node) => node.nodeKey === target.nodeId)?.status !== 'open') return 'reason.not_open'

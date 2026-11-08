@@ -116,8 +116,9 @@ import IconButton from '../../components/ui/IconButton.vue'
 import Input from '../../components/ui/Input.vue'
 import ModalShell from '../../components/ui/ModalShell.vue'
 import Textarea from '../../components/ui/Textarea.vue'
-import { failureText, renderUiText, type UiText } from '../../core/i18n/uiText'
+import { failureText, renderUiText, uiKey, type UiText } from '../../core/i18n/uiText'
 import { suggestProjectSlug } from './api'
+import { ProjectCreateConflictError } from './createConflict'
 import { useProjectStore } from './store'
 import type { Project } from './types'
 
@@ -355,10 +356,25 @@ async function handleSubmit(): Promise<void> {
     if (created) emit('created', created)
   } catch (err) {
     if (myGeneration !== generation.value) return
-    submitError.value = failureText(err, 'gui.project.create.failed')
+    submitError.value = conflictText(err) ?? failureText(err, 'gui.project.create.failed')
   } finally {
     if (myGeneration === generation.value) submitting.value = false
   }
+}
+
+// flowgate.v02.0152: a name/id already taken -- above all by an archived project, which this
+// Dialog's active-only list never shows -- is named in the person's language, with the holder.
+function conflictText(err: unknown): UiText | null {
+  if (!(err instanceof ProjectCreateConflictError)) return null
+  const params = { id: err.projectId, name: err.projectName }
+  if (err.code === 'project_archived_conflict') {
+    return uiKey(err.field === 'project_id'
+      ? 'gui.project.create.archived_id_conflict'
+      : 'gui.project.create.archived_name_conflict', params)
+  }
+  return uiKey(err.code === 'project_id_conflict'
+    ? 'gui.project.create.id_conflict'
+    : 'gui.project.create.name_conflict', params)
 }
 
 function requestClose(): void {

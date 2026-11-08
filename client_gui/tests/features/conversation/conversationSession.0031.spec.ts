@@ -182,7 +182,7 @@ describe('send', () => {
     await flushPromises()
     await invoke.session.send('a')
     await flushPromises()
-    expect(invoke.source.startChatRun).toHaveBeenCalledWith(A, 'opus')
+    expect(invoke.source.startChatRun).toHaveBeenCalledWith(A, 'opus', expect.any(String))
   })
 
   it('reports read positions forward only', async () => {
@@ -259,7 +259,7 @@ describe('send', () => {
     expect(await invoke.session.retry(invoke.session.state.pending[0].localId)).toBe(true)
     await flushPromises()
     expect(invoke.source.startChatRun).toHaveBeenCalledTimes(1)
-    expect(invoke.source.startChatRun).toHaveBeenCalledWith(A, 'opus')
+    expect(invoke.source.startChatRun).toHaveBeenCalledWith(A, 'opus', expect.any(String))
   })
 
   it('drops the retry send action when the chat changed before the retry was accepted', async () => {
@@ -320,7 +320,7 @@ describe('AI run', () => {
     await flushPromises()
     session.selectProvider('sonnet')
     await session.invokeAi()
-    expect(source.startChatRun).toHaveBeenCalledWith(A, 'sonnet')
+    expect(source.startChatRun).toHaveBeenCalledWith(A, 'sonnet', expect.any(String))
     await flushPromises()
     expect(session.running.value).toBe(false)
     expect(session.state.turns.at(-1)?.body).toBe('reply')

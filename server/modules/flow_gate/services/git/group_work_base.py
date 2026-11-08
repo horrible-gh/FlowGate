@@ -555,6 +555,8 @@ def _change_once(group_id: str, value: str, expected, project_id: Optional[str])
     if group is None or (project_id is not None and group.get("project_id") != project_id):
         raise _group_not_found(group_id)
     project_id = group.get("project_id")
+    if db_groups.is_archived(group_id):
+        raise GitServiceError(409, "flow_archived", "Restore the archived Flow before changing its base branch.")
     if _group_disposed(group_id):
         raise _disposed_error()
     if not _git_enabled(_gs.db_git.get_config(project_id)):
@@ -572,6 +574,8 @@ def _change_once(group_id: str, value: str, expected, project_id: Optional[str])
         row = lock_group_row(group_id)
         if row is None:
             raise _group_not_found(group_id)
+        if db_groups.is_archived(group_id):
+            raise GitServiceError(409, "flow_archived", "Restore the archived Flow before changing its base branch.")
         stored = row.get("work_base_ref")
         if expected is not _EXPECTED_UNSET and expected != stored:
             raise _changed_error()

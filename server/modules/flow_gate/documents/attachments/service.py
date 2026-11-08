@@ -120,8 +120,9 @@ def assert_mutable(doc: dict, actor: Optional[dict], operation: str) -> None:
 
     try:
         _documents._reject_if_group_disposed(doc)
-    except HTTPException:
-        raise not_mutable("group_disposed")
+    except HTTPException as exc:
+        reason = exc.detail.get("code") if isinstance(exc.detail, dict) else "group_disposed"
+        raise not_mutable(reason)
 
     is_worker_token = bool(actor) and "token_id" in actor and "action_scope" in actor
     principal = worker_principal(actor) if is_worker_token else human_principal(actor)

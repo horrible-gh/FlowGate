@@ -86,7 +86,8 @@ def ensure_identity(flow_id: str, project_id: Optional[str], actor: Optional[str
     handoffs = pending_handoffs(
         flow_id, snap.docs_by_id, layout_store.positions(flow_id).keys(), layout_store.retired_keys(flow_id)
     )
-    if recorded_tag == sequence_tag_of(snap) and not handoffs:
+    from modules.flow_gate.db.groups import is_archived
+    if is_archived(flow_id) or (recorded_tag == sequence_tag_of(snap) and not handoffs):
         protected = protected_ids(snap.rows)
         return IdentityResult(snap, keys_from_record(snap.rows, record, protected), protected, recorded_tag)
     return with_flow_guard(flow_id, lambda: _record(flow_id, project_id, actor, client_id))
@@ -101,7 +102,8 @@ def _record(flow_id: str, project_id: Optional[str], actor: Optional[str], clien
     retired = layout_store.retired_keys(flow_id)
     docs = snap.docs_by_id
     protected = protected_ids(snap.rows)
-    if recorded_tag == tag and not pending_handoffs(flow_id, docs, saved.keys(), retired):
+    from modules.flow_gate.db.groups import is_archived
+    if is_archived(flow_id) or (recorded_tag == tag and not pending_handoffs(flow_id, docs, saved.keys(), retired)):
         return IdentityResult(snap, keys_from_record(snap.rows, record, protected), protected, recorded_tag)
 
     retired_now: list[str] = []

@@ -37,6 +37,7 @@ def confirm_revision(group: dict, user_id: str, draft_version: int, base_revisio
     require_writable(flow_id)
 
     def body() -> dict:
+        require_writable(flow_id)
         own = read_ownership(flow_id)                                            # 1 담당
         require_graph_editable(flow_id, own)
         run_state_ports.require_editable(flow_id)

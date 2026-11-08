@@ -43,7 +43,7 @@ export const INSPECTOR_OWNERSHIPS = ['unassigned', 'v01', 'graph', 'conflict'] a
 export type InspectorCardDocument = FlowGraphCardDocument
 
 /** Why the Inspector may not change anything: ownership conflict, or a Graph revision view. */
-export type InspectorReadOnly = 'conflict' | 'revision' | null
+export type InspectorReadOnly = 'conflict' | 'revision' | 'archived' | null
 
 export interface InspectorTarget {
   readonly projectId: string
@@ -90,7 +90,7 @@ export interface InspectorTarget {
    * settings cannot change (the Center session's run lock); TR0031 rev1: `unknown` while the run's status is not
    * confirmed (being read, or the read failed). Absent / null = not locked.
    */
-  readonly editLock?: 'run' | 'unknown' | null
+  readonly editLock?: 'run' | 'unknown' | 'archived' | null
   /** flowgate.v02.0105 T#2 (B-6): the server confirmed the user may approve the Flow's cards. Absent = no [승인]. */
   readonly canApprove?: boolean
   /** flowgate.v02.0070 T#1: the card's own title state as shown (its version), or null / absent (none). */
@@ -219,10 +219,10 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     rootBound: node.definition?.rootBound === true,
     ownership,
     viewMode,
-    readOnly: inspectorReadOnly(ownership, viewMode),
+    readOnly: selection.flowReadOnly ? 'archived' : inspectorReadOnly(ownership, viewMode),
     // flowgate.v02.0130: a card's settings follow the server's capability in every view (revision, an older revision,
     // draft, with or without a Canvas run) — the view never turns the AI tab off; only an ownership conflict does here.
-    settingsReadOnly: ownership === 'conflict' ? 'conflict' : viewMode === 'revision' ? null : undefined,
+    settingsReadOnly: selection.flowReadOnly ? 'archived' : ownership === 'conflict' ? 'conflict' : viewMode === 'revision' ? null : undefined,
     settingsContext: node.definition ? {
       run_id: graph.run?.runId ?? null,
       graph_revision_no: viewMode === 'revision' ? graph.viewRevisionNo ?? null : null,

@@ -103,7 +103,7 @@ describe('v9 layout (R0001 §2.3)', () => {
     await find('conv-more-btn').trigger('click')
     await find('conv-invoke-ai').trigger('click')
     await flushPromises()
-    expect(source.startChatRun).toHaveBeenCalledWith(A, 'sonnet')
+    expect(source.startChatRun).toHaveBeenCalledWith(A, 'sonnet', expect.any(String))
   })
 
   it('closes a popover on Esc and on a press outside', async () => {

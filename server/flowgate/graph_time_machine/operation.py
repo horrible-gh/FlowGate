@@ -186,6 +186,7 @@ def execute(group: dict, run_id: str, node_key: str, user_id: str, locale: str =
     operation_id = journal.new_operation_id()
 
     def begin() -> tuple[dict, dict]:
+        require_writable(flow_id)
         run = run_store.run_by_id(run_id)
         if run is None or run["group_id"] != flow_id:
             raise GraphApiError(404, "run_not_found", {"run_id": run_id})

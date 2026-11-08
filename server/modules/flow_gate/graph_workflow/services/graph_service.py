@@ -50,6 +50,10 @@ _KEY_LENGTH = 12
 
 
 def require_writable(flow_id: str) -> None:
+    from modules.flow_gate.db.groups import is_archived
+    if is_archived(flow_id):
+        raise GraphApiError(409, "flow_archived", {"flow_id": flow_id},
+                            message="Restore the archived Flow before making changes.")
     from modules.flow_gate.process_service import is_group_disposed   # v0.1 single source of truth
     if is_group_disposed(flow_id):
         raise GraphApiError(409, "flow_disposed", {"flow_id": flow_id})
@@ -230,6 +234,7 @@ def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, clien
     """
     flow_id, project_id = group["group_id"], group.get("project_id")
     assert held_guard() == ("flow", flow_id), "write_draft runs inside the Flow guard of its Flow"
+    require_writable(flow_id)
 
     def body() -> dict:
         own = read_ownership(flow_id)

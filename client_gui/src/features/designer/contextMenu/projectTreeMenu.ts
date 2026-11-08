@@ -10,7 +10,7 @@ export function projectTreeMenu({ target, available: v, connected }: PartInput<P
     ? [a('project.newGroup', 'newGroup', '＋', !v.currentProject), s('project-info'), a('project.info', 'projectInfo', 'ⓘ')]
     : target.kind === 'group'
       ? [a('group.newFlow', 'newFlow', '＋', !v.currentProject), s('group-info'), a('group.rename', 'rename', '✎', !v.currentProject), a('group.info', 'info', 'ⓘ')]
-      : [a('flow.rename', 'rename', '✎', !!v.disposed), ...(v.gitEnabled === false ? [] : [a('flow.baseBranch', 'baseBranch', '⑂')]), s('flow-archive'), a(v.archived ? 'flow.restore' : 'flow.archive', v.archived ? 'restore' : 'archive', '▣', !v.currentProject || !!v.archiveBusy || (!v.archived && !v.archiveEligible)), s('flow-delete'), a('flow.delete', 'delete', '×', !v.currentProject || !!v.disposed, true)]
+      : [a('flow.rename', 'rename', '✎', !!v.disposed || !!v.archived), ...(v.gitEnabled === false ? [] : [a('flow.baseBranch', 'baseBranch', '⑂', !!v.archived)]), s('flow-archive'), a(v.archived ? 'flow.restore' : 'flow.archive', v.archived ? 'restore' : 'archive', '▣', !v.currentProject || !!v.archiveBusy || (!v.archived && !v.archiveEligible)), s('flow-delete'), a('flow.delete', 'delete', '×', !v.currentProject || !!v.disposed || !!v.archived, true)]
   // flow.delete requests the existing DC workflow; it never performs permanent deletion.
   return makeMenu(target, items, connected)
 }

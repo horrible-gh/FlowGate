@@ -185,6 +185,7 @@ export interface CardSettingsInput {
 /** Why the card's settings cannot change now (message key under `gui.inspector.settings.`), or null. */
 export function cardSettingsDisabledReason(input: CardSettingsInput): string | null {
   const reason = input.readOnly === 'conflict' ? 'conflict' : input.settingsReadOnly === undefined ? input.readOnly : input.settingsReadOnly
+  if (reason === 'archived') return 'reason.read_only_archived'
   if (reason === 'conflict') return 'reason.read_only_conflict'
   if (reason === 'revision') return 'reason.read_only_revision'
   if (input.blocked === 'disposed') return 'reason.disposed'

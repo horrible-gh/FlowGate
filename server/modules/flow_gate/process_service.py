@@ -2336,11 +2336,14 @@ def update_group(
             "graph_execution_limit": group.get("graph_execution_limit", 4),
         }
 
-    if graph_execution_limit is not None:
-        from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
-        updated = with_flow_guard(group_id, lambda: db_groups.update(group_id, updates))
-    else:
-        updated = db_groups.update(group_id, updates)
+    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+    from modules.flow_gate.graph_workflow.services.graph_service import require_writable
+
+    def write():
+        require_writable(group_id)
+        return db_groups.update(group_id, updates)
+
+    updated = with_flow_guard(group_id, write)
     return {
         "status": "success",
         "group_id": group_id,

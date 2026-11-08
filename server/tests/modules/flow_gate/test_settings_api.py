@@ -627,8 +627,99 @@ class TestProjectCreate:
         assert resp1.status_code == 201
         resp2 = client.post("/api/v1/projects", json={"project_name": "DuplicateProject257"})
         assert resp2.status_code == 422
-        assert "DuplicateProject257" in resp2.json()["detail"]
+        detail = resp2.json()["detail"]
+        assert detail["code"] == "project_name_conflict"
+        assert detail["field"] == "project_name"
+        assert detail["archived"] is False
+        assert "DuplicateProject257" in detail["message"]
         mock_db._execute("DELETE FROM projects WHERE project_name = 'DuplicateProject257'")
+
+    # flowgate.v02.0152: an archived project is not in the Designer's (active-only) list,
+    # so a create that collides with it must say so instead of a bare "already exists".
+    def test_create_project_archived_name_conflict(self, mock_db):
+        client = self._make_client()
+        try:
+            assert client.post(
+                "/api/v1/projects", json={"project_name": "arch0152", "project_id": "arch0152"}
+            ).status_code == 201
+            assert client.post("/api/v1/projects/arch0152/archive").status_code == 200
+
+            resp = client.post(
+                "/api/v1/projects", json={"project_name": "arch0152", "project_id": "arch0152-b"}
+            )
+            assert resp.status_code == 422
+            detail = resp.json()["detail"]
+            assert detail["code"] == "project_archived_conflict"
+            assert detail["field"] == "project_name"
+            assert detail["archived"] is True
+            assert detail["project_id"] == "arch0152"
+            assert detail["project_name"] == "arch0152"
+        finally:
+            mock_db._execute("DELETE FROM projects WHERE project_id LIKE 'arch0152%'")
+
+    def test_create_project_archived_id_conflict(self, mock_db):
+        client = self._make_client()
+        try:
+            assert client.post(
+                "/api/v1/projects", json={"project_name": "archid0152", "project_id": "archid0152"}
+            ).status_code == 201
+            assert client.post("/api/v1/projects/archid0152/archive").status_code == 200
+
+            resp = client.post(
+                "/api/v1/projects", json={"project_name": "archid0152 other", "project_id": "archid0152"}
+            )
+            assert resp.status_code == 422
+            detail = resp.json()["detail"]
+            assert detail["code"] == "project_archived_conflict"
+            assert detail["field"] == "project_id"
+            assert detail["project_id"] == "archid0152"
+            assert detail["project_name"] == "archid0152"
+        finally:
+            mock_db._execute("DELETE FROM projects WHERE project_id LIKE 'archid0152%'")
+
+    def test_create_project_after_restore_and_other_name(self, mock_db):
+        client = self._make_client()
+        try:
+            assert client.post(
+                "/api/v1/projects", json={"project_name": "rest0152", "project_id": "rest0152"}
+            ).status_code == 201
+            assert client.post("/api/v1/projects/rest0152/archive").status_code == 200
+            assert client.post("/api/v1/projects/rest0152/restore").status_code == 200
+
+            # Restored: the same name is now an ordinary (active) conflict.
+            resp = client.post(
+                "/api/v1/projects", json={"project_name": "rest0152", "project_id": "rest0152-b"}
+            )
+            assert resp.status_code == 422
+            assert resp.json()["detail"]["code"] == "project_name_conflict"
+
+            # A different name and id still creates normally.
+            resp = client.post(
+                "/api/v1/projects", json={"project_name": "rest0152 two", "project_id": "rest0152-two"}
+            )
+            assert resp.status_code == 201
+            assert resp.json()["project_id"] == "rest0152-two"
+        finally:
+            mock_db._execute("DELETE FROM projects WHERE project_id LIKE 'rest0152%'")
+
+    def test_create_project_typed_id_conflict_message(self, mock_db):
+        client = self._make_client()
+        try:
+            assert client.post(
+                "/api/v1/projects", json={"project_name": "idc0152", "project_id": "idc0152"}
+            ).status_code == 201
+            resp = client.post(
+                "/api/v1/projects", json={"project_name": "idc0152 other", "project_id": "idc0152"}
+            )
+            assert resp.status_code == 422
+            detail = resp.json()["detail"]
+            assert detail["code"] == "project_id_conflict"
+            assert detail["field"] == "project_id"
+            assert detail["archived"] is False
+            assert "same ID" in detail["message"]
+            assert "Slug conversion" not in detail["message"]
+        finally:
+            mock_db._execute("DELETE FROM projects WHERE project_id LIKE 'idc0152%'")
 
     def test_create_project_slug_from_name(self, mock_db):
         client = self._make_client()

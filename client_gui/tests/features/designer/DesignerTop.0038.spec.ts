@@ -102,7 +102,7 @@ beforeEach(() => {
       return { data: { ...flowCanvasResponse(id, 'graph'), run: runServer.runs.get(id) ?? null } }
     }
     if (url === '/api/v1/me/ai-roles') return { data: { setup_completed: true, selectable_count: 0, roles: {} } }
-    if (url.endsWith('/archive')) return { data: { archived: false, eligible: false, reason: 'run_not_completed' } }
+    if (url.endsWith('/archive')) return { data: { ok: true, archived: false, eligible: false, reason: 'run_not_completed' } }
     const run = runServer.get(url)
     if (run) return run
     if (/^\/api\/v1\/projects\/[^/]+\/groups\/tree$/.test(url)) return { data: { data: { nodes: TREE } } }
@@ -732,6 +732,17 @@ describe('designerTop model', () => {
 
 
 describe('T-c archive toolbar', () => {
+  it('locks archived mutation commands while preserving navigation and selection', () => {
+    const targets = { project: true, group: true, flow: true, readOnly: true, selectedCount: 3 }
+    for (const command of ['edit.undo', 'edit.redo', 'edit.delete', 'edit.align-left', 'edit.auto-layout-horizontal',
+      'run.next', 'run.all', 'run.pause', 'run.resume', 'run.stop', 'run.validate'] as const) {
+      expect(isMenuCommandEnabled(command, 'idle', targets), command).toBe(false)
+    }
+    for (const command of ['view.fit', 'view.zoom-in', 'view.zoom-out', 'edit.select-mode', 'edit.select-all', 'edit.copy', 'flow.close'] as const) {
+      expect(isMenuCommandEnabled(command, 'idle', targets), command).toBe(true)
+    }
+  })
+
   it('appends archive immediately after density, preserves idle buttons and emits once', async () => {
     wrapper = mount(DesignerToolbar, { props: { runPhase: 'idle', density: 'free', zoom: 100, canArchive: true },
       global: { plugins: [i18n] } })
@@ -739,9 +750,9 @@ describe('T-c archive toolbar', () => {
     const density = wrapper.get('[data-test="designer-tool-density"]').element
     expect(density.parentElement!.nextElementSibling).toBe(button.element.parentElement)
     expect(wrapper.findAll('button.designer-tool').map((b) => b.text())).toEqual([
-      '실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '화면 맞춤', '축소', '확대', '아카이브',
+      '실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대', '아카이브',
     ])
-    expect(wrapper.findAll('[data-test="designer-tool-run"]')).toHaveLength(0)
+    expect(wrapper.findAll('[data-test="designer-tool-run"]')).toHaveLength(2)
     await button.trigger('click')
     expect(wrapper.emitted('archive')).toEqual([[]])
     await wrapper.setProps({ archiveBusy: true })

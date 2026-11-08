@@ -312,6 +312,7 @@ export type QnaAvailability = Readonly<Record<QnaOperation, QnaAvailabilityItem>
 
 /** Why answering is disabled: one reason, in the order of D#1 §8.3 rule 6-1. */
 export function qnaDisabledReason(input: QnaInput): string | null {
+  if (input.readOnly === 'archived') return 'reason.read_only_archived'
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (input.groupDisposed) return 'reason.disposed'
   if (input.aiRunning) return 'reason.ai_running'

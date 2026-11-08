@@ -88,6 +88,7 @@ export function requirementTeamLabel(team: RequirementTeamFacts, labels: { reado
 /** Why the card's settings cannot change now (message key), or null. */
 export function requirementSettingsReason(input: Omit<RequirementSettingsInput, 'pending' | 'teams' | 'failure'>): string | null {
   if (!input.card) return 'delegation.unconnected'
+  if (input.readOnly === 'archived') return 'reason.read_only_archived'
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (input.readOnly === 'revision') return 'reason.read_only_revision'
   if (input.disposed) return 'reason.disposed'

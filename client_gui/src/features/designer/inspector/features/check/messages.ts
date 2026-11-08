@@ -82,6 +82,7 @@ export default {
     open_hint: '문서 열기',
     reason: {
       read_only_conflict: '소유 충돌 플로우라 확인할 수 없습니다.',
+      read_only_archived: '읽기 전용입니다. 보관 상태를 확인하거나 복원한 뒤 변경하세요.',
       read_only_revision: 'Graph revision 보기에서는 확인할 수 없습니다. draft 보기로 옮기세요.',
       disposed: '폐기된 그룹이라 확인할 수 없습니다.',
       ai_running: 'AI 실행 중이라 확인할 수 없습니다.',
@@ -182,6 +183,7 @@ export default {
     open_hint: 'Open the document',
     reason: {
       read_only_conflict: 'This Flow has an ownership conflict and cannot be checked.',
+      read_only_archived: 'Read only. Check the archive status or restore the Flow before making changes.',
       read_only_revision: 'A Graph revision view cannot be checked. Switch to the draft view.',
       disposed: 'This group was disposed and cannot be checked.',
       ai_running: 'An AI run is in progress, so it cannot be checked.',
@@ -282,6 +284,7 @@ export default {
     open_hint: '文書を開く',
     reason: {
       read_only_conflict: '所有競合の Flow のため確認できません。',
+      read_only_archived: '読み取り専用です。保管状態を確認するか、フローを復元してから変更してください。',
       read_only_revision: 'Graph revision 表示では確認できません。draft 表示に切り替えてください。',
       disposed: '破棄されたグループのため確認できません。',
       ai_running: 'AI 実行中のため確認できません。',

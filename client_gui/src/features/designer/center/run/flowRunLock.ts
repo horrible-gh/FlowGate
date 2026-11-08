@@ -43,7 +43,7 @@ const ACTIVE_INTEGRATIONS: readonly string[] = ['pending', 'integrating']
  * Why a Flow's structure cannot be edited now: its run is locked (`run`), its run status is not confirmed yet (`unknown`:
  * being read, or the read failed), or null.
  */
-export type FlowEditLock = 'run' | 'unknown' | null
+export type FlowEditLock = 'run' | 'unknown' | 'archived' | null
 
 export function isRunLocked(run: Pick<FlowRunInfo, 'status'> | null | undefined): boolean {
   return !!run && RUN_LOCKED_STATUSES.includes(run.status)

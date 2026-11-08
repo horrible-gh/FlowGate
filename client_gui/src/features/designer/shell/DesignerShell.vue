@@ -331,6 +331,7 @@ const aiSetup: ReturnType<typeof createFirstRunAiSetup> = createFirstRunAiSetup(
     ? `${projectStore.designerSessionOwner}\n${projectId.value}\n${center.state.activeFlowId}` : null,
 })
 const center = createDesignerCenterSession({
+  readArchive: (flowId) => projectStore.readFlowArchive(flowId),
   // flowgate.v02.0113 T#2 rework: the first AI setup is applied to the Flow whose command waits for it.
   beforeRunPrepare: (flowId) => aiSetup.request(flowId),
   runSetupCurrent: () => aiSetup.current(),
@@ -626,6 +627,7 @@ const menuTargets = computed<DesignerMenuTargets>(() => ({
   project: projectId.value !== null,
   group: explorerSelection.value?.kind === 'group',
   flow: hasWorkTarget.value,
+  readOnly: !!center.state.activeFlowId && center.isFlowReadOnly(center.state.activeFlowId),
   // flowgate.v02.0059 T#2: the open Flow's structure edit history (Toolbar buttons and Edit menu); flowgate.v02.0061
   // T#14: it waits while the Flow's run locks the structure.
   canUndo: center.activeEdit.value?.canUndo === true && center.activeRunMarks.value.lock === null,
@@ -702,7 +704,6 @@ const flowCreateGroupId = computed<string | null>(() => {
 // the name the create dialog showed, since the tree cache is being re-read at that moment). The
 // Center session ignores an activation for another Project.
 function openFlow(payload: ProjectExplorerFlowEvent, reveal: boolean, groupName?: string, seedNode?: CanvasNodeSpec) {
-  if (archivedFlows.value.has(payload.flowId)) return
   center.openFlow(payload, seedNode ? { seedNode } : undefined)
   projectStore.recordRecentFlow({ id: payload.flowId, name: payload.flowName, projectId: payload.projectId, groupId: payload.groupId })
   projectStore.recordRecentGroup({ id: payload.groupId, name: groupNameOf(payload.projectId, payload.groupId, groupName), projectId: payload.projectId })
@@ -1109,7 +1110,7 @@ async function readRestoreTree(run: RestoreRun) {
   restoreError.value = null
   let nodes: GroupTreeNode[]
   try {
-    nodes = await projectStore.fetchGroupTree(run.pid, { includeTerminal: true, force: true })
+    nodes = await projectStore.fetchGroupTree(run.pid, { includeTerminal: true, includeArchived: true, force: true })
   } catch (error) {
     if (!restoreAlive(run)) return
     const { status } = projectStore.readFailureOf(error)
@@ -1159,7 +1160,7 @@ function applyRestore(run: RestoreRun, nodes: GroupTreeNode[]) {
   const { target, touched, closed, pid } = run
   // Ended first, so nothing the restore changes below is taken for the user's.
   endRestore()
-  const groups = buildExplorerProject(nodes.filter((node) => !node.archivedAt && !archivedFlows.value.has(node.id)), projectNodeId(pid))?.groups ?? []
+  const groups = buildExplorerProject(nodes, projectNodeId(pid))?.groups ?? []
   const flows = new Map(groups.flatMap((group) => group.flows.map((flow) => [flow.id, flow] as const)))
   const groupIds = new Set(groups.map((group) => group.id))
   const userActive = center.state.activeFlowId
@@ -1322,7 +1323,6 @@ watch(
 
 // Display archive: toolbar and clicked-row menu share this action. Server rechecks under its Flow guard.
 const archiveState = ref<FlowArchiveState | null>(null)
-const archivedFlows = ref(new Set<string>())
 let archiveReadSeq = 0
 const archiveReason = computed(() => {
   const reason = archiveState.value?.reason
@@ -1343,31 +1343,15 @@ watch(() => [center.state.activeFlowId, center.activeRunStatus.value.run?.runId,
   center.activeRunStatus.value.run?.status, center.activeRunStatus.value.run?.idleReason,
   center.activeRunStatus.value.run?.lastEventSeq], () => { void refreshArchiveState() }, { immediate: true })
 
-function removeArchivedFlow(flowId: string) {
-  archivedFlows.value = new Set([...archivedFlows.value, flowId])
-  if (restoring) restoring.closed.add(flowId)
-  center.closeFlow(flowId)
-  projectStore.forgetRecentFlow(flowId)
-  if (explorerSelection.value?.kind === 'flow' && explorerSelection.value.id === flowId) requestExplorer({ select: null })
-  save()
-}
-
 async function changeArchive(flowId: string, archived: boolean) {
   const pid = projectId.value
   if (!pid || projectStore.archiveBusy[flowId]) return
   try {
     const result = await projectStore.setFlowArchived(pid, flowId, archived)
     if (projectId.value !== pid) return
-    if (result.archived) removeArchivedFlow(flowId)
-    else {
-      const next = new Set(archivedFlows.value)
-      next.delete(flowId)
-      archivedFlows.value = next
-    }
-    explorerRefreshToken.value += 1
-    // Both variants must be fresh; restored completed Flows have a server-side display exception.
-    await projectStore.fetchGroupTree(pid, { force: true })
-    void refreshArchiveState()
+    center.setFlowArchived(flowId, result.archived)
+    // Supersede any tree read started before this change; it must not unlock the archived Flow.
+    await refreshArchiveTree(pid)
   } catch {
     menuToast(() => t('gui.designer.archive.failed'), 'warning')
     void refreshArchiveState()
@@ -1383,17 +1367,22 @@ let archiveEvents: (() => void) | null = null
 let archiveTreeSeq = 0
 async function refreshArchiveTree(pid: string) {
   const seq = ++archiveTreeSeq
+  // Lock immediately on another session's event, before the authoritative tree read.
+  for (const tab of center.state.tabs) center.setFlowArchived(tab.flowId, null)
   projectStore.invalidateGroupTree(pid)
   explorerRefreshToken.value += 1
   try {
-    const nodes = await projectStore.fetchGroupTree(pid, { includeTerminal: true, force: true })
+    const nodes = await projectStore.fetchGroupTree(pid, { includeTerminal: true, includeArchived: true, force: true })
     if (seq !== archiveTreeSeq || projectId.value !== pid) return
-    const visible = new Set(nodes.filter((n) => n.kind === 'group' && !n.archivedAt).map((n) => n.id))
-    const ids = new Set([...center.state.tabs.map((t) => t.flowId),
-      ...projectStore.recentFlows.filter((f) => f.projectId === pid).map((f) => f.id),
-      ...(restoring?.target.tabs.map((t) => t.flowId) ?? [])])
-    for (const id of ids) if (!visible.has(id)) removeArchivedFlow(id)
-    archivedFlows.value = new Set([...archivedFlows.value].filter((id) => !visible.has(id)))
+    const flows = new Map(nodes.filter((n) => n.kind === 'group').map((n) => [n.id, n]))
+    for (const tab of [...center.state.tabs]) {
+      const flow = flows.get(tab.flowId)
+      if (flow) center.setFlowArchived(tab.flowId, !!flow.archivedAt)
+      else {
+        center.closeFlow(tab.flowId)
+        projectStore.forgetRecentFlow(tab.flowId)
+      }
+    }
   } catch { /* A failed read cannot remove tabs or recent entries. */ }
   void refreshArchiveState()
 }
@@ -1401,7 +1390,6 @@ watch(projectId, (pid) => {
   archiveEvents?.()
   archiveEvents = null
   archiveTreeSeq += 1
-  archivedFlows.value = new Set()
   if (pid) {
     if (projectStore.recentFlows.some((flow) => flow.projectId === pid)) void refreshArchiveTree(pid)
     archiveEvents = projectStore.subscribeProjectEvents(pid, {

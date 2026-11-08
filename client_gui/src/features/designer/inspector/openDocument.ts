@@ -125,7 +125,7 @@ export function workPlanOpenerLock(target: Pick<InspectorTarget, 'readOnly' | 'e
  * flowgate.v02.0072 TR0012 rev1 — a Flow's run lock as the Designer knows it now (the Center session's run marks): `run`
  * (running / paused / stopping), `unknown` (not confirmed: being read, failed, or the Flow is not open) or null.
  */
-export type WorkPlanFlowRunLock = (flowId: string) => 'run' | 'unknown' | null
+export type WorkPlanFlowRunLock = (flowId: string) => 'run' | 'unknown' | 'archived' | null
 
 /** Why the Inspector last showed each Flow read only, or null (reactive: an open window follows it). */
 const workPlanReadOnlyFlows = reactive(new Map<string, InspectorReadOnly>())

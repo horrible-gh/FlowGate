@@ -7,6 +7,7 @@ const extractApiErrorMessage = vi.hoisted(() => vi.fn((_error: unknown, fallback
 vi.mock('@shared/api', () => ({ getRequest, postRequest, extractApiErrorMessage }))
 
 import { createProject, fetchActiveProjects, suggestProjectSlug } from '@/features/project/api'
+import { ProjectCreateConflictError } from '@/features/project/createConflict'
 
 beforeEach(() => {
   getRequest.mockReset()
@@ -118,6 +119,49 @@ describe('createProject', () => {
     postRequest.mockRejectedValue(new Error('duplicate'))
     extractApiErrorMessage.mockReturnValueOnce('Failed to create project.')
     await expect(createProject({ name: 'Demo', id: 'demo' })).rejects.toThrow('Failed to create project.')
+  })
+
+  // flowgate.v02.0152: a name/id taken by an archived (unlisted) project comes back as a typed conflict.
+  it('turns a name / id conflict into ProjectCreateConflictError with the holder', async () => {
+    postRequest.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          detail: {
+            code: 'project_archived_conflict',
+            field: 'project_name',
+            archived: true,
+            project_id: 'test',
+            project_name: 'test',
+            message: 'A project with the same name already exists: test (archived; restore it or choose another value)',
+          },
+        },
+      },
+    })
+    const error = await createProject({ name: 'test', id: 'test-new' }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ProjectCreateConflictError)
+    const conflict = error as ProjectCreateConflictError
+    expect(conflict.code).toBe('project_archived_conflict')
+    expect(conflict.field).toBe('project_name')
+    expect(conflict.projectId).toBe('test')
+    expect(conflict.projectName).toBe('test')
+
+    postRequest.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 422, data: { detail: { code: 'project_id_conflict', field: 'project_id', archived: false, project_id: 'demo', project_name: 'Demo' } } },
+    })
+    const idError = (await createProject({ name: 'Demo 2', id: 'demo' }).catch((e: unknown) => e)) as ProjectCreateConflictError
+    expect(idError).toBeInstanceOf(ProjectCreateConflictError)
+    expect(idError.code).toBe('project_id_conflict')
+    expect(idError.field).toBe('project_id')
+  })
+
+  it('leaves any other failure as a plain Error', async () => {
+    postRequest.mockRejectedValueOnce({ isAxiosError: true, response: { status: 403, data: { detail: { code: 'project_create_forbidden' } } } })
+    const error = await createProject({ name: 'Demo', id: 'demo' }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect(error).not.toBeInstanceOf(ProjectCreateConflictError)
   })
 })
 

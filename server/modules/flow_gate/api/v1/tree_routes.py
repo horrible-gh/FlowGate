@@ -610,13 +610,21 @@ async def group_dispose(request: Request, group_id: str):
         body = {}
     reason_option = str(body.get("reason_option", "")).strip()
     reason_detail = str(body.get("reason_detail", "")).strip()
-    result = await anyio.to_thread.run_sync(
-        lambda: process_service.dispose_group(
-            group_id,
-            reason_option=reason_option,
-            reason_detail=reason_detail,
-        )
-    )
+    def dispose():
+        from modules.flow_gate.graph_workflow.services.errors import GraphApiError
+        from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+        from modules.flow_gate.graph_workflow.services.graph_service import require_writable
+
+        def write():
+            require_writable(group_id)
+            return process_service.dispose_group(
+                group_id, reason_option=reason_option, reason_detail=reason_detail)
+        try:
+            return with_flow_guard(group_id, write)
+        except GraphApiError as exc:
+            raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}) from exc
+
+    result = await anyio.to_thread.run_sync(dispose)
     # TR0079.0003 (rework): a group disposal must propagate over SSE so already-open
     # clients react immediately — without it the only refresh was the disposing user's
     # local explorer reload, leaving open document tabs (and other users' views) stale:

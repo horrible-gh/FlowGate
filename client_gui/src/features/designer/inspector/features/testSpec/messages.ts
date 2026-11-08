@@ -71,6 +71,7 @@ export default {
     },
     reason: {
       read_only_conflict: '플로우 소유가 충돌해 읽기 전용입니다.',
+      read_only_archived: '읽기 전용입니다. 보관 상태를 확인하거나 복원한 뒤 변경하세요.',
       read_only_revision: '확정된 Graph revision 보기라 읽기 전용입니다. draft 보기에서 테스트를 실행합니다.',
       disposed: '폐기된 그룹이라 테스트를 실행할 수 없습니다.',
       ai_running: 'AI 실행 중이라 테스트를 실행할 수 없습니다.',
@@ -194,6 +195,7 @@ export default {
     },
     reason: {
       read_only_conflict: 'Read only: the Flow ownership is in conflict.',
+      read_only_archived: 'Read only. Check the archive status or restore the Flow before making changes.',
       read_only_revision: 'Read only: this is a confirmed Graph revision view. Run tests in the draft view.',
       disposed: 'The group was disposed; tests cannot be run.',
       ai_running: 'An AI run is in progress; tests cannot be run.',
@@ -317,6 +319,7 @@ export default {
     },
     reason: {
       read_only_conflict: 'フローの所有が競合しているため読み取り専用です。',
+      read_only_archived: '読み取り専用です。保管状態を確認するか、フローを復元してから変更してください。',
       read_only_revision: '確定した Graph revision の表示のため読み取り専用です。draft 表示でテストを実行します。',
       disposed: '破棄されたグループのためテストを実行できません。',
       ai_running: 'AI 実行中のためテストを実行できません。',

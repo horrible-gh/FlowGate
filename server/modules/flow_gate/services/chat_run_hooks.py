@@ -25,6 +25,11 @@ from typing import Any, Callable, Optional
 logger = logging.getLogger(__name__)
 
 ON_CHAT_RUN_START = "on_chat_run_start"
+# flowgate.v02.0152: the heavy half of the start -- the start-tree snapshot -- runs on the
+# worker thread after the handoff gate opens and before any provider starts, so the
+# /ai-invoke/start request no longer waits for a full worktree hash (the browser gave up at
+# 30s and reported "could not call the AI" for a run the server then carried out).
+ON_CHAT_RUN_PREPARE = "on_chat_run_prepare"
 PROVIDE_CHAT_TOOLS = "provide_chat_tools"
 ON_CHAT_RUN_FINALIZE = "on_chat_run_finalize"
 ON_CHAT_RUN_CANCEL = "on_chat_run_cancel"
@@ -36,6 +41,7 @@ ACCEPT_CHAT_CALL = "accept_chat_call"
 
 HOOK_NAMES = (
     ON_CHAT_RUN_START,
+    ON_CHAT_RUN_PREPARE,
     PROVIDE_CHAT_TOOLS,
     ON_CHAT_RUN_FINALIZE,
     ON_CHAT_RUN_CANCEL,
@@ -105,9 +111,21 @@ def _is_chat(run: Optional[dict]) -> bool:
 
 
 def chat_run_start(run: dict) -> None:
-    """Admission: a chat run was admitted and its record built (before the worker starts)."""
+    """Admission: a chat run was admitted and its record built (before the worker starts).
+
+    Keep this cheap: the /ai-invoke/start request waits for it. Slow preparation belongs
+    to :func:`chat_run_prepare`."""
     if _is_chat(run):
         _call(ON_CHAT_RUN_START, run)
+
+
+def chat_run_prepare(run: dict) -> None:
+    """Worker: the run is registered and its gate is open, no provider has started yet.
+
+    flowgate.v02.0152: the start-tree snapshot lives here, off the request thread. Like
+    finalize, the caller picks its in-module path only when nothing is registered."""
+    if _is_chat(run):
+        _call(ON_CHAT_RUN_PREPARE, run)
 
 
 def chat_run_finalize(run: dict) -> None:

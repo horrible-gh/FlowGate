@@ -106,6 +106,7 @@ export function checkLockedReason(node: Pick<CheckNodeFacts, 'lockReason' | 'git
 /** Why the card's settings cannot change now (message key), or null. */
 export function checkSettingsReason(input: Pick<CheckSettingsInput, 'card' | 'node' | 'readOnly' | 'placing' | 'disposed'>): string | null {
   if (!input.card) return 'git.unconnected'
+  if (input.readOnly === 'archived') return 'reason.read_only_archived'
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (input.disposed) return 'reason.disposed'
   if (input.placing) return 'reason.placing'

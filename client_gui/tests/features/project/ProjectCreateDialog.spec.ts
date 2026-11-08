@@ -15,6 +15,7 @@ vi.mock('@/features/project/api', () => ({
 }))
 
 import ProjectCreateDialog from '@/features/project/ProjectCreateDialog.vue'
+import { ProjectCreateConflictError } from '@/features/project/createConflict'
 
 function project(id = 'new-project'): Project {
   return { id, name: 'New Project', description: '', color: '#2563eb', isActive: true, createdAt: null, updatedAt: null, modules: [] }
@@ -622,6 +623,64 @@ describe('features/project/ProjectCreateDialog', () => {
     await flushPromises()
     await wrapper.vm.$nextTick()
     expect(document.querySelector('.ui-alert')?.textContent?.trim()).toBe('같은 식별자의 프로젝트가 있습니다.')
+    wrapper.unmount()
+  })
+
+  // flowgate.v02.0152: "test" failed while "test2" worked because an archived project "test" held the
+  // name. The Designer list shows active projects only, so the refusal must name the archived holder.
+  it('names an archived project that already holds the name or id, in the current language', async () => {
+    setTestLocale('ko')
+    createProjectApi.mockRejectedValueOnce(
+      new ProjectCreateConflictError('project_archived_conflict', 'project_name', 'test', 'test', 'server words'),
+    )
+    const wrapper = mountDialog()
+    setInput('#pcd-name', 'test')
+    setInput('#pcd-id', 'test-new')
+    await wrapper.vm.$nextTick()
+    click('.pcd-actions .ui-btn--primary')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    const ko = document.querySelector('.ui-alert')?.textContent?.trim() ?? ''
+    expect(ko).toContain('“test”(ID: test)')
+    expect(ko).toContain('보관(비활성)')
+    expect(ko).not.toContain('server words')
+    setTestLocale('en')
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.ui-alert')?.textContent).toContain('archived')
+
+    createProjectApi.mockRejectedValueOnce(
+      new ProjectCreateConflictError('project_archived_conflict', 'project_id', 'test', 'Old Test', 'server words'),
+    )
+    click('.pcd-actions .ui-btn--primary')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.ui-alert')?.textContent).toContain('The ID “test” belongs to the archived project “Old Test”')
+    expect(wrapper.emitted('created')).toBeUndefined()
+    wrapper.unmount()
+    setTestLocale('ko')
+  })
+
+  it('shows an active name / id conflict with the taken value', async () => {
+    setTestLocale('ko')
+    createProjectApi.mockRejectedValueOnce(
+      new ProjectCreateConflictError('project_id_conflict', 'project_id', 'demo', 'Demo', ''),
+    )
+    const wrapper = mountDialog()
+    setInput('#pcd-name', 'Demo 2')
+    setInput('#pcd-id', 'demo')
+    await wrapper.vm.$nextTick()
+    click('.pcd-actions .ui-btn--primary')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.ui-alert')?.textContent?.trim()).toBe('같은 ID의 프로젝트가 이미 있습니다: demo')
+
+    createProjectApi.mockRejectedValueOnce(
+      new ProjectCreateConflictError('project_name_conflict', 'project_name', 'demo', 'Demo 2', ''),
+    )
+    click('.pcd-actions .ui-btn--primary')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.ui-alert')?.textContent?.trim()).toBe('같은 이름의 프로젝트가 이미 있습니다: Demo 2')
     wrapper.unmount()
   })
 })

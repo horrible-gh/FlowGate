@@ -110,6 +110,11 @@ def require_writable(token, operation, *, report=False):
     """0061 T#7: an attempt token may still write or register a result (``report``: an execution's own report, a
     review verdict). Raises ``GraphAttemptInactive``; an unmapped v0.1 token, or no handler, passes. Inside a
     ``write_session`` the judgement's hold is kept for the session."""
+    from modules.flow_gate.db.groups import is_archived
+    flow_id = (token or {}).get("group_id")
+    if flow_id and is_archived(flow_id):
+        raise GraphSourceError("flow_archived", flow_id=flow_id,
+                               locale=token.get("continuation_locale") or "ko")
     if _fence_handler is None or not binding(token):
         return
     _fence_handler(token, operation, report=report, keep=getattr(_session, "stack", None))
