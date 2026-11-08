@@ -866,6 +866,16 @@ export default {
         graph_time_machine_blocked: 'Graph Time Machine cannot run safely.',
         graph_time_machine_in_progress: 'A Graph Time Machine operation is unfinished.',
         graph_engine_owned: 'This flow is owned by the Graph engine.',
+        // flowgate.v02.0156 T1 R2/R3/R4 — run preparation failures that used to reach the toast with no reason.
+        run_command_storage_unavailable: 'Browser storage is unavailable, so the run request could not be recorded. Allow storage or reload, then try again.',
+        run_command_record_corrupt: "This flow's run request record cannot be read. Clear it from the run request notice, then try again.",
+        run_command_mode_requires_void: 'An unconfirmed earlier run request used a different run mode. Check that request, then try again.',
+        run_command_invalid_identity: 'The run request identifier could not be created. Reload, then try again.',
+        run_command_busy: 'Another tab is handling a run request for this flow. Check that tab, then try again.',
+        run_command_unresolved: 'Too many earlier run requests are still unconfirmed, so no new run request was sent. Try again once they are confirmed or voided.',
+        internal_error: 'The server could not handle the run request. Try again shortly.',
+        client_error: 'This screen could not prepare the run request. Reload, then try again.',
+        ai_setup_check_failed: 'The AI role settings could not be checked. Try again shortly.',
         other: 'It could not run.',
       },
       layout_notices: {

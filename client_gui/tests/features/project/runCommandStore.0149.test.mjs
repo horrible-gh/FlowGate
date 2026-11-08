@@ -45,7 +45,8 @@ test('B15c key lies outside logout prefix and partitions username/project/flow',
 })
 test('B17a a changed mode needs confirmed void, age never permits replacement', () => {
   const h = harness(), store = h.make(); store.sending(owner, 'step'); h.advance(365 * 24 * 60 * 60_000)
-  assert.throws(() => store.sending(owner, 'full'), /requires_void/)
+  // 0156 T1 R2: the refusal is told by its code (the toast names it); same condition, no identity, record kept.
+  assert.throws(() => store.sending(owner, 'full'), e => e.code === 'run_command_mode_requires_void' && e.message === '')
   assert.deepEqual(h.ids, [X]); assert.equal(store.read(owner).record.mode, 'step')
   store.clear(owner, X) // Caller has a server-confirmed resolution.
   assert.equal(store.sending(owner, 'full').commandRequestId, Y)
@@ -67,7 +68,7 @@ test('record schema rejects unknown fields rather than persisting private data o
 test('storage quota/read failure cannot return an identity for transmission', () => {
   const h = harness(), store = h.make()
   h.storage.setItem = () => { throw new Error('quota') }
-  assert.throws(() => store.sending(owner, 'step'), /quota/)
+  assert.throws(() => store.sending(owner, 'step'), e => e.code === 'run_command_storage_unavailable' && e.message === '')
   h.storage.getItem = () => { throw new Error('unavailable') }
   assert.equal(store.read(owner).kind, 'unavailable'); assert.throws(() => store.sending(owner, 'step'))
 })

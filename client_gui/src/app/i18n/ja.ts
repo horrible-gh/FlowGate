@@ -866,6 +866,16 @@ export default {
         graph_time_machine_blocked: 'Graph Time Machine を安全に実行できません。',
         graph_time_machine_in_progress: 'Graph Time Machine の操作が完了していません。',
         graph_engine_owned: 'このフローは Graph エンジンの担当です。',
+        // flowgate.v02.0156 T1 R2/R3/R4 — run preparation failures that used to reach the toast with no reason.
+        run_command_storage_unavailable: 'ブラウザのストレージを使えないため、実行要求を記録できませんでした。ストレージを許可するか再読み込みしてから再試行してください。',
+        run_command_record_corrupt: 'このフローの実行要求の記録を読み取れません。実行要求の案内で記録を整理してから再試行してください。',
+        run_command_mode_requires_void: '未確認の以前の実行要求と実行方式が異なります。以前の要求を確認してから再試行してください。',
+        run_command_invalid_identity: '実行要求の識別子を作成できませんでした。再読み込みしてから再試行してください。',
+        run_command_busy: '別のタブでこのフローの実行要求を処理しています。そのタブの結果を確認してから再試行してください。',
+        run_command_unresolved: '結果を確認できていない以前の実行要求が多いため、新しい実行要求を送信しませんでした。以前の要求が確認または無効化されてから再試行してください。',
+        internal_error: 'サーバーで実行要求を処理できませんでした。しばらくしてから再試行してください。',
+        client_error: 'この画面で実行要求を準備できませんでした。再読み込みしてから再試行してください。',
+        ai_setup_check_failed: 'AI ロール設定を確認できませんでした。しばらくしてから再試行してください。',
         other: '実行できませんでした。',
       },
       layout_notices: {

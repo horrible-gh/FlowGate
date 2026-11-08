@@ -35,6 +35,7 @@ import { toFlowCanvas } from '@/features/project/flowCanvasApi'
 import { toFlowRun } from '@/features/project/flowRunApi'
 import { createPhaseRunServer, type PhaseRunServer } from './flowRunPhaseServer'
 import { flowCanvasResponse } from './flowCanvasResponse'
+import { installMemoryWebLocks, removeMemoryWebLocks } from './memoryWebLocks'
 
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())
@@ -81,8 +82,10 @@ function project(id: string, name: string): Project {
   return { id, name, description: '', color: null, isActive: true, createdAt: null, updatedAt: null, modules: [] }
 }
 
+// 0156 T1 R4: this suite settles a click with flushPromises only, so it installs an in-memory Web Locks (see helper).
 describe('0143 T-C real Shell publisher and v0.1 fallback', () => {
   beforeEach(() => {
+    installMemoryWebLocks()
     localStorage.clear()
     sessionStorage.clear()
     i18n.global.locale.value = 'ko'
@@ -118,6 +121,7 @@ describe('0143 T-C real Shell publisher and v0.1 fallback', () => {
     wrapper?.unmount()
     wrapper = null
     setCurrentUser(null)
+    removeMemoryWebLocks()
   })
 
   async function settle() {

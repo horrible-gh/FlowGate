@@ -877,6 +877,16 @@ export default {
         graph_time_machine_blocked: 'Graph Time Machine을 안전하게 실행할 수 없습니다.',
         graph_time_machine_in_progress: 'Graph Time Machine 작업이 끝나지 않았습니다.',
         graph_engine_owned: '이 흐름은 Graph 엔진이 담당합니다.',
+        // flowgate.v02.0156 T1 R2/R3/R4 — run preparation failures that used to reach the toast with no reason.
+        run_command_storage_unavailable: '브라우저 저장소를 사용할 수 없어 실행 요청을 기록하지 못했습니다. 저장소 사용을 허용하거나 새로고침한 뒤 다시 시도하세요.',
+        run_command_record_corrupt: '이 흐름의 실행 요청 기록을 읽을 수 없습니다. 실행 요청 안내에서 기록을 정리한 뒤 다시 시도하세요.',
+        run_command_mode_requires_void: '확인되지 않은 이전 실행 요청과 실행 방식이 다릅니다. 이전 요청을 확인한 뒤 다시 시도하세요.',
+        run_command_invalid_identity: '실행 요청 식별자를 만들지 못했습니다. 새로고침한 뒤 다시 시도하세요.',
+        run_command_busy: '다른 탭에서 이 흐름의 실행 요청을 처리하고 있습니다. 그 탭의 결과를 확인한 뒤 다시 시도하세요.',
+        run_command_unresolved: '결과를 확인하지 못한 이전 실행 요청이 많아 새 실행 요청을 보내지 않았습니다. 이전 요청이 확인되거나 무효화된 뒤 다시 시도하세요.',
+        internal_error: '서버에서 실행 요청을 처리하지 못했습니다. 잠시 후 다시 시도하세요.',
+        client_error: '이 화면에서 실행 요청을 준비하지 못했습니다. 새로고침한 뒤 다시 시도하세요.',
+        ai_setup_check_failed: 'AI 역할 설정을 확인하지 못했습니다. 잠시 후 다시 시도하세요.',
         other: '실행하지 못했습니다.',
       },
       layout_notices: {

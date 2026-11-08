@@ -59,15 +59,47 @@ export interface RunFailureDiagnostic {
   readonly outcome: string | null
   readonly blocked?: RunBlockage | null
   readonly observation: { readonly state: string; readonly runId: string | null; readonly status: string | null; readonly lastEventSeq?: number | null } | null
+  /** 0156 T1 R2: the exception's name for a client failure (TypeError, QuotaExceededError, ...); never its message. */
+  readonly errorName?: string | null
+  /** 0156 T1 R3: the server code behind a mapped failure (ai_setup_check_failed), when it is a safe identifier. */
+  readonly causeCode?: string | null
 }
 
-const recent: RunFailureDiagnostic[] = []
+/** 0156 T1 R2: an exception name kept for diagnosis, only in the short identifier shape. */
+export function safeErrorName(value: unknown): string | null {
+  return typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value) ? value : null
+}
+
+// 0156 T1 E2: the buffer is mirrored into this tab's sessionStorage (same bound) so a reload keeps the evidence of the
+// click that failed. Local only: never sent anywhere, no telemetry. The records hold only the fixed safe fields above.
+export const RUN_FAILURE_DIAGNOSTICS_KEY = 'flowgate.runFailureDiagnostics.v1'
+export const RUN_FAILURE_DIAGNOSTICS_LIMIT = 50
+const session = (): Storage | null => {
+  try { return globalThis.sessionStorage ?? null } catch { return null }
+}
+function restore(): RunFailureDiagnostic[] {
+  try {
+    const list = JSON.parse(session()?.getItem(RUN_FAILURE_DIAGNOSTICS_KEY) ?? '[]') as unknown
+    return Array.isArray(list)
+      ? list.filter((r): r is RunFailureDiagnostic => !!r && typeof r === 'object' && !Array.isArray(r) && !('message' in r)).slice(-RUN_FAILURE_DIAGNOSTICS_LIMIT)
+      : []
+  } catch { return [] }
+}
+const recent: RunFailureDiagnostic[] = restore()
 export function recordRunFailureDiagnostic(record: RunFailureDiagnostic): void {
   recent.push(record)
-  if (recent.length > 50) recent.shift()
+  while (recent.length > RUN_FAILURE_DIAGNOSTICS_LIMIT) recent.shift()
+  // A failed write (quota, storage disabled) never breaks a command or its notice.
+  try { session()?.setItem(RUN_FAILURE_DIAGNOSTICS_KEY, JSON.stringify(recent)) } catch { /* memory buffer only */ }
 }
-/** A copy for local diagnostic consumers. This buffer is never persisted or sent as telemetry. */
-export function recentRunFailureDiagnostics(): readonly RunFailureDiagnostic[] { return [...recent] }
+/** A copy for local diagnostic consumers. This buffer is never sent as telemetry. */
+export function recentRunFailureDiagnostics(): readonly RunFailureDiagnostic[] {
+  return recent.map((r) => JSON.parse(JSON.stringify(r)) as RunFailureDiagnostic)
+}
+// 0156 T1 E2: read-only field access (DevTools console) to the failure stage/code of the last clicks. Copies only.
+try {
+  Object.defineProperty(globalThis, '__flowgateRunDiagnostics', { value: () => recentRunFailureDiagnostics(), configurable: true })
+} catch { /* a frozen global keeps the module usable */ }
 
 export function safeFlowLabel(value: unknown): string | null {
   if (typeof value !== 'string') return null

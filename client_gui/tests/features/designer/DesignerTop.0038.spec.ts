@@ -34,6 +34,7 @@ import {
 import { useProjectStore, type Project } from '@/features/project'
 import { createPhaseRunServer, type PhaseRunServer } from './flowRunPhaseServer'
 import { flowCanvasResponse } from './flowCanvasResponse'
+import { installMemoryWebLocks, removeMemoryWebLocks } from './memoryWebLocks'
 
 const getRequest = vi.hoisted(() => vi.fn())
 const postRequest = vi.hoisted(() => vi.fn())
@@ -81,6 +82,8 @@ function project(id: string, name: string): Project {
 }
 
 beforeEach(() => {
+  // 0156 T1 R4: run clicks here settle with flushPromises only; an in-memory Web Locks replaces the timed lease fallback.
+  installMemoryWebLocks()
   localStorage.clear()
   // flowgate.v02.0105 T#1: a signed-in Shell keeps its F5 snapshot per browser tab; each test is a fresh tab.
   sessionStorage.clear()
@@ -122,6 +125,7 @@ afterEach(() => {
   wrapper = null
   setCurrentUser(null)
   i18n.global.locale.value = 'ko'
+  removeMemoryWebLocks()
 })
 
 async function settle() {
