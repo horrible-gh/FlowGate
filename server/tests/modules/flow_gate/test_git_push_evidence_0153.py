@@ -263,44 +263,84 @@ def reconcile_setup(session, monkeypatch, tmp_path, observed):
     monkeypatch.setattr(gs.merge_target, 'resolve_session_target',
                         lambda row: SimpleNamespace(root=tmp_path, target_branch='main'))
     probes = []
-    monkeypatch.setattr(gs, '_query_remote_ref', lambda *a: probes.append(a) or observed)
+    # 0153 T#3: reconcile reads the remote through the detailed variant (patch target only).
+    monkeypatch.setattr(gs, '_query_remote_ref_detail', lambda *a: probes.append(a) or {
+        'sha': observed, 'cause': None if observed else 'network',
+        'returncode': 0 if observed else 128, 'detail': None, 'stderr': ''})
     monkeypatch.setattr(gs, 'PUSH_RECONCILE_DELAYS_SEC', [0, 0, 0])
     monkeypatch.setattr(gs, '_emit', lambda *a: None)
     return probes
 
 
-@pytest.mark.parametrize('observed,status,resets,probes_expected', [
-    (LOCAL, 'merged', 0, 1), (EXPECTED, 'pending_review', 1, 1),
+def scripted_checkout(cmds, push_code, fetched):
+    """0153 T#3: a scripted checkout for the synthetic SHAs — HEAD is LOCAL, no merge in
+    progress, clean, FETCH_HEAD is ``fetched`` and neither SHA is its ancestor."""
+    def run(args, **kw):
+        cmds.append(args)
+        if args == ['rev-parse', '--verify', '--quiet', 'HEAD']:
+            return subprocess.CompletedProcess(args, 0, LOCAL + '\n', '')
+        if args[:3] == ['rev-parse', '-q', '--verify']:
+            return subprocess.CompletedProcess(args, 1, '', '')
+        if args[:3] == ['rev-parse', '--verify', '--quiet'] and args[3].startswith('FETCH_HEAD'):
+            return subprocess.CompletedProcess(args, 0, (fetched or '') + '\n', '')
+        if args[0] == 'merge-base':
+            return subprocess.CompletedProcess(args, 1, '', '')
+        if args[0] == 'push':
+            return push_result(push_code, '')
+        return subprocess.CompletedProcess(args, 0, '', '')
+    return run
+
+
+@pytest.mark.parametrize('observed,status,pushes,probes_expected', [
+    (LOCAL, 'merged', 0, 1), (EXPECTED, None, 1, 1),
     ('d' * 40, 'manual_reconciliation_needed', 0, 1),
     (None, 'retry_scheduled', 0, 3),
 ])
-@pytest.mark.parametrize('reset_code', [0, 128])
+@pytest.mark.parametrize('push_code', [0, 128])
 def test_reconcile_contract_and_cross_instance_audit(session, monkeypatch, tmp_path,
-                                                    observed, status, resets, probes_expected, reset_code):
+                                                    observed, status, pushes, probes_expected, push_code):
+    # 0153 T#3: the remote-unchanged branch re-pushes the same commit (no reset); a
+    # third SHA confirmed by fetch with neither the commit nor the lease in it is a
+    # rewritten remote. The time/instance attribution of every record is unchanged.
     mid, ctx, row = session
     probes = reconcile_setup(session, monkeypatch, tmp_path, observed)
     before = saved(mid)
     cmds = []
-    monkeypatch.setattr(gs, '_run_git', lambda args, **kw: cmds.append(args) or push_result(reset_code, ''))
+    monkeypatch.setattr(gs, '_run_git', scripted_checkout(cmds, push_code, observed))
     def complete(group, mid, project, context, *, pushed):
         gs.db_git.set_session_context(mid, context)
         return {'ok': True, 'result': {'status': 'merged'}}
     monkeypatch.setattr(gs, '_complete_merge_review', complete)
     out = gs.reconcile_push_session(mid, trigger='server_startup')
     after = saved(mid)
+    if status is None:
+        status = 'merged' if push_code == 0 else 'retry_scheduled'
     assert out['result']['status'] == status
     assert len(probes) == probes_expected
-    assert cmds == [['reset', '--hard', 'ORIG_HEAD']] * resets
-    assert after['last_error'] == before['last_error']
-    assert after['last_error']['instance_id'] == 'inst_A'
-    assert after['last_error']['local_sha'] == LOCAL
+    assert [c for c in cmds if c[0] == 'reset'] == []
+    assert [c for c in cmds if c[0] == 'push'] == [
+        ['push', f'--force-with-lease=refs/heads/main:{EXPECTED}', 'origin', f'{LOCAL}:refs/heads/main']
+    ] * pushes
     assert after['reconcile_attempt_count'] == 1
-    if resets:
-        assert after['ref_operations'][-1] == dict(operation='reset', reason='reconcile_remote_unchanged',
-            at=RESET_AT, instance_id='inst_B', returncode=reset_code, status='completed')
-        assert after['merge_commit'] is None and after['approval_attempt_id'] is None
-        assert after['review_state'] == gs.REVIEW_STATE_PENDING
-        assert 'reconcile_next_at' not in after
+    if pushes and push_code != 0:
+        # result unknown again: the T#1 shape, now attributed to this instance and stage
+        assert after['last_error'] == dict(code='push_remote_unknown', returncode=push_code,
+            cause='unknown', detail='git command failed', local_sha=LOCAL,
+            expected_remote_head=EXPECTED, at=RESET_AT, instance_id='inst_B',
+            stage='reconcile_repush')
+    elif observed == 'd' * 40:
+        assert after['last_error']['code'] == 'remote_rewritten'
+        assert after['last_error']['prior_push_error'] == before['last_error']
+        assert (after['last_error']['at'], after['last_error']['instance_id']) == (RESET_AT, 'inst_B')
+    else:
+        assert after['last_error'] == before['last_error']
+        assert after['last_error']['instance_id'] == 'inst_A'
+        assert after['last_error']['local_sha'] == LOCAL
+    if pushes:
+        assert after['ref_operations'][-1] == dict(operation='push', reason='reconcile_repush',
+            at=RESET_AT, instance_id='inst_B', returncode=push_code, status='completed')
+        assert after['merge_commit'] == LOCAL and after['approval_attempt_id'] == 'attempt'
+        assert after['review_state'] != gs.REVIEW_STATE_PENDING
     elif observed == 'd' * 40:
         assert after['reconciliation_kind'] == 'push_remote_third'
         assert after['reconcile_next_at'] is None
@@ -445,15 +485,18 @@ def test_real_local_reset_reflog_identity_and_cross_instance_evidence(session, m
     real_run = gs._run_git
     probes = reconcile_setup(session, monkeypatch, repo, before)
     monkeypatch.setattr(gs, '_run_git', real_run)
+    monkeypatch.setattr(gs, '_complete_merge_review', lambda group, mid_, project, context, *, pushed: (
+        gs.db_git.set_session_context(mid_, context) or {'ok': True, 'result': {'status': 'merged'}}))
     monkeypatch.setenv('GIT_COMMITTER_NAME', 'operator')
     monkeypatch.setenv('GIT_COMMITTER_EMAIL', 'operator@example.invalid')
     out = gs.reconcile_push_session(mid, trigger='server_startup')
-    assert out['result']['status'] == 'pending_review'
-    assert git(['rev-parse', 'HEAD'], repo) == before
-    assert git(['rev-parse', 'main'], repo) == before
-    for ref in ('HEAD', 'refs/heads/main'):
-        assert git(['reflog', 'show', '-1', '--format=%gn <%ge>|%gs', ref], repo) == (
-            'FlowGate <flowgate@localhost>|reset: moving to ORIG_HEAD')
+    # 0153 T#3: the unchanged remote gets the same commit re-pushed (no reset); the
+    # local ref moves it makes (the remote-tracking ref) still carry FlowGate's identity.
+    assert out['result']['status'] == 'merged'
+    assert git(['rev-parse', 'HEAD'], repo) == local
+    assert git(['rev-parse', 'main'], bare) == local
+    assert git(['reflog', 'show', '-1', '--format=%gn <%ge>|%gs', 'refs/remotes/origin/main'], repo) == (
+        'FlowGate <flowgate@localhost>|update by push')
     after = saved(mid)
     assert after['last_error']['local_sha'] == local
     assert after['last_error']['instance_id'] == 'inst_A'

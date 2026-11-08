@@ -405,6 +405,23 @@ def _unmerged_paths(wt_path: Path) -> list[str]:
     return sorted({line.strip() for line in (proc.stdout or "").splitlines() if line.strip()})
 
 
+def _unmerged_paths_exact(wt_path: Path) -> list[str]:
+    """The conflicted paths of an in-flight merge as the REAL worktree-relative path
+    strings, sorted (flowgate.v02.0153 T#3 review): NUL-separated output, so Git's
+    ``core.quotePath`` C-quoting (non-ASCII bytes, double quote, backslash, control characters)
+    never reaches a caller. ``_unmerged_paths`` keeps its line form for the callers
+    that compare against session rows it wrote that way; a path list stored from this
+    function must be read back with this function. Empty on a Git failure, like it."""
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(
+        ["diff", "--name-only", "-z", "--diff-filter=U"],
+        cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0:
+        return []
+    return sorted({p for p in (proc.stdout or "").split("\0") if p})
+
+
 # Cap on the untracked list carried in advisory payloads (status / worktree-ready
 # event). A base checkout that accumulated a build tree can hold thousands of
 # untracked paths; the operator only needs to see that they exist and act on the
@@ -476,23 +493,42 @@ def _query_remote_ref(base_root: Path, cfg: dict, base_branch: str) -> Optional[
     was provisioned. A sync failure folds into the existing "query failed" ``None``
     contract instead of running ``ls-remote`` against a possibly-stale origin.
     """
+    return _query_remote_ref_detail(base_root, cfg, base_branch)["sha"]
+
+
+def _query_remote_ref_detail(base_root: Path, cfg: dict, base_branch: str) -> dict:
+    """flowgate.v02.0153 T#3 §2: the same ``ls-remote`` read as :func:`_query_remote_ref`,
+    but a failure says why: ``{"sha", "cause", "returncode", "detail", "stderr"}``.
+
+    ``cause`` is the runner's conservative classification (``timeout``/``auth``/
+    ``network``/``ref_lock``/``unknown``), ``origin_sync`` when the configured remote
+    could not be applied, or ``ref_missing`` for an empty answer. ``detail`` follows the
+    T#1 rule (scrubbed, last useful line, 300 characters). ``stderr`` is the scrubbed
+    text for the caller's own permission classifier and is never persisted."""
     from modules.flow_gate.services import git_service as _gs
+
+    def failed(cause: str, returncode=None, stderr: str = "") -> dict:
+        lines = [x.strip() for x in (stderr or "").splitlines() if x.strip()]
+        return {"sha": None, "cause": cause, "returncode": returncode,
+                "detail": (lines[-1] if lines else cause)[:300], "stderr": stderr or ""}
+
     try:
         _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
     except GitServiceError:
-        return None
+        return failed("origin_sync")
     proc = _gs._run_git(
         ["ls-remote", "origin", f"refs/heads/{base_branch}"],
         cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
         username=cfg.get("username"), secret=_gs._load_secret_for(cfg) or "",
     )
     if proc.returncode != 0:
-        return None
+        cause = getattr(proc, "cause", None) or _gs.git_failure_cause(proc)
+        return failed(cause, proc.returncode, proc.stderr or "")
     line = (proc.stdout or "").strip().splitlines()[:1]
-    if not line:
-        return None
-    sha = line[0].split("\t", 1)[0].strip()
-    return sha or None
+    sha = line[0].split("\t", 1)[0].strip() if line else ""
+    if not sha:
+        return failed("ref_missing", proc.returncode)
+    return {"sha": sha, "cause": None, "returncode": 0, "detail": None, "stderr": ""}
 
 
 def _base_ahead_behind(

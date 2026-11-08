@@ -687,6 +687,24 @@ def add_session_files(merge_id: int, files: list[str]) -> None:
             )
 
 
+def replace_session_files(merge_id: int, files: list[str], *, resolved: bool = False) -> None:
+    """Replace a session's whole conflict file set in one transaction (flowgate.v02.0153
+    T#3 §3.5): a reconcile handing a merge back to the resolver with NEW conflicts
+    against the advanced remote (unresolved rows), or back to review with a clean
+    candidate (``resolved=True``: nothing is unmerged). Same rows ``create_session``
+    writes; no schema change."""
+    store = get_store()
+    resolved_at = now_iso() if resolved else None
+    with store.transaction():
+        store._execute("DELETE FROM git_merge_session_file WHERE merge_id = ?", [merge_id])
+        for path in sorted(set(files)):
+            store._execute(
+                "INSERT INTO git_merge_session_file (merge_id, path, resolved, resolved_at) "
+                "VALUES (?, ?, ?, ?)",
+                [merge_id, path, 1 if resolved else 0, resolved_at],
+            )
+
+
 def get_session(merge_id: int) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM git_merge_session WHERE merge_id = ?", [merge_id]

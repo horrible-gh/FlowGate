@@ -1099,9 +1099,17 @@ def verify_open_attempt(session: dict, *, at_boot: bool = False) -> str:
                           observed={"merge_head": observed_merge_head})
         return "interrupted"
     if review_state is None:
-        unmerged = set(gs._unmerged_paths(root))
+        # flowgate.v02.0153 T#3: a reconcile hand-off (``merge_ref``) stored its rows as the
+        # real paths, so they are compared with the same NUL-separated query; a CLEAN
+        # hand-off rejected back to the resolver has nothing unmerged by construction.
+        handed_off = bool(baseline.get("merge_ref"))
+        unmerged = set(gs._unmerged_paths_exact(root) if handed_off else gs._unmerged_paths(root))
         remaining = set(gs.db_git.remaining_conflicts(merge_id))
-        if not remaining.issubset(unmerged):
+        if handed_off and baseline.get("clean") is True:
+            consistent = not unmerged
+        else:
+            consistent = remaining.issubset(unmerged)
+        if not consistent:
             _mark_interrupted(session, "conflict_files_mismatch",
                               observed={"unmerged": sorted(unmerged)})
             return "interrupted"

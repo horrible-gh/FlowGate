@@ -143,10 +143,15 @@ def env(monkeypatch, project, repo):
                         lambda mid, context, *, pushed: complete(None, mid, PROJECT, context, pushed=pushed))
 
     def remote(observed):
+        # 0153 T#3: reconcile reads the remote through the detailed variant; only the
+        # patch target changed (None still means "the query failed", here as network).
         def query(*a):
             probes.append(a)
-            return observed(a) if callable(observed) else observed
-        monkeypatch.setattr(gs, '_query_remote_ref', query)
+            sha = observed(a) if callable(observed) else observed
+            return {'sha': sha or None, 'cause': None if sha else 'network',
+                    'returncode': 0 if sha else 128, 'detail': None if sha else 'network',
+                    'stderr': ''}
+        monkeypatch.setattr(gs, '_query_remote_ref_detail', query)
     return SimpleNamespace(group=group, repo=repo, clock=clock, commands=commands, hooks=hooks,
                            completed=completed, probes=probes, remote=remote, monkeypatch=monkeypatch)
 
@@ -456,16 +461,16 @@ def test_reconcile_gate_recreates_a_deleted_ref_then_keeps_the_existing_branch(e
     git(['update-ref', '-d', ref, m], r.work)
     env.remote(r.B)
     out = gs.reconcile_push_session(mid, trigger='server_startup')
-    assert out['result']['status'] == 'pending_review'
+    # 0153 T#3: an unchanged remote now gets the same preserved commit re-pushed.
+    assert out['result']['status'] == 'merged'
     assert ref_value(r.work, ref) == m
     seq = names(env)
-    assert seq.index('update-ref') < seq.index('reset') and seq.count('reset') == 1
+    assert seq.index('update-ref') < seq.index('push') and seq.count('reset') == 0
     assert len(env.probes) == 1
     after = saved(mid)
-    assert after['review_state'] == gs.REVIEW_STATE_PENDING and after['merge_commit'] is None
-    assert after['preserve_history'][-1]['sha'] == m
-    assert after['preserve_history'][-1]['closed_reason'] == 'reconcile_remote_unchanged'
-    assert git(['rev-parse', 'HEAD'], r.work) == r.B
+    assert after['review_state'] == gs.REVIEW_STATE_COMPLETED and after['merge_commit'] == m
+    assert after['preserve_sha'] == m and 'preserve_history' not in after
+    assert git(['rev-parse', 'HEAD'], r.work) == m == git(['rev-parse', 'main'], r.bare)
 
 
 @pytest.mark.parametrize('damage', ['other_sha', 'commit_missing', 'no_merge_commit'])
@@ -619,15 +624,34 @@ def test_rejected_reset_keeps_existing_flow_and_the_ref(env, branch):
         'closed_at': AT, 'closed_reason': 're_review'}]
 
 
+def _remote_breaks_json(env):
+    """0153 T#3: another group's commit on origin that makes the integration fail its
+    syntax verification, so reconcile hands the merge back through the verified reset."""
+    r = env.repo
+    other = r.tmp / 'other_json'
+    git(['clone', '-q', str(r.bare), str(other)], r.tmp)
+    git(['config', 'user.name', 'other'], other)
+    git(['config', 'user.email', 'other@local'], other)
+    (other / 'data.json').write_text('{"broken": \n', encoding='utf-8')
+    git(['add', '.'], other)
+    git(['commit', '-q', '-m', 'broken json'], other)
+    git(['push', '-q', 'origin', 'main'], other)
+    return git(['rev-parse', 'HEAD'], other)
+
+
 def test_remote_unchanged_reset_gate(env):
+    # 0153 T#3: the remote-unchanged reset is gone; the reset gate now guards the
+    # hand-off reset (preserve.verify_round right before it).
     r = env.repo
     mid, m, before = unknown_session(env)
     ref = f'refs/flowgate/preserve/{mid}'
+    c = _remote_breaks_json(env)
 
-    def damage_then_unchanged(a):
-        git(['update-ref', ref, r.B, m], r.work)
-        return r.B
-    env.remote(damage_then_unchanged)
+    def damage_before_the_handoff(args):
+        if args and args[0] == 'merge-tree':
+            git(['update-ref', ref, r.B, m], r.work)
+        return None
+    env.hooks.append(damage_before_the_handoff)
     out = gs.reconcile_push_session(mid, trigger='server_startup')
     assert out['result'] == PRESERVE_FAILED
     assert 'reset' not in names(env)
@@ -635,14 +659,17 @@ def test_remote_unchanged_reset_gate(env):
     assert after['last_error']['stage'] == 'reset_gate' and after['last_error']['reason'] == 'ref_conflict'
     assert after['last_error']['prior_push_error'] == before['last_error']
     assert after['merge_commit'] == m and git(['rev-parse', 'HEAD'], r.work) == m
+    assert git(['rev-parse', 'main'], r.bare) == c
 
 
 def test_remote_unchanged_reset_keeps_the_ref_and_history(env):
+    # 0153 T#3: the hand-off reset (the only reconcile reset) keeps the ref and closes
+    # the round into the history.
     r = env.repo
     mid, m, before = unknown_session(env)
-    env.remote(r.B)
+    _remote_breaks_json(env)
     out = gs.reconcile_push_session(mid, trigger='server_startup')
-    assert out == {'ok': True, 'result': {'status': 'pending_review'}}
+    assert out['result']['status'] == 're_review'
     after = saved(mid)
     assert names(env).count('reset') == 1 and 'update-ref' not in names(env)
     assert ref_value(r.work, f'refs/flowgate/preserve/{mid}') == m
@@ -740,14 +767,20 @@ def test_push_timeout_then_restart_on_another_instance_reuses_the_ref(env):
     _only(env, mid)
     env.clock.update(now=LATER, instance='inst_B')
     env.remote(lambda a: git(['rev-parse', 'main'], r.bare))
+    # The completed row is closed by the attempt close in production; the sweep's
+    # completed-row finisher is outside this contract.
+    from modules.flow_gate.services.git import cleanup
+    env.monkeypatch.setattr(cleanup, '_finish_completed_review', lambda *a, **kw: None)
     gs.startup_recovery()
     after = saved(mid)
     assert len(env.probes) == 1
-    assert after['review_state'] == gs.REVIEW_STATE_PENDING  # the existing remote-unchanged branch
-    assert names(env).count('reset') == 1 and 'update-ref' not in names(env)
+    # 0153 T#3: the unchanged remote gets the same preserved commit re-pushed.
+    assert after['review_state'] == gs.REVIEW_STATE_COMPLETED
+    assert names(env).count('reset') == 0 and names(env).count('push') == 1
+    assert 'update-ref' not in names(env)
     ref = f'refs/flowgate/preserve/{mid}'
     assert ref_value(r.work, ref) == m and len(reflog(r.work, ref)) == 1
-    assert after['preserve_history'][0]['preserved_at'] == AT
+    assert after['preserved_at'] == AT
     assert after['ref_operations'][-1]['instance_id'] == 'inst_B'
 
 
@@ -896,8 +929,8 @@ def _exists(repo, sha):
 def test_preserve_ref_alone_keeps_commit_and_parents_through_external_gc(env):
     r = env.repo
     mid, m, before = unknown_session(env)
-    env.remote(r.B)
-    assert gs.reconcile_push_session(mid, trigger='server_startup')['result']['status'] == 'pending_review'
+    # 0153 T#3: reconcile no longer rewinds the branch; the same rewind is made directly.
+    git(['reset', '-q', '--hard', r.B], r.work)
     assert git(['rev-parse', 'HEAD'], r.work) == r.B
     git(['update-ref', '-d', 'ORIG_HEAD'], r.work)
     git(['branch', '-D', 'feature'], r.work)
@@ -978,10 +1011,12 @@ def test_push_exception_contract_is_unchanged_after_preservation(env):
 
 
 @pytest.mark.parametrize('observed,status', [
-    ('merge', 'merged'), ('expected', 'pending_review'),
-    ('third', 'manual_reconciliation_needed'), (None, 'retry_scheduled'),
+    ('merge', 'merged'), ('expected', 'merged'),
+    ('third', 'retry_scheduled'), (None, 'retry_scheduled'),
 ])
 def test_reconcile_four_branches_are_unchanged_behind_the_gate(env, observed, status):
+    # 0153 T#3: expected → the same commit is re-pushed and completed; a fake third SHA
+    # that the real fetch does not confirm is "the remote is moving" (transient).
     r = env.repo
     mid, m, before = unknown_session(env)
     value = {'merge': m, 'expected': r.B, 'third': 'd' * 40, None: None}[observed]
@@ -991,14 +1026,18 @@ def test_reconcile_four_branches_are_unchanged_behind_the_gate(env, observed, st
     after = saved(mid)
     assert after['reconcile_attempt_count'] == 1
     assert len(env.probes) == (3 if observed is None else 1)
-    assert names(env).count('reset') == (1 if observed == 'expected' else 0)
+    assert names(env).count('reset') == 0
+    assert names(env).count('push') == (1 if observed == 'expected' else 0)
     assert 'update-ref' not in names(env)  # gate reused the ref (`same`)
     assert after['last_error'] == before['last_error']
     if observed == 'expected':
-        assert after['merge_commit'] is None and after['review_state'] == gs.REVIEW_STATE_PENDING
+        assert after['merge_commit'] == m and after['review_state'] == gs.REVIEW_STATE_COMPLETED
         assert 'reconcile_next_at' not in after and 'reconciliation_kind' not in after
+        assert git(['rev-parse', 'main'], r.bare) == m and env.completed == [True]
     elif observed == 'third':
-        assert after['reconciliation_kind'] == 'push_remote_third' and after['reconcile_next_at'] is None
+        assert after['reconciliation_kind'] == 'push_remote_unknown'
+        assert after['reconcile_last_outcome'] == 'remote_moving'
+        assert after['merge_commit'] == m and after['reconcile_next_at'] == NEXT_AT
     elif observed is None:
         assert after['merge_commit'] == m and after['reconcile_next_at'] == NEXT_AT
     else:

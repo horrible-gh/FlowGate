@@ -66,10 +66,14 @@ STAGE_CREATE = "create"
 STAGE_VERIFY = "verify"
 STAGE_RECONCILE_GATE = "reconcile_gate"
 STAGE_RESET_GATE = "reset_gate"
+STAGE_REPUSH = "repush"            # T#3 §3.3 (a): re-verification before a reconcile re-push
+STAGE_INTEGRATION = "integration"  # T#3 §3.3 (c): the integration commit could not be pinned
 
 # Round-closing reasons recorded in ``preserve_history``.
 CLOSE_RE_REVIEW = "re_review"
 CLOSE_REMOTE_UNCHANGED = "reconcile_remote_unchanged"
+CLOSE_REMOTE_CONFLICT = "reconcile_remote_conflict"      # T#3 §3.5: handed back with new conflicts
+CLOSE_REMOTE_UNVERIFIED = "reconcile_remote_unverified"  # T#3 §3.5: clean, but not auto-verifiable
 
 # Context keys this module owns.
 KEY_REF = "preserve_ref"
@@ -82,6 +86,8 @@ KEY_HISTORY = "preserve_history"
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _REF_RE = re.compile(r"^refs/flowgate/preserve/([1-9][0-9]*)(?:-r([1-9][0-9]*))?$")
+_INTEGRATION_REF_RE = re.compile(
+    r"^refs/flowgate/preserve/([1-9][0-9]*)(?:-r([1-9][0-9]*))?-i([1-9][0-9]*)$")
 _DETAIL_MAX = 300
 
 
@@ -402,6 +408,146 @@ def failure_error(context: dict, result: dict, stage: str, *, now: str,
         elif prior.get("code") == "preserve_failed" and isinstance(prior.get("prior_push_error"), dict):
             error["prior_push_error"] = prior["prior_push_error"]
     return error
+
+
+# ── Integration commits (flowgate.v02.0153 T#3 §3.3 (c)) ─────────────────────
+# A reconcile that found the remote ahead with another group's commit builds an
+# integration commit I = commit-tree(T, -p publish_commit, -p F) off-tree and pins it
+# here BEFORE the local branch moves to it. The resolution ref of the round is left
+# exactly as it is; both the resolution result and the new remote tip stay reachable
+# as I's parents.
+
+def integration_ref_name(merge_id: int, round: int, k: int) -> str:  # noqa: A002
+    """``refs/flowgate/preserve/<merge_id>[-r<N>]-i<k>`` (k ≥ 1)."""
+    if isinstance(k, bool) or not isinstance(k, int) or k <= 0:
+        raise ValueError(f"integration index must be a positive integer: {k!r}")
+    return f"{preserve_ref_name(merge_id, round)}-i{k}"
+
+
+def parse_integration_ref(ref: str) -> Optional[tuple[int, int, int]]:
+    """``(merge_id, round, k)`` of a name :func:`integration_ref_name` produced, else None."""
+    m = _INTEGRATION_REF_RE.match(ref or "")
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2) or 0), int(m.group(3))
+
+
+def round_integrations(merge_id: int, context: dict) -> list[dict]:
+    """The ``integration_commits`` entries that belong to the current round."""
+    current = _round_of(context)
+    out = []
+    for entry in context.get("integration_commits") or []:
+        parsed = parse_integration_ref((entry or {}).get("ref") or "") if isinstance(entry, dict) else None
+        if parsed and parsed[0] == int(merge_id) and parsed[1] == current:
+            out.append(entry)
+    return out
+
+
+def _check_parents(repo: Path, sha: str, parents: list, ref: Optional[str]) -> Optional[dict]:
+    proc = _git(repo, ["rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"])
+    if proc.returncode != 0 or (proc.stdout or "").strip() != sha:
+        return _fail(REASON_COMMIT_MISSING, ref, sha)
+    proc = _git(repo, ["rev-list", "--parents", "-n", "1", sha])
+    if proc.returncode != 0:
+        return _fail(REASON_REF_READ_FAILED, ref, sha, detail=_detail(proc))
+    tokens = (proc.stdout or "").split()
+    if not tokens or tokens[0] != sha or tokens[1:] != list(parents):
+        return _fail(REASON_PARENT_MISMATCH, ref, sha)
+    return None
+
+
+def ensure_integration_preserved(repo: Path, merge_id: int, context: dict, sha: str,
+                                 parents: list, k: int) -> dict:
+    """Pin an integration commit with a zero-oid CAS (create-only, reason
+    ``preserve_integration_commit``) after checking its parents are exactly
+    ``[publish_commit, F]``. Same result shape as :func:`ensure_preserved`; never raises."""
+    ref: Optional[str] = None
+    try:
+        ref = integration_ref_name(int(merge_id), _round_of(context), int(k))
+        if not _is_sha(sha) or len(parents) != 2 or not all(_is_sha(p) for p in parents):
+            return _fail(REASON_MERGE_COMMIT_MISSING, ref, sha if isinstance(sha, str) else None)
+        failed = _check_parents(repo, sha, parents, ref)
+        if failed is not None:
+            return failed
+        try:
+            current = _read_ref(repo, ref)
+        except _ReadError as exc:
+            return _fail(REASON_REF_READ_FAILED, ref, sha,
+                         detail=_detail(exc.proc) if exc.proc is not None else None)
+        if current == sha:
+            return _result(True, status=RESULT_SAME, ref=ref, expected=sha, observed=sha, parents=parents)
+        if current is not None:
+            return _fail(REASON_REF_CONFLICT, ref, sha, observed=current)
+        gs = _gs()
+        write = gs._run_session_git(
+            int(merge_id), context, "update-ref", "preserve_integration_commit",
+            ["update-ref", "--create-reflog", "-m",
+             f"flowgate: preserve integration {int(merge_id)}-i{int(k)}", ref, sha, ZERO_OID],
+            cwd=repo, timeout=gs.GIT_LOCAL_TIMEOUT_SEC,
+        )
+        if write.returncode != 0:
+            try:
+                again = _read_ref(repo, ref)
+            except _ReadError:
+                again = None
+            if again == sha:
+                return _result(True, status=RESULT_SAME, ref=ref, expected=sha, observed=sha,
+                               parents=parents)
+            if again is not None:
+                return _fail(REASON_REF_CONFLICT, ref, sha, observed=again)
+            return _fail(REASON_REF_WRITE_FAILED, ref, sha, detail=_detail(write))
+        try:
+            written = _read_ref(repo, ref)
+        except _ReadError as exc:
+            return _fail(REASON_REF_VERIFY_FAILED, ref, sha,
+                         detail=_detail(exc.proc) if exc.proc is not None else None)
+        if written != sha:
+            return _fail(REASON_REF_VERIFY_FAILED, ref, sha, observed=written)
+        return _result(True, status=RESULT_CREATED, ref=ref, expected=sha, observed=sha, parents=parents)
+    except Exception:
+        _log.warning("integration ref creation failed for merge %s", merge_id, exc_info=True)
+        return _fail(REASON_EXCEPTION, ref, sha if isinstance(sha, str) else None)
+
+
+def verify_integration_preserved(repo: Path, entry: dict) -> dict:
+    """Read-only re-check of one recorded integration commit: the ref still holds the
+    SHA and the commit still has the recorded parents. Never writes, never raises."""
+    ref = (entry or {}).get("ref")
+    sha = (entry or {}).get("sha")
+    try:
+        if parse_integration_ref(ref or "") is None or not _is_sha(sha):
+            return _fail(REASON_REF_VERIFY_FAILED, ref, sha if isinstance(sha, str) else None)
+        try:
+            current = _read_ref(repo, ref)
+        except _ReadError as exc:
+            return _fail(REASON_REF_READ_FAILED, ref, sha,
+                         detail=_detail(exc.proc) if exc.proc is not None else None)
+        if current is None:
+            return _fail(REASON_REF_VERIFY_FAILED, ref, sha)
+        if current != sha:
+            return _fail(REASON_REF_CONFLICT, ref, sha, observed=current)
+        failed = _check_parents(repo, sha, list(entry.get("parents") or []), ref)
+        if failed is not None:
+            failed["observed_sha"] = current
+            return failed
+        return _result(True, status=RESULT_VERIFIED, ref=ref, expected=sha, observed=current,
+                       parents=list(entry.get("parents") or []))
+    except Exception:
+        _log.warning("integration ref verification failed", exc_info=True)
+        return _fail(REASON_EXCEPTION, ref, sha if isinstance(sha, str) else None)
+
+
+def verify_round(repo: Path, merge_id: int, context: dict) -> dict:
+    """:func:`verify_preserved` for the resolution ref plus every integration ref of the
+    current round. The first failure is returned as is."""
+    result = verify_preserved(repo, context)
+    if not result.get("ok"):
+        return result
+    for entry in round_integrations(merge_id, context):
+        checked = verify_integration_preserved(repo, entry)
+        if not checked.get("ok"):
+            return checked
+    return result
 
 
 def _retain_until_of(context: dict, ref: str) -> Optional[str]:
