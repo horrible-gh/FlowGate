@@ -387,6 +387,13 @@ def _gate_snapshot_reserved(flow_id: str) -> bool:
 # of exactly that session is the attempt's, however early it comes.
 _opened: dict[str, int] = {}
 _opened_lock = threading.Lock()
+# 0156 T#2 (D2-b, S-D2-5): the session an ``integrate`` opened whose ``conflict`` it could not record (the attempt left
+# ``integrating``; attempt -> (Flow, merge_id)), kept by that ``integrate`` itself before its drain lets the Flow go. A
+# close of that session, whenever it comes and whoever takes it, is the attempt's (``_settle_closed``: a person's abort
+# -> ``failed`` / ``conflict_aborted``, a commit -> (e)) - never a reason to merge it again, even when it closes while a
+# recovery judges the attempt (``_closed_meanwhile``). Dropped at the attempt's next ``_begin`` and once a recovery
+# took it.
+_left_open: dict[str, tuple[str, int]] = {}
 
 
 def _merge(row: dict) -> tuple[str, object]:
@@ -603,6 +610,9 @@ def integrate(attempt_id: str) -> str:
         elif not _begin(attempt_id, row["group_id"]):
             return SKIPPED
         else:
+            with _opened_lock:
+                _left_open.pop(attempt_id, None)                # a new integration: no earlier session is its
+            recorded = False
             try:
                 status, value = _merge(workspace.attempt(attempt_id))                       # (d)
             except Exception as exc:  # noqa: BLE001 — the merge ends as failed, never stays integrating
@@ -613,6 +623,7 @@ def integrate(attempt_id: str) -> str:
                     status = _finish(attempt_id, value, (INTEGRATING,))                     # (e)
                 elif status == CONFLICT:
                     _set(attempt_id, CONFLICT, SESSION_REASON + str(value), (INTEGRATING,))
+                    recorded = True
                     # A session closed before its conflict was recorded: its close found the attempt integrating
                     # (``session_closed``); one closed in between is settled here. Never lost, never twice.
                     current = workspace.attempt(attempt_id)
@@ -623,7 +634,9 @@ def integrate(attempt_id: str) -> str:
                     _set(attempt_id, status, str(value), (INTEGRATING,))
             finally:
                 with _opened_lock:
-                    _opened.pop(attempt_id, None)
+                    merge_id = _opened.pop(attempt_id, None)
+                    if merge_id is not None and not recorded:      # its conflict's record raised: the session stays its
+                        _left_open[attempt_id] = (row["group_id"], merge_id)
     _after(attempt_id)
     return status
 
@@ -691,6 +704,7 @@ def retry(flow_id: str, skip=(), *, failed: bool = True) -> None:
         while True:
             with _drain_lock:
                 _again.pop(flow_id, None)
+            reclaim_integrating(flow_id, drain_owner=True)     # 0156 T#2 (D2): the integrating ones a failure left
             aborted = _closed_conflicts(flow_id)
             with _drain_lock:
                 _skips[flow_id] |= aborted
@@ -846,7 +860,16 @@ def _retry_released(project_id: str, group_id: Optional[str], seen: set[str]) ->
     if group_id:
         sql += " AND group_id = ?"
         args.append(group_id)
-    for run in run_store._all(sql, args):
+    runs = run_store._all(sql, args)
+    # 0156 T#2 (D3 ⓓ): a running run left holding (its hold's end and release both failed) with no pending /
+    # integrating attempt — the server start's choice (``recover``): its drain ends the hold (a command's hold asks the
+    # failed ones again, as its command's drain does).
+    hold_sql = "SELECT run_id, group_id, status FROM graph_runs WHERE status = 'running'"
+    for run in run_store._all(hold_sql + (" AND group_id = ?" if group_id else ""), args):
+        kind = hold_of(run["run_id"])
+        if kind is not None:
+            runs.append({**run, "hold": kind})
+    for run in runs:
         flow_id = run["group_id"]
         if flow_id in seen or _project_of(flow_id) != project_id:
             continue
@@ -855,7 +878,7 @@ def _retry_released(project_id: str, group_id: Optional[str], seen: set[str]) ->
             if run["status"] == STOPPING:
                 stop.advance(flow_id, run["run_id"])
             else:
-                request(flow_id, failed=False)
+                request(flow_id, failed=run.get("hold") not in (None, HOLD_IDLE))
         except Exception:  # noqa: BLE001 — a release must not fail its original operation
             log.exception("Graph retry after Git lock release failed flow=%s", flow_id)
 
@@ -916,12 +939,43 @@ def session_closed(group_id: str, merge_id: int) -> None:
         row = workspace.attempt(attempt_id) if attempt_id else None
         with _opened_lock:
             opened = _opened.get(attempt_id) if attempt_id else None
+            left = _left_open.get(attempt_id) if attempt_id else None
         if row and row["status"] == "active" and row.get("result_commit") == context.get("result_commit") and (
                 (_status(row) == CONFLICT and _merge_id(row) == int(merge_id))
                 or (_status(row) == INTEGRATING and opened == int(merge_id))):
             if _settle_closed(row, (INTEGRATING, CONFLICT)) == FAILED:
                 skip.add(attempt_id)
             _after(attempt_id)
+        elif row and row["status"] == "active" and _status(row) == INTEGRATING and opened is None and \
+                left == (group_id, int(merge_id)):
+            # 0156 T#2 (D2-b, S-D2-5): the session an integration opened and left ``integrating`` (its conflict's
+            # record raised, ``_left_open``) closed — a person's abort / commit. Its end, judged as the drain owner (no
+            # ``integrate`` of the Flow holds the attempt). A drain owning the Flow meanwhile (the failed one not out
+            # yet, another pass) leaves it: ``_left_open`` keeps the close's meaning past that drain (even a failed
+            # one's cleanup), and the next recovery (``reclaim_integrating``: the drain's pass start, a Stop) settles it
+            # the same way — never ``_recover_one``'s ``pending`` and a second merge (the abort lost).
+            settled: dict = {}
+
+            def orphan() -> None:
+                current = workspace.attempt(attempt_id)
+                with _opened_lock:
+                    busy = attempt_id in _opened or _left_open.get(attempt_id) != (group_id, int(merge_id))
+                if busy or not current or current["status"] != "active" or _status(current) != INTEGRATING or \
+                        current.get("result_commit") != context.get("result_commit") or \
+                        db_git.get_open_session_by_group(group_id) is not None:
+                    return
+                settled["outcome"] = _settle_closed(current, (INTEGRATING,))
+                with _opened_lock:
+                    _left_open.pop(attempt_id, None)
+                if settled["outcome"] == FAILED:
+                    with _drain_lock:
+                        _skips.setdefault(group_id, set()).add(attempt_id)
+
+            _as_drain_owner(group_id, orphan)
+            if "outcome" in settled:
+                if settled["outcome"] == FAILED:
+                    skip.add(attempt_id)
+                _after(attempt_id)
     retry(group_id, skip)
 
 
@@ -987,6 +1041,110 @@ def _recover_one(row: dict) -> None:
         finally:
             git_commit._release_group_lock(lock)
     _set(row["attempt_id"], PENDING, "recovered", (INTEGRATING,))
+
+
+def _as_drain_owner(flow_id: str, body) -> bool:
+    """0156 T#2: ``body`` run as the Flow's drain owner (``_draining``), so no ``integrate`` of the Flow starts or runs
+    meanwhile in this process; False (``body`` not run) when a drain owns the Flow already. A drain asked meanwhile
+    (``retry`` found the Flow owned and left ``_again`` / ``_skips``) runs right after, as it would have. Single process
+    (``FLOWGATE_WORKERS`` = 1, SSE): the ownership is this process's."""
+    with _drain_lock:
+        if flow_id in _draining:
+            return False
+        _draining.add(flow_id)
+    try:
+        body()
+    finally:
+        with _drain_lock:
+            _draining.discard(flow_id)
+            again = _again.pop(flow_id, None)
+            skips = _skips.pop(flow_id, set())
+        if again is not None:
+            try:
+                retry(flow_id, skips, failed=again)
+            except Exception:  # noqa: BLE001
+                log.exception("Graph attempt integration failed flow=%s", flow_id)
+    return True
+
+
+def _closed_meanwhile(flow_id: str, attempt_id: str, merge_id: int) -> None:
+    """0156 T#2 (S-D2-5, TR0008 rev 1 review): the recovery read the attempt's own session (``_left_open``) open and
+    let ``_recover_one`` judge it, and that session closed in between - a person's abort / commit whose notice found
+    the Flow owned and left the close to this recovery. The close stays the attempt's (``_settle_closed``, as
+    ``session_closed`` would have judged it) before the pass retries anything: ``_recover_one``'s ``pending``
+    (``recovered``: it found no session) or its ``conflict`` of the closed session never merges the result again."""
+    if _session_open(merge_id):
+        return
+    current = workspace.attempt(attempt_id)
+    if not current or current["status"] != "active":
+        return
+    status = _status(current)
+    if status == PENDING and current.get("integration_reason") == "recovered":
+        outcome = _settle_closed(current, (PENDING,))
+    elif status == CONFLICT and _merge_id(current) == int(merge_id):
+        outcome = _settle_closed(current, (CONFLICT,))
+    else:
+        return
+    if outcome == FAILED:
+        with _drain_lock:
+            _skips.setdefault(flow_id, set()).add(attempt_id)
+
+
+def reclaim_integrating(flow_id: str, *, drain_owner: bool = False) -> None:
+    """0156 T#2 (D2): the runtime recovery of an ``integrating`` attempt no ``integrate`` holds any more (its end —
+    ``_finish`` / ``_set`` — raised: a Flow lock timeout, ...), by the server start's own rule (``_recover_one``: its
+    open session -> ``conflict``, its result in the group branch -> (e) with no second merge, its merge left in flight
+    -> undone under G, else ``pending`` again). Called at each drain pass start (``retry``, ``drain_owner``: the
+    calling thread owns the Flow's drain and has not started this pass's ``integrate``) and at a Stop's ``advance``
+    (outside the drain: only when no drain owns the Flow, and owning it meanwhile). An attempt whose session an
+    ``integrate`` just opened (``_opened``) is never taken. Ownership is per process: the deployment runs one worker
+    (``FLOWGATE_WORKERS`` = 1, ``config.py``; SSE is in-process). Never raises: a failed recovery is logged and left to
+    the next trigger (the drain / Stop / server start). An attempt whose own session (``_left_open``) closed is that
+    close's (``_settle_closed``, as ``session_closed`` would have judged it — its notice may have found the Flow owned),
+    also when it closes while ``_recover_one`` judges the attempt (``_closed_meanwhile``)."""
+    def body() -> None:
+        try:
+            rows = run_store._all(
+                "SELECT a.attempt_id FROM graph_node_attempts a JOIN graph_runs g ON g.run_id = a.run_id "
+                "WHERE g.group_id = ? AND a.status = 'active' AND a.integration_status = 'integrating' "
+                "ORDER BY a.created_at, a.attempt_id", [flow_id])
+        except Exception:  # noqa: BLE001
+            log.exception("Graph integration reclaim failed flow=%s", flow_id)
+            return
+        ids = {r["attempt_id"] for r in rows}
+        with _opened_lock:                     # the Flow's attempts no longer integrating keep nothing
+            for gone in [a for a, (f, _m) in _left_open.items() if f == flow_id and a not in ids]:
+                del _left_open[gone]
+        for r in rows:
+            attempt_id = r["attempt_id"]
+            with _opened_lock:
+                if attempt_id in _opened:
+                    continue
+                left = _left_open.get(attempt_id)
+            try:
+                row = workspace.attempt(attempt_id)
+                if not row or row["status"] != "active" or _status(row) != INTEGRATING:
+                    continue
+                if left is not None and not _session_open(left[1]):
+                    # its own session closed (a person's abort / commit): that close's end, never a second merge
+                    if _settle_closed(row, (INTEGRATING,)) == FAILED:
+                        with _drain_lock:
+                            _skips.setdefault(flow_id, set()).add(attempt_id)
+                else:
+                    _recover_one(row)
+                    if left is not None:     # its own session closed while it was judged: still that close's
+                        _closed_meanwhile(flow_id, attempt_id, left[1])
+                with _opened_lock:
+                    _left_open.pop(attempt_id, None)
+                if drain_owner:
+                    _after(attempt_id)       # as an integration's end: a waiting Stop goes on, a hold may end
+            except Exception:  # noqa: BLE001
+                log.exception("Graph integration reclaim failed for %s", attempt_id)
+
+    if drain_owner:
+        body()
+    else:
+        _as_drain_owner(flow_id, body)
 
 
 def recover() -> None:

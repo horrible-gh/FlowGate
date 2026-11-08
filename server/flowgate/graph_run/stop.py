@@ -308,6 +308,10 @@ def advance(flow_id: str, run_id: str, *, actor: Optional[str] = None,
     held: dict = {}
     run = run_store.run_by_id(run_id)
     if run is not None and run["status"] == STOPPING:
+        # 0156 T#2 (D2): an integrating attempt no integration holds any more (its end raised) is recovered first —
+        # done stays done, a merge not made yet goes pending and is invalidated below — else the Stop waits for it
+        # forever (``finish_stop``: an active attempt). Never while a drain of the Flow runs (it hands over to the Stop).
+        result_merge.reclaim_integrating(flow_id)
         # T#9: the run's merge sessions, before its attempts; one still open holds the whole of (c)~(e).
         left = result_merge.abort_for_stop(flow_id, run_id)
         if left:

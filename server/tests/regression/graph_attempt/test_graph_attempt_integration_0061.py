@@ -176,7 +176,17 @@ def test_late_close_of_an_older_session_leaves_a_new_merge_alone(merge_db, monke
     merge_db._execute("UPDATE graph_node_attempts SET integration_status='integrating', result_commit=? "
                       "WHERE attempt_id=?", [RESULT, merge_db.attempt])
     closed_session(monkeypatch, merge_db, merge_id=6)
-    result_merge.session_closed("flow", 6)
+    # 0156 T#2: a new merge in progress runs inside the Flow's drain (``integrate`` is called by ``retry`` only), so the
+    # drain owns the Flow; an integrating attempt with no drain is an orphan the close settles (S-D2-5).
+    with result_merge._drain_lock:
+        result_merge._draining.add("flow")
+    try:
+        result_merge.session_closed("flow", 6)
+    finally:
+        with result_merge._drain_lock:
+            result_merge._draining.discard("flow")
+            result_merge._again.pop("flow", None)
+            result_merge._skips.pop("flow", None)
     assert status(merge_db)[0] == "integrating"
 
 

@@ -751,12 +751,27 @@ def on_released(callback: Callable[[Held], None]) -> None:
     _released_listeners.append(callback)
 
 
-def _notify_released(h: Held) -> None:
+def _notify_released(h: Held, skip: tuple = ()) -> None:
     for callback in list(_released_listeners):
+        if callback in skip:
+            continue
         try:
             callback(h)
         except Exception:
             _log.warning("lock release listener failed", exc_info=True)
+
+
+def notify_reclaimed(row: dict, skip: tuple = ()) -> None:
+    """0156 T#2 (D3 ⓒ-5): a stale row ``reclaim_stale_row`` deleted for the Sweeper — the release notice
+    ``_db_release`` gives a committed delete, so its listeners (a Graph integration waiting for that G/W/M) run.
+    ``skip``: listeners the caller already woke. Never raises."""
+    try:
+        h = Held(row["lock_key"], row.get("domain"), row.get("project_id"), row.get("group_id"),
+                 row.get("target_key"), row.get("lock_epoch"), row.get("hold_class") or "")
+    except Exception:
+        _log.warning("reclaimed lock notice skipped for %s", row.get("lock_key"), exc_info=True)
+        return
+    _notify_released(h, skip)
 
 
 def protect(ctx: ExecutionContext, key: str, reason: str) -> bool:
