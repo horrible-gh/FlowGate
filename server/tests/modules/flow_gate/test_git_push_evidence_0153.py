@@ -35,6 +35,24 @@ def project(patch_store):
     projects.create({'project_id': PROJECT, 'project_name': 'Evidence0153'})
 
 
+@pytest.fixture(autouse=True)
+def preserve_gate_passes(monkeypatch):
+    """0153 T#2 added a preservation gate before every push and every existing reset.
+    These T#1 contracts drive those paths with synthetic SHAs and a scripted runner, so
+    the gate is passed here (no Git command, no state beyond the preserve_* fields) and
+    every T#1 command/state assertion stays exactly as it was. The gate itself is
+    proven against real Git in test_git_preserve_ref_0153.py."""
+    from modules.flow_gate.services.git import preserve
+
+    def passed(context, status):
+        sha = context.get('merge_commit')
+        return {'ok': True, 'result': status, 'reason': None,
+                'ref': context.get('preserve_ref') or 'refs/flowgate/preserve/1',
+                'expected_sha': sha, 'observed_sha': sha, 'parents': [None, None], 'detail': None}
+    monkeypatch.setattr(preserve, 'ensure_preserved', lambda repo, mid, context, **kw: passed(context, 'created'))
+    monkeypatch.setattr(preserve, 'verify_preserved', lambda repo, context: passed(context, 'verified'))
+
+
 @pytest.fixture
 def session(monkeypatch, project):
     group = PROJECT + '.default.' + uuid.uuid4().hex[:12]

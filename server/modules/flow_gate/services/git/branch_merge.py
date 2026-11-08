@@ -812,6 +812,12 @@ def publish_reviewed(
     push = bool(bm.get("push"))
     commit = context.get("merge_commit")
     if push:
+        # 0153 T#2 §3.1: pin the approved resolution commit before any remote contact
+        # (origin sync, secret load, push). push=False never contacts the remote and
+        # creates no preservation ref.
+        preserve_failed = gs._preserve_gate(merge_id, context, root, project_id=project_id)
+        if preserve_failed is not None:
+            return preserve_failed
         expected = context.get("expected_remote_head") or ""
         lease = f"refs/heads/{target_branch}:{expected}" if expected else f"refs/heads/{target_branch}:"
         gs.ensure_origin_matches_config(root, (cfg.get("repo_url") or "").strip())
@@ -831,6 +837,10 @@ def publish_reviewed(
                 )
             if ("stale info" in stderr_l or "rejected" in stderr_l or "fetch first" in stderr_l
                     or "non-fast-forward" in stderr_l):
+                # 0153 T#2 §4.2: reset only while the preservation ref is verified.
+                preserve_failed = gs._preserve_reset_gate(merge_id, context, root)
+                if preserve_failed is not None:
+                    return preserve_failed
                 gs._run_session_git(merge_id, context, "reset", "push_rejected",
                                     ["reset", "--hard", "ORIG_HEAD"], cwd=root, timeout=gs.GIT_LOCAL_TIMEOUT_SEC)
                 return gs._refreeze_for_re_review(

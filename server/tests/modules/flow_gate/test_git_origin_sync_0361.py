@@ -979,14 +979,24 @@ def dual_remote_merge_review_repo(tmp_path, monkeypatch):
         ["git", "clone", "--bare", str(remote_a), str(remote_b)],
         check=True, capture_output=True,
     )
-    # The local "merge commit" approve_merge_review() already created before
-    # ever calling _conditionally_push_or_reconcile.
+    # The local merge commit approve_merge_review() already created before ever
+    # calling _conditionally_push_or_reconcile. 0153 T#2: that function now pins the
+    # approved commit under refs/flowgate/preserve/ first, which validates it as a
+    # real two-parent merge of [base_head, merge_head] — so the fixture builds one.
+    subprocess.run(["git", "checkout", "-b", "side"], cwd=root, check=True, capture_output=True)
     (root / "merged.txt").write_text("merge result\n", encoding="utf-8")
     subprocess.run(["git", "add", "merged.txt"], cwd=root, check=True)
-    subprocess.run(["git", "commit", "-m", "merge"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "side"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "checkout", "main"], cwd=root, check=True, capture_output=True)
+    base_head = _git(["rev-parse", "HEAD"], cwd=root).strip()
+    merge_head = _git(["rev-parse", "side"], cwd=root).strip()
+    subprocess.run(["git", "merge", "--no-ff", "-m", "merge", "side"], cwd=root, check=True,
+                   capture_output=True)
+    context = {"merge_commit": _git(["rev-parse", "HEAD"], cwd=root).strip(),
+               "base_head": base_head, "merge_head": merge_head}
 
     monkeypatch.setattr(svc, "_load_secret_for", lambda cfg: "")
-    return {"root": root, "remote_a": remote_a, "remote_b": remote_b}
+    return {"root": root, "remote_a": remote_a, "remote_b": remote_b, "context": context}
 
 
 def test_conditionally_push_or_reconcile_uses_reconfigured_origin_not_stale_remote(
@@ -1010,7 +1020,8 @@ def test_conditionally_push_or_reconcile_uses_reconfigured_origin_not_stale_remo
     cfg = {"repo_url": str(remote_b), "username": None}
     session = {"finalize_action": "merge"}
     result = svc._conditionally_push_or_reconcile(
-        "flowgate.default.9401", 1, session, "proj", root, cfg, "main", {},
+        "flowgate.default.9401", 1, session, "proj", root, cfg, "main",
+        dual_remote_merge_review_repo["context"],
     )
 
     assert completed == [True], "the review must complete with pushed=True"
@@ -1048,7 +1059,8 @@ def test_conditionally_push_or_reconcile_sync_failure_stops_before_push(
     session = {"finalize_action": "merge"}
     with pytest.raises(GitServiceError) as caught:
         svc._conditionally_push_or_reconcile(
-            "flowgate.default.9402", 1, session, "proj", root, cfg, "main", {},
+            "flowgate.default.9402", 1, session, "proj", root, cfg, "main",
+            dual_remote_merge_review_repo["context"],
         )
     assert caught.value.code == "git_error"
     assert _origin_url(root) == str(remote_a), "a failed sync must leave origin untouched"

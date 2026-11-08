@@ -57,6 +57,7 @@ from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import path_exclusion_rules
 from modules.flow_gate.services.git import approval_intent
 from modules.flow_gate.services.git import merge_target
+from modules.flow_gate.services.git import preserve
 from modules.flow_gate.services.git import review_messages
 from modules.flow_gate.storage.paths import get_storage_root, src_root
 
@@ -1955,6 +1956,10 @@ PUSH_RECONCILE_DELAYS_SEC = (0, 1, 3)
 PUSH_RECONCILE_RETRY_INTERVAL_SEC = 60
 # Reconciliation kinds a durable worker (§2.8.1) is allowed to keep retrying.
 RECONCILE_AUTO_RETRY_KINDS = ("push_remote_unknown", "post_push_cleanup")
+# 0153 T#2 §3.4: the approved resolution commit could not be pinned/verified under
+# refs/flowgate/preserve/. Deliberately NOT auto-retried: nothing is pushed, synced or
+# reset until a person (T#5) re-runs the idempotent preserve.ensure_preserved.
+RECONCILE_KIND_PRESERVE_FAILED = "preserve_failed"
 
 
 def _parse_ls_tree_z(stdout: str) -> list[dict]:
@@ -3100,6 +3105,9 @@ def _refreeze_for_re_review(
     context["review_state"] = REVIEW_STATE_RE_REVIEW
     context["instruction_generation"] = int(context.get("instruction_generation") or 0) + 1
     context["approval_attempt_id"] = None
+    # 0153 T#2 §3.2: the resolution commit leaves the session here — close its
+    # preservation round (the ref itself stays); a re-approval pins `-r<N+1>`.
+    preserve.close_round(context, preserve.CLOSE_RE_REVIEW, now=now_iso())
     context["merge_commit"] = None
     context["apply_phase"] = None
     context["last_error"] = {"code": reason}
@@ -3270,6 +3278,80 @@ def _enter_reconciling(
     }}
 
 
+_PRESERVE_VALIDATION_REASONS = (
+    preserve.REASON_MERGE_COMMIT_MISSING, preserve.REASON_COMMIT_MISSING,
+    preserve.REASON_PARENT_MISMATCH, preserve.REASON_REMOTE_NOT_ANCESTOR,
+)
+
+
+def _enter_preserve_failed(merge_id: int, context: dict, result: dict, stage: str) -> dict:
+    """0153 T#2 §3.4 — park the session without touching Git any further.
+
+    ``merge_commit``, ``approval_attempt_id``, ``apply_phase``, the approval intent and
+    the local branch/HEAD stay exactly as they are; ``reconciling`` keeps the
+    startup/sweep orphan and TTL protection, and the kind is outside
+    ``RECONCILE_AUTO_RETRY_KINDS`` so no worker pushes, syncs or resets it."""
+    context["last_error"] = preserve.failure_error(
+        context, result, stage, now=now_iso(), instance_id=current_instance_id(),
+    )
+    context["review_state"] = REVIEW_STATE_RECONCILING
+    context["reconciliation_kind"] = RECONCILE_KIND_PRESERVE_FAILED
+    context["reconcile_next_at"] = None
+    db_git.set_session_context(merge_id, context)
+    return {"ok": True, "result": {
+        "status": "reconciling", "review_state": REVIEW_STATE_RECONCILING,
+        "reconciliation_kind": RECONCILE_KIND_PRESERVE_FAILED, "error": "preserve_failed",
+    }}
+
+
+def _preserve_gate(
+    merge_id: int, context: dict, root: Path, *, stage: Optional[str] = None,
+    project_id: Optional[str] = None, group_id: Optional[str] = None,
+) -> Optional[dict]:
+    """0153 T#2 §3.1/§3.3/§4.1 — pin the approved resolution commit before any remote
+    contact. None: preserved (``created``/``same``) and recorded in the session
+    context, persisted BEFORE the caller goes on to push/query. Otherwise the
+    ``preserve_failed`` response the caller returns as is.
+
+    ``stage`` defaults to ``verify`` for a commit that fails its object/parent/remote
+    checks and ``create`` for a ref read/write/verify failure; the reconcile entry
+    passes ``reconcile_gate``."""
+    result = preserve.ensure_preserved(
+        root, merge_id, context, project_id=project_id, group_id=group_id,
+    )
+    if not result.get("ok"):
+        if stage is None:
+            stage = (preserve.STAGE_VERIFY if result.get("reason") in _PRESERVE_VALIDATION_REASONS
+                     else preserve.STAGE_CREATE)
+        return _enter_preserve_failed(merge_id, context, result, stage)
+    keys = (preserve.KEY_REF, preserve.KEY_SHA, preserve.KEY_PARENTS, preserve.KEY_AT,
+            preserve.KEY_ROUND, preserve.KEY_RETAIN)
+    before = {key: context.get(key) for key in keys if key in context}
+    try:
+        preserve.record_preserved(context, result, now=now_iso())
+        db_git.set_session_context(merge_id, context)
+    except Exception:
+        # §3.3: never push without the recorded preservation. The ref (if this call
+        # wrote it) is recovered as `same` by the next entry.
+        _log.warning("preserve record failed for merge_id=%s", merge_id, exc_info=True)
+        for key in keys:
+            context.pop(key, None)
+        context.update(before)
+        failed = {**result, "ok": False, "result": None, "reason": preserve.REASON_EXCEPTION}
+        return _enter_preserve_failed(merge_id, context, failed, stage or preserve.STAGE_CREATE)
+    return None
+
+
+def _preserve_reset_gate(merge_id: int, context: dict, root: Path) -> Optional[dict]:
+    """0153 T#2 §4.2 — read-only re-verification right before an existing
+    ``reset --hard ORIG_HEAD``. None: the reset may run; otherwise preserve_failed
+    (``stage=reset_gate``) and the reset/refreeze must not run."""
+    result = preserve.verify_preserved(root, context)
+    if result.get("ok"):
+        return None
+    return _enter_preserve_failed(merge_id, context, result, preserve.STAGE_RESET_GATE)
+
+
 def _seconds_from_now_iso(seconds: float) -> str:
     from datetime import datetime, timedelta, timezone
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
@@ -3298,6 +3380,14 @@ def _conditionally_push_or_reconcile(
     session_action = session.get("finalize_action") or SESSION_ACTION_DEFAULT
     if session_action == "merge_only":
         return _complete_merge_review(group_id, merge_id, project_id, context, pushed=False)
+    # 0153 T#2 §3.1: pin the approved resolution commit under refs/flowgate/preserve/
+    # BEFORE the origin sync, the secret load and the push. A failure parks the session
+    # at reconciling/preserve_failed with nothing pushed, synced or reset.
+    preserve_failed = _preserve_gate(
+        merge_id, context, base_root, project_id=project_id, group_id=group_id,
+    )
+    if preserve_failed is not None:
+        return preserve_failed
     expected = context.get("expected_remote_head") or ""
     lease = f"{base_branch}:{expected}" if expected else base_branch
     # flowgate.default.0361 NR0003 §7/§16: the review may have sat waiting for
@@ -3322,6 +3412,11 @@ def _conditionally_push_or_reconcile(
             expected_remote_head=expected, secret=secret,
         )
     if "stale info" in stderr_l or "rejected" in stderr_l or "fetch first" in stderr_l or "non-fast-forward" in stderr_l:
+        # 0153 T#2 §4.2: the reset below drops the resolution commit from the branch;
+        # it runs only while its preservation ref is verified intact.
+        preserve_failed = _preserve_reset_gate(merge_id, context, base_root)
+        if preserve_failed is not None:
+            return preserve_failed
         _run_session_git(merge_id, context, "reset", "push_rejected",
                          ["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
         return _refreeze_for_re_review(group_id, merge_id, base_root, base_branch, context, "push_rejected")
@@ -4124,6 +4219,17 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         context = db_git.session_context(session)
         if context.get("review_state") != REVIEW_STATE_RECONCILING:
             return {"ok": True, "result": {"status": context.get("review_state")}}
+        # 0153 T#2 §3.4: the auto-retry check above ran without the lock. Another caller
+        # may have parked the session (e.g. reconciling/preserve_failed) while this one
+        # waited, so the kind is re-checked on the fresh row BEFORE any context write,
+        # preservation call, remote query or reset — a kind outside the auto-retry set
+        # is left exactly as stored.
+        kind = context.get("reconciliation_kind")
+        if kind not in RECONCILE_AUTO_RETRY_KINDS:
+            return {"ok": True, "result": {
+                "status": REVIEW_STATE_RECONCILING, "review_state": REVIEW_STATE_RECONCILING,
+                "reconciliation_kind": kind,
+            }}
         context["reconcile_next_at"] = _seconds_from_now_iso(PUSH_RECONCILE_RETRY_INTERVAL_SEC)
         context["reconcile_attempt_count"] = int(context.get("reconcile_attempt_count") or 0) + 1
         db_git.set_session_context(merge_id, context)
@@ -4134,6 +4240,15 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         base_branch = target.target_branch
         if base_root is None:
             return {"ok": True, "result": {"status": "retry_scheduled"}}
+        # 0153 T#2 §4.1: preservation gate (re-entry recovery included) BEFORE the remote
+        # is asked. A session from before T#2 gets its ref here if the commit passes the
+        # object/parent checks; any failure parks it with no remote query and no reset.
+        preserve_failed = _preserve_gate(
+            merge_id, context, base_root, stage=preserve.STAGE_RECONCILE_GATE,
+            project_id=project_id, group_id=group_id,
+        )
+        if preserve_failed is not None:
+            return preserve_failed
 
         observed: Optional[str] = None
         for i, delay in enumerate(PUSH_RECONCILE_DELAYS_SEC):
@@ -4167,11 +4282,18 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
             # the ledger points at the attempt and only its own workspace is released.
             return _complete_merge_review(group_id, merge_id, project_id, context, pushed=True)
         if observed is not None and observed == expected:
+            # 0153 T#2 §4.2: re-verify the preservation right before the reset that drops
+            # the resolution commit from the branch. The reset policy itself is T#3's.
+            preserve_failed = _preserve_reset_gate(merge_id, context, base_root)
+            if preserve_failed is not None:
+                return preserve_failed
             _run_session_git(
                 merge_id, context, "reset", "reconcile_remote_unchanged",
                 ["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
             )
             context["approval_attempt_id"] = None
+            # §3.2: round closed, ref kept.
+            preserve.close_round(context, preserve.CLOSE_REMOTE_UNCHANGED, now=now_iso())
             context["merge_commit"] = None
             context["apply_phase"] = None
             context["review_state"] = REVIEW_STATE_PENDING
