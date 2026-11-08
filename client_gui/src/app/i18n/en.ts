@@ -954,6 +954,7 @@ export default {
       exit_code: 'Exit code {code}',
     },
     change: {
+      window_title: 'Changes · {run}',
       title: 'Work change',
       files: '{n} files',
       and_more: '{name} +{n}',

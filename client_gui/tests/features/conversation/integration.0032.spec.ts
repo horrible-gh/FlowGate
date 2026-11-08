@@ -1,4 +1,4 @@
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // flowgate.v02.0032 T#2 integration — the Conversation panel with its DEFAULT HTTP source (no
@@ -267,7 +267,11 @@ describe('Conversation production path (flowgate.v02.0032 T#2)', () => {
     await find('tl-change-file').trigger('click')
     await flushPromises()
     expect(calls('GET', /\/runs\/run-1\/diff$/).at(-1)?.params).toEqual({ path: 'client_gui/build.txt' })
-    expect(find('rc-diff-lines').findAll('.rc-diff-line').map((l) => l.attributes('data-kind'))).toEqual(['context', 'del', 'add'])
+    const window = new DOMWrapper(document.body).find('[data-test="rc-window"]')
+    expect(window.find('[data-test="rc-diff-lines"]').findAll('.rc-diff-line').map((l) => l.attributes('data-kind'))).toEqual(['context', 'del', 'add'])
+    expect(find('conv-log').find('[data-test="rc-diff"]').exists()).toBe(false)
+    // Viewing changes makes only the existing stored-diff GET; no source write endpoint.
+    expect(calls('GET', /\/runs\/run-1\/diff$/).at(-1)?.path).toBe(`/api/v1/chat-activity/${encodeURIComponent(CHAT)}/runs/run-1/diff`)
   })
 
   it('a reopened panel reads the activity again and shows the server state', async () => {

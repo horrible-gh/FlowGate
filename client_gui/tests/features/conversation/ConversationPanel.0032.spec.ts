@@ -1,4 +1,4 @@
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
@@ -71,6 +71,7 @@ async function mountPanel(init: Parameters<typeof createFakeSource>[0] = {}, pro
 
 const find = (sel: string) => wrapper!.find(`[data-test="${sel}"]`)
 const findAll = (sel: string) => wrapper!.findAll(`[data-test="${sel}"]`)
+const windowFind = (sel: string) => new DOMWrapper(document.body).find(`[data-test="${sel}"]`)
 const card = (id: string) => findAll('tl-command').find((c) => c.text().includes(`npm ${id}`))!
 
 describe('command card (D0006 §6.1)', () => {
@@ -145,15 +146,17 @@ describe('run change card (D0006 §6.1)', () => {
     expect(find('tl-change-count').text()).toBe('2 files')
   })
 
-  it('opens the stored diff of a file under its row and closes it', async () => {
+  it('opens the stored diff in a modeless window outside the timeline and closes it', async () => {
     const { source } = await mountPanel({ activities: { [A]: [change] }, diffs: { 'run-1\nsrc/a.ts': diff } })
     await findAll('tl-change-file')[0].trigger('click')
     await flushPromises()
     expect(source.fetchRunFileDiff).toHaveBeenCalledWith(A, 'run-1', 'src/a.ts')
-    const lines = find('rc-diff-lines').findAll('.rc-diff-line').map((l) => `${l.attributes('data-kind')}:${l.text()}`)
+    expect(find('conv-log').find('[data-test="rc-diff"]').exists()).toBe(false)
+    expect(windowFind('rc-window').exists()).toBe(true)
+    const lines = windowFind('rc-diff-lines').findAll('.rc-diff-line').map((l) => `${l.attributes('data-kind')}:${l.text()}`)
     expect(lines).toEqual(['context:keep', 'del:-old', 'add:+new'])
-    await find('rc-diff-close').trigger('click')
-    expect(find('rc-diff').exists()).toBe(false)
+    await new DOMWrapper(document.body).find('[data-modeless-action="close"]').trigger('click')
+    expect(windowFind('rc-window').exists()).toBe(false)
   })
 
   it('says why a binary file has no line diff, and shows a failed read', async () => {
@@ -163,10 +166,10 @@ describe('run change card (D0006 §6.1)', () => {
     })
     await findAll('tl-change-file')[1].trigger('click')
     await flushPromises()
-    expect(find('rc-diff-unavailable').text()).toContain('바이너리')
+    expect(windowFind('rc-diff-unavailable').text()).toContain('바이너리')
     await findAll('tl-change-file')[0].trigger('click')
     await flushPromises()
-    expect(find('rc-diff-error').exists()).toBe(true)
+    expect(windowFind('rc-diff-error').exists()).toBe(true)
   })
 })
 

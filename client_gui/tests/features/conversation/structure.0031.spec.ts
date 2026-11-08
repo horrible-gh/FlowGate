@@ -40,6 +40,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'ConversationParticipants.vue',
         'ConversationTimeline.vue',
         'RunChangeDiff.vue',
+        'RunChangeWindow.vue',
         'TimelineActivity.vue',
         'TimelineMessage.vue',
         'api.ts',

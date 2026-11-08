@@ -1,4 +1,4 @@
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
@@ -166,7 +166,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(findAll('tl-command-approve')).toHaveLength(0)
   })
 
-  it('summarizes a work change and asks the container to open its detail', async () => {
+  it('summarizes a work change, opens its own window and retains the notification event', async () => {
     await mountPanel()
     const change = find('tl-change')
     expect(change.find('[data-test="tl-change-count"]').text()).toBe('2 files')
@@ -177,6 +177,9 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     const emitted = wrapper!.emitted('open-change')
     expect(emitted).toHaveLength(1)
     expect((emitted![0][0] as { id: string }).id).toBe('c1')
+    await flushPromises()
+    expect(new DOMWrapper(document.body).find('[data-test="rc-window"]').exists()).toBe(true)
+    expect(find('conv-log').find('[data-test="rc-diff"]').exists()).toBe(false)
   })
 
   it('sends a message, clears the draft and keeps earlier activities above it', async () => {

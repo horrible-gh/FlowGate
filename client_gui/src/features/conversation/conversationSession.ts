@@ -31,7 +31,6 @@ import type {
   ConversationParticipant,
   ConversationScope,
   ConversationTurn,
-  RunFileDiff,
   SourceAccessMode,
   StatusTone,
 } from './types'
@@ -66,15 +65,6 @@ export interface ConversationNotice {
   detail: string | null
 }
 
-/** The run change file whose stored diff is open under its card. */
-export interface OpenFileDiff {
-  runId: string
-  path: string
-  status: 'loading' | 'ready' | 'error'
-  diff: RunFileDiff | null
-  error: string | null
-}
-
 export interface ConversationState {
   scope: ConversationScope | null
   chats: ChatSummary[]
@@ -104,7 +94,8 @@ export interface ConversationState {
   cancelling: boolean
   /** Command ids whose decision is in flight. */
   deciding: string[]
-  fileDiff: OpenFileDiff | null
+  /** Invalidates panel-owned change windows whenever clearChat resets this chat lifetime. */
+  changeWindowEpoch: number
   copyingMention: boolean
   /** Text of a mention copy that did not reach the clipboard (inline manual copy, 0240). */
   manualCopyText: string | null
@@ -167,9 +158,6 @@ export interface ConversationSession {
   retry(localId: string): Promise<boolean>
   reportRead(seq: number): Promise<void>
   decideCommand(commandId: string, decision: CommandDecision): Promise<void>
-  /** Opens (or, when it is open, closes) the stored diff of one file of a run change. */
-  openChangeFile(runId: string, path: string): Promise<void>
-  closeChangeFile(): void
   selectProvider(providerId: string): void
   invokeAi(): Promise<void>
   stopRun(): Promise<void>
@@ -251,7 +239,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     runId: null,
     cancelling: false,
     deciding: [],
-    fileDiff: null,
+    changeWindowEpoch: 0,
     copyingMention: false,
     manualCopyText: null,
     notice: null,
@@ -392,7 +380,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.runId = null
     state.cancelling = false
     state.deciding = []
-    state.fileDiff = null
+    state.changeWindowEpoch += 1
   }
 
   function applyPage(page: Awaited<ReturnType<ConversationSource['fetchTurns']>>): void {
@@ -1081,30 +1069,6 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (isCurrentChat(chatId, gen)) await loadActivities(chatId, gen)
   }
 
-  // ── Run change file diff (D0006 §3.8.3, §6.1) ──────────────────────────────────────
-  async function openChangeFile(runId: string, path: string): Promise<void> {
-    const chatId = state.activeChatId
-    if (!chatId) return
-    const open = state.fileDiff
-    if (open && open.runId === runId && open.path === path && open.status !== 'error') {
-      state.fileDiff = null
-      return
-    }
-    const gen = chatGen
-    state.fileDiff = { runId, path, status: 'loading', diff: null, error: null }
-    const stillOpen = () => isCurrentChat(chatId, gen) && state.fileDiff?.runId === runId && state.fileDiff.path === path
-    try {
-      const diff = await source.fetchRunFileDiff(chatId, runId, path)
-      if (stillOpen()) state.fileDiff = { runId, path, status: 'ready', diff, error: null }
-    } catch (error) {
-      if (stillOpen()) state.fileDiff = { runId, path, status: 'error', diff: null, error: messageOf(error) }
-    }
-  }
-
-  function closeChangeFile(): void {
-    state.fileDiff = null
-  }
-
   // ── Chat AI run (D0005 §3-1, L0008, 0264 STOP) ─────────────────────────────────────
   function selectProvider(providerId: string): void {
     if (state.providers.some((p) => p.id === providerId)) state.selectedProviderId = providerId
@@ -1403,6 +1367,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   function dispose(): void {
+    state.changeWindowEpoch += 1
     disposed = true
     titleGuard.disposed = true
     unsubscribe?.()
@@ -1435,8 +1400,6 @@ export function createConversationSession(options: ConversationSessionOptions = 
     retry,
     reportRead,
     decideCommand,
-    openChangeFile,
-    closeChangeFile,
     selectProvider,
     invokeAi,
     stopRun,

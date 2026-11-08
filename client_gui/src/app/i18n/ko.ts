@@ -965,6 +965,7 @@ export default {
       exit_code: '종료 코드 {code}',
     },
     change: {
+      window_title: '변경 보기 · {run}',
       title: '작업 변경',
       files: '{n} files',
       and_more: '{name} 외 {n}',

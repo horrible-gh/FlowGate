@@ -63,7 +63,7 @@
             class="tl-change-file"
             data-test="tl-change-file"
             :data-path="file.path"
-            :aria-expanded="isOpen(file.path)"
+            aria-haspopup="dialog"
             :title="t('gui.conversation.change.open_file', { path: file.path })"
             @click="emit('open-file', activity.runId, file.path)"
           >
@@ -72,7 +72,6 @@
             <span v-if="file.insertions == null && file.deletions == null" class="tl-file-nums">{{ t('gui.conversation.change.no_stats') }}</span>
             <span v-else class="tl-file-nums">+{{ file.insertions ?? 0 }} −{{ file.deletions ?? 0 }}</span>
           </button>
-          <RunChangeDiff v-if="isOpen(file.path) && fileDiff" :file-diff="fileDiff" @close="emit('close-file')" />
         </li>
       </ul>
       <div class="tl-act-actions">
@@ -92,8 +91,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import RunChangeDiff from './RunChangeDiff.vue'
-import type { OpenFileDiff } from './conversationSession'
 import { formatTimelineTime, summarizeChange } from './timeline'
 import type { CommandDecision, ConversationActivity } from './types'
 
@@ -102,15 +99,12 @@ const props = defineProps<{
   /** A decision for this command is in flight. */
   busy?: boolean
   readOnly?: boolean
-  /** The open run change file diff, when it belongs to this card. */
-  fileDiff?: OpenFileDiff | null
 }>()
 
 const emit = defineEmits<{
   decide: [decision: CommandDecision]
   'open-change': []
   'open-file': [runId: string, path: string]
-  'close-file': []
 }>()
 
 const { t, te } = useI18n()
@@ -149,11 +143,6 @@ const commandReason = computed(() => {
   if ((a.state === 'failed' || a.state === 'succeeded') && a.exitCode != null) return t('gui.conversation.command.exit_code', { code: a.exitCode })
   return ''
 })
-
-function isOpen(path: string): boolean {
-  const open = props.fileDiff
-  return props.activity.kind === 'change' && !!open && open.runId === props.activity.runId && open.path === path
-}
 
 const statusText = computed(() => {
   const a = props.activity
