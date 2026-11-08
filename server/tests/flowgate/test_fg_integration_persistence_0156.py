@@ -675,8 +675,10 @@ def test_s_d2_matrix(env, decided, repo, tap, record, monkeypatch, point, hold, 
     rec.step("F5")
 
     assert rec.at("inject")["integration"] in (INTEGRATING, CONFLICT, INTEGRATED), rec.at("inject")
-    if not (point == "d" and mode == "persistent"):
-        expect_recovered(point, rec.at("F1" if mode == "transient" else "F2"), sc)
+    expect_recovered(point, rec.at("F1" if mode == "transient" else "F2"), sc)
+    if point == "d" and hold == "h3":
+        settled = rec.at("F1" if mode == "transient" else "F2")
+        assert (settled["run"], settled["idle_reason"]) == ("idle", "merge_conflict"), settled
     runtime = rec.at("F4")                                  # no restart: the runtime triggers alone
     assert runtime["integration"] != INTEGRATING and runtime["run"] != "stopping", runtime
     for row in rec.rows:                                    # S-SAFE-1 / S-SAFE-2 / S-SAFE-3
@@ -1248,11 +1250,11 @@ def test_s_d3c_3_a_session_closed_inside_a_transaction(env, decided, repo, tap, 
     row = rec.step("closed_in_transaction")
     assert row["integration"] == CONFLICT and row["sessions"] == [(merge_id, "aborted")], row
     lock_release(sc.flow)
-    rec.step("lock_release")
-    rec.step("command", code=command(sc))
-    result_merge.recover()                                 # the server start's drain (_closed_conflicts)
-    row = rec.step("server_start")
+    row = rec.step("lock_release")
+    # 0156 T#3 Q3: the first G release settles the lost close; no restart or new merge.
     assert (row["integration"], row["reason"]) == (FAILED, "conflict_aborted"), row
+    assert row["merges"] == 0 and not row["merge_head"], row
+    assert not [session for session in row["sessions"] if session[1] == "open"], row
 
 
 def test_s_d3c_4_a_release_retried_by_its_timer_dispatches_on_the_timer_thread(env, decided, repo, tap, record,

@@ -678,8 +678,12 @@ def _closed_conflicts(flow_id: str) -> set[str]:
     for r in run_store._all("SELECT attempt_id FROM graph_node_attempts WHERE run_id = ? AND status = 'active' "
                             "AND integration_status = 'conflict' ORDER BY created_at, attempt_id", [run["run_id"]]):
         row = workspace.attempt(r["attempt_id"])
-        if row and not _session_open(_merge_id(row)) and _settle_closed(row, (CONFLICT,)) == FAILED:
-            aborted.add(row["attempt_id"])
+        if row and not _session_open(_merge_id(row)):
+            outcome = _settle_closed(row, (CONFLICT,))
+            if outcome == FAILED:
+                aborted.add(row["attempt_id"])
+            if outcome in (FAILED, INTEGRATED):
+                _after(row["attempt_id"])
     return aborted
 
 
@@ -861,6 +865,15 @@ def _retry_released(project_id: str, group_id: Optional[str], seen: set[str]) ->
         sql += " AND group_id = ?"
         args.append(group_id)
     runs = run_store._all(sql, args)
+    # 0156 T#3 / Q3: a lost close notice must not require a server restart.
+    # Keep open sessions untouched; only the existing drain settles closed conflicts.
+    conflict_sql = ("SELECT r.run_id, r.group_id, r.status, a.integration_reason "
+                    "FROM graph_runs r JOIN graph_node_attempts a ON a.run_id = r.run_id "
+                    "WHERE r.status IN ('running', 'paused', 'idle') AND a.status = 'active' "
+                    "AND a.integration_status = 'conflict'")
+    for run in run_store._all(conflict_sql + (" AND r.group_id = ?" if group_id else ""), args):
+        if not _session_open(_merge_id(run)):
+            runs.append(run)
     # 0156 T#2 (D3 ⓓ): a running run left holding (its hold's end and release both failed) with no pending /
     # integrating attempt — the server start's choice (``recover``): its drain ends the hold (a command's hold asks the
     # failed ones again, as its command's drain does).

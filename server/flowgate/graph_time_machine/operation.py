@@ -177,6 +177,10 @@ def _finish(flow_id: str, run_id: str, operation_id: str, plan: dict, actor: Opt
             workspace.cleanup(attempt_id)      # outside every guard; a tree left behind goes at the next start
         except Exception:  # noqa: BLE001
             log.warning("Graph Time Machine worktree cleanup failed attempt=%s", attempt_id, exc_info=True)
+    # Admission was blocked until this operation committed. Outside the guard/fence,
+    # use the existing refill; a failure is retried by the supervisor's Graph step.
+    from flowgate.graph_run import execution
+    execution.settle(flow_id)
     return {**outcome, "operation_status": journal.COMPLETED, "reverts": reverts, **held["result"]}
 
 

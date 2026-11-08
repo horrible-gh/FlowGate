@@ -18,7 +18,7 @@ covers everything that must keep happening without it:
   skipped for it (end record, group lease release + orphan token revoke, Graph lease
   expiry and the Graph execution recovery / Stop continuation).
 
-Runs without a remote Job are untouched by all of this.
+The existing tick also resumes stranded Graph executions through their own recovery and refill boundaries.
 """
 from __future__ import annotations
 
@@ -379,6 +379,53 @@ def _keep_leases(run: dict) -> None:
 
 # ── the periodic tick ────────────────────────────────────────────────────────
 
+# The previous pass's eligible, unclaimed rows. No time/death inference is made here.
+_graph_refill_candidates: dict[str, tuple] = {}
+
+
+def _recover_graph() -> None:
+    """Single-worker deployment (FLOWGATE_WORKERS=1): reuse Graph recovery/refill.
+
+    Expiry only selects candidates; _recover_snapshot alone confirms termination
+    and fences loss. Stopping rows continue exclusively through Stop. An unclaimed
+    request must have identical state on two consecutive ticks before refill.
+    """
+    global _graph_refill_candidates
+    from flowgate.graph_run import execution, execution_store as ledger, result_merge, scheduling
+    store = _store()
+    if not store.table_exists("graph_attempt_runs"):
+        _graph_refill_candidates = {}
+        return
+    rows = store._fetch_all(
+        "SELECT e.*, r.group_id, r.status AS run_status, r.last_event_seq "
+        "FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+        "WHERE (e.status = 'running' AND e.lease_expires_at <= ?) "
+        "OR (e.status = 'requested' AND r.status IN ('running', 'paused')) "
+        "ORDER BY e.created_at, e.exec_id", [ledger.now()])
+    previous, _graph_refill_candidates = _graph_refill_candidates, {}
+    refilled: set[str] = set()
+    for row in rows:
+        try:
+            if is_held(row.get("ai_run_id")):
+                continue
+            if row["status"] == "running":
+                _continue_graph([row])
+            elif row.get("ai_run_id"):
+                live = _svc().get_run_record(row["ai_run_id"])
+                if not live or live.get("status") == "finished":
+                    execution.recover_execution(row["exec_id"])
+            elif row["run_status"] == "running" and not result_merge.holding(row["run_id"]):
+                slots = scheduling.available(row["run_id"], row["group_id"])
+                if slots > 0:
+                    state = (dict(row), slots)
+                    _graph_refill_candidates[row["exec_id"]] = state
+                    if previous.get(row["exec_id"]) == state and row["group_id"] not in refilled:
+                        refilled.add(row["group_id"])
+                        execution.settle(row["group_id"])
+        except Exception:
+            logger.warning("Graph runtime continuation failed for %s", row.get("exec_id"), exc_info=True)
+
+
 def tick() -> None:
     """One supervisor pass. Each step is independent: one failing never skips the others."""
     if not available():
@@ -391,6 +438,7 @@ def tick() -> None:
             ("fence", lambda: [fence_job(svc, row) for row in svc.unfenced_expired_ai_jobs()]),
             ("in_process", lambda: _settle_in_process(svc)),
             ("holds", lambda: [_resume_hold_safely(svc, hold) for hold in _hold_rows()]),
+            ("graph", _recover_graph),
         )
         for name, step in steps:
             try:
