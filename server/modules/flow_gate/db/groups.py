@@ -59,6 +59,12 @@ def update(group_id: str, updates: dict[str, Any]) -> Optional[dict]:
     return get_by_id(group_id)
 
 
+def is_archived(group_id: str) -> bool:
+    """Display archive is independent of disposal and legacy soft deletion."""
+    group = get_by_id(group_id)
+    return group is not None and group.get("archived_at") is not None
+
+
 def set_archive(group_id: str, archived: bool, actor: str) -> bool:
     """Conditional display-only write. The caller serializes eligibility in the Flow guard."""
     if archived:

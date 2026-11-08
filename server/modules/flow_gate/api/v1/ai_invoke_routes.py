@@ -26,6 +26,7 @@ from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import ai_invoke_service
 from modules.flow_gate.services import ai_group_service
 from modules.flow_gate.services import card_memo_hooks
+from modules.flow_gate.services import chat_start_requests
 from modules.flow_gate.services import graph_execution_hooks
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import invoke_mention_service
@@ -151,6 +152,11 @@ class AiInvokeStartRequest(BaseModel):
     # this value onto the session BEFORE the run starts — the run's own eventual
     # /resolve or /resolve-token submission never carries or can change it.
     auto: Optional[bool] = None
+    # flowgate.v02.0152: names one AI-call press of a chat (8..200 of [A-Za-z0-9._:-]). The
+    # browser resends the same press with the same id after a /start that got no answer,
+    # and gets the run the first request admitted -- running or finished -- instead of a
+    # second run. Chat only; see services/chat_start_requests.py.
+    client_request_id: Optional[str] = None
 
 
 # Wire scope → token scope. The extra invoke scopes reuse the edit/new token
@@ -320,6 +326,52 @@ def _explicit_request(route):
     return handler
 
 
+def _settling_start_claim(claim, user_id: str, body: "AiInvokeStartRequest"):
+    """flowgate.v02.0152: wrap ``start_run`` so a reserved press records its outcome.
+
+    Admitted -> later resends of the press get that run; refused or failed (any exception,
+    including the HTTP refusals the route maps below) -> the press is forgotten, so a
+    resend is an ordinary fresh request (a refused admission leaves nothing behind).
+    No reservation -> ``start_run`` unchanged."""
+    def wrap(start):
+        if claim is None:
+            return start
+        doc_ref, request_id = body.doc_ref or "", body.client_request_id
+
+        def run(**kwargs):
+            try:
+                result = start(**kwargs)
+            except BaseException:
+                chat_start_requests.release(user_id, doc_ref, request_id, claim.token)
+                raise
+            run_id = str((result or {}).get("run_id") or "")
+            if run_id:
+                chat_start_requests.complete(user_id, doc_ref, request_id, claim.token, run_id)
+            else:
+                chat_start_requests.release(user_id, doc_ref, request_id, claim.token)
+            return result
+        return run
+    return wrap
+
+
+def _replayed_chat_start(run_id: str, body: "AiInvokeStartRequest", group_id: str) -> dict:
+    """flowgate.v02.0152: the answer to a resent press -- the run its first request admitted.
+
+    ``status`` is the live record's when the run is still in memory (None once it has
+    been purged); the browser follows the run through GET /ai-invoke/{run_id} either way."""
+    status = None
+    try:
+        record = ai_invoke_service.get_run_record(run_id)
+        status = record.get("status") if record else None
+    except Exception:
+        status = None
+    return {
+        "ok": True, "run_id": run_id, "status": status, "replayed": True,
+        "mode": body.mode, "project_id": body.project, "group_id": group_id,
+        "action_scope": body.action_scope, "doc_ref": body.doc_ref,
+    }
+
+
 @router.post("/start")
 @_explicit_request
 def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
@@ -473,6 +525,12 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuation_reviewer_overrides = default_reviewer
         except ValueError as exc:
             errors.append({"loc": "continuation_reviewer_overrides", "msg": str(exc)})
+    if body.client_request_id is not None:
+        if body.action_scope != "chat":
+            errors.append({"loc": chat_start_requests.FIELD, "msg": "only available for action_scope=chat"})
+        elif not chat_start_requests.valid(body.client_request_id):
+            errors.append({"loc": chat_start_requests.FIELD,
+                           "msg": "must be 8..200 letters, digits, '.', '_', ':' or '-'"})
     if errors:
         return _validation_failed(errors)
 
@@ -1001,6 +1059,20 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     if result is not None:
         return JSONResponse(status_code=200, content=result)
 
+    # flowgate.v02.0152: a resend of a press this server has already seen answers with what
+    # the first request did, before anything of a second run is created.
+    start_claim = None
+    if body.client_request_id is not None:
+        start_claim = chat_start_requests.claim(user_id, body.doc_ref or "", body.client_request_id)
+        if start_claim.kind == chat_start_requests.STARTED:
+            return JSONResponse(status_code=200, content=_replayed_chat_start(
+                start_claim.run_id, body, group_id))
+        if start_claim.kind == chat_start_requests.PENDING:
+            return JSONResponse(status_code=409, content={
+                "code": "start_pending",
+                "message": "This AI call is still starting; ask again shortly.",
+            })
+
     recovery_exec_id = None
     try:
         # 0145 T#2: an explicit legacy-result re-review first proves its original
@@ -1009,7 +1081,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             recovery_exec_id = graph_execution_hooks.call(
                 "request_result_recovery", body.project, group_id, body.doc_ref, user_id,
                 body.document_review_loop.dict())
-        result = ai_invoke_service.start_run(
+        result = _settling_start_claim(start_claim, user_id, body)(ai_invoke_service.start_run)(
             project_id=body.project,
             module=body.module,
             group_id=group_id,

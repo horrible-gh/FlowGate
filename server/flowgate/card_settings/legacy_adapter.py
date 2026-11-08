@@ -1259,7 +1259,10 @@ def person_stage_open(flow_id: str, run_row: dict) -> bool:
 def _person_stage_refusal(flow_id: str, run_row: Optional[dict]) -> Optional[str]:
     """Why the run may not take a person's result stage now (``person_stage_open``), or None."""
     from flowgate.graph_time_machine.operation import busy  # noqa: PLC0415
+    from modules.flow_gate.db.groups import is_archived
 
+    if is_archived(flow_id):
+        return "flow_archived"
     if run_row is None:
         return "run_not_active"
     status = run_row.get("status")

@@ -231,160 +231,90 @@ function retry(field: string) {
   white-space: nowrap;
 }
 
-/* flowgate.v02test.0002 R0001 #2 - the Git box as approved (flowgate_git_settings_mockup.html, sha256 effa4c1d...caeb3).
-   Only this block: the shared InspectorBlock / InspectorControlRow / InspectorSegment and Toggle keep their own styles.
-   Normal width (the box content >= 760px): label 190px | target 290px | the two switches (minmax 280px), rows 42px / 72px,
-   10px apart. A narrower box re-flows on its own width (the block is the container; no viewport media query):
-   < 760px the switches go under the target; <= 480px each label sits above its control. Nothing overlaps. */
-.inspector-check-settings .inspector-check-settings-git {
-  padding: 16px 19px 18px;
-  border-radius: 11px;
-}
+/* flowgate.v02test.0002 R0001 #2 - the Git box. Font sizes, control heights, paddings and gaps are the shared ones
+   (InspectorBlock / InspectorControlRow / InspectorSegment / Select / Toggle), like the archive row above it; only the
+   layout is kept here: the rows' top alignment, the target area and the switches wrapping, the scope segment never
+   clipping a longer label, and the overlay of an unavailable target name. The block is the container (no viewport
+   media query): the box content < 580px puts the switches under the target; <= 360px each label sits above its control.
+   Nothing overlaps. */
 
-.inspector-check-settings-git :deep(.inspector-block-head) {
-  margin: 0 0 13px;
-  padding: 0 0 13px;
-  border-bottom: 1px solid rgba(116, 157, 192, 0.14);
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -0.35px;
-  line-height: 24px;
-}
-
-.inspector-check-settings-git :deep(.inspector-control-row) {
-  grid-template-columns: 190px minmax(0, 1fr);
-  column-gap: 0;
-  row-gap: 0;
-  min-height: 42px;
-  margin: 0;
-}
-
-.inspector-check-settings-git :deep(.inspector-control-row + .inspector-control-row) {
-  margin-top: 10px;
-}
-
-.inspector-check-settings-git :deep(.inspector-control-label) {
-  color: #a9c2db;
-  font-size: 15px;
-  font-weight: 500;
-  letter-spacing: -0.3px;
-}
-
-/* The target row: 72px, the label level with the select, the target area and the switches top-aligned. */
+/* The target row: the label level with the select (36px, --fg2-control-h-md); the target area and switches top-aligned. */
 .inspector-check-settings-git :deep(.inspector-control-row.is-wrap) {
   align-items: start;
-  min-height: 72px;
 }
 
 .inspector-check-settings-git :deep(.inspector-control-row.is-wrap .inspector-control-label) {
-  margin-top: 11px;
+  margin-top: 10px;
 }
 
 .inspector-check-settings-git :deep(.inspector-control-row.is-wrap .inspector-control-value) {
   flex-wrap: nowrap;
   align-items: flex-start;
-  gap: 0;
+  gap: 8px;
 }
 
-/* The scope segment: this instance only - 230 x 42px, 15px labels, three equal options. A longer label (en/ja)
-   widens the segment past 230px (equal columns of the longest label) instead of being clipped; never past the row. */
+/* The scope segment: the shared size (28px, 12px labels). A longer label (en/ja) widens it (equal columns of the
+   longest label) instead of being clipped; never past the row. */
 .inspector-check-settings-git .inspector-check-settings-scope {
-  box-sizing: border-box;
   display: inline-grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
   width: max-content;
-  min-width: min(230px, 100%);
   max-width: 100%;
-  height: 42px;
-  border-radius: 9px;
 }
 
 .inspector-check-settings-git .inspector-check-settings-scope :deep(.inspector-segment-option) {
   min-width: 0;
-  height: auto;
-  padding: 0 6px;
-  font-size: 15px;
-  font-weight: 600;
   white-space: nowrap;
 }
 
-/* The target: select 233 x 45px, refresh 32 x 40px (icon 19px) 11px to its right, the lookup error under the select. */
+/* The target: the shared select (height and font from the control tokens) with the refresh button (20px) to its right. */
 .inspector-check-settings-git .inspector-check-settings-target-group {
-  flex: 0 0 290px;
-  width: 290px;
-  gap: 11px;
+  flex: 0 0 auto;
+  width: auto;
+  gap: 8px;
 }
 
 .inspector-check-settings-git .inspector-check-settings-target-wrap {
-  flex: 0 1 233px;
-  width: 233px;
+  flex: 0 1 190px;
+  width: 190px;
 }
 
 .inspector-check-settings-git .inspector-check-settings-target {
-  height: 45px;
-  padding: 0 34px 0 14px;
-  border-radius: 9px;
-  font-size: 15px;
+  height: var(--fg2-control-h-md);
+  font-size: var(--fg2-control-font-size);
 }
 
 .inspector-check-settings-git .inspector-check-settings-missing {
-  left: 15px;
+  left: var(--fg2-control-pad-x);
   right: 34px;
-  font-size: 15px;
+  font-size: var(--fg2-control-font-size);
 }
 
-.inspector-check-settings-git .inspector-check-settings-target-help {
-  margin-top: 6px;
-  color: #ff5a66;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
+/* The refresh button is centred on the select. */
 .inspector-check-settings-git .inspector-check-settings-refresh {
-  flex: 0 0 32px;
-  width: 32px;
-  height: 40px;
-  margin-top: 2px;
-  padding: 0;
-  color: #7796b5;
-}
-
-.inspector-check-settings-git .inspector-check-settings-refresh svg {
-  width: 19px;
-  height: 19px;
+  margin-top: calc((var(--fg2-control-h-md) - 20px) / 2);
 }
 
 /* The two switch pairs (push, keep branch): the same label + Toggle, side by side to the right of the target. */
 .inspector-check-settings-switches {
   display: flex;
-  flex: 1 1 280px;
+  flex: 1 1 230px;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 19px;
+  gap: 6px 16px;
   min-width: 0;
-  min-height: 45px;
+  min-height: var(--fg2-control-h-md);
 }
 
-.inspector-check-settings-git .inspector-check-settings-toggle {
-  gap: 8px;
-  color: #9bb8d3;
-  font-size: 14px;
-}
-
-@container (max-width: 759px) {
-  .inspector-check-settings-git :deep(.inspector-control-row) {
-    grid-template-columns: 145px minmax(0, 1fr);
-  }
-
+@container (max-width: 579px) {
   .inspector-check-settings-git :deep(.inspector-control-row.is-wrap .inspector-control-value) {
     flex-wrap: wrap;
-    row-gap: 10px;
+    row-gap: 6px;
   }
 
   .inspector-check-settings-git .inspector-check-settings-target-group {
-    flex: 0 1 290px;
+    flex: 0 1 auto;
     max-width: 100%;
   }
 
@@ -393,15 +323,10 @@ function retry(field: string) {
   }
 }
 
-@container (max-width: 480px) {
+@container (max-width: 360px) {
   .inspector-check-settings-git :deep(.inspector-control-row) {
     grid-template-columns: minmax(0, 1fr);
-    row-gap: 8px;
-    min-height: 0;
-  }
-
-  .inspector-check-settings-git :deep(.inspector-control-row.is-wrap) {
-    min-height: 0;
+    gap: 4px;
   }
 
   .inspector-check-settings-git :deep(.inspector-control-row.is-wrap .inspector-control-label) {
@@ -410,34 +335,16 @@ function retry(field: string) {
 
   .inspector-check-settings-git .inspector-check-settings-target-group {
     flex: 1 1 100%;
-    width: auto;
   }
 
   .inspector-check-settings-git .inspector-check-settings-target-wrap {
     flex: 1 1 auto;
     width: auto;
-    max-width: 233px;
+    max-width: 190px;
   }
 
   .inspector-check-settings-switches {
-    gap: 6px 10px;
-  }
-}
-
-/* Only a box too narrow for the 230 x 42px segment (the Inspector at its minimum) shrinks it: 36px, 13px labels,
-   each option as wide as its own label, so no label is clipped. */
-@container (max-width: 340px) {
-  .inspector-check-settings-git .inspector-check-settings-scope {
-    display: inline-flex;
-    width: auto;
-    min-width: 0;
-    height: 36px;
-  }
-
-  .inspector-check-settings-git .inspector-check-settings-scope :deep(.inspector-segment-option) {
-    flex: 0 1 auto;
-    padding: 0 8px;
-    font-size: 13px;
+    min-height: 0;
   }
 }
 </style>

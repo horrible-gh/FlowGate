@@ -48,6 +48,7 @@ export interface DraftEditState {
 
 export interface DraftHost {
   readonly source: FlowGraphSource
+  canWrite?(flowId: string): boolean
   projectId(): string | null
   /** The ready Graph of an open Flow, else null. */
   graph(flowId: string): FlowGraph | null
@@ -132,7 +133,9 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
 
   function openEditor(flowId: string, pid: string, model: DraftModel, version: number): DraftEditor {
     const editor: DraftEditor = createDraftEditor(model, version, {
-      save: (v, content) => host.source.saveDraft!(pid, flowId, v, content),
+      save: (v, content) => host.canWrite?.(flowId) === false
+        ? Promise.reject(Object.assign(new Error('Flow is read only'), { code: 'flow_archived' }))
+        : host.source.saveDraft!(pid, flowId, v, content),
       onKeys: (keyMap) => {
         if (editors.get(flowId) === editor) onKeys(flowId, keyMap)
         else keepStoppedPositions(pid, flowId, editor, keyMap)
@@ -198,6 +201,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
   }
 
   function run(flowId: string, command: EditCommand, undoable = true): boolean {
+    if (host.canWrite?.(flowId) === false) return false
     const editor = editors.get(flowId)
     if (!editor || !editor.apply(command, undoable)) return false
     const state = stateOf(flowId)

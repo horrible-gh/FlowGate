@@ -194,6 +194,12 @@ const LONG_RUNNING_PATHS = [
   // server allows up to 90s (auto_title.TIMEOUT_SEC); a CLI model often needs more than
   // the 30s default, and the title was then dropped although the server still wrote it.
   /\/conversations\/[^/]+\/auto-title/,
+  // flowgate.v02.0152: an AI start answers only after admission — worktree check, the group's
+  // first source sync (git commands of up to 120s each), lease, token, scratch. The 30s default
+  // gave up on healthy starts the server went on to run, and the chat said "AI를 호출하지
+  // 못했습니다" for its first call. The chat resends the same press (client_request_id) when even
+  // this ceiling passes, so a slower admission is still recovered rather than started twice.
+  /\/ai-invoke\/start(?:$|\?)/,
 ]
 
 // flowgate.default.0607 T0004 §3.5 (NR0003 §6): a final approval that carries a

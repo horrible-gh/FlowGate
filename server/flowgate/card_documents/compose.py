@@ -151,6 +151,7 @@ def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str]
         raise _invalid("content", "not_for_this_slot")       # a work plan is made empty and filled in its editor
 
     def body() -> tuple[Optional[tuple[str, str]], Optional[dict]]:
+        legacy.require_writable(flow_id)
         running = legacy.running_node(flow_id, node_key)       # judged under the guard: one writer at a time
         if running is not None and running["result_type"] == slot.doc_type:
             return _reserve_result(group, node, slot, ordinal, running, content, user_id, locale), None

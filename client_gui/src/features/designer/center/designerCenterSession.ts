@@ -466,6 +466,8 @@ export interface DesignerCenterSession {
 
   // flowgate.v02.0064 T#4 — a card's own title (graph/nodeTitle.ts).
   /** The source saves card titles (the Canvas opens a card's title for editing). */
+  isFlowReadOnly(flowId: string): boolean
+  setFlowArchived(flowId: string, archived: boolean | null): void
   readonly canEditNodeTitles: boolean
   /**
    * Saves one card's title (the text as typed; the server normalizes and judges it). A saved answer newer than the title
@@ -475,6 +477,8 @@ export interface DesignerCenterSession {
 }
 
 export interface DesignerCenterSessionOptions {
+  /** Production archive read; missing/failed answers keep changes locked. */
+  readonly readArchive?: (flowId: string) => Promise<{ archived: boolean }>
   readonly beforeRunPrepare?: (flowId: string, mode: FlowRunMode) => Promise<boolean>
   readonly runSetupCurrent?: () => boolean
   /** The v0.1 single run calls behind 다음 단계 / 전체 실행 of a v0.1 Flow (the Shell hands them in); absent = none. */
@@ -503,6 +507,32 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     holds: {},
     timeMachine: null,
   })
+
+  const archiveStates = reactive<Record<string, boolean | null>>({})
+  const archiveReads = new Map<string, number>()
+  let archiveSeq = 0
+
+  function isFlowReadOnly(flowId: string): boolean {
+    return options.readArchive !== undefined && archiveStates[flowId] !== false
+  }
+
+  function setFlowArchived(flowId: string, archived: boolean | null) {
+    archiveReads.delete(flowId) // an event/change wins over an older in-flight read
+    archiveStates[flowId] = archived
+  }
+
+  function refreshFlowArchive(flowId: string) {
+    if (!options.readArchive) return
+    const pid = state.projectId
+    const seq = ++archiveSeq
+    archiveReads.set(flowId, seq)
+    if (archiveStates[flowId] !== true) archiveStates[flowId] = null
+    const current = () => !disposed && state.projectId === pid && archiveReads.get(flowId) === seq
+    void Promise.resolve().then(() => options.readArchive!(flowId)).then(
+      (answer) => { if (current()) archiveStates[flowId] = typeof answer.archived === 'boolean' ? answer.archived : null },
+      () => { /* Keep the tab readable and its changes locked; the next refresh retries. */ },
+    )
+  }
 
   // Latest read token per Flow id; a result whose token is no longer the latest is dropped.
   // Cleared on close and on project change, so their late results are dropped too.
@@ -557,7 +587,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   // Bound to the project it was created for, so a save still waiting when the project changes
   // goes out (and re-reads) for that project, not the new one.
   function sendLayout(projectId: string | null, flowId: string, change: FlowLayoutChange): Promise<unknown> | undefined {
-    if (projectId === null || !source.saveLayout) return undefined
+    if (projectId === null || !source.saveLayout || isFlowReadOnly(flowId)) return undefined
     // Not at once: a newer batch of the Flow may be waiting or about to go out. The queue's idle
     // report (createQueue) reads once nothing of the Flow is waiting or running.
     const reread = () => {
@@ -602,6 +632,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   const drafts = createDraftController({
     source,
+    canWrite: (flowId) => !isFlowReadOnly(flowId),
     projectId: () => state.projectId,
     graph: readyGraph,
     setGraph: (flowId, graph) => {
@@ -723,13 +754,14 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   // whatever the Graph's load (no ready Graph: the lock alone).
   function runMarks(flowId: string): FlowRunMarks {
     const { run, known, gateSource } = runStatus(flowId)
-    return flowRunMarks(readyGraph(flowId), run, known, gateSource)
+    const marks = flowRunMarks(readyGraph(flowId), run, known, gateSource)
+    return isFlowReadOnly(flowId) ? { ...marks, lock: 'archived' } : marks
   }
 
   /** flowgate.v02.0061 TR0031 rev1: a run command goes only on a confirmed status (the phase's own buttons). */
   function whenKnown(flowId: string, go: (run: FlowRunInfo | null) => boolean): boolean {
     const status = runStatus(flowId)
-    return status.known && go(status.run)
+    return !isFlowReadOnly(flowId) && status.known && go(status.run)
   }
 
   const editLock = (flowId: string): FlowEditLock => runMarks(flowId).lock
@@ -748,7 +780,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   }
   function canApproveFlow(flowId: string): boolean {
     const run = state.runs[flowId]
-    return runControl.canApprove && run?.readState === 'read' && run.run?.viewerCanApprove === true
+    return !isFlowReadOnly(flowId) && runControl.canApprove && run?.readState === 'read' && run.run?.viewerCanApprove === true
   }
 
   // ── flowgate.v02.0061 T#15: a card's context menu ─────────────────────────────────────────────────────────
@@ -807,7 +839,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   function cardMenu(flowId: string, nodeId: string): FlowCardMenuItem[] {
     const graph = readyGraph(flowId)
-    if (!graph || !graphNode(flowId, nodeId)) return []
+    if (!graph || !graphNode(flowId, nodeId) || isFlowReadOnly(flowId)) return []
     const { run, known } = runStatus(flowId)
     const flowRun = state.runs[flowId]
     return flowCardMenu({
@@ -971,6 +1003,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     readSeq += 1
     const token = readSeq
     pendingReads.set(flowId, token)
+    refreshFlowArchive(flowId)
     const keepShown = background && state.graphs[flowId]?.status === 'ready'
     if (!keepShown) setShownLoad(flowId, { status: 'loading' })
     const isCurrent = () => pendingReads.get(flowId) === token && state.projectId === projectId
@@ -1054,6 +1087,9 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     holdWrites.clear()
     titleStates.clear()
     runControl.clear()
+    archiveReads.clear()
+    // Keep the last write verdict for saves flushed by this switch (Flow ids are globally unique).
+    // Opening a Flow again refreshes its archive status before allowing new edits.
     state.projectId = projectId
     watchProject(projectId)
     applyTabs(EMPTY_FLOW_TABS)
@@ -1083,6 +1119,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     drafts.close(flowId)
     applyTabs(closeFlowTab(tabsState(), flowId))
     pendingReads.delete(flowId)
+    archiveReads.delete(flowId)
     moveCounts.delete(flowId)
     layoutRuns.delete(flowId)
     shownReads.delete(flowId)
@@ -1156,7 +1193,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   function commitViewport(flowId: string, viewport: CanvasViewport) {
     if (!state.views[flowId]) return
     recordViewport(flowId, viewport)
-    if (source.saveLayout) layoutQueue.queueViewport(flowId, viewport)
+    if (source.saveLayout && !isFlowReadOnly(flowId)) layoutQueue.queueViewport(flowId, viewport)
   }
 
   const viewRequest = shallowRef<CanvasViewRequest | null>(null)
@@ -1176,7 +1213,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
    */
   function placeNodes(flowId: string, placements: readonly NodePlacement[]): NodeMove[] {
     const load = state.graphs[flowId]
-    if (load?.status !== 'ready') return []
+    if (load?.status !== 'ready' || isFlowReadOnly(flowId)) return []
     const at = new Map(placements.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y)).map((p) => [p.nodeId, p] as const))
     const moves: NodeMove[] = []
     const nodes = load.graph.nodes.map((node) => {
@@ -1285,6 +1322,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   }
 
   function prepareRun(flowId: string): boolean | Promise<boolean> {
+    if (isFlowReadOnly(flowId)) return false
     if (!willConfirmDraft(flowId)) return true
     if (state.edits[flowId]?.action) return false
     return drafts.confirm(flowId).then(() => state.edits[flowId]?.notice?.kind === 'confirmed')
@@ -1320,7 +1358,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   async function saveNodeTitle(flowId: string, nodeId: string, title: string): Promise<NodeTitleSaveOutcome> {
     const projectId = state.projectId
-    if (projectId === null || !source.saveNodeTitle || !isOpen(projectId, flowId)) return { ok: false, code: null, message: '' }
+    if (isFlowReadOnly(flowId) || projectId === null || !source.saveNodeTitle || !isOpen(projectId, flowId)) return { ok: false, code: null, message: '' }
     let answered: FlowGraphTitleState
     try {
       answered = await source.saveNodeTitle(projectId, flowId, nodeId, title)
@@ -1370,8 +1408,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       if (!node || id === null || exposed.projectId === null || load?.status !== 'ready') return null
       // flowgate.v02.0061 T#14: the Inspector's card settings follow the run lock as the Canvas does.
       // flowgate.v02.0070 T#1: so does the Inspector's title edit (closed when the source saves no titles).
-      const titleEdit = canEditNodeTitles ? nodeTitleEdit(load.graph as FlowGraph, node as FlowGraphNode, runMarks(id).nodeRuns.get(node.id)) : null
-      return { projectId: exposed.projectId, graph: load.graph, node: { ...node, nodeRun: cardNodeRun(node.nodeRun, runMarks(id).nodeRuns.get(node.id)) }, editLock: editLock(id), titleEdit, canApprove: canApproveFlow(id) }
+      const titleEdit = canEditNodeTitles && !isFlowReadOnly(id) ? nodeTitleEdit(load.graph as FlowGraph, node as FlowGraphNode, runMarks(id).nodeRuns.get(node.id)) : null
+      return { projectId: exposed.projectId, graph: load.graph, node: { ...node, nodeRun: cardNodeRun(node.nodeRun, runMarks(id).nodeRuns.get(node.id)) }, editLock: editLock(id), flowReadOnly: isFlowReadOnly(id), titleEdit, canApprove: canApproveFlow(id) }
     }),
     canvasSize: computed(() => canvasSize.value),
     setProject,
@@ -1426,8 +1464,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     // flowgate.v02.0061 T#14: the history holds structure edits, so it waits while the run is locked.
     undoEdit: (flowId: string) => editLock(flowId) === null && drafts.undo(flowId),
     redoEdit: (flowId: string) => editLock(flowId) === null && drafts.redo(flowId),
-    validateDraft: drafts.validate,
-    confirmDraft: drafts.confirm,
+    validateDraft: (flowId) => isFlowReadOnly(flowId) ? Promise.resolve() : drafts.validate(flowId),
+    confirmDraft: (flowId) => isFlowReadOnly(flowId) ? Promise.resolve() : drafts.confirm(flowId),
     prepareRun,
     activeCanValidate: computed(() => {
       const id = exposed.activeFlowId
@@ -1493,6 +1531,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     askTimeMachine,
     confirmTimeMachine,
     closeTimeMachine,
+    isFlowReadOnly,
+    setFlowArchived,
     canEditNodeTitles,
     saveNodeTitle,
   }

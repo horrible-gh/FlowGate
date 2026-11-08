@@ -62,17 +62,25 @@ describe('0147 six required run/body/read conditions through the real session', 
       source.startChatRun.mockRejectedValueOnce(Object.assign(new ConversationRequestError('', 409, 'run_in_progress'), { runId: 'r1' }))
       await session.invokeAi()
     } else if (adopt === 'lost-start') {
+      // flowgate.v02.0152: the same press is sent again (same client_request_id) and the server answers with the run
+      // it already admitted — r1 here — instead of starting another.
       source.startChatRun.mockRejectedValueOnce(new ConversationRequestError('lost', null, null))
-      source.fetchActiveChatRun.mockResolvedValueOnce('r1')
-      await session.invokeAi()
-      await session.invokeAi() // lock prevents a second /start during adoption
+      const first = session.invokeAi()
+      await flushPromises()
+      await session.invokeAi() // lock prevents a second press during recovery
+      await time.tick() // the wait before the resend
+      await first
+      const keys = source.startChatRun.mock.calls.map((call: unknown[]) => call[2])
+      expect(keys).toHaveLength(2)
+      expect(keys[0]).toEqual(expect.any(String))
+      expect(keys[1]).toBe(keys[0])
     }
     const seqs = session.state.turns.map((t) => [t.seq, t.sourceRunId])
     await time.tick()
     expect(codes(session)).toEqual([])
     expect(session.state.turns.map((t) => [t.seq, t.sourceRunId])).toEqual(seqs)
     expect(session.state.runId).toBeNull()
-    expect(source.startChatRun).toHaveBeenCalledTimes(adopt === 'select' ? 0 : 1)
+    expect(source.startChatRun).toHaveBeenCalledTimes(adopt === 'select' ? 0 : adopt === 'lost-start' ? 2 : 1)
     expect(source.postTurn).not.toHaveBeenCalled()
   })
 

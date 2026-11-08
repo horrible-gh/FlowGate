@@ -29,6 +29,7 @@ import api, {
 } from '@shared/api'
 import { normalizeApiError } from '@shared/apiErrors'
 import { serverDetailOf } from '../../core/i18n/serverDetail'
+import { projectCreateConflictOf } from './createConflict'
 import type {
   BaseFileDiff,
   CreateFlowInput,
@@ -137,7 +138,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
     })
     return toProject(response.data)
   } catch (error) {
-    throw new Error(serverDetailOf(error))
+    throw projectCreateConflictOf(error) ?? new Error(serverDetailOf(error))
   }
 }
 

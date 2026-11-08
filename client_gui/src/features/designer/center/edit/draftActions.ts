@@ -33,7 +33,7 @@ export function createDraftActions({ host, stateOf, editor: editorOf, stop, tidy
   async function act(flowId: string, action: DraftAction, body: (pid: string) => Promise<void>) {
     const pid = host.projectId()
     const state = stateOf(flowId)
-    if (pid === null || state.action) return
+    if (pid === null || state.action || host.canWrite?.(flowId) === false) return
     state.action = action
     state.notice = null
     try {
@@ -54,6 +54,7 @@ export function createDraftActions({ host, stateOf, editor: editorOf, stop, tidy
     if (!editor) throw Object.assign(new Error('not editable'), { code: 'draft_not_editable' })
     tidy?.(flowId)
     if (!(await editor.settled())) throw Object.assign(new Error('not saved'), { code: editor.errorCode() ?? 'save_failed' })
+    if (host.canWrite?.(flowId) === false) throw Object.assign(new Error('Flow is read only'), { code: 'flow_archived' })
     return editor.version()
   }
 

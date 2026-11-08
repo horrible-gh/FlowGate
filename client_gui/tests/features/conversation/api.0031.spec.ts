@@ -199,6 +199,24 @@ describe('AI run', () => {
     expect(await fetchRun('r3')).toEqual({ runId: 'r3', status: 'finished', endReason: 'exited', outcome: null, exitCode: null, docRef: null, actionScope: null, groupId: null, finishedAt: null })
   })
 
+  it('flowgate.v02.0152: names the press with client_request_id and maps 409 start_pending', async () => {
+    postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r1', replayed: true } })
+    expect(await startChatRun('flowgate.v02.0031.0003-CH', 'a', 'run-1b2c3d4e')).toBe('r1')
+    expect(postRequest).toHaveBeenLastCalledWith('/api/v1/ai-invoke/start', {
+      project: 'flowgate',
+      module: 'v02',
+      group: '0031',
+      doc_ref: 'flowgate.v02.0031.0003-CH',
+      action_scope: 'chat',
+      mode: 'single',
+      provider_id: 'a',
+      client_request_id: 'run-1b2c3d4e',
+    })
+    postRequest.mockRejectedValueOnce(Object.assign(new Error('x'), { response: { status: 409, data: { code: 'start_pending', message: 'still starting' } } }))
+    const error = await startChatRun('p.m.0001.0002-CH', 'a', 'run-1b2c3d4e').catch((e) => e)
+    expect(error).toMatchObject({ status: 409, code: 'start_pending' })
+  })
+
   it('carries code and run id of a 409 run_in_progress', async () => {
     postRequest.mockRejectedValue(Object.assign(new Error('x'), { response: { status: 409, data: { code: 'run_in_progress', run_id: 'r9' } } }))
     const error = await startChatRun('p.m.0001.0002-CH', null).catch((e) => e)

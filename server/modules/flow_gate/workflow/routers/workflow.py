@@ -297,13 +297,17 @@ def update_group_endpoint(
             detail=f"group_disposed: {group_id} has been disposed",
         )
 
-    result = process_service.update_group(
-        group_id=group_id,
-        title=body.title,
-        priority=body.priority,
-        module=body.module,
-        graph_execution_limit=body.graph_execution_limit,
-    )
+    from modules.flow_gate.graph_workflow.services.errors import GraphApiError
+    try:
+        result = process_service.update_group(
+            group_id=group_id,
+            title=body.title,
+            priority=body.priority,
+            module=body.module,
+            graph_execution_limit=body.graph_execution_limit,
+        )
+    except GraphApiError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}) from exc
     if result.get("status") == "error":
         message = result.get("message", "")
         status_code = 404 if "not found" in message else 400

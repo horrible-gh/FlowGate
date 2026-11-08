@@ -2016,7 +2016,12 @@ def start_run(
         # 0670 T0004 (NR0003 §11.3): a chat run's start content as an isolated-index Git
         # tree. finalize diffs it against the end tree, so the run's change summary is
         # measured by FlowGate -- never reported by the model. None for every other scope.
-        "source_start_tree": _chat_start_tree(action_scope, source_root),
+        # flowgate.v02.0152: no longer taken here. Hashing the whole worktree inside this
+        # request (twice: here and again in the chat start hook) kept /ai-invoke/start from
+        # answering within the browser's 30s on a cold file cache; the browser reported
+        # "could not call the AI" and the run went on unseen. The worker takes it after the
+        # gate opens and before any provider starts (worker._prepare_chat_start_tree).
+        "source_start_tree": None,
         # 0675 T0004 §2-3: the conversation head this chat run started from. Its command
         # and change rows are anchored after it until the run's reply turn lands, and
         # stay there when the run ends without one. None for every other scope.
@@ -2253,9 +2258,9 @@ def start_run(
         "failure_signal_sent": False,
     }
     # flowgate.v02.0032 T#1 (D0006 §2.3, §3.8.1): the chat run start port -- command
-    # capability, the conversation head the run starts from and the start-tree snapshot.
-    # Chat-only and never refuses the run: a missing worktree or a failed snapshot only
-    # drops the run change summary. No-op when nothing is registered.
+    # capability and the conversation head the run starts from. Chat-only and never
+    # refuses the run. No-op when nothing is registered. flowgate.v02.0152: the start-tree
+    # snapshot moved to the worker (chat_run_hooks.chat_run_prepare), off this request.
     chat_run_hooks.chat_run_start(run)
     # 0515 T0009 §10: every run gets a handoff gate. The worker thread must not run its
     # real body (in particular the ai_invoke_started broadcast, T0009 §11) until this
@@ -2996,7 +3001,10 @@ def _chat_start_seq(action_scope: Optional[str], doc_ref: Optional[str]) -> Opti
 
 
 def _chat_start_tree(action_scope: Optional[str], source_root) -> Optional[str]:
-    """0670 T0004: start-tree snapshot for chat runs only; never raises."""
+    """0670 T0004: start-tree snapshot for chat runs only; never raises.
+
+    flowgate.v02.0152: called from the worker (worker._prepare_chat_start_tree) when no
+    chat prepare port is registered -- never from admission any more."""
     if action_scope != "chat":
         return None
     try:

@@ -84,7 +84,7 @@ interface BottomDockInspector {
   /** flowgate.v02.0070 T#1: the card title save (the session's, for the Flow and card given); null = none. */
   readonly saveTitle?: DesignerCenterSession['saveNodeTitle'] | null
   /** flowgate.v02.0072 TR0012 rev1: any open Flow's run lock now (the session's run marks), for the work plan windows. */
-  readonly flowRunLock?: ((flowId: string) => 'run' | 'unknown' | null) | null
+  readonly flowRunLock?: ((flowId: string) => 'run' | 'unknown' | 'archived' | null) | null
   /** flowgate.v02.0083 T#3: any shown card's latest node run (the session's), for a WP card's plan window. */
   readonly cardRun?:
     | ((flowId: string, nodeKey: string) => {

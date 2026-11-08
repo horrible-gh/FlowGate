@@ -13,7 +13,10 @@ const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex')
 const mock = join(here, 'mockup.html')
 if (sha(mock) !== 'ab33f07329b4d9371054692e9cfc4159b1a440bb7aea2bee28d6a3b90598d37b') throw Error('Unapproved mockup')
 const require = createRequire(join(cwd, 'package.json'))
-const pkgDir = (name) => dirname(require.resolve(`${name}/package.json`))
+const pkgDir = (name) => {
+  try { return dirname(require.resolve(`${name}/package.json`)) }
+  catch { return resolve(cwd, 'node_modules', name) }
+}
 process.env.NODE_ENV = 'production'
 const vite = await import(pathToFileURL(join(pkgDir('vite'), 'dist/node/index.js')).href)
 const vueMod = await import(pathToFileURL(require.resolve('@vitejs/plugin-vue')).href)
@@ -24,7 +27,7 @@ await vite.build({ configFile: false, mode: 'production', root: out, base: './',
   define: { __FG_GUI_BUILD__: JSON.stringify('archive-browser'), 'process.env.NODE_ENV': JSON.stringify('production'),
     __VUE_OPTIONS_API__: 'true', __VUE_PROD_DEVTOOLS__: 'false', __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false' },
   resolve: { preserveSymlinks: true, alias: { '@shared': resolve(cwd, '../client/shared'), '@': resolve(cwd, 'src'),
-    ...Object.fromEntries(['vue', 'vue-i18n', 'axios', 'pinia', 'vue-router'].map((n) => [n, pkgDir(n)])) } },
+    ...Object.fromEntries(['vue', 'vue-i18n', 'axios', 'pinia', 'vue-router', '@vue-flow/core', '@vue-flow/background'].map((n) => [n, pkgDir(n)])) } },
   build: { outDir: join(out, 'bundle'), emptyOutDir: true, minify: false, cssCodeSplit: false,
     lib: { entry: join(here, 'harness.ts'), name: 'FgArchiveHarness', formats: ['iife'], fileName: () => 'harness.js' } },
 })

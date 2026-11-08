@@ -74,6 +74,7 @@ def create_card_memo(flow_id: str, node_key: str, request: Request, body: Any = 
         _writable(flow_id)
 
         def write() -> dict:
+            _writable(flow_id)
             _card(flow_id, node_key)
             memo_id = repository.insert(flow_id, node_key, fields["title"], fields["body"], fields["ai_ref"], user_id)
             return _payload(flow_id, node_key, memo=memos.view(_memo(flow_id, node_key, memo_id)))
@@ -96,6 +97,7 @@ def change_card_memo(flow_id: str, node_key: str, memo_id: str, request: Request
         _writable(flow_id)
 
         def write() -> dict:
+            _writable(flow_id)
             _memo(flow_id, node_key, memo_id)
             repository.update(flow_id, node_key, memo_id, fields, user_id)
             return _payload(flow_id, node_key, memo=memos.view(_memo(flow_id, node_key, memo_id)))
@@ -114,6 +116,7 @@ def delete_card_memo(flow_id: str, node_key: str, memo_id: str, request: Request
         _writable(flow_id)
 
         def write() -> dict:
+            _writable(flow_id)
             _memo(flow_id, node_key, memo_id)
             repository.delete(flow_id, node_key, memo_id)
             return _payload(flow_id, node_key, memo_id=memo_id, deleted=True)

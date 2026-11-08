@@ -409,13 +409,16 @@ def reconcile_links(ctx: RunContext, policies: dict) -> None:
 
 def reconcile_if_needed(flow_id: str, project_id: Optional[str]) -> None:
     """Before a run read (L0009 §2.6.8 호출 시점). A failure only skips the repair; the read goes on."""
+    from modules.flow_gate.db.groups import is_archived
+    if is_archived(flow_id):
+        return
     run = run_store.active_run(flow_id)
     if run is None or run["status"] == STOPPING or not needs_reconcile(load_context(run, project_id, None)):
         return
     jobs: list = []
 
     def body() -> None:
-        if read_ownership(flow_id).state != "graph":
+        if is_archived(flow_id) or read_ownership(flow_id).state != "graph":
             return
         again = run_store.active_run(flow_id)
         if again is None or again["status"] == STOPPING:      # 0061 T#7: a stopping run binds nothing

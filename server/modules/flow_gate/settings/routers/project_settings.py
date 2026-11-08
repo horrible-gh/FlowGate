@@ -169,6 +169,39 @@ def restore_project(
     return _set_project_active(project_id, True)
 
 
+def _is_archived(row: dict) -> bool:
+    value = row.get("is_active")
+    return value is not None and not int(value)
+
+
+def _project_conflict(row: dict, field: str, message: str) -> HTTPException:
+    """422 for a create that collides with an existing project (flowgate.v02.0152).
+
+    The Designer only lists active projects, so a collision with an archived one
+    used to look like "already exists" for a project nobody could see. The code
+    tells the two apart, and the existing row's id/name let the screen point at
+    the project to restore.
+    """
+    archived = _is_archived(row)
+    if archived:
+        code = "project_archived_conflict"
+    elif field == "project_name":
+        code = "project_name_conflict"
+    else:
+        code = "project_id_conflict"
+    return HTTPException(
+        status_code=422,
+        detail={
+            "code": code,
+            "field": field,
+            "archived": archived,
+            "project_id": row.get("project_id"),
+            "project_name": row.get("project_name"),
+            "message": message + (" (archived; restore it or choose another value)" if archived else ""),
+        },
+    )
+
+
 @router.post("/projects", status_code=201)
 def create_project_endpoint(
     body: ProjectCreate,
@@ -181,10 +214,12 @@ def create_project_endpoint(
         workspace_id = workspace_service.resolve_create_workspace(user, body.workspace_id)
     except workspace_service.WorkspaceError as exc:
         raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
-    if projects_db.get_by_name(body.project_name):
-        raise HTTPException(
-            status_code=422,
-            detail=f"A project with the same name already exists: {body.project_name}",
+    same_name = projects_db.get_by_name(body.project_name)
+    if same_name:
+        raise _project_conflict(
+            same_name,
+            "project_name",
+            f"A project with the same name already exists: {body.project_name}",
         )
     if body.project_id:
         try:
@@ -196,10 +231,14 @@ def create_project_endpoint(
             project_id = project_name_to_slug(body.project_name)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=f"Failed to convert project name: {e}")
-    if projects_db.get_by_id(project_id):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Slug conversion result conflicts with an existing project ID: {project_id!r}",
+    same_id = projects_db.get_by_id(project_id)
+    if same_id:
+        raise _project_conflict(
+            same_id,
+            "project_id",
+            f"A project with the same ID already exists: {project_id}"
+            if body.project_id
+            else f"Slug conversion result conflicts with an existing project ID: {project_id!r}",
         )
     project = projects_db.create({
         "project_id": project_id,

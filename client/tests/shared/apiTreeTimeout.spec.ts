@@ -98,6 +98,15 @@ describe('shared/api timeout policy', () => {
     }
   })
 
+  it('gives the AI start the long ceiling, and only the start (flowgate.v02.0152)', async () => {
+    // Admission (worktree check, first source sync, lease, token) answered after the 30s default on a chat's first
+    // call; the screen reported a failure for a run the server then carried out.
+    expect(await appliedTimeout('/api/v1/ai-invoke/start')).toBe(LONG_TIMEOUT_MS)
+    for (const path of ['/api/v1/ai-invoke/active', '/api/v1/ai-invoke/aiv2_20261108_000001', '/api/v1/ai-invoke/providers']) {
+      expect(await appliedTimeout(path), `${path} should keep the 30s default`).toBe(DEFAULT_TIMEOUT_MS)
+    }
+  })
+
   it('lets an explicit per-call timeout win over the ceiling', async () => {
     // Only requests still on the default are raised: a caller that has already decided
     // must not be overridden, on a tree GET least of all.

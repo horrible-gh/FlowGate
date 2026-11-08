@@ -455,6 +455,7 @@ export interface DesignerMenuTargets {
   project: boolean
   group: boolean
   flow: boolean
+  readOnly?: boolean
   /**
    * flowgate.v02.0059 T#2: whether the open Flow's structure edits can be undone / redone. Left out
    * (undefined) the command follows the open Flow alone; the Shell states both explicitly.
@@ -517,6 +518,7 @@ export function isMenuCommandEnabled(
   if (cmd === 'group.close') return targets.group
   if (cmd === 'flow.close') return targets.flow
   if (!targets.flow) return false
+  if (targets.readOnly && (cmd.startsWith('run.') || (cmd.startsWith('edit.') && !['edit.select-all', 'edit.select-mode', 'edit.copy'].includes(cmd)))) return false
   if (cmd === 'edit.undo') return targets.canUndo !== false
   if (cmd === 'edit.redo') return targets.canRedo !== false
   const minimum = arrangeSelectionMinimum(cmd)

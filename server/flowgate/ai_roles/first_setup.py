@@ -175,7 +175,10 @@ def apply(group: dict, user_id: str, body: Any) -> dict:
         values = _values(user_id, roles)
         legacy.require_writable(flow_id)
         try:
-            result = legacy.with_flow_guard(flow_id, lambda: _apply(flow_id, user_id, request_id, values))
+            def write():
+                legacy.require_writable(flow_id)
+                return _apply(flow_id, user_id, request_id, values)
+            result = legacy.with_flow_guard(flow_id, write)
         except Exception:
             first = _recorded(user_id, request_id)  # the same request applied by another server process meanwhile
             if first is not None:

@@ -50,6 +50,9 @@ export function flowCanvasResponse(flowId: string, ownership = 'unassigned') {
 
 /** The mocked `getRequest` answer for a Canvas read URL, or null for any other URL. */
 export function answerFlowCanvas(url: string): { data: unknown } | null {
+  if (/^\/api\/v1\/flows\/[^/]+\/archive$/.test(url)) {
+    return { data: { ok: true, archived: false, eligible: false, reason: 'run_not_completed' } }
+  }
   const match = CANVAS_URL.exec(url)
   return match ? { data: flowCanvasResponse(decodeURIComponent(match[1])) } : null
 }

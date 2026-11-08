@@ -373,7 +373,6 @@ function onContext(event: MouseEvent, row: { kind: 'project' } | { kind: 'group'
 // Double click / Enter. The Flow is also selected (the user pointed at it), but whether it
 // becomes the ACTIVE Flow is the Designer's call — it answers through `activeFlowId`.
 function onActivateFlow(flow: ExplorerFlow) {
-  if (flow.archived) return
   selection.value = { kind: 'flow', id: flow.id }
   const payload = flowEvent(flow)
   if (payload) emit('activate-flow', payload)

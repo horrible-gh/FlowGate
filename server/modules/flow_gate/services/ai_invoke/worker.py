@@ -151,6 +151,41 @@ def _await_handoff_gate(run: dict) -> bool:
         return False
     return False  # ABORT: admission's own commit-failure path already cleaned up.
 
+def _prepare_chat_start_tree(run: dict) -> None:
+    """flowgate.v02.0152: the chat run's start-tree snapshot, on this worker thread.
+
+    It used to run inside admission, so /ai-invoke/start answered only after the whole
+    worktree had been hashed (twice). On a cold file cache that outlasted the browser's
+    30s wait: the screen said "could not call the AI" while the server went on to run the
+    AI, and pressing again could run it a second time. Here the request has already
+    answered and the run is visible to /active and GET /ai-invoke/{run_id}.
+
+    The meaning is unchanged: no provider has started, and the run's token is only handed
+    to its provider by ``_execute_provider_chain`` below, so nothing has touched the files
+    on the run's behalf yet. A cancel that arrives first skips the snapshot (the provider
+    walk also stops on it); a snapshot that fails only drops the run change summary, as
+    before. With the conversation port registered it owns the snapshot -- like finalize,
+    the in-module 0670 path runs only when nothing is registered.
+    """
+    if run.get("action_scope") != "chat" or run["cancel_event"].is_set():
+        return
+    run["chat_start_prepare_started_at"] = datetime.now(timezone.utc).isoformat()
+    started = time.monotonic()
+    try:
+        if chat_run_hooks.registered(chat_run_hooks.ON_CHAT_RUN_PREPARE):
+            chat_run_hooks.chat_run_prepare(run)
+        else:
+            run["source_start_tree"] = admission._chat_start_tree(
+                run.get("action_scope"), run.get("source_root"))
+    except Exception:
+        logger.warning("ai-invoke %s: chat start-tree snapshot failed (run continues)",
+                       run.get("run_id"), exc_info=True)
+    finally:
+        run["chat_start_prepare_ms"] = int((time.monotonic() - started) * 1000)
+        logger.info("ai-invoke %s: chat start-tree snapshot took %dms",
+                    run.get("run_id"), run["chat_start_prepare_ms"])
+
+
 _post_process_recovery_lock = threading.Lock()
 
 
@@ -272,6 +307,10 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             "worker_document_type": run.get("worker_document_type"),
             "auto_handled_item_seqs": list(run.get("auto_handled_item_seqs") or []),
         })
+        # flowgate.v02.0152: a chat run's start tree, taken here instead of inside the
+        # /ai-invoke/start request -- before the first provider starts, so it is still the
+        # content the AI found.
+        _prepare_chat_start_tree(run)
 
         while True:
             # A hop may retry.  Its preceding attempt's recovery window covers only

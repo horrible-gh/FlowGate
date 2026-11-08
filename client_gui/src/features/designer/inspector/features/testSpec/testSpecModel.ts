@@ -282,6 +282,7 @@ export type TestSpecAvailability = Readonly<Record<TestSpecOperation, TestSpecAv
 
 /** Why starting a run is disabled: one reason, in the order of D#1 §8.3 rule 6-1. */
 export function testSpecRunDisabledReason(input: TestSpecInput): string | null {
+  if (input.readOnly === 'archived') return 'reason.read_only_archived'
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (input.readOnly === 'revision') return 'reason.read_only_revision'
   if (input.groupDisposed) return 'reason.disposed'
@@ -309,6 +310,7 @@ export function testSpecRunDisabledReason(input: TestSpecInput): string | null {
 
 /** Why cancelling the live run is disabled (read-only views, the permission refusal, an accepted cancel, a call in flight). */
 export function testSpecCancelDisabledReason(input: TestSpecInput): string | null {
+  if (input.readOnly === 'archived') return 'reason.read_only_archived'
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (input.readOnly === 'revision') return 'reason.read_only_revision'
   if (input.denied) return 'reason.forbidden'

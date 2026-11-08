@@ -208,6 +208,7 @@ function ownershipReason(ownership: string | null | undefined): string | null {
 export function workPlanDeployCommonReason(input: WorkPlanDeployInput): string | null {
   const target = input.target
   if (!target || target.docId === null) return 'reason.no_document'
+  if (target.readOnly === 'archived') return 'reason.read_only_archived'
   if (target.readOnly === 'conflict') return 'reason.ownership_conflict'
   if (target.readOnly === 'revision') return 'reason.read_only_revision'
   if (target.editLock === 'run') return 'reason.run_locked'

@@ -80,7 +80,12 @@ def _reject_if_group_disposed(doc: dict) -> None:
     groups and on any lookup failure — legitimate work on a live group is never blocked.
     """
     from modules.flow_gate import process_service as _process_service
+    from modules.flow_gate.db import groups as db_groups
 
+    if db_groups.is_archived(doc.get("group_id")):
+        raise HTTPException(status_code=409, detail={
+            "code": "flow_archived", "message": "Restore the archived Flow before making changes.",
+        })
     if _process_service.is_group_disposed(doc.get("group_id")):
         raise HTTPException(
             status_code=409,

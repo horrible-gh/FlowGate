@@ -218,7 +218,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     await find('conv-more-btn').trigger('click')
     await find('conv-invoke-ai').trigger('click')
     await flushPromises()
-    expect(source.startChatRun).toHaveBeenCalledWith(A, 'sonnet')
+    expect(source.startChatRun).toHaveBeenCalledWith(A, 'sonnet', expect.any(String))
     const send = find('conv-send')
     expect(send.classes()).toContain('is-stop')
     expect(send.attributes('aria-label')).toBe('AI 호출 중지')

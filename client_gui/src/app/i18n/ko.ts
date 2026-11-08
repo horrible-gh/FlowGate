@@ -1917,6 +1917,10 @@ export default {
       discard_confirm: '버리기',
       discard_cancel: '계속 작성',
       failed: '프로젝트를 생성하지 못했습니다.',
+      name_conflict: '같은 이름의 프로젝트가 이미 있습니다: {name}',
+      id_conflict: '같은 ID의 프로젝트가 이미 있습니다: {id}',
+      archived_name_conflict: '같은 이름의 프로젝트 “{name}”(ID: {id})가 보관(비활성) 상태라 목록에 보이지 않습니다. 관리자에게 복원을 요청하거나 다른 이름을 입력하세요.',
+      archived_id_conflict: 'ID “{id}”는 보관(비활성) 상태인 프로젝트 “{name}”가 쓰고 있어 목록에 보이지 않습니다. 관리자에게 복원을 요청하거나 다른 ID를 입력하세요.',
     },
   },
   placeholder: {

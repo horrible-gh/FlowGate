@@ -82,6 +82,7 @@ function visibleOf(input: KindSwitchInput): boolean {
  * conflict, revision view, disposed, AI running, then this feature's own (a switch in flight).
  */
 export function kindSwitchDisabledReason(input: KindSwitchInput): string | null {
+  if (input.readOnly === 'archived') return 'reason.read_only_archived'
   if (input.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (input.readOnly === 'revision') return 'reason.read_only_revision'
   if (input.groupDisposed) return 'reason.disposed'

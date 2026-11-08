@@ -16,6 +16,7 @@ import { registerAppMessages } from '@/app/i18n'
 import { clearStoredAuth } from '@/core/auth/logout'
 import { setCurrentUser } from '@/core/auth/currentUser'
 import { DesignerShell } from '@/features/designer'
+import DesignerCenter from '@/features/designer/center/DesignerCenter.vue'
 import { useProjectStore, type Project } from '@/features/project'
 import { parseDesignerSession } from '@/features/project/designerSessionStorage'
 import { answerFlowCanvas } from './flowCanvasResponse'
@@ -343,7 +344,7 @@ describe('F5 restore of the Designer screen (NR 0101-0003 §5.5)', () => {
     const w = await reload()
     expect(tabIds(w)).toEqual(['p.ui.0003', 'p.ui.0001'])
     expect(activeTab(w)).toBe('p.ui.0003')
-    expect(treeReads(true).map(([, params]) => params)).toEqual([{ include_terminal: 'true', force: 'true', include_archived: 'false' }])
+    expect(treeReads(true).map(([, params]) => params)).toEqual([{ include_terminal: 'true', force: 'true', include_archived: 'true' }])
   })
 
   it('일부 삭제: a Flow missing from the tree is left out and the first tab becomes active', async () => {
@@ -717,7 +718,7 @@ describe('Q #510 contract and browser tab isolation (NR 0101-0003 §5.5 / §5.6)
 })
 
 
-describe('T-c archive session cleanup', () => {
+describe('archive session read-only viewing', () => {
   function installArchiveServer() {
     let archived = false
     const oldGet = getRequest.getMockImplementation()!
@@ -738,7 +739,7 @@ describe('T-c archive session cleanup', () => {
     })
     return { archiveElsewhere: () => { archived = true }, restoreElsewhere: () => { archived = false } }
   }
-  it('archives an open completed Flow, removes its tab and F5 snapshot, then restores it into the normal tree', async () => {
+  it('keeps the archived tab through F5 and restores it into the normal tree', async () => {
     installArchiveServer()
     seed({ tabs: [tab('p.ui.0002', 'Canvas')], activeFlowId: 'p.ui.0002',
       explorer: { selection: { kind: 'flow', id: 'p.ui.0002' }, expandedGroupIds: ['module:p:ui'] } })
@@ -749,10 +750,11 @@ describe('T-c archive session cleanup', () => {
     await archive.trigger('click')
     await settle()
     expect(postRequest.mock.calls.filter(([url]) => url.endsWith('/archive'))).toHaveLength(1)
-    expect(tabIds(w)).not.toContain('p.ui.0002')
-    expect(stored().tabs).toEqual([])
+    expect(tabIds(w)).toContain('p.ui.0002')
+    expect(stored().tabs.map((item: any) => item.flowId)).toEqual(['p.ui.0002'])
+    expect(w.get('[data-test="designer-canvas"]').attributes('data-editable')).toBe('false')
     w = await reload()
-    expect(tabIds(w)).not.toContain('p.ui.0002')
+    expect(tabIds(w)).toContain('p.ui.0002')
     expect(w.findAll('[data-test="project-explorer-flow"]').some((r) => r.text().includes('Canvas'))).toBe(false)
     await w.get('[data-test="project-explorer-include-archived"]').setValue(true)
     await settle()
@@ -766,7 +768,43 @@ describe('T-c archive session cleanup', () => {
     await w.get('[data-test="project-explorer-include-archived"]').setValue(false)
     await settle()
     expect(explorerRow(w, 'Canvas').exists()).toBe(true)
-    expect(tabIds(w)).toEqual([]) // restoring display never starts or opens a Flow
+    expect(tabIds(w)).toEqual(['p.ui.0002']) // restoration retains the existing tab
+    expect(putRequest).not.toHaveBeenCalled()
+  })
+  it('a tree read started before archive cannot unlock the archived tab when it arrives late', async () => {
+    installArchiveServer()
+    seed({ tabs: [tab('p.ui.0002', 'Canvas')], activeFlowId: 'p.ui.0002' })
+    let events: any
+    const w = await mountShell(null, () => {
+      vi.spyOn(useProjectStore(), 'subscribeProjectEvents').mockImplementation((_pid, subscription) => {
+        if (subscription.events.includes('group_view_refresh')) events = subscription
+        return () => {}
+      })
+    })
+    const center = w.findComponent(DesignerCenter).props('center')
+    expect(center.isFlowReadOnly('p.ui.0002')).toBe(false)
+    const oldGet = getRequest.getMockImplementation()!
+    const pending = deferred()
+    let delayed = false
+    getRequest.mockImplementation(async (url: string, params: any = {}) => {
+      if (!delayed && url.endsWith('/groups/tree') && params.include_archived === 'true') {
+        delayed = true
+        const old = await oldGet(url, params)
+        await pending.promise
+        return old
+      }
+      return oldGet(url, params)
+    })
+    events.resync()
+    await settle()
+    expect(delayed).toBe(true)
+    await w.get('[data-test="designer-tool-archive"]').trigger('click')
+    await settle()
+    expect(center.isFlowReadOnly('p.ui.0002')).toBe(true)
+    pending.resolve(undefined)
+    await settle()
+    expect(center.isFlowReadOnly('p.ui.0002')).toBe(true)
+    expect(tabIds(w)).toEqual(['p.ui.0002'])
   })
   it('handles another session archive and reconnect through the existing tree event', async () => {
     const server = installArchiveServer()
@@ -782,13 +820,13 @@ describe('T-c archive session cleanup', () => {
     server.archiveElsewhere()
     events.event({ type: 'group_view_refresh', groupId: 'p.ui.0002', payload: { reason: 'flow_archived' } })
     await settle()
-    expect(tabIds(w)).not.toContain('p.ui.0002')
-    expect(stored().tabs).toEqual([])
+    expect(tabIds(w)).toContain('p.ui.0002')
+    expect(stored().tabs.map((item: any) => item.flowId)).toEqual(['p.ui.0002'])
     server.restoreElsewhere()
     events.resync()
     await settle()
-    const nodes = useProjectStore().getCachedGroupTree('p', true)!
+    const nodes = useProjectStore().getCachedGroupTree('p', true, true)!
     expect(nodes.some((n) => n.id === 'p.ui.0002')).toBe(true)
-    expect(tabIds(w)).toEqual([])
+    expect(tabIds(w)).toEqual(['p.ui.0002'])
   })
 })

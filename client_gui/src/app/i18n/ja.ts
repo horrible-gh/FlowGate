@@ -1906,6 +1906,10 @@ export default {
       discard_confirm: '破棄',
       discard_cancel: '編集を続ける',
       failed: 'プロジェクトを作成できませんでした。',
+      name_conflict: '同じ名前のプロジェクトがすでにあります: {name}',
+      id_conflict: '同じIDのプロジェクトがすでにあります: {id}',
+      archived_name_conflict: '同じ名前のプロジェクト「{name}」(ID: {id})がアーカイブ(無効)状態のため一覧に表示されていません。管理者に復元を依頼するか、別の名前を入力してください。',
+      archived_id_conflict: 'ID「{id}」はアーカイブ(無効)状態のプロジェクト「{name}」が使用しているため一覧に表示されていません。管理者に復元を依頼するか、別のIDを入力してください。',
     },
   },
   placeholder: {

@@ -53,6 +53,12 @@ export const RUN_HISTORY_DETAIL_LIMIT = 50 // sequential reads: concurrency = 1
 // flowgate.v02.0084 T#2: a run adopted before the server has registered it (409 right after the
 // lease, or a /start that timed out) reads 404 for a while; it is polled this long before giving up.
 export const RUN_ADOPT_GRACE_MS = 60_000
+// flowgate.v02.0152: a /start that got no answer (or 409 `start_pending`: the server is still admitting that same
+// press) is sent again with the same client_request_id, RUN_POLL_MS apart, for at most START_RECOVERY_MS (a group's
+// first source sync can hold admission for minutes) and at most START_RESEND_MAX times (what bounds it under a test
+// clock). The server answers a known press with the run it admitted, so a resend never starts a second run.
+export const START_RESEND_MAX = 120
+export const START_RECOVERY_MS = 300_000
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -193,6 +199,17 @@ function isSourceLocked(error: unknown): boolean {
 /** flowgate.v02.0084 T#2: the request got no answer (timeout / network); the server may still have acted. */
 function isNoResponse(error: unknown): boolean {
   return error instanceof ConversationRequestError && error.status === null
+}
+
+/** flowgate.v02.0152: the server is still admitting the first request of this same press; ask again shortly. */
+function isStartPending(error: unknown): boolean {
+  return error instanceof ConversationRequestError && error.status === 409 && error.code === 'start_pending'
+}
+
+/** flowgate.v02.0152: one id per AI-call press (`client_request_id`, 8..200 of [A-Za-z0-9._:-]). */
+function newStartRequest(): string {
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  return `run-${random}`
 }
 
 /** flowgate.v02.0135 T#3: a fresh create intent id (`client_request_id`, 8..200 of [A-Za-z0-9._:-]). */
@@ -1229,37 +1246,56 @@ export function createConversationSession(options: ConversationSessionOptions = 
       return
     }
     const gen = chatGen
+    const stale = () => disposed || gen !== chatGen
     state.runId = 'starting'
-    try {
-      const runId = await source.startChatRun(chatId, providerId)
-      if (disposed || gen !== chatGen) return
-      if (!runId) {
-        state.runId = null
-        return
-      }
-      void pollRun(chatId, runId, gen)
-    } catch (error) {
-      if (disposed || gen !== chatGen) return
-      // 409 run_in_progress: adopt the run that already owns the group (L0008 §5).
-      if (error instanceof ConversationRequestError && error.code === 'run_in_progress' && error.runId) {
-        void pollRun(chatId, error.runId, gen)
-        return
-      }
-      // flowgate.v02.0084 T#2: a /start without an answer may still have made the run. Ask the
-      // server for the chat's active run and adopt it; state.runId stays 'starting' meanwhile, so
-      // another click cannot send a second /start.
-      if (isNoResponse(error)) {
-        const adopted = await findActiveRun(chatId)
-        if (disposed || gen !== chatGen) return
-        if (adopted) {
-          void pollRun(chatId, adopted, gen)
+    // flowgate.v02.0152: this press, named once. Every /start it sends carries the same id, so the server can answer
+    // a resend with the run the first request admitted — running or already finished — instead of a second run.
+    const requestId = newStartRequest()
+    const recoveryStarted = Date.now()
+    let resends = 0
+    for (;;) {
+      try {
+        const runId = await source.startChatRun(chatId, providerId, requestId)
+        if (stale()) return
+        if (!runId) {
+          state.runId = null
           return
         }
+        void pollRun(chatId, runId, gen)
+        return
+      } catch (error) {
+        if (stale()) return
+        // 409 run_in_progress: adopt the run that already owns the group (L0008 §5).
+        if (error instanceof ConversationRequestError && error.code === 'run_in_progress' && error.runId) {
+          void pollRun(chatId, error.runId, gen)
+          return
+        }
+        // flowgate.v02.0152: no answer (the first call of a chat used to run past the 30s wait while the server went
+        // on to run the AI), or the server still admitting this press: send the same press again. state.runId stays
+        // 'starting' meanwhile, so another click cannot start a second press.
+        if ((isNoResponse(error) || isStartPending(error))
+          && resends < START_RESEND_MAX && Date.now() - recoveryStarted < START_RECOVERY_MS) {
+          resends += 1
+          await sleep(RUN_POLL_MS)
+          if (stale()) return
+          continue
+        }
+        // flowgate.v02.0084 T#2: recovery ran out without an answer naming a run — adopt the chat's active run if
+        // there is one.
+        if (isNoResponse(error) || isStartPending(error)) {
+          const adopted = await findActiveRun(chatId)
+          if (stale()) return
+          if (adopted) {
+            void pollRun(chatId, adopted, gen)
+            return
+          }
+        }
+        state.runId = null
+        // flowgate.v02.0061 T#14: an edit / edit-once call while the Flow's Graph run is locked (WP answer 2).
+        if (isSourceLocked(error)) notify('warning', 'source_locked')
+        else notify('danger', 'invoke_failed', messageOf(error))
+        return
       }
-      state.runId = null
-      // flowgate.v02.0061 T#14: an edit / edit-once call while the Flow's Graph run is locked (WP answer 2).
-      if (isSourceLocked(error)) notify('warning', 'source_locked')
-      else notify('danger', 'invoke_failed', messageOf(error))
     }
   }
 

@@ -4,7 +4,8 @@
 (``startup.py``) calls :func:`register` once at startup. Each handler is chat-only, and a
 handler failure never fails the AI run (the hook port logs it and moves on).
 
-    on_chat_run_start               admission: command capability, run start seq, start snapshot
+    on_chat_run_start               admission: command capability, run start seq
+    on_chat_run_prepare             worker, before any provider: start snapshot (0152)
     provide_chat_tools              API worker: the ``run_command`` tool
     on_chat_run_finalize            finalize: close open commands, then record the run change
     on_chat_run_cancel              cancel: close the run's commands before it is announced
@@ -33,6 +34,13 @@ def on_chat_run_start(run: dict) -> None:
     # The capability that lets this run ask for commands (D0006 §5.3 capability_required).
     run["chat_command_capability"] = True
     run["chat_start_seq"] = activity.run_start_seq(run.get("doc_ref"))
+
+
+def on_chat_run_prepare(run: dict) -> None:
+    """flowgate.v02.0152: the start-tree snapshot, on the worker thread before any provider
+    starts. It hashes every file of the worktree, which on a cold file cache took longer
+    than the browser's 30s wait for /ai-invoke/start when it ran inside admission. Nothing
+    can change files for the run before its provider starts, so the tree means the same."""
     run_changes.start_snapshot(run)
 
 
@@ -107,6 +115,7 @@ def accept_chat_call(run: dict, call: dict):
 
 HANDLERS = {
     hooks.ON_CHAT_RUN_START: on_chat_run_start,
+    hooks.ON_CHAT_RUN_PREPARE: on_chat_run_prepare,
     hooks.PROVIDE_CHAT_TOOLS: provide_chat_tools,
     hooks.ON_CHAT_RUN_FINALIZE: on_chat_run_finalize,
     hooks.ON_CHAT_RUN_CANCEL: on_chat_run_cancel,

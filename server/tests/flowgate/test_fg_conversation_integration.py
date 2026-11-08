@@ -70,9 +70,11 @@ def test_unregistered_ports_are_no_ops(clean_hooks):
     assert chat_run_hooks.chat_mention_sections("http://x/api/v1", "raw") == []
     assert chat_run_hooks.chat_run_cancel(run, lambda: None) is False
     chat_run_hooks.chat_run_start(run)
+    chat_run_hooks.chat_run_prepare(run)
     chat_run_hooks.chat_run_finalize(run)
     chat_run_hooks.conversation_reply_appended("doc", {})
     assert "chat_command_capability" not in run
+    assert "source_start_tree" not in run
 
 
 def test_handler_failures_never_escape(clean_hooks):
@@ -83,6 +85,7 @@ def test_handler_failures_never_escape(clean_hooks):
         chat_run_hooks.register(name, boom)
     run = {"action_scope": "chat"}
     chat_run_hooks.chat_run_start(run)
+    chat_run_hooks.chat_run_prepare(run)
     chat_run_hooks.chat_run_finalize(run)
     chat_run_hooks.conversation_reply_appended("doc", {})
     assert chat_run_hooks.chat_tools(run) == []
@@ -118,6 +121,15 @@ def _source(rel):
 def test_engine_call_sites_are_in_place():
     admission = _source("modules/flow_gate/services/ai_invoke/admission.py")
     assert admission.index("chat_run_hooks.chat_run_start(run)") < admission.index("    _register_run(run, chain)")
+    # flowgate.v02.0152: no worktree snapshot inside the /ai-invoke/start request any more ...
+    start_run = admission[admission.index("def start_run("):admission.index("def _normalized_instruction_mode(")]
+    assert "_chat_start_tree(" not in start_run and "start_snapshot(" not in start_run
+    assert '"source_start_tree": None,' in start_run
+    # ... the worker takes it after the handoff gate opens and before the first provider starts.
+    worker = _source("modules/flow_gate/services/ai_invoke/worker.py")
+    body = worker[worker.index("def _worker(run: dict, chain: list[dict], prompt: str)"):]
+    assert body.index("if not _await_handoff_gate(run):") < body.index("_prepare_chat_start_tree(run)") \
+        < body.index("_svc()._execute_provider_chain(run, current_chain, current_prompt)")
     finalize = _source("modules/flow_gate/services/ai_invoke/finalize.py")
     steps = finalize[finalize.index("steps = ("):finalize.index("for name, action in steps")]
     assert steps.index('("source"') < steps.index('("chat_run"') < steps.index('("diagnostics"')
@@ -132,13 +144,16 @@ def test_engine_call_sites_are_in_place():
     assert "from flowgate.conversation.routes import router as _conversation_router" in main
 
 
-def test_start_hook_grants_the_capability_and_snapshots(env):
+def test_start_hook_grants_the_capability_and_prepare_snapshots(env):
     integration.register()
     add_turn(CHAT_DOC, "user")
     run = make_run(source_root=env["root"], capability=False, chat_start_seq=None, register=False)
     chat_run_hooks.chat_run_start(run)
     assert run["chat_command_capability"] is True
     assert run["chat_start_seq"] == 1
+    # flowgate.v02.0152: admission's hook stays cheap -- the snapshot is the worker's prepare step.
+    assert "source_start_tree" not in run and "source_change_capture" not in run
+    chat_run_hooks.chat_run_prepare(run)
     assert run["source_start_tree"] and run["source_change_capture"] == c.CAPTURE_READY
 
 
@@ -147,6 +162,7 @@ def test_start_hook_without_worktree_keeps_the_run(env, monkeypatch):
     bind_worktree(monkeypatch, None)
     run = make_run(source_root=env["root"], capability=False, register=False)
     chat_run_hooks.chat_run_start(run)
+    chat_run_hooks.chat_run_prepare(run)
     assert run["chat_command_capability"] is True
     assert run["source_change_capture"] == c.CAPTURE_UNAVAILABLE
     # run_command then answers 409 worktree_unavailable as a tool result, not a failure.
@@ -172,6 +188,7 @@ def test_finalize_hook_closes_commands_then_records_the_change(env):
     integration.register()
     run = make_run(source_root=env["root"])
     chat_run_hooks.chat_run_start(run)
+    chat_run_hooks.chat_run_prepare(run)
     pending = commands.create_request(run, {"program": "git", "args": ["status"]})
     (env["root"] / "made_by_run.txt").write_text("x\n", encoding="utf-8")
     run["status"] = "finished"
@@ -409,6 +426,7 @@ def test_activity_and_diff_routes(env, monkeypatch):
     monkeypatch.setattr(legacy_adapter, "has_permission", lambda user, perm, project: True)
     run = make_run(source_root=env["root"])
     chat_run_hooks.chat_run_start(run)
+    chat_run_hooks.chat_run_prepare(run)
     commands.create_request(run, {"program": "git"})
     (env["root"] / "keep.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
     chat_run_hooks.chat_run_finalize(run)

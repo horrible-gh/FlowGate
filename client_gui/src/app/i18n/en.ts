@@ -1905,6 +1905,10 @@ export default {
       discard_confirm: 'Discard',
       discard_cancel: 'Keep editing',
       failed: 'Could not create the project.',
+      name_conflict: 'A project with this name already exists: {name}',
+      id_conflict: 'A project with this ID already exists: {id}',
+      archived_name_conflict: 'A project named “{name}” (ID: {id}) already exists but is archived, so it is not in the list. Ask an administrator to restore it, or enter another name.',
+      archived_id_conflict: 'The ID “{id}” belongs to the archived project “{name}”, which is not in the list. Ask an administrator to restore it, or enter another ID.',
     },
   },
   placeholder: {

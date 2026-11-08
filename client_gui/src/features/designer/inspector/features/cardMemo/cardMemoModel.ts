@@ -149,6 +149,7 @@ export const CARD_MEMO_FAILURE_KEYS: readonly string[] = [
  * that works the card again what to change. 0056 F2-2's revision lock is lifted by this decision.
  */
 export function cardMemoLockedReason(target: Pick<InspectorTarget, 'readOnly'> | null): string | null {
+  if (target?.readOnly === 'archived') return 'locked.archived'
   if (target?.readOnly === 'conflict') return 'locked.conflict'
   return null
 }

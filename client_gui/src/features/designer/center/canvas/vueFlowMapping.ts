@@ -181,7 +181,7 @@ export function toVueFlowNodes(
       type: FLOWGATE_NODE_TYPE,
       position: { x: node.x, y: node.y },
       data,
-      draggable: node.movable === true,
+      draggable: node.movable === true && marks.lock !== 'archived',
       connectable,
       selectable: false,
       selected: false,
@@ -191,7 +191,7 @@ export function toVueFlowNodes(
     if (options.selectMode) {
       mapped.selectable = true
       mapped.selected = selected
-      mapped.draggable = node.movable === true && selected
+      mapped.draggable = node.movable === true && selected && marks.lock !== 'archived'
     }
     return mapped
   })

@@ -15,6 +15,7 @@ export default {
     // flowgate.v02.0070 (0015-T T2): a pick switches at once — no confirmation strings (number swap or succession).
     reason: {
       read_only_conflict: '소유 충돌 플로우라 바꿀 수 없습니다.',
+      read_only_archived: '읽기 전용입니다. 보관 상태를 확인하거나 복원한 뒤 변경하세요.',
       read_only_revision: 'Graph revision 보기에서는 바꿀 수 없습니다. draft 보기로 옮기세요.',
       disposed: '폐기된 그룹이라 바꿀 수 없습니다.',
       ai_running: 'AI 실행 중이라 바꿀 수 없습니다.',
@@ -53,6 +54,7 @@ export default {
     menu_title: 'Kind (until the group first runs)',
     reason: {
       read_only_conflict: 'This Flow has an ownership conflict and cannot be changed.',
+      read_only_archived: 'Read only. Check the archive status or restore the Flow before making changes.',
       read_only_revision: 'A Graph revision view cannot be changed. Switch to the draft view.',
       disposed: 'This group was disposed and cannot be changed.',
       ai_running: 'An AI run is in progress, so nothing can be changed.',
@@ -91,6 +93,7 @@ export default {
     menu_title: '種類（グループの初回実行まで）',
     reason: {
       read_only_conflict: '所有が競合しているフローのため変更できません。',
+      read_only_archived: '読み取り専用です。保管状態を確認するか、フローを復元してから変更してください。',
       read_only_revision: 'Graph revision 表示では変更できません。draft 表示に切り替えてください。',
       disposed: '破棄されたグループのため変更できません。',
       ai_running: 'AI実行中のため変更できません。',
