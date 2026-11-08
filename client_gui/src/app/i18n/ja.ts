@@ -1032,8 +1032,11 @@ export default {
       remote_agent_failed: 'Agent が実行を開始できませんでした',
     },
     participants: {
+      all: '参加者 {count}人',
+      show_all: '参加者 {count}人をすべて表示',
+      user: 'ユーザー',
+      ai: 'AI',
       label: '参加',
-      position: '{name} · #{seq} まで既読',
     },
     composer: {
       creating: "会話を作成中…",

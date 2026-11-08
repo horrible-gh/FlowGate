@@ -64,8 +64,8 @@ describe('v9 layout (R0001 §2.3)', () => {
       'conv-log',
       'conv-composer',
     ])
-    // The chips keep their own style: 참여  ● test #42  ◆ Opus #41 — not a folded count.
-    expect(find('conv-participants').text().replace(/\s+/g, '')).toBe('참여●test#42◆Opus#41')
+    // The chips keep their own style: 참여  ● test  ◆ Opus — name only (no read-position #N), not a folded count.
+    expect(find('conv-participants').text().replace(/\s+/g, '')).toBe('참여●test◆Opus')
   })
 
   it('puts input and send on the first composer line and the options on the second', async () => {

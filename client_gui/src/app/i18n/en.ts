@@ -1032,8 +1032,11 @@ export default {
       remote_agent_failed: 'The agent could not start the run',
     },
     participants: {
+      all: 'Participants ({count})',
+      show_all: 'Show all {count} participants',
+      user: 'User',
+      ai: 'AI',
       label: 'With',
-      position: '{name} · read up to #{seq}',
     },
     composer: {
       creating: "Creating conversation…",
