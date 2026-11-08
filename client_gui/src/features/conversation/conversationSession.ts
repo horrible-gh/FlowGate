@@ -31,7 +31,6 @@ import type {
   ConversationParticipant,
   ConversationScope,
   ConversationTurn,
-  RunFileDiff,
   SourceAccessMode,
   StatusTone,
 } from './types'
@@ -44,6 +43,10 @@ export const SEND_RETRY_MAX = 2
 export const RUN_POLL_MS = 2500
 export const RUN_POLL_MAX = 480
 export const FINAL_TURN_READ_ATTEMPTS = 3
+// flowgate.v02.0151 T-A2 (NR §2.6-3 ⑤): the activity read after a run ended is tried as often as its final turn read.
+export const FINAL_ACTIVITY_READ_ATTEMPTS = FINAL_TURN_READ_ATTEMPTS
+// flowgate.v02.0151 T-A2 (NR §2.6-3 ②): the shortest gap between two catch-ups started by coming back to the panel.
+export const REVISIT_CATCHUP_MIN_MS = 3000
 export const RUN_HISTORY_INITIAL_LIMIT = 20
 export const RUN_HISTORY_MAX_LIMIT = 100 // server services/ai_invoke/runtime.py
 export const RUN_HISTORY_DETAIL_LIMIT = 50 // sequential reads: concurrency = 1
@@ -60,15 +63,6 @@ export interface ConversationNotice {
   /** `gui.conversation.notice.<code>` */
   code: string
   detail: string | null
-}
-
-/** The run change file whose stored diff is open under its card. */
-export interface OpenFileDiff {
-  runId: string
-  path: string
-  status: 'loading' | 'ready' | 'error'
-  diff: RunFileDiff | null
-  error: string | null
 }
 
 export interface ConversationState {
@@ -100,7 +94,8 @@ export interface ConversationState {
   cancelling: boolean
   /** Command ids whose decision is in flight. */
   deciding: string[]
-  fileDiff: OpenFileDiff | null
+  /** Invalidates panel-owned change windows whenever clearChat resets this chat lifetime. */
+  changeWindowEpoch: number
   copyingMention: boolean
   /** Text of a mention copy that did not reach the clipboard (inline manual copy, 0240). */
   manualCopyText: string | null
@@ -163,9 +158,6 @@ export interface ConversationSession {
   retry(localId: string): Promise<boolean>
   reportRead(seq: number): Promise<void>
   decideCommand(commandId: string, decision: CommandDecision): Promise<void>
-  /** Opens (or, when it is open, closes) the stored diff of one file of a run change. */
-  openChangeFile(runId: string, path: string): Promise<void>
-  closeChangeFile(): void
   selectProvider(providerId: string): void
   invokeAi(): Promise<void>
   stopRun(): Promise<void>
@@ -247,7 +239,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     runId: null,
     cancelling: false,
     deciding: [],
-    fileDiff: null,
+    changeWindowEpoch: 0,
     copyingMention: false,
     manualCopyText: null,
     notice: null,
@@ -388,7 +380,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.runId = null
     state.cancelling = false
     state.deciding = []
-    state.fileDiff = null
+    state.changeWindowEpoch += 1
   }
 
   function applyPage(page: Awaited<ReturnType<ConversationSource['fetchTurns']>>): void {
@@ -592,19 +584,39 @@ export function createConversationSession(options: ConversationSessionOptions = 
     })
   }
 
-  /** One full read of the chat's command requests and run changes (D0006 §3.9.2). */
-  async function loadActivities(chatId: string, gen: number): Promise<void> {
-    if (!source.supportsActivities) return
+  /**
+   * One full read of the chat's command requests and run changes (D0006 §3.9.2).
+   * flowgate.v02.0151 T-A2 (NR §2.6-3 ④⑤): true once the server answered — applied, or dropped because a newer read
+   * or a decision already answered after it started, or because the chat / generation is gone — and false when the
+   * read failed. A failed read changes nothing on screen.
+   */
+  async function loadActivities(chatId: string, gen: number): Promise<boolean> {
+    if (!source.supportsActivities) return true
     activityReads += 1
     const read = activityReads
     try {
       const list = await source.listActivities(chatId)
-      if (!isCurrentChat(chatId, gen) || read <= activityApplied || read <= activityStaleUpTo) return
+      if (!isCurrentChat(chatId, gen) || read <= activityApplied || read <= activityStaleUpTo) return true
       activityApplied = read
       state.activities = replaceServerActivities(state.activities, list, state.deciding)
+      return true
     } catch {
       // Activities are an addition to the conversation of record: what is shown stays and the
       // next polling tick (or reopening the chat) reads again (D0006 §6.2).
+      return false
+    }
+  }
+
+  /**
+   * flowgate.v02.0151 T-A2 (NR §2.6-3 ⑤): the read once a run ended (or was given up) is tried up to
+   * FINAL_ACTIVITY_READ_ATTEMPTS times, RUN_POLL_MS apart, for the chat and generation it was for. When every try
+   * fails nothing is removed; the next catch-up (coming back to the panel, the same chat opened again) reads again.
+   */
+  async function loadFinalActivities(chatId: string, gen: number): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      if (!isCurrentChat(chatId, gen)) return
+      if (await loadActivities(chatId, gen) || attempt >= FINAL_ACTIVITY_READ_ATTEMPTS) return
+      await sleep(RUN_POLL_MS)
     }
   }
 
@@ -665,7 +677,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return { status: 'failed', nextAfterSeq: null }
   }
 
-  /** Fill a tail gap, then repair terminal evidence / a failed history lookup on reconnect. */
+  /**
+   * Fill a tail gap, re-read the activities, then repair terminal evidence / a failed history lookup on reconnect.
+   * flowgate.v02.0151 T-A2 (NR §2.6-3 ①③④): the activities are read between the turns and the run history — the
+   * order selectChat uses, since restoreRuns takes candidate runs from the activities — so every caller (the same chat
+   * selected again, a POST that finished after a switch, the panel coming back into view) also brings late run
+   * changes and command requests. Every step is for the chat and generation the catch-up started on; an older read
+   * answering late is dropped by the activity read numbers and by restoreRuns' own request number.
+   */
   async function catchUp(): Promise<void> {
     const chatId = state.activeChatId
     if (!chatId || disposed) return
@@ -673,6 +692,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const current = () => isCurrentChat(chatId, gen)
     const result = await readTurnPages(chatId, state.turns.at(-1)?.seq ?? 0, current)
     if (!current() || result.status === 'discarded') return
+    await loadActivities(chatId, gen)
+    if (!current()) return
     await restoreRuns(chatId, gen)
   }
 
@@ -1048,33 +1069,21 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (isCurrentChat(chatId, gen)) await loadActivities(chatId, gen)
   }
 
-  // ── Run change file diff (D0006 §3.8.3, §6.1) ──────────────────────────────────────
-  async function openChangeFile(runId: string, path: string): Promise<void> {
-    const chatId = state.activeChatId
-    if (!chatId) return
-    const open = state.fileDiff
-    if (open && open.runId === runId && open.path === path && open.status !== 'error') {
-      state.fileDiff = null
-      return
-    }
-    const gen = chatGen
-    state.fileDiff = { runId, path, status: 'loading', diff: null, error: null }
-    const stillOpen = () => isCurrentChat(chatId, gen) && state.fileDiff?.runId === runId && state.fileDiff.path === path
-    try {
-      const diff = await source.fetchRunFileDiff(chatId, runId, path)
-      if (stillOpen()) state.fileDiff = { runId, path, status: 'ready', diff, error: null }
-    } catch (error) {
-      if (stillOpen()) state.fileDiff = { runId, path, status: 'error', diff: null, error: messageOf(error) }
-    }
-  }
-
-  function closeChangeFile(): void {
-    state.fileDiff = null
-  }
-
   // ── Chat AI run (D0005 §3-1, L0008, 0264 STOP) ─────────────────────────────────────
   function selectProvider(providerId: string): void {
     if (state.providers.some((p) => p.id === providerId)) state.selectedProviderId = providerId
+  }
+
+  /**
+   * flowgate.v02.0151 T-A2 (NR §2.6-2): whether the server still lists `runId` as the chat's active run (`GET
+   * /ai-invoke/active`) — true / false, or null when that query did not answer.
+   */
+  async function serverStillRuns(chatId: string, runId: string): Promise<boolean | null> {
+    try {
+      return (await source.fetchActiveChatRun(chatId)) === runId
+    } catch {
+      return null
+    }
   }
 
   async function pollRun(chatId: string, runId: string, gen: number): Promise<void> {
@@ -1090,8 +1099,43 @@ export function createConversationSession(options: ConversationSessionOptions = 
     let liveMembershipConfirmed = false
     let unseenGone = 0
     const unseenGoneMax = Math.ceil(RUN_ADOPT_GRACE_MS / RUN_POLL_MS)
-    for (let i = 0; i < RUN_POLL_MAX; i++) {
+    // flowgate.v02.0151 T-A2 (NR §2.6-2): running out of polls (RUN_POLL_MAX), a 404/410 for a run already read (or
+    // never registered within the grace) and a detail that does not prove this chat no longer end the run by
+    // themselves. The server's active run of the chat is asked first: while it is this run the lock stays and the
+    // polling goes on, the budget growing by RUN_POLL_MAX; an unanswered active query is asked again on the next
+    // poll, FINAL_TURN_READ_ATTEMPTS times at most. When the budget ran out and the server no longer lists the run,
+    // one more detail read decides — normally the finish, judged like any other — and only a run still not terminal
+    // then is given up (run_result_unconfirmed).
+    let polls = 0
+    let budget = RUN_POLL_MAX
+    let unanswered = 0
+    let lastRead = false
+    const stillActive = async (): Promise<boolean> => {
+      const active = await serverStillRuns(chatId, runId)
+      if (active === true) {
+        unanswered = 0
+        lastRead = false
+        budget = Math.max(budget, polls + RUN_POLL_MAX)
+        return true
+      }
+      if (active === null && ++unanswered < FINAL_TURN_READ_ATTEMPTS) {
+        budget = Math.max(budget, polls + 1)
+        return true
+      }
+      return false
+    }
+    for (;;) {
       if (!current()) return
+      if (polls >= budget) {
+        if (lastRead) break
+        const active = await stillActive()
+        if (!current()) return
+        if (!active) {
+          lastRead = true
+          budget = polls + 1
+        }
+      }
+      polls += 1
       await sleep(RUN_POLL_MS)
       if (!current()) return
       let run
@@ -1102,7 +1146,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
         const status = error instanceof ConversationRequestError ? error.status : null
         if (status === 404 || status === 410) {
           unseenGone += 1
-          if (seen || unseenGone >= unseenGoneMax) break
+          if (seen || unseenGone >= unseenGoneMax) {
+            const active = await stillActive()
+            if (!current()) return
+            if (!active) break
+          }
           continue
         }
         await loadActivities(chatId, gen)
@@ -1115,8 +1163,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
         const liveWithoutDoc = run.status === 'running' && run.runId === runId && run.docRef == null &&
           run.actionScope === 'chat' && run.groupId === chatId.split('.').slice(0, 3).join('.')
         if (!liveWithoutDoc) {
-          showRunUnconfirmed(chatId, runId)
-          break
+          // The detail is not applied; the run ends here only when the server no longer lists it as active either.
+          const active = await stillActive()
+          if (!current()) return
+          if (!active) break
+          continue
         }
         if (!liveMembershipConfirmed) {
           let active: string | null
@@ -1147,14 +1198,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
       renderTerminal(chatId, run, result)
       state.runId = null
       state.cancelling = false
-      await loadActivities(chatId, gen)
+      await loadFinalActivities(chatId, gen)
       return
     }
     if (current()) {
       showRunUnconfirmed(chatId, runId)
       state.runId = null
       state.cancelling = false
-      await loadActivities(chatId, gen)
+      await loadFinalActivities(chatId, gen)
     }
   }
 
@@ -1316,6 +1367,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   function dispose(): void {
+    state.changeWindowEpoch += 1
     disposed = true
     titleGuard.disposed = true
     unsubscribe?.()
@@ -1348,8 +1400,6 @@ export function createConversationSession(options: ConversationSessionOptions = 
     retry,
     reportRead,
     decideCommand,
-    openChangeFile,
-    closeChangeFile,
     selectProvider,
     invokeAi,
     stopRun,

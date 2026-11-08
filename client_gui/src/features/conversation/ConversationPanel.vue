@@ -44,15 +44,24 @@
       :empty-text="emptyText"
       :chat-id="state.activeChatId"
       :read-only="readOnly"
-      :file-diff="state.fileDiff"
       @load-older="session.loadOlder"
       @reload="reloadChat"
       @retry="start.retry"
       @decide="session.decideCommand"
-      @open-change="(activity) => emit('open-change', activity)"
-      @open-file="session.openChangeFile"
-      @close-file="session.closeChangeFile"
+      @open-change="openChange"
+      @open-file="openChangeFile"
       @read="session.reportRead"
+    />
+    <RunChangeWindow
+      v-for="(view, index) in changeWindows"
+      :key="view.key"
+      :chat-id="view.chatId"
+      :activity="view.activity"
+      :requested-path="view.path"
+      :request-version="view.requestVersion"
+      :index="index"
+      :load-diff="source.fetchRunFileDiff"
+      @close="closeChange(view.key)"
     />
     <ConversationComposer
       ref="composerEl"
@@ -94,11 +103,11 @@
 // The panel is handed its scope (the current Project and the active Flow's v0.1 group id)
 // and creates one Conversation session for its own lifetime. A container that already has a
 // session-wide data source (or a test) passes `source`; otherwise the HTTP source of the
-// existing contracts is used. Opening a work change as a whole is a request to the container
-// (`open-change`); one file of it opens its stored diff right under the card (flowgate.v02.0032,
-// D0006 §6.1). flowgate.v02.0047: with no chat open the composer starts one — [+] only leaves
+// existing contracts is used. The panel owns modeless run-change windows (0151 T-B); the
+// optional `open-change` event remains a notification. File contents stay outside the log.
+// flowgate.v02.0047: with no chat open the composer starts one — [+] only leaves
 // the open chat, and the chat is created by its first send (chatStart.ts).
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Alert from '../../components/ui/Alert.vue'
 import { copyToClipboard } from '../../core/interaction/clipboard'
@@ -107,7 +116,8 @@ import ConversationComposer from './ConversationComposer.vue'
 import ConversationHeader from './ConversationHeader.vue'
 import ConversationParticipants from './ConversationParticipants.vue'
 import ConversationTimeline from './ConversationTimeline.vue'
-import { createConversationSession } from './conversationSession'
+import RunChangeWindow from './RunChangeWindow.vue'
+import { REVISIT_CATCHUP_MIN_MS, createConversationSession } from './conversationSession'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import type { ChatSettingsPatch, ChatSummary, WorkChangeActivity } from './types'
 
@@ -137,6 +147,46 @@ const start = createChatStart({ session, source, defaultTitle: () => t('gui.conv
 const composerEl = ref<InstanceType<typeof ConversationComposer> | null>(null)
 
 const activeChat = computed(() => (session.activeChat.value as ChatSummary | null) ?? null)
+
+// One window per run; separate runs can stay open together. The epoch is advanced by
+// clearChat, including a scope change or A -> B -> A within one render tick.
+interface ChangeWindow {
+  key: number
+  chatId: string
+  activity: WorkChangeActivity
+  path?: string
+  requestVersion: number
+}
+const changeWindows = ref<ChangeWindow[]>([])
+let nextChangeWindow = 0
+watch(() => state.changeWindowEpoch, () => { changeWindows.value = [] }, { flush: 'sync' })
+
+function showChange(activity: WorkChangeActivity, path?: string): void {
+  const chatId = state.activeChatId
+  if (!chatId) return
+  const existing = changeWindows.value.find((view) => view.chatId === chatId && view.activity.runId === activity.runId)
+  if (existing) {
+    existing.activity = activity
+    existing.path = path
+    existing.requestVersion += 1
+  } else {
+    changeWindows.value.push({ key: ++nextChangeWindow, chatId, activity, path, requestVersion: 0 })
+  }
+}
+
+function openChange(activity: WorkChangeActivity): void {
+  showChange(activity)
+  emit('open-change', activity)
+}
+
+function openChangeFile(runId: string, path: string): void {
+  const activity = session.timeline.value.find((item) => item.kind === 'change' && item.activity.runId === runId)
+  if (activity?.kind === 'change') showChange(activity.activity, path)
+}
+
+function closeChange(key: number): void {
+  changeWindows.value = changeWindows.value.filter((view) => view.key !== key)
+}
 
 const headerTitle = computed(() => {
   if (activeChat.value) return activeChat.value.title
@@ -204,6 +254,35 @@ async function copyManualAgain(): Promise<void> {
   if (!text) return
   if (await copyToClipboard(text)) session.setManualCopyText(null)
 }
+
+// flowgate.v02.0151 T-A2 (NR §2.6-3 ②): there is no push channel for activities, so coming back to the panel — the
+// tab visible again, the window focused again — catches the open chat up (turns, activities, run history). At most
+// once per REVISIT_CATCHUP_MIN_MS (both events fire on one return), never while hidden, and not while an AI run is
+// tracked: its polling ticks already read all of that.
+let lastRevisitCatchUp = Number.NEGATIVE_INFINITY
+
+function onRevisit(): void {
+  if (document.visibilityState === 'hidden') return
+  if (!state.activeChatId || state.turnsStatus !== 'ready' || session.running.value) return
+  const now = Date.now()
+  if (now - lastRevisitCatchUp < REVISIT_CATCHUP_MIN_MS) return
+  lastRevisitCatchUp = now
+  void session.catchUp()
+}
+
+function onVisibilityChange(): void {
+  if (document.visibilityState === 'visible') onRevisit()
+}
+
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('focus', onRevisit)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('focus', onRevisit)
+})
 
 onBeforeUnmount(() => session.dispose())
 

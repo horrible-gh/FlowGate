@@ -352,40 +352,37 @@ describe('new chat recovery (D0006 §6.3)', () => {
   })
 })
 
-describe('run change file diff', () => {
-  const diff = {
-    runId: 'run-1',
-    path: 'src/a.ts',
-    status: 'M',
-    old: { exists: true, binary: false, truncated: false, size: 2, content: 'a\n' },
-    new: { exists: true, binary: false, truncated: false, size: 2, content: 'b\n' },
-  }
-
-  it('opens the stored diff of a file and closes it on a second press', async () => {
-    const { session, source } = setup({ activities: { [A]: [runChange] }, diffs: { 'run-1\nsrc/a.ts': diff } })
-    await session.setScope(SCOPE)
-    await flushPromises()
-    const opening = session.openChangeFile('run-1', 'src/a.ts')
-    expect(session.state.fileDiff).toMatchObject({ runId: 'run-1', path: 'src/a.ts', status: 'loading' })
-    await opening
-    expect(source.fetchRunFileDiff).toHaveBeenCalledWith(A, 'run-1', 'src/a.ts')
-    expect(session.state.fileDiff).toMatchObject({ status: 'ready', diff })
-    await session.openChangeFile('run-1', 'src/a.ts')
-    expect(session.state.fileDiff).toBeNull()
-  })
-
-  it('shows a failed read and drops an answer for a chat no longer open', async () => {
+describe('run change window lifetime (0151 T-B)', () => {
+  it('keeps the window epoch on same-chat catch-up and invalidates it when clearChat leaves a chat', async () => {
     const { session, source } = setup({ activities: { [A]: [runChange] } })
     await session.setScope(SCOPE)
     await flushPromises()
-    await session.openChangeFile('run-1', 'missing.ts')
-    expect(session.state.fileDiff).toMatchObject({ status: 'error' })
-    let release!: () => void
-    source.fetchRunFileDiff.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(diff))))
-    const opening = session.openChangeFile('run-1', 'src/a.ts')
+    const epoch = session.state.changeWindowEpoch
+    await session.selectChat(A)
+    expect(session.state.changeWindowEpoch).toBe(epoch)
     await session.selectChat(B)
-    release()
-    await opening
-    expect(session.state.fileDiff).toBeNull()
+    expect(session.state.changeWindowEpoch).toBeGreaterThan(epoch)
+    const next = session.state.changeWindowEpoch
+    await session.selectChat(A)
+    expect(session.state.changeWindowEpoch).toBeGreaterThan(next)
+    expect(source.fetchRunFileDiff).not.toHaveBeenCalled()
+    expect('fileDiff' in session.state).toBe(false)
+    session.dispose()
+  })
+
+  it('invalidates window owners on a draft, scope change and disposal', async () => {
+    const { session } = setup()
+    await session.setScope(SCOPE)
+    await flushPromises()
+    const first = session.state.changeWindowEpoch
+    session.startDraft()
+    expect(session.state.changeWindowEpoch).toBeGreaterThan(first)
+    await session.selectChat(A)
+    const second = session.state.changeWindowEpoch
+    await session.setScope(null)
+    expect(session.state.changeWindowEpoch).toBeGreaterThan(second)
+    const third = session.state.changeWindowEpoch
+    session.dispose()
+    expect(session.state.changeWindowEpoch).toBeGreaterThan(third)
   })
 })

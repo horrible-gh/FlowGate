@@ -37,11 +37,9 @@
           :activity="item.activity"
           :busy="item.kind === 'command' && deciding.includes(item.activity.id)"
           :read-only="readOnly"
-          :file-diff="item.kind === 'change' ? fileDiff : null"
           @decide="(decision) => emit('decide', item.activity.id, decision)"
           @open-change="item.kind === 'change' && emit('open-change', item.activity)"
           @open-file="(runId, path) => emit('open-file', runId, path)"
-          @close-file="emit('close-file')"
         />
       </template>
     </template>
@@ -53,7 +51,6 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TimelineActivity from './TimelineActivity.vue'
 import TimelineMessage from './TimelineMessage.vue'
-import type { OpenFileDiff } from './conversationSession'
 import type { TimelineItem } from './timeline'
 import type { CommandDecision, WorkChangeActivity } from './types'
 
@@ -67,8 +64,6 @@ const props = defineProps<{
   /** Changes when another chat opens: the log jumps to its newest entry. */
   chatId: string | null
   readOnly?: boolean
-  /** The run change file diff open under its card, if any. */
-  fileDiff?: OpenFileDiff | null
 }>()
 
 const emit = defineEmits<{
@@ -78,7 +73,6 @@ const emit = defineEmits<{
   decide: [commandId: string, decision: CommandDecision]
   'open-change': [activity: WorkChangeActivity]
   'open-file': [runId: string, path: string]
-  'close-file': []
   read: [seq: number]
 }>()
 

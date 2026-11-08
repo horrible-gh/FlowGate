@@ -1,5 +1,6 @@
 // flowgate.v02.0147 T#2: stored body evidence and process completion are independent.
 import type { AiRunState, ConversationTurn, StatusTone } from './types'
+import type { ChatRunState } from './api'
 
 export type TurnReadState = 'complete' | 'failed' | 'limited' | 'discarded'
 export interface TurnReadResult { status: TurnReadState; nextAfterSeq: number | null }
@@ -27,7 +28,7 @@ export function runBodyState(turns: readonly ConversationTurn[], runId: string, 
 const FAILURE_REASONS = new Set(['timeout', 'all_providers_failed', 'worker_error', 'spawn_failed', 'provider_start_failed', 'orphaned_by_restart'])
 const REMOTE_CAUSES = new Set(['workdir_unset', 'permission_denied', 'workdir_create_failed', 'workdir_missing', 'path_invalid', 'agent_rejected', 'agent_failed'])
 
-export function runStatusLines(run: AiRunState, body: RunBodyState, read: TurnReadState): RunStatusLine[] {
+export function runStatusLines(run: ChatRunState, body: RunBodyState, read: TurnReadState): RunStatusLine[] {
   const lines: RunStatusLine[] = []
   const add = (slot: string, code: string, tone: StatusTone = 'warning', text: string | null = null) => lines.push({ slot, tone, code, text })
   // A stop stays a stop, including when the last read could not be confirmed.
@@ -39,7 +40,11 @@ export function runStatusLines(run: AiRunState, body: RunBodyState, read: TurnRe
   const failed = run.status === 'finished' && (FAILURE_REASONS.has(run.endReason ?? '') ||
     (typeof run.exitCode === 'number' && run.exitCode !== 0))
   const exited = run.status === 'finished' && run.endReason === 'exited' && run.exitCode === 0
-  const complete = exited && run.outcome === 'complete'
+  // The server judges API runs too (their exit code is null). Older servers keep
+  // the original rule; an explicit false verdict never falls back to exit code 0.
+  const complete = run.status === 'finished' && (run.succeeded == null
+    ? exited && run.outcome === 'complete'
+    : run.succeeded === true)
   const emptyExit = exited && run.outcome === 'none' && body === 'absent'
   if (failed) add('result', body === 'absent' ? 'run_no_reply' : 'run_failed', 'danger', run.failure?.detail ?? detail)
   else if (complete || emptyExit) {

@@ -9,7 +9,8 @@ import { createFakeSource, turn } from './fakeConversationSource'
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
 const A = 'p.m.0001.0002-CH'
 const B = 'p.m.0001.0003-CH'
-const NORMAL: AiRunState = { runId: 'r1', docRef: A, actionScope: 'chat', groupId: SCOPE.groupId,
+type RunResult = AiRunState & { succeeded?: boolean | null }
+const NORMAL: RunResult = { runId: 'r1', docRef: A, actionScope: 'chat', groupId: SCOPE.groupId,
   status: 'finished', endReason: 'exited', outcome: 'complete', exitCode: 0 }
 const sessions: ConversationSession[] = []
 afterEach(() => { for (const s of sessions.splice(0)) s.dispose() })
@@ -26,7 +27,7 @@ function page(turns: TurnsPage['turns'] = [], cursor: number | null = null): Tur
 function codes(session: ConversationSession) {
   return session.state.activities.filter((a) => a.kind === 'status').map((a) => a.code)
 }
-async function setup(init: Parameters<typeof createFakeSource>[0] = {}, result: AiRunState = NORMAL) {
+async function setup(init: Parameters<typeof createFakeSource>[0] = {}, result: RunResult = NORMAL) {
   const fake = createFakeSource({ chats: [{ id: A, title: 'A', updatedAt: null }, { id: B, title: 'B', updatedAt: null }],
     turns: { [A]: [turn(1, 'user', 'isolated input')] }, ...init })
   const time = clock()
@@ -90,8 +91,8 @@ describe('0147 six required run/body/read conditions through the real session', 
     expect(source.startChatRun).not.toHaveBeenCalled()
   })
 
-  it('3: final GET failure exhausts exactly three attempts and later catch-up repairs it', async () => {
-    const { session, source, data, time } = await setup()
+  it('V4b: final GET failure exhausts exactly three attempts and later catch-up repairs API success', async () => {
+    const { session, source, data, time } = await setup({}, { ...NORMAL, exitCode: null, succeeded: true })
     const realRead = source.fetchTurns.getMockImplementation()!
     source.fetchTurns.mockClear().mockRejectedValue(new Error('isolated GET failure'))
     await session.invokeAi()
@@ -375,7 +376,7 @@ describe('0147 fresh-session restoration from stored run history, no active run'
 
   it('remote failure diagnostics survive a partial reply without a no-reply label', async () => {
     const failure = { cause: 'workdir_missing', workdir: '/isolated/job', message: 'isolated missing path', detail: 'isolated failed connection' }
-    const { session, data, time } = await setup({}, { ...NORMAL, endReason: 'all_providers_failed', outcome: 'none', exitCode: null, failure })
+    const { session, data, time } = await setup({}, { ...NORMAL, endReason: 'all_providers_failed', outcome: 'none', exitCode: null, succeeded: false, failure })
     await session.invokeAi()
     data.turns[A].push(turn(2, 'ai', 'partial reply', null, { sourceRunId: 'r1' }))
     await time.tick()
@@ -479,5 +480,120 @@ describe('0147 fresh-session restoration from stored run history, no active run'
     answer({ items: [{ runId: 'r1', docRef: A }], total: 1, hasMore: false }); await old
     expect(session.state.activeChatId).toBe(B)
     expect(codes(session)).toEqual([])
+  })
+})
+
+describe('0151 T-A1 server assessment and status lifecycle (§2.8)', () => {
+  it.each([null, 0])('V1/V1b: succeeded=true accepts exit_code=%s and preserves the reply', async (exitCode) => {
+    const { session, data, time } = await setup({}, { ...NORMAL, exitCode, succeeded: true })
+    await session.invokeAi()
+    data.turns[A].push(turn(2, 'ai', 'API or CLI answer', null, { sourceRunId: 'r1' }))
+    await time.tick()
+    expect(codes(session)).toEqual([])
+    expect(session.state.runId).toBeNull()
+    expect(session.timeline.value.map((item) => item.key)).toEqual(['turn:1', 'turn:2'])
+  })
+
+  it.each([undefined, null])('V1c: absent/null succeeded=%s keeps the old exit-code rule', async (succeeded) => {
+    for (const exitCode of [0, null]) {
+      const result = { ...NORMAL, exitCode, ...(succeeded === undefined ? {} : { succeeded }) }
+      const { session, data, time } = await setup({}, result)
+      await session.invokeAi()
+      data.turns[A].push(turn(2, 'ai', 'legacy answer', null, { sourceRunId: 'r1' }))
+      await time.tick()
+      expect(codes(session)).toEqual(exitCode === 0 ? [] : ['run_result_unconfirmed'])
+      expect(session.state.runId).toBeNull()
+    }
+  })
+
+  it('explicit succeeded=false does not fall back to the legacy success rule', async () => {
+    const { session, data, time } = await setup({}, { ...NORMAL, succeeded: false })
+    await session.invokeAi()
+    data.turns[A].push(turn(2, 'ai', 'not confirmed by server', null, { sourceRunId: 'r1' }))
+    await time.tick()
+    expect(codes(session)).toEqual(['run_result_unconfirmed'])
+  })
+
+  it.each([
+    ['all_providers_failed', null], ['worker_error', null], ['timeout', null], ['exited', 1],
+  ])('V2: %s/%s remains danger regardless of succeeded', async (endReason, exitCode) => {
+    for (const succeeded of [false, true]) {
+      for (const hasBody of [false, true]) {
+        const { session, data, time } = await setup({}, { ...NORMAL, endReason: String(endReason), exitCode: exitCode as number | null, succeeded })
+        await session.invokeAi()
+        if (hasBody) data.turns[A].push(turn(2, 'ai', 'partial body', null, { sourceRunId: 'r1' }))
+        await time.tick()
+        const lines = session.state.activities.filter((a) => a.kind === 'status')
+        expect(lines).toMatchObject([{ code: hasBody ? 'run_failed' : 'run_no_reply', tone: 'danger', runId: 'r1' }])
+        expect(session.state.runId).toBeNull()
+      }
+    }
+  })
+
+  it.each([
+    ['exited', 'partial'], ['user_paused', 'complete'],
+  ])('V2b: false success with %s/%s keeps its warning', async (endReason, outcome) => {
+    const { session, data, time } = await setup({}, { ...NORMAL, endReason, outcome, succeeded: false })
+    await session.invokeAi()
+    data.turns[A].push(turn(2, 'ai', 'saved partial answer', null, { sourceRunId: 'r1' }))
+    await time.tick()
+    expect(codes(session)).toEqual(['run_result_unconfirmed'])
+    expect(session.state.activities.find((a) => a.kind === 'status')?.tone).toBe('warning')
+  })
+
+  it('V4: a reply before completion keeps the lock until API success arrives', async () => {
+    const { session, source, data, time } = await setup({}, { ...NORMAL, exitCode: null, succeeded: true })
+    source.fetchRun.mockResolvedValueOnce({ ...NORMAL, status: 'running', endReason: null, outcome: null, exitCode: null })
+    await session.invokeAi()
+    data.turns[A].push(turn(2, 'ai', 'saved before finish', null, { sourceRunId: 'r1' }))
+    await time.tick()
+    expect(codes(session)).toEqual([])
+    expect(session.state.runId).toBe('r1')
+    expect(session.running.value).toBe(true)
+    expect(session.timeline.value.map((item) => item.key)).toEqual(['turn:1', 'turn:2'])
+    await time.tick()
+    expect(codes(session)).toEqual([])
+    expect(session.state.runId).toBeNull()
+  })
+
+  it('V5: poll, restore, and catch-up replace one run result, then remove it on success', async () => {
+    const { session, source, data, time } = await setup({}, { ...NORMAL, exitCode: null, succeeded: false })
+    await session.invokeAi()
+    data.turns[A].push(turn(2, 'ai', 'saved answer', null, { sourceRunId: 'r1' }))
+    await time.tick()
+    const id = `local-status-run:${encodeURIComponent(A)}:r1:result`
+    for (let repeat = 0; repeat < 3; repeat++) {
+      await session.catchUp()
+      expect(session.state.activities.map((a) => a.id)).toEqual([id])
+      expect(codes(session)).toEqual(['run_result_unconfirmed'])
+    }
+    source.fetchRun.mockResolvedValue({ ...NORMAL, exitCode: null, succeeded: true })
+    await session.catchUp()
+    expect(codes(session)).toEqual([])
+    expect(session.timeline.value.map((item) => item.key)).toEqual(['turn:1', 'turn:2'])
+  })
+
+  it('V5b: separate failures survive repeated restoration alongside a successful API run', async () => {
+    const runs = {
+      rA: { ...NORMAL, runId: 'rA', endReason: 'worker_error', succeeded: false },
+      rB: { ...NORMAL, runId: 'rB', endReason: 'all_providers_failed', succeeded: false },
+      rC: { ...NORMAL, runId: 'rC', exitCode: null, succeeded: true },
+    }
+    const { session, source } = await setup({
+      turns: { [A]: [turn(1, 'user', 'input'), ...Object.keys(runs).map((id, i) => turn(i + 2, 'ai', id, null, { sourceRunId: id }))] },
+      runDetails: runs,
+    })
+    source.fetchRun.mockImplementation(async (id: string) => runs[id as keyof typeof runs])
+    for (let repeat = 0; repeat < 3; repeat++) {
+      await session.catchUp()
+      const statuses = session.state.activities.filter((a) => a.kind === 'status')
+      expect(statuses).toHaveLength(2)
+      expect(statuses).toMatchObject([
+        { runId: 'rA', tone: 'danger', code: 'run_failed' },
+        { runId: 'rB', tone: 'danger', code: 'run_failed' },
+      ])
+      expect(new Set(statuses.map((a) => a.id)).size).toBe(2)
+      expect(session.state.runId).toBeNull()
+    }
   })
 })

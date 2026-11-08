@@ -62,3 +62,24 @@ describe('0147 real HTTP DTO boundaries', () => {
     expect((await fetchChatRuns({ projectId: 'p', groupId: 'p.m.0001' }, 20)).hasMore).toBe(true)
   })
 })
+
+describe('0151 T-A1 run DTO (§2.6-1)', () => {
+  it.each([true, false, null, undefined])('maps succeeded=%s and server diagnostics without inferring success', async (succeeded) => {
+    http.getRequest.mockResolvedValue({ data: { run_id: 'r1', status: 'finished', end_reason: 'exited', outcome: 'complete',
+      exit_code: null, ...(succeeded === undefined ? {} : { succeeded }), stop_code: 'chain_completed',
+      api_turns_used: 7, provider_id: 'api-provider', doc_ref: A } })
+    expect(await fetchRun('r1')).toMatchObject({ succeeded: succeeded ?? null, stopCode: 'chain_completed',
+      apiTurnsUsed: 7, providerId: 'api-provider', exitCode: null })
+  })
+
+  it.each([{}, { succeeded: 'true', stop_code: 1, api_turns_used: '7', provider_id: false }])('keeps absent/malformed diagnostic fields null: %j', async (fields) => {
+    http.getRequest.mockResolvedValue({ data: fields })
+    expect(await fetchRun('r1')).toMatchObject({ succeeded: null, stopCode: null, apiTurnsUsed: null, providerId: null })
+  })
+
+  it.each(['running', 'cancelling', 'pause_requested'])('V9/V9b: %s remains nonterminal without inventing doc_ref', async (status) => {
+    http.getRequest.mockResolvedValue({ data: { run_id: 'r1', status, action_scope: 'chat', group_id: 'p.m.0001',
+      succeeded: false, api_turns_used: 0 } })
+    expect(await fetchRun('r1')).toMatchObject({ status: 'running', docRef: null, succeeded: false, apiTurnsUsed: 0 })
+  })
+})

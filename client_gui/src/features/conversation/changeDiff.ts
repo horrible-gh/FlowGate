@@ -3,6 +3,15 @@
 // patch text, so the lines are compared here. Pure: no Vue, no server.
 import type { RunFileDiff } from './types'
 
+/** The run change file loading state owned by a change window. */
+export interface OpenFileDiff {
+  runId: string
+  path: string
+  status: 'loading' | 'ready' | 'error'
+  diff: RunFileDiff | null
+  error: string | null
+}
+
 export interface DiffLine {
   kind: 'context' | 'add' | 'del'
   text: string
