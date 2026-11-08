@@ -226,6 +226,8 @@ def _is_ascii(text: str) -> bool:
     return all(ord(ch) < 128 for ch in text)
 
 
+from .git.command import git_failure_cause
+from .git.instance_registry import current_instance_id
 from .git.command import (
     GIT_LOCAL_TIMEOUT_SEC,
     _run_git,
@@ -3035,11 +3037,13 @@ def _refreeze_for_re_review(
         # currently configured remote, not whatever `origin` happened to point at
         # when the base checkout was adopted/cloned.
         ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
-        fetch = _run_git(
+        fetch = _run_session_git(
+            merge_id, context, "fetch", "refreeze_remote_sync",
             ["fetch", "origin"], cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
             username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
         )
-        ff = _run_git(
+        ff = _run_session_git(
+            merge_id, context, "merge", "refreeze_remote_sync",
             ["merge", "--ff-only", f"origin/{base_branch}"],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
         ) if fetch.returncode == 0 else None
@@ -3062,7 +3066,8 @@ def _refreeze_for_re_review(
         # touches anything, so without it this redo cannot even start and the retry
         # collapses into reconciling/push_remote_third on a server with no ambient
         # git config — see the same fix on the rejection restore below.
-        redo = _run_git(
+        redo = _run_session_git(
+            merge_id, context, "merge", "_refreeze_for_re_review",
             [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge",
              "--no-commit", "--no-ff", old_merge_commit],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
@@ -3072,7 +3077,8 @@ def _refreeze_for_re_review(
             # resolution — a fresh conflict, not something a push-result
             # reconciler should try to auto-resolve. Park it for a human;
             # automatic re-resolution is out of scope for this retry path.
-            _run_git(["merge", "--abort"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+            _run_session_git(merge_id, context, "merge", "_refreeze_for_re_review_abort",
+                             ["merge", "--abort"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
             context["review_state"] = REVIEW_STATE_RECONCILING
             context["reconciliation_kind"] = "push_remote_third"
             context["last_error"] = {"code": "conflicts_after_remote_moved"}
@@ -3212,9 +3218,49 @@ def _finish_reviewed_attempt(
         merge_target.release_workspace(target)
 
 
-def _enter_reconciling(merge_id: int, context: dict, kind: str, *, schedule_retry: bool) -> dict:
+def _run_session_git(
+    merge_id: Optional[int], context: Optional[dict], operation: str, reason: str,
+    args: list[str], **kwargs,
+) -> subprocess.CompletedProcess:
+    """Audit a session's existing ref-changing call under the caller's lock.
+
+    Keep this context object in sync so the caller's later whole-JSON write
+    retains the audit. No argv/output/credentials or extra Git probes are kept.
+    Exceptions retain a null result instead of inventing a subprocess exit code.
+    """
+    if merge_id is None:
+        return _run_git(args, **kwargs)
+    if context is None:
+        context = db_git.session_context(db_git.get_session(merge_id))
+    entry = {"operation": operation, "reason": reason, "at": now_iso(),
+             "instance_id": current_instance_id(), "returncode": None,
+             "status": "exception"}
+    try:
+        proc = _run_git(args, **kwargs)
+        entry.update(returncode=proc.returncode, status="completed")
+        return proc
+    finally:
+        context["ref_operations"] = [*(context.get("ref_operations") or []), entry][-20:]
+        db_git.set_session_context(merge_id, context)
+
+
+def _enter_reconciling(
+    merge_id: int, context: dict, kind: str, push: subprocess.CompletedProcess, *,
+    schedule_retry: bool, expected_remote_head: Optional[str], secret: Optional[str] = None,
+) -> dict:
     context["review_state"] = REVIEW_STATE_RECONCILING
     context["reconciliation_kind"] = kind
+    if kind == "push_remote_unknown":
+        stderr = _scrub(push.stderr, secret)
+        lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+        context["last_error"] = {
+            "code": "push_remote_unknown", "returncode": push.returncode,
+            "cause": getattr(push, "cause", None) or git_failure_cause(push),
+            "detail": (lines[-1] if lines else "git command failed")[:300],
+            "local_sha": context.get("merge_commit"),
+            "expected_remote_head": expected_remote_head or None,
+            "at": now_iso(), "instance_id": current_instance_id(),
+        }
     context["reconcile_attempt_count"] = int(context.get("reconcile_attempt_count") or 0)
     context["reconcile_next_at"] = _seconds_from_now_iso(PUSH_RECONCILE_RETRY_INTERVAL_SEC) if schedule_retry else None
     db_git.set_session_context(merge_id, context)
@@ -3260,22 +3306,31 @@ def _conditionally_push_or_reconcile(
     # whatever `origin` happened to point at when the base checkout was
     # provisioned. Raises (never pushes) if the sync itself fails.
     ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
-    push = _run_git(
+    secret = _load_secret_for(cfg) or ""
+    push = _run_session_git(
+        merge_id, context, "push", "reviewed_publish",
         ["push", f"--force-with-lease={lease}", "origin", base_branch],
         cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
-        username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
+        username=cfg.get("username"), secret=secret,
     )
     if push.returncode == 0:
         return _complete_merge_review(group_id, merge_id, project_id, context, pushed=True)
     stderr_l = (push.stderr or "").lower()
     if push.returncode == -1 or "timeout" in stderr_l or "could not resolve host" in stderr_l:
-        return _enter_reconciling(merge_id, context, "push_remote_unknown", schedule_retry=True)
+        return _enter_reconciling(
+            merge_id, context, "push_remote_unknown", push, schedule_retry=True,
+            expected_remote_head=expected, secret=secret,
+        )
     if "stale info" in stderr_l or "rejected" in stderr_l or "fetch first" in stderr_l or "non-fast-forward" in stderr_l:
-        _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+        _run_session_git(merge_id, context, "reset", "push_rejected",
+                         ["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
         return _refreeze_for_re_review(group_id, merge_id, base_root, base_branch, context, "push_rejected")
     # An error this function cannot classify is treated as "result unknown" rather
     # than assumed-failed (D0006 §3.6): the remote may or may not have the commit.
-    return _enter_reconciling(merge_id, context, "push_remote_unknown", schedule_retry=True)
+    return _enter_reconciling(
+        merge_id, context, "push_remote_unknown", push, schedule_retry=True,
+        expected_remote_head=expected, secret=secret,
+    )
 
 
 def approve_merge_review(
@@ -3387,7 +3442,8 @@ def approve_merge_review(
                 branch = (state.get("branch")
                           or worktree_branch_name(project_id, _module_of(group_id), group_id))
                 subject = _merge_commit_subject(branch, base_branch)
-            commit_proc = _run_git(
+            commit_proc = _run_session_git(
+                merge_id, context, "commit", "approve_merge_review",
                 [*_GIT_IDENT, "commit", "-m", subject],
                 cwd=base_root, author_env=_author_env_from_cfg(cfg),
             )
@@ -3410,7 +3466,8 @@ def approve_merge_review(
                 # process actually left behind is now unknown, so this must park at
                 # `reconciling`/`apply_restore_failed` for a human, never silently
                 # report the safe `pre_apply_review_state` it did not actually reach.
-                reset_proc = _run_git(
+                reset_proc = _run_session_git(
+                    merge_id, context, "reset", "commit_tree_mismatch",
                     ["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
                 )
                 restored = (
@@ -3527,7 +3584,8 @@ def reject_merge_review(
         if not base_head or not merge_head:
             raise GitServiceError(409, "restoration_verification_failed", "no resolver baseline recorded for this session")
         if _merge_in_progress(base_root):
-            _run_git(["merge", "--abort"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+            _run_session_git(merge_id, context, "merge", "reject_merge_review_abort",
+                             ["merge", "--abort"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
         current_head = _rev_parse(base_root, "HEAD")
         if current_head != base_head:
             context["review_state"] = REVIEW_STATE_RECONCILING
@@ -3561,7 +3619,8 @@ def reject_merge_review(
         # relies on ambient git config. Without it a rejection could only ever end
         # at restoration_verification_failed on a server that has none — the merge
         # never ran, so no marker could come back (0555 T0008 §7).
-        redo = _run_git(
+        redo = _run_session_git(
+            merge_id, context, "merge", "reject_merge_review",
             [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "-c", "rerere.enabled=false",
              "-c", "rerere.autoupdate=false", "merge", "--no-commit", "--no-ff", branch],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
@@ -4101,14 +4160,17 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
                 from .git import branch_merge as _branch_merge
                 _branch_merge._apply_local_target(
                     project_id, context.get("branch_merge") or {}, base_root,
-                    merge_commit, required=False,
+                    merge_commit, required=False, merge_id=merge_id, context=context,
                 )
                 return _branch_merge.complete_reviewed(merge_id, context, pushed=True)
             # _complete_merge_review → _finish_reviewed_attempt (0594 T0012 §6.3):
             # the ledger points at the attempt and only its own workspace is released.
             return _complete_merge_review(group_id, merge_id, project_id, context, pushed=True)
         if observed is not None and observed == expected:
-            _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+            _run_session_git(
+                merge_id, context, "reset", "reconcile_remote_unchanged",
+                ["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
+            )
             context["approval_attempt_id"] = None
             context["merge_commit"] = None
             context["apply_phase"] = None

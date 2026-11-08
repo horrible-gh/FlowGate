@@ -42,8 +42,16 @@ PROJECT_NAME = "FaProj"
 def project(patch_store, tmp_db):
     from modules.flow_gate.db import projects
 
-    projects.create({"project_id": PROJECT, "project_name": PROJECT_NAME})
-    yield
+    # Module/class fixtures seed documents before the function-scoped port
+    # fixture runs. Compose the real write gate for their whole lifetime too.
+    from modules.flow_gate.graph_workflow.services import card_document_ports as ports
+    from flowgate.card_document_edit import integration
+
+    with pytest.MonkeyPatch.context() as composition:
+        composition.setattr(ports, "_handlers", dict(ports._handlers))
+        integration.register()
+        projects.create({"project_id": PROJECT, "project_name": PROJECT_NAME})
+        yield
 
 
 @pytest.fixture(scope="module")

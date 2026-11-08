@@ -1760,7 +1760,8 @@ def _finalize_merge_attempt(
         )
     # One repository: a fetch from the base checkout refreshes the remote refs
     # the managed workspace reads as well (the base working tree is untouched).
-    proc = _gs._run_git(
+    proc = _gs._run_session_git(
+        attempt.merge_id, None, "fetch", "finalize_remote_sync",
         ["fetch", "origin"],
         cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
     )
@@ -1770,7 +1771,8 @@ def _finalize_merge_attempt(
         approval_context.phase("fetched", {"merge_id": attempt.merge_id})
     synced_from = _rev_parse(merge_root, "HEAD") if recheck_after_sync else None
     if _gs._ref_exists(merge_root, f"refs/remotes/origin/{target_branch}"):
-        proc = _gs._run_git(["merge", "--ff-only", f"origin/{target_branch}"], cwd=merge_root)
+        proc = _gs._run_session_git(attempt.merge_id, None, "merge", "finalize_remote_sync",
+                                    ["merge", "--ff-only", f"origin/{target_branch}"], cwd=merge_root)
         if proc.returncode != 0:
             failure_details = git_failure_details(proc, "merge")
             if failure_details["cause"] != "unknown":
@@ -1829,7 +1831,8 @@ def _finalize_merge_attempt(
     # 0232 B0001: the merge commit carries a conventional Merge subject, NOT the
     # work subject — the absorb commit above already holds finalize_subject().
     # Reusing it here stamped two commits of identical title+diff onto origin.
-    proc = _gs._run_git(
+    proc = _gs._run_session_git(
+        attempt.merge_id, None, "merge", "finalize_merge",
         [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "-c", "rerere.enabled=false",
          "-c", "rerere.autoupdate=false", "merge", "--no-ff", "-m",
          _merge_commit_subject(branch, target_branch), merge_source],
@@ -1853,7 +1856,8 @@ def _finalize_merge_attempt(
             # A process killed after its commit can leave MERGE_HEAD behind;
             # forget it without touching HEAD, index or worktree.
             if _rev_parse(merge_root, "MERGE_HEAD"):
-                _gs._run_git(["merge", "--quit"], cwd=merge_root)
+                _gs._run_session_git(attempt.merge_id, None, "merge", "finalize_merge_quit",
+                                     ["merge", "--quit"], cwd=merge_root)
             merge_landed = True
     if merge_landed:
         wants_push = action == "merge"
@@ -1867,14 +1871,16 @@ def _finalize_merge_attempt(
                     "remote_ref": f"refs/heads/{target_branch}",
                 })
         if wants_push:
-            push = _gs._run_git(
+            push = _gs._run_session_git(
+                attempt.merge_id, None, "push", "finalize_publish",
                 ["push", "origin", target_branch],
                 cwd=merge_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
             )
             if push.returncode != 0:
                 # E6 — atomicity: never report merged unless the push landed.
                 # Rewind exactly the merge this request made; the slot stays.
-                _gs._run_git(["reset", "--hard", pre_merge_head or "ORIG_HEAD"], cwd=merge_root)
+                _gs._run_session_git(attempt.merge_id, None, "reset", "finalize_push_failed",
+                                     ["reset", "--hard", pre_merge_head or "ORIG_HEAD"], cwd=merge_root)
                 _gs._set_status(group_id, "waiting")
                 raise _command_error(push, "push", "push_rejected", "Git push was rejected")
             if approval_context is not None:
@@ -1893,7 +1899,8 @@ def _finalize_merge_attempt(
         # design), so this is where it must be named. git refuses BEFORE
         # starting the merge here, so `merge --abort` below is a harmless no-op.
         blockers = _untracked_merge_blockers(proc.stderr)
-        _gs._run_git(["merge", "--abort"], cwd=merge_root)
+        _gs._run_session_git(attempt.merge_id, None, "merge", "finalize_merge_abort",
+                             ["merge", "--abort"], cwd=merge_root)
         _gs._set_status(group_id, "waiting")
         if blockers is not None:
             raise GitServiceError(

@@ -1811,7 +1811,8 @@ def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[
         # index and conflict files, and this session stays open (fail-closed 409).
         merge_target.raise_if_not_workspace_owner(merge_target.resolve_session_target(session))
     if root.exists():
-        proc = _gs._run_git(["merge", "--abort"], cwd=root)
+        proc = _gs._run_session_git(merge_id, None, "merge", "user_abort",
+                                    ["merge", "--abort"], cwd=root)
         if proc.returncode:
             raise GitServiceError(500, "git_error", "Merge abort failed",
                                   diagnostic=_gs._last_line(proc.stderr))

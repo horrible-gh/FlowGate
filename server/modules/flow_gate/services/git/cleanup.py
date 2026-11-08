@@ -269,7 +269,8 @@ def _auto_abort_session(
             )
             return
         if _gs._merge_in_progress(base_root):
-            proc = _gs._run_git(["merge", "--abort"], cwd=base_root)
+            proc = _gs._run_session_git(merge_id, None, "merge", "sweep_abort",
+                                        ["merge", "--abort"], cwd=base_root)
             if proc.returncode != 0:
                 _log.warning(
                     "sweep merge --abort failed for %s (%s) — left intact",

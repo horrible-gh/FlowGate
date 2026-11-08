@@ -15,6 +15,8 @@ from typing import Optional
 
 from Crypto.Cipher import AES as _AES
 
+from util.secret_redaction import scrub_credentials
+
 from modules.flow_gate.storage.paths import get_storage_root
 
 _log = logging.getLogger(__name__)
@@ -201,12 +203,8 @@ def mask_secret(plain: Optional[str]) -> Optional[str]:
 
 
 def _scrub(text: Optional[str], *secrets: Optional[str]) -> str:
-    """Remove any secret occurrences from git output before storing/returning."""
-    out = text or ""
-    for s in secrets:
-        if s:
-            out = out.replace(s, "***")
-    return out
+    """Remove credentials from the complete output; callers own any length limit."""
+    return scrub_credentials(text, *secrets)
 
 
 def _load_secret_for(cfg: dict) -> Optional[str]:
