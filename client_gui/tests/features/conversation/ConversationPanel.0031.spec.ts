@@ -96,7 +96,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     const ai = findAll('tl-message')[1]
     expect(ai.attributes('data-speaker')).toBe('ai')
     expect(ai.find('[data-test="tl-provider"]').text()).toBe('Claude Opus 5')
-    expect(findAll('conv-participant').map((p) => p.text().replace(/\s+/g, ''))).toEqual(['●test#2', '◆Opus#1'])
+    expect(findAll('conv-participant').map((p) => p.text().replace(/\s+/g, ''))).toEqual(['●test', '◆Opus'])
     expect(find('conv-composer').exists()).toBe(true)
     // R0001 §10: no 팔레트 / 대화 / Git tab buttons and no Palette / Git parts inside.
     expect(wrapper!.text()).not.toMatch(/팔레트|Palette/)

@@ -383,10 +383,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.changeWindowEpoch += 1
   }
 
-  function applyPage(page: Awaited<ReturnType<ConversationSource['fetchTurns']>>): void {
+  function applyPage(page: Awaited<ReturnType<ConversationSource['fetchTurns']>>, participantsComplete = false): void {
     state.turns = mergeTurns(state.turns, page.turns)
     state.headSeq = Math.max(state.headSeq, page.headSeq)
-    if (page.participants.length > 0) state.participants = page.participants
+    // Empty scroll pages omit metadata; an includeHead response is authoritative, even empty.
+    if (participantsComplete || page.participants.length > 0) state.participants = page.participants
     if (page.myReadSeq != null) state.readSeq = Math.max(state.readSeq, page.myReadSeq)
   }
 
@@ -554,7 +555,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       // No cursor: the server resumes from the position it remembers (D0002 §3-4).
       const first = await readTurns(chatId, { includeHead: true, limit: TURN_PAGE_SIZE }, trace, 'history')
       if (disposed || gen !== chatGen) return
-      applyPage(first)
+      applyPage(first, true)
       let cursor = first.nextAfterSeq
       for (let round = 0; cursor != null && round < CATCHUP_MAX_ROUNDS; round++) {
         const page = await readTurns(chatId, { afterSeq: cursor, limit: TURN_PAGE_SIZE }, trace, 'catchup')
@@ -649,12 +650,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
       if (!current()) return { status: 'discarded', nextAfterSeq: cursor }
       let page
       try {
-        page = await source.fetchTurns(chatId, { afterSeq: cursor, limit: TURN_PAGE_SIZE })
+        // Reuse the existing head contract once per refresh to keep the participant strip current.
+        page = await source.fetchTurns(chatId, { afterSeq: cursor, limit: TURN_PAGE_SIZE, ...(round === 0 ? { includeHead: true } : {}) })
       } catch {
         return { status: current() ? 'failed' : 'discarded', nextAfterSeq: cursor }
       }
       if (!current()) return { status: 'discarded', nextAfterSeq: cursor }
-      applyPage(page)
+      applyPage(page, round === 0)
       const next = page.nextAfterSeq
       if (next == null) return { status: 'complete', nextAfterSeq: null }
       if (next <= cursor) return { status: 'limited', nextAfterSeq: next }

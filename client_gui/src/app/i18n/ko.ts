@@ -1044,8 +1044,11 @@ export default {
       remote_agent_failed: '에이전트가 실행을 시작하지 못했습니다',
     },
     participants: {
+      all: '참여자 {count}명',
+      show_all: '전체 참여자 {count}명 보기',
+      user: '사용자',
+      ai: 'AI',
       label: '참여',
-      position: '{name} · #{seq}까지 읽음',
     },
     composer: {
       creating: "대화 생성 중…",
