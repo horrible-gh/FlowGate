@@ -2,18 +2,69 @@ import { toRaw } from 'vue'
 import type { FlowRunFailure } from '../center/run/flowRunControl'
 import { safeFlowLabel } from '../center/run/runFailureDiagnostic'
 
-/** One active-target observation, independent of toast dismissal. Reset on target/session changes. */
-export function createRunFailurePublisher() {
+const CONSUMED_LIMIT = 64
+const STORE_PREFIX = 'flowgate.run_failure_consumed.v1:'
+
+interface RunFailurePublisherOptions {
+  /** Same-tab storage (sessionStorage) so a reloaded tab does not tell a recovered failure again. Null: memory only. */
+  readonly storage?: Pick<Storage, 'getItem' | 'setItem'> | null
+  /** Who the persisted record belongs to (user/session owner); another owner never reads it. */
+  readonly owner?: () => string | null
+}
+
+/**
+ * The same-tab storage for the persisted consumed record, or null. Merely reading `sessionStorage` can throw
+ * (SecurityError when storage access is denied), so the lookup itself is guarded; failure means memory-only.
+ */
+export function resolveSessionStorage(): Pick<Storage, 'getItem' | 'setItem'> | null {
+  try { return typeof sessionStorage === 'undefined' ? null : sessionStorage ?? null } catch { return null }
+}
+
+/**
+ * flowgate.v02.0156 T5 (E1): two separate things.
+ * - observation (`ids`/`objects`): which failures this target observation already handed out. `clear()` resets it on
+ *   Flow/Project/session-owner changes and nothing else.
+ * - consumed record: failures already shown once. `clear()` never touches it, so a tab round trip, which re-reads the
+ *   same `state.error`, does not bring a closed or already shown toast back. A new failure has a new `publicationId`
+ *   and is never matched by its code or text. Legacy failures (no id/scope) keep object identity as before.
+ * The record is bounded; after a reload (new `scope`) only a command-recovery failure of the same stored
+ * `commandRequestId` is recognized, through the owner-scoped persisted record.
+ */
+export function createRunFailurePublisher(options: RunFailurePublisherOptions = {}) {
   let ids = new Set<string>()
   let objects = new WeakSet<object>()
+  const consumed = new Set<string>()
+  const storeKey = () => { const owner = options.owner?.(); return options.storage && owner ? `${STORE_PREFIX}${owner}` : null }
+  const readStored = (): string[] => {
+    const key = storeKey()
+    if (!key) return []
+    try {
+      const parsed: unknown = JSON.parse(options.storage!.getItem(key) ?? '[]')
+      return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string').slice(-CONSUMED_LIMIT) : []
+    } catch { return [] }
+  }
+  const commandKey = (failure: FlowRunFailure) => failure.commandRequestId && failure.outcome === 'unconfirmed' ? `cmd:${failure.commandRequestId}` : null
+  function remember(key: string) {
+    consumed.add(key)
+    if (consumed.size > CONSUMED_LIMIT) consumed.delete(consumed.values().next().value as string)
+  }
+  function persist(key: string) {
+    const storeAt = storeKey()
+    if (!storeAt) return
+    try { options.storage!.setItem(storeAt, JSON.stringify([...readStored().filter((k) => k !== key), key].slice(-CONSUMED_LIMIT))) } catch { /* storage full/blocked: memory record still holds */ }
+  }
   return {
     clear() { ids = new Set(); objects = new WeakSet() },
     accept(failure: FlowRunFailure): boolean {
       const raw = toRaw(failure)
+      const cmd = commandKey(failure)
       if (failure.publicationId && failure.scope) {
         const key = `${failure.scope}/${failure.publicationId}`
-        if (ids.has(key)) return false
+        if (ids.has(key) || consumed.has(key)) return false
+        if (cmd && failure.stage === 'command_lookup' && readStored().includes(cmd)) return false
         ids.add(key)
+        remember(key)
+        if (cmd) persist(cmd)
       } else {
         // Legacy producers do not prove that equal numbers/nulls/codes represent one event.
         if (objects.has(raw)) return false

@@ -248,10 +248,19 @@ describe('0143 T-C real Shell publisher and v0.1 fallback', () => {
     c.openFlow({projectId:'p',flowId:f,flowName:'Renamed'})
     c.openFlow({projectId:'p',flowId:'p.ui.0002',flowName:'Other'})
     await settle();expect(toastMessages(w)[0]).toBe(first)
-    c.activateFlow(f);await settle();expect(toastMessages(w)).toHaveLength(2)
-    const id=w.vm.$.setupState.shownToasts[1].id
+    // 0156 T5 (E1): the round trip re-reads the same state.error; an already shown failure is not told again.
+    c.activateFlow(f);await settle();expect(toastMessages(w)).toHaveLength(1)
+    const id=w.vm.$.setupState.shownToasts[0].id
     w.vm.$.setupState.dismissToast(id);await settle()
+    expect(toastMessages(w)).toHaveLength(0)
     const raw=reactive(toRaw(c.state.runs[f]));raw.error={...raw.error};await settle()
+    expect(toastMessages(w)).toHaveLength(0)
+    c.openFlow({projectId:'p',flowId:'p.ui.0002',flowName:'Other'});await settle()
+    c.activateFlow(f);await settle()
+    expect(toastMessages(w)).toHaveLength(0)
+    // a new failure (new publicationId, same code and message) is still shown
+    postRequest.mockRejectedValue({response:{status:503,data:{error:{code:'mystery',message:'opaque'}}}})
+    await c.pauseRun(f);await settle()
     expect(toastMessages(w)).toHaveLength(1)
   })
   it('C9 late failure while another Flow is active waits for its own target and keeps the requested name',async()=>{

@@ -128,7 +128,8 @@ describe('0149 T-A1 transmission -> assessment -> control -> toast', () => {
     for (const table of tables) {
       expect(Object.keys(table).filter(k => k.startsWith('blocked_') || ['graph_revision_migration_blocked','graph_node_protected','graph_node_key_reused'].includes(k)).sort()).toEqual(keys)
       const text = keys.map(k => (table as Record<string,string>)[k]).join(' ')
-      expect(text).not.toMatch(/Time Machine|Stop|재검수|타임머신|중지|re-review|再検証|停止/i)
+      // 0156 TR5: the Graph Time Machine recovery guidance is the required wording (0012 TR4 D1); only other promises stay forbidden.
+      expect(text).not.toMatch(/Stop|재검수|중지|re-review|再検証|停止/i)
     }
     const e = await fail(params(['K1'], [blocker('K1','review',false)]))
     for (const locale of ['ko','en','ja'] as const) {

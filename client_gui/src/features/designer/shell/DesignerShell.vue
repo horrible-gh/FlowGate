@@ -244,7 +244,7 @@
 //
 // flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4, Q #510 E-1) — an F5 brings the working screen back. See
 // "F5 restore" below.
-import { createRunFailurePublisher, runErrorText as requestErrorText } from './runFailureToast'
+import { createRunFailurePublisher, resolveSessionStorage, runErrorText as requestErrorText } from './runFailureToast'
 import { isCompletedNoop, type AckRun } from '../center/run/completedCommandAck'
 import { AiRoleSetupModeless } from '@/features/ai'
 import { createFirstRunAiSetup } from '@/features/ai'
@@ -521,8 +521,13 @@ function holdErrorText(error: FlowRunFailure): string {
   return key && te(key) ? `${head} — ${t(key)}` : head
 }
 
-const runFailurePublisher = createRunFailurePublisher()
-// Tab round trips and session replacement retain their existing reappearance policy.
+// 0156 T5 (E1): clear() resets only the observation dedupe on target/session change; the consumed record (a failure
+// already shown, closed or not) survives it, so a Flow round trip never brings the same toast back. A new failure has
+// a new publicationId and is shown. Reloads are covered by the owner-scoped sessionStorage record for recovered commands.
+const runFailurePublisher = createRunFailurePublisher({
+  storage: resolveSessionStorage(),
+  owner: () => projectStore.designerSessionOwner,
+})
 watch([projectId, () => center.state.activeFlowId, () => projectStore.designerSessionOwner], () => runFailurePublisher.clear(), { flush: 'sync' })
 watch(
   () => center.activeRun.value?.error,
