@@ -223,6 +223,11 @@ def start_loop(world, *, rejected, builder=None):
     """Real admission.start_run exactly as legacy_adapter.start_review_loop calls it."""
     if rejected:
         world.env.db._execute("UPDATE documents SET doc_review_status='rejected' WHERE doc_id=?", [D])
+    else:
+        # A loop starts on a submitted document (flowgate.v02test.0014: compute_review_baseline
+        # refuses one with no review status). `gated` already sets this; `world` left it NULL.
+        world.env.db._execute("UPDATE documents SET doc_review_status='pending_review' "
+                              "WHERE doc_id=? AND COALESCE(doc_review_status,'')=''", [D])
     builder = builder or make_builder()
     out = svc.start_run(
         project_id="flowgate", module="v02", group_id=F, doc_ref=D, action_scope="review", mode="single",

@@ -566,6 +566,11 @@ def test_finalize_closes_the_loop_before_it_releases_the_group_lease(world, monk
     observe what the loop row looked like at the moment it happened.
     """
     loops = _active_loop(world, "aiv_finalize_zombie")
+    # The hand-built run below has no execution_nonce / ai_run_owners row; without this the
+    # real ownership check made terminal.cleanup return before the release this test
+    # observes (0573's `env` fixture isolates cleanup the same way).
+    from modules.flow_gate.db import ai_run_identity
+    monkeypatch.setattr(ai_run_identity, "assert_owner", lambda *_a, **_k: None)
     monkeypatch.setattr(
         db_loops, "checkpoint",
         lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("loop table unwritable")),

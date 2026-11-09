@@ -269,3 +269,40 @@ def broadcast_event_threadsafe(event: FlowEvent) -> int:
     except Exception:
         # SSE delivery is best-effort; never let it break the request path.
         return 0
+
+
+def _log_unobserved_failure(future) -> None:
+    try:
+        future.result()
+    except Exception:
+        _log.warning("SSE broadcast scheduled without waiting failed", exc_info=True)
+
+
+def broadcast_event_nowait(event: FlowEvent) -> int:
+    """Broadcast from a synchronous context without waiting for the main loop.
+
+    Same routing as broadcast_event_threadsafe, but when the event has to be handed to
+    the main loop from a worker thread it only schedules the coroutine and returns -1.
+    broadcast_event_threadsafe blocks the calling request for up to 2 seconds while the
+    main loop is busy; callers whose events are pure refresh signals sent after commit
+    (card_document_edit.contacts) use this so the save response is not held by SSE.
+    Events scheduled from one thread keep their order (call_soon_threadsafe is FIFO).
+    Returns 0 when nothing was queued or scheduling failed.
+    """
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    try:
+        if running is not None:
+            asyncio.ensure_future(broadcast_event(event))
+            return -1
+        elif _main_loop is not None and _main_loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(broadcast_event(event), _main_loop)
+            future.add_done_callback(_log_unobserved_failure)
+            return -1
+        else:
+            return asyncio.run(broadcast_event(event))
+    except Exception:
+        # SSE delivery is best-effort; never let it break the request path.
+        return 0

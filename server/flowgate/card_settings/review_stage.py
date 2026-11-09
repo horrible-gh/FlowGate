@@ -828,6 +828,13 @@ def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id
         return True
     if legacy.review_loop_active(doc_id):
         return True
+    if ((completion_records.document(doc_id) or {}).get("doc_review_status") != "rejected"
+            and legacy.submission_judged(doc_id)):
+        # A verdict already answers this submission (the same guard the result stage and the
+        # person's review use): a loop that ended without its rejection -- a failed one, or a
+        # stopped run -- must not be followed by a fresh review of the same revision. A
+        # rejected document is still taken: its new loop starts with the rework.
+        return True
     project_id = legacy.project_of(flow_id)
     reviewer = stored.get("instruction_review_ai") or legacy.default_reviewer(project_id)
     reworker = fields.instruction_provider(stored) or node.get("assignee_provider_id")

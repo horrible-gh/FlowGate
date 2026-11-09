@@ -1907,11 +1907,24 @@ def _resumable_reviewer_overrides(
 
 # Document-scoped review loop (0417 L0009). Kept parallel to resolve_review_gate:
 # the continuous workflow gate has deliberately not been changed.
+DOCUMENT_NOT_SUBMITTED_CODE = "document_not_submitted"
+
+
 def compute_review_baseline(doc_id: str) -> dict:
     from modules.flow_gate.db import document_reviews as db_reviews
     doc = db_docs.get_by_id(doc_id)
     if doc is None:
         raise _http_error(404, "document_not_found", "Document disappeared before review-loop start.")
+    if not (doc.get("doc_review_status") or ""):
+        # No review status at all: the `('', 'submit')` transition never ran, so the
+        # document is not in review. A loop started here can review it, but its `issues`
+        # can never become a rejection (DOC_REVIEW_TRANSITIONS has no `('', 'reject')`),
+        # and nothing the loop does can submit it. Refuse the start -- every new loop
+        # (the AI invoke route and the Graph card's execution.request_loop) reads this.
+        raise _http_error(
+            409, DOCUMENT_NOT_SUBMITTED_CODE,
+            "Document has no review status (not submitted); a review loop cannot start.",
+        )
     reviews = db_reviews.list_by_doc(doc_id) or []
     latest_id = max((int(item.get("id") or 0) for item in reviews), default=0)
     # The document's current review status is the single source of truth for a
@@ -2047,6 +2060,9 @@ def check_expected_progress(bundle: dict, doc: dict, reviews: list[dict]) -> boo
     return True
 
 
+AUTO_REJECT_FAILED_STOP_DETAIL = "automatic rejection failed"
+
+
 def resolve_document_review_loop_gate(bundle: dict) -> dict:
     """Return the next persisted stage, or a terminal stopped state (L0009 §2/§4)."""
     now = bundle.get("now")
@@ -2079,7 +2095,22 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
         }
     if bundle.get("document_missing"):
         return {**common, "current_stage": "stopped", "stop_reason": "retry_exhausted", "stop_detail": "target document no longer exists"}
-    if bundle.get("last_hop_outcome") == "failed" or bundle.get("history_lookup_failed") or bundle.get("transition_failed"):
+    if bundle.get("transition_failed"):
+        # The review hop itself succeeded; only turning its `issues` into a real rejection
+        # failed (a document whose review status admits no `reject`, or an issuer without
+        # document.reject). Retrying cannot fix that: the stage the retry reserves is the
+        # REVIEW hop again, so the same revision is reviewed over and over while the
+        # document is never rejected and no rework is ever taken. Stop here instead, the
+        # same way the sibling gate parks on a failed rejection (run_review_gate), under the
+        # existing `retry_exhausted` reason with the rejection failure as stop_detail (as
+        # stop_for_checkpoint_failure does), so no new stop_reason / CHECK migration.
+        detail = bundle.get("failure_detail") or "unknown error"
+        return {
+            **common, "current_stage": "stopped", "stop_reason": "retry_exhausted",
+            "stop_detail": f"{AUTO_REJECT_FAILED_STOP_DETAIL}: {detail}"[:480],
+            "attempts_used": int(bundle.get("attempts_used") or 0),
+        }
+    if bundle.get("last_hop_outcome") == "failed" or bundle.get("history_lookup_failed"):
         used = int(bundle.get("attempts_used") or 0)
         maximum = int(bundle.get("failure_restart_max_attempts") or 0)
         if maximum == -1 or used <= maximum:
@@ -2260,6 +2291,54 @@ def force_stop_loop_after_checkpoint_failure(run: dict, error: BaseException | N
     except Exception:  # noqa: BLE001 — the last line of defence never raises
         logger.exception(
             "document review-loop force stop failed for %s", run.get("run_id")
+        )
+        return False
+
+
+ABANDONED_RUN_STOP_DETAIL = "run abandoned by post-process recovery"
+
+
+def force_stop_loop_after_abandon(run: dict, *, stop_code: str | None = None) -> bool:
+    """Close the loop of a run the worker's post-process recovery abandoned.
+
+    `worker._start_post_process_recovery` finishes such a run and releases its lease, but
+    nothing closed its loop row: `review_loop_active` kept answering True (card locked,
+    shown as running) and, with the lease gone, restart recovery could not reach it
+    either. Same safety-net shape as force_stop_loop_after_checkpoint_failure: a CAS that
+    never relabels a terminal loop, and every failure is swallowed.
+
+    Ownership comes first, exactly as terminal.cleanup checks it: when this process cannot
+    confirm it still owns the run id, the row may belong to another execution and is left
+    alone (cleanup then records `terminal_cleanup_errors.identity` for the operator).
+    """
+    loop = run.get("document_review_loop")
+    if not loop or loop.get("current_stage") == "stopped":
+        return False
+    try:
+        from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+        from modules.flow_gate.db.ai_run_identity import assert_owner
+
+        try:
+            assert_owner(run)
+        except Exception:  # noqa: BLE001 — not ours to close
+            return False
+
+        detail = ABANDONED_RUN_STOP_DETAIL
+        if stop_code:
+            detail = f"{detail}: {stop_code}"[:480]
+        stopped = db_loops.stop_for_abandoned_run(run["run_id"], detail=detail)
+        if stopped:
+            logger.warning(
+                "document review-loop closed as retry_exhausted after run abandon for %s",
+                run["run_id"],
+            )
+            latest = db_loops.get(run["run_id"])
+            if latest is not None:
+                run["document_review_loop"] = latest
+        return stopped
+    except Exception:  # noqa: BLE001 — the last line of defence never raises
+        logger.exception(
+            "document review-loop abandon stop failed for %s", run.get("run_id")
         )
         return False
 

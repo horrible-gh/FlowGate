@@ -220,6 +220,9 @@ def _start_post_process_recovery(run: dict) -> tuple[threading.Event, threading.
         except Exception:
             logger.exception("ai-invoke %s: recovery handoff cleanup failed", run.get("run_id"))
         finally:
+            # The abandoned run will never checkpoint its loop again; close the row before
+            # the lease is released so it does not stay "active" with nothing to reach it.
+            review.force_stop_loop_after_abandon(run, stop_code=code)
             terminal.cleanup(run, reason=code)
 
     timer = threading.Timer(POST_PROCESS_RECOVERY_SEC, recover)
