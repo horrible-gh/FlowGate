@@ -225,6 +225,7 @@ export default {
       close_tab: '{name} を閉じる',
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
+      draft_action_failed: "操作を完了できませんでした。最新のフローを確認してから、もう一度お試しください。({code})",
       document_storage_unwritable: '保存失敗: 文書ストレージエラー。編集内容は保持されています。',
       retry: '再試行',
       sample_data: 'サンプルデータ',
@@ -771,6 +772,7 @@ export default {
         // flowgate.v02.0061 T#14 — 一時停止 / 再開 and the stopping placeholder of the run buttons.
         pause: '一時停止',
         resume: '再開',
+        stop_retry: '停止を再試行',
         stopping: '停止処理中',
         zoom_fit: '画面に合わせる',
         zoom_out: '縮小',
@@ -797,6 +799,7 @@ export default {
         waiting_confirm: '確認待ち',
       },
       run_executions: '実行 {running}/{limit}',
+      run_completed_ack: 'すでに完了した実行のため、コマンドは何も行いませんでした。新しい構成を確定すると再度実行できます。',
       run_requested: '要求 {n}',
       run_waiting_cards: '次のカード {n} 件待ち',
       // flowgate.v02.0124 T#2 — a told wait: the other blocking cards, and how the first one is released.
@@ -833,7 +836,7 @@ export default {
       run_request_failed: '{action}リクエストを処理できませんでした。',
       run_request_unconfirmed: '{action}リクエストの処理結果を確認できませんでした。',
       run_errors: {
-        graph_revision_migration_blocked: '現在の実行状態では新しい構成を採用できません。',
+        graph_revision_migration_blocked: '現在の実行状態では新しい構成を採用できません。表示されたカードより前にある完了済みカードのメニュー『ここから戻す (Graph Time Machine)』で、そのカードから表示されたカードまで巻き戻してから（却下された確認カードはそのカードで）再度お試しください。',
         graph_node_protected: '保護されたカードの変更により構成を採用できません。',
         graph_node_key_reused: '使用済みのカードキーが再び含まれているため構成を採用できません。',
         blocked_reason_active_attempts: '開いているカード、検証中のカード、または進行中のカード実行があります。',
@@ -866,6 +869,16 @@ export default {
         graph_time_machine_blocked: 'Graph Time Machine を安全に実行できません。',
         graph_time_machine_in_progress: 'Graph Time Machine の操作が完了していません。',
         graph_engine_owned: 'このフローは Graph エンジンの担当です。',
+        // flowgate.v02.0156 T1 R2/R3/R4 — run preparation failures that used to reach the toast with no reason.
+        run_command_storage_unavailable: 'ブラウザのストレージを使えないため、実行要求を記録できませんでした。ストレージを許可するか再読み込みしてから再試行してください。',
+        run_command_record_corrupt: 'このフローの実行要求の記録を読み取れません。実行要求の案内で記録を整理してから再試行してください。',
+        run_command_mode_requires_void: '未確認の以前の実行要求と実行方式が異なります。以前の要求を確認してから再試行してください。',
+        run_command_invalid_identity: '実行要求の識別子を作成できませんでした。再読み込みしてから再試行してください。',
+        run_command_busy: '別のタブでこのフローの実行要求を処理しています。そのタブの結果を確認してから再試行してください。',
+        run_command_unresolved: '結果を確認できていない以前の実行要求が多いため、新しい実行要求を送信しませんでした。以前の要求が確認または無効化されてから再試行してください。',
+        internal_error: 'サーバーで実行要求を処理できませんでした。しばらくしてから再試行してください。',
+        client_error: 'この画面で実行要求を準備できませんでした。再読み込みしてから再試行してください。',
+        ai_setup_check_failed: 'AI ロール設定を確認できませんでした。しばらくしてから再試行してください。',
         other: '実行できませんでした。',
       },
       layout_notices: {

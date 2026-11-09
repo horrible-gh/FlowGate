@@ -47,14 +47,19 @@ import { cardApprovalFailureView, cardApprovalRefusalOf, type CardApprovalFailur
 import type { FlowGraphSource, FlowRunError, FlowRunInfo, FlowTimeMachineRefusal, FlowTimeMachineResult } from '../graph/flowGraphSource'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import type { RunCommandIdentity, RunCommandLookup } from '@/features/project/flowRunApi'
-import { createRunCommandStore, STALE_AFTER_MS, type RunCommandStore, type RunCommandScope, type RunCommandRecord } from './runCommandStore'
+import { createRunCommandStore, STALE_AFTER_MS, type CommandFence, type RunCommandOrphan, type RunCommandStore, type RunCommandScope, type RunCommandRecord } from './runCommandStore'
+import { createRunCommandLock } from './runCommandLock'
 import { isRunLocked } from './flowRunLock'
-import { diagnosticId, safeFlowLabel, recordRunFailureDiagnostic, runBlockageOf, type RunBlockage, type RunFailureDiagnostic } from './runFailureDiagnostic'
+import { diagnosticId, safeErrorName, safeFlowLabel, recordRunFailureDiagnostic, runBlockageOf, type RunBlockage, type RunFailureDiagnostic } from './runFailureDiagnostic'
+import { randomUuid } from '@shared/utils/uuid'
 
 export type FlowRunMode = 'next' | 'all'
 
 /** flowgate.v02.0083 T#4 rev1: how soon a run read showing a requested AI execution is read again. */
 export const REQUESTED_REREAD_MS = 2000
+/** 0156 T1 R4: first re-lookup of unresolved journaled identities; doubles up to ORPHAN_RECHECK_MAX_MS. */
+export const ORPHAN_RECHECK_MS = 15_000
+export const ORPHAN_RECHECK_MAX_MS = 300_000
 
 /** flowgate.v02.0061 T#14: what this tab is doing to the run — a command, Pause, Resume or Stop (T#15: or 되돌리기). */
 export type FlowRunAction = FlowRunMode | 'pause' | 'resume' | 'stop' | 'time_machine'
@@ -97,6 +102,10 @@ export interface FlowRunFailureContext {
   readonly baselineRunId: string | null
   readonly outcome: 'rejected' | 'unconfirmed' | 'failed'
   readonly observation: { readonly state: 'pending' | 'read' | 'failed'; readonly runId: string | null; readonly status: string | null; readonly lastEventSeq?: number | null }
+  /** 0156 T1 R2: the exception name of a client failure (diagnosis only; never its message or stack). */
+  readonly errorName?: string | null
+  /** 0156 T1 R3: the server code behind `ai_setup_check_failed` (diagnosis only). */
+  readonly causeCode?: string | null
 }
 
 export interface FlowRunFailure extends Partial<FlowRunFailureContext> {
@@ -241,19 +250,43 @@ function failureOf(kind: FlowRunFailure['kind'], error: unknown, seq: number, co
   }
 }
 
+/**
+ * 0156 T1 R2: a failure raised in this tab (TypeError, ReferenceError, a storage DOMException, ...) — no code, no HTTP
+ * status, no response, not an HTTP client error. Before 0156 it reached the toast with no code and so with no reason.
+ * The transport's own errors (FlowGraphApiError and the like) always carry a `status` field, null when no answer came.
+ */
+function isClientFailure(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return true
+  const e = error as { code?: unknown; status?: unknown; response?: unknown; isAxiosError?: unknown }
+  return (typeof e.code !== 'string' || !e.code) && !('status' in e) && e.response === undefined && !e.isAxiosError
+}
+
+/** 0156 T1 R3: a thrown AI role check (A3 getMyAiRoles) becomes a run failure with its own code; the status stays. */
+function aiSetupFailure(error: unknown): Error {
+  const cause = error as { code?: unknown; status?: unknown } | null
+  return Object.assign(new Error(''), { code: 'ai_setup_check_failed', causeCode: diagnosticId(cause?.code) },
+    typeof cause?.status === 'number' ? { status: cause.status } : {})
+}
+
 export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<string, FlowRunState>): FlowRunControl {
   const { source } = deps
   const currentUser = useCurrentUser()
-  const commandStore = deps.commandStore ?? (source.lookupCommand ? createRunCommandStore() : undefined)
+  // 0156 T1 R4: lock order is injected store -> navigator.locks -> the cross-tab lease (runCommandLock: IndexedDB
+  // compare-and-set, localStorage only where IndexedDB is missing). Any context without Web Locks gets the lease — the
+  // insecure LAN origin and a secure browser lacking the API alike; tests inject a lock or drive the waits with fake timers.
+  const commandStore = deps.commandStore ?? (source.lookupCommand
+    ? createRunCommandStore(globalThis.navigator?.locks ? {} : { lock: createRunCommandLock() })
+    : undefined)
   const username = deps.username ?? (() => currentUser.user.value?.username ?? null)
   const commandTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const commandBackoff = new Map<string, number>()
+  const orphanBackoff = new Map<string, number>()
   const available = !!(source.loadRun && source.startRun && source.stopRun && source.resumeRun)
   // Latest read per Flow: an older read answering later is dropped, and an action outdates every read.
   const reads = new Map<string, number>()
   let seq = 0
   let failures = 0
-  const scope = `run-control-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
+  const scope = `run-control-${randomUuid()}`
   let requests = 0
 
   function diagnose(failure: FlowRunFailure) {
@@ -268,6 +301,8 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
       responseStatus: failure.responseStatus ?? failure.status, transport: failure.transport,
       commandRequestId: id(failure.commandRequestId), baseline: failure.baseline ? Object.freeze({ ...failure.baseline, runId: id(failure.baseline.runId), status: id(failure.baseline.status) }) : undefined,
       observation: failure.observation ? Object.freeze({state:failure.observation.state,runId:id(failure.observation.runId),status:id(failure.observation.status),lastEventSeq:failure.observation.lastEventSeq ?? null}) : null,
+      ...(failure.errorName !== undefined ? { errorName: safeErrorName(failure.errorName) } : {}),
+      ...(failure.causeCode !== undefined ? { causeCode: id(failure.causeCode) } : {}),
     })
     try { (deps.diagnose ?? recordRunFailureDiagnostic)(record) } catch { /* Diagnostics cannot break a command or its notice. */ }
   }
@@ -374,12 +409,14 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
       state.error = null
       notice(flowId, 'confirmed')
       commandStore!.clear(record, record.commandRequestId)
+      commandStore!.dropOrphan(record, record.commandRequestId)
       stopCommandTimer(flowId)
       commandBackoff.delete(flowId)
       return 'found'
     }
     if (result.kind === 'voided' || result.kind === 'flow_gone') {
       commandStore!.clear(record, record.commandRequestId)
+      commandStore!.dropOrphan(record, record.commandRequestId)
       state.error = null
       state.commandRecovery = undefined
       if (result.kind === 'flow_gone') notice(flowId, 'flow_gone')
@@ -393,11 +430,66 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     waitForCommand(flowId, record)
     return 'pending'
   }
-  async function queryCommand(projectId: string, flowId: string, record: RunCommandRecord, voiding = false): Promise<RunCommandLookup> {
+  async function queryCommand(projectId: string, flowId: string, record: { commandRequestId: string }, voiding = false): Promise<RunCommandLookup> {
     try {
       return await (voiding ? source.voidCommand?.(projectId, flowId, record.commandRequestId)
         : source.lookupCommand?.(projectId, flowId, record.commandRequestId)) ?? { kind: 'legacy' }
     } catch { return { kind: 'failed' } }
+  }
+  /**
+   * 0156 T1 R4: journaled identities of the Flow other than the primary record's (that one has its own lookup): a tab
+   * whose record another tab replaced, an answer that never came. Looked up only — never resent; voided from here only by
+   * the explicit stale acknowledgement (`voiding`). found / voided / flow gone resolve and drop one; anything else
+   * (not_found, failed, legacy) leaves it unresolved, and no command may go until the server resolves it.
+   */
+  async function lookupOrphans(projectId: string, flowId: string, owner: RunCommandScope, alive: () => boolean, voiding = false): Promise<{ found: boolean; unresolved: RunCommandOrphan[]; legacy: boolean }> {
+    const outcome = { found: false, unresolved: [] as RunCommandOrphan[], legacy: false }
+    const primary = commandStore!.read(owner)
+    const skip = primary.kind === 'pending' ? primary.record.commandRequestId : null
+    const journal = commandStore!.orphans(owner).filter((orphan) => orphan.commandRequestId !== skip)
+    for (let i = 0; i < journal.length; i++) {
+      const orphan = journal[i]
+      const stale = commandStore!.now() - orphan.createdAt >= STALE_AFTER_MS
+      const result = await queryCommand(projectId, flowId, orphan, voiding && stale)
+      if (!alive()) return { ...outcome, unresolved: [...outcome.unresolved, ...journal.slice(i)] }
+      if (result.kind === 'found') {
+        const state = stateOf(flowId)
+        // Same signal as a found primary record: the Shell arms the result of the run that accepted it.
+        state.confirmedCommand = { commandRequestId: orphan.commandRequestId, runId: result.runId, commandSeq: result.commandSeq, replayed: true }
+        if (state.error?.commandRequestId === orphan.commandRequestId) state.error = null
+        if (!state.commandRecovery) notice(flowId, 'confirmed')
+        commandStore!.dropOrphan(owner, orphan.commandRequestId)
+        outcome.found = true
+      } else if (result.kind === 'voided' || result.kind === 'flow_gone') {
+        commandStore!.dropOrphan(owner, orphan.commandRequestId)
+      } else {
+        outcome.unresolved.push(orphan)
+        if (result.kind === 'legacy') outcome.legacy = true
+      }
+    }
+    if (!outcome.unresolved.length) orphanBackoff.delete(flowId)
+    return outcome
+  }
+  /** The oldest unresolved journaled identity, as the 0149 recovery notice and its pending failure show a record. */
+  function orphanRecord(owner: RunCommandScope, orphan: RunCommandOrphan, legacy: boolean): RunCommandRecord {
+    return { ...owner, v: 1, commandRequestId: orphan.commandRequestId, mode: orphan.mode, createdAt: orphan.createdAt, attempts: 1, state: legacy ? 'legacy_unconfirmed' : 'unconfirmed' }
+  }
+  /** Re-looks the Flow up (journal and primary record) soon: 15 s, doubling to 5 min, until the server resolves them. */
+  function waitForOrphans(flowId: string) {
+    stopCommandTimer(flowId)
+    const delay = orphanBackoff.get(flowId) ?? ORPHAN_RECHECK_MS
+    orphanBackoff.set(flowId, Math.min(ORPHAN_RECHECK_MAX_MS, delay * 2))
+    commandTimers.set(flowId, setTimeout(() => {
+      commandTimers.delete(flowId)
+      void recoverPending(flowId)
+    }, delay))
+  }
+  /** Unresolved journaled identities hold the Flow: recovery notice (retry; void once stale), pending failure, re-lookup. */
+  function holdForOrphans(flowId: string, owner: RunCommandScope, unresolved: RunCommandOrphan[], legacy: boolean) {
+    const record = orphanRecord(owner, unresolved[0], legacy)
+    notice(flowId, legacy ? 'legacy' : 'unconfirmed', record)
+    pendingFailure(flowId, record)
+    waitForOrphans(flowId)
   }
   async function recoverPending(flowId: string, voiding = false): Promise<void> {
     const projectId = deps.projectId()
@@ -405,15 +497,36 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
     if (!commandStore || !projectId || !state || state.action || !deps.isOpen(projectId, flowId)) return
     let owner: RunCommandScope
     try { owner = commandScope(projectId, flowId) } catch { notice(flowId, 'storage_failed'); return }
+    const alive = () => deps.projectId() === projectId && username() === owner.username && deps.isOpen(projectId, flowId) && runs[flowId] === state && !state.action
     await commandStore.withLock(owner, async () => {
       if (state.action) return
+      const orphans = await lookupOrphans(projectId, flowId, owner, alive, voiding)
+      if (!alive()) return
       const current = commandStore.read(owner)
-      if (current.kind === 'empty') { if (state.commandRecovery?.key !== 'confirmed') state.commandRecovery = undefined; return }
+      if (current.kind === 'empty') {
+        if (orphans.unresolved.length) { holdForOrphans(flowId, owner, orphans.unresolved, orphans.legacy); return }
+        if (state.commandRecovery?.key !== 'confirmed') state.commandRecovery = undefined
+        return
+      }
       if (current.kind !== 'pending') { notice(flowId, current.kind === 'corrupt' ? 'corrupt' : 'storage_failed'); return }
       const result = await queryCommand(projectId, flowId, current.record, voiding)
-      if (deps.projectId() !== projectId || username() !== owner.username || !deps.isOpen(projectId, flowId) || runs[flowId] !== state || state.action) return
-      applyLookup(flowId, current.record, result)
-    }).catch(() => { if (runs[flowId] === state) notice(flowId, 'storage_failed') })
+      if (!alive()) return
+      const applied = applyLookup(flowId, current.record, result)
+      // The primary record's notice stands while it is pending; otherwise an unresolved journaled identity is told.
+      if (orphans.unresolved.length) {
+        if (applied === 'pending') waitForOrphans(flowId)
+        else holdForOrphans(flowId, owner, orphans.unresolved, orphans.legacy)
+      }
+    }).catch((error) => {
+      if (runs[flowId] !== state) return
+      // Another tab holds the Flow's command lease: look again shortly instead of reporting a storage failure.
+      if ((error as { code?: unknown } | null)?.code === 'run_command_busy') {
+        stopCommandTimer(flowId)
+        commandTimers.set(flowId, setTimeout(() => { commandTimers.delete(flowId); void recoverPending(flowId, voiding) }, 2000))
+        return
+      }
+      notice(flowId, 'storage_failed')
+    })
   }
 
   function read(flowId: string, failure?: FlowRunFailure) {
@@ -475,11 +588,18 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
         const refused = error as FlowRunError | null
         const status = typeof refused?.status === 'number' ? refused.status : null
         const sent = request.stage === 'start' || request.stage === 'pause' || request.stage === 'resume' || request.stage === 'stop'
-        const outcome = refused?.code === 'run_response_unreadable' ? 'unconfirmed'
+        // 0156 T1 R2: a code-less failure raised in this tab before anything was sent is `client_error` (failed), with
+        // its exception name kept for diagnosis. After sending, no answer stays unconfirmed (0149 recovery below).
+        const client = isClientFailure(error)
+        const clientError = client && !sent
+        const outcome = clientError ? 'failed'
+          : refused?.code === 'run_response_unreadable' ? 'unconfirmed'
           : sent && (status === null || status >= 500 || status === 408) ? 'unconfirmed'
           : request.stage === 'revision' || (status !== null && status >= 400 && status < 500) ? 'rejected' : 'failed'
+        const named = error as { name?: unknown; errorName?: unknown; causeCode?: unknown } | null
+        const errorName = safeErrorName(named?.errorName) ?? (client ? safeErrorName(named?.name) : null)
         const n = ++failures
-        failure = failureOf('run', error, n, {
+        failure = failureOf('run', clientError ? { code: 'client_error' } : error, n, {
           scope, publicationId: `${scope}:failure:${n}`, localRequestId,
           serverRequestId: diagnosticId(refused?.serverRequestId),
           action: starting ? 'start' : action, mode: starting ? action : null,
@@ -487,6 +607,8 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
           baselineRunId, baseline, outcome, observation: {state:'pending',runId:null,status:null,lastEventSeq:null},
           commandRequestId: request.pending?.commandRequestId ?? null, responseStatus: status,
           transport: refused?.code === 'run_response_unreadable' ? 'unreadable_2xx' : status === null ? 'no_response' : 'http_error',
+          ...(errorName !== null ? { errorName } : {}),
+          ...(typeof named?.causeCode === 'string' || named?.causeCode === null ? { causeCode: diagnosticId(named?.causeCode) } : {}),
         })
         state.error = failure
         diagnose(failure)
@@ -495,6 +617,7 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
           try {
             if (refused?.code === 'command_request_voided' || (record.attempts === 1 && status !== null && status >= 400 && status < 500 && status !== 408 && refused?.code !== 'command_request_conflict')) {
               commandStore.clear(record, record.commandRequestId)
+              commandStore.dropOrphan(record, record.commandRequestId)
               state.commandRecovery = undefined
               stopCommandTimer(flowId)
             } else {
@@ -528,12 +651,23 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
 
   function run(flowId: string, mode: FlowRunMode): Promise<boolean> {
     return act(flowId, mode, async (projectId, state, request) => {
-      const execute = async () => {
+      const execute = async (owner: RunCommandScope | null, fence: CommandFence) => {
         if (!request.alive()) return false
-        const owner = commandStore ? commandScope(projectId, flowId) : null
         const requestedMode = mode === 'next' ? 'step' : 'full'
         if (commandStore && owner) {
           request.stage = 'command_lookup'
+          // 0156 T1 R4: an accepted journaled identity of this Flow consumes this click too; an unresolved one holds every
+          // command (no new identity may go around an answer nobody knows yet) until the server resolves it.
+          const orphans = await lookupOrphans(projectId, flowId, owner, request.alive)
+          if (!request.alive()) return false
+          if (orphans.found) { request.lookupOnly = true; return false }
+          if (orphans.unresolved.length) {
+            // This click just looked them up: the periodic re-lookup starts over from its first interval.
+            orphanBackoff.delete(flowId)
+            holdForOrphans(flowId, owner, orphans.unresolved, orphans.legacy)
+            request.lookupOnly = true
+            return false
+          }
           const current = commandStore.read(owner)
           if (current.kind === 'corrupt' || current.kind === 'unavailable') {
             notice(flowId, current.kind === 'corrupt' ? 'corrupt' : 'storage_failed')
@@ -560,7 +694,14 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
         // A locked run takes no command (its buttons are 일시정지 / 재개 / 중지); the draft is confirmed on an idle Flow only.
         if (isRunLocked(state.run)) return false
         request.stage = 'before_prepare'
-        if (deps.beforePrepare && !(await deps.beforePrepare(flowId, mode))) return false
+        if (deps.beforePrepare) {
+          let ready: boolean
+          // 0156 T1 R3: a failed AI role check is told as such (ai_setup_check_failed); a cancel (false) stays silent.
+          try { ready = await deps.beforePrepare(flowId, mode) } catch (error) { throw aiSetupFailure(error) }
+          if (!ready) return false
+          // 0156 T1 R4: the AI setup modal can outlast the cross-tab lease (a backgrounded or frozen tab): still the holder?
+          await fence()
+        }
         if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
         if (state.run?.status === 'idle' && source.checkRevisionAdoption) {
           request.stage = 'save_draft'
@@ -583,6 +724,9 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
         // One server call: the step / full command. Nothing is stopped from here after it (T#2 settles the step).
         if (!request.alive()) return false
         if (commandStore && owner) {
+          // 0156 T1 R4: the execution boundary — a holder that lost the cross-tab lease (taken over after it ran out) never
+          // sends; a passed fence leaves the whole lease before anyone may take over. Nothing async between here and the POST.
+          await fence()
           // Re-read immediately before sending; another tab may have resolved the prior record.
           request.pending = commandStore.sending(owner, requestedMode)
           state.commandRecovery = undefined
@@ -595,14 +739,19 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
         if (answer.command) state.confirmedCommand = answer.command
         if (request.pending && commandStore) {
           commandStore.clear(request.pending, request.pending.commandRequestId)
+          commandStore.dropOrphan(request.pending, request.pending.commandRequestId)
           stopCommandTimer(flowId)
           commandBackoff.delete(flowId)
           state.commandRecovery = undefined
         }
         return true
       }
-      if (!commandStore) return execute()
-      return commandStore.withLock(commandScope(projectId, flowId), execute)
+      if (!commandStore) return execute(null, async () => {})
+      // 0156 T1 R2: the owner (username) is resolved once, as part of the command lookup — a missing user is a
+      // command_lookup failure, not a before_prepare one. Same lock key and lookup order as before.
+      request.stage = 'command_lookup'
+      const owner = commandScope(projectId, flowId)
+      return commandStore.withLock(owner, (fence) => execute(owner, fence))
     })
   }
 
@@ -710,12 +859,14 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
       dropReread(flowId)
       stopCommandTimer(flowId)
       commandBackoff.delete(flowId)
+      orphanBackoff.delete(flowId)
       delete runs[flowId]
     },
     clear: () => {
       reads.clear()
       for (const flowId of [...commandTimers.keys()]) stopCommandTimer(flowId)
       commandBackoff.clear()
+      orphanBackoff.clear()
       for (const flowId of [...rereads.keys()]) dropReread(flowId)
       for (const flowId of Object.keys(runs)) delete runs[flowId]
     },

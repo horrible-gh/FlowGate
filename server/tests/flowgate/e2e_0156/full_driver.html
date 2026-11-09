@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8"><title>0156 full E2E</title><script>
+(async()=>{
+const q=new URLSearchParams(location.search),flow=q.get('flow'),mode=q.get('mode');
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));const report=o=>fetch('/harness/report',{method:'POST',body:JSON.stringify(o)});
+let w=null,watch=null;
+try{
+ const login=await(await fetch('/flowgate/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'w7user',password:'W7-harness-pass-0156!',locale:'ko'})})).json();
+ sessionStorage.clear();sessionStorage.setItem('fg_access_token',login.access_token);sessionStorage.setItem('fg_refresh_token',login.refresh_token);localStorage.setItem('preferred_locale','ko');
+ sessionStorage.setItem('flowgate.user.w7user.designer.session',JSON.stringify({v:1,projectId:'flowgate',explorer:{selection:{kind:'flow',id:flow},expandedGroupIds:['module:flowgate:v02']},tabs:[{flowId:flow,name:flow,groupId:'module:flowgate:v02'}],activeFlowId:flow,leftMode:'project',rightTool:'palette'}));
+ w=window.open('/app/designer','e2e4');
+ async function ready(){for(let i=0;i<600;i++){await sleep(100);try{let b=w.document.querySelector('button[data-test="designer-tool-run"][data-command="run.'+mode+'"]');if(b&&!b.disabled&&w.document.querySelectorAll('[data-test="designer-canvas-node"]').length>=3)return b}catch(e){}}throw Error('toolbar not ready')}
+ const b=await ready();await report({kind:'env',origin:w.location.origin,isSecureContext:w.isSecureContext,randomUUID:typeof w.crypto.randomUUID,locks:typeof w.navigator.locks});
+ const seen=new Set();function sample(label){
+  const states=[...w.document.querySelectorAll('[data-state]')].map(e=>({test:e.getAttribute('data-test'),state:e.getAttribute('data-state'),phase:e.getAttribute('data-phase'),text:(e.textContent||'').trim()}));
+  const toasts=[...w.document.querySelectorAll('.ui-toast')].map(e=>({cls:e.className,text:(e.textContent||'').trim()}));
+  const buttons=[...w.document.querySelectorAll('button[data-test="designer-tool-run"]')].map(e=>({command:e.dataset.command,disabled:e.disabled,text:(e.textContent||'').trim()}));
+  const key=label+'|'+JSON.stringify({states,toasts,buttons});if(seen.has(key))return;seen.add(key);
+  report({kind:'dom',label,at:Date.now(),states,toasts,buttons,body:w.document.body.innerText.slice(0,16000)});
+ }
+ watch=setInterval(()=>{try{sample('poll')}catch(e){}},100);
+ b.click();await report({kind:'click',mode,at:Date.now()});
+ let previousStep=-1,gateDone=false,final=null;
+ for(let i=0;i<480;i++){
+  await sleep(500);const state=await(await fetch('/harness/state')).json(),run=state.runs[0];if(!run)continue;
+  if(run.idle_reason==='completed'){final=state;break}
+  if(run.idle_reason==='waiting_confirm'&&!gateDone){
+   sample('waiting_confirm');await sleep(1600);sample('waiting_confirm_observed');
+   const decision=await(await fetch('/harness/confirm',{method:'POST'})).json();gateDone=true;await report({kind:'human_gate',decision,at:Date.now()});continue;
+  }
+  if(mode==='next'&&run.status==='idle'&&run.idle_reason==='step_done'&&previousStep!==run.last_event_seq){
+   previousStep=run.last_event_seq;sample('step_done');const next=await ready();next.click();await report({kind:'click',mode,at:Date.now(),afterSeq:previousStep});
+  }
+ }
+ if(!final)throw Error('completion not reached within 240s');
+ await sleep(1800);sample('completed');await report({kind:'completed',at:Date.now(),state:final,diagnostics:typeof w.__flowgateRunDiagnostics==='function'?w.__flowgateRunDiagnostics():null});
+}catch(e){await report({kind:'error',error:String(e&&e.stack||e)})}
+finally{if(watch)clearInterval(watch);if(w)w.close();await report({kind:'done'})}
+})();</script>

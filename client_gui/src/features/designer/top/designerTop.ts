@@ -16,7 +16,7 @@
 // its numbers live); 자율형 forces none. It never lays cards out and never starts or stops 자동 배치.
 //
 // flowgate.v02.0061 T#14 (R §실행 제어, 0002-CH turn 8 §2.3): the run commands follow the open Flow's run phase —
-// idle: 다음 단계 · 전체 실행; running: 일시정지 · 중지; paused: 재개 · 중지; stopping: nothing (the band says 중지 중).
+// idle: 다음 단계 · 전체 실행; running: 일시정지 · 중지; paused: 재개 · 중지; stopping: 중지 다시 시도 (0156 D8: the server's repeated Stop goes on with the stop).
 // No standing button is added (the Toolbar shows the two of the phase in place). The Run menu's 다음 단계 실행 · 전체
 // 실행 · 실행 중지 · Flow 검증 follow the same rule and 재실행 is never available (Q7: no reset / forced rerun in a
 // Graph Flow). While one run command is answered (`runBusy`) every run command waits.
@@ -365,7 +365,7 @@ function isRunCommandEnabled(cmd: DesignerTopCommand, phase: DesignerRunPhase): 
   if (cmd === 'run.next' || cmd === 'run.all' || cmd === 'run.validate') return phase === 'idle'
   if (cmd === 'run.pause') return phase === 'running'
   if (cmd === 'run.resume') return phase === 'paused'
-  if (cmd === 'run.stop') return phase === 'running' || phase === 'paused'
+  if (cmd === 'run.stop') return phase === 'running' || phase === 'paused' || phase === 'stopping' // 0156 T4 D8: re-stop
   return false // run.rerun: Q7, no reset / forced rerun in a Graph Flow
 }
 

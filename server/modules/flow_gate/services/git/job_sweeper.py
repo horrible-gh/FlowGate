@@ -110,6 +110,8 @@ def step_stale_locks(full: bool = False) -> int:
             reclaimed += 1
             runner.notify_released(row["lock_key"], row.get("domain"), row.get("project_id"),
                                    row.get("group_id"), row.get("target_key"))
+            # 0156 T#2 (D3 ⓒ-5): the release listeners too (the Runner's own is woken just above).
+            locks.notify_reclaimed(row, skip=(runner._on_lock_released,))
     return reclaimed
 
 

@@ -1001,7 +1001,22 @@ def after_terminal(flow_id: str, run_id: str) -> None:
             stop.advance(flow_id, run_id)
     except Exception:  # noqa: BLE001
         _log.exception("gate publish could not let the Stop go on run=%s", run_id)
+    _retry_reserved_integrations(flow_id)
     wake_next(flow_id)
+
+
+def _retry_reserved_integrations(flow_id: str) -> None:
+    """0156 T#2 (D3 ⓐ-2): a reservation that ended with no pin (canceled, resolved, abandoned) releases no G/M a
+    waiting integration (``pending`` / ``gate_snapshot_reserved``) hears: the Flow's drain is asked here, after the
+    decision's commit and outside every guard, when the Flow's active run has an integration waiting. Never raises."""
+    try:
+        from flowgate.graph_run import result_merge
+        run = legacy.run_store.active_run(flow_id)
+        if run is not None and run["status"] in ("running", "paused", "idle") and \
+                result_merge.in_progress(run["run_id"]):
+            result_merge.request(flow_id, failed=False)
+    except Exception:  # noqa: BLE001
+        _log.exception("gate publish could not retry the waiting integrations of %s", flow_id)
 
 
 # ── executor ─────────────────────────────────────────────────────────────────

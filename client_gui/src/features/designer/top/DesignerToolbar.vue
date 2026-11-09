@@ -280,7 +280,8 @@ const RUN_BUTTONS: Readonly<Record<DesignerRunPhase, readonly RunButton[]>> = {
     { key: 'resume', command: 'run.resume', label: 'resume', icon: 'next' },
     { key: 'stop', command: 'run.stop', label: 'stop', icon: 'stop' },
   ],
-  stopping: [{ key: 'stopping', command: 'run.stop', label: 'stopping', icon: 'stop' }],
+  // 0156 T4 D8: a stopping run can be stopped again (the server's repeated Stop is idempotent and goes on with it).
+  stopping: [{ key: 'stopping', command: 'run.stop', label: 'stop_retry', icon: 'stop' }],
 }
 
 const runButtons = computed(() =>

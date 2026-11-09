@@ -12,6 +12,7 @@ const files = [
   'client_gui/src/features/designer/center/run/flowRunControl.ts',
   'client_gui/src/features/designer/center/run/runFailureDiagnostic.ts',
   'client_gui/src/features/designer/center/run/runCommandStore.ts',
+  'client_gui/src/features/designer/center/run/runCommandLock.ts',
   'client_gui/src/features/ai/runResult/runResultWatch.ts',
   'client_gui/src/features/designer/shell/runFailureToast.ts',
   'client_gui/src/features/designer/shell/DesignerShell.vue',

@@ -90,6 +90,11 @@ def release_owned_lease(run: dict, reason: str) -> None:
         return
     if row and row.get("run_id") == run["run_id"]:
         raise RuntimeError("terminal lease still belongs to this run")
+    if run.get("group_id") and not run.get("graph_exec_id") and run.get("action_scope") != "resolve_base_dirty":
+        # The legacy lease release committed; no Flow guard is held here.
+        from flowgate.graph_run import execution
+        execution.settle(run["group_id"])
+
 
 
 def _handoff(run: dict) -> None:

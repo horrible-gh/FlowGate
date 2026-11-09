@@ -244,7 +244,8 @@
 //
 // flowgate.v02.0105 T#1 (NR flowgate.v02.0101.0003 §5.4, Q #510 E-1) — an F5 brings the working screen back. See
 // "F5 restore" below.
-import { createRunFailurePublisher, runErrorText as requestErrorText } from './runFailureToast'
+import { createRunFailurePublisher, resolveSessionStorage, runErrorText as requestErrorText } from './runFailureToast'
+import { isCompletedNoop, type AckRun } from '../center/run/completedCommandAck'
 import { AiRoleSetupModeless } from '@/features/ai'
 import { createFirstRunAiSetup } from '@/features/ai'
 import { RunResultDetailWindow, RunResultWindow, createRunResultWatch, runWaitText } from '@/features/ai'
@@ -521,8 +522,13 @@ function holdErrorText(error: FlowRunFailure): string {
   return key && te(key) ? `${head} — ${t(key)}` : head
 }
 
-const runFailurePublisher = createRunFailurePublisher()
-// Tab round trips and session replacement retain their existing reappearance policy.
+// 0156 T5 (E1): clear() resets only the observation dedupe on target/session change; the consumed record (a failure
+// already shown, closed or not) survives it, so a Flow round trip never brings the same toast back. A new failure has
+// a new publicationId and is shown. Reloads are covered by the owner-scoped sessionStorage record for recovered commands.
+const runFailurePublisher = createRunFailurePublisher({
+  storage: resolveSessionStorage(),
+  owner: () => projectStore.designerSessionOwner,
+})
 watch([projectId, () => center.state.activeFlowId, () => projectStore.designerSessionOwner], () => runFailurePublisher.clear(), { flush: 'sync' })
 watch(
   () => center.activeRun.value?.error,
@@ -941,7 +947,14 @@ function onTopCommand(command: DesignerTopCommand) {
         // flowgate.v02.0113 T#5: a command the server took is watched for its result (the run as known before it).
         const known = center.runStatus(flowId).run
         const before = known ? { runId: known.runId, status: known.status, lastEventSeq: known.lastEventSeq } : null
+        const beforeAck: AckRun | null = known ? { runId: known.runId, status: known.status, idleReason: known.idleReason ?? null, revisionNo: known.revisionNo ?? null } : null
         void center.runFlow(flowId, command === 'run.next' ? 'next' : 'all').then((taken) => {
+          // flowgate.v02.0156 T#4 (D7): a command a completed run only acknowledged says so, once, in this command's answer.
+          const after = center.runStatus(flowId).run
+          if (isCompletedNoop(beforeAck, after ? { runId: after.runId, status: after.status, idleReason: after.idleReason ?? null, revisionNo: after.revisionNo ?? null } : null, taken)) {
+            toastSeq += 1
+            toasts.value = [...toasts.value.slice(-2), { id: `done-ack-${toastSeq}`, text: () => t('gui.designer.top.run_completed_ack'), tone: 'info', duration: 6000 }]
+          }
           if (!taken || center.state.runs[flowId]?.run?.command) return
           runResult.arm(flowId, before)
           runResult.observe(flowId, center.runStatus(flowId).run)
