@@ -51,6 +51,7 @@ FC = "flowgate.v02.0085"      # conflict (Graph assignment + a v0.1 sequence)
 FV = "flowgate.v02.0086"      # v0.1 (a sequence)
 FLOWS = (FU, FB, FD, FG, FC, FV)
 START = "gn_start000001"
+NEXT = "gn_design00001"
 USER = "u_kim"
 DECIDED = "Cannot convert root type after the workflow decision was taken."
 
@@ -87,6 +88,20 @@ def env(monkeypatch, tmp_path):
     conn_mod.STORE = store
     monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path))
+    # The seeding confirms revisions, which ask the run state ports startup registers (f511c917). Wire them as
+    # startup does, in registries restored after the test (the test_graph_definition_api_0045 pattern), instead of
+    # relying on an earlier suite having left them registered.
+    from flowgate.graph_run import integration as graph_run
+    from modules.flow_gate.graph_workflow.services import run_state_ports
+    from modules.flow_gate.services import graph_execution_hooks, graph_source_hooks
+    monkeypatch.setattr(run_state_ports, "_handlers", dict(run_state_ports._handlers))
+    monkeypatch.setattr(graph_execution_hooks, "_handler", graph_execution_hooks._handler)
+    for attr in ("_handler", "_mutation_handler", "_fence_handler"):
+        monkeypatch.setattr(graph_source_hooks, attr, getattr(graph_source_hooks, attr))
+    graph_run.register()
+    from flowgate.graph_validation.run_scope import run_scope
+    from modules.flow_gate.graph_workflow.domain import run_scope_ports
+    monkeypatch.setattr(run_scope_ports, "_handler", run_scope)
     state = {"events": [], "db": path, "storage": tmp_path, "routes": routes}
     monkeypatch.setattr(canvas_events, "broadcast_event_threadsafe", lambda ev: state["events"].append(ev) or 1)
 
@@ -150,8 +165,12 @@ def _make_draft(flow):
 
     with get_store().transaction():
         definition_store.create_draft(flow, None, USER)
-        definition_store.replace_draft_content(flow, [{"node_key": START, "node_type": "document",
-                                                       "doc_type": "R", "label": "요구"}], [])
+        # edb61b31: a run start is a root-type document node with an outgoing edge, so the R start leads to one card.
+        definition_store.replace_draft_content(flow, [
+            {"node_key": START, "node_type": "document", "doc_type": "R", "label": "요구"},
+            {"node_key": NEXT, "node_type": "document", "doc_type": "D", "label": "설계",
+             "assignee_kind": "human", "assignee_user_id": USER, "assignee_provider_id": None},
+        ], [{"edge_id": "ge_start_next1", "source": START, "target": NEXT}])
 
 
 def _make_graph(flow):
@@ -236,10 +255,12 @@ def test_conflict_flow_is_refused_flat(env, monkeypatch):
                           "graph_revision_no": 1}
     assert doc_row(env, root(FC))["type_code"] == "R"
     assert binding_row(env, FC)["doc_id"] == root(FC)
-    # before 0048 the sequence gate answered it with a detail string
+    # before 0048 the sequence gate answered it with a detail string; since 0064 T#3 the converter judges the Flow
+    # ownership again inside the guard, so with the contact bypassed it still refuses with the same flat body.
     _bypass(env, monkeypatch)
     old = convert(env, root(FC))
-    assert (old.status_code, old.json()) == (409, {"detail": DECIDED})
+    assert (old.status_code, old.json()) == (409, res.json())
+    assert doc_row(env, root(FC))["type_code"] == "R"
 
 
 # ── ⓒ unassigned Flow without a draft ────────────────────────────────────────
@@ -341,6 +362,34 @@ def test_unassigned_flow_with_an_r_start_draft_converts_and_validation_reports_i
     assert [i["code"] for i in after["issues"]] == ["root_binding_no_start_node"]
     assert definition_store.draft(FD)["draft_version"] == version      # the draft itself is untouched
     assert binding_row(env, FD) is None
+
+
+# ── the requesting tab on the draft card event ───────────────────────────────
+# The tab that switched reads its Canvas again after the answer; the event its conversion causes names that tab's
+# x-canvas-client-id, so the tab reads once for both. No header, or one not of the P0008 §1.1 format: no origin
+# (as before), and the conversion is never refused for it.
+
+@pytest.mark.parametrize("headers, origin", [
+    ({"x-canvas-client-id": "kind_abc-1"}, "kind_abc-1"),
+    ({}, None),
+    ({"x-canvas-client-id": "not a client id!"}, None),
+])
+def test_the_draft_card_event_names_the_requesting_tab(env, headers, origin):
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+
+    card_document_ports.register(card_document_ports.ON_ROOT_CONVERTED, lambda flow, old, new: [START] if flow == FD else [])
+    res = env["client"].patch(f"/api/v1/documents/{root(FD)}/root-type", json={"new_type": "B"}, headers=headers)
+    assert res.status_code == 200, res.json()
+    assert res.json()["conversion"]["draft_node_keys"] == [START]
+    events = [e.payload for e in env["events"] if e.event_type == "graph_canvas_changed"]
+    assert [(p["flow_id"], p["reason"], p["origin_client_id"]) for p in events] == [(FD, "draft", origin)]
+
+
+def test_a_conversion_without_a_draft_card_change_sends_no_canvas_event(env):
+    res = env["client"].patch(f"/api/v1/documents/{root(FU)}/root-type", json={"new_type": "B"},
+                              headers={"x-canvas-client-id": "kind_abc-2"})
+    assert res.status_code == 200, res.json()
+    assert [e for e in env["events"] if e.event_type == "graph_canvas_changed"] == []
 
 
 # ── ⓔ v0.1 Flow ──────────────────────────────────────────────────────────────

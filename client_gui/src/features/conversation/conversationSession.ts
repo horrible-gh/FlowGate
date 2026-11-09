@@ -59,6 +59,34 @@ export const RUN_ADOPT_GRACE_MS = 60_000
 // clock). The server answers a known press with the run it admitted, so a resend never starts a second run.
 export const START_RESEND_MAX = 120
 export const START_RECOVERY_MS = 300_000
+// flowgate.v02test.0013: the chat's active run looked up when a chat opens is asked this often, RUN_POLL_MS apart,
+// when the query itself fails; a run missed then would otherwise go untracked until the next signal.
+export const ACTIVE_RUN_ADOPT_ATTEMPTS = FINAL_TURN_READ_ATTEMPTS
+
+/**
+ * flowgate.v02test.0013 — what a signal (a server event, a stream reconnect, coming back to the panel) says may have
+ * changed in the open chat: `run` its active run (adopt it and poll), `turns` its messages after the last one shown,
+ * `activities` its command requests and run changes, `history` the terminal state of runs that ended unseen.
+ */
+export interface ChatRefresh {
+  run?: boolean
+  turns?: boolean
+  activities?: boolean
+  history?: boolean
+}
+
+/** Everything: a reconnect or a return to the panel, after which any of it may be missing. */
+export const FULL_CHAT_REFRESH: Readonly<Required<ChatRefresh>> = Object.freeze({ run: true, turns: true, activities: true, history: true })
+
+/** The union of two refresh requests (null: none yet). */
+export function mergeChatRefresh(a: ChatRefresh | null, b: ChatRefresh): ChatRefresh {
+  return {
+    run: !!(a?.run || b.run),
+    turns: !!(a?.turns || b.turns),
+    activities: !!(a?.activities || b.activities),
+    history: !!(a?.history || b.history),
+  }
+}
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -156,6 +184,14 @@ export interface ConversationSession {
   setChatTitle(chatId: string, title: string, marker?: ChatAutoTitle): void
   loadOlder(trace?: SubmissionTrace): Promise<void>
   catchUp(): Promise<void>
+  /**
+   * flowgate.v02test.0013 — brings the open chat back in line with the server after a signal (default: everything).
+   * One recovery runs at a time: a signal while it runs is merged into one more round after it, so nothing asked for
+   * is dropped and nothing is read twice side by side. A run already polled is not read beside its poll: the poll's
+   * wait is cut short instead. While the chat is still opening, or a message of it is being sent, the request waits
+   * and runs right after (a turn read then could show the message twice: once sending, once stored).
+   */
+  recover(parts?: ChatRefresh): Promise<void>
   /**
    * flowgate.v02.0142 T#1: the AI of the message is pinned when it is sent: `target.providerId` when given (the first
    * message of a new chat, whose AI was chosen before the chat was created), else the current selection.
@@ -317,6 +353,17 @@ export function createConversationSession(options: ConversationSessionOptions = 
   const settingsRefreshedRuns = new Set<string>()
   let trackedRunId: string | null = null
   let historyRequest = 0
+  // flowgate.v02test.0013 — the poll of the tracked run (pollRun). A signal sets `due` and calls `wake`, so the
+  // poll's next tick reads now instead of after the rest of its RUN_POLL_MS wait (a signal during a tick makes the
+  // next wait none). Exactly one per chat generation: clearChat wakes and drops it, and pollRun refuses a second
+  // poll of the run it already polls.
+  interface LivePoll { chatId: string; gen: number; runId: string; due: boolean; wake: (() => void) | null }
+  let livePoll: LivePoll | null = null
+  // flowgate.v02test.0013 — the recovery running for the open chat, with what was asked for while it runs.
+  interface Recovery { chatId: string; gen: number; wanted: ChatRefresh | null; done: Promise<void> }
+  let recovery: Recovery | null = null
+  // flowgate.v02test.0013 — a recovery asked for while the chat was opening or one of its messages was being sent.
+  let deferredRefresh: { gen: number; parts: ChatRefresh } | null = null
 
 
   const activeChat = computed(() => state.chats.find((c) => c.id === state.activeChatId) ?? null)
@@ -379,6 +426,12 @@ export function createConversationSession(options: ConversationSessionOptions = 
     settingsRefreshedRuns.clear()
     trackedRunId = null
     historyRequest += 1
+    // The old chat's poll ends on its next check; waking it lets that happen now, not after its wait.
+    const poll = livePoll
+    livePoll = null
+    poll?.wake?.()
+    recovery = null
+    deferredRefresh = null
     unsubscribe?.()
     unsubscribe = null
     state.turns = []
@@ -591,7 +644,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
       return
     }
     void openActivities(chatId, gen).then(() => restoreRuns(chatId, gen))
-    void adoptActiveRun(chatId, gen)
+    void adoptActiveRun(chatId, gen, ACTIVE_RUN_ADOPT_ATTEMPTS)
+    // A signal that came while the chat was opening (after its pages were read, possibly) is served now.
+    flushDeferredRefresh()
   }
 
   async function openActivities(chatId: string, gen: number): Promise<void> {
@@ -714,6 +769,85 @@ export function createConversationSession(options: ConversationSessionOptions = 
     await loadActivities(chatId, gen)
     if (!current()) return
     await restoreRuns(chatId, gen)
+  }
+
+  // ── Recovery after a signal (flowgate.v02test.0013) ────────────────────────────────
+  /** The poll of the open chat's tracked run, when one is running. */
+  function currentPoll(chatId: string, gen: number): LivePoll | null {
+    const poll = livePoll
+    return poll && poll.chatId === chatId && poll.gen === gen && state.runId === poll.runId ? poll : null
+  }
+
+  /** Cuts the poll's wait short: its next tick reads the run, the turns and the activities now. */
+  function wakePoll(poll: LivePoll): void {
+    poll.due = true
+    poll.wake?.()
+  }
+
+  /** A signal is held while the chat is opening or one of its messages is on its way to the server. */
+  function mustDefer(): boolean {
+    return state.turnsStatus === 'loading' || state.pending.some((p) => !p.failed)
+  }
+
+  function flushDeferredRefresh(): void {
+    const held = deferredRefresh
+    if (!held || held.gen !== chatGen || disposed || mustDefer()) return
+    deferredRefresh = null
+    void recover(held.parts)
+  }
+
+  function recover(parts: ChatRefresh = FULL_CHAT_REFRESH): Promise<void> {
+    const chatId = state.activeChatId
+    if (!chatId || disposed) return Promise.resolve()
+    const gen = chatGen
+    if (mustDefer()) {
+      deferredRefresh = { gen, parts: mergeChatRefresh(deferredRefresh?.gen === gen ? deferredRefresh.parts : null, parts) }
+      return Promise.resolve()
+    }
+    // A chat whose first read failed shows its own [다시 시도]; nothing to bring up to date.
+    if (state.turnsStatus !== 'ready') return Promise.resolve()
+    const ongoing = recovery
+    if (ongoing && ongoing.chatId === chatId && ongoing.gen === gen) {
+      ongoing.wanted = mergeChatRefresh(ongoing.wanted, parts)
+      return ongoing.done
+    }
+    const entry: Recovery = { chatId, gen, wanted: mergeChatRefresh(null, parts), done: Promise.resolve() }
+    recovery = entry
+    entry.done = (async () => {
+      try {
+        while (entry.wanted && isCurrentChat(chatId, gen)) {
+          const wanted = entry.wanted
+          entry.wanted = null
+          await recoverOnce(chatId, gen, wanted)
+        }
+      } finally {
+        if (recovery === entry) recovery = null
+      }
+    })()
+    return entry.done
+  }
+
+  async function recoverOnce(chatId: string, gen: number, wanted: ChatRefresh): Promise<void> {
+    const current = () => isCurrentChat(chatId, gen)
+    // A run started elsewhere (another window, a resend that was answered late) or missed when the chat opened.
+    if (wanted.run && !running.value) await adoptActiveRun(chatId, gen, 1)
+    if (!current()) return
+    // The poll reads the turns and activities on every tick and ends the run with its own final reads.
+    const poll = currentPoll(chatId, gen)
+    if (poll) {
+      wakePoll(poll)
+      return
+    }
+    if (wanted.turns) {
+      const result = await readTurnPages(chatId, state.turns.at(-1)?.seq ?? 0, current)
+      if (!current() || result.status === 'discarded') return
+    }
+    if (wanted.activities) {
+      await loadActivities(chatId, gen)
+      if (!current()) return
+    }
+    // A run being started or polled owns its own end; the history is read once nothing is.
+    if (wanted.history && !running.value) await restoreRuns(chatId, gen)
   }
 
   /** Existing group history has no cursor. At most two windows and fifty detail reads. */
@@ -1006,11 +1140,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!ok) {
       publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === item.localId ? { ...p, failed: true } : p))
       publishProgress(owner, { phase: 'failed', stage: 'send', attempt: progress.get(owner)?.attempt ?? 1 })
+      if (visibleOwner(owner)) flushDeferredRefresh()
       return false
     }
     pendingDrafts.delete(item.localId)
     publishProgress(owner, null)
     runSendAction(chatId, gen, trace, item.providerId)
+    // flowgate.v02test.0013: a signal held while this message was on its way is served once it is stored.
+    if (visibleOwner(owner)) flushDeferredRefresh()
     return true
   }
 
@@ -1107,10 +1244,33 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   async function pollRun(chatId: string, runId: string, gen: number): Promise<void> {
     if (!isCurrentChat(chatId, gen)) return
+    // flowgate.v02test.0013: the run is polled already (an adoption racing a start's answer): one poll per run.
+    if (currentPoll(chatId, gen)?.runId === runId) return
+    const poll: LivePoll = { chatId, gen, runId, due: false, wake: null }
+    livePoll = poll
+    try {
+      await trackRun(chatId, runId, gen, poll)
+    } finally {
+      if (livePoll === poll) livePoll = null
+    }
+  }
+
+  async function trackRun(chatId: string, runId: string, gen: number, poll: LivePoll): Promise<void> {
     state.runId = runId
     trackedRunId = runId
     runChecks.set(runId, (runChecks.get(runId) ?? 0) + 1)
     const current = () => isCurrentChat(chatId, gen) && state.runId === runId
+    // RUN_POLL_MS between ticks, cut short by a signal (wakePoll); a signal during a tick skips the next wait.
+    const wait = async (): Promise<void> => {
+      if (!poll.due) {
+        await new Promise<void>((resolve) => {
+          poll.wake = resolve
+          void sleep(RUN_POLL_MS).then(resolve)
+        })
+      }
+      poll.wake = null
+      poll.due = false
+    }
     // 0084 registration grace remains independent of response / completion evidence.
     let seen = false
     // The server's running detail has group/action scope but no doc_ref. Only its
@@ -1155,7 +1315,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         }
       }
       polls += 1
-      await sleep(RUN_POLL_MS)
+      await wait()
       if (!current()) return
       let run
       try {
@@ -1307,14 +1467,23 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
-  async function adoptActiveRun(chatId: string, gen: number): Promise<void> {
-    if (!isCurrentChat(chatId, gen)) return
-    try {
-      const runId = await source.fetchActiveChatRun(chatId)
-      if (!runId || !isCurrentChat(chatId, gen) || running.value) return
-      void pollRun(chatId, runId, gen)
-    } catch {
-      // Best effort — a manual [AI 호출] still adopts the run through 409.
+  /**
+   * Polls the chat's active run, if the server has one. flowgate.v02test.0013: a failed query is asked again up to
+   * `attempts` times, RUN_POLL_MS apart (the chat opening: a run missed there showed no progress until its end). A
+   * recovery asks once — the next signal asks again. A manual [AI 호출] still adopts the run through 409.
+   */
+  async function adoptActiveRun(chatId: string, gen: number, attempts = 1): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      if (!isCurrentChat(chatId, gen) || running.value) return
+      try {
+        const runId = await source.fetchActiveChatRun(chatId)
+        if (!runId || !isCurrentChat(chatId, gen) || running.value) return
+        void pollRun(chatId, runId, gen)
+        return
+      } catch {
+        if (attempt >= attempts) return
+      }
+      await sleep(RUN_POLL_MS)
     }
   }
 
@@ -1408,6 +1577,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.changeWindowEpoch += 1
     disposed = true
     titleGuard.disposed = true
+    const poll = livePoll
+    livePoll = null
+    poll?.wake?.()
+    recovery = null
+    deferredRefresh = null
     unsubscribe?.()
     unsubscribe = null
   }
@@ -1434,6 +1608,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     setChatTitle,
     loadOlder,
     catchUp,
+    recover,
     send,
     retry,
     reportRead,

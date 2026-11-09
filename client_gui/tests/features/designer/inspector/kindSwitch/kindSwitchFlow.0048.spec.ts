@@ -55,6 +55,9 @@ const { toReviewDocument, toReviewActivity, toKindSwitchResult, toDocumentDetail
 const i18n = prepareInspectorI18n()
 
 const FLOW = 'flowgate.v02.0050'
+/** flowgate.v02test.0013: each switch names itself (its x-canvas-client-id) to the converter and in its refresh. */
+const SWITCH_ID = expect.stringMatching(/^kind_[a-z0-9]+$/)
+const SWITCHED = { kind: 'refresh-flow', flowId: FLOW, originClientId: SWITCH_ID }
 const ROOT_R = `${FLOW}.0001-R`
 const ROOT_B = `${FLOW}.0001-B`
 const START_KEY = 'gn_start000001'
@@ -289,7 +292,7 @@ describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 Â
     expect(loadFlowCanvas).toHaveBeenCalledTimes(1)
 
     await switchKind()
-    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B', SWITCH_ID)
     // refresh-flow -> the session read the Canvas again: the root is now the B document.
     expect(loadFlowCanvas).toHaveBeenCalledTimes(2)
     expect(canvasNodes(center)).toEqual([{ id: `doc:${ROOT_B}`, docType: 'B', docId: ROOT_B }])
@@ -312,7 +315,7 @@ describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 Â
     expect(find('kind-switch-open').text()).toBe('ë²„ê·¸ â–¾')
 
     await switchKind()
-    expect(convertCall).toHaveBeenLastCalledWith(ROOT_B, 'R')
+    expect(convertCall).toHaveBeenLastCalledWith(ROOT_B, 'R', SWITCH_ID)
     expect(loadFlowCanvas).toHaveBeenCalledTimes(3)
     expect(canvasNodes(center)).toEqual([{ id: `doc:${ROOT_R}`, docType: 'R', docId: ROOT_R }])
     expect(center.activeSelection.value).toBeNull()
@@ -385,7 +388,7 @@ describe("another Flow tab is activated while the switch waits (refresh-flow nam
     await select(center, `doc:${ROOT_R}`)
     const release = holdNextSwitch()
     await switchKind()
-    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B', SWITCH_ID)
 
     await openOther(center)
     await select(center, `doc:${OTHER_ROOT}`, OTHER)

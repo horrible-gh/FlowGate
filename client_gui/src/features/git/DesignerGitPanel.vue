@@ -95,7 +95,8 @@ import { gitErrorOf } from './api'
 import { createGitCenterDiff } from './gitCenterDiff'
 import { createHttpGitSource, type GitSource } from './gitSource'
 import { createGitSession, GIT_PANEL_CONTEXT, type GitConfirmRequest } from './gitSession'
-import { createGitWorktreeSession, GIT_WORKTREE_CONTEXT, type WorktreeTicket } from './gitWorktreeSession'
+import { createGitWorktreeSession, GIT_WORKTREE_CONTEXT, WORKTREE_REFRESH_EVENTS, type WorktreeTicket } from './gitWorktreeSession'
+import { useInspectorEvents } from '../designer/inspector/useInspectorResource'
 import type {
   GitBadge,
   GitConfigSave,
@@ -148,6 +149,25 @@ const worktree = createGitWorktreeSession({
   source: props.source,
   onCenterDiffRefresh: (request) => diff.refresh(request),
 })
+// flowgate.v02test.0013 — an AI run of the shown Flow changes working files with no Git action of
+// the panel: when it ends (or the event stream reconnects after a drop) the worktree area reads
+// again, also while the tab is hidden so the count badge stays right (§3-8). Only frames of the
+// shown Flow count; matching events within the coalesce window are one read, and requestReads
+// joins them with any other read of the same turn or holds them behind a running write (③).
+// refresh() reads nothing while the gate is closed; a project / Flow switch drops a pending signal
+// and any late answer of the old context (the session's generation, ①).
+useInspectorEvents(
+  () => {
+    const projectId = session.state.projectId
+    const groupId = session.state.flow?.groupId ?? null
+    return projectId && groupId ? { projectId, flowId: groupId, docId: null } : null
+  },
+  {
+    events: WORKTREE_REFRESH_EVENTS,
+    matches: (frame, scope) => frame.groupId === scope.flowId,
+    changed: () => worktree.refresh(),
+  },
+)
 const pendingConfirm = shallowRef<GitConfirmRequest | null>(null)
 // The worktree context of the open dialog; null for a 0033 dialog.
 const confirmTicket = shallowRef<WorktreeTicket | null>(null)

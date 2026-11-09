@@ -87,12 +87,15 @@ provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
       lineDocId: node.cardDocuments?.find((line) => line.slot === 'plan')?.docId ?? null,
     }
   },
-  host(intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string; readonly flowId?: string }) {
+  host(intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string; readonly flowId?: string; readonly originClientId?: string }) {
     const flowId = props.center.state.activeFlowId
     if (intent.kind === 'select-node' && flowId !== null && intent.nodeId) props.center.selectNode(flowId, intent.nodeId)
     else if (intent.kind === 'refresh-flow') {
       const readFlowId = intent.flowId ?? flowId
-      if (readFlowId !== null) props.center.refreshFlow(readFlowId)
+      if (readFlowId !== null) {
+        if (intent.originClientId) props.center.refreshFlow(readFlowId, { originClientId: intent.originClientId })
+        else props.center.refreshFlow(readFlowId)
+      }
     } else if (intent.kind === 'show-tool' && intent.tool === 'git') emit('show-tool', intent.tool)
   },
 })

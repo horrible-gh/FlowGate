@@ -22,10 +22,16 @@ export interface FlowLayoutSaveResult {
   readonly ignoredNodeIds: readonly string[]
 }
 
+/** What a change report knows of the write that caused it. */
+export interface FlowGraphChangeSignal {
+  /** The change event's `origin_client_id`: the id the write named itself with (`x-canvas-client-id`). */
+  readonly originClientId?: string
+}
+
 /** What a source reports about Graphs changed elsewhere (another tab, device or user). */
 export interface FlowGraphChangeHandlers {
-  /** This Flow's Graph changed elsewhere: read it again. */
-  changed(flowId: string): void
+  /** This Flow's Graph changed elsewhere: read it again. `signal`: what the event says of the write behind it. */
+  changed(flowId: string, signal?: FlowGraphChangeSignal): void
   /** Change reports may have been missed (reconnect): read every open Graph again. */
   resync(): void
 }

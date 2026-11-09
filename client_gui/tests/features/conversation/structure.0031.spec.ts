@@ -46,6 +46,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'api.ts',
         'changeDiff.ts',
         'chatStart.ts',
+        'conversationEvents.ts',
         'conversationSession.ts',
         'conversationSource.ts',
         'drafts.ts',

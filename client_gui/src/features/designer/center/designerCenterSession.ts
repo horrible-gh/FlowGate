@@ -321,9 +321,11 @@ export interface DesignerCenterSession {
   retryGraph(flowId: string): void
   /**
    * flowgate.v02.0048 T#1: reads an open Flow again in the background (the shown Graph stays until
-   * the new one arrives), once this tab's saves of the Flow have settled.
+   * the new one arrives), once this tab's saves of the Flow have settled. `answered`: the answer of a write that
+   * named itself `originClientId`; the Canvas event that write causes carries the same id, and the Flow is read
+   * once for the two (whichever comes first).
    */
-  refreshFlow(flowId: string): void
+  refreshFlow(flowId: string, answered?: { readonly originClientId: string }): void
   /** Single selection of one Node, or none. */
   selectNode(flowId: string, nodeId: string | null): void
   /** flowgate.v02.0059 T#1: the Selection becomes these Nodes of the Flow (the Canvas in 선택 mode). */
@@ -965,8 +967,34 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     return drafts.check(flowId, source, target)
   }
 
-  function changedElsewhere(projectId: string, flowId: string) {
-    if (isOpen(projectId, flowId)) readWhenSaved(flowId)
+  // R↔B switch delay: a write that named itself (its `x-canvas-client-id`, e.g. useKindSwitch's id per switch) is followed
+  // by two signals of one commit — this tab's refresh after the answer and the Canvas event carrying that id. Both
+  // come after the commit, so the read the first one starts already shows it, and the second one reads nothing. An id
+  // pairs an answer with an event only (never two events: another tab's events all carry that tab's id), once, per
+  // Flow; the latest PAIRED_SIGNALS_KEPT are kept. A failed read forgets the Flow's ids, so the second one reads.
+  const PAIRED_SIGNALS_KEPT = 16
+  const pairedSignals = new Map<string, Map<string, 'answer' | 'event'>>()
+  function pairedAlready(flowId: string, id: string, side: 'answer' | 'event'): boolean {
+    let seen = pairedSignals.get(flowId)
+    const other = seen?.get(id)
+    if (seen && other !== undefined && other !== side) {
+      seen.delete(id)
+      return true
+    }
+    if (!seen) pairedSignals.set(flowId, (seen = new Map()))
+    seen.delete(id)
+    seen.set(id, side)
+    for (const oldest of seen.keys()) {
+      if (seen.size <= PAIRED_SIGNALS_KEPT) break
+      seen.delete(oldest)
+    }
+    return false
+  }
+
+  function changedElsewhere(projectId: string, flowId: string, signal?: { readonly id: string; readonly side: 'answer' | 'event' }) {
+    if (!isOpen(projectId, flowId)) return
+    if (signal && pairedAlready(flowId, signal.id, signal.side)) return
+    readWhenSaved(flowId)
   }
 
   function watchProject(projectId: string | null) {
@@ -975,7 +1003,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     staleFlows.clear()
     if (projectId === null || !source.watchChanges) return
     stopWatching = source.watchChanges(projectId, {
-      changed: (flowId) => changedElsewhere(projectId, flowId),
+      changed: (flowId, signal) =>
+        changedElsewhere(projectId, flowId, signal?.originClientId ? { id: signal.originClientId, side: 'event' } : undefined),
       resync: () => {
         for (const tab of state.tabs) changedElsewhere(projectId, tab.flowId)
       },
@@ -1060,6 +1089,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       (error: unknown) => {
         if (!isCurrent()) return
         pendingReads.delete(flowId)
+        pairedSignals.delete(flowId)
         // TR0020 rev3: the draft is gone meanwhile (run / removed elsewhere) — the server's default.
         if (view === 'draft') {
           graphViews.delete(flowId)
@@ -1086,6 +1116,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     seeds.clear()
     holdWrites.clear()
     titleStates.clear()
+    pairedSignals.clear()
     runControl.clear()
     archiveReads.clear()
     // Keep the last write verdict for saves flushed by this switch (Flow ids are globally unique).
@@ -1128,6 +1159,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     seeds.delete(flowId)
     holdWrites.delete(flowId)
     titleStates.delete(flowId)
+    pairedSignals.delete(flowId)
     runControl.forget(flowId)
     delete state.graphs[flowId]
     delete state.views[flowId]
@@ -1140,8 +1172,9 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     readGraph(flowId)
   }
 
-  function refreshFlow(flowId: string) {
-    if (state.projectId !== null) changedElsewhere(state.projectId, flowId)
+  function refreshFlow(flowId: string, answered?: { readonly originClientId: string }) {
+    if (state.projectId === null) return
+    changedElsewhere(state.projectId, flowId, answered ? { id: answered.originClientId, side: 'answer' } : undefined)
   }
 
   function selectNode(flowId: string, nodeId: string | null) {

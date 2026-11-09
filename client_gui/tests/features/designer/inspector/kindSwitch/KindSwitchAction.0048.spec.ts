@@ -65,6 +65,9 @@ const { toReviewDocument, toReviewActivity, toKindSwitchResult, toDocumentDetail
 const i18n = prepareInspectorI18n()
 
 const FLOW = UNASSIGNED_GRAPH.flowId
+/** flowgate.v02test.0013: each switch names itself (its x-canvas-client-id) to the converter and in its refresh. */
+const SWITCH_ID = expect.stringMatching(/^kind_[a-z0-9]+$/)
+const SWITCHED = { kind: 'refresh-flow', flowId: FLOW, originClientId: SWITCH_ID }
 const ROOT_R = UNASSIGNED_REQ_NODE.document!.docId
 const ROOT_B = `${FLOW}.0001-B`
 
@@ -218,8 +221,8 @@ describe('the switch button and its menu', () => {
     expect(confirmText()).toBe('')
     expect(document.body.textContent).not.toContain('문서 번호(0001-R → 0001-B)가 바뀌고')
     expect(convertCall).toHaveBeenCalledTimes(1)
-    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
-    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B', SWITCH_ID)
+    expect(intents).toEqual([SWITCHED])
   })
 
   it('a pick while the state is still being read does not wait for it: the switch is asked at once (0015-T T2)', async () => {
@@ -232,8 +235,8 @@ describe('the switch button and its menu', () => {
     await mountSwitch(TARGET_R)
     await pickOther()
     expect(convertCall).toHaveBeenCalledTimes(1)
-    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
-    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B', SWITCH_ID)
+    expect(intents).toEqual([SWITCHED])
     answer()
     await flushPromises()
     expect(confirmButtons()).toEqual([])
@@ -246,7 +249,7 @@ describe('the switch button and its menu', () => {
     await mountSwitch(TARGET_R)
     await pickOther()
     expect(confirmButtons()).toEqual([])
-    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B', SWITCH_ID)
   })
 
   it.each(['answers', 'fails'] as const)('the part unmounted while the state is read: the read that %s afterwards starts nothing', async (end) => {
@@ -292,8 +295,8 @@ describe('a switch (D#2 §3.4)', () => {
     await switchKind()
 
     expect(convertCall).toHaveBeenCalledTimes(1)
-    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
-    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B', SWITCH_ID)
+    expect(intents).toEqual([SWITCHED])
     expect(docs.has(ROOT_R)).toBe(false)
     expect(docs.get(ROOT_B)?.typeCode).toBe('B')
     // The old id is gone on the server: it is not read again.
@@ -319,9 +322,9 @@ describe('a switch (D#2 §3.4)', () => {
     expect(documentRead).toHaveBeenLastCalledWith(ROOT_B)
 
     await switchKind()
-    expect(convertCall).toHaveBeenLastCalledWith(ROOT_B, 'R')
+    expect(convertCall).toHaveBeenLastCalledWith(ROOT_B, 'R', SWITCH_ID)
     expect(docs.get(ROOT_R)?.typeCode).toBe('R')
-    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }, { kind: 'refresh-flow', flowId: FLOW }])
+    expect(intents).toEqual([SWITCHED, SWITCHED])
   })
 
   it('waiting for the answer: busy, and a second click sends nothing', async () => {
@@ -336,7 +339,7 @@ describe('a switch (D#2 §3.4)', () => {
     answer(toKindSwitchResult({ data: { doc_id: ROOT_B, type_code: 'B', group_id: FLOW } }, ROOT_R))
     await flushPromises()
     expect(find('inspector-kind-switch').attributes('data-busy')).toBe('false')
-    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    expect(intents).toEqual([SWITCHED])
   })
 })
 
@@ -500,7 +503,7 @@ describe('in the Frame (real registry)', () => {
   it('a host intent leaves the Frame as its `host` event', async () => {
     await mountFrame(SELECTIONS.unassigned)
     await switchKind()
-    expect(wrapper!.emitted('host')).toEqual([[{ kind: 'refresh-flow', flowId: FLOW }]])
+    expect(wrapper!.emitted('host')).toEqual([[SWITCHED]])
   })
 
   it.each([

@@ -10,7 +10,8 @@ import { createFakeSource, turn } from './fakeConversationSource'
 
 // flowgate.v02.0151 T-A2 (NR Rev.4 §2.6-3 ②, §2.8 V8): coming back to the panel — the tab visible again, the window
 // focused again — catches the open chat up, activities included; at most once per REVISIT_CATCHUP_MIN_MS, never while
-// hidden or while an AI run is polled. The panel's existing reload path (same chat) brings activities too.
+// hidden. The panel's existing reload path (same chat) brings activities too. flowgate.v02test.0013: a polled run's
+// poll is woken instead of being skipped.
 registerAppMessages(i18n)
 
 const A = 'p.m.0001.0002-CH'
@@ -91,19 +92,24 @@ describe('0151 T-A2 panel revisit catch-up (V8)', () => {
     expect(changeCards()).toHaveLength(1)
   })
 
-  it('does not catch up while an AI run is polled (its ticks read instead)', async () => {
+  // flowgate.v02test.0013: a return while a run is polled is no longer skipped — the poll may be behind (a throttled
+  // background tab, missed events). It wakes the poll instead of reading beside it: one tick now, no history read.
+  it('while an AI run is polled a return wakes its poll instead of a catch-up beside it', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const { source, session } = await mountPanel()
     source.startChatRun.mockResolvedValueOnce('r1')
+    source.fetchRun.mockImplementation(async (id: string) => ({ runId: id, status: 'running', endReason: null, outcome: null,
+      exitCode: null, succeeded: null, docRef: A, actionScope: 'chat', groupId: 'p.m.0001' }))
     await session.invokeAi()
     await flushPromises()
     expect(session.running.value).toBe(true)
-    const reads = source.listActivities.mock.calls.length
-    const turnReads = source.fetchTurns.mock.calls.length
+    const ticks = source.fetchRun.mock.calls.length
+    const history = source.listRuns.mock.calls.length
     await visibilityChange()
     await windowFocus()
-    expect(source.listActivities.mock.calls.length).toBe(reads)
-    expect(source.fetchTurns.mock.calls.length).toBe(turnReads)
+    expect(source.fetchRun.mock.calls.length).toBe(ticks + 1) // one tick; the focus of the same return adds none
+    expect(source.listRuns.mock.calls.length).toBe(history)
+    expect(session.state.runId).toBe('r1')
   })
 
   it('removes the listeners it added when the panel goes away', async () => {

@@ -40,8 +40,11 @@ export const CANVAS_CARD_STEP_COALESCE_MS = 200
 export const CANVAS_STREAM_RETRY_MS = PROJECT_STREAM_RETRY_MS
 
 export interface FlowCanvasChangeHandlers {
-  /** Another tab / device / user changed this Flow's Canvas. */
-  changed(flowId: string): void
+  /**
+   * Another tab / device / user changed this Flow's Canvas. `signal.originClientId`: the event's `origin_client_id`
+   * (the id the write named itself with, e.g. an R↔B switch's own id), given only when the event carries one.
+   */
+  changed(flowId: string, signal?: { readonly originClientId?: string }): void
   /** The stream (re)connected after a drop: events may be missing, read every open Canvas. */
   resync(): void
 }
@@ -90,7 +93,11 @@ export function subscribeFlowCanvasChanges(projectId: string, handlers: FlowCanv
       const flowId = changedFlowOfFrame(frame.payload, frame.groupId)
       if (flowId === null) return
       if ((CANVAS_CARD_STEP_EVENTS as readonly string[]).includes(frame.type) || (CANVAS_GATE_JOB_EVENTS as readonly string[]).includes(frame.type)) stepChanged(flowId)
-      else handlers.changed(flowId)
+      else {
+        const origin = frame.payload.origin_client_id
+        if (typeof origin === 'string' && origin) handlers.changed(flowId, { originClientId: origin })
+        else handlers.changed(flowId)
+      }
     },
     resync: () => handlers.resync(),
   })

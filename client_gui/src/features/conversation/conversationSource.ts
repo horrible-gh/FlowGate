@@ -8,6 +8,9 @@
 // changes with their server anchors, and command decisions go to the server. There is no push
 // channel yet — the HTTP source leaves `subscribeActivities` undefined and the session
 // re-reads activities on its AI-run polling ticks instead (D0006 §3.9.2).
+// flowgate.v02test.0013: server events still do not carry state through this source; the panel
+// hears them from the container's project stream (conversationEvents.ts) as signals and the
+// session reads through this source again (session.recover).
 import * as api from './api'
 import type {
   ChatSettings,

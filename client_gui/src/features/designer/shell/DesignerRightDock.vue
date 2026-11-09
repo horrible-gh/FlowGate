@@ -16,7 +16,10 @@
        flowgate.v02.0061 T#14: `sourceLocked` (the open Flow's Graph run is running / paused / stopping) goes to the
        Conversation, whose AI source access mode then cannot change.
        flowgate.v02.0066 T#6 sent the Git part's `open-diff` and `git-center-diff-refresh` up to the Shell's Center
-       Diff; flowgate.v02.0067 T#4 shows that diff in the Git part's own modeless, so none of its intents goes up. -->
+       Diff; flowgate.v02.0067 T#4 shows that diff in the Git part's own modeless, so none of its intents goes up.
+       flowgate.v02test.0013: the Conversation gets the project event stream (`subscribe-events`) and whether it is the
+       part shown (`active`, as the Git part already did), so it follows the server's chat events and catches up when
+       its tab is shown again. -->
   <aside
     class="designer-right-dock"
     :class="{ 'is-unselected': unselected }"
@@ -76,7 +79,13 @@
         class="designer-right-pane is-fill"
         data-test="designer-right-pane-conversation"
       >
-        <ConversationPanel :project-id="partProjectId" :group-id="partFlow?.groupId ?? null" :source-locked="sourceLocked" />
+        <ConversationPanel
+          :project-id="partProjectId"
+          :group-id="partFlow?.groupId ?? null"
+          :source-locked="sourceLocked"
+          :subscribe-events="subscribeChatEvents"
+          :active="!collapsed && !unselected && tool === 'conversation'"
+        />
       </div>
       <div v-if="mountedTools.git" v-show="!unselected && tool === 'git'" class="designer-right-pane" data-test="designer-right-pane-git">
         <DesignerGitPanel
@@ -90,11 +99,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, getCurrentInstance, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ConversationPanel } from '@/features/conversation'
 import { DesignerGitPanel } from '@/features/git'
-import type { FlowRef } from '@/features/project'
+import { useProjectStore, type FlowRef, type ProjectEventSubscription } from '@/features/project'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import PalettePanel from '../palette/PalettePanel.vue'
 import type { PaletteItemDefinition } from '../palette/paletteCatalog'
@@ -153,6 +162,14 @@ watch(
 // reset to their empty state and read nothing; the target's context arrives with the first choice.
 const partProjectId = computed(() => (props.unselected ? null : props.projectId))
 const partFlow = computed(() => (props.unselected ? null : props.activeFlow))
+
+// flowgate.v02test.0013: the Conversation knows no store; it hears the project's shared event stream through this.
+// A Dock mounted without the app's Pinia (a unit test) hands in nothing and the chat hears no event.
+const pinia = getCurrentInstance()?.appContext.config.globalProperties.$pinia
+const projectStore = pinia ? useProjectStore(pinia) : null
+const subscribeChatEvents = projectStore
+  ? (projectId: string, subscription: ProjectEventSubscription) => projectStore.subscribeProjectEvents(projectId, subscription)
+  : undefined
 </script>
 
 <style scoped>

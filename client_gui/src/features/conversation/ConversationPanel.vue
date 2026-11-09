@@ -6,7 +6,10 @@
        gives it the height to fill.
        flowgate.v02.0061 T#14 (WP answer 2): `sourceLocked` — the Flow's Graph run is running / paused / stopping: the
        AI source access mode cannot change (the reason on the mode icons); messages, AI calls and read use go on. A
-       refused edit / edit-once call (409 graph_run_locked) says so in the notice. -->
+       refused edit / edit-once call (409 graph_run_locked) says so in the notice.
+       flowgate.v02test.0013: `subscribeEvents` (the container's project event stream) keeps the open chat in line with
+       the server while it is open — shown or not — and `active` (the container shows this part) makes coming back to
+       the Dock tab a return like the browser tab's. -->
   <section class="conv-panel" data-test="conversation-panel" :aria-label="t('gui.conversation.label')">
     <ConversationHeader
       :chats="state.chats"
@@ -118,18 +121,26 @@ import ConversationParticipants from './ConversationParticipants.vue'
 import ConversationTimeline from './ConversationTimeline.vue'
 import RunChangeWindow from './RunChangeWindow.vue'
 import { REVISIT_CATCHUP_MIN_MS, createConversationSession } from './conversationSession'
+import { useChatEvents, type SubscribeChatEvents } from './conversationEvents'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import type { ChatSettingsPatch, ChatSummary, WorkChangeActivity } from './types'
 
-const props = defineProps<{
-  projectId: string | null
-  /** The active Flow's v0.1 group id (FlowRef.groupId), or null when no Flow is open. */
-  groupId: string | null
-  source?: ConversationSource
-  readOnly?: boolean
-  /** flowgate.v02.0061 T#14: the Flow's Graph run locks the AI source access mode. */
-  sourceLocked?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    projectId: string | null
+    /** The active Flow's v0.1 group id (FlowRef.groupId), or null when no Flow is open. */
+    groupId: string | null
+    source?: ConversationSource
+    readOnly?: boolean
+    /** flowgate.v02.0061 T#14: the Flow's Graph run locks the AI source access mode. */
+    sourceLocked?: boolean
+    /** flowgate.v02test.0013: the project event stream; without it the chat hears no server event. */
+    subscribeEvents?: SubscribeChatEvents
+    /** flowgate.v02test.0013: the container shows this part (false while another Dock tab is shown). */
+    active?: boolean
+  }>(),
+  { source: undefined, readOnly: false, sourceLocked: false, subscribeEvents: undefined, active: true },
+)
 
 const emit = defineEmits<{
   'open-change': [activity: WorkChangeActivity]
@@ -255,20 +266,42 @@ async function copyManualAgain(): Promise<void> {
   if (await copyToClipboard(text)) session.setManualCopyText(null)
 }
 
-// flowgate.v02.0151 T-A2 (NR §2.6-3 ②): there is no push channel for activities, so coming back to the panel — the
-// tab visible again, the window focused again — catches the open chat up (turns, activities, run history). At most
-// once per REVISIT_CATCHUP_MIN_MS (both events fire on one return), never while hidden, and not while an AI run is
-// tracked: its polling ticks already read all of that.
+// flowgate.v02test.0013: every server event about the open chat (a message, its AI run starting or ending, a command
+// request, a run's changes) and a reconnect of the stream recover what it may have changed — also while the part is
+// hidden behind another Dock tab, so it is current when shown again.
+useChatEvents(
+  props.subscribeEvents,
+  () => {
+    const scope = state.scope
+    const chatId = state.activeChatId
+    return scope && chatId ? { projectId: scope.projectId, groupId: scope.groupId, chatId } : null
+  },
+  (parts) => void session.recover(parts),
+)
+
+// flowgate.v02.0151 T-A2 (NR §2.6-3 ②): coming back to the panel — the tab visible again, the window focused again —
+// catches the open chat up. At most once per REVISIT_CATCHUP_MIN_MS (both events fire on one return), never while
+// hidden. flowgate.v02test.0013: events missed meanwhile (a dropped stream, a throttled background tab) are why the
+// return recovers everything — the chat's active run included, which the open chat may have missed — and a run
+// being polled is not skipped any more: its poll reads now instead of at the end of its wait. Showing the Dock's
+// chat tab again is a return too; a window focus while another Dock tab is shown is not.
 let lastRevisitCatchUp = Number.NEGATIVE_INFINITY
 
 function onRevisit(): void {
-  if (document.visibilityState === 'hidden') return
-  if (!state.activeChatId || state.turnsStatus !== 'ready' || session.running.value) return
+  if (document.visibilityState === 'hidden' || !props.active) return
+  if (!state.activeChatId || state.turnsStatus !== 'ready') return
   const now = Date.now()
   if (now - lastRevisitCatchUp < REVISIT_CATCHUP_MIN_MS) return
   lastRevisitCatchUp = now
-  void session.catchUp()
+  void session.recover()
 }
+
+watch(
+  () => props.active,
+  (active, before) => {
+    if (active && !before) onRevisit()
+  },
+)
 
 function onVisibilityChange(): void {
   if (document.visibilityState === 'visible') onRevisit()

@@ -29,11 +29,24 @@ def guarded_assignment(doc: Optional[dict], call: Callable[[], Any], actor: Opti
     return outcome
 
 
-def guarded_root_conversion(doc: Optional[dict], call: Callable[[], Any], actor: Optional[str] = None) -> Any:
+def guarded_root_conversion(doc: Optional[dict], call: Callable[[], Any], actor: Optional[str] = None,
+                            origin_client_id: Optional[str] = None) -> Any:
     """R↔B root-type conversion of ``doc``: guarded like a sequence save (``guarded_assignment``,
     flowgate.v02.0048). ``call`` is ``documents.root_conversion.execute_root_conversion``, which joins
-    this guard and moves the card lines and draft cards itself (flowgate.v02.0053 T#1, 0064 T#3)."""
-    return guarded_assignment(doc, call, actor)
+    this guard and moves the card lines and draft cards itself (flowgate.v02.0053 T#1, 0064 T#3).
+    ``origin_client_id``: the requesting tab's ``x-canvas-client-id`` as sent (or None), named by the draft card
+    event when it has the P0008 §1.1 format; any other value is ignored, never refused."""
+    from modules.flow_gate.graph_workflow.services.root_conversion_cards import conversion_origin
+
+    from .envelope import CLIENT_ID_RE
+
+    origin = origin_client_id if isinstance(origin_client_id, str) and CLIENT_ID_RE.match(origin_client_id) else None
+
+    def originated() -> Any:
+        with conversion_origin(origin):
+            return call()
+
+    return guarded_assignment(doc, originated, actor)
 
 
 def progress_refusal(doc: Optional[dict]) -> Optional[tuple[str, dict]]:

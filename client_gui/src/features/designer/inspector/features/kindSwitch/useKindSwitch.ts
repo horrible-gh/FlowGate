@@ -74,6 +74,14 @@ export interface KindSwitchState {
   clearFailure(): void
 }
 
+/** A new id for one switch (P0008 §1.1 format: 1~64 of [A-Za-z0-9_-]). */
+export function newKindSwitchId(): string {
+  const bytes = new Uint8Array(9)
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes)
+  else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256)
+  return `kind_${[...bytes].map((b) => b.toString(36).padStart(2, '0')).join('')}`
+}
+
 export function useKindSwitch(target: () => InspectorTarget | null): KindSwitchState {
   const host = inject(INSPECTOR_HOST, null)
   const docState = useInspectorResource<KindSwitchPreview>({ target, read: kindSwitchPreviewRead, events: KIND_SWITCH_DOCUMENT_EVENTS })
@@ -91,8 +99,12 @@ export function useKindSwitch(target: () => InspectorTarget | null): KindSwitchS
   const failure = ref<KindSwitchFailureKind | null>(null)
   const done = shallowRef<KindSwitchResult | null>(null)
 
-  /** Reads the Flow the switch was made in again, whichever Flow tab is active now. */
-  const readFlow = (flowId: string) => host?.request({ kind: 'refresh-flow', flowId })
+  /**
+   * Reads the Flow the switch was made in again, whichever Flow tab is active now. `originClientId`: the id the switch
+   * named itself with; the Canvas event it causes carries it, and the Center reads once for both.
+   */
+  const readFlow = (flowId: string, originClientId?: string) =>
+    host?.request(originClientId ? { kind: 'refresh-flow', flowId, originClientId } : { kind: 'refresh-flow', flowId })
 
   // A refusal or a finished switch belongs to the Node (and document kind) it was answered for.
   watch(
@@ -147,11 +159,15 @@ export function useKindSwitch(target: () => InspectorTarget | null): KindSwitchS
     busy.value = true
     failure.value = null
     done.value = null
+    // One id per switch: the Canvas event of this switch (when its draft cards changed) names it, so the Center reads
+    // the Flow once for that event and this answer, whichever comes first. Not this tab's own Canvas id: another
+    // change of this tab is told apart, and an event of a switch whose answer got lost is still read.
+    const originClientId = newKindSwitchId()
     try {
-      const result = await kindSwitchConvert(docId, next)
+      const result = await kindSwitchConvert(docId, next, originClientId)
       if (sameNode()) done.value = result
-      // The document has a new identity and no event tells the Canvas: read the Flow again.
-      readFlow(flowId)
+      // The document has a new identity: read the Flow again (once with the switch's own Canvas event).
+      readFlow(flowId, originClientId)
       return true
     } catch (error) {
       const kind = kindSwitchErrorOf(error).kind

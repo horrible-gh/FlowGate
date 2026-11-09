@@ -188,9 +188,17 @@ export async function kindSwitchOriginRead(docId: string): Promise<KindSwitchCon
   return toConvertedFrom(record(response.data).converted_from)
 }
 
-/** Switches a requirement / bug root to the other kind. Transport errors are thrown as they are. */
-export async function kindSwitchConvert(docId: string, newType: KindSwitchType): Promise<KindSwitchResult> {
-  const response = await patchRequest<unknown>(`${API}/documents/${encodeURIComponent(docId)}/root-type`, { new_type: newType })
+/**
+ * Switches a requirement / bug root to the other kind. Transport errors are thrown as they are.
+ * `originClientId` (P0008 §1.1: 1~64 of [A-Za-z0-9_-]) is sent as `x-canvas-client-id`: the Canvas event the switch
+ * causes (its draft cards changed) names it as `origin_client_id`, so the caller can tell that event from another change.
+ */
+export async function kindSwitchConvert(docId: string, newType: KindSwitchType, originClientId?: string): Promise<KindSwitchResult> {
+  const path = `${API}/documents/${encodeURIComponent(docId)}/root-type`
+  const body = { new_type: newType }
+  const response = originClientId
+    ? await patchRequest<unknown>(path, body, { headers: { 'x-canvas-client-id': originClientId } })
+    : await patchRequest<unknown>(path, body)
   return toKindSwitchResult(response.data, docId)
 }
 
