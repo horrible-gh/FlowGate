@@ -73,13 +73,15 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
     }
   })
 
-  it('imports only vue / vue-i18n, its own files, ui primitives, the clipboard helper and (api.ts) the shared transport', () => {
+  // flowgate.v02.0157: plus the shared Markdown renderer the AI messages are drawn with.
+  it('imports only vue / vue-i18n, its own files, ui primitives, the clipboard helper, the Markdown renderer and (api.ts) the shared transport', () => {
     const allowed = [
       /^vue$/,
       /^vue-i18n$/,
       /^\.\/[A-Za-z]+(\.vue)?$/,
       /^\.\.\/\.\.\/components\/ui\/[A-Za-z]+\.vue$/,
       /^\.\.\/\.\.\/core\/interaction\/clipboard$/,
+      /^\.\.\/\.\.\/core\/markdown\/markdownRenderer$/,
       /^@shared\/api$/,
       /^@shared\/utils\/uuid$/,
     ]

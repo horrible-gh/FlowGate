@@ -50,6 +50,55 @@ class ConversationReadMark(BaseModel):
     reason: Literal["viewed", "delivered"] = "viewed"
 
 
+def _bearer(request: Request) -> Optional[str]:
+    value = request.headers.get("Authorization", "")
+    return value[7:] if value.startswith("Bearer ") and len(value) > 7 else None
+
+
+def _worker_token_redirect(leaf: str, method: str):
+    """Answer a worker token sent to this session route with the worker route to use.
+
+    flowgate.v02.0157: the plural ``/documents/{doc_id}/conversation/*`` routes accept only a
+    signed-in session JWT, so a worker's chat token sent here used to come back as the JWT
+    decoder's generic 401 ``Invalid authentication credentials``. That reads as "the token is
+    bad", while the token was fine and only the route was wrong -- the worker then reports an
+    authentication failure instead of reading the conversation at
+    ``/conversation/{doc_id}/turns``. This check keeps the session boundary exactly as it was
+    (still 401, still no worker access here) and only names the right route.
+
+    It runs before ``get_current_user`` (route-level dependency) and stays out of every session
+    request's way: no bearer, or a JWT-shaped one (three dot-separated parts), returns at once
+    and the session check decides as before. A non-JWT bearer that is not a known worker token
+    also falls through, so a garbage value keeps the generic 401.
+    """
+
+    def _check(request: Request, doc_id: str) -> None:
+        raw = _bearer(request)
+        if raw is None or raw.count(".") == 2:
+            return
+        try:
+            from modules.flow_gate.services import token_service
+
+            known = token_service._find_token_by_raw(raw) is not None
+        except Exception:  # noqa: BLE001 -- a lookup failure must not change the session answer
+            return
+        if not known:
+            return
+        path = request.url.path
+        cut = path.rfind("/documents/")
+        worker_url = f"{path[:cut] if cut >= 0 else ''}/conversation/{doc_id}/{leaf}"
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "This is the console session API and it does not accept worker tokens. "
+                f"Use {method} {worker_url} with a chat token bound to this conversation."
+            ),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return _check
+
+
 def _session_actor(request: Request, current_user: dict) -> dict:
     locale = (request.headers.get("X-Locale") or "ko").strip().lower().split("-")[0]
     return {
@@ -60,7 +109,10 @@ def _session_actor(request: Request, current_user: dict) -> dict:
     }
 
 
-@router.get("/{doc_id}/conversation/turns")
+@router.get(
+    "/{doc_id}/conversation/turns",
+    dependencies=[Depends(_worker_token_redirect("turns", "GET"))],
+)
 @require_permission("perm_document_read")
 def list_conversation_turns(
     doc_id: str,
@@ -162,7 +214,11 @@ def get_conversation_markdown(
     }
 
 
-@router.post("/{doc_id}/conversation/turn", status_code=201)
+@router.post(
+    "/{doc_id}/conversation/turn",
+    status_code=201,
+    dependencies=[Depends(_worker_token_redirect("turn", "POST"))],
+)
 @require_permission("perm_document_update")
 def append_conversation_turn(
     doc_id: str,

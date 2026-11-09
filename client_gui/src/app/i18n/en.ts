@@ -960,6 +960,9 @@ export default {
       sending: 'Sending',
       failed: 'Could not send.',
       stale: 'Written before message #{seq} was seen.',
+      copy: 'Copy original text',
+      copied: 'Copied',
+      copy_failed: 'Could not copy',
     },
     command: {
       title: 'Command request',

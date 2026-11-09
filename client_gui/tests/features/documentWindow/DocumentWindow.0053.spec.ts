@@ -38,6 +38,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentContentSave: (...args: unknown[]) => contentSave(...args),
     cardDocumentRead: (...args: unknown[]) => cardBridge.read(...(args as [never])),
     cardDocumentRevise: (...args: unknown[]) => cardBridge.revise(...(args as [never, never])),
+    cardDocumentStandaloneRead: (...args: unknown[]) => cardBridge.standaloneRead(...(args as [never])),
+    cardDocumentStandaloneRevise: (...args: unknown[]) => cardBridge.standaloneRevise(...(args as [never, never])),
     bodyRecoveryDiagnose: (...args: unknown[]) => diagnose(...args),
     bodyRecoveryRecover: (...args: unknown[]) => recoverBody(...args),
   }
@@ -358,8 +360,35 @@ describe('document window — ✎ editing (flowgate.v02.0053 T#3)', () => {
     expect(cardBridge.calls[1].idempotencyKey).not.toBe(cardBridge.calls[0].idempotencyKey)
   })
 
-  it('without card coordinates the window can view but the editor is blocked: no v1 save fallback', async () => {
+  // flowgate.v02.0157: a document no card holds is edited by its doc_id; the server's read decides (edit_path).
+  it('without card coordinates a standalone document (edit_path=non_card) is edited and saved by its own id, never through a card', async () => {
     cardBridge.calls.length = 0
+    cardBridge.standaloneCalls.length = 0
+    cardBridge.editPaths.set(REPORT, 'non_card')
+    const before = cardBridge.revisions.get(REPORT) ?? 0
+    closeAllDocumentWindows()
+    openDocumentWindow(REPORT, 'edit')
+    await flushPromises()
+    const panel = panels()[0]
+    const area = q(panel, 'document-window-textarea') as HTMLTextAreaElement
+    expect(area.value).toBe('# 결과\n\n본문입니다.\n')
+    await type(area, '# 결과\n\n독립 문서 수정.\n')
+    await click(q(panel, 'document-window-save'))
+    expect(contentSave).toHaveBeenCalledWith(REPORT, `${FRONT}\n# 결과\n\n독립 문서 수정.\n`)
+    expect(cardBridge.standaloneCalls).toHaveLength(1)
+    expect(cardBridge.standaloneCalls[0]).toMatchObject({ docId: REPORT, expectedDocId: REPORT, expectedRevision: before })
+    expect(cardBridge.revisions.get(REPORT)).toBe(before + 1)
+    expect(String(cardBridge.standaloneCalls[0].idempotencyKey)).toMatch(/^[0-9a-f-]{36}$/)
+    expect(cardBridge.calls).toHaveLength(0)
+    // A confirmed N+1 without a card line is a success: back to the view with the saved text.
+    expect(windows()).toEqual([[REPORT, 'view']])
+    expect(q(panel, 'md-viewer-content')!.textContent).toContain('독립 문서 수정.')
+  })
+
+  it('a document a card holds (edit_path=card) opened without its coordinates stays blocked: nothing is saved', async () => {
+    cardBridge.calls.length = 0
+    cardBridge.standaloneCalls.length = 0
+    cardBridge.editPaths.set(REPORT, 'card')
     closeAllDocumentWindows()
     openDocumentWindow(REPORT, 'edit')
     await flushPromises()
@@ -369,6 +398,8 @@ describe('document window — ✎ editing (flowgate.v02.0053 T#3)', () => {
     expect(q(panel, 'document-window-save')!.hasAttribute('disabled')).toBe(true)
     expect(contentSave).not.toHaveBeenCalled()
     expect(cardBridge.calls).toHaveLength(0)
+    expect(cardBridge.standaloneCalls).toHaveLength(0)
+    cardBridge.editPaths.delete(REPORT)
   })
 
   it('opening with ✎ while the view is open turns that window to the editor', async () => {

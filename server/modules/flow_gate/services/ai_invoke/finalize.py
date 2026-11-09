@@ -468,6 +468,11 @@ def _finalize_stop(run: dict, respawn_pending: bool) -> None:
 # (submission_ledger.py) keeps every attempt in order; the scratch goes only when the
 # current hop has no failure, or when a success that is still durable in the documents
 # table came AFTER the last failure.
+#
+# flowgate.v02.0157: "settled" no longer means "delete now". It only decides whether the
+# run left unsubmitted drafts behind (`scratch_retained`, the carry-over source). The
+# directory of every run, settled or not, is removed only by the retained sweep once the
+# system scratch retention (scratch_ttl_value/unit) has passed.
 
 
 def _verified_success(run: dict, event: dict) -> tuple[bool, str]:
@@ -642,7 +647,12 @@ def _finalize_scratch(run: dict) -> None:
     )
     settled, settle_reason, evidence = _submission_settlement(run)
     evidence["submission"] = settle_reason
-    deleted = False
+    # flowgate.v02.0157: finalize never deletes the run scratch. Before this, a complete run
+    # with a settled submission was removed right here, so the system scratch retention
+    # (scratch_ttl_value/unit) never applied to it and notes, drafts and logs that lived only
+    # in the scratch were lost at once. Every outcome now keeps the directory; the retained
+    # sweep (_cleanup_retained_scratches) removes it once `completed_at` (stamped above) or
+    # the durable finished_at is older than the current system retention.
     if run["outcome"] != "complete":
         cleanup_reason = "non_complete_outcome"
     elif not manifest_updated:
@@ -650,19 +660,20 @@ def _finalize_scratch(run: dict) -> None:
     elif not settled:
         cleanup_reason = settle_reason
     else:
-        deleted, cleanup_reason = _svc()._delete_owned_scratch(
-            run["project_id"], run["run_id"], scratch, run.get("execution_nonce")
-        )
-    if deleted:
+        cleanup_reason = "settled_retention_active"
+    if settled and manifest_updated:
+        # `scratch_retained` keeps its meaning "unsubmitted drafts were left behind": it
+        # drives the next run's carry-over (carryover._previous_run_problem) and the
+        # retained-path notice. A settled run has nothing to hand over, so it stays empty
+        # while the directory itself waits for the TTL sweep like every other run scratch.
         run["scratch_retained"] = None
-    if not deleted:
+    else:
         try:
             run["scratch_retained"] = storage_paths.to_storage_relative(scratch, run["project_id"])
         except Exception:
             run["scratch_retained"] = run["scratch_dir"]
-        _safe_scratch_log(run["project_id"], run["run_id"], scratch, "retained", cleanup_reason)
-    _scratch_audit_log(run, "deleted" if deleted else "retained", cleanup_reason, evidence,
-                       manifest_updated)
+    _safe_scratch_log(run["project_id"], run["run_id"], scratch, "retained", cleanup_reason)
+    _scratch_audit_log(run, "retained", cleanup_reason, evidence, manifest_updated)
 
 
 def _finalize_source(run: dict) -> None:

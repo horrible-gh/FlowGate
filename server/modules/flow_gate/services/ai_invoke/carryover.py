@@ -458,7 +458,10 @@ def _previous_run_problem(row: Optional[dict], *, project_id: str, group_id: str
 
         retention = scratch_retention.effective_retention()
     except Exception:
-        retention = timedelta(days=7)
+        # flowgate.v02.0157: no private 7-day fallback. The retained sweep stops on the
+        # same settings error, so the source stays where it is; this check fails closed
+        # like every other one here instead of judging expiry by a value nobody set.
+        return "retention_unavailable"
     if datetime.now(timezone.utc) - finished >= retention:
         return "previous_expired"
     if run_live is not None:

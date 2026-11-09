@@ -971,6 +971,9 @@ export default {
       sending: '보내는 중',
       failed: '전송하지 못했습니다.',
       stale: '#{seq} 메시지를 보기 전에 작성된 답변입니다.',
+      copy: '원문 복사',
+      copied: '복사했습니다',
+      copy_failed: '복사하지 못했습니다',
     },
     command: {
       title: '명령 실행 요청',

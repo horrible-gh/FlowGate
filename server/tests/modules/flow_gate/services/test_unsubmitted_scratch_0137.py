@@ -181,22 +181,61 @@ class TestSubmissionSettlement:
         runtime._cleanup_retained_scratches(PROJECT)
         assert not scratch.exists()
 
-    def test_clean_complete_run_is_still_deleted_c3(self, storage):
+    def test_clean_complete_run_is_retained_until_the_system_ttl_c3(self, storage, monkeypatch):
+        """flowgate.v02.0157: a complete, settled run no longer loses its scratch at
+        finalize. It is kept (not offered for carry-over) until the system retention
+        measured from `completed_at` has passed, then the retained sweep removes it."""
         run_id, scratch = _run_scratch(2)
-        (scratch / "notes.md").write_text("x", encoding="utf-8")
+        notes = scratch / "notes.md"
+        notes.write_text("x", encoding="utf-8")
+        digest = _sha(notes)
         run = _finished_run(run_id, scratch)
         finalize._finalize_scratch(run)
-        assert not scratch.exists()
-        assert run["scratch_retained"] is None
-        assert run["scratch_cleanup"] == {**run["scratch_cleanup"], "action": "deleted",
-                                          "reason": "deleted", "submission": "no_registration_error"}
+        assert notes.is_file() and _sha(notes) == digest
+        assert run["scratch_retained"] is None             # nothing to carry over
+        assert run["scratch_cleanup"] == {**run["scratch_cleanup"], "action": "retained",
+                                          "reason": "settled_retention_active",
+                                          "submission": "no_registration_error"}
+        manifest = json.loads((scratch / svc.SCRATCH_MANIFEST_NAME).read_text(encoding="utf-8"))
+        assert manifest["completed_at"] is not None
 
-    def test_clean_submission_is_deleted(self, storage, docs):
+        monkeypatch.setattr(svc, "is_run_live", lambda _r: False)
+        monkeypatch.setattr(runtime.db_group_ai_leases, "get_by_run_id", lambda _r: None)
+        runtime._cleanup_retained_scratches(PROJECT)       # fresh: retention active
+        assert notes.is_file() and _sha(notes) == digest
+        manifest["completed_at"] = (datetime.now(timezone.utc) - timedelta(days=7)
+                                    + timedelta(minutes=5)).isoformat()
+        (scratch / svc.SCRATCH_MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+        runtime._cleanup_retained_scratches(PROJECT)       # just before the TTL: kept
+        assert notes.is_file()
+        manifest["completed_at"] = (datetime.now(timezone.utc) - timedelta(days=7)
+                                    - timedelta(minutes=5)).isoformat()
+        (scratch / svc.SCRATCH_MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+        runtime._cleanup_retained_scratches(PROJECT)       # past the TTL: removed
+        assert not scratch.exists()
+
+    def test_settled_run_follows_a_longer_system_retention(self, storage, monkeypatch):
+        """The system setting, not a fixed 7 days, decides: 30 days keeps an 8-day-old run."""
+        monkeypatch.setattr(scratch_retention, "effective_retention", lambda: timedelta(days=30))
+        monkeypatch.setattr(svc, "is_run_live", lambda _r: False)
+        monkeypatch.setattr(runtime.db_group_ai_leases, "get_by_run_id", lambda _r: None)
+        run_id, scratch = _run_scratch(19)
+        run = _finished_run(run_id, scratch)
+        finalize._finalize_scratch(run)
+        manifest = json.loads((scratch / svc.SCRATCH_MANIFEST_NAME).read_text(encoding="utf-8"))
+        manifest["completed_at"] = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+        (scratch / svc.SCRATCH_MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+        runtime._cleanup_retained_scratches(PROJECT)
+        assert scratch.is_dir()
+
+    def test_clean_submission_is_retained_until_ttl(self, storage, docs):
         run_id, scratch = _run_scratch(12)
         run = _finished_run(run_id, scratch)
         _ok(run)
         finalize._finalize_scratch(run)
-        assert not scratch.exists() and run["scratch_cleanup"]["submission"] == "submitted"
+        assert scratch.is_dir() and run["scratch_cleanup"]["submission"] == "submitted"
+        assert run["scratch_cleanup"]["reason"] == "settled_retention_active"
+        assert run["scratch_retained"] is None
 
     @pytest.mark.parametrize("outcome", ["none", "partial"])
     def test_non_complete_outcomes_keep_their_reason(self, storage, outcome):
@@ -231,15 +270,17 @@ class TestSubmissionSettlement:
         assert run["scratch_cleanup"]["reason"] == "last_submission_failed"
         assert run["scratch_cleanup"]["last_failure_status"] == status
 
-    def test_failure_then_verified_success_is_deleted(self, storage, docs):
-        """§2-3: an earlier error is not a permanent failure once a later submission landed."""
+    def test_failure_then_verified_success_is_settled(self, storage, docs):
+        """§2-3: an earlier error is not a permanent failure once a later submission landed.
+        0157: settled means "nothing to carry over"; the directory still waits for the TTL."""
         run_id, scratch = _run_scratch(13)
         run = _finished_run(run_id, scratch, register_errors=[{"status": 422}])
         _fail(run, 422)
         _ok(run, revision_no=4)
         finalize._finalize_scratch(run)
-        assert not scratch.exists()
+        assert scratch.is_dir() and run["scratch_retained"] is None
         assert run["scratch_cleanup"]["submission"] == "submitted_after_error"
+        assert run["scratch_cleanup"]["reason"] == "settled_retention_active"
 
     def test_success_failure_success_is_deleted_and_failure_success_failure_is_not(
             self, storage, docs):
@@ -317,7 +358,7 @@ class TestSubmissionSettlement:
         assert run["scratch_cleanup"]["reason"] == "review_loop_hop_failed"
         assert run["scratch_cleanup"]["loop_stop_reason"] == "retry_exhausted"
 
-    def test_loop_hop_failure_then_success_is_deleted(self, storage, docs):
+    def test_loop_hop_failure_then_success_is_settled(self, storage, docs):
         run_id, scratch = _run_scratch(6)
         run = _finished_run(
             run_id, scratch, hop_kind="review", document_review_loop_checkpointed=True,
@@ -327,8 +368,9 @@ class TestSubmissionSettlement:
         _fail(run, 422)
         _ok(run, action="review")
         finalize._finalize_scratch(run)
-        assert not scratch.exists()
+        assert scratch.is_dir() and run["scratch_retained"] is None
         assert run["scratch_cleanup"]["submission"] == "review_loop_submitted_after_error"
+        assert run["scratch_cleanup"]["reason"] == "settled_retention_active"
 
     def test_loop_hop_success_then_failure_is_retained_even_if_checkpoint_succeeded(
             self, storage, docs):
@@ -731,6 +773,22 @@ class TestNewRunCarryOver:
         row, *_ = self._retained(storage, finished_ago=timedelta(days=8))
         _m, record, _d = self._start(storage, monkeypatch, row)
         assert record["reason"] == "previous_expired"
+
+    def test_unreadable_retention_fails_closed_without_a_private_default(
+            self, storage, monkeypatch):
+        """0157: a settings error no longer means "7 days" (which would have copied this
+        30-minute-old run); it means no copy, like the sweep that stops on the same error.
+        The source itself stays untouched."""
+        row, run_dir, _tok = self._retained(storage)
+
+        def broken():
+            raise ValueError("scratch_ttl_unit must be one of: minute, hour, day")
+
+        monkeypatch.setattr(scratch_retention, "effective_retention", broken)
+        _m, record, new_dir = self._start(storage, monkeypatch, row)
+        assert record["reason"] == "retention_unavailable"
+        assert not (new_dir / "carryover").exists()
+        assert (run_dir / "nr_rev1.md").is_file()
 
     def test_run_id_collision_is_never_carried(self, storage, monkeypatch):
         """0138: this run's own id already names a finished row — that row is someone else's."""

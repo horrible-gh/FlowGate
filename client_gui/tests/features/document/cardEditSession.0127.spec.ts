@@ -363,19 +363,12 @@ describe('body_unreadable on a save keeps the draft (review fix)', () => {
   })
 
   it('a later recovery read is kept as latest only; the draft stays until the user adopts the latest explicitly', () => {
-    const read = conflictLatestRead(unreadable(), snap(7, '---
-project: flowgate
-rev: 7
----
-복구된 본문'))
+    const read = conflictLatestRead(unreadable(), snap(7, '---\nproject: flowgate\nrev: 7\n---\n복구된 본문'))
     expect(read).toMatchObject({ state: 'BLOCKED', draft: 'unsaved' })
     expect(read.base?.revisionNo).toBe(5)
     expect(read.latest?.revisionNo).toBe(7)
     const adopted = adoptMerge(read, 'unsaved')
     expect(adopted).toMatchObject({ state: 'DIRTY', draft: 'unsaved', pending: null })
-    expect(adopted.base).toMatchObject({ revisionNo: 7, frontmatter: '---
-project: flowgate
-rev: 7
----' })
+    expect(adopted.base).toMatchObject({ revisionNo: 7, frontmatter: '---\nproject: flowgate\nrev: 7\n---' })
   })
 })

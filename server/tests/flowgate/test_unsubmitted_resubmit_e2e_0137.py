@@ -14,7 +14,8 @@ Paths walked (T0004 §5-A1/A3/A4, review rej_01M6Q5JFT9ZRCVFB findings 1-5):
   C. follow-up run R3 on the same document: R1's retained drafts are carried into R3's
      token scratch (credential files refused), resubmitted with R3's token (rev 2).
   B. run R2: token T2 revoked mid-run -> _prepare_retry_token reissues T3, carries T2's draft,
-     the old path is refused for T3, the carried path lands (rev 3), finalize deletes.
+     the old path is refused for T3, the carried path lands (rev 3), finalize settles it
+     (0157: settled runs keep their scratch until the system TTL sweep, no carry-over).
 """
 import json
 from pathlib import Path
@@ -203,8 +204,12 @@ def test_unsubmitted_drafts_survive_and_resubmit_with_the_current_token(e2e):
     assert resubmitted.json()["revision_no"] == 2
     assert _token_row(t3["token_id"])["consumed_at"]
     _end(r3)
-    assert r3["scratch_cleanup"] == {**r3["scratch_cleanup"], "action": "deleted",
+    # 0157: a settled run keeps its scratch until the system TTL; it only stops being a
+    # carry-over source (scratch_retained stays empty).
+    assert r3["scratch_cleanup"] == {**r3["scratch_cleanup"], "action": "retained",
+                                     "reason": "settled_retention_active",
                                      "submission": "submitted_after_error"}
+    assert Path(r3["scratch_dir"]).is_dir() and not r3["scratch_retained"]
     assert Path(r1["scratch_dir"]).is_dir()                       # the source is never touched
     _evidence("C.follow_up", carry=record, old_path_status=old_path.status_code,
               resubmit_status=resubmitted.status_code,
@@ -239,7 +244,9 @@ def test_unsubmitted_drafts_survive_and_resubmit_with_the_current_token(e2e):
     assert landed_b.json()["revision_no"] == 3
     assert _ledger(r2) == [(False, 401), (True, 200)]
     _end(r2)
-    assert r2["scratch_cleanup"]["action"] == "deleted"
+    assert r2["scratch_cleanup"]["action"] == "retained"
+    assert r2["scratch_cleanup"]["reason"] == "settled_retention_active"
+    assert Path(r2["scratch_dir"]).is_dir()
     _evidence("B.reissue", revoked_status=revoked.status_code, landed_status=landed_b.status_code,
               revision=documents.get_by_id(D)["revision_no"], ledger=_ledger(r2),
               cleanup=r2["scratch_cleanup"]["submission"])

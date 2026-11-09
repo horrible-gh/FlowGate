@@ -19,6 +19,8 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentContentSave: (...args: unknown[]) => contentSave(...args),
     cardDocumentRead: (...args: unknown[]) => cardBridge.read(...(args as [never])),
     cardDocumentRevise: (...args: unknown[]) => cardBridge.revise(...(args as [never, never])),
+    cardDocumentStandaloneRead: (...args: unknown[]) => cardBridge.standaloneRead(...(args as [never])),
+    cardDocumentStandaloneRevise: (...args: unknown[]) => cardBridge.standaloneRevise(...(args as [never, never])),
     documentDownload: (...args: unknown[]) => download(...args),
     documentInfoRead: (...args: unknown[]) => infoRead(...args),
     documentRead: (...args: unknown[]) => recordRead(...args),
@@ -127,6 +129,38 @@ afterEach(() => {
 })
 
 // --- Upload -----------------------------------------------------------------------------------------------
+
+// flowgate.v02.0157: an upload without card coordinates targets the document by its doc_id; the base read decides.
+describe('upload — a standalone document (flowgate.v02.0157)', () => {
+  it('without card coordinates a standalone document (edit_path=non_card) is saved to its own id, never through a card', async () => {
+    cardBridge.calls.length = 0
+    cardBridge.standaloneCalls.length = 0
+    const a = win([A])
+    await documentIoUpload(A, { pick: async () => md('# 독립 문서\n') })
+    expect(contentSave).toHaveBeenCalledWith(A, '# 독립 문서\n')
+    expect(cardBridge.standaloneCalls).toHaveLength(1)
+    expect(cardBridge.standaloneCalls[0]).toMatchObject({ docId: A, expectedRevision: 0, content: '# 독립 문서\n' })
+    expect(cardBridge.calls).toHaveLength(0)
+    expect(a.log).toEqual([`guard:${A}`, `reflect:${A}`, `release:${A}`])
+    expect(notices()).toEqual(['upload_done'])
+  })
+
+  it('a document a card holds (edit_path=card) without its coordinates: nothing is picked or saved', async () => {
+    cardBridge.standaloneCalls.length = 0
+    cardBridge.editPaths.set(A, 'card')
+    try {
+      const pick = vi.fn()
+      await documentIoUpload(A, { pick })
+      expect(pick).not.toHaveBeenCalled()
+      expect(contentSave).not.toHaveBeenCalled()
+      expect(cardBridge.standaloneCalls).toHaveLength(0)
+      expect(notices()).toEqual(['save.binding_required'])
+      expect(documentIoBusy(A)).toBe(false)
+    } finally {
+      cardBridge.editPaths.delete(A)
+    }
+  })
+})
 
 describe('upload — the lifecycle (D §3.1)', () => {
   it('saves the file text as it is (only a leading BOM dropped) to the fixed id, reflects, releases, then tells', async () => {

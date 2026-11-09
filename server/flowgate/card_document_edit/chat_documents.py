@@ -268,11 +268,17 @@ def with_current_frontmatter(content, current_text):
     return header + ("" if content.startswith("\n") else "\n") + content
 
 
-def _revise_non_card(doc, expected, content, actor, origin, key, recheck, size_guard, locale):
+def _revise_non_card(doc, expected, content, actor, origin, key, recheck, size_guard, locale,
+                     edit_reason=CHAT_EDIT_REASON):
+    """Shared non-card save core (chat doc_id path and, 0157, the Designer doc_id path ``user_documents``).
+
+    The caller has authenticated ``actor`` / ``origin`` and authorized the project; ``edit_reason`` is the
+    caller's own (the chat default stays ``CHAT_EDIT_REASON``; the Designer passes None, as the card user route)."""
     from . import legacy_store
     box = []
     rule = NonCardRule(box, recheck, size_guard, locale)
-    req = ChatDocumentRequest(doc["doc_id"], expected, actor, rule, origin, content, idempotency_key=key, locale=locale)
+    req = ChatDocumentRequest(doc["doc_id"], expected, actor, rule, origin, content, idempotency_key=key,
+                              edit_reason=edit_reason, locale=locale)
     box.append(req)
     try:
         result, plan = legacy_store.legacy_store(req, expected_revision=expected)

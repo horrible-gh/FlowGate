@@ -9,11 +9,15 @@
 //   automatic_retry_with_new_key = 0    an UNCERTAIN or 401-REJECTED request is resent as it is (same key, same bytes);
 //                                       a new key exists only for an explicit new intent
 //   401 unauthorized / 403 token_kind_not_allowed are REJECTED (rejected before commit), never UNCERTAIN.
+// flowgate.v02.0157: a session's target is a card line (`CardDocumentContext`) or a standalone document
+// (`StandaloneDocumentTarget`, doc_id only). A standalone base is adopted only when the server's read says
+// edit_path=non_card; a card / unavailable answer keeps the editor BLOCKED (binding_required) as before.
 import {
-  cardDocumentConfirmRevision,
+  cardDocumentTargetConfirmRevision,
+  cardDocumentIsStandalone,
   type CardApiError,
-  type CardDocumentContext,
   type CardDocumentSnapshot,
+  type DocumentEditTarget,
   type CardRevisionConfirmed,
   type CardRevisionRequest,
   type CardStructuredCommand,
@@ -45,7 +49,7 @@ export interface EditBase {
 
 /** The frozen request (coordinates, target, submitted bytes, key). Nothing but the session's own answer changes `status`. */
 export interface PendingRequest {
-  readonly context: CardDocumentContext
+  readonly context: DocumentEditTarget
   readonly expectedDocId: string
   readonly expectedRevision: number
   readonly frontmatter: string
@@ -70,7 +74,7 @@ export interface SaveFailure {
 
 export interface EditSession {
   readonly state: EditState
-  readonly context: CardDocumentContext | null
+  readonly context: DocumentEditTarget | null
   /** The document id the editor was started for (the shown document); a read of another id is DETACHED. */
   readonly targetDocId: string | null
   readonly base: EditBase | null
@@ -178,8 +182,8 @@ export function classifyFailure(error: CardApiError): ClassifiedFailure {
 
 // --- Transitions ------------------------------------------------------------------------------------
 
-/** VIEW -> LOADING_BASE (card context present) or BLOCKED (no context: editing needs a card connection). */
-export function beginLoad(session: EditSession, context: CardDocumentContext | null, targetDocId: string): { session: EditSession; seq: number } {
+/** VIEW -> LOADING_BASE (card or standalone target present) or BLOCKED (no target: nothing to edit through). */
+export function beginLoad(session: EditSession, context: DocumentEditTarget | null, targetDocId: string): { session: EditSession; seq: number } {
   const seq = session.readSequence + 1
   if (!context) {
     return { seq, session: with_(newSession(), { state: 'BLOCKED', blockReason: 'binding_required', readSequence: seq, targetDocId }) }
@@ -197,6 +201,10 @@ export function beginLoad(session: EditSession, context: CardDocumentContext | n
 export function baseRead(session: EditSession, seq: number, snapshot: CardDocumentSnapshot): EditSession {
   if (seq !== session.readSequence) return session
   if (session.state !== 'LOADING_BASE') return latestRead(session, snapshot)
+  if (cardDocumentIsStandalone(session.context) && snapshot.editPath !== 'non_card') {
+    // The server says a card holds the document (or it cannot tell): only the card's coordinates may edit it.
+    return with_(session, { state: 'BLOCKED', blockReason: 'binding_required', latest: snapshot })
+  }
   if (snapshot.bodyState !== 'readable' || typeof snapshot.content !== 'string') {
     return with_(session, { state: 'BLOCKED', blockReason: snapshot.bodyState || 'body_unreadable', latest: snapshot })
   }
@@ -271,6 +279,7 @@ export function beginSave(
     return { session: with_(session, { state: 'SAVING', pending: resent, failure: null }), request: resent, blocked: null }
   }
   if (pending && pending.status === 'UNCERTAIN') return stop('blocked') // unreachable guard: uncertain is always resendable
+  if (command !== null && cardDocumentIsStandalone(session.context)) return stop('not_editable') // structured saves are card-only
   if (command === null && session.base.body === null) return stop('base_snapshot_required')
   const body = session.draft
   const request: PendingRequest = {
@@ -308,17 +317,18 @@ export interface SaveOutcome {
   readonly toView: boolean
 }
 
-const own = (session: EditSession, key: string, context: CardDocumentContext | null): boolean =>
+const own = (session: EditSession, key: string, context: DocumentEditTarget | null): boolean =>
   !!session.pending && session.pending.key === key && session.pending.status === 'INFLIGHT' && session.context === context
 
 /**
  * An answer to the request of `key`. Only this session's own INFLIGHT pending can be acknowledged. A shape that
- * does not match (ok / doc_id / expected+1 / updated_at / replayed / line) is UNCERTAIN, never a success.
+ * does not match (ok / doc_id / expected+1 / updated_at / replayed / line — or, for a standalone target,
+ * edit_path=non_card instead of a line) is UNCERTAIN, never a success.
  */
-export function saveAnswered(session: EditSession, key: string, context: CardDocumentContext | null, raw: unknown): SaveOutcome {
+export function saveAnswered(session: EditSession, key: string, context: DocumentEditTarget | null, raw: unknown): SaveOutcome {
   if (!own(session, key, context) || !session.pending) return { session, ignored: true, confirmed: null, toView: false }
   const pending = session.pending
-  const confirmed = cardDocumentConfirmRevision(raw, pending.expectedDocId, pending.expectedRevision)
+  const confirmed = cardDocumentTargetConfirmRevision(pending.context, raw, pending.expectedDocId, pending.expectedRevision)
   if (confirmed === null) {
     const failure: SaveFailure = { code: null, status: null, params: {}, errorKey: 'save_unverified' }
     return {
@@ -349,7 +359,7 @@ export function structuredAcknowledged(session: EditSession, stillEqual: boolean
 }
 
 /** A failed answer for the request of `key`. */
-export function saveFailed(session: EditSession, key: string, context: CardDocumentContext | null, error: CardApiError): SaveOutcome {
+export function saveFailed(session: EditSession, key: string, context: DocumentEditTarget | null, error: CardApiError): SaveOutcome {
   if (!own(session, key, context) || !session.pending) return { session, ignored: true, confirmed: null, toView: false }
   const pending = session.pending
   const failure = classifyFailure(error)
