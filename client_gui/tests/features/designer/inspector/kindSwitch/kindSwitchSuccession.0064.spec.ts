@@ -65,6 +65,9 @@ const { openDocument: realOpenDocument } =
 const i18n = prepareInspectorI18n()
 
 const FLOW = UNASSIGNED_GRAPH.flowId
+/** flowgate.v02test.0013: each switch names itself (its x-canvas-client-id) to the converter and in its refresh. */
+const SWITCH_ID = expect.stringMatching(/^kind_[a-z0-9]+$/)
+const SWITCHED = { kind: 'refresh-flow', flowId: FLOW, originClientId: SWITCH_ID }
 const ROOT_R = UNASSIGNED_REQ_NODE.document!.docId
 const ROOT_B = `${FLOW}.0001-B`
 
@@ -168,8 +171,8 @@ describe('a pick switches at once, whatever the judgement (0015-T T2, P0006 §6.
     expect(confirmButtons()).toEqual([])
     expect(document.body.textContent).not.toContain('새 문서로 이어 가기')
     expect(convertCall).toHaveBeenCalledTimes(1)
-    expect(convertCall).toHaveBeenCalledWith(back ? ROOT_B : ROOT_R, back ? 'R' : 'B')
-    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    expect(convertCall).toHaveBeenCalledWith(back ? ROOT_B : ROOT_R, back ? 'R' : 'B', SWITCH_ID)
+    expect(intents).toEqual([SWITCHED])
     expect(find('kind-switch-line').attributes('data-kind')).toBe('done')
   })
 
@@ -181,7 +184,7 @@ describe('a pick switches at once, whatever the judgement (0015-T T2, P0006 §6.
     await mountSwitch()
     await pickOther()
     expect(confirmButtons()).toEqual([])
-    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B', SWITCH_ID)
     expect(find('kind-switch-line').text()).toBe('버그 문서(0005-B)로 바꿨습니다. Canvas를 다시 읽는 중입니다.')
   })
 
@@ -191,8 +194,8 @@ describe('a pick switches at once, whatever the judgement (0015-T T2, P0006 §6.
     await mountSwitch()
     await pickOther()
     expect(convertCall).toHaveBeenCalledTimes(1)
-    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
-    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B', SWITCH_ID)
+    expect(intents).toEqual([SWITCHED])
     held.answer()
     await flushPromises()
     expect(confirmButtons()).toEqual([])
@@ -221,14 +224,14 @@ describe('a pick switches at once, whatever the judgement (0015-T T2, P0006 §6.
     await pickOther()
     // The switch was asked at the pick itself, while the part was still shown.
     expect(convertCall).toHaveBeenCalledTimes(1)
-    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    expect(intents).toEqual([SWITCHED])
     wrapper!.unmount()
     wrapper = null
     if (end === 'answers') held.answer()
     else held.fail()
     await flushPromises()
     expect(convertCall).toHaveBeenCalledTimes(1)
-    expect(intents).toEqual([{ kind: 'refresh-flow', flowId: FLOW }])
+    expect(intents).toEqual([SWITCHED])
   })
 
   it('another Node while the judgement is read: its answer starts nothing on the Node left behind', async () => {
@@ -268,7 +271,7 @@ describe('the judgement and the badge', () => {
     await pickOther()
     // 0015-T T2: no confirmation — the server judges the switch itself.
     expect(confirmButtons()).toEqual([])
-    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B')
+    expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B', SWITCH_ID)
   })
 
   it('a judgement for the other kind is not used', async () => {

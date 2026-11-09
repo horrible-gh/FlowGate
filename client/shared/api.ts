@@ -607,8 +607,8 @@ export const serverLogout = async (): Promise<void> => {
   }
 }
 
-export const patchRequest = async <T>(path: string, data: unknown): Promise<AxiosResponse<T>> =>
-  api.patch<T>(path, data)
+export const patchRequest = async <T>(path: string, data: unknown, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
+  config ? api.patch<T>(path, data, config) : api.patch<T>(path, data)
 
 export const putRequest = async <T>(path: string, data: unknown, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
   config ? api.put<T>(path, data, config) : api.put<T>(path, data)

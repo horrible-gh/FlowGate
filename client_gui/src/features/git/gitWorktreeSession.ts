@@ -67,6 +67,16 @@ import { worktreeReasons, type WorktreeButton, type WorktreeReason } from './wor
 /** The server's normalized commit subject maximum (COMMIT_SUBJECT_MAX); the server decides. */
 export const WORKTREE_MESSAGE_MAX = 200
 
+/**
+ * flowgate.v02test.0013 — server events after which the worktree area reads again (refresh():
+ * E1 / E8 / E10). An AI run of the Flow (a card worker or a chat run) changes working files with no
+ * Git action of this panel, so without them the area kept the E1 answer read before the run — e.g.
+ * "변경 파일 0" over 16 uncommitted files. `ai_invoke_finished` is any run of the group ending;
+ * `chat_run_changes` is a chat run's changed-file record stored (finalize). The subscriber also
+ * reads again on a stream reconnect, when events may have been missed.
+ */
+export const WORKTREE_REFRESH_EVENTS: readonly string[] = ['ai_invoke_finished', 'chat_run_changes']
+
 type Load = 'idle' | 'loading' | 'ready' | 'error'
 
 /**

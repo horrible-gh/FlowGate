@@ -3573,6 +3573,7 @@ def _recovery_refused_response(refused) -> JSONResponse:
 def convert_root_type(
     doc_id: str,
     body: RootTypeConvert,
+    request: Request,
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     """Convert a workflow root document between R (requirement) and B (bug).
@@ -3594,6 +3595,8 @@ def convert_root_type(
     one entry point. Inside the guard it judges again, stages the new body file next to the original,
     moves the attachment rows and files, the card lines and the draft cards, and removes the old files
     only after the commit. The response adds ``conversion``; new refusals answer with a flat 409.
+    The ``x-canvas-client-id`` header (P0008 §1.1 format; anything else is ignored, never refused) becomes the
+    draft card event's ``origin_client_id`` so the requesting tab reads its Canvas once for the answer and the event.
     """
     from modules.flow_gate.documents import root_conversion
 
@@ -3603,9 +3606,11 @@ def convert_root_type(
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     actor = current_user["user_id"]
+    client_id = request.headers.get("x-canvas-client-id") if request is not None else None
     try:
         result = _graph_contact.guarded_root_conversion(
-            doc, lambda: root_conversion.execute_root_conversion(doc_id, body.new_type, actor), actor)
+            doc, lambda: root_conversion.execute_root_conversion(doc_id, body.new_type, actor), actor,
+            origin_client_id=client_id)
     except root_conversion.ConversionRefused as refused:
         return refused.response()
     if isinstance(result, JSONResponse):

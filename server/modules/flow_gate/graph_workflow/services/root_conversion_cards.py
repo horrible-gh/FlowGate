@@ -6,11 +6,17 @@ only from one reserved root id to the other, and its label only while it is the 
 (ko / ja / en, normalized as the 0062 L0006 2.1 titles); a label or palette id a person chose stays.
 Only when a card changed: the draft version goes up by one and ``graph_canvas_changed`` (``draft``) is
 queued for after the commit. Confirmed revisions are never touched.
+
+That event's ``origin_client_id`` is the requesting tab's ``x-canvas-client-id`` when the route was given one
+(``conversion_origin``): the tab reads its Canvas again after the answer, and with this id it tells its own
+conversion's event from another change and reads the Canvas once for both (P0008 §8.1). None otherwise.
 """
 from __future__ import annotations
 
 import unicodedata
-from typing import Iterable, Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterable, Iterator, Optional
 
 from modules.flow_gate.graph_workflow.store import definition_store
 
@@ -27,6 +33,18 @@ ROOT_NAMES = {
 }
 ROOT_PALETTE_IDS = {"R": "requirement", "B": "bug"}
 LOCALES = ("ko", "ja", "en")
+
+_origin_client_id: ContextVar[Optional[str]] = ContextVar("root_conversion_origin_client_id", default=None)
+
+
+@contextmanager
+def conversion_origin(client_id: Optional[str]) -> Iterator[None]:
+    """The conversion run inside names ``client_id`` as its draft card event's ``origin_client_id``."""
+    token = _origin_client_id.set(client_id)
+    try:
+        yield
+    finally:
+        _origin_client_id.reset(token)
 
 
 def name_key(raw: Optional[str]) -> str:
@@ -77,6 +95,6 @@ def sync_draft_cards(flow_id: str, project_id: Optional[str], doc_id: str, holde
     definition_store.replace_draft_content(flow_id, nodes, draft["edges"])
     from .card_document_ports import dedicated_write
     dedicated_write("conversion_canvas", project_id=project_id, flow_id=flow_id, reason=CANVAS_REASON_DRAFT,
-                           actor_user_id=actor, origin_client_id=None,
+                           actor_user_id=actor, origin_client_id=_origin_client_id.get(),
                            draft_version=int(head["draft_version"]) + 1)
     return changed

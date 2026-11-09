@@ -18,7 +18,15 @@ export type InspectorHostIntent =
    * selected (active) Flow when none is given. flowgate.v02.0048 T#10: an answer that comes after another
    * Flow tab was activated names the Flow it was asked for.
    */
-  | { readonly kind: 'refresh-flow'; readonly flowId?: string }
+  | {
+      readonly kind: 'refresh-flow'
+      readonly flowId?: string
+      /**
+       * The id the answered write named itself with (`x-canvas-client-id`); the Canvas event that write causes carries
+       * it as `origin_client_id`, so the Flow is read once for the answer and that event (whichever comes first).
+       */
+      readonly originClientId?: string
+    }
   /** Open the right Tool Panel on the given tool. */
   | { readonly kind: 'show-tool'; readonly tool: 'git' }
 
