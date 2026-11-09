@@ -230,7 +230,8 @@ def _observe(monkeypatch, repo, env, tmp_path_factory, window, folder):
             (out / "series.json").write_text(json.dumps(series, ensure_ascii=False), encoding="utf-8")
             next_sample = t + SAMPLE_SEC
         triggers_over = done_triggers >= len(schedule)
-        quiet = triggers_over and all(t - last_change[name] >= window for name in scenes)
+        # judged on the recorded samples (the window is what the series shows, not the loop's clock between samples)
+        quiet = triggers_over and all(series[-1]["t"] - last_change[name] >= window for name in scenes)
         if quiet or t >= LIMIT_SEC:
             break
         time.sleep(1)

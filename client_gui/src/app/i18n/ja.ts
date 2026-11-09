@@ -225,6 +225,7 @@ export default {
       close_tab: '{name} を閉じる',
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
+      draft_action_failed: "操作を完了できませんでした。最新のフローを確認してから、もう一度お試しください。({code})",
       document_storage_unwritable: '保存失敗: 文書ストレージエラー。編集内容は保持されています。',
       retry: '再試行',
       sample_data: 'サンプルデータ',

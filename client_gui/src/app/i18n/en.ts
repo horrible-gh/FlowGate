@@ -225,6 +225,7 @@ export default {
       close_tab: 'Close {name}',
       graph_loading: 'Loading graph',
       graph_load_failed: 'Could not load the graph',
+      draft_action_failed: "The action could not be completed. Check the latest flow and try again. ({code})",
       document_storage_unwritable: 'Save failed: document storage error. Your edits are preserved.',
       retry: 'Retry',
       sample_data: 'Sample data',

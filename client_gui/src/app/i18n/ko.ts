@@ -228,6 +228,7 @@ export default {
       close_tab: '{name} 닫기',
       graph_loading: '그래프를 불러오는 중',
       graph_load_failed: '그래프를 불러오지 못했습니다',
+      draft_action_failed: "작업을 완료하지 못했습니다. 최신 플로우를 확인한 뒤 다시 시도하세요. ({code})",
       document_storage_unwritable: '저장 실패: 문서 저장소 오류. 편집 내용은 유지됩니다.',
       retry: '다시 시도',
       sample_data: '샘플 데이터',
