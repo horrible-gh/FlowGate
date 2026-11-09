@@ -257,9 +257,10 @@ class TestNormalExit:
         assert run["outcome"] == "complete"
         assert run["docs_reached"] == 1
         assert run["reached_doc_ids"] == ["flowgate.default.0187.0005-TR"]
-        # complete ⇒ scratch removed, not retained (§2.7)
+        # complete ⇒ not a carry-over source (§2.7). 0157: the folder is no longer removed
+        # at finalize; it waits for the system scratch TTL sweep.
         assert run["scratch_retained"] is None
-        assert not Path(run["scratch_dir"]).exists()
+        assert Path(run["scratch_dir"]).is_dir()
 
 
 # ── ② Forced tree-kill (harness case 2) ──────────────────────────────────────

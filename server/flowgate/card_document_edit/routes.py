@@ -8,7 +8,7 @@ from .revise import revise
 from .read import read_card
 from .validation import parse_body
 from .errors import invalid, internal_error
-from . import contacts, structured_ts_adapter as ts_adapter
+from . import contacts, structured_ts_adapter as ts_adapter, user_documents
 from .structured_identity import INPUT_TS_BRIEF, INPUT_TS_SPEC
 
 router = APIRouter(prefix="/api/v2", tags=["CardDocumentEdit"])
@@ -105,3 +105,29 @@ async def post_test_spec_revision(flow_id: str, node_key: str, slot: str, reques
 @router.post(BASE + "/test-brief/revisions")
 async def post_test_brief_revision(flow_id: str, node_key: str, slot: str, request: Request):
     return await _post_structured(INPUT_TS_BRIEF, flow_id, node_key, slot, request)
+
+
+# flowgate.v02.0157: a standalone (certain non-card) document, by doc_id. User JWT only; a card-bound
+# document keeps the coordinate routes above (its revision POST here is refused, its read says edit_path=card).
+DOC_BASE = "/documents/{doc_id}"
+
+
+@router.get(DOC_BASE)
+def get_standalone_document(doc_id: str, request: Request):
+    def handle():
+        actor = Actor(legacy.authenticate(request))
+        return user_documents.user_read_document(actor, doc_id)
+    return legacy.run(request, handle)
+
+
+@router.post(DOC_BASE + "/revisions")
+async def post_standalone_revision(doc_id: str, request: Request):
+    raw = await request.body()
+    def handle():
+        actor = Actor(legacy.authenticate(request))  # authenticate before JSON/object validation
+        try:
+            body = json.loads(raw)
+        except (ValueError, UnicodeError):
+            raise invalid("invalid_request", "body", "invalid_format")
+        return user_documents.user_revise_document(actor, doc_id, body, legacy.locale_of(request))
+    return await run_in_threadpool(legacy.run, request, handle)

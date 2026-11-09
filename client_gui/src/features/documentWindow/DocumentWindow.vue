@@ -217,6 +217,12 @@ import {
   cardDocumentRevise,
   documentErrorOf,
   documentRead,
+  cardDocumentIsStandalone,
+  cardDocumentStandaloneRead,
+  cardDocumentStandaloneRevise,
+  cardDocumentStandaloneTarget,
+  type CardRevisionRequest,
+  type DocumentEditTarget,
   type DocumentRecord,
 } from '@/features/document'
 import {
@@ -329,6 +335,11 @@ const editDocId = ref(props.win.shown)
 const needReloadFlag = ref(false)
 let latestSequence = 0
 
+/** flowgate.v02.0157: the session target's own read / revision route (card coordinates or the standalone doc_id). */
+const readTarget = (target: DocumentEditTarget) => (cardDocumentIsStandalone(target) ? cardDocumentStandaloneRead(target) : cardDocumentRead(target))
+const reviseTarget = (target: DocumentEditTarget, request: CardRevisionRequest) =>
+  cardDocumentIsStandalone(target) ? cardDocumentStandaloneRevise(target, request) : cardDocumentRevise(target, request)
+
 const editLoading = computed(() => session.value.state === 'LOADING_BASE' || (needReloadFlag.value && editing.value))
 const BLOCK_KEYS: Readonly<Record<string, string>> = {
   binding_required: 'binding_required',
@@ -364,7 +375,7 @@ const latestText = computed(() => session.value.latest?.content ?? '')
 
 /** What the upload buttons act on: the edited document while editing, else the one shown. */
 const ioDocId = computed(() => (editing.value ? editDocId.value : props.win.shown))
-/** The coordinates the header's upload uses: the active edit session's frozen ones, else the latest opener's. */
+/** The target the header's upload uses: the active edit session's frozen one (card or standalone), else the latest opener's card. */
 const ioCard = computed(() => (editing.value ? session.value.context : null) ?? props.win.card)
 /** An upload guards this window's document (or a save the previous Designer sent has not answered). */
 const guardedHere = computed(() => documentIoGuarded(ioDocId.value))
@@ -405,6 +416,9 @@ async function loadEditor(): Promise<void> {
 /**
  * The editor read itself: the card's v2 GET with the frozen opener coordinates. Only a read that starts a session
  * (`adopt`) may fill the editor's base; any other read fills `latest` only (no automatic rebase).
+ * flowgate.v02.0157: without the opener's card coordinates the session targets the document itself (its doc_id
+ * read / revision). The server's read decides: edit_path=non_card edits it, a card-held document stays BLOCKED
+ * (binding_required — it is edited from its card).
  */
 async function readEditor(focus: boolean, adopt = true): Promise<'ok' | 'failed' | 'superseded'> {
   const docId = props.win.shown
@@ -414,7 +428,7 @@ async function readEditor(focus: boolean, adopt = true): Promise<'ok' | 'failed'
     if (!ctx) return 'superseded'
     const seq = ++latestSequence
     try {
-      const snapshot = await cardDocumentRead(ctx)
+      const snapshot = await readTarget(ctx)
       if (seq !== latestSequence || session.value.context !== ctx) return 'superseded'
       const state = session.value.state
       session.value = state === 'CONFLICT' || state === 'DETACHED' ? conflictLatestRead(session.value, snapshot) : latestRead(session.value, snapshot)
@@ -425,14 +439,15 @@ async function readEditor(focus: boolean, adopt = true): Promise<'ok' | 'failed'
   }
   editDocId.value = docId
   loadReadErrorKey.value = null
-  const started = beginLoad(session.value, props.win.card, docId)
+  // The target object is frozen for the session: its saves and answers are matched by this very reference.
+  const started = beginLoad(session.value, props.win.card ?? cardDocumentStandaloneTarget(docId), docId)
   session.value = started.session
   draft.value = ''
   const ctx = started.session.context
   if (ctx === null) return 'failed'
   const seq = started.seq
   try {
-    const snapshot = await cardDocumentRead(ctx)
+    const snapshot = await readTarget(ctx)
     if (seq !== session.value.readSequence) return 'superseded'
     session.value = baseRead(session.value, seq, snapshot)
     if (session.value.state === 'CLEAN') draft.value = session.value.draft
@@ -479,7 +494,7 @@ async function save(): Promise<void> {
   const context = pending.context
   let outcome
   try {
-    const raw = await cardDocumentRevise(context, requestOf(pending))
+    const raw = await reviseTarget(context, requestOf(pending))
     outcome = saveAnswered(session.value, pending.key, context, raw)
   } catch (error) {
     outcome = saveFailed(session.value, pending.key, context, cardDocumentErrorOf(error))

@@ -8,6 +8,11 @@
 //   brief     GET  …/document/test-brief    POST …/document/test-brief/revisions  { …, text }
 // A success is never judged by HTTP status alone: `cardDocumentConfirmRevision` checks ok / doc_id / N+1 / updated_at /
 // line / replayed against the request's own pending target, and anything else is an uncertain result.
+// flowgate.v02.0157 — a standalone document (no card line holds it) is edited by its doc_id only:
+//   read      GET  /api/v2/documents/{doc_id}             -> the same snapshot + edit_path (card / non_card / unavailable)
+//   revise    POST /api/v2/documents/{doc_id}/revisions   { expected_revision, content, idempotency_key }
+// The server alone classifies the document; the client starts a standalone session only for edit_path=non_card, and
+// a standalone answer carries no card line (`cardDocumentStandaloneConfirmRevision`). `DocumentEditTarget` is either one.
 import { getRequest, postRequest } from '@shared/api'
 import { normalizeApiError, normalizeApiInput } from '@shared/apiErrors'
 
@@ -23,6 +28,28 @@ export interface CardDocumentContext {
   readonly openedDocId: string
 }
 
+/** flowgate.v02.0157 — a standalone document's edit target: the document id alone (the server keeps the rest). */
+export interface StandaloneDocumentTarget {
+  readonly kind: 'document'
+  readonly docId: string
+}
+
+/** What an edit session saves to: a card line's coordinates, or a standalone document's id. */
+export type DocumentEditTarget = CardDocumentContext | StandaloneDocumentTarget
+
+export function cardDocumentStandaloneTarget(docId: string): StandaloneDocumentTarget {
+  return { kind: 'document', docId }
+}
+
+export function cardDocumentIsStandalone(target: DocumentEditTarget | null | undefined): target is StandaloneDocumentTarget {
+  return !!target && 'kind' in target && target.kind === 'document'
+}
+
+/** The card coordinates of a target, or null for a standalone document (card-only callers: TS, structured saves). */
+export function cardDocumentContextOf(target: DocumentEditTarget | null | undefined): CardDocumentContext | null {
+  return target && !cardDocumentIsStandalone(target) ? target : null
+}
+
 /** One readable-or-not snapshot of the card's document (P#1 read). */
 export interface CardDocumentSnapshot {
   readonly docId: string
@@ -34,6 +61,8 @@ export interface CardDocumentSnapshot {
   readonly line: unknown
   /** TS structured projection of the same snapshot, when the structured read asked for it. */
   readonly projection?: unknown
+  /** flowgate.v02.0157: the server's classification on a doc_id read (`card` / `non_card` / `unavailable`). */
+  readonly editPath?: string
 }
 
 export interface CardRevisionConfirmed {
@@ -70,6 +99,7 @@ export function toCardDocumentSnapshot(raw: unknown): CardDocumentSnapshot {
     bodyState: row.body_state,
     line: row.line ?? null,
     ...('projection' in row ? { projection: row.projection } : {}),
+    ...(typeof row.edit_path === 'string' ? { editPath: row.edit_path } : {}),
   }
 }
 
@@ -137,6 +167,47 @@ export function cardDocumentConfirmRevision(raw: unknown, expectedDocId: string,
   if (typeof raw.updated_at !== 'string' || !raw.updated_at || typeof raw.replayed !== 'boolean') return null
   if (!('line' in raw) || raw.line === undefined) return null
   return { docId: raw.doc_id, revisionNo: raw.revision_no, updatedAt: raw.updated_at, replayed: raw.replayed, line: raw.line }
+}
+
+// --- Standalone documents (flowgate.v02.0157) --------------------------------------------------------
+
+export function cardDocumentStandalonePath(docId: string): string {
+  return `${API}/documents/${encodeURIComponent(docId)}`
+}
+
+export async function cardDocumentStandaloneRead(target: StandaloneDocumentTarget): Promise<CardDocumentSnapshot> {
+  const response = await getRequest<unknown>(cardDocumentStandalonePath(target.docId))
+  return toCardDocumentSnapshot(response.data)
+}
+
+/** Whole-body save of a standalone document; the raw body is returned unjudged (`cardDocumentStandaloneConfirmRevision`). */
+export async function cardDocumentStandaloneRevise(target: StandaloneDocumentTarget, request: CardRevisionRequest): Promise<unknown> {
+  // Structured TS commands are card-only; a standalone target never sends one.
+  if (request.command) throw new Error('a standalone document takes whole-body saves only')
+  const response = await postRequest<unknown>(`${cardDocumentStandalonePath(target.docId)}/revisions`, {
+    expected_revision: request.expectedRevision,
+    content: request.content ?? '',
+    idempotency_key: request.idempotencyKey,
+  })
+  return response.data
+}
+
+/**
+ * A validated standalone success for exactly this request: ok, same doc_id, integer expected+1, updated_at, replayed
+ * boolean and edit_path=non_card (there is no card line). Otherwise null — uncertain, never a success.
+ */
+export function cardDocumentStandaloneConfirmRevision(raw: unknown, expectedDocId: string, expectedRevision: number): CardRevisionConfirmed | null {
+  if (!isRecord(raw) || raw.ok !== true || raw.edit_path !== 'non_card') return null
+  if (raw.doc_id !== expectedDocId || !isInt(raw.revision_no) || raw.revision_no !== expectedRevision + 1) return null
+  if (typeof raw.updated_at !== 'string' || !raw.updated_at || typeof raw.replayed !== 'boolean') return null
+  return { docId: raw.doc_id, revisionNo: raw.revision_no, updatedAt: raw.updated_at, replayed: raw.replayed, line: null }
+}
+
+/** The success check of the target's own route (a card answer needs its line, a standalone one edit_path=non_card). */
+export function cardDocumentTargetConfirmRevision(target: DocumentEditTarget, raw: unknown, expectedDocId: string, expectedRevision: number): CardRevisionConfirmed | null {
+  return cardDocumentIsStandalone(target)
+    ? cardDocumentStandaloneConfirmRevision(raw, expectedDocId, expectedRevision)
+    : cardDocumentConfirmRevision(raw, expectedDocId, expectedRevision)
 }
 
 // --- Errors (§2.13) ---------------------------------------------------------------------------------

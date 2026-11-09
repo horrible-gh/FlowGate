@@ -17,6 +17,7 @@
 // - 401 keeps the original request for a same-actor resend, 403 token_kind_not_allowed and idempotency_key_reused
 //   stop further sending until the setting is corrected / a new intent is started explicitly.
 import {
+  cardDocumentContextOf,
   cardDocumentErrorOf,
   cardDocumentRevise,
   type CardApiError,
@@ -139,10 +140,18 @@ export async function reviseTs(owner: string, base: TsBase | null, payload: TsPa
   if (!documentIoTsBegin(docId, owner)) return { ok: false, kind: 'busy', failure: null, error: null }
   let session: EditSession
   let pending: PendingRequest
+  // flowgate.v02.0157: the shared session also edits standalone documents; a TS request is always a card's (its
+  // coordinates come from the card's snapshot), so the card coordinates are carried as such.
+  let ctx: CardDocumentContext
   const resent = !!holding
   if (holding) {
     // Explicit retry of the kept request: the frozen pending as it is, sent with its own original coordinates.
-    const ctx = holding.pending.context
+    const kept = cardDocumentContextOf(holding.pending.context)
+    if (kept === null) {
+      documentIoTsEnd(docId, owner)
+      return { ok: false, kind: 'no_context', failure: null, error: null }
+    }
+    ctx = kept
     session = { ...sessionOf(ctx, { docId: holding.pending.expectedDocId, revisionNo: holding.pending.expectedRevision }), state: 'UNCERTAIN', pending: holding.pending }
     const again = beginSave(session, newIdempotencyKey, holding.pending.command)
     if (again.request === null) {
@@ -152,6 +161,7 @@ export async function reviseTs(owner: string, base: TsBase | null, payload: TsPa
     session = again.session
     pending = again.request
   } else {
+    ctx = base.ctx
     const command = 'command' in payload ? payload.command : null
     // The structured / raw difference lives in the frozen request; raw text rides in `body` with an empty frontmatter.
     const start = { ...sessionOf(base.ctx, base), draft: 'raw' in payload ? payload.raw : '' }
@@ -171,7 +181,7 @@ export async function reviseTs(owner: string, base: TsBase | null, payload: TsPa
     let error: CardApiError | null = null
     let outcome
     try {
-      const raw = await cardDocumentRevise(pending.context, requestOf(pending))
+      const raw = await cardDocumentRevise(ctx, requestOf(pending))
       outcome = saveAnswered(session, pending.key, pending.context, raw)
     } catch (thrown) {
       error = cardDocumentErrorOf(thrown)

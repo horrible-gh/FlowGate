@@ -554,8 +554,12 @@ def test_real_admission_conflict_then_a_new_request_runs_the_worker_and_ends(scr
     fresh = legacy.parent / retry_id
     cleanup = run["scratch_cleanup"]
     if submission == "submitted":
-        assert cleanup["action"] == "deleted" and run["scratch_retained"] is None
-        assert not fresh.exists()
+        # 0157: settled -> no carry-over source, but the folder waits for the system TTL.
+        assert cleanup["action"] == "retained" and cleanup["reason"] == "settled_retention_active"
+        assert run["scratch_retained"] is None
+        assert (fresh / "tmp" / "work.txt").read_text(encoding="utf-8") == "retry output"
+        manifest, reason = runtime._validate_scratch_manifest(PROJECT, retry_id, fresh, run["execution_nonce"])
+        assert reason == "valid" and manifest.get("completed_at")         # stamped for the retained sweep
     else:
         assert cleanup["action"] == "retained" and cleanup["reason"] == "last_submission_failed"
         assert (fresh / "tmp" / "work.txt").read_text(encoding="utf-8") == "retry output"

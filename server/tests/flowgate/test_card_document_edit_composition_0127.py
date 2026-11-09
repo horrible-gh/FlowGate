@@ -82,9 +82,11 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
                  edit_routes.post_test_spec_revision, edit_routes.post_test_brief_revision,
                  chat_routes.get_document, chat_routes.post_revision,
                  # 0127 CH0028: chat doc_id read / existing-body revision / new-document create.
-                 chat_routes.get_document_by_id, chat_routes.post_document_revision, chat_routes.post_document)
+                 chat_routes.get_document_by_id, chat_routes.post_document_revision, chat_routes.post_document,
+                 # 0157: the Designer's standalone (non-card) document read / revision by doc_id.
+                 edit_routes.get_standalone_document, edit_routes.post_standalone_revision)
     added = [r for r in current.routes if isinstance(r, APIRoute) and r.endpoint in endpoints]
-    assert len(added) == 11
+    assert len(added) == 13
     expected = "/flowgate/api/v2/flows/{flow_id}/nodes/{node_key}/slots/{slot}/document"
     assert {(r.path, tuple(sorted(r.methods))) for r in added} == {
         (expected, ("GET",)), (expected + "/revisions", ("POST",)),
@@ -94,7 +96,9 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
         (expected.replace("/api/v2/", "/api/v2/chat/") + "/revisions", ("POST",)),
         ("/flowgate/api/v2/chat/documents/{doc_id}", ("GET",)),
         ("/flowgate/api/v2/chat/documents/{doc_id}/revisions", ("POST",)),
-        ("/flowgate/api/v2/chat/documents", ("POST",))}
+        ("/flowgate/api/v2/chat/documents", ("POST",)),
+        ("/flowgate/api/v2/documents/{doc_id}", ("GET",)),
+        ("/flowgate/api/v2/documents/{doc_id}/revisions", ("POST",))}
     before = [r for r in reference.routes if isinstance(r, APIRoute)]
     after = [r for r in current.routes if isinstance(r, APIRoute) and r not in added]
     assert [_route_signature(r) for r in before] == [_route_signature(r) for r in after]
@@ -117,10 +121,11 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
         assert posted.group_resolver is None  # Flow-coordinate routes enforce policy inside the service.
     # 0127 CH0028: the chat doc_id routes keep the standard group resolver (lease check in front of
     # the service, which re-checks the lease owner itself).
-    for posted in (r for r in added if "POST" in r.methods and "/chat/documents" in r.path):
+    # 0157: the Designer doc_id revision resolves the document's group the same way (lease in front of the service).
+    for posted in (r for r in added if "POST" in r.methods and ("/chat/documents" in r.path or "/documents/{doc_id}" in r.path)):
         assert posted.mutation_resource == "group"
         assert posted.mutation_reason == "standard_group_resolver"
-    print(f"COMPOSITION: {len(before)} legacy API routes unchanged; 11 distinct v2 routes (including chat); 4 middleware unchanged")
+    print(f"COMPOSITION: {len(before)} legacy API routes unchanged; 13 distinct v2 routes (including chat); 4 middleware unchanged")
 
 
 @pytest.mark.parametrize("method,path", [
@@ -129,6 +134,8 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
     ("GET", "/flowgate/api/v2/chat/flows/{flow}/nodes/research/slots/instruction/document"),
     ("POST", "/flowgate/api/v2/chat/flows/{flow}/nodes/research/slots/instruction/document/revisions"),
     ("POST", "/flowgate/api/v2/flows/{flow}/nodes/research/slots/instruction/document/revisions"),
+    ("GET", "/flowgate/api/v2/documents/{flow}.0002-N"),
+    ("POST", "/flowgate/api/v2/documents/{flow}.0002-N/revisions"),
 ])
 def test_main_routes_require_auth(composition, method, path):
     reference, current, _ = composition

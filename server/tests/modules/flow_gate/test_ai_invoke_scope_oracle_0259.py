@@ -165,7 +165,8 @@ class TestPerfectWorkerSucceeds:
         assert run["docs_target"] == 0, "an edit run creates no document"
         assert run["outcome"] == "complete"
         assert run["oracle_mismatch"] is False
-        # complete ⇒ scratch cleaned up immediately, not left as scratch_retained (§2.7).
+        # complete ⇒ not left as a carry-over source (scratch_retained). Since 0157 the
+        # folder itself is kept until the system scratch TTL sweep removes it.
         assert run["scratch_retained"] is None
 
     def test_review_run_that_writes_a_review_row_is_complete(self, world):

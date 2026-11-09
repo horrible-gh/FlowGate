@@ -22,9 +22,13 @@ import {
   cardDocumentErrorOf,
   cardDocumentRead,
   cardDocumentRevise,
-  cardDocumentConfirmRevision,
+  cardDocumentTargetConfirmRevision,
+  cardDocumentIsStandalone,
+  cardDocumentStandaloneRead,
+  cardDocumentStandaloneRevise,
+  cardDocumentStandaloneTarget,
   type CardApiError,
-  type CardDocumentContext,
+  type DocumentEditTarget,
   type CardRevisionRequest,
   documentDownload,
   documentErrorOf,
@@ -299,9 +303,10 @@ export interface DocumentIoUploadOptions {
   readonly context?: { readonly projectId: string | null; readonly groupId: string | null }
   /**
    * flowgate.v02.0127 T#5 (§2.11 / §2.14): the card coordinates of the button's line, handed by the caller that draws
-   * the group. Without them nothing is picked or saved (no v1 save fallback).
+   * the group (no v1 save fallback). flowgate.v02.0157: without them the upload targets the document by its doc_id; its
+   * base read must say edit_path=non_card, else nothing is picked or saved (a card-held document needs its card).
    */
-  readonly card?: CardDocumentContext | null
+  readonly card?: DocumentEditTarget | null
 }
 
 type SaveOutcome = { readonly ok: true } | { readonly ok: false; readonly error: unknown }
@@ -311,15 +316,18 @@ class UploadUnverified extends Error {}
 
 /** One upload request whose result is uncertain: frozen with its key, resent as it is by an explicit upload press. */
 interface HeldUpload {
-  readonly card: CardDocumentContext
+  readonly card: DocumentEditTarget
   readonly request: CardRevisionRequest
 }
 
 const heldUploads = new Map<string, HeldUpload>()
 
-async function sendUpload(card: CardDocumentContext, request: CardRevisionRequest): Promise<void> {
-  const raw = await cardDocumentRevise(card, request)
-  if (cardDocumentConfirmRevision(raw, request.expectedDocId, request.expectedRevision) === null) throw new UploadUnverified()
+/** flowgate.v02.0157: the target's own read / revision route (card coordinates or the standalone doc_id). */
+const readTarget = (card: DocumentEditTarget) => (cardDocumentIsStandalone(card) ? cardDocumentStandaloneRead(card) : cardDocumentRead(card))
+
+async function sendUpload(card: DocumentEditTarget, request: CardRevisionRequest): Promise<void> {
+  const raw = cardDocumentIsStandalone(card) ? await cardDocumentStandaloneRevise(card, request) : await cardDocumentRevise(card, request)
+  if (cardDocumentTargetConfirmRevision(card, raw, request.expectedDocId, request.expectedRevision) === null) throw new UploadUnverified()
 }
 
 /** Message key under `gui.document_io.notice.save` for a failed v2 upload (§2.13 codes). */
@@ -402,24 +410,25 @@ export async function documentIoUpload(docId: string, options: DocumentIoUploadO
     notify('upload_hold', 'warning')
     return
   }
-  const card = options.card ?? null
-  if (!card) {
-    notify('save.binding_required', 'warning')
-    return
-  }
+  const card: DocumentEditTarget = options.card ?? cardDocumentStandaloneTarget(docId)
   const token = documentIoNewToken(docId)
   documentIoStartUpload(token)
   let released = false
   try {
     // §2.14: the base read comes before the file picker; what it fixes is the only base the upload saves against.
-    let base: Awaited<ReturnType<typeof cardDocumentRead>>
+    let base: Awaited<ReturnType<typeof readTarget>>
     try {
-      base = await cardDocumentRead(card)
+      base = await readTarget(card)
     } catch {
       if (documentIoAlive(token)) notify('save.base_failed', 'danger')
       return
     }
     if (!documentIoAlive(token)) return // C0
+    if (cardDocumentIsStandalone(card) && base.editPath !== 'non_card') {
+      // flowgate.v02.0157: the server says a card holds the document (or cannot tell): it is uploaded from its card.
+      notify('save.binding_required', 'warning')
+      return
+    }
     if (base.bodyState !== 'readable' || base.content === null || base.docId !== docId) {
       notify('save.base_failed', 'warning')
       return

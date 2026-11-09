@@ -4998,11 +4998,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             # to a temp file then swaps it in wholesale, so a half-written canonical
             # body is never left behind.
             work_plan_service.write_body_atomically(stored_path, wp_plan)
-            if doc_path is not None:
-                try:
-                    document_write_ports.write_gate("paths", [doc_path], lambda: os.unlink(doc_path))
-                except OSError:
-                    pass
+            # flowgate.v02.0157: the `doc_path` source in the token scratch is left in
+            # place (see the plain-body branch below).
         else:
             # T0004 task 2.2: the canonical body is the single normalized string
             # every guard above already checked — never the pre-normalization
@@ -5019,11 +5016,11 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 stored_path,
                 body_for_guards if body_for_guards is not None else (_raw_submission_text or ""),
             )
-            if doc_path is not None:
-                try:
-                    document_write_ports.write_gate("paths", [doc_path], lambda: os.unlink(doc_path))
-                except OSError:
-                    pass
+            # flowgate.v02.0157: the `doc_path` source (always inside the token scratch,
+            # validate_doc_path) is no longer unlinked here. It used to go before the DB
+            # registration below, so a failed db_docs.create / add_questions rolled back the
+            # stored copy too and left neither file. The source now stays in the token
+            # scratch and is reclaimed by the system scratch retention sweep.
     except OSError as exc:
         return _fail(500, f"Storage error: {exc}")
 

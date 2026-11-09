@@ -947,6 +947,9 @@ export default {
       sending: '送信中',
       failed: '送信できませんでした。',
       stale: '#{seq} のメッセージを見る前に書かれた返信です。',
+      copy: '原文をコピー',
+      copied: 'コピーしました',
+      copy_failed: 'コピーできませんでした',
     },
     command: {
       title: 'コマンド実行リクエスト',

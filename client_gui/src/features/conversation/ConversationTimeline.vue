@@ -180,6 +180,18 @@ watch(
   },
 )
 
+// flowgate.v02.0157: the newest message can also grow in place (its body replaced by a longer one, a table or code
+// fence completed). That follows the tail under the same rule: only for a reader already at the bottom.
+watch(
+  () => {
+    const last = props.items[props.items.length - 1]
+    return last?.kind === 'message' ? last.turn.body.length : -1
+  },
+  () => {
+    if (pinned) scrollToBottom()
+  },
+)
+
 watch(
   () => props.chatId,
   () => {

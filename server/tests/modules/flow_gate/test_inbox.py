@@ -2141,6 +2141,46 @@ class TestInboxEditDuplicateBodyGuard:
         assert "normalizations" not in resp.json()
         assert Path(resp.json()["stored_path"]).read_bytes() == self._CRLF_DOC.encode("utf-8")
 
+    # ── flowgate.v02.0157: the doc_path source in the token scratch is never deleted ──
+
+    def test_new_doc_path_source_survives_successful_registration(self, seed_data, tmp_path):
+        """The stored copy is written and registered; the scratch source stays byte-equal
+        and is left for the system scratch retention sweep, not unlinked by the inbox."""
+        scratch = tmp_path / "scratch"
+        scratch.mkdir(parents=True, exist_ok=True)
+        src = scratch / "kept_submission.md"
+        with open(src, "w", encoding="utf-8", newline="") as fh:
+            fh.write(self._LF_DOC)
+        before = src.read_bytes()
+
+        resp = self._post_new(tmp_path, "0001", "R0001", "NR7637", doc_path=str(src))
+        assert resp.status_code == 201, resp.text
+        assert Path(resp.json()["stored_path"]).read_bytes() == before
+        assert src.is_file() and src.read_bytes() == before
+
+    def test_new_doc_path_source_survives_failed_db_registration(self, seed_data, tmp_path):
+        """Before 0157 the source was unlinked before db_docs.create; a failed registration
+        then rolled back the stored copy as well and neither file was left."""
+        from modules.flow_gate.api import inbox_routes
+        from modules.flow_gate.db import documents as db_documents
+
+        scratch = tmp_path / "scratch"
+        scratch.mkdir(parents=True, exist_ok=True)
+        src = scratch / "failed_submission.md"
+        with open(src, "w", encoding="utf-8", newline="") as fh:
+            fh.write(self._LF_DOC)
+        before = src.read_bytes()
+        stored = tmp_path / "docs" / "NR7638_document.md"
+
+        with patch.object(inbox_routes.db_docs, "create",
+                          side_effect=RuntimeError("injected registration failure")):
+            resp = self._post_new(tmp_path, "0001", "R0001", "NR7638", doc_path=str(src))
+        assert resp.status_code == 500, resp.text
+        assert "DB registration error" in resp.text
+        assert not stored.exists()                      # the stored copy is rolled back ...
+        assert src.is_file() and src.read_bytes() == before   # ... the source is not lost
+        assert db_documents.get_by_id("testprj-__ALL__-0001-NR7638") is None
+
     def test_new_crlf_collapsed_header_is_repaired_in_crlf(self, seed_data, tmp_path):
         """A genuine repair must not smuggle a second line-ending style into a
         CRLF document either."""
