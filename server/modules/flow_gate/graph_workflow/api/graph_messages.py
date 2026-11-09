@@ -70,10 +70,15 @@ RUN_EDIT_MESSAGES = {
     # flowgate.v02.0085 T#2: also refused while a confirm card is unresolved (``reason`` gate_rejected /
     # gate_recovery_reset_required in the params)
     "graph_revision_migration_blocked": {
-        "ko": "진행 중 attempt나 해결되지 않은 확인 카드(반려·회차 분리 대기)가 있어 최신 개정으로 이관할 수 없습니다.",
+        "ko": "진행 중 attempt나 해결되지 않은 확인 카드(반려·회차 분리 대기)가 있어 최신 개정으로 이관할 수 없습니다. "
+              "표시된 카드보다 앞에 있는 완료된 카드에서 Time Machine으로 그 카드부터 표시된 카드까지 되돌린 뒤"
+              "(거절된 확인 카드는 그 카드에서) 다시 시도하세요.",
         "en": "The run cannot adopt the latest revision while an attempt is active or a confirm card is unresolved "
-              "(rejected, or waiting for its round split).",
-        "ja": "進行中の attempt または未解決の確認カード（差し戻し・回次分離待ち）があるため最新リビジョンへ移行できません。",
+              "(rejected, or waiting for its round split). Use Time Machine on a completed card before the listed cards "
+              "(for a rejected confirm card, on that card) to rewind from it through the listed cards, then try again.",
+        "ja": "進行中の attempt または未解決の確認カード（差し戻し・回次分離待ち）があるため最新リビジョンへ移行できません。"
+              "表示されたカードより前にある完了済みカードで Time Machine により、そのカードから表示されたカードまで"
+              "巻き戻してから（却下された確認カードはそのカードで）再度お試しください。",
     },
     # flowgate.v02.0085 T#1: a confirm gate's settings are locked outside the pending / open gate of a running or idle
     # run (a reserved decision, a finished gate, a pause, a Time Machine, a conflict, a pending round split)

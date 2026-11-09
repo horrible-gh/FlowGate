@@ -164,10 +164,31 @@ def needs_ai_dispatch(ctx, row: dict) -> bool:
             and row["node_key"] not in (graph_execution_hooks.call("held_nodes", ctx.flow_id) or ()) \
             and graph_execution_hooks.call("write_failure", row) not in (None, "", QUESTION_PENDING):
         return True
+    if _start_failed_open_card(ctx, row, node):
+        return True                                                       # 0156 T4 D6: its AI start failed earlier
     return (row["status"] == "open" and row.get("stage") is None and row.get("result_doc_id") is None
             and node.get("assignee_kind") is None
             and card_settings_ports.uses_ai(ctx.flow_id, node)
             and run_store.active_attempt_id(ctx.run_id, row["node_key"]) is not None)
+
+
+def _start_failed_open_card(ctx, row: dict, node: dict) -> bool:
+    """flowgate.v02.0156 T#4 (D6): a pre-feature (no stage assignment) AI card whose AI start failed (``record_ai_failure``
+    wrote ``ai_invoke_failed`` on its open row) is dispatched again by an explicit command, on the same attempt. Only
+    with no result, no hold, no question wait, and no requested / running execution of the attempt (no duplicate run)."""
+    if row["status"] != "open" or row.get("dispatch_error_code") != "ai_invoke_failed" or row.get("result_doc_id") is not None:
+        return False
+    if not card_settings_ports.uses_ai(ctx.flow_id, node):
+        return False
+    if row["node_key"] in (graph_execution_hooks.call("held_nodes", ctx.flow_id) or ()):
+        return False
+    attempt = run_store.active_attempt_id(ctx.run_id, row["node_key"])
+    if attempt is None:
+        return False
+    if graph_execution_hooks.call("write_failure", row) == QUESTION_PENDING:
+        return False
+    return run_store._one("SELECT 1 AS present FROM graph_attempt_runs WHERE attempt_id = ? "
+                          "AND status IN ('requested', 'running') LIMIT 1", [attempt]) is None
 
 
 def dispatch_document(ctx, row: dict) -> dict:

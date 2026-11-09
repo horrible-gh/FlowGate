@@ -189,12 +189,9 @@ describe('the run band (designerTop.runBandTone, DesignerToolbar)', () => {
     const buttons = w.findAll('[data-test="designer-tool-run"]')
     expect(buttons.map(button => button.attributes('data-command'))).toEqual(commands)
     expect(w.find('[data-command="run.validate"]').exists()).toBe(true)
-    if (facts.status === 'stopping') {
-      expect(buttons[0].attributes('disabled')).toBeDefined()
-    } else {
-      for (const button of buttons) await button.trigger('click')
-      expect(w.emitted('command')).toEqual(commands.map((command) => [command]))
-    }
+    // 0156 T4 D8: a stopping run offers an enabled re-stop (the server's repeated Stop is idempotent).
+    for (const button of buttons) await button.trigger('click')
+    expect(w.emitted('command')).toEqual(commands.map((command) => [command]))
   })
 
   it('has no status area without a run or work target', () => {

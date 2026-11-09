@@ -772,6 +772,7 @@ export default {
         pause: 'Pause',
         resume: 'Resume',
         stopping: 'Stopping',
+        stop_retry: 'Retry stop',
         zoom_fit: 'Fit',
         zoom_out: 'Zoom Out',
         zoom_in: 'Zoom In',
@@ -797,6 +798,7 @@ export default {
         waiting_confirm: 'Waiting for confirmation',
       },
       run_executions: 'Running {running}/{limit}',
+      run_completed_ack: 'The run is already completed, so the command did nothing. Confirm a new definition to run it again.',
       run_requested: 'Requested {n}',
       run_waiting_cards: '{n} next card(s) waiting',
       // flowgate.v02.0124 T#2 — a told wait: the other blocking cards, and how the first one is released.
@@ -833,7 +835,7 @@ export default {
       run_request_failed: 'Could not process the {action} request.',
       run_request_unconfirmed: 'Could not confirm the outcome of the {action} request.',
       run_errors: {
-        graph_revision_migration_blocked: 'The current run state prevents adoption of the new definition.',
+        graph_revision_migration_blocked: 'The current run state prevents adoption of the new definition. Use “Rewind from here (Graph Time Machine)” in the menu of a completed card before the listed cards (for a rejected confirm card, on that card) to rewind from it through the listed cards, then try again.',
         graph_node_protected: 'Changed protected cards prevent adoption.',
         graph_node_key_reused: 'Reused card keys prevent adoption.',
         blocked_reason_active_attempts: 'There are open cards, cards in review, or active card attempts.',

@@ -771,6 +771,7 @@ export default {
         // flowgate.v02.0061 T#14 — 一時停止 / 再開 and the stopping placeholder of the run buttons.
         pause: '一時停止',
         resume: '再開',
+        stop_retry: '停止を再試行',
         stopping: '停止処理中',
         zoom_fit: '画面に合わせる',
         zoom_out: '縮小',
@@ -797,6 +798,7 @@ export default {
         waiting_confirm: '確認待ち',
       },
       run_executions: '実行 {running}/{limit}',
+      run_completed_ack: 'すでに完了した実行のため、コマンドは何も行いませんでした。新しい構成を確定すると再度実行できます。',
       run_requested: '要求 {n}',
       run_waiting_cards: '次のカード {n} 件待ち',
       // flowgate.v02.0124 T#2 — a told wait: the other blocking cards, and how the first one is released.
@@ -833,7 +835,7 @@ export default {
       run_request_failed: '{action}リクエストを処理できませんでした。',
       run_request_unconfirmed: '{action}リクエストの処理結果を確認できませんでした。',
       run_errors: {
-        graph_revision_migration_blocked: '現在の実行状態では新しい構成を採用できません。',
+        graph_revision_migration_blocked: '現在の実行状態では新しい構成を採用できません。表示されたカードより前にある完了済みカードのメニュー『ここから戻す (Graph Time Machine)』で、そのカードから表示されたカードまで巻き戻してから（却下された確認カードはそのカードで）再度お試しください。',
         graph_node_protected: '保護されたカードの変更により構成を採用できません。',
         graph_node_key_reused: '使用済みのカードキーが再び含まれているため構成を採用できません。',
         blocked_reason_active_attempts: '開いているカード、検証中のカード、または進行中のカード実行があります。',

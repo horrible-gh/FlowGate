@@ -783,6 +783,7 @@ export default {
         pause: '일시정지',
         resume: '재개',
         stopping: '중지 중',
+        stop_retry: '중지 다시 시도',
         zoom_fit: '화면 맞춤',
         zoom_out: '축소',
         zoom_in: '확대',
@@ -808,6 +809,7 @@ export default {
         waiting_confirm: '확인 대기',
       },
       run_executions: '실행 {running}/{limit}',
+      run_completed_ack: '이미 완료된 실행이라 명령이 아무 작업도 하지 않았습니다. 새 구성을 확정하면 다시 실행할 수 있습니다.',
       run_requested: '요청 {n}',
       run_waiting_cards: '다음 카드 {n}개 대기',
       // flowgate.v02.0124 T#2 — a told wait: the other blocking cards, and how the first one is released.
@@ -844,7 +846,7 @@ export default {
       run_request_failed: '{action} 요청을 처리하지 못했습니다.',
       run_request_unconfirmed: '{action} 요청의 처리 결과를 확인하지 못했습니다.',
       run_errors: {
-        graph_revision_migration_blocked: '현재 실행 상태로는 새 구성을 채택할 수 없습니다.',
+        graph_revision_migration_blocked: '현재 실행 상태로는 새 구성을 채택할 수 없습니다. 표시된 카드보다 앞에 있는 완료된 카드의 메뉴 “여기부터 되돌리기 (Graph Time Machine)”로 그 카드부터 표시된 카드까지 되돌린 뒤(거절된 확인 카드는 그 카드에서) 다시 시도하세요.',
         graph_node_protected: '보호된 카드가 변경되어 구성을 채택할 수 없습니다.',
         graph_node_key_reused: '이미 사용된 카드 키가 다시 포함되어 구성을 채택할 수 없습니다.',
         blocked_reason_active_attempts: '열려 있거나 검수 상태인 카드 또는 진행 중인 카드 실행이 있습니다.',
