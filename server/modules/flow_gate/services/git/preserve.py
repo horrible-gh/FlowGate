@@ -129,6 +129,13 @@ def parse_preserve_ref(ref: str) -> Optional[tuple[int, int]]:
     return int(m.group(1)), int(m.group(2) or 0)
 
 
+def preserve_ref_namespace() -> str:
+    """The namespace every preservation ref lives under, for READ-ONLY listings
+    (``for-each-ref``) outside this module — 0153 T#4's orphan guard reads it to find a
+    merge's refs on disk. Deletion stays this module's alone (§5.2/§5.4)."""
+    return PRESERVE_REF_PREFIX
+
+
 # ── Git reads (never audited, never remote) ──────────────────────────────────
 
 def _git(repo: Path, args: list[str]):

@@ -871,9 +871,31 @@ def on_session_closed(callback) -> None:
     _close_listeners.append(callback)
 
 
+# flowgate.v02.0153 T#4 (review rej_01M6ZWFPF1E6JE2M): guards run BEFORE each session-row
+# write (context, context CAS, close). The merge session claim registers one: a session an
+# automatic pass processes under its claim is written only while that claim is still valid
+# in the DB; a guard that raises stops the write. No guard registered → no change.
+_write_guards: list = []
+
+
+def on_session_write(callback) -> None:
+    """``callback(merge_id, operation)`` before each session-row write; raising refuses it.
+    A callback with the same module/qualified name replaces the earlier one (reload-safe)."""
+    key = (getattr(callback, "__module__", None), getattr(callback, "__qualname__", None))
+    _write_guards[:] = [c for c in _write_guards
+                        if (getattr(c, "__module__", None), getattr(c, "__qualname__", None)) != key]
+    _write_guards.append(callback)
+
+
+def _guard_session_write(merge_id, operation: str) -> None:
+    for callback in list(_write_guards):
+        callback(merge_id, operation)
+
+
 def close_session(merge_id: int, status: str) -> None:
     if status not in ("done", "aborted"):
         raise ValueError(f"invalid session close status: {status!r}")
+    _guard_session_write(merge_id, "close")
     get_store()._execute(
         "UPDATE git_merge_session SET status = ?, closed_at = ? WHERE merge_id = ?",
         [status, now_iso(), merge_id],
@@ -908,6 +930,7 @@ def cas_session_context(merge_id: int, expected_raw: Any, context: dict) -> bool
     the affected-row boundary with the previous text as the CAS condition.  Run
     inside a transaction the caller owns and the consume shares that unit of work.
     """
+    _guard_session_write(merge_id, "cas_context")
     affected = get_store()._execute_affected(
         "UPDATE git_merge_session SET context = ? WHERE merge_id = ? AND context = ?",
         [json.dumps(context or {}, ensure_ascii=False), merge_id, expected_raw],
@@ -922,6 +945,7 @@ def set_session_context(merge_id: int, context: dict) -> None:
     (see [[store-execute-has-no-rowcount]]), so a caller that has to know the write landed
     reads the row back instead of trusting a return value that does not exist.
     """
+    _guard_session_write(merge_id, "set_context")
     get_store()._execute(
         "UPDATE git_merge_session SET context = ? WHERE merge_id = ?",
         [json.dumps(context or {}, ensure_ascii=False), merge_id],

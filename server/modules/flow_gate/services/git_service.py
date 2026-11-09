@@ -3261,9 +3261,15 @@ def _run_session_git(
     Keep this context object in sync so the caller's later whole-JSON write
     retains the audit. No argv/output/credentials or extra Git probes are kept.
     Exceptions retain a null result instead of inventing a subprocess exit code.
+
+    0153 T#4 (review rej_01M6ZWFPF1E6JE2M): when this thread processes the session under
+    its claim, the claim is fenced before the command and again after it, before the audit
+    write — a lease that ran out during a slow fetch/push (and was taken over) stops here
+    with ``session_claim.ClaimLost``; nothing of this processor is written afterwards.
     """
     if merge_id is None:
         return _run_git(args, **kwargs)
+    _session_claim_require(merge_id, f"git_{reason}")
     if context is None:
         context = db_git.session_context(db_git.get_session(merge_id))
     entry = {"operation": operation, "reason": reason, "at": now_iso(),
@@ -3274,8 +3280,16 @@ def _run_session_git(
         entry.update(returncode=proc.returncode, status="completed")
         return proc
     finally:
+        _session_claim_require(merge_id, f"after_{reason}")
         context["ref_operations"] = [*(context.get("ref_operations") or []), entry][-20:]
         db_git.set_session_context(merge_id, context)
+
+
+def _session_claim_require(merge_id: int, step: str) -> None:
+    """0153 T#4: fence the session claim this thread holds for ``merge_id`` (no claim held:
+    nothing to fence). Raises ``session_claim.ClaimLost`` when it is no longer valid."""
+    from .git import session_claim as _session_claim
+    _session_claim.require(int(merge_id), step)
 
 
 def _enter_reconciling(
@@ -4260,65 +4274,103 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
     if trigger != "server_startup" and not _iso_is_due(context.get("reconcile_next_at")):
         return None
     project_id = _session_project(session)
-    # 0669 unit 8b: the session target's G/W/B plus R (it asks the remote and may push or
-    # move the target) instead of the project mutex.
-    from .git import branch_merge_publish as _bmp
-    try:
-        lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action",
-                                           publish=True)
-    except GitServiceError:
+    # 0153 T#4 §4.3: the session claim is taken after the unlocked pre-check and before
+    # the lock (re-entered when a sweep/startup pass of this thread already holds it). A
+    # busy claim is answered like a busy lock: None, nothing written. The outermost
+    # release records the outcome; a dead process is freed by lease expiry / owner DEAD.
+    from .git import session_claim as _session_claim
+    claim = _session_claim.acquire(merge_id, _session_claim.PURPOSE_RECONCILE)
+    if claim is None:
         return None
+
+    def _locked() -> Optional[dict]:
+        nonlocal session
+        # 0669 unit 8b: the session target's G/W/B plus R (it asks the remote and may push or
+        # move the target) instead of the project mutex.
+        from .git import branch_merge_publish as _bmp
+        try:
+            lock_ctx, lock_held = _bmp.session_lock(session, project_id, holder_kind="review_action",
+                                               publish=True)
+        except GitServiceError:
+            return None
+        try:
+            session = db_git.get_session(merge_id)
+            if session is None or session.get("status") != "open":
+                return None   # closed meanwhile (completed / aborted elsewhere): nothing to do
+            context = db_git.session_context(session)
+            if context.get("review_state") != REVIEW_STATE_RECONCILING:
+                return {"ok": True, "result": {"status": context.get("review_state")}}
+            # 0153 T#2 §3.4: the auto-retry check above ran without the lock. Another caller
+            # may have parked the session (e.g. reconciling/preserve_failed) while this one
+            # waited, so the kind is re-checked on the fresh row BEFORE any context write,
+            # preservation call, remote query or reset — a kind outside the auto-retry set
+            # is left exactly as stored.
+            kind = context.get("reconciliation_kind")
+            if kind not in RECONCILE_AUTO_RETRY_KINDS:
+                return {"ok": True, "result": {
+                    "status": REVIEW_STATE_RECONCILING, "review_state": REVIEW_STATE_RECONCILING,
+                    "reconciliation_kind": kind,
+                }}
+            # 0153 T#3 §3.1: one more cycle of this round (counted even on server_startup,
+            # which skips the due check) with an exponential back-off; the cumulative
+            # reconcile_attempt_count keeps counting for T#4. A round whose budget is already
+            # spent is not counted again — it is parked below without any remote contact.
+            # 0153 T#4 (review rej_01M6ZWFPF1E6JE2M): the claim was taken before the lock and
+            # may have been lost while this call waited for it (lease expired, another
+            # instance took over). It is fenced HERE, before the first change under the lock
+            # (cycle counters, preservation gate, remote contact). Every later session write
+            # and audited Git command is fenced again (session_claim.require).
+            if not _reconcile_claim_ok(merge_id, "reconcile_lock"):
+                return _reconcile_claim_lost("reconcile_lock")
+            cycles_before = int(context.get("reconcile_cycle_count") or 0)
+            if cycles_before < RECONCILE_MAX_CYCLES:
+                context["reconcile_cycle_count"] = cycles_before + 1
+                context["reconcile_next_at"] = _seconds_from_now_iso(
+                    _reconcile_backoff_seconds(cycles_before + 1))
+            context["reconcile_attempt_count"] = int(context.get("reconcile_attempt_count") or 0) + 1
+            db_git.set_session_context(merge_id, context)
+            cfg = db_git.get_config(project_id) or {}
+            # 0594 T0012 §13: the remote ref asked about is the attempt's pinned target.
+            target = merge_target.resolve_session_target(session)
+            base_root = target.root
+            base_branch = target.target_branch
+            if base_root is None:
+                return {"ok": True, "result": {"status": "retry_scheduled"}}
+            # 0153 T#2 §4.1: preservation gate (re-entry recovery included) BEFORE the remote
+            # is asked. A session from before T#2 gets its ref here if the commit passes the
+            # object/parent checks; any failure parks it with no remote query and no reset.
+            preserve_failed = _preserve_gate(
+                merge_id, context, base_root, stage=preserve.STAGE_RECONCILE_GATE,
+                project_id=project_id, group_id=group_id,
+            )
+            if preserve_failed is not None:
+                return preserve_failed
+            run = _ReconcileRun(
+                group_id=group_id, merge_id=merge_id, project_id=project_id, context=context,
+                root=base_root, branch=base_branch, cfg=cfg, is_branch=is_branch_merge,
+                cycles_before=cycles_before,
+            )
+            return _reconcile_cycle(run)
+        finally:
+            _bmp.session_unlock(lock_ctx, lock_held)
+
+    result = None
     try:
-        session = db_git.get_session(merge_id)
-        context = db_git.session_context(session)
-        if context.get("review_state") != REVIEW_STATE_RECONCILING:
-            return {"ok": True, "result": {"status": context.get("review_state")}}
-        # 0153 T#2 §3.4: the auto-retry check above ran without the lock. Another caller
-        # may have parked the session (e.g. reconciling/preserve_failed) while this one
-        # waited, so the kind is re-checked on the fresh row BEFORE any context write,
-        # preservation call, remote query or reset — a kind outside the auto-retry set
-        # is left exactly as stored.
-        kind = context.get("reconciliation_kind")
-        if kind not in RECONCILE_AUTO_RETRY_KINDS:
-            return {"ok": True, "result": {
-                "status": REVIEW_STATE_RECONCILING, "review_state": REVIEW_STATE_RECONCILING,
-                "reconciliation_kind": kind,
-            }}
-        # 0153 T#3 §3.1: one more cycle of this round (counted even on server_startup,
-        # which skips the due check) with an exponential back-off; the cumulative
-        # reconcile_attempt_count keeps counting for T#4. A round whose budget is already
-        # spent is not counted again — it is parked below without any remote contact.
-        cycles_before = int(context.get("reconcile_cycle_count") or 0)
-        if cycles_before < RECONCILE_MAX_CYCLES:
-            context["reconcile_cycle_count"] = cycles_before + 1
-            context["reconcile_next_at"] = _seconds_from_now_iso(
-                _reconcile_backoff_seconds(cycles_before + 1))
-        context["reconcile_attempt_count"] = int(context.get("reconcile_attempt_count") or 0) + 1
-        db_git.set_session_context(merge_id, context)
-        cfg = db_git.get_config(project_id) or {}
-        # 0594 T0012 §13: the remote ref asked about is the attempt's pinned target.
-        target = merge_target.resolve_session_target(session)
-        base_root = target.root
-        base_branch = target.target_branch
-        if base_root is None:
-            return {"ok": True, "result": {"status": "retry_scheduled"}}
-        # 0153 T#2 §4.1: preservation gate (re-entry recovery included) BEFORE the remote
-        # is asked. A session from before T#2 gets its ref here if the commit passes the
-        # object/parent checks; any failure parks it with no remote query and no reset.
-        preserve_failed = _preserve_gate(
-            merge_id, context, base_root, stage=preserve.STAGE_RECONCILE_GATE,
-            project_id=project_id, group_id=group_id,
-        )
-        if preserve_failed is not None:
-            return preserve_failed
-        run = _ReconcileRun(
-            group_id=group_id, merge_id=merge_id, project_id=project_id, context=context,
-            root=base_root, branch=base_branch, cfg=cfg, is_branch=is_branch_merge,
-            cycles_before=cycles_before,
-        )
-        return _reconcile_cycle(run)
+        try:
+            result = _locked()
+        except _session_claim.ClaimLost as lost:
+            if lost.merge_id != int(merge_id):
+                raise
+            # A fenced write found the claim gone (e.g. after a slow push): nothing of this
+            # processor was written from that point on; the other instance's result stands.
+            _log.warning("reconcile of merge %s stopped: session claim lost before %s",
+                         merge_id, lost.step)
+            result = _reconcile_claim_lost(lost.step)
+        return result
     finally:
-        _bmp.session_unlock(lock_ctx, lock_held)
+        status = ((result or {}).get("result") or {}).get("status") if isinstance(result, dict) else None
+        _session_claim.note(merge_id, f"reconcile:{status or 'none'}")
+        _session_claim.release(claim)
 
 
 # ── 0153 T#3: reconcile state machine executor ───────────────────────────────
@@ -4331,6 +4383,17 @@ _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 
 def _is_sha40(value) -> bool:
     return isinstance(value, str) and bool(_SHA40_RE.match(value))
+
+
+def _reconcile_claim_ok(merge_id: int, step: str) -> bool:
+    """0153 T#4 §4.3: renew + fence the session claim right before a reconcile write."""
+    from .git import session_claim as _session_claim
+    return _session_claim.check(merge_id, step)
+
+
+def _reconcile_claim_lost(step: str) -> dict:
+    """The claim was lost (lease expired and taken over): nothing is written or moved."""
+    return {"ok": True, "result": {"status": "claim_lost", "stage": step}}
 
 
 class _ReconcileRun:
@@ -4538,6 +4601,8 @@ def _reconcile_cycle(run: _ReconcileRun) -> dict:
             verdict = reconcile_plan.LOCAL_MISMATCH
             if not restored:
                 restored = True
+                if not _reconcile_claim_ok(run.merge_id, "reconcile_restore_local"):
+                    return _reconcile_claim_lost("reconcile_restore_local")
                 ff = _run_session_git(
                     run.merge_id, context, "merge", "reconcile_restore_local",
                     ["merge", "--ff-only", inputs.publish_commit],
@@ -4590,6 +4655,8 @@ def _reconcile_complete(run: _ReconcileRun, tip: Optional[str], *, published: Op
     """(b): the remote holds the resolution. No new commit, merge, approval or push —
     the common completer only (intent consumption and the AC decision live there). The
     local branch is NOT moved to the remote tip and every preservation ref stays."""
+    if not _reconcile_claim_ok(run.merge_id, "reconcile_complete"):
+        return _reconcile_claim_lost("reconcile_complete")
     context = run.context
     merge_commit = context.get("merge_commit")
     publish = context.get("publish_commit") or merge_commit
@@ -4627,6 +4694,8 @@ def _reconcile_repush(run: _ReconcileRun, inputs) -> dict:
             "expected_head": publish, "observed_head": run.local.get("observed_head"),
             "publish_lease": lease,
         })
+    if not _reconcile_claim_ok(run.merge_id, "reconcile_repush"):
+        return _reconcile_claim_lost("reconcile_repush")
     secret = _reconcile_secret(run)
     push = _run_session_git(
         run.merge_id, context, "push", "reconcile_repush",
@@ -4794,6 +4863,8 @@ def _reconcile_integrate(run: _ReconcileRun, inputs, remote_tip: str) -> dict:
     integration = (made.stdout or "").strip()
     if made.returncode != 0 or not _is_sha40(integration):
         return _reconcile_transient(run, inputs, reconcile_plan.OUT_MERGE_TREE_FAILED)
+    if not _reconcile_claim_ok(run.merge_id, "reconcile_integrate"):
+        return _reconcile_claim_lost("reconcile_integrate")
     k = len(preserve.round_integrations(run.merge_id, context)) + 1
     pinned = preserve.ensure_integration_preserved(
         root, run.merge_id, context, integration, [publish, remote_tip], k)
@@ -4838,6 +4909,8 @@ def _verified_reset(run: _ReconcileRun, target_sha: str, reason: str) -> Optiona
         return _enter_local_mismatch(run, f"{reason}_precondition", {
             "expected_head": context.get("publish_commit"), "observed_head": head,
             "target": target_sha})
+    if not _reconcile_claim_ok(run.merge_id, "reconcile_verified_reset"):
+        return _reconcile_claim_lost("reconcile_verified_reset")
     proc = _run_session_git(run.merge_id, context, "reset", "reconcile_verified_reset",
                             ["reset", "--hard", target_sha], cwd=root, timeout=GIT_LOCAL_TIMEOUT_SEC)
     observed = _rev_parse(root, "HEAD")

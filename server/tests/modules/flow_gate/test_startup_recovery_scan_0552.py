@@ -32,7 +32,25 @@ def _startup_stubs(monkeypatch, sessions):
     monkeypatch.setattr(svc.db_git, "list_open_sessions", listed)
     monkeypatch.setattr(svc, "_project_of_group", Mock(return_value="flowgate"))
     monkeypatch.setattr(svc, "_start_sweep_daemon", Mock())
+    _claim_and_lock_stubs(monkeypatch)
     return listed
+
+
+def _claim_and_lock_stubs(monkeypatch):
+    """0153 T#4: each group session is recovered under its DB session claim, and the orphan
+    close re-reads the row under the session lock. These scan tests have no store, so the
+    claim is always granted and the lock is a no-op; the claim/guard contract itself is
+    covered by test_git_orphan_claim_0153.py."""
+    from modules.flow_gate.services.git import cleanup, session_claim
+
+    claim = session_claim.Claim(merge_id=0, token="t", owner="inst_test", purpose="startup",
+                                claimed_at="", lease_until="")
+    monkeypatch.setattr(session_claim, "acquire", lambda merge_id, purpose: claim)
+    monkeypatch.setattr(session_claim, "release", lambda *a, **k: None)
+    monkeypatch.setattr(session_claim, "current", lambda merge_id: claim)
+    monkeypatch.setattr(session_claim, "check", lambda merge_id, step: True)
+    monkeypatch.setattr(cleanup, "session_lock", lambda *a, **k: (None, []))
+    monkeypatch.setattr(cleanup, "session_unlock", lambda *a, **k: None)
 
 
 def test_startup_reads_open_sessions_once_even_when_empty(monkeypatch):
@@ -72,7 +90,10 @@ def test_startup_orphan_is_closed_once_and_not_reoffered_to_sweep(monkeypatch):
     monkeypatch.setattr(svc, "_base_root_of", Mock(return_value=None))
     close_orphan = Mock()
     monkeypatch.setattr(svc, "_close_orphan", close_orphan)
-    monkeypatch.setattr(svc.db_git, "get_session", Mock(return_value=None))
+    # 0153 T#4: startup re-reads the row under its lock and the orphan guard re-reads it
+    # under its own (still open both times: it has no recovery evidence, so it is closed);
+    # the refresh after it finds the row closed.
+    monkeypatch.setattr(svc.db_git, "get_session", Mock(side_effect=[session, session, None]))
     seen = []
     monkeypatch.setattr(svc, "merge_session_sweep", lambda sessions=None: seen.extend(sessions or []))
 
@@ -88,7 +109,9 @@ def test_startup_reconcile_uses_snapshot_but_sweep_gets_fresh_pending_row(monkey
     fresh = _session(review_state=svc.REVIEW_STATE_PENDING)
     listed = _startup_stubs(monkeypatch, [original])
     monkeypatch.setattr(svc, "_set_status", Mock())
-    monkeypatch.setattr(svc.db_git, "get_session", Mock(return_value=fresh))
+    # 0153 T#4: startup judges the row re-read under its lock (still the listed reconciling
+    # row); the reconcile scan then changed it, so the refresh for the sweep reads it pending.
+    monkeypatch.setattr(svc.db_git, "get_session", Mock(side_effect=[original, fresh]))
     reconciled = []
     swept = []
     monkeypatch.setattr(
