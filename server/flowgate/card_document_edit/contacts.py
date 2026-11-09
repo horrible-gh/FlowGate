@@ -4,10 +4,15 @@ from modules.flow_gate.db.connection import in_transaction
 from modules.flow_gate.graph_workflow.services.flow_guard import held_guard
 from modules.flow_gate.graph_workflow.services import canvas_events
 from modules.flow_gate.graph_workflow.api import v01_contact
-from modules.flow_gate.api.v1.events.publisher import broadcast_event_threadsafe, FlowEvent
+from modules.flow_gate.api.v1.events.publisher import broadcast_event_nowait, FlowEvent
 from modules.flow_gate.api.v1.events.event_types import EventType
 
 _log = logging.getLogger(__name__)
+
+# Contacts run after commit and only send refresh signals, so the save response must not wait
+# for the SSE main loop (up to 2s in the shared publisher.broadcast_event_threadsafe). The module
+# attribute keeps its name because tests and callers patch contacts.broadcast_event_threadsafe.
+broadcast_event_threadsafe = broadcast_event_nowait
 
 
 def _best_effort(name, call):

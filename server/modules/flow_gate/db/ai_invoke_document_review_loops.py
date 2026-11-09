@@ -69,6 +69,28 @@ def stop_for_checkpoint_failure(run_id: str, *, detail: str, at: Optional[str] =
     ) == 1
 
 
+def stop_for_abandoned_run(run_id: str, *, detail: str, at: Optional[str] = None) -> bool:
+    """Terminally stop the loop of a run the post-process recovery abandoned.
+
+    The worker's post-process recovery (worker._start_post_process_recovery) marks the run
+    finished, discards any late classify/judge result and releases the group lease, so no
+    hop of this run will ever checkpoint the loop again. Without this the row kept
+    `current_stage IN (review, rework)` and `review_loop_active` reported the document as
+    still under review (the card stayed locked) with no lease left for restart recovery to
+    find. Same one-way compare-and-swap and the same existing `retry_exhausted` reason as
+    stop_for_checkpoint_failure, `stop_detail` naming the cause: a human hold or a normal
+    outcome is never relabelled, a replay answers False, no new CHECK migration.
+    """
+    stamp = at or now_iso()
+    return get_store()._execute_affected(
+        "UPDATE ai_invoke_document_review_loops "
+        "SET current_stage = ?, stop_reason = ?, stop_detail = ?, updated_at = ? "
+        "WHERE run_id = ? AND current_stage IN (?, ?) AND stop_reason IS NULL",
+        ["stopped", "retry_exhausted", detail or "run abandoned by post-process recovery",
+         stamp, run_id, "review", "rework"],
+    ) == 1
+
+
 def dismiss_card(run_id: str, *, at: Optional[str] = None) -> bool:
     """Mark this loop's MONITOR CARD as removed by its owner (0529 B0001).
 

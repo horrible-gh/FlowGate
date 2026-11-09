@@ -95,6 +95,25 @@ def recovery_db(tmp_path, monkeypatch):
     conn.close()
 
 
+@pytest.fixture(autouse=True)
+def _no_identity_owner(monkeypatch):
+    """`_record_orphaned_lease_run` now reads `ai_run_owners` (identity guard) and closes the
+    run's role invocations (`invocations.orphan`) before it touches the run and loop rows,
+    both through the process-wide store this module never opens -- every test calling it
+    died on `None.execute` before reaching what it asserts. A run with no owner row is the
+    legacy shape these orphan leases have; the guard's own behaviour is covered by
+    integration/ai_run_identity/0138."""
+    from flowgate.ai_roles import invocations
+    from modules.flow_gate.db import ai_run_identity
+
+    class _NoOwners:
+        def _fetch_one(self, *_a, **_k):
+            return None
+
+    monkeypatch.setattr(ai_run_identity, "get_store", lambda: _NoOwners())
+    monkeypatch.setattr(invocations, "orphan", lambda _run_id: None)
+
+
 def loop_row(run_id, stage):
     return {
         "run_id": run_id, "group_id": GROUP, "doc_ref": DOC,
@@ -206,6 +225,40 @@ def test_loop_failure_is_logged_without_losing_orphan_run(monkeypatch, caplog):
         }, "orphaned_by_restart")
     assert captured["run_id"] == "aiv_loop_failure"
     assert "review-loop stop failed" in caplog.text
+
+
+@pytest.mark.parametrize("stage", ["review", "rework"])
+def test_abandoned_run_stops_active_loop_once_with_retry_exhausted(recovery_db, stage):
+    """flowgate.v02test.0014: the post-process recovery's loop close is the same one-way CAS."""
+    run_id = f"aiv_abandoned_{stage}"
+    db_loops.insert(loop_row(run_id, stage))
+    before = db_loops.get(run_id)
+
+    assert db_loops.stop_for_abandoned_run(
+        run_id, detail="run abandoned by post-process recovery: post_process_timeout",
+        at="2026-09-10T00:40:00+00:00") is True
+    first = db_loops.get(run_id)
+    assert (first["current_stage"], first["stop_reason"]) == ("stopped", "retry_exhausted")
+    assert first["stop_detail"] == "run abandoned by post-process recovery: post_process_timeout"
+    assert (first["round_no"], first["attempts_used"], first["created_at"]) == (
+        before["round_no"], before["attempts_used"], before["created_at"]
+    )
+    assert db_loops.stop_for_abandoned_run(run_id, detail="again") is False
+    assert db_loops.get(run_id) == first
+
+
+def test_abandoned_run_never_relabels_a_terminal_or_missing_loop(recovery_db):
+    db_loops.insert(loop_row("aiv_hold", "review"))
+    recovery_db.execute(
+        "UPDATE ai_invoke_document_review_loops SET current_stage='stopped', "
+        "stop_reason='review_verdict_hold', stop_detail='human hold' WHERE run_id=?",
+        ["aiv_hold"],
+    )
+    recovery_db.commit()
+    held = db_loops.get("aiv_hold")
+    assert db_loops.stop_for_abandoned_run("aiv_hold", detail="x") is False
+    assert db_loops.stop_for_abandoned_run("aiv_missing", detail="x") is False
+    assert db_loops.get("aiv_hold") == held
 
 
 def test_106_three_dialects_widen_check_and_preserve_schema_contract():

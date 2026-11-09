@@ -370,7 +370,8 @@ export function saveFailed(session: EditSession, key: string, context: DocumentE
   })
   if (failure.kind === 'uncertain') return settle('UNCERTAIN', {}, 'UNCERTAIN', true)
   const code = failure.code
-  if (code === 'revision_conflict') return settle('CONFLICT')
+  // The latest read before this 409 predates the conflicting save: drop it so adoptMerge waits for the follow-up read.
+  if (code === 'revision_conflict') return settle('CONFLICT', { latest: null })
   if (code === 'slot_document_changed' || code === 'no_document') return settle('DETACHED')
   if (code === 'unauthorized') return settle('REJECTED', {}, 'REJECTED', true) // same pending after re-authentication
   if (code === 'token_kind_not_allowed') return settle('REJECTED', { configBlocked: true })
