@@ -661,8 +661,8 @@ def not_passed(loop: dict) -> str:
 
 
 def review_running(_flow_id: str, _node_key: str, doc_id: Optional[str]) -> bool:
-    """A review loop is still working on ``doc_id`` (the node's result)."""
-    return bool(doc_id) and legacy.review_loop_active(doc_id)
+    """The current attempt's latest loop, or a loop with owner evidence, still works."""
+    return legacy.running_review_loop(_flow_id, _node_key, doc_id) is not None
 
 
 def ai_working(flow_id: str, node_key: str, doc_id: Optional[str]) -> bool:

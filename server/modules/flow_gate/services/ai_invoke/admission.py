@@ -589,6 +589,19 @@ def _utc_instant(value):
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
+def review_loop_owner(loop_row: dict, *, now=None) -> Optional[str]:
+    """Read-only R4 ownership using the sweeper's evidence and grace boundary."""
+    from datetime import timezone
+
+    held = _restart_held_run_ids()
+    if held is None:
+        return "remote_hold"
+    instant = _utc_instant(now) if now is not None else datetime.now(timezone.utc)
+    return review_loop_owner_evidence(
+        loop_row, held=held,
+        before=instant - timedelta(seconds=REVIEW_LOOP_SWEEP_GRACE_SEC), now=instant)
+
+
 def review_loop_owner_evidence(loop_row: dict, *, held, before, now=None,
                                remote_settled: bool = False) -> Optional[str]:
     """Read-only evidence: foreign, live_run, handoff, remote_hold, group_lease, graph_lease,

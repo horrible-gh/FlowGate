@@ -58,6 +58,9 @@ flowgate.v02.0125 T#1 (Q #544, 0005-NR §3.5 / §4.1): a step / full command giv
 실행) is also the person's explicit re-review request of a card whose result review count was spent on a revision no
 review answered yet (``needs_intervention``, ``review_not_passed:review_count_exhausted``): after its guard and its
 stage reconciliation it asks ``card_settings_ports.command_review``. A run read never asks it.
+
+flowgate.v02.0159 T#3: node_running_cause accompanies the run read lock;
+unknown ownership detail preserves a true lock and never aborts the read.
 """
 from __future__ import annotations
 
@@ -686,6 +689,7 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
         start_failure = start_failure_of(row)
         if start_failure:
             dispatch = {**dispatch, START_FAILURE_KEY: start_failure}
+    running = running_lock(flow_id, row)
     state = intervention(flow_id, row)                                                     # 0119 T-2
     reason = approval_wait_reason(flow_id, row) if state else None
     return {**graph_execution_hooks.call("execution_wire", row["run_id"], flow_id, attempt_id or ""),
@@ -698,7 +702,7 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
             "intervention": state,                                                                  # 0119 T-2
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
             "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked,
-            "node_running": running_lock(flow_id, row), **stage_view(flow_id, row, attempt_id, reason)}
+            "node_running": running, "node_running_cause": running_cause(flow_id, row, running), **stage_view(flow_id, row, attempt_id, reason)}
 
 
 def stage_view(flow_id: str, row: dict, attempt_id: Optional[str], reason: Optional[str]) -> dict:
@@ -730,6 +734,17 @@ def approval_wait_reason(flow_id: str, row: dict) -> Optional[str]:
     except Exception:  # noqa: BLE001 — the run read goes on
         _log.warning("graph approval wait reason read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
         return None
+
+
+def running_cause(flow_id: str, row: dict, running: bool) -> Optional[str]:
+    """R5: only active cards pay for a cause read; a read race/error yields unknown."""
+    if not running:
+        return None
+    try:
+        return card_settings_ports.node_running_cause(flow_id, row["node_key"]) or "unknown"
+    except Exception:  # noqa: BLE001 — preserve the run read and its running lock
+        _log.warning("graph running cause read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+        return "unknown"
 
 
 def running_lock(flow_id: str, row: dict) -> bool:
