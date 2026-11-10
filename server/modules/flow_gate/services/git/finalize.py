@@ -599,6 +599,16 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
     # response keeps its old meaning — a merge_id is only published while it names
     # an actionable conflict session — and the target rides along separately.
     ledger_merge_id = state.get("merge_id") if status == "conflict" else None
+    recovery_view = None
+    if state.get("merge_id"):
+        from . import recovery
+        recovery_row = _gs.db_git.get_session(int(state["merge_id"]))
+        if recovery.supported(recovery_row):
+            recovery_context = _gs.db_git.session_context(recovery_row)
+            if recovery.needed(recovery_context) or recovery.has_preservation(recovery_context):
+                recovery_view = recovery.projection(recovery_row)
+                if not recovery_view['approval']['approved'] and recovery_row.get('status') != 'aborted':
+                    ledger_merge_id = state['merge_id']
     finalize_target = None
     try:
         if status == "conflict":
@@ -638,6 +648,7 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "merge_id": group_update_merge_id or ledger_merge_id,
         "merge_commit": (clean_retry or {}).get("merge_commit") or state.get("merge_commit"),
         "review_state": review_state,
+        "recovery": recovery_view,
         "reconciliation_kind": reconciliation_kind,
         # 0668 T0004 (additive): tr_revert / tr_reapply when the conflict is a TR one.
         "conflict_kind": conflict_kind,

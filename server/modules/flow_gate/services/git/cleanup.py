@@ -689,6 +689,10 @@ def _sweep_group_merge_session(session: dict, project_id: str) -> None:
         return
     session = fresh
     context = _gs.db_git.session_context(session)
+    from . import recovery
+    if recovery.supported(session) and recovery.automatic_blocked(context):
+        session_claim.note(merge_id, "abort_pending" if context.get("abort_progress") else "hold_kept")
+        return
     review_state = context.get("review_state")
     if review_state == _gs.REVIEW_STATE_COMPLETED:
         # 0594 T0012 §6.3: the review finished but the row was never closed.
@@ -829,6 +833,10 @@ def _finish_completed_review(session: dict, project_id: str) -> None:
         fresh = _gs.db_git.get_session(int(session["merge_id"]))
         if fresh is None or fresh.get("status") != "open":
             return
+        from . import recovery
+        context = _gs.db_git.session_context(fresh)
+        if context.get("review_state") != _gs.REVIEW_STATE_COMPLETED or recovery.automatic_blocked(context):
+            return
         # 0153 T#4: under the sweep's claim, fenced before the change (no claim: no-op).
         session_claim.require(int(fresh["merge_id"]), "sweep_finish_completed")
         merge_target.finish_completed_review(fresh)
@@ -908,7 +916,12 @@ def _startup_group_session(session: dict, project_id: str) -> bool:
             return True
         session = fresh
         group_id = session.get("group_id")
-        review_state = _gs.db_git.session_context(session).get("review_state")
+        context = _gs.db_git.session_context(session)
+        from . import recovery
+        if recovery.supported(session) and recovery.automatic_blocked(context):
+            session_claim.note(merge_id, "abort_pending" if context.get("abort_progress") else "hold_kept")
+            return False
+        review_state = context.get("review_state")
         if review_state == _gs.REVIEW_STATE_COMPLETED:
             # 0594 T0012 §6.3: the review finished (ledger may already say
             # merged) but the process died before the row was closed.

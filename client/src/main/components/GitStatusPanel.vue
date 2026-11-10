@@ -305,7 +305,7 @@
             <!-- 0481 D0006 §6.4: a resolved general merge stops at the human
                  approval gate, not the resolver — same row, different button. -->
             <button
-              v-if="p.status === 'conflict' && isReviewPending(p)"
+              v-if="isReviewPending(p)"
               class="btn btn-sm btn-primary"
               :disabled="busy"
               @click="reviewDialogTarget = { group_id: p.group_id, merge_id: p.merge_id as number }"
@@ -353,13 +353,17 @@
                붉은 카드 안에 아이콘 + 굵은 제목 + 안내 줄, 채움형 [AI에게 맡기기] 와
                링크형 [펼쳐 보기 ▾]. 펼친 목록은 시안 `.conflict-raw-list` 처럼 파선으로
                갈라지고 줄마다 붉은 표식이 붙는다. -->
-          <div v-if="p.status === 'conflict' && isReviewPending(p)" class="git-v9-conflict-summary">
+          <div v-if="isReviewPending(p)" class="git-v9-conflict-summary">
             <div class="git-v9-chip-row">
               <AppIcon name="clock" class="git-v9-chip-icon" />
               <span class="git-v9-chip">{{ t(`main.git_review.badge.${reviewBadgeKeyOf(p)}`) }}</span>
             </div>
           </div>
           <div v-else-if="p.status === 'conflict'" class="git-v9-conflict-summary">
+            <p v-if="p.recovery?.preserved_refs?.length">
+              {{ t('main.git_review.recovery.preserved') }}:
+              <code v-for="entry in p.recovery.preserved_refs" :key="entry.ref">{{ entry.ref }} · {{ entry.sha }}</code>
+            </p>
             <div class="git-v9-chip-row">
               <AppIcon name="warning" class="git-v9-chip-icon" />
               <span class="git-v9-chip">
@@ -369,6 +373,8 @@
               <!-- 0668 T0004 (R1) — provider + [AI로 해결] right on the card; [직접 해결] is
                    the row's own button above. No resolver in front of the AI call. -->
               <GitConflictCardActions
+                :recovery="p.recovery"
+                @review="reviewDialogTarget = { group_id: p.group_id, merge_id: p.merge_id as number }"
                 :providers="aiProviderStore.providers"
                 :selected-provider="aiProviderStore.selectedProviderId"
                 :provider-loading="aiProviderStore.loading"
@@ -436,6 +442,8 @@
             :allow-partial-resolve="true"
             :saved-resolved-count="savedResolvedPaths.length"
             :checkpoint-recovery="checkpointRecovery"
+            :preserved-refs="p.recovery?.preserved_refs"
+            @recovery="requestConflictReview(p.group_id, p.merge_id, true)"
             @hold="holdInline(p)"
             :providers="aiProviderStore.providers"
             :selected-provider="aiProviderStore.selectedProviderId"
@@ -735,7 +743,10 @@ import {
   TR_REVIEW_RESOLVED,
   conflictRunElapsed,
   groupParts,
-  isReviewPendingState,
+  opensConflictReview,
+  needsRecoveryResult,
+  requestConflictReview,
+  type MergeRecovery,
   reviewBadgeKeyOf as reviewBadgeKeyOfState,
   runningConflictRun,
   useConflictAiStarter,
@@ -855,6 +866,7 @@ interface Pending {
   // 0481 D0006 §6.4 / L0007 §2.11 — null/absent means the conflict is still being
   // resolved (the resolver dialog); any REVIEW_PENDING_STATES value means the
   // human approval gate is waiting instead (the review dialog).
+  recovery?: MergeRecovery | null
   review_state?: string | null
   reconciliation_kind?: string | null
   // True when ReviewActionBar's final-approval request owns this session.
@@ -1212,8 +1224,8 @@ const conflictLoadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
 // 0481 D0006 §6.4 / L0007 §2.11 — the general-merge human approval gate's own
 // entry point, same row/slot the resolver otherwise occupies.
-function isReviewPending(p: Pick<Pending, 'review_state'>): boolean {
-  return isReviewPendingState(p.review_state)
+function isReviewPending(p: Pick<Pending, 'review_state' | 'recovery'>): boolean {
+  return opensConflictReview(p)
 }
 function reviewBadgeKeyOf(p: Pick<Pending, 'review_state'>): string {
   return reviewBadgeKeyOfState(p.review_state)
@@ -1823,6 +1835,10 @@ async function submitResolveInline(p: ConflictTarget | null, auto: boolean) {
     )
     if (data.ok === false) {
       conflictError.value = resolveGitError(data, t, 'main.git_finalize.failed')
+    } else if (needsRecoveryResult(data.result)) {
+      collapseResolve()
+      reviewDialogTarget.value = { group_id: p.group_id, merge_id: p.merge_id }
+      showToast(t('main.git_review.recovery.title'), 'warning')
     } else if (data.result?.status === 'merged') {
       const key = data.result?.pushed === false ? 'main.git_finalize.merged_local_toast' : 'main.git_finalize.merged_toast'
       showToast(t(key, { commit: data.result.merge_commit || '' }), 'success')
@@ -2077,6 +2093,7 @@ async function holdInline(p: Pending) {
 
 async function abortInline(p: Pending) {
   if (p.merge_id == null || busy.value) return
+  if (p.recovery) { requestConflictReview(p.group_id, p.merge_id, true); return }
   busy.value = true
   try {
     await postRequest(`/api/v1/groups/${p.group_id}/git/merge/${p.merge_id}/abort`, {})
@@ -2084,6 +2101,10 @@ async function abortInline(p: Pending) {
     showToast(t('main.git_finalize.aborted_toast'), 'success')
     collapseResolve()
   } catch (e: any) {
+    if (e?.response?.data?.error?.code === 'recovery_required') {
+      requestConflictReview(p.group_id, p.merge_id, true)
+      return
+    }
     showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false

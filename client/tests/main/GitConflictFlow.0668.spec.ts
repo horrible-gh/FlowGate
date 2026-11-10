@@ -330,3 +330,67 @@ describe('AiInvokeMiniplayer — [검토 열기] on a finished conflict run', ()
     wrapper.unmount()
   })
 })
+
+describe('0153 auto resolve callers preserve an incomplete approval outcome', () => {
+  const outcomes = [
+    { status: 'merged', git_terminal: true, approval: { approved: false, stage: 'approval_commit_failed' }, error: { code: 'approval_commit_failed' } },
+    { status: 'reconciling', git_terminal: false, approval: { approved: false, stage: 'pending' } },
+    { status: 'user_intervention_required', git_terminal: false, approval: { approved: false, stage: 'pending' } },
+  ]
+  for (const surface of ['status', 'finalize'] as const) {
+    it.each([...outcomes, { status: 'merged', git_terminal: true, approval: { approved: true, stage: 'approved' } }])(
+      `${surface}: routes $status / $approval.stage according to approval truth`, async (result) => {
+        useProjectStore().setCurrentProject('test2')
+        const wrapper = surface === 'status'
+          ? mount(GitStatusPanel, { props: { projectId: 'test2' }, global: { plugins: [i18n], stubs: STUBS } })
+          : mount(GitFinalizePanel, { props: { groupId: GROUP_ID }, global: { plugins: [i18n], stubs: STUBS } })
+        await flushPromises()
+        if (surface === 'status') await wrapper.find('.git-status-row-main .btn-danger').trigger('click')
+        else await wrapper.findAll('button').find(b => b.text().includes(i18n.global.t('main.git_finalize.open_resolver')))!.trigger('click')
+        await flushPromises()
+        const resolver = wrapper.findComponent(GitConflictResolverDialog)
+        expect(resolver.exists()).toBe(true)
+        postRequest.mockResolvedValue({ data: { ok: true, result } })
+        resolver.vm.$emit('submit', true)
+        await flushPromises()
+        expect(postRequest.mock.calls.filter(([url]) => String(url).endsWith('/resolve'))).toHaveLength(1)
+        const completed = result.approval.approved
+        expect(wrapper.findComponent(GitMergeReviewDialog).exists()).toBe(!completed)
+        expect(showToast.mock.calls.some(([,kind]) => kind === 'success')).toBe(completed)
+        if (!completed) expect(showToast).toHaveBeenCalledWith(i18n.global.t('main.git_review.recovery.title'), 'warning')
+        wrapper.unmount()
+      },
+    )
+  }
+})
+
+
+describe('TR0014 rev1 — an unresolved TR conflict card keeps the existing TR route', () => {
+  it('renders the TR slot card without recovery bindings and still opens the TR resolver', async () => {
+    panelStatus = trStatus('open')
+    const wrapper = mount(GitStatusPanel, { props: { projectId: 'test2' }, global: { plugins: [i18n], stubs: STUBS } })
+    await flushPromises()
+    const card = wrapper.find('.git-trc-conflict')
+    expect(card.exists()).toBe(true)
+    // Positive control: the TR card's own AI action is there; recovery is not a TR feature.
+    expect(card.find('[data-test="conflict-card-ai"]').exists()).toBe(true)
+    expect(card.find('[data-test="conflict-card-recovery"]').exists()).toBe(false)
+    expect(card.find('[data-test="conflict-card-direct"]').exists()).toBe(false)
+    await card.find('.git-trc-conflict-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(GitConflictResolverDialog).exists()).toBe(true)
+    expect(wrapper.findComponent(GitMergeReviewDialog).exists()).toBe(false)
+    wrapper.unmount()
+  })
+  it('a resolved TR slot offers the existing review button', async () => {
+    panelStatus = trStatus('resolved')
+    const wrapper = mount(GitStatusPanel, { props: { projectId: 'test2' }, global: { plugins: [i18n], stubs: STUBS } })
+    await flushPromises()
+    const card = wrapper.find('.git-trc-conflict')
+    expect(card.find('[data-test="conflict-card-actions"]').exists()).toBe(false)
+    await card.find('.git-trc-conflict-review-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(GitMergeReviewDialog).props('mergeId')).toBe(TR_MERGE_ID)
+    wrapper.unmount()
+  })
+})

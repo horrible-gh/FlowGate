@@ -18,7 +18,13 @@
     <div class="card-bd pad">
       <p v-if="aheadBehindText" class="git-fin-meta">{{ aheadBehindText }}</p>
 
-      <template v-if="(state.status === 'awaiting_choice' || state.status === 'waiting') && !state.final_approval_bound">
+      <template v-if="reviewPending && state.recovery">
+        <p>{{ t('main.git_review.recovery.title') }}</p>
+        <button class="btn btn-primary" :disabled="busy" @click="reviewDialogOpen = true">
+          {{ t('main.git_review.open_review') }}
+        </button>
+      </template>
+      <template v-else-if="(state.status === 'awaiting_choice' || state.status === 'waiting') && !state.final_approval_bound">
         <!-- 0331 T0006: the approved v4 layout — two axes instead of a card list.
              `action_axes` is additive, so a server that predates it still gets
              the original cards below. -->
@@ -157,7 +163,7 @@
         <p class="git-fin-meta"><AppIcon name="spinner" spin /> {{ t('main.git_finalize.merging_msg') }}</p>
       </template>
 
-      <template v-else-if="state.status === 'conflict' && reviewPending">
+      <template v-else-if="reviewPending">
         <!-- 0481 D0006 §6.4: same slot the resolver otherwise occupies — a
              resolved general merge stopped at the human approval gate instead
              of committing, and the badge/button here is how a person notices. -->
@@ -198,6 +204,8 @@
           <!-- 0668 T0004 (R1) — the AI call starts here, on the conflict card; the resolver
                below is the direct-resolution editor and detail view, not a gate in front of it. -->
           <GitConflictCardActions
+            :recovery="state.recovery"
+            @review="reviewDialogOpen = true"
             :providers="aiProviderStore.providers"
             :selected-provider="aiProviderStore.selectedProviderId"
             :provider-loading="aiProviderStore.loading"
@@ -270,6 +278,8 @@
     :allow-partial-resolve="true"
     :saved-resolved-count="savedResolvedPaths.length"
     :checkpoint-recovery="checkpointRecovery"
+    :preserved-refs="state?.recovery?.preserved_refs"
+    @recovery="requestConflictReview(props.groupId, state?.merge_id, true)"
     @hold="holdMerge"
     :providers="aiProviderStore.providers"
     :selected-provider="aiProviderStore.selectedProviderId"
@@ -324,7 +334,10 @@ import GitMergeReviewDialog from './GitMergeReviewDialog.vue'
 import {
   conflictRunElapsed,
   groupParts,
-  isReviewPendingState,
+  opensConflictReview,
+  needsRecoveryResult,
+  requestConflictReview,
+  type MergeRecovery,
   reviewBadgeKeyOf,
   runningConflictRun,
   useConflictAiStarter,
@@ -385,6 +398,7 @@ interface GitFinState {
   // 0481 D0006 §6.4 / L0007 §2.11 — null/absent means the conflict is still being
   // resolved (the resolver dialog); any REVIEW_PENDING_STATES value means the
   // human approval gate is waiting instead (the review dialog).
+  recovery?: MergeRecovery | null
   review_state?: string | null
   reconciliation_kind?: string | null
   // Server-owned coupling marker: a waiting final approval already owns this
@@ -472,7 +486,7 @@ function restoreSuggested() {
 }
 // 0481 D0006 §6.4 — same states approve_merge_review/reconcile_push_session use.
 // 0668 T0004: a resolved TR conflict arrives here in the same vocabulary (finalize state).
-const reviewPending = computed(() => isReviewPendingState(state.value?.review_state))
+const reviewPending = computed(() => opensConflictReview(state.value))
 const reviewBadgeKey = computed(() => reviewBadgeKeyOf(state.value?.review_state))
 const resolvedFileCount = computed(() => conflictFiles.value.filter(isFileResolved).length)
 const allConflictsResolved = computed(
@@ -773,6 +787,10 @@ async function submitResolve(auto: boolean) {
     )
     if (data.ok === false) {
       outcome = resolveGitError(data, t, 'main.git_finalize.failed')
+    } else if (needsRecoveryResult(data.result)) {
+      conflictDialogOpen.value = false
+      reviewDialogOpen.value = true
+      showToast(t('main.git_review.recovery.title'), 'warning')
     } else if (data.result?.status === 'merged') {
       mergeCommit.value = data.result.merge_commit || null
       conflictDialogOpen.value = false
@@ -835,6 +853,10 @@ async function holdMerge() {
 }
 
 async function abortMerge() {
+  if (state.value?.recovery) {
+    requestConflictReview(props.groupId, state.value.merge_id, true)
+    return
+  }
   const mergeId = state.value?.merge_id
   if (!props.groupId || mergeId == null) return
   busy.value = true
@@ -844,6 +866,10 @@ async function abortMerge() {
     conflictDialogOpen.value = false
     showToast(t('main.git_finalize.aborted_toast'), 'success')
   } catch (e: any) {
+    if (e?.response?.data?.error?.code === 'recovery_required') {
+      requestConflictReview(props.groupId, mergeId, true)
+      return
+    }
     showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false

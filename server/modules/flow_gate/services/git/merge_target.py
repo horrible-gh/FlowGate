@@ -1716,9 +1716,10 @@ def close_session_attempt(session: dict, state: str, *, error: Optional[dict] = 
             merge_id, verdict,
         )
         return False
+    if target.managed_workspace and not target.is_project_base and verdict == OWN_OWNED:
+        if not release_workspace(target):
+            return False
     close_attempt(merge_id, state, error=error)
-    if target.managed_workspace:
-        release_workspace(target)
     return True
 
 

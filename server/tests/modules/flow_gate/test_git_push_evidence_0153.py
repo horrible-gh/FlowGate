@@ -114,7 +114,8 @@ def test_push_evidence_is_persisted(session, monkeypatch, branch, rc, err, cause
     touched = row['touched_at']
     out, calls = publish(session, monkeypatch, push_result(rc, err), branch)
     after = saved(mid)
-    e = after['last_error']
+    auth_hold = not branch and cause == 'auth'
+    e = after['last_error']['prior_push_error'] if auth_hold else after['last_error']
     assert set(e) == {'code', 'returncode', 'cause', 'detail', 'local_sha',
                       'expected_remote_head', 'at', 'instance_id'}
     assert e == dict(code='push_remote_unknown', returncode=rc, cause=cause,
@@ -123,13 +124,19 @@ def test_push_evidence_is_persisted(session, monkeypatch, branch, rc, err, cause
                      local_sha=LOCAL, expected_remote_head=EXPECTED, at=AT, instance_id='inst_A')
     assert datetime.fromisoformat(e['at']).utcoffset() is not None
     assert after['review_state'] == gs.REVIEW_STATE_RECONCILING
-    assert after['reconciliation_kind'] == 'push_remote_unknown'
+    assert after['reconciliation_kind'] == (gs.RECONCILE_KIND_AUTH_REQUIRED if auth_hold else 'push_remote_unknown')
     assert after['reconcile_attempt_count'] == 0
-    assert after['reconcile_next_at'] == '2026-11-08T10:10:00+09:00'
+    assert after['reconcile_next_at'] == (None if auth_hold else '2026-11-08T10:10:00+09:00')
     assert after['keep_existing'] == ctx['keep_existing']
     assert gs.db_git.get_session(mid)['touched_at'] == touched
-    assert out['result'] == dict(status='reconciling', review_state=gs.REVIEW_STATE_RECONCILING,
-                                 reconciliation_kind='push_remote_unknown')
+    if auth_hold:
+        assert out['result']['status'] == 'user_intervention_required'
+        assert out['result']['reconciliation_kind'] == gs.RECONCILE_KIND_AUTH_REQUIRED
+        assert after['last_error']['cause'] == 'auth'
+        assert after['first_push_error'] == {k: e[k] for k in ('code', 'cause', 'returncode', 'detail', 'at', 'instance_id')}
+    else:
+        assert out['result'] == dict(status='reconciling', review_state=gs.REVIEW_STATE_RECONCILING,
+                                     reconciliation_kind='push_remote_unknown')
     assert len(calls) == 1 and calls[0][0][0] == 'push'
     lease = ('refs/heads/main:' if branch else 'main:') + EXPECTED
     assert calls[0][0][1] == '--force-with-lease=' + lease
@@ -396,8 +403,15 @@ def test_rejected_preserves_rereview_commands_and_audits(session, monkeypatch, b
         out = branch_merge.publish_reviewed(mid, row, PROJECT, Path('.'), {}, 'main', ctx)
     else:
         out = gs._conditionally_push_or_reconcile(row['group_id'], mid, row, PROJECT, Path('.'), {}, 'main', ctx)
-    assert out['result']['status'] == 're_review'
     after = saved(mid)
+    if not branch:
+        assert out['result']['status'] == 'reconciling'
+        assert after['merge_commit'] == LOCAL and after['approval_attempt_id'] == ctx['approval_attempt_id']
+        assert after['first_push_error']['returncode'] == 1
+        assert [c[0] for c in calls] == ['push']
+        assert [e['operation'] for e in after['ref_operations']] == ['push']
+        return
+    assert out['result']['status'] == 're_review'
     assert after['last_error'] == {'code': 'push_rejected'}
     assert [c[0] for c in calls[:4]] == ['push', 'reset', 'fetch', 'merge']
     assert len(calls) == 5
@@ -415,8 +429,11 @@ def approve_setup(session, monkeypatch, tmp_path):
     monkeypatch.setattr(gs, '_live_candidate_matches_snapshot', lambda *a: True)
     monkeypatch.setattr(gs, '_validate_review_changed_paths', lambda *a, **kw: [])
     monkeypatch.setattr(gs, '_rev_parse', lambda root, ref: ctx['snapshot_tree'] if ref == 'HEAD^{tree}' else LOCAL)
-    # A fresh approval must get past the existing idempotence fast-path.
+    # This fixture now represents a genuinely uncommitted review candidate.
+    # Keeping the synthetic post-commit SHA would correctly require recovery.
     ctx['approval_attempt_id'] = None
+    ctx['merge_commit'] = None
+    ctx['apply_phase'] = None
     gs.db_git.set_session_context(mid, ctx)
 
 
@@ -440,18 +457,23 @@ def test_push_exception_stays_separate(session, monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize('reset_code', [0, 128])
-def test_tree_mismatch_reset_keeps_existing_restore_policy(session, monkeypatch, tmp_path, reset_code):
+def test_tree_mismatch_preserves_candidate_without_reset(session, monkeypatch, tmp_path, reset_code):
     mid, ctx, row = session
     approve_setup(session, monkeypatch, tmp_path)
     ctx['base_head'] = EXPECTED
     gs.db_git.set_session_context(mid, ctx)
     monkeypatch.setattr(gs, '_rev_parse', lambda root, ref: 'd' * 40 if ref == 'HEAD^{tree}' else EXPECTED)
-    monkeypatch.setattr(gs, '_run_git', lambda args, **kw: push_result(reset_code if args[0] == 'reset' else 0))
+    calls = []
+    monkeypatch.setattr(gs, '_run_git', lambda args, **kw: calls.append(args) or push_result(reset_code if args[0] == 'reset' else 0))
     out = gs.approve_merge_review(row['group_id'], mid, attempt_id='new', review_fingerprint='fp', authority='human')
     after = saved(mid)
-    assert after['ref_operations'][-1]['reason'] == 'commit_tree_mismatch'
-    assert after['ref_operations'][-1]['returncode'] == reset_code
-    assert out['result']['status'] == ('commit_creation_failed' if reset_code == 0 else 'reconciling')
+    assert after['ref_operations'][-1]['reason'] == 'approve_merge_review'
+    assert after['ref_operations'][-1]['returncode'] == 0
+    assert all('reset' not in cmd and 'push' not in cmd for cmd in calls)
+    assert after['merge_commit'] == EXPECTED and after['approval_attempt_id'] == 'new'
+    assert after['last_error']['code'] == 'commit_tree_mismatch'
+    assert out['result']['status'] == 'user_intervention_required'
+    assert after['reconciliation_kind'] == gs.RECONCILE_KIND_LOCAL_STATE_MISMATCH
 
 
 def git(args, cwd=None):

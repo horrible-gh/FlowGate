@@ -338,6 +338,28 @@ def test_other_sha_is_never_overwritten_and_nothing_moves(env, branch):
     assert env.completed == []
 
 
+def assert_parked_approval_response(result, mid, kind):
+    context = saved(mid)
+    approval = {'approved': False, 'stage': 'pending', 'error': None,
+                'approval_intent_id': 'intent-0153'}
+    assert {key: value for key, value in result.items() if key != 'recovery'} == {
+        'status': 'reconciling', 'review_state': 'reconciling',
+        'reconciliation_kind': kind, 'merge_commit': context['merge_commit'][:7],
+        'git_terminal': False, 'pushed': False, 'approval': approval,
+        'approval_intent_id': 'intent-0153', 'approval_attempt_id': 'att-1',
+        'error': None, 'deferred': True,
+    }
+    recovery = result['recovery']
+    assert recovery['merge_id'] == mid and recovery['session_state'] == 'open'
+    assert recovery['reconciliation_kind'] == kind
+    assert recovery['requires_recovery'] is True and recovery['git_terminal'] is False
+    assert recovery['approval'] == approval and recovery['approval_attempt_id'] == 'att-1'
+    assert recovery['merge_commit'] == context['merge_commit']
+    assert recovery['preserve_ref'] == context.get('preserve_ref')
+    assert recovery['preserve_sha'] == context.get('preserve_sha')
+    assert len(recovery['recovery_version']) == 64
+
+
 def test_same_attempt_replay_returns_the_parked_state(env):
     r = env.repo
     mid, fp = approve_ready(env)
@@ -346,8 +368,7 @@ def test_same_attempt_replay_returns_the_parked_state(env):
     assert out['result'] == PRESERVE_FAILED
     env.commands.clear()
     again = approve(env, mid, 'att-1', fp)
-    assert again['result'] == {'status': 'reconciling', 'review_state': 'reconciling',
-                               'reconciliation_kind': 'preserve_failed'}
+    assert_parked_approval_response(again['result'], mid, 'preserve_failed')
     assert env.commands == []
 
 
@@ -597,9 +618,15 @@ def test_rejected_reset_is_blocked_when_the_ref_was_damaged(env, branch):
         return push_rejected(args)
     env.hooks.append(on('push', damage_then_reject))
     out = publish(env, mid, branch=branch)
+    if not branch:
+        assert out['result']['reconciliation_kind'] == 'push_remote_unknown'
+        assert git(['rev-parse', 'HEAD'], r.work) == m
+        assert 'reset' not in names(env) and 'fetch' not in names(env)
+        out = gs.reconcile_push_session(mid, trigger='server_startup')
     assert out['result'] == PRESERVE_FAILED
     assert 'reset' not in names(env) and 'fetch' not in names(env)
-    assert_parked(env, mid, m, reason='ref_conflict', stage='reset_gate', observed=r.B)
+    assert_parked(env, mid, m, reason='ref_conflict',
+                  stage='reset_gate' if branch else 'reconcile_gate', observed=r.B)
     assert git(['rev-parse', 'HEAD'], r.work) == m
 
 
@@ -610,6 +637,18 @@ def test_rejected_reset_keeps_existing_flow_and_the_ref(env, branch):
     mid = open_session(env, approved(r, m))
     env.hooks.append(on('push', push_rejected))
     out = publish(env, mid, branch=branch)
+    if not branch:
+        assert out['result']['status'] == 'reconciling'
+        after = saved(mid)
+        assert after['merge_commit'] == m and after['preserve_round'] == 0
+        assert after['preserve_ref'] == f'refs/flowgate/preserve/{mid}'
+        assert ref_value(r.work, after['preserve_ref']) == m
+        assert parents_of(r.work, m) == [r.B, r.F]
+        assert git(['rev-parse', 'HEAD'], r.work) == m
+        assert 'reset' not in names(env) and 'fetch' not in names(env)
+        assert after['first_push_error']['returncode'] == 1
+        assert after['last_error']['code'] == 'push_remote_unknown'
+        return
     assert out['result']['status'] == 're_review'
     seq = names(env)
     assert seq.index('update-ref') < seq.index('push') < seq.index('reset') < seq.index('fetch')
@@ -684,19 +723,29 @@ def test_rejected_then_reapproved_pins_round_one_with_previous_commit_as_parent(
     git(['clone', str(r.bare), str(other)], r.tmp)
     git(['config', 'user.name', 'other'], other)
     git(['config', 'user.email', 'other@local'], other)
-    (other / 'c.txt').write_text('concurrent\n', encoding='utf-8')
+    (other / 'f.txt').write_text('concurrent\n', encoding='utf-8')
     git(['add', '.'], other)
     git(['commit', '-m', 'concurrent'], other)
     git(['push', 'origin', 'main'], other)
     c = git(['rev-parse', 'HEAD'], other)
     mid, fp = approve_ready(env)
     out = approve(env, mid, 'att-1', fp)
-    assert out['result']['status'] == 're_review', out
+    assert out['result']['status'] == 'reconciling', out
+    assert 'reset' not in names(env)
+    out = gs.reconcile_push_session(mid, trigger='server_startup')
+    assert out['result']['status'] == 'returned_to_resolver', out
     first = saved(mid)
     r0 = f'refs/flowgate/preserve/{mid}'
     m0 = first['preserve_history'][0]['sha']
     assert ref_value(r.work, r0) == m0 and parents_of(r.work, m0) == [r.B, r.F]
-    out = approve(env, mid, 'att-2', out['result']['review_fingerprint'])
+    assert ref_value(r.work, 'MERGE_HEAD') == m0 and ref_value(r.work, 'HEAD') == c
+    assert git(['diff', '--name-only', '--diff-filter=U'], r.work) == 'f.txt'
+    (r.work / 'f.txt').write_text('feature\nconcurrent\n', encoding='utf-8')
+    git(['add', 'f.txt'], r.work)
+    snapshot = gs._freeze_commit_candidate(r.work, 'main')
+    first.update(snapshot, review_state=gs.REVIEW_STATE_PENDING)
+    gs.db_git.set_session_context(mid, first)
+    out = approve(env, mid, 'att-2', snapshot['review_fingerprint'])
     assert out['result']['status'] == 'merged', out
     m1 = git(['rev-parse', 'HEAD'], r.work)
     r1 = f'refs/flowgate/preserve/{mid}-r1'
@@ -1001,8 +1050,7 @@ def test_push_exception_contract_is_unchanged_after_preservation(env):
         return None
     env.hooks.append(raise_on_push)
     out = approve(env, mid, 'att-1', fp)
-    assert out['result'] == {'status': 'reconciling', 'review_state': gs.REVIEW_STATE_RECONCILING,
-                             'reconciliation_kind': 'push_remote_unknown'}
+    assert_parked_approval_response(out['result'], mid, 'push_remote_unknown')
     after = saved(mid)
     assert after['last_error'] == {'code': 'push_exception', 'detail': 'unexpected_error'}
     assert after['reconcile_attempt_count'] == 0 and after['reconcile_next_at'] == NEXT_AT
