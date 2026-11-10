@@ -6944,7 +6944,7 @@ class TestBaseUntrackedConflictEndToEnd0350:
                     svc.finalize(group, action)
                 assert exc.value.status == 409
                 assert exc.value.code == "base_untracked_conflict"
-                assert exc.value.details == {"files": ["clash.txt"]}
+                assert exc.value.details == {"files": ["clash.txt"], "stage": "merge", "cause": "conflict_other"}
             finally:
                 (base / "clash.txt").unlink()
 
@@ -7001,7 +7001,7 @@ class TestBaseUntrackedConflictEndToEnd0350:
             with pytest.raises(svc.GitServiceError) as exc2:
                 svc.finalize(group, "merge_only")
             assert exc2.value.code == "base_untracked_conflict"
-            assert exc2.value.details == {"files": ["clash3.txt"]}
+            assert exc2.value.details == {"files": ["clash3.txt"], "stage": "merge", "cause": "conflict_other"}
         finally:
             (base / "clash3.txt").unlink()
 

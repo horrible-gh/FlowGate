@@ -727,6 +727,10 @@ def dual_remote_branch_repo(tmp_path, monkeypatch):
     `origin` stays pointed at the stale one (`remote_a`) exactly as an existing
     checkout would after `save_config()` touched only the DB row (NR0003 §3);
     `_branch_context` reports `remote_b` as the current config's `repo_url`."""
+    # Real Git setup/publish can outlive the instance self-validity window.
+    # Keep the same real heartbeat as server startup; group_store owns shutdown.
+    from modules.flow_gate.services.git import instance_registry
+    instance_registry.startup()
     root = tmp_path / "repo"
     root.mkdir()
     subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
