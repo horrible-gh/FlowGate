@@ -199,7 +199,7 @@ class Probe:
         for name in ('resolve','apply_decision','settle_run'):
             p.setattr(binder,name,lambda *a,**kw:pytest.fail('inbox_edited must not create a node event'))
 
-    def intent(self,flow,run,node,a,doc,mode,after):
+    def intent(self,flow,run,node,a,doc,mode,after,ctx=None):
         if a.get('intent_kind'):return a
         if a['actor']=='ai':
             a['intent_kind']='execution'

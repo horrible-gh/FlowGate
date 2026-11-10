@@ -348,10 +348,28 @@ def resolve_merge_id_target(merge_id: int) -> Optional[MergeTargetContext]:
     return resolve_session_target(session) if session else None
 
 
+# flowgate.v02.0158: inside one check card candidate computation (``_compute_snapshot``) every listed name's
+# ``inspect_workspace`` (and the base slot check) asked for the same open attempts, re-reading every open session of
+# the server once per candidate under the view's one CHECK_TARGET_BUDGET_SEC budget. There the first read is kept
+# for the rest of that computation (project -> attempts). Outside it -- saving, confirming, running, every merge
+# path -- each call still reads the sessions afresh. A failed read is not kept.
+_attempts_memo: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "flowgate_check_target_open_attempts", default=None)
+
+
 def open_merge_attempts(project_id: str) -> list[dict]:
     """Every open merge attempt of the project (any phase, any target): group finalize
     merges and — 0630 T0005 — ordinary branch merges, so a workspace/target claim or a
     branch-delete guard sees both owners."""
+    memo = _attempts_memo.get()
+    if memo is None:
+        return _read_open_merge_attempts(project_id)
+    if project_id not in memo:
+        memo[project_id] = _traced_read("attempts", _read_open_merge_attempts, project_id)
+    return list(memo[project_id])
+
+
+def _read_open_merge_attempts(project_id: str) -> list[dict]:
     from modules.flow_gate.services import git_service as _gs
     out: list[dict] = []
     for session in _gs.db_git.list_open_sessions():
@@ -1367,6 +1385,7 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
         return floor, (_traced_read("containing", _branches_containing, basis.base_root, floor) if floor else None)
 
     trace = _check_trace.get()                    # 0119 T#1: diagnostics only (None outside a view)
+    memo_token = None
     try:
         _trace_stage(trace, "shared_reads")
         if _spent(budget):
@@ -1389,6 +1408,9 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
             floor, contained = history.result()
             base_dirty = dirty.result()
         judged = replace(basis, base_checked=True, floor_sha=floor, floor_known=True, base_dirty=base_dirty)
+        # flowgate.v02.0158: the names below share one read of the open attempts (``open_merge_attempts``), set only
+        # after the shared-read threads above have been joined.
+        memo_token = _attempts_memo.set({})
 
         def incoming_of(name: str) -> tuple[Optional[int], Optional[str]]:
             # ``preview_target``'s count is ``target..floor``: 0 exactly when the tip contains the floor (the
@@ -1426,6 +1448,9 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
         if _spent(budget):
             return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
         return _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, "probe_failed", **common)
+    finally:
+        if memo_token is not None:
+            _attempts_memo.reset(memo_token)
     options = sorted(name for name in refs if verdicts[name]["error"] is None)
     return {"status": CHECK_STATUS_OK if options else CHECK_STATUS_EMPTY, "code": None, "reason": None,
             "options": options, "verdicts": verdicts, "default_branch": basis.work_base_ref, "basis": judged}

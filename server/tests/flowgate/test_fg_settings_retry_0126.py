@@ -160,15 +160,41 @@ def test_failed_writer_explicit_command_gets_new_attempt_and_current_provider(
         'old_assignment':first,'new_assignment':second,'actual_provider_id':call['provider_id']},indent=2),encoding='utf-8')
 
 
+def _submitted_ai_instruction(env,monkeypatch,provider):
+    """0158: the instruction AI's write as a submitted document (``pending_review``), as an edit submission leaves it.
+    ``_ai_writes_instruction`` alone writes the body only; a review loop refuses such a document
+    (``document_not_submitted``), which is the refusal case below, not this recovery case."""
+    import test_fg_ai_roles_l2_review as l2_review
+    from modules.flow_gate.db import documents as db_documents
+    real=l2_review._write_written
+
+    def written_and_submitted(doc_id,*args,**kwargs):
+        real(doc_id,*args,**kwargs)
+        db_documents.update(doc_id,{'doc_review_status':'pending_review'})
+
+    monkeypatch.setattr(l2_review,'_write_written',written_and_submitted)
+    try:
+        return l2_review._ai_writes_instruction(env,monkeypatch,provider=provider)
+    finally:
+        monkeypatch.setattr(l2_review,'_write_written',real)
+
+
+def _instruction_reviews(env,key):
+    return sorted((a for a in assignments(env,key) if a['stage']=='instruction_review'),key=lambda a:a['seq'])
+
+
+def _event_seqs(env,run_id):
+    return [r['event_seq'] for r in _sql(env['db'],'SELECT event_seq FROM graph_run_events WHERE run_id = ?',(run_id,))]
+
+
 @pytest.mark.parametrize('mode',['step','full'])
 def test_instruction_verdict_hold_resolves_current_instruction_reworker_and_limit(
         env,decided,monkeypatch,starts,mode):
     from test_fg_ai_roles_l2_assignment import record_starts
-    from test_fg_ai_roles_l2_review import _ai_writes_instruction,_review_end
     key=flow(env,extra_settings=(('instruction_review_count',3),))
     roles(key,instruction=X,execution=A,review=B)
     command(env,mode)
-    instruction=_ai_writes_instruction(env,monkeypatch,provider=X)
+    instruction=_submitted_ai_instruction(env,monkeypatch,provider=X)
     record_starts(monkeypatch,starts)
     first=one(env,key,'instruction_review',1)
     assert first['review_rounds']==3 and first['rework_provider_id']==X
@@ -190,6 +216,39 @@ def test_instruction_verdict_hold_resolves_current_instruction_reworker_and_limi
     [call]=_loops(starts)[calls:]
     assert call['doc_ref']==instruction
     assert (call['document_review_loop']['reviewer_provider_id'],call['document_review_loop']['rework_provider_id'])==(A,Y)
+    assert node_run(env,key)['stage']=='instruction' and one(env,key,'result') is None
+
+
+@pytest.mark.parametrize('mode',['step','full'])
+def test_unsubmitted_instruction_command_rerequest_refusal_keeps_the_command_and_event_order(
+        env,decided,monkeypatch,starts,mode):
+    """0158: an explicit command re-requests the review of an AI instruction that was written but never submitted.
+    The loop refuses its start (``document_not_submitted``); the new seq is failed ``review_not_started`` inside the
+    command's guard. Its ``stage_failed`` event keeps the command's ``ctx`` numbering, so the command's own run event
+    after it takes the next ``event_seq`` (formerly the same one: ``UNIQUE(run_id, event_seq)`` -> 500). The submission
+    gate is not bypassed, and the earlier seqs stay as they were."""
+    from test_fg_ai_roles_l2_review import _ai_writes_instruction
+    key=flow(env,extra_settings=(('instruction_review_count',3),))
+    roles(key,instruction=X,execution=A,review=B)
+    run_id=command(env,mode)['run_id']
+    instruction=_ai_writes_instruction(env,monkeypatch,provider=X)          # body written, never submitted
+    _read(env)
+    before=_instruction_reviews(env,key)
+    assert before and all((r['stage_state'],r['fail_cause'])==('failed','review_not_started') for r in before)
+    for field,value in [('instruction_role',{'kind':'assigned','provider_id':Y}),
+                        ('instruction_review_ai',A),('instruction_review_count',1)]:
+        save(env,key,field,value)
+    command(env,mode)                                                       # accepted (200/201), never a 500
+    after=_instruction_reviews(env,key)
+    assert after[:len(before)]==before                                      # history kept as it was
+    newer=after[len(before):]
+    assert newer and newer[0]['seq']==before[-1]['seq']+1 and newer[0]['attempt_id']==before[-1]['attempt_id']
+    assert (newer[0]['provider_id'],newer[0]['rework_provider_id'],newer[0]['review_rounds'])==(A,Y,1)
+    assert (newer[0]['stage_state'],newer[0]['fail_cause'])==('failed','review_not_started')
+    assert not newer[0]['intent_exec_id']                                   # the refused request was rolled back
+    seqs=_event_seqs(env,run_id)
+    assert len(seqs)==len(set(seqs))
+    assert _sql(env['db'],'SELECT doc_review_status FROM documents WHERE doc_id = ?',(instruction,))[0]['doc_review_status'] in (None,'')
     assert node_run(env,key)['stage']=='instruction' and one(env,key,'result') is None
 
 
