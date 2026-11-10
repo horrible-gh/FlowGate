@@ -116,6 +116,18 @@ def _payload_of(event: dict) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _stage_failed_detail(data: dict, event: dict) -> Optional[str]:
+    """A ``stage_failed`` failure's detail: its ``fail_cause`` and, when its safe ``fail_detail`` (flowgate.v02.0140)
+    names a code the cause does not already carry, that code too -- ``review_not_started: document_not_submitted``
+    (flowgate.v02test.0015: the bare ``review_not_started`` told no one why)."""
+    cause = data.get("fail_cause") or event.get("reason")
+    extra = data.get("fail_detail") if isinstance(data.get("fail_detail"), dict) else {}
+    code = extra.get("code")
+    if cause and isinstance(code, str) and code and code not in str(cause):
+        return f"{cause}: {code}"
+    return cause
+
+
 def _is_run_status(event: dict) -> bool:
     return event.get("event_type") == engine.RUN_STATUS_EVENT
 
@@ -555,7 +567,7 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
                 fail(key, "ai_unavailable", data.get("cause_code"), at, role)
         elif cause == STAGE_FAILED:
             touch(key)
-            fail(key, "stage_failed", data.get("fail_cause") or event.get("reason"), at, ROLE_OF_STAGE.get(data.get("stage")))
+            fail(key, "stage_failed", _stage_failed_detail(data, event), at, ROLE_OF_STAGE.get(data.get("stage")))
         elif cause == APPROVAL_SKIPPED and event.get("reason") not in PERSON_APPROVAL_WAITS:
             touch(key)
             fail(key, "auto_approval_failed", event.get("reason"), at)

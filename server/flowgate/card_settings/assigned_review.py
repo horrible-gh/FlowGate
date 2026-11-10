@@ -241,16 +241,28 @@ def ensure_intent_locked(flow_id: str, run_row: dict, node: dict, a: dict, doc: 
     # assignee may lack the review's reject permission); the approval's actor stays the token recipient (L-2 §2.7.4)
     issuer = legacy.run_issuer(run_row) or sa.issued_to_of(node, run_row)
     project_id = legacy.project_of(flow_id)
+
+    def request():
+        # flowgate.v02test.0015: the card's stage decides its next step. A submission with no review status (the v0.1
+        # submit step never ran on it) is put in review by the system first, in this same savepoint -- and an AI's
+        # submission whose finished review answered ``issues`` with no rejection is rejected by it, so the loop starts
+        # with that rework. The v0.1 refusal (``document_not_submitted``) no longer stops a card on every try.
+        legacy.submit_for_card_review(doc["doc_id"], issuer,
+                                      answer_issues=a.get("author") == sa.AI and bool(loop.get("rework_provider_id")))
+        current = _doc(doc["doc_id"]) or doc
+        return execution.request_loop_locked(
+            project_id, flow_id, current["doc_id"], issuer, loop,
+            fields.review_basis_note(criteria, legacy.last_rejection(current["doc_id"])), a["node_key"],
+            assignment_ref=sa.ref_of(a), origin=sa.origin(a, purpose, flow_id, doc=current, round_no=1),
+            statuses="idle_excepted" if mode == HELD else "writable", attempt_id=a["attempt_id"])
+
     try:
-        exec_id = legacy.isolated(lambda: execution.request_loop_locked(
-            project_id, flow_id, doc["doc_id"], issuer, loop,
-            fields.review_basis_note(criteria, legacy.last_rejection(doc["doc_id"])), a["node_key"],
-            assignment_ref=sa.ref_of(a), origin=sa.origin(a, purpose, flow_id, doc=doc, round_no=1),
-            statuses="idle_excepted" if mode == HELD else "writable", attempt_id=a["attempt_id"]),
-            "fg_review_request")
+        exec_id = legacy.isolated(request, "fg_review_request")
     except Exception as exc:  # noqa: BLE001 — E-42: the request is rolled back, the assignment stays failed
         _log.info("card review not started flow=%s node=%s: %s", flow_id, a["node_key"], exc)
-        failed = sa.fail(a, sa.REVIEW_NOT_STARTED, ctx)
+        from modules.flow_gate.graph_workflow.services import node_dispatch  # noqa: PLC0415
+        info = node_dispatch._start_failure_info(exc)          # flowgate.v02test.0015: why, kept on its stage_failed
+        failed = sa.fail(a, sa.REVIEW_NOT_STARTED, ctx, detail=info)
         after.append(lambda error=exc: execution.start_failed(None, error))   # a fence refusal recorded after the commit
         after.append(lambda: _review_not_started(flow_id, failed, doc))
         return failed
