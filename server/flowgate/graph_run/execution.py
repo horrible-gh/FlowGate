@@ -687,6 +687,8 @@ def _request_has_owner(row, group_id):
     from modules.flow_gate.db import group_ai_leases
     from modules.flow_gate.services import ai_invoke_service
     from modules.flow_gate.services.ai_invoke import remote_supervisor
+    if ledger.handing_off(row["run_id"]) or result_merge.holding(row["run_id"]):
+        return True
     if run_store._one(
             "SELECT e.exec_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
             "WHERE r.group_id = ? AND e.exec_id <> ? AND "
@@ -716,20 +718,23 @@ def _request_has_owner(row, group_id):
         return True
 
 
-def _close_unowned_requests(*, started_before=None, exec_id=None):
+def _close_unowned_requests(*, started_before=None, exec_id=None,
+                            run_statuses=("running", "paused"),
+                            reason="restart_unowned_request", confirm=None):
     """After replay, close only unadmitted intents with no owner that can refill them.
     Startup requires the shared process boundary; hold-release checks ONE intent regardless of age.
     """
     from modules.flow_gate.services.ai_invoke.admission import _utc_instant
-    if exec_id is None and started_before is None:
+    if not run_statuses or (exec_id is None and started_before is None):
         return
     count = 0
     try:
         rows = run_store._all(
             "SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
             "WHERE e.status = 'requested' AND e.ai_run_id IS NULL AND e.lease_token IS NULL "
-            "AND r.status IN ('running','paused')" + (" AND e.exec_id = ?" if exec_id else ""),
-            [exec_id] if exec_id else [])
+            "AND r.status IN (" + ",".join("?" for _ in run_statuses) + ")" +
+            (" AND e.exec_id = ?" if exec_id else ""),
+            [*run_statuses, *([exec_id] if exec_id else [])])
         for snapshot in rows:
             try:
                 def body():
@@ -738,29 +743,31 @@ def _close_unowned_requests(*, started_before=None, exec_id=None):
                             or row.get("lease_token") is not None:
                         return False
                     graph = run_store.run_by_id(row["run_id"])
-                    if not graph or graph["status"] not in ("running", "paused"):
+                    if not graph or graph["status"] not in run_statuses:
                         return False
                     if started_before is not None and _utc_instant(row["created_at"]) >= _utc_instant(started_before):
                         return False
                     if _time_machine().busy(snapshot["group_id"]) or _request_has_owner(row, snapshot["group_id"]):
                         return False
+                    if confirm is not None and not confirm(row):
+                        return False
                     ledger.cancel(row["exec_id"], None, "requested")
                     return True
                 if with_flow_guard(snapshot["group_id"], body):
                     count += 1
-                    log.warning("Graph restart_unowned_request: %s", snapshot["exec_id"])
+                    log.warning("Graph %s: %s", reason, snapshot["exec_id"])
                     # Node failure and settle take their own Flow guard. Run them after
                     # the cancellation commits, as the ordinary start-failure path does.
                     _start_failure({"graph_exec_id": snapshot["exec_id"], "group_id": snapshot["group_id"]},
-                                   failure_info={"code": "start_failed", "reason": "restart_unowned_request"})
+                                   failure_info={"code": "start_failed", "reason": reason})
             except ledger.LeaseLost:
                 pass  # Another admission won the cancellation CAS.
             except Exception:
                 log.warning("Graph unowned request recovery failed for %s", snapshot["exec_id"], exc_info=True)
     except Exception:
-        log.warning("Graph unowned request startup scan failed", exc_info=True)
+        log.warning("Graph %s scan failed", reason, exc_info=True)
     if count:
-        log.warning("Graph startup closed %d unowned request(s)", count)
+        log.warning("Graph %s closed %d unowned request(s)", reason, count)
 
 
 def recover():

@@ -203,6 +203,7 @@ from .admission import (
     startup_recover_leases,
     startup_recovery_started_at,
     review_loop_owner_evidence,
+    sweep_unowned_review_loops,
     stored_hop_provider,
 )
 
@@ -762,6 +763,7 @@ __all__ = [
     "startup_recover_leases",
     "startup_recovery_started_at",
     "review_loop_owner_evidence",
+    "sweep_unowned_review_loops",
     "startup_sweep_run_scratches",
     "stop_reason_text",
     "storage_paths",

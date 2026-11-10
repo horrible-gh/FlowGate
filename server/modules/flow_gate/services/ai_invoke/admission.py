@@ -27,6 +27,9 @@ from modules.flow_gate import template_provision
 from modules.flow_gate.db import ai_run_identity
 # Initialize recovery DB dependencies before callers can temporarily override connection.get_store.
 from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+from modules.flow_gate.db import ai_invoke_runs as db_runs
+from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import connection as db_connection
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import document_reviews as db_document_reviews
@@ -64,6 +67,8 @@ from .runtime import (
     PROVIDER_UNAVAILABLE_MESSAGE,
     RESTART_MAX_ATTEMPTS_DEFAULT,
     REVIEW_HOP_KIND,
+    REVIEW_LOOP_SWEEP_GRACE_SEC,
+    REVIEW_LOOP_ORPHAN_TTL_SEC,
     REWORK_HOP_KIND,
     STEP_TIMEOUT_MAX_SEC,
     STEP_TIMEOUT_MIN_SEC,
@@ -586,7 +591,7 @@ def _utc_instant(value):
 
 def review_loop_owner_evidence(loop_row: dict, *, held, before, now=None,
                                remote_settled: bool = False) -> Optional[str]:
-    """Read-only evidence: foreign, live_run, remote_hold, group_lease, graph_lease,
+    """Read-only evidence: foreign, live_run, handoff, remote_hold, group_lease, graph_lease,
     recent, or None. Never misidentify a normal execution as an orphan.
 
     before=None disables the startup-only recent check (also reusable by the TTL sweep).
@@ -601,6 +606,24 @@ def review_loop_owner_evidence(loop_row: dict, *, held, before, now=None,
         return "foreign"
     if _svc().is_run_live(run_id):
         return "live_run"
+    try:
+        from flowgate.card_settings import review_stage
+        from flowgate.graph_run import execution_store as ledger
+        from . import chain
+        if review_stage.handoff_owned_by(run_id):
+            return "handoff"
+        store = db_connection.get_store()
+        if store.table_exists("graph_attempt_runs") and any(
+                ledger.handing_off(row["run_id"]) for row in store._fetch_all(
+                    "SELECT DISTINCT run_id FROM graph_attempt_runs WHERE ai_run_id = ?", [run_id])):
+            return "handoff"
+        if store.table_exists("ai_invoke_paused_chains"):
+            paused = db_paused.get_by_group(loop_row["group_id"])
+            if paused and paused.get("stop_run_id") == run_id and chain._handoff_row_in_flight(paused):
+                return "handoff"
+    except Exception:
+        logger.warning("review-loop hand-off ownership unreadable for %s", run_id, exc_info=True)
+        return "handoff"
     try:
         remote = (remote_supervisor.run_has_unsettled_job(run_id) if remote_settled
                   else remote_supervisor.remote_alive(run_id))
@@ -630,6 +653,62 @@ def review_loop_owner_evidence(loop_row: dict, *, held, before, now=None,
             _utc_instant(loop_row["updated_at"]) >= _utc_instant(before):
         return "recent"
     return None
+
+
+# Only eligible rows from the immediately preceding sweep can be closed.
+_review_loop_sweep_candidates: dict[tuple, str] = {}
+_review_loop_sweep_lock = threading.Lock()
+
+
+def sweep_unowned_review_loops(*, now=None) -> int:
+    """Runtime-only, fail-closed recovery. Never write an AI end record or release leases."""
+    global _review_loop_sweep_candidates
+    from datetime import timezone
+    count = 0
+    with _review_loop_sweep_lock:
+        previous, _review_loop_sweep_candidates = _review_loop_sweep_candidates, {}
+        try:
+            store = db_connection.get_store()
+            if not store.table_exists("ai_invoke_document_review_loops"):
+                return 0
+            instant = _utc_instant(now) if now is not None else datetime.now(timezone.utc)
+            held = _restart_held_run_ids()
+            if held is None:
+                logger.warning("[ai_invoke] review-loop sweep skipped: remote Job holds unknown")
+                return 0
+            for row in db_loops.list_active_unstopped():
+                try:
+                    if review_loop_owner_evidence(row, held=held,
+                            before=instant - timedelta(seconds=REVIEW_LOOP_SWEEP_GRACE_SEC), now=instant):
+                        continue
+                    group = db_groups.get_by_id(row["group_id"]) or {}
+                    owner = ai_run_identity.get_store()._fetch_one(
+                        "SELECT * FROM ai_run_owners WHERE run_id = ?", [row["run_id"]])
+                    if owner and (owner.get("group_id") != row["group_id"] or
+                                  owner.get("project_id") != group.get("project_id")):
+                        logger.warning("[ai_invoke] review-loop sweep identity conflict for %s", row["run_id"])
+                        continue
+                    if row.get("deadline_at") and _utc_instant(row["deadline_at"]) <= instant:
+                        reason, detail = "total_timeout", review.UNOWNED_LOOP_DEADLINE_STOP_DETAIL
+                    elif _utc_instant(row["updated_at"]) <= instant - timedelta(seconds=REVIEW_LOOP_ORPHAN_TTL_SEC):
+                        reason, detail = "retry_exhausted", review.UNOWNED_LOOP_STOP_DETAIL
+                    else:
+                        continue
+                    key = (row["run_id"], row["current_stage"], row["round_no"], row["updated_at"])
+                    _review_loop_sweep_candidates[key] = reason
+                    if previous.get(key) != reason:
+                        continue
+                    if db_runs.get(row["run_id"]) is None:
+                        logger.warning("[ai_invoke] unowned review loop %s has no end record", row["run_id"])
+                    count += bool(db_loops.stop_unowned(row["run_id"], stop_reason=reason,
+                        detail=detail, expected_updated_at=row["updated_at"]))
+                except Exception:
+                    logger.warning("review-loop sweep failed for %s", row.get("run_id"), exc_info=True)
+        except Exception:
+            logger.warning("review-loop sweep scan failed", exc_info=True)
+        if count:
+            logger.warning("[ai_invoke] sweeper closed %d unowned review loop(s)", count)
+    return count
 
 
 def _close_orphan_review_loop(row: dict, *, held, before, remote_settled=False) -> bool:

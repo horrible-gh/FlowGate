@@ -2296,6 +2296,8 @@ def force_stop_loop_after_checkpoint_failure(run: dict, error: BaseException | N
 
 
 ABANDONED_RUN_STOP_DETAIL = "run abandoned by post-process recovery"
+UNOWNED_LOOP_STOP_DETAIL = "review loop has no live run, lease or hand-off"
+UNOWNED_LOOP_DEADLINE_STOP_DETAIL = "document review loop deadline reached with no live run, lease or hand-off"
 
 
 def force_stop_loop_after_abandon(run: dict, *, stop_code: str | None = None) -> bool:

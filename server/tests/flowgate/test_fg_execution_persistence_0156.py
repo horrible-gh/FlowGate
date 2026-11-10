@@ -15,6 +15,14 @@ from modules.flow_gate.services.ai_invoke import remote_supervisor as supervisor
 pytestmark = pytest.mark.usefixtures('legacy_cards')
 REAL_ACQUIRE = scheduling.acquire
 
+@pytest.fixture(autouse=True)
+def isolate_unowned_sweep_state(monkeypatch):
+    """Every tick test starts with independent runtime sweep observations."""
+    from modules.flow_gate.services.ai_invoke import admission, remote_supervisor
+    monkeypatch.setattr(remote_supervisor, "_unowned_sweep_ticks", 0, raising=False)
+    monkeypatch.setattr(remote_supervisor, "_unowned_request_candidates", {}, raising=False)
+    monkeypatch.setattr(admission, "_review_loop_sweep_candidates", {}, raising=False)
+
 @pytest.fixture
 def scene(env, decided, monkeypatch):
     key = _run_one_card(env, {'kind':'human','user_id':'u_kim','provider_id':None})

@@ -40,6 +40,20 @@ def list_active_unstopped(limit: Optional[int] = None) -> list[dict]:
                                  [limit] if limit is not None else [])
 
 
+def stop_unowned(run_id: str, *, stop_reason: str, detail: str,
+                 expected_updated_at: str, at: Optional[str] = None) -> bool:
+    """Close only the still-unprogressed active loop observed by the runtime sweep."""
+    if stop_reason not in ("total_timeout", "retry_exhausted"):
+        raise ValueError("invalid unowned loop stop reason: " + str(stop_reason))
+    return get_store()._execute_affected(
+        "UPDATE ai_invoke_document_review_loops "
+        "SET current_stage = 'stopped', stop_reason = ?, stop_detail = ?, updated_at = ? "
+        "WHERE run_id = ? AND current_stage IN ('review','rework') "
+        "AND stop_reason IS NULL AND updated_at = ?",
+        [stop_reason, detail, at or now_iso(), run_id, expected_updated_at],
+    ) == 1
+
+
 def stop_for_restart_orphan(run_id: str, *, at: Optional[str] = None,
                             detail: str = "worker lease orphaned by server restart") -> bool:
     """Terminally stop an active loop whose worker disappeared during restart recovery.

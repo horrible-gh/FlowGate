@@ -255,6 +255,16 @@ def _handoff_pending(flow_id: str, node_key: str) -> bool:
     return mark is not None
 
 
+def handoff_owned_by(run_id: str) -> bool:
+    """Read ownership without consuming a stage hand-off; discard expired marks."""
+    with _handoff_lock:
+        instant = time.monotonic()
+        for key, (_owner, deadline) in list(_handoffs.items()):
+            if deadline <= instant:
+                _handoffs.pop(key, None)
+        return any(owner == run_id for owner, _deadline in _handoffs.values())
+
+
 def _clear_handoffs(run_id: Optional[str]) -> bool:
     with _handoff_lock:
         keys = [k for k, (owner, _deadline) in _handoffs.items() if owner == run_id]
