@@ -82,7 +82,7 @@ from modules.flow_gate.settings import ai_execution_policy_service
 __all__ = ["GraphApiError", "GitServiceError", "judge_merge_target", "merge_target_view", "invalidate_merge_targets",
            "MERGE_TARGET_UNFIT", "MERGE_TARGET_GIT_UNAVAILABLE", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid",
            "locale_of", "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
-           "node_running", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
+           "node_running", "node_running_cause", "running_review_loop", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
            "run_doc_type",
            "node_ai_run_active", "instruction_node_of_ai_run", "registered_instructions", "start_result_stage",
            "instruction_stage_failed", "attempt_of_ai_run", "attempt_owns", "attempt_hold", "active_run_id",
@@ -189,26 +189,119 @@ def invalidate_merge_targets(group: dict) -> None:
 
 
 def node_running(flow_id: str, node_key: str) -> bool:
-    """flowgate.v02.0113 T#1 (0030-M §4, 0002-D 개정 §3.13): the node is *actually running* — the one judgement the card
-    settings lock, the title save lock, the run read's ``node_running`` and the screen's 🔒 실행 중 / ◌ follow. True only
-    while an AI works on the node of the Flow's active run (open or in review): an AI execution of it is requested or
-    running (or the stage is about to follow its run that just released the lease), or an AI review loop works on its
-    result — a result the card took as already written and sent straight to review too (``review_stage.ai_working``).
-    A node merely open (a person's or a setup wait, a question, an unavailable AI), one awaiting approval, done or in
-    error, and a running run alone are not running."""
-    run_row: Optional[dict] = run_store.active_run(flow_id)
-    row = next((r for r in run_store.node_runs(run_row["run_id"]) if r["node_key"] == node_key), None) if run_row else None
-    from flowgate.card_settings import review_stage  # noqa: PLC0415 — review_stage imports this module
+    """The shared running lock: see node_running_cause for R4 and fail-closed rules.
 
-    # Activity is evidence, not a display status. A delayed worker/lease or an instruction
-    # review still protects this card even when its node status was already changed.
-    docs = {row.get("result_doc_id"), row.get("instruction_doc_id")} if row else set()
+    Causes are handoff, graph_exec:<id>, group_lease:<id>, review_loop:<id>.
+    Only a latest/current-attempt loop or one with owner evidence protects the card.
+    Unknown attempts and unreadable owner evidence keep the lock closed.
+    """
+    return node_running_cause(flow_id, node_key) is not None
+
+
+def node_running_cause(flow_id: str, node_key: str) -> Optional[str]:
+    """Read-only running judgement, in priority order: handoff, graph_exec:<id>,
+    group_lease:<id>, review_loop:<id>, or None. Unknown ids use 'unknown'.
+
+    R4 counts the document's latest loop on the current attempt (unknown attempts
+    count too), and any loop with owner evidence. Unreadable evidence fails closed.
+    Merely open, awaiting approval, done or error is not evidence of activity.
+    """
+    from flowgate.card_settings import review_stage  # noqa: PLC0415
+
+    if review_stage.ai_working(flow_id, node_key, None):
+        if review_stage._handoff_pending(flow_id, node_key):
+            return "handoff"
+        return _node_ai_run_cause(flow_id, node_key)
+    run_row = run_store.active_run(flow_id)
+    row = next((r for r in run_store.node_runs(run_row["run_id"]) if r["node_key"] == node_key), None) if run_row else None
+    docs = [row.get("result_doc_id"), row.get("instruction_doc_id")] if row else []
     if get_store().table_exists("graph_node_documents"):
-        docs.update(r["doc_id"] for r in get_store()._fetch_all(
+        docs.extend(sorted(r["doc_id"] for r in get_store()._fetch_all(
             "SELECT doc_id FROM graph_node_documents WHERE group_id = ? AND node_key = ?",
-            [flow_id, node_key]) or [])
-    return bool(review_stage.ai_working(flow_id, node_key, None) or
-                any(review_stage.review_running(flow_id, node_key, doc) for doc in docs if doc))
+            [flow_id, node_key]) or [] if r.get("doc_id")))
+    for doc in dict.fromkeys(d for d in docs if d):
+        loop = running_review_loop(flow_id, node_key, doc)
+        if loop is not None:
+            return "review_loop:" + (loop.get("run_id") or "unknown")
+    return None
+
+
+def _loop_attempt(ai_run_id: Optional[str]) -> Optional[str]:
+    store = get_store()
+    if not ai_run_id or not store.table_exists("graph_attempt_runs"):
+        return None
+    row = store._fetch_one(
+        "SELECT attempt_id FROM graph_attempt_runs WHERE ai_run_id = ? "
+        "ORDER BY created_at DESC, exec_id DESC LIMIT 1", [ai_run_id])
+    return row.get("attempt_id") if row else None
+
+
+def running_review_loop(flow_id: str, node_key: str, doc_id: Optional[str]) -> Optional[dict]:
+    """R4: latest loop of the current attempt, or a loop with owner evidence.
+    Unknown attempts, a changing loop read and evidence errors fail closed. No writes.
+    """
+    if not doc_id or not review_loop_active(doc_id):
+        return None
+    loops = review_loops(doc_id)
+    unstopped = [r for r in loops if r.get("current_stage") != STOPPED_LOOP_STAGE]
+    if not unstopped:
+        return {"run_id": None}
+    run = run_store.active_run(flow_id)
+    attempt = None
+    if run:
+        attempt = (run_store.active_attempt_id(run["run_id"], node_key)
+                   or run_store.current_attempts(run["run_id"]).get(node_key))
+    from modules.flow_gate.services import ai_invoke_service  # noqa: PLC0415
+
+    for loop in unstopped:
+        loop_attempt = _loop_attempt(loop.get("run_id"))
+        if loop is loops[0] and (attempt is None or loop_attempt is None or attempt == loop_attempt):
+            return loop
+        try:
+            if ai_invoke_service.review_loop_owner(loop) is not None:
+                return loop
+        except Exception:  # noqa: BLE001 — unreadable ownership must retain protection
+            _log.warning("review loop owner read failed run=%s doc=%s", loop.get("run_id"), doc_id, exc_info=True)
+            return loop
+        _log.info("review loop ignored run=%s doc=%s reason=%s", loop.get("run_id"), doc_id,
+                  "not_latest" if loop is not loops[0] else "other_attempt")
+    return None
+
+
+def _node_ai_run_cause(flow_id: str, node_key: str) -> str:
+    """Identify the execution after ai_working judged it active; preserve its SQL scope."""
+    store = get_store()
+    has_execs = store.table_exists("graph_attempt_runs")
+    if has_execs:
+        row = store._fetch_one(
+            "SELECT x.exec_id FROM graph_attempt_runs x JOIN graph_runs r ON r.run_id = x.run_id "
+            "JOIN graph_node_attempts a ON a.attempt_id = x.attempt_id "
+            "WHERE r.group_id = ? AND a.node_key = ? AND x.status IN ('requested','running') "
+            "ORDER BY x.created_at DESC, x.exec_id DESC LIMIT 1", [flow_id, node_key])
+        if row:
+            return "graph_exec:" + (row.get("exec_id") or "unknown")
+    run = run_store.active_run(flow_id)
+    if run:
+        attempt = run_store.active_attempt_id(run["run_id"], node_key)
+        if attempt and has_execs:
+            row = store._fetch_one(
+                "SELECT exec_id FROM graph_attempt_runs WHERE run_id = ? AND attempt_id = ? "
+                "AND status IN ('requested','running') ORDER BY created_at DESC, exec_id DESC LIMIT 1",
+                [run["run_id"], attempt])
+            if row:
+                return "graph_exec:" + (row.get("exec_id") or "unknown")
+        lease = db_leases.get(flow_id)
+        if _lease_held(lease) and store._fetch_one(
+                "SELECT m.node_key FROM graph_run_token_map m JOIN tokens t ON t.token_id = m.token_id "
+                "WHERE m.run_id = ? AND m.node_key = ? AND t.ai_run_id = ?",
+                [run["run_id"], node_key, lease["run_id"]]):
+            row = store._fetch_one(
+                "SELECT exec_id FROM graph_attempt_runs WHERE ai_run_id = ? "
+                "ORDER BY created_at DESC, exec_id DESC LIMIT 1", [lease["run_id"]]) if has_execs else None
+            if row:
+                return "graph_exec:" + (row.get("exec_id") or "unknown")
+            return "group_lease:" + lease["run_id"]
+    return "graph_exec:unknown"
 
 
 # ── the review stage ─────────────────────────────────────────────────────────

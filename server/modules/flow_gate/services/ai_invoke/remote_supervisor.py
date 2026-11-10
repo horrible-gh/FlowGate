@@ -11,6 +11,7 @@ covers everything that must keep happening without it:
   stage limits, hands over and scrubs Jobs whose owner run vanished or whose retrieval
   deadline passed, retries token revocation of unconfirmed ends, finishes in-process runs
   whose watch was lost once their Job is settled, and keeps restart holds alive.
+  It also sweeps unowned review loops and aged unadmitted Graph requests, even without remote Jobs.
 * **Restart hold**: at startup, a run of the previous process whose Job is not settled is
   recorded in ``ai_remote_recovery_holds`` (durable) and kept out of the lease reclaim and
   the Graph lease expiry; its token revocation is attempted at once. The tick heartbeats
@@ -26,7 +27,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
-from .runtime import _svc, logger
+from .runtime import _svc, logger, REVIEW_LOOP_ORPHAN_TTL_SEC, REVIEW_LOOP_SWEEP_EVERY_TICKS
 
 SUPERVISOR_INTERVAL_SEC = 15.0
 FENCE_REASON = "remote_termination_unconfirmed"
@@ -426,20 +427,59 @@ def _recover_graph() -> None:
             logger.warning("Graph runtime continuation failed for %s", row.get("exec_id"), exc_info=True)
 
 
+_unowned_sweep_ticks = 0
+_unowned_request_candidates: dict[str, tuple] = {}
+
+
+def _sweep_unowned() -> None:
+    global _unowned_sweep_ticks, _unowned_request_candidates
+    _unowned_sweep_ticks += 1
+    if _unowned_sweep_ticks % REVIEW_LOOP_SWEEP_EVERY_TICKS:
+        return
+    previous, _unowned_request_candidates = _unowned_request_candidates, {}
+    try:
+        store = _store()
+        if store is None:
+            return
+        loops_available = store.table_exists("ai_invoke_document_review_loops")
+        graph_available = store.table_exists("graph_attempt_runs")
+    except Exception:
+        return  # DB-less processes have no recovery work.
+    try:
+        if loops_available:
+            _svc().sweep_unowned_review_loops()
+    except Exception:
+        logger.warning("unowned review-loop supervisor sweep failed", exc_info=True)
+    try:
+        if graph_available:
+            from flowgate.graph_run import execution
+            def confirm(row):
+                state = tuple(row.get(key) for key in
+                              ("status", "ai_run_id", "lease_token", "created_at", "attempt_id"))
+                _unowned_request_candidates[row["exec_id"]] = state
+                return previous.get(row["exec_id"]) == state
+            execution._close_unowned_requests(
+                started_before=datetime.now(timezone.utc) - timedelta(seconds=REVIEW_LOOP_ORPHAN_TTL_SEC),
+                run_statuses=("running",), reason="stalled_unowned_request", confirm=confirm)
+    except Exception:
+        logger.warning("unowned Graph request supervisor sweep failed", exc_info=True)
+
+
 def tick() -> None:
     """One supervisor pass. Each step is independent: one failing never skips the others."""
-    if not available():
-        return
     with _tick_lock:
-        svc = _jobs()
-        steps = (
-            ("advance", lambda: svc.advance_ai_jobs()),
-            ("sweep", lambda: svc.sweep_orphaned_ai_jobs(_live_owner)),
-            ("fence", lambda: [fence_job(svc, row) for row in svc.unfenced_expired_ai_jobs()]),
-            ("in_process", lambda: _settle_in_process(svc)),
-            ("holds", lambda: [_resume_hold_safely(svc, hold) for hold in _hold_rows()]),
-            ("graph", _recover_graph),
-        )
+        steps = []
+        if available():
+            svc = _jobs()
+            steps.extend((
+                ("advance", lambda: svc.advance_ai_jobs()),
+                ("sweep", lambda: svc.sweep_orphaned_ai_jobs(_live_owner)),
+                ("fence", lambda: [fence_job(svc, row) for row in svc.unfenced_expired_ai_jobs()]),
+                ("in_process", lambda: _settle_in_process(svc)),
+                ("holds", lambda: [_resume_hold_safely(svc, hold) for hold in _hold_rows()]),
+                ("graph", _recover_graph),
+            ))
+        steps.append(("unowned_sweep", _sweep_unowned))
         for name, step in steps:
             try:
                 step()

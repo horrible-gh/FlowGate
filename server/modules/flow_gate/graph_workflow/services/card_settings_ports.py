@@ -72,10 +72,13 @@ flowgate.v02.0113 T#3 (L-2): the stage assignments of a role card's attempt, kep
                      is a report approved before the node's attempt took it, and that attempt's own result review has
                      not passed it yet — the old approval completes nothing (True), else False (no handler: False)
 
+    node_running_cause   run read: handoff, Graph execution, group lease or review loop
+
 * With no handler registered ``run_settings`` answers ``{}``, ``result_type`` None,
   ``ai_working`` False, ``instruction_document`` ``{}``, ``approve_instruction`` False and ``node_running``
   False, so a node starts and binds exactly as it did before (one stage); ``approval_wait_reason`` None and
   ``reconcile_stage`` does nothing; ``intervention`` answers ``needs_intervention`` with the latest recorded reason.
+* With no handler registered ``node_running_cause`` answers None.
 * A handler exception propagates: the callers run inside a run step's Flow guard or a run read.
 * One handler per port. Registering again replaces it (startup may run more than once in a process).
 """
@@ -93,6 +96,7 @@ INSTRUCTION_DOCUMENT = "instruction_document"
 APPROVE_INSTRUCTION = "approve_instruction"
 REVIEW_INSTRUCTION = "review_instruction"
 NODE_RUNNING = "node_running"
+NODE_RUNNING_CAUSE = "node_running_cause"
 PERSON_RESULT = "person_result"                                  # flowgate.v02.0083 WP-4
 APPROVAL_WAIT_REASON = "approval_wait_reason"                    # flowgate.v02.0105 T#2 B-2
 RECONCILE_STAGE = "reconcile_stage"                              # flowgate.v02.0105 T#2 B-3
@@ -109,7 +113,7 @@ RESULT_REVIEW_PENDING = "result_review_pending"                  # 0038-T T#3 A-
 INTERVENTION = "intervention"                                    # flowgate.v02.0119 T#3 (T-2)
 COMMAND_REVIEW = "command_review"                                # flowgate.v02.0125 T#1 (Q #544)
 INTERVENTION_NEEDED = "needs_intervention"                       # the default kind (no handler, an unknown answer)
-PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING,
+PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING, NODE_RUNNING_CAUSE,
               PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE, CARDS_CREATED, STAGE_DISPATCH, STAGE_RESULT_START,
               STAGE_NEEDS_DISPATCH, STAGE_RETRY, STAGE_VIEW, STAGE_WAITS, INSTRUCTION_SAVED, STAGE_FAILED,
               RESULT_REVIEW_PENDING, INTERVENTION, COMMAND_REVIEW)
@@ -204,6 +208,12 @@ def node_running(flow_id: str, node_key: str) -> bool:
     if handler is None:
         return False
     return bool(handler(flow_id, node_key))
+
+
+def node_running_cause(flow_id: str, node_key: str) -> Optional[str]:
+    """The read-only cause of the running lock, or None without a handler."""
+    handler = _handler(NODE_RUNNING_CAUSE)
+    return handler(flow_id, node_key) if handler is not None else None
 
 
 def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id: str, attempt_id=None) -> bool:

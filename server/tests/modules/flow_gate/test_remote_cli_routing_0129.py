@@ -47,6 +47,14 @@ TOKEN = "fgt_secret_token_0129_value"
 COMMAND = "claude --secret-flag-0129 -p"
 SCRATCH = "/srv/flowgate/scratch/run-0129"
 TOKEN_SCRATCH = "/srv/flowgate/scratch/token-0129"
+
+@pytest.fixture(autouse=True)
+def isolate_unowned_sweep_state(monkeypatch):
+    """Every tick test starts with independent runtime sweep observations."""
+    from modules.flow_gate.services.ai_invoke import admission, remote_supervisor
+    monkeypatch.setattr(remote_supervisor, "_unowned_sweep_ticks", 0, raising=False)
+    monkeypatch.setattr(remote_supervisor, "_unowned_request_candidates", {}, raising=False)
+    monkeypatch.setattr(admission, "_review_loop_sweep_candidates", {}, raising=False)
 BASE = "https://flowgate.example.test/flowgate/api/v1"
 # flowgate.v02.0135 CH0006: the Agent's remote working directory setting.
 WORKDIR = "/tmp/flowgate/${AGENT_JOB_ID}"

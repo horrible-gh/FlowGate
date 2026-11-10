@@ -19,6 +19,7 @@ root (``startup.py``) calls :func:`register` once at startup.
     token_step_type  the source tools' step type of a node token (``settings.token_step_type``)
     node_running     a card title save: the card is running (``legacy_adapter.node_running``, the card settings lock;
                      0064 T-B4b; flowgate.v02.0113 T#1: actually running — an AI execution or its AI review, never open alone)
+    node_running_cause   run read: the cause of the running lock (``legacy_adapter``)
     person_result    result binding: a person's work plan result takes its card's review or automatic approval
                      (``review_stage``, flowgate.v02.0083 WP-4)
     approval_wait_reason   a run read: why the automatic approval of a node's result was not made (``legacy_adapter``,
@@ -51,6 +52,7 @@ def register() -> None:
     ports.register(ports.APPROVE_INSTRUCTION, review_stage.approve_instruction)
     ports.register(ports.REVIEW_INSTRUCTION, review_stage.review_instruction)
     ports.register(ports.NODE_RUNNING, legacy_adapter.node_running)
+    ports.register(ports.NODE_RUNNING_CAUSE, legacy_adapter.node_running_cause)
     ports.register(ports.PERSON_RESULT, review_stage.person_result)          # flowgate.v02.0083 WP-4
     ports.register(ports.APPROVAL_WAIT_REASON, legacy_adapter.approval_wait_reason)   # flowgate.v02.0105 T#2 B-2
     ports.register(ports.RECONCILE_STAGE, review_stage.reconcile)            # flowgate.v02.0105 T#2 B-3

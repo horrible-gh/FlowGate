@@ -371,6 +371,13 @@ HOP_HANDOFF_STOP_CODE = "hop_handoff"
 # means nothing. A row still there past the grace really did break, and must show.
 HOP_HANDOFF_GRACE_SEC = 120
 
+# Runtime orphan recovery: longer than every normal in-memory/durable hand-off.
+REVIEW_LOOP_SWEEP_GRACE_SEC = 900
+REVIEW_LOOP_ORPHAN_TTL_SEC = max(REVIEW_LOOP_SWEEP_GRACE_SEC, min(86400, int(
+    os.getenv("FLOWGATE_REVIEW_LOOP_ORPHAN_TTL_SEC", "1800"))))
+REVIEW_LOOP_SWEEP_EVERY_TICKS = max(1, min(240, int(
+    os.getenv("FLOWGATE_REVIEW_LOOP_SWEEP_EVERY_TICKS", "4"))))
+
 # A handoff whose in-memory queue was lost to a restart. Switching to this code at
 # startup skips the grace check so it becomes a [resume] card immediately.
 HOP_HANDOFF_INTERRUPTED_STOP_CODE = "hop_handoff_interrupted"

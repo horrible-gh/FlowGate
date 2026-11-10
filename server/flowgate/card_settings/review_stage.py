@@ -255,6 +255,16 @@ def _handoff_pending(flow_id: str, node_key: str) -> bool:
     return mark is not None
 
 
+def handoff_owned_by(run_id: str) -> bool:
+    """Read ownership without consuming a stage hand-off; discard expired marks."""
+    with _handoff_lock:
+        instant = time.monotonic()
+        for key, (_owner, deadline) in list(_handoffs.items()):
+            if deadline <= instant:
+                _handoffs.pop(key, None)
+        return any(owner == run_id for owner, _deadline in _handoffs.values())
+
+
 def _clear_handoffs(run_id: Optional[str]) -> bool:
     with _handoff_lock:
         keys = [k for k, (owner, _deadline) in _handoffs.items() if owner == run_id]
@@ -651,8 +661,8 @@ def not_passed(loop: dict) -> str:
 
 
 def review_running(_flow_id: str, _node_key: str, doc_id: Optional[str]) -> bool:
-    """A review loop is still working on ``doc_id`` (the node's result)."""
-    return bool(doc_id) and legacy.review_loop_active(doc_id)
+    """The current attempt's latest loop, or a loop with owner evidence, still works."""
+    return legacy.running_review_loop(_flow_id, _node_key, doc_id) is not None
 
 
 def ai_working(flow_id: str, node_key: str, doc_id: Optional[str]) -> bool:

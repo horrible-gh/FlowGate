@@ -538,7 +538,7 @@ def finish(run):
     settle(run["group_id"])
 
 
-def _start_failure(run):
+def _start_failure(run, *, failure_info=None):
     """0063 B7: the request its launcher cancelled before the acquire. A node write records the AI start failure as a
     refused start does (``node_dispatch.record_ai_failure``, L0009 E-23: the token stays a person's, the run settles idle
     with ``error``); a review / rework hop leaves the result to a person (``start_review_loop``) and the run settles."""
@@ -546,7 +546,10 @@ def _start_failure(run):
     payload = json.loads(row.get("request_json") or "{}")
     if payload.get("type") == "write":
         from modules.flow_gate.graph_workflow.services.node_dispatch import record_ai_failure
-        record_ai_failure(payload["job"])
+        job = payload["job"]
+        if failure_info is not None:
+            job = {**job, "start_failure": "start_failed", "start_failure_info": failure_info}
+        record_ai_failure(job)
     else:
         settle(run["group_id"])
 
@@ -680,6 +683,93 @@ _RECOVER_ROWS_SQL = ("SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN grap
                      "AND r.status <> 'stopping'")
 
 
+def _request_has_owner(row, group_id):
+    from modules.flow_gate.db import group_ai_leases
+    from modules.flow_gate.services import ai_invoke_service
+    from modules.flow_gate.services.ai_invoke import remote_supervisor
+    if ledger.handing_off(row["run_id"]) or result_merge.holding(row["run_id"]):
+        return True
+    if run_store._one(
+            "SELECT e.exec_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+            "WHERE r.group_id = ? AND e.exec_id <> ? AND "
+            "(e.status = 'running' OR (e.status = 'requested' AND e.ai_run_id IS NOT NULL)) LIMIT 1",
+            [group_id, row["exec_id"]]):
+        return True
+    if group_ai_leases.get_active(group_id):
+        return True
+    # The registry can own a request before its admission CAS publishes ai_run_id.
+    if any(run.get("graph_exec_id") == row["exec_id"] and ai_invoke_service.is_run_live(run_id)
+           for run_id, run in list(ai_invoke_service._runs.items())):
+        return True
+    # Holds can outlive their execution lease, including an already-ended hop.
+    try:
+        held = remote_supervisor.held_run_ids()
+        if get_store().table_exists(remote_supervisor.HOLD_TABLE) and run_store._one(
+                "SELECT run_id FROM " + remote_supervisor.HOLD_TABLE +
+                " WHERE group_id = ? AND resumed_at IS NULL LIMIT 1", [group_id]):
+            return True
+        ids = run_store._all(
+            "SELECT DISTINCT e.ai_run_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+            "WHERE r.group_id = ? AND e.ai_run_id IS NOT NULL", [group_id])
+        return any(item["ai_run_id"] in held or remote_supervisor.remote_alive(item["ai_run_id"])
+                   for item in ids)
+    except Exception:
+        log.warning("Graph request remote ownership unreadable for %s", row["exec_id"], exc_info=True)
+        return True
+
+
+def _close_unowned_requests(*, started_before=None, exec_id=None,
+                            run_statuses=("running", "paused"),
+                            reason="restart_unowned_request", confirm=None):
+    """After replay, close only unadmitted intents with no owner that can refill them.
+    Startup requires the shared process boundary; hold-release checks ONE intent regardless of age.
+    """
+    from modules.flow_gate.services.ai_invoke.admission import _utc_instant
+    if not run_statuses or (exec_id is None and started_before is None):
+        return
+    count = 0
+    try:
+        rows = run_store._all(
+            "SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+            "WHERE e.status = 'requested' AND e.ai_run_id IS NULL AND e.lease_token IS NULL "
+            "AND r.status IN (" + ",".join("?" for _ in run_statuses) + ")" +
+            (" AND e.exec_id = ?" if exec_id else ""),
+            [*run_statuses, *([exec_id] if exec_id else [])])
+        for snapshot in rows:
+            try:
+                def body():
+                    row = ledger.get(snapshot["exec_id"])
+                    if not row or row["status"] != "requested" or row.get("ai_run_id") is not None \
+                            or row.get("lease_token") is not None:
+                        return False
+                    graph = run_store.run_by_id(row["run_id"])
+                    if not graph or graph["status"] not in run_statuses:
+                        return False
+                    if started_before is not None and _utc_instant(row["created_at"]) >= _utc_instant(started_before):
+                        return False
+                    if _time_machine().busy(snapshot["group_id"]) or _request_has_owner(row, snapshot["group_id"]):
+                        return False
+                    if confirm is not None and not confirm(row):
+                        return False
+                    ledger.cancel(row["exec_id"], None, "requested")
+                    return True
+                if with_flow_guard(snapshot["group_id"], body):
+                    count += 1
+                    log.warning("Graph %s: %s", reason, snapshot["exec_id"])
+                    # Node failure and settle take their own Flow guard. Run them after
+                    # the cancellation commits, as the ordinary start-failure path does.
+                    _start_failure({"graph_exec_id": snapshot["exec_id"], "group_id": snapshot["group_id"]},
+                                   failure_info={"code": "start_failed", "reason": reason})
+            except ledger.LeaseLost:
+                pass  # Another admission won the cancellation CAS.
+            except Exception:
+                log.warning("Graph unowned request recovery failed for %s", snapshot["exec_id"], exc_info=True)
+    except Exception:
+        log.warning("Graph %s scan failed", reason, exc_info=True)
+    if count:
+        log.warning("Graph %s closed %d unowned request(s)", reason, count)
+
+
 def recover():
     """Once after orphan AI cleanup and Graph port registration. Never infer death from TTL alone."""
     from modules.flow_gate.services import ai_invoke_service
@@ -691,6 +781,8 @@ def recover():
     rows = run_store._all(_RECOVER_ROWS_SQL + " ORDER BY e.created_at, e.exec_id", [])
     for snapshot in rows:
         _recover_snapshot(snapshot, ai_invoke_service, run_apply)
+
+    _close_unowned_requests(started_before=ai_invoke_service.startup_recovery_started_at())
 
     # Outside all Flow guards and DB transactions. T#10: invalidated and integrated (ended) attempts' trees.
     workspace.cleanup_finished()
@@ -706,6 +798,7 @@ def recover_execution(exec_id):
         return
     for snapshot in run_store._all(_RECOVER_ROWS_SQL + " AND e.exec_id = ?", [exec_id]):
         _recover_snapshot(snapshot, ai_invoke_service, run_apply)
+    _close_unowned_requests(exec_id=exec_id)
     workspace.cleanup_finished()
 
 
@@ -723,6 +816,12 @@ def _recover_snapshot(snapshot, ai_invoke_service, run_apply):
                 live = ai_invoke_service.get_run_record(row.get("ai_run_id")) if row.get("ai_run_id") else None
                 if live and live.get("status") != "finished":
                     return
+                if row.get("ai_run_id"):
+                    from modules.flow_gate.services.ai_invoke import remote_supervisor
+                    # A requested successor can still belong to a held remote hop.
+                    # Leave its id intact so neither replay nor the unowned scan steals it.
+                    if remote_supervisor.remote_alive(row["ai_run_id"]):
+                        return
                 run_store._affected("UPDATE graph_attempt_runs SET ai_run_id = NULL WHERE exec_id = ? "
                                     "AND status = 'requested'", [row["exec_id"]])
                 jobs.append(lambda: replay(row))
