@@ -25,6 +25,8 @@ from typing import Callable, Optional
 from fastapi import HTTPException
 from modules.flow_gate import template_provision
 from modules.flow_gate.db import ai_run_identity
+# Initialize recovery DB dependencies before callers can temporarily override connection.get_store.
+from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
 from modules.flow_gate.db import connection as db_connection
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import document_reviews as db_document_reviews
@@ -394,7 +396,6 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     the token up. Best-effort: a run this cannot explain still gets its lease
     cleared by the caller either way, it just won't carry the extra explanation.
     """
-    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
     from modules.flow_gate.db import ai_invoke_runs as db_runs
 
     run_id = str(lease_row.get("run_id") or "")
@@ -569,6 +570,120 @@ def _restart_held_run_ids() -> Optional[frozenset]:
         return None
 
 
+_startup_recovery_before: Optional[str] = None
+
+
+def startup_recovery_started_at() -> Optional[str]:
+    """The shared startup boundary; Graph only closes requests older than this instant."""
+    return _startup_recovery_before
+
+
+def _utc_instant(value):
+    from datetime import timezone
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def review_loop_owner_evidence(loop_row: dict, *, held, before, now=None,
+                               remote_settled: bool = False) -> Optional[str]:
+    """Read-only evidence: foreign, live_run, remote_hold, group_lease, graph_lease,
+    recent, or None. Never misidentify a normal execution as an orphan.
+
+    before=None disables the startup-only recent check (also reusable by the TTL sweep).
+    remote_settled is only for the supervisor's confirmed-settled hold release: its
+    durable hold is marked resumed AFTER recovery, so that old hold must not protect itself.
+    Unsettled remote work still protects the loop in that path.
+    """
+    from datetime import timezone
+    from . import remote_supervisor
+    run_id = loop_row["run_id"]
+    if ai_run_identity.foreign_run_id(run_id):
+        return "foreign"
+    if _svc().is_run_live(run_id):
+        return "live_run"
+    try:
+        remote = (remote_supervisor.run_has_unsettled_job(run_id) if remote_settled
+                  else remote_supervisor.remote_alive(run_id))
+        if run_id in held or remote:
+            return "remote_hold"
+    except Exception:
+        logger.warning("review-loop remote ownership unreadable for %s", run_id, exc_info=True)
+        return "remote_hold"
+    instant = _utc_instant(now) if now is not None else datetime.now(timezone.utc)
+    lease = db_group_ai_leases.get_by_run_id(run_id)
+    # Same read-only expiry rule as legacy_adapter._lease_held (expires_at > now).
+    if lease and lease.get("expires_at"):
+        try:
+            if _utc_instant(lease["expires_at"]) > instant:
+                return "group_lease"
+        except ValueError:
+            pass
+    store = db_connection.get_store()
+    if store.table_exists("graph_attempt_runs"):
+        from flowgate.graph_run import execution_store as ledger
+        for row in store._fetch_all("SELECT status, lease_expires_at FROM graph_attempt_runs "
+                                    "WHERE ai_run_id = ? AND status IN ('requested','running')", [run_id]):
+            if row["status"] == "requested" or (row.get("lease_expires_at") and
+                    _utc_instant(row["lease_expires_at"]) > _utc_instant(ledger.now())):
+                return "graph_lease"
+    if before is not None and loop_row.get("updated_at") and \
+            _utc_instant(loop_row["updated_at"]) >= _utc_instant(before):
+        return "recent"
+    return None
+
+
+def _close_orphan_review_loop(row: dict, *, held, before, remote_settled=False) -> bool:
+    from modules.flow_gate.db import ai_invoke_runs as db_runs, groups as db_groups
+    from flowgate.ai_roles import invocations
+    if row.get("stop_reason") is not None or row.get("current_stage") not in ("review", "rework"):
+        return False
+    if review_loop_owner_evidence(row, held=held, before=before, remote_settled=remote_settled):
+        return False
+    group = db_groups.get_by_id(row["group_id"]) or {}
+    owner = ai_run_identity.get_store()._fetch_one(
+        "SELECT * FROM ai_run_owners WHERE run_id = ?", [row["run_id"]])
+    if owner and (owner.get("group_id") != row["group_id"] or
+                  owner.get("project_id") != group.get("project_id")):
+        raise ai_run_identity.RunIdentityConflict()
+    # Identity validation and end persistence precede the terminal CAS. A failed write
+    # leaves the loop available for retry; a normally completed hop's record is immutable.
+    if db_runs.get(row["run_id"]) is None:
+        stamp = now_iso()
+        started = owner["started_at"] if owner else row["started_at"]
+        invocations.orphan(row["run_id"])
+        db_runs.upsert({
+            "execution_nonce": owner["execution_nonce"] if owner else None,
+            "run_id": row["run_id"], "group_id": row["group_id"],
+            "project_id": group.get("project_id"), "doc_ref": row["doc_ref"],
+            "mode": "single", "outcome": "none", "end_reason": "orphaned_by_restart",
+            "resumable": False, "started_at": started, "finished_at": stamp,
+            "created_at": started, "updated_at": stamp,
+        })
+    return db_loops.stop_for_restart_orphan(row["run_id"], detail=
+        "review loop orphaned by server restart (no live run, hold or lease)")
+
+
+def _startup_recover_orphan_review_loops(held, before, *, run_id=None,
+                                        remote_settled=False) -> None:
+    count = 0
+    try:
+        if not db_connection.get_store().table_exists("ai_invoke_document_review_loops"):
+            return
+        rows = [db_loops.get(run_id)] if run_id else db_loops.list_active_unstopped()
+        for row in rows:
+            if row is None:
+                continue
+            try:
+                count += bool(_close_orphan_review_loop(row, held=held, before=before,
+                                                       remote_settled=remote_settled))
+            except Exception:
+                logger.warning("orphaned review-loop recovery failed for %s", row["run_id"], exc_info=True)
+    except Exception:
+        logger.warning("orphaned review-loop startup scan failed", exc_info=True)
+    if count:
+        logger.warning("[ai_invoke] startup closed %d orphaned review loop(s)", count)
+
+
 def resume_remote_held_recovery(run_id: str) -> list[dict]:
     """flowgate.v02.0129 T#2 (D0005 §3-4 step 4): the restart recovery that was held for
     ``run_id`` while its remote Job was alive, done now that the Job is settled.
@@ -583,13 +698,17 @@ def resume_remote_held_recovery(run_id: str) -> list[dict]:
         db_group_ai_leases.release(lease["group_id"], run_id, reason="orphaned_by_restart")
         _recover_orphan_group_lease_row(lease)
     store = db_connection.get_store()
-    if not store.table_exists("graph_attempt_runs"):
-        return []
-    rows = store._fetch_all(
-        "SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
-        "WHERE e.status IN ('requested', 'running') AND e.ai_run_id = ?", [run_id])
-    for row in rows:
-        _recover_graph_lease_row(store, row)
+    rows = []
+    if store.table_exists("graph_attempt_runs"):
+        rows = store._fetch_all(
+            "SELECT e.*, r.group_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+            "WHERE e.status IN ('requested', 'running') AND e.ai_run_id = ?", [run_id])
+        for row in rows:
+            _recover_graph_lease_row(store, row)
+    held = _restart_held_run_ids()
+    if held is not None:
+        _startup_recover_orphan_review_loops(held - {run_id}, None, run_id=run_id,
+                                            remote_settled=True)
     return rows
 
 
@@ -602,7 +721,9 @@ def startup_recover_leases() -> int:
     the process's own start time so a multi-process deployment cannot reclaim a
     lease a sibling process is mid-admission on.
     """
+    global _startup_recovery_before
     before = now_iso()
+    _startup_recovery_before = before
     # flowgate.v02.0129 T#2 (D0005 §3-4 step 2): a run whose remote Job is not settled
     # keeps its leases (held); unknown holds keep every lease rather than free a live one.
     held = _restart_held_run_ids()
@@ -622,6 +743,7 @@ def startup_recover_leases() -> int:
     # off. It pairs with lease reclaim: one recovers the lock, the other the intent.
     if held is not None:
         _startup_recover_graph_leases(held)
+        _startup_recover_orphan_review_loops(held, before)
     _svc().startup_recover_handoffs()
     # 0661 T0004 F3: question items whose AI responder died with the previous process
     # become a visible 'failed / interrupted' the Q&A panel can re-dispatch, instead of a

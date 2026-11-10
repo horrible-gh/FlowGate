@@ -86,13 +86,13 @@ def command_rerequest_due(reason: Optional[str]) -> bool:
 
 
 def command_reentry_due(reason: Optional[str]) -> bool:
-    """0126: explicit intent also releases a verdict hold or failed path; never a card Hold.
+    """0126/0159: explicit intent also releases a verdict hold, restart orphan or failed path; never a card Hold.
 
     A missing completion is inspected against durable document/assignment evidence by the caller.
     Permission, unknown reasons and instruction approval gates remain blocked.
     """
     return (command_rerequest_due(reason) or reason in (
-        REVIEW_NOT_PASSED + "review_verdict_hold", COMPLETION_MISSING,
+        REVIEW_NOT_PASSED + "review_verdict_hold", REVIEW_NOT_PASSED + "restart_orphaned", COMPLETION_MISSING,
         REVIEW_NOT_STARTED, REVIEW_RESULT_UNKNOWN, APPROVAL_REFUSED, STAGE_NOT_PERSON)
         or isinstance(reason, str) and reason.startswith(RUN_NOT_CLEAN))
 

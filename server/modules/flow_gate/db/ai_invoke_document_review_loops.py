@@ -32,7 +32,16 @@ def checkpoint(run_id: str, *, expected_round_no: int, expected_stage: str, expe
         latest = store._fetch_one("SELECT * FROM ai_invoke_document_review_loops WHERE run_id = ?", [run_id])
         return affected == 1, latest
 
-def stop_for_restart_orphan(run_id: str, *, at: Optional[str] = None) -> bool:
+def list_active_unstopped(limit: Optional[int] = None) -> list[dict]:
+    """Active loop candidates, including loops whose last hop already returned its lease."""
+    sql = ("SELECT * FROM ai_invoke_document_review_loops WHERE stop_reason IS NULL "
+           "AND current_stage IN ('review','rework') ORDER BY updated_at")
+    return get_store()._fetch_all(sql + (" LIMIT ?" if limit is not None else ""),
+                                 [limit] if limit is not None else [])
+
+
+def stop_for_restart_orphan(run_id: str, *, at: Optional[str] = None,
+                            detail: str = "worker lease orphaned by server restart") -> bool:
     """Terminally stop an active loop whose worker disappeared during restart recovery.
 
     The stage/reason guards make this a one-way compare-and-swap: a competing recovery
@@ -44,7 +53,7 @@ def stop_for_restart_orphan(run_id: str, *, at: Optional[str] = None) -> bool:
         "UPDATE ai_invoke_document_review_loops "
         "SET current_stage = ?, stop_reason = ?, stop_detail = ?, updated_at = ? "
         "WHERE run_id = ? AND current_stage IN (?, ?) AND stop_reason IS NULL",
-        ["stopped", "restart_orphaned", "worker lease orphaned by server restart",
+        ["stopped", "restart_orphaned", detail,
          stamp, run_id, "review", "rework"],
     ) == 1
 
