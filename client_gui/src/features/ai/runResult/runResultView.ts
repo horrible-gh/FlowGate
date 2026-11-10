@@ -26,6 +26,19 @@ export function nextLabel(t: Translate, te: HasKey, result: FlowCommandResult): 
   return next ? word(t, te, `next.${next}`, next) : '—'
 }
 
+/**
+ * flowgate.chat.0017 CH0002: "첨부 승인 대기 n건" for the AI attachment requests still waiting (this run's, with the
+ * Flow's total when more wait there); empty when none wait or the server could not tell.
+ */
+export function attachmentPendingLine(t: Translate, result: FlowCommandResult | null): string {
+  const counts = result?.attachmentRequests
+  if (!counts || (counts.pending <= 0 && counts.flowPending <= 0)) return ''
+  const line = t('gui.attachment_request.run_result_pending', { n: counts.pending > 0 ? counts.pending : counts.flowPending })
+  return counts.pending > 0 && counts.flowPending > counts.pending
+    ? `${line} ${t('gui.attachment_request.run_result_flow_total', { n: counts.flowPending })}`
+    : line
+}
+
 export function countsLabel(result: FlowCommandResult): string {
   return `${result.counts.done} / ${result.counts.failed}`
 }

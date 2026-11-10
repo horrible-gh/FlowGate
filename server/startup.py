@@ -153,6 +153,20 @@ def recover_git_sessions():
         logger.warning(f"[startup] git session recovery failed: {exc}")
 
 
+def start_attachment_requests():
+    """flowgate.chat.0017 CH0002: AI attachment upload requests. An approval a dead process left
+    half-way is put back to pending (an overwrite gets its previous bytes back), then expired
+    requests / backups and orphaned staging folders are swept periodically -- all on a daemon
+    thread, never blocking startup. Requests are NOT closed because their run ended: they wait
+    for a person's decision until their own retention period ends."""
+    try:
+        from modules.flow_gate.documents.attachments import requests as attachment_requests
+
+        attachment_requests.start_background()
+    except Exception as exc:
+        logger.warning(f"[startup] attachment request sweep start failed: {exc}")
+
+
 def recover_chat_commands():
     """0670 T0004: chat command rows a dead server left open are closed, never resumed."""
     try:
@@ -509,3 +523,4 @@ def run_all():
     start_snapshot_cleanup()
     remove_retired_source_bundle_storage()
     recover_chat_commands()
+    start_attachment_requests()

@@ -3,6 +3,7 @@
 // an activity pushes that activity up like any other entry. flowgate.v02.0032: command requests
 // and run changes are placed by their server anchor (D0006 §3.9.1), not by their time.
 import type {
+  AttachmentRequestActivity,
   CommandRequestActivity,
   ConversationActivity,
   ConversationTurn,
@@ -33,6 +34,7 @@ export type TimelineItem =
   | { kind: 'command'; key: string; activity: CommandRequestActivity }
   | { kind: 'change'; key: string; activity: WorkChangeActivity }
   | { kind: 'status'; key: string; activity: StatusActivity }
+  | { kind: 'attachments'; key: string; activity: AttachmentRequestActivity }
 
 function timeOf(iso: string | null | undefined): number | null {
   if (!iso) return null
@@ -84,6 +86,7 @@ function activityItem(activity: ConversationActivity): TimelineItem {
   const key = `${activity.kind}:${activity.id}`
   if (activity.kind === 'command') return { kind: 'command', key, activity }
   if (activity.kind === 'change') return { kind: 'change', key, activity }
+  if (activity.kind === 'attachments') return { kind: 'attachments', key, activity }
   return { kind: 'status', key, activity }
 }
 
@@ -160,7 +163,8 @@ export function buildTimeline(
 }
 
 function kindRank(activity: ConversationActivity): number {
-  return activity.kind === 'command' ? 0 : 1
+  // At the same place: a run's commands, then its change, then its attachment requests (right below its message).
+  return activity.kind === 'command' ? 0 : activity.kind === 'attachments' ? 2 : 1
 }
 
 /** Seq of the first unread turn when some turn above it was read (D0002 §6), else 0. */

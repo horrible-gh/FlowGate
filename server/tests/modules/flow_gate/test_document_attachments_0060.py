@@ -819,10 +819,12 @@ def test_the_rpc_wrapper_and_the_rest_route_produce_the_same_result(env):
     class _Request:
         headers = {"content-length": "10"}
 
+    # flowgate.chat.0017 CH0002: the attachment routes check the project permission now; the session user
+    # dict carries is_admin like get_current_user's (ACTOR alone is the service-level actor).
     response = asyncio.run(
         documents_router.upload_attachment_rpc(
             _Request(), doc_id=DOC_ID, file=FakePart("shared.txt", b"same-bytes"),
-            current_user=ACTOR,
+            current_user={**ACTOR, "is_admin": True},
         )
     )
 

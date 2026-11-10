@@ -684,7 +684,8 @@ def test_help_tools_read_kind_names_copy_as_denied_not_missing(env):
     body = _help_get("/api/v1/help/tools", _token("review")).json()
     block = body["document_attachments"]
 
-    assert [op["name"] for op in block["operations"]] == ["attachment_list", "attachment_read"]
+    # flowgate.chat.0017 CH0002: a read kind may also ask a person to approve an attachment it produced.
+    assert [op["name"] for op in block["operations"]] == ["attachment_list", "attachment_read", "attachment_upload_request"]
     assert [op["name"] for op in block["denied"]] == ["attachment_copy"]
     assert "read" in block["denied"][0]["reason"]
 
@@ -770,6 +771,6 @@ def test_the_attachments_help_item_reads_its_permissions_from_the_same_judge(env
         kind: [name.replace("attachment_", "", 1) for name in tool_registry.attachment_names(kind)]
         for kind in ("read", "read_write", "none")
     }
-    assert table["read"] == ["list", "read"]
-    assert table["read_write"] == ["list", "read", "copy"]
+    assert table["read"] == ["list", "read", "upload_request"]
+    assert table["read_write"] == ["list", "read", "copy", "upload_request"]
     assert table["none"] == []

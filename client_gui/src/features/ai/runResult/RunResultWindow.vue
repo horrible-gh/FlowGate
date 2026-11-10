@@ -39,6 +39,8 @@
       <p v-if="result.failure" class="run-result-issue" data-test="run-result-failure">
         <span class="run-result-label">{{ t('gui.runResult.label.reason') }}</span> {{ failureLine(tr, has, result) }}
       </p>
+      <!-- flowgate.chat.0017 CH0002: AI attachment requests waiting for a decision (each card's attachments tab). -->
+      <p v-if="attachmentLine" class="run-result-attachments" data-test="run-result-attachments">{{ attachmentLine }}</p>
       <footer class="run-result-footer">
         <Button size="sm" variant="secondary" data-test="run-result-detail" @click="emit('detail')">{{ t('gui.runResult.detail') }}</Button>
         <Button size="sm" variant="primary" data-test="run-result-close" @click="emit('close')">{{ t('gui.runResult.close') }}</Button>
@@ -59,7 +61,17 @@ import Button from '@/components/ui/Button.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import type { FlowCommandResult } from '@/features/project'
 import { installRunResultMessages } from './messages'
-import { countsLabel, failureLine, nextLabel, scopeLabel, stateLabel, stepLines, type HasKey, type Translate } from './runResultView'
+import {
+  attachmentPendingLine,
+  countsLabel,
+  failureLine,
+  nextLabel,
+  scopeLabel,
+  stateLabel,
+  stepLines,
+  type HasKey,
+  type Translate,
+} from './runResultView'
 
 const props = defineProps<{ result: FlowCommandResult | null; open: boolean }>()
 const emit = defineEmits<{ close: []; detail: [] }>()
@@ -76,6 +88,7 @@ const initialX = Math.max(8, Math.round(viewportWidth / 2 - 230))
 const initialY = Math.max(8, Math.round(viewportHeight * 0.2))
 
 const steps = computed(() => (props.result ? stepLines(tr, has, props.result) : { lines: [], more: 0 }))
+const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))
 </script>
 
 <style scoped>
@@ -95,4 +108,5 @@ const steps = computed(() => (props.result ? stepLines(tr, has, props.result) : 
 .run-result-more { color: var(--fg2-muted); }
 .run-result-issue { margin: 0; color: var(--fg2-status-danger-fg, #f0a2a2); line-height: 1.5; overflow-wrap: anywhere; }
 .run-result-footer { display: flex; justify-content: flex-end; gap: 8px; }
+.run-result-attachments { margin: 0; color: var(--fg2-status-warning-fg, #e3b341); }
 </style>

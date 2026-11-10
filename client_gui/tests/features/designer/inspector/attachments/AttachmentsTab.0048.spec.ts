@@ -49,6 +49,19 @@ vi.mock('@/features/document', async (importOriginal) => {
   }
 })
 
+// flowgate.chat.0017 CH0002: the card's AI attachment requests (none unless a case puts some) and their bulk decision.
+const cardRequests = vi.fn()
+const decideMany = vi.fn()
+vi.mock('@/features/document/api/attachmentRequests', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/features/document/api/attachmentRequests')>()
+  return {
+    ...actual,
+    attachmentRequestsForCard: (...args: unknown[]) => cardRequests(...args),
+    attachmentRequestDecideMany: (...args: unknown[]) => decideMany(...args),
+  }
+})
+const { toAttachmentRequest } = await vi.importActual<typeof import('@/features/document/api/attachmentRequests')>('@/features/document/api/attachmentRequests')
+
 const { toAttachmentsList, toAttachmentsUploadResult, toAttachmentsDeleteResult, toReviewActivity, toReviewDocument, toDocumentDetail, toQaThread } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
 
@@ -171,7 +184,8 @@ beforeEach(() => {
   refusals.clear()
   running = false
   disposed = false
-  for (const mock of [listCall, uploadCall, deleteCall, downloadCall, activityRead, documentRead, detailRead, relationsRead, qaReadCall]) mock.mockReset()
+  for (const mock of [listCall, uploadCall, deleteCall, downloadCall, activityRead, documentRead, detailRead, relationsRead, qaReadCall, cardRequests, decideMany]) mock.mockReset()
+  cardRequests.mockImplementation(async (flowId: string, nodeKey: string) => ({ flowId, nodeKey, requests: [], pending: 0 }))
   seed()
   serve()
   saved.length = 0
@@ -771,5 +785,42 @@ describe('attachments tab in the Frame (real registry)', () => {
     const text = w.text()
     for (const word of ['AI 전달', '🤖']) expect(text).not.toContain(word)
     expect(w.find('[data-test="inspector-attachments"] input[type="checkbox"]').exists()).toBe(false)
+  })
+})
+
+// --- AI attachment requests on the card (flowgate.chat.0017 CH0002, seq 22/24 review fixes) ---------
+
+describe('attachments tab — AI attachment requests (flowgate.chat.0017)', () => {
+  const pendingRequest = (id: string, filename: string) =>
+    toAttachmentRequest({
+      request_id: id, origin: 'chat', status: 'pending', project_id: 'p', flow_id: V01_FLOW, node_key: 'n', target_doc_id: V01_DOC,
+      filename, original_filename: filename, size: 10, content_type: 'text/plain', content_sha256: 'a'.repeat(64), preview: 'text',
+    })!
+  const waiting = [pendingRequest('aur_000000000000000000000001', 'a.md'), pendingRequest('aur_000000000000000000000002', 'b.md')]
+
+  it('no empty-state picture while requests wait on a card without attachments', async () => {
+    rows.set(V01_DOC, [])
+    cardRequests.mockImplementation(async (flowId: string, nodeKey: string) => ({ flowId, nodeKey, requests: waiting, pending: 2 }))
+    const w = await mountTab(v01Target())
+    expect(w.findAll('[data-test="ar-item"]')).toHaveLength(2)
+    expect(w.find('[data-test="attachments-empty"]').exists()).toBe(false)
+    expect(isDisabled(addButton(w))).toBe(false)
+  })
+
+  it('keeps the bulk result after the last request was decided, and locks the rows during the confirm', async () => {
+    let open = true
+    cardRequests.mockImplementation(async (flowId: string, nodeKey: string) => ({ flowId, nodeKey, requests: open ? waiting : [], pending: open ? 2 : 0 }))
+    decideMany.mockImplementation(async () => {
+      open = false
+      return { decision: 'reject', results: waiting.map((r) => ({ id: r.id, outcome: 'done', request: { ...r, status: 'rejected' }, code: null })), done: 2, skipped: 0, failed: 0 }
+    })
+    const w = await mountTab(v01Target())
+    await w.get('[data-test="ar-bulk-reject"]').trigger('click')
+    expect(w.findAll('[data-test="ar-approve"]').every((b) => isDisabled(b))).toBe(true)
+    await w.get('[data-test="ar-bulk-reject-yes"]').trigger('click')
+    await flushPromises()
+    expect(decideMany).toHaveBeenCalledTimes(1)
+    expect(w.findAll('[data-test="ar-item"]')).toHaveLength(0)
+    expect(w.get('[data-test="ar-bulk-result"]').text()).toBe('2건 반려')
   })
 })

@@ -450,6 +450,57 @@ def post_document_attachment_copy(
     return JSONResponse(status_code=201, content={"ok": True, "doc_id": doc_id, **data})
 
 
+@router.post("/attachment-requests", status_code=201)
+async def post_attachment_upload_request(request: Request):
+    """AI attachment upload request (flowgate.chat.0017 CH0002) -- the HTTP transport for CLI
+    providers and remote Agents. multipart/form-data: ``file`` (the bytes the AI produced in
+    its own environment) and optional ``meta`` (JSON: ``filename``, ``note``, and for a chat
+    ``target: {"node_key"}``). Answers at once with the stored request; the person's decision
+    comes later and never blocks the run. Any live chat or card run token whose source-access
+    kind is read or read_write may ask (reading mode included) -- nothing is registered until a
+    person approves.
+    """
+    import json as _json
+
+    from modules.flow_gate.documents.attachments import requests as attachment_requests
+
+    raw = request.headers.get("Authorization", "")
+    raw = raw[7:].strip() if raw.startswith("Bearer ") else ""
+    try:
+        import anyio.to_thread
+
+        requester = await anyio.to_thread.run_sync(attachment_requests.requester_from_raw_token, raw)
+        try:
+            form = await request.form()
+        except Exception:
+            raise attachment_requests.RequestError(
+                422, "attachment_request_invalid", "send multipart/form-data with a file part")
+        upload = form.get("file")
+        if upload is None or isinstance(upload, str) or not hasattr(upload, "read"):
+            raise attachment_requests.RequestError(422, "attachment_request_invalid", "the file part is required")
+        files = [v for v in form.getlist("file") if not isinstance(v, str)]
+        if len(files) != 1:
+            raise attachment_requests.RequestError(
+                422, "attachment_request_invalid", "send exactly one file per request")
+        meta_raw = form.get("meta")
+        meta = None
+        if meta_raw not in (None, ""):
+            if not isinstance(meta_raw, str):
+                raise attachment_requests.RequestError(422, "attachment_request_invalid", "meta must be JSON text")
+            try:
+                meta = _json.loads(meta_raw)
+            except ValueError:
+                raise attachment_requests.RequestError(422, "attachment_request_invalid", "meta is not valid JSON")
+        row = await attachment_requests.acreate_from_upload(requester, meta, upload)
+    except attachment_requests.RequestError as exc:
+        return JSONResponse(status_code=exc.status, content=exc.body())
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"attachment upload request failed: {type(exc).__name__}: {exc}")
+        return JSONResponse(status_code=500, content={"ok": False, "error": {
+            "code": "attachment_request_failed", "message": "the request could not be stored"}})
+    return JSONResponse(status_code=201, content=attachment_requests.ai_result(row))
+
+
 # T247/T564 — path-style endpoint (including branch). Registered before the 1-segment {doc_id} endpoint.
 @router.get("/document/{project}/branches/{branch}/{module}/{group}/{doc}")
 def get_document_by_path(

@@ -32,6 +32,7 @@
           :read-only="readOnly"
           @retry="item.localId && emit('retry', item.localId)"
         />
+        <TimelineAttachments v-else-if="item.kind === 'attachments'" :activity="item.activity" />
         <TimelineActivity
           v-else
           :activity="item.activity"
@@ -50,6 +51,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TimelineActivity from './TimelineActivity.vue'
+import TimelineAttachments from './TimelineAttachments.vue'
 import TimelineMessage from './TimelineMessage.vue'
 import type { TimelineItem } from './timeline'
 import type { CommandDecision, WorkChangeActivity } from './types'

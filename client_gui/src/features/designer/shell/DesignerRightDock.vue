@@ -84,6 +84,8 @@
           :group-id="partFlow?.groupId ?? null"
           :source-locked="sourceLocked"
           :subscribe-events="subscribeChatEvents"
+          :attachment-request-row="AttachmentRequestItem"
+          :attachment-request-bulk="AttachmentRequestBulkBar"
           :active="!collapsed && !unselected && tool === 'conversation'"
         />
       </div>
@@ -101,6 +103,8 @@
 <script setup lang="ts">
 import { computed, getCurrentInstance, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AttachmentRequestBulkBar from '@/features/attachmentRequests/AttachmentRequestBulkBar.vue'
+import AttachmentRequestItem from '@/features/attachmentRequests/AttachmentRequestItem.vue'
 import { ConversationPanel } from '@/features/conversation'
 import { DesignerGitPanel } from '@/features/git'
 import { useProjectStore, type FlowRef, type ProjectEventSubscription } from '@/features/project'

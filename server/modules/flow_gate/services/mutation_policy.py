@@ -325,6 +325,17 @@ _CONVERSATION_CREATE_PATH = re.compile(r"^(?:/flowgate)?/api/v1/conversations/?$
 _CONVERSATION_AUTO_TITLE_PATH = re.compile(r"^(?:/flowgate)?/api/v1/conversations/[^/]+/auto-title/?$")
 _CHAT_COMMAND_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-commands/[^/]+/decision/?$")
 _CHAT_COMMAND_WORKER_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-commands(?:/[^/]+)?/?$")
+# flowgate.chat.0017 CH0002: AI attachment upload requests. A person's decision is how the
+# user answers a request while (or after) the AI that made it works in the same group, so the
+# AI-run lease must never refuse it -- the handler checks perm_document_update, the archived /
+# disposed group and the document guard itself. The AI's own intake only stages a file in a
+# server-owned area (no document, no group state changes) and authenticates its live run
+# token itself, so it is not held up by another run's lease either: a request is never what
+# stops an AI run.
+_ATTACHMENT_REQUEST_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/attachment-requests/[^/]+/decision/?$")
+_ATTACHMENT_REQUEST_WORKER_PATH = re.compile(r"^(?:/flowgate)?/api/v1/attachment-requests/?$")
+# The bulk decision (approve all / reject all) runs every item through the same single decision.
+_ATTACHMENT_REQUEST_BULK_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/attachment-requests/decisions/?$")
 
 
 def is_group_lease_exempt_path(path: str, method: str = "POST") -> bool:
@@ -334,7 +345,10 @@ def is_group_lease_exempt_path(path: str, method: str = "POST") -> bool:
     if str(method or "").upper() != "POST":
         return False
     return bool(_CONVERSATION_CREATE_PATH.search(path) or _CONVERSATION_AUTO_TITLE_PATH.search(path)
-                or _CHAT_COMMAND_DECISION_PATH.search(path))
+                or _CHAT_COMMAND_DECISION_PATH.search(path)
+                or _ATTACHMENT_REQUEST_DECISION_PATH.search(path)
+                or _ATTACHMENT_REQUEST_BULK_DECISION_PATH.search(path)
+                or _ATTACHMENT_REQUEST_WORKER_PATH.search(path))
 
 
 def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResource, str]:
@@ -349,6 +363,12 @@ def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResou
         return "personal", "chat_command_decision"
     if _CHAT_COMMAND_WORKER_PATH.search(path):
         return "system", "chat_command_worker"
+    if _ATTACHMENT_REQUEST_DECISION_PATH.search(path):
+        return "group", "attachment_request_decision_lease_exempt"
+    if _ATTACHMENT_REQUEST_BULK_DECISION_PATH.search(path):
+        return "group", "attachment_request_bulk_decision_lease_exempt"
+    if _ATTACHMENT_REQUEST_WORKER_PATH.search(path):
+        return "system", "attachment_request_worker"
     if any(p.search(path) for p in _PERSONAL_PATHS):
         return "personal", "per_user_state"
     if any(p.search(path) for p in _SYSTEM_PATHS):

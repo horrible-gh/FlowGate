@@ -1861,6 +1861,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
                     elif call["name"] in api_server_tools.SELF_CHECK_NAMES:
                         _status, resp = api_server_tools.self_check_call(run, current_token, call["name"], call["input"])
+                    elif call["name"] == api_server_tools.ATTACHMENT_REQUEST_NAME and not is_chat:
+                        # flowgate.chat.0017 CH0002: stored at once, decided later by a person.
+                        _status, resp = api_server_tools.attachment_request_call(run, call["input"])
                     elif call["name"] == "request_source_snapshot":
                         _status, resp = api_server_tools.request_source_snapshot(
                             run, current_token, call["input"],
@@ -1925,7 +1928,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     call["name"] not in api_server_tools.SOURCE_OPS
                     and call["name"] not in (
                         "read_help", _CHAT_HISTORY_TOOL_NAME, chat_command_service.TOOL_NAME,
-                        *api_server_tools.SNAPSHOT_NAMES,
+                        api_server_tools.ATTACHMENT_REQUEST_NAME, *api_server_tools.SNAPSHOT_NAMES,
                     )
                     and call["name"] not in chat_tool_handlers
                 ):

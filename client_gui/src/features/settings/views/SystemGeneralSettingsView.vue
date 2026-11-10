@@ -143,6 +143,9 @@
             </div>
           </div>
         </template>
+
+        <!-- flowgate.chat.0017 CH0002: AI 첨부 승인 요청의 시스템 기본 한도 (프로젝트가 따로 정하지 않으면 상속). -->
+        <AttachmentRequestSettingsCard scope="system" />
       </div>
     </section>
 
@@ -210,6 +213,7 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import SettingsIcon from '../SettingsIcon.vue'
+import AttachmentRequestSettingsCard from '../components/AttachmentRequestSettingsCard.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useSystemNav } from '../components/systemNav'

@@ -42,6 +42,8 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'RunChangeDiff.vue',
         'RunChangeWindow.vue',
         'TimelineActivity.vue',
+        // flowgate.chat.0017 CH0002: the AI attachment request block of a run (rows drawn by the container's component).
+        'TimelineAttachments.vue',
         'TimelineMessage.vue',
         'api.ts',
         'changeDiff.ts',

@@ -64,6 +64,8 @@ from flowgate.graph_time_machine.routes import router as _graph_time_machine_rou
 # flowgate.v02.0085 T#2: the confirm gate decision history (server/flowgate/gate_decisions).
 from flowgate.gate_decisions.routes import router as _gate_decisions_router
 from modules.flow_gate.api.v1.chat_command_routes import router as _chat_command_router
+# flowgate.chat.0017 CH0002: AI attachment upload requests, the user side (decision, preview, settings).
+from modules.flow_gate.api.v1.attachment_request_routes import router as _attachment_request_router
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
 from modules.flow_gate.api.v1.self_check_routes import router as _self_check_router
@@ -260,6 +262,7 @@ app.include_router(_conversation_router, prefix=f"{CONTEXT}/api/v1", tags=["Conv
 # /chat-commands and /chat-activity paths first.
 app.include_router(_chat_command_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatCommands"])
 app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSettings"])
+app.include_router(_attachment_request_router, prefix=f"{CONTEXT}/api/v1", tags=["AttachmentRequests"])
 app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
 app.include_router(_agent_router, prefix=f"{CONTEXT}/api/v1", tags=["Agents"])
 app.include_router(_agent_job_router, prefix=f"{CONTEXT}/api/v1", tags=["AgentJobs"])
