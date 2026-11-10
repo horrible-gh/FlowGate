@@ -38,12 +38,32 @@ PROJECT = "faprj"
 PROJECT_NAME = "FaProj"
 
 
+@pytest.fixture(autouse=True)
+def live_instance(server_instance_per_test, patch_store):
+    # These real Git scenarios can outlive the instance self-validity window.
+    # Run the real heartbeat against the temporary DB, as server startup does.
+    from modules.flow_gate.services.git import instance_registry
+    instance_registry.startup()
+    try:
+        yield
+    finally:
+        instance_registry.shutdown()
+
+
 @pytest.fixture(scope="module")
 def project(patch_store, tmp_db):
     from modules.flow_gate.db import projects
 
-    projects.create({"project_id": PROJECT, "project_name": PROJECT_NAME})
-    yield
+    # Module/class fixtures seed documents before the function-scoped port
+    # fixture runs. Compose the real write gate for their whole lifetime too.
+    from modules.flow_gate.graph_workflow.services import card_document_ports as ports
+    from flowgate.card_document_edit import integration
+
+    with pytest.MonkeyPatch.context() as composition:
+        composition.setattr(ports, "_handlers", dict(ports._handlers))
+        integration.register()
+        projects.create({"project_id": PROJECT, "project_name": PROJECT_NAME})
+        yield
 
 
 @pytest.fixture(scope="module")
@@ -787,7 +807,10 @@ class TestFinalApprovalConflictIntent0555:
         )
         # unchanged shape: no approval block is invented for an uncoupled session
         assert approved["result"]["status"] == "merged"
-        assert "approval" not in approved["result"]
+        assert approved["result"]["git_terminal"] is True
+        assert approved["result"]["approval"] == {
+            "approved": False, "stage": "not_required", "error": None, "approval_intent_id": None,
+        }
         assert db_git.get_session(merge_id)["status"] == "done"
 
     # ── §15: atomicity ────────────────────────────────────────────────────────

@@ -148,11 +148,65 @@ export const OPEN_CONFLICT_REVIEW_EVENT = 'fg:open_conflict_review'
 export interface OpenConflictReviewDetail {
   group_id: string
   merge_id?: number | null
+  recovery_only?: boolean
 }
 
 /** Ask the global host to open this group's review screen; it resolves the merge_id itself. */
-export function requestConflictReview(groupId: string, mergeId: number | null = null): void {
+export function requestConflictReview(groupId: string, mergeId: number | null = null, recoveryOnly = false): void {
   if (typeof window === 'undefined') return
-  const detail: OpenConflictReviewDetail = { group_id: groupId, merge_id: mergeId }
+  const detail: OpenConflictReviewDetail = { group_id: groupId, merge_id: mergeId, ...(recoveryOnly ? { recovery_only: true } : {}) }
   window.dispatchEvent(new CustomEvent(OPEN_CONFLICT_REVIEW_EVENT, { detail }))
+}
+
+/** The server owns both recovery admission and the durable approval identity. */
+export interface MergeRecovery {
+  merge_id: number
+  session_state: string
+  review_state: string | null
+  approval_attempt_id: string | null
+  recovery_version: string
+  reconciliation_kind: string | null
+  reconcile_next_at?: string | null
+  automatic_retry_scheduled?: boolean
+  requires_recovery?: boolean
+  git_terminal: boolean
+  pushed?: boolean
+  approval: { approved: boolean; stage: string; error?: { code?: string; message?: string } | null }
+  push_error: { cause: string | null; returncode: number | null; detail: string | null; at?: string | null; instance_id?: string | null } | null
+  last_error?: { code?: string; detail?: string } | null
+  preserved_refs: { ref: string; sha: string; verification: string }[]
+  recovery_hold?: unknown
+  resume_missing?: string[]
+  unobserved?: string[]
+  probe_error?: { code?: string; detail?: string } | null
+  allowed_actions: string[]
+  blocked_reasons?: string[]
+  next_action: string
+  remote_outcome?: string | null
+  request_id?: string
+  receipt?: { phase: string; action: string } | null
+  pending_request?: { action: string; request_id: string; recovery_version: string; approval_attempt_id: string | null } | null
+}
+
+export function hasRecovery(value: MergeRecovery | null | undefined): boolean {
+  return !!value && (value.requires_recovery || value.session_state === 'aborted' || !!value.recovery_hold
+    || value.review_state === 'applying' || value.review_state === 'reconciling'
+    || (value.git_terminal && !value.approval.approved && value.approval.stage !== 'not_required'))
+}
+
+/** Auto-resolution can finish Git while the final approval is still pending. */
+export function needsRecoveryResult(value: {
+  status?: string; review_state?: string | null; git_terminal?: boolean;
+  recovery?: MergeRecovery | null;
+  approval?: { approved: boolean; stage?: string };
+  error?: unknown;
+} | null | undefined): boolean {
+  if (!value) return false
+  if (hasRecovery(value.recovery) || ['applying', 'reconciling', 'user_intervention_required', 'retry_scheduled', 'manual_reconciliation_needed'].includes(value.status || '')) return true
+  const terminal = value.git_terminal || value.status === 'merged' || value.status === 'already_applied'
+  return !!terminal && (!!value.error || (value.approval?.approved === false && value.approval.stage !== 'not_required'))
+}
+
+export function opensConflictReview(value: { review_state?: string | null; recovery?: MergeRecovery | null } | null | undefined): boolean {
+  return isReviewPendingState(value?.review_state) || hasRecovery(value?.recovery)
 }

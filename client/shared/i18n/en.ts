@@ -4084,6 +4084,39 @@ export default {
     // 0481 D0006 §6.3/§6.4 · L0007 §2.11 — the human approval gate screen for a
     // resolved general-merge conflict.
     git_review: {
+      recovery: {
+  "title": "Merge recovery",
+  "unknown": "Not recorded / unverified",
+  "scheduled": "Next automatic check: {at}",
+  "push_error": "Original push failure",
+  "preserved": "Preserved resolution",
+  "retry": "Retry",
+  "retry_approval": "Retry approval only",
+  "abort": "Stop and preserve resolution",
+  "refresh": "Refresh status",
+  "approval_pending": "Git is complete. Final approval is still pending.",
+  "abort_confirm": "The resolution commits will be preserved. This approval attempt will stop and the AC will remain unapproved. Remote changes will not be rolled back.",
+  "remote_unknown": "Remote outcome is unknown; this stops only the local attempt.",
+  "verification": {
+    "verified": "Verified",
+    "failed": "Verification failed",
+    "unobserved": "Unverified"
+  },
+  "next": {
+    "refresh": "Refresh status and inspect the missing evidence.",
+    "retry": "Retry after addressing the reported cause.",
+    "retry_approval": "Retry the final approval transaction. Git will not be repeated.",
+    "fix_auth": "Correct authentication or repository permissions, then retry.",
+    "inspect_retry_budget": "Check the failure cause before starting another bounded retry.",
+    "verify_preservation": "Restore and verify preservation before retrying.",
+    "inspect_local_state": "Check the target branch, local edits and saved commits.",
+    "await_reconcile": "The server is checking the remote result automatically. You can refresh the status.",
+    "resume_abort": "Finish the recorded stop. Automatic publishing is paused until cleanup completes.",
+    "inspect_remote_history": "Inspect the changed remote history before retrying.",
+    "review": "Review the new candidate. Earlier resolution commits are preserved.",
+    "resolve": "Resolve the new remote conflict. Earlier resolution commits are preserved."
+  }
+},
       title: 'Pending approval',
       // 0683 T0004 §2 — an ordinary branch merge can be aborted from its review as well.
       abort: 'Abort merge',

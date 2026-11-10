@@ -357,6 +357,24 @@ def project_git_status(project_id: str) -> dict:
         # exactly as it did before this feature, never breaks the status call.
         _log.warning("tr commit slot summaries failed for %s", project_id, exc_info=True)
     pending_rows = [r for r in rows if r.get("status") in _gs.PENDING_STATUSES]
+    # A closed Git attempt with pending AC still needs an entry in the status panel.
+    from . import recovery
+    recovery_rows = {}
+    for ledger in all_rows:
+        if not ledger.get('merge_id'):
+            continue
+        try:
+            session = _gs.db_git.get_session(int(ledger['merge_id']))
+            if recovery.supported(session):
+                ctx = _gs.db_git.session_context(session)
+                if recovery.needed(ctx) or recovery.has_preservation(ctx):
+                    view = recovery.projection(session)
+                    recovery_rows[ledger['group_id']] = view
+                    if (view['git_terminal'] and view['requires_recovery']
+                            and ledger not in pending_rows):
+                        pending_rows.append(ledger)
+        except Exception:
+            _log.warning('recovery status unavailable for %s', ledger['group_id'])
     # 0282 NR0003 finding 1: the AC lookup was the next N+1 in line — batched
     # before pending grows with adoption.
     ac_doc_ids = _gs._group_ac_doc_ids([r["group_id"] for r in pending_rows])
@@ -380,6 +398,7 @@ def project_git_status(project_id: str) -> dict:
         # between "choose an action and run it" and "go finish the conflict" — a
         # coupled group's Git already belongs to a final approval that is waiting.
         row["final_approval_bound"] = False
+        row["recovery"] = recovery_rows.get(row["group_id"])
         if row.get("status") == "conflict" and row.get("merge_id") is not None:
             try:
                 s = _gs.db_git.get_session(int(row["merge_id"]))
@@ -392,6 +411,8 @@ def project_git_status(project_id: str) -> dict:
                     ctx = _gs.db_git.session_context(s)
                     row["review_state"] = ctx.get("review_state")
                     row["reconciliation_kind"] = ctx.get("reconciliation_kind")
+                    from . import recovery
+                    row["recovery"] = recovery.projection(s) if recovery.supported(s) and (recovery.needed(ctx) or recovery.has_preservation(ctx)) else None
                     row["final_approval_bound"] = (
                         approval_intent.intent_of_context(ctx) is not None
                     )

@@ -1786,6 +1786,20 @@ def _resolver_run_provider(run_id: Optional[str]) -> tuple[Optional[str], Option
 
 
 def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
+    from modules.flow_gate.services import git_service as _gs
+    from . import branch_merge_publish as bmp
+    row = _gs._review_session_of_owner(group_id, merge_id, project_id)
+    if _gs.db_git.session_kind(row) != _gs.db_git.SESSION_KIND_MERGE or _is_branch_merge_session(row):
+        return _abort_merge_locked(group_id, merge_id, project_id=project_id)
+    lock, held = bmp.session_lock(row, _gs._session_project(row), holder_kind="review_action", publish=True)
+    try:
+        # The implementation re-reads owner, phase and recovery evidence under this lock.
+        return _abort_merge_locked(group_id, merge_id, project_id=project_id)
+    finally:
+        bmp.session_unlock(lock, held)
+
+
+def _abort_merge_locked(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
     """Manual [abort] — discard this merge attempt and preserve the work branch
     (0205 P scenario 9). Shares its end state with the auto-recovery sweep; only
     the trigger differs. The merge:{id} release is now best-effort legacy cleanup
@@ -1796,6 +1810,12 @@ def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[
     and `merge --abort` has nothing to abort in a group worktree — it is delegated whole
     to :func:`abort_tr_conflict` rather than given a second endpoint to learn."""
     from modules.flow_gate.services import git_service as _gs
+    from . import recovery
+    row = _gs._review_session_of_owner(group_id, merge_id, project_id)
+    if recovery.supported(row) and (recovery.needed(_gs.db_git.session_context(row))
+                                    or recovery.has_preservation(_gs.db_git.session_context(row))):
+        raise GitServiceError(409, "recovery_required", "use the versioned preservation abort",
+                              details={"recovery": recovery.projection(row)})
     session, _cfg, project_id, root = _gs._session_context(group_id, merge_id, **({"project_id": project_id} if project_id else {}))
     kind = _gs.db_git.session_kind(session)
     if _is_branch_merge_session(session):
@@ -1811,7 +1831,8 @@ def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[
         # index and conflict files, and this session stays open (fail-closed 409).
         merge_target.raise_if_not_workspace_owner(merge_target.resolve_session_target(session))
     if root.exists():
-        proc = _gs._run_git(["merge", "--abort"], cwd=root)
+        proc = _gs._run_session_git(merge_id, None, "merge", "user_abort",
+                                    ["merge", "--abort"], cwd=root)
         if proc.returncode:
             raise GitServiceError(500, "git_error", "Merge abort failed",
                                   diagnostic=_gs._last_line(proc.stderr))

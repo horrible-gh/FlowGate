@@ -51,18 +51,24 @@
           </button>
         </div>
         <template v-else>
-          <div class="gmr-provider-badge" data-test="gmr-resolved-by">
+          <GitRecoveryPanel v-if="recoveryVisible && recovery" :recovery="recovery" :busy="busy"
+            @retry="recover('retry')" @abort="recover('abort')" @refresh="loadReview()" @resume="resumeCandidate" />
+          <button v-if="!recoveryVisible && recovery?.preserved_refs.length" type="button" class="btn btn-secondary"
+            data-test="review-preservation" @click="recoveryRequested = true">
+            {{ t('main.git_review.recovery.preserved') }}
+          </button>
+          <div v-if="!recoveryVisible" class="gmr-provider-badge" data-test="gmr-resolved-by">
             <AppIcon :name="review?.resolver_type === 'human' ? 'pencil-simple' : 'robot'" />
             <span>{{ resolvedByText }}</span>
             <small v-if="review?.resolver_type !== 'human'">{{ t('main.git_review.provider_badge_note') }}</small>
           </div>
 
-          <p class="gmr-warning" :class="warningClass">
+          <p v-if="!recoveryVisible" class="gmr-warning" :class="warningClass">
             <AppIcon :name="warningIcon" />
             <span>{{ warningText }}</span>
           </p>
 
-          <div class="gmr-modal-body">
+          <div v-if="!recoveryVisible" class="gmr-modal-body">
             <div class="gcd-bd gmr-bd">
               <aside class="gcd-filelist" :aria-label="t('main.git_review.file_list')">
                 <p v-if="!changes.length" class="gcd-nomatch">{{ t('main.group_changes.no_match') }}</p>
@@ -354,6 +360,8 @@ import { resolveGitError } from '@shared/gitErrors'
 import { randomUuid } from '@shared/utils/uuid'
 import AiProviderSelect from './AiProviderSelect.vue'
 import GitMergeRejectDialog from './GitMergeRejectDialog.vue'
+import GitRecoveryPanel from './GitRecoveryPanel.vue'
+import { hasRecovery, type MergeRecovery } from '../composables/useConflictSession'
 import DialogFooter from './dialogs/DialogFooter.vue'
 import DialogHeader from './dialogs/DialogHeader.vue'
 import DialogShell from './dialogs/DialogShell.vue'
@@ -378,6 +386,7 @@ const props = defineProps<{
   // project-scoped route base (`/api/v1/projects/{p}/git/merge/{id}`) and every call
   // below goes there. Omitted = the group route, exactly as before.
   mergeApiBase?: string | null
+  recoveryOnly?: boolean
   branch?: string | null
   baseBranch?: string | null
   providers?: { id: string; name: string }[]
@@ -476,6 +485,8 @@ interface HeldTestOperation {
   purpose: string
 }
 interface ReviewPayload {
+  recovery?: MergeRecovery | null
+  approval_attempt_id?: string | null
   group_id: string
   merge_id: number
   review_state: string
@@ -508,6 +519,10 @@ interface ApproveError {
   message: string
 }
 interface ApproveResult {
+  recovery?: MergeRecovery
+  approval?: MergeRecovery['approval']
+  git_terminal?: boolean
+  error?: unknown
   status?: string
   review_state?: string
   errors?: ApproveError[]
@@ -528,6 +543,10 @@ const loading = ref(true)
 const loadError = ref('')
 const review = ref<ReviewPayload | null>(null)
 const busy = ref(false)
+const recovery = ref<MergeRecovery | null>(null)
+const recoveryRequested = ref(!!props.recoveryOnly)
+const recoveryVisible = computed(() => recoveryRequested.value || hasRecovery(recovery.value))
+let loadGeneration = 0
 const sending = ref(false)
 // 0570 T0004 §2.1 — true from the STOP click until the poll observes the run
 // settled (mirrors ConversationView.vue's `cancelling`). Guards against a duplicate
@@ -784,7 +803,7 @@ const canAbort = computed(() => {
   return !!props.abortable && state !== 'applying' && state !== 'reconciling'
 })
 
-const actions = computed<DialogAction[]>(() => [
+const actions = computed<DialogAction[]>(() => recoveryVisible.value ? [] : [
   ...(props.abortable ? [{
     id: 'abort',
     label: t('main.git_review.abort'),
@@ -951,6 +970,7 @@ async function loadDiff(path: string) {
  * dialog goes away while I wait" meant. A poll that fails is simply retried.
  */
 async function loadReview({ background = false } = {}) {
+  const generation = ++loadGeneration
   if (!background) {
     loading.value = true
     loadError.value = ''
@@ -959,7 +979,10 @@ async function loadReview({ background = false } = {}) {
     const { data } = await getRequest<{ ok: boolean; result: ReviewPayload }>(
       `${reviewApiBase.value}/review`,
     )
+    if (generation !== loadGeneration || disposed) return
     const priorAiTurns = aiTurnCount(review.value?.conversation ?? [])
+    const priorFingerprint = review.value?.review_fingerprint
+    recovery.value = data.result.recovery ?? null
     review.value = data.result
     // Server truth from here on: if it says nothing is in flight, nothing is. The
     // second arm only matters against a server that does not report the field at
@@ -967,16 +990,32 @@ async function loadReview({ background = false } = {}) {
     if (data.result.pending_conversation !== undefined) locallyPending.value = null
     else if (aiTurnCount(data.result.conversation) > priorAiTurns) locallyPending.value = null
     syncWaitClock()
-    if (!attemptId.value) attemptId.value = newAttemptId()
+    if (data.result.approval_attempt_id) attemptId.value = data.result.approval_attempt_id
+    else if (!attemptId.value || priorFingerprint !== data.result.review_fingerprint) {
+      const key = approvalStorageKey(data.result.review_fingerprint)
+      attemptId.value = readStored(key) || newAttemptId()
+      writeStored(key, attemptId.value)
+    }
     if (!selectedPath.value && data.result.changes.length) {
       selectedPath.value = data.result.changes[0].path
       void loadDiff(selectedPath.value)
     }
     if (!background) loadError.value = ''
   } catch (e: any) {
+    if (generation !== loadGeneration || disposed) return
+    // Recovery is available even if the legacy review endpoint cannot read a workspace.
+    if (!props.mergeApiBase) {
+      try {
+        const response = await getRequest<{ ok: boolean; result: MergeRecovery }>(`${reviewApiBase.value}/recovery`)
+        if (generation !== loadGeneration || disposed) return
+        recovery.value = response.data.result
+        loadError.value = ''
+        return
+      } catch { /* Keep the original review error when recovery is unavailable too. */ }
+    }
     if (!background) loadError.value = resolveGitError(e, t, 'main.git_finalize.failed')
   } finally {
-    if (!background) loading.value = false
+    if (!background && generation === loadGeneration) loading.value = false
   }
 }
 
@@ -1131,31 +1170,93 @@ function refreshTerminalSurfaces(status: string) {
  * idempotently (`already_applied` once that attempt merged) and refuses with `git_busy`
  * while the first request still holds the session lock, so asking can never apply twice.
  */
-const LOST_RESPONSE_RECHECK_MS = 5_000
-// As long as the request itself may run (GIT_APPROVAL_TIMEOUT_MS in @shared/api).
-const LOST_RESPONSE_RECHECK_LIMIT_MS = 330_000
 let disposed = false
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+async function recheckApproval(url: string, body: Record<string, unknown>): Promise<ApproveResponse> {
+  // Retain the established busy wait, bounded to 66 polls (330 seconds).
+  for (let tries = 0; tries < 66; tries++) {
+    try { return (await postRequest<ApproveResponse>(url, body)).data }
+    catch (e: any) {
+      if (disposed || e?.response?.data?.error?.code !== 'git_busy' || tries === 65) throw e
+      await new Promise(resolve => setTimeout(resolve, 5_000))
+      if (disposed) throw e
+    }
+  }
+  throw new Error('Approval outcome is unconfirmed')
 }
 
-async function recheckApproval(url: string, body: Record<string, unknown>): Promise<ApproveResponse> {
-  const deadline = Date.now() + LOST_RESPONSE_RECHECK_LIMIT_MS
-  for (;;) {
-    try {
-      return (await postRequest<ApproveResponse>(url, body)).data
-    } catch (e: any) {
-      const busyNow = String(e?.response?.data?.error?.code || '') === 'git_busy'
-      if (!busyNow || disposed || Date.now() >= deadline) throw e
+function readStored(key: string): string | null {
+  try { return sessionStorage.getItem(key) } catch { return null }
+}
+function writeStored(key: string, value: string | null) {
+  try { if (value === null) sessionStorage.removeItem(key); else sessionStorage.setItem(key, value) } catch { /* Storage may be disabled. */ }
+}
+function approvalStorageKey(fingerprint: string) {
+  return `fg:approval:${reviewApiBase.value}:${fingerprint}`
+}
+function resumeCandidate() {
+  if (recovery.value?.allowed_actions.includes('review')) recoveryRequested.value = false
+  else if (recovery.value?.allowed_actions.includes('resolve')) { emit('resolved'); emit('close') }
+}
+async function recover(action: 'retry' | 'abort') {
+  if (busy.value || !recovery.value) return
+  busy.value = true
+  ++loadGeneration
+  stopPolling()
+  const key = `fg:recovery:${reviewApiBase.value}:${action}`
+  const saved = readStored(key)
+  let body: { request_id: string; recovery_version: string; approval_attempt_id: string | null }
+  try { body = saved ? JSON.parse(saved) : null } catch { body = null as any }
+  const pending = recovery.value.pending_request
+  if (pending?.action === action) {
+    body = { request_id: pending.request_id, recovery_version: pending.recovery_version,
+             approval_attempt_id: pending.approval_attempt_id }
+  }
+  body ??= { request_id: randomUuid(), recovery_version: recovery.value.recovery_version,
+             approval_attempt_id: recovery.value.approval_attempt_id }
+  writeStored(key, JSON.stringify(body))
+  try {
+    const { data } = await postRequest<{ ok: boolean; result: MergeRecovery }>(`${reviewApiBase.value}/recovery/${action}`, body)
+    if (!data.ok) throw { response: { data } }
+    ++loadGeneration
+    recovery.value = data.result
+    if (data.result.receipt?.phase !== 'reconcile_prepared') writeStored(key, null)
+    refreshTerminalSurfaces(data.result.session_state)
+    if (data.result.allowed_actions.includes('resolve')) {
+      emit('resolved')
+      emit('close')
+    } else if (data.result.session_state === 'aborted' || (data.result.git_terminal &&
+      (data.result.approval.approved || data.result.approval.stage === 'not_required'))) {
+      emit('resolved')
+      emit('close')
+    } else {
+      if (data.result.allowed_actions.includes('review') && !data.result.approval_attempt_id) {
+        if (review.value) writeStored(approvalStorageKey(review.value.review_fingerprint), null)
+        attemptId.value = ''
+      }
+      await loadReview({ background: true })
     }
-    await delay(LOST_RESPONSE_RECHECK_MS)
+  } catch (e: any) {
+    ++loadGeneration
+    const view = e?.response?.data?.error?.details?.recovery as MergeRecovery | undefined
+    if (view) recovery.value = view
+    const code = e?.response?.data?.error?.code
+    // A completed receipt (e.g. auth still failing after this request's one budget)
+    // means the next explicit retry is a new action with a new request_id. A started/
+    // prepared receipt or a lost response (no envelope) keeps the key for a resend.
+    const completed = view?.receipt?.phase === 'completed' && (!view.request_id || view.request_id === body.request_id)
+    if (code === 'recovery_stale' || completed) writeStored(key, null)
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
+    await loadReview({ background: true })
+  } finally {
+    busy.value = false
   }
 }
 
 async function approve() {
   if (!review.value || busy.value) return
   busy.value = true
+  ++loadGeneration
   approveOutcome.value = null
   try {
     const url = `${reviewApiBase.value}/approve`
@@ -1168,13 +1269,23 @@ async function approve() {
       approveOutcome.value = { status: 'confirming', errors: [], message: t('main.git_review.approve_confirming') }
       data = await recheckApproval(url, body)
     }
+    ++loadGeneration
     const status = String(data.result?.status ?? '')
+    if (data.result?.recovery) recovery.value = data.result.recovery
+    const approvalFailed = data.result?.git_terminal === true && data.result?.approval?.approved === false
+      && data.result.approval.stage !== 'not_required'
+    if (data.ok === false || data.result?.error || approvalFailed) {
+      approveOutcome.value = { status, errors: [], message: data.result?.approval?.error?.message || t(data.result?.git_terminal ? 'main.git_review.recovery.approval_pending' : 'main.git_review.approve_failed_toast') }
+      await loadReview({ background: true })
+      return
+    }
     // 0668 T0004: a TR conflict is approved here too; its terminal outcome is the TR
     // commit's own `committed` / `empty` (review_state `completed`).
     if (
       status === 'completed' || status === 'merged' || status === 'pushed'
       || status === 'already_applied' || status === 'committed' || status === 'empty'
     ) {
+      writeStored(approvalStorageKey(review.value.review_fingerprint), null)
       showToast(t('main.git_review.approved_toast'), 'success')
       refreshTerminalSurfaces(status)
       emit('resolved')
@@ -1190,7 +1301,10 @@ async function approve() {
       showToast(t('main.git_review.approve_failed_toast'), 'danger')
     }
     approveOutcome.value = { status, errors }
-    attemptId.value = newAttemptId()
+    if (status === 'pre_commit_validation_failed' || status === 'commit_creation_failed' || status === 're_review') {
+      attemptId.value = newAttemptId()
+      writeStored(approvalStorageKey(review.value.review_fingerprint), attemptId.value)
+    }
     await loadReview({ background: true })
   } catch (e: any) {
     // Still no answer after asking again: the outcome is unknown, not failed. The attempt_id
@@ -1202,7 +1316,7 @@ async function approve() {
     showToast(message, network ? 'warning' : 'danger')
     const code = String(e?.response?.data?.error?.code || '')
     approveOutcome.value = { status: code, errors: [], message }
-    if (network) await loadReview({ background: true })
+    if (network || e?.response?.status === 409) await loadReview({ background: true })
     // 0668 T0004: the reviewed tree moved (the server re-froze it) — show the new
     // candidate and its fingerprint so the next [승인] is about what is really there.
     if (code === 'stale_review') {

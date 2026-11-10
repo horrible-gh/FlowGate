@@ -377,11 +377,11 @@ def commit_clean_retry(group_id: str, retry: dict) -> dict:
         )
     except Exception as exc:  # noqa: BLE001 — Git remains terminal on every failure
         _log.warning(
-            "clean final approval transaction failed for %s", group_id, exc_info=True,
+            "clean final approval transaction failed for %s", group_id,
         )
         return _verdict(
             approved=False, stage="approval_commit", intent=intent, merge_id=None,
-            error={"code": "approval_commit_failed", "message": str(exc)},
+            error={"code": "approval_commit_failed", "message": "approval transaction failed"},
         )
     verdict = _verdict(
         approved=True, stage="complete", intent=intent, merge_id=None,
@@ -426,10 +426,10 @@ def commit_deferred_approval(group_id: str, merge_id: int, intent: dict) -> dict
         )
     except Exception as exc:  # noqa: BLE001 — every failure means "not approved"
         _log.warning(
-            "deferred final approval transaction failed for %s", group_id, exc_info=True,
+            "deferred final approval transaction failed for %s", group_id,
         )
         return _verdict(
             approved=False, stage="approval_commit", intent=intent, merge_id=merge_id,
-            error={"code": "approval_commit_failed", "message": str(exc)},
+            error={"code": "approval_commit_failed", "message": "approval transaction failed"},
         )
     return _verdict(approved=True, stage="complete", intent=intent, merge_id=merge_id)

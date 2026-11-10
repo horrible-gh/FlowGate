@@ -63,8 +63,6 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, Request
 from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from modules.flow_gate import template_provision
@@ -1164,6 +1162,52 @@ def get_merge_review_diff(
         return _guard(exc)
 
 
+class RecoveryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str
+    recovery_version: str
+    approval_attempt_id: Optional[str]
+
+
+@router.get("/groups/{group_id}/git/merge/{merge_id}/recovery")
+def get_merge_recovery(group_id: str, merge_id: int, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied:
+        return denied
+    try:
+        return git_service.get_merge_recovery(group_id, merge_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+def _recovery_action(group_id, merge_id, body, action, user):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    if not _UUID_RE.match(body.request_id or ""):
+        return _error_response(400, "invalid_request_id", "request_id must be a UUID")
+    if body.approval_attempt_id is not None and not _UUID_RE.match(body.approval_attempt_id):
+        return _error_response(400, "invalid_attempt_id", "approval_attempt_id must be a UUID or null")
+    try:
+        return git_service.mutate_merge_recovery(
+            group_id, merge_id, action, request_id=body.request_id,
+            recovery_version=body.recovery_version, approval_attempt_id=body.approval_attempt_id,
+            actor=user.get("user_id"),
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/groups/{group_id}/git/merge/{merge_id}/recovery/retry")
+def post_merge_recovery_retry(group_id: str, merge_id: int, body: RecoveryBody, user=Depends(get_current_user)):
+    return _recovery_action(group_id, merge_id, body, "retry", user)
+
+
+@router.post("/groups/{group_id}/git/merge/{merge_id}/recovery/abort")
+def post_merge_recovery_abort(group_id: str, merge_id: int, body: RecoveryBody, user=Depends(get_current_user)):
+    return _recovery_action(group_id, merge_id, body, "abort", user)
+
+
 class ApproveBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1191,11 +1235,20 @@ def post_merge_review_approve(
             return tr_commit_service.commit_conflict_resolution(
                 group_id, merge_id, review_fingerprint=body.review_fingerprint,
             )
-        return git_service.approve_merge_review(
+        response = git_service.approve_merge_review(
             group_id, merge_id,
             attempt_id=body.attempt_id, review_fingerprint=body.review_fingerprint,
             authority="human",
         )
+        from ...services.git import recovery
+        row = git_service.db_git.get_session(merge_id)
+        if recovery.supported(row):
+            result = response.get("result") or {}
+            truth = recovery.replay_result(row)
+            response["result"] = {**truth, **result}
+            if isinstance(result.get("error"), str):
+                response["result"]["error"] = {"code": result["error"]}
+        return response
     except GitServiceError as exc:
         return _guard(exc)
 

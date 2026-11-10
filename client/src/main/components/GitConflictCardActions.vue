@@ -4,6 +4,11 @@
        the AI call; it is what [직접 해결] (and detail viewing) opens. While the run works the
        card says so in place, and the operator is free to leave — the run is the server's. -->
   <div class="git-conflict-card-actions" data-test="conflict-card-actions">
+    <button v-if="hasRecovery(recovery)" class="btn btn-sm btn-primary" type="button"
+      data-test="conflict-card-recovery" :disabled="busy" @click="emit('review')">
+      {{ t('main.git_review.open_review') }}
+    </button>
+    <template v-else>
     <AiProviderSelect
       class="git-conflict-card-provider"
       :providers="providers || []"
@@ -43,16 +48,19 @@
       <AppIcon name="spinner" spin />
       {{ runningNotice || t('main.git_status.ai_resolve_starting') }}
     </span>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { hasRecovery, type MergeRecovery } from '../composables/useConflictSession'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 
 const props = defineProps<{
+  recovery?: MergeRecovery | null
   providers?: { id: string; name: string }[]
   selectedProvider?: string
   providerLoading?: boolean
@@ -67,6 +75,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  review: []
   'ai-resolve': []
   'direct-resolve': []
   'update:provider': [value: string]

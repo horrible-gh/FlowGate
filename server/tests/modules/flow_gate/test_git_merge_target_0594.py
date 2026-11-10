@@ -62,13 +62,23 @@ class _MockTxn:
         self._cur = None
 
     def execute(self, sql, params=None):
+        # No commit here: a transaction that commits every statement cannot roll
+        # anything back, and then an atomic unit of work (0555 D0005 INV-6: AC
+        # approval + root completion + intent consume, all or nothing) silently
+        # tests as "each write landed on its own". begin_transaction below owns
+        # the commit/rollback.
         self._cur = self._conn.execute(sql, params or [])
-        self._conn.commit()
 
     @property
     def cursor(self):
-        """The live cursor: FlowGateStore._execute_affected (every lock/job CAS write) reads the
-        affected-row count from it (same gap 0555 T0008 closed in the 0115 harness)."""
+        """The live cursor, so `_execute_affected` can read a real rowcount.
+
+        FlowGateStore._execute_affected reads the affected-row count off the
+        transaction's cursor (that is the one portable place all three real
+        adapters expose it). A mock that hides its cursor makes every CAS write
+        raise "database driver did not expose affected row count" — a harness
+        gap, not a product one (0555 T0008).
+        """
         return self._cur
 
     def fetchone(self):
@@ -81,27 +91,44 @@ class _MockTxn:
 
 class _MockDB:
     def __init__(self, db_path: str):
+        import threading
+        self._mutex = threading.RLock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
 
     def execute(self, sql, params=None):
-        self._conn.execute(sql, params or [])
-        self._conn.commit()
+        with self._mutex:
+            self._conn.execute(sql, params or [])
+            self._conn.commit()
 
     def fetch_one(self, sql, params=None):
-        row = self._conn.execute(sql, params or []).fetchone()
-        return dict(row) if row else None
+        with self._mutex:
+            row = self._conn.execute(sql, params or []).fetchone()
+            return dict(row) if row else None
 
     def fetch_all(self, sql, params=None):
-        return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
+        with self._mutex:
+            return [dict(row) for row in self._conn.execute(sql, params or []).fetchall()]
 
     @contextmanager
     def begin_transaction(self):
-        yield _MockTxn(self._conn)
+        # One connection backs this fixture. Serialize its complete transaction,
+        # including rollback, so concurrent requests cannot consume each other's
+        # cursors or commit a different thread's unit of work. Domain locks and
+        # session claims still run through their real database CAS operations.
+        with self._mutex:
+            txn = _MockTxn(self._conn)
+            try:
+                yield txn
+            except BaseException:
+                self._conn.rollback()
+                raise
+            self._conn.commit()
 
     def close(self):
-        self._conn.close()
+        with self._mutex:
+            self._conn.close()
 
 
 @pytest.fixture(scope="module")

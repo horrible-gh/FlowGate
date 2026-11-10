@@ -4085,6 +4085,39 @@ export default {
     },
     // 0481 D0006 §6.3/§6.4 · L0007 §2.11 — 일반 병합 충돌의 사람 승인 관문 화면.
     git_review: {
+      recovery: {
+  "title": "병합 복구",
+  "unknown": "미기록 / 미확인",
+  "scheduled": "다음 자동 확인: {at}",
+  "push_error": "최초 push 실패",
+  "preserved": "보존된 해결 결과",
+  "retry": "재시도",
+  "retry_approval": "승인만 재시도",
+  "abort": "해결 결과 보존 후 중단",
+  "refresh": "상태 새로고침",
+  "approval_pending": "Git 작업은 완료됐습니다. 최종 승인은 아직 대기 중입니다.",
+  "abort_confirm": "해결 커밋은 보존됩니다. 현재 승인 시도를 중단하며 AC는 승인되지 않습니다. 원격 변경은 되돌리지 않습니다.",
+  "remote_unknown": "원격 반영 여부가 미확인입니다. 로컬 시도만 중단합니다.",
+  "verification": {
+    "verified": "확인됨",
+    "failed": "검증 실패",
+    "unobserved": "미확인"
+  },
+  "next": {
+    "refresh": "상태를 새로고침하고 부족한 증거를 확인하세요.",
+    "retry": "표시된 원인을 조치한 뒤 재시도하세요.",
+    "retry_approval": "최종 승인만 재시도합니다. Git 작업은 반복하지 않습니다.",
+    "fix_auth": "인증 또는 저장소 권한을 조치한 뒤 재시도하세요.",
+    "inspect_retry_budget": "실패 원인을 확인한 뒤 제한된 재시도를 시작하세요.",
+    "verify_preservation": "보존 상태를 복구하고 검증한 뒤 재시도하세요.",
+    "inspect_local_state": "대상 브랜치, 새 편집, 보존 커밋을 확인하세요.",
+    "await_reconcile": "서버가 원격 반영 결과를 자동으로 확인합니다. 상태를 새로고침할 수 있습니다.",
+    "resume_abort": "기록된 중단 정리를 이어서 완료하세요. 정리가 끝날 때까지 자동 전송은 멈춥니다.",
+    "inspect_remote_history": "변경된 원격 이력을 확인한 뒤 재시도하세요.",
+    "review": "새 후보를 검토하세요. 이전 해결 커밋은 보존돼 있습니다.",
+    "resolve": "새 원격 충돌을 해결하세요. 이전 해결 커밋은 보존돼 있습니다."
+  }
+},
       title: '승인 대기',
       // 0683 T0004 §2 — 일반 브랜치 병합은 검토 단계에서도 병합 자체를 중단할 수 있다.
       abort: '병합 중단',

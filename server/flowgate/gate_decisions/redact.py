@@ -13,38 +13,15 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, Optional
 
-MASK = "***"
+from util.secret_redaction import MASK, scrub_credentials
 _CODE = re.compile(r"[^a-z0-9_.:-]+")
 CODE_MAX = 64
 TEXT_MAX = 300
 
-# scheme://user:pass@host or scheme://token@host -> scheme://***@host
-_URL_USERINFO = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@'\"]+@")
-# Authorization / Proxy-Authorization / X-*-Token header values, to the end of the line
-_AUTH_HEADER = re.compile(r"(?im)\b((?:proxy-)?authorization|x-[a-z0-9-]*token|private-token|cookie)\s*[:=]\s*[^\r\n]+")
-# Bearer / Basic / token schemes
-_AUTH_SCHEME = re.compile(r"(?i)\b(bearer|basic|token)\s+[a-z0-9._~+/=-]{6,}")
-# key=value / key: value secrets (query strings, config dumps)
-_KEY_VALUE = re.compile(
-    r"(?i)\b(password|passwd|pwd|secret|token|access_token|refresh_token|api[_-]?key|private_token|client_secret)"
-    r"(\s*[=:]\s*)[^\s&'\";,]+")
-# well-known token shapes (GitHub, GitLab, Slack, generic long hex/base64 after a known prefix)
-_KNOWN_TOKENS = re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}"
-                           r"|xox[abprs]-[A-Za-z0-9-]{10,})\b")
-
-
 def scrub(text: Optional[str], *secrets: Optional[str]) -> str:
     """``text`` without any remote credential: URL user info, auth headers and schemes, key=value secrets, known token
     shapes and every given secret by value. Bounded to ``TEXT_MAX`` characters."""
-    out = str(text or "")
-    for secret in sorted((s for s in secrets if s), key=len, reverse=True):
-        out = out.replace(secret, MASK)
-    out = _URL_USERINFO.sub(lambda m: f"{m.group(1)}{MASK}@", out)
-    out = _AUTH_HEADER.sub(lambda m: f"{m.group(1)}: {MASK}", out)
-    out = _AUTH_SCHEME.sub(lambda m: f"{m.group(1)} {MASK}", out)
-    out = _KEY_VALUE.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK}", out)
-    out = _KNOWN_TOKENS.sub(MASK, out)
-    return out[:TEXT_MAX]
+    return scrub_credentials(text, *secrets)[:TEXT_MAX]
 
 
 def scrub_value(value: Any, *secrets: Optional[str]) -> Any:

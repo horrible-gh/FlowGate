@@ -140,12 +140,17 @@ def git_failure_cause(proc: subprocess.CompletedProcess) -> str:
 
 
 def git_failure_details(proc: subprocess.CompletedProcess, stage: str) -> dict:
-    return {"stage": stage, "cause": git_failure_cause(proc)}
+    return {"stage": stage, "cause": getattr(proc, "cause", None) or git_failure_cause(proc)}
 
 
-def _git_result(args, returncode, stdout, stderr) -> subprocess.CompletedProcess:
+def _git_result(args, returncode, stdout, stderr, secret=None) -> subprocess.CompletedProcess:
+    # Classify the transient raw result before scrubbing diagnostic words away.
     proc = subprocess.CompletedProcess(args, returncode, stdout, stderr)
     proc.cause = git_failure_cause(proc)
+    proc.stdout = _scrub(stdout, secret)
+    proc.stderr = _scrub(stderr, secret)
+    proc.args = ([_scrub(arg, secret) for arg in args]
+                 if isinstance(args, (list, tuple)) else _scrub(args, secret))
     return proc
 
 
@@ -172,7 +177,7 @@ def _run_git(
     if budget is not None:
         left = budget.remaining()
         if left <= 0:
-            return _git_result(["git", *args], returncode=-1, stdout="", stderr="timeout_expired")
+            return _git_result(["git", *args], returncode=-1, stdout="", stderr="timeout_expired", secret=secret)
         timeout = min(timeout, left)
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -186,6 +191,10 @@ def _run_git(
         env.update(author_env)
     if extra_env:
         env.update(extra_env)
+    # App ref movement must never inherit a person's committer, even through
+    # extra_env. Project author attribution remains independent and unchanged.
+    env["GIT_COMMITTER_NAME"] = "FlowGate"
+    env["GIT_COMMITTER_EMAIL"] = "flowgate@localhost"
     _suppress_auto_maintenance(env)
     askpass_dir: Optional[Path] = None
     if secret is not None:
@@ -209,7 +218,7 @@ def _run_git(
             if budget is not None and budget.remaining() <= 0:
                 budget.expired = True
             return _git_result(
-                ["git", *args], returncode=-1, stdout="", stderr="timeout_expired"
+                ["git", *args], returncode=-1, stdout="", stderr="timeout_expired", secret=secret
             )
         except FileNotFoundError:
             raise GitServiceError(
@@ -217,8 +226,7 @@ def _run_git(
                 "git binary not found on server (install git in the runtime image)",
             )
         proc = _git_result(
-            proc.args, proc.returncode,
-            _scrub(proc.stdout, secret), _scrub(proc.stderr, secret),
+            proc.args, proc.returncode, proc.stdout, proc.stderr, secret,
         )
         return proc
     finally:

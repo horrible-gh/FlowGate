@@ -606,13 +606,14 @@ def merge_branches(
 
 
 def merge_no_ff(merge_root: Path, source_head: str, message: str,
-                source_branch: str, target_branch: str) -> list[str]:
+                source_branch: str, target_branch: str, *, merge_id: Optional[int] = None) -> list[str]:
     """``git merge --no-ff`` of ``source_head`` into the checkout at ``merge_root``: the conflicted paths (the merge
     left in flight, MERGE_HEAD / index / markers kept), or [] when it committed. A merge git never started (an
     untracked collision, any other refusal) is aborted and raised. Shared by ``run_merge`` and the Graph attempt
     integration (flowgate.v02.0061 T#9); the caller holds the target's lock."""
     from modules.flow_gate.services import git_service as _gs
-    merged = _gs._run_git(
+    merged = _gs._run_session_git(
+        merge_id, None, "merge", "branch_merge",
         [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff",
          "-m", message, source_head],
         cwd=merge_root,
@@ -625,7 +626,8 @@ def merge_no_ff(merge_root: Path, source_head: str, message: str,
         # No conflict markers means git never started the merge at all — an
         # untracked collision refuses BEFORE MERGE_HEAD exists. Nothing to keep.
         blockers = _gs._untracked_merge_blockers(merged.stderr)
-        _gs._run_git(["merge", "--abort"], cwd=merge_root)
+        _gs._run_session_git(merge_id, None, "merge", "branch_merge_failed_abort",
+                             ["merge", "--abort"], cwd=merge_root)
         if blockers is not None:
             raise GitServiceError(
                 409, "branch_merge_untracked_conflict",
@@ -739,14 +741,16 @@ def run_merge(
         # later pushes through this same repository's `origin` — sync it first so
         # a repo_url change is not silently ignored by this entry point either.
         _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
-        fetch = _gs._run_git(
+        fetch = _gs._run_session_git(
+            ctx.merge_id, None, "fetch", "branch_remote_sync",
             ["fetch", "origin"], cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
             username=username, secret=secret,
         )
         if fetch.returncode != 0:
             raise GitServiceError(500, "git_error", "Git fetch failed", diagnostic=_one_line(fetch.stderr))
         if _gs._ref_exists(merge_root, f"refs/remotes/origin/{target_branch}"):
-            update = _gs._run_git(["merge", "--ff-only", f"origin/{target_branch}"], cwd=merge_root)
+            update = _gs._run_session_git(ctx.merge_id, None, "merge", "branch_remote_sync",
+                                         ["merge", "--ff-only", f"origin/{target_branch}"], cwd=merge_root)
             if update.returncode != 0:
                 # An untracked collision makes git refuse before touching HEAD at
                 # all — that is not divergence (the branch really could fast-
@@ -775,7 +779,7 @@ def run_merge(
             expected_remote_head=expected_remote_head,
         )
         files = merge_no_ff(merge_root, source_before, f"Merge branch '{source_branch}' into {target_branch}",
-                            source_branch, target_branch)
+                            source_branch, target_branch, merge_id=ctx.merge_id)
         if files:
             # 0630 T0005: the conflict is KEPT — no `merge --abort`, no workspace cleanup.
             branch_merge.mark_conflict(
@@ -788,12 +792,14 @@ def run_merge(
             return branch_merge.conflict_response(ctx, files)
         phase("merged", merge_commit=_gs._rev_parse(merge_root, "HEAD"))
         if push:
-            push_proc = _gs._run_git(
+            push_proc = _gs._run_session_git(
+                ctx.merge_id, None, "push", "branch_publish",
                 ["push", "origin", f"HEAD:{target_branch}"], cwd=merge_root,
                 timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
             )
             if push_proc.returncode != 0:
-                _gs._run_git(["reset", "--hard", target_before], cwd=merge_root)
+                _gs._run_session_git(ctx.merge_id, None, "reset", "branch_push_failed",
+                                     ["reset", "--hard", target_before], cwd=merge_root)
                 raise GitServiceError(
                     500, "branch_merge_push_failed", "Git push was rejected",
                     diagnostic=_one_line(push_proc.stderr),
@@ -803,7 +809,8 @@ def run_merge(
         if apply_to_base_checkout:
             # The local base ref and the shared checkout's tree advance together, exactly
             # as when this combination merged in the base checkout itself (T0006 T5).
-            applied = _gs._run_git(["merge", "--ff-only", target_after], cwd=base_root)
+            applied = _gs._run_session_git(ctx.merge_id, None, "merge", "branch_apply_local_target",
+                                           ["merge", "--ff-only", target_after], cwd=base_root)
             if applied.returncode != 0:
                 blockers = _gs._untracked_merge_blockers(applied.stderr)
                 if blockers is not None:

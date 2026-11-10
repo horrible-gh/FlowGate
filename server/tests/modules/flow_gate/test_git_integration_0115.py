@@ -149,33 +149,44 @@ class _MockTxn:
 
 class _MockDB:
     def __init__(self, db_path: str):
+        import threading
+        self._mutex = threading.RLock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
 
     def execute(self, sql, params=None):
-        self._conn.execute(sql, params or [])
-        self._conn.commit()
+        with self._mutex:
+            self._conn.execute(sql, params or [])
+            self._conn.commit()
 
     def fetch_one(self, sql, params=None):
-        row = self._conn.execute(sql, params or []).fetchone()
-        return dict(row) if row else None
+        with self._mutex:
+            row = self._conn.execute(sql, params or []).fetchone()
+            return dict(row) if row else None
 
     def fetch_all(self, sql, params=None):
-        return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
+        with self._mutex:
+            return [dict(row) for row in self._conn.execute(sql, params or []).fetchall()]
 
     @contextmanager
     def begin_transaction(self):
-        txn = _MockTxn(self._conn)
-        try:
-            yield txn
-        except BaseException:
-            self._conn.rollback()
-            raise
-        self._conn.commit()
+        # One connection backs this fixture. Serialize its complete transaction,
+        # including rollback, so concurrent requests cannot consume each other's
+        # cursors or commit a different thread's unit of work. Domain locks and
+        # session claims still run through their real database CAS operations.
+        with self._mutex:
+            txn = _MockTxn(self._conn)
+            try:
+                yield txn
+            except BaseException:
+                self._conn.rollback()
+                raise
+            self._conn.commit()
 
     def close(self):
-        self._conn.close()
+        with self._mutex:
+            self._conn.close()
 
 
 @pytest.fixture(scope="module")
@@ -6933,7 +6944,7 @@ class TestBaseUntrackedConflictEndToEnd0350:
                     svc.finalize(group, action)
                 assert exc.value.status == 409
                 assert exc.value.code == "base_untracked_conflict"
-                assert exc.value.details == {"files": ["clash.txt"]}
+                assert exc.value.details == {"files": ["clash.txt"], "stage": "merge", "cause": "conflict_other"}
             finally:
                 (base / "clash.txt").unlink()
 
@@ -6990,7 +7001,7 @@ class TestBaseUntrackedConflictEndToEnd0350:
             with pytest.raises(svc.GitServiceError) as exc2:
                 svc.finalize(group, "merge_only")
             assert exc2.value.code == "base_untracked_conflict"
-            assert exc2.value.details == {"files": ["clash3.txt"]}
+            assert exc2.value.details == {"files": ["clash3.txt"], "stage": "merge", "cause": "conflict_other"}
         finally:
             (base / "clash3.txt").unlink()
 

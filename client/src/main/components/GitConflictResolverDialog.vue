@@ -49,6 +49,13 @@
     </template>
 
     <template #default>
+      <div v-if="preservedRefs?.length" data-test="resolver-preservation" class="pad">
+        <p>{{ t('main.git_review.recovery.next.resolve') }}</p>
+        <p v-for="entry in preservedRefs" :key="entry.ref"><code>{{ entry.ref }}</code> · <code>{{ entry.sha }}</code></p>
+        <button type="button" class="btn btn-secondary" :disabled="busy" @click="emit('recovery')">
+          {{ t('main.git_review.recovery.title') }}
+        </button>
+      </div>
       <!-- §2.4 — Shift+↑/Shift+↓ chunk navigation used to hang off the deleted
            `.git-conflict-overlay`. `DialogShell`'s surface has a `keydown` handler of its own
            (Tab, the focus trap) and cannot carry this one, so the listener moves to a wrapper
@@ -399,6 +406,7 @@ const props = defineProps<{
   allowHold?: boolean
   allowPartialResolve?: boolean
   savedResolvedCount?: number
+  preservedRefs?: { ref: string; sha: string }[]
   checkpointRecovery?: {
     previous_resolved: number
     reused_paths: string[]
@@ -409,6 +417,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   abort: []
+  recovery: []
   hold: []
   submit: [auto: boolean]
   retry: []

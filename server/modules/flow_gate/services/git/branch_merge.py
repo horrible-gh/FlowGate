@@ -812,26 +812,46 @@ def publish_reviewed(
     push = bool(bm.get("push"))
     commit = context.get("merge_commit")
     if push:
+        # 0153 T#2 §3.1: pin the approved resolution commit before any remote contact
+        # (origin sync, secret load, push). push=False never contacts the remote and
+        # creates no preservation ref.
+        preserve_failed = gs._preserve_gate(merge_id, context, root, project_id=project_id)
+        if preserve_failed is not None:
+            return preserve_failed
         expected = context.get("expected_remote_head") or ""
         lease = f"refs/heads/{target_branch}:{expected}" if expected else f"refs/heads/{target_branch}:"
         gs.ensure_origin_matches_config(root, (cfg.get("repo_url") or "").strip())
-        proc = gs._run_git(
+        secret = gs._load_secret_for(cfg) or ""
+        proc = gs._run_session_git(
+            merge_id, context, "push", "reviewed_publish",
             ["push", f"--force-with-lease={lease}", "origin", f"HEAD:refs/heads/{target_branch}"],
             cwd=root, timeout=gs.GIT_NET_TIMEOUT_SEC,
-            username=cfg.get("username"), secret=gs._load_secret_for(cfg) or "",
+            username=cfg.get("username"), secret=secret,
         )
         if proc.returncode != 0:
             stderr_l = (proc.stderr or "").lower()
             if proc.returncode == -1 or "timeout" in stderr_l or "could not resolve host" in stderr_l:
-                return gs._enter_reconciling(merge_id, context, "push_remote_unknown", schedule_retry=True)
+                return gs._enter_reconciling(
+                    merge_id, context, "push_remote_unknown", proc, schedule_retry=True,
+                    expected_remote_head=expected, secret=secret,
+                )
             if ("stale info" in stderr_l or "rejected" in stderr_l or "fetch first" in stderr_l
                     or "non-fast-forward" in stderr_l):
-                gs._run_git(["reset", "--hard", "ORIG_HEAD"], cwd=root, timeout=gs.GIT_LOCAL_TIMEOUT_SEC)
+                # 0153 T#2 §4.2: reset only while the preservation ref is verified.
+                preserve_failed = gs._preserve_reset_gate(merge_id, context, root)
+                if preserve_failed is not None:
+                    return preserve_failed
+                gs._run_session_git(merge_id, context, "reset", "push_rejected",
+                                    ["reset", "--hard", "ORIG_HEAD"], cwd=root, timeout=gs.GIT_LOCAL_TIMEOUT_SEC)
                 return gs._refreeze_for_re_review(
                     None, merge_id, root, target_branch, context, "push_rejected",
                 )
-            return gs._enter_reconciling(merge_id, context, "push_remote_unknown", schedule_retry=True)
-    local_applied = _apply_local_target(project_id, bm, root, commit, required=not push)
+            return gs._enter_reconciling(
+                merge_id, context, "push_remote_unknown", proc, schedule_retry=True,
+                expected_remote_head=expected, secret=secret,
+            )
+    local_applied = _apply_local_target(project_id, bm, root, commit, required=not push,
+                                        merge_id=merge_id, context=context)
     if local_applied is False:
         context["review_state"] = gs.REVIEW_STATE_RECONCILING
         context["reconciliation_kind"] = "target_apply_failed"
@@ -845,7 +865,8 @@ def publish_reviewed(
 
 
 def _apply_local_target(project_id: str, bm: dict, root: Path, commit: Optional[str],
-                        *, required: bool) -> Optional[bool]:
+                        *, required: bool, merge_id: Optional[int] = None,
+                        context: Optional[dict] = None) -> Optional[bool]:
     """Make the local target ref point at the approved commit.
 
     An attached (non-base) workspace already advanced it with the commit itself. A base
@@ -859,7 +880,11 @@ def _apply_local_target(project_id: str, bm: dict, root: Path, commit: Optional[
     base_root = gs._base_root_of(project_id)
     if base_root is None or not commit:
         return False if required else None
-    proc = gs._run_git(["merge", "--ff-only", commit], cwd=base_root, timeout=gs.GIT_LOCAL_TIMEOUT_SEC)
+    args = ["merge", "--ff-only", commit]
+    proc = (gs._run_session_git(merge_id, context, "merge", "apply_local_target", args,
+                               cwd=base_root, timeout=gs.GIT_LOCAL_TIMEOUT_SEC)
+            if merge_id is not None else
+            gs._run_git(args, cwd=base_root, timeout=gs.GIT_LOCAL_TIMEOUT_SEC))
     if proc.returncode == 0:
         return True
     _log.warning("branch merge: base checkout could not fast-forward to %s: %s",
@@ -912,7 +937,8 @@ def finish_landed_merge(session: dict, ctx: merge_target.MergeTargetContext,
     local_applied: Optional[bool] = True
     if bm.get("target_is_base"):
         full = gs._rev_parse(ctx.root, "HEAD") if ctx.root is not None else None
-        local_applied = _apply_local_target(ctx.project_id, bm, ctx.root, full, required=not pushed)
+        local_applied = _apply_local_target(ctx.project_id, bm, ctx.root, full, required=not pushed,
+                                            merge_id=ctx.merge_id)
         if local_applied is False:
             merge_target.close_attempt(ctx.merge_id, merge_target.ATTEMPT_INTERRUPTED, error={
                 "code": "landed_merge_not_applied", "merge_commit": merge_commit,
@@ -954,7 +980,8 @@ def abort(project_id: str, merge_id: int) -> dict:
     lock_ctx, lock_key = branch_merge_publish.attempt_lock(target)
     try:
         if target.root is not None and target.root.exists() and gs._merge_in_progress(target.root):
-            proc = gs._run_git(["merge", "--abort"], cwd=target.root)
+            proc = gs._run_session_git(merge_id, None, "merge", "branch_merge_abort",
+                                       ["merge", "--abort"], cwd=target.root)
             if proc.returncode != 0:
                 raise GitServiceError(
                     500, "branch_merge_abort_failed", "Git could not abort the merge",
@@ -1072,9 +1099,17 @@ def verify_open_attempt(session: dict, *, at_boot: bool = False) -> str:
                           observed={"merge_head": observed_merge_head})
         return "interrupted"
     if review_state is None:
-        unmerged = set(gs._unmerged_paths(root))
+        # flowgate.v02.0153 T#3: a reconcile hand-off (``merge_ref``) stored its rows as the
+        # real paths, so they are compared with the same NUL-separated query; a CLEAN
+        # hand-off rejected back to the resolver has nothing unmerged by construction.
+        handed_off = bool(baseline.get("merge_ref"))
+        unmerged = set(gs._unmerged_paths_exact(root) if handed_off else gs._unmerged_paths(root))
         remaining = set(gs.db_git.remaining_conflicts(merge_id))
-        if not remaining.issubset(unmerged):
+        if handed_off and baseline.get("clean") is True:
+            consistent = not unmerged
+        else:
+            consistent = remaining.issubset(unmerged)
+        if not consistent:
             _mark_interrupted(session, "conflict_files_mismatch",
                               observed={"unmerged": sorted(unmerged)})
             return "interrupted"

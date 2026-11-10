@@ -8,6 +8,7 @@
     v-if="target"
     :group-id="target.group_id"
     :merge-id="target.merge_id"
+    :recovery-only="target.recovery_only"
     :branch="target.branch"
     :base-branch="target.base_branch"
     :providers="aiProviderStore.providers"
@@ -30,7 +31,7 @@ import GitMergeReviewDialog from './GitMergeReviewDialog.vue'
 import {
   OPEN_CONFLICT_REVIEW_EVENT,
   groupParts,
-  isReviewPendingState,
+  opensConflictReview,
   type OpenConflictReviewDetail,
 } from '../composables/useConflictSession'
 
@@ -39,6 +40,7 @@ interface ReviewTarget {
   merge_id: number
   branch: string | null
   base_branch: string | null
+  recovery_only?: boolean
 }
 
 const { t } = useI18n()
@@ -60,7 +62,7 @@ async function open(detail: OpenConflictReviewDetail): Promise<void> {
     )
     const state = data?.state
     const mergeId = state?.merge_id
-    if (state?.status !== 'conflict' || mergeId == null || !isReviewPendingState(state?.review_state)) {
+    if (mergeId == null || (!opensConflictReview(state) && !(detail.recovery_only && state?.recovery))) {
       showToast(t('main.git_review.no_review_pending'), 'warning')
       return
     }
@@ -68,6 +70,7 @@ async function open(detail: OpenConflictReviewDetail): Promise<void> {
     target.value = {
       group_id: groupId,
       merge_id: Number(mergeId),
+      recovery_only: !!detail.recovery_only,
       branch: state?.branch ?? null,
       base_branch: state?.base_branch ?? null,
     }

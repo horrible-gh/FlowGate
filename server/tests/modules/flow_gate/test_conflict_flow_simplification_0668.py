@@ -85,14 +85,32 @@ INSERT OR IGNORE INTO group_git_state(
 
 
 class _SqliteStore:
+    """A one-connection sqlite store with the ``FlowGateStore.transaction`` contract.
+
+    The card-document write gate (``write_gate.lock_path_namespace``, reached by
+    ``resolve_conflicts`` → ``_write_resolved_file``) requires a real transaction frame:
+    ``connection._tx_local.txn`` set for the outermost frame, nested frames joining it,
+    ``after_commit`` / ``after_rollback`` queues drained after commit / rollback, and the
+    statements of the frame committed together (0153 T#4 fixture, review
+    rej_01M6ZWFPF1E6JE2M). A no-op ``transaction()`` made every TR conflict test stop at
+    "path namespace requires a transaction" before reaching the code under test."""
+
     def __init__(self, db_path: str) -> None:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
+        self._in_tx = False
 
     def _execute(self, sql, params=None):
         self._conn.execute(sql, params or [])
-        self._conn.commit()
+        if not self._in_tx:
+            self._conn.commit()
+
+    def _execute_affected(self, sql, params=None):
+        cursor = self._conn.execute(sql, params or [])
+        if not self._in_tx:
+            self._conn.commit()
+        return cursor.rowcount
 
     def _fetch_one(self, sql, params=None):
         row = self._conn.execute(sql, params or []).fetchone()
@@ -103,7 +121,37 @@ class _SqliteStore:
 
     @contextmanager
     def transaction(self):
-        yield self
+        local = db_connection._tx_local
+        if getattr(local, "txn", None) is not None:
+            yield self
+            return
+        local.after_commit, local.after_rollback = [], []
+        local.txn = self._conn
+        self._in_tx = True
+        try:
+            yield self
+        except BaseException:
+            self._in_tx = False
+            local.txn = None
+            self._conn.rollback()
+            local.after_commit = []
+            callbacks, local.after_rollback = list(local.after_rollback or []), []
+            for callback in reversed(callbacks):
+                try:
+                    callback()
+                except Exception:
+                    pass
+            raise
+        self._in_tx = False
+        local.txn = None
+        self._conn.commit()
+        local.after_rollback = []
+        callbacks, local.after_commit = list(local.after_commit or []), []
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                pass
 
 
 @pytest.fixture

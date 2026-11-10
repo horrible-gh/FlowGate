@@ -298,8 +298,13 @@ def lock_env(monkeypatch):
     monkeypatch.setenv("FLOWGATE_FREEZE_INTERACTIVE_WAIT_SEC", "0.2")
     monkeypatch.setenv("FLOWGATE_INTERACTIVE_WAIT_SEC", "0.2")
     monkeypatch.setenv("FLOWGATE_R_INTERACTIVE_WAIT_SEC", "0.2")
-    reg.register()
-    yield
+    # A real freeze can take longer than the self-validity window on Windows.
+    # Keep the actual registry lease alive instead of disabling lease checks.
+    reg.startup()
+    try:
+        yield
+    finally:
+        reg.shutdown()
 
 
 @pytest.fixture
@@ -540,6 +545,13 @@ class TestConflictHandOffWithFailedResolveRun:
         assert ap.job_view(job)["outcome"] == "handed_off"
         merge_id = int(payload["git"]["result"]["merge_id"])
 
+        # The persisted run's provider FK must name a real fixture row. Keep FK
+        # enforcement and the production upsert; a name-only unit stub is insufficient.
+        from modules.flow_gate.db.connection import get_store, now_iso
+        get_store()._execute(
+            "INSERT INTO ai_providers (provider_id, name, exec_type, kind, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ["aip_c2", "Codex2 GPT 6-Sol", "cli", "codex", now_iso(), now_iso()])
         # The 0668 run: resolve_conflict, provider at capacity, exit 1, nothing resolved.
         monkeypatch.setattr(_svc(), "ORACLE_SETTLE_SEC", 0)
         run = _run(run_id="aiv_20261005_0674a", group_id=group, project_id=PROJECT,
