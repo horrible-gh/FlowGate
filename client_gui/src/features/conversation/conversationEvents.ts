@@ -37,6 +37,7 @@ export type SubscribeChatEvents = (projectId: string, subscription: ChatEventSub
  * - ai_invoke_started: a run of the chat began — it is adopted and polled.
  * - ai_invoke_finished: it ended — its reply, changes and terminal state (the poll's own end when it is polled).
  * - chat_command_updated / chat_run_changes: a command request changed state / a run's changed files were stored.
+ * - attachment_request_updated: an AI attachment upload request of the chat was made or decided (flowgate.chat.0017).
  */
 export const CHAT_EVENT_REFRESH: Readonly<Record<string, ChatRefresh>> = Object.freeze({
   conversation_turn_appended: { turns: true },
@@ -44,6 +45,7 @@ export const CHAT_EVENT_REFRESH: Readonly<Record<string, ChatRefresh>> = Object.
   ai_invoke_finished: { turns: true, activities: true, history: true },
   chat_command_updated: { activities: true },
   chat_run_changes: { activities: true },
+  attachment_request_updated: { activities: true },
 })
 
 export const CHAT_REFRESH_EVENTS: readonly string[] = Object.freeze(Object.keys(CHAT_EVENT_REFRESH))

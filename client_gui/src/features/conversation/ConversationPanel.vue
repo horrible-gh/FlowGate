@@ -110,7 +110,7 @@
 // optional `open-change` event remains a notification. File contents stay outside the log.
 // flowgate.v02.0047: with no chat open the composer starts one — [+] only leaves
 // the open chat, and the chat is created by its first send (chatStart.ts).
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Alert from '../../components/ui/Alert.vue'
 import { copyToClipboard } from '../../core/interaction/clipboard'
@@ -123,7 +123,7 @@ import RunChangeWindow from './RunChangeWindow.vue'
 import { REVISIT_CATCHUP_MIN_MS, createConversationSession } from './conversationSession'
 import { useChatEvents, type SubscribeChatEvents } from './conversationEvents'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
-import type { ChatSettingsPatch, ChatSummary, WorkChangeActivity } from './types'
+import { ATTACHMENT_REQUEST_BULK, ATTACHMENT_REQUEST_REFRESH, ATTACHMENT_REQUEST_ROW, type ChatSettingsPatch, type ChatSummary, type WorkChangeActivity } from './types'
 
 const props = withDefaults(
   defineProps<{
@@ -136,15 +136,23 @@ const props = withDefaults(
     sourceLocked?: boolean
     /** flowgate.v02test.0013: the project event stream; without it the chat hears no server event. */
     subscribeEvents?: SubscribeChatEvents
+    /** flowgate.chat.0017 CH0002: the AI attachment request row the container draws requests with. */
+    attachmentRequestRow?: Component
+    /** flowgate.chat.0017 CH0002: the approve all / reject all bar of a request block. */
+    attachmentRequestBulk?: Component
     /** flowgate.v02test.0013: the container shows this part (false while another Dock tab is shown). */
     active?: boolean
   }>(),
-  { source: undefined, readOnly: false, sourceLocked: false, subscribeEvents: undefined, active: true },
+  { source: undefined, readOnly: false, sourceLocked: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined },
 )
 
 const emit = defineEmits<{
   'open-change': [activity: WorkChangeActivity]
 }>()
+
+// flowgate.chat.0017 CH0002: the attachment request blocks of the timeline draw their rows with the container's component.
+provide(ATTACHMENT_REQUEST_ROW, computed(() => props.attachmentRequestRow ?? null))
+provide(ATTACHMENT_REQUEST_BULK, computed(() => props.attachmentRequestBulk ?? null))
 
 const { t, te } = useI18n()
 
@@ -154,6 +162,8 @@ const session = createConversationSession({
   onAutoCopyMention: () => void copyMention(true),
 })
 const state = session.state
+// flowgate.chat.0017 CH0002: a request block reads the activities again after a bulk call (a failed one too).
+provide(ATTACHMENT_REQUEST_REFRESH, () => session.recover({ activities: true }))
 const start = createChatStart({ session, source, defaultTitle: () => t('gui.conversation.header.new_title') })
 const composerEl = ref<InstanceType<typeof ConversationComposer> | null>(null)
 

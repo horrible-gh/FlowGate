@@ -175,4 +175,19 @@ def list_for_doc(doc_id: str, *, from_seq: Optional[int] = None, to_seq: Optiona
         "ok": True, "doc_id": doc_id, "from_seq": from_seq, "to_seq": to_seq,
         "commands": [commands.public(row) for row in repo.list_commands_for_doc(doc_id, **window)],
         "changes": [run_changes.public(row) for row in repo.list_run_changes_for_doc(doc_id, **window)],
+        "attachments": attachment_request_groups(doc_id),
     }
+
+
+def attachment_request_groups(doc_id: str) -> list[dict]:
+    """flowgate.chat.0017 CH0002: the AI attachment upload requests this chat made, one block
+    per run, placed right after that run's (last) AI reply. Requests outlive their run, so a
+    pending block stays where it is until a person decides. A failure here never fails the
+    activity read (the rest of the timeline still loads)."""
+    try:
+        from modules.flow_gate.documents.attachments import requests as attachment_requests
+
+        return attachment_requests.chat_groups(doc_id)
+    except Exception:
+        logger.warning("chat attachment request read failed doc=%s", doc_id, exc_info=True)
+        return []

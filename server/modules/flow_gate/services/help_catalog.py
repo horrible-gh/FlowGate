@@ -174,7 +174,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "notices": "이 작업에서 반드시 지켜야 할 금지 사항.",
         "group_documents": "이 그룹의 문서 ID·타입·제목 목록을 바로 돌려준다.",
         "document_access": "문서 본문과 메타데이터를 읽는 주소.",
-        "document_attachments": "첨부파일 목록/읽기/소스 복사 주소와 권한.",
+        "document_attachments": "첨부파일 목록/읽기/소스 복사/업로드 요청 주소와 권한.",
         "doc_type": "문서 타입 코드와 이름 목록.",
         "question": "막혔을 때 질의를 등록하는 방법.",
         "submit": "작성한 문서를 등록하는 요청 서식.",
@@ -189,7 +189,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "notices": "What this step forbids and must not be skipped.",
         "group_documents": "Document ids, types and titles in this group, returned directly.",
         "document_access": "Addresses that read a document body and its metadata.",
-        "document_attachments": "Addresses and permissions for attachment list/read/copy-to-source.",
+        "document_attachments": "Addresses and permissions for attachment list/read/copy-to-source/upload request.",
         "doc_type": "Document type codes and their names.",
         "question": "How to register a query when you are blocked.",
         "submit": "Request format that registers the document you wrote.",
@@ -204,7 +204,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "notices": "この作業で必ず守るべき禁止事項。",
         "group_documents": "このグループの文書ID・タイプ・タイトル一覧をそのまま返す。",
         "document_access": "文書本文とメタデータを読むアドレス。",
-        "document_attachments": "添付ファイルの一覧/読み取り/ソースコピーのアドレスと権限。",
+        "document_attachments": "添付ファイルの一覧/読み取り/ソースコピー/アップロード依頼のアドレスと権限。",
         "doc_type": "文書タイプコードと名称の一覧。",
         "question": "行き詰まったときに質問を登録する方法。",
         "submit": "作成した文書を登録するリクエスト形式。",
@@ -309,7 +309,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
     "ko": {
         "group_documents": "본문까지 읽으려면 GET {base}/document/{{doc_id}} 를 호출하세요.",
         "document_access": "경로는 단수형 /document/ 입니다. 복수형 /documents/ 는 콘솔 전용 API라 작업 토큰에 401 을 돌려줍니다.",
-        "document_attachments": "첨부파일은 복사하기 전까지 프로젝트 소스가 아닙니다. /remote/read, grep, glob으로 찾지 마십시오. read 권한은 list/read만, read_write 권한은 list/read/copy까지, none 권한은 이 API를 전혀 쓸 수 없습니다.",
+        "document_attachments": "첨부파일은 복사하기 전까지 프로젝트 소스가 아닙니다. /remote/read, grep, glob으로 찾지 마십시오. read 권한은 list/read/upload_request, read_write 권한은 list/read/copy/upload_request까지, none 권한은 이 API를 전혀 쓸 수 없습니다. 만든 파일을 첨부로 넘기려면 upload_request로 승인을 요청하고, 승인을 기다리지 말고 작업을 계속하십시오.",
         "design_template_children": "default_child 는 이번에 작성할 문서의 타입입니다. 특별한 이유가 없으면 그것을 받으세요. 작업계획(WP)을 쓸 때 수량은 근거 기반으로 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 count 0으로 둡니다(1로 추측하지 않습니다).",
         "design_template_body": "rendered 는 예전 지시문의 '## Document template' 절과 같은 완성 블록입니다. 본문에는 파일 경로가 들어가지 않습니다. 작업계획(WP)을 쓸 때 수량은 근거 기반으로 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 count 0으로 둡니다(1로 추측하지 않습니다).",
         "design_template_fallback": "resolved_locale 이 requested_locale 과 다르면 본문은 대체 로케일의 것입니다. 작업계획(WP)을 쓸 때 수량은 근거 기반으로 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 count 0으로 둡니다(1로 추측하지 않습니다).",
@@ -324,7 +324,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
     "en": {
         "group_documents": "To read a body, call GET {base}/document/{{doc_id}}.",
         "document_access": "The path is singular /document/. The plural /documents/ is the console-only API and answers a work token with 401.",
-        "document_attachments": "An attachment is not project source until you copy it. Do not search for it through /remote/read, grep or glob. A read kind may list/read only; read_write may list/read/copy; none cannot use these endpoints at all.",
+        "document_attachments": "An attachment is not project source until you copy it. Do not search for it through /remote/read, grep or glob. A read kind may list/read/upload_request; read_write may list/read/copy/upload_request; none cannot use these endpoints at all. To hand over a file you made as an attachment, ask with upload_request and keep working without waiting for the decision.",
         "design_template_children": "default_child is the type you are writing now. Take that one unless you have a reason not to. When authoring a work plan (WP), derive quantities from evidence; when there is no basis, keep the key in counted_types/quantities with count 0 -- never guess 1.",
         "design_template_body": "rendered is the finished block that used to be the '## Document template' section of the mention. The body never contains a file path. When authoring a work plan (WP), derive quantities from evidence; when there is no basis, keep the key in counted_types/quantities with count 0 -- never guess 1.",
         "design_template_fallback": "When resolved_locale differs from requested_locale, the body is the fallback locale's. When authoring a work plan (WP), derive quantities from evidence; when there is no basis, keep the key in counted_types/quantities with count 0 -- never guess 1.",
@@ -339,7 +339,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
     "ja": {
         "group_documents": "本文まで読むには GET {base}/document/{{doc_id}} を呼び出してください。",
         "document_access": "パスは単数形の /document/ です。複数形の /documents/ はコンソール専用APIで、作業トークンには401を返します。",
-        "document_attachments": "添付ファイルはコピーするまでプロジェクトソースではありません。/remote/read、grep、globで探さないでください。read権限はlist/readのみ、read_write権限はlist/read/copyまで、none権限はこれらのエンドポイントを一切使用できません。",
+        "document_attachments": "添付ファイルはコピーするまでプロジェクトソースではありません。/remote/read、grep、globで探さないでください。read権限はlist/read/upload_request、read_write権限はlist/read/copy/upload_requestまで、none権限はこれらのエンドポイントを一切使用できません。作ったファイルを添付として渡すには upload_request で承認を依頼し、決定を待たずに作業を続けてください。",
         "design_template_children": "default_child は今回作成する文書のタイプです。特別な理由が無ければそれを取得してください。作業計画(WP)を書くとき、数量は根拠から算定し、根拠がなければ counted_types/quantities にキーを残したまま count 0 とします(1 と推測しません)。",
         "design_template_body": "rendered は以前の指示文の '## Document template' 節と同じ完成ブロックです。本文にファイルパスは入りません。作業計画(WP)を書くとき、数量は根拠から算定し、根拠がなければ counted_types/quantities にキーを残したまま count 0 とします(1 と推測しません)。",
         "design_template_fallback": "resolved_locale が requested_locale と異なる場合、本文は代替ロケールのものです。作業計画(WP)を書くとき、数量は根拠から算定し、根拠がなければ counted_types/quantities にキーを残したまま count 0 とします(1 と推測しません)。",
@@ -925,6 +925,15 @@ def _content_document_attachments(ctx: dict) -> dict:
             "body": {
                 "target_path": "<path inside the source tree, e.g. assets/schema.json>",
             },
+        },
+        # flowgate.chat.0017 CH0002: hand a produced file to a person for approval as an
+        # attachment of this worker's own card. Answers at once; never wait for the decision.
+        "upload_request": {
+            "method": "POST",
+            "url": f"{base}/attachment-requests",
+            "headers": {"Authorization": "Bearer <YOUR_TOKEN>", "Content-Type": "multipart/form-data"},
+            "form": {"file": "@<file you produced>", "meta": '{"filename": "report.md", "note": "what it is"}'},
+            "returns": "status=pending at once; a person approves or rejects later (maybe after this run ends)",
         },
         "permission": {
             "kind": kind,

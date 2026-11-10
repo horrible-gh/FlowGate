@@ -248,7 +248,7 @@ import { createRunFailurePublisher, resolveSessionStorage, runErrorText as reque
 import { isCompletedNoop, type AckRun } from '../center/run/completedCommandAck'
 import { AiRoleSetupModeless } from '@/features/ai'
 import { createFirstRunAiSetup } from '@/features/ai'
-import { RunResultDetailWindow, RunResultWindow, createRunResultWatch, runWaitText } from '@/features/ai'
+import { RunResultDetailWindow, RunResultWindow, attachmentPendingLine, createRunResultWatch, runWaitText } from '@/features/ai'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
@@ -552,7 +552,19 @@ function tellRunWait(result: Parameters<typeof runWaitText>[0]) {
   toastSeq += 1
   toasts.value = [
     ...toasts.value.slice(-2),
-    { id: `wait-${toastSeq}`, text: () => runWaitText(result, (key, values) => (values ? t(key, values) : t(key)), (key) => te(key)), tone: 'info', duration: 6000 },
+    {
+      id: `wait-${toastSeq}`,
+      // flowgate.chat.0017 CH0002: a command that ended waiting for a person opens no result window, so the toast also
+      // tells the AI attachment requests still waiting for a decision.
+      text: () => {
+        const translate = (key: string, values?: Record<string, unknown>) => (values ? t(key, values) : t(key))
+        const pending = attachmentPendingLine(translate, result)
+        const wait = runWaitText(result, translate, (key) => te(key))
+        return pending ? `${wait} ${pending}` : wait
+      },
+      tone: 'info',
+      duration: 6000,
+    },
   ]
 }
 

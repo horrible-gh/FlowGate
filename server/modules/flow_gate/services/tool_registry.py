@@ -393,11 +393,15 @@ EXAMPLE_RESPONSES["resolve_base_dirty"] = {"ok": True, "op": "resolve_base_dirty
 # spoke only for the source tree, a worker asked to touch a document's attachment read
 # the six read tools, read the "investigation only" note, and concluded that attachments
 # cannot be reached at all — which is what 0523 TR0005 was rejected for twice.
-ATTACHMENT_DISPLAY_ORDER = ("attachment_list", "attachment_read", "attachment_copy")
+# flowgate.chat.0017 CH0002: ``attachment_upload_request`` hands a file the worker produced to a
+# person for approval (it is attached to the worker's own card only once approved). It is not
+# ``attachment_upload``, which stays a Console-only action and stays named in ATTACHMENT_ABSENT_OPS.
+ATTACHMENT_DISPLAY_ORDER = ("attachment_list", "attachment_read", "attachment_copy", "attachment_upload_request")
 ATTACHMENT_ROUTES: dict[str, tuple[str, str]] = {
     "attachment_list": ("GET", "/document/{doc_id}/attachments"),
     "attachment_read": ("GET", "/document/{doc_id}/attachments/{name}/read"),
     "attachment_copy": ("POST", "/document/{doc_id}/attachments/{name}/copy"),
+    "attachment_upload_request": ("POST", "/attachment-requests"),
 }
 # Which effective kinds may call each operation. This is the SAME read/read_write
 # judgment the worker routes themselves make (document_routes._attachment_read_kind, and
@@ -407,11 +411,14 @@ ATTACHMENT_KINDS: dict[str, frozenset] = {
     "attachment_list": frozenset({"read", "read_write"}),
     "attachment_read": frozenset({"read", "read_write"}),
     "attachment_copy": frozenset({"read_write"}),
+    # A request changes nothing until a person approves it, so reading mode may ask too.
+    "attachment_upload_request": frozenset({"read", "read_write"}),
 }
 ATTACHMENT_SCOPE = {
     "attachment_list": "read",
     "attachment_read": "read",
     "attachment_copy": "write",
+    "attachment_upload_request": "request",
 }
 # Attachment operations that exist on the Console screen but are NOT on the worker
 # surface at all. Named out loud so "control an attachment" gets a complete answer from
@@ -424,21 +431,24 @@ ATTACHMENT_SUMMARY = {
         "attachment_list": "이 문서에 올라온 첨부파일의 목록과 크기·종류를 조회한다.",
         "attachment_read": "첨부파일 하나의 내용을 텍스트 또는 base64로 읽는다.",
         "attachment_copy": "첨부파일 하나를 내 그룹 워크트리의 소스 트리로 복사한다.",
-        "attachment_upload": "첨부파일 올리기(콘솔 화면 전용).",
+        "attachment_upload_request": "내가 만든 파일을 내 카드 문서의 첨부로 올려 달라고 사람에게 승인을 요청한다. 바로 응답하며 승인을 기다리지 않는다.",
+        "attachment_upload": "첨부파일 직접 올리기(콘솔 화면 전용). AI는 attachment_upload_request로 승인을 요청한다.",
         "attachment_delete": "첨부파일 삭제(콘솔 화면 전용).",
     },
     "ja": {
         "attachment_list": "この文書にアップロードされた添付ファイルの一覧とサイズ・種類を取得する。",
         "attachment_read": "添付ファイル1つの内容をテキストまたはbase64で読み取る。",
         "attachment_copy": "添付ファイル1つを自分のグループワークツリーのソースツリーへコピーする。",
-        "attachment_upload": "添付ファイルのアップロード(コンソール画面専用)。",
+        "attachment_upload_request": "自分が作ったファイルを自分のカード文書の添付にするよう人に承認を依頼する。すぐに応答し、承認を待たない。",
+        "attachment_upload": "添付ファイルの直接アップロード(コンソール画面専用)。AIは attachment_upload_request で承認を依頼する。",
         "attachment_delete": "添付ファイルの削除(コンソール画面専用)。",
     },
     "en": {
         "attachment_list": "List the attachments uploaded to this document, with size and type.",
         "attachment_read": "Read one attachment's content as text or base64.",
         "attachment_copy": "Copy one attachment into your own group worktree's source tree.",
-        "attachment_upload": "Upload an attachment (Console screen only).",
+        "attachment_upload_request": "Ask a person to approve a file you produced as an attachment of your own card's document. Answers at once; never wait for the decision.",
+        "attachment_upload": "Upload an attachment directly (Console screen only). An AI asks with attachment_upload_request instead.",
         "attachment_delete": "Delete an attachment (Console screen only).",
     },
 }
@@ -447,26 +457,26 @@ ATTACHMENT_VIEW_NOTES = {
     "ko": {
         "what": "문서 첨부파일은 위 소스 도구(/remote/*)가 아니라 문서 API로 다룹니다. operations 의 method 와 path 를 그대로 호출하세요.",
         "not_source": "첨부파일은 copy 로 복사하기 전까지 프로젝트 소스가 아닙니다. /remote/read, grep, glob 으로 찾지 마세요.",
-        "permission": "권한은 소스 접근 kind 를 그대로 따릅니다: read=목록/읽기, read_write=목록/읽기/복사, none=사용 불가.",
+        "permission": "권한은 소스 접근 kind 를 그대로 따릅니다: read=목록/읽기/업로드 요청, read_write=목록/읽기/복사/업로드 요청, none=사용 불가.",
         "scope": "볼 수 있는 문서는 이 토큰이 바인딩된 문서와 같은 그룹의 문서뿐입니다. 다른 그룹의 문서 첨부파일은 403 입니다.",
         "denied": "이 토큰의 소스 접근 kind={kind} 에는 허용되지 않습니다.",
-        "absent": "작업 토큰에는 열려 있지 않습니다. 첨부파일을 올리거나 지우는 일은 콘솔 화면에서 사람이 합니다.",
+        "absent": "작업 토큰에는 열려 있지 않습니다. 첨부파일을 직접 올리거나 지우는 일은 콘솔 화면에서 사람이 합니다. 파일을 첨부로 넘기려면 attachment_upload_request 로 승인을 요청하세요.",
     },
     "ja": {
         "what": "文書の添付ファイルは上のソースツール(/remote/*)ではなく文書APIで扱います。operations の method と path をそのまま呼び出してください。",
         "not_source": "添付ファイルは copy でコピーするまでプロジェクトソースではありません。/remote/read、grep、glob で探さないでください。",
-        "permission": "権限はソースアクセスの kind に従います: read=一覧/読み取り、read_write=一覧/読み取り/コピー、none=利用不可。",
+        "permission": "権限はソースアクセスの kind に従います: read=一覧/読み取り/アップロード依頼、read_write=一覧/読み取り/コピー/アップロード依頼、none=利用不可。",
         "scope": "参照できるのはこのトークンがバインドされた文書と同じグループの文書だけです。他グループの文書の添付ファイルは403です。",
         "denied": "このトークンのソースアクセス kind={kind} では許可されていません。",
-        "absent": "作業トークンには開放されていません。添付ファイルの追加・削除はコンソール画面で人が行います。",
+        "absent": "作業トークンには開放されていません。添付ファイルの直接追加・削除はコンソール画面で人が行います。ファイルを添付として渡すには attachment_upload_request で承認を依頼してください。",
     },
     "en": {
         "what": "Document attachments are handled by the document API, not by the source tools above (/remote/*). Call the method and path in operations as written.",
         "not_source": "An attachment is not project source until copy puts it there. Do not look for it through /remote/read, grep or glob.",
-        "permission": "Permission follows the source-access kind exactly: read=list/read, read_write=list/read/copy, none=unavailable.",
+        "permission": "Permission follows the source-access kind exactly: read=list/read/upload request, read_write=list/read/copy/upload request, none=unavailable.",
         "scope": "You may reach the document this token is bound to and other documents in its own group. Another group's document attachments answer 403.",
         "denied": "Not allowed for this token's source-access kind={kind}.",
-        "absent": "Not open to work tokens. Uploading and deleting attachments is done by a person on the Console screen.",
+        "absent": "Not open to work tokens. Uploading and deleting attachments directly is done by a person on the Console screen. To hand over a file as an attachment, ask with attachment_upload_request.",
     },
 }
 
@@ -513,6 +523,24 @@ ATTACHMENT_FIELDS: dict[str, dict[str, list]] = {
             ("target_path", "string", True, None, "body", "Source-root-relative POSIX path. Absolute paths and '..' are forbidden. The destination root is always this token's own group worktree and the request cannot steer it elsewhere."),
         ],
     },
+}
+
+ATTACHMENT_FIELDS["attachment_upload_request"] = {
+    "ko": [
+        ("file", "file", True, None, "multipart", "올릴 파일(내 실행 환경에서 만든 파일). 요청 하나에 파일 하나."),
+        ("meta", "string(JSON)", False, None, "multipart",
+         '{"filename": "제안할 첨부 이름", "note": "무슨 파일인지 한 줄"}. 대상은 언제나 이 토큰의 카드 문서이며 바꿀 수 없다.'),
+    ],
+    "ja": [
+        ("file", "file", True, None, "multipart", "アップロードするファイル(自分の実行環境で作ったもの)。1リクエストに1ファイル。"),
+        ("meta", "string(JSON)", False, None, "multipart",
+         '{"filename": "提案する添付名", "note": "何のファイルかを1行で"}。対象は常にこのトークンのカード文書で、変更できない。'),
+    ],
+    "en": [
+        ("file", "file", True, None, "multipart", "The file to hand over (made in your own environment). One file per request."),
+        ("meta", "string(JSON)", False, None, "multipart",
+         '{"filename": "attachment name to propose", "note": "one line on what it is"}. The target is always the card document of this token.'),
+    ],
 }
 
 ATTACHMENT_ERRORS: dict[str, dict[str, list]] = {
@@ -563,6 +591,28 @@ ATTACHMENT_ERRORS: dict[str, dict[str, list]] = {
     },
 }
 
+ATTACHMENT_ERRORS["attachment_upload_request"] = {
+    locale: [
+        (401, "attachment_request_unauthorized", text[0]),
+        (403, "attachment_request_forbidden", text[1]),
+        (409, "attachment_request_run_finished", text[2]),
+        (413, "attachment_request_too_large", text[3]),
+        (422, "attachment_request_extension_blocked", text[4]),
+        (429, "attachment_request_pending_limit", text[5]),
+    ]
+    for locale, text in (
+        ("ko", ("살아 있는 실행의 토큰이 아니다.", "소스 접근 kind 가 none 이거나 카드/채팅 실행이 아니다.",
+                "실행이 이미 끝났다. 요청은 살아 있는 실행에서만 보낸다.", "파일이 설정된 크기 상한을 넘는다.",
+                "이 프로젝트에서 막아 둔 확장자다.", "이 카드의 대기 요청 수나 이 실행의 요청 수 상한에 닿았다.")),
+        ("ja", ("生きている実行のトークンではない。", "ソースアクセスの kind が none、またはカード/チャット実行ではない。",
+                "実行は既に終わった。依頼は生きている実行からのみ送る。", "ファイルが設定されたサイズ上限を超える。",
+                "このプロジェクトで禁止された拡張子。", "このカードの待機依頼数、またはこの実行の依頼数の上限に達した。")),
+        ("en", ("Not the token of a live run.", "The source-access kind is none, or this is not a card/chat run.",
+                "The run already ended; requests come from a live run only.", "The file exceeds the configured size limit.",
+                "This extension is blocked in this project.", "This card's waiting requests or this run's requests hit their limit.")),
+    )
+}
+
 ATTACHMENT_CAUTIONS: dict[str, dict[str, list]] = {
     "attachment_list": {
         "ko": ["빈 배열은 '첨부파일 없음'을 확정한 답이다. 조회가 실패하면 빈 배열이 아니라 오류가 온다.",
@@ -596,6 +646,18 @@ ATTACHMENT_CAUTIONS: dict[str, dict[str, list]] = {
     },
 }
 
+ATTACHMENT_CAUTIONS["attachment_upload_request"] = {
+    "ko": ["바로 status=pending 으로 응답한다. 사람의 승인/반려를 기다리지 말고 같은 파일을 다시 보내지도 말고 작업을 계속한다.",
+           "사람이 승인하기 전에는 아무 문서에도 첨부되지 않는다. 결정은 실행이 끝난 뒤에 올 수도 있다. 작업 레포트에 요청한 파일을 적는다.",
+           "대상은 이 토큰의 카드(노드)의 문서다. 다른 카드나 문서를 지정할 수 없다."],
+    "ja": ["すぐに status=pending で応答する。人の承認/却下を待たず、同じファイルを再送せず作業を続ける。",
+           "人が承認するまでどの文書にも添付されない。決定は実行終了後に来ることもある。作業レポートに依頼したファイルを書く。",
+           "対象はこのトークンのカード(ノード)の文書。他のカードや文書は指定できない。"],
+    "en": ["Answers at once with status=pending. Do not wait for the approval and do not resend the same file; keep working.",
+           "Nothing is attached until a person approves it; the decision may come after your run ends. List the requested file in your report.",
+           "The target is the card (node) document of this token; no other card or document can be chosen."],
+}
+
 ATTACHMENT_EXAMPLE_BODIES = {
     "attachment_copy": {"target_path": "assets/schema.json"},
 }
@@ -603,6 +665,7 @@ ATTACHMENT_EXAMPLE_RESPONSES = {
     "attachment_list": {"ok": True, "doc_id": "flowgate.default.0523.0005-TR", "attachments": [{"filename": "schema.json", "size": 12345, "content_type": "application/json", "uploaded_at": "2026-09-04T09:14:30+09:00"}], "count": 1},
     "attachment_read": {"ok": True, "doc_id": "flowgate.default.0523.0005-TR", "attachment": {"filename": "schema.json", "size": 12345, "content_type": "application/json"}, "kind": "text", "encoding": "utf-8", "content_encoding": "identity", "content": "{\n  \"title\": \"...\"\n}", "truncated": False},
     "attachment_copy": {"ok": True, "doc_id": "flowgate.default.0523.0005-TR", "filename": "schema.json", "destination": {"project_id": "flowgate", "group_id": "flowgate.default.0523", "target_path": "assets/schema.json", "path_base": "source"}, "size": 12345, "content_sha256": "0123456789abcdef", "copied_at": "2026-09-04T09:20:00+09:00"},
+    "attachment_upload_request": {"ok": True, "request_id": "aur_0123456789abcdef01234567", "status": "pending", "filename": "report.md", "size": 2048, "content_sha256": "0123456789abcdef", "target": {"flow_id": "flowgate.default.0523", "node_key": "n_1", "doc_id": "flowgate.default.0523.0005-TR", "title": "Report"}, "expires_at": "2026-09-11T09:20:00+09:00", "message": "Stored and waiting for a person's approval ..."},
 }
 
 
@@ -711,6 +774,9 @@ def build_attachment_detail(name: str, locale: str, base_url: str) -> dict:
     if name in ATTACHMENT_EXAMPLE_BODIES:
         example_request["headers"]["Content-Type"] = "application/json"
         example_request["body"] = deepcopy(ATTACHMENT_EXAMPLE_BODIES[name])
+    elif name == "attachment_upload_request":
+        example_request["headers"]["Content-Type"] = "multipart/form-data"
+        example_request["form"] = {"file": "@report.md", "meta": '{"filename": "report.md", "note": "weekly report"}'}
     return {
         "name": name,
         "method": method,

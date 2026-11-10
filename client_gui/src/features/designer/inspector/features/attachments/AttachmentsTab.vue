@@ -42,12 +42,43 @@
       <InspectorReason tone="danger" :text="t(k(failure.key), failure.params)" />
     </div>
 
+    <!-- flowgate.chat.0017 CH0002: AI attachment requests waiting on this card. Check the file (preview / download),
+         then approve (keep both by default, overwrite when chosen) or reject — also while an AI runs and in a reading
+         view; adding and deleting keep their own lock. -->
+    <!-- The section stays while the bar shows its result, so "n건 반려" is still read after the last request went. -->
+    <section v-if="requests.length || bulkShown" class="inspector-attachments-requests" data-test="attachments-requests">
+      <h4 v-if="requests.length" class="inspector-attachments-requests-title">{{ t('gui.attachment_request.tab_section', { n: requests.length }) }}</h4>
+      <!-- Approve all / reject all (from two requests up); ticked rows narrow it to those. While its confirm is open
+           or its call runs, the rows below are locked. -->
+      <AttachmentRequestBulkBar
+        :key="target.docId ?? ''"
+        v-model:selected="selectedRequests"
+        :requests="requests"
+        :expected-doc-id="target.docId"
+        @decided="decidedRequest"
+        @update:locked="bulkLocked = $event"
+        @update:visible="bulkShown = $event"
+      />
+      <AttachmentRequestItem
+        v-for="request in requests"
+        :key="request.id"
+        :request="request"
+        :expected-doc-id="target.docId"
+        :selectable="requests.length >= 2"
+        :selected="selectedRequests.includes(request.id)"
+        :disabled="bulkLocked"
+        @decided="decidedRequest"
+        @select="selectRequest"
+      />
+    </section>
+
     <InspectorPaneState v-if="status === 'loading' && !rows" state="loading" />
     <InspectorPaneState v-else-if="errorKey && !rows" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
     <template v-else-if="rows">
       <InspectorPaneState v-if="errorKey" state="error" :message="t(k(errorKey))" retryable @retry="reload" />
-      <!-- 0017-CH (시안): no attachment — the stacked documents with a blue [+] and two lines. -->
-      <div v-if="!rows.length" class="inspector-attachments-empty" data-test="attachments-empty">
+      <!-- 0017-CH (시안): no attachment — the stacked documents with a blue [+] and two lines. Not while AI requests
+           wait above: the empty-state picture would contradict the files listed there. -->
+      <div v-if="!rows.length && !requests.length" class="inspector-attachments-empty" data-test="attachments-empty">
         <svg class="inspector-attachments-illustration" viewBox="0 0 128 100" aria-hidden="true" focusable="false">
           <rect x="36" y="12" width="58" height="70" rx="9" fill="#172f4a" stroke="#385a7e" stroke-width="1.5" transform="rotate(11 65 47)" />
           <rect x="23" y="18" width="62" height="72" rx="9" fill="#223f60" stroke="#5b82ad" stroke-width="1.5" transform="rotate(-9 54 54)" />
@@ -59,7 +90,7 @@
         <p class="inspector-attachments-empty-title">{{ t(k('empty')) }}</p>
         <p class="inspector-attachments-empty-hint">{{ t(k('empty_hint')) }}</p>
       </div>
-      <ul v-else class="inspector-attachments-list">
+      <ul v-else-if="rows.length" class="inspector-attachments-list">
         <li v-for="row in rows" :key="row.filename" class="inspector-attachments-item" data-test="attachments-item" :data-name="row.filename">
           <div class="inspector-attachments-line">
             <svg class="inspector-attachments-file-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -141,7 +172,9 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import { INSPECTOR_BODY } from '../../inspectorHost'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { useAttachments } from './useAttachments'
+import AttachmentRequestBulkBar from '@/features/attachmentRequests/AttachmentRequestBulkBar.vue'
+import AttachmentRequestItem from '@/features/attachmentRequests/AttachmentRequestItem.vue'
+import { useAttachmentRequests, useAttachments } from './useAttachments'
 
 const props = defineProps<{
   target: InspectorTarget
@@ -152,6 +185,27 @@ const { t } = useI18n()
 const k = (key: string) => `gui.inspector.attachments.${key}`
 
 const { rows, availability, status, errorKey, busy, opening, failure, limits, add, remove, open, reload } = useAttachments(() => props.target)
+const { requests, decided } = useAttachmentRequests(() => props.target, { reload })
+
+function decidedRequest() {
+  void decided()
+}
+
+/** The requests ticked for a bulk decision; only the ones still listed stay ticked. */
+const selectedRequests = ref<string[]>([])
+/** The bulk bar's confirm is open or its call runs: the rows' own decisions wait. */
+const bulkLocked = ref(false)
+/** The bulk bar has something to show (its result too, after the last request was decided). */
+const bulkShown = ref(false)
+watch(requests, (now) => {
+  const open = new Set(now.map((r) => r.id))
+  if (selectedRequests.value.some((id) => !open.has(id))) selectedRequests.value = selectedRequests.value.filter((id) => open.has(id))
+})
+
+function selectRequest(id: string, on: boolean) {
+  const rest = selectedRequests.value.filter((value) => value !== id)
+  selectedRequests.value = on ? [...rest, id] : rest
+}
 
 const picker = ref<HTMLInputElement | null>(null)
 // A refusal about one attachment shows on its row; an add refusal, or one whose row is gone after the
@@ -168,6 +222,10 @@ watch(
   () => props.target.docId,
   () => {
     confirming.value = null
+    selectedRequests.value = []
+    // Another card: the bar is drawn anew (keyed by the document) and its old result is not carried over.
+    bulkShown.value = false
+    bulkLocked.value = false
     endDrag()
   },
 )
@@ -262,6 +320,18 @@ watch(
 </script>
 
 <style scoped>
+.inspector-attachments-requests {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.inspector-attachments-requests-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg2-status-warning-fg, #d29922);
+}
 .inspector-attachments {
   position: relative;
   display: flex;

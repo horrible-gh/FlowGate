@@ -293,7 +293,7 @@ const tabCounts = registry.entries.flatMap((entry) => {
   return [{ entry, tab: entry.tab.key, count: entry.tab.count(scoped) }]
 })
 
-function tabCount(key: InspectorTabKey): number | null {
+function tabCount(key: InspectorTabKey): number | string | null {
   const supplier = tabCounts.find((item) => item.tab === key && contributions.value.includes(item.entry))
   return supplier?.count.value ?? null
 }

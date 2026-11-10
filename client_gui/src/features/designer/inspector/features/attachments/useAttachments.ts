@@ -10,6 +10,13 @@
 // reason until a guard event (AI run started / finished, document refresh), a manual read again or
 // another document. Opening downloads the file (a query, never blocked).
 import { computed, reactive, ref, watch, type ComputedRef, type Ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import {
+  attachmentRequestIsOpen,
+  attachmentRequestsForCard,
+  type AttachmentRequest,
+  type AttachmentRequestsOfCard,
+} from '@/features/document/api/attachmentRequests'
 import {
   ATTACHMENTS_MAX_COUNT_PER_DOC,
   ATTACHMENTS_MAX_FILES_PER_REQUEST,
@@ -37,6 +44,7 @@ import {
   attachmentsBlockedBy,
   attachmentsErrorKey,
   attachmentsFailureKey,
+  attachmentsTabBadge,
   attachmentsTabCount,
   attachmentsTargetDocId,
   attachmentsUploadRefusal,
@@ -51,6 +59,14 @@ export const ATTACHMENTS_EVENTS: readonly string[] = []
 
 /** Server events after which the change guard (AI activity, disposal) is read again. */
 export const ATTACHMENTS_GUARD_EVENTS = ['ai_invoke_started', 'ai_invoke_finished', 'document_explorer_refresh'] as const
+
+/**
+ * flowgate.chat.0017 CH0002: AI attachment upload requests aimed at the card. A request is made, decided or expired with
+ * `attachment_request_updated` (a Flow-level frame: group_id = the Flow, the node in the payload).
+ */
+export const ATTACHMENT_REQUEST_EVENTS: readonly string[] = ['attachment_request_updated']
+
+export const attachmentRequestMatches: InspectorEventMatch = (frame, scope) => frame.groupId === scope.flowId
 
 /** A guard event of any document of the target Flow, or of the target document itself. */
 export const attachmentsGuardMatches: InspectorEventMatch = (frame, scope) =>
@@ -277,15 +293,70 @@ export function useAttachments(target: () => InspectorTarget | null): Attachment
   }
 }
 
+function useCardRequestResource(target: () => InspectorTarget | null) {
+  const scope = () => scopeOf(target())
+  const resource = useInspectorResource<AttachmentRequestsOfCard>({
+    target: scope,
+    read: async () => {
+      const current = target()
+      if (!current) throw new Error('no target card')
+      return attachmentRequestsForCard(current.flowId, current.nodeId)
+    },
+    events: ATTACHMENT_REQUEST_EVENTS,
+    matches: attachmentRequestMatches,
+  })
+  const requests = computed<readonly AttachmentRequest[]>(() => {
+    const read = resource.data.value
+    const current = target()
+    return read && current && read.flowId === current.flowId && read.nodeKey === current.nodeId
+      ? read.requests.filter(attachmentRequestIsOpen)
+      : []
+  })
+  return { resource, requests }
+}
+
+export interface AttachmentRequestsState {
+  /** The card's AI attachment requests still waiting for a decision, oldest first. */
+  readonly requests: ComputedRef<readonly AttachmentRequest[]>
+  /** After a decision here: the requests, and (an approval adds an attachment) the list and the tab number. */
+  decided(): Promise<void>
+}
+
+/**
+ * flowgate.chat.0017 CH0002: the AI attachment upload requests waiting on the selected card. Deciding is not a change
+ * of this tab's add / delete kind: it is open while an AI runs and in a reading view (the server checks the person's
+ * permission and the target), so nothing here reads `availability`.
+ */
+export function useAttachmentRequests(target: () => InspectorTarget | null, list?: { reload(): Promise<void> }): AttachmentRequestsState {
+  const { resource, requests } = useCardRequestResource(target)
+  return {
+    requests,
+    decided: async () => {
+      const id = target()?.docId ?? null
+      if (id) changed(id)
+      await Promise.all([resource.reload(), list ? list.reload() : Promise.resolve()])
+    },
+  }
+}
+
 /**
  * The attachments tab number supplier (D#1 §5.2, §10.4): the number of attachments of the target
  * document, read on its own and again after this folder's add / delete or a reconnect. None while
  * there is no target, before the first read succeeds, or with no attachment; a failed read again keeps
  * the last known number.
  */
-export function useAttachmentsCount(target: Readonly<Ref<InspectorTarget | null>>): Readonly<Ref<number | null>> {
+export function useAttachmentsCount(target: Readonly<Ref<InspectorTarget | null>>): Readonly<Ref<number | string | null>> {
   const scope = () => scopeOf(target.value)
   const list = useInspectorResource<AttachmentsList>({ target: scope, read: attachmentsRead, events: ATTACHMENTS_EVENTS })
+  // flowgate.chat.0017 CH0002: the card's waiting AI attachment requests, shown next to the number.
+  const pending = useCardRequestResource(() => target.value)
+  let translate: ((key: string, values: Record<string, unknown>) => string) | null = null
+  try {
+    const { t } = useI18n({ useScope: 'global' })
+    translate = (key, values) => t(key, values)
+  } catch {
+    translate = null
+  }
   watch(
     () => {
       const id = scope()?.docId ?? null
@@ -293,12 +364,18 @@ export function useAttachmentsCount(target: Readonly<Ref<InspectorTarget | null>
     },
     (now, before) => {
       // A new document is read by the resource itself; only a change of the same document reads again.
-      if (now !== null && before !== null && now.split('\n')[1] === before.split('\n')[1]) void list.reload()
+      if (now !== null && before !== null && now.split('\n')[1] === before.split('\n')[1]) {
+        void list.reload()
+        void pending.resource.reload()
+      }
     },
   )
   return computed(() => {
     const read = list.data.value
     const id = scope()?.docId ?? null
-    return read && id && read.docId === id ? attachmentsTabCount(read.items) : null
+    const count = read && id && read.docId === id ? attachmentsTabCount(read.items) : null
+    return attachmentsTabBadge(count, pending.requests.value.length, (n) =>
+      translate ? translate('gui.attachment_request.tab_pending', { n }) : `+${n}`,
+    )
   })
 }

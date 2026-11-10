@@ -23,6 +23,11 @@ _CONFLICT_NEVER_OPS = frozenset({"write", "patch", "remove", "move"})
 BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
 SNAPSHOT_NAMES = ("request_source_snapshot", "access_source_snapshot", "run_source_snapshot")
 SELF_CHECK_NAMES = ("run_self_check", "read_self_check", "cancel_self_check")
+# flowgate.chat.0017 CH0002: a card worker hands a file of its worktree to a person for approval
+# as an attachment of its own card's document. Answers at once; the decision never blocks the run.
+ATTACHMENT_REQUEST_NAME = "request_attachment_upload"
+ATTACHMENT_REQUEST_SCOPES = frozenset({"new", "edit", "review"})
+ATTACHMENT_REQUEST_KINDS = frozenset({"read", "read_write"})
 SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "move_source_file")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
 SOURCE_OPS = {
@@ -294,11 +299,19 @@ def definitions_for_run(run: dict) -> list[dict]:
         names += list(SELF_CHECK_NAMES)
     elif tr_review:
         names += ["read_self_check"]
+    if scope in ATTACHMENT_REQUEST_SCOPES and kind in ATTACHMENT_REQUEST_KINDS:
+        names.append(ATTACHMENT_REQUEST_NAME)
     # 0684 T#4: Source Bundle and its TS worker tools (access/run_source_bundle, run_test) are
     # gone. Every step works on the live source tools; an official TS result comes only from
     # the server spec run.
     result = []
     for name in names:
+        if name == ATTACHMENT_REQUEST_NAME:
+            from modules.flow_gate.documents.attachments import request_tools as attachment_request_tools
+
+            result.append({"name": name, "description": attachment_request_tools.CARD_DESCRIPTION,
+                           "schema": attachment_request_tools.CARD_SCHEMA, "completion": False})
+            continue
         schema = REGISTER_SCHEMAS[scope] if name == "register_document" else SCHEMAS[name]
         if name == "register_document" and scope == "edit":
             from modules.flow_gate.graph_workflow.services import card_document_ports
@@ -611,6 +624,13 @@ def _draft_self_check_call(run: dict, token: dict, name: str, tool_input: dict) 
         raise ToolError(422, "invalid_tool_call")
     except tr_self_check_service.SelfCheckError as exc:
         raise ToolError(exc.status, SELF_CHECK_WORKER_REASONS.get(exc.code, exc.code), exc.detail) from exc
+
+
+def attachment_request_call(run: dict, tool_input: Any) -> tuple[int, dict]:
+    """flowgate.chat.0017 CH0002: the card worker's attachment upload request (in-process)."""
+    from modules.flow_gate.documents.attachments import request_tools as attachment_request_tools
+
+    return attachment_request_tools.call(run, tool_input)
 
 
 def error_payload(name: str, exc: ToolError) -> tuple[int, dict]:

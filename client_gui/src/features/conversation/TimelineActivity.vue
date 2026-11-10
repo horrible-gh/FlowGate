@@ -145,10 +145,10 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatTimelineTime, summarizeChange } from './timeline'
-import type { CommandDecision, ConversationActivity } from './types'
+import type { CommandDecision, TimelineActivityEntry } from './types'
 
 const props = defineProps<{
-  activity: ConversationActivity
+  activity: TimelineActivityEntry
   /** A decision for this command is in flight. */
   busy?: boolean
   readOnly?: boolean

@@ -3088,6 +3088,37 @@ def transition_document_rpc(
     )
 
 
+async def _attachment_permission_refusal(doc_id: str, user: Optional[dict], permission: str):
+    """flowgate.chat.0017 CH0002 (decision 3 at seq 11): the attachment routes' project permission.
+
+    The ``@require_permission`` decorators in this router resolve to the no-op stub (there is no
+    top-level ``rbac`` package, see ``# ── RBAC stub``), and the attachment routes carried none
+    at all, so any logged-in user could list, download, upload or delete the attachments of a
+    document in a project they hold no role in. These routes now check the same per-project
+    permission the v0.2 surfaces check (``rbac.decorators._has_permission``, administrators
+    pass): ``perm_document_read`` to see, ``perm_document_update`` to change. Scoped to the
+    attachment routes only — the rest of the router keeps its behaviour (no RBAC overhaul).
+    A missing document is left to the service, which answers its own 404.
+    """
+    import anyio.to_thread
+
+    def judge():
+        from modules.flow_gate.db import documents as _db_docs
+        from modules.flow_gate.rbac.decorators import _has_permission
+
+        doc = _db_docs.get_by_id(doc_id)
+        if doc is None:
+            return None
+        if _has_permission(user or {}, permission, doc.get("project_id")):
+            return None
+        return attachments.AttachmentError(
+            403, "FORBIDDEN", "You do not have permission for this document's attachments.",
+            doc_id=doc_id, permission=permission,
+        ).response()
+
+    return await anyio.to_thread.run_sync(judge)
+
+
 @router.post("/attachments", status_code=201)
 async def upload_attachment_rpc(
     request: Request,
@@ -3109,6 +3140,9 @@ async def upload_attachment_rpc(
       existing success handling is untouched, and the `Deprecation` / `Link` headers point
       new callers at the canonical URL.
     """
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_update")
+    if refusal is not None:
+        return refusal
     try:
         data = await attachments.upload_attachments(
             doc_id, [file], current_user, request.headers.get("content-length")
@@ -3779,6 +3813,9 @@ async def upload_attachment(
     `projects/*/attachments/{doc_id}` location, and the absolute `str(dest)` in the response
     (NR0003 G4).
     """
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_update")
+    if refusal is not None:
+        return refusal
     try:
         data = await attachments.upload_attachments(
             doc_id,
@@ -3805,6 +3842,9 @@ async def list_attachments(
     A document with no attachments answers 200 and an empty array — not 404. The card draws
     its empty state from that answer.
     """
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_read")
+    if refusal is not None:
+        return refusal
     try:
         data = await attachments.alist_attachments(doc_id)
     except attachments.AttachmentError as exc:
@@ -3827,6 +3867,9 @@ async def download_attachment(
     A read path, so a disposed group or a running AI run does not block it — D0010 §6-1 keeps
     the list and the download alive while the document is read-only.
     """
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_read")
+    if refusal is not None:
+        return refusal
     try:
         path, meta = await attachments.aresolve_download(doc_id, name)
     except attachments.AttachmentError as exc:
@@ -3847,6 +3890,9 @@ async def delete_attachment(
     current_user: dict = Depends(get_current_user),
 ):
     """Delete one attachment — file first, then the row (P0011 §5, L0012 §2-8)."""
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_update")
+    if refusal is not None:
+        return refusal
     try:
         data = await attachments.adelete_attachment(doc_id, name, current_user)
     except attachments.AttachmentError as exc:
@@ -3867,6 +3913,9 @@ async def read_attachment(
     current_user: dict = Depends(get_current_user),
 ):
     """Read an attachment's content instead of downloading it (P0011 §6)."""
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_read")
+    if refusal is not None:
+        return refusal
     try:
         data = await attachments.aread_attachment(doc_id, name, mode, encoding)
     except attachments.AttachmentError as exc:
@@ -3897,6 +3946,9 @@ async def copy_attachment_to_source(
     Called by whoever works on the source, never by the attachment card — the approved deck
     has no copy button and D0010 §6-7 refuses to invent one.
     """
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_update")
+    if refusal is not None:
+        return refusal
     try:
         data = await attachments.acopy_to_source(
             doc_id, name, body.target_path, body.group_id, current_user

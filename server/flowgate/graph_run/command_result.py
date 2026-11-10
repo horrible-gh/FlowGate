@@ -447,6 +447,20 @@ def _release_of(run_id: str, key: str, found: dict) -> Optional[str]:
         return None
 
 
+def _attachment_requests(run_id: str, flow_id: Optional[str]) -> Optional[dict]:
+    """flowgate.chat.0017 CH0002: AI attachment upload requests still waiting for a person —
+    those this run's card workers made, and the Flow's total. Read live (not from the run's
+    events): a request outlives its run and is decided whenever a person gets to it. None when
+    it cannot be read, so the completion window simply shows nothing for it."""
+    try:
+        from modules.flow_gate.db import attachment_upload_requests as requests_db
+
+        return {"pending": requests_db.count_pending_for_graph_run(run_id),
+                "flow_pending": requests_db.count_pending_for_flow(flow_id) if flow_id else 0}
+    except Exception:
+        return None
+
+
 def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
     """``{"command_result": …}`` of the run's command starting at ``command_seq`` (none: its latest). Raises
     ``CommandNotFound`` when there is no such command. A read only."""
@@ -695,4 +709,5 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
                    "waiting": len([n for n in nodes if n["outcome"] == "waiting"])},
         "nodes": nodes, "failure": first_failure if state == STATE_FAILED else None,
         "failures": failures, "blocking": blocking, "roles": roles, "message_count": len(messages), "messages": messages,
+        "attachment_requests": _attachment_requests(run_id, run.get("group_id")),
     }}

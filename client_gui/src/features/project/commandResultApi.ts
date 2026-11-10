@@ -119,6 +119,11 @@ export interface FlowCommandResult {
     readonly review: readonly FlowCommandRoleUse[]
   }
   readonly messages: readonly FlowCommandMessage[]
+  /**
+   * flowgate.chat.0017 CH0002: AI attachment upload requests still waiting for a person — those this run's card workers
+   * made (`pending`) and the Flow's total (`flowPending`). Read live by the server; null when it could not be read.
+   */
+  readonly attachmentRequests?: { readonly pending: number; readonly flowPending: number } | null
 }
 
 const STATES: readonly FlowCommandState[] = ['running', 'completed', 'failed', 'waiting', 'stopped', 'superseded']
@@ -204,7 +209,14 @@ export function toFlowCommandResult(raw: unknown): FlowCommandResult {
     })),
     roles: { instruction: toRoleUses(roles.instruction), execution: toRoleUses(roles.execution), review: toRoleUses(roles.review) },
     messages: objects(r.messages).map(toMessage),
+    attachmentRequests: toAttachmentRequestCounts(r.attachment_requests),
   }
+}
+
+function toAttachmentRequestCounts(raw: unknown): { pending: number; flowPending: number } | null {
+  if (!raw || typeof raw !== 'object') return null
+  const row = raw as Raw
+  return { pending: count(row.pending), flowPending: count(row.flow_pending) }
 }
 
 /** GET /api/v1/runs/{runId}/command-result — the run's latest command (or the one starting at `commandSeq`). */

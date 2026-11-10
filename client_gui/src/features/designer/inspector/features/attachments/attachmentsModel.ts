@@ -77,6 +77,19 @@ export function attachmentsTabCount(items: readonly unknown[] | null): number | 
   return items !== null && items.length > 0 ? items.length : null
 }
 
+/**
+ * flowgate.chat.0017 CH0002: the tab number with the AI attachment requests still waiting for a decision next to it
+ * (`3 · 대기 2`). Without waiting requests it is the plain number (or none) as before.
+ */
+export function attachmentsTabBadge(
+  count: number | null,
+  pending: number | null,
+  pendingLabel: (n: number) => string,
+): number | string | null {
+  if (!pending || pending <= 0) return count
+  return `${count ?? 0} · ${pendingLabel(pending)}`
+}
+
 export type AttachmentsOperation = 'read' | 'open' | 'add' | 'delete'
 
 /** Listing and opening are queries; adding and deleting change the server state (D#1 §8.3 rule 0). */

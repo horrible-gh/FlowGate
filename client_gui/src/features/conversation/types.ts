@@ -187,7 +187,98 @@ export interface StatusActivity {
   text: string | null
 }
 
-export type ConversationActivity = CommandRequestActivity | WorkChangeActivity | StatusActivity
+/** A same-name attachment already on a request's target document (server `conflict`). */
+export interface ConversationAttachmentConflict {
+  readonly docId: string
+  readonly filename: string
+  readonly caseOnly: boolean
+  readonly size: number
+  readonly sha256: string | null
+}
+
+/**
+ * flowgate.chat.0017 CH0002: one AI attachment upload request as the chat reads it (`GET /chat-activity` `attachments`).
+ * The same shape the card tab's request row takes, so the container's row component draws either.
+ */
+export interface ConversationAttachmentRequest {
+  readonly id: string
+  readonly origin: string
+  readonly status: string
+  readonly projectId: string | null
+  readonly flowId: string | null
+  readonly nodeKey: string | null
+  readonly targetDocId: string | null
+  readonly targetTitle: string | null
+  readonly runId: string | null
+  readonly providerName: string | null
+  readonly filename: string
+  readonly originalFilename: string | null
+  readonly size: number
+  readonly contentType: string | null
+  readonly sha256: string | null
+  readonly note: string | null
+  readonly decision: 'keep_both' | 'overwrite' | null
+  readonly decidedBy: string | null
+  readonly decidedAt: string | null
+  readonly finalDocId: string | null
+  readonly finalFilename: string | null
+  readonly errorCode: string | null
+  readonly expiresAt: string | null
+  readonly createdAt: string | null
+  readonly preview: 'text' | 'image' | null
+  readonly conflict: ConversationAttachmentConflict | null
+}
+
+/** One run's requests, placed by the server (after the run's last AI reply). */
+export interface ConversationAttachmentGroup {
+  readonly id: string
+  readonly runId: string | null
+  readonly anchorSeq: number | null
+  readonly anchorPosition: 'before' | 'after' | null
+  readonly anchorState: string | null
+  readonly createdAt: string | null
+  readonly pending: number
+  readonly requests: readonly ConversationAttachmentRequest[]
+}
+
+/**
+ * flowgate.chat.0017 CH0002: the AI attachment upload requests one run made, shown as one block right below that run's
+ * AI message (server anchor: after the run's last reply). `id` is the run id (or the request id without a run).
+ */
+export interface AttachmentRequestActivity {
+  kind: 'attachments'
+  id: string
+  runId: string | null
+  createdAt: string | null
+  pending: number
+  requests: readonly ConversationAttachmentRequest[]
+  anchor?: ActivityAnchor | null
+}
+
+/**
+ * Provide/inject key of the request row the container hands in (ConversationPanel `attachmentRequestRow`): a component
+ * taking `request` and emitting `decided`. The part itself draws only a plain line without one.
+ */
+export const ATTACHMENT_REQUEST_ROW = 'fg.conversation.attachmentRequestRow'
+
+/**
+ * Provide/inject key of the bulk bar the container hands in (ConversationPanel `attachmentRequestBulk`): a component
+ * taking `requests` and `selected` (v-model) and emitting `decided` with `{ results: [{ id, request }] } | null`.
+ * Without one a block offers no approve all / reject all (its rows still decide one by one).
+ */
+export const ATTACHMENT_REQUEST_BULK = 'fg.conversation.attachmentRequestBulk'
+
+/**
+ * Provide/inject key of the panel's "read the activities again" (ConversationPanel provides it): a request block calls
+ * it after a bulk call — also a failed one, which may have been processed in part — so the rows show the server state.
+ */
+export const ATTACHMENT_REQUEST_REFRESH = 'fg.conversation.attachmentRequestRefresh'
+
+
+export type ConversationActivity = CommandRequestActivity | WorkChangeActivity | StatusActivity | AttachmentRequestActivity
+
+/** The activities TimelineActivity draws (attachment request blocks have their own component). */
+export type TimelineActivityEntry = CommandRequestActivity | WorkChangeActivity | StatusActivity
 
 /** The decisions the card offers (the wire also has `cancel`, not offered here — D0006 §3.2). */
 export type CommandDecision = 'approve' | 'reject'

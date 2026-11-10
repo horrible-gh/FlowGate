@@ -1,4 +1,4 @@
-"""The `attachments` table — every query DB0013 §4 lists, and nothing else.
+"""The `attachments` table — every query DB0013 §4 lists, plus the AI request overwrite (181).
 
 flowgate.default.0060 DB0013 §4. Same shape as the other db submodules
 (``get_store()._fetch_one/_fetch_all/_execute`` with ``?`` placeholders), so the dialect
@@ -99,6 +99,34 @@ def registry_insert(
             1 if is_legacy_migrated else 0,
             now,
         ],
+    )
+
+
+def registry_replace(
+    *,
+    doc_id: str,
+    filename: str,
+    expected_sha256: str,
+    original_filename: str,
+    size: int,
+    content_type: str,
+    content_sha256: str,
+    uploaded_by: Optional[str],
+    uploaded_at: str,
+    store=None,
+) -> int:
+    """Overwrite of an approved AI attachment request (flowgate.chat.0017 CH0002 §4).
+
+    The row keeps its name and path (the file was replaced in place); only the content
+    columns change. A compare-and-set on the content hash the person saw, so a concurrent
+    change of the same attachment makes this a no-op (0) instead of a lost update.
+    """
+    st = store or get_store()
+    return st._execute_affected(
+        "UPDATE attachments SET original_filename = ?, size = ?, content_type = ?, content_sha256 = ?, "
+        "uploaded_by = ?, uploaded_at = ? WHERE doc_id = ? AND filename = ? AND content_sha256 = ?",
+        [original_filename, int(size), content_type, content_sha256, uploaded_by, uploaded_at,
+         doc_id, filename, expected_sha256],
     )
 
 

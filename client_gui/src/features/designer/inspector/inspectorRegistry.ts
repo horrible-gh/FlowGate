@@ -30,7 +30,8 @@ export type InspectorMessages = Readonly<Record<(typeof INSPECTOR_LOCALES)[numbe
  * Tab number supplier (e.g. waiting questions): given the target — null whenever the registration
  * does not apply to the selected Node — it answers a number, or null for none.
  */
-export type InspectorTabCount = (target: Readonly<Ref<InspectorTarget | null>>) => Readonly<Ref<number | null>>
+/** The tab number (or, flowgate.chat.0017 CH0002, a short text such as `3 · 대기 2`); null: none. */
+export type InspectorTabCount = (target: Readonly<Ref<InspectorTarget | null>>) => Readonly<Ref<number | string | null>>
 
 export interface InspectorTabContribution {
   readonly key: InspectorTabKey

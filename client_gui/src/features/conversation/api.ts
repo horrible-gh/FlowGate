@@ -27,6 +27,10 @@ import type {
   AiRunFailure,
   AiRunState,
   AiRunList,
+  AttachmentRequestActivity,
+  ConversationAttachmentConflict,
+  ConversationAttachmentGroup,
+  ConversationAttachmentRequest,
   ChatProvider,
   ChatSettings,
   ChatSettingsPatch,
@@ -334,14 +338,104 @@ export function toRunChange(raw: RawRunChange): WorkChangeActivity {
   }
 }
 
-/** Commands and run changes of one CH, each with its server anchor (reconciled server-side). */
+// ── flowgate.chat.0017 CH0002: AI attachment upload requests in the chat ──────────────
+type RawRecord = Record<string, unknown>
+const rec = (value: unknown): RawRecord => (value && typeof value === 'object' && !Array.isArray(value) ? (value as RawRecord) : {})
+const txt = (value: unknown): string | null => (typeof value === 'string' && value ? value : null)
+const nonNegative = (value: unknown): number | null => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null)
+
+function toAttachmentConflict(raw: unknown): ConversationAttachmentConflict | null {
+  const row = rec(raw)
+  const docId = txt(row.doc_id)
+  const filename = txt(row.filename)
+  if (!docId || !filename) return null
+  return { docId, filename, caseOnly: row.case_only === true, size: nonNegative(row.size) ?? 0, sha256: txt(row.content_sha256) }
+}
+
+/** One request of `GET /chat-activity` `attachments[].requests`; null without an id or a name. */
+export function toAttachmentRequest(raw: unknown): ConversationAttachmentRequest | null {
+  const row = rec(raw)
+  const id = txt(row.request_id)
+  const filename = txt(row.filename)
+  if (!id || !filename) return null
+  const decision = txt(row.decision)
+  const preview = txt(row.preview)
+  return {
+    id,
+    origin: txt(row.origin) ?? 'chat',
+    status: txt(row.status) ?? 'pending',
+    projectId: txt(row.project_id),
+    flowId: txt(row.flow_id),
+    nodeKey: txt(row.node_key),
+    targetDocId: txt(row.target_doc_id),
+    targetTitle: txt(row.target_title),
+    runId: txt(row.ai_run_id),
+    providerName: txt(row.provider_name),
+    filename,
+    originalFilename: txt(row.original_filename),
+    size: nonNegative(row.size) ?? 0,
+    contentType: txt(row.content_type),
+    sha256: txt(row.content_sha256),
+    note: txt(row.note),
+    decision: decision === 'keep_both' || decision === 'overwrite' ? decision : null,
+    decidedBy: txt(row.decided_by),
+    decidedAt: txt(row.decided_at),
+    finalDocId: txt(row.final_doc_id),
+    finalFilename: txt(row.final_filename),
+    errorCode: txt(row.error_code),
+    expiresAt: txt(row.expires_at),
+    createdAt: txt(row.created_at),
+    preview: preview === 'image' ? 'image' : preview === 'text' ? 'text' : null,
+    conflict: toAttachmentConflict(row.conflict),
+  }
+}
+
+/** `GET /chat-activity` `attachments` -> one group per run. */
+export function toAttachmentGroups(value: unknown): ConversationAttachmentGroup[] {
+  return (Array.isArray(value) ? value : []).flatMap((raw) => {
+    const row = rec(raw)
+    const id = txt(row.id)
+    if (!id) return []
+    const position = txt(row.anchor_position)
+    const seq = row.anchor_seq
+    return [{
+      id,
+      runId: txt(row.run_id),
+      anchorSeq: typeof seq === 'number' && Number.isInteger(seq) ? seq : null,
+      anchorPosition: position === 'before' || position === 'after' ? position : null,
+      anchorState: txt(row.anchor_state),
+      createdAt: txt(row.created_at),
+      pending: nonNegative(row.pending) ?? 0,
+      requests: (Array.isArray(row.requests) ? row.requests : []).flatMap((r) => toAttachmentRequest(r) ?? []),
+    }]
+  })
+}
+
+/** flowgate.chat.0017 CH0002: one run's attachment upload requests -> one timeline block. */
+export function toAttachmentActivity(group: ConversationAttachmentGroup): AttachmentRequestActivity {
+  return {
+    kind: 'attachments',
+    id: `attachments:${group.id}`,
+    runId: group.runId,
+    createdAt: group.createdAt,
+    pending: group.pending,
+    requests: group.requests,
+    anchor: toAnchor({ anchor_seq: group.anchorSeq, anchor_position: group.anchorPosition, anchor_state: group.anchorState }),
+  }
+}
+
+/** Commands, run changes and attachment requests of one CH, each with its server anchor (reconciled server-side). */
 export async function fetchActivities(chatId: string): Promise<ConversationActivity[]> {
   const data = await call(
-    () => getRequest<{ commands?: RawCommand[] | null; changes?: RawRunChange[] | null }>(`${API}/chat-activity/${encodeURIComponent(chatId)}`),
+    () =>
+      getRequest<{ commands?: RawCommand[] | null; changes?: RawRunChange[] | null; attachments?: unknown }>(
+        `${API}/chat-activity/${encodeURIComponent(chatId)}`,
+      ),
   )
   const commands = (data?.commands ?? []).filter((c) => c && typeof c.request_id === 'string').map(toCommand)
   const changes = (data?.changes ?? []).filter((c) => c && typeof c.run_id === 'string').map(toRunChange)
-  return [...commands, ...changes]
+  const attachments = toAttachmentGroups(data?.attachments).map(toAttachmentActivity)
+  return [...commands, ...changes, ...attachments]
 }
 
 /** The decision body carries the decision only — no group / doc id (D0006 §3.2). */

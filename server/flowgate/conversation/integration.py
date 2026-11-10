@@ -6,7 +6,8 @@ handler failure never fails the AI run (the hook port logs it and moves on).
 
     on_chat_run_start               admission: command capability, run start seq
     on_chat_run_prepare             worker, before any provider: start snapshot (0152)
-    provide_chat_tools              API worker: the ``run_command`` tool
+    provide_chat_tools              API worker: the ``run_command`` tool (and the attachment
+                                    upload request, flowgate.chat.0017 CH0002)
     on_chat_run_finalize            finalize: close open commands, then record the run change
     on_chat_run_cancel              cancel: close the run's commands before it is announced
     on_conversation_reply_appended  reply append: move the run's activity anchors
@@ -51,9 +52,14 @@ def provide_chat_tools(run) -> list[dict]:
 
     from flowgate.graph_read import tools as graph_read_tools
 
+    from modules.flow_gate.documents.attachments import request_tools as attachment_request_tools
+
     tools = graph_read_tools.descriptors()
     if run is None or run.get("chat_command_capability"):
         tools.append(commands.tool_descriptor())
+    # flowgate.chat.0017 CH0002: offered in reading mode too -- a request registers nothing
+    # until a person approves it, and it never waits for that decision.
+    tools.append(attachment_request_tools.chat_descriptor())
     return tools + chat_tools.descriptors({
         chat_tools.READ_TOOL: chat_adapter.read_card_document_call_handler,
         chat_tools.REVISE_TOOL: chat_adapter.revise_card_document_call_handler,
