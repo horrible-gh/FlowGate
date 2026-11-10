@@ -207,12 +207,17 @@ def open_review_stage_locked(flow_id: str, run_row: dict, node: dict, attempt_id
                        author_provider_id=author_provider_id, ctx=ctx)
     if a == sa.LEGACY:
         return sa.LEGACY
-    return ensure_intent_locked(flow_id, run_row, node, a, doc, mode, after)
+    return ensure_intent_locked(flow_id, run_row, node, a, doc, mode, after, ctx=ctx)
 
 
 def ensure_intent_locked(flow_id: str, run_row: dict, node: dict, a: dict, doc: Optional[dict], mode: str,
-                         after: list) -> dict:
-    """Inside the Flow guard: the assignment's execution intent, recorded once (idempotent, E-43)."""
+                         after: list, ctx=None) -> dict:
+    """Inside the Flow guard: the assignment's execution intent, recorded once (idempotent, E-43).
+
+    ``ctx`` (flowgate.v02.0158): the caller's guarded step context, when it has one. A refused start's
+    ``stage_failed`` event is numbered from the stored run row; without ``ctx`` the caller's in-memory
+    ``last_event_seq`` stays behind it and its next event (``run_apply.emit_run_status``) reuses the same
+    ``event_seq`` (``UNIQUE(run_id, event_seq)``). Callers that number events from ``ctx`` must pass it."""
     from flowgate.graph_run import execution  # noqa: PLC0415 — the Graph run's ledger (v0.2)
 
     legacy.require_guard(flow_id)
@@ -245,7 +250,7 @@ def ensure_intent_locked(flow_id: str, run_row: dict, node: dict, a: dict, doc: 
             "fg_review_request")
     except Exception as exc:  # noqa: BLE001 — E-42: the request is rolled back, the assignment stays failed
         _log.info("card review not started flow=%s node=%s: %s", flow_id, a["node_key"], exc)
-        failed = sa.fail(a, sa.REVIEW_NOT_STARTED)
+        failed = sa.fail(a, sa.REVIEW_NOT_STARTED, ctx)
         after.append(lambda error=exc: execution.start_failed(None, error))   # a fence refusal recorded after the commit
         after.append(lambda: _review_not_started(flow_id, failed, doc))
         return failed
@@ -585,7 +590,7 @@ def rerequest_review_locked(ctx, row: dict) -> bool:
         nxt, inserted = sa.restart_review_stage(flow_id, cur, sa.mark(doc), ctx=ctx)
         if not inserted:
             return False                            # another writer opened that seq first: it requests, not we
-        nxt = ensure_intent_locked(flow_id, ctx.run, node, nxt, doc, AUTO, after)
+        nxt = ensure_intent_locked(flow_id, ctx.run, node, nxt, doc, AUTO, after, ctx=ctx)
         # A newly resolved no-review/person role must be driven as well as an AI loop.
         after.append(lambda: _drive_command_assignment(flow_id, nxt))
         return True
