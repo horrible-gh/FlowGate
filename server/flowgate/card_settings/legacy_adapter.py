@@ -811,6 +811,105 @@ def last_rejection(doc_id: str) -> Optional[str]:
     return reason.strip() if isinstance(reason, str) and reason.strip() else None
 
 
+# flowgate.v02test.0015: a v0.2 card moves on by its own stage results -- its work done, its review starts; its review
+# answered ``issues``, its rework starts. The v0.1 document review loop it borrows still reads the document's review
+# status alone (``review.compute_review_baseline``, 0417 L0009): no status at all is refused (``document_not_submitted``)
+# and a status of ``rejected`` starts with the rework. A card document handed to its review with no status -- an AI's
+# write, a card editor's save: nothing ran the v0.1 ``('', 'submit')`` step -- was refused on every try
+# (``review_not_started``), and a review that finished on it could never become a rejection (no ``('', 'reject')``).
+# The card's own review start now puts such a document in review first; the v0.1 routes keep their gate unchanged.
+CARD_REVIEW_SUBMITTED_EVENT = "card_review_submitted"
+CARD_REVIEW_SUBMIT_ACTION = "submit"
+CARD_REVIEW_ANSWER_SAVEPOINT = "fg_card_review_answer"
+
+
+class _RejectionRefused(RuntimeError):
+    """The rejection of an unanswered ``issues`` review was refused (its savepoint is rolled back)."""
+
+
+def submit_for_card_review(doc_id: Optional[str], requested_by: Optional[str], *,
+                           answer_issues: bool = False) -> Optional[str]:
+    """flowgate.v02test.0015: a card document with no review status is put in review by the system, as its card's
+    review stage starts -- ``pending_review`` (and ``draft -> open``, as an inbox submission would), with a document
+    event naming the system as the actor and the run's issuer as ``requested_by``. A document that has a review status
+    already is left as it is (None).
+
+    ``answer_issues`` (an AI author's submission whose loop has a rework AI): the document's latest review of its current
+    revision whose ``issues`` verdict never became a rejection -- it finished while the document had no status, so the
+    rejection was refused -- becomes that rejection now (``review._auto_reject``: the issuer's permissions, under its own
+    savepoint), so the loop starts with the rework the finished review asked for instead of reviewing it again. A
+    refused rejection leaves the document ``pending_review``.
+
+    Returns the review status written (``pending_review`` / ``rejected``) or None. Runs in the caller's transaction when
+    one is open (the card's review request commits or rolls back with it)."""
+    from modules.flow_gate.db import documents as db_documents  # noqa: PLC0415
+    from modules.flow_gate.db import events as db_events  # noqa: PLC0415
+    from modules.flow_gate.db.connection import now_iso  # noqa: PLC0415
+    from modules.flow_gate.workflow.transition_rules import get_doc_review_rule, get_doc_rule  # noqa: PLC0415
+
+    if not doc_id:
+        return None
+    store = get_store()
+    with store.transaction():
+        row = store._fetch_one("SELECT revision_no, status, doc_review_status FROM documents WHERE doc_id = ?", [doc_id])
+        if row is None or (row.get("doc_review_status") or ""):
+            return None
+        status = get_doc_review_rule("", CARD_REVIEW_SUBMIT_ACTION) or "pending_review"
+        fields = {"doc_review_status": status, "updated_at": now_iso()}
+        rule = get_doc_rule(str(row.get("status") or ""), CARD_REVIEW_SUBMIT_ACTION)
+        if rule is not None:
+            fields["status"] = rule.next_state                      # draft -> open, as an inbox submission
+        if not db_documents.update(doc_id, fields):
+            return None
+        revision = int(row.get("revision_no") or 0)
+        db_events.insert_event(doc_id, CARD_REVIEW_SUBMITTED_EVENT, note=json.dumps({
+            "actor": "system", "actor_kind": "system", "requested_by": requested_by, "revision_no": revision},
+            ensure_ascii=False))
+    _log.info("card review: %s submitted by the system (revision %s)", doc_id, revision)
+    if answer_issues and requested_by and _answer_unanswered_issues(doc_id, revision, requested_by):
+        return "rejected"
+    return status
+
+
+def _answer_unanswered_issues(doc_id: str, revision: int, issuer: str) -> bool:
+    """The latest review of ``doc_id``'s current ``revision`` answered ``issues`` and no rejection was made of it: make
+    it now (``submit_for_card_review``). True when the document is rejected by it."""
+    from modules.flow_gate.db import document_reviews as db_reviews  # noqa: PLC0415
+    from modules.flow_gate.services.ai_invoke import review as v01_review  # noqa: PLC0415 — AI stack on use
+    from modules.flow_gate.workflow.pipeline_service import parse_rejection_history  # noqa: PLC0415
+
+    try:
+        latest = db_reviews.get_latest_by_doc(doc_id)
+    except Exception:  # noqa: BLE001 — no review read: the loop reviews the document
+        _log.warning("card review: latest review of %s unreadable", doc_id, exc_info=True)
+        return False
+    if (not latest or str(latest.get("verdict") or "").lower() != "issues"
+            or int(latest.get("revision_no") or 0) != int(revision)):
+        return False
+    doc = document_row(doc_id) or {}
+    try:
+        from modules.flow_gate.graph_workflow.services.ai_node_starter import api_base_url  # noqa: PLC0415
+        base_url = api_base_url()
+    except Exception:  # noqa: BLE001 — the reason's review link is relative then
+        base_url = None
+    slot = {"doc_id": doc_id, "revision_no": int(revision), "review_status": doc.get("doc_review_status") or "",
+            "rejection_history": parse_rejection_history(doc.get("rejection_history"))}
+    if slot["review_status"] != "pending_review" or v01_review._review_already_rejected(latest, slot, base_url):
+        return False
+
+    def reject() -> bool:
+        result = v01_review._auto_reject(slot, latest, {"issued_to": issuer, "api_base_url": base_url})
+        if not result.get("ok"):
+            raise _RejectionRefused(str(result.get("detail") or result.get("stop_code") or "refused"))
+        return True
+
+    try:
+        return bool(isolated(reject, CARD_REVIEW_ANSWER_SAVEPOINT))
+    except Exception as exc:  # noqa: BLE001 — the document stays pending_review: the loop reviews it again
+        _log.info("card review: issues of %s r%s not turned into a rejection: %s", doc_id, revision, exc)
+        return False
+
+
 def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issued_to: str,
                       loop: dict, basis_note: Callable[[Optional[str]], str],
                       node_key: Optional[str] = None, graph_exec_id: Optional[str] = None,
@@ -864,6 +963,7 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
 
     from flowgate.graph_run import execution
     try:
+        submit_for_card_review(doc_id, issued_to)          # flowgate.v02test.0015: the card's review, never a refusal
         graph_exec_id = execution.request_loop(project_id, flow_id, doc_id, issued_to, loop,
                                                 basis_note(last_rejection(doc_id)), node_key, graph_exec_id,
                                                 attempt_id=attempt_id)

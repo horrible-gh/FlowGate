@@ -162,8 +162,8 @@ def test_failed_writer_explicit_command_gets_new_attempt_and_current_provider(
 
 def _submitted_ai_instruction(env,monkeypatch,provider):
     """0158: the instruction AI's write as a submitted document (``pending_review``), as an edit submission leaves it.
-    ``_ai_writes_instruction`` alone writes the body only; a review loop refuses such a document
-    (``document_not_submitted``), which is the refusal case below, not this recovery case."""
+    ``_ai_writes_instruction`` alone writes the body only; its review start then submits it itself (flowgate.v02test.0015,
+    the case below), which is not this recovery case."""
     import test_fg_ai_roles_l2_review as l2_review
     from modules.flow_gate.db import documents as db_documents
     real=l2_review._write_written
@@ -220,35 +220,29 @@ def test_instruction_verdict_hold_resolves_current_instruction_reworker_and_limi
 
 
 @pytest.mark.parametrize('mode',['step','full'])
-def test_unsubmitted_instruction_command_rerequest_refusal_keeps_the_command_and_event_order(
-        env,decided,monkeypatch,starts,mode):
-    """0158: an explicit command re-requests the review of an AI instruction that was written but never submitted.
-    The loop refuses its start (``document_not_submitted``); the new seq is failed ``review_not_started`` inside the
-    command's guard. Its ``stage_failed`` event keeps the command's ``ctx`` numbering, so the command's own run event
-    after it takes the next ``event_seq`` (formerly the same one: ``UNIQUE(run_id, event_seq)`` -> 500). The submission
-    gate is not bypassed, and the earlier seqs stay as they were."""
+def test_unsubmitted_ai_instruction_goes_to_its_review_by_the_card_stage(env,decided,monkeypatch,starts,mode):
+    """flowgate.v02test.0015 (replaces the 0158 refusal case): an AI instruction written but never submitted (the v0.1
+    submit step never ran on it) goes to its review because the card's instruction stage ended -- the review start puts
+    it in review itself (``pending_review``, the system as the actor, ``card_review_submitted``) and requests the loop
+    in the same savepoint. Formerly the loop's admission refused it (``document_not_submitted``) on every try, and the
+    card stood still as ``review_not_started``. Event numbering stays unique."""
     from test_fg_ai_roles_l2_review import _ai_writes_instruction
     key=flow(env,extra_settings=(('instruction_review_count',3),))
     roles(key,instruction=X,execution=A,review=B)
     run_id=command(env,mode)['run_id']
     instruction=_ai_writes_instruction(env,monkeypatch,provider=X)          # body written, never submitted
     _read(env)
-    before=_instruction_reviews(env,key)
-    assert before and all((r['stage_state'],r['fail_cause'])==('failed','review_not_started') for r in before)
-    for field,value in [('instruction_role',{'kind':'assigned','provider_id':Y}),
-                        ('instruction_review_ai',A),('instruction_review_count',1)]:
-        save(env,key,field,value)
-    command(env,mode)                                                       # accepted (200/201), never a 500
-    after=_instruction_reviews(env,key)
-    assert after[:len(before)]==before                                      # history kept as it was
-    newer=after[len(before):]
-    assert newer and newer[0]['seq']==before[-1]['seq']+1 and newer[0]['attempt_id']==before[-1]['attempt_id']
-    assert (newer[0]['provider_id'],newer[0]['rework_provider_id'],newer[0]['review_rounds'])==(A,Y,1)
-    assert (newer[0]['stage_state'],newer[0]['fail_cause'])==('failed','review_not_started')
-    assert not newer[0]['intent_exec_id']                                   # the refused request was rolled back
+    reviews=_instruction_reviews(env,key)
+    assert reviews and not any(r['fail_cause']=='review_not_started' for r in reviews)
+    assert reviews[0]['seq']==1 and reviews[0]['intent_exec_id']            # the loop's request committed
+    doc=_sql(env['db'],'SELECT status, doc_review_status FROM documents WHERE doc_id = ?',(instruction,))[0]
+    assert doc['doc_review_status']=='pending_review'
+    [submitted]=_sql(env['db'],"SELECT note FROM events WHERE doc_id = ? AND event_type = 'card_review_submitted'",
+                     (instruction,))
+    note=json.loads(submitted['note'])
+    assert note['actor']=='system' and note['actor_kind']=='system'
     seqs=_event_seqs(env,run_id)
     assert len(seqs)==len(set(seqs))
-    assert _sql(env['db'],'SELECT doc_review_status FROM documents WHERE doc_id = ?',(instruction,))[0]['doc_review_status'] in (None,'')
     assert node_run(env,key)['stage']=='instruction' and one(env,key,'result') is None
 
 

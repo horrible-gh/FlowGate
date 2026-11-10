@@ -5,7 +5,7 @@
     :initial-x="initialX"
     :initial-y="initialY"
     :initial-width="460"
-    :initial-height="320"
+    :initial-height="initialHeight"
     :min-width="340"
     :min-height="240"
     @close="emit('close')"
@@ -85,7 +85,9 @@ const has: HasKey = (key) => te(key)
 const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth
 const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight
 const initialX = Math.max(8, Math.round(viewportWidth / 2 - 230))
-const initialY = Math.max(8, Math.round(viewportHeight * 0.2))
+// flowgate.v02test.0015: no fixed 320 — the failed cards and their causes show without scrolling (the screen less 80).
+const initialHeight = Math.max(240, viewportHeight - 80)
+const initialY = Math.max(8, Math.round((viewportHeight - initialHeight) / 2))
 
 const steps = computed(() => (props.result ? stepLines(tr, has, props.result) : { lines: [], more: 0 }))
 const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))

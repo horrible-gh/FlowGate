@@ -91,9 +91,10 @@ const has: HasKey = (key) => te(key)
 const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth
 const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight
 const initialWidth = Math.max(360, Math.min(780, viewportWidth - 30))
-const initialHeight = Math.max(320, Math.min(690, viewportHeight - 40))
+// flowgate.v02test.0015: no 690 cap — the messages and their logs use the screen's height (less 40).
+const initialHeight = Math.max(320, viewportHeight - 40)
 const initialX = Math.max(8, Math.round(viewportWidth / 2 - initialWidth / 2 + 40))
-const initialY = Math.max(8, Math.round(viewportHeight * 0.08))
+const initialY = Math.max(8, Math.round((viewportHeight - initialHeight) / 2))
 
 const renderer = createMarkdownRenderer({ copyLabel: () => t('gui.document_window.viewer.copy_code'), safe: true })
 // One parse per body and language: a long body is never parsed again on a re-render.
