@@ -377,9 +377,14 @@ def test_projection_failure_still_notifies_after_commit_and_reports_500(chat, mo
 
 def test_cli_mention_and_descriptors_cover_contract_without_command_capability():
     from flowgate.conversation import integration
-    tools = integration.provide_chat_tools({"action_scope": "chat"})
-    assert [t["name"] for t in tools] == [chat_tools.READ_TOOL, chat_tools.REVISE_TOOL, chat_tools.READ_DOC_TOOL,
-                                          chat_tools.REVISE_DOC_TOOL, chat_tools.CREATE_DOC_TOOL]
+    offered = integration.provide_chat_tools({"action_scope": "chat"})
+    # flowgate.v02test.0023: the Graph reads (0145), the control tower tools and the attachment request
+    # (chat.0017) come first; the card document contract is the last five.
+    assert [t["name"] for t in offered] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards",
+                                            "start_flow_run", "request_attachment_upload",
+                                            chat_tools.READ_TOOL, chat_tools.REVISE_TOOL, chat_tools.READ_DOC_TOOL,
+                                            chat_tools.REVISE_DOC_TOOL, chat_tools.CREATE_DOC_TOOL]
+    tools = offered[-5:]
     assert all(t["completion"] is False and callable(t["call_handler"]) for t in tools)
     doc_section = tools[3]["cli_mention"]("http://host/flowgate/api/v1/", "raw")
     for word in ("/api/v2/chat/documents/{doc_id}", "/revisions", "POST http://host/flowgate/api/v2/chat/documents",
