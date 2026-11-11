@@ -2283,6 +2283,9 @@ def finished_payload(run: dict) -> dict:
         "prompt_user_message_sha256": run.get("prompt_user_message_sha256"),
         "prompt_final_length": run.get("prompt_final_length"),
         "prompt_final_sha256": run.get("prompt_final_sha256"),
+        # flowgate.v02test.0023: what the chat commit point did at the run end (None: no Git,
+        # or no message and nothing left uncommitted). Live finish only.
+        "chat_commit": run.get("chat_commit"),
     }
     if run["source_dirty"]:
         payload["source_dirty_files"] = run["source_dirty_files"]

@@ -1369,6 +1369,9 @@ def start_run(
     # the chain counters do not move for it — this is what lets a card say WHAT is running
     # instead of reporting a frozen progress number.
     hop_kind: str = WORK_HOP_KIND,
+    # flowgate.v02test.0023: the chat's commit message (already validated by the route).
+    # Rides the run only; the chat commit point commits with it when the run ends.
+    chat_commit_message: Optional[str] = None,
 ) -> dict:
     """Admit and launch a run. mention_builder(raw_token, scratch_dir) builds the
     worker mention through the exact token_routes path so the prompt the AI reads
@@ -2470,6 +2473,8 @@ def start_run(
         # the chain; the engine's own classification still wins for cancel/timeout/pause.
         "inbox_stop_code": None,
         "failure_signal_sent": False,
+        "chat_commit_message": chat_commit_message if action_scope == "chat" else None,
+        "chat_commit": None,
     }
     # flowgate.v02.0032 T#1 (D0006 §2.3, §3.8.1): the chat run start port -- command
     # capability and the conversation head the run starts from. Chat-only and never

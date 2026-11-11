@@ -1173,6 +1173,9 @@ export default {
       remote_path_invalid: '에이전트가 작업 디렉터리 경로를 사용할 수 없습니다. 원격 작업 디렉터리를 확인하세요',
       remote_agent_rejected: '에이전트가 실행을 거절했습니다',
       remote_agent_failed: '에이전트가 실행을 시작하지 못했습니다',
+      chat_committed: '채팅 작업을 커밋했습니다',
+      chat_commit_missing: '커밋 메시지가 없어 변경을 커밋하지 않았습니다. 다음 AI 호출 때 커밋 메시지를 입력하세요',
+      chat_commit_skipped: '채팅 작업을 커밋하지 못했습니다. 다음 AI 호출 때 커밋 메시지를 입력하면 다시 커밋합니다',
     },
     participants: {
       all: '참여자 {count}명',
@@ -1215,6 +1218,10 @@ export default {
       source_locked: '이 흐름의 Graph 실행 중(실행·일시정지·중지 중)이거나 실행 상태를 확인하기 전에는 읽기 모드로만 전환할 수 있습니다',
       manual_copy_title: '클립보드에 복사하지 못했습니다. 아래 내용을 직접 복사하세요.',
       manual_copy_again: '다시 복사',
+      // flowgate.v02test.0023 — the chat commit point.
+      commit_placeholder: '커밋 메시지 (예: fix(chat): 커밋 누락 수정)',
+      commit_tip: 'AI 호출이 끝나면 이 메시지로 흐름의 작업 공간을 커밋합니다',
+      commit_required: '커밋되지 않은 변경 {n}건 — 커밋 메시지를 입력하고 AI를 다시 호출하세요',
     },
     settings: {
       title: '대화 설정',
@@ -1241,6 +1248,7 @@ export default {
       settings_failed: '대화 설정을 저장하지 못했습니다',
       source_mode_failed: 'AI 소스 모드를 바꾸지 못했습니다',
       source_locked: '이 흐름의 Graph 실행 중에는 채팅으로 소스를 수정할 수 없습니다. 읽기 모드로 사용하세요',
+      commit_required: '커밋되지 않은 변경이 있어 AI를 호출하지 않았습니다. 커밋 메시지를 입력하고 다시 호출하세요',
       create_forbidden: '이 플로우에 새 채팅을 만들 권한이 없습니다',
       create_group_disposed: '폐기된 플로우에는 새 채팅을 만들 수 없습니다',
       command_already_handled: '이미 처리된 명령 실행 요청입니다',

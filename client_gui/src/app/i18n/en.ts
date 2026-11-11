@@ -1162,6 +1162,9 @@ export default {
       remote_path_invalid: 'The agent cannot use the working directory path. Check the remote working directory',
       remote_agent_rejected: 'The agent rejected the run',
       remote_agent_failed: 'The agent could not start the run',
+      chat_committed: 'Committed the chat\'s changes',
+      chat_commit_missing: 'Changes were not committed: no commit message. Enter one with the next AI call',
+      chat_commit_skipped: 'Could not commit the chat\'s changes. Enter a commit message with the next AI call to commit them',
     },
     participants: {
       all: 'Participants ({count})',
@@ -1204,6 +1207,10 @@ export default {
       source_locked: 'Only switching to Read is allowed while this flow\'s Graph run is running, paused or stopping, or before its run status is confirmed',
       manual_copy_title: 'Could not copy to the clipboard. Copy the text below by hand.',
       manual_copy_again: 'Copy again',
+      // flowgate.v02test.0023 — the chat commit point.
+      commit_placeholder: 'Commit message (e.g. fix(chat): commit missing changes)',
+      commit_tip: 'When the AI call ends, the flow\'s worktree is committed with this message',
+      commit_required: '{n} uncommitted change(s) — enter a commit message and call the AI again',
     },
     settings: {
       title: 'Chat settings',
@@ -1230,6 +1237,7 @@ export default {
       settings_failed: 'Could not save chat settings',
       source_mode_failed: 'Could not change the AI source mode',
       source_locked: 'A chat cannot change the source while this flow\'s Graph run goes on. Use the read mode',
+      commit_required: 'The AI was not called: there are uncommitted changes. Enter a commit message and call again',
       create_forbidden: 'You may not create a chat in this Flow',
       create_group_disposed: 'A disposed Flow cannot get a new chat',
       command_already_handled: 'This command request was already handled',
