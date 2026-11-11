@@ -7,6 +7,10 @@ flowgate.v02.0085 T#2 (D0007 §3.2 / §3.4): an unresolved rejected confirm gate
 (``graph_revision_migration_blocked``, reason ``gate_rejected``) even though its attempt has ended, and so does a gate
 waiting for a round split after an abandoned recovery (reason ``gate_recovery_reset_required``): the Time Machine
 puts the rework range back first. ``editing.protect_definition`` keeps such a gate and its input edges as well.
+
+flowgate.v02test.0018: open/review cards no longer refuse the adoption as a whole. They stay as they are and
+``protect_definition`` refuses a change to their definition or input edges, so one branch can be extended while the
+other branches wait for review. Only an active attempt outside an open/review row refuses (``active_attempts``).
 """
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.domain.run_policies import policies_of, required_policies, undecided_for
@@ -16,6 +20,9 @@ from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.graph_workflow.services.run_apply import load_context
 from modules.flow_gate.graph_workflow.store import definition_store, layout_store, run_store
 from flowgate.graph_run.editing import protect_definition
+
+# Row states whose live work stays across an adoption (guarded by ``protect_definition``).
+LIVE = frozenset({"open", "review"})
 
 
 def check_revision_adoption(group: dict, run: dict, record: dict, latest: int) -> tuple:
@@ -27,12 +34,19 @@ def check_revision_adoption(group: dict, run: dict, record: dict, latest: int) -
     flow_id, run_id = run["group_id"], run["run_id"]
     old_no = int(run["revision_no"])
     rows = run_store.node_runs(run_id)
-    # Pre-151 open/review rows have no attempt record: do not migrate their live work either.
-    if run_store.has_active_attempts(run_id) or any(r["status"] in ("open", "review") for r in rows):
+    # v02test.0018: live open/review cards (pre-151 rows without an attempt record included) keep their work and
+    # their attempt's revision_no; protect_definition below refuses any change to their definition or input edges.
+    # An active attempt on any other row (pending, done, missing...) has no such protection and still refuses.
+    if run_store.has_active_attempts(run_id):
         active = set(run_store.active_attempt_node_keys(run_id))
         statuses = {r["node_key"]: r["status"] for r in rows}
-        keys = sorted(k for k in active | {r["node_key"] for r in rows if r["status"] in ("open", "review")}
-                      if isinstance(k, str) and k.strip())
+        unguarded = {k for k in active if statuses.get(k) not in LIVE}
+        # A count without listable keys is inconsistent: refuse rather than adopt over it.
+        blocked = bool(unguarded) or not active
+    else:
+        blocked = False
+    if blocked:
+        keys = sorted(k for k in unguarded if isinstance(k, str) and k.strip())
         node_keys = keys[:50]
         raise GraphApiError(409, "graph_revision_migration_blocked", {
             "flow_id": flow_id, "run_id": run_id, "reason": "active_attempts",

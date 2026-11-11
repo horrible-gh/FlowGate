@@ -80,7 +80,8 @@ def confirm_candidate():
 
 
 @pytest.mark.parametrize("reason", [
-    "active_attempts", "open", "review", "gate_rejected", "gate_recovery_reset_required",
+    # v02test.0018: open/review alone no longer refuses (test_revision_adoption_live_cards_v02test_0018).
+    "active_attempts", "gate_rejected", "gate_recovery_reset_required",
     "gate_jobs_in_progress", "reservation", "run_policy_undecided", "graph_node_protected",
 ])
 def test_assessment_and_adoption_have_identical_refusals_without_writes(candidate, monkeypatch, reason):
