@@ -2731,6 +2731,9 @@ export default {
         platform: 'OS / アーキテクチャ',
         agent_id: 'Agent ID',
         remote_workdir: 'リモート作業ディレクトリ',
+        workspace_cleanup: '作業フォルダーを自動で整理',
+        workspace_cleanup_hours: '完了後の保管時間(時間)',
+        workspace_cleanup_hours_hint: '1~720 時間',
       },
       connection: {
         agent_pull: 'Agent Pull',
@@ -2927,8 +2930,8 @@ export default {
         revoke_pending: '待機中の登録トークンも無効になります。',
         revoke_reenroll: '再び使うには新しい登録トークンを発行して再登録する必要があります。',
         revoke_history: '登録履歴は残るため、この Agent は削除できなくなります。',
-        delete_removes: 'この Agent の項目と待機中の登録トークンが一覧から削除されます。',
-        delete_unregistered: '一度も登録されていない Agent のみ削除できます。',
+        delete_removes: '一覧から削除され、資格が失効します。',
+        delete_keeps_history: '登録・実行の履歴は保持されます。',
       },
       errors: {
         load_failed: 'Agent 一覧を読み込めませんでした。',
@@ -2938,6 +2941,7 @@ export default {
         name_too_long: '名前は {max} 文字まで入力できます。',
         unconfirmed: 'リクエストの結果を確認できませんでした。一覧を再読み込みしました。',
         reread_mismatch: '再読み込みした Agent の状態がリクエストした内容と異なります。',
+        retention_hours_range: '保管時間は {min}~{max} の整数で入力してください。',
       },
     },
     system_nav: {
@@ -3245,6 +3249,7 @@ export default {
       agent_not_found: 'Agent が見つかりません。',
       enrollment_not_allowed: '使用中のリモート Agent のみ登録トークンを発行できます。',
       agent_has_registration_history: '登録履歴のある Agent は削除できません。',
+      agent_has_active_jobs: '実行中の作業があります。作業が終わってから削除してください。',
       temporarily_unavailable: 'サーバーに Agent のシークレット (FLOWGATE_AGENT_PEPPER) が設定されていません。再試行では解決しないため、サーバー管理者にシークレット設定の確認とサーバーの再起動を依頼してください。',
       validation_failed: '入力値が正しくありません。',
     },

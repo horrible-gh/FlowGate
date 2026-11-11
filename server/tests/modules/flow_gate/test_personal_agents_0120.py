@@ -62,9 +62,11 @@ def test_personal_enrollment_authentication_and_invalid_scope_fields(env):
     assert env.heartbeat(aid, credential).status_code == 200
     current = env.client.get(ME+"/"+aid, headers=env.h("M")).json()
     assert current["online_status"] == "online" and current["owner_user_id"] == "usr_ag_m0076"
-    assert env.client.delete(ME+"/"+aid, headers=env.h("M")).status_code == 409
-    assert env.client.post(ME+"/"+aid+"/credential/revoke", json={}, headers=env.h("M")).status_code == 200
+    # flowgate.v02test.0019: a connected Agent with no Job in progress is deleted (was 409); its
+    # credential is revoked in the same transaction, so it can no longer connect.
+    assert env.client.delete(ME+"/"+aid, headers=env.h("M")).status_code == 204
     assert env.heartbeat(aid, credential).status_code == 401
+    assert env.client.get(ME+"/"+aid, headers=env.h("M")).status_code == 404
 
 
 def test_personal_jobs_require_requester_project_and_live_permissions(env):

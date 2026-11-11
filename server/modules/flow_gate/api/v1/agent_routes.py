@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Literal
 from fastapi import APIRouter,Depends,Header,Request
 from fastapi.responses import JSONResponse,Response
-from pydantic import BaseModel,ConfigDict,Field,model_validator
+from pydantic import BaseModel,ConfigDict,Field,StrictBool,StrictInt,model_validator
 from modules.flow_gate.rbac.decorators import require_permission
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.services.agent_registry import AgentService,AgentError
@@ -13,6 +13,9 @@ class Caps(Strict): ai_cli:bool;ai_api:bool;storage:bool
 class AgentCreate(Strict):
  name:str=Field(min_length=1,max_length=100);enabled:bool;location:Literal["local","remote"];connection_mode:Literal["agent_pull"]|None;local_executable_path:str|None;configured_capabilities:Caps
  remote_workdir:str|None=None
+ # flowgate.v02test.0019: workspace cleanup policy (default ON / 24 h, whole hours 1..720).
+ workspace_cleanup_enabled:StrictBool=True
+ workspace_cleanup_retention_hours:StrictInt=Field(default=24,ge=1,le=720)
  @model_validator(mode="after")
  def combo(self):
   if self.name.strip()=="" or (self.location=="remote" and(self.connection_mode!="agent_pull" or self.local_executable_path is not None)) or (self.location=="local" and self.connection_mode is not None): raise ValueError("invalid Agent field combination")
@@ -21,9 +24,11 @@ class AgentPatch(Strict):
  name:str|None=None;enabled:bool|None=None;location:Literal["local","remote"]|None=None;connection_mode:Literal["agent_pull"]|None=None;local_executable_path:str|None=None;configured_capabilities:Caps|None=None
  # flowgate.v02.0135 CH0006: null or blank clears it.
  remote_workdir:str|None=None
+ workspace_cleanup_enabled:StrictBool|None=None
+ workspace_cleanup_retention_hours:StrictInt|None=Field(default=None,ge=1,le=720)
  @model_validator(mode="after")
  def valid_changes(self):
-  for field in ("name","enabled","configured_capabilities"):
+  for field in ("name","enabled","configured_capabilities","workspace_cleanup_enabled","workspace_cleanup_retention_hours"):
    if field in self.model_fields_set and getattr(self,field) is None: raise ValueError(field+" cannot be null")
   if self.name is not None and not 1<=len(self.name.strip())<=100: raise ValueError("name must be 1 to 100 characters")
   return self

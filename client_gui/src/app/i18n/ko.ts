@@ -2742,6 +2742,9 @@ export default {
         platform: 'OS / 아키텍처',
         agent_id: '에이전트 ID',
         remote_workdir: '원격 작업 디렉터리',
+        workspace_cleanup: '작업 폴더 자동 정리',
+        workspace_cleanup_hours: '완료 후 보관 시간(시간)',
+        workspace_cleanup_hours_hint: '1~720시간',
       },
       connection: {
         agent_pull: '에이전트 Pull',
@@ -2938,8 +2941,8 @@ export default {
         revoke_pending: '대기 중인 등록 토큰도 함께 무효가 됩니다.',
         revoke_reenroll: '다시 쓰려면 새 등록 토큰을 발급해 재등록해야 합니다.',
         revoke_history: '등록 이력은 남으므로 이 에이전트는 삭제할 수 없게 됩니다.',
-        delete_removes: '이 에이전트 항목과 대기 중인 등록 토큰이 목록에서 제거됩니다.',
-        delete_unregistered: '한 번도 등록되지 않은 에이전트만 삭제할 수 있습니다.',
+        delete_removes: '목록에서 제거되고 인증이 해지됩니다.',
+        delete_keeps_history: '등록·실행 이력은 유지됩니다.',
       },
       errors: {
         load_failed: '에이전트 목록을 불러오지 못했습니다.',
@@ -2949,6 +2952,7 @@ export default {
         name_too_long: '이름은 {max}자까지 입력할 수 있습니다.',
         unconfirmed: '요청 결과를 확인하지 못했습니다. 목록을 다시 불러왔습니다.',
         reread_mismatch: '다시 불러온 에이전트 상태가 요청한 내용과 다릅니다.',
+        retention_hours_range: '보관 시간은 {min}~{max} 사이의 정수로 입력하세요.',
       },
     },
     system_nav: {
@@ -3256,6 +3260,7 @@ export default {
       agent_not_found: '에이전트를 찾을 수 없습니다.',
       enrollment_not_allowed: '사용 중인 원격 에이전트만 등록 토큰을 발급할 수 있습니다.',
       agent_has_registration_history: '등록 이력이 있는 에이전트는 삭제할 수 없습니다.',
+      agent_has_active_jobs: '진행 중인 작업이 있습니다. 작업이 끝난 뒤 삭제하세요.',
       temporarily_unavailable: '서버에 에이전트 비밀키(FLOWGATE_AGENT_PEPPER)가 설정되어 있지 않습니다. 다시 시도해도 해결되지 않으니 서버 관리자에게 비밀 설정 확인과 서버 재시작을 요청하세요.',
       validation_failed: '입력값이 올바르지 않습니다.',
     },

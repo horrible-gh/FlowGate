@@ -126,7 +126,10 @@ def test_heartbeat_api_success_contract_and_runtime_state(heartbeat_api):
  assert response.status_code==200
  payload=response.json()
  assert set(payload)=={"accepted","agent_id","server_time","protocol_version",
-  "heartbeat_interval_seconds","online_ttl_seconds"}
+  "heartbeat_interval_seconds","online_ttl_seconds","workspace_cleanup"}
+ # flowgate.v02test.0019: the stored policy of this Agent; an existing row is ON / 24 h.
+ assert payload["workspace_cleanup"]=={"enabled":True,"retention_hours":24}
+ assert type(payload["workspace_cleanup"]["enabled"]) is bool and type(payload["workspace_cleanup"]["retention_hours"]) is int
  assert payload["accepted"] is True
  assert payload["agent_id"]=="agt_x"
  assert type(payload["protocol_version"]) is int and payload["protocol_version"]==1
@@ -158,6 +161,7 @@ def test_heartbeat_api_failure_contract(heartbeat_api,headers,body,setup,status,
  if code:
   assert response.json()["ok"] is False
   assert response.json()["error"]["code"]==code
+ assert "workspace_cleanup" not in response.text  # success response only
  if status==409:
   row=db.execute("SELECT last_seen_at,agent_version,protocol_version,"
    "reported_ai_cli,reported_ai_api,reported_storage,protocol_compatibility,"
@@ -166,3 +170,30 @@ def test_heartbeat_api_failure_contract(heartbeat_api,headers,body,setup,status,
   assert row[6:8]==("incompatible",2)
   assert row[8] is not None
   assert db.execute("SELECT last_heartbeat_at FROM agent_credentials WHERE credential_id='cred_x'").fetchone()[0] is None
+
+
+def test_heartbeat_sends_the_latest_stored_policy_0019(heartbeat_api):
+ # flowgate.v02test.0019: a saved change reaches the Agent on its next heartbeat; OFF keeps the hours.
+ client,db,raw=heartbeat_api
+ send=lambda: client.post("/flowgate/api/v1/agent/heartbeat",headers={"Authorization":"Bearer "+raw},json=heartbeat_body())
+ db.execute("UPDATE agents SET workspace_cleanup_enabled=0,workspace_cleanup_retention_hours=720 WHERE agent_id='agt_x'"); db.commit()
+ assert send().json()["workspace_cleanup"]=={"enabled":False,"retention_hours":720}
+ db.execute("UPDATE agents SET workspace_cleanup_enabled=1,workspace_cleanup_retention_hours=1 WHERE agent_id='agt_x'"); db.commit()
+ assert send().json()["workspace_cleanup"]=={"enabled":True,"retention_hours":1}
+
+
+@pytest.mark.parametrize("hours",[0,721])
+def test_migration_183_refuses_out_of_range_hours_0019(migrated_sqlite_db,hours):
+ db=sqlite3.connect(migrated_sqlite_db(f"agent_cleanup_range_{hours}_0019.sqlite"))
+ agent(db,"agt_range")
+ with pytest.raises(sqlite3.IntegrityError):
+  db.execute("UPDATE agents SET workspace_cleanup_retention_hours=? WHERE agent_id='agt_range'",[hours])
+
+
+def test_migrations_183_184_have_three_dialect_parity_0019():
+ for name,needles in (("183_agent_workspace_cleanup.sql",("workspace_cleanup_enabled","workspace_cleanup_retention_hours","default 24","between 1 and 720")),
+                      ("184_agent_soft_delete.sql",("add column deleted_at",))):
+  for d in ("sqlite","mysql","postgres"):
+   text=(MIG/d/name).read_text(encoding="utf-8").lower()
+   assert all(n in text for n in needles),(d,name)
+   assert "not null default" in text or name.startswith("184")

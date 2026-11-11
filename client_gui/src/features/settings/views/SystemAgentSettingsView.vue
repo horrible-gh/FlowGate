@@ -29,8 +29,8 @@
                 </div>
                 <div class="agent-actions">
                   <Button variant="ghost" class="agent-icon" :disabled="busy" :title="t('gui.agent_screen.edit')" :aria-label="t('gui.agent_screen.edit_name', { name: row.name })" :data-edit-agent="row.agent_id" @click="select(row)"><SettingsIcon name="edit" size="sm" /></Button>
-                  <span :title="row.has_registration_history ? t('gui.settings.agents.delete_protected_short') : t('gui.settings.agents.delete_short')">
-                    <Button variant="ghost" class="agent-icon" :disabled="busy || row.has_registration_history" :aria-label="t('gui.agent_screen.delete_name', { name: row.name })" :data-delete-agent="row.agent_id" @click="askDelete(row)"><SettingsIcon name="trash" size="sm" /></Button>
+                  <span :title="t('gui.settings.agents.delete_short')">
+                    <Button variant="ghost" class="agent-icon" :disabled="busy" :aria-label="t('gui.agent_screen.delete_name', { name: row.name })" :data-delete-agent="row.agent_id" @click="askDelete(row)"><SettingsIcon name="trash" size="sm" /></Button>
                   </span>
                 </div>
               </div>
@@ -108,7 +108,7 @@
             </div>
           </form>
     </ModalShell>
-    <AgentEditDialog v-if="selected" :creating="false" :agent="selected" :name="mode === 'create' ? form.name : edit.name" :workdir="edit.workdir" :caps="mode === 'create' ? form.caps : edit.caps" :busy="busy" :can-save="mode === 'create' ? createCanSave : editCanSave" :name-problem="mode === 'create' ? createNameProblem : editNameProblem" :error="mode === 'create' ? formError : actionError" :saved="editSaved" :state-label="selected ? stateLabel(selected) : ''" @update:name="setName" @update:workdir="setWorkdir" @update:cap="setCap" @submit="mode === 'create' ? submitCreate() : saveEdit()" @close="closeEditor" />
+    <AgentEditDialog v-if="selected" :creating="false" :agent="selected" :name="mode === 'create' ? form.name : edit.name" :workdir="edit.workdir" :caps="mode === 'create' ? form.caps : edit.caps" :busy="busy" :can-save="mode === 'create' ? createCanSave : editCanSave" :name-problem="mode === 'create' ? createNameProblem : editNameProblem" :error="mode === 'create' ? formError : actionError" :saved="editSaved" :state-label="selected ? stateLabel(selected) : ''" :cleanup-enabled="edit.cleanup" :cleanup-hours="edit.hours" :cleanup-hours-problem="editHoursProblem" @update:name="setName" @update:workdir="setWorkdir" @update:cap="setCap" @update:cleanup-enabled="edit.cleanup = $event" @update:cleanup-hours="edit.hours = $event" @submit="mode === 'create' ? submitCreate() : saveEdit()" @close="closeEditor" />
     <AgentEnrollmentDialog v-if="enrollmentAgent" :agent="enrollmentAgent" :enrollment="enrollment" :busy="busy" :error="enrollmentError" :refresh-error="listError" :state-label="stateLabel(enrollmentAgent)" :expired="enrollmentExpired" @retry="retryEnrollment" @refresh="load" @close="closeEnrollment" @copied="onCopied" />
     <ModalShell :open="!!pending" size="sm" :aria-label="pending?.title" @close="closePending">
       <div v-if="pending" class="confirm" data-testid="agent-confirm" :data-action="pending.kind">
@@ -454,20 +454,35 @@ async function submitCreate() {
 }
 
 // ── 이름 · 실행 경로 · capability ──
-const edit = reactive<{ name: string; path: string; workdir: string; caps: AgentCapabilities }>({ name: '', path: '', workdir: '', caps: { ai_cli: false, ai_api: false, storage: false } })
+// flowgate.v02test.0019: workspace cleanup (the Agent deletes finished Job folders after these hours).
+const CLEANUP_HOURS_MIN = 1
+const CLEANUP_HOURS_MAX = 720
+const blankEdit = () => ({ name: '', path: '', workdir: '', cleanup: true, hours: '24', caps: { ai_cli: false, ai_api: false, storage: false } })
+const edit = reactive<{ name: string; path: string; workdir: string; cleanup: boolean; hours: string; caps: AgentCapabilities }>(blankEdit())
 const editSaved = ref(false)
 
 /** The confirmed values the form stands on: the server's last answer for the Agent in the form. */
-interface EditValues { name: string; path: string | null; workdir: string | null; caps: AgentCapabilities }
+interface EditValues { name: string; path: string | null; workdir: string | null; cleanup: boolean; hours: number; caps: AgentCapabilities }
 const editBase = ref<{ agentId: string; values: EditValues } | null>(null)
 
 function confirmedValues(a: SystemAgent): EditValues {
-  return { name: a.name, path: a.local_executable_path, workdir: a.remote_workdir ?? null, caps: { ...a.configured_capabilities } }
+  return { name: a.name, path: a.local_executable_path, workdir: a.remote_workdir ?? null,
+    cleanup: a.workspace_cleanup_enabled ?? true, hours: a.workspace_cleanup_retention_hours ?? 24, caps: { ...a.configured_capabilities } }
+}
+
+/** The typed hours as a whole number 1..720, or null when it is not one. */
+function typedHours(value: string): number | null {
+  const text = value.trim()
+  if (!/^\d+$/.test(text)) return null
+  const hours = Number(text)
+  return hours >= CLEANUP_HOURS_MIN && hours <= CLEANUP_HOURS_MAX ? hours : null
 }
 
 const nameTouched = (base: EditValues) => edit.name.trim() !== base.name
 const pathTouched = (base: EditValues) => (edit.path.trim() || null) !== base.path
 const workdirTouched = (base: EditValues) => (edit.workdir.trim() || null) !== base.workdir
+const cleanupTouched = (base: EditValues) => edit.cleanup !== base.cleanup
+const hoursTouched = (base: EditValues) => edit.hours.trim() !== String(base.hours)
 const capTouched = (base: EditValues, cap: AgentCapability) => edit.caps[cap] !== base.caps[cap]
 
 /** Which inputs differ from the confirmed values (marked as unsaved on screen). */
@@ -490,16 +505,15 @@ function syncEdit() {
   edit.name = values.name
   edit.path = values.path ?? ''
   edit.workdir = values.workdir ?? ''
+  edit.cleanup = values.cleanup
+  edit.hours = String(values.hours)
   edit.caps = { ...values.caps }
 }
 
 /** 저장하지 않고 나가기: the typed values are thrown away. */
 function discardEdit() {
   editBase.value = null
-  edit.name = ''
-  edit.path = ''
-  edit.workdir = ''
-  edit.caps = { ai_cli: false, ai_api: false, storage: false }
+  Object.assign(edit, blankEdit())
 }
 
 /**
@@ -517,6 +531,8 @@ function rebaseEdit(a: SystemAgent) {
   if (!nameTouched(base.values)) edit.name = fresh.name
   if (!pathTouched(base.values)) edit.path = fresh.path ?? ''
   if (!workdirTouched(base.values)) edit.workdir = fresh.workdir ?? ''
+  if (!cleanupTouched(base.values)) edit.cleanup = fresh.cleanup
+  if (!hoursTouched(base.values)) edit.hours = String(fresh.hours)
   for (const cap of CAPS) {
     if (!capTouched(base.values, cap)) edit.caps[cap] = fresh.caps[cap]
   }
@@ -531,13 +547,21 @@ const editChanges = computed<SystemAgentChanges>(() => {
   if (!a || !base || base.agentId !== a.agent_id) return changes
   if (nameTouched(base.values)) changes.name = edit.name.trim()
   if (workdirTouched(base.values)) changes.remote_workdir = edit.workdir.trim() || null
+  if (cleanupTouched(base.values)) changes.workspace_cleanup_enabled = edit.cleanup
+  const hours = typedHours(edit.hours)
+  if (hoursTouched(base.values) && hours !== null && hours !== base.values.hours) changes.workspace_cleanup_retention_hours = hours
   if (CAPS.some((cap) => capTouched(base.values, cap))) changes.configured_capabilities = { ...edit.caps }
   return changes
 })
 
 const editDirty = computed(() => Object.keys(editChanges.value).length > 0)
 const editNameProblem = computed(() => (touched.value.name ? nameProblem(edit.name) : ''))
-const editCanSave = computed(() => editDirty.value && !editNameProblem.value && !busy.value)
+const editHoursProblem = computed(() => {
+  const base = editBase.value?.values
+  if (!base || !hoursTouched(base) || typedHours(edit.hours) !== null) return ''
+  return t('gui.settings.agents.errors.retention_hours_range', { min: CLEANUP_HOURS_MIN, max: CLEANUP_HOURS_MAX })
+})
+const editCanSave = computed(() => editDirty.value && !editNameProblem.value && !editHoursProblem.value && !busy.value)
 
 /** The Agent shows every change that was asked for. */
 function applied(a: SystemAgent, changes: SystemAgentChanges): boolean {
@@ -545,6 +569,8 @@ function applied(a: SystemAgent, changes: SystemAgentChanges): boolean {
     && (changes.enabled === undefined || a.enabled === changes.enabled)
     && (changes.local_executable_path === undefined || a.local_executable_path === changes.local_executable_path)
     && (changes.remote_workdir === undefined || (a.remote_workdir ?? null) === changes.remote_workdir)
+    && (changes.workspace_cleanup_enabled === undefined || a.workspace_cleanup_enabled === changes.workspace_cleanup_enabled)
+    && (changes.workspace_cleanup_retention_hours === undefined || a.workspace_cleanup_retention_hours === changes.workspace_cleanup_retention_hours)
     && (changes.configured_capabilities === undefined
       || CAPS.every((cap) => a.configured_capabilities[cap] === changes.configured_capabilities![cap]))
 }
@@ -635,7 +661,7 @@ async function runPending() {
 }
 
 function askDelete(a: SystemAgent) {
-  if (!a || busy.value || a.has_registration_history) return
+  if (!a || busy.value) return
   pending.value = {
     kind: 'delete',
     icon: 'trash',
@@ -643,7 +669,7 @@ function askDelete(a: SystemAgent) {
     title: `${a.name} · ${t('gui.settings.agents.delete')}`,
     effects: [
       t('gui.settings.agents.effects.delete_removes'),
-      t('gui.settings.agents.effects.delete_unregistered'),
+      t('gui.settings.agents.effects.delete_keeps_history'),
     ],
     label: t('gui.settings.agents.delete'),
     run: async (at) => {
@@ -754,7 +780,8 @@ function onFocus() {
 function onVisibility() { if (document.visibilityState !== 'hidden') onFocus() }
 
 // ── 미저장 이탈 보호 ──
-const formDirty = computed(() => (mode.value === 'create' ? createDirty.value : editDirty.value))
+// flowgate.v02test.0019: hours typed but not valid is still unsaved input.
+const formDirty = computed(() => (mode.value === 'create' ? createDirty.value : editDirty.value || !!editHoursProblem.value))
 const { open: leaveOpen, answer: answerLeave, ask } = useUnsavedLeaveGuard(() => formDirty.value || saving.value)
 
 /** 개요 › 확인 필요 opens one Agent here with ?agent=<id>; the query is dropped once it is read. */

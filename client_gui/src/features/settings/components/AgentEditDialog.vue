@@ -25,6 +25,16 @@
         <label for="agent-dialog-workdir">{{ t('gui.settings.agents.fields.remote_workdir') }}</label>
         <Input id="agent-dialog-workdir" :model-value="workdir" :disabled="busy" autocomplete="off" data-testid="edit-remote-workdir" @update:model-value="emit('update:workdir', $event)" />
       </div>
+      <div v-if="agent && !creating && agent.location === 'remote'" class="agent-form-group" data-testid="edit-workspace-cleanup">
+        <label class="agent-check-row">
+          <input type="checkbox" :checked="cleanupEnabled" :disabled="busy" data-testid="edit-cleanup-enabled" @change="emit('update:cleanupEnabled', ($event.target as HTMLInputElement).checked)" />
+          <span><strong>{{ t('gui.settings.agents.fields.workspace_cleanup') }}</strong></span>
+        </label>
+        <label for="agent-dialog-retention">{{ t('gui.settings.agents.fields.workspace_cleanup_hours') }}</label>
+        <Input id="agent-dialog-retention" type="number" min="1" max="720" step="1" inputmode="numeric" :model-value="cleanupHours" :disabled="busy" :invalid="!!cleanupHoursProblem" data-testid="edit-cleanup-hours" @update:model-value="emit('update:cleanupHours', $event)" />
+        <small v-if="cleanupHoursProblem" class="fgs-error" data-testid="edit-cleanup-hours-invalid">{{ cleanupHoursProblem }}</small>
+        <small v-else>{{ t('gui.settings.agents.fields.workspace_cleanup_hours_hint') }}</small>
+      </div>
       <p v-if="error" class="fgs-error" role="alert" :data-testid="creating ? 'agent-form-error' : 'agent-action-error'">{{ error }}</p>
       <p v-if="saved" role="status" data-testid="edit-saved">{{ t('gui.agent_screen.saved') }}</p>
     </form>
@@ -46,9 +56,12 @@ import type { AgentCapabilities, SystemAgent } from '../types'
 const props = defineProps<{
   creating: boolean; agent: SystemAgent | null; name: string; workdir: string; caps: AgentCapabilities
   busy: boolean; canSave: boolean; nameProblem: string; error: string; saved: boolean; stateLabel: string
+  /** flowgate.v02test.0019: workspace cleanup policy of a remote Agent; hours as typed. */
+  cleanupEnabled?: boolean; cleanupHours?: string; cleanupHoursProblem?: string
 }>()
 const emit = defineEmits<{
   'update:name': [name: string]; 'update:workdir': [workdir: string]; 'update:cap': [cap: 'ai_cli' | 'ai_api', value: boolean]
+  'update:cleanupEnabled': [value: boolean]; 'update:cleanupHours': [value: string]
   submit: []; close: []
 }>()
 const { t } = useI18n()

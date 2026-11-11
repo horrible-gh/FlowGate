@@ -2730,6 +2730,9 @@ export default {
         platform: 'OS / architecture',
         agent_id: 'Agent ID',
         remote_workdir: 'Remote working directory',
+        workspace_cleanup: 'Clean up job folders automatically',
+        workspace_cleanup_hours: 'Keep after completion (hours)',
+        workspace_cleanup_hours_hint: '1–720 hours',
       },
       connection: {
         agent_pull: 'Agent Pull',
@@ -2926,8 +2929,8 @@ export default {
         revoke_pending: 'A pending enrollment token is invalidated as well.',
         revoke_reenroll: 'To use it again, issue a new enrollment token and enroll again.',
         revoke_history: 'The registration history stays, so this agent can no longer be deleted.',
-        delete_removes: 'This agent and its pending enrollment token are removed from the list.',
-        delete_unregistered: 'Only an agent that was never registered can be deleted.',
+        delete_removes: 'Removed from the list and credentials revoked.',
+        delete_keeps_history: 'Registration and job history are kept.',
       },
       errors: {
         load_failed: 'Could not load the agents.',
@@ -2937,6 +2940,7 @@ export default {
         name_too_long: 'The name can be at most {max} characters.',
         unconfirmed: 'The result of the request could not be confirmed. The list was reloaded.',
         reread_mismatch: 'The reloaded agent state differs from what was requested.',
+        retention_hours_range: 'Enter a whole number of hours from {min} to {max}.',
       },
     },
     system_nav: {
@@ -3244,6 +3248,7 @@ export default {
       agent_not_found: 'The agent was not found.',
       enrollment_not_allowed: 'Only an enabled remote agent can get an enrollment token.',
       agent_has_registration_history: 'An agent with registration history cannot be deleted.',
+      agent_has_active_jobs: 'This agent has jobs in progress. Delete it after they finish.',
       temporarily_unavailable: 'The Agent secret (FLOWGATE_AGENT_PEPPER) is not configured on the server. Retrying will not help: ask the server administrator to check the secret settings and restart the server.',
       validation_failed: 'The input is not valid.',
     },

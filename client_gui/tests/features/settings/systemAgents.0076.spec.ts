@@ -29,6 +29,11 @@ interface Rec {
   connection_mode: 'agent_pull' | null
   local_executable_path: string | null
   remote_workdir?: string | null
+  /** flowgate.v02test.0019: workspace cleanup policy (server default ON / 24 h). */
+  cleanup?: boolean
+  hours?: number
+  /** flowgate.v02test.0019: a CLAIMED/STARTED Job leased by it, or a NEW Job only it can take. */
+  activeJobs?: boolean
   configured: Caps
   reported: Caps | null
   credentialActive: boolean
@@ -79,6 +84,8 @@ vi.mock('@shared/api', async (importOriginal) => {
     connection_mode: r.connection_mode,
     local_executable_path: r.local_executable_path,
     remote_workdir: r.remote_workdir ?? null,
+    workspace_cleanup_enabled: r.cleanup ?? true,
+    workspace_cleanup_retention_hours: r.hours ?? 24,
     configured_capabilities: { ...r.configured },
     reported_capabilities: r.reported ? { ...r.reported } : { ai_cli: null, ai_api: null, storage: null },
     effective_capabilities: {
@@ -148,7 +155,8 @@ vi.mock('@shared/api', async (importOriginal) => {
   }
 
   function patch(id: string, body: Record<string, unknown>) {
-    const fields = ['name', 'enabled', 'location', 'connection_mode', 'local_executable_path', 'remote_workdir', 'configured_capabilities']
+    const fields = ['name', 'enabled', 'location', 'connection_mode', 'local_executable_path', 'remote_workdir',
+      'workspace_cleanup_enabled', 'workspace_cleanup_retention_hours', 'configured_capabilities']
     const extra = Object.keys(body).filter((k) => !fields.includes(k))
     if (extra.length) throw invalid(extra[0], 'extra_forbidden')
     if (!Object.keys(body).length) throw invalid('body', 'required')
@@ -164,7 +172,14 @@ vi.mock('@shared/api', async (importOriginal) => {
     r.connection_mode = mode as Rec['connection_mode']
     r.local_executable_path = path as string | null
     if ('configured_capabilities' in body) r.configured = caps(body.configured_capabilities)
+    if ('workspace_cleanup_enabled' in body && typeof body.workspace_cleanup_enabled !== 'boolean') throw invalid('workspace_cleanup_enabled', 'invalid_type')
+    const hours = body.workspace_cleanup_retention_hours
+    if ('workspace_cleanup_retention_hours' in body && (typeof hours !== 'number' || !Number.isInteger(hours) || hours < 1 || hours > 720)) {
+      throw invalid('workspace_cleanup_retention_hours', 'out_of_range')
+    }
     if ('remote_workdir' in body) r.remote_workdir = (String(body.remote_workdir ?? '').trim() || null)
+    if ('workspace_cleanup_enabled' in body) r.cleanup = body.workspace_cleanup_enabled as boolean
+    if ('workspace_cleanup_retention_hours' in body) r.hours = hours as number
     return { data: detail(r) }
   }
 
@@ -201,7 +216,8 @@ vi.mock('@shared/api', async (importOriginal) => {
       if (m[1] === 'GET') return { data: detail(find(id)) }
       if (m[1] === 'PATCH') return patch(id, body as Record<string, unknown>)
       const r = find(id)
-      if (r.credentialHistory) throw agentError(409, 'agent_has_registration_history', 'Registered Agent cannot be deleted')
+      // flowgate.v02test.0019: registration history no longer blocks deleting; Jobs in progress do.
+      if (r.activeJobs) throw agentError(409, 'agent_has_active_jobs', 'Agent has Jobs in progress; delete it after they finish')
       net.agents = net.agents.filter((a) => a !== r)
       return { status: 204, data: '' }
     }
@@ -535,6 +551,45 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     expect(w.find('[data-testid="edit-remote-workdir"]').exists()).toBe(false)
   })
 
+  it('flowgate.v02test.0019: 작업 폴더 자동 정리 ON/OFF and 보관 시간 are shown, sent as changed fields only and read back', async () => {
+    const w = await open('/settings/system/agents')
+    await pick(w, 'agt_a_online')
+    const group = w.get('[data-testid="edit-workspace-cleanup"]')
+    expect(group.text()).toContain('작업 폴더 자동 정리')
+    expect(group.text()).toContain('완료 후 보관 시간(시간)')
+    expect((w.get('[data-testid="edit-cleanup-enabled"]').element as HTMLInputElement).checked).toBe(true)
+    expect((w.get('[data-testid="edit-cleanup-hours"]').element as HTMLInputElement).value).toBe('24')
+    await type(w, '[data-testid="edit-cleanup-hours"]', '48')
+    await click(w, '[data-testid="edit-save"]')
+    expect(bodiesOf(/^PATCH /)).toEqual([{ workspace_cleanup_retention_hours: 48 }])
+    expect(server('agt_a_online')!.hours).toBe(48)
+    expect(server('agt_a_online')!.cleanup).toBeUndefined()   // only the changed field was sent
+    await pick(w, 'agt_a_online')
+    await w.get('[data-testid="edit-cleanup-enabled"]').setValue(false)
+    await click(w, '[data-testid="edit-save"]')
+    expect(bodiesOf(/^PATCH /).at(-1)).toEqual({ workspace_cleanup_enabled: false })
+    expect(server('agt_a_online')).toMatchObject({ cleanup: false, hours: 48 })
+    await pick(w, 'agt_a_online')
+    expect((w.get('[data-testid="edit-cleanup-enabled"]').element as HTMLInputElement).checked).toBe(false)
+    expect((w.get('[data-testid="edit-cleanup-hours"]').element as HTMLInputElement).value).toBe('48')
+    await pick(w, 'agt_f_local')
+    expect(w.find('[data-testid="edit-workspace-cleanup"]').exists()).toBe(false)
+  })
+
+  it.each(['0', '721', '1.5', ''])('flowgate.v02test.0019: 보관 시간 %j is refused on screen and nothing is sent', async (value) => {
+    const w = await open('/settings/system/agents')
+    await pick(w, 'agt_a_online')
+    await type(w, '[data-testid="edit-cleanup-hours"]', value)
+    expect(w.get('[data-testid="edit-cleanup-hours-invalid"]').text()).toBe('보관 시간은 1~720 사이의 정수로 입력하세요.')
+    expect(w.get('[data-testid="edit-save"]').attributes('disabled')).toBeDefined()
+    await click(w, '[data-testid="edit-save"]')
+    expect(writes()).toEqual([])
+    await type(w, '[data-testid="edit-cleanup-hours"]', '720')
+    expect(w.find('[data-testid="edit-cleanup-hours-invalid"]').exists()).toBe(false)
+    await click(w, '[data-testid="edit-save"]')
+    expect(bodiesOf(/^PATCH /)).toEqual([{ workspace_cleanup_retention_hours: 720 }])
+  })
+
   it('empty/long names send nothing; create 403 keeps the form and input without reporting success', async () => {
     const w = await open('/settings/system/agents')
     await click(w, '[data-testid="agent-new"]')
@@ -759,18 +814,29 @@ describe('V17 — row deletion and failed mutation confirmation', () => {
     expect(net.requests.at(-1)).toBe('GET /api/v1/system/agents')
   })
 
-  it('history disables delete with a short tooltip; stale 409 preserves the row and shows an error', async () => {
+  it('flowgate.v02test.0019: registration history no longer disables delete; a registered row is deleted', async () => {
     const w = await open('/settings/system/agents')
     for (const id of ['agt_a_online','agt_b_offline','agt_c_incompat','agt_d_revoked']) {
-      expect(w.get(`[data-delete-agent="${id}"]`).attributes('disabled')).toBeDefined()
-      expect(w.get(`[data-delete-agent="${id}"]`).element.parentElement?.title).toBe('등록 이력이 있어 삭제할 수 없습니다')
+      expect(w.get(`[data-delete-agent="${id}"]`).attributes('disabled')).toBeUndefined()
+      expect(w.get(`[data-delete-agent="${id}"]`).element.parentElement?.title).toBe('삭제')
     }
-    Object.assign(server('agt_e_new')!, { credentialActive: true, credentialHistory: true })
-    await deleteRow(w)
+    await deleteRow(w, 'agt_d_revoked')
+    expect(w.get('[data-testid="agent-confirm"]').text()).toContain('등록·실행 이력은 남습니다')
     await click(w, '[data-testid="agent-confirm-ok"]')
-    expect(w.get('[data-testid="agent-action-error"]').text()).toBe('등록 이력이 있는 에이전트는 삭제할 수 없습니다.')
-    expect(w.get('[data-delete-agent="agt_e_new"]').attributes('disabled')).toBeDefined()
-    expect(server('agt_e_new')).toBeDefined()
+    expect(writes()).toEqual(['DELETE /api/v1/system/agents/agt_d_revoked'])
+    expect(w.find('[data-agent="agt_d_revoked"]').exists()).toBe(false)
+    expect(toastText(w)).toBeTruthy()
+  })
+
+  it('flowgate.v02test.0019: 409 agent_has_active_jobs keeps the row and says to delete after the Jobs finish', async () => {
+    const w = await open('/settings/system/agents')
+    Object.assign(server('agt_a_online')!, { activeJobs: true })
+    await deleteRow(w, 'agt_a_online')
+    await click(w, '[data-testid="agent-confirm-ok"]')
+    expect(w.get('[data-testid="agent-action-error"]').text()).toBe('진행 중인 작업이 있습니다. 작업이 끝난 뒤 삭제하세요.')
+    expect(w.find('[data-agent="agt_a_online"]').exists()).toBe(true)
+    expect(w.get('[data-delete-agent="agt_a_online"]').attributes('disabled')).toBeUndefined()
+    expect(server('agt_a_online')).toBeDefined()
     expect(toastText(w)).toBe('')
   })
 
