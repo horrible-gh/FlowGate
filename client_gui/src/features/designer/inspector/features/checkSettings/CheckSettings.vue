@@ -165,11 +165,13 @@ const off = computed(() => safetyLock.value)
 
 const reasonText = computed(() => (safetyLock.value && shown.value.reason ? t(k(shown.value.reason)) : null))
 
-const targetOptions = computed(() => shown.value.targetOptions.map(value => ({ value, label: value })))
+// flowgate.v02test.0020: names offered without a confirmed list are labelled unverified (the server judges them on save).
+const targetOptions = computed(() => shown.value.targetOptions.map(value => ({ value,
+  label: shown.value.optionsSource === 'unverified' ? t(k('target.unverified_option'), { name: value }) : value })))
 /** The shown name is no option (unavailable, or nothing to show): it is drawn over the control, never added to it. */
 const missingTarget = computed(() => !shown.value.targetOptions.includes(shown.value.target ?? ''))
 const targetFailure = computed(() => failureOf('merge_target_branch') ?? (shown.value.targetError ? t(k(shown.value.targetError)) : null))
-/** Only a name of the shown list (live, else the kept confirmed one) is sent; the server judges it again on PATCH. */
+/** Only a name of the shown list (live, else the kept confirmed one, else the unverified stored / inherited names) is sent; the server judges it again on PATCH. */
 function onTarget(value: string) {
   if (shown.value.scope !== 'merge' || !shown.value.targetOptions.includes(value)) return
   onChange('merge_target_branch', value)

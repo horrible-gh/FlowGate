@@ -36,19 +36,33 @@ class GitBudget:
             self.expired = True
         return left
 
+    def cancel(self) -> None:
+        """Spend what is left now (flowgate.v02test.0020): no further git process starts under this budget; a call
+        already running keeps the timeout it started with."""
+        self.deadline = time.monotonic()
+        self.expired = True
+
 
 _BUDGET: contextvars.ContextVar[Optional[GitBudget]] = contextvars.ContextVar("flowgate_git_budget", default=None)
 
 
 @contextmanager
-def git_budget(seconds: float) -> Iterator[GitBudget]:
-    """Bound every ``_run_git`` of this context (thread) to one shared budget. Nested: the inner one only."""
-    budget = GitBudget(seconds)
+def bind_git_budget(budget: GitBudget) -> Iterator[GitBudget]:
+    """Bound every ``_run_git`` of this context (thread) to an existing budget -- one its creator may still
+    ``cancel`` from another thread (flowgate.v02test.0020: a background candidate computation). Nested: the inner one
+    only."""
     token = _BUDGET.set(budget)
     try:
         yield budget
     finally:
         _BUDGET.reset(token)
+
+
+@contextmanager
+def git_budget(seconds: float) -> Iterator[GitBudget]:
+    """Bound every ``_run_git`` of this context (thread) to one shared budget. Nested: the inner one only."""
+    with bind_git_budget(GitBudget(seconds)) as budget:
+        yield budget
 
 # flowgate.default.0607 T0004 §3.1 (NR0003 §5/§9.6): git commands that write objects
 # (merge, commit, fetch) end by running auto maintenance. Git for Windows cannot

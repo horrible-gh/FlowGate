@@ -1095,9 +1095,9 @@ def git_flow(env, tmp_path, monkeypatch, git_repositories):
     _git_cmd(["branch", "feature/v0.2.0", "origin/feature/v0.2.0"], base)
     _git_cmd(["branch", "old", "origin/old"], base)
     _git_cmd(["branch", "release/local", "main"], base)
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     yield {"base": base, "own": db_git.get_state(FB)["branch"], "other": db_git.get_state(FA)["branch"]}
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     svc.delete_config("flowgate")
 
 
@@ -1228,7 +1228,7 @@ def test_0148_refresh_and_target_patch_discard_negative_cache(env, git_flow, mon
 
     g = _gate_key(env)
     setting(env, FB, g, "merge_target_branch", "main")
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     with monkeypatch.context() as m:
         m.setattr(mt, "_compute_snapshot", lambda basis, *_a: mt._failed_snapshot(
             mt.CHECK_STATUS_TIMEOUT, mt.CHECK_OPTIONS_TIMEOUT, default_branch=basis.work_base_ref, basis=None))

@@ -54,7 +54,6 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(mt, "raise_if_base_checkout_off_branch", lambda *_a: None)
     monkeypatch.setattr(group_work_base, "local_branch_refs", lambda _root: dict(REFS))
     monkeypatch.setattr(mt, "check_scope_floor", lambda _basis: "f" * 40)
-    monkeypatch.setattr(mt, "_branches_containing", lambda _root, _sha: set(REFS))
     monkeypatch.setattr(mt, "_base_dirty", lambda _root: False)
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda _pid: [])
     monkeypatch.setattr(git_service, "resolve_group_work_base_ref", lambda *_a, **_k: "main")
@@ -78,9 +77,10 @@ def env(monkeypatch, tmp_path):
         return [dict(s) for s in state["sessions"]]
 
     monkeypatch.setattr(git_service.db_git, "list_open_sessions", list_open_sessions)
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     yield mt, state
-    mt.invalidate_check_targets()
+    assert mt.settle_check_targets(10)
+    mt.reset_check_targets()
 
 
 def test_0158_one_view_reads_the_open_attempts_once_and_judges_each_name_from_it(env):

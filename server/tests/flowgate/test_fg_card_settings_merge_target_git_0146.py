@@ -27,8 +27,9 @@ def test_the_merge_target_branch_is_saved_only_for_a_target_the_judgement_allows
     work_base_before = db_groups.get_by_id(FB).get("work_base_ref")
     g = _gate_key(env)
     body = get_settings(env, FB, g)
-    # only the names the judgement passes: not the groups' own slots, not a remote, not a branch lacking history
-    assert body["merge_target_options"] == ["feature/v0.2.0", "main", "release/local"], body["merge_target_state"]
+    # not the groups' own slots, not a remote. flowgate.v02test.0020 rev2: a branch lacking the work base history
+    # (``old``) is listed -- the list no longer reads the scope floor -- and its save is refused below
+    assert body["merge_target_options"] == ["feature/v0.2.0", "main", "old", "release/local"], body["merge_target_state"]
     assert body["default_target_branch"] == "main"
     state = body["merge_target_state"]
     assert (state["status"], state["code"], state["reason"]) == ("ok", None, None)
@@ -46,9 +47,9 @@ def test_the_merge_target_branch_is_saved_only_for_a_target_the_judgement_allows
         assert refused["error"]["code"] == code, (name, refused["error"])
         assert "\\" not in json.dumps(refused["error"]["params"])                # no worktree path
     assert stored_rows(env, FB, g) == {} and get_settings(env, FB, g)["settings_version"] == 0
-    # every candidate is a target the save allows (one judgement), whatever the merge mode
+    # every other candidate is a target the save allows (one judgement), whatever the merge mode
     setting(env, FB, g, "merge_mode", "commit")
-    for name in reversed(body["merge_target_options"]):
+    for name in [n for n in reversed(body["merge_target_options"]) if n != "old"]:
         saved = setting(env, FB, g, "merge_target_branch", name)
         assert saved["fields"]["merge_target_branch"] == {"value": name, "stored": True, "default": None,
                                                           "choices": None}
@@ -61,7 +62,7 @@ def test_the_merge_target_branch_is_saved_only_for_a_target_the_judgement_allows
     assert {field for (_key, field) in stored_rows(env, FB, g)} == {"merge_mode", "merge_target_branch"}
     assert db_groups.get_by_id(FB).get("work_base_ref") == work_base_before
     # the stored target disappears: its name stays, it is no candidate and the state says why (the refresh read
-    # option skips the at most 5 s old cache); the save judges the name again, never from the cache
+    # option skips the cache); the save judges the name again, never from the cache
     for name, status, code in (("release/local", 404, "merge_target_not_found"),
                                ("feature/v0.2.0", 409, "merge_target_remote_only")):   # its origin copy is left
         setting(env, FB, g, "merge_target_branch", name)

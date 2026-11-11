@@ -18,6 +18,12 @@ type Request = { runId: string; decision: RunGateDecision; comment?: string; int
 // server answer: the live lookup status stays as read, PATCH and the confirm preflight still judge the branch.
 export const MERGE_TARGET_CACHE_MS = 5 * 60 * 1000
 const CONFIRMED_LOOKUPS = ['ok', 'empty']
+// flowgate.v02test.0020: after a lookup timeout / failure the card reads its settings again by itself, a few times with
+// growing waits, until a confirmed list arrives (the refresh button stays for more). These are plain reads: on the
+// server they pick up / join the candidate computation still running in the background instead of restarting it, and
+// they never lock or change anything. Only while the Inspector shows the card.
+export const TARGET_RETRY_DELAYS_MS: readonly number[] = [4000, 8000, 16000, 32000]
+const RETRY_LOOKUPS = ['timeout', 'failed']
 // A PATCH of merge_target_branch refused because the target itself is unusable drops the kept list.
 const TARGET_INVALID_CODES = ['merge_target_not_found', 'merge_target_invalid', 'target_branch_invalid', 'merge_target_remote_only',
   'merge_target_internal_slot', 'merge_target_same_branch', 'merge_target_owner_mismatch', 'merge_target_incoming_work_base',
@@ -89,6 +95,9 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
   let recoverAgain = false
   let recoverKeeps = NO_RIGHTS
   let cacheTimer: ReturnType<typeof setTimeout> | null = null
+  /** flowgate.v02test.0020: the pending automatic re-read after a timeout / failure, and how many were scheduled. */
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let retries = 0
   // 0006-T §2 / §3.6: bumped when the Inspector leaves this card. An answer to a GET / PATCH sent before that may still
   // set the values it carries, but it can no longer keep candidates: only a request sent after the return can.
   let targetEpoch = 0
@@ -132,6 +141,26 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
   function leave() {
     targetEpoch++
     dropTargets()
+    stopTargetRetry()
+  }
+  function stopTargetRetry() {
+    if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null }
+    retries = 0
+  }
+  /**
+   * flowgate.v02test.0020: one answer that carries the lookup state (a GET, or a PATCH answered in full) schedules the
+   * next automatic re-read after a timeout / failure (TARGET_RETRY_DELAYS_MS, then none) or ends them once the lookup
+   * is confirmed or Git itself refused.
+   */
+  function noteLookup(saved: SettingsNode) {
+    const lookup = saved.mergeTargetState?.status
+    if (!lookup) return
+    if (!RETRY_LOOKUPS.includes(lookup)) { stopTargetRetry(); return }
+    if (retryTimer !== null || !shown() || retries >= TARGET_RETRY_DELAYS_MS.length) return
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      if (shown()) void reload()
+    }, TARGET_RETRY_DELAYS_MS[retries++])
   }
   /** Keeps / replaces / drops the confirmed candidates by one current answer (a GET of this epoch or a PATCH). */
   function noteTargets(saved: SettingsNode) {
@@ -191,7 +220,14 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
         // Keep each confirmed read even when the other request fails; actions stay locked.
         if (current.status === 'fulfilled') run.value = current.value
         // A read sent before the Inspector left this card keeps no candidates (sent before the switch).
-        if (saved.status === 'fulfilled') { settings.value = saved.value; if (saved.value.mergeTargetState !== undefined) { viewAt = Date.now(); viewEpoch = keeps }; if (keeps === targetEpoch) noteTargets(saved.value) }
+        if (saved.status === 'fulfilled') {
+          settings.value = saved.value
+          if (saved.value.mergeTargetState !== undefined) { viewAt = Date.now(); viewEpoch = keeps }
+          if (keeps === targetEpoch) noteTargets(saved.value)
+          // A pressed refresh starts the automatic re-reads over (flowgate.v02test.0020).
+          if (refreshMergeTargets && retryTimer === null) retries = 0
+          noteLookup(saved.value)
+        }
         if (saved.status === 'rejected') throw saved.reason
         if (current.status === 'rejected') throw current.reason
         error.value = null
@@ -310,6 +346,7 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
         // while it was on its way: then its value still holds, but it keeps no candidates.
         if (saved.mergeTargetState !== undefined) { viewAt = Date.now(); viewEpoch = keeps }
         if (keeps === targetEpoch) noteTargets(saved)
+        noteLookup(saved)
       }
       decisionError.value = null
       setFailure(field, null)
