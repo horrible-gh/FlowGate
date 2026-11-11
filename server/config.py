@@ -164,6 +164,12 @@ class Settings(BaseSettings):
     # values fail fast rather than risking bearer-token delivery to another origin.
     FLOWGATE_AGENT_API_BASE: str | None = None
 
+    # flowgate.v02test.0017 CH0002: the OPERATOR-facing origin (scheme://host[:port]) for AI starts that have no
+    # HTTP request -- Graph node starts, card reviews / Q answers, recovery jobs. A remote Agent connects to it, so it
+    # must be reachable from the Agent PC (never loopback). When unset, such a start uses the run user's latest
+    # non-loopback request origin (as chat does), else loopback. Not the agent base above.
+    FLOWGATE_OPERATOR_API_BASE: str | None = None
+
     @field_validator("FLOWGATE_INBOX_CONTENT_MAX", mode="before")
     @classmethod
     def _blank_int_uses_default(cls, v):

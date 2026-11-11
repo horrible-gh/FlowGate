@@ -676,7 +676,7 @@ def ask_responder(anchor_doc_id: str, item_id: int, issued_to: str, provider_id:
         return None
     item = q_answer_invoke_service.resolve_item(anchor_doc_id, item_id)
     return q_answer_invoke_service.dispatch_answer_run(
-        doc={**doc, "doc_id": anchor_doc_id}, item=item, issued_to=issued_to, api_base_url=api_base_url(),
+        doc={**doc, "doc_id": anchor_doc_id}, item=item, issued_to=issued_to, api_base_url=api_base_url(issued_to),
         provider_id=provider_id, provider_source=provider_source, actor_user_id=issued_to,
         responder_candidates=[], default_tail=default_tail, invocation_origin=invocation_origin)
 
@@ -941,14 +941,14 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
     def _issue(ai_run_id: Optional[str] = None) -> dict:
         if getattr(_issue, "loop_stage", None) == ai_invoke_service.REWORK_HOP_KIND:
             issued = invoke_mention_service.issue_rework_request(
-                doc_id=doc_id, issued_to=issued_to, api_base_url=api_base_url(), locale=LOCALE, ai_run_id=ai_run_id)
+                doc_id=doc_id, issued_to=issued_to, api_base_url=api_base_url(issued_to), locale=LOCALE, ai_run_id=ai_run_id)
             from modules.flow_gate.services import graph_execution_hooks
             live = ai_invoke_service.get_run_record(ai_run_id) if ai_run_id else None
             graph_execution_hooks.call("map_token", (live or {}).get("graph_exec_id") or graph_exec_id, issued["token_id"])
             return {**issued, "mention": card_memo_hooks.prepend_memo_section(
                 issued.get("mention") or "", flow_id, node_key=node_key)}
         issued = workflow_decision_service.request_review(
-            doc_id=doc_id, issued_to=issued_to, api_base_url=api_base_url(), ref_doc_ids=None, locale=LOCALE,
+            doc_id=doc_id, issued_to=issued_to, api_base_url=api_base_url(issued_to), ref_doc_ids=None, locale=LOCALE,
             ai_run_id=ai_run_id)
         from modules.flow_gate.services import graph_execution_hooks
         live = ai_invoke_service.get_run_record(ai_run_id) if ai_run_id else None
@@ -974,7 +974,7 @@ def start_review_loop(project_id: Optional[str], flow_id: str, doc_id: str, issu
             project_id=project_id or "", module=_module_of(flow_id), group_id=flow_id, doc_ref=doc_id,
             action_scope="review", mode="single", continuation_target_seq=None, continuation_review_mode=False,
             continuation_instruction_mode=None, continuation_locale=None, issued_to=issued_to,
-            api_base_url=api_base_url(), mention_builder=lambda _raw, _scratch: None, issue_builder=_issue,
+            api_base_url=api_base_url(issued_to), mention_builder=lambda _raw, _scratch: None, issue_builder=_issue,
             document_review_loop=dict(loop),
         )
     except Exception as exc:  # noqa: BLE001 -- the result stays in review for a person
