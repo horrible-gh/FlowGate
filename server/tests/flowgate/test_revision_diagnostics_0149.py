@@ -10,9 +10,13 @@ from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.graph_workflow.store import definition_store, layout_store, run_store
 
 RUN = "run_precheck"
-CASES = ["review_only", "active_open", "active_pending", "mixed", "capped", "orphan_attempt",
-         "empty", "gate_rejected", "gate_recovery_reset_required", "jobs", "reservation", "jobs_and_reservation",
+# v02test.0018: a live open/review card (review_only, active_open) no longer refuses; only an active attempt outside
+# an open/review row does (ACTIVE).
+CASES = ["active_pending", "mixed", "capped", "orphan_attempt", "empty", "review_only", "active_open",
+         "gate_rejected", "gate_recovery_reset_required", "jobs", "reservation", "jobs_and_reservation",
          "protected", "reused", "policy", "allowed"]
+ACTIVE = CASES[:5]
+ALLOWED = ("review_only", "active_open", "allowed")
 
 
 def all_facts(env):
@@ -41,18 +45,21 @@ def seed(candidate, monkeypatch, case):
     gate = keys["tmp_g"]
     expected = {}
     if case == "review_only":
-        row(env, "K1", "review"); expected = {"K1": ("review", False)}
-    elif case in ("active_open", "active_pending"):
-        status = case.removeprefix("active_")
-        row(env, "K2", status); attempt(env, "K2"); expected = {"K2": (status, True)}
+        _sql(env["db"], "UPDATE graph_node_runs SET status='review' WHERE node_key=?", (gate,))
+    elif case == "active_open":
+        _sql(env["db"], "UPDATE graph_node_runs SET status='open' WHERE node_key=?", (gate,)); attempt(env, gate)
+    elif case == "active_pending":
+        row(env, "K2", "pending"); attempt(env, "K2"); expected = {"K2": ("pending", True)}
     elif case in ("mixed", "capped"):
+        # Live open/review rows (with or without an attempt) are no blockers; pending/orphan attempts are.
         row(env, "K1", "review"); row(env, "K2", "open"); attempt(env, "K2"); row(env, "K3", "open")
-        expected = {"K1": ("review", False), "K2": ("open", True), "K3": ("open", False)}
+        row(env, "K4", "pending"); attempt(env, "K4"); attempt(env, "K_orphan")
+        expected = {"K4": ("pending", True), "K_orphan": (None, True)}
         for key, status in [("excluded_done", "done"), ("excluded_pending", "pending")]:
             row(env, key, status); attempt(env, key, "ended")
         if case == "capped":
             for i in range(52):
-                key = f"extra_{i:02d}"; row(env, key, "review"); expected[key] = ("review", False)
+                key = f"extra_{i:02d}"; row(env, key, "pending"); attempt(env, key); expected[key] = ("pending", True)
     elif case == "orphan_attempt":
         attempt(env, "K_orphan"); expected = {"K_orphan": (None, True)}
     elif case == "empty":
@@ -95,12 +102,12 @@ def test_policy_baseline_and_http_parity(candidate, monkeypatch, case):
     before = all_facts(env)
     result = assess(env)
     assert all_facts(env) == before  # Evaluation alone must never reconcile/settle/write.
-    active = case in CASES[:7]
+    active = case in ACTIVE
     reason = "active_attempts" if active else "gate_jobs_in_progress" if case in ("jobs", "reservation", "jobs_and_reservation") else case if case.startswith("gate_") else None
     code = "graph_revision_migration_blocked" if reason else {"protected": "graph_node_protected", "reused": "graph_node_key_reused", "policy": "run_policy_undecided"}.get(case)
-    assert policy_tuple(result) == [case == "allowed", code, reason, 409 if code else None, 200]
+    assert policy_tuple(result) == [case in ALLOWED, code, reason, 409 if code else None, 200]
     print("POLICY_0149", case, json.dumps(policy_tuple(result)), "evaluation_facts_unchanged=true")
-    if case != "allowed":
+    if case not in ALLOWED:
         params = result["error"]["params"]
         if active:
             selected = sorted(expected)[:50]
@@ -133,9 +140,12 @@ def test_policy_baseline_and_http_parity(candidate, monkeypatch, case):
         response = env["client"].post(f"/api/v1/flows/{FA}/runs", json={"mode": "full"}, headers=_h())
         assert response.status_code == 201, response.text
         assert response.json()["run"]["revision_no"] == 2
+        if case in ("review_only", "active_open"):
+            kept = {"review_only": "review", "active_open": "open"}[case]
+            assert {r["node_key"]: r["status"] for r in run_store.node_runs(RUN)}[gate] == kept   # the live card stays
 
 
-@pytest.mark.parametrize("case", ["review_only", "active_pending", "mixed"])
+@pytest.mark.parametrize("case", ["active_pending", "mixed", "orphan_attempt"])
 def test_a3_a6_current_read_is_measured_separately(candidate, monkeypatch, case):
     env, _, _ = seed(candidate, monkeypatch, case)
     before = all_facts(env)

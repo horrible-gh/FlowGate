@@ -98,7 +98,8 @@ def test_original_attribution_ignores_foreign_run_and_explicit_review_completes_
         json={'draft_version':1,'base_revision_no':1},headers=_h())
     assert confirmed.status_code==201,confirmed.text
     pre=env['client'].get(f'/api/v1/flows/{FA}/runs/revision-adoption',headers=_h()).json()
-    assert pre['adoptable'] is False and pre['error']['params']['reason']=='active_attempts'
+    # v02test.0018: the card in review does not refuse the newer revision; it stays pinned until a command adopts it.
+    assert pre['adoptable'] is True and pre['target']=='revision'
     assert run_store.run_by_id(writer['run_id'])['revision_no']==1
     exec_id=request(orphan)
     rr=one(env,key,'result_review',1)

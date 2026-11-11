@@ -78,7 +78,8 @@ def test_latest_view_never_unlocks_an_active_run(candidate, status):
     assert facts(env) == before
 
 
-@pytest.mark.parametrize('reason', ['active_attempts', 'open', 'review', 'gate_rejected',
+# v02test.0018: open/review alone no longer refuses (test_revision_adoption_live_cards_v02test_0018).
+@pytest.mark.parametrize('reason', ['active_attempts', 'gate_rejected',
                                     'gate_recovery_reset_required', 'gate_jobs_in_progress',
                                     'reservation', 'run_policy_undecided', 'protected_input'])
 def test_confirmed_latest_precheck_matches_actual_command_without_false_adoptable(candidate, monkeypatch, reason):

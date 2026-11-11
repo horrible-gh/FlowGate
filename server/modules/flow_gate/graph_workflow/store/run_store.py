@@ -357,7 +357,7 @@ def has_active_attempts(run_id: str) -> bool:
 
 
 def active_attempt_node_keys(run_id: str) -> list[str]:
-    """Diagnostic keys only; has_active_attempts remains the adoption predicate."""
+    """Nodes with an active attempt. Revision adoption refuses those whose node row is not open/review."""
     return [r["node_key"] for r in _all(
         "SELECT DISTINCT node_key FROM graph_node_attempts WHERE run_id = ? AND status = 'active' ORDER BY node_key",
         [run_id])]

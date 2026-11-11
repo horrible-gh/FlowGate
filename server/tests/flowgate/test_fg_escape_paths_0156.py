@@ -118,7 +118,7 @@ def test_d6_assigned_attempt_is_still_started_again(env, decided, monkeypatch):
     assert len(calls) > before
 
 
-# ── D1: a new revision blocked by an open card: refused with a reason, the way out is told ──────────────────────────────
+# ── D1: a new revision after an open card (v02test.0018: adopted; the open card keeps its attempt) ─────────────────────
 
 def _confirm_new_card_after(env, key):
     """A new card after ``key`` in a confirmed revision 2 (the run still runs revision 1)."""
@@ -135,20 +135,23 @@ def _confirm_new_card_after(env, key):
                               headers=_h()).status_code == 201
 
 
-def test_d1_blocked_adoption_is_refused_with_reason_and_the_way_out_is_told(env, decided, monkeypatch):
+def test_d1_open_card_does_not_block_the_new_revision_and_keeps_its_attempt(env, decided, monkeypatch):
+    """v02test.0018: the open card (its AI start failed) no longer refuses revision 2 as a whole. Its definition and input
+    edges are unchanged, so the command adopts revision 2; the card stays open on its revision-1 attempt (or a reopened
+    one) and the card added behind it waits as pending."""
     from modules.flow_gate.graph_workflow.api import graph_messages
     key, _calls = _fail_start(env, monkeypatch, RuntimeError("boom"))
     run_id = _run(env)["run_id"]
+    rows_before = {r["node_key"] for r in _sql(env["db"], "SELECT node_key FROM graph_node_runs")}
     _confirm_new_card_after(env, key)
-    for res in (_cmd(env, "step"), _cmd(env, "full"),
-                env["client"].post(f"/api/v1/runs/{run_id}/resume", json={}, headers=_h())):
-        error = res.json()["error"]
-        assert (res.status_code, error["code"], error["params"]["reason"]) == (409, "graph_revision_migration_blocked", "active_attempts")
-        assert error["params"]["node_keys"] == [key]
-        assert "Time Machine" in error["message"]
-    stop = env["client"].post(f"/api/v1/runs/{run_id}/stop", json={}, headers=_h())
-    assert (stop.status_code, stop.json()["error"]["code"]) == (409, "run_not_running")     # Stop does not free it
-    # the refusal tells what to do (the Time Machine is the way out of an idle run: ``rewind`` requires idle)
+    res = _cmd(env, "step")
+    assert res.status_code == 201, res.text
+    assert _run(env)["revision_no"] == 2
+    after = {r["node_key"]: r["status"] for r in _sql(env["db"], "SELECT node_key, status FROM graph_node_runs")}
+    added = set(after) - rows_before
+    assert len(added) == 1 and after[added.pop()] == "pending"               # behind the open card: not opened yet
+    assert after[key] == "open"
+    # the refusal message (still used by the remaining blockers) tells the way out
     for locale in ("ko", "en", "ja"):
         assert "Time Machine" in graph_messages.RUN_EDIT_MESSAGES["graph_revision_migration_blocked"][locale]
 
@@ -166,27 +169,27 @@ def _graph_edges(env):
 
 def test_d1_the_done_upstream_card_s_time_machine_frees_the_blocked_run_and_the_new_revision_is_adopted(
         env, decided, monkeypatch):
-    """The way out told by the message, run for real (SQLite, the stubbed AI start, no Git: the plan has no commit to
-    revert): the open card (R -> T, the AI start failed) blocks revision 2; the Time Machine of the completed card before
-    it (the live root R, the menu's ``done`` card) puts R's range back — T becomes pending, its attempt invalidated — so
-    the next command adopts revision 2 and the new card and every edge stay."""
+    """The Time Machine run for real (SQLite, the stubbed AI start, no Git: the plan has no commit to revert) with
+    revision 2 confirmed after the open card (R -> T, the AI start failed): the Time Machine of the completed card before
+    it (the live root R, the menu's ``done`` card) puts R's range back — T becomes pending, its attempt invalidated — and
+    the next command adopts revision 2 and the new card and every edge stay. (v02test.0018: the open card alone no
+    longer blocks the adoption; see the test above.)"""
     key, calls = _fail_start(env, monkeypatch, RuntimeError("boom"))
     run_id = _run(env)["run_id"]
     _confirm_new_card_after(env, key)
     graph, edges_before = _graph_edges(env)
     root = next(n["node_key"] for n in graph["nodes"] if n["doc_type"] == "R")
     states = {r["node_key"]: r["status"] for r in _sql(env["db"], "SELECT node_key, status FROM graph_node_runs")}
-    assert states[root] == "done" and states[key] == "open"                  # the menu's `done` card; the blocker is open
-    assert _cmd(env, "step").json()["error"]["code"] == "graph_revision_migration_blocked"
+    assert states[root] == "done" and states[key] == "open"                  # the menu's `done` card; T is open
     # GET-free check of the pre-state the GUI menu needs: the run is idle (the menu item is enabled only then)
     assert (_run(env)["status"], _run(env)["idle_reason"]) == ("idle", "error")
 
     _mount_time_machine(env)
     res = env["client"].post(f"/api/v1/runs/{run_id}/nodes/{root}/time-machine", json={}, headers=_h())
     assert res.status_code == 200, res.text
-    assert key in res.json()["time_machine"]["impact"]["node_keys"]          # the range includes the blocking card
+    assert key in res.json()["time_machine"]["impact"]["node_keys"]          # the range includes the open card
     after = {r["node_key"]: r["status"] for r in _sql(env["db"], "SELECT node_key, status FROM graph_node_runs")}
-    assert after[key] == "pending"                                           # the blocker is back to pending
+    assert after[key] == "pending"                                           # the open card is back to pending
     attempts = _sql(env["db"], "SELECT status FROM graph_node_attempts WHERE node_key = ?", (key,))
     assert attempts and all(a["status"] == "invalidated" for a in attempts)  # no active attempt remains
 
