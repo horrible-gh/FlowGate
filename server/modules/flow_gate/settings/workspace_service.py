@@ -606,7 +606,9 @@ def _resource_names() -> dict[tuple[str, str], dict]:
         names[("provider", row["provider_id"])] = {"name": row["name"], "kind": row.get("kind"),
                                                   "enabled": bool(row.get("enabled"))}
     try:
-        agents = _store()._fetch_all("SELECT agent_id, name, enabled FROM agents WHERE owner_user_id IS NULL ORDER BY name")
+        # flowgate.v02test.0019: a deleted Agent (deleted_at set) is no longer offered, like a deleted provider.
+        agents = _store()._fetch_all("SELECT agent_id, name, enabled FROM agents WHERE owner_user_id IS NULL "
+                                     "AND deleted_at IS NULL ORDER BY name")
     except Exception:  # noqa: BLE001 — an install without the agent registry lists no agents
         agents = []
     for row in agents:

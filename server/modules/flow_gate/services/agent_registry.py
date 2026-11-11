@@ -30,13 +30,33 @@ def _bool(v): return bool(v)
 def _workdir(v):
  """flowgate.v02.0135 CH0006: the stored remote working directory; blank means not set."""
  return (v or "").strip() or None
+# flowgate.v02test.0019: per-Agent workspace cleanup policy, sent to the Agent in the heartbeat
+# success response (FlowGate-Agent docs/workspace-cleanup-contract.md: default ON / 24 h, 1..720 h).
+CLEANUP_DEFAULT_ENABLED=True; CLEANUP_DEFAULT_HOURS=24; CLEANUP_MIN_HOURS=1; CLEANUP_MAX_HOURS=720
+def _cleanup_fields(b):
+ """The cleanup fields present in b, validated. A real bool, and a whole hour count 1..720 (bool,
+ float and string refused). The hours are checked even when cleanup is OFF."""
+ out={}
+ if "workspace_cleanup_enabled" in b:
+  v=b["workspace_cleanup_enabled"]
+  if type(v) is not bool: raise AgentError(422,"validation_failed","Invalid Agent field",{"field":"workspace_cleanup_enabled","reason":"invalid_type"})
+  out["workspace_cleanup_enabled"]=v
+ if "workspace_cleanup_retention_hours" in b:
+  v=b["workspace_cleanup_retention_hours"]
+  if type(v) is not int: raise AgentError(422,"validation_failed","Invalid Agent field",{"field":"workspace_cleanup_retention_hours","reason":"invalid_type"})
+  if not CLEANUP_MIN_HOURS<=v<=CLEANUP_MAX_HOURS: raise AgentError(422,"validation_failed","Invalid Agent field",{"field":"workspace_cleanup_retention_hours","reason":"out_of_range"})
+  out["workspace_cleanup_retention_hours"]=v
+ return out
+def _cleanup(r):
+ """The stored policy in the heartbeat shape."""
+ return {"enabled":_bool(r.get("workspace_cleanup_enabled",CLEANUP_DEFAULT_ENABLED)),"retention_hours":int(r.get("workspace_cleanup_retention_hours",CLEANUP_DEFAULT_HOURS))}
 def _row(s,agent_id):
  return s._fetch_one("""SELECT a.*,
  (SELECT COUNT(*) FROM agent_credentials c WHERE c.agent_id=a.agent_id) credential_count,
  (SELECT COUNT(*) FROM agent_credentials c WHERE c.agent_id=a.agent_id AND c.revoked_at IS NULL) active_count,
  (SELECT MAX(e.expires_at) FROM agent_enrollments e WHERE e.agent_id=a.agent_id AND e.consumed_at IS NULL AND e.revoked_at IS NULL) enrollment_expires_at,
  (SELECT MAX(c.last_heartbeat_at) FROM agent_credentials c WHERE c.agent_id=a.agent_id AND c.revoked_at IS NULL) current_heartbeat_at
- FROM agents a WHERE a.agent_id=?""",[agent_id])
+ FROM agents a WHERE a.agent_id=? AND a.deleted_at IS NULL""",[agent_id])
 def detail(r,at=None):
  if not r: return None
  cfg={k:_bool(r["configured_"+k]) for k in CAPS}
@@ -53,6 +73,7 @@ def detail(r,at=None):
  "connection_mode":r["connection_mode"],"local_executable_path":r["local_executable_path"],
  # flowgate.v02.0135 CH0006: the working directory sent to this Agent's Jobs (None = not set).
  "remote_workdir":r.get("remote_workdir"),
+ "workspace_cleanup_enabled":_cleanup(r)["enabled"],"workspace_cleanup_retention_hours":_cleanup(r)["retention_hours"],
  "configured_capabilities":cfg,"reported_capabilities":rep,
  "effective_capabilities":{k:cfg[k] and rep[k] is True for k in CAPS},
  "registration_status":("registered" if active else "revoked" if history else "unregistered"),
@@ -72,8 +93,8 @@ class AgentService:
    raise AgentError(404,"agent_not_found","Agent not found")
   return detail(r)
  def list(self):
-  clause,params=("",[]) if self.owner_user_id is ALL_OWNERS else (" WHERE owner_user_id IS NULL",[]) if self.owner_user_id is None else (" WHERE owner_user_id=?",[self.owner_user_id])
-  ids=self.s._fetch_all("SELECT agent_id FROM agents"+clause+" ORDER BY agent_id",params)
+  clause,params=("",[]) if self.owner_user_id is ALL_OWNERS else (" AND owner_user_id IS NULL",[]) if self.owner_user_id is None else (" AND owner_user_id=?",[self.owner_user_id])
+  ids=self.s._fetch_all("SELECT agent_id FROM agents WHERE deleted_at IS NULL"+clause+" ORDER BY agent_id",params)
   return [detail(_row(self.s,x["agent_id"])) for x in ids]
  def _personal_fields(self,b):
   if self.owner_user_id is ALL_OWNERS or self.owner_user_id is None: return
@@ -81,17 +102,20 @@ class AgentService:
    raise AgentError(422,"validation_failed","Personal Agents support remote AI CLI and AI API only")
  def create(self,b):
   self._personal_fields(b)
+  policy=_cleanup_fields(b)
   aid="agt_"+secrets.token_urlsafe(20); ts=stamp(); c=b["configured_capabilities"]
   with self.s.transaction():
    self.s._execute("""INSERT INTO agents(agent_id,name,enabled,location,connection_mode,local_executable_path,configured_ai_cli,configured_ai_api,configured_storage,created_at,updated_at,owner_user_id)
  VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",[aid,b["name"].strip(),b["enabled"],b["location"],b["connection_mode"],b["local_executable_path"],c["ai_cli"],c["ai_api"],c["storage"],ts,ts,None if self.owner_user_id is ALL_OWNERS else self.owner_user_id])
    workdir=_workdir(b.get("remote_workdir"))
    if workdir is not None: self.s._execute("UPDATE agents SET remote_workdir=? WHERE agent_id=?",[workdir,aid])
+   if policy: self.s._execute("UPDATE agents SET "+",".join(k+"=?" for k in policy)+" WHERE agent_id=?",[*policy.values(),aid])
   return self.get(aid)
  def patch(self,aid,b):
   self.get(aid)
   self._personal_fields(b)
   if "location" in b: raise AgentError(422,"validation_failed","Invalid Agent field",{"field":"location","reason":"immutable"})
+  policy=_cleanup_fields(b)
   current=self.get(aid); merged={k:b.get(k,current[k]) for k in ("name","enabled","connection_mode","local_executable_path")}
   caps=b.get("configured_capabilities",current["configured_capabilities"])
   loc=current["location"]
@@ -101,6 +125,7 @@ class AgentService:
    self.s._execute("UPDATE agents SET name=?,enabled=?,connection_mode=?,local_executable_path=?,configured_ai_cli=?,configured_ai_api=?,configured_storage=?,updated_at=? WHERE agent_id=?",
    [merged["name"].strip(),merged["enabled"],merged["connection_mode"],merged["local_executable_path"],caps["ai_cli"],caps["ai_api"],caps["storage"],stamp(),aid])
    if "remote_workdir" in b: self.s._execute("UPDATE agents SET remote_workdir=? WHERE agent_id=?",[_workdir(b["remote_workdir"]),aid])
+   if policy: self.s._execute("UPDATE agents SET "+",".join(k+"=?" for k in policy)+" WHERE agent_id=?",[*policy.values(),aid])
   return self.get(aid)
  def issue(self,aid):
   self.get(aid)
@@ -139,7 +164,7 @@ class AgentService:
   auth=self.authenticate(raw); ts=stamp()
   if auth["agent_id"]!=b["agent_id"]: raise AgentError(403,"agent_identity_mismatch","Agent identity does not match credential")
   if auth["location"]!="remote": raise AgentError(401,"unauthorized","Invalid Agent credential")
-  incompatible=b["protocol_version"] not in SUPPORTED
+  incompatible=b["protocol_version"] not in SUPPORTED; policy=None
   with self.s.transaction():
    live=self.s._fetch_one("SELECT revoked_at FROM agent_credentials WHERE credential_id=?",[auth["credential_id"]])
    if not live or live["revoked_at"] is not None: raise AgentError(401,"unauthorized","Invalid Agent credential")
@@ -150,8 +175,10 @@ class AgentService:
     self.s._execute("""UPDATE agents SET reported_ai_cli=?,reported_ai_api=?,reported_storage=?,last_seen_at=?,agent_version=?,protocol_version=?,os=?,architecture=?,protocol_compatibility='compatible',last_rejected_protocol_version=NULL,last_protocol_rejection_at=NULL,updated_at=? WHERE agent_id=?""",
      [c["ai_cli"],c["ai_api"],c["storage"],ts,b["agent_version"],b["protocol_version"],b["os"],b["architecture"],ts,auth["agent_id"]])
     self.s._execute("UPDATE agent_credentials SET last_heartbeat_at=? WHERE credential_id=?",[ts,auth["credential_id"]])
+    # flowgate.v02test.0019: the authenticated Agent's latest stored policy, success response only.
+    policy=_cleanup(self.s._fetch_one("SELECT workspace_cleanup_enabled,workspace_cleanup_retention_hours FROM agents WHERE agent_id=?",[auth["agent_id"]]))
   if incompatible: raise AgentError(409,"protocol_incompatible","Unsupported Agent protocol version",{"received_version":b["protocol_version"],"supported_versions":SUPPORTED})
-  return {"accepted":True,"agent_id":auth["agent_id"],"server_time":ts,"protocol_version":SUPPORTED[0],"heartbeat_interval_seconds":HEARTBEAT_INTERVAL,"online_ttl_seconds":ONLINE_TTL}
+  return {"accepted":True,"agent_id":auth["agent_id"],"server_time":ts,"protocol_version":SUPPORTED[0],"heartbeat_interval_seconds":HEARTBEAT_INTERVAL,"online_ttl_seconds":ONLINE_TTL,"workspace_cleanup":policy}
  def revoke(self,aid):
   self.get(aid); ts=stamp()
   with self.s.transaction():
@@ -160,8 +187,16 @@ class AgentService:
   return self.get(aid)
  @synchronized
  def delete(self,aid):
-  self.get(aid)
+  """flowgate.v02test.0019: registration history no longer blocks deleting. The row, its ID and
+  every history row stay (credentials RESTRICT, enrollments CASCADE); deleted_at takes it off the
+  list. Its credential and pending token are revoked in the same transaction (as revoke() does),
+  so the deleted Agent can no longer connect or take Jobs."""
+  self.get(aid); ts=stamp()
   with self.s.transaction():
    if self.s._fetch_one("SELECT 1 ok FROM ai_providers WHERE target_agent_id=?",[aid]): raise AgentError(409,"agent_in_use","Agent is referenced by an AI connection")
-   if self.s._fetch_one("SELECT 1 ok FROM agent_credentials WHERE agent_id=?",[aid]): raise AgentError(409,"agent_has_registration_history","Registered Agent cannot be deleted")
-   self.s._execute("DELETE FROM agents WHERE agent_id=?",[aid])
+   if self.s._fetch_one("""SELECT 1 ok FROM agent_jobs WHERE (lease_owner_agent_id=? AND status IN ('CLAIMED','STARTED'))
+ OR (target_agent_id=? AND status='NEW')""",[aid,aid]):
+    raise AgentError(409,"agent_has_active_jobs","Agent has Jobs in progress; delete it after they finish")
+   self.s._execute("UPDATE agent_credentials SET revoked_at=? WHERE agent_id=? AND revoked_at IS NULL",[ts,aid])
+   self.s._execute("UPDATE agent_enrollments SET revoked_at=? WHERE agent_id=? AND consumed_at IS NULL AND revoked_at IS NULL",[ts,aid])
+   self.s._execute("UPDATE agents SET deleted_at=?,updated_at=? WHERE agent_id=? AND deleted_at IS NULL",[ts,ts,aid])

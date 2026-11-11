@@ -209,6 +209,8 @@ export const updateSystemAgent = (id: string, changes: SystemAgentChanges) => {
   if (changes.enabled !== undefined) body.enabled = changes.enabled
   if (changes.local_executable_path !== undefined) body.local_executable_path = changes.local_executable_path
   if (changes.remote_workdir !== undefined) body.remote_workdir = changes.remote_workdir
+  if (changes.workspace_cleanup_enabled !== undefined) body.workspace_cleanup_enabled = changes.workspace_cleanup_enabled
+  if (changes.workspace_cleanup_retention_hours !== undefined) body.workspace_cleanup_retention_hours = changes.workspace_cleanup_retention_hours
   if (changes.configured_capabilities !== undefined) body.configured_capabilities = { ...changes.configured_capabilities }
   return call(() => patchRequest<SystemAgent>(agent(id), body), 'save_failed')
 }
@@ -237,6 +239,8 @@ export const updatePersonalAgent = (id: string, changes: SystemAgentChanges) => 
   if (changes.name !== undefined) body.name = changes.name
   if (changes.enabled !== undefined) body.enabled = changes.enabled
   if (changes.remote_workdir !== undefined) body.remote_workdir = changes.remote_workdir
+  if (changes.workspace_cleanup_enabled !== undefined) body.workspace_cleanup_enabled = changes.workspace_cleanup_enabled
+  if (changes.workspace_cleanup_retention_hours !== undefined) body.workspace_cleanup_retention_hours = changes.workspace_cleanup_retention_hours
   if (changes.configured_capabilities !== undefined) body.configured_capabilities = { ...changes.configured_capabilities, storage: false }
   return call(() => patchRequest<SystemAgent>(personalAgent(id), body), 'save_failed')
 }

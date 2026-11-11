@@ -45,6 +45,8 @@ from modules.flow_gate.api.v1 import agent_routes as routes  # noqa: E402
 SERVER = Path(__file__).resolve().parents[3]
 REPO = SERVER.parent
 MIG = SERVER / "sql" / "migrations" / "sqlite" / "121_agent_registry.sql"
+# flowgate.v02test.0019: AgentService reads agents.deleted_at (a deleted Agent is not found).
+MIG_SOFT_DELETE = SERVER / "sql" / "migrations" / "sqlite" / "184_agent_soft_delete.sql"
 PY = sys.executable
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -58,6 +60,7 @@ def _read(rel):
 def _registry_db(path: Path, *, live=0, revoked=0, pending=0, expired=0):
     db = sqlite3.connect(path)
     db.executescript(MIG.read_text(encoding="utf-8"))
+    db.executescript(MIG_SOFT_DELETE.read_text(encoding="utf-8"))
     ts = "2026-01-01T00:00:00Z"
     future = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(timespec="seconds").replace("+00:00", "Z")
     n = 0
@@ -628,6 +631,7 @@ def registry():
     db = sqlite3.connect(":memory:", check_same_thread=False)
     db.execute("PRAGMA foreign_keys=ON")
     db.executescript(MIG.read_text(encoding="utf-8"))
+    db.executescript(MIG_SOFT_DELETE.read_text(encoding="utf-8"))
     ts = "2026-01-01T00:00:00Z"
     db.execute("INSERT INTO agents(agent_id,name,enabled,location,connection_mode,created_at,updated_at) "
                "VALUES('agt_x','r',1,'remote','agent_pull',?,?)", (ts, ts))
