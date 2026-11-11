@@ -88,7 +88,7 @@ def _target(r, target):
         return "main"
     from modules.flow_gate.services.git import merge_target as mt
     _git(["branch", NON_BASE, "main"], cwd=r["base"])
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()        # a branch made outside FlowGate: forget the list from before
     return NON_BASE
 
 

@@ -292,6 +292,8 @@ def proj(tmp_path, monkeypatch):
     monkeypatch.setattr(svc, "_sweep_daemon_started", True)   # never spawn the thread
     p = Proj(tmp_path)
     yield p
+    from modules.flow_gate.services.git import merge_target as mt
+    mt.settle_check_targets(30)          # flowgate.v02test.0020: no background candidate computation outlives a test
     svc.delete_config(p.pid)
 
 
@@ -1648,9 +1650,10 @@ def check_budget(monkeypatch):
     """What is judged, not how fast this host spawns Git (the 3 s budget has its own test below)."""
     from modules.flow_gate.services.git import merge_target as mt
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     yield
-    mt.invalidate_check_targets()
+    assert mt.settle_check_targets(60)
+    mt.reset_check_targets()
 
 
 def _feature_group(p: Proj, seq: int, name: str = "feature/v0.2.0") -> str:
@@ -1726,7 +1729,9 @@ def test_0098_main_is_a_target_only_when_it_holds_the_work_base_history(proj, ch
 
     gid = _feature_group(proj, 3)
     view = _check_view(proj, gid)
-    assert view["merge_target_options"] == ["feature/v0.2.0"]                     # main lacks the v0.2 commit
+    # flowgate.v02test.0020 rev2: the list no longer reads the work base history a target lacks (the scope floor);
+    # main lacks the v0.2 commit, is listed, and the single judgement of a save / confirm / run refuses it
+    assert view["merge_target_options"] == ["feature/v0.2.0", "main"]
     assert view["default_target_branch"] == "feature/v0.2.0"
     inherited = view["merge_target_state"]["current"]
     assert (inherited["branch"], inherited["inherited"], inherited["unmerge_supported"], inherited["warnings"]) == (
@@ -1734,8 +1739,7 @@ def test_0098_main_is_a_target_only_when_it_holds_the_work_base_history(proj, ch
     refused = _refused(proj, gid, "main")
     assert (refused.code, refused.details["incoming_work_base_commits"]) == ("merge_target_incoming_work_base", 1)
     main_state = _check_view(proj, gid, "main")["merge_target_state"]["current"]
-    assert (main_state["branch"], main_state["inherited"], main_state["error"]) == (
-        "main", False, "merge_target_incoming_work_base")
+    assert (main_state["branch"], main_state["inherited"], main_state["error"]) == ("main", False, None)
     work_base = _judge(proj, gid, "feature/v0.2.0")
     assert (work_base["is_work_base"], work_base["is_project_base"], work_base["unmerge_supported"],
             work_base["incoming_work_base_commits"]) == (True, False, False, None)
@@ -1745,21 +1749,17 @@ def test_0098_main_is_a_target_only_when_it_holds_the_work_base_history(proj, ch
                                                                 "incoming_work_base_commits": None})
     assert _refused(proj, gid, "main").code == "merge_target_preview_unavailable"
     monkeypatch.setattr(mt, "preview_target", real_preview)
-    # Git failing to tell which tips hold the floor is the list's own basis failing: no partial list (the work base
-    # is not left in it), and nothing cached -- the next read computes again
+    # the list never asks Git which tips hold the floor (nor for the floor): a broken answer leaves it as it is
     from modules.flow_gate.services import git_service as svc
     real_run = svc._run_git
     monkeypatch.setattr(svc, "_run_git", lambda args, **kw: (
         subprocess.CompletedProcess(["git", *args], 128, "", "fatal: broken")
-        if args[:2] == ["for-each-ref", "--contains"] else real_run(args, **kw)))
-    mt.invalidate_check_targets()
-    broken = _check_view(proj, gid, refresh=False)
-    assert broken["merge_target_options"] == []
-    assert (broken["merge_target_state"]["status"], broken["merge_target_state"]["code"],
-            broken["merge_target_state"]["reason"]) == ("failed", mt.CHECK_OPTIONS_UNAVAILABLE, "probe_failed")
-    assert broken["merge_target_state"]["current"]["checked"] is False
+        if args[:2] in (["for-each-ref", "--contains"], ["merge-base", "--is-ancestor"]) else real_run(args, **kw)))
+    mt.reset_check_targets()
+    listed = _check_view(proj, gid, refresh=False)
+    assert listed["merge_target_state"]["status"] == "ok"
+    assert listed["merge_target_options"] == ["feature/v0.2.0", "main"]
     monkeypatch.setattr(svc, "_run_git", real_run)
-    assert _check_view(proj, gid, refresh=False)["merge_target_options"] == ["feature/v0.2.0"]
     # main holds the whole work base history (incoming 0): a candidate and an allowed target
     _git(["merge", "--ff-only", "feature/v0.2.0"], cwd=proj.base)
     judged = _judge(proj, gid, "main")
@@ -1783,22 +1783,23 @@ def test_0098_base_and_non_base_targets_take_their_own_slot_checks(proj, check_b
     gid = _feature_group(proj, 4)
     _git(["merge", "--ff-only", "feature/v0.2.0"], cwd=proj.base)
     assert {_judge(proj, gid, n)["target_branch"] for n in ("main", "feature/v0.2.0")} == {"main", "feature/v0.2.0"}
-    # the project base checkout off its branch (or detached) refuses every target, the inherited one too
+    # the project base checkout off its branch (or detached) refuses every target, the inherited one too.
+    # flowgate.v02test.0020 rev2: the list does not read the checkout's branch; the names stay listed and the
+    # single judgement of a save / confirm / run refuses them
     for off in (["checkout", "feature/v0.2.0"], ["checkout", "--detach", "main"]):
         _git(off, cwd=proj.base)
         for name in ("main", "feature/v0.2.0"):
             assert _refused(proj, gid, name).code == "base_checkout_branch_mismatch"
         view = _check_view(proj, gid)
-        assert view["merge_target_options"] == []
-        assert (view["merge_target_state"]["status"], view["merge_target_state"]["code"]) == (
-            "git_unavailable", "base_checkout_branch_mismatch")
-        assert view["merge_target_state"]["current"]["error"] == "base_checkout_branch_mismatch"
+        assert view["merge_target_options"] == ["feature/v0.2.0", "main"]
+        assert view["merge_target_state"]["status"] == "ok"
+        assert view["merge_target_state"]["current"]["error"] is None
         _git(["checkout", "main"], cwd=proj.base)
-    # tracked local changes in the base checkout refuse the project base only
+    # tracked local changes in the base checkout refuse the project base only (on save; the list does not read them)
     (proj.base / "README.md").write_text("dirty\n", encoding="utf-8")
     assert _refused(proj, gid, "main").code == "base_dirty"
     assert _judge(proj, gid, "feature/v0.2.0")["is_project_base"] is False
-    assert _check_view(proj, gid)["merge_target_options"] == ["feature/v0.2.0"]
+    assert _check_view(proj, gid)["merge_target_options"] == ["feature/v0.2.0", "main"]
     _git(["checkout", "--", "README.md"], cwd=proj.base)
     assert db_groups.get_by_id(gid)["work_base_ref"] == "feature/v0.2.0"
 
@@ -1849,7 +1850,7 @@ def test_0098_an_occupied_target_is_refused_and_never_reclaimed(proj, check_budg
 
 
 @needs_git
-def test_0098_the_candidate_cache_is_shared_short_and_invalidated(proj, check_budget, monkeypatch):
+def test_0098_the_candidate_cache_is_shared_served_stale_and_revalidated(proj, check_budget, monkeypatch):
     import threading
     import time as _time
 
@@ -1866,21 +1867,23 @@ def test_0098_the_candidate_cache_is_shared_short_and_invalidated(proj, check_bu
 
     monkeypatch.setattr(mt, "_compute_snapshot", counted)
     first = _check_view(proj, gid, refresh=False)
-    assert _check_view(proj, gid, refresh=False) == first and len(computed) == 1     # within 5 s: the cache
-    mt.invalidate_check_targets(proj.pid, gid)                                        # a server change: dropped
-    _check_view(proj, gid, refresh=False)
-    assert len(computed) == 2
+    assert _check_view(proj, gid, refresh=False) == first and len(computed) == 1     # fresh: the cache
+    # flowgate.v02test.0020 rev2: a server change marks it stale; it is still served and recomputed behind it
+    mt.invalidate_check_targets(proj.pid, gid)
+    assert _check_view(proj, gid, refresh=False) == first
+    assert mt.settle_check_targets(60) and len(computed) == 2
+    assert _check_view(proj, gid, refresh=False) == first and len(computed) == 2     # the recomputed list
     _check_view(proj, gid, refresh=True)                                              # the refresh option skips it
     assert len(computed) == 3
     monkeypatch.setattr(mt, "CHECK_TARGET_CACHE_SEC", 0.0)                            # older than the cache time
     _check_view(proj, gid, refresh=False)
     assert len(computed) == 4
-    monkeypatch.setattr(mt, "CHECK_TARGET_CACHE_SEC", 5.0)
+    monkeypatch.setattr(mt, "CHECK_TARGET_CACHE_SEC", 1800.0)
     # concurrent misses of one key share one computation (the basis is read once up front: this harness shares a
     # single SQLite connection, which the real stores never do)
     basis = mt.check_target_basis(proj.pid, gid)
     monkeypatch.setattr(mt, "check_target_basis", lambda *_a, **_k: basis)
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     results = []
     threads = [threading.Thread(target=lambda: results.append(_check_view(proj, gid, refresh=False)))
                for _ in range(4)]
@@ -1896,7 +1899,7 @@ def test_0098_the_candidate_cache_is_shared_short_and_invalidated(proj, check_bu
                         lambda basis, *_a: computed.append("x") or mt._failed_snapshot(
                             mt.CHECK_STATUS_FAILED, mt.CHECK_OPTIONS_UNAVAILABLE, "probe_failed",
                             default_branch=basis.work_base_ref, basis=None))
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     _check_view(proj, gid, refresh=False)
     _check_view(proj, gid, refresh=False)
     assert computed.count("x") == 2
@@ -1912,14 +1915,19 @@ def test_0098_the_candidate_budget_ends_git_and_discards_a_partial_list(proj, mo
 
     gid = proj.group(9)
     proj.local_branch("develop")
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.01)
+    # flowgate.v02test.0020: the computation has a budget of its own; here it runs out too (a host where even that
+    # one is not enough), so nothing finishes behind the timed-out view
+    monkeypatch.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.01)
     view = _check_view(proj, gid)
     assert view["merge_target_options"] == []
     assert (view["merge_target_state"]["status"], view["merge_target_state"]["code"]) == (
         "timeout", mt.CHECK_OPTIONS_TIMEOUT)
     assert view["merge_target_state"]["current"]["checked"] is False
+    assert mt.settle_check_targets(10)
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
+    monkeypatch.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 60.0)
     # 0148: a timeout is now negative-cached for 5 s; explicit refresh must bypass and replace it.
     assert _check_view(proj, gid, refresh=False)["merge_target_state"]["status"] == "timeout"
     assert _check_view(proj, gid, refresh=True)["merge_target_options"] == ["develop", "main"]
@@ -1985,9 +1993,10 @@ def test_0098_the_judgement_reads_a_legacy_group_without_recording_anything(proj
     before = rows()
     assert before[0]["work_base_ref"] is None and before[1]["work_base_state"] is None
     view = _check_view(proj, gid, "develop", refresh=False)
-    assert view["merge_target_options"] == ["main"]                    # the inherited work base needs no floor
+    # flowgate.v02test.0020 rev2: the list reads no floor; develop is listed and refused when saved (below)
+    assert view["merge_target_options"] == ["develop", "main"]
     assert view["default_target_branch"] == "main"
-    assert view["merge_target_state"]["current"]["error"] == "merge_target_preview_unavailable"
+    assert view["merge_target_state"]["current"]["error"] is None
     assert _judge(proj, gid, "main")["is_work_base"] is True
     assert _refused(proj, gid, "develop").code == "merge_target_preview_unavailable"   # no floor: cannot be told
     assert rows() == before                                  # no floor, no audit row, no work base pin
@@ -2015,14 +2024,16 @@ def test_0098_without_a_verified_floor_no_target_beyond_the_work_base_is_allowed
     assert mt.preview_target(gid, "main")["incoming_work_base_commits"] == 0      # the preview's tip fallback
     assert _refused(proj, gid, "main").code == "merge_target_preview_unavailable"
     view = _check_view(proj, gid, "main")
-    assert view["merge_target_options"] == ["feature/v0.2.0"]
-    assert view["merge_target_state"]["current"]["error"] == "merge_target_preview_unavailable"
+    # flowgate.v02test.0020 rev2: the list reads no floor; main is listed and refused when saved / confirmed / run
+    assert view["merge_target_options"] == ["feature/v0.2.0", "main"]
+    assert view["merge_target_state"]["current"]["error"] is None
     assert _refused(proj, gid, "main", scope_floor_sha=b).code == "merge_target_incoming_work_base"
     _git(["branch", "-f", "feature/v0.2.0", b], cwd=proj.base)
     _git(["update-ref", "refs/remotes/origin/feature/v0.2.0", b], cwd=proj.base)
     _git(["merge", "--ff-only", "feature/v0.2.0"], cwd=proj.base)
     assert _judge(proj, gid, "main")["incoming_work_base_commits"] == 0
-    # the ledger the floor check reads, or Git answering it, failing: the judgement's basis fails and the list too
+    # the ledger the floor check reads, or Git answering it, failing: the judgement's basis fails; the list, which
+    # reads neither, stays as it is
     real_run = svc._run_git
     for patch_failure, reason in (
         (lambda m: m.setattr(db_tr_ledger, "group_commit_evidence",
@@ -2035,10 +2046,9 @@ def test_0098_without_a_verified_floor_no_target_beyond_the_work_base_is_allowed
             patch_failure(m)
             failed = _refused(proj, gid, "main")
             assert (failed.code, failed.details["reason"]) == ("gate_git_unavailable", reason)
-            broken = _check_view(proj, gid)
-            assert broken["merge_target_options"] == []
-            assert (broken["merge_target_state"]["status"], broken["merge_target_state"]["code"],
-                    broken["merge_target_state"]["reason"]) == ("failed", mt.CHECK_OPTIONS_UNAVAILABLE, reason)
+            listed = _check_view(proj, gid)
+            assert listed["merge_target_state"]["status"] == "ok"
+            assert listed["merge_target_options"] == ["feature/v0.2.0", "main"]
             assert _judge(proj, gid, "feature/v0.2.0")["is_work_base"] is True     # the work base reads no floor
     assert _check_view(proj, gid)["merge_target_options"] == ["feature/v0.2.0", "main"]
 
@@ -2069,10 +2079,10 @@ def test_0098_a_base_status_that_cannot_be_read_is_no_clean_base(proj, check_bud
             failed = _refused(proj, gid, "main")
             assert (failed.code, failed.details["reason"]) == ("gate_git_unavailable", "probe_failed")
             assert _judge(proj, gid, "develop")["is_project_base"] is False      # a non-base target never reads it
+            # flowgate.v02test.0020 rev2: the list does not read the base checkout's status
             view = _check_view(proj, gid)
-            assert view["merge_target_options"] == []
-            assert (view["merge_target_state"]["status"], view["merge_target_state"]["code"]) == (
-                "failed", mt.CHECK_OPTIONS_UNAVAILABLE)
+            assert view["merge_target_options"] == ["develop", "main"]
+            assert view["merge_target_state"]["status"] == "ok"
     assert _check_view(proj, gid)["merge_target_options"] == ["develop", "main"]
 
 
@@ -2112,15 +2122,18 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
     gid = proj.group(64)
     proj.local_branch("develop")
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     assert _check_view(proj, gid, refresh=False)["merge_target_options"] == ["develop", "main"]      # cached
     real_basis, real_verdict, real_compute = mt.check_target_basis, mt._verdict, mt._compute_snapshot
     with monkeypatch.context() as m:
         # each step alone stays inside the 1 s budget; the basis and the stored target's judgement together do not
         m.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 1.0)
+        # flowgate.v02test.0020: the background computation does not finish either (its own budget runs out)
+        m.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.3)
         m.setattr(mt, "check_target_basis", lambda *a, **k: _time.sleep(0.6) or real_basis(*a, **k))
         m.setattr(mt, "_verdict", lambda *a, **k: _time.sleep(0.6) or real_verdict(*a, **k))
         view = _check_view(proj, gid, "gone", refresh=False)
+        assert mt.settle_check_targets(10)
     state = view["merge_target_state"]
     assert view["merge_target_options"] == []
     assert (state["status"], state["code"]) == ("timeout", mt.CHECK_OPTIONS_TIMEOUT)
@@ -2138,11 +2151,13 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
     # A basis miss spends the same budget and is cached too; hits do no new computation, refresh does.
     computed = []
     monkeypatch.setattr(mt, "_compute_snapshot", lambda *a: computed.append(1) or real_compute(*a))
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     with monkeypatch.context() as m:
         m.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.5)
+        m.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.0)     # flowgate.v02test.0020: nothing finishes behind it
         m.setattr(mt, "check_target_basis", lambda *a, **k: _time.sleep(0.6) or real_basis(*a, **k))
         missed = _check_view(proj, gid, "gone", refresh=False)
+        assert mt.settle_check_targets(10)
     assert missed["merge_target_options"] == []
     assert (missed["merge_target_state"]["status"], missed["merge_target_state"]["current"]["checked"]) == (
         "timeout", False)
@@ -2153,7 +2168,45 @@ def test_0098_one_budget_covers_the_basis_the_candidates_and_the_stored_target(p
     assert len(computed) == timeout_calls
     assert _check_view(proj, gid, refresh=True)["merge_target_options"] == ["develop", "main"]
     assert len(computed) == timeout_calls + 1
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
+
+
+@needs_git
+def test_0020_a_lookup_that_outlives_the_view_budget_ends_in_the_background(proj, monkeypatch):
+    """flowgate.v02test.0020: a slow lookup used to be dropped at the 3 s budget and computed again from nothing by
+    every retry and refresh, so on a slow host the list never came. Now the view still answers ``timeout`` in its own
+    budget, but the computation (real Git) ends in the background; the next plain read gets the list without
+    computing again, and a save never waited for any of it."""
+    import time as _time
+
+    from modules.flow_gate.services.git import merge_target as mt
+
+    gid = proj.group(65)
+    proj.local_branch("develop")
+    mt.reset_check_targets()
+    # the basis is read once up front (this harness shares one SQLite connection; the real stores never do)
+    basis = mt.check_target_basis(proj.pid, gid, require_slot=False)
+    monkeypatch.setattr(mt, "check_target_basis", lambda *_a, **_k: basis)
+    real_inspect, real_compute = mt.inspect_workspace, mt._compute_snapshot
+    monkeypatch.setattr(mt, "inspect_workspace", lambda pid, name: _time.sleep(0.5) or real_inspect(pid, name))
+    computed = []
+    monkeypatch.setattr(mt, "_compute_snapshot", lambda *a: computed.append(1) or real_compute(*a))
+    monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.3)
+    started = _time.monotonic()
+    first = _check_view(proj, gid, refresh=False)
+    assert _time.monotonic() - started < 0.3 + 0.5                 # the view answered inside its own budget
+    assert (first["merge_target_state"]["status"], first["merge_target_options"]) == ("timeout", [])
+    assert mt.settle_check_targets(30)
+    assert len(computed) == 1
+    snap = mt._check_cache[(proj.pid, gid)]
+    assert snap["status"] == "ok" and "stale" not in snap         # replaced the negative snapshot
+    monkeypatch.setattr(mt, "inspect_workspace", real_inspect)
+    picked = _check_view(proj, gid, refresh=False)
+    assert picked["merge_target_state"]["status"] == "ok"
+    assert picked["merge_target_options"] == ["develop", "main"]
+    assert picked["merge_target_state"]["current"]["checked"] is True
+    assert len(computed) == 1                                      # read from the finished computation
+    assert mt._check_cache[(proj.pid, gid)] is snap
 
 
 @needs_git

@@ -84,16 +84,20 @@ function expectNoGatePart(w: VueWrapper<any>) {
   expect(sections(w)).not.toContain('checkSettings')
   expect(sections(w)).not.toContain('gateCard')
 }
-/** Back on 설정 with a timed-out lookup and no kept list: no candidate is made up. */
+/**
+ * Back on 설정 with a timed-out lookup and no kept list: no candidate is made up -- only the inherited name, marked
+ * unverified (flowgate.v02test.0020: the lookup alone no longer locks the control).
+ */
 async function expectNoListAfterTimeout(w: VueWrapper<any>) {
   lookupFails('timeout')
   await select(w, gateSelection())
   await openTab(w, 'settings')
   expect(kept().settings.value?.mergeTargetState?.status).toBe('timeout')
   expect(kept().cachedTargets()).toBeNull()
-  expect(optionNames(w)).toEqual([])
-  expect(control(w).attributes('disabled')).toBeDefined()
-  expect(w.get('[data-test="check-settings-target-display"]').text()).toBe('feature/v0.2.0')
+  expect(optionNames(w)).toEqual(['feature/v0.2.0 (미검증)'])
+  expect(control(w).attributes('disabled')).toBeUndefined()
+  expect((control(w).element as HTMLSelectElement).value).toBe('feature/v0.2.0')
+  expect(w.find('[data-test="check-settings-target-display"]').exists()).toBe(false)
   expect(w.get('[data-test="check-settings-refresh"]').attributes('disabled')).toBeUndefined()
   expect(http.patch).not.toHaveBeenCalled()
 }
@@ -123,9 +127,10 @@ describe('0006-T T-b in the real Inspector: the kept list follows the selection 
     expect(sections(w)).toEqual(['checkSettings'])
     expect(kept().settings.value?.mergeTargetState?.status).toBe('timeout')
     expect(kept().cachedTargets()).toBeNull()
-    expect(optionNames(w)).toEqual([])
-    expect(control(w).attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="check-settings-target-display"]').text()).toBe('feature/v0.2.0')
+    expect(optionNames(w)).toEqual(['feature/v0.2.0 (미검증)'])
+    expect(control(w).attributes('disabled')).toBeUndefined()
+    expect((control(w).element as HTMLSelectElement).value).toBe('feature/v0.2.0')
+    expect(w.find('[data-test="check-settings-target-display"]').exists()).toBe(false)
     expect(w.find('[data-test="check-settings-target-state"]').exists()).toBe(true)
     expect(w.get('[data-test="check-settings-refresh"]').attributes('disabled')).toBeUndefined()
     expect(http.patch).not.toHaveBeenCalled()
@@ -157,8 +162,9 @@ describe('0006-T T-b in the real Inspector: the kept list follows the selection 
     lookupFails('timeout')
     await select(w, gateSelection())
     expect(kept().cachedTargets()).toBeNull()
-    expect(optionNames(w)).toEqual([])
-    expect(control(w).attributes('disabled')).toBeDefined()
+    expect(optionNames(w)).toEqual(['feature/v0.2.0 (미검증)'])
+    expect(control(w).attributes('disabled')).toBeUndefined()
+    expect((control(w).element as HTMLSelectElement).value).toBe('feature/v0.2.0')
   })
 
   it('a tab change on the same check card keeps the card selected: the kept list stays usable after a failed lookup', async () => {

@@ -40,8 +40,10 @@ def _lookup_times_out(monkeypatch):
         return real(project_id, name)
 
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 0.3)
+    # flowgate.v02test.0020: the background computation's own budget runs out too, so the lookup keeps timing out
+    monkeypatch.setattr(mt, "CHECK_TARGET_COMPUTE_SEC", 0.3)
     monkeypatch.setattr(mt, "inspect_workspace", slow)
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()        # no list from before is served (an invalidation would keep it, stale)
 
 
 def test_0002_tb_a_target_changed_before_the_confirmation_during_a_lookup_timeout_is_merged_and_pushed(
@@ -52,14 +54,14 @@ def test_0002_tb_a_target_changed_before_the_confirmation_during_a_lookup_timeou
     first, chosen = "review/first-0002", "review/kept-0002"
     for name in (first, chosen):
         _git(["branch", name, "main"], cwd=r["base"])
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     frozen = _work(r, "tb-0002.txt")
 
     # 1. The lookup works: the Designer reads the candidates and saves the first choice (versioned, as the client).
     # On a loaded Self-check host the real 3 s budget alone was spent in the shared reads (TR0013 rev 1, the R0001 #3
     # condition itself); this phase needs one confirmed list, so only here the test gives the lookup more time.
     monkeypatch.setattr(mt, "CHECK_TARGET_BUDGET_SEC", 60.0)
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()
     view = get_settings(env, FA, g)
     assert view["merge_target_state"]["status"] == "ok", view["merge_target_state"]
     assert {first, chosen} <= set(view["merge_target_options"])

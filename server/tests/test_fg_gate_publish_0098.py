@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git binary 
 def _0098_target(r, name="review/selected"):
     from modules.flow_gate.services.git import merge_target as mt
     _git(["branch", name, "main"], cwd=r["base"])
-    mt.invalidate_check_targets()
+    mt.reset_check_targets()        # a branch made outside FlowGate: forget the list from before
     return name
 
 

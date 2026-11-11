@@ -34,12 +34,13 @@ def test_a_group_without_its_worktree_yet_lists_and_saves_real_branch_names(env,
     _git_cmd(["branch", "graph_attempt_att_x", "main"], git_flow["base"])
     g = put_draft(env, fc, 0, [node("tmp_g", None, "gate")])["key_map"]["tmp_g"]
     body = get_settings(env, fc, g)
-    assert body["merge_target_options"] == ["feature/v0.2.0", "main", "release/local"], body["merge_target_state"]
+    # flowgate.v02test.0020 rev2: ``old`` (lacking the work base history) is listed and refused when saved, below
+    assert body["merge_target_options"] == ["feature/v0.2.0", "main", "old", "release/local"], body["merge_target_state"]
     assert body["default_target_branch"] == "main"
     state = body["merge_target_state"]
     assert (state["status"], state["code"]) == ("ok", None)
     assert (state["current"]["branch"], state["current"]["inherited"], state["current"]["error"]) == ("main", True, None)
-    for name in body["merge_target_options"]:
+    for name in [n for n in body["merge_target_options"] if n != "old"]:
         assert setting(env, fc, g, "merge_target_branch", name)["fields"]["merge_target_branch"]["value"] == name
     for name, code in (("old", "merge_target_incoming_work_base"), (git_flow["own"], "merge_target_internal_slot"),
                        ("graph_attempt_att_x", "merge_target_internal_slot")):

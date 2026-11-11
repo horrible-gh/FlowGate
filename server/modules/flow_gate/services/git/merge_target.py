@@ -30,7 +30,6 @@ import contextvars
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
@@ -42,9 +41,13 @@ from modules.flow_gate.db.git_integration import (  # pure session readers (0630
 )
 from modules.flow_gate.storage.paths import project_dir_name
 
+from ..route_logging import forward_to_file_log
 from .credentials import GitServiceError
 
-_log = logging.getLogger(__name__)
+# flowgate.v02test.0020: this module's WARNING lines (the 0119 ``check target lookup`` diagnostic among them) reach
+# logs/default.log. A plain getLogger(__name__) propagates to a handler-less root (route_logging.get_logger), so the
+# diagnostic line had never been written to the server log.
+_log = forward_to_file_log(logging.getLogger(__name__))
 
 # Session-context keys (git_merge_session.context JSON — no schema change).
 TARGET_RECORD_KEY = "merge_target"
@@ -854,8 +857,19 @@ def work_base_floor(project_id: str, group_id: str, base_root: Path, cfg: Option
 CHECK_GIT_UNAVAILABLE = "gate_git_unavailable"
 CHECK_OPTIONS_TIMEOUT = "merge_target_options_timeout"
 CHECK_OPTIONS_UNAVAILABLE = "merge_target_options_unavailable"
-CHECK_TARGET_CACHE_SEC = 5.0
+# flowgate.v02test.0020 rev2: the candidate list is served stale-while-revalidate. An ok / empty list is served for
+# CHECK_TARGET_CACHE_SEC; once older than CHECK_TARGET_REFRESH_SEC, or marked stale by ``invalidate_check_targets``,
+# it is still served at once and recomputed in the background (the next read gets the new list). A pick from a list
+# that has gone out of date is still refused on save / confirm / run: those judge the one name (``judge_check_target``).
+CHECK_TARGET_CACHE_SEC = 1800.0
+CHECK_TARGET_REFRESH_SEC = 60.0
+# 0148: a timed-out view's negative snapshot (no candidates) is kept this long, without renewing its age on hits.
+CHECK_TARGET_TIMEOUT_CACHE_SEC = 5.0
 CHECK_TARGET_BUDGET_SEC = 3.0
+# flowgate.v02test.0020: the candidate computation runs on its own thread under this budget. A request waits for it
+# at most CHECK_TARGET_BUDGET_SEC (its answer is then ``timeout``), but the computation still ends and is cached, so a
+# later read gets its result instead of starting over under the same 3 s and timing out again on a slow host.
+CHECK_TARGET_COMPUTE_SEC = 30.0
 # The Graph attempt worktree branches (``flowgate.graph_run.workspace.location``): internal, never a merge target.
 GRAPH_ATTEMPT_BRANCH_PREFIX = "graph_attempt_"
 # The candidate list's lookup status.
@@ -989,10 +1003,13 @@ def _base_dirty(root: Path) -> bool:
     return bool((proc.stdout or "").strip())
 
 
-def _raise_if_base_slot_unavailable(basis: CheckTargetBasis, own_merge_id: Optional[int]) -> None:
+def _raise_if_base_slot_unavailable(basis: CheckTargetBasis, own_merge_id: Optional[int], *,
+                                    tracked_changes: bool = True) -> None:
     """The project base target's existing slot checks: an open conflict / stopped merge, tracked local changes, and
     another open attempt into the base (in use). ``own_merge_id`` is the caller's own attempt, never "another".
-    The tracked-change read happens only when nothing is stopped; it failing refuses (``gate_git_unavailable``)."""
+    The tracked-change read happens only when nothing is stopped; it failing refuses (``gate_git_unavailable``).
+    ``tracked_changes=False`` (the candidate list, flowgate.v02test.0020 rev2) leaves that one Git read to the single
+    judgement; the other checks read the ledger and the checkout's MERGE_HEAD file only."""
     from .lock import base_merge_in_progress, guard_base_free
 
     own = str(own_merge_id) if own_merge_id is not None else None
@@ -1006,7 +1023,8 @@ def _raise_if_base_slot_unavailable(basis: CheckTargetBasis, own_merge_id: Optio
         raise GitServiceError(409, "merge_conflict_open", "a merge is stopped in the base checkout",
                               details={"merge_id": stopped.get("merge_id"),
                                        "blocking_group_id": stopped.get("group_id")})
-    if stopped is None and (basis.base_dirty if basis.base_dirty is not None else _base_dirty(basis.base_root)):
+    if tracked_changes and stopped is None and (
+            basis.base_dirty if basis.base_dirty is not None else _base_dirty(basis.base_root)):
         raise GitServiceError(409, "base_dirty", "base checkout has local modifications")
     for session in open_merge_attempts(basis.project_id):
         rec = target_record(session)
@@ -1092,20 +1110,24 @@ def _slot_error(basis: CheckTargetBasis, name: str, owner_group_id: Optional[str
 
 
 def _judge_local_target(basis: CheckTargetBasis, name: str, sha: str, incoming_of,
-                        own_merge_id: Optional[int]) -> dict:
+                        own_merge_id: Optional[int], *, listing: bool = False) -> dict:
     """The part of the judgement after the name resolved to a local, non-slot commit — shared by the single
-    judgement and the candidate list (which only gathers the same facts in batch). ``incoming_of(name)`` answers
-    ``(incoming_work_base_commits | None when it cannot be told, scope floor sha)`` for a name other than the work
-    base."""
+    judgement and the candidate list. ``incoming_of(name)`` answers ``(incoming_work_base_commits | None when it
+    cannot be told, scope floor sha)`` for a name other than the work base.
+
+    ``listing=True`` is the candidate list's share (flowgate.v02test.0020 rev2): only the steps that need no Git
+    read of their own -- the group's own branch, a Graph attempt branch, the target workspace / base slot in use.
+    The base checkout's branch, its tracked changes and the work base history the target lacks (``incoming_of``
+    is not called) are left to the single judgement of the name that is saved, confirmed or run."""
     if name == basis.source_branch:
         raise _target_error(409, "merge_target_same_branch", "the group's own branch cannot be its merge target", name)
     if name.startswith(GRAPH_ATTEMPT_BRANCH_PREFIX):
         raise _target_error(409, "merge_target_internal_slot", "a Graph attempt branch cannot be a merge target", name)
-    if not basis.base_checked:
+    if not basis.base_checked and not listing:
         raise_if_base_checkout_off_branch(basis.project_id, basis.base_branch)
     is_base = name == basis.base_branch
     if is_base:
-        _raise_if_base_slot_unavailable(basis, own_merge_id)
+        _raise_if_base_slot_unavailable(basis, own_merge_id, tracked_changes=not listing)
     else:
         verdict, details = _inspect_traced(basis.project_id, name)
         # Only a ``busy`` workspace (one claim, its marker naming the same attempt and owner) can be the caller's
@@ -1117,7 +1139,7 @@ def _judge_local_target(basis: CheckTargetBasis, name: str, sha: str, incoming_o
             raise _target_error(409, "merge_target_owner_mismatch",
                                 "the target workspace owner does not match any open attempt", name, **details)
     incoming, floor = None, None
-    if name != basis.work_base_ref:
+    if name != basis.work_base_ref and not listing:
         incoming, floor = incoming_of(name)
         if incoming is None:
             raise _target_error(409, "merge_target_preview_unavailable",
@@ -1139,31 +1161,75 @@ def _judge_local_target(basis: CheckTargetBasis, name: str, sha: str, incoming_o
     }
 # The candidate cache: (project, group) -> snapshot, at most CHECK_TARGET_CACHE_SEC old. Concurrent misses of one key
 # share one computation; ``invalidate_check_targets`` moves the epoch, so a computation that began before it is
-# neither cached nor joined afterwards. Timeout views also use this TTL (with no partial candidates or basis),
-# checked before any new basis probe; they never serve as a save/confirm judgement.
+# neither cached nor joined afterwards. Timeout views are kept CHECK_TARGET_TIMEOUT_CACHE_SEC (with no partial
+# candidates or basis), checked before any new basis probe; they never serve as a save/confirm judgement.
+# flowgate.v02test.0020 rev2: an ok / empty snapshot older than CHECK_TARGET_REFRESH_SEC or marked ``stale`` by an
+# invalidation is still served, and the read that serves it starts (or leaves running) one background recomputation.
+# flowgate.v02test.0020: a miss is computed on a background thread (``_run_check_flight``) under its own
+# CHECK_TARGET_COMPUTE_SEC budget; the request that started it and the requests joining it each wait at most their own
+# CHECK_TARGET_BUDGET_SEC. A newer computation of the same key cancels the older ones (their results could no longer
+# be cached), so one key keeps at most one computation spending Git time.
 _check_cache: dict[tuple, dict] = {}
 _check_inflight: dict[tuple, "_CheckFlight"] = {}
+_check_running: set = set()                       # flights whose thread has not ended yet
 _check_lock = threading.Lock()
 _check_epoch = 0
 
 
 class _CheckFlight:
-    def __init__(self) -> None:
-        self.done = threading.Event()
+    def __init__(self, budget=None, budget_sec: float = 0.0) -> None:
+        self.done = threading.Event()             # ``result`` is set
+        self.finished = threading.Event()         # the thread ended (its log line, if any, written)
         self.result: Optional[dict] = None
+        self.late = False                         # a waiter gave up first: the result is kept for the next read
+        self.budget = budget                      # the computation's own GitBudget (``cancel`` ends it)
+        self.budget_sec = budget_sec
+        self.revalidate = False                   # started by a read that served a stale list: nobody waits for it
+
+    def cancel(self) -> None:
+        if self.budget is not None:
+            self.budget.cancel()
 
 
 def invalidate_check_targets(project_id: Optional[str] = None, group_id: Optional[str] = None) -> None:
-    """Drop the cached check card candidates of one group, of a whole project (``group_id`` None) or of all.
+    """Mark the cached check card candidates of one group, of a whole project (``group_id`` None) or of all stale.
 
     Called when a card's target, a work base or a project's Git settings change, and by every server path that
-    changes refs, the internal slot ledger, a merge attempt or a target workspace (T#2's run paths)."""
+    changes refs, the internal slot ledger, a merge attempt or a target workspace (T#2's run paths).
+    flowgate.v02test.0020 rev2: a stale list is still served (the card opens at once, right after a merge too) and
+    the read serving it recomputes it in the background; a computation that began before this call is never cached.
+    A timeout snapshot is dropped. A list whose basis changed (work base, base branch, own branch) is never served:
+    the cache key's fingerprint no longer matches."""
     global _check_epoch
     with _check_lock:
         _check_epoch += 1
         for key in list(_check_cache):
             if (project_id is None or key[0] == project_id) and (group_id is None or key[1] == group_id):
-                del _check_cache[key]
+                if _check_cache[key].get("status") in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY):
+                    _check_cache[key]["stale"] = True
+                else:
+                    del _check_cache[key]
+
+
+def reset_check_targets() -> None:
+    """Forget every cached candidate list (tests, and a caller that changed Git outside FlowGate and must not be
+    served the list from before). A computation that began before this call is never cached."""
+    global _check_epoch
+    with _check_lock:
+        _check_epoch += 1
+        _check_cache.clear()
+
+
+def settle_check_targets(timeout: float = 30.0) -> bool:
+    """Wait until the background candidate computations running now have ended (tests, diagnostics); True when none
+    of them is left running."""
+    deadline = time.monotonic() + max(float(timeout), 0.0)
+    with _check_lock:
+        flights = list(_check_running)
+    for flight in flights:
+        flight.finished.wait(max(deadline - time.monotonic(), 0.0))
+    with _check_lock:
+        return not any(flight in _check_running for flight in flights)
 
 
 def _entry(branch: Optional[str], *, checked: bool, error: Optional[str] = None,
@@ -1298,8 +1364,11 @@ def _traced_name(trace: Optional[_CheckTrace], name: str, judge, *, kind: str):
 
 
 def _log_check_trace(project_id: Optional[str], group_id: str, refresh: bool, state: dict,
-                     trace: _CheckTrace) -> None:
-    """The one line of a failed / timed-out view (never raises: diagnostics do not change the response)."""
+                     trace: _CheckTrace, *, kind: str = "lookup", budget_sec: Optional[float] = None) -> None:
+    """The one line of a failed / timed-out view (never raises: diagnostics do not change the response).
+
+    flowgate.v02test.0020: ``kind="background"`` is the line of a background computation that ended after its
+    waiters had given up -- its real total time and every name judged, under its own budget (``budget_sec``)."""
     try:
         with trace.lock:
             shared = ",".join(f"{k}:{v}" for k, v in sorted(trace.shared.items())) or "-"
@@ -1309,12 +1378,13 @@ def _log_check_trace(project_id: Optional[str], group_id: str, refresh: bool, st
         slowest = ",".join(f"{n}:{ms}" for ms, n in sorted(names, key=lambda x: (-x[0], x[1]))[:CHECK_TRACE_SLOWEST])
         entries_ms = ",".join(f"{n}:{ms}" for ms, n in entries)
         _log.warning(
-            "check target lookup %s group=%s project=%s code=%s reason=%s source=%s stage=%s error=%s "
+            "check target %s %s group=%s project=%s code=%s reason=%s source=%s stage=%s error=%s "
             "failed_read=%s failed_name=%s refresh=%s total_ms=%d budget_ms=%d basis_ms=%s shared_ms=%s "
             "names=%d/%s judge_ms=%d inspect_workspace=%d/%dms extra_ms=%d slowest_ms=%s entries=%d entries_ms=%s",
-            state.get("status"), group_id, project_id, state.get("code"), state.get("reason"), trace.source,
+            kind, state.get("status"), group_id, project_id, state.get("code"), state.get("reason"), trace.source,
             trace.stage, trace.error or "-", trace.failed_read or "-", trace.failed_name or "-", bool(refresh),
-            _ms(time.monotonic() - trace.started), _ms(CHECK_TARGET_BUDGET_SEC),
+            _ms(time.monotonic() - trace.started),
+            _ms(CHECK_TARGET_BUDGET_SEC if budget_sec is None else budget_sec),
             "-" if trace.basis_ms is None else trace.basis_ms, shared, len(names),
             "-" if trace.listed is None else trace.listed, sum(ms for ms, _n in names), inspect_calls,
             _ms(inspect_ms), _ms(trace.extra_ms), slowest or "-", len(entries), entries_ms or "-")
@@ -1326,22 +1396,10 @@ def _failed_snapshot(status: str, code: str, reason: Optional[str] = None, **ext
     return {"status": status, "code": code, "reason": reason, "options": [], "verdicts": {}, **extra}
 
 
-def _branches_containing(root: Path, commitish: str) -> set:
-    """The local branches whose tip contains ``commitish`` (``target..commitish`` is empty for exactly these). A Git
-    failure is the list's own basis failing (409 ``gate_git_unavailable``), never "no branch contains it". Names are
-    the full refname less its exact ``refs/heads/`` prefix, as :func:`group_work_base.local_branch_refs` lists them."""
-    from modules.flow_gate.services import git_service as _gs
-    proc = _gs._run_git(["for-each-ref", "--contains", commitish, "--format=%(refname)", "refs/heads"], cwd=root)
-    if proc.returncode != 0:
-        raise _git_unavailable("probe_failed")
-    names = (line.strip() for line in (proc.stdout or "").splitlines())
-    return {ref[len("refs/heads/"):] for ref in names if ref.startswith("refs/heads/") and ref != "refs/heads/"}
-
-
-def _listed_verdict(basis: CheckTargetBasis, name: str, ref: tuple, slots: dict, incoming_of) -> dict:
-    """One listed local branch's entry from the batch facts — the judgement's own steps: the ledger verdict of
-    ``validate_target_branch`` (the listed name exists locally), a commit tip, then ``_judge_local_target``. A tip
-    that is no plain commit takes the single judgement."""
+def _listed_verdict(basis: CheckTargetBasis, name: str, ref: tuple, slots: dict) -> dict:
+    """One listed local branch's entry from the batch facts — the judgement's own Git-free steps: the ledger verdict
+    of ``validate_target_branch`` (the listed name exists locally), a commit tip, then ``_judge_local_target`` with
+    ``listing=True`` (flowgate.v02test.0020 rev2). A tip that is no plain commit takes the single judgement."""
     sha, kind = ref
     try:
         if name in slots:
@@ -1350,7 +1408,7 @@ def _listed_verdict(basis: CheckTargetBasis, name: str, ref: tuple, slots: dict,
             raise _target_error(422, "merge_target_invalid", "invalid target branch", name)
         if kind != "commit":
             return _verdict(basis, name)
-        judged = _judge_local_target(basis, name, sha, incoming_of, None)
+        judged = _judge_local_target(basis, name, sha, None, None, listing=True)
     except GitServiceError as exc:
         if exc.code not in CHECK_TARGET_UNFIT:
             raise
@@ -1368,70 +1426,46 @@ class _BudgetSpent(Exception):
 
 
 def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dict:
-    """Judge every local branch name, the work base and ``extra`` (the stored target) under ``budget`` — the view's
-    one CHECK_TARGET_BUDGET_SEC budget, started before the basis was read and bounding every Git call of this context.
-    The facts every name shares are read once (the base checkout's branch, the names and tips, the slot ledger, the
-    verified scope floor and which tips contain it, the base checkout's tracked changes); each name then takes the
-    judgement's own decision. Nothing partial survives: a basis failure is ``merge_target_options_unavailable`` and a
-    spent budget ``merge_target_options_timeout``."""
+    """The candidate list of every local branch name, the work base and ``extra`` (the stored target) under
+    ``budget``, which bounds every Git call of this context.
+
+    flowgate.v02test.0020 rev2: two facts every name shares are read once -- the slot ledger and the local branch
+    names with their tips (one ``for-each-ref``) -- and each name is kept when the judgement's Git-free steps allow it
+    (``_listed_verdict``): never the group's own branch, a registered worktree, a Graph attempt branch, a target
+    workspace or a base slot in use. The base checkout's branch, its tracked changes and the work base history a
+    target lacks (the verified scope floor: several Git reads in a row, which spent the whole budget on a slow host)
+    are no longer read here; the single judgement of the name that is saved, confirmed or run still refuses them. A
+    work base / stored target that is no listed local branch takes the single judgement. Nothing partial survives: a
+    basis failure is ``merge_target_options_unavailable`` and a spent budget ``merge_target_options_timeout``."""
     from modules.flow_gate.services import git_service as _gs
     from .group_work_base import local_branch_refs
 
     common = {"default_branch": basis.work_base_ref, "basis": basis}
-
-    def floor_and_containing() -> tuple:
-        # read only; None: no verified floor (no tip stands in)
-        floor = _traced_read("floor", check_scope_floor, basis)
-        return floor, (_traced_read("containing", _branches_containing, basis.base_root, floor) if floor else None)
-
     trace = _check_trace.get()                    # 0119 T#1: diagnostics only (None outside a view)
     memo_token = None
     try:
         _trace_stage(trace, "shared_reads")
         if _spent(budget):
             return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
-        # The shared reads run side by side under the one budget (each thread carries it) and are all joined
-        # here: nothing outlives this call.
-        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="check-target") as pool:
-            def run(fn, *args):
-                return pool.submit(contextvars.copy_context().run, fn, *args)
-            checkout = run(_traced_read, "checkout", raise_if_base_checkout_off_branch, basis.project_id,
-                           basis.base_branch)
-            listed = run(_traced_read, "refs", local_branch_refs, basis.base_root)
-            history = run(floor_and_containing)
-            dirty = run(_traced_read, "dirty", _base_dirty, basis.base_root)
-            # The ledger ``branches.internal_slot_owner`` reads (registered group worktrees), read once.
-            slots = {row.get("branch"): row.get("group_id")
-                     for row in _traced_read("slots", _gs.db_git.list_states_of_project, basis.project_id)}
-            checkout.result()
-            refs = listed.result()
-            floor, contained = history.result()
-            base_dirty = dirty.result()
-        judged = replace(basis, base_checked=True, floor_sha=floor, floor_known=True, base_dirty=base_dirty)
-        # flowgate.v02.0158: the names below share one read of the open attempts (``open_merge_attempts``), set only
-        # after the shared-read threads above have been joined.
+        # The ledger ``branches.internal_slot_owner`` reads (registered group worktrees), read once.
+        slots = {row.get("branch"): row.get("group_id")
+                 for row in _traced_read("slots", _gs.db_git.list_states_of_project, basis.project_id)}
+        refs = _traced_read("refs", local_branch_refs, basis.base_root)
+        # flowgate.v02.0158: the names below share one read of the open attempts (``open_merge_attempts``).
         memo_token = _attempts_memo.set({})
-
-        def incoming_of(name: str) -> tuple[Optional[int], Optional[str]]:
-            # ``preview_target``'s count is ``target..floor``: 0 exactly when the tip contains the floor (the
-            # list needs no more than "none" / "some": 1 stands for at least one). No verified floor: cannot tell.
-            if contained is None:
-                return None, None
-            return (0 if name in contained else 1), None
-
         verdicts: dict[str, dict] = {}
         _trace_stage(trace, "names")
         if trace is not None:
             trace.listed = len(refs)
         for name in sorted(refs):
             verdicts[name] = _traced_name(
-                trace, name, lambda: _listed_verdict(judged, name, refs[name], slots, incoming_of), kind="listed")
+                trace, name, lambda: _listed_verdict(basis, name, refs[name], slots), kind="listed")
             if _spent(budget):
                 return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
         _trace_stage(trace, "extra")
         for name in (basis.work_base_ref, *extra):   # a work base / stored target that is no listed local branch
             if name and name not in verdicts:
-                verdicts[name] = _traced_name(trace, name, lambda: _verdict(judged, name), kind="extra")
+                verdicts[name] = _traced_name(trace, name, lambda: _verdict(basis, name), kind="extra")
         if _spent(budget):
             return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, **common)
     except GitServiceError as exc:
@@ -1453,19 +1487,107 @@ def _compute_snapshot(basis: CheckTargetBasis, budget, extra: tuple = ()) -> dic
             _attempts_memo.reset(memo_token)
     options = sorted(name for name in refs if verdicts[name]["error"] is None)
     return {"status": CHECK_STATUS_OK if options else CHECK_STATUS_EMPTY, "code": None, "reason": None,
-            "options": options, "verdicts": verdicts, "default_branch": basis.work_base_ref, "basis": judged}
+            "options": options, "verdicts": verdicts, "default_branch": basis.work_base_ref, "basis": basis}
+
+
+def _servable_hit(hit: Optional[dict], fingerprint: tuple) -> bool:
+    """A cached ok / empty snapshot of the same basis, younger than CHECK_TARGET_CACHE_SEC (stale or not)."""
+    return (hit is not None and hit.get("status") in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY)
+            and hit.get("fingerprint") == fingerprint and time.monotonic() - hit["at"] < CHECK_TARGET_CACHE_SEC)
+
+
+def _revalidation_due(hit: dict) -> bool:
+    """flowgate.v02test.0020 rev2: a served snapshot is recomputed in the background once an invalidation marked it
+    stale or it is older than CHECK_TARGET_REFRESH_SEC."""
+    return hit.get("stale") is True or time.monotonic() - hit["at"] >= CHECK_TARGET_REFRESH_SEC
+
+
+def _start_check_flight(flight_key: tuple, basis: CheckTargetBasis, extra: tuple,
+                        trace: Optional[_CheckTrace], refresh: bool, *, revalidate: bool = False) -> _CheckFlight:
+    """Register and start the background computation of ``flight_key`` (the caller holds ``_check_lock``)."""
+    from .command import GitBudget
+
+    seconds = CHECK_TARGET_COMPUTE_SEC
+    flight = _CheckFlight(GitBudget(seconds), seconds)
+    flight.revalidate = revalidate
+    for other_key, other in _check_inflight.items():
+        if other_key[0] == flight_key[0]:
+            other.cancel()                        # an older epoch / basis of this key: never cached any more
+    _check_inflight[flight_key] = flight
+    _check_running.add(flight)
+    # A fresh context: the request's own context variables (its DB read scope, its Git budget) never outlive the
+    # request in this thread; only the trace of the request that started the computation is carried.
+    thread = threading.Thread(target=contextvars.Context().run,
+                              args=(_run_check_flight, flight, flight_key, basis, extra, trace, refresh),
+                              name=f"check-target-{basis.group_id}", daemon=True)
+    try:
+        thread.start()
+    except RuntimeError:                          # no thread available: this lookup fails, nothing is left waiting
+        _log.warning("check target computation could not start for %s", basis.group_id, exc_info=True)
+        del _check_inflight[flight_key]
+        _check_running.discard(flight)
+        flight.result = _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, "probe_failed",
+                                         default_branch=basis.work_base_ref, basis=None)
+        flight.done.set()
+        flight.finished.set()
+    return flight
+
+
+def _run_check_flight(flight: _CheckFlight, flight_key: tuple, basis: CheckTargetBasis, extra: tuple,
+                      trace: Optional[_CheckTrace], refresh: bool) -> None:
+    """One candidate computation on its own thread under the flight's budget (flowgate.v02test.0020). Its result goes
+    to the waiters still there and, when ok / empty and no invalidation came meanwhile, into the cache, so the next
+    read gets it instead of computing again. A failed one leaves the cache as it was (a stale list stays served).
+    Its diagnostic line is written when every waiter had given up first (``late``), and for a background
+    revalidation only when it did not list."""
+    from .command import bind_git_budget
+
+    key, epoch, fingerprint = flight_key
+    token = _check_trace.set(trace)
+    snapshot: Optional[dict] = None
+    late = False
+    try:
+        with bind_git_budget(flight.budget):
+            snapshot = _compute_snapshot(basis, flight.budget, extra)
+    except Exception as exc:  # noqa: BLE001
+        _trace_error(trace, exc)
+        _log.warning("check target snapshot failed for %s", basis.group_id, exc_info=True)
+    finally:
+        try:
+            if snapshot is None:
+                snapshot = _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, "probe_failed",
+                                            default_branch=basis.work_base_ref, basis=None)
+            snapshot.update(fingerprint=fingerprint, at=time.monotonic())
+            with _check_lock:
+                if _check_inflight.get(flight_key) is flight:
+                    del _check_inflight[flight_key]
+                late = flight.late
+                listed = snapshot["status"] in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY)
+                if listed and epoch == _check_epoch:
+                    _check_cache[key] = snapshot
+                flight.result = snapshot
+            flight.done.set()
+            if trace is not None and (late and not flight.revalidate or flight.revalidate and not listed):
+                _log_check_trace(basis.project_id, basis.group_id, refresh, snapshot, trace, kind="background",
+                                 budget_sec=flight.budget_sec)
+        finally:
+            _check_trace.reset(token)
+            with _check_lock:
+                _check_running.discard(flight)
+            flight.finished.set()
 
 
 def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, budget,
                     selected: Optional[str] = None) -> dict:
-    """The (cached) snapshot of one group's candidates, read under the view's ``budget``: the basis, the shared
-    computation and the wait for another request's computation all spend the same deadline."""
+    """The (cached) snapshot of one group's candidates, read under the view's ``budget``: the basis and the wait for
+    the computation (this request's own or another one's) spend the same deadline. The computation itself runs in
+    the background under CHECK_TARGET_COMPUTE_SEC and is not abandoned when the wait ends (flowgate.v02test.0020)."""
     trace = _check_trace.get()                    # 0119 T#1: diagnostics only
     key = (project_id, group_id)
     with _check_lock:
         hit = _check_cache.get(key)
         if (not refresh and hit is not None and hit["status"] == CHECK_STATUS_TIMEOUT
-                and time.monotonic() - hit["at"] < CHECK_TARGET_CACHE_SEC):
+                and time.monotonic() - hit["at"] < CHECK_TARGET_TIMEOUT_CACHE_SEC):
             if trace is not None:
                 trace.source = "cache"
             return hit
@@ -1490,52 +1612,42 @@ def _check_snapshot(project_id: Optional[str], group_id: str, refresh: bool, bud
             trace.basis_ms = _ms(time.monotonic() - started)
     fingerprint = (basis.base_branch, basis.work_base_ref, basis.source_branch, basis.slot_registered,
                    str(basis.base_root))
+    extra = (selected,) if selected else ()
     with _check_lock:
         epoch = _check_epoch
+        flight_key = (key, epoch, fingerprint)
         hit = _check_cache.get(key)
-        if (not refresh and hit is not None and hit.get("fingerprint") == fingerprint
-                and time.monotonic() - hit["at"] < CHECK_TARGET_CACHE_SEC):
+        if not refresh and _servable_hit(hit, fingerprint):
+            # flowgate.v02test.0020 rev2: served at once, stale or not; a stale / old one is recomputed behind it
+            # (one computation per key: a running one is left to finish).
+            if _revalidation_due(hit) and flight_key not in _check_inflight:
+                background = _CheckTrace()
+                background.source = "revalidate"
+                _start_check_flight(flight_key, basis, extra, background, False, revalidate=True)
             if trace is not None:
                 trace.source = "cache"
             return hit
-        flight_key = (key, epoch, fingerprint)
-        flight = None if refresh else _check_inflight.get(flight_key)
+        # A refresh joins a computation already running for the same basis and epoch (it began at most
+        # CHECK_TARGET_COMPUTE_SEC ago) instead of cancelling it and starting over.
+        flight = _check_inflight.get(flight_key)
         owner = flight is None
         if owner:
-            flight = _CheckFlight()
-            _check_inflight[flight_key] = flight
+            flight = _start_check_flight(flight_key, basis, extra, trace, refresh)
     if not owner:
-        # Joining another request's computation spends this request's own deadline; one that does not end inside
-        # it is this request's timeout (never a second computation past the budget).
         if trace is not None:
             trace.source = "joined"
         _trace_stage(trace, "flight_wait")
-        flight.done.wait(max(budget.remaining(), 0.0))
-        if flight.result is not None:
-            return flight.result
-        return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT,
-                                default_branch=basis.work_base_ref, basis=None)
-    snapshot: Optional[dict] = None
-    try:
-        snapshot = _compute_snapshot(basis, budget, (selected,) if selected else ())
-    except Exception as exc:  # noqa: BLE001
-        _trace_error(trace, exc)
-        _log.warning("check target snapshot failed for %s", group_id, exc_info=True)
-        snapshot = _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, "probe_failed",
-                                    default_branch=basis.work_base_ref, basis=None)
-    finally:
-        if snapshot is None:
-            snapshot = _failed_snapshot(CHECK_STATUS_FAILED, CHECK_OPTIONS_UNAVAILABLE, "probe_failed",
-                                        default_branch=basis.work_base_ref, basis=None)
-        snapshot.update(fingerprint=fingerprint, at=time.monotonic())
-        with _check_lock:
-            if _check_inflight.get(flight_key) is flight:
-                del _check_inflight[flight_key]
-            if snapshot["status"] in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY) and epoch == _check_epoch:
-                _check_cache[key] = snapshot
-        flight.result = snapshot
-        flight.done.set()
-    return snapshot
+    # The starter and the joiners alike wait at most their own deadline; one that ends first answers ``timeout`` and
+    # marks the result ``late`` (flowgate.v02test.0020). The computation goes on under its own budget either way.
+    flight.done.wait(max(budget.remaining(), 0.0))
+    with _check_lock:
+        result = flight.result
+        if result is None:
+            flight.late = True
+    if result is not None:
+        return result
+    return _failed_snapshot(CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT,
+                            default_branch=basis.work_base_ref, basis=None)
 
 
 def _entry_of(snapshot: dict, name: Optional[str], budget) -> dict:
@@ -1575,7 +1687,7 @@ def check_target_view(project_id: Optional[str], group_id: str, selected: Option
                       refresh: bool = False) -> dict:
     """The read-only merge target outputs of a check card's settings response (D0004 §3.1 / §5)::
 
-        {"merge_target_options": [branch, ...],          # names passing judge_check_target, sorted
+        {"merge_target_options": [branch, ...],          # names the list keeps (_compute_snapshot), sorted
          "default_target_branch": work base | None,
          "merge_target_state": {
              "status": ok | empty | git_unavailable | failed | timeout,
@@ -1585,23 +1697,30 @@ def check_target_view(project_id: Optional[str], group_id: str, selected: Option
              "current": {branch, inherited, checked, error, unmerge_supported, warnings},
              "default": {branch, checked, error, unmerge_supported, warnings}}}
 
-    ``selected`` is the stored ``merge_target_branch`` (None: the work base is inherited). ``refresh`` invalidates
-    the cache. One CHECK_TARGET_BUDGET_SEC budget covers the whole view -- the basis, the candidates and the current /
-    default states; when it runs out the view is ``timeout`` with no candidates and unchecked states. That negative
-    snapshot is cached for CHECK_TARGET_CACHE_SEC, without renewing its age on hits. Never raises for a Git / ledger
-    read: the status says what failed. Saving, confirming and running
-    never read this (they call ``judge_check_target``)."""
+    ``selected`` is the stored ``merge_target_branch`` (None: the work base is inherited). A cached list is served
+    stale-while-revalidate (CHECK_TARGET_CACHE_SEC / CHECK_TARGET_REFRESH_SEC, flowgate.v02test.0020 rev2);
+    ``refresh`` skips it and waits for a computation (a running one is joined). One CHECK_TARGET_BUDGET_SEC budget
+    covers the whole view -- the basis, the wait for the candidates and the current / default states; when it runs
+    out the view is ``timeout`` with no candidates and unchecked states. That negative snapshot is cached for
+    CHECK_TARGET_TIMEOUT_CACHE_SEC, without renewing its age on hits. The candidate
+    computation itself is not bounded by the view's budget (flowgate.v02test.0020): it ends in the background under
+    CHECK_TARGET_COMPUTE_SEC and its ok / empty result replaces the negative snapshot, so the next read (a client
+    retry) gets the list. Never raises for a Git / ledger read: the status says what failed. Saving, confirming and
+    running never read this (they call ``judge_check_target``)."""
     from .command import git_budget
 
     trace = _CheckTrace()                         # 0119 T#1: the failed / timed-out view's one diagnostic line
     token = _check_trace.set(trace)
     if refresh:
-        invalidate_check_targets(project_id, group_id)
+        # flowgate.v02test.0020 rev2: the cached list is not served, but the epoch stays: a computation already
+        # running for this group is joined, not cancelled and started over (``_check_snapshot``).
+        with _check_lock:
+            _check_cache.pop((project_id, group_id), None)
     with _check_lock:
         epoch = _check_epoch
     try:
         with git_budget(CHECK_TARGET_BUDGET_SEC) as budget:
-            snapshot = _check_snapshot(project_id, group_id, refresh, budget, selected)
+            snapshot = got = _check_snapshot(project_id, group_id, refresh, budget, selected)
             default_branch = snapshot.get("default_branch")
             if snapshot["status"] in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY):
                 _trace_stage(trace, "entries")
@@ -1619,7 +1738,13 @@ def check_target_view(project_id: Optional[str], group_id: str, selected: Option
                 # poison the owner's result; invalidation/refresh fences late results, and hits never renew TTL.
                 with _check_lock:
                     key = (project_id, group_id)
-                    if epoch == _check_epoch and _check_cache.get(key) is not snapshot:
+                    existing = _check_cache.get(key)
+                    # flowgate.v02test.0020: a background result that landed while this view was giving up (one
+                    # this view never received) is never replaced by this view's negative snapshot.
+                    landed = (existing is not None and existing is not got
+                              and existing.get("status") in (CHECK_STATUS_OK, CHECK_STATUS_EMPTY)
+                              and existing.get("at", 0.0) >= trace.started)
+                    if epoch == _check_epoch and existing is not snapshot and not landed:
                         _check_cache[key] = {**_failed_snapshot(
                             CHECK_STATUS_TIMEOUT, CHECK_OPTIONS_TIMEOUT, default_branch=default_branch, basis=None),
                             "at": time.monotonic()}

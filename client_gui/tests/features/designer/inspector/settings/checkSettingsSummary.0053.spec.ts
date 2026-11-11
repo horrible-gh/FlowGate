@@ -24,15 +24,21 @@ describe('check settings branch contract — 0098', () => {
     expect(checkSettingsView({ ...base, node: node({ fields: { merge_mode: field(mode), merge_target_branch: field('release', true) } }) })).toMatchObject({ target: 'release', targetEnabled: false })
   })
   it.each([['empty', 'target.empty'], ['failed', 'target.lookup_failed'], ['timeout', 'target.lookup_timeout'], ['git_unavailable', 'target.git_unavailable']])('distinguishes %s from other lookup states', (status, lookupError) => {
-    expect(checkSettingsView({ ...base, node: node({ merge_target_options: [], merge_target_state: { status, current: null, default: null } }) })).toMatchObject({ targetEnabled: false, lookupError })
+    // flowgate.v02test.0020: after a timeout / failure the inherited name stays choosable, unverified; empty / Git refused lock
+    const usable = status === 'failed' || status === 'timeout'
+    expect(checkSettingsView({ ...base, node: node({ merge_target_options: [], merge_target_state: { status, current: null, default: null } }) })).toMatchObject({
+      targetEnabled: usable, lookupError, optionsSource: usable ? 'unverified' : 'none', targetOptions: usable ? ['feature/v0.2.0'] : [] })
   })
   it.each(['failed', 'timeout', 'git_unavailable'].flatMap(status => [false, true].map(stored => ({ status, stored }))))('keeps unchecked names without invalidating targets on $status (stored=$stored)', ({ status, stored }) => {
     const name = stored ? 'release' : 'feature/v0.2.0'
     const unchecked = { checked: false, error: null, unmerge_supported: null, warnings: [] }
     const saved = node({ fields: { merge_mode: field('merge'), merge_target_branch: field(stored ? name : null, stored) },
       merge_target_options: [], merge_target_state: { status, current: entry(name, unchecked), default: entry('feature/v0.2.0', unchecked) } })
+    // flowgate.v02test.0020: on a timeout / failure with nothing kept the stored and inherited names are offered, unverified
+    const usable = status !== 'git_unavailable'
     expect(checkSettingsView({ ...base, node: saved })).toMatchObject({ target: name, targetStored: stored, targetError: null,
-      lookupError: status === 'git_unavailable' ? 'target.git_unavailable' : status === 'timeout' ? 'target.lookup_timeout' : 'target.lookup_failed', targetEnabled: false })
+      lookupError: status === 'git_unavailable' ? 'target.git_unavailable' : status === 'timeout' ? 'target.lookup_timeout' : 'target.lookup_failed', targetEnabled: usable,
+      optionsSource: usable ? 'unverified' : 'none', targetOptions: usable ? [...new Set([name, 'feature/v0.2.0'])] : [] })
   })
   it('keeps invalid stored names out of choices and never substitutes another inherited branch', () => {
     const missing = entry('gone', { error: 'merge_target_not_found' })
@@ -106,8 +112,15 @@ describe('check settings branch contract — 0098', () => {
     expect(checkOperationErrorKey(code)).toBe(`target.${key}`)
     for (const locale of ['ko', 'en', 'ja'] as const) expect((messages[locale].target as Record<string, string>)[key]).toBeTruthy()
   })
-  it('keeps a failed lookup disabled even if a stale list is present', () => {
-    expect(checkSettingsView({ ...base, node: node({ merge_target_state: { status: 'failed' } }) }).targetEnabled).toBe(false)
+  it('never offers a stale list beside a failed lookup: only the inherited name, unverified (flowgate.v02test.0020)', () => {
+    expect(checkSettingsView({ ...base, node: node({ merge_target_state: { status: 'failed' } }) })).toMatchObject({
+      targetOptions: ['feature/v0.2.0'], optionsSource: 'unverified', targetEnabled: true })
+  })
+  it('prefers the kept confirmed list to the unverified names, and offers none of them in commit / hold or under a lock', () => {
+    const failed = node({ merge_target_options: [], merge_target_state: { status: 'timeout' } })
+    expect(checkSettingsView({ ...base, node: failed, cachedTargets: ['main', 'release'] })).toMatchObject({ targetOptions: ['main', 'release'], optionsSource: 'cache', targetEnabled: true })
+    expect(checkSettingsView({ ...base, node: { ...failed, fields: { ...failed.fields, merge_mode: field('hold') } } }).targetEnabled).toBe(false)
+    expect(checkSettingsView({ ...base, node: { ...failed, locked: true } }).targetEnabled).toBe(false)
   })
   it('keeps locks and all ko/en/ja labels', () => {
     expect(checkSettingsView({ ...base, node: { ...node(), locked: true } }).reason).toBe('reason.locked')

@@ -6,7 +6,7 @@ vi.mock('@shared/api', async original => ({ ...await original<typeof import('@sh
   getRequest: (...a: unknown[]) => http.get(...a), patchRequest: (...a: unknown[]) => http.patch(...a), postRequest: (...a: unknown[]) => http.post(...a) }))
 import CheckSettings from '@/features/designer/inspector/features/checkSettings/CheckSettings.vue'
 import GateSettingsSummary from '@/features/designer/inspector/features/gateCard/GateSettingsSummary.vue'
-import { MERGE_TARGET_CACHE_MS, useGateContext } from '@/features/designer/inspector/features/gateCard/useGateContext'
+import { MERGE_TARGET_CACHE_MS, TARGET_RETRY_DELAYS_MS, useGateContext } from '@/features/designer/inspector/features/gateCard/useGateContext'
 import { checkTargetErrorKey } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
 import { settingsNodeRead, toSettingsNode } from '@/features/document'
 import { SELECTIONS, prepareInspectorI18n, targetOf } from '../support/inspectorSupport'
@@ -158,18 +158,26 @@ describe('check card target and push controls — 0098', () => {
     const w = await show()
     const control = w.get('[data-test="check-settings-target"]')
     expect(w.get('[data-test="check-settings-target-state"]').text()).toBe(status === 'git_unavailable' ? 'Git 사용 불가' : status === 'timeout' ? '대상 조회 시간 초과' : '대상 조회 실패')
-    expect(control.attributes('disabled')).toBeDefined()
     expect(control.attributes('aria-invalid')).toBe('false')
     expect(control.classes()).not.toContain('is-invalid')
-    expect(w.get('[data-test="check-settings-target-display"]').text()).toBe(name)
     expect(w.find('[data-test="check-settings-target-error"]').exists()).toBe(false)
-    expect(optionNames(w)).toEqual([])
-    if (status === 'failed' || status === 'timeout') {
-      // 0006-T §3.5: the first read failed and nothing is kept: no list, but the refresh is open.
+    if (status === 'git_unavailable') {
+      // Git itself refused: nothing to choose, the name is drawn over the control.
+      expect(control.attributes('disabled')).toBeDefined()
+      expect(w.get('[data-test="check-settings-target-display"]').text()).toBe(name)
+      expect(optionNames(w)).toEqual([])
+    } else {
+      // flowgate.v02test.0020 (replaces 0006-T §3.5's lock): the first read failed and nothing is kept, but the stored /
+      // inherited names stay choosable, marked unverified, and the refresh is open.
+      const names = [...new Set([stored ? name : null, raw.default_target_branch].filter((n): n is string => !!n))]
+      expect(control.attributes('disabled')).toBeUndefined()
+      expect(optionNames(w)).toEqual(names.map(n => `${n} (미검증)`))
+      expect(selected(w)).toBe(name)
+      expect(w.find('[data-test="check-settings-target-display"]').exists()).toBe(false)
       expect(w.get('[data-test="check-settings-refresh"]').attributes('disabled')).toBeUndefined()
       await w.get('[data-test="check-settings-refresh"]').trigger('click'); await flushPromises()
       expect(http.get).toHaveBeenCalledWith(expect.stringContaining('/settings'), { refresh_merge_targets: true })
-      expect(w.get('[data-test="check-settings-target-display"]').text()).toBe(name)
+      expect(selected(w)).toBe(name)
       expect(w.find('[data-test="check-settings-target-error"]').exists()).toBe(false)
     }
     expect(raw.fields).toEqual(before)
@@ -397,10 +405,17 @@ describe('0006-T T-b: kept confirmed merge targets before the confirmation', () 
   async function reread() { await context.value!.reload(); await flushPromises() }
   const control = (w: VueWrapper) => w.get('[data-test="check-settings-target"]')
   const refresh = (w: VueWrapper) => w.get('[data-test="check-settings-refresh"]')
+  /**
+   * flowgate.v02test.0020 (replaces 0006-T §3.5's lock): nothing confirmed is kept, so the list holds only the stored and
+   * the inherited name, marked unverified; the control stays open (the server judges a choice on PATCH) with the lookup
+   * error and the refresh.
+   */
   function expectNothingKept(w: VueWrapper, name: string) {
-    expect(optionNames(w)).toEqual([])
-    expect(control(w).attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="check-settings-target-display"]').text()).toBe(name)
+    const names = [...new Set([storedTarget(), raw.default_target_branch].filter((n): n is string => !!n))]
+    expect(optionNames(w)).toEqual(names.map(n => `${n} (미검증)`))
+    expect(control(w).attributes('disabled')).toBeUndefined()
+    expect(selected(w)).toBe(name)
+    expect(w.find('[data-test="check-settings-target-display"]').exists()).toBe(false)
     expect(w.find('[data-test="check-settings-target-state"]').exists()).toBe(true)
     expect(refresh(w).attributes('disabled')).toBeUndefined()
   }
@@ -617,10 +632,11 @@ describe('0006-T T-b: kept confirmed merge targets before the confirmation', () 
       lookupFails('timeout'); back(); await flushPromises()
       expect(kept.settings.value?.mergeTargetState?.status).toBe('timeout')
       expect(kept.cachedTargets()).toBeNull()
-      // No list from before the move: the control is off with the saved name; the refusal stays as the control error.
-      expect(optionNames(w)).toEqual([])
-      expect(control(w).attributes('disabled')).toBeDefined()
-      expect(w.get('[data-test="check-settings-target-display"]').text()).toBe('feature/v0.2.0')
+      // No list from before the move: only the saved name, unverified (flowgate.v02test.0020); the refusal stays as the
+      // control error.
+      expect(optionNames(w)).toEqual(['feature/v0.2.0 (미검증)'])
+      expect(control(w).attributes('disabled')).toBeUndefined()
+      expect(selected(w)).toBe('feature/v0.2.0')
       expect(w.get('[data-test="check-settings-target-error"]').text()).toBe(i18n.global.t(`gui.inspector.checkSettings.${checkTargetErrorKey(code)}`))
       expect(refresh(w).attributes('disabled')).toBeUndefined()
       expect(http.patch).toHaveBeenCalledTimes(1)
@@ -664,9 +680,10 @@ describe('0006-T T-b: kept confirmed merge targets before the confirmation', () 
         expect(optionNames(w)).toEqual(LIST)
         expect(selected(w)).toBe('feature/v0.2.0')
       } else {
-        expect(optionNames(w)).toEqual([])
+        // the kept list is dropped: only the inherited name, unverified (flowgate.v02test.0020)
+        expect(optionNames(w)).toEqual(['feature/v0.2.0 (미검증)'])
         expect(context.value!.targetCache.value).toBeNull()
-        expect(w.get('[data-test="check-settings-target-display"]').text()).toBe('feature/v0.2.0')
+        expect(selected(w)).toBe('feature/v0.2.0')
       }
     })
 
@@ -762,5 +779,63 @@ describe('0006-T T-b: kept confirmed merge targets before the confirmation', () 
     http.post.mockResolvedValueOnce({ data: { run: structuredClone(current) } })
     expect(await context.value!.decide('confirm')).toBe(true)
     expect(http.post).toHaveBeenLastCalledWith(expect.stringContaining(`/nodes/${target.nodeId}/gate-decision`), expect.objectContaining({ decision: 'confirm', expected_settings_version: 7 }))
+  })
+})
+
+
+// flowgate.v02test.0020: after a lookup timeout / failure the card reads its settings again by itself (plain reads that pick
+// up the server's background computation), a few times with growing waits, until a confirmed list arrives. Leaving the
+// card ends it; nothing is written.
+describe('flowgate.v02test.0020: automatic re-read after a lookup timeout', () => {
+  const LIST = ['feature/v0.2.0', 'main', 'release/local']
+  const settingsReads = () => http.get.mock.calls.filter(([url]) => String(url).endsWith('/settings'))
+  const step = async (ms: number) => { vi.advanceTimersByTime(ms); await flushPromises() }
+  afterEach(() => { vi.useRealTimers() })
+
+  it('re-reads with growing waits, without the refresh option, and the confirmed list ends the error and the re-reads', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    lookupFails('timeout')
+    const w = await show()
+    expect(optionNames(w)).toEqual(['feature/v0.2.0 (미검증)'])
+    const first = settingsReads().length
+    await step(TARGET_RETRY_DELAYS_MS[0] - 1)
+    expect(settingsReads().length).toBe(first)
+    await step(1)
+    expect(settingsReads().length).toBe(first + 1)
+    expect(JSON.stringify(settingsReads().at(-1))).not.toContain('refresh_merge_targets')
+    await step(TARGET_RETRY_DELAYS_MS[1] - 1)                          // still timing out: a longer wait
+    expect(settingsReads().length).toBe(first + 1)
+    raw.merge_target_options = [...LIST]; targets(null)                // the server's computation has ended
+    await step(1)
+    expect(settingsReads().length).toBe(first + 2)
+    expect(optionNames(w)).toEqual(LIST)
+    expect(w.find('[data-test="check-settings-target-state"]').exists()).toBe(false)
+    expect(w.find('[data-test="check-settings-refresh"]').exists()).toBe(false)
+    await step(120_000)
+    expect(settingsReads().length).toBe(first + 2)
+    expect(http.patch).not.toHaveBeenCalled()
+  })
+
+  it('stops after the last wait, leaving the refresh button', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    lookupFails('failed')
+    const w = await show()
+    const first = settingsReads().length
+    for (const delay of TARGET_RETRY_DELAYS_MS) await step(delay)
+    expect(settingsReads().length).toBe(first + TARGET_RETRY_DELAYS_MS.length)
+    await step(300_000)
+    expect(settingsReads().length).toBe(first + TARGET_RETRY_DELAYS_MS.length)
+    expect(w.get('[data-test="check-settings-refresh"]').attributes('disabled')).toBeUndefined()
+    expect(http.patch).not.toHaveBeenCalled()
+  })
+
+  it('does not re-read a card the Inspector left', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    lookupFails('timeout')
+    const w = await show()
+    const first = settingsReads().length
+    wrappers.splice(wrappers.indexOf(w), 1); w.unmount(); await flushPromises()
+    await step(120_000)
+    expect(settingsReads().length).toBe(first)
   })
 })

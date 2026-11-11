@@ -58,6 +58,32 @@ def get_logger(name: str) -> logging.Logger:
     return logger
 
 
+class _FileLogForwarder(logging.Handler):
+    """Hands a channel's records to the app's FILE handlers (``logs/default.log``), looked up per record.
+
+    ``get_logger`` borrows LogAssist's handlers once, when it is called; a module-level logger created before
+    LogAssist is initialised therefore keeps none. Looking the handlers up per record removes that import-order
+    dependency (the pattern of ``ai_invoke/runtime.py``). Only file handlers are used: the console keeps the copy it
+    gets through propagation, and pytest's ``caplog`` still sees every record.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        for handler in logging.getLogger("LogAssist.log").handlers:
+            if isinstance(handler, logging.FileHandler) and record.levelno >= handler.level:
+                try:
+                    handler.handle(record)
+                except Exception:  # noqa: BLE001 -- logging must never break the caller
+                    self.handleError(record)
+
+
+def forward_to_file_log(logger: logging.Logger, level: int = logging.WARNING) -> logging.Logger:
+    """Make ``logger``'s records of ``level`` and above reach ``logs/default.log`` (flowgate.v02test.0020: the merge
+    target lookup's diagnostic line had been written to a handler-less root since 0119). Idempotent."""
+    if not any(isinstance(handler, _FileLogForwarder) for handler in logger.handlers):
+        logger.addHandler(_FileLogForwarder(level=level))
+    return logger
+
+
 def correlation_id(request: Any) -> str:
     """The caller's correlation id, or a fresh short one when the request carries none."""
     headers = getattr(request, "headers", None)

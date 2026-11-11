@@ -7,8 +7,11 @@ export type CheckUsage = 'mid' | 'end'
 export type CheckScope = 'merge' | 'commit' | 'hold'
 /** The candidate lookup's own status as the server answered it (`merge_target_state.status`). */
 export type CheckLookupStatus = 'ok' | 'empty' | 'timeout' | 'failed' | 'git_unavailable'
-/** Where the shown candidates come from: this answer, the kept confirmed list (0006-T §2), or nowhere. */
-export type CheckOptionsSource = 'live' | 'cache' | 'none'
+/**
+ * Where the shown candidates come from: this answer, the kept confirmed list (0006-T §2), the stored / inherited names
+ * alone while no confirmed list exists after a timeout / failure (`unverified`, flowgate.v02test.0020), or nowhere.
+ */
+export type CheckOptionsSource = 'live' | 'cache' | 'unverified' | 'none'
 export const CHECK_LOOKUP_STATUSES: readonly CheckLookupStatus[] = ['ok', 'empty', 'timeout', 'failed', 'git_unavailable']
 /** Lookups after which the kept confirmed list may stand in for the missing candidates. */
 const CACHE_USABLE_LOOKUPS: readonly CheckLookupStatus[] = ['timeout', 'failed']
@@ -146,9 +149,18 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
   // Only a confirmed lookup (or an answer without lookup facts) lists live candidates; names beside a failure are not.
   const liveOptions = !state || lookupStatus === 'ok' || lookupStatus === 'empty' ? input.node?.mergeTargetOptions ?? [] : []
   // 0006-T §3.3: the live answer's candidates when it has any, else the kept confirmed list after a timeout / failure.
-  const cached = lookupStatus !== null && CACHE_USABLE_LOOKUPS.includes(lookupStatus) ? input.cachedTargets ?? [] : []
-  const optionsSource: CheckOptionsSource = liveOptions.length > 0 ? 'live' : cached.length > 0 ? 'cache' : 'none'
-  const targetOptions = optionsSource === 'live' ? liveOptions : optionsSource === 'cache' ? cached : []
+  const usable = lookupStatus !== null && CACHE_USABLE_LOOKUPS.includes(lookupStatus)
+  const cached = usable ? input.cachedTargets ?? [] : []
+  // flowgate.v02test.0020 (replaces 0006-T §3.5's lock): with no confirmed list at all after a timeout / failure (a first
+  // entry, F5, the kept list expired), the stored and the inherited name stay choosable, marked unverified, so the lookup
+  // alone never locks the control. The server judges the choice again on PATCH (judge_check_target) and before the
+  // confirmation; a refusal is the field's own error, as for any other name.
+  const storedName = targetStored ? field!.value as string : null
+  const unverified = usable ? [...new Set([storedName, defaultTarget].filter((name): name is string => !!name))] : []
+  const optionsSource: CheckOptionsSource = liveOptions.length > 0 ? 'live' : cached.length > 0 ? 'cache'
+    : unverified.length > 0 ? 'unverified' : 'none'
+  const targetOptions = optionsSource === 'live' ? liveOptions : optionsSource === 'cache' ? cached
+    : optionsSource === 'unverified' ? unverified : []
   const reason = checkSettingsReason(input)
   const scope = oneOf(valueOf('merge_mode'), CHECK_SCOPES)
   const lookupError = state?.status === 'git_unavailable' ? 'target.git_unavailable'
@@ -166,7 +178,8 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
     target,
     targetStored,
     defaultTarget,
-    // 0006-T §3.2: a valid candidate (live or kept) and no safety lock; a lookup error alone never locks the choice.
+    // 0006-T §3.2: a candidate (live, kept, or the unverified stored / inherited names) and no safety lock; a lookup
+    // error alone never locks the choice (flowgate.v02test.0020).
     // flowgate.v02.0148 T#2: a save of another field on its way is no lock (the writes are queued).
     targetEnabled: scope === 'merge' && targetOptions.length > 0 && reason === null,
     targetError: scope === 'merge' && !pendingTarget ? targetError : null,
