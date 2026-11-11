@@ -63,14 +63,19 @@ from modules.flow_gate.services import (
 from .flow_guard import with_flow_guard
 
 
-def api_base_url() -> str:
-    """0063 B7: the operator base of a Graph AI start, absolute as an HTTP-started run's is (``token_routes``).
-    The start is a post-commit or recovery job with no request to read the origin from, so it is this server's
-    loopback; a relative base made the CLI launch refuse the run before its provider chain
-    (``provider_api._resolve_agent_api_base``). The agent base is resolved downstream."""
-    from config import settings                                    # noqa: PLC0415
+def api_base_url(user_id: Optional[str] = None) -> str:
+    """0063 B7: the operator base of a Graph AI start, absolute as an HTTP-started run's is (``token_routes``);
+    a relative base made the CLI launch refuse the run before its provider chain
+    (``provider_api._resolve_agent_api_base``). The local CLI resolves its agent base downstream.
 
-    return f"http://127.0.0.1:{settings.FLOWGATE_PORT}{settings.CONTEXT.rstrip('/')}/api/v1"
+    flowgate.v02test.0017 CH0002: the start is a post-commit or recovery job with no request to read the origin
+    from. Loopback alone made a remote CLI refuse every Graph start before its Job
+    (``remote_api_base_unreachable: api_base_loopback``) while chat on the same Agent worked, because chat hands
+    over the person's request origin. ``operator_base.resolve`` answers the configured
+    ``FLOWGATE_OPERATOR_API_BASE``, else ``user_id``'s own latest non-loopback request origin, else loopback."""
+    from .operator_base import resolve                             # noqa: PLC0415
+
+    return resolve(user_id)
 
 
 class NodeNotStartable(RuntimeError):
@@ -144,7 +149,7 @@ def start_ai_invoke(job: dict) -> dict:
         mention = mention_service.build_mention_from_token_rec(
             token_rec={"project": project_id, "group_id": flow_id, "scratch_dir": issue["scratch_dir"]},
             head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
-            api_base_url=api_base_url(), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
+            api_base_url=api_base_url(job["issued_to"]), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
             # flowgate.v02.0117: the instruction stage's edit writes the line's empty document for the first time —
             # no revision, no review feedback, and it keeps the document's own header (``first_write``).
             **({"first_write": True} if scope == "edit" and (job.get("stage") == "instruction"
@@ -168,7 +173,7 @@ def start_ai_invoke(job: dict) -> dict:
         project_id=project_id, module=_module_of(flow_id), group_id=flow_id, doc_ref=doc_ref,
         action_scope=scope, mode="single", continuation_target_seq=None, continuation_review_mode=False,
         continuation_instruction_mode=None, continuation_locale=None, issued_to=job["issued_to"],
-        api_base_url=api_base_url(), mention_builder=lambda _raw, _scratch: None,
+        api_base_url=api_base_url(job["issued_to"]), mention_builder=lambda _raw, _scratch: None,
         provider_id=job.get("provider_id"), issue_builder=_issue,
         continuation_step_timeout_sec=job.get("step_timeout_sec"),
         node_restart_max_attempts=job.get("restart_max"),

@@ -190,6 +190,10 @@ def authenticate(request: Request) -> str:
     user_id = auth.get("issued_to") or auth.get("sub")
     if not user_id:
         raise GraphApiError(401, "unauthorized")
+    # flowgate.v02test.0017 CH0002: the origin this person reached the server on, for their request-less AI starts
+    # (a remote Agent must not be handed loopback; ``operator_base``). Never refuses the request.
+    from modules.flow_gate.graph_workflow.services import operator_base  # noqa: PLC0415
+    operator_base.remember(str(user_id), request)
     return str(user_id)
 
 
