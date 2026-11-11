@@ -551,7 +551,11 @@ def _settle(run, provider, kind, result, launched, role_invocations):
             return _final(run, provider, CANCELLED, "cancelled_before_claim")
         if run.get("timed_out"):
             return _final(run, provider, NO_CLAIM, "timeout_before_claim")
-        return _final(run, provider, NO_CLAIM, "not_claimed")
+        # flowgate.v02test.0022 CH0002: the code/reason stay as before; the server's verdict
+        # on why the target Agent never claimed (agent_offline, claim_refused, agent_busy,
+        # claim_polling_stopped, polled_not_taken, agent_missing) rides in cause/message.
+        return _final(run, provider, NO_CLAIM, "not_claimed",
+                      cause=result.get("claim_wait_cause"), message=result.get("diagnostics"))
     if result.get("terminal_cause") == agent_jobs.CAUSE_SERVER_EXPIRED:
         return _final(run, provider, UNCONFIRMED, "no_terminal_report")
     if status == "REJECTED":
