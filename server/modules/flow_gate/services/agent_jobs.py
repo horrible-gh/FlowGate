@@ -14,12 +14,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.services.agent_registry import AgentError, AgentService
+from modules.flow_gate.services.agent_registry import _row as _agent_row
+from modules.flow_gate.services.agent_registry import detail as _agent_detail
+from modules.flow_gate.services.agent_registry import digest as _agent_digest
+
+_log = logging.getLogger(__name__)
 
 LEASE_TTL_SECONDS = 90
 RENEW_AFTER_SECONDS = 30
@@ -46,6 +52,17 @@ CAUSE_AGENT_REPORT = "agent_report"
 CAUSE_SERVER_EXPIRED = "server_expired"
 CAUSE_CLAIM_TIMEOUT = "claim_timeout"
 CAUSE_SERVER_CANCELLED = "server_cancelled"
+
+# flowgate.v02test.0022 CH0002: why an AI-run Job ran out of claim wait (``claim_wait_cause``).
+# Decided once, at claim_timeout, from what the server saw of the target Agent: its heartbeat
+# (online), its last authenticated claim poll and its last refused claim (``agents`` columns
+# written by claim()), and the Jobs it currently holds. Checked in this order:
+CLAIM_WAIT_AGENT_MISSING = "agent_missing"          # the target Agent row is gone
+CLAIM_WAIT_REFUSED = "claim_refused"                # its latest claim call was refused (403 ...)
+CLAIM_WAIT_OFFLINE = "agent_offline"                # no heartbeat inside the online window
+CLAIM_WAIT_POLLED = "polled_not_taken"              # it polled after the Job was queued, took others
+CLAIM_WAIT_BUSY = "agent_busy"                      # online, no poll since queued, holds Jobs (slots full)
+CLAIM_WAIT_NO_POLL = "claim_polling_stopped"        # online, no poll since queued, holds nothing
 
 # Identity of THIS server process for retrieval ownership. A restart gets a new one, so
 # an owner written by a previous process is recognisably orphaned.
@@ -253,12 +270,23 @@ class AgentJobService:
         claim_cut = _stamp(now - timedelta(seconds=AI_CLAIM_WAIT_SECONDS))
         start_cut = _stamp(now - timedelta(seconds=AI_START_WAIT_SECONDS))
         cancel_cut = _stamp(now - timedelta(seconds=AI_CANCEL_GRACE_SECONDS))
-        self.s._execute_affected(
-            """UPDATE agent_jobs SET status='CANCELLED',end_reason='not_claimed',terminal_cause=?,
-                   stdin_text='',command_line='',retrieval_state=?,scrubbed_at=?,finished_at=?,updated_at=?
+        # One conditional update per Job so each carries its own claim_wait_cause; the
+        # status='NEW' condition still lets exactly one of this, cancel and claim win.
+        facts = {}
+        for row in self.s._fetch_all(
+            """SELECT job_id,attempt_id,target_agent_id,created_at FROM agent_jobs
                    WHERE ai_run_id IS NOT NULL AND status='NEW' AND created_at<=?""",
-            [CAUSE_CLAIM_TIMEOUT, RETRIEVAL_HANDED_OVER, ts, ts, ts, claim_cut],
-        )
+            [claim_cut],
+        ):
+            cause, note = self._claim_wait_cause(row, now, facts)
+            self.s._execute_affected(
+                """UPDATE agent_jobs SET status='CANCELLED',end_reason='not_claimed',terminal_cause=?,
+                       claim_wait_cause=?,diagnostics=?,
+                       stdin_text='',command_line='',retrieval_state=?,scrubbed_at=?,finished_at=?,updated_at=?
+                       WHERE job_id=? AND attempt_id=? AND ai_run_id IS NOT NULL AND status='NEW'""",
+                [CAUSE_CLAIM_TIMEOUT, cause, note, RETRIEVAL_HANDED_OVER, ts, ts, ts,
+                 row["job_id"], row["attempt_id"]],
+            )
         self.s._execute_affected(
             """UPDATE agent_jobs SET cancel_requested=TRUE,cancel_requested_at=?,updated_at=?
                    WHERE ai_run_id IS NOT NULL AND status='CLAIMED' AND cancel_requested=FALSE
@@ -291,6 +319,52 @@ class AgentJobService:
             [CAUSE_SERVER_EXPIRED, RETRIEVAL_HANDED_OVER, ts, ts, ts, ts, cancel_cut],
         )
 
+    def _claim_facts(self, agent_id, now):
+        """What the server saw of one Agent, for claim_wait_cause. None = no such Agent."""
+        r = _agent_row(self.s, agent_id) if agent_id else None
+        if not r:
+            return None
+        held = self.s._fetch_one(
+            "SELECT COUNT(*) AS n FROM agent_jobs WHERE lease_owner_agent_id=? AND status IN ('CLAIMED','STARTED')",
+            [agent_id],
+        )
+        return {"online": _agent_detail(r, at=now)["online_status"] == "online",
+                "heartbeat_at": r.get("current_heartbeat_at"),
+                "poll_at": r.get("last_claim_poll_at"),
+                "refusal_code": r.get("last_claim_refusal_code"),
+                "refusal_at": r.get("last_claim_refusal_at"),
+                "held": int((held or {}).get("n") or 0)}
+
+    def _claim_wait_cause(self, job, now, cache):
+        """(claim_wait_cause, diagnostics) of a NEW AI-run Job whose claim wait ran out.
+
+        Timestamps written by this service share one format, so they compare as text.
+        """
+        agent_id = job.get("target_agent_id")
+        if agent_id not in cache:
+            cache[agent_id] = self._claim_facts(agent_id, now)
+        f = cache[agent_id]
+        if f is None:
+            return CLAIM_WAIT_AGENT_MISSING, "Target Agent not found"
+        state = "online" if f["online"] else "offline"
+        poll, refusal, queued = f["poll_at"], f["refusal_at"], str(job.get("created_at") or "")
+        if refusal and (not poll or str(refusal) > str(poll)):
+            return CLAIM_WAIT_REFUSED, (
+                f"Agent's last claim was refused: {f['refusal_code']} at {refusal} "
+                f"(a refused claim stops the Agent pulling Jobs until it restarts); Agent {state}")
+        if not f["online"]:
+            return CLAIM_WAIT_OFFLINE, f"Agent offline; last heartbeat {f['heartbeat_at'] or 'never'}"
+        if poll and str(poll) >= queued:
+            return CLAIM_WAIT_POLLED, (
+                f"Agent polled at {poll} but did not take this Job; {f['held']} Job(s) held by the Agent")
+        if f["held"]:
+            return CLAIM_WAIT_BUSY, (
+                f"Agent online but made no claim poll since this Job was queued; {f['held']} Job(s) "
+                f"held by the Agent (all slots likely busy); last poll {poll or 'never'}")
+        return CLAIM_WAIT_NO_POLL, (
+            f"Agent online but made no claim poll since this Job was queued and holds no Job "
+            f"(its Job pulling has stopped); last poll {poll or 'never'}")
+
     def advance_ai_jobs(self):
         """Apply the AI-run stage limits now, without waiting for an Agent request.
 
@@ -308,7 +382,7 @@ class AgentJobService:
             """SELECT job_id,attempt_id,status,target_agent_id,lease_owner_agent_id,cancel_requested,
                       child_exit_code,end_reason,terminal_cause,retrieval_state,ai_run_id,graph_exec_id,
                       cwd,created_at,claimed_at,started_at,finished_at,scrubbed_at,fenced_at,
-                      ai_token_id,ai_group_id,retrieval_deadline_at
+                      ai_token_id,ai_group_id,retrieval_deadline_at,claim_wait_cause
                FROM agent_jobs WHERE job_id=? AND attempt_id=? AND ai_run_id IS NOT NULL""",
             [job_id, attempt_id],
         )
@@ -369,7 +443,7 @@ class AgentJobService:
             result = {key: row.get(key) for key in (
                 "job_id", "attempt_id", "status", "target_agent_id", "lease_owner_agent_id",
                 "child_exit_code", "end_reason", "terminal_cause", "duration_seconds",
-                "claimed_at", "started_at", "finished_at", "diagnostics")}
+                "claimed_at", "started_at", "finished_at", "diagnostics", "claim_wait_cause")}
             result["collected"] = won == 1
             result["stdout"] = row.get("stdout") if won == 1 else None
             result["stderr"] = row.get("stderr") if won == 1 else None
@@ -539,10 +613,40 @@ class AgentJobService:
             [ts, ts, *params],
         )
 
+    def _note_claim_refusal(self, credential, exc):
+        """Remember a refused claim on the Agent row (CH0002). The claim's own transaction
+        rolled back, so this is a separate one. Best effort: never masks the refusal."""
+        if not 400 <= int(getattr(exc, "status", 0) or 0) < 500:
+            return
+        if not isinstance(credential, str) or not credential.startswith("agc_"):
+            return
+        try:
+            key = _agent_digest("agent_credential", credential)
+            with self.s.transaction():
+                ts = _stamp(_now())
+                self.s._execute_affected(
+                    """UPDATE agents SET last_claim_refusal_code=?,last_claim_refusal_at=?
+                           WHERE agent_id=(SELECT agent_id FROM agent_credentials
+                                           WHERE credential_digest=? AND revoked_at IS NULL)""",
+                    [str(exc.code)[:64], ts, key],
+                )
+        except Exception:
+            _log.warning("agent claim refusal %s could not be recorded", getattr(exc, "code", "?"), exc_info=True)
+
     def claim(self, credential):
+        try:
+            return self._claim(credential)
+        except AgentError as exc:
+            self._note_claim_refusal(credential, exc)
+            raise
+
+    def _claim(self, credential):
         with self.s.transaction():
             agent_id = self._auth(credential, claim=True)
             ts = _stamp(_now())
+            # CH0002: an authenticated poll, kept so a claim timeout can tell "the Agent
+            # stopped polling" from "it polled and did not take the Job".
+            self.s._execute_affected("UPDATE agents SET last_claim_poll_at=? WHERE agent_id=?", [ts, agent_id])
             self._reclaim(ts)
             candidates = self.s._fetch_all(
                 """SELECT j.* FROM agent_jobs j JOIN agents a ON a.agent_id=?
