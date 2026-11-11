@@ -8,7 +8,8 @@ handler failure never fails the AI run (the hook port logs it and moves on).
     on_chat_run_prepare             worker, before any provider: start snapshot (0152)
     provide_chat_tools              API worker: the ``run_command`` tool (and the attachment
                                     upload request, flowgate.chat.0017 CH0002)
-    on_chat_run_finalize            finalize: close open commands, then record the run change
+    on_chat_run_finalize            finalize: close open commands, record the run change, then
+                                    the chat commit point (flowgate.v02test.0023)
     on_chat_run_cancel              cancel: close the run's commands before it is announced
     on_conversation_reply_appended  reply append: move the run's activity anchors
     accept_chat_call                API worker: accept a received tool call (card document
@@ -96,6 +97,10 @@ def on_chat_run_finalize(run: dict) -> None:
     except Exception:
         logger.warning("chat command cleanup failed for %s", run.get("run_id"), exc_info=True)
     run_changes.finalize_run(run)
+    # flowgate.v02test.0023: the chat commit point -- after the end snapshot, so the run
+    # change still compares the run's own trees. Never raises.
+    from modules.flow_gate.services import chat_commit_service
+    chat_commit_service.commit_on_finalize(run)
 
 
 def on_chat_run_cancel(run: dict, announce) -> None:

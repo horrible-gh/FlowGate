@@ -32,8 +32,10 @@ export function runStatusLines(run: ChatRunState, body: RunBodyState, read: Turn
   const lines: RunStatusLine[] = []
   const add = (slot: string, code: string, tone: StatusTone = 'warning', text: string | null = null) => lines.push({ slot, tone, code, text })
   // A stop stays a stop, including when the last read could not be confirmed.
+  const commit = commitLine(run)
   if (run.endReason === 'cancelled') {
     add('result', 'run_cancelled', 'info')
+    if (commit) lines.push(commit)
     return lines
   }
   const detail = [run.endReason, `outcome=${run.outcome ?? '?'}`, `exit_code=${run.exitCode ?? '?'}`].filter(Boolean).join(' · ')
@@ -61,5 +63,24 @@ export function runStatusLines(run: ChatRunState, body: RunBodyState, read: Turn
     add('remote', known ? `remote_${cause}` : 'run_failed', 'danger',
       (known ? parts : [cause, ...parts, failureDetail]).filter(Boolean).join(' · ') || null)
   }
+  if (commit) lines.push(commit)
   return lines
+}
+
+/**
+ * flowgate.v02test.0023: the chat commit point's line — committed (short SHA · subject · files), left uncommitted for
+ * want of a message (the next AI call asks for one), or skipped (e.g. `git_busy`; the next call asks for a message).
+ */
+export function commitLine(run: ChatRunState): RunStatusLine | null {
+  const commit = run.chatCommit
+  if (!commit) return null
+  if (commit.committed) {
+    return { slot: 'commit', tone: 'info', code: 'chat_committed',
+      text: [commit.commit, commit.subject, `${commit.fileCount} files`].filter(Boolean).join(' · ') }
+  }
+  if (commit.skippedReason === 'message_missing') {
+    const shown = commit.files.slice(0, 3).join(', ') + (commit.fileCount > 3 ? ` (+${commit.fileCount - 3})` : '')
+    return { slot: 'commit', tone: 'warning', code: 'chat_commit_missing', text: shown || null }
+  }
+  return { slot: 'commit', tone: 'warning', code: 'chat_commit_skipped', text: commit.skippedReason }
 }

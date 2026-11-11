@@ -45,6 +45,27 @@
       </button>
     </div>
 
+    <!-- flowgate.v02test.0023: the commit message of the next AI call. Shown in the edit modes, when the server
+         refused a call over uncommitted changes, or while one is typed; the run end commits the flow's worktree. -->
+    <div v-if="showCommit" class="conv-commit" :class="{ 'is-required': commitRequired }" data-test="conv-commit">
+      <input
+        class="conv-commit-input"
+        data-test="conv-commit-input"
+        type="text"
+        maxlength="200"
+        :value="commitMessage"
+        :placeholder="t('gui.conversation.composer.commit_placeholder')"
+        :aria-label="t('gui.conversation.composer.commit_placeholder')"
+        :title="t('gui.conversation.composer.commit_tip')"
+        :disabled="readOnly"
+        @input="emit('update-commit-message', ($event.target as HTMLInputElement).value)"
+      />
+      <div v-if="commitRequired" class="conv-commit-files" data-test="conv-commit-files">
+        {{ t('gui.conversation.composer.commit_required', { n: commitRequired.fileCount }) }}
+        <span v-if="commitRequired.files.length">· {{ commitRequired.files.slice(0, 3).join(', ') }}{{ commitRequired.fileCount > 3 ? ' …' : '' }}</span>
+      </div>
+    </div>
+
     <div v-if="submission?.phase === 'failed'" role="status" aria-live="polite" data-test="conv-submission">
       {{ t(`gui.conversation.composer.failed_${submission.stage}`, { attempt: submission.attempt }) }}
     </div>
@@ -121,6 +142,9 @@ const props = defineProps<{
   cancelling: boolean
   copyingMention: boolean
   manualCopyText: string | null
+  /** flowgate.v02test.0023: the commit message of the next AI call, and the changes a refused call named. */
+  commitMessage?: string
+  commitRequired?: { fileCount: number; files: readonly string[] } | null
   /** Sends one message; resolves true when the server accepted it (the draft clears then). */
   onSend: (text: string, snapshot?: DraftSendSnapshot, trace?: SubmissionTrace) => Promise<boolean>
 }>()
@@ -134,6 +158,7 @@ const emit = defineEmits<{
   stop: []
   'manual-copy-again': []
   'manual-copy-dismiss': []
+  'update-commit-message': [text: string]
 }>()
 
 const { t } = useI18n()
@@ -170,6 +195,9 @@ watch(
     void nextTick(autoGrow)
   },
 )
+
+const showCommit = computed(() => !!props.commitRequired || !!props.commitMessage ||
+  props.settings.sourceAccessMode !== 'read_only')
 
 const sendTitle = computed(() => {
   if (props.cancelling) return t('gui.conversation.composer.stopping')
@@ -342,6 +370,39 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 .conv-send:focus-visible {
   outline: 2px solid var(--fg2-focus);
   outline-offset: 1px;
+}
+
+.conv-commit {
+  margin-top: 5px;
+}
+
+.conv-commit-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 26px;
+  border: 1px solid var(--fg2-line);
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-control-surface);
+  color: var(--fg2-text);
+  padding: 0 8px;
+  font: 11.5px/1.3 var(--fg2-font);
+}
+
+.conv-commit-input::placeholder {
+  color: var(--fg2-muted-2);
+}
+
+.conv-commit.is-required .conv-commit-input {
+  border-color: var(--fg2-status-warning-border, var(--fg2-line-strong));
+}
+
+.conv-commit-files {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--fg2-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conv-assist {

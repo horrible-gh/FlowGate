@@ -60,7 +60,11 @@ const doc = (docId: string) => `${API}/documents/${encodeURIComponent(docId)}`
 
 /** A failed conversation request: the readable message plus the HTTP status / server code. */
 export class ConversationRequestError extends Error {
-  constructor(message: string, readonly status: number | null, readonly code: string | null, readonly runId: string | null = null) {
+  constructor(
+    message: string, readonly status: number | null, readonly code: string | null, readonly runId: string | null = null,
+    /** The answer body of a refusal (flowgate.v02test.0023: the uncommitted files of `chat_commit_message_required`). */
+    readonly data: Record<string, unknown> | null = null,
+  ) {
     super(message)
     this.name = 'ConversationRequestError'
   }
@@ -116,7 +120,8 @@ function toRequestError(error: unknown): ConversationRequestError {
   // contract, D0006 §5.1) or a `detail` object.
   const code = codeOf(data) ?? codeOf(data?.error) ?? codeOf(data?.detail)
   const runId = typeof data?.run_id === 'string' ? data.run_id : null
-  return new ConversationRequestError(serverDetailOf(error, response != null, data, code), response?.status ?? null, code, runId)
+  return new ConversationRequestError(serverDetailOf(error, response != null, data, code), response?.status ?? null, code, runId,
+    data && typeof data === 'object' && !Array.isArray(data) ? data : null)
 }
 
 async function call<T>(request: () => Promise<{ data: T }>): Promise<T> {
@@ -594,7 +599,9 @@ export async function fetchProviders(projectId: string): Promise<ProviderList> {
  * got no answer, and the server answers that resend with the run the first request admitted (running or finished)
  * instead of starting a second one; 409 `start_pending` means the first request is still being admitted.
  */
-export async function startChatRun(chatId: string, providerId: string | null, clientRequestId?: string): Promise<string | null> {
+export async function startChatRun(
+  chatId: string, providerId: string | null, clientRequestId?: string, commitMessage?: string,
+): Promise<string | null> {
   const parts = splitGroupId(chatId)
   if (!parts) throw clientCheckFailure()
   // A CH id is `project.module.group.seq-TYPE`; the group is the third segment.
@@ -609,6 +616,8 @@ export async function startChatRun(chatId: string, providerId: string | null, cl
       mode: 'single',
       provider_id: providerId || undefined,
       ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+      // flowgate.v02test.0023: the chat commit point commits the flow's worktree with it when the run ends.
+      ...(commitMessage ? { commit_message: commitMessage } : {}),
     }),
   )
   return data?.run_id ?? null
@@ -635,12 +644,39 @@ function runFailure(history: unknown): AiRunFailure | null {
   return failure.cause || failure.detail ? failure : null
 }
 
+/** flowgate.v02test.0023: what the chat commit point did when the run ended. */
+export interface ChatCommitResult {
+  committed: boolean
+  commit: string | null
+  subject: string | null
+  skippedReason: string | null
+  fileCount: number
+  files: string[]
+}
+
 /** Extra detail fields stay optional for sources speaking the older run contract. */
 export interface ChatRunState extends AiRunState {
   succeeded?: boolean | null
   stopCode?: string | null
   apiTurnsUsed?: number | null
   providerId?: string | null
+  chatCommit?: ChatCommitResult | null
+}
+
+interface RawChatCommit {
+  committed?: unknown; commit?: unknown; subject?: unknown; skipped_reason?: unknown; file_count?: unknown; files?: unknown
+}
+
+function toChatCommit(raw: RawChatCommit | null | undefined): ChatCommitResult | null {
+  if (!raw || typeof raw !== 'object') return null
+  return {
+    committed: raw.committed === true,
+    commit: textOrNull(raw.commit),
+    subject: textOrNull(raw.subject),
+    skippedReason: textOrNull(raw.skipped_reason),
+    fileCount: nullableNumber(raw.file_count) ?? 0,
+    files: Array.isArray(raw.files) ? raw.files.filter((f): f is string => typeof f === 'string') : [],
+  }
 }
 
 export async function fetchRun(runId: string): Promise<ChatRunState> {
@@ -648,7 +684,7 @@ export async function fetchRun(runId: string): Promise<ChatRunState> {
     () => getRequest<{ run_id?: string; status?: string; end_reason?: string | null; outcome?: string | null;
       exit_code?: number | null; doc_ref?: string | null; action_scope?: string | null; group_id?: string | null;
       finished_at?: string | null; fallback_history?: unknown; succeeded?: boolean | null; stop_code?: string | null;
-      api_turns_used?: number | null; provider_id?: string | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
+      api_turns_used?: number | null; provider_id?: string | null; chat_commit?: RawChatCommit | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
   )
   const endReason = data?.end_reason ?? null
   const failure = endReason === 'all_providers_failed' ? runFailure(data?.fallback_history) : null
@@ -661,6 +697,7 @@ export async function fetchRun(runId: string): Promise<ChatRunState> {
     stopCode: textOrNull(data?.stop_code), apiTurnsUsed: nullableNumber(data?.api_turns_used), providerId: textOrNull(data?.provider_id),
     docRef: textOrNull(data?.doc_ref), actionScope: textOrNull(data?.action_scope), groupId: textOrNull(data?.group_id),
     finishedAt: textOrNull(data?.finished_at), ...(failure ? { failure } : {}),
+    ...(data?.chat_commit ? { chatCommit: toChatCommit(data.chat_commit) } : {}),
   }
 }
 
