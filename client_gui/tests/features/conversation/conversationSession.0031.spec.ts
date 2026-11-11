@@ -156,7 +156,11 @@ describe('send', () => {
     expect(source.postTurn).toHaveBeenCalledTimes(1)
     const failed = session.state.pending[0]
     expect(failed.failed).toBe(true)
-    expect(session.state.notice).toMatchObject({ code: 'send_failed', detail: 'corrupted body' })
+    // flowgate.v02test.0024 B: a line of the chat's history, recorded on the server (it answered).
+    expect(session.state.notice).toBeNull()
+    expect(session.state.activities.filter((a) => a.kind === 'status')).toMatchObject([
+      { code: 'send_failed', tone: 'danger', text: 'corrupted body', chatError: true }])
+    expect(source.recordChatError).toHaveBeenCalledWith(A, expect.objectContaining({ code: 'send_failed', message: 'corrupted body' }))
     expect(await session.retry(failed.localId)).toBe(true)
     expect(source.postTurn.mock.calls[1][1].idempotencyKey).toBe(failed.idempotencyKey)
     expect(session.state.pending).toEqual([])
@@ -308,7 +312,9 @@ describe('command requests', () => {
     source.decideCommand.mockRejectedValueOnce(httpError(500, 'boom'))
     await session.decideCommand('k1', 'approve')
     expect(session.state.activities[0]).toMatchObject({ state: 'pending_approval' })
-    expect(session.state.notice).toMatchObject({ code: 'command_decision_failed' })
+    // flowgate.v02test.0024 B: the failure is a line of the chat's history.
+    expect(session.state.notice).toBeNull()
+    expect(session.state.activities.find((a) => a.kind === 'status')).toMatchObject({ code: 'command_decision_failed', text: 'boom', chatError: true })
   })
 })
 

@@ -6,6 +6,7 @@
        (D0006 §6.1) and the run change card lists its files, each opening the stored diff. -->
   <div
     v-if="activity.kind === 'command'"
+    ref="rootEl"
     class="tl-act tl-act--command"
     data-test="tl-command"
     :data-state="activity.state"
@@ -14,6 +15,19 @@
       <span aria-hidden="true">⌘</span>
       <span>{{ t('gui.conversation.command.title') }}</span>
       <span class="tl-act-state" data-test="tl-command-state">{{ commandStateText }}</span>
+      <!-- flowgate.v02test.0024 C: a failed / refused command copies its whole failure (command, path, reason, output). -->
+      <button
+        v-if="copyText"
+        type="button"
+        class="tl-copy"
+        :class="copyState === 'idle' ? null : `is-${copyState}`"
+        data-test="tl-command-copy"
+        :data-state="copyState"
+        :aria-label="copyLabel"
+        :title="copyLabel"
+        @click="copyError"
+      >{{ copyState === 'done' ? '✓' : copyState === 'failed' ? '✕' : '⧉' }}</button>
+      <span v-if="copyState !== 'idle'" class="tl-sr" role="status">{{ copyLabel }}</span>
     </div>
     <div class="tl-act-body">
       <div class="tl-command-line" :title="commandTitle">{{ activity.command }}</div>
@@ -135,15 +149,37 @@
     </div>
   </div>
 
-  <div v-else class="tl-status" :class="`tl-status--${activity.tone}`" data-test="tl-status" role="status">
+  <div
+    v-else
+    ref="rootEl"
+    class="tl-status"
+    :class="`tl-status--${activity.tone}`"
+    data-test="tl-status"
+    :data-code="activity.code ?? undefined"
+    role="status"
+  >
     <span class="tl-status-text">{{ statusText }}</span>
-    <span v-if="activity.createdAt" class="tl-status-time">{{ formatTimelineTime(activity.createdAt) }}</span>
+    <span v-if="activity.createdAt" class="tl-status-time" :title="activity.createdAt">{{ formatTimelineTime(activity.createdAt) }}</span>
+    <!-- flowgate.v02test.0024 C: a warning / error line copies its whole text (the wording and the server detail). -->
+    <button
+      v-if="copyText"
+      type="button"
+      class="tl-copy"
+      :class="copyState === 'idle' ? null : `is-${copyState}`"
+      data-test="tl-status-copy"
+      :data-state="copyState"
+      :aria-label="copyLabel"
+      :title="copyLabel"
+      @click="copyError"
+    >{{ copyState === 'done' ? '✓' : copyState === 'failed' ? '✕' : '⧉' }}</button>
+    <span v-if="copyState !== 'idle'" class="tl-sr" role="status">{{ copyLabel }}</span>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { copyToClipboard } from '../../core/interaction/clipboard'
 import { formatTimelineTime, summarizeChange } from './timeline'
 import type { CommandDecision, TimelineActivityEntry } from './types'
 
@@ -244,11 +280,76 @@ const commandReason = computed(() => {
 const statusText = computed(() => {
   const a = props.activity
   if (a.kind !== 'status') return ''
+  // flowgate.v02test.0024 D: the run in progress line — which AI runs and with which access, each once it is known.
+  if (a.code === 'run_running') {
+    const access = a.run?.access === 'read_write' ? t('gui.conversation.composer.source.edit')
+      : a.run?.access === 'read' ? t('gui.conversation.composer.source.read_only') : ''
+    return [t('gui.conversation.status.run_running'), a.run?.providerName, access].filter(Boolean).join(' · ')
+  }
+  // flowgate.v02test.0024 B: a recorded chat error keeps the wording its notice had.
   const key = a.code ? `gui.conversation.status.${a.code}` : ''
-  const known = key && te(key) ? t(key) : ''
+  const noticeKey = a.code ? `gui.conversation.notice.${a.code}` : ''
+  const known = key && te(key) ? t(key) : a.chatError && noticeKey && te(noticeKey) ? t(noticeKey) : ''
   if (known && a.text) return `${known} (${a.text})`
   return known || a.text || a.code || ''
 })
+
+// ── flowgate.v02test.0024 C: copy of a failure (same icon, feedback and wording as a message's copy) ──
+const FAILED_COMMANDS = new Set(['failed', 'timed_out', 'cancelled', 'rejected'])
+
+/** The whole failure text, or '' when this entry is no failure. */
+const copyText = computed(() => {
+  const a = props.activity
+  if (a.kind === 'status') return a.tone === 'warning' || a.tone === 'danger' ? statusText.value : ''
+  if (a.kind !== 'command') return ''
+  const failed = FAILED_COMMANDS.has(a.state) || !!a.errorCode || !!a.timedOut || (a.exitCode != null && a.exitCode !== 0)
+  if (!failed) return ''
+  const lines = [`${t('gui.conversation.command.title')}: ${commandStateText.value}`]
+  if (commandReason.value) lines.push(commandReason.value)
+  lines.push(`${t('gui.conversation.command.detail.command')}: ${a.command}`)
+  if (a.cwd) lines.push(`${t('gui.conversation.command.detail.cwd')}: ${a.cwd}`)
+  if (a.exitCode != null) lines.push(`${t('gui.conversation.command.detail.exit_code')}: ${a.exitCode}`)
+  for (const line of errorLines.value) if (line !== commandReason.value) lines.push(line)
+  if (a.detail) lines.push(a.detail)
+  if (a.stderr) lines.push(`stderr:\n${a.stderr}`)
+  if (a.stdout) lines.push(`stdout:\n${a.stdout}`)
+  return lines.join('\n')
+})
+
+type CopyState = 'idle' | 'done' | 'failed'
+const rootEl = ref<HTMLElement | null>(null)
+const copyState = ref<CopyState>('idle')
+const copyLabel = computed(() =>
+  copyState.value === 'done'
+    ? t('gui.conversation.message.copied')
+    : copyState.value === 'failed'
+      ? t('gui.conversation.message.copy_failed')
+      : t('gui.conversation.message.copy'),
+)
+let copyTimer: ReturnType<typeof setTimeout> | null = null
+let copyAttempt = 0
+
+function resetCopyFeedback(): void {
+  copyAttempt += 1
+  if (copyTimer !== null) clearTimeout(copyTimer)
+  copyTimer = null
+  copyState.value = 'idle'
+}
+
+watch(copyText, resetCopyFeedback)
+onBeforeUnmount(resetCopyFeedback)
+
+async function copyError(): Promise<void> {
+  const attempt = ++copyAttempt
+  const copied = await copyToClipboard(copyText.value, rootEl.value)
+  if (attempt !== copyAttempt) return
+  copyState.value = copied ? 'done' : 'failed'
+  if (copyTimer !== null) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => {
+    copyTimer = null
+    copyState.value = 'idle'
+  }, 1500)
+}
 </script>
 
 <style scoped>
@@ -587,5 +688,50 @@ const statusText = computed(() => {
 .tl-status-time {
   flex: 0 0 auto;
   color: var(--fg2-muted-2);
+}
+
+/* flowgate.v02test.0024 C: the message copy button (TimelineMessage .tl-copy), same look and feedback. */
+.tl-copy {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--fg2-control-radius-sm);
+  background: transparent;
+  color: var(--fg2-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tl-act-state + .tl-copy {
+  margin-left: 2px;
+}
+
+.tl-copy:hover,
+.tl-copy:focus-visible {
+  border-color: var(--fg2-line-strong);
+  color: var(--fg2-text);
+}
+
+.tl-copy.is-done {
+  color: var(--fg2-status-success-fg);
+}
+
+.tl-copy.is-failed {
+  color: var(--fg2-status-danger-fg);
+}
+
+.tl-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 </style>

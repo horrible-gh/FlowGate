@@ -1148,6 +1148,7 @@ export default {
       more_lines: '{n} more lines',
     },
     status: {
+      run_running: 'AI call running',
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',
       run_query_unconfirmed: 'The AI call ended, but the saved reply could not be verified',

@@ -79,7 +79,10 @@ export function replaceServerActivities(
     if (now && held.includes(activity.id)) return now
     return now?.decisionForbidden ? { ...activity, decisionForbidden: true } : activity
   })
-  return [...current.filter((a) => a.kind === 'status'), ...fromServer]
+  // flowgate.v02test.0024 B: a recorded chat error comes back from the server as a status line; the server's copy
+  // replaces the one this client placed (same id), so it is never shown twice.
+  const serverIds = new Set(fromServer.map((a) => a.id))
+  return [...current.filter((a) => a.kind === 'status' && !serverIds.has(a.id)), ...fromServer]
 }
 
 function activityItem(activity: ConversationActivity): TimelineItem {

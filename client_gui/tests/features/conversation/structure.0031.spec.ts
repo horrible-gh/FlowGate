@@ -47,6 +47,8 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'TimelineMessage.vue',
         'api.ts',
         'changeDiff.ts',
+        // flowgate.v02test.0024 B: the chat's own request failures kept in its history.
+        'chatErrors.ts',
         'chatStart.ts',
         'conversationEvents.ts',
         'conversationSession.ts',

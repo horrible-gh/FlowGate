@@ -336,6 +336,10 @@ _ATTACHMENT_REQUEST_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/attachme
 _ATTACHMENT_REQUEST_WORKER_PATH = re.compile(r"^(?:/flowgate)?/api/v1/attachment-requests/?$")
 # The bulk decision (approve all / reject all) runs every item through the same single decision.
 _ATTACHMENT_REQUEST_BULK_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/attachment-requests/decisions/?$")
+# flowgate.v02test.0024 B: a chat error record is the user's own history of a refused request
+# (a send, an AI call, a command decision) -- often refused while the chat's own AI run holds
+# the lease. It writes only a per-user event row, so the lease must not refuse it.
+_CHAT_ERROR_RECORD_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-activity/[^/]+/errors/?$")
 
 
 def is_group_lease_exempt_path(path: str, method: str = "POST") -> bool:
@@ -348,7 +352,8 @@ def is_group_lease_exempt_path(path: str, method: str = "POST") -> bool:
                 or _CHAT_COMMAND_DECISION_PATH.search(path)
                 or _ATTACHMENT_REQUEST_DECISION_PATH.search(path)
                 or _ATTACHMENT_REQUEST_BULK_DECISION_PATH.search(path)
-                or _ATTACHMENT_REQUEST_WORKER_PATH.search(path))
+                or _ATTACHMENT_REQUEST_WORKER_PATH.search(path)
+                or _CHAT_ERROR_RECORD_PATH.search(path))
 
 
 def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResource, str]:
@@ -363,6 +368,8 @@ def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResou
         return "personal", "chat_command_decision"
     if _CHAT_COMMAND_WORKER_PATH.search(path):
         return "system", "chat_command_worker"
+    if _CHAT_ERROR_RECORD_PATH.search(path):
+        return "personal", "chat_error_record"
     if _ATTACHMENT_REQUEST_DECISION_PATH.search(path):
         return "group", "attachment_request_decision_lease_exempt"
     if _ATTACHMENT_REQUEST_BULK_DECISION_PATH.search(path):

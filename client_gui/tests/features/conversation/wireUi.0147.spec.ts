@@ -48,7 +48,9 @@ function installHttp() {
     if (url === '/api/v1/ai-invoke/runs') return { data: { items: raw.runs.map(({ run_id, doc_ref }) => ({ run_id, doc_ref })), total: raw.runs.length, has_more: false } }
     if (url.startsWith('/api/v1/ai-invoke/')) {
       const run = raw.runs.find((r) => url.endsWith('/' + r.run_id))
-      return { data: run && ['running', 'cancelling', 'pause_requested'].includes(run.status) ? { run_id: run.run_id, status: run.status, action_scope: 'chat', group_id: run.group_id } : run }
+      // A running detail has no doc_ref; flowgate.v02test.0024 D: it does carry `provider` and the applied `source_access`.
+      return { data: run && ['running', 'cancelling', 'pause_requested'].includes(run.status) ? { run_id: run.run_id, status: run.status, action_scope: 'chat', group_id: run.group_id,
+        provider: (run as { provider?: unknown }).provider ?? null, source_access: (run as { source_access?: unknown }).source_access ?? null } : run }
     }
     if (url.startsWith('/api/v1/chat-activity/')) return { data: { commands: url.endsWith(A) ? raw.commands : [], changes: [] } }
     throw new Error(`Unexpected isolated GET: ${url}`)
@@ -100,7 +102,9 @@ describe('0147 isolated server wire -> real adapter -> session -> ConversationPa
 
   it('F5 during a real-shaped running wire preserves a leading reply and follows completion', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    raw.runs = [{ ...raw.runs[0], status: 'running', end_reason: '', outcome: '', exit_code: null }]
+    // flowgate.v02test.0024 D: a real-shaped live detail names its AI in `provider` and its applied access.
+    raw.runs = [{ ...raw.runs[0], status: 'running', end_reason: '', outcome: '', exit_code: null,
+      provider: { id: 'fixture', name: 'isolated provider' }, source_access: 'read_write' }]
     raw.commands = []
     const turnHash = () => createHash('sha256').update(JSON.stringify(raw.turns)).digest('hex')
     const before = turnHash()
@@ -110,7 +114,8 @@ describe('0147 isolated server wire -> real adapter -> session -> ConversationPa
     const fresh = await open()
     await vi.advanceTimersByTimeAsync(2500); await flushPromises()
     expect(fresh.state.runId).toBe('partial')
-    expect(statuses()).toEqual([])
+    // flowgate.v02test.0024 D: after F5 the adopted run shows its AI and the access the server applied.
+    expect(statuses()).toEqual([`${i18n.global.t('gui.conversation.status.run_running')} · isolated provider · ${i18n.global.t('gui.conversation.composer.source.edit')}`])
     raw.runs[0] = { ...raw.runs[0], status: 'finished', end_reason: 'exited', outcome: 'complete', exit_code: 0 }
     await vi.advanceTimersByTimeAsync(2500); await flushPromises()
     expect(fresh.state.runId).toBeNull()
@@ -155,7 +160,7 @@ describe('0147 isolated server wire -> real adapter -> session -> ConversationPa
 describe('0151 V9/V9b: live server wire through adapter and session', () => {
   it.each(['cancelling', 'pause_requested'])('%s keeps the composer locked until terminal cancellation', async (status) => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    raw.runs = [{ ...raw.runs[0], status: 'running', end_reason: '', outcome: '', exit_code: null }]
+    raw.runs = [{ ...raw.runs[0], status: 'running', end_reason: '', outcome: '', exit_code: null, source_access: 'read' }]
     raw.commands = []
     const session = await open()
     await session.stopRun()
@@ -166,8 +171,9 @@ describe('0151 V9/V9b: live server wire through adapter and session', () => {
       expect(session.state.runId).toBe('partial')
       expect(session.running.value).toBe(true)
       expect(session.state.cancelling).toBe(true)
-      expect(statuses()).toEqual([])
-      expect(session.timeline.value.map((item) => item.key)).toEqual(['turn:1', 'turn:2'])
+      // flowgate.v02test.0024 D: the one run in progress line (no provider in this detail: name left out).
+      expect(statuses()).toEqual([`${i18n.global.t('gui.conversation.status.run_running')} · ${i18n.global.t('gui.conversation.composer.source.read_only')}`])
+      expect(session.timeline.value.map((item) => item.key)).toEqual(['turn:1', 'turn:2', 'status:local-status-run-running'])
       expect(wrapper!.get('[data-test="conv-send"]').attributes('disabled')).toBeDefined()
     }
     expect(http.getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/active', { group_id: 'p.m.0001' })

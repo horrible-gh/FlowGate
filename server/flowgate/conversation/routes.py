@@ -8,7 +8,8 @@ Worker side (Bearer = the live chat run's own current AI token, CLI providers)::
 User side (session)::
 
     POST /chat-commands/{request_id}/decision          {"decision": "approve"|"reject"|"cancel"}
-    GET  /chat-activity/{doc_id}?from_seq=&to_seq=&unplaced=
+    GET  /chat-activity/{doc_id}?from_seq=&to_seq=&unplaced=   (+ ``errors``: this user's chat errors)
+    POST /chat-activity/{doc_id}/errors                {"id", "code", "message", "occurred_at"}
     GET  /chat-activity/{doc_id}/runs/{run_id}/diff?path=
     POST /conversations                                standalone CH, 201
     POST /conversations/{doc_id}/auto-title            the one AI title of a new chat
@@ -24,6 +25,7 @@ and group state themselves.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -31,11 +33,14 @@ from fastapi.responses import JSONResponse
 
 from flowgate.conversation import activity
 from flowgate.conversation import auto_title
+from flowgate.conversation import chat_errors
 from flowgate.conversation import chats
 from flowgate.conversation import commands
 from flowgate.conversation import contracts as c
 from flowgate.conversation import legacy_adapter
 from flowgate.conversation import run_changes
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Conversation"])
 
@@ -97,8 +102,25 @@ def chat_activity(doc_id: str, user=Depends(get_current_user),
                   to_seq: Optional[int] = Query(default=None, ge=0),
                   unplaced: bool = Query(default=True)):
     try:
-        activity.readable_chat_document(doc_id, user)
-        return activity.list_for_doc(doc_id, from_seq=from_seq, to_seq=to_seq, include_unplaced=unplaced)
+        doc = activity.readable_chat_document(doc_id, user)
+        body = activity.list_for_doc(doc_id, from_seq=from_seq, to_seq=to_seq, include_unplaced=unplaced)
+    except c.ConversationError as exc:
+        return _error(exc)
+    # flowgate.v02test.0024 B: the user's own recorded chat errors ride the same read; a
+    # failure here never fails the activity read (the rest of the timeline still loads).
+    try:
+        body["errors"] = chat_errors.list_for(doc, user)
+    except Exception:
+        logger.warning("chat error history read failed doc=%s", doc_id, exc_info=True)
+        body["errors"] = []
+    return body
+
+
+@router.post("/chat-activity/{doc_id}/errors")
+def record_chat_error(doc_id: str, body: Any = Body(default=None), user=Depends(get_current_user)):
+    try:
+        doc = activity.readable_chat_document(doc_id, user)
+        return chat_errors.record(doc, user, body)
     except c.ConversationError as exc:
         return _error(exc)
 

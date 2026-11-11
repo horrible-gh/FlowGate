@@ -98,7 +98,10 @@ describe('session', () => {
       'chat_commit_message_required', null, { file_count: 2, files: ['a.py', 'b.py'] }))
     await session.invokeAi()
     expect(session.state.commitRequired).toEqual({ fileCount: 2, files: ['a.py', 'b.py'] })
-    expect(session.state.notice).toMatchObject({ code: 'commit_required', detail: '2 uncommitted change(s): a.py, b.py' })
+    // flowgate.v02test.0024 B: the refusal is a line of the chat's history (no longer the notice above the composer).
+    expect(session.state.notice).toBeNull()
+    expect(session.state.activities.filter((a) => a.kind === 'status')).toMatchObject([
+      { code: 'commit_required', tone: 'warning', text: '2 uncommitted change(s): a.py, b.py', chatError: true }])
     expect(session.state.runId).toBeNull()
 
     session.setCommitMessage('  fix(chat): leftover edits ')

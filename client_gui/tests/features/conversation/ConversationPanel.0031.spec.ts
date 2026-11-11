@@ -206,7 +206,9 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     await flushPromises()
     expect((input.element as HTMLTextAreaElement).value).toBe('hello')
     expect(find('tl-retry').exists()).toBe(true)
-    expect(find('conv-notice').text()).toContain('메시지를 보내지 못했습니다')
+    // flowgate.v02test.0024 B: the failure is a line of the timeline, not the notice above the composer.
+    expect(find('conv-notice').exists()).toBe(false)
+    expect(find('tl-status').text()).toContain('메시지를 보내지 못했습니다')
   })
 
   it('selects the AI, calls it and turns the send button into STOP while it runs', async () => {

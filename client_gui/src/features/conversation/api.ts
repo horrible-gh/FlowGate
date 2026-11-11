@@ -22,6 +22,7 @@
 
 import { extractApiErrorMessage, getRequest, patchRequest, postRequest } from '@shared/api'
 import { randomUuid } from '@shared/utils/uuid'
+import { chatErrorActivity, isChatErrorCode, type ChatErrorRecord } from './chatErrors'
 import type {
   ActivityAnchor,
   AiRunFailure,
@@ -433,14 +434,36 @@ export function toAttachmentActivity(group: ConversationAttachmentGroup): Attach
 export async function fetchActivities(chatId: string): Promise<ConversationActivity[]> {
   const data = await call(
     () =>
-      getRequest<{ commands?: RawCommand[] | null; changes?: RawRunChange[] | null; attachments?: unknown }>(
+      getRequest<{ commands?: RawCommand[] | null; changes?: RawRunChange[] | null; attachments?: unknown; errors?: unknown }>(
         `${API}/chat-activity/${encodeURIComponent(chatId)}`,
       ),
   )
   const commands = (data?.commands ?? []).filter((c) => c && typeof c.request_id === 'string').map(toCommand)
   const changes = (data?.changes ?? []).filter((c) => c && typeof c.run_id === 'string').map(toRunChange)
   const attachments = toAttachmentGroups(data?.attachments).map(toAttachmentActivity)
-  return [...commands, ...changes, ...attachments]
+  const errors = toChatErrorRecords(data?.errors).map((record) => chatErrorActivity(chatId, record))
+  return [...commands, ...changes, ...attachments, ...errors]
+}
+
+/** flowgate.v02test.0024 B: the user's recorded chat errors of the activity read (an older server sends none). */
+export function toChatErrorRecords(value: unknown): ChatErrorRecord[] {
+  if (!Array.isArray(value)) return []
+  const out: ChatErrorRecord[] = []
+  for (const raw of value as Array<Record<string, unknown> | null>) {
+    const id = textOrNull(raw?.id)
+    const code = textOrNull(raw?.code)
+    const occurredAt = textOrNull(raw?.occurred_at)
+    if (!id || !code || !isChatErrorCode(code) || !occurredAt) continue
+    out.push({ id, code, occurredAt, message: typeof raw?.message === 'string' ? raw.message : '' })
+  }
+  return out
+}
+
+/** flowgate.v02test.0024 B: stores one refused request of this chat in its history (idempotent on the record id). */
+export async function recordChatError(chatId: string, record: ChatErrorRecord): Promise<void> {
+  await call(() => postRequest<unknown>(`${API}/chat-activity/${encodeURIComponent(chatId)}/errors`, {
+    id: record.id, code: record.code, message: record.message, occurred_at: record.occurredAt,
+  }))
 }
 
 /** The decision body carries the decision only — no group / doc id (D0006 §3.2). */
@@ -684,19 +707,27 @@ export async function fetchRun(runId: string): Promise<ChatRunState> {
     () => getRequest<{ run_id?: string; status?: string; end_reason?: string | null; outcome?: string | null;
       exit_code?: number | null; doc_ref?: string | null; action_scope?: string | null; group_id?: string | null;
       finished_at?: string | null; fallback_history?: unknown; succeeded?: boolean | null; stop_code?: string | null;
-      api_turns_used?: number | null; provider_id?: string | null; chat_commit?: RawChatCommit | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
+      api_turns_used?: number | null; provider_id?: string | null; chat_commit?: RawChatCommit | null;
+      started_at?: string | null; provider?: { id?: unknown; name?: unknown } | null; provider_name?: string | null;
+      requested_provider_id?: string | null; source_access?: string | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
   )
   const endReason = data?.end_reason ?? null
   const failure = endReason === 'all_providers_failed' ? runFailure(data?.fallback_history) : null
+  // flowgate.v02test.0024 D: a live detail names its AI in `provider` (null until it spawned one — then the pinned
+  // `requested_provider_id`), a finished one in `provider_id` / `provider_name`.
+  const live = data?.provider && typeof data.provider === 'object' ? data.provider : null
+  const sourceAccess = data?.source_access === 'read' || data?.source_access === 'read_write' ? data.source_access : null
   return {
     runId: textOrNull(data?.run_id) ?? runId,
     status: data?.status === 'finished' ? 'finished' :
       ['running', 'cancelling', 'pause_requested'].includes(data?.status ?? '') ? 'running' : 'unknown',
     endReason, outcome: data?.outcome ?? null, exitCode: nullableNumber(data?.exit_code),
     succeeded: typeof data?.succeeded === 'boolean' ? data.succeeded : null,
-    stopCode: textOrNull(data?.stop_code), apiTurnsUsed: nullableNumber(data?.api_turns_used), providerId: textOrNull(data?.provider_id),
+    stopCode: textOrNull(data?.stop_code), apiTurnsUsed: nullableNumber(data?.api_turns_used),
+    providerId: textOrNull(data?.provider_id) ?? textOrNull(live?.id) ?? textOrNull(data?.requested_provider_id),
+    providerName: textOrNull(data?.provider_name) ?? textOrNull(live?.name), sourceAccess,
     docRef: textOrNull(data?.doc_ref), actionScope: textOrNull(data?.action_scope), groupId: textOrNull(data?.group_id),
-    finishedAt: textOrNull(data?.finished_at), ...(failure ? { failure } : {}),
+    startedAt: textOrNull(data?.started_at), finishedAt: textOrNull(data?.finished_at), ...(failure ? { failure } : {}),
     ...(data?.chat_commit ? { chatCommit: toChatCommit(data.chat_commit) } : {}),
   }
 }

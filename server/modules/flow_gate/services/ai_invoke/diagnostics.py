@@ -161,11 +161,17 @@ def get_run_detail(run_id: str) -> dict:
     A live or same-process-finished run answers exactly as :func:`get_status`
     always has — only ``persisted`` is added, so no existing caller's response
     shape moves. A run this process never saw falls back to the `ai_invoke_runs`
-    row DB0008 kept for it.
+    row DB0008 kept for it. flowgate.v02test.0024 D adds ``source_access`` (both
+    halves) and ``requested_provider_id`` (live half), additive like the rest.
     """
-    if _svc().get_run_record(run_id) is not None:
+    record = _svc().get_run_record(run_id)
+    if record is not None:
         payload = get_status(run_id)
         payload["persisted"] = False
+        token_id = record.get("token_id")
+        # flowgate.v02test.0024 D: a live detail names its provider only once it spawned one;
+        # the chat's own pinned choice is the name to show until then (no fallback in a chat).
+        payload["requested_provider_id"] = record.get("requested_provider_id")
     else:
         from modules.flow_gate.db import ai_invoke_runs as db_runs
 
@@ -174,10 +180,12 @@ def get_run_detail(run_id: str) -> dict:
             raise _http_error(404, "run_not_found", "Unknown or expired run id.")
         payload = _run_detail_from_row(row)
         payload["persisted"] = True
+        token_id = row.get("token_id")
 
     project_id = str(payload.get("project_id") or payload.get("group_id") or "").split(".", 1)[0]
     payload["project_id"] = project_id
     payload["succeeded"] = ai_run_succeeded(payload)
+    payload["source_access"] = chat_source_access(token_id)
     payload["doc_title"] = None
     if payload.get("doc_ref"):
         try:
@@ -187,6 +195,29 @@ def get_run_detail(run_id: str) -> dict:
         except Exception:
             logger.debug("AI detail document enrichment skipped", exc_info=True)
     return payload
+
+
+def chat_source_access(token_id: Optional[str]) -> Optional[str]:
+    """flowgate.v02test.0024 D: the read/edit access a chat run actually got.
+
+    ``tokens.source_access`` is fixed when the run's token is issued from the user's stored
+    mode (an edit_once that lost its claim is ``read``), so it is the applied value, not the
+    button state. ``read`` / ``read_write`` for a chat token; None for any other run, for a
+    token row that is gone, or when the lookup fails -- never a guess.
+    """
+    if not token_id:
+        return None
+    try:
+        from modules.flow_gate.db import tokens as db_tokens
+
+        token = db_tokens.get_by_id(str(token_id))
+    except Exception:
+        logger.debug("chat source access lookup skipped", exc_info=True)
+        return None
+    if not token or token.get("action_scope") != "chat":
+        return None
+    value = token.get("source_access")
+    return value if value in ("read", "read_write") else None
 
 
 def _persisted_register_failures(run_id: str) -> list:

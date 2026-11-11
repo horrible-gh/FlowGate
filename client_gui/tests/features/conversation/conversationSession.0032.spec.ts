@@ -84,8 +84,9 @@ describe('activity re-read during an AI run (D0006 §3.9.2)', () => {
     await clock.tick()
     expect(source.listActivities).toHaveBeenCalledTimes(2)
     expect(commandOf(session.state.activities, 'k1')?.state).toBe('pending_approval')
-    // flowgate.v02.0047 rev3: no run_started line next to it.
-    expect(session.timeline.value.map((i) => i.key)).toEqual(['turn:1', 'turn:2', 'command:k1'])
+    // flowgate.v02.0047 rev3: no run_started line next to it — flowgate.v02test.0024 D: only the one run in progress
+    // line, after everything, until the run ends.
+    expect(session.timeline.value.map((i) => i.key)).toEqual(['turn:1', 'turn:2', 'command:k1', 'status:local-status-run-running'])
 
     // The user approves; the same live run keeps being polled and gets its reply.
     await session.decideCommand('k1', 'approve')
@@ -245,10 +246,19 @@ describe('command decision recovery (D0006 §6.2)', () => {
     source.decideCommand.mockRejectedValueOnce(httpError(502, 'bad gateway'))
     await session.decideCommand('k1', 'approve')
     expect(commandOf(session.state.activities, 'k1')?.state).toBe('pending_approval')
-    expect(session.state.notice).toMatchObject({ code: 'command_decision_failed' })
+    // flowgate.v02test.0024 B: a line of the chat's history; the server answered, so the server keeps it.
+    expect(session.state.notice).toBeNull()
+    const errorLines = () => session.state.activities.filter((a) => a.kind === 'status' && a.chatError)
+    expect(errorLines()).toMatchObject([{ code: 'command_decision_failed', text: 'bad gateway' }])
+    expect(source.recordChatError).toHaveBeenCalledTimes(1)
     source.decideCommand.mockRejectedValueOnce(new (await import('@/features/conversation/api')).ConversationRequestError('offline', null, null))
     await session.decideCommand('k1', 'approve')
     expect(commandOf(session.state.activities, 'k1')?.state).toBe('pending_approval')
+    // No answer: the record would not get through either — this browser keeps it.
+    expect(source.recordChatError).toHaveBeenCalledTimes(1)
+    expect(errorLines().map((a) => a.kind === 'status' && a.code)).toEqual(['command_decision_failed', 'command_decision_failed'])
+    expect(Object.keys(localStorage).some((key) => key.endsWith(`.chat.errors.${A}`))).toBe(true)
+    localStorage.clear()
     await session.decideCommand('k1', 'approve')
     expect(commandOf(session.state.activities, 'k1')?.state).toBe('approved')
     expect(source.decideCommand).toHaveBeenCalledTimes(3)

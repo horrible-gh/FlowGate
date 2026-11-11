@@ -150,6 +150,10 @@ describe('turns', () => {
   })
 })
 
+// The optional detail fields a bare answer leaves null (0147 verdict / stop code / API turns, flowgate.v02test.0024 D).
+const NO_EXTRA_DETAIL = { succeeded: null, stopCode: null, apiTurnsUsed: null, providerId: null, providerName: null,
+  sourceAccess: null, startedAt: null }
+
 describe('AI run', () => {
   it('lists providers of the project', async () => {
     getRequest.mockResolvedValue({ data: { providers: [{ id: 'a', name: 'Opus 5' }, { id: 'b' }], default_provider_id: 'b' } })
@@ -170,7 +174,7 @@ describe('AI run', () => {
       provider_id: 'a',
     })
     getRequest.mockResolvedValueOnce({ data: { status: 'finished', end_reason: 'cancelled' } })
-    expect(await fetchRun('r1')).toEqual({ runId: 'r1', status: 'finished', endReason: 'cancelled', outcome: null, exitCode: null, docRef: null, actionScope: null, groupId: null, finishedAt: null })
+    expect(await fetchRun('r1')).toEqual({ runId: 'r1', status: 'finished', endReason: 'cancelled', outcome: null, exitCode: null, docRef: null, actionScope: null, groupId: null, finishedAt: null, ...NO_EXTRA_DETAIL })
     postRequest.mockResolvedValueOnce({ data: {} })
     await cancelRun('r1')
     expect(postRequest).toHaveBeenLastCalledWith('/api/v1/ai-invoke/r1/cancel', {})
@@ -188,7 +192,7 @@ describe('AI run', () => {
       remote_final: { code: 'remote_agent_rejected', cause: 'workdir_missing', workdir: '/tmp/flowgate/job_1',
         message: 'workspace: "/tmp/flowgate/job_1" is invalid: does not exist' },
     }] } })
-    expect(await fetchRun('r1')).toEqual({ runId: 'r1', status: 'finished', endReason: 'all_providers_failed', outcome: null, exitCode: null, docRef: null, actionScope: null, groupId: null, finishedAt: null, failure: {
+    expect(await fetchRun('r1')).toEqual({ runId: 'r1', status: 'finished', endReason: 'all_providers_failed', outcome: null, exitCode: null, docRef: null, actionScope: null, groupId: null, finishedAt: null, ...NO_EXTRA_DETAIL, failure: {
       cause: 'workdir_missing', workdir: '/tmp/flowgate/job_1',
       message: 'workspace: "/tmp/flowgate/job_1" is invalid: does not exist',
       detail: 'remote_agent_rejected: workdir_missing: workspace: "/tmp/flowgate/job_1" is invalid: does not exist',
@@ -196,7 +200,20 @@ describe('AI run', () => {
     getRequest.mockResolvedValueOnce({ data: { status: 'finished', end_reason: 'all_providers_failed', fallback_history: [{ detail: 'exit 2 within 1s' }] } })
     expect((await fetchRun('r2')).failure).toEqual({ cause: null, message: null, workdir: null, detail: 'exit 2 within 1s' })
     getRequest.mockResolvedValueOnce({ data: { status: 'finished', end_reason: 'exited', fallback_history: [{ detail: 'x' }] } })
-    expect(await fetchRun('r3')).toEqual({ runId: 'r3', status: 'finished', endReason: 'exited', outcome: null, exitCode: null, docRef: null, actionScope: null, groupId: null, finishedAt: null })
+    expect(await fetchRun('r3')).toEqual({ runId: 'r3', status: 'finished', endReason: 'exited', outcome: null, exitCode: null, docRef: null, actionScope: null, groupId: null, finishedAt: null, ...NO_EXTRA_DETAIL })
+  })
+
+  it('flowgate.v02test.0024 D: reads the AI and the applied read / edit access of a live and a finished run', async () => {
+    // Live: the AI is the `provider` object; before it spawned one, the pinned `requested_provider_id`.
+    getRequest.mockResolvedValueOnce({ data: { run_id: 'r1', status: 'running', started_at: '2026-11-12T07:50:00+09:00',
+      provider: { id: 'aip_1', name: 'Claude Opus 5.5 (AG)' }, source_access: 'read_write' } })
+    expect(await fetchRun('r1')).toMatchObject({ status: 'running', providerId: 'aip_1', providerName: 'Claude Opus 5.5 (AG)',
+      sourceAccess: 'read_write', startedAt: '2026-11-12T07:50:00+09:00' })
+    getRequest.mockResolvedValueOnce({ data: { run_id: 'r2', status: 'running', provider: null, requested_provider_id: 'aip_2', source_access: 'read' } })
+    expect(await fetchRun('r2')).toMatchObject({ providerId: 'aip_2', providerName: null, sourceAccess: 'read' })
+    // Finished: `provider_id` / `provider_name`; an unknown access value is not guessed.
+    getRequest.mockResolvedValueOnce({ data: { run_id: 'r3', status: 'finished', provider_id: 'aip_3', provider_name: 'Sonnet', source_access: 'edit' } })
+    expect(await fetchRun('r3')).toMatchObject({ providerId: 'aip_3', providerName: 'Sonnet', sourceAccess: null })
   })
 
   it('flowgate.v02.0152: names the press with client_request_id and maps 409 start_pending', async () => {

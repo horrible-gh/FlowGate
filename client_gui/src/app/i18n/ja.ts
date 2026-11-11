@@ -1148,6 +1148,7 @@ export default {
       more_lines: 'あと {n} 行',
     },
     status: {
+      run_running: 'AI 呼び出し中',
       run_cancelled: 'AI 呼び出しを停止しました',
       run_no_reply: 'AI 呼び出しが返信なしで終了しました',
       run_query_unconfirmed: 'AI 呼び出しは終了しましたが、保存された返信の照会を確認できませんでした',
