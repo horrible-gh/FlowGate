@@ -548,6 +548,8 @@ from .git.worktree import (
     worktree_branch_name,
     _force_rmtree,
     ensure_worktree,
+    TRANSIENT_WORKTREE_FAILURES,
+    take_worktree_failure_reason,
     _ensure_worktree_locked,
     _worktree_start_point,
     _emit_worktree_ready,
