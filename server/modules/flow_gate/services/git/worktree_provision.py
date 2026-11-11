@@ -284,7 +284,9 @@ def _report(job: dict) -> str:
         _record_attempt(project_id, "failed", "git_busy", p.get("trigger") or "", "none")
         _gs._fail_worktree(project_id, group_id, branch, "git_busy")
     elif code == "branch_merge_claim_active":
+        from .worktree import _note_worktree_failure
         _record_attempt(project_id, "blocked", code, p.get("trigger") or "", "none")
+        _note_worktree_failure(code)  # v02test.0021: transient, told apart by the caller
     else:
         _gs._fail_worktree(project_id, group_id, branch, code)
     return FAILED

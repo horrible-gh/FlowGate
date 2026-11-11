@@ -634,6 +634,59 @@ def heartbeat(ai_run_id):
         raise
 
 
+# v02test.0021: a start refused ``git_busy`` (the group's worktree held by another provision job, a branch merge or a
+# gate end cleanup) keeps its request, but only a later settle replays it (``scheduling.queue_requests``) and nothing
+# settles when that holder lets the group go -- the run stayed ``running`` with nothing moving. So the refusal asks for
+# the settle itself, after a growing delay; a request still refused after the last one fails as a broken workspace does
+# (``workspace._failed``: the attempt invalidated, the node pending, the run idle / error), its cause kept in the event.
+BUSY_RETRY_DELAYS = (5.0, 10.0, 20.0, 40.0, 60.0)
+_BUSY_RETRY_TTL = 3600.0
+_busy_retries: dict = {}          # exec_id -> (refusals so far, monotonic time of the last one)
+_busy_retries_lock = threading.Lock()
+
+
+def _retry_busy(exec_id, provision_error=None):
+    """Count this ``git_busy`` refusal of ``exec_id`` and schedule, outside every guard, its settle or its failure."""
+    import time
+    if not exec_id:
+        return
+    now = time.monotonic()
+    with _busy_retries_lock:
+        for key in [k for k, (_n, at) in _busy_retries.items() if now - at > _BUSY_RETRY_TTL]:
+            del _busy_retries[key]
+        tries = _busy_retries.get(exec_id, (0, now))[0] + 1
+        _busy_retries[exec_id] = (tries, now)
+    exhausted = tries > len(BUSY_RETRY_DELAYS)
+    delay = 0.0 if exhausted else BUSY_RETRY_DELAYS[tries - 1]
+
+    def fire():
+        try:
+            row = ledger.get(exec_id)
+            if not row or row["status"] != "requested" or row.get("ai_run_id"):
+                with _busy_retries_lock:
+                    _busy_retries.pop(exec_id, None)
+                return                   # admitted, ended or cancelled meanwhile: nothing to retry
+            if exhausted:
+                with _busy_retries_lock:
+                    _busy_retries.pop(exec_id, None)
+                log.warning("Graph execution %s still git_busy after %d retries (%s): failing its attempt",
+                            exec_id, len(BUSY_RETRY_DELAYS), provision_error or "git_busy")
+                workspace._failed(exec_id, "git_busy_exhausted",
+                                  **({"provision_error": provision_error} if provision_error else {}))
+                return
+            graph = run_store.run_by_id(row["run_id"]) or {}
+            if graph.get("group_id"):
+                settle(graph["group_id"])
+        except Exception:
+            log.warning("Graph git_busy retry failed for %s", exec_id, exc_info=True)
+
+    log.info("Graph execution %s git_busy (%s): %s in %.0fs", exec_id, provision_error or "git_busy",
+             "failing" if exhausted else "retry %d/%d" % (tries, len(BUSY_RETRY_DELAYS)), delay)
+    timer = threading.Timer(delay, fire)
+    timer.daemon = True
+    timer.start()
+
+
 def start_failed(exec_id, error=None):
     if error is not None:
         fencing.recorded(error)          # T#7: a refusal judged inside the start's guard, recorded after its rollback
@@ -645,6 +698,7 @@ def start_failed(exec_id, error=None):
     detail = getattr(error, "detail", None)
     if isinstance(detail, dict) and detail.get("code") == "graph_worktree_unavailable" \
             and detail.get("reason") == "git_busy":
+        _retry_busy(exec_id, detail.get("provision_error"))
         return True  # Admission releases its claim; a later refill can retry this request.
     if isinstance(detail, dict) and detail.get("reason") == "worktree_failed":
         return True  # Workspace preparation already invalidated/reset the node.

@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import sys
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +28,25 @@ _log = logging.getLogger(__name__)
 BRANCH_MAX_LEN = 100
 
 GIT_WORKTREE_RM_TIMEOUT_SEC = 300
+
+# v02test.0021: ``ensure_worktree`` keeps its 'skipped' | 'ok' | 'failed' contract, but a caller that must tell a
+# refusal that passes (another provision job queued / running: ``git_busy``; a branch merge holding the group:
+# ``branch_merge_claim_active``) from a broken slot reads this thread's last failure reason right after the call
+# (``take_worktree_failure_reason``). Every failure that goes through ``_fail_worktree`` is noted, so the reason also
+# reaches the caller's diagnostics.
+TRANSIENT_WORKTREE_FAILURES = frozenset({"git_busy", "branch_merge_claim_active"})
+_failure = threading.local()
+
+
+def _note_worktree_failure(reason: Optional[str]) -> None:
+    _failure.reason = reason
+
+
+def take_worktree_failure_reason() -> Optional[str]:
+    """This thread's last ``ensure_worktree`` failure reason (None when none), cleared as it is read."""
+    reason = getattr(_failure, "reason", None)
+    _failure.reason = None
+    return reason
 
 
 def sanitize_branch(raw: str) -> str:
@@ -82,6 +102,7 @@ def ensure_worktree(
     the workflow itself proceeds on the fallback source path (P0005 §4-2).
     """
     from modules.flow_gate.services import git_service as _gs
+    _note_worktree_failure(None)
     try:
         cfg = _gs.db_git.get_config(project_id)
         if cfg is None or not cfg.get("enabled"):
@@ -112,6 +133,7 @@ def ensure_worktree(
             # ensure_worktree return contract for callers, but do not poison the
             # durable provision-failure ledger or emit git_worktree_failed.
             _record_attempt(project_id, "blocked", "branch_merge_claim_active", trigger, "none")
+            _note_worktree_failure("branch_merge_claim_active")
             return "failed"
 
         # 0669 unit 7b: the plain path is a worktree_provision job (G/R/M) run once in
@@ -473,6 +495,7 @@ def _fail_worktree(
     fails silently. Persistence is best-effort so a bookkeeping error never
     swallows the operator-facing SSE."""
     from modules.flow_gate.services import git_service as _gs
+    _note_worktree_failure(error)
     try:
         _gs.db_git.upsert_provision_failure(group_id, project_id, branch or "", error)
     except Exception:

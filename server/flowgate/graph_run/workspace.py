@@ -363,6 +363,17 @@ def _join(row, directory, root, branch, marker, group_root):
     return marker
 
 
+# v02test.0021: what a failed preparation keeps for its diagnosis (the run event and the log), beyond its reason.
+_FAILURE_DETAILS = ("provision_error", "git_stderr")
+
+
+def _git_error(proc):
+    """v02test.0021: a failed Git command's stderr (credentials scrubbed, bounded) for the failure's details."""
+    from modules.flow_gate.services.git.credentials import _scrub
+    text = _scrub(((getattr(proc, "stderr", "") or "").strip()))[:500]
+    return {"git_stderr": text} if text else {}
+
+
 def _materialize(row, project_id):
     directory, root, branch = location(row, project_id)
     module = row["group_id"].split(".")[1]
@@ -375,8 +386,16 @@ def _materialize(row, project_id):
         if refused:
             raise port.GraphSourceError("graph_worktree_unavailable", reason=refused)
         restore = {"start_point": start_point} if start_point else {}
+        git.take_worktree_failure_reason()  # v02test.0021: no reason left over from an earlier call on this thread
         if git.ensure_worktree(project_id, module, row["group_id"], trigger="graph_attempt", **restore) != "ok":
-            raise port.GraphSourceError("graph_worktree_unavailable", reason="group_input_missing")
+            # v02test.0021: a refusal that passes (another provision job queued / running, a branch merge holding the
+            # group) is ``git_busy`` -- the attempt and its request stay and a later refill retries, as the gate
+            # cleanup case below -- not a missing input that invalidates the attempt and idles the run.
+            failure = git.take_worktree_failure_reason()
+            if failure in git.TRANSIENT_WORKTREE_FAILURES:
+                raise port.GraphSourceError("graph_worktree_unavailable", reason="git_busy", provision_error=failure)
+            raise port.GraphSourceError("graph_worktree_unavailable", reason="group_input_missing",
+                                        **({"provision_error": failure} if failure else {}))
     with _git_locks(row, project_id, branch):
         current = attempt(row["attempt_id"])
         if not current or current["status"] != "active":
@@ -418,16 +437,19 @@ def _materialize(row, project_id):
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="branch_occupied")
             if _layout(marker) == REF_LAYOUT:
                 # T#8: the ref first (only if absent), then the tree detached at it; no branch is created.
-                if not exists and git._run_git(["update-ref", "-m", "flowgate: attempt input", head, sha, ""],
-                                               cwd=group_root).returncode:
-                    raise port.GraphSourceError("graph_worktree_unavailable", reason="ref_create_failed")
+                if not exists:
+                    proc = git._run_git(["update-ref", "-m", "flowgate: attempt input", head, sha, ""], cwd=group_root)
+                    if proc.returncode:
+                        raise port.GraphSourceError("graph_worktree_unavailable", reason="ref_create_failed",
+                                                    **_git_error(proc))
                 args = ["worktree", "add", "--detach", str(root), head]
             else:
                 args = ["worktree", "add"]
                 args += [str(root), branch] if exists else ["-b", branch, str(root), sha]
             proc = git._run_git(args, cwd=group_root)
             if proc.returncode:
-                raise port.GraphSourceError("graph_worktree_unavailable", reason="worktree_add_failed")
+                raise port.GraphSourceError("graph_worktree_unavailable", reason="worktree_add_failed",
+                                            **_git_error(proc))
         _validate_tree(root, branch, marker, moving=bool(marker.get("join_inputs")))
         if marker.get("join_inputs"):
             marker = _join(current, directory, root, branch, marker, group_root)
@@ -442,7 +464,7 @@ def _input_record(row, project_id):
             "join_conflict": marker.get("join_conflict")}
 
 
-def _failed(exec_id, cause):
+def _failed(exec_id, cause, **detail):
     """The runtime's invalidation of an attempt whose worktree failed. 0061 T#7: committed under the exclusive hold of
     the Flow's Stop gate (``fencing.exclusive``, as the Stop's ``stopping``): a side effect of the attempt's token in
     flight (an inbox registration, a source write) completes before it, and none starts after it — it is judged
@@ -476,7 +498,7 @@ def _failed(exec_id, cause):
             "instruction_doc_id = NULL, result_event_floor = NULL, updated_at = ? "
             "WHERE run_id = ? AND node_key = ? AND status <> 'done'",
             [ledger.now(), row["run_id"], node_attempt["node_key"]])
-        _event(attempt(row["attempt_id"]), "worktree_failed", reason=cause)
+        _event(attempt(row["attempt_id"]), "worktree_failed", reason=cause, **detail)
         if node and node["status"] != "done":
             from modules.flow_gate.graph_workflow.services import run_apply
             ctx = run_apply.load_context(run_store.run_by_id(row["run_id"]), _project(original), None)
@@ -529,12 +551,20 @@ def prepare(exec_id, project_id, group_id):
         cleanup(row["attempt_id"])
         raise
     except Exception as exc:
-        cause = getattr(exc, "details", {}).get("reason") or type(exc).__name__
+        details = getattr(exc, "details", None)
+        details = details if isinstance(details, dict) else {}
+        cause = details.get("reason") or type(exc).__name__
         if isinstance(exc, port.GraphSourceError) and cause == "git_busy":
+            log.info("attempt %s workspace busy (%s); the request stays for a later refill",
+                     row["attempt_id"], details.get("provision_error") or cause)
             raise  # Transient contention keeps the attempt and durable request intact.
+        # v02test.0021: the real cause is in the log, the run event and the 409 (``cause``), not only in the event.
+        detail = {key: details[key] for key in _FAILURE_DETAILS if details.get(key)}
+        log.warning("attempt %s workspace preparation failed: %s %s", row["attempt_id"], cause, detail or "",
+                    exc_info=not isinstance(exc, port.GraphSourceError))
         _record_attempt(project_id, "failed", cause, "graph_attempt", "none")
-        _failed(exec_id, cause)
-        raise port.GraphSourceError("graph_worktree_unavailable", reason="worktree_failed") from exc
+        _failed(exec_id, cause, **detail)
+        raise port.GraphSourceError("graph_worktree_unavailable", reason="worktree_failed", cause=cause) from exc
 
 
 def verify_execution(exec_id):
