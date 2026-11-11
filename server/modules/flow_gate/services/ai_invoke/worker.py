@@ -2530,6 +2530,9 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
         "based_on_seq": int(run.get("_chat_based_on_seq") or 0),
         "display_name": (run.get("provider") or {}).get("name") or "AI",
     }
+    # flowgate.v02test.0023: the chat commit point's message, when the model named one.
+    if isinstance(tool_input.get("commit_message"), str) and tool_input["commit_message"].strip():
+        body["commit_message"] = tool_input["commit_message"]
     req = urllib.request.Request(
         f"{api_base}/conversation/{run['doc_ref']}/turn",
         data=json.dumps(body).encode("utf-8"),

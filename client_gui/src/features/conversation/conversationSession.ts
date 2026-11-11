@@ -131,12 +131,6 @@ export interface ConversationState {
   /** Invalidates panel-owned change windows whenever clearChat resets this chat lifetime. */
   changeWindowEpoch: number
   copyingMention: boolean
-  /**
-   * flowgate.v02test.0023: the commit message the next AI call sends (the run end commits the flow's worktree with
-   * it), and the uncommitted changes the server refused a call over (409 `chat_commit_message_required`).
-   */
-  commitMessage: string
-  commitRequired: { fileCount: number; files: string[] } | null
   /** Text of a mention copy that did not reach the clipboard (inline manual copy, 0240). */
   manualCopyText: string | null
   notice: ConversationNotice | null
@@ -212,8 +206,6 @@ export interface ConversationSession {
   /** Resolves the chat mention; the screen writes it to the clipboard (it owns the click). */
   issueMention(): Promise<string | null>
   setManualCopyText(text: string | null): void
-  /** flowgate.v02test.0023: the commit message the next AI call sends. */
-  setCommitMessage(text: string): void
   saveSettings(patch: ChatSettingsPatch): Promise<boolean>
   setSourceMode(mode: SourceAccessMode): Promise<void>
   /** Adds an activity pushed by the container or the source (upsert by id). */
@@ -248,18 +240,6 @@ function isNoResponse(error: unknown): boolean {
 /** flowgate.v02.0152: the server is still admitting the first request of this same press; ask again shortly. */
 function isStartPending(error: unknown): boolean {
   return error instanceof ConversationRequestError && error.status === 409 && error.code === 'start_pending'
-}
-
-/** flowgate.v02test.0023: the flow's worktree holds uncommitted changes and the call named no commit message. */
-function isCommitRequired(error: unknown): boolean {
-  return error instanceof ConversationRequestError && error.status === 409 && error.code === 'chat_commit_message_required'
-}
-
-function commitRequiredOf(error: unknown): { fileCount: number; files: string[] } {
-  const data = error instanceof ConversationRequestError ? error.data : null
-  const files = Array.isArray(data?.files) ? data.files.filter((f): f is string => typeof f === 'string') : []
-  const count = typeof data?.file_count === 'number' && Number.isFinite(data.file_count) ? data.file_count : files.length
-  return { fileCount: count, files }
 }
 
 /** flowgate.v02.0152: one id per AI-call press (`client_request_id`, 8..200 of [A-Za-z0-9._:-]). */
@@ -314,8 +294,6 @@ export function createConversationSession(options: ConversationSessionOptions = 
     deciding: [],
     changeWindowEpoch: 0,
     copyingMention: false,
-    commitMessage: '',
-    commitRequired: null,
     manualCopyText: null,
     notice: null,
   })
@@ -601,9 +579,6 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.chatsError = null
     state.activeChatId = null
     state.notice = null
-    // flowgate.v02test.0023: a commit message names changes of one Flow's worktree only.
-    state.commitMessage = ''
-    state.commitRequired = null
     clearChat()
     state.settings = { ...state.settings, sourceAccessMode: 'read_only', sourceAccessScope: null }
     state.savingSettings = false
@@ -1437,19 +1412,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
     // a resend with the run the first request admitted — running or already finished — instead of a second run.
     const requestId = newStartRequest()
     const recoveryStarted = Date.now()
-    // flowgate.v02test.0023: taken once per press, so a resend carries the same message.
-    const commitMessage = state.commitMessage.trim() || undefined
     let resends = 0
     for (;;) {
       try {
-        // The fourth argument only when there is one: a call without a message keeps its 0152 shape.
-        const runId = await (commitMessage
-          ? source.startChatRun(chatId, providerId, requestId, commitMessage)
-          : source.startChatRun(chatId, providerId, requestId))
+        const runId = await source.startChatRun(chatId, providerId, requestId)
         if (stale()) return
-        // The message belongs to this run now; the next call names its own.
-        if (commitMessage && state.commitMessage.trim() === commitMessage) state.commitMessage = ''
-        state.commitRequired = null
         if (!runId) {
           state.runId = null
           return
@@ -1484,13 +1451,6 @@ export function createConversationSession(options: ConversationSessionOptions = 
           }
         }
         state.runId = null
-        // flowgate.v02test.0023: uncommitted changes and no commit message — the composer asks for one; the turn
-        // already sent stays, and the AI call is made again with the message.
-        if (isCommitRequired(error)) {
-          state.commitRequired = commitRequiredOf(error)
-          notify('warning', 'commit_required', messageOf(error))
-          return
-        }
         // flowgate.v02.0061 T#14: an edit / edit-once call while the Flow's Graph run is locked (WP answer 2).
         if (isSourceLocked(error)) notify('warning', 'source_locked')
         else notify('danger', 'invoke_failed', messageOf(error))
@@ -1568,11 +1528,6 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   function setManualCopyText(text: string | null): void {
     state.manualCopyText = text || null
-  }
-
-  /** flowgate.v02test.0023: the composer's commit message for the next AI call. */
-  function setCommitMessage(text: string): void {
-    state.commitMessage = text
   }
 
   async function saveSettings(patch: ChatSettingsPatch): Promise<boolean> {
@@ -1663,7 +1618,6 @@ export function createConversationSession(options: ConversationSessionOptions = 
     stopRun,
     issueMention,
     setManualCopyText,
-    setCommitMessage,
     saveSettings,
     setSourceMode,
     pushActivity,

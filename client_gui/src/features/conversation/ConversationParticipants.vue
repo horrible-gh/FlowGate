@@ -120,7 +120,9 @@ let opener: HTMLElement | null = null
 let observer: ResizeObserver | null = null
 
 function kindLabel(p: ConversationParticipant): string {
-  return p.kind === 'user' || p.kind === 'ai' ? t(`gui.conversation.participants.${p.kind}`) : p.kind
+  if (p.kind === 'user' || p.kind === 'ai') return t(`gui.conversation.participants.${p.kind}`)
+  // flowgate.v02test.0023: FlowGate's own turns (the chat commit result).
+  return p.kind === 'system' ? t('gui.conversation.message.system') : p.kind
 }
 
 function description(p: ConversationParticipant): string {

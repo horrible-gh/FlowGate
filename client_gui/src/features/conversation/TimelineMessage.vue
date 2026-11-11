@@ -3,19 +3,19 @@
   <div
     ref="rootEl"
     class="tl-msg"
-    :class="[isUser ? 'tl-msg--user' : 'tl-msg--ai', { 'is-pending': pending, 'is-failed': failed }]"
+    :class="[isUser ? 'tl-msg--user' : 'tl-msg--ai', { 'tl-msg--system': isSystem, 'is-pending': pending, 'is-failed': failed }]"
     data-test="tl-message"
-    :data-speaker="isUser ? 'user' : 'ai'"
+    :data-speaker="isUser ? 'user' : isSystem ? 'system' : 'ai'"
     :data-seq="turn.seq || undefined"
   >
     <div class="tl-bubble">
       <div class="tl-meta">
         <span class="tl-speaker">
-          <span class="tl-avatar" aria-hidden="true">{{ isUser ? '●' : '◆' }}</span>
-          {{ isUser ? t('gui.conversation.message.user') : t('gui.conversation.message.ai') }}
+          <span class="tl-avatar" aria-hidden="true">{{ isUser ? '●' : isSystem ? '■' : '◆' }}</span>
+          {{ isUser ? t('gui.conversation.message.user') : isSystem ? t('gui.conversation.message.system') : t('gui.conversation.message.ai') }}
         </span>
         <!-- 0293 R0001: the model name is a badge only; identity is participant_key. -->
-        <span v-if="!isUser && turn.displayName" class="tl-provider" data-test="tl-provider" :title="turn.displayName">{{ turn.displayName }}</span>
+        <span v-if="!isUser && !isSystem && turn.displayName" class="tl-provider" data-test="tl-provider" :title="turn.displayName">{{ turn.displayName }}</span>
         <span v-if="pending" class="tl-time">{{ t('gui.conversation.message.sending') }}</span>
         <span v-else-if="turn.createdAt" class="tl-time" :title="turn.createdAt">{{ formatTimelineTime(turn.createdAt) }}</span>
         <!-- flowgate.v02.0157: the message as written (Markdown source, not the rendered page), on both sides. -->
@@ -64,6 +64,9 @@ const emit = defineEmits<{ retry: [] }>()
 const { t, locale } = useI18n()
 
 const isUser = computed(() => props.turn.speaker === 'user')
+// flowgate.v02test.0023: FlowGate's own turn (the chat commit result) -- shown as Markdown like an AI message, but
+// labelled FlowGate so it is never taken for the AI's reply.
+const isSystem = computed(() => props.turn.speaker === 'system')
 const rootEl = ref<HTMLElement | null>(null)
 
 // flowgate.v02.0157 — the run result window's renderer (GFM tables, a copy button per code block), made once per
@@ -228,6 +231,15 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
 
 .tl-msg--ai .tl-avatar {
   color: var(--fg2-violet);
+}
+
+.tl-msg--system .tl-bubble {
+  border-style: dashed;
+  background: transparent;
+}
+
+.tl-msg--system .tl-avatar {
+  color: var(--fg2-muted);
 }
 
 .tl-provider {

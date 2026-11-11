@@ -1072,6 +1072,8 @@ export default {
     message: {
       user: '自分',
       ai: 'AI',
+      // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
+      system: 'FlowGate',
       sending: '送信中',
       failed: '送信できませんでした。',
       stale: '#{seq} のメッセージを見る前に書かれた返信です。',
@@ -1162,9 +1164,6 @@ export default {
       remote_path_invalid: 'Agent が作業ディレクトリのパスを使用できません。リモート作業ディレクトリを確認してください',
       remote_agent_rejected: 'Agent が実行を拒否しました',
       remote_agent_failed: 'Agent が実行を開始できませんでした',
-      chat_committed: 'チャットの変更をコミットしました',
-      chat_commit_missing: 'コミットメッセージがないため変更をコミットしていません。次の AI 呼び出しでコミットメッセージを入力してください',
-      chat_commit_skipped: 'チャットの変更をコミットできませんでした。次の AI 呼び出しでコミットメッセージを入力すると再度コミットします',
     },
     participants: {
       all: '参加者 {count}人',
@@ -1207,10 +1206,6 @@ export default {
       source_locked: 'このフローの Graph 実行中（実行中・一時停止中・停止中）または実行状態の確認前は、読み取りモードへの切り替えのみ可能です',
       manual_copy_title: 'クリップボードにコピーできませんでした。下の内容を手動でコピーしてください。',
       manual_copy_again: 'もう一度コピー',
-      // flowgate.v02test.0023 — the chat commit point.
-      commit_placeholder: 'コミットメッセージ（例: fix(chat): コミット漏れを修正）',
-      commit_tip: 'AI 呼び出しが終わると、このメッセージでフローの作業領域をコミットします',
-      commit_required: '未コミットの変更 {n} 件 — コミットメッセージを入力して AI を再度呼び出してください',
     },
     settings: {
       title: '会話設定',
@@ -1237,7 +1232,6 @@ export default {
       settings_failed: '会話設定を保存できませんでした',
       source_mode_failed: 'AI ソースモードを変更できませんでした',
       source_locked: 'このフローの Graph 実行中はチャットでソースを変更できません。読み取りモードを使用してください',
-      commit_required: '未コミットの変更があるため AI を呼び出しませんでした。コミットメッセージを入力して再度呼び出してください',
       create_forbidden: 'このフローに新しいチャットを作成する権限がありません',
       create_group_disposed: '廃棄されたフローには新しいチャットを作成できません',
       command_already_handled: 'すでに処理されたコマンド実行リクエストです',

@@ -89,8 +89,6 @@
       :cancelling="state.cancelling"
       :copying-mention="state.copyingMention"
       :manual-copy-text="state.manualCopyText"
-      :commit-message="state.commitMessage"
-      :commit-required="state.commitRequired"
       :on-send="start.send"
       @select-provider="session.selectProvider"
       @save-settings="onSaveSettings"
@@ -100,7 +98,6 @@
       @stop="session.stopRun"
       @manual-copy-again="copyManualAgain"
       @manual-copy-dismiss="session.setManualCopyText(null)"
-      @update-commit-message="session.setCommitMessage"
     />
   </section>
 </template>

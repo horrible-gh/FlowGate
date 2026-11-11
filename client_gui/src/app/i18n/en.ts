@@ -136,7 +136,7 @@ export default {
     "enroll_title": "Agent enrollment",
     "enroll_hint": "Enter the issued one-time token in the Agent machine’s enrollment procedure, then start the Agent.",
     "expired": "The enrollment token has expired.",
-    "retry_issue": "Retry token issuance",
+    "retry_issue": "Retry token ***",
     "copy": "Copy",
     "done": "Done"
 },
@@ -511,7 +511,7 @@ export default {
         control: 'Control',
       },
       items: {
-        basic_design: 'Basic design',
+        basic_design: 'Basic ***',
         protocol: 'Protocol',
         logic: 'Logic',
         db_design: 'DB design',
@@ -1072,6 +1072,8 @@ export default {
     message: {
       user: 'Me',
       ai: 'AI',
+      // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
+      system: 'FlowGate',
       sending: 'Sending',
       failed: 'Could not send.',
       stale: 'Written before message #{seq} was seen.',
@@ -1162,9 +1164,6 @@ export default {
       remote_path_invalid: 'The agent cannot use the working directory path. Check the remote working directory',
       remote_agent_rejected: 'The agent rejected the run',
       remote_agent_failed: 'The agent could not start the run',
-      chat_committed: 'Committed the chat\'s changes',
-      chat_commit_missing: 'Changes were not committed: no commit message. Enter one with the next AI call',
-      chat_commit_skipped: 'Could not commit the chat\'s changes. Enter a commit message with the next AI call to commit them',
     },
     participants: {
       all: 'Participants ({count})',
@@ -1207,10 +1206,6 @@ export default {
       source_locked: 'Only switching to Read is allowed while this flow\'s Graph run is running, paused or stopping, or before its run status is confirmed',
       manual_copy_title: 'Could not copy to the clipboard. Copy the text below by hand.',
       manual_copy_again: 'Copy again',
-      // flowgate.v02test.0023 — the chat commit point.
-      commit_placeholder: 'Commit message (e.g. fix(chat): commit missing changes)',
-      commit_tip: 'When the AI call ends, the flow\'s worktree is committed with this message',
-      commit_required: '{n} uncommitted change(s) — enter a commit message and call the AI again',
     },
     settings: {
       title: 'Chat settings',
@@ -1237,7 +1232,6 @@ export default {
       settings_failed: 'Could not save chat settings',
       source_mode_failed: 'Could not change the AI source mode',
       source_locked: 'A chat cannot change the source while this flow\'s Graph run goes on. Use the read mode',
-      commit_required: 'The AI was not called: there are uncommitted changes. Enter a commit message and call again',
       create_forbidden: 'You may not create a chat in this Flow',
       create_group_disposed: 'A disposed Flow cannot get a new chat',
       command_already_handled: 'This command request was already handled',
@@ -1915,7 +1909,7 @@ export default {
     // flowgate.v02.0053 T#4 — special document views: type names, the work plan table, the test views.
     types: {
       DS: 'Design instruction',
-      D: 'Basic design',
+      D: 'Basic ***',
       P: 'Protocol',
       L: 'Logic',
       DB: 'Database design',
@@ -2866,9 +2860,9 @@ export default {
         local_disabled: 'Runs locally',
         disabled: 'Connections and enrollment refused',
         disabled_revoked: 'Credential revoked',
-        pending: 'Token expires {at}',
+        pending: 'Token *** {at}',
         unregistered: 'Needs an enrollment token',
-        reenroll: 'Token expires {at}',
+        reenroll: 'Token *** {at}',
         revoked: 'Needs re-enrollment',
         incompatible: 'v{version} request refused · {at}',
         online: 'Heartbeat {at}',
@@ -2929,8 +2923,8 @@ export default {
         disable_keeps: 'Its registration and credential stay. This is not a delete or a credential revoke.',
         disable_no_cancel: 'This is not a job cancel. Running work is not cancelled.',
         issue_replaces_pending: 'The previous pending enrollment token stops working at once.',
-        issue_replaces_any: 'Any pending token issued earlier stops working at once.',
-        issue_replaces_credential: 'Enrolling with the new token revokes the current credential and replaces it.',
+        issue_replaces_any: 'Any pending token *** earlier stops working at once.',
+        issue_replaces_credential: 'Enrolling with the new token *** the current credential and replaces it.',
         issue_once: 'The token is shown once on this screen right after issuing and cannot be fetched again.',
         issue_http: 'An HTTP connection needs the risk allowed on the Agent, and the token may be sent in plain text.',
         revoke_credential: 'The current credential is revoked; this agent can no longer connect.',

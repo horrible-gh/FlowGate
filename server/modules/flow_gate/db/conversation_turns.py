@@ -83,6 +83,16 @@ def first_turns(doc_id: str, limit: int) -> list[dict]:
     return fetch_turns_after(doc_id, 0, limit)
 
 
+def latest_user_locale(doc_id: str) -> Optional[str]:
+    """The locale of the newest person turn (flowgate.v02test.0023: a FlowGate turn speaks it)."""
+    row = get_store()._fetch_one(
+        "SELECT locale FROM conversation_turns WHERE doc_id = ? AND speaker = 'user' "
+        "ORDER BY seq DESC LIMIT 1",
+        [doc_id],
+    )
+    return (row or {}).get("locale")
+
+
 def insert_turn_with_next_seq(
     *,
     doc_id: str,
