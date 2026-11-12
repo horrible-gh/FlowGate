@@ -1615,11 +1615,6 @@ const contextMenu = useDesignerContextMenu({
   border-bottom: 1px solid var(--fg2-border);
 }
 
-/* ≤1120px the App Shell scrolls as a page and gives no height; keep the Body usable. The
-   final responsive policy is deferred. */
-@media (max-width: 1120px) {
-  .designer-shell {
-    min-height: 100vh;
-  }
-}
+/* No ≤1120px rule: App.vue keeps the full-screen Designer route pinned to the viewport at
+   every width, so the Shell always has a height and each area scrolls inside. */
 </style>

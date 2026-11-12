@@ -102,6 +102,19 @@ function closeDesigner(): void {
   .gui-route-content {
     overflow: visible;
   }
+
+  /* The full-screen workspace (Designer) is not a page: it stays pinned to the viewport at
+     every width, so its Conversation timeline keeps its own scroll and the composer stays
+     on screen. A too-narrow Body scrolls sideways inside DesignerBody instead. */
+  .gui-app-shell.is-fullscreen {
+    height: 100vh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .gui-app-shell.is-fullscreen .gui-route-content {
+    overflow: hidden;
+  }
 }
 
 @media (max-width: 760px) {
