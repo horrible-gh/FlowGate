@@ -134,9 +134,15 @@ function pick(providerId: string): void {
   left: 0;
   bottom: calc(100% + 4px);
   z-index: 30;
-  min-width: 186px;
-  max-width: 260px;
-  max-height: 220px;
+  /* flowgate.v02gui.0003: wide enough for a full provider name; a longer one wraps instead of being cut.
+     The picker is the first item of the composer row, so the popover starts at the composer's
+     content edge; 100cqw (the composer is an inline-size container) keeps its right edge inside
+     the panel instead of past the screen edge (360px in a ~300px panel ran ~69px off-screen). */
+  box-sizing: border-box;
+  width: max-content;
+  min-width: min(220px, 100cqw);
+  max-width: min(360px, 100cqw);
+  max-height: 260px;
   overflow: auto;
   padding: 5px;
   border: 1px solid var(--fg2-line-strong);
@@ -147,38 +153,44 @@ function pick(providerId: string): void {
 
 .cmp-model-opt {
   width: 100%;
-  height: 32px;
-  padding: 0 8px;
+  min-height: 32px;
+  padding: 6px 8px;
   display: flex;
   align-items: center;
   gap: 7px;
   border: 0;
   border-radius: var(--fg2-control-radius-sm);
   background: transparent;
-  color: var(--fg2-muted);
+  color: var(--fg2-text);
   text-align: left;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.35;
   cursor: pointer;
 }
 
-.cmp-model-opt:hover,
+.cmp-model-opt:hover {
+  background: var(--fg2-status-info-bg);
+}
+
+/* The selected provider is told apart from a hovered one: its own border, weight and check. */
 .cmp-model-opt.is-on {
   background: var(--fg2-status-info-bg);
-  color: var(--fg2-text);
+  box-shadow: inset 0 0 0 1px var(--fg2-status-info-border);
+  font-weight: 700;
 }
 
 .cmp-model-opt-name {
   min-width: 0;
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .cmp-model-check {
   flex: 0 0 auto;
   color: var(--fg2-status-info-fg);
+  font-size: 13px;
   visibility: hidden;
 }
 

@@ -163,6 +163,8 @@ export interface DesignerContextMenuDeps {
   readonly selectAll: (flowId: string) => void
   /** File › 새 Group (the top menu's dialog and create path). */
   readonly openFlowBaseBranch?: (projectId: string, flowId: string) => void
+  /** flowgate.v02gui.0003: the card menu's ID 복사 — copies the card's document id (absent: the item is not shown). */
+  readonly copyDocumentId?: (docId: string) => void
   readonly projectGitEnabled?: (projectId: string) => boolean | undefined
   readonly archive?: {
     read: (flowId: string) => Promise<{ archived: boolean; eligible: boolean }>
@@ -204,7 +206,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   /** The menu the host shows now, with what it was built from (replaced on every open). */
   const open = shallowRef<OpenMenu | null>(null)
   /** What runs: the 2-B commands only while the Shell lends their server paths. */
-  const connected: readonly MenuCommand[] = [...(deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS), ...(deps.openFlowBaseBranch ? ['flow.baseBranch' as const] : []), ...(deps.archive ? ['flow.archive' as const, 'flow.restore' as const] : [])]
+  const connected: readonly MenuCommand[] = [...(deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS), ...(deps.openFlowBaseBranch ? ['flow.baseBranch' as const] : []), ...(deps.archive ? ['flow.archive' as const, 'flow.restore' as const] : []), ...(deps.copyDocumentId ? ['node.copyId' as const] : [])]
   /** T#2: the one 2-B window open now (a new one replaces it). */
   const pending = shallowRef<PendingMenuAction | null>(null)
   let actionSeq = 0
@@ -411,6 +413,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
           editable,
           structureEditable: node.structureEditable === true && !marks.protectedNodeIds.has(node.id),
           definitionExists: !!node.definition,
+          hasDocument: !!node.document?.docId,
         },
         connected: CANVAS_CONNECTED,
         runItems: target.kind === 'node' ? runItems(entry.flowId, node.id) : [],
@@ -455,6 +458,10 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
         center.removeNode(scope.flowId, scope.nodeId)
       } else if (request.command === 'edge.disconnect' && scope.kind === 'edge') {
         center.removeEdge(scope.flowId, scope.edgeId)
+      } else if (request.command === 'node.copyId' && scope.kind === 'node') {
+        // flowgate.v02gui.0003: the id the Inspector's ID 복사 copies (the card's document), read from the graph of now.
+        const docId = canvasState(scope.flowId)?.graph.nodes.find((candidate) => candidate.id === scope.nodeId)?.document?.docId
+        if (docId) deps.copyDocumentId?.(docId)
       } else if (request.command in RUN_KEYS && scope.kind === 'node') {
         center.chooseCardMenu(scope.flowId, scope.nodeId, RUN_KEYS[request.command as CardRunCommand])
       }

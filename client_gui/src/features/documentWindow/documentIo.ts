@@ -338,6 +338,12 @@ function cardUploadNotice(error: unknown): { readonly key: string; readonly unce
   if (failure.kind === 'uncertain') return { key: 'uncertain', uncertain: true }
   const key = saveFailureKey(read)
   if (key.startsWith('not_editable')) return { key: 'locked', uncertain: false }
+  // flowgate.v02gui.0003: the file carries another document's front matter (a file without one is saved under the
+  // document's own, by the server) — told apart from a body that is not valid.
+  if (key === 'invalid_content') {
+    const first = Array.isArray(read.params.errors) ? (read.params.errors[0] as { reason?: unknown } | null | undefined) : null
+    if (first?.reason === 'document_identity_changed') return { key: 'identity_changed', uncertain: false }
+  }
   const mapped: Readonly<Record<string, string>> = {
     unauthorized: 'unauthorized',
     token_kind_not_allowed: 'token_kind_not_allowed',

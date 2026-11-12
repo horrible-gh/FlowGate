@@ -87,6 +87,9 @@ const { availability, to, busy, failureKey, done, run, clearFailure } = useKindS
 
 /** The current kind: the one the switch leaves; the document type when there is no switch. */
 const from = computed<KindSwitchKind | null>(() => {
+  // flowgate.v02gui.0003: the server answered the switch — the badge shows the new kind at once (it stays locked, as
+  // before, until the Canvas read the switch asked for moves the target; `done` is forgotten then).
+  if (done.value) return done.value.document.typeCode === 'B' ? 'B' : 'R'
   if (to.value === 'B') return 'R'
   if (to.value === 'R') return 'B'
   const type = props.target.docType?.trim().toUpperCase()

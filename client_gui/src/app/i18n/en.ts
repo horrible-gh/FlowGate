@@ -1747,6 +1747,7 @@ export default {
         conflict: 'Upload failed: it was saved elsewhere first. Check the latest content.',
         detached: 'Upload failed: the document linked to the card changed or is missing.',
         invalid_content: 'Upload failed: the content is not valid.',
+        identity_changed: 'Upload failed: the file\'s document header (front matter) does not match this document. Upload a file downloaded from this document, or a Markdown file without a header.',
         binding_required: 'Upload failed: a card connection is required. Open the document from the card.',
         base_failed: 'Upload did not start: the current body could not be read.',
         uncertain: 'The upload result could not be verified. Pressing upload again sends the same request.',

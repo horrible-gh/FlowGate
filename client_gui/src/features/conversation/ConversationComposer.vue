@@ -234,6 +234,8 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 .conv-compose {
   position: relative;
   flex: 0 0 auto;
+  /* flowgate.v02gui.0003: the AI picker's popover caps its width to this box (100cqw). */
+  container-type: inline-size;
   padding: 7px 8px;
   border-top: 1px solid var(--fg2-line);
   background: var(--fg2-control-surface-flat);

@@ -5,6 +5,7 @@
 // canvas coordinate the card is added at.
 // flowgate.v02.0060 T#2: a single card also lists the card's existing run menu items (0061 T#15 Hold 설정 / 해제,
 // 되돌리기) the caller judged and worded, after a separator. A card of a multi-selection never takes them (§3.6).
+// flowgate.v02gui.0003: a single card also has ID 복사 (node.copyId, outside the mockup's 40: hidden where not connected).
 // flowgate.v02.0060 T#1 (WP 0012 [B]): 정렬 · 배치 (blank Canvas) and 정렬 (multi-selected card) open the Edit menu's
 // 정렬 / 배치 commands as a submenu — the groups, order, words and enabled state the caller gives (the top menu's
 // DESIGNER_ARRANGE_GROUPS and isMenuCommandEnabled); a separator between groups. Without them the item keeps the
@@ -20,6 +21,8 @@ export interface CanvasAvailability {
   readonly structureEditable?: boolean
   readonly definitionExists?: boolean
   readonly progressed?: boolean
+  /** flowgate.v02gui.0003: the card holds a document (ID 복사 copies its id; without one the item is disabled). */
+  readonly hasDocument?: boolean
 }
 /** One item of the card's existing run menu, already judged (disabled) and worded (label) by the caller. */
 export interface CardRunItem {
@@ -69,7 +72,7 @@ export function canvasMenu({ target, available: v, connected, definitions = [], 
       s('canvas-arrange'), arrangeItem('canvas.arrange', 'arrangeLayout', arrange),
     ]
   } else if (target.kind === 'node') {
-    items = [a('node.detail', 'detail', 'ⓘ'), s('node-copy'), a('node.copy', 'copy', '▣'), s('node-delete'),
+    items = [a('node.detail', 'detail', 'ⓘ'), s('node-copy'), a('node.copy', 'copy', '▣'), a('node.copyId', 'copyId', '#', !v.hasDocument), s('node-delete'),
       a('node.delete', 'delete', '×', !v.editable || !v.structureEditable || !v.definitionExists, true)]
   } else if (target.kind === 'multi') {
     items = [a('multi.editSettings', 'editSettings', '⚙'), s('multi-copy'), a('multi.copy', 'copy', '▣'),

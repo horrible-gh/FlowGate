@@ -62,7 +62,8 @@ function draftGraph(flowId: string): FlowGraph {
     ownership: 'unassigned',
     nodes: [
       { id: 'gn_a', kind: 'task', title: 'A', x: 0, y: 0, movable: true, structureEditable: true, definition: definition('A'), state: 'done' },
-      { id: 'gn_b', kind: 'task', title: 'B', x: 300, y: 0, movable: true, structureEditable: true, definition: definition('B'), state: 'in_progress' },
+      { id: 'gn_b', kind: 'task', title: 'B', x: 300, y: 0, movable: true, structureEditable: true, definition: definition('B'), state: 'in_progress',
+        document: { docId: 'p.m.f1.0002-T', typeCode: 'T', seq: 2, title: 'B', docReviewStatus: null, status: 'draft', supersedes: [] } },
       { id: 'gn_c', kind: 'task', title: 'C', x: 600, y: 0, movable: true, structureEditable: true, definition: definition('C') },
       { id: 'gn_lock', kind: 'task', title: 'L', x: 0, y: 220, movable: true, structureEditable: false, definition: definition('L') },
     ],
@@ -129,6 +130,8 @@ interface Calls {
   palette: PaletteItemDefinition[]
   /** 정렬 · 배치 / 정렬 reaching the Edit menu path (flowId, command). */
   arrange: Array<[string, string]>
+  /** ID 복사 reaching the Shell's copy (the document id). */
+  copied: string[]
 }
 
 const Harness = defineComponent({
@@ -148,6 +151,7 @@ const Harness = defineComponent({
         props.center.selectAll(flowId)
       },
       openGroupCreate: () => { props.calls.groupCreate += 1 },
+      copyDocumentId: (docId) => { props.calls.copied.push(docId) },
       openFlowCreate: (groupId) => { props.calls.flowCreate.push(groupId) },
       selectPalette: (picked) => { props.calls.palette.push(picked) },
       // The Shell's Edit menu 정렬 / 배치 as DesignerShell lends it (rule: isMenuCommandEnabled with the open Flow and
@@ -208,7 +212,7 @@ async function mountHarness(options: { editable?: boolean; flows?: string[]; can
   })
   center.setProject('p')
   for (const flowId of options.flows ?? ['f1']) center.openFlow({ projectId: 'p', flowId, flowName: flowId.toUpperCase() })
-  const calls: Calls = { selectAll: [], groupCreate: 0, flowCreate: [], palette: [], arrange: [] }
+  const calls: Calls = { selectAll: [], groupCreate: 0, flowCreate: [], palette: [], arrange: [], copied: [] }
   const layout = ref('left:open')
   wrapper = mount(Harness, {
     props: { center, calls, canSelectAll: () => options.canSelectAll ?? true, layout },
@@ -331,8 +335,8 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     rightClick(card(w, 'gn_c'))
     await settle()
     expect(invariants(center)).toBe(before)
-    expect(itemTexts()).toEqual(['ⓘ 상세 보기', '▣ 복사', '× 삭제'])
-    expect(states()).toEqual([['node.detail', 'true', '미구현'], ['node.copy', 'true', '미구현'], ['node.delete', 'false', '']])
+    expect(itemTexts()).toEqual(['ⓘ 상세 보기', '▣ 복사', '# ID 복사', '× 삭제'])
+    expect(states()).toEqual([['node.detail', 'true', '미구현'], ['node.copy', 'true', '미구현'], ['node.copyId', 'true', ''], ['node.delete', 'false', '']])
     expect(item('node.delete').classList.contains('danger')).toBe(true)
     item('node.delete').click()
     await settle()
@@ -342,11 +346,31 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     expect(graphOf(center).nodes.map((node) => node.title).sort()).toEqual(['A', 'B', 'C', 'L'])
   })
 
+  it('a card with a document: ID 복사 copies the document id the Inspector copies; a card without one keeps it disabled (v02gui.0003)', async () => {
+    const { w, center, calls } = await mountHarness()
+    const before = invariants(center)
+    rightClick(card(w, 'gn_b'))
+    await settle()
+    expect(item('node.copyId').textContent).toContain('ID 복사')
+    expect(item('node.copyId').getAttribute('aria-disabled')).toBe('false')
+    item('node.copyId').click()
+    await settle()
+    expect(calls.copied).toEqual(['p.m.f1.0002-T'])
+    expect(menuEl()).toBeNull()
+    expect(invariants(center)).toBe(before)
+    rightClick(card(w, 'gn_c'))
+    await settle()
+    expect(item('node.copyId').getAttribute('aria-disabled')).toBe('true')
+    item('node.copyId').click()
+    await settle()
+    expect(calls.copied).toHaveLength(1)
+  })
+
   it('a locked card / a progressed line open an all-disabled menu: no command, Escape closes and returns focus', async () => {
     const { w, center } = await mountHarness()
     const trigger = document.createElement('button')
     document.body.appendChild(trigger)
-    for (const [element, keys] of [[card(w, 'gn_lock'), ['node.detail', 'node.copy', 'node.delete']], [line(w, 'ge_ab'), ['edge.disconnect']]] as const) {
+    for (const [element, keys] of [[card(w, 'gn_lock'), ['node.detail', 'node.copy', 'node.copyId', 'node.delete']], [line(w, 'ge_ab'), ['edge.disconnect']]] as const) {
       trigger.focus()
       const before = invariants(center)
       const event = rightClick(element)
@@ -431,7 +455,7 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
 
     rightClick(card(w, 'gn_c'))
     await settle()
-    expect(itemTexts()).toEqual(['ⓘ 상세 보기', '▣ 복사', '× 삭제'])
+    expect(itemTexts()).toEqual(['ⓘ 상세 보기', '▣ 복사', '# ID 복사', '× 삭제'])
     item('node.delete').click()
     await settle()
     expect(graphOf(center).nodes.map((node) => node.id).sort()).toEqual(['gn_a', 'gn_b', 'gn_lock'])
@@ -509,7 +533,7 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     rightClick(card(w, 'gn_c'))
     await settle()
     const keys = items().map((entry) => entry.dataset.key)
-    expect(keys).toEqual(['node.detail', 'node.copy', 'node.delete', 'node.run.holdSet'])
+    expect(keys).toEqual(['node.detail', 'node.copy', 'node.copyId', 'node.delete', 'node.run.holdSet'])
     expect(menuEl()!.querySelectorAll('[data-level="0"] [role="separator"]')).toHaveLength(3)
     expect(item('node.run.holdSet').textContent).toContain(i18n.global.t('gui.designer.center.card_menu.hold_set'))
     item('node.run.holdSet').click()
@@ -522,11 +546,11 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     // The source does offer the run menu: a single card shows it (gn_a is done, 되돌리기 can run).
     rightClick(card(w, 'gn_a'))
     await settle()
-    expect(items().map((entry) => entry.dataset.key)).toEqual(['node.detail', 'node.copy', 'node.delete', 'node.run.holdSet', 'node.run.timeMachine'])
+    expect(items().map((entry) => entry.dataset.key)).toEqual(['node.detail', 'node.copy', 'node.copyId', 'node.delete', 'node.run.holdSet', 'node.run.timeMachine'])
     expect(item('node.run.timeMachine').getAttribute('aria-disabled')).not.toBe('true')
     rightClick(card(w, 'gn_c'))
     await settle()
-    expect(items().map((entry) => entry.dataset.key)).toEqual(['node.detail', 'node.copy', 'node.delete', 'node.run.holdSet'])
+    expect(items().map((entry) => entry.dataset.key)).toEqual(['node.detail', 'node.copy', 'node.copyId', 'node.delete', 'node.run.holdSet'])
     expect(item('node.run.holdSet').getAttribute('aria-disabled')).not.toBe('true')
 
     center.setSelectMode(true)
@@ -900,7 +924,7 @@ describe('Designer context menu — 연결 예정 / 미구현 items request noth
       await settle()
     }
     for (const spy of spies) expect(spy).not.toHaveBeenCalled()
-    expect(calls).toEqual({ selectAll: [], groupCreate: 0, flowCreate: [], palette: [], arrange: [] })
+    expect(calls).toEqual({ selectAll: [], groupCreate: 0, flowCreate: [], palette: [], arrange: [], copied: [] })
     expect(drafts).toEqual([])
     expect(graphOf(center).nodes).toHaveLength(4)
   })
@@ -924,7 +948,7 @@ describe('Designer context menu — 연결 예정 / 미구현 items request noth
       await settle()
     }
     expect(item('flow.delete') ?? null).toBeNull()
-    expect(calls).toEqual({ selectAll: [], groupCreate: 0, flowCreate: [], palette: [], arrange: [] })
+    expect(calls).toEqual({ selectAll: [], groupCreate: 0, flowCreate: [], palette: [], arrange: [], copied: [] })
   })
 })
 

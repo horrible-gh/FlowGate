@@ -39,7 +39,7 @@ async def post_revision(flow_id: str, node_key: str, slot: str, request: Request
         req = ReviseRequest(flow_id, node_key, slot, body.get("expected_doc_id"),
                             body.get("expected_revision"), body.get("content"), actor,
                             idempotency_key=body.get("idempotency_key"), locale=legacy.locale_of(request))
-        outcome = revise(req)
+        outcome = revise(user_documents.keep_card_frontmatter(req))
         if outcome.contacts == "NORMAL":
             contacts.run(outcome.plan)
         elif outcome.contacts == "REPLAY":

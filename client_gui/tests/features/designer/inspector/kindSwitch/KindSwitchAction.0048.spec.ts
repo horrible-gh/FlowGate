@@ -305,6 +305,9 @@ describe('a switch (D#2 §3.4)', () => {
     expect(line().text()).toBe('버그 문서(0001-B)로 바꿨습니다. Canvas를 다시 읽는 중입니다.')
     // Until the Canvas moves the selection, the target still names the old id.
     expect(openButton().attributes('disabled')).toBeDefined()
+    // flowgate.v02gui.0003: the badge already shows the kind the server switched to (no wait for the Canvas read).
+    expect(openButton().attributes('data-kind')).toBe('B')
+    expect(openButton().text()).toContain('버그')
     await openButton().trigger('click')
     await flushPromises()
     expect(confirmButtons()).toEqual([])
