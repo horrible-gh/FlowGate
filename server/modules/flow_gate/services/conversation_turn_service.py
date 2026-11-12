@@ -284,6 +284,16 @@ def resolve_actor(actor: dict[str, Any], display_name_hint: Optional[str] = None
             "locale": None,
             "source_run_id": token.get("ai_run_id"),
         }
+    if kind == "system":
+        # flowgate.v02test.0023: FlowGate itself speaks in a chat (the chat commit point's
+        # outcome). Its own speaker, so a screen never takes it for the AI's reply.
+        return {
+            "speaker": "system",
+            "participant_key": turn_store.compose_participant_key("system", "flowgate"),
+            "display_name": actor.get("display_name") or "FlowGate",
+            "locale": None,
+            "source_run_id": actor.get("run_id"),
+        }
     raise ConversationTurnError(401, "Invalid conversation actor.")
 
 

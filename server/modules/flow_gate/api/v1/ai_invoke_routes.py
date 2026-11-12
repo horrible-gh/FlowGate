@@ -26,7 +26,6 @@ from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import ai_invoke_service
 from modules.flow_gate.services import ai_group_service
 from modules.flow_gate.services import card_memo_hooks
-from modules.flow_gate.services import chat_commit_service
 from modules.flow_gate.services import chat_start_requests
 from modules.flow_gate.services import graph_execution_hooks
 from modules.flow_gate.services import git_service
@@ -158,10 +157,6 @@ class AiInvokeStartRequest(BaseModel):
     # and gets the run the first request admitted -- running or finished -- instead of a
     # second run. Chat only; see services/chat_start_requests.py.
     client_request_id: Optional[str] = None
-    # flowgate.v02test.0023: the chat's commit message. When the chat run ends FlowGate commits
-    # the flow's worktree with it; without it a chat is refused while the worktree holds
-    # uncommitted changes (409 chat_commit_message_required). Chat only, at most 200 chars.
-    commit_message: Optional[str] = None
 
 
 # Wire scope → token scope. The extra invoke scopes reuse the edit/new token
@@ -536,15 +531,6 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         elif not chat_start_requests.valid(body.client_request_id):
             errors.append({"loc": chat_start_requests.FIELD,
                            "msg": "must be 8..200 letters, digits, '.', '_', ':' or '-'"})
-    chat_commit_message = None
-    if body.commit_message is not None:
-        if body.action_scope != "chat":
-            errors.append({"loc": "commit_message", "msg": "only available for action_scope=chat"})
-        else:
-            try:
-                chat_commit_message = chat_commit_service.validate_message(body.commit_message)
-            except ValueError as exc:
-                errors.append({"loc": "commit_message", "msg": str(exc)})
     if errors:
         return _validation_failed(errors)
 
@@ -1086,16 +1072,6 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "code": "start_pending",
                 "message": "This AI call is still starting; ask again shortly.",
             })
-    # flowgate.v02test.0023: no chat while the flow's worktree holds uncommitted changes and no
-    # commit message names them. After the resend check (a resent press gets its run even
-    # though that run is now changing files) and before anything of a run is created.
-    if body.action_scope == "chat":
-        refused = chat_commit_service.refusal(group_id, chat_commit_message)
-        if refused is not None:
-            if start_claim is not None:
-                chat_start_requests.release(user_id, body.doc_ref or "", body.client_request_id, start_claim.token)
-            return JSONResponse(status_code=409, content=refused)
-
     recovery_exec_id = None
     try:
         # 0145 T#2: an explicit legacy-result re-review first proves its original
@@ -1140,7 +1116,6 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             document_review_loop=(body.document_review_loop.dict() if body.document_review_loop else None),
             review_intent=(body.review_intent if body.action_scope == "review" else None),
             capability_warning_ack=body.capability_warning_ack,
-            chat_commit_message=chat_commit_message,
         )
     except HTTPException as exc:
         if recovery_exec_id:

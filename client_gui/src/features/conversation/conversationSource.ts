@@ -52,8 +52,7 @@ export interface ConversationSource {
 
   listProviders(projectId: string): Promise<ProviderList>
   /** flowgate.v02.0152: `clientRequestId` names the press; a resend with the same id gets the run already admitted. */
-  /** flowgate.v02test.0023: `commitMessage` — the run end commits the flow's worktree with it. */
-  startChatRun(chatId: string, providerId: string | null, clientRequestId?: string, commitMessage?: string): Promise<string | null>
+  startChatRun(chatId: string, providerId: string | null, clientRequestId?: string): Promise<string | null>
   fetchRun(runId: string): Promise<AiRunState>
   listRuns(scope: ConversationScope, limit: number): Promise<AiRunList>
   cancelRun(runId: string): Promise<void>

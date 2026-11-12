@@ -30,6 +30,9 @@ class WorkerConversationTurnAppend(BaseModel):
     body_sha256: Optional[str] = None
     body_chars: Optional[int] = None
     force_encoding_reason: Optional[str] = None
+    # flowgate.v02test.0023: the commit message of an edit-mode chat that changed source.
+    # FlowGate commits the flow's worktree with it when the chat run ends.
+    commit_message: Optional[str] = None
 
 
 def _fail(status: int, message: str) -> JSONResponse:
@@ -156,6 +159,9 @@ def _append_authenticated(
             force_encoding_reason=body.force_encoding_reason,
             locale=locale,
         )
+        if body.commit_message:
+            from modules.flow_gate.services import chat_commit_service
+            chat_commit_service.record_message(token, body.commit_message)
         result["message"] = (
             f"Turn {result['turn']['seq']} already recorded. You may end the session."
             if result["replayed"]

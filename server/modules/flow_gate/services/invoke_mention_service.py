@@ -335,6 +335,11 @@ def build_conversation_mention(
         '  "force_encoding_reason": "<optional: only if a genuinely-flagged body must go through anyway>"',
         "}",
     ]
+    # flowgate.v02test.0023: an edit-mode chat names its commit; FlowGate commits at the run end.
+    can_write = source_access == "read_write"
+    if can_write:
+        payload_lines[-2] += ","
+        payload_lines.insert(-1, '  "commit_message": "<only if you changed source files: see below>"')
     lines = [
         "## Conversation",
         "---",
@@ -382,6 +387,15 @@ def build_conversation_mention(
         'with "dry_run": true added. Nothing is registered and the token is not consumed — only',
         "the corruption/fingerprint verdict comes back.",
     ]
+    if can_write:
+        lines += [
+            "",
+            "If you changed source files in this chat, put the commit message in commit_message:",
+            "English, `type(scope): summary`, one line. Do not commit yourself: when this chat",
+            "ends FlowGate commits the flow's worktree with that message and writes the result",
+            "(or why the commit failed) into the conversation. Without commit_message FlowGate",
+            "writes a plain message. Leave it out when you changed no files.",
+        ]
     if provider:
         lines += [
             "display_name is a badge only and is not used to determine identity. The server",

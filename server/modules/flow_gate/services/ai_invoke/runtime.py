@@ -406,6 +406,15 @@ _CHAT_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
         "body": {"type": "string", "description": "Complete assistant reply text"},
+        # flowgate.v02test.0023: the chat commit point.
+        "commit_message": {
+            "type": "string",
+            "description": (
+                "Only when you changed source files in this chat: the commit message, in "
+                "English, as type(scope): summary. FlowGate commits the flow's worktree with "
+                "it when this chat ends."
+            ),
+        },
     },
     "required": ["body"],
 }
