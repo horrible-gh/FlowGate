@@ -60,7 +60,9 @@ _TEST_BUILD = frozenset({"pytest", "py.test", "python", "python3", "py", "node",
                          "flake8", "black", "pylint", "tox", "nox", "cargo", "go", "mvn", "gradle",
                          "dotnet", "make", "cmake", "ctest", "deno", "bun", "uv", "poetry", "pip", "pip3"})
 _READ = frozenset({"ls", "dir", "cat", "type", "head", "tail", "wc", "find", "findstr", "grep", "rg",
-                   "tree", "pwd", "which", "where", "echo", "stat", "file", "du", "df"})
+                   "tree", "pwd", "which", "where", "echo", "stat", "file", "du", "df",
+                   # Identity readers (0001-B §1's whoami): they print, never change anything.
+                   "whoami", "id", "uname"})
 
 CATEGORIES = ("read", "test_build", "file_mutation", "git_read", "git_write", "other")
 REQUEST_FIELDS = frozenset({"program", "args", "cwd", "timeout_seconds"})
@@ -193,6 +195,117 @@ def validate_request(payload: object) -> ChatCommand:
         _validate_git(list(args))
     category, high_impact = classify(program, list(args))
     return ChatCommand(program, tuple(args), cwd.replace("\\", "/"), timeout, category, high_impact)
+
+
+# ── execute mode (flowgate.v02test.0026, 0001-B §7-3) ─────────────────────────────
+# An execute-mode chat may run commands but must not change source. A command can write
+# files whatever the token says, so the boundary is the command itself: only categories
+# that do not change the tree by design, minus the known writing options inside them.
+# Test/build runs keep their usual by-products (caches, reports, build output) -- the
+# same allowance the self-check runner has -- and a program that runs a script file
+# (python file.py, npm run x) is trusted as a test/build step; that residue is reported,
+# not hidden. The execute token never gets the chat commit point (source_access stays
+# "read"), so nothing such a run leaves behind is committed by it.
+EXECUTE_CATEGORIES = frozenset({"read", "git_read", "test_build"})
+_FIND_WRITE = frozenset({"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0",
+                         "-fprintf", "-fls"})
+_GIT_BRANCH_LIST = frozenset({"--list", "-l", "-a", "--all", "-r", "--remotes", "--contains",
+                              "--no-contains", "--merged", "--no-merged", "--points-at", "--show-current"})
+_PACKAGE_TOOLS = frozenset({"npm", "pnpm", "yarn", "pip", "pip3", "uv", "poetry", "cargo", "go", "bun",
+                            "deno", "dotnet", "mvn", "gradle"})
+_PACKAGE_MUTATION = frozenset({"install", "i", "add", "remove", "rm", "uninstall", "un", "update", "upgrade",
+                               "up", "ci", "link", "unlink", "init", "create", "new", "get", "prune", "dedupe",
+                               "sync", "lock", "fmt", "fix", "tidy", "vendor"})
+# `npm version` bumps package.json; `go version` / `cargo version` only print.
+_VERSION_BUMPERS = frozenset({"npm", "pnpm", "yarn", "poetry"})
+_PYTHONS = frozenset({"python", "python3", "py"})
+
+
+def _writing_option(name: str, args: list[str]) -> str | None:
+    """The argument that makes an otherwise read/test command write files, if any."""
+    low = [a.lower() for a in args]
+    if name in _PYTHONS and "-m" in low:
+        index = low.index("-m")
+        if index + 1 < len(args):
+            # python -m pip install / python -m black ...: judge the module like the program.
+            return _writing_option(low[index + 1], args[index + 2:])
+        return None
+    if name == "find":
+        return next((a for a in low if a in _FIND_WRITE), None)
+    if name in _PACKAGE_TOOLS:
+        positional = [a for a in low if not a.startswith("-")]
+        sub = positional[0] if positional else None
+        if sub in _PACKAGE_MUTATION:
+            return sub
+        if sub is None and name == "yarn":
+            return "yarn"                       # bare `yarn` installs
+        if sub == "version" and name in _VERSION_BUMPERS:
+            return "version"
+        if sub == "audit" and "fix" in positional:
+            return "audit fix"
+        if name == "go" and sub == "mod":
+            return "mod"
+        return next((a for a in low if a in ("--fix", "--write")), None)
+    if name == "prettier":
+        return next((a for a in low if a in ("--write", "-w") or a.startswith("--write=")), None)
+    if name == "eslint":
+        return next((a for a in low if a == "--fix" or a.startswith("--fix=")), None)
+    if name == "ruff":
+        fix = next((a for a in low if a in ("--fix", "--unsafe-fixes", "--add-noqa") or a.startswith("--fix=")),
+                   None)
+        if fix:
+            return fix
+        if "format" in low and not any(a in ("--check", "--diff") for a in low):
+            return "format"
+        return None
+    if name == "black":
+        return None if any(a in ("--check", "--diff") for a in low) else "black"
+    return None
+
+
+def _git_read_writes(args: list[str]) -> str | None:
+    """git_read invocations that still write: --output files, pager hooks, ref edits."""
+    sub, rest = _git_subcommand(args)
+    for arg in args:
+        low = arg.lower()
+        if low == "--output" or low.startswith("--output="):
+            return arg
+        # git grep -O<cmd> / --open-files-in-pager runs another program on the matches.
+        if sub == "grep" and (arg.startswith("-O") or low.startswith("--open-files-in-pager")):
+            return arg
+    if sub == "branch" and not any(a in _GIT_BRANCH_LIST for a in rest) \
+            and any(not a.startswith("-") for a in rest):
+        return "branch"
+    if sub == "reflog" and rest[:1] and rest[0].lower() in ("expire", "delete", "write"):
+        return "reflog " + rest[0]
+    return None
+
+
+def execute_mode_refusal(command: ChatCommand) -> str | None:
+    """Why an execute-mode chat may not run ``command`` (None: it may, under the user's policy).
+
+    Allowed: ``read``, ``git_read`` and ``test_build`` commands, minus high-impact ones
+    (publish/deploy) and the known options that make them write (``find -delete``,
+    ``git diff --output``, ``git branch <new>``, package install/update, ``--fix``/``--write``
+    formatters, ...). Refused: ``file_mutation``, ``git_write`` and ``other`` (unknown
+    programs). The answer is a short English reason for the refusal result.
+    """
+    if command.category not in EXECUTE_CATEGORIES:
+        return f"a {command.category} command changes files or is unknown; execute mode runs read, git read and test/build commands only"
+    if command.high_impact:
+        return "a high-impact command is not allowed in execute mode"
+    try:
+        name = _base().canonical_name(command.program)
+    except Exception:
+        return "the program could not be identified"
+    args = list(command.args)
+    if command.category == "git_read":
+        hit = _git_read_writes(args)
+    else:
+        hit = _writing_option(name, args)
+    if hit:
+        return f"'{hit}' writes files; execute mode does not change source"
+    return None
 
 
 def resolve(command: ChatCommand, worktree: Path):

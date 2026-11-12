@@ -173,9 +173,11 @@ def seed(store, *, project: str = PROJECT, group: str = GROUP, module: str = MOD
         db_groups.create({"group_id": group, "project_id": project, "module": module,
                           "title": "conversation group", "status": "OPEN"})
     if chat_doc and not db_documents.get_by_id(chat_doc):
-        db_documents.create({"doc_id": chat_doc, "project_id": project, "module": module,
-                             "group_id": group, "type_code": "CH", "seq": 1, "title": "chat",
-                             "status": "draft", "owner_id": USER})
+        # Straight to the row: these suites are about chat runs, not the card document
+        # write port (``documents.create`` refuses while no write gate is registered).
+        db_documents._insert_document({"doc_id": chat_doc, "project_id": project, "module": module,
+                                       "group_id": group, "type_code": "CH", "seq": 1, "title": "chat",
+                                       "status": "draft", "owner_id": USER})
 
 
 def add_turn(doc_id: str, speaker: str, run_id: Optional[str] = None, body: str = "hello") -> int:
@@ -223,13 +225,61 @@ def bind_worktree(monkeypatch, root: Optional[Path], reason: str = "worktree") -
                             lambda project_id, group_id: (Path(root), reason))
 
 
+FUTURE = "2099-01-01T00:00:00+00:00"
+
+
+def add_run_token(run_id: str = RUN_ID, *, source_access: Optional[str] = "read_write",
+                  doc_id: str = CHAT_DOC, issued_to: str = USER, token_id: Optional[str] = None,
+                  **over) -> Optional[dict]:
+    """The chat (CH) token row a run names, as ``token_service.issue`` leaves it.
+
+    ``source_access`` is the issue-time capability: ``read_write`` (edit, or an edit_once
+    that won its claim), ``read`` (read-only, or an edit_once that lost it) or None (legacy).
+    Kept when the row already exists, so a suite may insert its own first. Only on the
+    per-test SQLite store of :func:`fg_store`; anywhere else nothing is written.
+    """
+    from modules.flow_gate.db import connection as conn_mod
+    from modules.flow_gate.db import tokens as db_tokens
+
+    if not isinstance(getattr(conn_mod.STORE, "_db", None), FgSqliteDB):
+        return None
+    token_id = token_id or f"tok_{run_id}"
+    existing = db_tokens.get_by_id(token_id)
+    if existing is not None:
+        return existing
+    data = {"token_id": token_id, "hash": f"hash-{token_id}", "pepper_id": "test", "project": PROJECT,
+            "group_id": GROUP, "doc_ref": doc_id, "action_scope": "chat", "ai_run_id": run_id,
+            "issued_to": issued_to, "source_access": source_access,
+            "created_at": "2026-01-01T00:00:00+00:00", "expires_at": FUTURE}
+    data.update(over)
+    return db_tokens.create(data)
+
+
+def set_token(token_id: str, **fields) -> None:
+    """Change a token row in place (consumed_at, revoked_at, expires_at, source_access ...)."""
+    from modules.flow_gate.db import tokens as db_tokens
+    from modules.flow_gate.db.connection import get_store
+
+    sets = ", ".join(f"{name} = ?" for name in fields)
+    get_store()._execute(f"UPDATE tokens SET {sets} WHERE token_id = ?", [*fields.values(), token_id])
+    db_tokens._invalidate_token_cache()
+
+
 def make_run(*, run_id: str = RUN_ID, doc_id: str = CHAT_DOC, issued_to: str = USER,
              source_root: Optional[Path] = None, elapsed_sec: float = 0.0, register: bool = True,
-             capability: bool = True, chat_start_seq: Optional[int] = 0) -> dict:
+             capability: bool = True, chat_start_seq: Optional[int] = 0,
+             source_access: Optional[str] = "read_write", command_access: Optional[str] = None) -> dict:
     """A live chat run record shaped like admission builds it (and, by default, registered
-    in the AI invoke engine's process-local run table)."""
+    in the AI invoke engine's process-local run table).
+
+    Its token row is added too (:func:`add_run_token`, ``source_access`` as given; an
+    existing row is kept): command execution is judged from that persisted token."""
     from modules.flow_gate.services import ai_invoke_service as svc
 
+    # command_access="execute" (with source_access="read") is an execute-mode token
+    # (flowgate.v02test.0026); None everywhere else, as token_service.issue leaves it.
+    add_run_token(run_id, source_access=source_access, doc_id=doc_id, issued_to=issued_to,
+                  command_access=command_access)
     run = {
         "run_id": run_id, "status": "running", "mode": "single", "project_id": PROJECT,
         "group_id": GROUP, "doc_ref": doc_id, "action_scope": "chat", "issued_to": issued_to,

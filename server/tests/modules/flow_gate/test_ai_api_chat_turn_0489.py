@@ -30,9 +30,14 @@ def _run(kind="openai"):
     }
 
 
+@pytest.mark.parametrize("offered", [True, False])
 @pytest.mark.parametrize("kind", ["openai", "claude"])
-def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kind):
+def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kind, offered):
+    from modules.flow_gate.services import chat_command_service
+
     seen = {}
+    # Whether the run's issued token may write source (read_write) decides run_command.
+    monkeypatch.setattr(chat_command_service, "token_allows_commands", lambda run: offered)
     monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
     monkeypatch.setattr(svc, "_remaining_sec", lambda _run: 60)
     # 0505 T0006 (DB0005 3.3): _conversation_context now returns (status, body) like its
@@ -57,10 +62,15 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
     monkeypatch.setattr(svc, "_inbox_register", lambda *_: pytest.fail("chat must not call /inbox"))
 
     assert svc._api_execute({"id": "provider", "kind": kind, "api_base_url": "https://api.example", "api_model": "test"}, "prompt", _run()) == ("started_ok", None)
-    assert [spec["name"] for spec in seen["tool_name"]] == [
-        # 0670 T0004: command execution is a chat capability next to the reads.
+    expected = [
+        # 0670 T0004: command execution is a chat capability next to the reads -- offered
+        # only to a run whose token may write source; a read-only chat never sees it.
         "read_chat_history", "read_help", "run_command", "send_chat_reply",
     ]
+    if not offered:
+        expected.remove("run_command")
+    assert [spec["name"] for spec in seen["tool_name"]] == expected
+    assert ("`run_command`" in seen["conversation"][2]["content"]) is offered
     assert next(spec for spec in seen["tool_name"] if spec["name"] == "send_chat_reply")["completion"] is True
     assert seen["force_tool"] is True
     assert seen["turn"][0]["_chat_based_on_seq"] == 1

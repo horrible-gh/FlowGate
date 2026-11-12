@@ -1195,11 +1195,13 @@ export default {
       source_mode: 'AI source mode',
       source: {
         read_only: 'Read',
+        execute: 'Execute',
         edit: 'Edit',
         edit_once: 'Edit once',
       },
       source_tip: {
-        read_only: 'The AI only reads the source',
+        read_only: 'The AI only reads the source and runs no commands',
+        execute: 'The AI may run commands such as tests and builds, but does not change the source or documents',
         edit: 'The AI may change the source',
         edit_once: 'The AI may change the source on the next call only',
       },

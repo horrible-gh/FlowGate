@@ -245,6 +245,25 @@ class TestSchema:
         db_env.conn.commit()
         assert db_env.rows("SELECT * FROM user_chat_source_access WHERE user_id=?", (USER,)) == []
 
+    def test_execute_mode_is_in_the_stored_domain(self, db_env):
+        now = "T"
+        db_env.conn.execute(
+            "INSERT INTO user_chat_source_access (user_id, project_id, group_id, source_access_mode, created_at, updated_at) VALUES (?, 'flowgate', 'flowgate.default.0515', 'execute', ?, ?)", (USER, now, now),
+        )
+        db_env.conn.commit()
+        assert db_source_access.resolve_source_access_mode(USER, PROJECT, GROUP) == "execute"
+        assert css.SOURCE_ACCESS_DOMAIN == db_source_access.SOURCE_ACCESS_DOMAIN == (
+            "read_only", "execute", "edit", "edit_once")
+
+    def test_tokens_command_access_domain(self, db_env):
+        with pytest.raises(sqlite3.IntegrityError):
+            db_env.conn.execute(
+                "INSERT INTO tokens (token_id, hash, pepper_id, project, action_scope, issued_to, created_at, "
+                "expires_at, source_access, command_access) VALUES ('tok-bad-cmd', 'h', 'v1', ?, 'chat', ?, 'T', "
+                "'2036-01-01T00:00:00+09:00', 'read', 'read_write')", (PROJECT, USER),
+            )
+        db_env.conn.rollback()
+
     def test_tokens_source_access_domain(self, db_env):
         with pytest.raises(sqlite3.IntegrityError):
             _insert_token(db_env, "tok-bad-domain", source_access="bogus")
@@ -497,6 +516,33 @@ class TestChatTokenIssueCapability:
         assert first["one_shot_claimed"] is True
         assert second["source_access"] == "read"
         assert second["one_shot_claimed"] is False
+
+    def test_execute_mode_issues_read_with_its_own_command_capability(self, db_env):
+        """flowgate.v02test.0026: execute is a separate capability, never read_write."""
+        db_source_access.upsert(USER, PROJECT, GROUP, "execute", "T1")
+        result = token_service.issue(
+            project=PROJECT, group_id=GROUP, action_scope="chat", doc_ref=DOC, issued_to=USER,
+        )
+        assert result["source_access"] == "read"
+        assert result["command_access"] == "execute"
+        assert result["one_shot_claimed"] is False
+        rec = db_tokens.get_by_id(result["token_id"])
+        assert (rec["source_access"], rec["command_access"]) == ("read", "execute")
+        assert tool_registry.kind_for_token(rec) == ("read", None)
+        assert tool_registry.command_access_for_token(rec) == "execute"
+        # The stored mode is left as it is (no one-shot claim in execute mode).
+        row = db_source_access.get(USER, PROJECT, GROUP)
+        assert row["source_access_mode"] == "execute" and row["one_shot_token_id"] is None
+
+    def test_other_modes_carry_no_command_capability(self, db_env):
+        for mode, access in (("read_only", None), ("edit", "edit")):
+            db_source_access.upsert(USER, PROJECT, GROUP, mode, "T1")
+            result = token_service.issue(
+                project=PROJECT, group_id=GROUP, action_scope="chat", doc_ref=DOC, issued_to=USER,
+            )
+            rec = db_tokens.get_by_id(result["token_id"])
+            assert result["command_access"] is None and rec["command_access"] is None, mode
+            assert tool_registry.command_access_for_token(rec) == access, mode
 
     def test_non_chat_token_carries_no_source_access(self, db_env):
         result = token_service.issue(

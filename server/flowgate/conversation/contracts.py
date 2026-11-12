@@ -59,6 +59,8 @@ FAILURE_REASONS = (REASON_PROCESS_OWNER_UNAVAILABLE, REASON_INTERNAL_ERROR)
 # ── HTTP error codes (D0006 §5.3, §5.4) ──────────────────────────────────────
 ERR_FORBIDDEN = "chat_command_forbidden"
 ERR_CAPABILITY_REQUIRED = "chat_command_capability_required"
+# flowgate.v02test.0026: an execute-mode chat asked for a command that changes files.
+ERR_EXECUTE_MODE_DENIED = "chat_command_execute_mode_denied"
 ERR_RUN_FINISHED = REASON_RUN_FINISHED
 ERR_RUN_CANCELLED = REASON_RUN_CANCELLED
 ERR_WORKTREE_UNAVAILABLE = "chat_command_worktree_unavailable"

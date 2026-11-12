@@ -181,10 +181,14 @@ def accept_chat_call(run: Optional[dict], call: Any) -> Any:
     return context if ran else None
 
 
-def chat_mention_sections(api_base: str, raw_token: str) -> list[str]:
-    """CLI-provider instructions of every provided chat tool, for the chat mention."""
+def chat_mention_sections(api_base: str, raw_token: str, omit: tuple = ()) -> list[str]:
+    """CLI-provider instructions of every provided chat tool, for the chat mention.
+
+    ``omit`` names tools whose section is left out (a reading-mode chat: ``run_command``)."""
     sections: list[str] = []
     for tool in chat_tools(None):
+        if tool.get("name") in omit:
+            continue
         builder = tool.get("cli_mention")
         if not callable(builder):
             continue

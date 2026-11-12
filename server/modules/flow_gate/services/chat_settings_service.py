@@ -70,7 +70,9 @@ CONTEXT_MODE_DOMAIN = ("recent", "all")
 CONTEXT_MODE_DEFAULT = "recent"
 
 # -- 0515 D0006 §2.2 domain -- kept in its own separate storage (§3.1) ------
-SOURCE_ACCESS_DOMAIN = ("read_only", "edit", "edit_once")
+# flowgate.v02test.0026: "execute" sits between read_only and edit -- the chat may run FlowGate
+# commands (its user's command policy applies) but never edits source or documents.
+SOURCE_ACCESS_DOMAIN = ("read_only", "execute", "edit", "edit_once")
 SOURCE_ACCESS_DEFAULT = "read_only"
 
 # -- 0670 T0004 / flowgate.v02.0032 T#1: chat command execution policy -- its own storage too ----------

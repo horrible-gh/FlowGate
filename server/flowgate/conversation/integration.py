@@ -33,8 +33,15 @@ logger = logging.getLogger(__name__)
 
 
 def on_chat_run_start(run: dict) -> None:
-    # The capability that lets this run ask for commands (D0006 §5.3 capability_required).
-    run["chat_command_capability"] = True
+    # The capability that lets this run ask for commands (D0006 §5.3 capability_required):
+    # only a run whose issued token carries command access -- edit (read_write: edit, or an
+    # edit_once that won its claim) or execute (flowgate.v02test.0026: commands only). A
+    # reading chat is never offered the tool; the gate itself stays commands._authorize_run,
+    # which re-judges the token (and an execute token's command scope) at creation,
+    # approval and spawn.
+    access = commands.command_access(run)
+    run["chat_command_capability"] = access is not None
+    run["chat_command_access"] = access
     run["chat_start_seq"] = activity.run_start_seq(run.get("doc_ref"))
 
 
@@ -47,8 +54,9 @@ def on_chat_run_prepare(run: dict) -> None:
 
 
 def provide_chat_tools(run) -> list[dict]:
-    """``run_command`` for a run admitted through :func:`on_chat_run_start` (or, with
-    ``run=None``, the description for the CLI mention built before the run exists)."""
+    """``run_command`` for a run admitted through :func:`on_chat_run_start` with the command
+    capability (or, with ``run=None``, the description for the CLI mention built before the
+    run exists; the mention adds it only for a token with command access -- edit or execute)."""
     from flowgate.card_document_edit import chat_tools, chat_adapter, chat_documents
 
     from flowgate.graph_read import tools as graph_read_tools
@@ -57,7 +65,8 @@ def provide_chat_tools(run) -> list[dict]:
 
     tools = graph_read_tools.descriptors()
     if run is None or run.get("chat_command_capability"):
-        tools.append(commands.tool_descriptor())
+        tools.append(commands.tool_descriptor(
+            execute_mode=bool(run) and run.get("chat_command_access") == "execute"))
     # flowgate.chat.0017 CH0002: offered in reading mode too -- a request registers nothing
     # until a person approves it, and it never waits for that decision.
     tools.append(attachment_request_tools.chat_descriptor())

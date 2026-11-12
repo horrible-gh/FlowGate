@@ -1206,11 +1206,13 @@ export default {
       source_mode: 'AI 소스 모드',
       source: {
         read_only: '읽기',
+        execute: '실행',
         edit: '편집',
         edit_once: '1회 편집',
       },
       source_tip: {
-        read_only: 'AI가 소스를 읽기만 합니다',
+        read_only: 'AI가 소스를 읽기만 합니다. 명령은 실행하지 않습니다',
+        execute: 'AI가 테스트·빌드 등 명령을 실행할 수 있습니다. 소스와 문서는 수정하지 않습니다',
         edit: 'AI가 소스를 수정할 수 있습니다',
         edit_once: '다음 AI 호출 한 번만 소스를 수정할 수 있습니다',
       },

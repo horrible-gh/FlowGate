@@ -1,8 +1,9 @@
 <template>
-  <!-- flowgate.v02.0047 — AI source mode as icons (R0001 §2.3-8): 읽기 / 편집 / 1회 편집, each
-       with its name, tooltip and pressed state. Server-confirmed only: the highlight moves once
+  <!-- flowgate.v02.0047 — AI source mode as icons (R0001 §2.3-8): 읽기 / 실행 / 편집 / 1회 편집, each
+       with its name, tooltip and pressed state (실행 = commands only, no source/document edit —
+       flowgate.v02test.0026; the order comes from api.ts SOURCE_MODES). Server-confirmed only: the highlight moves once
        the PATCH answers (0568 T0004 §2). flowgate.v02.0061 T#14 (WP answer 2): `locked` — the Flow's Graph run is
-       running / paused / stopping — only permits switching to read_only. Edit / edit-once stay off and say why
+       running / paused / stopping — only permits switching to read_only. Execute / edit / edit-once stay off and say why
        (the current one still shows pressed). -->
   <div
     v-if="modes.length > 0"
@@ -31,6 +32,9 @@
         <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
         <circle cx="12" cy="12" r="2.5" />
       </svg>
+      <svg v-else-if="mode === 'execute'" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M8 5.5v13l10.5-6.5L8 5.5Z" />
+      </svg>
       <svg v-else-if="mode === 'edit'" viewBox="0 0 24 24" aria-hidden="true">
         <path d="m15 5 4 4M4 20l4.5-.9L19 8.5a2.8 2.8 0 0 0-4-4L4.5 15 4 20Z" />
       </svg>
@@ -48,7 +52,7 @@ defineProps<{
   current: SourceAccessMode
   pending: SourceAccessMode | null
   disabled?: boolean
-  /** flowgate.v02.0061 T#14: the Flow's Graph run blocks edit modes; switching to read_only stays available. */
+  /** flowgate.v02.0061 T#14: the Flow's Graph run blocks execute / edit modes; switching to read_only stays available. */
   locked?: boolean
 }>()
 

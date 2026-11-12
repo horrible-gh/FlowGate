@@ -312,8 +312,8 @@ export interface ProviderList {
 
 export type SendAction = 'copy_mention' | 'invoke_ai' | 'none'
 export type ContextMode = 'recent' | 'all'
-/** AI source access mode (group 0515/0568): read / edit / edit once. */
-export type SourceAccessMode = 'read_only' | 'edit' | 'edit_once'
+/** AI source access mode (group 0515/0568, flowgate.v02test.0026): read / execute (commands only) / edit / edit once. */
+export type SourceAccessMode = 'read_only' | 'execute' | 'edit' | 'edit_once'
 
 /** GET/PATCH /me/chat-settings (D0008 / P0009). */
 export interface ChatSettings {

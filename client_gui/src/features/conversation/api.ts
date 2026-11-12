@@ -738,7 +738,8 @@ interface RawChatSettings {
 }
 
 const SEND_ACTIONS: readonly SendAction[] = ['copy_mention', 'invoke_ai', 'none']
-const SOURCE_MODES: readonly SourceAccessMode[] = ['read_only', 'edit', 'edit_once']
+// Button order is fixed here (flowgate.v02test.0026 §7): read -> execute -> edit -> edit once.
+const SOURCE_MODES: readonly SourceAccessMode[] = ['read_only', 'execute', 'edit', 'edit_once']
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   sendAction: 'none',

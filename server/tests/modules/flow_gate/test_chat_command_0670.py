@@ -704,7 +704,12 @@ def test_only_the_invoke_mention_offers_commands(monkeypatch):
                   group_name="flowgate.default.0670", raw_token="RAW", token_id="tok",
                   api_base_url="http://h/flowgate/api/v1")
     assert "## Command execution" not in invoke_mention_service.build_conversation_mention(**kwargs)
-    assert "## Command execution" in invoke_mention_service.build_conversation_mention(**kwargs, command_execution=True)
+    assert "## Command execution" in invoke_mention_service.build_conversation_mention(
+        **kwargs, source_access="read_write", command_execution=True)
+    # A read-only (or legacy) token is never told how to run commands.
+    for source_access in ("read", None):
+        assert "## Command execution" not in invoke_mention_service.build_conversation_mention(
+            **kwargs, source_access=source_access, command_execution=True)
 
 
 # ── 7. HTTP layer ───────────────────────────────────────────────────────────

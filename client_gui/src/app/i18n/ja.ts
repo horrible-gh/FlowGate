@@ -1195,11 +1195,13 @@ export default {
       source_mode: 'AI ソースモード',
       source: {
         read_only: '読み取り',
+        execute: '実行',
         edit: '編集',
         edit_once: '1回編集',
       },
       source_tip: {
-        read_only: 'AI はソースを読み取るだけです',
+        read_only: 'AI はソースを読み取るだけで、コマンドは実行しません',
+        execute: 'AI はテスト・ビルドなどのコマンドを実行できますが、ソースや文書は変更しません',
         edit: 'AI がソースを変更できます',
         edit_once: '次の AI 呼び出し 1 回だけソースを変更できます',
       },

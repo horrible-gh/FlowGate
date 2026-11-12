@@ -1,7 +1,8 @@
 """CRUD for the user_chat_source_access table (group 0515, DB0008).
 
 One row per (user, project, group), holding the group source-editing mode
-(``read_only``/``edit``/``edit_once``) and the ``edit_once`` one-shot claim marker
+(``read_only``/``execute``/``edit``/``edit_once``; ``execute`` = commands only, no
+source or document edit -- flowgate.v02test.0026) and the ``edit_once`` one-shot claim marker
 (DB0008 §2.1). The absence of a row is itself the answer "this user has never
 chosen" -- it means ``read_only`` (D0006 §2.2, L0007 §2.1.1) -- so nothing here
 creates a row implicitly.
@@ -19,7 +20,7 @@ from .connection import get_store
 
 # Kept beside the persisted value so every consumer — settings responses and token
 # issuance alike — gets the same fail-closed interpretation of corrupt storage.
-SOURCE_ACCESS_DOMAIN = ("read_only", "edit", "edit_once")
+SOURCE_ACCESS_DOMAIN = ("read_only", "execute", "edit", "edit_once")
 SOURCE_ACCESS_DEFAULT = "read_only"
 
 _SELECT = (

@@ -123,8 +123,8 @@ def create(data: dict[str, Any]) -> dict:
         "continuation_target_seq, continuation_review_mode, continuation_locale, "
         "merge_id, continuation_instruction_mode, provider_id, ai_run_id, "
         "continuation_auto_approve_item_seqs, failure_origin_target_run_id, "
-        "failure_origin_before_marker, source_access) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "failure_origin_before_marker, source_access, command_access) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             data["token_id"], data["hash"], data["pepper_id"],
             data["project"], data.get("group_id"), data.get("doc_ref"),
@@ -150,6 +150,9 @@ def create(data: dict[str, Any]) -> dict:
             # 0515 T0009 (D0006 §2.3, DB0008 §2.2): capability fixed at issue time for
             # a chat (CH) token -- "read"/"read_write"/NULL (legacy or non-CH).
             data.get("source_access"),
+            # flowgate.v02test.0026 (migration 185): "execute" only for a chat token issued in
+            # execute mode -- commands allowed, source_access stays "read". NULL otherwise.
+            data.get("command_access"),
         ],
     )
     _invalidate_token_cache()
