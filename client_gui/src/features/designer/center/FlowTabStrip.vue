@@ -8,7 +8,8 @@
        strip's blank part goes to the Designer context menu (닫기 / 다른 탭 닫기 / 전체 닫기).
        flowgate.v02gui.0001: a tab dragged sideways (primary pointer, past a few px — a shorter press stays a click; the
        close button never starts a drag) or moved with Alt+←/→ raises `reorder` (its final index); a drop line shows
-       where it lands. A tab whose Flow's run is running / paused / stopping shows that state's mark before its name. -->
+       where it lands; held near the strip's ends it keeps scrolling the strip (a requestAnimationFrame loop) until
+       moved away. A tab whose Flow's run is running / paused / stopping shows that state's mark before its name. -->
   <div
     ref="stripRef"
     class="flow-tab-strip"
@@ -158,13 +159,24 @@ function onKeydown(event: KeyboardEvent, flowId: string) {
 
 /** A press moving less than this stays a click. */
 const DRAG_THRESHOLD = 4
-/** Near the strip's ends a drag scrolls the strip by this step. */
-const EDGE_ZONE = 24
-const EDGE_STEP = 12
+/** Near the strip's ends (within this many px, or past them) a drag keeps scrolling the strip while the pointer rests
+ *  there — one requestAnimationFrame loop, not one step per pointermove — faster the closer it is to the end. */
+const EDGE_ZONE = 32
+/** Edge scroll speed in px/s: at the zone's inner border, and at (or past) the strip's end. */
+const EDGE_SPEED_MIN = 120
+const EDGE_SPEED_MAX = 900
+/** A longer gap between frames (slow frame, hidden page) scrolls only this many ms' worth. */
+const EDGE_FRAME_MAX_MS = 50
 
 const drag = reactive({ flowId: null as string | null, pointerId: -1, startX: 0, active: false, toIndex: -1 })
 let suppressClick = false
 let suppressTimer: ReturnType<typeof setTimeout> | null = null
+/** The dragging pointer's last clientX; the edge loop reads it between pointermoves. */
+let pointerX = 0
+let edgeFrame: number | null = null
+let edgeLastTime: number | null = null
+/** Sub-pixel scroll not applied yet (scrollLeft may round small steps away on high refresh rates). */
+let edgeCarry = 0
 
 /** Where the dragged tab would land: a line before / after one of the other tabs; null while it would not move. */
 const dropMark = computed<{ flowId: string; side: 'before' | 'after' } | null>(() => {
@@ -203,12 +215,57 @@ function dropIndexAt(x: number): number {
   return index
 }
 
-function scrollNearEdge(x: number) {
+/** Signed edge scroll speed (px/s) for a pointer at `x`: < 0 near the left end, > 0 near the right end, 0 elsewhere or
+ *  when the strip cannot scroll further that way. */
+function edgeSpeedAt(x: number): number {
   const strip = stripRef.value
-  if (!strip) return
+  if (!strip) return 0
   const rect = strip.getBoundingClientRect()
-  if (x < rect.left + EDGE_ZONE) strip.scrollLeft -= EDGE_STEP
-  else if (x > rect.right - EDGE_ZONE) strip.scrollLeft += EDGE_STEP
+  const zone = Math.min(EDGE_ZONE, rect.width / 3)
+  if (zone <= 0) return 0
+  const speed = (depth: number) => EDGE_SPEED_MIN + (EDGE_SPEED_MAX - EDGE_SPEED_MIN) * Math.min(1, depth / zone)
+  const maxScroll = strip.scrollWidth - strip.clientWidth
+  if (x < rect.left + zone && strip.scrollLeft > 0.5) return -speed(rect.left + zone - x)
+  if (x > rect.right - zone && strip.scrollLeft < maxScroll - 0.5) return speed(x - (rect.right - zone))
+  return 0
+}
+
+function edgeTick(time: number) {
+  edgeFrame = null
+  const strip = stripRef.value
+  const speed = drag.active ? edgeSpeedAt(pointerX) : 0
+  if (!strip || speed === 0) {
+    stopEdgeScroll()
+    return
+  }
+  if (edgeLastTime !== null) {
+    edgeCarry += (speed * Math.min(EDGE_FRAME_MAX_MS, Math.max(0, time - edgeLastTime))) / 1000
+    const step = Math.trunc(edgeCarry)
+    if (step !== 0) {
+      edgeCarry -= step
+      strip.scrollLeft += step
+      // The tabs moved under a resting pointer, so the landing place moves too.
+      drag.toIndex = dropIndexAt(pointerX)
+    }
+  }
+  edgeLastTime = time
+  edgeFrame = requestAnimationFrame(edgeTick)
+}
+
+/** Starts the edge loop when the pointer is in an edge zone; a running loop stops by itself once it leaves. */
+function updateEdgeScroll() {
+  if (edgeFrame !== null || typeof requestAnimationFrame !== 'function') return
+  if (edgeSpeedAt(pointerX) === 0) return
+  edgeLastTime = null
+  edgeCarry = 0
+  edgeFrame = requestAnimationFrame(edgeTick)
+}
+
+function stopEdgeScroll() {
+  if (edgeFrame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(edgeFrame)
+  edgeFrame = null
+  edgeLastTime = null
+  edgeCarry = 0
 }
 
 function onPointerMove(event: PointerEvent) {
@@ -218,8 +275,9 @@ function onPointerMove(event: PointerEvent) {
     drag.active = true
   }
   event.preventDefault()
-  scrollNearEdge(event.clientX)
-  drag.toIndex = dropIndexAt(event.clientX)
+  pointerX = event.clientX
+  drag.toIndex = dropIndexAt(pointerX)
+  updateEdgeScroll()
 }
 
 function onPointerUp(event: PointerEvent) {
@@ -240,6 +298,7 @@ function onPointerCancel(event: PointerEvent) {
 }
 
 function endDrag() {
+  stopEdgeScroll()
   drag.flowId = null
   drag.pointerId = -1
   drag.active = false
