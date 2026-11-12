@@ -57,6 +57,7 @@ from flowgate.ai_roles.routes import router as _ai_roles_router
 from flowgate.card_documents.routes import router as _card_documents_router
 from flowgate.card_document_edit.routes import router as _card_document_edit_router
 from flowgate.graph_read.routes import router as _ai_graph_read_router
+from flowgate.chat_control.routes import router as _chat_control_router
 from flowgate.card_memos.routes import router as _card_memos_router
 from flowgate.work_plan_deploy.routes import router as _work_plan_deploy_router
 # flowgate.v02.0061 T#13: the Graph Time Machine (server/flowgate/graph_time_machine).
@@ -274,6 +275,8 @@ app.include_router(_ai_roles_router, prefix=f"{CONTEXT}", tags=["AiSettings"])
 app.include_router(_card_documents_router, prefix=f"{CONTEXT}", tags=["CardDocuments"])
 app.include_router(_card_document_edit_router, prefix=f"{CONTEXT}", tags=["CardDocumentEdit"])
 app.include_router(_ai_graph_read_router, prefix=f"{CONTEXT}", tags=["AiGraphRead"])
+# flowgate.v02test.0023: chat control tower stage 1 (CLI chat: place work cards, start the Flow's run).
+app.include_router(_chat_control_router, prefix=f"{CONTEXT}", tags=["ChatControl"])
 app.include_router(_card_memos_router, prefix=f"{CONTEXT}", tags=["CardMemos"])
 app.include_router(_work_plan_deploy_router, prefix=f"{CONTEXT}", tags=["WorkPlanDeploy"])
 app.include_router(_graph_time_machine_router, prefix=f"{CONTEXT}", tags=["GraphTimeMachine"])

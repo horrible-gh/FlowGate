@@ -61,9 +61,14 @@ def provide_chat_tools(run) -> list[dict]:
 
     from flowgate.graph_read import tools as graph_read_tools
 
+    from flowgate.chat_control import tools as chat_control_tools
+
     from modules.flow_gate.documents.attachments import request_tools as attachment_request_tools
 
     tools = graph_read_tools.descriptors()
+    # flowgate.v02test.0023 (0002-CH turn 43): control tower stage 1 -- place work cards and start the
+    # Flow's run. Offered in every mode; reading mode is refused by the tool (chat_edit_mode_required).
+    tools.extend(chat_control_tools.descriptors())
     if run is None or run.get("chat_command_capability"):
         tools.append(commands.tool_descriptor(
             execute_mode=bool(run) and run.get("chat_command_access") == "execute"))

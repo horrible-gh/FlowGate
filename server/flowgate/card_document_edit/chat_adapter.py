@@ -19,6 +19,7 @@ CHAT_ORIGIN = "chat"
 CHAT_EDIT_REASON = "user_comment"
 COORD_FIELDS = frozenset({"flow_id", "node_key", "slot"})
 ALTERNATIVE_PATHS = ["cli_chat:/api/v2/chat", "designer", "agent"]
+IDENTITY_FREE_TYPES = frozenset({"WP", "TR2"})   # bodies without an identity front matter (``common_checks``)
 
 
 def cli_key(run_id, client_key):
@@ -101,6 +102,27 @@ def _identity(run, token, record=None):
                    server_call_id=record.server_call_id if record else None))
 
 
+def _keep_frontmatter(req):
+    """0002-CH turn 48: a chat's line edit sent without front matter keeps the line document's current front matter,
+    as the chat's doc_id path does (``chat_documents.with_current_frontmatter``), instead of failing the identity check
+    (422 ``document_identity_changed``). Only a document of the request's Flow is read; ``revise`` still checks that it
+    is the line's document, its revision and the identity."""
+    from dataclasses import replace
+    from modules.flow_gate.db import documents
+    from .chat_documents import _split_frontmatter, with_current_frontmatter
+
+    content = req.content
+    if not isinstance(content, str) or not req.expected_doc_id or _split_frontmatter(content)[0] is not None:
+        return req
+    doc = documents.get_by_id(req.expected_doc_id)
+    if not doc or doc.get("group_id") != req.flow_id or doc.get("type_code") in IDENTITY_FREE_TYPES:
+        return req
+    _current, body = read._snapshot_parts(doc["doc_id"])
+    if body.state != "readable":
+        return req
+    return replace(req, content=with_current_frontmatter(content, body.text))
+
+
 def chat_read(via, *, token_raw=None, run_hint=None, coords=None, ctx=None):
     run, token = chat_authz.authorize_chat_run(via, token_raw, run_hint)
     with _input(via, run, coords, None, ctx, False) as (inp, record):
@@ -133,6 +155,7 @@ def chat_edit(via, *, token_raw=None, run_hint=None, coords=None, request_body=N
         if kind != chat_authz.CHAT_WRITE_KIND:
             raise chat_errors.edit_mode_denied(run["run_id"], kind)
         _project(run, inp)
+        req = _keep_frontmatter(req)
         try:
             outcome = revise(req)
         finally:

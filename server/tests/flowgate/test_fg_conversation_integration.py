@@ -100,6 +100,19 @@ def test_non_chat_runs_never_reach_the_handlers(clean_hooks):
     assert seen == [] and chat_run_hooks.chat_tools({"action_scope": "work"}) == []
 
 
+def test_graph_and_control_tower_tools_come_before_run_command(clean_hooks):
+    # flowgate.v02test.0023: Graph reads (0145) and the control tower tools come before run_command;
+    # the attachment request (chat.0017) right after it. Kept apart from the order-agnostic checks below.
+    integration.register()
+    names = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})]
+    at = names.index("run_command")
+    assert names[at - 4:at] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run"]
+    assert names[at + 1] == "request_attachment_upload"
+    without = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})]
+    assert {"read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
+            "request_attachment_upload"} <= set(without)
+
+
 def test_register_connects_every_port_idempotently(clean_hooks):
     integration.register()
     integration.register()
