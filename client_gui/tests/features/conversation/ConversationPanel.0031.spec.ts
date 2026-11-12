@@ -229,15 +229,23 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(findAll('tl-status').map((s) => s.text()).join(' ')).not.toContain('AI 호출을 시작했습니다')
   })
 
-  it('switches the AI source mode (읽기 / 편집 / 1회 편집) through the server', async () => {
+  it('switches the AI source mode (읽기 / 실행 / 편집 / 1회 편집) through the server', async () => {
     const { source } = await mountPanel()
     const buttons = find('conv-source-mode').findAll('button')
-    expect(buttons.map((b) => b.attributes('aria-label'))).toEqual(['읽기', '편집', '1회 편집'])
+    expect(buttons.map((b) => b.attributes('aria-label'))).toEqual(['읽기', '실행', '편집', '1회 편집'])
     expect(buttons[0].attributes('aria-pressed')).toBe('true')
-    await buttons[2].trigger('click')
+    await buttons[3].trigger('click')
     await flushPromises()
     expect(source.saveChatSettings).toHaveBeenCalledWith({ source_access_mode: 'edit_once' }, { projectId: 'p', groupId: 'p.m.0001' })
-    expect(find('conv-source-mode').findAll('button')[2].attributes('aria-pressed')).toBe('true')
+    expect(find('conv-source-mode').findAll('button')[3].attributes('aria-pressed')).toBe('true')
+  })
+
+  it('saves the execute mode as its own value, never as edit (flowgate.v02test.0026)', async () => {
+    const { source } = await mountPanel()
+    await find('conv-source-mode').findAll('button')[1].trigger('click')
+    await flushPromises()
+    expect(source.saveChatSettings).toHaveBeenCalledWith({ source_access_mode: 'execute' }, { projectId: 'p', groupId: 'p.m.0001' })
+    expect(find('conv-source-mode').findAll('button').map((b) => b.attributes('aria-pressed'))).toEqual(['false', 'true', 'false', 'false'])
   })
 
   it('saves chat settings from the settings popover', async () => {

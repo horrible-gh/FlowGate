@@ -246,6 +246,18 @@ describe('chat settings / mention', () => {
     expect(getRequest).toHaveBeenCalledWith('/api/v1/me/chat-settings')
   })
 
+  it('keeps the four source modes in button order whatever order the server lists them (flowgate.v02test.0026)', async () => {
+    getRequest.mockResolvedValue({
+      data: {
+        settings: { source_access_mode: 'execute' },
+        domain: { source_access_mode: ['edit_once', 'edit', 'execute', 'read_only'] },
+      },
+    })
+    const settings = await fetchChatSettings()
+    expect(settings.sourceAccessMode).toBe('execute')
+    expect(settings.sourceAccessModes).toEqual(['read_only', 'execute', 'edit', 'edit_once'])
+  })
+
   it('defaults the context-turns cap to 999 when the server sends no domain', async () => {
     getRequest.mockResolvedValue({ data: { settings: {}, domain: {} } })
     expect((await fetchChatSettings()).contextTurnsMax).toBe(999)

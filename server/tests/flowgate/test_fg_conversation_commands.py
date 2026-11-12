@@ -651,3 +651,191 @@ def test_token_allows_commands_is_the_offer_not_the_gate(env):
     assert commands.token_allows_commands(_read_only_run(env, run_id="aiv_legacy", source_access=None)) is False
     assert commands.token_allows_commands({"action_scope": "edit", "run_id": RUN_ID}) is False
     assert commands.token_allows_commands(None) is False
+
+
+# ── execute mode (flowgate.v02test.0026, 0001-B §7) ──────────────────────────
+# An execute-mode token: source_access stays "read" (no source / document edit) and
+# command_access="execute" lets it run commands that do not change files.
+
+WHOAMI = {"program": "whoami", "args": [], "cwd": ".", "timeout_seconds": 30}
+
+
+def _execute_run(env, run_id="aiv_exec"):
+    return make_run(run_id=run_id, source_root=env["root"], source_access="read", command_access="execute")
+
+
+@pytest.mark.parametrize("policy_value", [c.POLICY_ALWAYS_APPROVE, c.POLICY_USER_APPROVAL, c.POLICY_REJECT])
+def test_the_same_whoami_is_refused_in_reading_and_follows_the_policy_in_execute(env, monkeypatch, policy_value):
+    set_policy(monkeypatch, policy_value)
+    with pytest.raises(c.ConversationError) as refused:
+        commands.create_request(_read_only_run(env), WHOAMI)
+    assert (refused.value.status, refused.value.code) == (403, "chat_command_capability_required")
+    assert env["executor"].spawned == []
+    run = _execute_run(env)
+    row = commands.create_request(run, WHOAMI)
+    assert row["category"] == "read"
+    if policy_value == c.POLICY_ALWAYS_APPROVE:
+        assert wait_until(lambda: repo.get_command(row["request_id"])["status"] == c.SUCCEEDED)
+        assert len(env["executor"].spawned) == 1
+    elif policy_value == c.POLICY_USER_APPROVAL:
+        assert row["status"] == c.PENDING_APPROVAL and env["executor"].spawned == []
+        commands.decide(row["request_id"], {"user_id": USER}, "approve")
+        assert wait_until(lambda: repo.get_command(row["request_id"])["status"] == c.SUCCEEDED)
+        assert len(env["executor"].spawned) == 1
+    else:
+        assert row["status"] == c.REJECTED and env["executor"].spawned == []
+
+
+@pytest.mark.parametrize("policy_value", [c.POLICY_ALWAYS_APPROVE, c.POLICY_USER_APPROVAL])
+def test_edit_tokens_keep_running_whoami_as_before(env, monkeypatch, policy_value):
+    set_policy(monkeypatch, policy_value)
+    row = commands.create_request(env["run"], WHOAMI)          # read_write (edit / won edit_once)
+    if policy_value == c.POLICY_USER_APPROVAL:
+        assert row["status"] == c.PENDING_APPROVAL
+        commands.decide(row["request_id"], {"user_id": USER}, "approve")
+    assert wait_until(lambda: repo.get_command(row["request_id"])["status"] == c.SUCCEEDED)
+    assert len(env["executor"].spawned) == 1
+
+
+@pytest.mark.parametrize("program, args", [
+    ("rm", ["-rf", "src"]),
+    ("mv", ["a.txt", "b.txt"]),
+    ("touch", ["new.txt"]),
+    ("git", ["commit", "-am", "x"]),
+    ("git", ["checkout", "--", "."]),
+    ("git", ["add", "."]),
+    ("git", ["branch", "new-branch"]),
+    ("git", ["diff", "--output=patch.txt"]),
+    ("find", [".", "-name", "*.py", "-delete"]),
+    ("npm", ["install", "left-pad"]),
+    ("python", ["-m", "pip", "install", "x"]),
+    ("black", ["server"]),
+    ("ruff", ["check", "--fix", "server"]),
+    ("prettier", ["--write", "src"]),
+    ("sed", ["-i", "s/a/b/", "a.txt"]),                    # unknown program: category other
+])
+def test_execute_mode_refuses_commands_that_change_files(env, monkeypatch, program, args):
+    set_policy(monkeypatch, c.POLICY_ALWAYS_APPROVE)
+    run = _execute_run(env)
+    with pytest.raises(c.ConversationError) as exc:
+        commands.create_request(run, {"program": program, "args": args, "cwd": "."})
+    assert (exc.value.status, exc.value.code) == (403, "chat_command_execute_mode_denied")
+    assert repo.list_open_commands_for_run(run["run_id"]) == []
+    assert env["executor"].spawned == []
+    status, result = commands.run_tool(run, {"program": program, "args": args})
+    assert status == 403 and result["error"]["code"] == "chat_command_execute_mode_denied"
+    assert env["executor"].spawned == []
+
+
+def test_execute_mode_refusal_on_the_cli_transport(env, monkeypatch):
+    set_policy(monkeypatch, c.POLICY_ALWAYS_APPROVE)
+    run = _execute_run(env)
+    token = {"ai_run_id": run["run_id"], "project": PROJECT, "group_id": GROUP,
+             "token_id": run["current_token_id"]}
+    assert commands.authorize_token(token, run) is run      # execute may ask ...
+    with pytest.raises(c.ConversationError) as exc:          # ... but not for a write
+        commands.cli_create(run, token, {"program": "git", "args": ["reset", "--hard"], "wait_seconds": 0})
+    assert exc.value.code == "chat_command_execute_mode_denied"
+    payload = commands.cli_create(run, token, {**_payload(), "wait_seconds": 0})
+    assert payload["request"]["category"] == "git_read"
+
+
+def test_execute_mode_rejudges_the_stored_command_at_approval_and_spawn(env, monkeypatch):
+    """The stored row is classified again (never its stored category): a row that now
+    names a writing command is closed, and no process is created."""
+    from modules.flow_gate.db.connection import get_store
+
+    run = _execute_run(env)
+    row = commands.create_request(run, _payload())
+    get_store()._execute("UPDATE chat_command_requests SET program = 'rm', args_json = ?, category = 'read' "
+                         "WHERE request_id = ?", [json.dumps(["-rf", "src"]), row["request_id"]])
+    with pytest.raises(c.ConversationError) as exc:
+        commands.decide(row["request_id"], {"user_id": USER}, "approve")
+    assert exc.value.code == "chat_command_execute_mode_denied"
+    stored = repo.get_command(row["request_id"])
+    assert stored["status"] == c.CANCELLED and stored["error_code"] == "chat_command_execute_mode_denied"
+    # spawn gate
+    started = []
+    monkeypatch.setattr(commands, "_start", lambda r: started.append(r))
+    second = commands.create_request(run, _payload())
+    commands.decide(second["request_id"], {"user_id": USER}, "approve")
+    get_store()._execute("UPDATE chat_command_requests SET program = 'git', args_json = ? WHERE request_id = ?",
+                         [json.dumps(["push", "--force"]), second["request_id"]])
+    commands._execute(second["request_id"], run["source_root"])
+    stored = repo.get_command(second["request_id"])
+    assert stored["status"] == c.CANCELLED and stored["error_code"] == "chat_command_execute_mode_denied"
+    assert env["executor"].spawned == []
+
+
+def test_switching_the_mode_never_lifts_an_issued_token(env, monkeypatch):
+    """The setting moves; the token that was issued does not."""
+    from modules.flow_gate.db import tokens as db_tokens
+    from modules.flow_gate.db import user_chat_source_access
+    from modules.flow_gate.db.connection import now_iso
+    from modules.flow_gate.services import tool_registry
+
+    set_policy(monkeypatch, c.POLICY_ALWAYS_APPROVE)
+    reader = _read_only_run(env)
+    executor_run = _execute_run(env)
+    for mode in ("execute", "edit", "edit_once"):
+        user_chat_source_access.upsert(USER, PROJECT, GROUP, mode, now_iso())
+        with pytest.raises(c.ConversationError) as exc:
+            commands.create_request(reader, WHOAMI)
+        assert exc.value.code == "chat_command_capability_required", mode
+        with pytest.raises(c.ConversationError) as denied:
+            commands.create_request(executor_run, {"program": "git", "args": ["commit", "-m", "x"]})
+        assert denied.value.code == "chat_command_execute_mode_denied", mode
+        rec = db_tokens.get_by_id(executor_run["current_token_id"])
+        assert tool_registry.kind_for_token(rec) == ("read", None), mode   # never source write
+    assert env["executor"].spawned == []
+
+
+def test_execute_token_never_gets_source_or_document_write(env):
+    from modules.flow_gate.db import tokens as db_tokens
+    from modules.flow_gate.services import chat_commit_service, tool_registry
+    from flowgate.card_document_edit import chat_authz
+
+    run = _execute_run(env)
+    rec = db_tokens.get_by_id(run["current_token_id"])
+    assert tool_registry.kind_for_token(rec)[0] == "read"
+    assert tool_registry.command_access_for_token(rec) == "execute"
+    assert chat_commit_service.run_may_write(run) is False       # no chat commit point
+    assert chat_authz.CHAT_WRITE_KIND == "read_write"           # card document edit needs read_write
+    # A damaged combination is no access at all.
+    assert tool_registry.command_access_for_token({**rec, "source_access": None}) is None
+    assert tool_registry.command_access_for_token({**rec, "action_scope": "edit"}) is None
+    assert tool_registry.command_access_for_token({**rec, "command_access": "bogus"}) is None
+
+
+def test_command_access_offer(env):
+    assert commands.command_access(env["run"]) == "edit"
+    assert commands.command_access(_execute_run(env)) == "execute"
+    assert commands.command_access(_read_only_run(env)) is None
+    assert commands.token_allows_commands(_execute_run(env, run_id="aiv_exec2")) is True
+
+
+@pytest.mark.parametrize("program, args", [
+    ("whoami", []), ("git", ["status"]), ("git", ["diff", "HEAD"]), ("git", ["log", "-3"]),
+    ("git", ["branch", "--list"]), ("git", ["branch"]), ("pytest", ["-q", "server/tests"]),
+    ("npm", ["test"]), ("npm", ["run", "build"]), ("ls", ["-la"]), ("black", ["--check", "server"]),
+    ("ruff", ["check", "server"]), ("ruff", ["format", "--check", "server"]), ("go", ["version"]),
+    ("python", ["-m", "pytest", "-q"]), ("find", [".", "-name", "*.py"]),
+])
+def test_execute_mode_policy_allows_reading_and_test_commands(program, args):
+    from flowgate.conversation import command_policy as policy
+
+    command = policy.validate_request({"program": program, "args": args})
+    assert policy.execute_mode_refusal(command) is None, (program, args)
+
+
+@pytest.mark.parametrize("program, args", [
+    ("npm", ["audit", "fix"]), ("npm", ["version", "patch"]), ("yarn", []),
+    ("go", ["mod", "tidy"]), ("go", ["get", "x"]), ("cargo", ["fmt"]), ("eslint", ["--fix", "src"]),
+    ("git", ["reflog", "expire", "--all"]), ("git", ["grep", "-Ovim", "x"]), ("git", ["stash"]),
+    ("cp", ["a", "b"]), ("mkdir", ["x"]), ("python", ["-m", "black", "server"]),
+])
+def test_execute_mode_policy_refuses_writing_variants(program, args):
+    from flowgate.conversation import command_policy as policy
+
+    command = policy.validate_request({"program": program, "args": args})
+    assert policy.execute_mode_refusal(command), (program, args)

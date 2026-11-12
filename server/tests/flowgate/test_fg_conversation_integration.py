@@ -376,13 +376,14 @@ def test_api_worker_without_registration_keeps_existing_chat_tools(env, monkeypa
 
 # ── the CLI mention ──────────────────────────────────────────────────────────
 
-def _mention(command_execution, source_access="read_write"):
+def _mention(command_execution, source_access="read_write", command_access=None):
     from modules.flow_gate.services import invoke_mention_service
 
     return invoke_mention_service.build_conversation_mention(
         doc_id=CHAT_DOC, project=PROJECT, module="v02", group_name=GROUP, raw_token="raw-run-token",
         token_id="tok_1", api_base_url="http://127.0.0.1:8089/flowgate/api/v1/",
         source_access=source_access, command_execution=command_execution,
+        command_access=command_access,
     )
 
 
@@ -406,6 +407,48 @@ def test_read_only_mention_never_offers_commands(env, source_access, registered)
         integration.register()
     text = _mention(True, source_access=source_access)
     assert "## Command execution" not in text and "/chat-commands" not in text
+    assert "## Execute mode" not in text
+
+
+def test_read_only_mention_keeps_the_other_chat_tool_sections(env):
+    """Hiding run_command must not hide the reading-mode tools (graph read, attachment
+    request, card document read) -- the 0032 / chat.0017 contract."""
+    integration.register()
+    reader = _mention(True, source_access="read")
+    writer = _mention(True)
+    for section in chat_run_hooks.chat_mention_sections("http://127.0.0.1:8089/flowgate/api/v1", "raw-run-token",
+                                                        omit=("run_command",)):
+        assert section in reader and section in writer
+    assert "## Command execution" in writer and "## Command execution" not in reader
+
+
+@pytest.mark.parametrize("registered", [True, False])
+def test_execute_mention_offers_commands_without_write(env, registered):
+    """flowgate.v02test.0026: an execute token is told how to run commands and that it may
+    not change source; it is never offered the edit-mode commit message."""
+    if registered:
+        integration.register()
+    text = _mention(True, source_access="read", command_access="execute")
+    assert "## Command execution" in text and "/chat-commands" in text
+    assert "## Execute mode" in text and "chat_command_execute_mode_denied" in text
+    assert "commit_message" not in text
+    # command_access is honoured only on a read token (never a damaged combination).
+    assert "## Execute mode" not in _mention(True, source_access=None, command_access="execute")
+
+
+def test_start_hook_offers_an_execute_run_the_limited_command_tool(env):
+    integration.register()
+    run = make_run(run_id="aiv_exec", source_root=env["root"], capability=False, register=False,
+                   source_access="read", command_access="execute")
+    chat_run_hooks.chat_run_start(run)
+    assert run["chat_command_capability"] is True and run["chat_command_access"] == "execute"
+    tool = next(t for t in chat_run_hooks.chat_tools(run) if t["name"] == "run_command")
+    assert "execute mode" in tool["description"] and "execute mode" in tool["prompt_hint"]
+    writer = make_run(run_id="aiv_writer2", source_root=env["root"], capability=False, register=False)
+    chat_run_hooks.chat_run_start(writer)
+    assert writer["chat_command_access"] == "edit"
+    tool = next(t for t in chat_run_hooks.chat_tools(writer) if t["name"] == "run_command")
+    assert "execute mode" not in tool["description"]
 
 
 def test_start_hook_withholds_the_capability_from_a_read_only_run(env):

@@ -297,8 +297,11 @@ def build_conversation_mention(
     # path, whose token is bound to a live run that a command request can belong to. The
     # sections come from the chat run hook port (or, with none registered, the in-module
     # command section); the copy path (no run) never shows them, and neither does a token
-    # whose source_access is not read_write.
+    # whose token carries no command access (reading mode).
     command_execution: bool = False,
+    # flowgate.v02test.0026: the token's own `command_access` ("execute" for an execute-mode
+    # chat: commands allowed while source_access stays "read"; None otherwise).
+    command_access: Optional[str] = None,
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
 
@@ -412,14 +415,22 @@ def build_conversation_mention(
         source_access=source_access,
     ):
         lines += ["", section]
-    # A read-only chat token can never run a command (commands._authorize_run refuses it),
-    # so its mention does not offer the endpoint either: only the token's own read_write.
-    if command_execution and can_write:
+    # A reading-mode chat token can never run a command (commands._authorize_run refuses it),
+    # so its mention does not offer the endpoint either: only a token with command access --
+    # read_write (edit / edit_once) or execute (flowgate.v02test.0026). The other chat tool
+    # sections (graph read, attachment request, card document) stay in reading mode too.
+    may_run = can_write or (source_access == "read" and command_access == "execute")
+    if command_execution:
         from modules.flow_gate.services import chat_run_hooks
 
-        sections = chat_run_hooks.chat_mention_sections(api_base, raw_token)
+        omit = () if may_run else ("run_command",)
+        sections = chat_run_hooks.chat_mention_sections(api_base, raw_token, omit=omit)
         if not chat_run_hooks.registered(chat_run_hooks.PROVIDE_CHAT_TOOLS):
-            sections = [_command_section(base=api_base, raw_token=raw_token)]
+            sections = [_command_section(base=api_base, raw_token=raw_token)] if may_run else []
+        if may_run and not can_write:
+            from flowgate.conversation import commands as conversation_commands
+
+            sections.append(conversation_commands.execute_mode_mention_section())
         for section in sections:
             lines += ["", section]
     return "\n".join(lines)

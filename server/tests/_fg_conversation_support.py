@@ -268,7 +268,7 @@ def set_token(token_id: str, **fields) -> None:
 def make_run(*, run_id: str = RUN_ID, doc_id: str = CHAT_DOC, issued_to: str = USER,
              source_root: Optional[Path] = None, elapsed_sec: float = 0.0, register: bool = True,
              capability: bool = True, chat_start_seq: Optional[int] = 0,
-             source_access: Optional[str] = "read_write") -> dict:
+             source_access: Optional[str] = "read_write", command_access: Optional[str] = None) -> dict:
     """A live chat run record shaped like admission builds it (and, by default, registered
     in the AI invoke engine's process-local run table).
 
@@ -276,7 +276,10 @@ def make_run(*, run_id: str = RUN_ID, doc_id: str = CHAT_DOC, issued_to: str = U
     existing row is kept): command execution is judged from that persisted token."""
     from modules.flow_gate.services import ai_invoke_service as svc
 
-    add_run_token(run_id, source_access=source_access, doc_id=doc_id, issued_to=issued_to)
+    # command_access="execute" (with source_access="read") is an execute-mode token
+    # (flowgate.v02test.0026); None everywhere else, as token_service.issue leaves it.
+    add_run_token(run_id, source_access=source_access, doc_id=doc_id, issued_to=issued_to,
+                  command_access=command_access)
     run = {
         "run_id": run_id, "status": "running", "mode": "single", "project_id": PROJECT,
         "group_id": GROUP, "doc_ref": doc_id, "action_scope": "chat", "issued_to": issued_to,
