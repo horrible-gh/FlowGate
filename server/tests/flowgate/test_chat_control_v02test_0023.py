@@ -336,3 +336,126 @@ def test_cli_routes_authenticate_before_the_body():
     for path in ("cards", "runs"):
         res = client.post(f"/api/v2/chat/flows/{FA}/{path}", content=b"not json")
         assert res.status_code == 401 and res.json()["error"]["code"] == "unauthorized"
+
+
+# ── 0002-CH turn 48: test server E2E findings ────────────────────────────────
+
+def test_an_empty_definition_starts_from_the_flow_root():
+    from flowgate.chat_control import placement
+
+    plan = placement.plan([], [], set(), root_type="B", root_keys=["doc:g.0001-B"])
+    assert plan == placement.Plan("tmp_cc_root", None, None, True, "B")
+    assert placement.plan([], [], set(), after="doc:g.0001-B", root_type="B", root_keys=["doc:g.0001-B"]) == plan
+    with pytest.raises(placement.PlacementError) as caught:
+        placement.plan([], [], set(), after="gn_x", root_type="B", root_keys=["doc:g.0001-B"])
+    assert (caught.value.code, caught.value.params) == ("chat_cards_anchor_unknown", {"after": "gn_x"})
+    body = placement.draft_body({"nodes": [], "edges": []}, 0, plan,
+                                [{"doc_type": "T", "label": "버그 수정", "palette_item_id": "task"}], "확인",
+                                {"label": "버그", "palette_item_id": "bug"})
+    assert [(n["client_key"], n["node_type"], n["doc_type"], n["palette_item_id"], n["label"]) for n in body["nodes"]] == [
+        ("tmp_cc_root", "document", "B", "bug", "버그"), ("tmp_cc_n0", "document", "T", "task", "버그 수정"),
+        ("tmp_cc_gate", "gate", None, "confirm", "확인")]
+    assert [(e["source"], e["target"]) for e in body["edges"]] == [("tmp_cc_root", "tmp_cc_n0"),
+                                                                   ("tmp_cc_n0", "tmp_cc_gate")]
+
+
+def test_a_new_group_with_only_its_root_document_gets_root_work_confirm_and_runs(env, decided, gate_policy):
+    from flowgate.card_documents import repository as lines
+    from flowgate.chat_control import service
+    from modules.flow_gate.graph_workflow.store import assignment_store
+
+    assert _draft() is None                                       # FA: no draft, no revision, one live root R
+    placed = service.place(_group(), "u_kim", {"cards": [{"label": "버그 수정"}]}, "ko")
+    root = placed["root"]
+    assert root["doc_type"] == "R" and root["doc_id"] == f"{FA}.0001-R" and root["created"] is True
+    assert placed["after"] == root["node_key"] and placed["draft_version"] == 1
+    card, gate = placed["cards"][0]["node_key"], placed["gate"]["node_key"]
+    draft = _draft()
+    kinds = {n["node_key"]: (n["node_type"], n.get("doc_type"), n.get("palette_item_id"), n.get("label"))
+             for n in draft["nodes"]}
+    assert kinds == {root["node_key"]: ("document", "R", "requirement", "요구사항"),
+                     card: ("document", "T", "task", "버그 수정"), gate: ("gate", None, "confirm", "확인")}
+    assert sorted((e["source"], e["target"]) for e in draft["edges"]) == sorted([(root["node_key"], card), (card, gate)])
+    # the start card shows the existing root: no second root is made
+    assert [r["doc_id"] for r in lines.rows(FA, [root["node_key"]]) if r["slot"] == "requirement"] == [f"{FA}.0001-R"]
+
+    _ai_card(card)
+    _write_instruction(placed["cards"][0]["instruction"]["doc_id"], "## 지시\n\n사용자 원문: 버그 고쳐\n")
+    started = service.start(_group(), "u_kim", None)
+    assert started["confirmed_revision_no"] == 1 and started["run"]["run_id"]
+    binding = assignment_store.root_binding(FA)
+    assert binding["node_key"] == root["node_key"] and binding["doc_id"] == f"{FA}.0001-R"
+
+
+def test_a_flow_without_cards_or_root_is_unplaceable_and_two_roots_are_ambiguous(env, decided):
+    from flowgate.chat_control import service
+    from modules.flow_gate.graph_workflow.services import canvas_service
+    from modules.flow_gate.graph_workflow.services.errors import GraphApiError
+    from test_fg_card_settings import FB, _doc
+
+    with pytest.raises(GraphApiError) as caught:
+        service.place(canvas_service.load_flow(FB), "u_kim", {"cards": [{}]}, "ko")
+    assert (caught.value.status, caught.value.code) == (409, "chat_cards_flow_empty")
+    _doc(FA, 2, "B")
+    with pytest.raises(GraphApiError) as caught:
+        service.place(_group(), "u_kim", {"cards": [{}]}, "ko")
+    assert (caught.value.status, caught.value.code) == (409, "chat_cards_root_ambiguous")
+    assert caught.value.params["doc_ids"] == [f"{FA}.0001-R", f"{FA}.0002-B"]
+    assert _draft() is None
+
+
+def test_a_start_answers_why_cards_wait():
+    from flowgate.chat_control import service
+
+    run = {"run_id": "run_1", "status": "idle", "idle_reason": "needs_intervention", "node_runs": [
+        {"node_key": "gn_t", "status": "open", "stage": "result", "dispatch": None,
+         "wait_reason": {"code": "manual_write_wait", "role": "execution", "stage": "result", "seq": 1,
+                         "detail": None, "extra": "x"}, "intervention": None},
+        {"node_key": "gn_u", "status": "review", "stage": "result", "dispatch": {"error_code": "ai_invoke_failed"},
+         "wait_reason": None, "intervention": {"kind": "needs_intervention", "reason": "completion_missing"}},
+        {"node_key": "gn_r", "status": "done", "stage": None, "wait_reason": None, "intervention": None}]}
+    view = service._run_view(run)
+    assert view["node_runs"][0]["wait_reason"] == {"code": "manual_write_wait", "role": "execution",
+                                                    "stage": "result", "seq": 1, "detail": None}
+    assert view["node_runs"][1]["error_code"] == "ai_invoke_failed"
+    assert service.waiting(view) == [
+        {"node_key": "gn_t", "reason": "manual_write_wait", "role": "execution", "stage": "result", "detail": None},
+        {"node_key": "gn_u", "reason": "needs_intervention", "role": None, "stage": "result",
+         "detail": "completion_missing"}]
+    assert service.waiting(service._run_view({"node_runs": [run["node_runs"][2]]})) == []
+
+
+def test_the_chat_run_read_keeps_why_a_card_waits():
+    from flowgate.graph_read import service as graph_read
+
+    row = {"node_key": "gn_t", "status": "open", "result_doc_id": None, "instruction_doc_id": "d1",
+           "wait_reason": {"code": "manual_write_wait", "role": "execution", "stage": "result", "seq": 1,
+                           "detail": None, "secret": {"x": 1}},
+           "intervention": {"kind": "needs_intervention", "reason": "completion_missing"}}
+    out = graph_read.node_run(row, {"d1"})
+    assert out["wait_reason"] == {"code": "manual_write_wait", "role": "execution", "stage": "result", "seq": 1,
+                                  "detail": None}
+    assert out["intervention"] == {"kind": "needs_intervention", "reason": "completion_missing"}
+    assert out["instruction_doc_id"] == "d1"
+    assert graph_read.node_run({"node_key": "gn_r", "status": "done"}, set())["wait_reason"] is None
+
+
+def test_a_chat_line_edit_without_front_matter_keeps_the_current_one(monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from flowgate.card_document_edit import chat_adapter, read
+    from flowgate.card_document_edit.contracts import Actor, ReviseRequest
+    from modules.flow_gate.db import documents
+
+    head = "---\nproject: flowgate\ntype: T\ndoc_id: g.0003-T\n---\n"
+    docs = {"g.0003-T": {"doc_id": "g.0003-T", "group_id": "g"}, "o.0001-T": {"doc_id": "o.0001-T", "group_id": "o"}}
+    monkeypatch.setattr(documents, "get_by_id", lambda doc_id: docs.get(doc_id))
+    monkeypatch.setattr(read, "_snapshot_parts",
+                        lambda doc_id: (docs[doc_id], SimpleNamespace(state="readable", text=head + "old\n")))
+    req = ReviseRequest("g", "gn_t", "instruction", "g.0003-T", 1, "## 지시\n\nnew\n", Actor("u_kim", "person_delegated"))
+    assert chat_adapter._keep_frontmatter(req).content == head + "\n## 지시\n\nnew\n"
+    sent = replace(req, content=head + "mine\n")
+    assert chat_adapter._keep_frontmatter(sent) is sent           # a body with front matter is checked as sent
+    other = replace(req, expected_doc_id="o.0001-T")
+    assert chat_adapter._keep_frontmatter(other) is other         # another Flow's document is never read

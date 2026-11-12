@@ -12,6 +12,12 @@ as a person extends a finished Flow by hand (B -> confirm -> confirm).
 
 Without an explicit anchor: the single edge ``work card -> unstarted confirm card`` (the anchor's only successor), else the
 single tail (a card with no successor). Anything else is ambiguous and names the candidates; the caller passes ``after``.
+
+A definition with no card yet (a new group: the Canvas draws its bug / requirement document as a free document node)
+starts from the Flow's root (0002-CH turn 48): the chain begins with a new start card of the root's type
+(``root_type``), as a person drags the root onto the Designer first. Its requirement line shows the existing root
+(``card_documents.lines``) and the first confirmation binds it (``root_binding``). ``after`` may then only name that
+root's document node (``root_keys``). With no root the definition stays unplaceable (``chat_cards_flow_empty``).
 """
 from __future__ import annotations
 
@@ -21,6 +27,7 @@ from typing import Iterable, Optional
 CLIENT_NODE = "tmp_cc_n"
 CLIENT_GATE = "tmp_cc_gate"
 CLIENT_EDGE = "tmp_cc_e"
+CLIENT_ROOT = "tmp_cc_root"
 
 
 class PlacementError(Exception):
@@ -35,6 +42,7 @@ class Plan:
     before: Optional[str] = None     # the existing confirm card the chain ends in
     removed_edge: Optional[str] = None
     new_gate: bool = False
+    new_root: Optional[str] = None   # doc type of the new start card the chain begins with (empty definition)
 
 
 def is_gate(node: Optional[dict]) -> bool:
@@ -42,12 +50,17 @@ def is_gate(node: Optional[dict]) -> bool:
 
 
 def plan(nodes: Iterable[dict], edges: Iterable[dict], protected: Iterable[str] = (),
-         after: Optional[str] = None, want_gate: bool = True) -> Plan:
+         after: Optional[str] = None, want_gate: bool = True, root_type: Optional[str] = None,
+         root_keys: Iterable[str] = ()) -> Plan:
     by_key = {n["node_key"]: n for n in nodes}
     edges = list(edges)
     protected = set(protected)
     if not by_key:
-        raise PlacementError("chat_cards_flow_empty", {})
+        if root_type is None:
+            raise PlacementError("chat_cards_flow_empty", {})
+        if after is not None and after not in set(root_keys):
+            raise PlacementError("chat_cards_anchor_unknown", {"after": after})
+        return Plan(CLIENT_ROOT, None, None, want_gate, root_type)
     outs: dict[str, list[dict]] = {}
     for e in edges:
         outs.setdefault(e["source"], []).append(e)
@@ -88,10 +101,16 @@ def _wire_node(node: dict) -> dict:
             "label": node.get("label"), "assignee": assignee}
 
 
-def draft_body(record: dict, draft_version: int, chosen: Plan, cards: list[dict], gate_label: str) -> dict:
+def draft_body(record: dict, draft_version: int, chosen: Plan, cards: list[dict], gate_label: str,
+               root: Optional[dict] = None) -> dict:
     """The whole draft save request: the definition as it is, the new cards chained in (``cards``: each with
-    ``doc_type``, ``label``, ``palette_item_id``)."""
+    ``doc_type``, ``label``, ``palette_item_id``). ``root`` (``label``, ``palette_item_id``): the new start card of a
+    plan with ``new_root``."""
     nodes = [_wire_node(n) for n in record.get("nodes", [])]
+    if chosen.new_root is not None:
+        nodes.append({"node_key": None, "client_key": CLIENT_ROOT, "node_type": "document",
+                      "doc_type": chosen.new_root, "palette_item_id": (root or {}).get("palette_item_id"),
+                      "label": (root or {}).get("label") or chosen.new_root, "assignee": None})
     removed = next((e for e in record.get("edges", []) if e.get("edge_id") == chosen.removed_edge), None)
     edges = [{"edge_id": e["edge_id"], "client_key": None, "source": e["source"], "target": e["target"],
               "condition": e.get("condition")} for e in record.get("edges", []) if e is not removed]

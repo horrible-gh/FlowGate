@@ -18,6 +18,10 @@ RUN_FIELDS = ("run_id", "flow_id", "status", "revision_no", "started_at", "stopp
 NODE_FIELDS = ("node_key", "identity_source", "origin", "kind", "doc_type", "title", "state")
 DOC_FIELDS = ("doc_id", "type_code", "seq", "title", "doc_review_status", "status", "revision_no")
 LINE_FIELDS = ("slot", "doc_type", "doc_id", "revision_no", "status", "doc_review_status", "has_body", "body_state")
+# 0002-CH turn 48: why a card waits is an object on the run read (``stage_view.node_wait_reason``,
+# ``node_approval.intervention``); ``scalar_fields`` alone dropped it, so a chat could not tell why a card stopped.
+WAIT_REASON_FIELDS = ("code", "role", "stage", "seq", "detail")
+INTERVENTION_FIELDS = ("kind", "reason")
 
 
 def scalar_fields(row, fields):
@@ -34,6 +38,9 @@ def node_run(row, allowed):
     out = scalar_fields(row, NODE_RUN_FIELDS)
     for key in ("result_doc_id", "instruction_doc_id"):
         out[key] = row.get(key) if row.get(key) in allowed else None
+    for key, fields in (("wait_reason", WAIT_REASON_FIELDS), ("intervention", INTERVENTION_FIELDS)):
+        value = row.get(key)
+        out[key] = scalar_fields(value, fields) if isinstance(value, dict) else None
     return out
 
 

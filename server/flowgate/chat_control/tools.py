@@ -25,15 +25,18 @@ PLACE_DESCRIPTION = (
     "of the Flow and ends the chain in a confirm card: the anchor's unstarted confirm card when it has one, else a "
     "new confirm card (gate=false: none). Without `after` the server picks the single work card -> unstarted confirm "
     "card edge, else the single tail card; when that is ambiguous it answers 409 chat_cards_anchor_ambiguous with "
-    "candidates and you pass `after` (a node_key from the canvas read). Nothing is confirmed or run. The answer "
-    "names each new card's node_key and instruction line; write the instruction into it (card document edit, "
-    "slot=instruction) before starting the run."
+    "candidates and you pass `after` (a node_key from the canvas read). A Flow with no card yet (a new group whose "
+    "bug/requirement is only a document on the canvas) starts the chain with a new start card of that root document "
+    "(answer `root`). Nothing is confirmed or run. The answer names each new card's node_key and instruction line; "
+    "write the instruction into it (card document edit, slot=instruction) before starting the run."
 )
 START_DESCRIPTION = (
     "Start this chat's Flow (edit mode only): the draft is confirmed as a new revision and the run starts in full "
     "mode (an idle or paused run goes on with the latest revision). Work cards that still have an empty instruction "
     "line are refused (409 chat_run_instruction_missing) unless allow_instruction_ai=true lets their instruction AI "
-    "write one. This chat is not woken when the run stops: tell the user and ask them to message you when it is done."
+    "write one. The answer's `waiting` lists cards that already wait instead of running and why (manual_write_wait: "
+    "the card has no AI for that role; ai_setup_required / ai_unavailable; needs_intervention): tell the user. "
+    "This chat is not woken when the run stops: tell the user and ask them to message you when it is done."
 )
 
 PLACE_SCHEMA = {
@@ -109,14 +112,18 @@ def cli_mention(api_base, raw_token):
         "Places up to 5 work cards (T, or TS for a test) in one chain after a card and ends it in a confirm card",
         "(the anchor's unstarted confirm card, else a new one). Without `after` the server picks the only",
         "work card -> unstarted confirm card edge, else the only tail; otherwise 409 chat_cards_anchor_ambiguous",
-        "lists candidates. The answer gives each card's node_key and its instruction line: write the instruction",
-        "with the card document edit (POST .../nodes/{node_key}/slots/instruction/document/revisions).",
+        "lists candidates. A Flow with no card yet starts the chain with a start card of its bug/requirement",
+        "document (answer `root`). The answer gives each card's node_key and its instruction line: write the",
+        "instruction with the card document edit (POST .../nodes/{node_key}/slots/instruction/document/revisions;",
+        "content without front matter keeps the document's current front matter).",
         "",
         f"POST {base}/api/v2/chat/flows/{{flow_id}}/runs",
         f"Authorization: Bearer {raw_token}",
         '{"allow_instruction_ai": false}',
         "Confirms the draft and starts the run in full mode (an idle/paused run goes on). Empty instruction lines",
-        "are refused (409 chat_run_instruction_missing) unless allow_instruction_ai is true.",
+        "are refused (409 chat_run_instruction_missing) unless allow_instruction_ai is true. `waiting` lists cards",
+        "that already wait and why (manual_write_wait = no AI on that card role); runs/current node_runs carry the",
+        "same wait_reason / intervention later.",
         "",
         "flow_id is this chat's group id. Edit mode only: reading mode answers 403 chat_edit_mode_required.",
         "You are not woken when the run stops: report what you started and ask the user to message you when it",

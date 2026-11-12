@@ -547,7 +547,8 @@ def test_rejected_saves_preserve_claim_token_document_and_guard(chat, monkeypatc
     if case == "revision":
         body["expected_revision"] = 7
     elif case == "content":
-        body["content"] = "no required document identity"
+        # 0002-CH turn 48: a body without front matter keeps the current one; a changed identity is still refused
+        body["content"] = "---\nproject: flowgate\nmodule: v02\ngroup: 0127\ntype: T\ndoc_number: 0002-N\n---\nchanged"
     else:
         def deny(group_id, principal, operation):
             assert group_id == F and principal.kind == "human" and principal.user_id == "user"
@@ -563,6 +564,21 @@ def test_rejected_saves_preserve_claim_token_document_and_guard(chat, monkeypatc
     error(result, status, code)
     assert (business_state(chat.env), token_state(chat)) == before
     assert chat.env.events == [] and chat_gate.state(RUN_ID)[1] == 0
+
+
+@pytest.mark.parametrize("via", ["api", "cli"])
+def test_a_body_without_front_matter_keeps_the_current_front_matter(chat, monkeypatch, via):
+    """0002-CH turn 48: the chat's line edit, like its doc_id edit, keeps the document's front matter when the body has
+    none (the test server chat failed once with 422 document_identity_changed before sending it again)."""
+    monkeypatch.setattr(guards.mutation_policy, "assert_group_mutation_allowed", lambda *a: None)
+    body = request_body(chat, content="## body only\n")
+    if via == "api":
+        result, _ = api(chat, True, {**COORDS, **body})
+    else:
+        response = cli(chat, True, body)
+        result = response.status_code, response.json()
+    assert result[0] == 200 and result[1]["revision_no"] == 1, result
+    assert chat.env.path.read_text(encoding="utf-8") == HEADER + "\n## body only\n"
 
 
 def test_cli_chat_routes_use_main_composition_and_human_policy(chat, composition, monkeypatch):

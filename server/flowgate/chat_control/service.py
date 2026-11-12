@@ -8,6 +8,13 @@
 
 A start refuses work cards whose instruction line has no body (409 ``chat_run_instruction_missing``) unless the
 caller allows their instruction AI: the chat is meant to write the instruction itself (0002-CH turn 30).
+
+0002-CH turn 48 (test server E2E):
+- a new group's Flow has no card yet (its bug / requirement is a free document on the Canvas): placement starts the
+  chain with a start card of the Flow's one live root (``placement`` ``new_root``); two live roots are ambiguous (409
+  ``chat_cards_root_ambiguous``), none leaves it unplaceable (409 ``chat_cards_flow_empty``);
+- a start answers why a card already waits instead of running (``waiting``: each node run's ``wait_reason`` /
+  ``intervention``, e.g. ``manual_write_wait`` for a card with no AI), so the chat can tell the user the cause.
 """
 from __future__ import annotations
 
@@ -18,9 +25,12 @@ from flowgate.card_documents import repository as card_lines_store
 from flowgate.card_documents import slots as cs
 from modules.flow_gate.graph_workflow.domain import draft_request as dr
 from modules.flow_gate.graph_workflow.domain.graph_model import LABEL_MAX_LEN
+from modules.flow_gate.graph_workflow.domain.root_binding import doc_key, resolve_root
+from modules.flow_gate.graph_workflow.projection.flow_snapshot import alive_documents, read_snapshot
 from modules.flow_gate.graph_workflow.services import confirm_service, graph_service, run_service
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.graph_workflow.services.node_title_names import PALETTE_KEY_OF_DOC_TYPE, PALETTE_NAMES
+from modules.flow_gate.graph_workflow.services.root_conversion_cards import ROOT_NAMES, ROOT_PALETTE_IDS
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
 
 from . import placement
@@ -36,6 +46,12 @@ NEXT_AFTER_PLACE = ("Write each card's instruction into its instruction line (ca
 NEXT_AFTER_START = ("The cards now run (work AI, then review). This chat is not woken when the run stops: tell the "
                     "user what you started and ask them to send a message such as \"결과 봐\" when it is done; then "
                     "read runs/current and the canvas and answer from them.")
+NEXT_WHEN_WAITING = ("Some cards already wait instead of running (`waiting`). manual_write_wait: the card has no AI for "
+                     "that role, so it waits for a person; ask the user to set the card's AI (card settings) or write "
+                     "it, then start the run again. ai_setup_required / ai_unavailable: the card's AI is not set up / "
+                     "cannot run now (see detail). needs_intervention / system_error: a card in review that nothing "
+                     "completes (see detail). Tell the user which card waits and why; never report the cause as unknown.")
+WAIT_KEYS = ("code", "role", "stage", "seq", "detail")
 
 
 def _invalid(field: str, reason: str) -> GraphApiError:
@@ -90,6 +106,18 @@ def _definition(flow_id: str) -> tuple[dict, int]:
     return latest or {"nodes": [], "edges": []}, 0
 
 
+def _root(flow_id: str) -> Optional[dict]:
+    """The Flow's one live root (``doc_id``, ``doc_type``) a card-less definition starts from; None: no root."""
+    status, candidates = resolve_root(alive_documents(read_snapshot(flow_id)))
+    if status == "none":
+        return None
+    if status == "ambiguous":
+        raise GraphApiError(409, "chat_cards_root_ambiguous",
+                            {"flow_id": flow_id, "doc_ids": [d["doc_id"] for d in candidates]})
+    doc = candidates[0]
+    return {"doc_id": doc["doc_id"], "doc_type": str(doc.get("type_code") or "").upper()}
+
+
 def _run_rows(flow_id: str) -> dict[str, dict]:
     run = run_store.current_run(flow_id)
     return {r["node_key"]: r for r in run_store.node_runs(run["run_id"])} if run else {}
@@ -107,12 +135,20 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None) ->
     record, version = _definition(flow_id)
     rows = _run_rows(flow_id)
     protected = {k for k, r in rows.items() if r.get("status") in PROTECTED}
+    root = _root(flow_id) if not record.get("nodes") else None
     try:
-        chosen = placement.plan(record.get("nodes", []), record.get("edges", []), protected, after, want_gate)
+        chosen = placement.plan(record.get("nodes", []), record.get("edges", []), protected, after, want_gate,
+                                root_type=root["doc_type"] if root else None,
+                                root_keys=[doc_key(root["doc_id"])] if root else ())
     except placement.PlacementError as exc:
         status = 404 if exc.code == "chat_cards_anchor_unknown" else 409
         raise GraphApiError(status, exc.code, {"flow_id": flow_id, **exc.params}) from exc
-    request = dr.parse_draft(placement.draft_body(record, version, chosen, cards, GATE_LABELS[_locale(locale)]))
+    root_card = None
+    if chosen.new_root is not None:
+        root_card = {"label": ROOT_NAMES[chosen.new_root][_locale(locale)],
+                     "palette_item_id": ROOT_PALETTE_IDS[chosen.new_root]}
+    request = dr.parse_draft(placement.draft_body(record, version, chosen, cards, GATE_LABELS[_locale(locale)],
+                                                  root_card))
     if request.errors or request.draft_version is None:
         raise GraphApiError(422, "chat_cards_draft_invalid", {"flow_id": flow_id,
                                                               "errors": dr.sort_errors(request.errors)})
@@ -128,7 +164,12 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None) ->
         gate = {"node_key": chosen.before, "created": False}
     elif chosen.new_gate:
         gate = {"node_key": key_map[placement.CLIENT_GATE], "created": True}
-    return {"flow_id": flow_id, "draft_version": saved.get("draft_version"), "after": chosen.anchor,
+    start_card = None
+    if chosen.new_root is not None:
+        start_card = {"node_key": key_map[placement.CLIENT_ROOT], "doc_type": chosen.new_root,
+                      "doc_id": root["doc_id"], "created": True}
+    return {"flow_id": flow_id, "draft_version": saved.get("draft_version"),
+            "after": key_map.get(chosen.anchor, chosen.anchor), "root": start_card,
             "cards": placed, "gate": gate, "next": NEXT_AFTER_PLACE}
 
 
@@ -164,13 +205,38 @@ def missing_instructions(flow_id: str, record: dict) -> list[str]:
     return sorted(out)
 
 
+def _picked(value: Any, keys: tuple) -> Optional[dict]:
+    return {k: value.get(k) for k in keys} if isinstance(value, dict) else None
+
+
+def _node_run_view(n: dict) -> dict:
+    dispatch = n.get("dispatch") if isinstance(n.get("dispatch"), dict) else {}
+    return {"node_key": n.get("node_key"), "status": n.get("status"), "stage": n.get("stage"),
+            "wait_reason": _picked(n.get("wait_reason"), WAIT_KEYS),
+            "intervention": _picked(n.get("intervention"), ("kind", "reason")),
+            "error_code": dispatch.get("error_code")}
+
+
 def _run_view(run: Optional[dict]) -> Optional[dict]:
     if not isinstance(run, dict):
         return None
     out = {k: run.get(k) for k in RUN_FIELDS if k in run}
     if isinstance(run.get("node_runs"), list):
-        out["node_runs"] = [{"node_key": n.get("node_key"), "status": n.get("status"), "stage": n.get("stage")}
-                            for n in run["node_runs"] if isinstance(n, dict)]
+        out["node_runs"] = [_node_run_view(n) for n in run["node_runs"] if isinstance(n, dict)]
+    return out
+
+
+def waiting(view: Optional[dict]) -> list[dict]:
+    """The cards that wait instead of running, with why (a node run's ``wait_reason``, else its ``intervention``)."""
+    out = []
+    for n in (view or {}).get("node_runs") or []:
+        wait, held = n.get("wait_reason"), n.get("intervention")
+        if wait:
+            out.append({"node_key": n["node_key"], "reason": wait.get("code"), "role": wait.get("role"),
+                        "stage": wait.get("stage"), "detail": wait.get("detail")})
+        elif held:
+            out.append({"node_key": n["node_key"], "reason": held.get("kind"), "role": None,
+                        "stage": n.get("stage"), "detail": held.get("reason")})
     return out
 
 
@@ -192,5 +258,7 @@ def start(group: dict, user_id: str, body: Any = None) -> dict:
         confirmed = confirm_service.confirm_revision(group, user_id, int(draft["draft_version"]), latest,
                                                      None)["revision_no"]
     result = run_service.start_run(group, user_id, None, "full", None)
-    return {"flow_id": flow_id, "confirmed_revision_no": confirmed, "run": _run_view(result.get("run")),
-            "next": NEXT_AFTER_START}
+    view = _run_view(result.get("run"))
+    waits = waiting(view)
+    return {"flow_id": flow_id, "confirmed_revision_no": confirmed, "run": view, "waiting": waits,
+            "next": (NEXT_WHEN_WAITING + " " + NEXT_AFTER_START) if waits else NEXT_AFTER_START}
