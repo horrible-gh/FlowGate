@@ -99,17 +99,24 @@ describe('AiProvidersPanel (0015 T0003, AI 목록 since 0017 CH0006)', () => {
     wrapper.unmount()
   })
 
-  it('reorders within an owner from the keyboard and disables reordering while searching', async () => {
+  it('reorders any card into my own order from the keyboard and disables reordering while searching', async () => {
     mockLists()
-    const saveMine = vi.spyOn(api, 'saveMyAi').mockResolvedValue({ providers: [myAi[1], myAi[0]], default_provider_id: null, updated_at: null })
+    // flowgate.v02test.0025: system AI and my AI share one order of mine; it is saved as my order, not as either list.
+    vi.spyOn(api, 'fetchMyAiOrder').mockResolvedValue({ order: [] })
+    const saveOrder = vi.spyOn(api, 'saveMyAiOrder').mockImplementation(async (order: string[]) => ({ order, system_order_changed: false }))
+    const saveMine = vi.spyOn(api, 'saveMyAi')
+    const saveSystem = vi.spyOn(api, 'saveSystemAi')
     const wrapper = await mountPanel()
 
-    // Only my AI can be reordered by a non-administrator.
     const grips = wrapper.findAll('button.grip')
-    expect(grips).toHaveLength(2)
-    await grips[0].trigger('keydown', { key: 'ArrowDown' })
+    expect(grips).toHaveLength(4)
+    // My first AI moves above the last system AI.
+    await grips[2].trigger('keydown', { key: 'ArrowUp' })
     await flushPromises()
-    expect(saveMine).toHaveBeenCalledWith([myAi[1], myAi[0]])
+    expect(saveOrder).toHaveBeenCalledWith(['sys-1', 'my-1', 'sys-2', 'my-2'])
+    expect(cardNames(wrapper)).toEqual(['Claude Sonnet 5', 'My Gemini', 'GPT-4o', 'My Haiku'])
+    expect(saveMine).not.toHaveBeenCalled()
+    expect(saveSystem).not.toHaveBeenCalled()
 
     await wrapper.find('.detail-search input').setValue('my')
     expect(wrapper.findAll('button.grip')).toHaveLength(0)

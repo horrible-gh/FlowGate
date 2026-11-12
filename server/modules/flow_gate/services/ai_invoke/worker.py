@@ -32,6 +32,7 @@ from modules.flow_gate.db import questions as db_questions
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.services import api_server_tools
 from modules.flow_gate.services import chat_run_hooks
+from modules.flow_gate.services import chat_doc_settings_service
 from modules.flow_gate.services import chat_settings_service
 from modules.flow_gate.services import chat_command_service
 from modules.flow_gate.services import node_title_hooks
@@ -2431,8 +2432,10 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
             if mode == "recent"
             else 0
         )
+        # flowgate.v02test.0025: the chat's context checkpoint floors the window (same helper as the mention).
+        checkpoint_seq = chat_doc_settings_service.checkpoint_seq_safe(run.get("issued_to"), run["doc_ref"])
         after_seq, folded = chat_settings_service.resolve_context_window(
-            head_seq=head_seq, mode=mode, turns=turns
+            head_seq=head_seq, mode=mode, turns=turns, checkpoint_seq=checkpoint_seq
         )
         cursor = after_seq
         remaining = turns if mode == "recent" else None
@@ -2487,6 +2490,8 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
             "after_seq": after_seq,
             "folded": folded,
         }
+        if checkpoint_seq is not None:
+            merged["context_window"]["checkpoint_seq"] = checkpoint_seq
         if folded > 0:
             merged["older_history"] = {
                 "before_seq": after_seq + 1,

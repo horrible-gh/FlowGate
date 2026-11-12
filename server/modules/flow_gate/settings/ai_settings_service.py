@@ -869,6 +869,112 @@ def save_user_settings(owner_user_id: str, providers: Optional[list[dict]]) -> d
     return get_user_settings(owner_user_id, include_catalog=False)
 
 
+# ── Display order over system AI and my AI (flowgate.v02test.0025) ────────────
+#
+# One list per user over every system AI and the user's own AI (local or remote, enabled or not),
+# so the AI 관리 screen can drag any card above any other. Every selection list reads it
+# (admission.list_runtime_providers). For an ordinary user it is display only: the fallback
+# chain keeps the system order. For an administrator the two are linked (decision of
+# flowgate.v02test.0025.0002-CH): when a save changes the order of the system AI among
+# themselves, the system order (= fallback order) is saved in the same transaction.
+
+def _order_candidates(owner_user_id: str) -> tuple[list[str], list[str]]:
+    """(system ids in fallback order, the user's own ids in their order)."""
+    return ([r["provider_id"] for r in _ai_db.list_scope(None)],
+            [r["provider_id"] for r in _ai_db.list_user(owner_user_id)])
+
+
+def _effective_order(saved: list[str], default_order: list[str]) -> list[str]:
+    """Saved ids that still exist first, then every id the saved list does not name, in
+    default order (an AI added after the last save goes after the ordered ones)."""
+    known = set(default_order)
+    head = [pid for pid in dict.fromkeys(saved) if pid in known]
+    placed = set(head)
+    return head + [pid for pid in default_order if pid not in placed]
+
+
+def _with_system_order(order: list[str], system_ids: list[str]) -> list[str]:
+    """Keep every slot a system AI holds in ``order`` but fill those slots with the system AI in
+    fallback order. An administrator's list always shows the fallback order this way, so a list
+    saved before another administrator's reorder cannot quietly undo it on the next drag."""
+    system_set = set(system_ids)
+    slots = [index for index, pid in enumerate(order) if pid in system_set]
+    result = list(order)
+    for index, pid in zip(slots, system_ids):
+        result[index] = pid
+    return result
+
+
+def get_user_ai_order(owner_user_id: str, *, link_system_order: bool = False) -> dict:
+    """The caller's effective display order (every system AI and own AI exactly once)."""
+    from modules.flow_gate.db import user_ai_order as _order_db
+
+    system_ids, user_ids = _order_candidates(owner_user_id)
+    saved = _order_db.list_ids(owner_user_id)
+    order = _effective_order(saved, system_ids + user_ids)
+    if link_system_order:
+        order = _with_system_order(order, system_ids)
+    return {
+        "ok": True,
+        "order": order,
+        "customized": bool(saved),
+        "linked_to_fallback": link_system_order,
+    }
+
+
+def apply_user_order(user_id: Optional[str], providers: list[dict]) -> list[dict]:
+    """Sort chain entries / views (dicts with "id") by the user's display order. Without a saved
+    order (or on any read failure) the list is returned unchanged -- system AI first, then own AI."""
+    if not user_id or not providers:
+        return providers
+    try:
+        from modules.flow_gate.db import user_ai_order as _order_db
+        saved = _order_db.list_ids(user_id)
+    except Exception:  # noqa: BLE001 -- an order must never stop a selection list
+        return providers
+    if not saved:
+        return providers
+    rank = {pid: index for index, pid in enumerate(saved)}
+    tail = len(rank)
+    return [p for _, p in sorted(enumerate(providers), key=lambda pair: (rank.get(pair[1].get("id"), tail), pair[0]))]
+
+
+@synchronized
+def save_user_ai_order(owner_user_id: str, order: Optional[list], *, link_system_order: bool = False) -> dict:
+    """Save the caller's display order. ``order`` names system AI and the caller's own AI; an
+    id that is neither is a 422. Ids it leaves out keep their default place after the named ones.
+
+    ``link_system_order`` (administrators): the system AI's relative order in ``order`` becomes the
+    system order (= fallback order) in the same transaction, only when it actually changed.
+    """
+    from modules.flow_gate.db import user_ai_order as _order_db
+
+    if not isinstance(order, list) or not all(isinstance(pid, str) for pid in order):
+        raise AiSettingsValidationError([{"field": "order", "reason": "not_a_list"}])
+    if len(order) > PROVIDERS_MAX * 2:
+        raise AiSettingsValidationError([{"field": "order", "reason": "too_many", "max": PROVIDERS_MAX * 2}])
+    if len(set(order)) != len(order):
+        raise AiSettingsValidationError([{"field": "order", "reason": "duplicate_id"}])
+    system_ids, user_ids = _order_candidates(owner_user_id)
+    allowed = set(system_ids) | set(user_ids)
+    for index, pid in enumerate(order):
+        if pid not in allowed:
+            raise AiSettingsValidationError([{"index": index, "field": "order", "reason": "unknown_provider"}])
+
+    full = _effective_order(order, system_ids + user_ids)
+    system_set = set(system_ids)
+    new_system = [pid for pid in full if pid in system_set]
+    system_changed = link_system_order and new_system != system_ids
+    store = _ai_db.get_store()
+    with store.transaction() as s:
+        _order_db.replace(s, owner_user_id, full)
+        if system_changed:
+            _ai_db.reorder_system(s, new_system)
+    result = get_user_ai_order(owner_user_id, link_system_order=link_system_order)
+    result["system_order_changed"] = system_changed
+    return result
+
+
 # ── Pre-rev7 project routes (v0.1 screens) ────────────────────────────────────
 
 def get_project_settings(project_id: str, include_catalog: bool = True) -> dict:

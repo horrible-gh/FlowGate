@@ -47,6 +47,9 @@
       :empty-text="emptyText"
       :chat-id="state.activeChatId"
       :read-only="readOnly"
+      :checkpoint-seq="state.checkpointSeq"
+      :can-checkpoint="session.supportsChatDocSettings && !readOnly && !!state.activeChatId"
+      :checkpoint-busy="state.savingCheckpoint"
       @load-older="session.loadOlder"
       @reload="reloadChat"
       @retry="start.retry"
@@ -54,6 +57,7 @@
       @open-change="openChange"
       @open-file="openChangeFile"
       @read="session.reportRead"
+      @checkpoint="session.setCheckpoint"
     />
     <RunChangeWindow
       v-for="(view, index) in changeWindows"

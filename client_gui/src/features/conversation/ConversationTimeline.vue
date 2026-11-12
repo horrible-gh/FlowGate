@@ -20,7 +20,24 @@
         {{ loadingOlder ? t('gui.conversation.timeline.loading_older') : t('gui.conversation.timeline.load_older') }}
       </button>
       <p v-if="items.length === 0" class="conv-log-state" data-test="conv-log-empty">{{ emptyText }}</p>
+      <!-- flowgate.v02test.0025: the checkpoint message is older than what is loaded; it can still be cleared here. -->
+      <div v-if="checkpointAbove" class="conv-boundary conv-checkpoint" data-test="conv-checkpoint">
+        <span>{{ t('gui.conversation.checkpoint.line_older', { seq: checkpointSeq }) }}</span>
+        <button v-if="canCheckpoint" type="button" class="conv-checkpoint-clear" :disabled="checkpointBusy" @click="emit('checkpoint', null)">
+          {{ t('gui.conversation.checkpoint.clear') }}
+        </button>
+      </div>
       <template v-for="item in items" :key="item.key">
+        <div
+          v-if="item.kind === 'message' && checkpointSeq != null && item.turn.seq === checkpointSeq && !item.pending"
+          class="conv-boundary conv-checkpoint"
+          data-test="conv-checkpoint"
+        >
+          <span>{{ t('gui.conversation.checkpoint.line') }}</span>
+          <button v-if="canCheckpoint" type="button" class="conv-checkpoint-clear" :disabled="checkpointBusy" @click="emit('checkpoint', null)">
+            {{ t('gui.conversation.checkpoint.clear') }}
+          </button>
+        </div>
         <div v-if="item.kind === 'boundary'" class="conv-boundary" data-test="conv-boundary">
           <span>{{ t('gui.conversation.timeline.read_boundary') }}</span>
         </div>
@@ -30,7 +47,11 @@
           :pending="item.pending"
           :failed="item.failed"
           :read-only="readOnly"
+          :can-checkpoint="canCheckpoint"
+          :is-checkpoint="checkpointSeq != null && item.turn.seq === checkpointSeq"
+          :checkpoint-busy="checkpointBusy"
           @retry="item.localId && emit('retry', item.localId)"
+          @checkpoint="(seq) => emit('checkpoint', seq)"
         />
         <TimelineAttachments v-else-if="item.kind === 'attachments'" :activity="item.activity" />
         <TimelineActivity
@@ -48,7 +69,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TimelineActivity from './TimelineActivity.vue'
 import TimelineAttachments from './TimelineAttachments.vue'
@@ -66,6 +87,10 @@ const props = defineProps<{
   /** Changes when another chat opens: the log jumps to its newest entry. */
   chatId: string | null
   readOnly?: boolean
+  /** flowgate.v02test.0025: the chat's context checkpoint (message seq) and whether it can be changed here. */
+  checkpointSeq?: number | null
+  canCheckpoint?: boolean
+  checkpointBusy?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -76,7 +101,16 @@ const emit = defineEmits<{
   'open-change': [activity: WorkChangeActivity]
   'open-file': [runId: string, path: string]
   read: [seq: number]
+  checkpoint: [seq: number | null]
 }>()
+
+// The checkpoint message is not among the loaded messages (older pages not read yet): say so at the top.
+const checkpointAbove = computed(() => {
+  const seq = props.checkpointSeq
+  if (seq == null) return false
+  const first = props.items.find((item) => item.kind === 'message' && item.turn.seq > 0)
+  return !!first && first.kind === 'message' && first.turn.seq > seq
+})
 
 const { t } = useI18n()
 
@@ -288,6 +322,22 @@ defineExpose({ scrollToBottom })
   font-size: 10px;
 }
 
+.conv-checkpoint {
+  color: var(--fg2-status-info-fg);
+}
+.conv-checkpoint-clear {
+  padding: 0 6px;
+  border: 1px solid var(--fg2-status-info-border);
+  border-radius: var(--fg2-control-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.conv-checkpoint-clear:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
 .conv-boundary::before,
 .conv-boundary::after {
   content: '';

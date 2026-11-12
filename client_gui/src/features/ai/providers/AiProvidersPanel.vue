@@ -28,7 +28,8 @@
     </div>
 
     <template v-else>
-      <!-- One list: system AI first, then my AI. Drag reorders within the same owner (order = fallback order). -->
+      <!-- One list over system AI and my AI in my order (flowgate.v02test.0025): any card can be dragged above any other.
+           For an administrator the system AI's relative order is also the fallback order (linked). -->
       <section class="detail-panel">
         <div class="detail-toolbar">
           <div class="segmented" role="group" :aria-label="t('gui.ai.owned.filter_aria')">
@@ -50,6 +51,9 @@
             {{ t('gui.ai.owned.count_split', { system: systemList.length, mine: myList.length }) }}
           </span>
         </div>
+        <p class="detail-hint order-hint" data-test="ai-order-hint">
+          {{ isAdmin ? t('gui.ai.owned.order_hint_admin') : t('gui.ai.owned.order_hint') }}
+        </p>
 
         <div class="provider-cards">
           <div v-if="rows.length === 0" class="empty-row">
@@ -62,17 +66,17 @@
             class="provider-card"
             :class="{
               'is-dragging': dragId === row.item.id,
-              'is-drag-over': overId === row.item.id && dragId !== row.item.id && dragOwner === row.owner,
+              'is-drag-over': overId === row.item.id && dragId !== row.item.id,
               'is-off': !row.item.enabled,
             }"
-            :draggable="canReorder(row.owner)"
+            :draggable="canReorder()"
             @dragstart="onDragStart(row, $event)"
             @dragover="onDragOver(row, $event)"
             @drop.prevent="onDrop(row)"
             @dragend="onDragEnd"
           >
             <button
-              v-if="canReorder(row.owner)"
+              v-if="canReorder()"
               type="button"
               class="grip"
               :aria-label="t('gui.ai.providers.reorder_aria', { name: row.item.name })"
@@ -267,6 +271,10 @@
 // AI 관리 list (flowgate.v02.0017 CH0006 (2)): system AI and my AI in ONE list, each card marked
 // with its owner and its 2x2 execution mode. System AI is edited by administrators only and read
 // by everyone; my AI is edited by its owner. Saves stay per owner (each list is a full save).
+// flowgate.v02test.0025: the list is shown in my own order (/me/ai-order) and any card can be dragged above any other —
+// system or mine, local or remote. That order is what every AI selection list shows. An ordinary user's drag changes
+// only their order; an administrator's drag also saves the system AI's relative order as the fallback order (the
+// server links the two in one transaction and says so, and this screen then tells the administrator).
 // Only failures are announced (an error toast under the header); a change that worked shows in
 // the card itself (toggle, star, radio), so there is no success toast.
 import { computed, onBeforeUnmount, ref } from 'vue'
@@ -283,11 +291,13 @@ import { useCurrentUser } from '@/core/auth/currentUser'
 import {
   AiRequestError,
   fetchMyAi,
+  fetchMyAiOrder,
   fetchSystemAi,
   fetchVisibleSystemAi,
   probeSystemAi,
   saveMyAi,
   saveMyAiDefault,
+  saveMyAiOrder,
   saveRepeatCountMax,
   saveSystemAi,
 } from '../api'
@@ -340,8 +350,9 @@ const probeResults = ref<Record<string, AiProbeResult | null>>({})
 const execPolicy = ref<AiExecutionPolicy | null>(null)
 const repeatMax = ref(0)
 const dragId = ref<string | null>(null)
-const dragOwner = ref<AiOwnerScope | null>(null)
 const overId = ref<string | null>(null)
+// My display order (provider ids); ids it does not name are shown after it (system, then mine).
+const order = ref<string[]>([])
 let disposed = false
 let repeatTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -357,6 +368,9 @@ async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
+    // My order is read beside the lists and never holds them up: until it answers (or if it fails) the list shows
+    // system AI first, then mine.
+    void loadOrder()
     const [system, mine] = await Promise.all([
       isAdmin.value ? fetchSystemAi() : fetchVisibleSystemAi(),
       fetchMyAi(),
@@ -372,6 +386,18 @@ async function load(): Promise<void> {
     loadError.value = err instanceof Error ? err.message : t('gui.ai.providers.save_failed')
   } finally {
     loading.value = false
+  }
+}
+
+let orderRequest = 0
+async function loadOrder(): Promise<void> {
+  const request = ++orderRequest
+  try {
+    const data = await fetchMyAiOrder()
+    // A drag saved meanwhile is newer than this read.
+    if (!disposed && request === orderRequest && !saving.value) order.value = data.order ?? []
+  } catch {
+    // Keep the default order; a drag still saves a full order.
   }
 }
 
@@ -416,6 +442,15 @@ function modeLabel(item: ProviderItem): string {
   return t(`gui.ai.modes.${modeKey(item)}`)
 }
 
+// Every AI once, in my order: the saved ids that still exist, then the rest (system order, then mine).
+const orderedRows = computed<Row[]>(() => {
+  const byId = new Map<string, { owner: AiOwnerScope; item: ProviderItem }>()
+  for (const item of systemList.value) byId.set(item.id, { owner: 'system', item })
+  for (const item of myList.value) if (!byId.has(item.id)) byId.set(item.id, { owner: 'user', item })
+  const ids = [...order.value.filter((id) => byId.has(id)), ...byId.keys()]
+  return [...new Set(ids)].map((id, index) => ({ ...byId.get(id)!, rank: index + 1 }))
+})
+
 const rows = computed<Row[]>(() => {
   const query = searchQuery.value.trim().toLowerCase()
   const matches = (p: ProviderItem) =>
@@ -424,20 +459,17 @@ const rows = computed<Row[]>(() => {
     p.kind.toLowerCase().includes(query) ||
     p.id.toLowerCase().includes(query) ||
     modeLabel(p).toLowerCase().includes(query)
-  const owners: AiOwnerScope[] = ownerFilter.value === 'all' ? ['system', 'user'] : [ownerFilter.value]
-  return owners.flatMap((owner) =>
-    listOf(owner)
-      .map((item, index) => ({ owner, item, rank: index + 1 }))
-      .filter((row) => matches(row.item))
-  )
+  return orderedRows.value.filter((row) => (ownerFilter.value === 'all' || row.owner === ownerFilter.value) && matches(row.item))
 })
 
-function canReorder(owner: AiOwnerScope): boolean {
-  return canEdit(owner) && !searchQuery.value.trim() && !saving.value && !deleting.value
+// My order is mine to change for every card (system or mine); a search hides cards, so it pauses dragging.
+function canReorder(): boolean {
+  return !searchQuery.value.trim() && !saving.value && !deleting.value
 }
 
-function pushToast(message: string, tone: ToastHostItem['tone']): void {
-  if (tone !== 'danger') return
+function pushToast(message: string, tone: ToastHostItem['tone'], announce = false): void {
+  // Only failures are announced, plus the one change the card does not show: the fallback order moving with my order.
+  if (tone !== 'danger' && !announce) return
   toasts.value = [...toasts.value, { id: `ai-owned-${Date.now()}-${Math.random()}`, message, tone, duration: 3500 }]
 }
 
@@ -528,38 +560,67 @@ function toggleEnabled(row: Row, enabled: boolean) {
   void persist(row.owner, listOf(row.owner).map((p) => (p.id === row.item.id ? { ...p, enabled } : p)))
 }
 
-function reorder(owner: AiOwnerScope, fromId: string, toIndex: number) {
-  if (!canReorder(owner)) return
-  const list = [...listOf(owner)]
-  const index = list.findIndex((p) => p.id === fromId)
-  if (index < 0 || toIndex < 0 || toIndex >= list.length || toIndex === index) return
-  const [moved] = list.splice(index, 1)
-  list.splice(toIndex, 0, moved)
-  void persist(owner, list)
+// Moves `fromId` to the place `toId` holds in my whole order (dropped on a card below = after it, above = before it).
+function reorder(fromId: string, toId: string) {
+  if (!canReorder() || fromId === toId) return
+  const ids = orderedRows.value.map((row) => row.item.id)
+  const from = ids.indexOf(fromId)
+  const to = ids.indexOf(toId)
+  if (from < 0 || to < 0) return
+  ids.splice(from, 1)
+  ids.splice(to, 0, fromId)
+  void persistOrder(ids)
 }
 
-// Keyboard alternative to dragging (↑/↓ on the grip).
+async function persistOrder(next: string[]): Promise<void> {
+  if (saving.value) return
+  const previous = order.value
+  order.value = next // shown at once; put back if the save fails
+  orderRequest += 1 // an order read still out is older than this save
+  saving.value = true
+  try {
+    const data = await saveMyAiOrder(next)
+    if (disposed) return
+    order.value = data.order ?? next
+    if (data.system_order_changed) {
+      // The fallback order moved with it: read the system list again so its own order is current.
+      const system = await (isAdmin.value ? fetchSystemAi() : fetchVisibleSystemAi()).catch(() => null)
+      if (system && !disposed) systemList.value = system.providers ?? systemList.value
+      pushToast(t('gui.ai.owned.fallback_order_changed'), 'info', true)
+    }
+    emit('changed')
+  } catch (err: unknown) {
+    if (disposed) return
+    order.value = previous
+    pushToast(err instanceof Error ? err.message : t('gui.ai.request_failed.order_save'), 'danger')
+  } finally {
+    saving.value = false
+  }
+}
+
+// Keyboard alternative to dragging (↑/↓ on the grip): swaps places with the neighbour shown above / below.
 function moveProvider(row: Row, delta: number) {
-  const index = listOf(row.owner).findIndex((p) => p.id === row.item.id)
-  if (index >= 0) reorder(row.owner, row.item.id, index + delta)
+  const shown = rows.value
+  const index = shown.findIndex((r) => r.item.id === row.item.id)
+  const target = shown[index + delta]
+  if (index >= 0 && target) reorder(row.item.id, target.item.id)
 }
 
 function onDragStart(row: Row, event: DragEvent) {
-  if (!canReorder(row.owner)) {
+  if (!canReorder()) {
     event.preventDefault()
     return
   }
   dragId.value = row.item.id
-  dragOwner.value = row.owner
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', row.item.id)
   }
 }
 
-// A card only accepts a drop from its own owner's list.
+// Any card takes a drop: system and my AI share one order.
 function onDragOver(row: Row, event: DragEvent) {
-  if (!dragId.value || dragOwner.value !== row.owner) return
+  if (!dragId.value) return
   event.preventDefault()
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
   overId.value = row.item.id
@@ -567,15 +628,13 @@ function onDragOver(row: Row, event: DragEvent) {
 
 function onDrop(row: Row) {
   const from = dragId.value
-  const owner = dragOwner.value
   onDragEnd()
-  if (!from || !owner || from === row.item.id || owner !== row.owner) return
-  reorder(owner, from, listOf(owner).findIndex((p) => p.id === row.item.id))
+  if (!from || from === row.item.id) return
+  reorder(from, row.item.id)
 }
 
 function onDragEnd() {
   dragId.value = null
-  dragOwner.value = null
   overId.value = null
 }
 
@@ -689,6 +748,11 @@ async function onSaveProvider(item: ProviderItem, owner: AiOwnerScope) {
 .count-hint {
   margin-left: auto;
   white-space: nowrap;
+}
+
+.order-hint {
+  margin: 0 0 8px;
+  padding: 0 12px;
 }
 
 /* While I follow the system default its radio is shown, but dimmer than my own pick. */

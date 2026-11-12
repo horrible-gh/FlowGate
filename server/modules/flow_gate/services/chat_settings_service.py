@@ -478,14 +478,19 @@ def recover_stale_claim(user_id: str, project_id: str, group_id: str) -> str:
 
 
 def resolve_context_window(
-    *, head_seq: int, mode: str, turns: int
+    *, head_seq: int, mode: str, turns: int, checkpoint_seq: Optional[int] = None
 ) -> tuple[int, int]:
     """Return the invocation-local ``(after_seq, folded)`` context window.
 
     A provider participant cursor records delivery history, not memory carried by a new
     model invocation, so it does not participate in this calculation.
+
+    flowgate.v02test.0025: ``checkpoint_seq`` (the chat's context checkpoint, see
+    ``chat_doc_settings_service``) is a floor: the window never starts before that message,
+    in either mode. Turns before it are folded like any other older turn. With no checkpoint
+    the window is exactly what it was before.
     """
-    if mode == "all":
-        return 0, 0
-    start = max(0, head_seq - turns)
+    start = 0 if mode == "all" else max(0, head_seq - turns)
+    if isinstance(checkpoint_seq, int) and not isinstance(checkpoint_seq, bool) and checkpoint_seq > 1:
+        start = max(start, checkpoint_seq - 1)
     return start, start

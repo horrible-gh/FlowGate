@@ -117,7 +117,11 @@ export interface ConversationState {
   loadingOlder: boolean
   providers: ChatProvider[]
   providersStatus: LoadStatus
+  /** flowgate.v02test.0025: the open chat's AI (each chat keeps its own; a new chat starts on my default AI). */
   selectedProviderId: string
+  /** flowgate.v02test.0025: seq of the message the open chat's AI context starts from; null = no checkpoint. */
+  checkpointSeq: number | null
+  savingCheckpoint: boolean
   settings: ChatSettings
   savingSettings: boolean
   pendingSourceMode: SourceAccessMode | null
@@ -200,7 +204,12 @@ export interface ConversationSession {
   retry(localId: string): Promise<boolean>
   reportRead(seq: number): Promise<void>
   decideCommand(commandId: string, decision: CommandDecision): Promise<void>
+  /** Picks the open chat's AI and stores it as that chat's pick (a draft keeps it for the chat its first send makes). */
   selectProvider(providerId: string): void
+  /** flowgate.v02test.0025: the open chat's AI context starts at message `seq` (null = no checkpoint). */
+  setCheckpoint(seq: number | null): Promise<void>
+  /** Whether the source keeps per-chat settings (AI pick, context checkpoint). */
+  readonly supportsChatDocSettings: boolean
   invokeAi(): Promise<void>
   stopRun(): Promise<void>
   /** Resolves the chat mention; the screen writes it to the clipboard (it owns the click). */
@@ -283,6 +292,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     providers: [],
     providersStatus: 'idle',
     selectedProviderId: '',
+    checkpointSeq: null,
+    savingCheckpoint: false,
     settings: { ...DEFAULT_CHAT_SETTINGS },
     savingSettings: false,
     pendingSourceMode: null,
@@ -327,6 +338,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
   let createIntent: { key: string; scopeGen: number; chatGen: number } | null = null
   let createOperation = 0
   let providersProject: string | null = null
+  let providersDefaultId: string | null = null
+  // flowgate.v02test.0025: each chat's AI pick as last read or picked on this screen (key: ownerKey); null = my default.
+  const chatProviders = new Map<string, string | null>()
   let providersRequest = 0
   let providersLoad: Promise<void> = Promise.resolve()
   let noticeSeq = 0
@@ -450,6 +464,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.runId = null
     state.cancelling = false
     state.deciding = []
+    state.checkpointSeq = null
+    state.savingCheckpoint = false
     state.changeWindowEpoch += 1
   }
 
@@ -478,6 +494,44 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return providersLoad
   }
 
+  // ── Per-chat AI pick and context checkpoint (flowgate.v02test.0025) ──────────────────
+  /** My default AI when this scope offers it, else the first offered AI. */
+  function defaultProviderId(): string {
+    const id = providersDefaultId
+    return id && state.providers.some((p) => p.id === id) ? id : state.providers[0]?.id ?? ''
+  }
+
+  /** Shows `pick` when it is still offered; anything else (none, removed, not runnable) is my default AI. */
+  function applyChatProvider(pick: string | null): void {
+    if (state.providersStatus !== 'ready') return
+    state.selectedProviderId = pick && state.providers.some((p) => p.id === pick) ? pick : defaultProviderId()
+  }
+
+  function persistChatProvider(chatId: string, providerId: string): void {
+    if (!source.saveChatDocSettings) return
+    source.saveChatDocSettings(chatId, { provider_id: providerId }).catch((error) => {
+      if (!disposed && state.activeChatId === chatId) notify('warning', 'chat_ai_save_failed', messageOf(error))
+    })
+  }
+
+  async function loadChatDocSettings(chatId: string, gen: number): Promise<void> {
+    const key = ownerKey(chatId)
+    const before = chatProviders.get(key)
+    if (!source.fetchChatDocSettings) return
+    try {
+      const [settings] = await Promise.all([source.fetchChatDocSettings(chatId), providersLoad])
+      if (!isCurrentChat(chatId, gen)) return
+      state.checkpointSeq = settings.checkpointSeq
+      // A pick made on this screen while the read was out wins: it is the newer one (and is being saved).
+      if (chatProviders.get(key) !== before) return
+      const pick = settings.providerId ?? before ?? null
+      chatProviders.set(key, pick)
+      applyChatProvider(pick)
+    } catch {
+      // Keep chatting on the shown selection (my default AI or this screen's last pick); never block.
+    }
+  }
+
   async function fetchProviders(projectId: string): Promise<void> {
     const request = ++providersRequest
     const userId = draftUserId()
@@ -485,6 +539,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       const list = await source.listProviders(projectId)
       if (disposed || providersProject !== projectId || request !== providersRequest || userId !== draftUserId()) return
       state.providers = list.providers
+      providersDefaultId = list.defaultProviderId
       const keep = list.providers.some((p) => p.id === state.selectedProviderId)
       state.selectedProviderId = keep
         ? state.selectedProviderId
@@ -621,6 +676,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.pending = outbox.get(ownerKey(chatId)) ?? []
     state.sending = progress.get(ownerKey(chatId))?.phase === 'sending'
     state.turnsStatus = 'loading'
+    // flowgate.v02test.0025: this chat's own AI, never the previous chat's; the stored pick follows from the server.
+    if (source.fetchChatDocSettings) {
+      applyChatProvider(chatProviders.get(ownerKey(chatId)) ?? null)
+      void loadChatDocSettings(chatId, gen)
+    }
     try {
       // No cursor: the server resumes from the position it remembers (D0002 §3-4).
       const first = await readTurns(chatId, { includeHead: true, limit: TURN_PAGE_SIZE }, trace, 'history')
@@ -996,6 +1056,12 @@ export function createConversationSession(options: ConversationSessionOptions = 
       createdId = created.id
       if (createIntent?.key === intent) createIntent = null
       if (!currentDraft()) return finish('cancelled')
+      // flowgate.v02test.0025: the AI picked in the draft becomes the new chat's own pick.
+      const draftPick = state.selectedProviderId
+      if (draftPick && source.saveChatDocSettings) {
+        chatProviders.set(ownerKey(created.id), draftPick)
+        persistChatProvider(created.id, draftPick)
+      }
       // A list read that failed (or does not show it yet) still gets the chat the server made.
       if (!state.chats.some((c) => c.id === created.id)) {
         unlistedChats.set(created.id, created)
@@ -1024,6 +1090,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.notice = null
     clearChat()
     state.activeChatId = null
+    // flowgate.v02test.0025: a new chat starts on my default AI, not on the AI of the chat left behind.
+    if (source.fetchChatDocSettings) applyChatProvider(null)
   }
 
   function setChatTitle(chatId: string, title: string, marker?: ChatAutoTitle): void {
@@ -1227,7 +1295,31 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   // ── Chat AI run (D0005 §3-1, L0008, 0264 STOP) ─────────────────────────────────────
   function selectProvider(providerId: string): void {
-    if (state.providers.some((p) => p.id === providerId)) state.selectedProviderId = providerId
+    if (!state.providers.some((p) => p.id === providerId)) return
+    const changed = state.selectedProviderId !== providerId
+    state.selectedProviderId = providerId
+    const chatId = state.activeChatId
+    // flowgate.v02test.0025: stored as this chat's pick; a draft keeps it until its first send makes the chat.
+    if (!chatId || !source.saveChatDocSettings) return
+    const key = ownerKey(chatId)
+    if (!changed && chatProviders.get(key) === providerId) return
+    chatProviders.set(key, providerId)
+    persistChatProvider(chatId, providerId)
+  }
+
+  async function setCheckpoint(seq: number | null): Promise<void> {
+    const chatId = state.activeChatId
+    if (!chatId || !source.saveChatDocSettings || state.savingCheckpoint || seq === state.checkpointSeq) return
+    const gen = chatGen
+    state.savingCheckpoint = true
+    try {
+      const saved = await source.saveChatDocSettings(chatId, { context_checkpoint_seq: seq })
+      if (isCurrentChat(chatId, gen)) state.checkpointSeq = saved.checkpointSeq
+    } catch (error) {
+      if (isCurrentChat(chatId, gen)) notify('danger', 'checkpoint_failed', messageOf(error))
+    } finally {
+      if (isCurrentChat(chatId, gen)) state.savingCheckpoint = false
+    }
   }
 
   /**
@@ -1614,6 +1706,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     reportRead,
     decideCommand,
     selectProvider,
+    setCheckpoint,
+    supportsChatDocSettings: !!(source.fetchChatDocSettings && source.saveChatDocSettings),
     invokeAi,
     stopRun,
     issueMention,

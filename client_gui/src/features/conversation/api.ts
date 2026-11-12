@@ -18,6 +18,7 @@
 //   AI call        POST  /api/v1/ai-invoke/start (action_scope chat) · GET /ai-invoke/{run}
 //                  POST  /api/v1/ai-invoke/{run}/cancel · GET /ai-invoke/active?group_id=
 //   chat settings  GET/PATCH /api/v1/me/chat-settings
+//   per-chat       GET/PATCH /api/v1/documents/{doc_id}/conversation/settings  { provider_id, context_checkpoint_seq }
 //   mention copy   POST  /api/v1/token/issue                        (action_scope chat)
 
 import { extractApiErrorMessage, getRequest, patchRequest, postRequest } from '@shared/api'
@@ -31,6 +32,8 @@ import type {
   ConversationAttachmentConflict,
   ConversationAttachmentGroup,
   ConversationAttachmentRequest,
+  ChatDocSettings,
+  ChatDocSettingsPatch,
   ChatProvider,
   ChatSettings,
   ChatSettingsPatch,
@@ -755,6 +758,30 @@ export async function fetchChatSettings(scope?: ConversationScope): Promise<Chat
 
 export async function saveChatSettings(patch: ChatSettingsPatch, scope?: ConversationScope): Promise<ChatSettings> {
   return toChatSettings(await call(() => patchRequest<RawChatSettings>(chatSettingsUrl(scope), patch)))
+}
+
+// ── Per-chat settings (flowgate.v02test.0025) ───────────────────────────────────────────
+interface RawChatDocSettings {
+  settings?: { provider_id?: string | null; context_checkpoint_seq?: number | null } | null
+}
+
+function toChatDocSettings(raw: RawChatDocSettings | null | undefined): ChatDocSettings {
+  const s = raw?.settings ?? {}
+  const seq = s.context_checkpoint_seq
+  return {
+    providerId: typeof s.provider_id === 'string' && s.provider_id ? s.provider_id : null,
+    checkpointSeq: Number.isInteger(seq) && Number(seq) >= 1 ? Number(seq) : null,
+  }
+}
+
+/** The user's AI pick and context checkpoint of one chat. */
+export async function fetchChatDocSettings(chatId: string): Promise<ChatDocSettings> {
+  return toChatDocSettings(await call(() => getRequest<RawChatDocSettings>(`${doc(chatId)}/conversation/settings`)))
+}
+
+/** Saves only the sent fields; answers the stored settings. */
+export async function saveChatDocSettings(chatId: string, patch: ChatDocSettingsPatch): Promise<ChatDocSettings> {
+  return toChatDocSettings(await call(() => patchRequest<RawChatDocSettings>(`${doc(chatId)}/conversation/settings`, patch)))
 }
 
 // ── Mention copy ─────────────────────────────────────────────────────────────────────

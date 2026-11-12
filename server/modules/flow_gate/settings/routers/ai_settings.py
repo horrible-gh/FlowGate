@@ -9,6 +9,8 @@ GET  /api/v1/system/ai-providers                      — system AI, read-only, 
 GET  /api/v1/me/ai-providers                          — the caller's own AI (rev7)
 PUT  /api/v1/me/ai-providers                          — full save of the caller's own AI
 PUT  /api/v1/me/ai-default                            — the caller's default AI (null = system default)
+GET  /api/v1/me/ai-order                              — the caller's display order (system + own AI)
+PUT  /api/v1/me/ai-order                              — save it (administrator: linked to the fallback order)
 
 flowgate.v02.0017 TR0003 rev7: projects no longer own connection rows; a custom list save and the
 project command probe answer 409 project_owned_ai_retired. CH0006 (4) retired the project AI
@@ -223,6 +225,37 @@ def put_my_ai_providers(body: UserAiSettingsPut, user=Depends(get_current_user))
 def put_my_ai_default(body: UserAiDefaultPut, user=Depends(get_current_user)):
     try:
         return _svc.save_user_default(user["user_id"], body.provider_id)
+    except _svc.AiSettingsValidationError as exc:
+        raise _validation_error(exc)
+
+
+class UserAiOrderPut(BaseModel):
+    """Every AI of the AI 관리 list (system and own) in the caller's order."""
+
+    order: list[str] | None = None
+
+
+@router.get("/me/ai-order")
+def get_my_ai_order(user=Depends(get_current_user)):
+    """flowgate.v02test.0025: the caller's display order over system AI and their own AI."""
+    return _svc.get_user_ai_order(user["user_id"], link_system_order=_manages_system_ai(user))
+
+
+def _manages_system_ai(user: dict) -> bool:
+    from modules.flow_gate.rbac.decorators import _has_permission
+
+    return _has_permission(user, "system.settings.manage", None)
+
+
+@router.put("/me/ai-order")
+def put_my_ai_order(body: UserAiOrderPut, user=Depends(get_current_user)):
+    """Save the caller's display order. For an administrator (system.settings.manage) the system
+    AI's relative order is linked: it is saved as the fallback order in the same transaction, and
+    the answer says so (``system_order_changed``)."""
+    try:
+        return _svc.save_user_ai_order(
+            user["user_id"], body.order, link_system_order=_manages_system_ai(user),
+        )
     except _svc.AiSettingsValidationError as exc:
         raise _validation_error(exc)
 

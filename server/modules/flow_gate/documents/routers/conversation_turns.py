@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -12,6 +12,7 @@ from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.documents import document_service
 from modules.flow_gate.services import (
+    chat_doc_settings_service,
     conversation_markdown_service,
     conversation_query_service,
     conversation_turn_service,
@@ -164,6 +165,53 @@ def mark_conversation_read(
         )
     except conversation_turn_service.ConversationTurnError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+def _conversation_doc(doc_id: str) -> dict:
+    doc = document_service.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    if (doc.get("type_code") or "").upper() not in conversation_turn_service.CONVERSATION_TYPE_CODES:
+        raise HTTPException(status_code=400, detail="Not a conversation document.")
+    return doc
+
+
+@router.get("/{doc_id}/conversation/settings")
+@require_permission("perm_document_read")
+def get_conversation_settings(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """flowgate.v02test.0025: the caller's settings of this chat (its AI and context checkpoint)."""
+    _conversation_doc(doc_id)
+    return {
+        "ok": True,
+        "doc_id": doc_id,
+        "settings": chat_doc_settings_service.get_settings(current_user["user_id"], doc_id),
+    }
+
+
+@router.patch("/{doc_id}/conversation/settings")
+@require_permission("perm_document_read")
+def patch_conversation_settings(
+    doc_id: str,
+    body: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Save only the sent fields: ``provider_id`` (null = my default AI) and
+    ``context_checkpoint_seq`` (null = no checkpoint). 422 names the refused field."""
+    doc = _conversation_doc(doc_id)
+    try:
+        settings = chat_doc_settings_service.save_settings(
+            current_user["user_id"], doc_id, body, project_id=doc.get("project_id"),
+        )
+    except chat_doc_settings_service.ChatDocSettingsError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"ok": False, "code": "validation_failed", "field": exc.field,
+                     "reason": exc.reason, "message": exc.message},
+        )
+    return {"ok": True, "doc_id": doc_id, "settings": settings}
 
 
 @router.get("/{doc_id}/conversation/markdown")

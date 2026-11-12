@@ -13,6 +13,8 @@
 // session reads through this source again (session.recover).
 import * as api from './api'
 import type {
+  ChatDocSettings,
+  ChatDocSettingsPatch,
   ChatSettings,
   ChatSettingsPatch,
   ChatSummary,
@@ -60,6 +62,12 @@ export interface ConversationSource {
   fetchChatSettings(scope?: ConversationScope): Promise<ChatSettings>
   saveChatSettings(patch: ChatSettingsPatch, scope?: ConversationScope): Promise<ChatSettings>
   issueChatMention(chatId: string): Promise<string>
+  /**
+   * flowgate.v02test.0025: the user's AI pick and context checkpoint of one chat. Optional: a source without them keeps
+   * one selection for every chat and no checkpoint (the behaviour before).
+   */
+  fetchChatDocSettings?(chatId: string): Promise<ChatDocSettings>
+  saveChatDocSettings?(chatId: string, patch: ChatDocSettingsPatch): Promise<ChatDocSettings>
 }
 
 export function createHttpConversationSource(): ConversationSource {
@@ -84,5 +92,7 @@ export function createHttpConversationSource(): ConversationSource {
     fetchChatSettings: api.fetchChatSettings,
     saveChatSettings: api.saveChatSettings,
     issueChatMention: api.issueChatMention,
+    fetchChatDocSettings: api.fetchChatDocSettings,
+    saveChatDocSettings: api.saveChatDocSettings,
   }
 }

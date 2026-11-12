@@ -294,6 +294,21 @@ export interface ProviderList {
   defaultProviderId: string | null
 }
 
+/**
+ * flowgate.v02test.0025 — the signed-in user's settings of one chat (GET/PATCH
+ * /documents/{doc_id}/conversation/settings): the AI picked in that chat (null = my default AI) and the message the
+ * AI context starts from (null = no checkpoint).
+ */
+export interface ChatDocSettings {
+  providerId: string | null
+  checkpointSeq: number | null
+}
+
+export interface ChatDocSettingsPatch {
+  provider_id?: string | null
+  context_checkpoint_seq?: number | null
+}
+
 export type SendAction = 'copy_mention' | 'invoke_ai' | 'none'
 export type ContextMode = 'recent' | 'all'
 /** AI source access mode (group 0515/0568): read / edit / edit once. */

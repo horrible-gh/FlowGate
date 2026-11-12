@@ -326,6 +326,19 @@ def _replace_rows(s, scope: tuple[str, list], rows: list[dict], existing_ids: se
             )
 
 
+def reorder_system(s, provider_ids: list[str]) -> None:
+    """Rewrite the system AI's sort_order (= fallback order) to the given order, inside the
+    caller's transaction ``s`` (flowgate.v02test.0025: an administrator's reorder on the AI 관리
+    list). Only live system rows are touched; nothing else of a row changes."""
+    now = now_iso()
+    where, params = _scope_where(None)
+    for index, provider_id in enumerate(provider_ids):
+        s._execute(
+            f"UPDATE ai_providers SET sort_order = ?, updated_at = ? WHERE provider_id = ? AND {where}",
+            [index, now, provider_id] + params,
+        )
+
+
 def all_provider_ids() -> set[str]:
     """Every provider_id in the table (ids are global, whoever owns the row)."""
     return {r["provider_id"] for r in get_store()._fetch_all("SELECT provider_id FROM ai_providers", [])}

@@ -44,6 +44,15 @@ export interface VisibleSystemAi {
   execution_policy?: undefined
 }
 
+// flowgate.v02test.0025: my display order over system AI and my AI (GET/PUT /me/ai-order). For an administrator the
+// system AI's relative order is the fallback order (linked): a save that changes it reports system_order_changed.
+export interface UserAiOrder {
+  order: string[]
+  customized?: boolean
+  linked_to_fallback?: boolean
+  system_order_changed?: boolean
+}
+
 export interface UserAiSettings {
   providers: ProviderItem[]
   // My default AI (a system AI or my own); null = follow the system default.

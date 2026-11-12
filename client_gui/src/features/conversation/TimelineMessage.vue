@@ -31,6 +31,19 @@
           @click="copyBody"
         >{{ copyState === 'done' ? '✓' : copyState === 'failed' ? '✕' : '⧉' }}</button>
         <span v-if="copyState !== 'idle'" class="tl-sr" role="status">{{ copyLabel }}</span>
+        <!-- flowgate.v02test.0025: start this chat's AI context at this message (a stored message only). -->
+        <button
+          v-if="canCheckpoint && turn.seq > 0 && !pending"
+          type="button"
+          class="tl-copy tl-checkpoint"
+          :class="{ 'is-on': isCheckpoint }"
+          data-test="tl-checkpoint"
+          :aria-pressed="isCheckpoint"
+          :aria-label="isCheckpoint ? t('gui.conversation.checkpoint.clear_here') : t('gui.conversation.checkpoint.set_here')"
+          :title="isCheckpoint ? t('gui.conversation.checkpoint.clear_here') : t('gui.conversation.checkpoint.set_here')"
+          :disabled="checkpointBusy"
+          @click="emit('checkpoint', isCheckpoint ? null : turn.seq)"
+        >⚑</button>
       </div>
       <!-- A person's own input stays plain text; an AI's message is Markdown (tables, code blocks with copy) rendered by
            the shared renderer in safe mode: raw HTML is shown as text, unsafe links and every image as text only. -->
@@ -57,9 +70,14 @@ const props = defineProps<{
   pending: boolean
   failed: boolean
   readOnly?: boolean
+  /** flowgate.v02test.0025: the context checkpoint button is offered. */
+  canCheckpoint?: boolean
+  /** This message is the chat's context checkpoint. */
+  isCheckpoint?: boolean
+  checkpointBusy?: boolean
 }>()
 
-const emit = defineEmits<{ retry: [] }>()
+const emit = defineEmits<{ retry: []; checkpoint: [seq: number | null] }>()
 
 const { t, locale } = useI18n()
 
@@ -294,6 +312,21 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
 
 .tl-copy.is-failed {
   color: var(--fg2-status-danger-fg);
+}
+
+.tl-copy + .tl-checkpoint,
+.tl-sr + .tl-checkpoint {
+  margin-left: 0;
+}
+
+.tl-checkpoint.is-on {
+  color: var(--fg2-status-info-fg);
+  border-color: var(--fg2-status-info-border);
+}
+
+.tl-checkpoint:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .tl-sr {

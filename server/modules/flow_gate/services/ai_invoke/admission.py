@@ -953,7 +953,9 @@ def list_runtime_providers(project_id: str, user_id: Optional[str] = None) -> di
     # offered after the system AI -- the chat composer, card settings and start dialogs all
     # read this list. The caller's default may be one of them.
     personal = ai_settings_service.personal_selectable(user_id)
-    providers = (effective.get("providers") or []) + personal
+    # flowgate.v02test.0025: in the caller's display order (AI 관리 list) when they saved one. Only
+    # the order of this list changes -- the default and every fallback chain stay as they were.
+    providers = ai_settings_service.apply_user_order(user_id, (effective.get("providers") or []) + personal)
     return {
         "ok": True,
         "project": project_id,

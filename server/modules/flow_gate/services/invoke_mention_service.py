@@ -23,6 +23,7 @@ import json
 from typing import Optional
 
 from modules.flow_gate.db import conversation_turns
+from modules.flow_gate.services import chat_doc_settings_service
 from modules.flow_gate.services import chat_settings_service
 
 # Mirrors client SECTION_SEPARATOR / MESSAGES_SEPARATOR (mentionMessages.ts).
@@ -239,6 +240,14 @@ def _start_paragraph(folded: int) -> list[str]:
     ]
 
 
+def _checkpoint_notice(checkpoint_seq: int) -> list[str]:
+    """flowgate.v02test.0025: the user started this chat's AI context at a message of their choice."""
+    return [
+        f"The user set a context checkpoint at seq {checkpoint_seq}: this invocation's context starts",
+        "there. Treat earlier turns as background and read them only when the request depends on them.",
+    ]
+
+
 def _fold_notice(
     *, api_base: str, doc_id: str, raw_token: str, folded: int, before_seq: int
 ) -> list[str]:
@@ -317,10 +326,13 @@ def build_conversation_mention(
     head_seq = (
         conversation_turns.current_head_seq(doc_id) if context_mode == "recent" else 0
     )
+    # flowgate.v02test.0025: the chat's context checkpoint floors the window (same helper as the API worker).
+    checkpoint_seq = chat_doc_settings_service.checkpoint_seq_safe(user_id, doc_id)
     after_seq, folded = chat_settings_service.resolve_context_window(
         head_seq=head_seq,
         mode=context_mode,
         turns=settings["context_turns"],
+        checkpoint_seq=checkpoint_seq,
     )
     api_base = api_base_url.rstrip("/")
     display_name = provider or "<your model name>"
@@ -351,6 +363,8 @@ def build_conversation_mention(
         "",
         *_start_paragraph(folded),
     ]
+    if checkpoint_seq is not None and after_seq == checkpoint_seq - 1:
+        lines += [""] + _checkpoint_notice(checkpoint_seq)
     # Right behind the paragraph that named the starting point, and ahead of the reply
     # instructions: said in that order the worker reads the two as one thought. Appended
     # at the end of the document it reads the first half and moves on (P0009 scenario 11).

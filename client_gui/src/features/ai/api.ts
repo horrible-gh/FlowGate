@@ -27,6 +27,7 @@ import type {
   AiProbeResult,
   ProviderItem,
   SystemAiSettings,
+  UserAiOrder,
   UserAiSettings,
   VisibleSystemAi,
 } from './types'
@@ -189,6 +190,15 @@ export async function fetchMyAi(): Promise<UserAiSettings> {
 export async function saveMyAi(providers: ProviderItem[]): Promise<UserAiSettings> {
   const wire = toWireProviders(providers)
   return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers: wire }), 'gui.ai.request_failed.my_save', wire)
+}
+
+// flowgate.v02test.0025: one order over system AI and my AI (AI 관리 list, every AI selection list).
+export async function fetchMyAiOrder(): Promise<UserAiOrder> {
+  return call(() => getRequest<UserAiOrder>('/api/v1/me/ai-order'), 'gui.ai.request_failed.order_load')
+}
+
+export async function saveMyAiOrder(order: string[]): Promise<UserAiOrder> {
+  return call(() => putRequest<UserAiOrder>('/api/v1/me/ai-order', { order }), 'gui.ai.request_failed.order_save')
 }
 
 // null = follow the system default.
