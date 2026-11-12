@@ -338,6 +338,8 @@ export default {
       past_revision_notice: 'リビジョン {revision} を表示中（最新 {latest}）。この画面では編集できません。最新リビジョンに追加されたカードは表示されません。',
       tabs_label: '開いているフロー',
       close_tab: '{name} を閉じる',
+      // flowgate.v02gui.0001: a tab's run mark (its accessible name).
+      tab_run: { running: '実行中', paused: '一時停止', stopping: '停止中' },
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
       draft_action_failed: "操作を完了できませんでした。最新のフローを確認してから、もう一度お試しください。({code})",

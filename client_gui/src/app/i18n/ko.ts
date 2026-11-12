@@ -341,6 +341,8 @@ export default {
       past_revision_notice: '개정 {revision} 표시 중 (최신 {latest}). 이 화면에서는 편집할 수 없습니다. 최신 개정에 추가된 카드는 표시되지 않습니다.',
       tabs_label: '열린 플로우',
       close_tab: '{name} 닫기',
+      // flowgate.v02gui.0001: a tab's run mark (its accessible name).
+      tab_run: { running: '실행 중', paused: '일시정지', stopping: '중지 중' },
       graph_loading: '그래프를 불러오는 중',
       graph_load_failed: '그래프를 불러오지 못했습니다',
       draft_action_failed: "작업을 완료하지 못했습니다. 최신 플로우를 확인한 뒤 다시 시도하세요. ({code})",

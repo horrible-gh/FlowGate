@@ -25,8 +25,10 @@
     <FlowTabStrip
       :tabs="center.state.tabs"
       :active-flow-id="center.state.activeFlowId"
+      :run-states="tabRunStates"
       @activate="center.activateFlow"
       @close="center.closeFlow"
+      @reorder="center.moveFlow"
     />
     <div class="designer-center-canvas-area">
       <template v-if="activeTab">
@@ -112,7 +114,8 @@ import ErrorState from '../../../components/ui/ErrorState.vue'
 import LoadingState from '../../../components/ui/LoadingState.vue'
 import FlowCanvas from './canvas/FlowCanvas.vue'
 import type { DesignerCenterSession, FlowCardMenuKey } from './designerCenterSession'
-import FlowTabStrip from './FlowTabStrip.vue'
+import FlowTabStrip, { type FlowTabRunState } from './FlowTabStrip.vue'
+import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
 import RevisionNotice from './RevisionNotice.vue'
 import DraftActionNotice from './edit/DraftActionNotice.vue'
 import GraphTimeMachineDialog from './run/GraphTimeMachineDialog.vue'
@@ -149,6 +152,19 @@ function chooseCardMenu(nodeId: string, key: FlowCardMenuKey) {
 
 /** flowgate.v02.0061 T#15: the active Flow's card Holds as the session judges them (the Graph read's for every card). */
 const holds = computed(() => (activeTab.value ? props.center.cardHolds(activeTab.value.flowId) : new Map<string, boolean>()))
+/**
+ * flowgate.v02gui.0001: every open tab's run mark — its Flow's run status when it is one the run lock names (running /
+ * paused / stopping) and confirmed by a read; a status not confirmed yet shows no mark. Every opened tab reads its run
+ * with its Graph, so inactive tabs are known too.
+ */
+const tabRunStates = computed(() => {
+  const states: Record<string, FlowTabRunState> = {}
+  for (const tab of props.center.state.tabs) {
+    const { run, known } = props.center.runStatus(tab.flowId)
+    if (known && run && RUN_LOCKED_STATUSES.includes(run.status)) states[tab.flowId] = run.status as FlowTabRunState
+  }
+  return states
+})
 const timeMachine = props.center.timeMachine
 /** flowgate.v02.0061 T#15: the dialog's Flow's card titles by node key (its shown Graph). */
 const timeMachineTitles = computed(() => {
