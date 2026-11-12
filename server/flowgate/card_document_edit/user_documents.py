@@ -22,7 +22,9 @@ from __future__ import annotations
 
 from modules.flow_gate.db import documents
 from . import contacts, guards, read, target
-from .chat_documents import _edit_path, _expected_revision, _read_payload, _revise_non_card
+from .chat_adapter import IDENTITY_FREE_TYPES
+from .chat_documents import (_edit_path, _expected_revision, _read_payload, _revise_non_card, _split_frontmatter,
+                             with_current_frontmatter)
 from .contracts import Actor, Origin
 from .errors import GraphApiError, internal_error, invalid
 from .validation import KEY_RE, required_text
@@ -56,6 +58,33 @@ def _idempotency_key(value):
     return value
 
 
+def _kept_frontmatter(doc, content):
+    """flowgate.v02gui.0003: a Designer save sent WITHOUT front matter (an uploaded plain ``.md``) keeps the document's
+    current front matter, as the chat paths do (``chat_documents.with_current_frontmatter``). A body that brings its own
+    front matter is passed as sent, so ``common_checks.identity_frontmatter`` still refuses another document's file;
+    an empty body, an identity-free type (WP / TR2) and an unreadable current body are left to the existing checks."""
+    if not isinstance(content, str) or not content.strip() or _split_frontmatter(content)[0] is not None:
+        return content
+    if doc.get("type_code") in IDENTITY_FREE_TYPES:
+        return content
+    _current, body = read._snapshot_parts(doc["doc_id"])
+    if body.state != "readable":
+        return content
+    return with_current_frontmatter(content, body.text)
+
+
+def keep_card_frontmatter(req):
+    """The card route's request with ``_kept_frontmatter`` applied. Only the request's own Flow document is read;
+    ``revise`` still checks that it is the line's document, its revision, the permission and the identity."""
+    from dataclasses import replace
+    doc_id = req.expected_doc_id
+    doc = documents.get_by_id(doc_id) if isinstance(doc_id, str) and doc_id else None
+    if not doc or doc.get("group_id") != req.flow_id:
+        return req
+    content = _kept_frontmatter(doc, req.content)
+    return req if content is req.content else replace(req, content=content)
+
+
 def user_read_document(actor: Actor, doc_id: str) -> dict:
     doc = _document(doc_id)
     guards.authorize(actor, doc["project_id"], "perm_document_read", flow_id=doc.get("group_id"))
@@ -79,6 +108,7 @@ def user_revise_document(actor: Actor, doc_id: str, raw_body, locale: str = "ko"
     if classification != target.NON_CARD:
         raise invalid("card_binding_missing", "card_binding", "invalid_format", doc,
                       validation={"reason": "card_edit_unavailable"})
+    content = _kept_frontmatter(doc, content)
     kind, result, plan, _line = _revise_non_card(doc, expected, content, actor, Origin(), key, None, None, locale,
                                                  edit_reason=None)
     if kind == "SAVED":

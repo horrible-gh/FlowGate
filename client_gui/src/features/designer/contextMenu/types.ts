@@ -21,7 +21,8 @@ export const COMMANDS = [
   'multi.editSettings', 'multi.copy', 'multi.arrange', 'multi.delete',
   'edge.disconnect', 'palette.addCard',
 ] as const
-export type MenuCommand = typeof COMMANDS[number] | 'flow.baseBranch' | 'flow.archive' | 'flow.restore'
+/** flowgate.v02gui.0003: `node.copyId` (the card's document id, as the Inspector's ID 복사) is outside the mockup's 40 as well. */
+export type MenuCommand = typeof COMMANDS[number] | 'flow.baseBranch' | 'flow.archive' | 'flow.restore' | 'node.copyId'
 /** 0006-D §5.3 후속 연결 (2-B): an existing server contract a later T connects — '연결 예정' until then. */
 export const PLANNED_COMMANDS: readonly MenuCommand[] = Object.freeze([
   'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile', 'folder.download',

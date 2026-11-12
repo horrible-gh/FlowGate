@@ -33,7 +33,7 @@ export function createDesignerMenuHost() {
   return {
     current: readonly(current),
     open(model: MenuModel, position: Point, fallbackFocus: HTMLElement | null = null): number | null {
-      const saved = makeMenu(model.target, model.items, [...COMMANDS, ...CARD_RUN_COMMANDS, 'flow.baseBranch', 'flow.archive', 'flow.restore'])
+      const saved = makeMenu(model.target, model.items, [...COMMANDS, ...CARD_RUN_COMMANDS, 'flow.baseBranch', 'flow.archive', 'flow.restore', 'node.copyId'])
       if (!saved.items.some((item) => item.kind !== 'separator')) { close(); return null }
       // A replacement must not capture the old menu button as its return target.
       const focused = captureFocusedElement()

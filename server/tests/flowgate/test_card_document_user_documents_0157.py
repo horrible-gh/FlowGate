@@ -170,6 +170,53 @@ def test_input_contract_auth_first_and_missing_document_not_created(env):
     assert unchanged(env) == before
 
 
+def test_a_plain_markdown_upload_keeps_the_current_front_matter_on_both_designer_routes(env):
+    """flowgate.v02gui.0003: an uploaded ``.md`` without front matter is saved under the document's own front matter."""
+    card_url = f"/flowgate/api/v2/flows/{F}/nodes/research/slots/instruction/document/revisions"
+    plain = "# 제목\n\n일반 Markdown 본문\n"
+    card = env.client.post(card_url, headers=USER, json={"expected_doc_id": D, "expected_revision": 0,
+                                                          "content": plain, "idempotency_key": "upload-card-1"})
+    assert card.status_code == 200 and card.json()["revision_no"] == 1, card.text
+    assert env.path.read_bytes().decode() == HEADER + "\n" + plain
+    # The same request again is the same stored request: replayed, no second revision.
+    again = env.client.post(card_url, headers=USER, json={"expected_doc_id": D, "expected_revision": 0,
+                                                           "content": plain, "idempotency_key": "upload-card-1"})
+    assert again.status_code == 200 and again.json()["replayed"] is True and again.json()["revision_no"] == 1, again.text
+    non_card()
+    other = "두 번째 본문\n"
+    saved = save(env, {"expected_revision": 1, "content": other, "idempotency_key": "upload-doc-1"})
+    assert saved[0] == 200 and saved[1]["revision_no"] == 2, saved
+    assert env.path.read_bytes().decode() == HEADER + "\n" + other
+    replay = save(env, {"expected_revision": 1, "content": other, "idempotency_key": "upload-doc-1"})
+    assert replay[0] == 200 and replay[1]["replayed"] is True and replay[1]["revision_no"] == 2, replay
+    assert len(document_revisions.list_by_doc(D)) == 2
+
+
+def test_a_file_with_its_own_front_matter_is_checked_as_sent(env):
+    """The document's own file (downloaded, edited) is stored byte for byte; another document's file is refused."""
+    card_url = f"/flowgate/api/v2/flows/{F}/nodes/research/slots/instruction/document/revisions"
+    foreign = HEADER.replace("doc_number: 0002-N", "doc_number: 0002-N\ndoc_id: " + F + ".0009-N") + "body\n"
+    partial = "---\ntitle: note\n---\nbody\n"
+    before = unchanged(env)
+    for index, content in enumerate((foreign, partial)):
+        res = env.client.post(card_url, headers=USER, json={"expected_doc_id": D, "expected_revision": 0,
+                                                             "content": content, "idempotency_key": f"own-card-{index}"})
+        assert res.status_code == 422, res.text
+        assert res.json()["error"]["params"]["errors"][0]["reason"] == "document_identity_changed"
+    empty = env.client.post(card_url, headers=USER, json={"expected_doc_id": D, "expected_revision": 0,
+                                                           "content": "", "idempotency_key": "own-card-empty"})
+    assert empty.status_code == 422, empty.text
+    assert unchanged(env) == before
+    non_card()
+    for index, content in enumerate((foreign, partial)):
+        refused = save(env, {"expected_revision": 0, "content": content, "idempotency_key": f"own-doc-{index}"})
+        assert error(refused, 422, "invalid_content")["errors"][0]["reason"] == "document_identity_changed"
+    assert unchanged(env) == before
+    own = HEADER + "내려받아 고친 본문\n"
+    saved = save(env, {"expected_revision": 0, "content": own, "idempotency_key": "own-doc-ok"})
+    assert saved[0] == 200 and env.path.read_bytes().decode() == own, saved
+
+
 def test_not_editable_documents_stay_refused(env, monkeypatch):
     non_card()
     monkeypatch.setattr(guards.document_service, "is_final_approved", lambda d: True)

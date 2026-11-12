@@ -256,6 +256,7 @@ import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, re
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import type { FlowArchiveState } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
+import { copyToClipboard } from '@/core/interaction/clipboard'
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
 import type { V01RunOutcome } from '../center/run/v01RunControl'
@@ -1585,6 +1586,7 @@ const contextMenu = useDesignerContextMenu({
     restoreFlow: (flowId) => changeArchive(flowId, false),
   },
   projectGitEnabled: (pid) => projectStore.knownGitEnabled?.[pid],
+  copyDocumentId: (docId) => { void copyToClipboard(docId) },
   openFlowBaseBranch: (pid, flowId) => {
     if (projectId.value === pid) flowBaseTarget.value = { projectId: pid, flowId }
   },
