@@ -338,6 +338,8 @@ export default {
       past_revision_notice: 'リビジョン {revision} を表示中（最新 {latest}）。この画面では編集できません。最新リビジョンに追加されたカードは表示されません。',
       tabs_label: '開いているフロー',
       close_tab: '{name} を閉じる',
+      // flowgate.v02gui.0001: a tab's run mark (its accessible name).
+      tab_run: { running: '実行中', paused: '一時停止', stopping: '停止中' },
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
       draft_action_failed: "操作を完了できませんでした。最新のフローを確認してから、もう一度お試しください。({code})",
@@ -1160,6 +1162,7 @@ export default {
       more_lines: 'あと {n} 行',
     },
     status: {
+      run_running: 'AI 呼び出し中',
       run_cancelled: 'AI 呼び出しを停止しました',
       run_no_reply: 'AI 呼び出しが返信なしで終了しました',
       run_query_unconfirmed: 'AI 呼び出しは終了しましたが、保存された返信の照会を確認できませんでした',
@@ -1204,11 +1207,13 @@ export default {
       source_mode: 'AI ソースモード',
       source: {
         read_only: '読み取り',
+        execute: '実行',
         edit: '編集',
         edit_once: '1回編集',
       },
       source_tip: {
-        read_only: 'AI はソースを読み取るだけです',
+        read_only: 'AI はソースを読み取るだけで、コマンドは実行しません',
+        execute: 'AI はテスト・ビルドなどのコマンドを実行できますが、ソースや文書は変更しません',
         edit: 'AI がソースを変更できます',
         edit_once: '次の AI 呼び出し 1 回だけソースを変更できます',
       },

@@ -122,14 +122,20 @@ describe('v9 layout (R0001 §2.3)', () => {
   it('shows the source modes as named icons with the pressed one marked', async () => {
     await mountPanel(withChat())
     const buttons = find('conv-source-mode').findAll('button')
-    expect(buttons.map((b) => b.attributes('aria-label'))).toEqual(['읽기', '편집', '1회 편집'])
+    // flowgate.v02test.0026 §7: exactly four, in this order — read → execute → edit → edit once.
+    expect(buttons.map((b) => b.attributes('data-mode'))).toEqual(['read_only', 'execute', 'edit', 'edit_once'])
+    expect(buttons.map((b) => b.attributes('aria-label'))).toEqual(['읽기', '실행', '편집', '1회 편집'])
     expect(buttons.map((b) => b.attributes('title'))).toEqual([
-      'AI가 소스를 읽기만 합니다',
+      'AI가 소스를 읽기만 합니다. 명령은 실행하지 않습니다',
+      'AI가 테스트·빌드 등 명령을 실행할 수 있습니다. 소스와 문서는 수정하지 않습니다',
       'AI가 소스를 수정할 수 있습니다',
       '다음 AI 호출 한 번만 소스를 수정할 수 있습니다',
     ])
-    expect(buttons.map((b) => b.attributes('aria-pressed'))).toEqual(['true', 'false', 'false'])
+    expect(buttons.map((b) => b.attributes('aria-pressed'))).toEqual(['true', 'false', 'false', 'false'])
     expect(buttons[0].find('svg').exists()).toBe(true)
+    // The execute button is an icon of the same kind as read / edit (same .csm button style).
+    expect(buttons[1].find('svg').exists()).toBe(true)
+    expect(buttons[1].classes()).toEqual(buttons[2].classes())
   })
 
   it('keeps mention copy and AI call in the ⋯ menu', async () => {

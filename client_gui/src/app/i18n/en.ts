@@ -338,6 +338,8 @@ export default {
       past_revision_notice: 'Showing revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',
       tabs_label: 'Open flows',
       close_tab: 'Close {name}',
+      // flowgate.v02gui.0001: a tab's run mark (its accessible name).
+      tab_run: { running: 'Running', paused: 'Paused', stopping: 'Stopping' },
       graph_loading: 'Loading graph',
       graph_load_failed: 'Could not load the graph',
       draft_action_failed: "The action could not be completed. Check the latest flow and try again. ({code})",
@@ -1160,6 +1162,7 @@ export default {
       more_lines: '{n} more lines',
     },
     status: {
+      run_running: 'AI call running',
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',
       run_query_unconfirmed: 'The AI call ended, but the saved reply could not be verified',
@@ -1204,11 +1207,13 @@ export default {
       source_mode: 'AI source mode',
       source: {
         read_only: 'Read',
+        execute: 'Execute',
         edit: 'Edit',
         edit_once: 'Edit once',
       },
       source_tip: {
-        read_only: 'The AI only reads the source',
+        read_only: 'The AI only reads the source and runs no commands',
+        execute: 'The AI may run commands such as tests and builds, but does not change the source or documents',
         edit: 'The AI may change the source',
         edit_once: 'The AI may change the source on the next call only',
       },

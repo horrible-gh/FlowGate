@@ -135,7 +135,13 @@ describe('run adoption on a slow server (flowgate.v02.0084 T#2)', () => {
     await none.session.invokeAi()
     expect(none.source.startChatRun).toHaveBeenCalledTimes(1 + START_RESEND_MAX)
     expect(none.session.state.runId).toBeNull()
-    expect(none.session.state.notice).toMatchObject({ code: 'invoke_failed', detail: 'timeout of 30000ms exceeded' })
+    // flowgate.v02test.0024 B: a line of the chat's history; no answer, so this browser keeps it (not the server).
+    expect(none.session.state.notice).toBeNull()
+    expect(none.session.state.activities.filter((a) => a.kind === 'status')).toMatchObject([
+      { code: 'invoke_failed', text: 'timeout of 30000ms exceeded', chatError: true }])
+    expect(none.source.recordChatError).not.toHaveBeenCalled()
+    expect(Object.keys(localStorage).some((key) => key.includes('.chat.errors.'))).toBe(true)
+    localStorage.clear()
   })
 
   it('neither resends nor re-checks a 4xx decision', async () => {
@@ -148,7 +154,10 @@ describe('run adoption on a slow server (flowgate.v02.0084 T#2)', () => {
     expect(source.startChatRun).toHaveBeenCalledTimes(1)
     expect(source.fetchActiveChatRun).toHaveBeenCalledTimes(opened)
     expect(session.state.runId).toBeNull()
-    expect(session.state.notice).toMatchObject({ code: 'invoke_failed', detail: 'bad request' })
+    // flowgate.v02test.0024 B: a line of the chat's history, kept by the server (it answered).
+    expect(session.state.notice).toBeNull()
+    expect(session.state.activities.filter((a) => a.kind === 'status')).toMatchObject([{ code: 'invoke_failed', text: 'bad request' }])
+    expect(source.recordChatError).toHaveBeenCalledTimes(1)
   })
 
   it('names every press anew, so a deliberate second call is its own run', async () => {

@@ -1,7 +1,8 @@
 <template>
   <ModelessShell
+    ref="shellRef"
     :open="open && result !== null"
-    :title="t('gui.runResult.detail_title')"
+    :title="windowTitle"
     :initial-x="initialX"
     :initial-y="initialY"
     :initial-width="initialWidth"
@@ -10,7 +11,11 @@
     :min-height="320"
     @close="emit('close')"
   >
-    <section v-if="result" class="run-detail" data-test="run-result-detail-window" :data-state="result.state">
+    <!-- flowgate.v02gui.0001: the titlebar names the Flow the result is of (a long name ends in an ellipsis). -->
+    <template #header>
+      <span :title="windowTitle" data-test="run-result-detail-title">{{ windowTitle }}</span>
+    </template>
+    <section v-if="result" ref="contentRef" class="run-detail" data-test="run-result-detail-window" :data-state="result.state">
       <div class="run-detail-summary" data-test="run-result-summary">{{ summaryLine(tr, has, result) }}</div>
       <div class="run-detail-meta">
         <div v-for="role in ROLES" :key="role" class="run-detail-meta-item" :data-role="role">
@@ -67,7 +72,7 @@
 // whose own output was not kept says so, and the AI run's final output shown on its last launch is labelled as such. Everything scrolls inside the
 // window, thousands of lines and many messages alike (each card lays out only when near the view). ModelessShell, as the
 // 1st window; the wire is the 0029-TR mock's detailWindow.
-import { ref, shallowRef, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
@@ -76,8 +81,10 @@ import { createMarkdownRenderer } from '@/core/markdown/markdownRenderer'
 import type { FlowCommandResult } from '@/features/project'
 import { installRunResultMessages } from './messages'
 import { bodyNote, copyText, eventLine, modelLabel, roleLabel, roleUseLabel, summaryLine, timeLabel, type HasKey, type Translate } from './runResultView'
+import { useFitModelessHeight, type FittableShell } from './fitModelessHeight'
 
-const props = defineProps<{ result: FlowCommandResult | null; open: boolean }>()
+// flowgate.v02gui.0001: `flowName` — the name of the Flow the result is of (the caller's, taken when the result showed).
+const props = defineProps<{ result: FlowCommandResult | null; open: boolean; flowName?: string | null }>()
 const emit = defineEmits<{ close: [] }>()
 
 const ROLES = ['instruction', 'execution', 'review'] as const
@@ -92,9 +99,20 @@ const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth
 const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight
 const initialWidth = Math.max(360, Math.min(780, viewportWidth - 30))
 // flowgate.v02test.0015: no 690 cap — the messages and their logs use the screen's height (less 40).
-const initialHeight = Math.max(320, viewportHeight - 40)
+// flowgate.v02gui.0001: that is now the cap only — few messages fit the window to their height (centred again); many
+// still reach the screen less 40 and scroll.
+const VIEWPORT_MARGIN = 40
+const initialHeight = Math.max(320, viewportHeight - VIEWPORT_MARGIN)
 const initialX = Math.max(8, Math.round(viewportWidth / 2 - initialWidth / 2 + 40))
 const initialY = Math.max(8, Math.round((viewportHeight - initialHeight) / 2))
+
+const shellRef = ref<FittableShell | null>(null)
+const contentRef = ref<HTMLElement | null>(null)
+useFitModelessHeight(shellRef, contentRef, VIEWPORT_MARGIN)
+
+const windowTitle = computed(() =>
+  props.flowName ? t('gui.runResult.detail_title_with_flow', { name: props.flowName }) : t('gui.runResult.detail_title'),
+)
 
 const renderer = createMarkdownRenderer({ copyLabel: () => t('gui.document_window.viewer.copy_code'), safe: true })
 // One parse per body and language: a long body is never parsed again on a re-render.
@@ -134,7 +152,9 @@ async function onContentClick(event: MouseEvent) {
 </script>
 
 <style scoped>
-.run-detail { display: flex; flex-direction: column; min-height: 100%; padding: 14px 16px; box-sizing: border-box; color: var(--fg2-text); font-size: 13px; }
+/* flowgate.v02gui.0001: its own height (no min-height: 100%, which the fit would read back as content) and no padding of
+   its own — the shell's body already pads it. */
+.run-detail { display: flex; flex-direction: column; box-sizing: border-box; color: var(--fg2-text); font-size: 13px; }
 .run-detail-summary { margin-bottom: 12px; line-height: 1.6; }
 .run-detail-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
 .run-detail-meta-item { min-width: 0; padding: 8px 10px; border: 1px solid var(--fg2-line); border-radius: var(--fg2-control-radius); background: var(--fg2-control-surface-flat); }
@@ -146,9 +166,10 @@ async function onContentClick(event: MouseEvent) {
 .run-detail-copy-state { font-weight: 400; color: var(--fg2-muted); }
 .run-detail-copy-state.is-done { color: var(--fg2-status-success-fg); }
 .run-detail-copy-state.is-failed { color: var(--fg2-status-danger-fg); }
-.run-detail-empty { color: var(--fg2-muted); text-align: center; padding: 20px; }
+.run-detail-empty { margin: 0; color: var(--fg2-muted); text-align: center; padding: 20px; }
 .run-detail-message { margin: 0 0 12px; border: 1px solid var(--fg2-line); border-radius: 8px; overflow: hidden; background: var(--fg2-panel);
   content-visibility: auto; contain-intrinsic-size: auto 160px; }
+.run-detail-message:last-child { margin-bottom: 0; }
 .run-detail-message.is-event { background: transparent; }
 .run-detail-message.is-error { border-color: var(--fg2-status-danger-border, #7a3434); }
 .run-detail-message-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--fg2-line);

@@ -377,9 +377,14 @@ def test_projection_failure_still_notifies_after_commit_and_reports_500(chat, mo
 
 def test_cli_mention_and_descriptors_cover_contract_without_command_capability():
     from flowgate.conversation import integration
-    tools = integration.provide_chat_tools({"action_scope": "chat"})
-    assert [t["name"] for t in tools] == [chat_tools.READ_TOOL, chat_tools.REVISE_TOOL, chat_tools.READ_DOC_TOOL,
-                                          chat_tools.REVISE_DOC_TOOL, chat_tools.CREATE_DOC_TOOL]
+    offered = integration.provide_chat_tools({"action_scope": "chat"})
+    # flowgate.v02test.0023: the Graph reads (0145), the control tower tools and the attachment request
+    # (chat.0017) come first; the card document contract is the last five.
+    assert [t["name"] for t in offered] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards",
+                                            "start_flow_run", "request_attachment_upload",
+                                            chat_tools.READ_TOOL, chat_tools.REVISE_TOOL, chat_tools.READ_DOC_TOOL,
+                                            chat_tools.REVISE_DOC_TOOL, chat_tools.CREATE_DOC_TOOL]
+    tools = offered[-5:]
     assert all(t["completion"] is False and callable(t["call_handler"]) for t in tools)
     doc_section = tools[3]["cli_mention"]("http://host/flowgate/api/v1/", "raw")
     for word in ("/api/v2/chat/documents/{doc_id}", "/revisions", "POST http://host/flowgate/api/v2/chat/documents",
@@ -542,7 +547,8 @@ def test_rejected_saves_preserve_claim_token_document_and_guard(chat, monkeypatc
     if case == "revision":
         body["expected_revision"] = 7
     elif case == "content":
-        body["content"] = "no required document identity"
+        # 0002-CH turn 48: a body without front matter keeps the current one; a changed identity is still refused
+        body["content"] = "---\nproject: flowgate\nmodule: v02\ngroup: 0127\ntype: T\ndoc_number: 0002-N\n---\nchanged"
     else:
         def deny(group_id, principal, operation):
             assert group_id == F and principal.kind == "human" and principal.user_id == "user"
@@ -558,6 +564,21 @@ def test_rejected_saves_preserve_claim_token_document_and_guard(chat, monkeypatc
     error(result, status, code)
     assert (business_state(chat.env), token_state(chat)) == before
     assert chat.env.events == [] and chat_gate.state(RUN_ID)[1] == 0
+
+
+@pytest.mark.parametrize("via", ["api", "cli"])
+def test_a_body_without_front_matter_keeps_the_current_front_matter(chat, monkeypatch, via):
+    """0002-CH turn 48: the chat's line edit, like its doc_id edit, keeps the document's front matter when the body has
+    none (the test server chat failed once with 422 document_identity_changed before sending it again)."""
+    monkeypatch.setattr(guards.mutation_policy, "assert_group_mutation_allowed", lambda *a: None)
+    body = request_body(chat, content="## body only\n")
+    if via == "api":
+        result, _ = api(chat, True, {**COORDS, **body})
+    else:
+        response = cli(chat, True, body)
+        result = response.status_code, response.json()
+    assert result[0] == 200 and result[1]["revision_no"] == 1, result
+    assert chat.env.path.read_text(encoding="utf-8") == HEADER + "\n## body only\n"
 
 
 def test_cli_chat_routes_use_main_composition_and_human_policy(chat, composition, monkeypatch):

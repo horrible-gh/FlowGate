@@ -558,7 +558,8 @@ describe('0151 T-A1 server assessment and status lifecycle (§2.8)', () => {
     expect(codes(session)).toEqual([])
     expect(session.state.runId).toBe('r1')
     expect(session.running.value).toBe(true)
-    expect(session.timeline.value.map((item) => item.key)).toEqual(['turn:1', 'turn:2'])
+    // flowgate.v02test.0024 D: the one run in progress line stays after the early reply until the run ends.
+    expect(session.timeline.value.map((item) => item.key)).toEqual(['turn:1', 'turn:2', 'status:local-status-run-running'])
     await time.tick()
     expect(codes(session)).toEqual([])
     expect(session.state.runId).toBeNull()

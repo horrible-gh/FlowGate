@@ -393,8 +393,8 @@ class TestResolveSettings:
             "context_turns_min": 1,
             "context_turns_max": css.CONTEXT_TURNS_MAX,
             "context_checkpoint_fallback_turns": 5,
-            # 0515 T0009 §3.2/D0006 §2.2.
-            "source_access_mode": ["read_only", "edit", "edit_once"],
+            # 0515 T0009 §3.2/D0006 §2.2; "execute" (commands only) -- flowgate.v02test.0026.
+            "source_access_mode": ["read_only", "execute", "edit", "edit_once"],
             # 0670 T0004 / flowgate.v02.0032 T#1.
             "command_policy": ["always_approve", "user_approval", "reject"],
         }

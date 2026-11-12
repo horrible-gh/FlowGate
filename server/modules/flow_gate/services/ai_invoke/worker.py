@@ -1398,6 +1398,11 @@ _CHAT_HISTORY_TOOL_SCHEMA = {
 }
 
 
+# The refusal code of a run_command call from a chat run that was not offered the tool (a
+# read-only token): the same code commands._authorize_run / chat_command_service give.
+_CHAT_COMMAND_WITHHELD = "chat_command_capability_required"
+
+
 def _chat_tool_definitions() -> list[dict]:
     """API-chat tools: optional discovery/history reads followed by one reply."""
     return [
@@ -1523,6 +1528,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                                if callable(tool.get("call_handler"))}
     chat_tool_own_validation = {tool["name"] for tool in chat_tools if tool.get("own_validation") is True}
     chat_tool_specs: Optional[list[dict]] = None
+    # Without a chat tool port, the in-module run_command is offered only to a run whose
+    # issued token may write source; a read-only chat never sees it (the old service's
+    # _require_read_write still refuses any call).
+    chat_commands_offered = bool(is_chat and not chat_tools
+                                 and chat_command_service.token_allows_commands(run))
+    run_command_offered = chat_commands_offered or chat_command_service.TOOL_NAME in chat_tool_handlers
     if chat_tools:
         # The history/help reads of _chat_tool_definitions stay; the port's tools replace
         # its in-module run_command, and the reply tool closes the list.
@@ -1599,9 +1610,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 "The server fetched this invocation's configured conversation context window. "
                 "Reply from it directly. If `older_history` is present and earlier context is "
                 "needed, call `read_chat_history` with its `before_seq`; `read_help` with "
-                "item=document_access explains the paging contract. When the work needs a test, "
-                "build or git command, call `run_command`; its result (or the user's refusal) "
-                "comes back here and you continue from it.\n"
+                "item=document_access explains the paging contract."
+                # Only a run offered run_command is told about it (never a read-only chat).
+                + (" When the work needs a test, build or git command, call `run_command`; its "
+                   "result (or the user's refusal) comes back here and you continue from it."
+                   if run_command_offered else "")
+                + "\n"
                 + json.dumps(chat_context, ensure_ascii=False)
                 + ("\n\n" + "\n".join(chat_hints) if chat_hints else "")
             ),
@@ -1636,6 +1650,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             tool_name, tool_desc, tool_schema = tool_specs, "", {}
         elif is_chat:
             tool_specs = _chat_tool_definitions()
+            if not chat_commands_offered:
+                tool_specs = [spec for spec in tool_specs if spec["name"] != chat_command_service.TOOL_NAME]
             tool_name, tool_desc, tool_schema = tool_specs, "", {}
         elif is_sequence_edit:
             tool_name, tool_desc, tool_schema = (
@@ -1791,6 +1807,13 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             for call in tool_calls:
                 try:
                     spec = exposed.get(call.get("name"))
+                    if spec is None and is_chat and call.get("name") == chat_command_service.TOOL_NAME:
+                        # Withheld from a read-only chat, asked for anyway: the same explicit
+                        # refusal the CLI transport gives, in this same conversation; nothing runs.
+                        raise api_server_tools.ToolError(
+                            403, _CHAT_COMMAND_WITHHELD,
+                            "this AI chat run was issued without source write access; no command was run",
+                        )
                     if spec is None:
                         raise api_server_tools.ToolError(422, "invalid_tool_call")
                     tool_input = call.get("input")
@@ -1819,6 +1842,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     _status, resp = api_server_tools.error_payload(
                         call.get("name") or "tool_call", validation_error
                     )
+                    if validation_error.reason == _CHAT_COMMAND_WITHHELD:
+                        resp["error"]["code"] = _CHAT_COMMAND_WITHHELD
                     conversation.append(_svc()._tool_result_msg(
                         kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                     ))

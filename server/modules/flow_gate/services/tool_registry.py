@@ -870,6 +870,29 @@ def kind_for_token(token_rec: dict) -> tuple[str, Optional[str]]:
     return kind_for_step(action_scope, step_type, lookup_failed)
 
 
+# flowgate.v02test.0026 (0001-B §7): what a chat token may do with FlowGate commands.
+COMMAND_ACCESS_EDIT = "edit"          # read_write token (edit, or an edit_once that won its claim)
+COMMAND_ACCESS_EXECUTE = "execute"    # execute-mode token: commands only, source stays read
+
+
+def command_access_for_token(token_rec: Optional[dict]) -> Optional[str]:
+    """The command capability fixed on a chat token: ``edit`` | ``execute`` | None.
+
+    ``edit`` is exactly ``kind_for_token == read_write`` (the 0180 rule). ``execute`` is a
+    separate capability (``tokens.command_access``) that only ever rides on a
+    ``source_access == "read"`` chat token, so it never widens source or document access:
+    every source/document gate keeps reading ``kind_for_token`` and sees ``read``. Anything
+    else -- non-chat, legacy, damaged, or a combination no issue path writes -- is None.
+    """
+    if not token_rec or token_rec.get("action_scope") != "chat":
+        return None
+    if kind_for_token(token_rec)[0] == "read_write":
+        return COMMAND_ACCESS_EDIT
+    if token_rec.get("source_access") == "read" and token_rec.get("command_access") == COMMAND_ACCESS_EXECUTE:
+        return COMMAND_ACCESS_EXECUTE
+    return None
+
+
 def _list_notes(kind: str, locale: str, reason: Optional[str], user_jwt: bool) -> list[str]:
     notes = NOTES[locale]
     if kind == "read_write":

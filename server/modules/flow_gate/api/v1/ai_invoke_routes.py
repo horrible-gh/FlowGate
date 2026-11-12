@@ -720,6 +720,8 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 # far back the worker is told to start reading.
                 user_id=user_id,
                 source_access=_chat_token_rec.get("source_access"),
+                # flowgate.v02test.0026: "execute" for an execute-mode chat token.
+                command_access=_chat_token_rec.get("command_access"),
                 # flowgate.v02.0032 T#1: this token belongs to a live run, so the CLI
                 # provider is told how to request commands for it (chat run hook port).
                 command_execution=True,

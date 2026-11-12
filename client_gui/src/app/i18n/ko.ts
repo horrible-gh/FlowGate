@@ -341,6 +341,8 @@ export default {
       past_revision_notice: '개정 {revision} 표시 중 (최신 {latest}). 이 화면에서는 편집할 수 없습니다. 최신 개정에 추가된 카드는 표시되지 않습니다.',
       tabs_label: '열린 플로우',
       close_tab: '{name} 닫기',
+      // flowgate.v02gui.0001: a tab's run mark (its accessible name).
+      tab_run: { running: '실행 중', paused: '일시정지', stopping: '중지 중' },
       graph_loading: '그래프를 불러오는 중',
       graph_load_failed: '그래프를 불러오지 못했습니다',
       draft_action_failed: "작업을 완료하지 못했습니다. 최신 플로우를 확인한 뒤 다시 시도하세요. ({code})",
@@ -1171,6 +1173,7 @@ export default {
       more_lines: '{n}줄 더 있음',
     },
     status: {
+      run_running: 'AI 호출 중',
       run_cancelled: 'AI 호출을 중지했습니다',
       run_no_reply: 'AI 호출이 답변 없이 끝났습니다',
       run_query_unconfirmed: 'AI 실행은 종료되었지만 저장 답변 조회를 확인하지 못했습니다',
@@ -1215,11 +1218,13 @@ export default {
       source_mode: 'AI 소스 모드',
       source: {
         read_only: '읽기',
+        execute: '실행',
         edit: '편집',
         edit_once: '1회 편집',
       },
       source_tip: {
-        read_only: 'AI가 소스를 읽기만 합니다',
+        read_only: 'AI가 소스를 읽기만 합니다. 명령은 실행하지 않습니다',
+        execute: 'AI가 테스트·빌드 등 명령을 실행할 수 있습니다. 소스와 문서는 수정하지 않습니다',
         edit: 'AI가 소스를 수정할 수 있습니다',
         edit_once: '다음 AI 호출 한 번만 소스를 수정할 수 있습니다',
       },

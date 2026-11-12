@@ -18,6 +18,7 @@ import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, typ
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import { buildTimeline, mergeTurns, replaceServerActivities, upsertActivity, type PendingTurn, type TimelineItem } from './timeline'
 import { runBelongsToChat, runBodyState, runStatusLines, type TurnReadResult } from './runAssessment'
+import { chatErrorActivity, keepLocalChatError, newChatErrorId, readLocalChatErrors, redactChatError, type ChatErrorRecord } from './chatErrors'
 import type {
   AiRunState,
   ChatProvider,
@@ -32,7 +33,10 @@ import type {
   ConversationParticipant,
   ConversationScope,
   ConversationTurn,
+  ChatSourceAccess,
+  RunDisplay,
   SourceAccessMode,
+  StatusActivity,
   StatusTone,
 } from './types'
 
@@ -132,6 +136,11 @@ export interface ConversationState {
   creatingChat: boolean
   renaming: boolean
   runId: string | null
+  /**
+   * flowgate.v02test.0024 D: what the one run in progress line shows while `runId` is set — the AI connection name
+   * and the read / edit access, from the call itself first and then from the server's run detail (the applied value).
+   */
+  runDisplay: RunDisplay | null
   cancelling: boolean
   /** Command ids whose decision is in flight. */
   deciding: string[]
@@ -308,6 +317,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     creatingChat: false,
     renaming: false,
     runId: null,
+    runDisplay: null,
     cancelling: false,
     deciding: [],
     changeWindowEpoch: 0,
@@ -388,8 +398,16 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
 
   const activeChat = computed(() => state.chats.find((c) => c.id === state.activeChatId) ?? null)
-  const timeline = computed(() => buildTimeline(state.turns, state.activities, state.pending, state.readSeq))
+  // flowgate.v02test.0024 D: while a run goes on, ONE status line says which AI runs it and with which access. It is
+  // untimed — the newest thing in the chat, after every turn — and goes the moment the run ends (runId null), when the
+  // run's own result lines take over.
+  const timeline = computed(() => {
+    const display = state.runId !== null ? state.runDisplay : null
+    const activities = display ? [...state.activities, runLine(display)] : state.activities
+    return buildTimeline(state.turns, activities, state.pending, state.readSeq)
+  })
   const running = computed(() => state.runId !== null)
+  watch(() => state.runId, (runId) => { if (runId === null) state.runDisplay = null }, { flush: 'sync' })
   const hasProviders = computed(() => state.providersStatus === 'ready' && state.providers.length > 0)
 
   function notify(tone: StatusTone, code: string, detail: string | null = null): void {
@@ -404,6 +422,68 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!disposed && gen === chatGen) notify(tone, code, detail)
   }
 
+  function runLine(display: DeepReadonly<RunDisplay> | RunDisplay): StatusActivity {
+    return {
+      kind: 'status', id: 'local-status-run-running', chatId: state.activeChatId ?? undefined, createdAt: null,
+      tone: 'info', code: 'run_running', text: null, run: { providerName: display.providerName, access: display.access },
+    }
+  }
+
+  function providerName(providerId: string | null | undefined): string | null {
+    return providerId ? state.providers.find((p) => p.id === providerId)?.name ?? null : null
+  }
+
+  /** The access a call made now gets: the user's stored mode decides the run's token (an edit once is an edit). */
+  function accessOfMode(mode: SourceAccessMode): ChatSourceAccess {
+    return mode === 'read_only' ? 'read' : 'read_write'
+  }
+
+  /** The server's run detail is the applied value; what it does not say yet keeps what the line already shows. */
+  function showRunDetail(run: AiRunState): void {
+    const shown = state.runDisplay
+    state.runDisplay = {
+      providerName: run.providerName ?? providerName(run.providerId) ?? shown?.providerName ?? null,
+      access: run.sourceAccess ?? shown?.access ?? null,
+    }
+  }
+
+  /**
+   * flowgate.v02test.0024 B: a refused send / AI call / command decision becomes a line of this chat's history (at its
+   * time) instead of the notice above the composer, and is recorded so F5 and reopening the chat bring it back: the
+   * server keeps what it answered (4xx / 5xx); what got no answer — or whose record could not be stored — stays in
+   * this browser. Only the code, the server's words and the time; never a token or a header.
+   */
+  function recordChatError(chatId: string, gen: number, code: string, error: unknown, withDetail = true): void {
+    if (!isCurrentChat(chatId, gen)) return
+    const record: ChatErrorRecord = {
+      id: newChatErrorId(), code, occurredAt: new Date().toISOString(),
+      message: withDetail && error != null ? redactChatError(messageOf(error)) : '',
+    }
+    state.activities = upsertActivity(state.activities, chatErrorActivity(chatId, record))
+    void persistChatError(chatId, record, error)
+  }
+
+  async function persistChatError(chatId: string, record: ChatErrorRecord, error: unknown): Promise<void> {
+    const userId = draftUserId()
+    const answered = error instanceof ConversationRequestError && error.status !== null
+    if (answered && source.recordChatError) {
+      try {
+        await source.recordChatError(chatId, record)
+        return
+      } catch {
+        // The server could not take it: this browser keeps it instead.
+      }
+    }
+    keepLocalChatError(userId, chatId, record)
+  }
+
+  /** The errors this browser kept for the chat (the server's come with its activity read). */
+  function restoreLocalChatErrors(chatId: string): void {
+    for (const record of readLocalChatErrors(draftUserId(), chatId)) {
+      state.activities = upsertActivity(state.activities, chatErrorActivity(chatId, record))
+    }
+  }
+
   function runStatusPrefix(chatId: string, runId: string): string {
     return `local-status-run:${encodeURIComponent(chatId)}:${encodeURIComponent(runId)}:`
   }
@@ -415,7 +495,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
     for (const line of runStatusLines(run, body, read.status)) {
       state.activities = upsertActivity(state.activities, {
         kind: 'status', id: prefix + line.slot, chatId, runId: run.runId, runResult: { ...run },
-        createdAt: run.finishedAt ?? null, tone: line.tone, code: line.code, text: line.text,
+        // flowgate.v02test.0024 B: a result line sits at its run's time like any entry of the history. Without a
+        // finish time the start places it; only a run with neither stays untimed (after every turn).
+        createdAt: run.finishedAt ?? run.startedAt ?? null, tone: line.tone, code: line.code, text: line.text,
       })
     }
     if (body === 'present' && trackedRunId === run.runId && !settingsRefreshedRuns.has(run.runId)) {
@@ -426,10 +508,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
-  function showRunUnconfirmed(chatId: string, runId: string): void {
+  function showRunUnconfirmed(chatId: string, runId: string, startedAt: string | null = null): void {
     const id = runStatusPrefix(chatId, runId) + 'result'
     state.activities = upsertActivity(state.activities, {
-      kind: 'status', id, chatId, runId, createdAt: null, tone: 'warning', code: 'run_result_unconfirmed', text: null,
+      kind: 'status', id, chatId, runId, createdAt: startedAt, tone: 'warning', code: 'run_result_unconfirmed', text: null,
     })
   }
 
@@ -682,6 +764,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const gen = chatGen
     clearChat()
     state.activeChatId = chatId
+    restoreLocalChatErrors(chatId)
     state.pending = outbox.get(ownerKey(chatId)) ?? []
     state.sending = progress.get(ownerKey(chatId))?.phase === 'sending'
     state.turnsStatus = 'loading'
@@ -1202,7 +1285,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         const status = error instanceof ConversationRequestError ? error.status : null
         trace.mark('turn_end', { docId: chatId, attempt: attempt + 1, result: 'error', ...(status === null ? {} : { status }) })
         if ((status != null && [400, 404, 409, 422].includes(status)) || attempt === SEND_RETRY_MAX || !isCurrentChat(chatId, gen)) {
-          if (isCurrentChat(chatId, gen)) notify('danger', 'send_failed', messageOf(error))
+          recordChatError(chatId, gen, 'send_failed', error)
           return false
         }
       }
@@ -1341,7 +1424,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         // 404: the re-read drops the card if the server no longer has it.
         // Network / 5xx: the card is pending again and can be pressed again.
         if (status === 409) notify('info', 'command_already_handled')
-        else if (status !== 404) notify('danger', 'command_decision_failed', messageOf(error))
+        else if (status !== 404) recordChatError(chatId, gen, 'command_decision_failed', error)
       }
     } finally {
       state.deciding = state.deciding.filter((id) => id !== commandId)
@@ -1413,6 +1496,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   async function trackRun(chatId: string, runId: string, gen: number, poll: LivePoll): Promise<void> {
     state.runId = runId
+    // flowgate.v02test.0024 D: an adopted run (another tab, F5, a 409 run_in_progress) shows its line at once; the
+    // AI name and the access come with its first detail read.
+    if (!state.runDisplay) state.runDisplay = { providerName: null, access: null }
     trackedRunId = runId
     runChecks.set(runId, (runChecks.get(runId) ?? 0) + 1)
     const current = () => isCurrentChat(chatId, gen) && state.runId === runId
@@ -1441,6 +1527,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     // poll, FINAL_TURN_READ_ATTEMPTS times at most. When the budget ran out and the server no longer lists the run,
     // one more detail read decides — normally the finish, judged like any other — and only a run still not terminal
     // then is given up (run_result_unconfirmed).
+    let startedAt: string | null = null
     let polls = 0
     let budget = RUN_POLL_MAX
     let unanswered = 0
@@ -1494,6 +1581,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       }
       if (!current()) return
       seen = true
+      startedAt = run.startedAt ?? startedAt
       if (!runBelongsToChat(run, runId, chatId)) {
         const liveWithoutDoc = run.status === 'running' && run.runId === runId && run.docRef == null &&
           run.actionScope === 'chat' && run.groupId === chatId.split('.').slice(0, 3).join('.')
@@ -1520,6 +1608,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         }
       }
       if (run.status === 'running') {
+        showRunDetail(run)
         await readTurnPages(chatId, state.turns.at(-1)?.seq ?? 0, current)
         if (!current()) return
         await loadActivities(chatId, gen)
@@ -1537,7 +1626,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       return
     }
     if (current()) {
-      showRunUnconfirmed(chatId, runId)
+      showRunUnconfirmed(chatId, runId, startedAt)
       state.runId = null
       state.cancelling = false
       await loadFinalActivities(chatId, gen)
@@ -1564,6 +1653,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const gen = chatGen
     const stale = () => disposed || gen !== chatGen
     state.runId = 'starting'
+    // flowgate.v02test.0024 D: from the press on — the AI this call is pinned to and the access the user's mode gives
+    // it; the run detail later replaces both with what the server applied.
+    state.runDisplay = { providerName: providerName(providerId), access: accessOfMode(state.settings.sourceAccessMode) }
     // flowgate.v02.0152: this press, named once. Every /start it sends carries the same id, so the server can answer
     // a resend with the run the first request admitted — running or already finished — instead of a second run.
     const requestId = newStartRequest()
@@ -1608,8 +1700,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
         }
         state.runId = null
         // flowgate.v02.0061 T#14: an edit / edit-once call while the Flow's Graph run is locked (WP answer 2).
-        if (isSourceLocked(error)) notify('warning', 'source_locked')
-        else notify('danger', 'invoke_failed', messageOf(error))
+        if (isSourceLocked(error)) recordChatError(chatId, gen, 'source_locked', error, false)
+        else recordChatError(chatId, gen, 'invoke_failed', error)
         return
       }
     }
@@ -1674,7 +1766,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       if (gen === chatGen) void loadSettings(settingsScope)
       return mention
     } catch (error) {
-      if (isSourceLocked(error)) notifyIfCurrent(gen, 'warning', 'source_locked')
+      if (isSourceLocked(error)) recordChatError(chatId, gen, 'source_locked', error, false)
       else notifyIfCurrent(gen, 'danger', 'mention_failed', messageOf(error))
       return null
     } finally {

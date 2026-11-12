@@ -1,5 +1,6 @@
 import { vi } from 'vitest'
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS } from '@/features/conversation/api'
+import { chatErrorActivity, type ChatErrorRecord } from '@/features/conversation/chatErrors'
 import type { ConversationSource } from '@/features/conversation/conversationSource'
 import type {
   AiRunState,
@@ -32,6 +33,8 @@ export interface FakeData {
   diffs: Record<string, RunFileDiff>
   /** flowgate.v02.0152: client_request_id → the run the "server" admitted for that press (a resend gets it back). */
   admitted: Record<string, string>
+  /** flowgate.v02test.0024 B: chat id → the chat errors the "server" recorded (read back with the activities). */
+  chatErrors: Record<string, ChatErrorRecord[]>
 }
 
 export function turn(seq: number, speaker: 'user' | 'ai', body: string, createdAt: string | null = null, extra: Partial<ConversationTurn> = {}): ConversationTurn {
@@ -51,6 +54,7 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
     runDetails: init.runDetails ?? {},
     diffs: init.diffs ?? {},
     admitted: init.admitted ?? {},
+    chatErrors: init.chatErrors ?? {},
   }
   let nextSeq = 100
   const owedTitles = new Map<string, string>(data.chats.filter((c) => c.autoTitle?.state === 'owed').map((c) => [c.id, c.autoTitle!.provisionalTitle]))
@@ -105,7 +109,10 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
     }),
     markRead: vi.fn(async (_chatId: string, seq: number) => seq),
     supportsActivities: true,
-    listActivities: vi.fn(async (chatId: string) => (data.activities[chatId] ?? []).map((a) => ({ ...a }))),
+    listActivities: vi.fn(async (chatId: string) => [
+      ...(data.activities[chatId] ?? []).map((a) => ({ ...a })),
+      ...(data.chatErrors[chatId] ?? []).map((record) => chatErrorActivity(chatId, record)),
+    ]),
     decideCommand: vi.fn(async (chatId: string, commandId: string, decision: 'approve' | 'reject') => {
       const list = data.activities[chatId] ?? []
       const at = list.findIndex((a) => a.id === commandId)
@@ -164,6 +171,11 @@ export function createFakeSource(init: Partial<FakeData> = {}): { source: Conver
       return { ...data.settings, sourceAccessScope: scope ?? null }
     }),
     issueChatMention: vi.fn(async (chatId: string) => `@mention ${chatId}`),
+    // flowgate.v02test.0024 B: like the server, one record per id (a repeat is answered, not stored twice).
+    recordChatError: vi.fn(async (chatId: string, record: ChatErrorRecord) => {
+      const list = (data.chatErrors[chatId] ??= [])
+      if (!list.some((r) => r.id === record.id)) list.push({ ...record })
+    }),
   }
   return { source, data }
 }

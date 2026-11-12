@@ -125,6 +125,7 @@ import {
   activateFlowTab,
   closeFlowTab,
   findFlowTab,
+  moveFlowTab,
   openFlowTab,
   type FlowTab,
   type FlowTabsState,
@@ -317,6 +318,11 @@ export interface DesignerCenterSession {
   activateFlow(flowId: string): void
   /** Closes a tab and drops its Graph, Viewport and Selection. */
   closeFlow(flowId: string): void
+  /**
+   * flowgate.v02gui.0001: moves an open tab to `toIndex` in screen order (tab drag / Alt+←→). Only the order changes —
+   * the active tab, Graphs and views stay; the Designer session storage keeps the new order.
+   */
+  moveFlow(flowId: string, toIndex: number): void
   /** Reads the Graph of an open Flow again. */
   retryGraph(flowId: string): void
   /**
@@ -1144,6 +1150,10 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     applyTabs(activateFlowTab(tabsState(), flowId))
   }
 
+  function moveFlow(flowId: string, toIndex: number) {
+    applyTabs(moveFlowTab(tabsState(), flowId, toIndex))
+  }
+
   function closeFlow(flowId: string) {
     if (!findFlowTab(tabsState(), flowId)) return
     layoutQueue.flush(flowId)
@@ -1449,6 +1459,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     openFlow,
     activateFlow,
     closeFlow,
+    moveFlow,
     retryGraph,
     refreshFlow,
     selectNode,

@@ -140,6 +140,29 @@ const VIEWED_DEBOUNCE_MS = 1000
 const scrollEl = ref<HTMLElement | null>(null)
 let pinned = true
 let viewedTimer: ReturnType<typeof setTimeout> | null = null
+// flowgate.v02test.0024 A: an earlier page is being put in front of the log. Its entries are not new: the reader keeps
+// their place (loadOlderKeepingScroll adds the prepended height back), and the tail rule below must not pin the log
+// to the bottom over that correction — the v0.1 ConversationView never pinned while loading older turns.
+let prepending = false
+// flowgate.v02test.0024 (stg check): the log's own box changes size without any new entry — the window gets lower, the
+// composer grows, the panel narrows and bubbles re-wrap. Its scrollTop stays where it was, so a reader at the bottom
+// was left with a gap and the last message hidden. A ResizeObserver puts that reader back at the bottom; someone
+// scrolled up keeps their place. `observedSize` is the last size the observer handled ('' until it is observing).
+let resizeObserver: ResizeObserver | null = null
+let observedSize = ''
+
+function sizeOf(el: HTMLElement): string {
+  return `${el.clientWidth}x${el.clientHeight}`
+}
+
+function onResize(): void {
+  const el = scrollEl.value
+  if (!el) return
+  const size = sizeOf(el)
+  if (size === observedSize) return
+  observedSize = size
+  if (pinned && !prepending && !props.loadingOlder) el.scrollTop = el.scrollHeight
+}
 
 function isPinnedToBottom(): boolean {
   const el = scrollEl.value
@@ -161,31 +184,38 @@ function scrollToBottom(): void {
 
 /** Scroll-up paging keeps the reader's place: the prepended height is added back. */
 async function loadOlderKeepingScroll(): Promise<void> {
+  if (prepending) return
   const el = scrollEl.value
   const heightBefore = el?.scrollHeight ?? 0
   const topBefore = el?.scrollTop ?? 0
-  emit('load-older')
-  await new Promise<void>((resolve) => {
-    const stop = watch(
-      () => props.loadingOlder,
-      (busy) => {
-        if (!busy) {
+  prepending = true
+  try {
+    emit('load-older')
+    await new Promise<void>((resolve) => {
+      const stop = watch(
+        () => props.loadingOlder,
+        (busy) => {
+          if (!busy) {
+            stop()
+            resolve()
+          }
+        },
+      )
+      // The request may already have finished (or not started for want of history).
+      setTimeout(() => {
+        if (!props.loadingOlder) {
           stop()
           resolve()
         }
-      },
-    )
-    // The request may already have finished (or not started for want of history).
-    setTimeout(() => {
-      if (!props.loadingOlder) {
-        stop()
-        resolve()
-      }
-    }, 0)
-  })
-  await nextTick()
-  const target = scrollEl.value
-  if (target) target.scrollTop = topBefore + (target.scrollHeight - heightBefore)
+      }, 0)
+    })
+    await nextTick()
+    const target = scrollEl.value
+    if (target) target.scrollTop = topBefore + (target.scrollHeight - heightBefore)
+  } finally {
+    prepending = false
+    pinned = isPinnedToBottom()
+  }
 }
 
 /**
@@ -218,8 +248,11 @@ function scheduleRead(): void {
 }
 
 function onScroll(): void {
-  pinned = isPinnedToBottom()
   const el = scrollEl.value
+  // A scroll the browser fires for a size change the observer has not handled yet (scrollTop clamped) does not count
+  // as the reader leaving the bottom: onResize re-pins right after.
+  const resizing = !!el && observedSize !== '' && sizeOf(el) !== observedSize
+  if (!(resizing && pinned)) pinned = isPinnedToBottom()
   if (el && el.scrollTop <= PREPEND_TRIGGER_PX && props.hasMoreBefore && !props.loadingOlder) void loadOlderKeepingScroll()
   scheduleRead()
 }
@@ -229,10 +262,35 @@ function onScroll(): void {
 watch(
   () => props.items.length,
   (length, before) => {
-    if (pinned || (before ?? 0) === 0) scrollToBottom()
+    if (!prepending && !props.loadingOlder && (pinned || (before ?? 0) === 0)) scrollToBottom()
     if (length > 0) scheduleRead()
   },
 )
+
+// flowgate.v02test.0024 A (v0.1 activitySignature): a card or status line can also change in place — a command
+// request running and finishing, its output growing, the run line naming its AI, a result line replacing it. That
+// follows the tail under the same rule: only for a reader already at the bottom, never while older turns load.
+function activitySignature(): string {
+  return props.items
+    .map((item) => {
+      if (item.kind === 'command') {
+        const a = item.activity
+        return `${item.key}|${a.state}|${a.exitCode ?? ''}|${a.errorCode ?? ''}|${a.stdout?.length ?? 0}|${a.stderr?.length ?? 0}`
+      }
+      if (item.kind === 'status') {
+        const a = item.activity
+        return `${item.key}|${a.code ?? ''}|${a.text ?? ''}|${a.run?.providerName ?? ''}|${a.run?.access ?? ''}`
+      }
+      if (item.kind === 'change') return `${item.key}|${item.activity.files.length}`
+      if (item.kind === 'attachments') return `${item.key}|${item.activity.requests.length}|${item.activity.pending}`
+      return ''
+    })
+    .join('\n')
+}
+
+watch(activitySignature, () => {
+  if (pinned && !prepending && !props.loadingOlder) scrollToBottom()
+})
 
 // flowgate.v02.0157: the newest message can also grow in place (its body replaced by a longer one, a table or code
 // fence completed). That follows the tail under the same rule: only for a reader already at the bottom.
@@ -265,10 +323,20 @@ watch(
   },
 )
 
-onMounted(scrollToBottom)
+onMounted(() => {
+  scrollToBottom()
+  const el = scrollEl.value
+  if (el && typeof ResizeObserver !== 'undefined') {
+    observedSize = sizeOf(el)
+    resizeObserver = new ResizeObserver(onResize)
+    resizeObserver.observe(el)
+  }
+})
 
 onBeforeUnmount(() => {
   if (viewedTimer !== null) clearTimeout(viewedTimer)
+  resizeObserver?.disconnect()
+  resizeObserver = null
 })
 
 defineExpose({ scrollToBottom })

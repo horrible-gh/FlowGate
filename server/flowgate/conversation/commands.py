@@ -33,6 +33,7 @@ import tempfile
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -170,12 +171,132 @@ def _close_run(run_id: str, reason: str, on_closed: Optional[Callable[[], None]]
             on_closed()
 
 
-def _authorize_run(run: Optional[dict]) -> dict:
-    """The checks every new request gets, re-applied at approval and right before spawn."""
+def _run_token_id(run: Optional[dict]) -> str:
+    """The run's current token id: ``current_token_id`` first, else the admission ``token_id``."""
+    return str((run or {}).get("current_token_id") or (run or {}).get("token_id") or "")
+
+
+def _token_expired(rec: dict) -> bool:
+    try:
+        expires = datetime.fromisoformat(str(rec.get("expires_at")))
+    except (TypeError, ValueError):
+        return True             # unreadable expiry fails closed
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return expires <= datetime.now(timezone.utc)
+
+
+def _require_execute_scope(command: object) -> None:
+    """Execute mode (flowgate.v02test.0026): refuse a command that changes files.
+
+    ``command`` is a validated :class:`policy.ChatCommand`, or a stored request row, which is
+    validated and classified again here -- the stored category is never trusted.
+    """
+    if isinstance(command, dict):
+        try:
+            command = policy.validate_request({
+                "program": command.get("program"),
+                "args": list(command.get("args") or []),
+                "cwd": command.get("cwd_relative") or ".",
+                "timeout_seconds": int(command.get("timeout_seconds") or policy.TIMEOUT_DEFAULT_SEC),
+            })
+        except Exception as exc:
+            raise c.ConversationError(403, c.ERR_EXECUTE_MODE_DENIED,
+                                      "the stored command could not be judged for execute mode") from exc
+    try:
+        reason = policy.execute_mode_refusal(command)
+    except Exception:
+        logger.warning("execute mode judgement failed", exc_info=True)
+        reason = "the command could not be judged for execute mode"
+    if reason:
+        raise c.ConversationError(403, c.ERR_EXECUTE_MODE_DENIED, reason)
+
+
+def _require_command_access(run: dict, token_id: Optional[str], command: object = None) -> str:
+    """Fixed issued-token capability: only a live CH token issued with command access runs commands.
+
+    Returns ``"edit"`` (a ``read_write`` token: edit, or an edit_once that won its claim --
+    the 0180 rule) or ``"execute"`` (an execute-mode token: commands only, its source stays
+    ``read``; flowgate.v02test.0026). A reading-mode token is refused. With ``command``
+    given, an execute token is also held to :func:`_require_execute_scope`.
+
+    The authority is the persisted row of the run's current token -- never the run's own
+    flags nor the user's current source-access setting, so an ``edit_once`` token that won
+    its claim stays ``read_write`` for its whole run even after the setting fell back to
+    ``read_only``, and a reading token is never lifted by a later switch to execute or edit.
+    ``token_id`` is the token the request belongs to: at creation the caller's, at approval
+    and spawn the one stored on the request row. It must still be the run's current token,
+    so a request never outlives a replaced, revoked, expired or consumed token. Anything
+    missing, legacy or corrupt fails closed through the registry's own judgement
+    (``tool_registry.command_access_for_token``).
+    """
+    from modules.flow_gate.db import tokens as db_tokens
+    from modules.flow_gate.services import tool_registry
+
+    live_id = _run_token_id(run)
+    if not live_id or str(token_id or "") != live_id:
+        raise c.ConversationError(403, c.ERR_FORBIDDEN, "AI token is not current for this run")
+    try:
+        rec = db_tokens.get_by_id(live_id)
+    except Exception as exc:
+        logger.warning("chat command token read failed for %s", run.get("run_id"), exc_info=True)
+        raise c.ConversationError(403, c.ERR_FORBIDDEN, "AI token could not be verified") from exc
+    if not rec or rec.get("action_scope") != "chat":
+        raise c.ConversationError(403, c.ERR_FORBIDDEN, "a live AI chat run token is required")
+    axes = (
+        (rec.get("project") or rec.get("project_id"), run.get("project_id")),
+        (rec.get("group_id"), run.get("group_id")),
+        (rec.get("ai_run_id"), run.get("run_id")),
+        (rec.get("doc_ref"), run.get("doc_ref")),
+    )
+    if any(not left or str(left) != str(right or "") for left, right in axes):
+        raise c.ConversationError(403, c.ERR_FORBIDDEN, "AI run/token scope does not match")
+    if rec.get("revoked_at") or rec.get("consumed_at") or _token_expired(rec):
+        raise c.ConversationError(403, c.ERR_FORBIDDEN, "AI token is no longer live")
+    try:
+        access = tool_registry.command_access_for_token(rec)
+    except Exception:
+        logger.warning("chat command token access unreadable for %s", run.get("run_id"), exc_info=True)
+        access = None
+    if access not in (tool_registry.COMMAND_ACCESS_EDIT, tool_registry.COMMAND_ACCESS_EXECUTE):
+        raise c.ConversationError(403, c.ERR_CAPABILITY_REQUIRED,
+                                  "this AI chat run was issued in reading mode, without command access")
+    if access == tool_registry.COMMAND_ACCESS_EXECUTE and command is not None:
+        _require_execute_scope(command)
+    return access
+
+
+def command_access(run: Optional[dict]) -> Optional[str]:
+    """The run's current token's command access: ``"edit"``, ``"execute"`` or None (reading).
+
+    Used to offer the capability (tool, prompt hint, execute-mode note) only where
+    :func:`_authorize_run` can pass; it is never the gate itself.
+    """
+    if not run or run.get("action_scope") != "chat":
+        return None
+    try:
+        return _require_command_access(run, _run_token_id(run))
+    except c.ConversationError:
+        return None
+
+
+def token_allows_commands(run: Optional[dict]) -> bool:
+    """Whether the run's current token may run commands at all (reading-mode runs: never)."""
+    return command_access(run) is not None
+
+
+def _authorize_run(run: Optional[dict], token_id: Optional[str] = None, command: object = None) -> dict:
+    """The checks every new request gets, re-applied at approval and right before spawn.
+
+    ``token_id`` is the token the request belongs to; omitted, the run's current token
+    (the API transport, whose requests always use it). ``command`` (a validated command or
+    the stored row) is judged against an execute-mode token's command scope.
+    """
     if run:
         from modules.flow_gate.db import tokens as db_tokens
         from modules.flow_gate.services import graph_source_hooks
-        token_id = run.get("current_token_id") or run.get("token_id")
+        if token_id is None:
+            token_id = _run_token_id(run)
         try:
             token = db_tokens.get_by_id(token_id) if token_id else None
             # flowgate.v02.0061 T#7: a stopping run's / inactive attempt's token gets no command — judged before
@@ -198,16 +319,26 @@ def _authorize_run(run: Optional[dict]) -> dict:
     if closed:
         code = c.ERR_RUN_CANCELLED if closed == c.REASON_RUN_CANCELLED else c.ERR_RUN_FINISHED
         raise c.ConversationError(409, code, "this AI run is finishing")
+    # Last: the token's own issued capability (reading-mode chats never run commands; an
+    # execute-mode chat runs only commands that do not change files).
+    _require_command_access(run, token_id, command)
     return run
 
 
-def _live_refusal(run_id: Optional[str]) -> Optional[c.ConversationError]:
-    """Why the run that asked may no longer have the command executed, if it may not."""
+def _live_refusal(run_id: Optional[str], token_id: Optional[str],
+                  row: Optional[dict] = None) -> Optional[c.ConversationError]:
+    """Why the run that asked may no longer have the command executed, if it may not.
+
+    ``token_id`` is the token stored on the request row: approval and spawn re-judge the
+    token the request was made with, never whatever token the run holds now. A missing
+    one (a legacy row) is refused. ``row`` is re-judged against an execute token's scope.
+    """
     run = _live_run(run_id)
     if run is None:
         return c.ConversationError(409, c.ERR_RUN_FINISHED, "this AI run has already finished")
     try:
-        _authorize_run(run)
+        # "" (never None) so a row without a token is refused, after the run-state checks.
+        _authorize_run(run, str(token_id or ""), row)
     except c.ConversationError as exc:
         return exc
     return None
@@ -227,7 +358,7 @@ def authorize_token(token: dict, run: Optional[dict]) -> dict:
     current = str(run.get("current_token_id") or run.get("token_id") or "")
     if current and str(token.get("token_id") or "") != current:
         raise c.ConversationError(403, c.ERR_FORBIDDEN, "AI token is not current for this run")
-    return _authorize_run(run)
+    return _authorize_run(run, str(token.get("token_id") or ""))
 
 
 def worktree_root(project_id: str, group_id: str, expected: Optional[str] = None,
@@ -524,11 +655,17 @@ def create_request(run: dict, payload: object, *, token_id: Optional[str] = None
 
 
 def _create_request(run: dict, payload: object, *, token_id: Optional[str] = None) -> dict:
-    _authorize_run(run)
+    # CLI: the bearer's token; API: the run's current token. The same id is judged now,
+    # stored on the row and re-judged at approval and right before spawn.
+    token_id = token_id or _run_token_id(run) or None
+    _authorize_run(run, token_id)
     try:
         command = policy.validate_request(payload)
     except policy.CommandPolicyError as exc:
         raise c.ConversationError(422, exc.code, exc.message) from exc
+    # flowgate.v02test.0026: an execute-mode token runs only commands that do not change
+    # files -- refused here, before any row exists or any policy applies.
+    _require_command_access(run, token_id, command)
     root = worktree_root(run["project_id"], run["group_id"], run.get("source_root"),
                          token_id=token_id or run.get("current_token_id") or run.get("token_id"))
     try:
@@ -564,7 +701,7 @@ def _create_request(run: dict, payload: object, *, token_id: Optional[str] = Non
         logger.warning("chat command anchor resolve failed for %s", row["request_id"], exc_info=True)
     # Stored while the run was ending: re-check right after the insert (D0006 §3.7).
     try:
-        _authorize_run(run)
+        _authorize_run(run, token_id, command)
     except c.ConversationError as exc:
         closed = repo.transition_command(row["request_id"], (c.PENDING_APPROVAL, c.APPROVED), c.CANCELLED,
                                          error_code=exc.code)
@@ -594,7 +731,7 @@ def decide(request_id: str, user: dict, decision: object) -> dict:
     if decision == c.DECISION_APPROVE:
         # A run that finished, is being cancelled or is finalizing never gets an approval
         # (and so never a process): the request is closed instead.
-        refusal = _live_refusal(row["ai_run_id"])
+        refusal = _live_refusal(row["ai_run_id"], row.get("token_id"), row)
         if refusal is not None:
             closed = repo.transition_command(request_id, (c.PENDING_APPROVAL,), c.CANCELLED,
                                              error_code=refusal.code, **fields)
@@ -833,7 +970,7 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
         from modules.flow_gate.services import graph_source_hooks
         with graph_source_hooks.write_session(), _launch_gate(row["ai_run_id"]):
             refusal_code = None
-            refusal = _live_refusal(row["ai_run_id"])
+            refusal = _live_refusal(row["ai_run_id"], row.get("token_id"), row)
             if refusal is not None:
                 refusal_code = refusal.code
             with _lock:
@@ -1050,13 +1187,30 @@ def cli_mention_section(api_base: str, raw_token: str) -> str:
     return "\n".join(lines)
 
 
-def tool_descriptor() -> dict:
-    """The ``run_command`` capability as a chat tool (``chat_run_hooks.PROVIDE_CHAT_TOOLS``)."""
+# flowgate.v02test.0026: what an execute-mode chat is told (API tool text and CLI mention).
+EXECUTE_MODE_NOTE = (
+    "This chat is in execute mode: you may run commands, but you must not change source or "
+    "documents. Only read, git read and test/build commands run; a command that changes files "
+    "(rm/mv/cp/mkdir, git add/commit/checkout/reset, package install/update, --fix/--write "
+    "formatters, unknown programs) is refused with chat_command_execute_mode_denied. Source and "
+    "document edit tools are not available."
+)
+
+
+def execute_mode_mention_section() -> str:
+    """The CLI mention's note for an execute-mode chat (after its command section)."""
+    return "\n".join(["## Execute mode", "---", EXECUTE_MODE_NOTE])
+
+
+def tool_descriptor(execute_mode: bool = False) -> dict:
+    """The ``run_command`` capability as a chat tool (``chat_run_hooks.PROVIDE_CHAT_TOOLS``).
+
+    ``execute_mode`` adds the execute-mode limits to the description and prompt hint."""
     return {
         "name": TOOL_NAME,
-        "description": TOOL_DESCRIPTION,
+        "description": TOOL_DESCRIPTION + (" " + EXECUTE_MODE_NOTE if execute_mode else ""),
         "schema": TOOL_SCHEMA,
         "handler": run_tool,
         "cli_mention": cli_mention_section,
-        "prompt_hint": TOOL_PROMPT_HINT,
+        "prompt_hint": TOOL_PROMPT_HINT + (" " + EXECUTE_MODE_NOTE if execute_mode else ""),
     }

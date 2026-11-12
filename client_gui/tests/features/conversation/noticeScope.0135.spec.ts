@@ -122,13 +122,18 @@ describe('a notice stays with its Flow', () => {
     await flushPromises()
     expect(session.state.notice).toBeNull()
 
+    // flowgate.v02test.0024 B: a send failure is a line of the chat's own history, not a notice: it stays with the
+    // chat (also when it is opened again) and a new draft does not show it.
     source.postTurn.mockRejectedValueOnce(httpError(422, 'nope'))
     expect(await session.send('again')).toBe(false)
-    expect(session.state.notice?.code).toBe('send_failed')
-    await session.selectChat(B1) // same chat, already open: no reload, the notice is about it
-    expect(session.state.notice?.code).toBe('send_failed')
+    expect(session.state.notice).toBeNull()
+    const sendErrors = () => session.state.activities.filter((a) => a.kind === 'status' && a.code === 'send_failed')
+    expect(sendErrors()).toHaveLength(1)
+    await session.selectChat(B1) // same chat, already open: no reload
+    expect(sendErrors()).toHaveLength(1)
     start.startNew()
     expect(session.state.notice).toBeNull()
+    expect(sendErrors()).toHaveLength(0)
   })
 })
 

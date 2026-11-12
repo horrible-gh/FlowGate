@@ -131,10 +131,17 @@ def scratch_dir_path(project_id: str, token_id: str) -> str:
     return str(_scratch_dir(project_id, token_id))
 
 
+# flowgate.v02test.0026: the execute capability of a chat token (tokens.command_access).
+CHAT_EXECUTE = "execute"
+
+
 def _resolve_chat_source_access(issued_to: str, project: str, group_id: Optional[str]) -> tuple[Optional[str], bool]:
     """Decide a chat (CH) token's capability (D0006 §2.3, L0007 §2.3, DB0008 §4.6).
 
-    Returns ``(source_access, claim_deferred)``. ``claim_deferred`` is True only for
+    Returns ``(source_access, claim_deferred)``. ``source_access`` is ``"read"``,
+    ``"read_write"``, or ``"execute"`` (flowgate.v02test.0026: the execute mode -- the caller
+    stores it as ``source_access="read"`` + ``command_access="execute"``, never as write
+    access). ``claim_deferred`` is True only for
     ``edit_once``: the actual CAS claim has to run inside the same transaction as the
     token INSERT (T0009 §6), so this function only runs the pre-claim stale-recovery
     sweep (T0009 §5.1) and resolves the *stored* mode — the caller performs the claim
@@ -155,6 +162,8 @@ def _resolve_chat_source_access(issued_to: str, project: str, group_id: Optional
     mode = db_source_access.resolve_source_access_mode(issued_to, project, group_id)
     if mode == "edit":
         return "read_write", False
+    if mode == "execute":
+        return CHAT_EXECUTE, False
     if mode == "edit_once":
         return None, True
     return "read", False
@@ -228,6 +237,7 @@ def issue(
     token_scratch.create(project, token_id, scratch_path)
 
     source_access: Optional[str] = None
+    command_access: Optional[str] = None
     one_shot_claimed = False
     claim_deferred = False
 
@@ -259,6 +269,9 @@ def issue(
         "failure_origin_before_marker": failure_origin_before_marker,
         # 0515 T0009 §6 / DB0008 §2.2: fixed at issue time, never changed afterwards.
         "source_access": source_access,
+        # flowgate.v02test.0026: "execute" for a chat token issued in execute mode, else NULL.
+        # Fixed at issue time like source_access.
+        "command_access": None,
     }
 
     def _create_and_log() -> None:
@@ -283,10 +296,17 @@ def issue(
             source_access, claim_deferred = _resolve_chat_source_access(
                 issued_to, project, group_id
             )
-            if source_access == "read_write" or claim_deferred:
+            if source_access == CHAT_EXECUTE:
+                # flowgate.v02test.0026: execute is its own capability, never write access.
+                # Source/document tools keep judging source_access ("read"); only the
+                # command gate reads command_access.
+                source_access, command_access = "read", CHAT_EXECUTE
+                data["command_access"] = command_access
+            if source_access == "read_write" or claim_deferred or command_access:
                 # flowgate.v02.0061 T#14 (WP answer 2): an edit / edit-once chat of a Flow whose Graph run is
                 # running / paused / stopping is refused (409 graph_run_locked) before anything is written or
-                # claimed; a read chat is not. The judgement is flowgate.graph_run's (graph_execution_hooks).
+                # claimed; a read chat is not. An execute chat is (flowgate.v02test.0026): its commands run in
+                # the same worktree the Graph run uses. The judgement is flowgate.graph_run's (graph_execution_hooks).
                 from modules.flow_gate.services import graph_execution_hooks
                 graph_execution_hooks.call("chat_source_refusal", group_id, continuation_locale)
             data["source_access"] = source_access
@@ -336,6 +356,7 @@ def issue(
         "failure_origin_before_marker": failure_origin_before_marker,
         # 0515 T0009 §6: None for every non-chat token (unchanged wire shape otherwise).
         "source_access": source_access,
+        "command_access": command_access,
         "one_shot_claimed": one_shot_claimed,
     }
 

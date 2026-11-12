@@ -316,12 +316,17 @@ def test_integration_registers_every_port_including_call_acceptance(clean_hooks)
     assert isinstance(ctx, call_ledger.CallContext) and ctx.run_id == RUN_ID and ctx.tool_call_id == "call_0"
     # 0145 adds scoped Graph reads; run_command and the T#7 card ports retain their handlers.
     tools = chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})
+    # flowgate.v02test.0023: the control tower tools follow the Graph reads; the attachment request
+    # (chat.0017) follows run_command. Neither uses the call ledger.
     assert [t["name"] for t in tools] == ["read_flow_canvas", "read_flow_current_run",
-                                          "run_command", "read_card_document", "revise_card_document",
+                                          "place_flow_cards", "start_flow_run",
+                                          "run_command", "request_attachment_upload",
+                                          "read_card_document", "revise_card_document",
                                           "read_document_by_id", "revise_document_by_id", "create_new_document"]
     by_name = {t["name"]: t for t in tools}
-    assert "call_handler" not in by_name["run_command"]
-    assert all(callable(t["call_handler"]) for t in tools if t["name"] != "run_command")
+    plain = {"run_command", "request_attachment_upload", "place_flow_cards", "start_flow_run"}
+    assert all("call_handler" not in by_name[name] for name in plain)
+    assert all(callable(t["call_handler"]) for t in tools if t["name"] not in plain)
     assert all(by_name[name]["own_validation"] and not by_name[name]["completion"]
                for name in ("read_flow_canvas", "read_flow_current_run"))
 

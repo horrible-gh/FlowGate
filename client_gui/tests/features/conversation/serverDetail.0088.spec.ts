@@ -108,8 +108,10 @@ describe('a check the app makes itself carries no words', () => {
     expect(await session.createChat('새 채팅')).toBe(false)
     expect(session.state.notice).toMatchObject({ code: 'create_failed', detail: '' })
     await session.decideCommand('k1', 'approve')
-    expect(session.state.notice).toMatchObject({ code: 'command_decision_failed', detail: '' })
+    // flowgate.v02test.0024 B: the decision failure is a line of the chat's history — also without words.
+    expect(session.state.activities.find((a) => a.kind === 'status')).toMatchObject({ code: 'command_decision_failed', text: null })
     session.dispose()
+    localStorage.clear()
   })
 })
 

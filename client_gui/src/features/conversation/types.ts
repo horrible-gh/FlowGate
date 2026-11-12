@@ -185,6 +185,22 @@ export interface StatusActivity {
   code: string | null
   /** Source-supplied text, or extra detail appended to a known event. */
   text: string | null
+  /**
+   * flowgate.v02test.0024 D: the run in progress line (`run_running`) — the AI connection name and the read / edit
+   * access the run got. Null parts are not known yet (an adopted run before its first detail read).
+   */
+  run?: RunDisplay
+  /** flowgate.v02test.0024 B: a recorded chat error (send / AI call / command decision refused) kept in the history. */
+  chatError?: boolean
+}
+
+/** flowgate.v02test.0024 D: the read / edit access a chat run actually got (its token's `source_access`). */
+export type ChatSourceAccess = 'read' | 'read_write'
+
+/** flowgate.v02test.0024 D: what the one run in progress line shows. */
+export interface RunDisplay {
+  providerName: string | null
+  access: ChatSourceAccess | null
 }
 
 /** A same-name attachment already on a request's target document (server `conflict`). */
@@ -317,8 +333,8 @@ export interface ChatDocSettingsPatch {
 export type SendAction = 'copy_mention' | 'invoke_ai' | 'none'
 /** flowgate.v02test.0025: 'checkpoint' = the chat's checkpoint decides what is sent (the last 5 turns without one). */
 export type ContextMode = 'recent' | 'all' | 'checkpoint'
-/** AI source access mode (group 0515/0568): read / edit / edit once. */
-export type SourceAccessMode = 'read_only' | 'edit' | 'edit_once'
+/** AI source access mode (group 0515/0568, flowgate.v02test.0026): read / execute (commands only) / edit / edit once. */
+export type SourceAccessMode = 'read_only' | 'execute' | 'edit' | 'edit_once'
 
 /** GET/PATCH /me/chat-settings (D0008 / P0009). */
 export interface ChatSettings {
@@ -364,6 +380,13 @@ export interface AiRunState {
   groupId?: string | null
   finishedAt?: string | null
   failure?: AiRunFailure | null
+  /** flowgate.v02test.0024: when the run started (places a result line without a finish time). */
+  startedAt?: string | null
+  /** flowgate.v02test.0024 D: the run's AI connection (`provider_id` / live `provider` / the pinned request). */
+  providerId?: string | null
+  providerName?: string | null
+  /** flowgate.v02test.0024 D: the applied read / edit access of a chat run; null when the server does not say. */
+  sourceAccess?: ChatSourceAccess | null
 }
 
 /** Existing group run-history window (no CH filter or pagination cursor). */

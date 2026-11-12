@@ -127,8 +127,9 @@
       :group-id="flowBaseTarget?.flowId ?? null" @close="flowBaseTarget = null" @saved="explorerRefreshToken += 1" />
     <AiRoleSetupModeless :data="aiSetup.state.data" :saving="aiSetup.state.saving" :error="aiSetup.state.error" @close="aiSetup.cancel" @save="aiSetup.save" />
     <!-- flowgate.v02.0113 T#5: the run result windows — the 1st only for a command that ended completed or failed. -->
-    <RunResultWindow :key="`result-${runResult.state.seq}`" :result="runResult.state.result" :open="runResult.state.resultOpen" @close="runResult.closeResult" @detail="runResult.openDetail" />
-    <RunResultDetailWindow :key="`detail-${runResult.state.seq}`" :result="runResult.state.result" :open="runResult.state.detailOpen" @close="runResult.closeDetail" />
+    <!-- flowgate.v02gui.0001: both name the result's own Flow (runResultFlowName), not the active tab's. -->
+    <RunResultWindow :key="`result-${runResult.state.seq}`" :result="runResult.state.result" :open="runResult.state.resultOpen" :flow-name="runResultFlowName" @close="runResult.closeResult" @detail="runResult.openDetail" />
+    <RunResultDetailWindow :key="`detail-${runResult.state.seq}`" :result="runResult.state.result" :open="runResult.state.detailOpen" :flow-name="runResultFlowName" @close="runResult.closeDetail" />
     <DesignerContextMenu :host="contextMenu.host" @request="contextMenu.run" />
     <component :is="contextMenu.dialogs" v-if="contextMenu.actions" :actions="contextMenu.actions" />
     <ToastHost :toasts="shownToasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
@@ -400,6 +401,23 @@ const runResult = createRunResultWatch({
 // flowgate.v02.0143 T#1: every run observation of a watched Flow goes to its watch (running too: the watch keeps the
 // latest), and a Flow whose tab closed drops its watch (`forget`).
 const isOpenTab = (flowId: string) => center.state.tabs.some((tab) => tab.flowId === flowId)
+// flowgate.v02gui.0001: the name of the Flow the shown result is of, for the windows' titles. A result is only watched
+// while its Flow's tab is open, so the name is taken from that tab when the result shows (seq) and kept: the window
+// still names it after the tab is closed. While the tab stays open its current name (a rename) wins; the flow id is
+// the last resort.
+const runResultFlowSnapshot = ref<{ flowId: string; name: string } | null>(null)
+watch(() => runResult.state.seq, () => {
+  const flowId = runResult.state.result?.flowId
+  const name = flowId ? center.state.tabs.find((tab) => tab.flowId === flowId)?.name : undefined
+  runResultFlowSnapshot.value = flowId && name ? { flowId, name } : null
+}, { flush: 'sync', immediate: true })
+const runResultFlowName = computed(() => {
+  const flowId = runResult.state.result?.flowId
+  if (!flowId) return null
+  const live = center.state.tabs.find((tab) => tab.flowId === flowId)?.name
+  const kept = runResultFlowSnapshot.value?.flowId === flowId ? runResultFlowSnapshot.value.name : null
+  return live || kept || flowId
+})
 // The recovery signal has a server-provided sequence; observations never create it.
 watch(() => center.state.tabs.map(tab => [tab.flowId, center.state.runs[tab.flowId]?.confirmedCommand] as const), (entries, previous) => {
   for (const [flowId, command] of entries) {
@@ -1615,11 +1633,6 @@ const contextMenu = useDesignerContextMenu({
   border-bottom: 1px solid var(--fg2-border);
 }
 
-/* ≤1120px the App Shell scrolls as a page and gives no height; keep the Body usable. The
-   final responsive policy is deferred. */
-@media (max-width: 1120px) {
-  .designer-shell {
-    min-height: 100vh;
-  }
-}
+/* No ≤1120px rule: App.vue keeps the full-screen Designer route pinned to the viewport at
+   every width, so the Shell always has a height and each area scrolls inside. */
 </style>

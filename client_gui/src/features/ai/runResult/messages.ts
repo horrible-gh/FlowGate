@@ -2,6 +2,9 @@
 const ko = {
   title: '실행 결과',
   detail_title: '실행 결과 상세',
+  // flowgate.v02gui.0001: the window titles naming the result's Flow.
+  title_with_flow: '실행 결과 · {name}',
+  detail_title_with_flow: '실행 결과 상세 · {name}',
   state: { completed: '완료', failed: '실패', waiting: '대기', running: '실행 중', stopped: '중지', superseded: '다른 명령으로 넘어감' },
   scope: { step: '다음 단계', full: '전체 실행' },
   label: { scope: '실행 범위', steps: '처리 단계', counts: '완료 / 실패', next: '다음 상태', reason: '실패 사유' },
@@ -45,6 +48,8 @@ const ko = {
 const en: typeof ko = {
   title: 'Run result',
   detail_title: 'Run result details',
+  title_with_flow: 'Run result · {name}',
+  detail_title_with_flow: 'Run result details · {name}',
   state: { completed: 'Completed', failed: 'Failed', waiting: 'Waiting', running: 'Running', stopped: 'Stopped', superseded: 'Taken over by another command' },
   scope: { step: 'Next step', full: 'Run all' },
   label: { scope: 'Scope', steps: 'Steps processed', counts: 'Done / failed', next: 'Next state', reason: 'Failure' },
@@ -88,6 +93,8 @@ const en: typeof ko = {
 const ja: typeof ko = {
   title: '実行結果',
   detail_title: '実行結果の詳細',
+  title_with_flow: '実行結果 · {name}',
+  detail_title_with_flow: '実行結果の詳細 · {name}',
   state: { completed: '完了', failed: '失敗', waiting: '待機', running: '実行中', stopped: '停止', superseded: '別のコマンドに引き継ぎ' },
   scope: { step: '次のステップ', full: '全体実行' },
   label: { scope: '実行範囲', steps: '処理ステップ', counts: '完了 / 失敗', next: '次の状態', reason: '失敗理由' },

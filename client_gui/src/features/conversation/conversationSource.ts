@@ -12,6 +12,7 @@
 // hears them from the container's project stream (conversationEvents.ts) as signals and the
 // session reads through this source again (session.recover).
 import * as api from './api'
+import type { ChatErrorRecord } from './chatErrors'
 import type {
   ChatDocSettings,
   ChatDocSettingsPatch,
@@ -68,6 +69,8 @@ export interface ConversationSource {
    */
   fetchChatDocSettings?(chatId: string): Promise<ChatDocSettings>
   saveChatDocSettings?(chatId: string, patch: ChatDocSettingsPatch): Promise<ChatDocSettings>
+  /** flowgate.v02test.0024 B: stores a refused request of the chat in its history; optional (a source without it keeps errors locally). */
+  recordChatError?(chatId: string, record: ChatErrorRecord): Promise<void>
 }
 
 export function createHttpConversationSource(): ConversationSource {
@@ -94,5 +97,6 @@ export function createHttpConversationSource(): ConversationSource {
     issueChatMention: api.issueChatMention,
     fetchChatDocSettings: api.fetchChatDocSettings,
     saveChatDocSettings: api.saveChatDocSettings,
+    recordChatError: api.recordChatError,
   }
 }

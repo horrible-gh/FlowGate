@@ -100,16 +100,31 @@ def test_non_chat_runs_never_reach_the_handlers(clean_hooks):
     assert seen == [] and chat_run_hooks.chat_tools({"action_scope": "work"}) == []
 
 
+def test_graph_and_control_tower_tools_come_before_run_command(clean_hooks):
+    # flowgate.v02test.0023: Graph reads (0145) and the control tower tools come before run_command;
+    # the attachment request (chat.0017) right after it. Kept apart from the order-agnostic checks below.
+    integration.register()
+    names = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})]
+    at = names.index("run_command")
+    assert names[at - 4:at] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run"]
+    assert names[at + 1] == "request_attachment_upload"
+    without = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})]
+    assert {"read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
+            "request_attachment_upload"} <= set(without)
+
+
 def test_register_connects_every_port_idempotently(clean_hooks):
     integration.register()
     integration.register()
     assert all(chat_run_hooks.registered(name) for name in chat_run_hooks.HOOK_NAMES)
-    tools = chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})
-    assert [t["name"] for t in tools] == ["run_command", "read_card_document", "revise_card_document",
-                                          "read_document_by_id", "revise_document_by_id", "create_new_document"]
-    # Document delegation is independent of command capability.
-    assert [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})] == [
-        "read_card_document", "revise_card_document", "read_document_by_id", "revise_document_by_id", "create_new_document"]
+    with_cap = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})]
+    without = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})]
+    # run_command only with the capability (a read-only run is admitted without it) ...
+    assert "run_command" in with_cap and "run_command" not in without
+    assert [name for name in with_cap if name != "run_command"] == without
+    # ... while document delegation is independent of command capability.
+    assert without[-5:] == ["read_card_document", "revise_card_document", "read_document_by_id",
+                            "revise_document_by_id", "create_new_document"]
 
 
 # ── call sites in the existing engine (composition, order) ───────────────────
@@ -262,9 +277,11 @@ def test_api_worker_exposes_run_command_and_returns_the_result_to_the_same_run(e
     outcome = svc._api_execute({"id": "p", "kind": "openai", "api_base_url": "https://api.example",
                                 "api_model": "m"}, "prompt", run)
     assert outcome == ("started_ok", None)
-    assert calls[0]["tools"] == ["read_chat_history", "read_help", "run_command",
-                                 "read_card_document", "revise_card_document",
-                                 "read_document_by_id", "revise_document_by_id", "create_new_document", "send_chat_reply"]
+    tools = calls[0]["tools"]
+    assert tools[:2] == ["read_chat_history", "read_help"] and tools[-1] == "send_chat_reply"
+    assert tools.count("run_command") == 1
+    assert tools[-6:-1] == ["read_card_document", "revise_card_document", "read_document_by_id",
+                            "revise_document_by_id", "create_new_document"]
     assert "`run_command`" in calls[0]["conversation"][2]["content"]
     tool_msg = next(m for m in calls[1]["conversation"] if m.get("role") == "tool")
     assert tool_msg["tool_call_id"] == "call_cmd"
@@ -305,9 +322,50 @@ def test_api_worker_input_error_result_stays_whole_json(env, monkeypatch):
     assert result["meta_truncated"] is True
 
 
-def test_api_worker_without_registration_keeps_existing_chat_tools(clean_hooks, monkeypatch):
+def test_api_read_only_run_is_not_offered_run_command_and_a_call_is_refused(env, monkeypatch):
+    """Port registered, read-only token: no run_command tool; a call made anyway gets the
+    explicit capability refusal in the same conversation, and nothing is stored or run."""
+    integration.register()
+    set_policy(monkeypatch, c.POLICY_ALWAYS_APPROVE)
+    run = make_run(run_id="aiv_api_reader", source_root=env["root"], capability=False, source_access="read")
+    chat_run_hooks.chat_run_start(run)
+    run.update({"raw_token": "raw-token", "docs_target": 0, "timed_out": False,
+                "api_base_url": "http://127.0.0.1:8089/flowgate/api/v1"})
+    monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+    monkeypatch.setattr(svc, "_conversation_context", lambda *_: (200, {"head_seq": 0, "turns": []}))
+    monkeypatch.setattr(svc, "_conversation_turn_register", lambda run, token, payload: (201, {"ok": True}))
+    calls = []
+
+    def fake_call(*args):
+        calls.append({"tools": [t["name"] for t in args[5]], "conversation": list(args[3])})
+        if len(calls) == 1:
+            return None, [{"id": "call_cmd", "name": "run_command",
+                           "input": {"program": "git", "args": ["status"]}}], {"role": "assistant"}
+        return "done", [{"id": "call_reply", "name": "send_chat_reply", "input": {"body": "ok"}}], {
+            "role": "assistant"}
+
+    monkeypatch.setattr(svc, "_call_openai", fake_call)
+    outcome = svc._api_execute({"id": "p", "kind": "openai", "api_base_url": "https://api.example",
+                                "api_model": "m"}, "prompt", run)
+    assert outcome == ("started_ok", None)
+    assert "run_command" not in calls[0]["tools"]
+    assert "`run_command`" not in calls[0]["conversation"][2]["content"]
+    tool_msg = next(m for m in calls[1]["conversation"] if m.get("role") == "tool")
+    result = json.loads(tool_msg["content"])
+    assert result["ok"] is False and result["error"]["code"] == "chat_command_capability_required"
+    assert repo.list_open_commands_for_run("aiv_api_reader") == []
+    assert env["executor"].spawned == []
+
+
+@pytest.mark.parametrize("source_access,offered", [("read_write", True), ("read", False), (None, False)])
+def test_api_worker_without_registration_keeps_existing_chat_tools(env, monkeypatch, source_access, offered):
+    """No chat tool port: the in-module tools stay, with run_command only for a read_write token."""
+    from _fg_conversation_support import add_run_token
+
+    add_run_token("aiv_plain", token_id="tok", source_access=source_access)
     seen = {}
-    run = {"project_id": PROJECT, "run_id": "aiv_plain", "docs_target": 0, "raw_token": "raw",
+    run = {"project_id": PROJECT, "group_id": GROUP, "issued_to": USER, "run_id": "aiv_plain",
+           "docs_target": 0, "raw_token": "raw",
            "token_id": "tok", "doc_ref": CHAT_DOC, "action_scope": "chat", "mode": "single",
            "cancel_event": threading.Event(), "provider": {"name": "x"}, "timed_out": False,
            "api_base_url": "http://127.0.0.1:8089/flowgate/api/v1"}
@@ -323,19 +381,22 @@ def test_api_worker_without_registration_keeps_existing_chat_tools(clean_hooks, 
     monkeypatch.setattr(svc, "_call_openai", fake_call)
     assert svc._api_execute({"id": "p", "kind": "openai", "api_base_url": "https://x", "api_model": "m"},
                             "prompt", run) == ("started_ok", None)
-    assert [t["name"] for t in seen["tool_name"]] == [
-        "read_chat_history", "read_help", "run_command", "send_chat_reply"]
+    expected = ["read_chat_history", "read_help", "run_command", "send_chat_reply"]
+    if not offered:
+        expected.remove("run_command")
+    assert [t["name"] for t in seen["tool_name"]] == expected
 
 
 # ── the CLI mention ──────────────────────────────────────────────────────────
 
-def _mention(command_execution):
+def _mention(command_execution, source_access="read_write", command_access=None):
     from modules.flow_gate.services import invoke_mention_service
 
     return invoke_mention_service.build_conversation_mention(
         doc_id=CHAT_DOC, project=PROJECT, module="v02", group_name=GROUP, raw_token="raw-run-token",
         token_id="tok_1", api_base_url="http://127.0.0.1:8089/flowgate/api/v1/",
-        command_execution=command_execution,
+        source_access=source_access, command_execution=command_execution,
+        command_access=command_access,
     )
 
 
@@ -350,6 +411,73 @@ def test_cli_mention_section_only_for_a_live_run(env):
     fallback = _mention(True)
     assert "## Command execution" in fallback  # Existing command-service fallback.
     assert "Card document read and edit" not in fallback
+
+
+@pytest.mark.parametrize("source_access", ["read", None])
+@pytest.mark.parametrize("registered", [True, False])
+def test_read_only_mention_never_offers_commands(env, source_access, registered):
+    if registered:
+        integration.register()
+    text = _mention(True, source_access=source_access)
+    assert "## Command execution" not in text and "/chat-commands" not in text
+    assert "## Execute mode" not in text
+
+
+def test_read_only_mention_keeps_the_other_chat_tool_sections(env):
+    """Hiding run_command must not hide the reading-mode tools (graph read, attachment
+    request, card document read) -- the 0032 / chat.0017 contract."""
+    integration.register()
+    reader = _mention(True, source_access="read")
+    writer = _mention(True)
+    for section in chat_run_hooks.chat_mention_sections("http://127.0.0.1:8089/flowgate/api/v1", "raw-run-token",
+                                                        omit=("run_command",)):
+        assert section in reader and section in writer
+    assert "## Command execution" in writer and "## Command execution" not in reader
+
+
+@pytest.mark.parametrize("registered", [True, False])
+def test_execute_mention_offers_commands_without_write(env, registered):
+    """flowgate.v02test.0026: an execute token is told how to run commands and that it may
+    not change source; it is never offered the edit-mode commit message."""
+    if registered:
+        integration.register()
+    text = _mention(True, source_access="read", command_access="execute")
+    assert "## Command execution" in text and "/chat-commands" in text
+    assert "## Execute mode" in text and "chat_command_execute_mode_denied" in text
+    assert "commit_message" not in text
+    # command_access is honoured only on a read token (never a damaged combination).
+    assert "## Execute mode" not in _mention(True, source_access=None, command_access="execute")
+
+
+def test_start_hook_offers_an_execute_run_the_limited_command_tool(env):
+    integration.register()
+    run = make_run(run_id="aiv_exec", source_root=env["root"], capability=False, register=False,
+                   source_access="read", command_access="execute")
+    chat_run_hooks.chat_run_start(run)
+    assert run["chat_command_capability"] is True and run["chat_command_access"] == "execute"
+    tool = next(t for t in chat_run_hooks.chat_tools(run) if t["name"] == "run_command")
+    assert "execute mode" in tool["description"] and "execute mode" in tool["prompt_hint"]
+    writer = make_run(run_id="aiv_writer2", source_root=env["root"], capability=False, register=False)
+    chat_run_hooks.chat_run_start(writer)
+    assert writer["chat_command_access"] == "edit"
+    tool = next(t for t in chat_run_hooks.chat_tools(writer) if t["name"] == "run_command")
+    assert "execute mode" not in tool["description"]
+
+
+def test_start_hook_withholds_the_capability_from_a_read_only_run(env):
+    integration.register()
+    run = make_run(run_id="aiv_reader", source_root=env["root"], capability=False, register=False,
+                   source_access="read")
+    chat_run_hooks.chat_run_start(run)
+    assert run["chat_command_capability"] is False
+    assert "run_command" not in [t["name"] for t in chat_run_hooks.chat_tools(run)]
+    with pytest.raises(c.ConversationError) as exc:
+        commands.create_request(run, {"program": "git", "args": ["status"]})
+    assert exc.value.code == "chat_command_capability_required"
+    writer = make_run(run_id="aiv_writer", source_root=env["root"], capability=False, register=False)
+    chat_run_hooks.chat_run_start(writer)
+    assert writer["chat_command_capability"] is True
+    assert "run_command" in [t["name"] for t in chat_run_hooks.chat_tools(writer)]
 
 
 # ── chat settings: the command policy ────────────────────────────────────────
