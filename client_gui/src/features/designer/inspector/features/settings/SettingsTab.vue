@@ -211,7 +211,7 @@ import { settingsRowPhase, type SettingsField, type SettingsOption } from './set
 import { useSharedCardSettings } from './useCardSettings'
 import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
 import type { AiRoleValue } from '@/features/document'
-import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_REVIEW_COUNTS, cardRoleRows } from './cardRolesModel'
+import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_REVIEW_COUNT_HIDDEN, cardRoleRows } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
 const props = withDefaults(defineProps<{ target: InspectorTarget; panel?: 'settings' | 'ai' }>(), { panel: 'settings' })
@@ -465,14 +465,15 @@ function onChange(field: CardSettingsField, text: string) {
 }
 
 /**
- * flowgate.v02.0113 T#4 — a select's options on the AI tab. The two review counts offer 안 함 · 1회 · 2회 · 3회
- * (0002-D §3.7); a stored count outside them stays shown so nothing is changed by opening the card.
+ * flowgate.v02.0113 T#4 — a select's options on the AI tab. flowgate.v02gui.0007 B: the two review counts offer the
+ * server's choices up to its effective maximum (안 함 · 1회 … n회), without "until it passes" (-1); a stored value
+ * outside them stays shown so nothing is changed by opening the card.
  */
 function optionsOf(field: CardSettingsField) {
   const view = views.value[field]
   const counted = field === 'review_count' || field === 'instruction_review_count'
   return view.options
-    .filter(option => !counted || AI_REVIEW_COUNTS.includes(Number(option.value)) || option.value === view.value)
+    .filter(option => !counted || !AI_REVIEW_COUNT_HIDDEN.includes(Number(option.value)) || option.value === view.value)
     .map(option => ({ value: option.value, label: labelOf(option) }))
 }
 

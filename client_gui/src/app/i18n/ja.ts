@@ -1088,6 +1088,15 @@ export default {
       system: 'FlowGate',
       sending: '送信中',
       failed: '送信できませんでした。',
+      // flowgate.v02gui.0007 A: the failed bubble's short reason.
+      failure: {
+        rejected: 'サーバーがメッセージを拒否しました',
+        forbidden: '権限がありません',
+        not_found: '会話が見つかりません',
+        conflict: '別のリクエストと競合しました',
+        server: 'サーバーエラー',
+        network: 'サーバーに接続できませんでした',
+      },
       stale: '#{seq} のメッセージを見る前に書かれた返信です。',
       copy: '原文をコピー',
       copied: 'コピーしました',
@@ -1191,7 +1200,6 @@ export default {
       sending: "送信中…（試行 {attempt}）",
       failed_create: "会話の作成に失敗しました — 入力は保持されています",
       failed_load: "履歴の確認に失敗しました — 履歴を再読み込みしてください",
-      failed_send: "送信に失敗しました — 同じリクエストで再試行できます",
       placeholder: 'メッセージを入力',
       send: '送信',
       stop: 'AI 呼び出しを停止',

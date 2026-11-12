@@ -1099,6 +1099,15 @@ export default {
       system: 'FlowGate',
       sending: '보내는 중',
       failed: '전송하지 못했습니다.',
+      // flowgate.v02gui.0007 A: the failed bubble's short reason.
+      failure: {
+        rejected: '서버가 메시지를 거부했습니다',
+        forbidden: '권한이 없습니다',
+        not_found: '대화를 찾을 수 없습니다',
+        conflict: '다른 요청과 충돌했습니다',
+        server: '서버 오류',
+        network: '서버에 연결하지 못했습니다',
+      },
       stale: '#{seq} 메시지를 보기 전에 작성된 답변입니다.',
       copy: '원문 복사',
       copied: '복사했습니다',
@@ -1202,7 +1211,6 @@ export default {
       sending: "메시지 전송 중… (시도 {attempt})",
       failed_create: "대화 생성 실패 — 입력이 보존되었습니다",
       failed_load: "대화 이력 확인 실패 — 이력을 다시 조회해 주세요",
-      failed_send: "메시지 전송 실패 — 같은 요청으로 재시도할 수 있습니다",
       placeholder: '메시지 입력',
       send: '전송',
       stop: 'AI 호출 중지',

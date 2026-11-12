@@ -1088,6 +1088,15 @@ export default {
       system: 'FlowGate',
       sending: 'Sending',
       failed: 'Could not send.',
+      // flowgate.v02gui.0007 A: the failed bubble's short reason.
+      failure: {
+        rejected: 'The server refused the message',
+        forbidden: 'Not permitted',
+        not_found: 'Conversation not found',
+        conflict: 'Conflicted with another request',
+        server: 'Server error',
+        network: 'Could not reach the server',
+      },
       stale: 'Written before message #{seq} was seen.',
       copy: 'Copy original text',
       copied: 'Copied',
@@ -1191,7 +1200,6 @@ export default {
       sending: "Sending message… (attempt {attempt})",
       failed_create: "Conversation creation failed — input preserved",
       failed_load: "History loading failed — reload the history",
-      failed_send: "Sending failed — retry the same request",
       placeholder: 'Type a message',
       send: 'Send',
       stop: 'Stop the AI call',

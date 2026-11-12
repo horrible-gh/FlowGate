@@ -133,6 +133,28 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect(w.find('[data-test="inspector-run-settings-run_ai"]').exists()).toBe(false)
     expect(http.patch).not.toHaveBeenCalled()
   })
+  it('flowgate.v02gui.0007 B: the review counts follow the server maximum (5 offers 4회 · 5회), never -1', async () => {
+    raw = settingsRaw()
+    for (const name of ['review_count', 'instruction_review_count']) raw.fields[name].choices = [-1, 0, 1, 2, 3, 4, 5]
+    raw.fields.review_count.value = 5
+    wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
+    const count = wrapper.get('[data-test="inspector-run-settings-review_count"]')
+    expect(count.findAll('option').map(option => option.text())).toEqual(['안 함','1회','2회','3회','4회','5회'])
+    expect((count.element as HTMLSelectElement).value).toBe('5')
+    await wrapper.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
+    expect(wrapper.get('[data-field="instruction_review_count"]').findAll('option').map(option => option.text())).toEqual(['안 함','1회','2회','3회','4회','5회'])
+    expect(http.patch).not.toHaveBeenCalled()
+  })
+  it('flowgate.v02gui.0007 B: a stored "until it passes" (-1) stays shown so opening the card changes nothing', async () => {
+    raw = settingsRaw(); raw.fields.instruction_review_count.value = -1
+    wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
+    await wrapper.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
+    const select = wrapper.get('[data-field="instruction_review_count"]')
+    expect(select.findAll('option')).toHaveLength(5)
+    expect((select.element as HTMLSelectElement).value).toBe('-1')
+    expect(wrapper.get('[data-test="inspector-run-settings-review_count"]').findAll('option')).toHaveLength(4)
+    expect(http.patch).not.toHaveBeenCalled()
+  })
   it('a running card locks the roles and [고급]; a waiting card keeps them', async () => {
     raw = settingsRaw(); raw.locked = true
     wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()

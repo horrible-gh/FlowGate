@@ -16,7 +16,7 @@ import { draftUserId, type DraftSendSnapshot } from './drafts'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, type CreateChatOptions } from './api'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
-import { buildTimeline, mergeTurns, replaceServerActivities, upsertActivity, type PendingTurn, type TimelineItem } from './timeline'
+import { buildTimeline, mergeTurns, replaceServerActivities, sendFailureOf, upsertActivity, type PendingTurn, type SendFailure, type TimelineItem } from './timeline'
 import { runBelongsToChat, runBodyState, runStatusLines, type TurnReadResult } from './runAssessment'
 import { chatErrorActivity, keepLocalChatError, newChatErrorId, readLocalChatErrors, redactChatError, type ChatErrorRecord } from './chatErrors'
 import type {
@@ -1259,11 +1259,15 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return !disposed && gen === chatGen && chatId === state.activeChatId
   }
 
-  /** POST one turn; every replay keeps its original CH, body, head and key. */
-  async function postPending(chatId: string, gen: number, key: string, item: PendingTurn, trace: SubmissionTrace, refresh = false): Promise<boolean> {
+  /**
+   * POST one turn; every replay keeps its original CH, body, head and key. True when it was accepted, else why the
+   * last attempt failed (flowgate.v02gui.0007 A: shown on the failed bubble).
+   */
+  async function postPending(chatId: string, gen: number, key: string, item: PendingTurn, trace: SubmissionTrace, refresh = false): Promise<true | SendFailure> {
+    let failure = sendFailureOf(null)
     for (let attempt = 0; attempt <= SEND_RETRY_MAX; attempt++) {
       // An in-flight POST may finish off screen; no later POST is started there.
-      if (attempt > 0 && !isCurrentChat(chatId, gen)) return false
+      if (attempt > 0 && !isCurrentChat(chatId, gen)) return failure
       publishProgress(key, { phase: 'sending', stage: 'send', attempt: attempt + 1 })
       try {
         trace.mark('turn_start', { docId: chatId, attempt: attempt + 1 })
@@ -1284,13 +1288,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
       } catch (error) {
         const status = error instanceof ConversationRequestError ? error.status : null
         trace.mark('turn_end', { docId: chatId, attempt: attempt + 1, result: 'error', ...(status === null ? {} : { status }) })
+        failure = sendFailureOf(status)
         if ((status != null && [400, 404, 409, 422].includes(status)) || attempt === SEND_RETRY_MAX || !isCurrentChat(chatId, gen)) {
           recordChatError(chatId, gen, 'send_failed', error)
-          return false
+          return failure
         }
       }
     }
-    return false
+    return failure
   }
 
   /**
@@ -1344,9 +1349,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   async function finishSend(chatId: string, gen: number, owner: string, item: PendingTurn, trace: SubmissionTrace, refresh = false): Promise<boolean> {
-    const ok = await postPending(chatId, gen, owner, item, trace, refresh)
-    if (!ok) {
-      publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === item.localId ? { ...p, failed: true } : p))
+    const result = await postPending(chatId, gen, owner, item, trace, refresh)
+    if (result !== true) {
+      publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === item.localId ? { ...p, failed: true, failure: result } : p))
       publishProgress(owner, { phase: 'failed', stage: 'send', attempt: progress.get(owner)?.attempt ?? 1 })
       if (visibleOwner(owner)) flushDeferredRefresh()
       return false
@@ -1365,7 +1370,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!chatId || !item || state.sending || running.value || state.turnsStatus !== 'ready') return false
     const owner = ownerKey(chatId)
     if (progress.get(owner)?.phase === 'sending') return false
-    publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === localId ? { ...p, failed: false } : p))
+    publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === localId ? { ...p, failed: false, failure: null } : p))
     publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
     const gen = chatGen
     const snapshot = pendingDrafts.get(localId)

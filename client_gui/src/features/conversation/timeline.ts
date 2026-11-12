@@ -12,6 +12,26 @@ import type {
   WorkChangeFile,
 } from './types'
 
+/**
+ * flowgate.v02gui.0007 A: why a send failed, shown briefly on its bubble — a class of the HTTP status (no answer =
+ * `network`) and the status itself. The server's own wording is not shown there: it is written for an AI / API caller.
+ */
+export type SendFailureReason = 'rejected' | 'forbidden' | 'not_found' | 'conflict' | 'server' | 'network'
+export interface SendFailure {
+  reason: SendFailureReason
+  status: number | null
+}
+
+/** The bubble's failure of an HTTP status (null = the request got no answer). */
+export function sendFailureOf(status: number | null): SendFailure {
+  if (status == null) return { reason: 'network', status: null }
+  if (status === 401 || status === 403) return { reason: 'forbidden', status }
+  if (status === 404) return { reason: 'not_found', status }
+  if (status === 409) return { reason: 'conflict', status }
+  if (status >= 500) return { reason: 'server', status }
+  return { reason: 'rejected', status }
+}
+
 /** A message the composer has sent but the server has not numbered yet (L0004 §2-17). */
 export interface PendingTurn {
   localId: string
@@ -26,10 +46,12 @@ export interface PendingTurn {
    * every retry runs on this AI, whatever the picker shows later.
    */
   providerId: string
+  /** flowgate.v02gui.0007 A: why the last attempt failed (set with `failed`, cleared when a retry starts). */
+  failure?: SendFailure | null
 }
 
 export type TimelineItem =
-  | { kind: 'message'; key: string; turn: ConversationTurn; pending: boolean; failed: boolean; localId: string | null }
+  | { kind: 'message'; key: string; turn: ConversationTurn; pending: boolean; failed: boolean; localId: string | null; failure?: SendFailure | null }
   | { kind: 'boundary'; key: string }
   | { kind: 'command'; key: string; activity: CommandRequestActivity }
   | { kind: 'change'; key: string; activity: WorkChangeActivity }
@@ -100,7 +122,12 @@ function activityItem(activity: ConversationActivity): TimelineItem {
  * turns after them, and an activity the server could not place yet stays after every turn
  * until a later read places it. Status events are this client's own (run started / finished):
  * they keep the time rule — in front of the first turn later than them, an untimed one last.
- * Unsent messages are always last — they are, by definition, the newest thing this client knows.
+ *
+ * flowgate.v02gui.0007 A: a failed message goes where it was sent — right after the turn its `basedOnSeq` saw (and
+ * that turn's after-anchors), in front of every later turn — so a message that succeeded after it never shows above
+ * it. The place is the seq, never `createdAt` (client and server clocks differ). Failed messages at one place keep
+ * their outbox order. A message still on its way, and a failed one sent after the last loaded turn, stays last in
+ * outbox order: the newest thing this client knows. A retry is a new send — it goes last, then to its server seq.
  */
 export function buildTimeline(
   turns: readonly ConversationTurn[],
@@ -126,11 +153,31 @@ export function buildTimeline(
   // Same place: before-anchors first, then a run's commands ahead of its change, then list order.
   anchored.sort((a, b) => a.seq - b.seq || Number(a.after) - Number(b.after) || kindRank(a.activity) - kindRank(b.activity) || a.index - b.index)
 
+  const lastSeq = turns.length > 0 ? turns[turns.length - 1].seq : 0
+  const placedFailed = pending
+    .map((p, index) => ({ p, index }))
+    .filter(({ p }) => p.failed && p.basedOnSeq < lastSeq)
+    .sort((a, b) => a.p.basedOnSeq - b.p.basedOnSeq || a.index - b.index)
+    .map(({ p }) => p)
+  const trailing = pending.filter((p) => !placedFailed.includes(p))
+
   const boundarySeq = firstUnreadSeq(turns, readSeq)
   const out: TimelineItem[] = []
   let nextAnchored = 0
   let nextStatus = 0
+  let nextFailed = 0
   for (const turn of turns) {
+    // Failed messages sent before this turn existed: after the previous turn and its after-anchors. A status event
+    // older than such a message goes ahead of it; its own send_failed line (recorded after it) stays below it.
+    while (nextFailed < placedFailed.length && placedFailed[nextFailed].basedOnSeq < turn.seq) {
+      const failedAt = timeOf(placedFailed[nextFailed].createdAt)
+      while (nextStatus < statuses.length && failedAt != null && statuses[nextStatus].at != null && statuses[nextStatus].at! < failedAt) {
+        out.push(activityItem(statuses[nextStatus].activity))
+        nextStatus += 1
+      }
+      out.push(pendingItem(placedFailed[nextFailed]))
+      nextFailed += 1
+    }
     while (nextAnchored < anchored.length) {
       const a = anchored[nextAnchored]
       if (a.seq > turn.seq || (a.seq === turn.seq && a.after)) break
@@ -152,17 +199,20 @@ export function buildTimeline(
   for (; nextAnchored < anchored.length; nextAnchored++) out.push(activityItem(anchored[nextAnchored].activity))
   for (const activity of unplaced) out.push(activityItem(activity))
   for (; nextStatus < statuses.length; nextStatus++) out.push(activityItem(statuses[nextStatus].activity))
-  for (const p of pending) {
-    out.push({
-      kind: 'message',
-      key: `local:${p.localId}`,
-      turn: { seq: 0, speaker: 'user', body: p.body, basedOnSeq: p.basedOnSeq, createdAt: p.createdAt },
-      pending: !p.failed,
-      failed: p.failed,
-      localId: p.localId,
-    })
-  }
+  for (const p of trailing) out.push(pendingItem(p))
   return out
+}
+
+function pendingItem(p: PendingTurn): TimelineItem {
+  return {
+    kind: 'message',
+    key: `local:${p.localId}`,
+    turn: { seq: 0, speaker: 'user', body: p.body, basedOnSeq: p.basedOnSeq, createdAt: p.createdAt },
+    pending: !p.failed,
+    failed: p.failed,
+    localId: p.localId,
+    failure: p.failed ? p.failure ?? null : null,
+  }
 }
 
 function kindRank(activity: ConversationActivity): number {

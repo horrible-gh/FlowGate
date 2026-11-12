@@ -166,6 +166,26 @@ describe('send', () => {
     expect(session.state.pending).toEqual([])
   })
 
+  it('flowgate.v02gui.0007 A: a failed message keeps its place and its reason; a later message lands below it', async () => {
+    const { session, source } = setup()
+    await session.setScope(SCOPE)
+    source.postTurn.mockRejectedValueOnce(httpError(422, 'corrupted body'))
+    expect(await session.send('first')).toBe(false)
+    const failed = session.state.pending[0]
+    expect(failed).toMatchObject({ failed: true, basedOnSeq: 2, failure: { reason: 'rejected', status: 422 } })
+    expect(await session.send('second')).toBe(true)
+    const keys = session.timeline.value.map((item) => item.key)
+    const second = session.state.turns.find((t) => t.body === 'second')!
+    expect(keys.indexOf(`local:${failed.localId}`)).toBeGreaterThan(keys.indexOf('turn:2'))
+    expect(keys.indexOf(`local:${failed.localId}`)).toBeLessThan(keys.indexOf(`turn:${second.seq}`))
+    const bubble = session.timeline.value.find((item) => item.key === `local:${failed.localId}`)
+    expect(bubble).toMatchObject({ failed: true, failure: { reason: 'rejected', status: 422 } })
+    // A retry is a new send: the reason goes, and the accepted message takes its server seq (the end).
+    expect(await session.retry(failed.localId)).toBe(true)
+    expect(session.state.pending).toEqual([])
+    expect(session.state.turns.map((t) => t.body).slice(-2)).toEqual(['second', 'first'])
+  })
+
   it('retries a transient failure itself', async () => {
     const { session, source } = setup()
     await session.setScope(SCOPE)
