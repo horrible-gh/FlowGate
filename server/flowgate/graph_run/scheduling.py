@@ -9,9 +9,28 @@ Paused runs start existing requests only; idle/stopping runs start nothing.
 from __future__ import annotations
 
 import heapq
+import threading
 from contextvars import ContextVar
 
 _admission_owner = ContextVar("graph_admission_owner", default=None)
+# flowgate.v02gui.0006 CH: the thread whose ``admission`` span is open. Only a claim made inside that span is marked
+# ``starting`` (below), because only that span's end clears the mark; a bare ``admit`` (tests, tools) marks nothing.
+_admission_thread = ContextVar("graph_admission_thread", default=None)
+# flowgate.v02gui.0006 CH: the launchers whose start is under way -- from ``admit``'s claim (``ai_run_id`` published)
+# until their ``admission`` returns (the run registered, ``_register_run``) or rolls back. In that span the execution
+# is ``requested`` with an ``ai_run_id`` but no registry run exists yet (the worktree is being prepared), so the
+# supervisor's refill took it for an ended launcher, cleared the id and closed the request as unowned.
+_starting: dict = {}            # exec_id -> ai_run_id
+_starting_lock = threading.Lock()
+
+
+def starting(exec_id, ai_run_id=None):
+    """flowgate.v02gui.0006 CH: ``exec_id``'s admission (by ``ai_run_id`` when given) is still starting its run."""
+    if not exec_id:
+        return False
+    with _starting_lock:
+        owner = _starting.get(exec_id)
+    return owner is not None and (ai_run_id is None or owner == ai_run_id)
 from fastapi import HTTPException
 from modules.flow_gate.db import groups, group_ai_leases
 from modules.flow_gate.db.connection import get_store
@@ -169,7 +188,13 @@ def admit(exec_id, ai_run_id, flow_id, attempt_id=None):
                                       [ai_run_id, exec_id])
         if changed != 1:
             busy()
+        previous = _admission_owner.get()
         _admission_owner.set((exec_id, ai_run_id, flow_id))
+        if _admission_thread.get() == threading.get_ident():
+            with _starting_lock:
+                if previous and previous[0] != exec_id and _starting.get(previous[0]) == previous[1]:
+                    del _starting[previous[0]]      # only the span's last claim is cleared at its end
+                _starting[exec_id] = ai_run_id      # cleared when this admission ends (``admission``'s finally)
         return row["attempt_id"]
     return with_flow_guard(flow_id, body)
 
@@ -197,6 +222,7 @@ def acquire(exec_id, ai_run_id):
 
 def admission(start):
     marker = _admission_owner.set(None)
+    thread = _admission_thread.set(threading.get_ident())
     try:
         return start()
     except Exception:
@@ -211,4 +237,10 @@ def admission(start):
             with_flow_guard(flow_id, release)
         raise
     finally:
+        owner = _admission_owner.get()
+        if owner:
+            with _starting_lock:
+                if _starting.get(owner[0]) == owner[1]:
+                    del _starting[owner[0]]
+        _admission_thread.reset(thread)
         _admission_owner.reset(marker)

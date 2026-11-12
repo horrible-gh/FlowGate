@@ -643,6 +643,16 @@ BUSY_RETRY_DELAYS = (5.0, 10.0, 20.0, 40.0, 60.0)
 _BUSY_RETRY_TTL = 3600.0
 _busy_retries: dict = {}          # exec_id -> (refusals so far, monotonic time of the last one)
 _busy_retries_lock = threading.Lock()
+# flowgate.v02gui.0006 CH: the requests whose retry timer is scheduled and has not fired yet. That timer owns the
+# request: the unowned-request close (``_request_has_owner``) must not cancel it meanwhile -- a recovery's own replay
+# refused ``git_busy`` was otherwise cancelled at once as ``restart_unowned_request`` by the same recovery.
+_busy_pending: set = set()
+
+
+def busy_retry_pending(exec_id):
+    """flowgate.v02gui.0006 CH: a ``git_busy`` retry of ``exec_id`` is scheduled and has not fired yet."""
+    with _busy_retries_lock:
+        return exec_id in _busy_pending
 
 
 def _retry_busy(exec_id, provision_error=None):
@@ -656,10 +666,13 @@ def _retry_busy(exec_id, provision_error=None):
             del _busy_retries[key]
         tries = _busy_retries.get(exec_id, (0, now))[0] + 1
         _busy_retries[exec_id] = (tries, now)
+        _busy_pending.add(exec_id)
     exhausted = tries > len(BUSY_RETRY_DELAYS)
     delay = 0.0 if exhausted else BUSY_RETRY_DELAYS[tries - 1]
 
     def fire():
+        with _busy_retries_lock:
+            _busy_pending.discard(exec_id)   # a refusal of the settle below schedules (and marks) the next one
         try:
             row = ledger.get(exec_id)
             if not row or row["status"] != "requested" or row.get("ai_run_id"):
@@ -742,6 +755,10 @@ def _request_has_owner(row, group_id):
     from modules.flow_gate.services import ai_invoke_service
     from modules.flow_gate.services.ai_invoke import remote_supervisor
     if ledger.handing_off(row["run_id"]) or result_merge.holding(row["run_id"]):
+        return True
+    # flowgate.v02gui.0006 CH: an admission still preparing its run's worktree, or a scheduled ``git_busy`` retry,
+    # owns the request although neither the registry nor the ledger shows it yet.
+    if scheduling.starting(row["exec_id"]) or busy_retry_pending(row["exec_id"]):
         return True
     if run_store._one(
             "SELECT e.exec_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
@@ -867,6 +884,10 @@ def _recover_snapshot(snapshot, ai_invoke_service, run_apply):
             if _time_machine().busy(snapshot["group_id"]):
                 return              # T#13: kept requested; replayed once the Time Machine operation is finished
             if ledger.eligible(row):
+                if row.get("ai_run_id") and scheduling.starting(row["exec_id"], row["ai_run_id"]):
+                    # flowgate.v02gui.0006 CH: its admission is still preparing the run (worktree before
+                    # ``_register_run``); taking the id back here replayed it against itself and closed it unowned.
+                    return
                 live = ai_invoke_service.get_run_record(row.get("ai_run_id")) if row.get("ai_run_id") else None
                 if live and live.get("status") != "finished":
                     return

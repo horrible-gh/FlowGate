@@ -332,3 +332,77 @@ def test_restart_scan_does_not_bind_loop_reads_to_a_temporary_connection_store()
         encoding="utf-8", errors="replace", timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# ── flowgate.v02gui.0006 CH: a request owned by a starting admission or a git_busy retry is never closed unowned ──
+
+@pytest.mark.parametrize("entry", ["supervisor_tick", "held_recovery"])
+def test_recovery_during_admission_keeps_the_starting_claim(request_scene, monkeypatch, entry):
+    """① The admission published ai_run_id and is preparing the worktree (no registry run yet). A supervisor tick
+    (``_recover_graph``) or a held-run recovery (``recover_execution``) there took the id back, replayed the request
+    against its own admission and cancelled it as ``restart_unowned_request``."""
+    s = request_scene
+    monkeypatch.setattr(scheduling, "_starting", {})
+    monkeypatch.setattr(remote, "_graph_refill_candidates", {})
+    monkeypatch.setattr(execution, "replay", Mock())
+    before = ledger.get(s.eid)
+    assert before["status"] == "requested" and before["ai_run_id"] is None
+    seen = {}
+
+    def start():
+        scheduling.admit(s.eid, "air_starting", FA)
+        assert scheduling.starting(s.eid, "air_starting") and not service._runs
+        if entry == "supervisor_tick":
+            remote._recover_graph()
+        else:
+            execution.recover_execution(s.eid)
+        seen["row"] = ledger.get(s.eid)
+        return "registered"
+
+    assert scheduling.admission(start) == "registered"
+    assert seen["row"]["status"] == "requested" and seen["row"]["ai_run_id"] == "air_starting"
+    assert not execution.replay.called and not s.failures
+    assert not scheduling.starting(s.eid)          # the mark ends with the admission
+
+
+def test_starting_mark_ends_with_a_rolled_back_admission_and_needs_an_admission(request_scene, monkeypatch):
+    s = request_scene
+    monkeypatch.setattr(scheduling, "_starting", {})
+
+    def start():
+        scheduling.admit(s.eid, "air_starting", FA)
+        assert scheduling.starting(s.eid)
+        raise RuntimeError("worktree preparation failed")
+
+    with pytest.raises(RuntimeError):
+        scheduling.admission(start)
+    assert not scheduling.starting(s.eid) and ledger.get(s.eid)["ai_run_id"] is None
+    scheduling.admit(s.eid, "air_bare", FA)           # a bare claim has no admission end to clear a mark
+    assert not scheduling.starting(s.eid) and scheduling._starting == {}
+
+
+def test_replay_refused_git_busy_is_kept_for_its_retry(request_scene, monkeypatch):
+    """② A held-run recovery's replay refused ``git_busy`` schedules its retry; the same recovery's unowned close
+    cancelled the request at once. The scheduled retry owns it until it fires."""
+    from fastapi import HTTPException
+    s = request_scene
+    timers = []
+    monkeypatch.setattr(execution.threading, "Timer", lambda delay, fn: timers.append(fn) or Mock())
+    monkeypatch.setattr(execution, "_busy_retries", {})
+    monkeypatch.setattr(execution, "_busy_pending", set())
+    monkeypatch.setattr(execution, "replay", Mock(side_effect=HTTPException(409, detail={
+        "code": "graph_worktree_unavailable", "reason": "git_busy", "provision_error": "git_busy"})))
+    execution.recover_execution(s.eid)
+    row = ledger.get(s.eid)
+    assert row["status"] == "requested" and row["ai_run_id"] is None and not s.failures
+    assert len(timers) == 1 and execution.busy_retry_pending(s.eid)
+    execution._close_unowned_requests(started_before=FUTURE, run_statuses=("running",),
+                                      reason="stalled_unowned_request")    # the supervisor sweep keeps it too
+    assert ledger.get(s.eid)["status"] == "requested" and not s.failures
+    monkeypatch.setattr(execution, "settle", lambda _flow: None)
+    timers[-1]()                                      # the retry fires (its settle replays the request)
+    assert not execution.busy_retry_pending(s.eid)
+    execution._close_unowned_requests(exec_id=s.eid)  # no retry owns it any more: closed as before
+    assert ledger.get(s.eid)["status"] == "cancelled"
+    [failure] = s.failures
+    assert failure["start_failure_info"]["reason"] == "restart_unowned_request"

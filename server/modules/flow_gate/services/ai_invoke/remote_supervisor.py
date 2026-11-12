@@ -412,6 +412,8 @@ def _recover_graph() -> None:
             if row["status"] == "running":
                 _continue_graph([row])
             elif row.get("ai_run_id"):
+                if scheduling.starting(row["exec_id"], row["ai_run_id"]):
+                    continue    # flowgate.v02gui.0006 CH: admitted, its worktree still being prepared; not ended
                 live = _svc().get_run_record(row["ai_run_id"])
                 if not live or live.get("status") == "finished":
                     execution.recover_execution(row["exec_id"])
