@@ -439,8 +439,8 @@ export interface DesignerCenterSession {
   /** flowgate.v02.0056 F2-1: the source can approve a card (the Canvas offers [승인]). */
   readonly canApprove: boolean
   /**
-   * flowgate.v02.0105 T#2 (B-6): the Flow's cards may be approved by this user now — the source approves and the Flow's
-   * confirmed run read says so (`viewer.can_approve` true). Not told, not read or false: no [승인].
+   * flowgate.v02gui.0002 B: the Flow's confirm cards may offer [승인] now — a run source, a writable Flow and a confirmed
+   * run read; each card still needs the server's `gate.can_decide` (`waiting_confirm`). Not read or archived: no [승인].
    */
   canApproveFlow(flowId: string): boolean
   approveNode(flowId: string, nodeId: string): Promise<boolean>
@@ -518,6 +518,10 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   const archiveStates = reactive<Record<string, boolean | null>>({})
   const archiveReads = new Map<string, number>()
+  // flowgate.v02gui.0002 A: the archive read in flight per Flow (settles when it answered or failed), and how long a
+  // run command under way waits for it.
+  const archiveWaits = new Map<string, Promise<void>>()
+  const RUN_GATE_SETTLE_MS = 15_000
   let archiveSeq = 0
 
   function isFlowReadOnly(flowId: string): boolean {
@@ -536,10 +540,32 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     archiveReads.set(flowId, seq)
     if (archiveStates[flowId] !== true) archiveStates[flowId] = null
     const current = () => !disposed && state.projectId === pid && archiveReads.get(flowId) === seq
-    void Promise.resolve().then(() => options.readArchive!(flowId)).then(
+    const answered: Promise<void> = Promise.resolve().then(() => options.readArchive!(flowId)).then(
       (answer) => { if (current()) archiveStates[flowId] = typeof answer.archived === 'boolean' ? answer.archived : null },
       () => { /* Keep the tab readable and its changes locked; the next refresh retries. */ },
-    )
+    ).finally(() => { if (archiveWaits.get(flowId) === answered) archiveWaits.delete(flowId) })
+    archiveWaits.set(flowId, answered)
+  }
+
+  /**
+   * flowgate.v02gui.0002 A: a run click under way (the run control's `settle`) that finds the archive state unanswered —
+   * every Canvas read asks it again, the draft confirmation's re-read too — waits for that answer instead of being
+   * dropped; a failed read is asked once more (the "next refresh" its failure waits for). True: it waited, ask the gates
+   * again. False: nothing to wait for. No answer within RUN_GATE_SETTLE_MS is the command's refusal
+   * (`flow_archive_unconfirmed`, the run toast says it), never a silent end. A click on a Flow whose archive state is
+   * unanswered before any command stays refused as before (archiveReadOnly.0152).
+   */
+  function settleRunGates(flowId: string): Promise<boolean> {
+    if (disposed || !options.readArchive || archiveStates[flowId] !== null || state.projectId === null || !isOpen(state.projectId, flowId)) {
+      return Promise.resolve(false)
+    }
+    if (!archiveWaits.has(flowId)) refreshFlowArchive(flowId)
+    const answered = archiveWaits.get(flowId)
+    if (!answered) return Promise.resolve(false)
+    return new Promise<boolean>((resolve, reject) => {
+      const timer = setTimeout(() => reject(Object.assign(new Error(''), { code: 'flow_archive_unconfirmed' })), RUN_GATE_SETTLE_MS)
+      void answered.then(() => { clearTimeout(timer); resolve(true) })
+    })
   }
 
   // Latest read token per Flow id; a result whose token is no longer the latest is dropped.
@@ -694,6 +720,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     isOpen,
     beforePrepare: options.beforeRunPrepare,
     canProceed: (flowId) => !disposed && (options.runSetupCurrent?.() ?? true) && whenKnown(flowId, run => !isRunLocked(run)),
+    settle: (flowId) => settleRunGates(flowId),
     prepare: (flowId) => prepareRunTold(flowId),
     hasDraftToConfirm: willConfirmDraft,
     saveDraftBeforeCheck: (flowId) => drafts.saveBeforeRunCheck(flowId),
@@ -786,9 +813,13 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     if (state.projectId === projectId) refreshFlow(flowId)
     return ok
   }
+  // flowgate.v02gui.0002 B: a confirm card's [승인] stands on what the Inspector's [승인] stands on — the server's
+  // `gate.can_decide` (gateHeaderState `waiting_confirm`, per card) on a confirmed run read of a writable Flow. The
+  // general card approval this was tied to (`runControl.canApprove` / `viewer.can_approve`) was removed by 0119 T-3,
+  // which left the card's [승인] never drawn. The decision itself is approveGateTarget's (the Inspector's own path).
   function canApproveFlow(flowId: string): boolean {
     const run = state.runs[flowId]
-    return !isFlowReadOnly(flowId) && runControl.canApprove && run?.readState === 'read' && run.run?.viewerCanApprove === true
+    return runControl.available && !isFlowReadOnly(flowId) && run?.readState === 'read'
   }
 
   // ── flowgate.v02.0061 T#15: a card's context menu ─────────────────────────────────────────────────────────

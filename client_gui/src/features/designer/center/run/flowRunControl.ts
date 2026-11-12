@@ -43,6 +43,14 @@
 // flowgate.v02.0083 T#4 rev1 — an AI execution read while still requested turns running with no run event of its own (the
 // AI start's frame may come before it): while the run read shows a running run with a requested execution, it is read
 // again after REQUESTED_REREAD_MS, so the band's executions and a card's running lock (its WP window) follow it.
+//
+// flowgate.v02gui.0002 A — one 전체 실행 / 다음 단계 click confirms the drawn draft and starts the run. The confirmation
+// re-reads the Canvas, and that re-read asks the archive state again (unknown until it answers) while this action keeps
+// run reads out (`read` returns during an action). A gate asked meanwhile said no for "not answered yet", and the click
+// ended after the confirmation with no run and no word (stg flowgate.v02test.0026: confirmed 16:28:17, run only on a
+// second click at 16:29:13). Now an unanswered gate is waited for (`mayGo`: the run is read here, `settle` waits for the
+// archive answer) and the same click goes on to `startRun`. Only a real no stops it: archived, a run started elsewhere,
+// the tab closed, the AI setup cancelled.
 import { cardApprovalFailureView, cardApprovalRefusalOf, type CardApprovalFailureView, type CardApprovalRefusal } from '../graph/cardStateView'
 import type { FlowGraphSource, FlowRunError, FlowRunInfo, FlowTimeMachineRefusal, FlowTimeMachineResult } from '../graph/flowGraphSource'
 import { useCurrentUser } from '@/core/auth/currentUser'
@@ -57,6 +65,11 @@ export type FlowRunMode = 'next' | 'all'
 
 /** flowgate.v02.0083 T#4 rev1: how soon a run read showing a requested AI execution is read again. */
 export const REQUESTED_REREAD_MS = 2000
+/**
+ * flowgate.v02gui.0002 A: how many times one run click waits for an unanswered gate (run status, archive state) before
+ * it takes the gate's no. Each wait is one answer the click would otherwise have dropped silently.
+ */
+export const RUN_GATE_SETTLE_ATTEMPTS = 3
 /** 0156 T1 R4: first re-lookup of unresolved journaled identities; doubles up to ORPHAN_RECHECK_MAX_MS. */
 export const ORPHAN_RECHECK_MS = 15_000
 export const ORPHAN_RECHECK_MAX_MS = 300_000
@@ -156,6 +169,12 @@ export interface FlowRunControlDeps {
   readonly diagnose?: (record: RunFailureDiagnostic) => void
   readonly beforePrepare?: (flowId: string, mode: FlowRunMode) => Promise<boolean>
   readonly canProceed?: (flowId: string) => boolean
+  /**
+   * flowgate.v02gui.0002 A: waits for what `canProceed` reads but has no answer for yet (the archive state a Canvas
+   * re-read asks again). Resolves true when it waited for something (ask `canProceed` again), false when nothing is
+   * pending (its no is a real no).
+   */
+  readonly settle?: (flowId: string) => Promise<boolean>
   readonly source: FlowGraphSource
   readonly projectId: () => string | null
   /** Whether the Flow is still open in this project (a late answer for a closed tab is dropped). */
@@ -651,6 +670,32 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
 
   function run(flowId: string, mode: FlowRunMode): Promise<boolean> {
     return act(flowId, mode, async (projectId, state, request) => {
+      /**
+       * gui.0002 A: whether the command may go on now. A gate with no answer yet is not a no: an unconfirmed run status is
+       * read here (this action keeps `read` out, so nothing else would confirm it) and the session's `settle` waits for
+       * the archive answer; then the gates are asked again. Only a no that stands after the answers stops the click.
+       */
+      const mayGo = async (): Promise<boolean> => {
+        for (let attempt = 0; ; attempt++) {
+          if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run)) return false
+          if (deps.canProceed?.(flowId) !== false) return true
+          if (attempt >= RUN_GATE_SETTLE_ATTEMPTS) return false
+          let waited = false
+          if (state.readState !== 'read') {
+            const stage = request.stage
+            request.stage = 'target_read'
+            const current = await source.loadRun!(projectId, flowId)
+            if (!request.alive()) return false
+            request.stage = stage
+            state.run = current
+            state.readState = 'read'
+            waited = true
+          }
+          if (deps.settle && (await deps.settle(flowId))) waited = true
+          if (!request.alive()) return false
+          if (!waited) return false
+        }
+      }
       const execute = async (owner: RunCommandScope | null, fence: CommandFence) => {
         if (!request.alive()) return false
         const requestedMode = mode === 'next' ? 'step' : 'full'
@@ -702,11 +747,15 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
           // 0156 T1 R4: the AI setup modal can outlast the cross-tab lease (a backgrounded or frozen tab): still the holder?
           await fence()
         }
-        if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
-        if (state.run?.status === 'idle' && source.checkRevisionAdoption) {
+        if (!(await mayGo())) return false
+        // gui.0002 A: pending draft saves settle before anything reads or confirms the candidate — also on a Flow with no
+        // run yet — so a save's own Canvas re-read (it asks the archive state again) is answered before the confirmation.
+        if (deps.hasDraftToConfirm?.(flowId) && deps.saveDraftBeforeCheck) {
           request.stage = 'save_draft'
-          if (deps.hasDraftToConfirm?.(flowId) && deps.saveDraftBeforeCheck && !(await deps.saveDraftBeforeCheck(flowId))) return false
-          if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
+          if (!(await deps.saveDraftBeforeCheck(flowId))) return false
+          if (!(await mayGo())) return false
+        }
+        if (state.run?.status === 'idle' && source.checkRevisionAdoption) {
           // A negative assessment is a run refusal. Only failure to obtain an assessment falls back (T A-2.3).
           request.stage = 'revision'
           let refusal: FlowRunError | null = null
@@ -715,12 +764,14 @@ export function createFlowRunControl(deps: FlowRunControlDeps, runs: Record<stri
           } catch {
             // The command still enforces adoption; the revision notice explains a pinned view if it refuses.
           }
-          if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || isRunLocked(state.run) || deps.canProceed?.(flowId) === false) return false
+          if (!(await mayGo())) return false
           if (refusal) throw refusal
         }
         request.stage = 'prepare'
         if (!(await deps.prepare(flowId))) return false
-        if (!deps.isOpen(projectId, flowId) || runs[flowId] !== state || deps.canProceed?.(flowId) === false) return false
+        // gui.0002 A: the confirmation re-reads the Canvas (and so the archive state); its answer is waited for here, in
+        // this click, instead of ending it with the draft confirmed and no run.
+        if (!(await mayGo())) return false
         // One server call: the step / full command. Nothing is stopped from here after it (T#2 settles the step).
         if (!request.alive()) return false
         if (commandStore && owner) {
