@@ -22,6 +22,7 @@ import {
   gitErrorOf,
   pushBranch,
   rejectReview,
+  resolveConflictFile,
   startConflictAi,
 } from '@/features/git/api'
 
@@ -33,7 +34,8 @@ beforeEach(() => {
 const axiosError = (status: number, data: unknown) => Object.assign(new Error('x'), { isAxiosError: true, response: { status, data } })
 
 describe('reads', () => {
-  it('conflicts: files with marker counts, content dropped', async () => {
+  // flowgate.v02gui.0004: the content is kept now — the direct resolver splits it into chunks.
+  it('conflicts: files with marker counts, content and resolved state', async () => {
     getRequest.mockResolvedValue({
       data: {
         ok: true,
@@ -42,6 +44,7 @@ describe('reads', () => {
         base_branch: 'main',
         target_branch: 'v0.2',
         files: [{ path: 'a\\b.ts', content: '<<<<<<< x', conflict_count: 1 }, { path: 'c.ts', content: '', conflict_count: 0 }],
+        resolved_paths: ['c.ts'],
       },
     })
     await expect(fetchConflicts('p.m.0001', 7)).resolves.toEqual({
@@ -51,8 +54,8 @@ describe('reads', () => {
       targetBranch: 'v0.2',
       trConflict: false,
       files: [
-        { path: 'a/b.ts', conflictCount: 1 },
-        { path: 'c.ts', conflictCount: 0 },
+        { path: 'a/b.ts', conflictCount: 1, content: '<<<<<<< x', resolved: false },
+        { path: 'c.ts', conflictCount: 0, content: '', resolved: true },
       ],
     })
     expect(getRequest).toHaveBeenCalledWith('/api/v1/groups/p.m.0001/git/merge/7/conflicts')
@@ -106,7 +109,7 @@ describe('reads', () => {
 
   it('providers: ids and the default', async () => {
     getRequest.mockResolvedValue({ data: { ok: true, providers: [{ id: 'a', name: 'A' }, null, { id: '' }], default_provider_id: 'a' } })
-    await expect(fetchProviders('p')).resolves.toEqual({ providerIds: ['a'], defaultProviderId: 'a' })
+    await expect(fetchProviders('p')).resolves.toEqual({ providerIds: ['a'], defaultProviderId: 'a', providers: [{ id: 'a', name: 'A' }] })
     expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/providers', { project: 'p' })
   })
 })
@@ -122,6 +125,31 @@ describe('actions', () => {
       action_scope: 'resolve_conflict',
       mode: 'single',
       merge_id: 7,
+    })
+  })
+
+  // flowgate.v02gui.0004: the AI picked under [AI 해결 ▾] goes out pinned.
+  it('AI start pins the picked provider', async () => {
+    postRequest.mockResolvedValue({ data: { ok: true, run_id: 'r2' } })
+    await expect(startConflictAi('p.m.0001', 7, 'prov-1')).resolves.toBe('r2')
+    expect(postRequest).toHaveBeenLastCalledWith('/api/v1/ai-invoke/start', {
+      project: 'p',
+      module: 'm',
+      group: '0001',
+      action_scope: 'resolve_conflict',
+      mode: 'single',
+      merge_id: 7,
+      provider_id: 'prov-1',
+      provider_pinned: true,
+    })
+  })
+
+  it('direct resolve sends one file by chunks with complete, no auto', async () => {
+    postRequest.mockResolvedValue({ data: { ok: true, result: { status: 'conflict', remaining_conflicts: ['b.ts'] } } })
+    await expect(resolveConflictFile('p.m.0001', 7, 'a.ts', [{ chunk: 1, content: 'x\ny' }])).resolves.toEqual({ status: 'conflict', remaining: ['b.ts'] })
+    expect(postRequest).toHaveBeenLastCalledWith('/api/v1/groups/p.m.0001/git/merge/7/resolve', {
+      files: [{ path: 'a.ts', chunks: [{ chunk: 1, content: 'x\ny' }] }],
+      complete: true,
     })
   })
 

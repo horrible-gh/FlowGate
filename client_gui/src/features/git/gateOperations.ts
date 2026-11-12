@@ -34,11 +34,29 @@ export function parkedAgain(gate: RunGateState): boolean {
   return !gate.job || gate.job.status === 'recovery_required'
 }
 
+/**
+ * flowgate.v02gui.0004 — a held decision whose Git work stopped on the merge conflict the Git tab's conflict card
+ * shows (job parked on `gate_conflict`, or a recovery in `conflict`). That card speaks for it; it is not listed again
+ * as a separate "Git 작업 실패" card.
+ */
+export function isConflictOperation(gate: RunGateState): boolean {
+  const code = gate.recovery?.error_code ?? gate.job?.last_error_code ?? ''
+  return gate.job?.phase_note === 'gate_conflict' || gate.recovery?.status === 'conflict' || code === 'gate_conflict' || code === 'merge_conflict' || code === 'merge_conflict_open'
+}
+
+/** The commit a decision froze (`frozen_sha` of its receipt), when the server sent it. */
+export function frozenShaOf(gate: RunGateState | null | undefined): string | null {
+  const value = (gate?.decision as Record<string, unknown> | null | undefined)?.frozen_sha
+  return typeof value === 'string' && value ? value : null
+}
+
 export function useGateOperations(project: () => string | null, flow: () => string | null, readOnly: () => boolean) {
   const run = shallowRef<RunCurrent | null>(null)
   const selected = shallowRef<GateOperation | null>(null)
   const busy = ref(false)
   const notice = ref<string | null>(null)
+  /** flowgate.v02gui.0004 §B: how the last "새 커밋으로 다시 승인" ended (code null = ready for the person's approval). */
+  const reapproval = ref<{ decisionId: string; code: string | null } | null>(null)
   /** Accepted retries by decision id: the decision version and error code they were sent at (see `retryOutcomeOf`). */
   const retried = ref<Record<string, { version: number; code: string | null }>>({})
   const operations = computed<GateOperation[]>(() => (run.value?.nodes ?? []).flatMap(node => {
@@ -46,6 +64,14 @@ export function useGateOperations(project: () => string | null, flow: () => stri
     return gate?.decision_in_progress && gate.recovery && (gate.recovery.error_code || ['failed', 'recovery_required'].includes(gate.recovery.status))
       ? [{ runId: run.value!.runId, nodeKey: node.nodeKey, gate }] : []
   }))
+  /** flowgate.v02gui.0004: the held decision parked on the open merge conflict, if any. */
+  const conflictOperation = computed<GateOperation | null>(() => {
+    for (const node of run.value?.nodes ?? []) {
+      const gate = node.gate
+      if (gate?.decision_in_progress && gate.recovery && isConflictOperation(gate)) return { runId: run.value!.runId, nodeKey: node.nodeKey, gate }
+    }
+    return null
+  })
   /** An accepted retry matters until its decision leaves the run's held decisions (it succeeded or was closed). */
   function pruneRetried() {
     const held = new Set((run.value?.nodes ?? []).flatMap(node => node.gate?.recovery ? [node.gate.recovery.decision_id] : []))
@@ -84,6 +110,7 @@ export function useGateOperations(project: () => string | null, flow: () => stri
     selected.value = null
     notice.value = null
     retried.value = {}
+    reapproval.value = null
     pending = null
     void reload()
   }, { immediate: true })
@@ -137,7 +164,23 @@ export function useGateOperations(project: () => string | null, flow: () => stri
       return false
     } finally { busy.value = false }
   }
-  return { operations, selected, busy, notice, select, act, reload, readOnly, retryOutcomeOf }
+  /**
+   * flowgate.v02gui.0004 §B step 2 (0001-B 결정 사항): after the conflict review was closed, read the run again and
+   * cancel the decision that was parked on it — only when the server now says it is cancelable. The answer is the
+   * refusal / reason code to show, or null when the decision was cancelled (or had already ended on its own). The
+   * new approval is never sent from here: the person presses [승인] on the check card.
+   */
+  async function cancelAfterAbort(decisionId: string): Promise<string | null> {
+    if (busy.value || readOnly()) return 'busy'
+    await reload()
+    const node = (run.value?.nodes ?? []).find(item => item.gate?.recovery?.decision_id === decisionId)
+    const gate = node?.gate
+    if (!node || !gate?.decision_in_progress || !gate.recovery) return null
+    if (!gate.recovery.cancelable) return gate.recovery.error_code ?? 'gate_decision_not_cancelable'
+    select({ runId: run.value!.runId, nodeKey: node.nodeKey, gate })
+    return await act('cancel') ? null : notice.value ?? 'gate_decision_not_cancelable'
+  }
+  return { operations, conflictOperation, selected, busy, notice, reapproval, select, act, reload, readOnly, retryOutcomeOf, cancelAfterAbort }
 }
 export type GateOperations = ReturnType<typeof useGateOperations>
 export const GATE_OPERATIONS_CONTEXT: InjectionKey<GateOperations> = Symbol('flowgate.gitGateOperations')

@@ -62,7 +62,13 @@ export function conflicts(count = 5, resolved = 0): GitConflictSession {
     baseBranch: 'v0.2',
     targetBranch: 'main',
     trConflict: false,
-    files: Array.from({ length: count }, (_, i) => ({ path: `src/f${i}.ts`, conflictCount: i < resolved ? 0 : 2 })),
+    // flowgate.v02gui.0004: the working file with one marker chunk (resolved files have none).
+    files: Array.from({ length: count }, (_, i) => ({
+      path: `src/f${i}.ts`,
+      conflictCount: i < resolved ? 0 : 2,
+      content: i < resolved ? `merged ${i}\n` : `head ${i}\n<<<<<<< HEAD\nours ${i}\n=======\ntheirs ${i}\n>>>>>>> flow\ntail ${i}\n`,
+      resolved: i < resolved,
+    })),
   }
 }
 
@@ -121,6 +127,7 @@ export function createFakeGitSource(init: Partial<FakeState> = {}, extra: Partia
     }),
     fetchConflicts: vi.fn(async () => clone(db.conflicts)),
     startConflictAi: vi.fn(async () => 'run-1'),
+    resolveConflictFile: vi.fn(async () => ({ status: 'conflict', remaining: [] as string[] })),
     cancelAiRun: vi.fn(async () => 'cancelling'),
     abortMerge: vi.fn(async () => undefined),
     fetchReview: vi.fn(async () => clone(db.review)),

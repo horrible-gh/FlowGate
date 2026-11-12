@@ -342,7 +342,8 @@ describe('Designer Shell x Git tab — the diff in the Git modeless `Diff` tab (
     expect(find('designer-canvas')?.getAttribute('data-flow-id')).toBe('p.ui.0002')
   })
 
-  it('(e) a 0033 conflict file opens no diff; its intent is the 0033 value, unchanged', async () => {
+  // flowgate.v02gui.0004: a conflict file opens the Git part's own direct resolver, not the Center diff / an intent.
+  it('(e) a 0033 conflict file opens no diff; it opens the conflict resolver instead', async () => {
     pending = [{ group_id: 'p.ui.0001', status: 'conflict', merge_id: 7, ac_doc_id: null, review_state: null, final_approval_bound: false }]
     const w = await mountShell()
     await openFlow(w, 'Designer v0.2')
@@ -351,9 +352,8 @@ describe('Designer Shell x Git tab — the diff in the Git modeless `Diff` tab (
     expect(file).not.toBeNull()
     file!.click()
     await settle()
-    expect(w.findComponent(DesignerGitPanel).emitted('open-diff')).toEqual([
-      [{ projectId: 'p', groupId: 'p.ui.0001', mergeId: null, path: 'src/conflict.ts', status: 'C', origin: 'conflict', diffSource: 'base' }],
-    ])
+    expect(w.findComponent(DesignerGitPanel).emitted('open-diff')).toBeUndefined()
+    expect(find('git-conflict-window')).not.toBeNull()
     expect(find('git-center-diff')).toBeNull()
     expect(diffCalls()).toEqual([])
     expect(hidden(find('designer-center'))).toBe(false)

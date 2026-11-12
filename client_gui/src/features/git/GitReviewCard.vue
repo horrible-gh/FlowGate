@@ -64,6 +64,7 @@
     <p v-if="review && review.canReject && !session.defaultProviderId.value" class="gx-reason" data-test="git-review-no-provider">
       {{ t('gui.git.review.no_provider') }}
     </p>
+    <GitReapproveBlock />
     <p v-if="noticeText" class="gx-notice" data-test="git-notice">{{ noticeText }}</p>
   </section>
 </template>
@@ -75,6 +76,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitFileRow from './GitFileRow.vue'
+import GitReapproveBlock from './GitReapproveBlock.vue'
 import { FILE_PREVIEW, REJECT_REASON_MAX, useGitPanel } from './gitSession'
 import type { GitFileLetter } from './types'
 

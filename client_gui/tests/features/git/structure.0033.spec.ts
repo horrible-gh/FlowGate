@@ -65,6 +65,9 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         'GitPushErrorWindow.vue',
         'GitPushFailureCard.vue',
         'GitReviewCard.vue',
+        // flowgate.v02gui.0004 — the §B re-approval block and the direct resolver's chunk split.
+        'GitReapproveBlock.vue',
+        'conflictChunks.ts',
         'api.ts',
         'gitCenterDiff.ts',
         'gitPanel.css',

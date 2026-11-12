@@ -8,6 +8,10 @@
       </span>
       <span v-if="decision.result.value.description" data-test="gate-result-description">{{ decision.result.value.description }}</span>
     </div>
+    <div v-if="shape === 'gate' && decision.result.value.key === 'conflict_review'" class="inspector-gate-conflict" role="status" data-test="gate-conflict-line">
+      <span>{{ t(k('conflict.line')) }}</span>
+      <button type="button" class="inspector-gate-conflict-go" data-test="gate-conflict-open-git" @click="openGit">{{ t(k('conflict.open')) }}</button>
+    </div>
     <GateSettingsSummary v-if="shape === 'gate'" :node="decision.settings.value" :decision="decision.receipt.value" :error-code="decision.errorCode.value" hide-target />
     <InspectorSlotList :target="target" v-if="shape !== 'gate'" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
@@ -94,6 +98,11 @@ function history(line: InspectorSlotView) {
  * flowgate.v02.0056 F2-2: a row action of a card line — [작성] opens the line's write window, [AI 호출] the
  * document's AI call window (openCardLineAction; the Canvas is read again after them).
  */
+/** flowgate.v02gui.0004 (0001-B §A-1): a conflict is worked on in the Git tab; this line only points there. */
+function openGit() {
+  host?.request({ kind: 'show-tool', tool: 'git' })
+}
+
 function action(line: InspectorSlotView, key: SlotActionKey) {
   openCardLineAction(props.target, line, key, host)
 }
@@ -109,5 +118,7 @@ function action(line: InspectorSlotView, key: SlotActionKey) {
 .inspector-gate-result-value i { width: 7px; height: 7px; border-radius: 50%; background: #5c7491; }
 .inspector-gate-result-value[data-tone="success"] i { background: #19b68e; }
 .inspector-gate-result-value[data-tone="danger"] i { background: #e56b82; }
+.inspector-gate-conflict { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 7px 12px; border: 1px solid #6b3a44; border-radius: 8px; background: #2a1219; color: #f0a9b6; font-size: 12px; }
+.inspector-gate-conflict-go { margin-left: auto; height: 26px; padding: 0 10px; border: 1px solid #b4474f; border-radius: 6px; background: transparent; color: #ffd0d7; font-size: 11.5px; font-weight: 700; cursor: pointer; }
 .inspector-gate-archive { padding: 2px 8px; border: 1px solid #28635b; border-radius: 5px; background: #163f37; color: #88d8c2; font-size: 11px; }
 </style>

@@ -11,6 +11,7 @@
 //   finalize    POST  /api/v1/groups/{gid}/git/finalize                   { action, git_target_branch? }
 //   push        POST  /api/v1/projects/{pid}/git/push                     { branch }
 //   base ops    POST  /api/v1/projects/{pid}/git/base-commit | base-revert | base-remove
+//   resolve     POST  /api/v1/groups/{gid}/git/merge/{merge_id}/resolve   { files: [{ path, chunks }], complete: true }
 //   AI          POST  /api/v1/ai-invoke/start (resolve_conflict) · POST /api/v1/ai-invoke/{run}/cancel
 //   providers   GET   /api/v1/ai-invoke/providers?project=
 //
@@ -45,7 +46,9 @@ import type {
   GitProvisionResult,
   GitProvisionView,
   GitRejectResult,
+  GitResolveResult,
   GitReview,
+  GitChunkResolution,
   ManualMergeBlock,
   ManualMergePreview,
   ManualMergeResult,
@@ -136,7 +139,8 @@ interface RawConflicts extends Envelope {
   target_branch?: string | null
   kind?: string | null
   tr_conflict?: Record<string, unknown> | null
-  files?: Array<{ path?: string; conflict_count?: number }> | null
+  files?: Array<{ path?: string; conflict_count?: number; content?: string | null }> | null
+  resolved_paths?: string[] | null
 }
 
 // Session kinds of a TR rewind's revert / a forward restore's reapply (db/git_integration.py).
@@ -144,18 +148,21 @@ const TR_SESSION_KINDS: readonly string[] = ['tr_revert', 'tr_reapply']
 
 export async function fetchConflicts(groupId: string, mergeId: number): Promise<GitConflictSession> {
   const data = await call(() => getRequest<RawConflicts>(`${mergePath(groupId, mergeId)}/conflicts`))
+  const resolved = new Set(strList(data.resolved_paths))
   return {
     mergeId: typeof data.merge_id === 'number' ? data.merge_id : mergeId,
     branch: str(data.branch),
     baseBranch: str(data.base_branch),
     targetBranch: str(data.target_branch),
     trConflict: (!!data.tr_conflict && typeof data.tr_conflict === 'object') || TR_SESSION_KINDS.includes(str(data.kind) ?? ''),
-    // The file content the server also sends is not kept: the part never renders it.
+    // flowgate.v02gui.0004: the file content is kept — the direct resolver shows its chunks.
     files: (data.files ?? [])
       .filter((f) => f && typeof f.path === 'string' && f.path)
       .map((f) => ({
         path: toSlashes(f.path as string),
         conflictCount: typeof f.conflict_count === 'number' ? f.conflict_count : 0,
+        content: typeof f.content === 'string' ? f.content : '',
+        resolved: resolved.has(toSlashes(f.path as string)),
       })),
   }
 }
@@ -172,10 +179,32 @@ export function splitGroupId(groupId: string): { project: string; module: string
 }
 
 /**
- * POST /ai-invoke/start for a group conflict (not the branch-merge `ai-resolve`). No provider
- * (the server's default chain) and no `auto` authority: the screen has no picker for either.
+ * POST …/merge/{id}/resolve for one file, chunk by chunk (flowgate.v02gui.0004 direct resolve).
+ * `complete` is always sent: the server only closes the conflict (resolved_pending_review) once no
+ * file has markers left, so a file saved while others remain answers `conflict`. No `auto`: the
+ * commit stays the person's own approve press.
  */
-export async function startConflictAi(groupId: string, mergeId: number): Promise<string | null> {
+export async function resolveConflictFile(
+  groupId: string,
+  mergeId: number,
+  path: string,
+  chunks: GitChunkResolution[],
+): Promise<GitResolveResult> {
+  const data = await call(() =>
+    postRequest<Envelope & { result?: { status?: string | null; remaining_conflicts?: unknown } }>(
+      `${mergePath(groupId, mergeId)}/resolve`,
+      { files: [{ path, chunks: chunks.map((c) => ({ chunk: c.chunk, content: c.content })) }], complete: true },
+    ),
+  )
+  return { status: str(data.result?.status) ?? '', remaining: strList(data.result?.remaining_conflicts) }
+}
+
+/**
+ * POST /ai-invoke/start for a group conflict (not the branch-merge `ai-resolve`). No `auto`
+ * authority. flowgate.v02gui.0004: the AI the person picked goes out pinned; none = the server's
+ * default chain (the endpoint already takes provider_id / provider_pinned for resolve_conflict).
+ */
+export async function startConflictAi(groupId: string, mergeId: number, providerId: string | null = null): Promise<string | null> {
   const parts = splitGroupId(groupId)
   if (!parts) throw new GitRequestError(normalizeGitError({ error: { code: 'invalid_request' } }))
   const data = await call(() =>
@@ -186,6 +215,7 @@ export async function startConflictAi(groupId: string, mergeId: number): Promise
       action_scope: 'resolve_conflict',
       mode: 'single',
       merge_id: mergeId,
+      ...(providerId ? { provider_id: providerId, provider_pinned: true } : {}),
     }),
   )
   return str(data.run_id)
@@ -274,14 +304,19 @@ export async function rejectReview(
 
 export async function fetchProviders(projectId: string): Promise<GitProviders> {
   const data = await call(() =>
-    getRequest<Envelope & { providers?: Array<{ id?: string | null } | null> | null; default_provider_id?: string | null }>(
+    getRequest<Envelope & { providers?: Array<{ id?: string | null; name?: string | null } | null> | null; default_provider_id?: string | null }>(
       `${API}/ai-invoke/providers`,
       { project: projectId },
     ),
   )
+  const providers = (data.providers ?? [])
+    .map((p) => ({ id: str(p?.id), name: str(p?.name) }))
+    .filter((p): p is { id: string; name: string | null } => !!p.id)
+    .map((p) => ({ id: p.id, name: p.name ?? p.id }))
   return {
-    providerIds: (data.providers ?? []).map((p) => str(p?.id)).filter((id): id is string => !!id),
+    providerIds: providers.map((p) => p.id),
     defaultProviderId: str(data.default_provider_id),
+    providers,
   }
 }
 

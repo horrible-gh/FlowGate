@@ -21,6 +21,7 @@ import type {
   GitApplyRequest,
   GitBadge,
   GitCardKey,
+  GitChunkResolution,
   GitConflictSession,
   GitFileLetter,
   GitFileOrigin,
@@ -57,6 +58,11 @@ const NOTICE_CODES: readonly string[] = [
   'base_dirty',
   'base_untracked_conflict',
   'final_approval_bound',
+  // flowgate.v02gui.0004 — direct resolve refusals.
+  'conflict_markers_remain',
+  'conflict_side_dropped',
+  'conflict_supersede_invalid',
+  'conflict_source_changed',
 ]
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -122,6 +128,17 @@ export interface GitState {
   rejectReason: string
   pushFailure: GitPushFailure | null
   windows: GitWindowDescriptor[]
+  // flowgate.v02gui.0004 — the AI the last [AI 해결] of this session pinned (null = server default).
+  aiProviderId: string | null
+  // How the last AI run on the open conflict ended while markers remained (null = none / gone).
+  aiOutcome: GitAiOutcome | null
+}
+
+/** An AI resolver run that ended with conflicts left: its server status and who ran it. */
+export interface GitAiOutcome {
+  status: string | null
+  providerId: string | null
+  remaining: number
 }
 
 export interface GitSession {
@@ -133,6 +150,8 @@ export interface GitSession {
   readonly badge: ComputedRef<GitBadge | null>
   readonly workBranch: ComputedRef<string | null>
   readonly defaultProviderId: ComputedRef<string | null>
+  /** flowgate.v02gui.0004 — the AI the picker starts on: last used here, else the project default, else the first. */
+  readonly preferredProviderId: ComputedRef<string | null>
   /** False while read-only, forbidden or another action runs. */
   readonly canAct: ComputedRef<boolean>
   /** The conflicts answer for the active merge is in and says an ordinary merge (§3.2, §3.7). */
@@ -142,7 +161,13 @@ export interface GitSession {
   setReadOnly(readOnly: boolean): void
   refresh(): Promise<void>
 
-  startAi(card?: GitCardKey): Promise<void>
+  startAi(card?: GitCardKey, providerId?: string | null): Promise<void>
+  /** Reads the AI list the picker shows (once per project). */
+  ensureProviders(): void
+  /** Saves one file's chunk resolutions; true when the server accepted them. */
+  resolveFile(path: string, chunks: GitChunkResolution[]): Promise<boolean>
+  /** §B: closes the conflict review (merge abort) for a new approval; true when it is closed. */
+  abortForReapproval(): Promise<boolean>
   abortMerge(): Promise<void>
   cancelAi(): Promise<void>
   approve(): Promise<void>
@@ -158,7 +183,7 @@ export interface GitSession {
   ensureFileStatus(paths: readonly string[]): void
   loadConflicts(): Promise<void>
 
-  openConflictWindow(title: string): void
+  openConflictWindow(title: string, path?: string | null): void
   openPushErrorWindow(title: string, groupId?: string): void
   restoreWindow(id: string): void
   closeWindow(id: string): void
@@ -179,6 +204,26 @@ export interface GitSessionOptions {
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 const isResolving = (ai: FlowAiActivity | null): boolean => !!ai?.active && ai.actionScope === 'resolve_conflict'
+
+// flowgate.v02gui.0004 — the AI last pinned for a conflict in a project, kept in this browser so
+// the picker starts on it next time. Storage failures (private mode, quota) only lose the hint.
+const LAST_PROVIDER_KEY = 'flowgate.git.conflictAi.'
+function lastProvider(projectId: string | null): string | null {
+  if (!projectId) return null
+  try {
+    return globalThis.localStorage?.getItem(LAST_PROVIDER_KEY + projectId) ?? null
+  } catch {
+    return null
+  }
+}
+function rememberProvider(projectId: string | null, providerId: string): void {
+  if (!projectId) return
+  try {
+    globalThis.localStorage?.setItem(LAST_PROVIDER_KEY + projectId, providerId)
+  } catch {
+    // the hint is optional
+  }
+}
 
 export function conflictWindowId(groupId: string, mergeId: number): string {
   return `conflict:${groupId}:${mergeId}`
@@ -215,6 +260,8 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     rejectReason: '',
     pushFailure: null,
     windows: [],
+    aiProviderId: null,
+    aiOutcome: null,
   })
 
   let disposed = false
@@ -345,6 +392,14 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     return providers.providerIds.includes(providers.defaultProviderId) ? providers.defaultProviderId : null
   })
 
+  const preferredProviderId = computed(() => {
+    const providers = state.providers
+    if (!providers?.providerIds.length) return null
+    const remembered = state.aiProviderId ?? lastProvider(state.projectId)
+    if (remembered && providers.providerIds.includes(remembered)) return remembered
+    return defaultProviderId.value ?? providers.providerIds[0]
+  })
+
   const canAct = computed(() => !state.readOnly && !state.forbidden && !state.busy)
 
   // ── Notices ────────────────────────────────────────────────────────────────────────
@@ -397,6 +452,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     state.reviewLoad = 'idle'
     state.rejectOpen = false
     state.rejectReason = ''
+    state.aiOutcome = null
     attempt = null
     const gid = state.flow?.groupId ?? null
     // Another group's conflict window is closed; project-level windows stay (§4.1).
@@ -410,6 +466,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     state.fileStatus = {}
     state.providers = null
     providersFor = null
+    state.aiProviderId = null
     state.forbidden = false
     state.commitMessage = ''
     state.pushFailure = null
@@ -493,6 +550,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
       state.review = null
       state.reviewLoad = 'idle'
       state.rejectOpen = false
+      state.aiOutcome = null
       attempt = null
       // A window for a conflict that is no longer there has nothing left to show.
       state.windows = state.windows.filter((w) => w.kind !== 'conflict')
@@ -510,8 +568,11 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     }
     const resolving = isResolving(state.ai)
     const aiEnded = wasResolving && !resolving
+    const endedRun = aiEnded ? { status: state.ai?.status ?? null, providerId: state.aiProviderId } : null
     const reads: Promise<void>[] = []
     if (forceConflicts || aiEnded || state.conflict?.mergeId !== mergeId) reads.push(loadConflictsFor(myCtx, gid, mergeId))
+    // flowgate.v02gui.0004: the conflict card's AI picker needs the list too, not only reject.
+    if (state.projectId && !row.reviewState) reads.push(loadProviders(myCtx, state.projectId))
     if (!resolving && row.reviewState && REVIEW_STATES.includes(row.reviewState)) {
       reads.push(loadReviewFor(myCtx, gid, mergeId))
       if (state.projectId) reads.push(loadProviders(myCtx, state.projectId))
@@ -522,6 +583,12 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     }
     await Promise.all(reads)
     if (myCtx !== ctx || disposed) return
+    if (resolving) state.aiOutcome = null
+    // An AI run that ended while the conflict is still open: say so on the card (status, who, what is left).
+    if (endedRun && pendingRow.value?.status === 'conflict' && !pendingRow.value.reviewState && state.conflict?.mergeId === mergeId) {
+      const remaining = state.conflict.files.filter((f) => f.conflictCount > 0).length
+      state.aiOutcome = remaining ? { ...endedRun, remaining } : null
+    }
     // A TR conflict has no window here (§3.7).
     if (state.conflict?.mergeId === mergeId && state.conflict.trConflict) {
       state.windows = state.windows.filter((w) => w.kind !== 'conflict')
@@ -647,12 +714,15 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     return { groupId: row.groupId, mergeId: row.mergeId, row }
   }
 
-  function startAi(card: GitCardKey = 'conflict'): Promise<void> {
+  function startAi(card: GitCardKey = 'conflict', providerId: string | null = null): Promise<void> {
     const target = activeConflict()
     if (!target || isResolving(state.ai) || !conflictActionable.value) return Promise.resolve()
     return act(card, 'ai', async () => {
       try {
-        const runId = await src().startConflictAi(target.groupId, target.mergeId)
+        const runId = await src().startConflictAi(target.groupId, target.mergeId, providerId)
+        state.aiProviderId = providerId
+        state.aiOutcome = null
+        if (providerId) rememberProvider(state.projectId, providerId)
         // Optimistic only until the first active read right after (§4.4 job/session).
         state.ai = { active: true, runId, status: 'running', actionScope: 'resolve_conflict' }
       } catch (error) {
@@ -673,6 +743,39 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     if (groupCard.value !== 'review' && !conflictActionable.value) return Promise.resolve()
     const card: GitCardKey = groupCard.value === 'review' ? 'review' : 'conflict'
     return act(card, 'abort', () => src().abortMerge(target.groupId, target.mergeId))
+  }
+
+  function ensureProviders(): void {
+    if (state.projectId) void loadProviders(ctx, state.projectId)
+  }
+
+  // flowgate.v02gui.0004 — direct resolve: one file's chunks, then the conflicts / status read
+  // again so the file's state (and, once nothing is left, the review card) follows the server.
+  async function resolveFile(path: string, chunks: GitChunkResolution[]): Promise<boolean> {
+    const target = activeConflict()
+    const resolve = src().resolveConflictFile
+    if (!target || !resolve || !conflictActionable.value || isResolving(state.ai) || !chunks.length) return false
+    let ok = false
+    await act('window', 'resolve', async () => {
+      await resolve(target.groupId, target.mergeId, path, chunks)
+      ok = true
+    }, { forceConflicts: true })
+    return ok
+  }
+
+  // §B (0001-B 결정 사항): step 1 of "새 커밋으로 다시 승인" — close the conflict review with the
+  // existing abort. The decision cancel and the new approval stay with the gate (and the person).
+  async function abortForReapproval(): Promise<boolean> {
+    const target = activeConflict()
+    if (!target || !canAct.value || disposed) return false
+    if (groupCard.value !== 'review' && !conflictActionable.value) return false
+    const card: GitCardKey = groupCard.value === 'review' ? 'review' : 'conflict'
+    let ok = false
+    await act(card, 'reapprove', async () => {
+      await src().abortMerge(target.groupId, target.mergeId)
+      ok = true
+    })
+    return ok
   }
 
   function cancelAi(): Promise<void> {
@@ -886,18 +989,22 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     }
   }
 
-  function openConflictWindow(title: string): void {
+  function openConflictWindow(title: string, path: string | null = null): void {
     const target = activeConflict()
     if (!target) return
     if (groupCard.value !== 'ai' && !conflictActionable.value) return
+    const id = conflictWindowId(target.groupId, target.mergeId)
+    const open = state.windows.find((w) => w.id === id)
     upsertWindow({
-      id: conflictWindowId(target.groupId, target.mergeId),
+      id,
       kind: 'conflict',
       title,
       minimized: false,
       groupId: target.groupId,
       mergeId: target.mergeId,
+      path: path ?? open?.path ?? null,
     })
+    if (open && path) state.windows = state.windows.map((w) => (w.id === id ? { ...w, path } : w))
     void loadConflicts()
   }
 
@@ -935,12 +1042,16 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     badge,
     workBranch,
     defaultProviderId,
+    preferredProviderId,
     canAct,
     conflictActionable,
     setContext,
     setReadOnly,
     refresh,
     startAi,
+    ensureProviders,
+    resolveFile,
+    abortForReapproval,
     abortMerge,
     cancelAi,
     approve,

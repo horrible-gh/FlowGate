@@ -148,7 +148,8 @@ describe('conflict actions', () => {
     const s = await open(fake)
     fake.db.ai = resolvingRun
     await s.startAi()
-    expect(fake.source.startConflictAi).toHaveBeenCalledWith(G, 7)
+    // flowgate.v02gui.0004: no AI picked = the server's default chain (null goes to the source).
+    expect(fake.source.startConflictAi).toHaveBeenCalledWith(G, 7, null)
     expect(s.groupCard.value).toBe('ai')
   })
 

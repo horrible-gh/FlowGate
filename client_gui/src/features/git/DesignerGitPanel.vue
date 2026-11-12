@@ -168,6 +168,30 @@ useInspectorEvents(
     changed: () => worktree.refresh(),
   },
 )
+// flowgate.v02gui.0004 (0001-B §A-1, 관찰 2): a conflict (or its end) is shown as it happens — the Git ledger frames of
+// the shown Flow read git/status and the conflict again, also while the tab is hidden (badge), with no F5. The
+// inspector event hook coalesces a burst of frames into one read.
+const GIT_LEDGER_EVENTS = [
+  'git_pending_changed',
+  'git_merge_conflict',
+  'git_finalize_done',
+  'git_approval_job_changed',
+  'gate_publish_job_changed',
+  'git_status_changed',
+  'ai_invoke_finished',
+] as const
+useInspectorEvents(
+  () => {
+    const projectId = session.state.projectId
+    const groupId = session.state.flow?.groupId ?? null
+    return projectId && groupId ? { projectId, flowId: groupId, docId: null } : null
+  },
+  {
+    events: GIT_LEDGER_EVENTS,
+    matches: (frame, scope) => frame.groupId === scope.flowId,
+    changed: () => void session.refresh(),
+  },
+)
 const pendingConfirm = shallowRef<GitConfirmRequest | null>(null)
 // The worktree context of the open dialog; null for a 0033 dialog.
 const confirmTicket = shallowRef<WorktreeTicket | null>(null)
