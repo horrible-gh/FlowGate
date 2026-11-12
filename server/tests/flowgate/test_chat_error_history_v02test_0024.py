@@ -98,6 +98,21 @@ def test_the_row_stays_out_of_group_listings_and_keeps_no_secret(env):
     assert meta["doc_id"] == CHAT_DOC
     assert "abc.def-ghi" not in meta["message"] and "s3cr3t" not in meta["message"]
     assert "rest" in meta["message"]
+    # The stored text reads like the browser's own redaction (stg check: F5 showed [REDACTED]).
+    assert meta["message"] == "401 Authorization: Bearer *** token=*** rest"
+
+
+@pytest.mark.parametrize("raw, masked", [
+    ("401 Bearer abc.DEF-1 token=s3cr3t ok", "401 Bearer *** token=*** ok"),
+    ("Authorization: Bearer a,b'c", "Authorization: Bearer ***'c"),
+    ("FLOWGATE_TOKEN=xyz MY_API_KEY: k1 password=p", "FLOWGATE_TOKEN=*** MY_API_KEY: *** password=***"),
+    ("Authorization: Basic zz", "Authorization: *** zz"),
+])
+def test_redaction_masks_with_stars_like_the_client_and_is_idempotent(raw, masked):
+    # Same cases as chatHistory.v02test0024.spec.ts 'redacts credential-looking words'.
+    assert chat_errors.redact(raw) == masked
+    assert chat_errors.redact(masked) == masked
+    assert "[REDACTED]" not in chat_errors.redact(raw)
 
 
 @pytest.mark.parametrize("body", [

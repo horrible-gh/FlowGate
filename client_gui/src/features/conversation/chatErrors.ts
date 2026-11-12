@@ -34,9 +34,12 @@ export interface ChatErrorRecord {
 const STORAGE_LIMIT = 50
 const MESSAGE_LIMIT = 4000
 const ACTIVITY_PREFIX = 'chat-error:'
+// The same ordered rule as the server's chat_errors.redact (keep them identical): the line shows this text at once and
+// the server's stored text after F5, so both mask with `***`. Applying it twice changes nothing.
 const SECRETS: RegExp[] = [
-  /(\bbearer\s+)[A-Za-z0-9._~+/=-]+/gi,
-  /(\b(?:authorization|token|access_token|api[_-]?key|password|secret)\b\s*[=:]\s*)[^\s,;&"']+/gi,
+  /(\bbearer\s+)[^\s"']+/gi,
+  /\b((?:FLOWGATE_TOKEN|[A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN|SECRET_KEY|PASSWORD))\s*[:=]\s*)[^\s"']+/gi,
+  /(\b(?:authorization|token|access_token|api[_-]?key|password|secret)\b\s*[=:]\s*)(?!bearer\b)[^\s,;&"']+/gi,
 ]
 
 export function newChatErrorId(): string {

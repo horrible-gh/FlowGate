@@ -225,6 +225,19 @@ describe('B: chat errors are part of the history', () => {
   it('redacts credential-looking words', () => {
     expect(redactChatError('401 Bearer abc.DEF-1 token=s3cr3t ok')).toBe('401 Bearer *** token=*** ok')
   })
+
+  it('masks exactly like the server record (test_chat_error_history_v02test_0024), twice changing nothing', () => {
+    const cases: Array<[string, string]> = [
+      ['401 Authorization: Bearer abc.def-ghi token=s3cr3t rest', '401 Authorization: Bearer *** token=*** rest'],
+      ["Authorization: Bearer a,b'c", "Authorization: Bearer ***'c"],
+      ['FLOWGATE_TOKEN=xyz MY_API_KEY: k1 password=p', 'FLOWGATE_TOKEN=*** MY_API_KEY: *** password=***'],
+      ['Authorization: Basic zz', 'Authorization: *** zz'],
+    ]
+    for (const [raw, masked] of cases) {
+      expect(redactChatError(raw)).toBe(masked)
+      expect(redactChatError(masked)).toBe(masked)
+    }
+  })
 })
 
 // ── C: copy of an error line and of a failed command ───────────────────────────────────
@@ -358,5 +371,87 @@ describe('A: scroll', () => {
     await wrapper!.setProps({ items: [msg(1), command('succeeded')] })
     await flushPromises()
     expect(log.at()).toBe(10)
+  })
+})
+
+// ── stg check: the log's own size changes (window lower, composer taller, narrower) ─────
+describe('A: resize keeps a reader at the bottom at the bottom', () => {
+  let wrapper: VueWrapper | null = null
+  let observed: Array<() => void> = []
+  beforeEach(() => {
+    observed = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { cb(0); return 0 })
+    vi.stubGlobal('ResizeObserver', class {
+      private cb: () => void
+      constructor(cb: () => void) { this.cb = cb }
+      observe() { observed.push(this.cb) }
+      disconnect() { observed = observed.filter((cb) => cb !== this.cb) }
+    })
+  })
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+    vi.unstubAllGlobals()
+  })
+  const msg = (seq: number): TimelineItem => ({ kind: 'message', key: `turn:${seq}`, turn: turn(seq, 'user', `m${seq}`, null), pending: false, failed: false, localId: null })
+
+  async function mountLog() {
+    let top = 0
+    let client = 900
+    wrapper = mount(ConversationTimeline, {
+      props: { items: [msg(1), msg(2)], status: 'ready', hasMoreBefore: false, loadingOlder: false, deciding: [], emptyText: '', chatId: 'c' },
+      attachTo: document.body,
+      global: { plugins: [i18n] },
+    })
+    const el = wrapper.get('[data-test="conv-log"]').element as HTMLElement
+    Object.defineProperty(el, 'clientWidth', { configurable: true, get: () => 600 })
+    Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => client })
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => 2000 })
+    Object.defineProperty(el, 'scrollTop', { configurable: true, get: () => top, set: (v: number) => { top = Math.min(v, 2000 - client) } })
+    observed.forEach((cb) => cb()) // the observer's first report: the size it starts from
+    await flushPromises()
+    return {
+      log: wrapper.get('[data-test="conv-log"]'),
+      at: () => top,
+      set: (v: number) => { top = v },
+      resize: (h: number) => { client = h; observed.forEach((cb) => cb()) },
+      setClient: (h: number) => { client = h },
+    }
+  }
+
+  it('a lower window re-pins a reader at the bottom (no gap under the last message)', async () => {
+    const log = await mountLog()
+    log.set(1100) // 2000 - 1100 - 900 = 0: at the bottom
+    await log.log.trigger('scroll')
+    log.resize(700) // 900 → 700: scrollTop stays at 1100 and a 200px gap would open
+    expect(log.at()).toBe(1300)
+  })
+
+  it('a scroll fired by the size change before the observer runs does not unpin', async () => {
+    const log = await mountLog()
+    log.set(1100)
+    await log.log.trigger('scroll')
+    log.setClient(700)
+    await log.log.trigger('scroll') // the browser's scroll for the new size, before the observer callback
+    log.resize(700)
+    expect(log.at()).toBe(1300)
+  })
+
+  it('a reader scrolled up keeps their place when the window changes', async () => {
+    const log = await mountLog()
+    log.set(400)
+    await log.log.trigger('scroll')
+    log.resize(700)
+    expect(log.at()).toBe(400)
+    log.resize(900)
+    expect(log.at()).toBe(400)
+  })
+
+  it('stops observing on unmount', async () => {
+    await mountLog()
+    expect(observed).toHaveLength(1)
+    wrapper!.unmount()
+    wrapper = null
+    expect(observed).toHaveLength(0)
   })
 })

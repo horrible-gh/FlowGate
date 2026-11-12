@@ -25,7 +25,6 @@ from typing import Any, Optional
 from modules.flow_gate.db.connection import get_store, now_iso
 
 from flowgate.conversation import contracts as c
-from flowgate.conversation import legacy_adapter
 
 EVENT_TYPE = "chat_error"
 
@@ -43,21 +42,24 @@ LIST_LIMIT = 100
 # A user's errors are few; the scan is bounded and filtered per chat afterwards.
 SCAN_LIMIT = 1000
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9.:-]{8,200}$")
+# The one redaction rule of a chat error, kept identical to the client's ``redactChatError``
+# (client_gui/src/features/conversation/chatErrors.ts): the browser shows its redacted text at once
+# and this stored text after F5, so both must read the same (``***``). It covers what the
+# self-check redaction (tr_self_check_service._redact) masks -- formerly applied here first, which
+# stored ``[REDACTED]`` -- plus the chat's own words. Applying it twice changes nothing.
 _SECRETS = (
-    re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+"),
-    re.compile(r"(?i)(\b(?:authorization|token|access_token|api[_-]?key|password|secret)\b\s*[=:]\s*)[^\s,;&\"']+"),
+    re.compile(r"(?i)(\bbearer\s+)[^\s\"']+"),
+    re.compile(r"(?i)\b((?:FLOWGATE_TOKEN|[A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN|SECRET_KEY|PASSWORD))\s*[:=]\s*)[^\s\"']+"),
+    re.compile(r"(?i)(\b(?:authorization|token|access_token|api[_-]?key|password|secret)\b\s*[=:]\s*)(?!bearer\b)[^\s,;&\"']+"),
 )
+MASK = "***"
 
 
 def redact(text: Optional[str]) -> str:
     """The message without anything that looks like a credential."""
     value = str(text or "")
-    try:
-        value = legacy_adapter.redact(value)
-    except Exception:
-        pass
     for pattern in _SECRETS:
-        value = pattern.sub(lambda m: m.group(1) + "***", value)
+        value = pattern.sub(lambda m: m.group(1) + MASK, value)
     return value[:MAX_MESSAGE_CHARS]
 
 

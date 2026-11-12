@@ -92,6 +92,25 @@ let viewedTimer: ReturnType<typeof setTimeout> | null = null
 // their place (loadOlderKeepingScroll adds the prepended height back), and the tail rule below must not pin the log
 // to the bottom over that correction — the v0.1 ConversationView never pinned while loading older turns.
 let prepending = false
+// flowgate.v02test.0024 (stg check): the log's own box changes size without any new entry — the window gets lower, the
+// composer grows, the panel narrows and bubbles re-wrap. Its scrollTop stays where it was, so a reader at the bottom
+// was left with a gap and the last message hidden. A ResizeObserver puts that reader back at the bottom; someone
+// scrolled up keeps their place. `observedSize` is the last size the observer handled ('' until it is observing).
+let resizeObserver: ResizeObserver | null = null
+let observedSize = ''
+
+function sizeOf(el: HTMLElement): string {
+  return `${el.clientWidth}x${el.clientHeight}`
+}
+
+function onResize(): void {
+  const el = scrollEl.value
+  if (!el) return
+  const size = sizeOf(el)
+  if (size === observedSize) return
+  observedSize = size
+  if (pinned && !prepending && !props.loadingOlder) el.scrollTop = el.scrollHeight
+}
 
 function isPinnedToBottom(): boolean {
   const el = scrollEl.value
@@ -177,8 +196,11 @@ function scheduleRead(): void {
 }
 
 function onScroll(): void {
-  pinned = isPinnedToBottom()
   const el = scrollEl.value
+  // A scroll the browser fires for a size change the observer has not handled yet (scrollTop clamped) does not count
+  // as the reader leaving the bottom: onResize re-pins right after.
+  const resizing = !!el && observedSize !== '' && sizeOf(el) !== observedSize
+  if (!(resizing && pinned)) pinned = isPinnedToBottom()
   if (el && el.scrollTop <= PREPEND_TRIGGER_PX && props.hasMoreBefore && !props.loadingOlder) void loadOlderKeepingScroll()
   scheduleRead()
 }
@@ -249,10 +271,20 @@ watch(
   },
 )
 
-onMounted(scrollToBottom)
+onMounted(() => {
+  scrollToBottom()
+  const el = scrollEl.value
+  if (el && typeof ResizeObserver !== 'undefined') {
+    observedSize = sizeOf(el)
+    resizeObserver = new ResizeObserver(onResize)
+    resizeObserver.observe(el)
+  }
+})
 
 onBeforeUnmount(() => {
   if (viewedTimer !== null) clearTimeout(viewedTimer)
+  resizeObserver?.disconnect()
+  resizeObserver = null
 })
 
 defineExpose({ scrollToBottom })
