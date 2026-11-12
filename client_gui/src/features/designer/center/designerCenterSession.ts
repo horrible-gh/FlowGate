@@ -518,6 +518,10 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   const archiveStates = reactive<Record<string, boolean | null>>({})
   const archiveReads = new Map<string, number>()
+  // flowgate.v02gui.0002 A: the archive read in flight per Flow (settles when it answered or failed), and how long a
+  // run command under way waits for it.
+  const archiveWaits = new Map<string, Promise<void>>()
+  const RUN_GATE_SETTLE_MS = 15_000
   let archiveSeq = 0
 
   function isFlowReadOnly(flowId: string): boolean {
@@ -536,10 +540,32 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     archiveReads.set(flowId, seq)
     if (archiveStates[flowId] !== true) archiveStates[flowId] = null
     const current = () => !disposed && state.projectId === pid && archiveReads.get(flowId) === seq
-    void Promise.resolve().then(() => options.readArchive!(flowId)).then(
+    const answered: Promise<void> = Promise.resolve().then(() => options.readArchive!(flowId)).then(
       (answer) => { if (current()) archiveStates[flowId] = typeof answer.archived === 'boolean' ? answer.archived : null },
       () => { /* Keep the tab readable and its changes locked; the next refresh retries. */ },
-    )
+    ).finally(() => { if (archiveWaits.get(flowId) === answered) archiveWaits.delete(flowId) })
+    archiveWaits.set(flowId, answered)
+  }
+
+  /**
+   * flowgate.v02gui.0002 A: a run click under way (the run control's `settle`) that finds the archive state unanswered —
+   * every Canvas read asks it again, the draft confirmation's re-read too — waits for that answer instead of being
+   * dropped; a failed read is asked once more (the "next refresh" its failure waits for). True: it waited, ask the gates
+   * again. False: nothing to wait for. No answer within RUN_GATE_SETTLE_MS is the command's refusal
+   * (`flow_archive_unconfirmed`, the run toast says it), never a silent end. A click on a Flow whose archive state is
+   * unanswered before any command stays refused as before (archiveReadOnly.0152).
+   */
+  function settleRunGates(flowId: string): Promise<boolean> {
+    if (disposed || !options.readArchive || archiveStates[flowId] !== null || state.projectId === null || !isOpen(state.projectId, flowId)) {
+      return Promise.resolve(false)
+    }
+    if (!archiveWaits.has(flowId)) refreshFlowArchive(flowId)
+    const answered = archiveWaits.get(flowId)
+    if (!answered) return Promise.resolve(false)
+    return new Promise<boolean>((resolve, reject) => {
+      const timer = setTimeout(() => reject(Object.assign(new Error(''), { code: 'flow_archive_unconfirmed' })), RUN_GATE_SETTLE_MS)
+      void answered.then(() => { clearTimeout(timer); resolve(true) })
+    })
   }
 
   // Latest read token per Flow id; a result whose token is no longer the latest is dropped.
@@ -694,6 +720,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     isOpen,
     beforePrepare: options.beforeRunPrepare,
     canProceed: (flowId) => !disposed && (options.runSetupCurrent?.() ?? true) && whenKnown(flowId, run => !isRunLocked(run)),
+    settle: (flowId) => settleRunGates(flowId),
     prepare: (flowId) => prepareRunTold(flowId),
     hasDraftToConfirm: willConfirmDraft,
     saveDraftBeforeCheck: (flowId) => drafts.saveBeforeRunCheck(flowId),
