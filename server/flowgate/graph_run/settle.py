@@ -350,9 +350,13 @@ def _assert_one(affected: int, what: str) -> None:
 def _end_cleanup(ctx) -> None:
     """0085 T#3 (D0007 §7.1): a completed run of a Flow with gate decisions gets its end cleanup - a ``gate_cleanup``
     job written in this completion's transaction and run by the job runner outside every guard, under the Git locks
-    (``gate_decisions.cleanup``)."""
-    from flowgate.gate_decisions import cleanup
+    (``gate_decisions.cleanup``).
+
+    flowgate.v02gui.0002 C: a confirm of the run with archive ON also queues the Flow archive for after this commit
+    (``gate_decisions.auto_archive``: the manual archive's path, outside every guard)."""
+    from flowgate.gate_decisions import auto_archive, cleanup
     cleanup.request(ctx)
+    auto_archive.request(ctx)
 
 
 def settle_run(ctx) -> None:

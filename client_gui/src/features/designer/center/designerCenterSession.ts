@@ -439,8 +439,8 @@ export interface DesignerCenterSession {
   /** flowgate.v02.0056 F2-1: the source can approve a card (the Canvas offers [승인]). */
   readonly canApprove: boolean
   /**
-   * flowgate.v02.0105 T#2 (B-6): the Flow's cards may be approved by this user now — the source approves and the Flow's
-   * confirmed run read says so (`viewer.can_approve` true). Not told, not read or false: no [승인].
+   * flowgate.v02gui.0002 B: the Flow's confirm cards may offer [승인] now — a run source, a writable Flow and a confirmed
+   * run read; each card still needs the server's `gate.can_decide` (`waiting_confirm`). Not read or archived: no [승인].
    */
   canApproveFlow(flowId: string): boolean
   approveNode(flowId: string, nodeId: string): Promise<boolean>
@@ -786,9 +786,13 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     if (state.projectId === projectId) refreshFlow(flowId)
     return ok
   }
+  // flowgate.v02gui.0002 B: a confirm card's [승인] stands on what the Inspector's [승인] stands on — the server's
+  // `gate.can_decide` (gateHeaderState `waiting_confirm`, per card) on a confirmed run read of a writable Flow. The
+  // general card approval this was tied to (`runControl.canApprove` / `viewer.can_approve`) was removed by 0119 T-3,
+  // which left the card's [승인] never drawn. The decision itself is approveGateTarget's (the Inspector's own path).
   function canApproveFlow(flowId: string): boolean {
     const run = state.runs[flowId]
-    return !isFlowReadOnly(flowId) && runControl.canApprove && run?.readState === 'read' && run.run?.viewerCanApprove === true
+    return runControl.available && !isFlowReadOnly(flowId) && run?.readState === 'read'
   }
 
   // ── flowgate.v02.0061 T#15: a card's context menu ─────────────────────────────────────────────────────────

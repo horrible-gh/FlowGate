@@ -21,6 +21,8 @@ the persistence base only (T#1); T#2 adds the decision intake; the Git / archive
 - ``recovery``       retry / cancel / resolve (effects_confirmed / abandon) of an accepted decision, with request keys.
 - ``cleanup``        the end cleanup of the group slot after a completed run - its own ``gate_cleanup`` job (migration
                      161), plan stored before any delete, resumed step by step - and the slot's restore at its end HEAD.
+- ``auto_archive``   flowgate.v02gui.0002 C: a confirm's archive ON archives the Flow after its run completes, through
+                     the manual Flow archive's own path, queued by the completion and run after its commit.
 - ``checkpoints``    the gate checkpoints in the existing archive list and their non-consuming restore.
 - ``redact``         remote credentials removed from everything stored, logged, sent or shown.
 
