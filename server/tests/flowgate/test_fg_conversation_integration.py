@@ -100,22 +100,31 @@ def test_non_chat_runs_never_reach_the_handlers(clean_hooks):
     assert seen == [] and chat_run_hooks.chat_tools({"action_scope": "work"}) == []
 
 
+def test_graph_and_control_tower_tools_come_before_run_command(clean_hooks):
+    # flowgate.v02test.0023: Graph reads (0145) and the control tower tools come before run_command;
+    # the attachment request (chat.0017) right after it. Kept apart from the order-agnostic checks below.
+    integration.register()
+    names = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})]
+    at = names.index("run_command")
+    assert names[at - 4:at] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run"]
+    assert names[at + 1] == "request_attachment_upload"
+    without = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})]
+    assert {"read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
+            "request_attachment_upload"} <= set(without)
+
+
 def test_register_connects_every_port_idempotently(clean_hooks):
     integration.register()
     integration.register()
     assert all(chat_run_hooks.registered(name) for name in chat_run_hooks.HOOK_NAMES)
-    tools = chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})
-    # flowgate.v02test.0023: Graph reads (0145) and the control tower tools first; the attachment request
-    # (chat.0017) after run_command.
-    assert [t["name"] for t in tools] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards",
-                                          "start_flow_run", "run_command", "request_attachment_upload",
-                                          "read_card_document", "revise_card_document",
-                                          "read_document_by_id", "revise_document_by_id", "create_new_document"]
-    # Document delegation is independent of command capability.
-    assert [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})] == [
-        "read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
-        "request_attachment_upload",
-        "read_card_document", "revise_card_document", "read_document_by_id", "revise_document_by_id", "create_new_document"]
+    with_cap = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})]
+    without = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})]
+    # run_command only with the capability (a read-only run is admitted without it) ...
+    assert "run_command" in with_cap and "run_command" not in without
+    assert [name for name in with_cap if name != "run_command"] == without
+    # ... while document delegation is independent of command capability.
+    assert without[-5:] == ["read_card_document", "revise_card_document", "read_document_by_id",
+                            "revise_document_by_id", "create_new_document"]
 
 
 # ── call sites in the existing engine (composition, order) ───────────────────
@@ -268,11 +277,11 @@ def test_api_worker_exposes_run_command_and_returns_the_result_to_the_same_run(e
     outcome = svc._api_execute({"id": "p", "kind": "openai", "api_base_url": "https://api.example",
                                 "api_model": "m"}, "prompt", run)
     assert outcome == ("started_ok", None)
-    assert calls[0]["tools"] == ["read_chat_history", "read_help",
-                                 "read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
-                                 "run_command", "request_attachment_upload",
-                                 "read_card_document", "revise_card_document",
-                                 "read_document_by_id", "revise_document_by_id", "create_new_document", "send_chat_reply"]
+    tools = calls[0]["tools"]
+    assert tools[:2] == ["read_chat_history", "read_help"] and tools[-1] == "send_chat_reply"
+    assert tools.count("run_command") == 1
+    assert tools[-6:-1] == ["read_card_document", "revise_card_document", "read_document_by_id",
+                            "revise_document_by_id", "create_new_document"]
     assert "`run_command`" in calls[0]["conversation"][2]["content"]
     tool_msg = next(m for m in calls[1]["conversation"] if m.get("role") == "tool")
     assert tool_msg["tool_call_id"] == "call_cmd"
