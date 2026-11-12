@@ -12,6 +12,7 @@ import {
   formatTimelineTime,
   mergeTurns,
   replaceServerActivities,
+  sendFailureOf,
   summarizeChange,
   upsertActivity,
   type PendingTurn,
@@ -117,6 +118,54 @@ describe('buildTimeline', () => {
     const [, , a, b] = items
     expect(a.kind === 'message' && a.pending && !a.failed).toBe(true)
     expect(b.kind === 'message' && !b.pending && b.failed).toBe(true)
+  })
+
+  // flowgate.v02gui.0007 A: a failed message stays where it was sent (by seq, never by time).
+  const unsent = (localId: string, basedOnSeq: number, createdAt: string, failed: boolean): PendingTurn =>
+    ({ localId, idempotencyKey: localId, body: localId, basedOnSeq, createdAt, failed, providerId: '', failure: failed ? sendFailureOf(422) : null })
+
+  it('places a failed message after the turn it saw, above a message that succeeded later', () => {
+    const items = buildTimeline(
+      [turn(1, '2026-10-06T08:00:00Z'), turn(2, '2026-10-06T08:05:00Z')],
+      [command('k', at(1, 'after')), status('send-failed', '2026-10-06T08:01:01Z')],
+      [unsent('f', 1, '2026-10-06T08:01:00Z', true)],
+    )
+    expect(items.map((i) => i.key)).toEqual(['turn:1', 'command:k', 'local:f', 'status:send-failed', 'turn:2'])
+    expect(items[2]).toMatchObject({ kind: 'message', failed: true, pending: false, failure: { reason: 'rejected', status: 422 } })
+    // A client clock ahead of the server: createdAt says "after turn 2", but only basedOnSeq counts.
+    const skewed = buildTimeline([turn(1, '2026-10-06T08:00:00Z'), turn(2, '2026-10-06T08:05:00Z')], [], [unsent('f', 1, '2026-10-06T09:00:00Z', true)])
+    expect(skewed.map((i) => i.key)).toEqual(['turn:1', 'local:f', 'turn:2'])
+  })
+
+  it('keeps several failed messages at one place in outbox order, and an older status above them', () => {
+    const items = buildTimeline(
+      [turn(1, '2026-10-06T08:00:00Z'), turn(2, '2026-10-06T08:05:00Z'), turn(3, '2026-10-06T08:06:00Z')],
+      [status('run-done', '2026-10-06T08:00:30Z')],
+      [unsent('b', 2, '2026-10-06T08:05:10Z', true), unsent('a', 1, '2026-10-06T08:01:00Z', true), unsent('c', 2, '2026-10-06T08:05:20Z', true)],
+    )
+    expect(items.map((i) => i.key)).toEqual(['turn:1', 'status:run-done', 'local:a', 'turn:2', 'local:b', 'local:c', 'turn:3'])
+  })
+
+  it('keeps a message on its way, and a failed one sent after the last loaded turn, last in outbox order', () => {
+    const items = buildTimeline(
+      [turn(1, '2026-10-06T08:00:00Z'), turn(2, '2026-10-06T08:05:00Z')],
+      [],
+      [unsent('sending', 1, '2026-10-06T08:01:00Z', false), unsent('late', 2, '2026-10-06T08:06:00Z', true)],
+    )
+    expect(items.map((i) => i.key)).toEqual(['turn:1', 'turn:2', 'local:sending', 'local:late'])
+    expect(items[2]).toMatchObject({ pending: true, failed: false, failure: null })
+    expect(buildTimeline([], [], [unsent('f', 0, '2026-10-06T08:00:00Z', true)]).map((i) => i.key)).toEqual(['local:f'])
+  })
+
+  it('puts a failed message seen before the loaded turns ahead of them', () => {
+    expect(buildTimeline([turn(5, null), turn(6, null)], [], [unsent('f', 2, '2026-10-06T08:00:00Z', true)]).map((i) => i.key))
+      .toEqual(['local:f', 'turn:5', 'turn:6'])
+  })
+
+  it('classes a send failure by its HTTP status', () => {
+    expect([400, 422, 413, 401, 403, 404, 409, 500, 503, null].map((s) => sendFailureOf(s).reason))
+      .toEqual(['rejected', 'rejected', 'rejected', 'forbidden', 'forbidden', 'not_found', 'conflict', 'server', 'server', 'network'])
+    expect(sendFailureOf(null).status).toBeNull()
   })
 
   it('draws the read boundary above the first unread turn only when something above was read', () => {

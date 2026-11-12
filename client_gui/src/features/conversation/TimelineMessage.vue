@@ -48,6 +48,8 @@
       <div v-else class="tl-text tl-md" data-test="tl-md" @click.capture="onBodyClick" v-html="html" />
       <p v-if="failed" class="tl-note tl-note--failed">
         {{ t('gui.conversation.message.failed') }}
+        <!-- flowgate.v02gui.0007 A: the failure's short reason (class of the HTTP status, and the status). -->
+        <span v-if="failureText" class="tl-failure" data-test="tl-failure" :data-reason="failure?.reason">{{ failureText }}</span>
         <button v-if="!readOnly" type="button" class="tl-retry" data-test="tl-retry" @click="emit('retry')">{{ t('gui.conversation.retry') }}</button>
       </p>
     </div>
@@ -61,12 +63,15 @@ import { copyToClipboard } from '../../core/interaction/clipboard'
 import { createMarkdownRenderer } from '../../core/markdown/markdownRenderer'
 import TimelineMessageMenu from './TimelineMessageMenu.vue'
 import { formatTimelineTime } from './timeline'
+import type { SendFailure } from './timeline'
 import type { CheckpointKind, ConversationTurn } from './types'
 
 const props = defineProps<{
   turn: ConversationTurn
   pending: boolean
   failed: boolean
+  /** flowgate.v02gui.0007 A: why the send failed (a failed message only). */
+  failure?: SendFailure | null
   readOnly?: boolean
   /** flowgate.v02test.0025: the ⋯ checkpoint menu is offered (context setting 체크포인트 사용). */
   canCheckpoint?: boolean
@@ -80,6 +85,12 @@ const emit = defineEmits<{ retry: []; checkpoint: [seq: number | null, kind?: Ch
 const { t, locale } = useI18n()
 
 const isUser = computed(() => props.turn.speaker === 'user')
+const failureText = computed(() => {
+  const failure = props.failed ? props.failure : null
+  if (!failure) return ''
+  const reason = t(`gui.conversation.message.failure.${failure.reason}`)
+  return failure.status == null ? reason : `${reason} (HTTP ${failure.status})`
+})
 // flowgate.v02test.0023: FlowGate's own turn (the chat commit result) -- shown as Markdown like an AI message, but
 // labelled FlowGate so it is never taken for the AI's reply.
 const isSystem = computed(() => props.turn.speaker === 'system')
@@ -501,6 +512,10 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
 
 .tl-note--failed {
   color: var(--fg2-status-danger-fg);
+}
+
+.tl-failure {
+  margin-left: 4px;
 }
 
 .tl-retry {

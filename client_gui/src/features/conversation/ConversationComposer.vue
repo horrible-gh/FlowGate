@@ -45,7 +45,9 @@
       </button>
     </div>
 
-    <div v-if="submission?.phase === 'failed'" role="status" aria-live="polite" data-test="conv-submission">
+    <!-- flowgate.v02gui.0007 A: a failed send says why on its own bubble (with 다시 시도) and in the timeline's error
+         line; the composer no longer repeats it. -->
+    <div v-if="submission?.phase === 'failed' && submission.stage !== 'send'" role="status" aria-live="polite" data-test="conv-submission">
       {{ t(`gui.conversation.composer.failed_${submission.stage}`, { attempt: submission.attempt }) }}
     </div>
 
