@@ -35,6 +35,8 @@
           <option v-for="n in settings.contextTurnsPresets" :key="n" :value="String(n)">{{ t('gui.conversation.settings.context_turns', { n }) }}</option>
           <option value="custom">{{ t('gui.conversation.settings.context_custom') }}</option>
           <option value="all">{{ t('gui.conversation.settings.context_all') }}</option>
+          <!-- flowgate.v02test.0025: each chat's checkpoint (message ⋯ menu) decides; the last 5 turns without one. -->
+          <option value="checkpoint">{{ t('gui.conversation.settings.context_checkpoint') }}</option>
         </select>
       </label>
       <div v-if="draftRange === 'custom'" class="csx-row csx-turns">
@@ -89,7 +91,7 @@ const { t } = useI18n()
 const rootEl = ref<HTMLElement | null>(null)
 const { open, close } = usePopover(rootEl)
 const draftSendAction = ref<SendAction>('none')
-// A preset's number as text, 'custom' (사용자 입력) or 'all'.
+// A preset's number as text, 'custom' (사용자 입력), 'all' or 'checkpoint' (체크포인트 사용).
 const draftRange = ref('20')
 // The typed "last N turns", used only while 'custom' is selected. It is raw text on
 // purpose: 0, -3, 1.5, "abc", "" and anything over the server cap are rejected as
@@ -115,8 +117,8 @@ function toggleSettings(): void {
   draftSendAction.value = props.settings.sendAction
   // A saved number that is not a preset reopens as 사용자 입력 with that number filled in.
   draftRange.value =
-    props.settings.contextMode === 'all'
-      ? 'all'
+    props.settings.contextMode === 'all' || props.settings.contextMode === 'checkpoint'
+      ? props.settings.contextMode
       : props.settings.contextTurnsPresets.includes(props.settings.contextTurns)
         ? String(props.settings.contextTurns)
         : 'custom'
@@ -129,15 +131,15 @@ function toggleSettings(): void {
 // after a preset starts the input from that preset's number.
 function onRangeChange(event: Event): void {
   const value = (event.target as HTMLSelectElement).value
-  if (value === 'custom' && shownRange !== 'custom' && shownRange !== 'all') draftTurnsText.value = shownRange
+  if (value === 'custom' && /^\d+$/.test(shownRange)) draftTurnsText.value = shownRange
   shownRange = value
 }
 
 function saveSettings(): void {
   const patch: ChatSettingsPatch = { send_action: draftSendAction.value }
-  if (draftRange.value === 'all') {
-    // L0010 §2-7-4: never send context_turns with 'all' — the number must survive.
-    patch.context_mode = 'all'
+  if (draftRange.value === 'all' || draftRange.value === 'checkpoint') {
+    // L0010 §2-7-4: never send context_turns with 'all' (nor 'checkpoint') — the number must survive.
+    patch.context_mode = draftRange.value === 'all' ? 'all' : 'checkpoint'
   } else {
     if (!turnsValid.value) return
     patch.context_mode = 'recent'

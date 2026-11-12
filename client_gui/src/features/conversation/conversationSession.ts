@@ -25,6 +25,7 @@ import type {
   ChatSettingsPatch,
   ChatSummary,
   ChatAutoTitle,
+  CheckpointKind,
   CommandDecision,
   CommandRequestActivity,
   ConversationActivity,
@@ -121,6 +122,8 @@ export interface ConversationState {
   selectedProviderId: string
   /** flowgate.v02test.0025: seq of the message the open chat's AI context starts from; null = no checkpoint. */
   checkpointSeq: number | null
+  /** 'include' = the AI context starts at that message, 'exclude' = at the next one; null without a checkpoint. */
+  checkpointKind: CheckpointKind | null
   savingCheckpoint: boolean
   settings: ChatSettings
   savingSettings: boolean
@@ -206,8 +209,11 @@ export interface ConversationSession {
   decideCommand(commandId: string, decision: CommandDecision): Promise<void>
   /** Picks the open chat's AI and stores it as that chat's pick (a draft keeps it for the chat its first send makes). */
   selectProvider(providerId: string): void
-  /** flowgate.v02test.0025: the open chat's AI context starts at message `seq` (null = no checkpoint). */
-  setCheckpoint(seq: number | null): Promise<void>
+  /**
+   * flowgate.v02test.0025: the open chat's checkpoint: send from message `seq` ('include') or from the next one
+   * ('exclude'); null clears it. Applied while the context setting is 체크포인트 사용.
+   */
+  setCheckpoint(seq: number | null, kind?: CheckpointKind): Promise<void>
   /** Whether the source keeps per-chat settings (AI pick, context checkpoint). */
   readonly supportsChatDocSettings: boolean
   invokeAi(): Promise<void>
@@ -293,6 +299,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     providersStatus: 'idle',
     selectedProviderId: '',
     checkpointSeq: null,
+    checkpointKind: null,
     savingCheckpoint: false,
     settings: { ...DEFAULT_CHAT_SETTINGS },
     savingSettings: false,
@@ -465,6 +472,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.cancelling = false
     state.deciding = []
     state.checkpointSeq = null
+    state.checkpointKind = null
     state.savingCheckpoint = false
     state.changeWindowEpoch += 1
   }
@@ -522,6 +530,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       const [settings] = await Promise.all([source.fetchChatDocSettings(chatId), providersLoad])
       if (!isCurrentChat(chatId, gen)) return
       state.checkpointSeq = settings.checkpointSeq
+      state.checkpointKind = settings.checkpointKind
       // A pick made on this screen while the read was out wins: it is the newer one (and is being saved).
       if (chatProviders.get(key) !== before) return
       const pick = settings.providerId ?? before ?? null
@@ -1307,14 +1316,21 @@ export function createConversationSession(options: ConversationSessionOptions = 
     persistChatProvider(chatId, providerId)
   }
 
-  async function setCheckpoint(seq: number | null): Promise<void> {
+  async function setCheckpoint(seq: number | null, kind: CheckpointKind = 'include'): Promise<void> {
     const chatId = state.activeChatId
-    if (!chatId || !source.saveChatDocSettings || state.savingCheckpoint || seq === state.checkpointSeq) return
+    if (!chatId || !source.saveChatDocSettings || state.savingCheckpoint) return
+    if (seq === state.checkpointSeq && (seq == null || kind === state.checkpointKind)) return
     const gen = chatGen
     state.savingCheckpoint = true
     try {
-      const saved = await source.saveChatDocSettings(chatId, { context_checkpoint_seq: seq })
-      if (isCurrentChat(chatId, gen)) state.checkpointSeq = saved.checkpointSeq
+      const saved = await source.saveChatDocSettings(
+        chatId,
+        seq == null ? { context_checkpoint_seq: null } : { context_checkpoint_seq: seq, context_checkpoint_kind: kind },
+      )
+      if (isCurrentChat(chatId, gen)) {
+        state.checkpointSeq = saved.checkpointSeq
+        state.checkpointKind = saved.checkpointKind
+      }
     } catch (error) {
       if (isCurrentChat(chatId, gen)) notify('danger', 'checkpoint_failed', messageOf(error))
     } finally {

@@ -1069,11 +1069,16 @@ export default {
       empty: 'まだメッセージがありません。下から会話を始めてください。',
       no_flow: 'フローを開くと、そのフローの会話がここに表示されます。',
     },
+    // flowgate.v02test.0025: the message ⋯ menu and the divider (context setting チェックポイントを使用).
     checkpoint: {
-      set_here: 'ここから AI コンテキストを開始',
-      clear_here: 'AI コンテキストの開始位置を解除',
-      line: 'AI コンテキストの開始位置: このメッセージから AI に送ります',
-      line_older: 'AI コンテキストは #{seq} のメッセージから送ります',
+      menu: 'メッセージメニュー',
+      from_here: 'このメッセージから送信',
+      after_here: 'このメッセージの次から送信',
+      clear_here: 'チェックポイントを解除',
+      line: 'チェックポイント: このメッセージから AI に送ります',
+      line_after: 'チェックポイント: このメッセージの次から AI に送ります',
+      line_older: 'チェックポイント: #{seq} のメッセージから送ります',
+      line_older_after: 'チェックポイント: #{seq} のメッセージの次から送ります',
       clear: '解除',
     },
     message: {
@@ -1224,6 +1229,7 @@ export default {
       context_turns: '直近 {n} ターン',
       context_all: 'すべて',
       context_custom: 'ユーザー入力',
+      context_checkpoint: 'チェックポイントを使用',
       context_invalid: '{min}〜{max} の整数を入力してください',
     },
     notice: {

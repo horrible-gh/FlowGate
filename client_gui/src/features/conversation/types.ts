@@ -296,21 +296,27 @@ export interface ProviderList {
 
 /**
  * flowgate.v02test.0025 — the signed-in user's settings of one chat (GET/PATCH
- * /documents/{doc_id}/conversation/settings): the AI picked in that chat (null = my default AI) and the message the
- * AI context starts from (null = no checkpoint).
+ * /documents/{doc_id}/conversation/settings): the AI picked in that chat (null = my default AI) and its context
+ * checkpoint (null = none). The checkpoint applies only while the context setting is 체크포인트 사용.
  */
 export interface ChatDocSettings {
   providerId: string | null
   checkpointSeq: number | null
+  /** 'include' = send from the checkpoint message, 'exclude' = from the next message; null without a checkpoint. */
+  checkpointKind: CheckpointKind | null
 }
+
+export type CheckpointKind = 'include' | 'exclude'
 
 export interface ChatDocSettingsPatch {
   provider_id?: string | null
   context_checkpoint_seq?: number | null
+  context_checkpoint_kind?: CheckpointKind
 }
 
 export type SendAction = 'copy_mention' | 'invoke_ai' | 'none'
-export type ContextMode = 'recent' | 'all'
+/** flowgate.v02test.0025: 'checkpoint' = the chat's checkpoint decides what is sent (the last 5 turns without one). */
+export type ContextMode = 'recent' | 'all' | 'checkpoint'
 /** AI source access mode (group 0515/0568): read / edit / edit once. */
 export type SourceAccessMode = 'read_only' | 'edit' | 'edit_once'
 

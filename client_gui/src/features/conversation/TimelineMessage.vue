@@ -31,19 +31,16 @@
           @click="copyBody"
         >{{ copyState === 'done' ? '✓' : copyState === 'failed' ? '✕' : '⧉' }}</button>
         <span v-if="copyState !== 'idle'" class="tl-sr" role="status">{{ copyLabel }}</span>
-        <!-- flowgate.v02test.0025: start this chat's AI context at this message (a stored message only). -->
-        <button
+        <!-- flowgate.v02test.0025: the ⋯ menu (체크포인트 사용 only, a stored message only): send from this message /
+             from the next message / clear. -->
+        <TimelineMessageMenu
           v-if="canCheckpoint && turn.seq > 0 && !pending"
-          type="button"
-          class="tl-copy tl-checkpoint"
-          :class="{ 'is-on': isCheckpoint }"
-          data-test="tl-checkpoint"
-          :aria-pressed="isCheckpoint"
-          :aria-label="isCheckpoint ? t('gui.conversation.checkpoint.clear_here') : t('gui.conversation.checkpoint.set_here')"
-          :title="isCheckpoint ? t('gui.conversation.checkpoint.clear_here') : t('gui.conversation.checkpoint.set_here')"
-          :disabled="checkpointBusy"
-          @click="emit('checkpoint', isCheckpoint ? null : turn.seq)"
-        >⚑</button>
+          class="tl-more"
+          :seq="turn.seq"
+          :kind="checkpointKind ?? null"
+          :busy="checkpointBusy"
+          @checkpoint="(seq, kind) => (seq == null ? emit('checkpoint', null) : emit('checkpoint', seq, kind))"
+        />
       </div>
       <!-- A person's own input stays plain text; an AI's message is Markdown (tables, code blocks with copy) rendered by
            the shared renderer in safe mode: raw HTML is shown as text, unsafe links and every image as text only. -->
@@ -62,22 +59,23 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyToClipboard } from '../../core/interaction/clipboard'
 import { createMarkdownRenderer } from '../../core/markdown/markdownRenderer'
+import TimelineMessageMenu from './TimelineMessageMenu.vue'
 import { formatTimelineTime } from './timeline'
-import type { ConversationTurn } from './types'
+import type { CheckpointKind, ConversationTurn } from './types'
 
 const props = defineProps<{
   turn: ConversationTurn
   pending: boolean
   failed: boolean
   readOnly?: boolean
-  /** flowgate.v02test.0025: the context checkpoint button is offered. */
+  /** flowgate.v02test.0025: the ⋯ checkpoint menu is offered (context setting 체크포인트 사용). */
   canCheckpoint?: boolean
-  /** This message is the chat's context checkpoint. */
-  isCheckpoint?: boolean
+  /** This message's checkpoint kind when it is the chat's checkpoint, else null. */
+  checkpointKind?: CheckpointKind | null
   checkpointBusy?: boolean
 }>()
 
-const emit = defineEmits<{ retry: []; checkpoint: [seq: number | null] }>()
+const emit = defineEmits<{ retry: []; checkpoint: [seq: number | null, kind?: CheckpointKind] }>()
 
 const { t, locale } = useI18n()
 
@@ -314,19 +312,14 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
   color: var(--fg2-status-danger-fg);
 }
 
-.tl-copy + .tl-checkpoint,
-.tl-sr + .tl-checkpoint {
+.tl-more {
+  margin-left: auto;
+}
+
+.tl-time + .tl-more,
+.tl-copy + .tl-more,
+.tl-sr + .tl-more {
   margin-left: 0;
-}
-
-.tl-checkpoint.is-on {
-  color: var(--fg2-status-info-fg);
-  border-color: var(--fg2-status-info-border);
-}
-
-.tl-checkpoint:disabled {
-  cursor: default;
-  opacity: 0.5;
 }
 
 .tl-sr {

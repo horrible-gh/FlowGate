@@ -287,7 +287,8 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     const values = options.map((o) => o.attributes('value'))
     expect(values).toContain('custom')
     expect(options.find((o) => o.attributes('value') === 'custom')!.text()).toBe('사용자 입력')
-    expect(values.at(-1)).toBe('all')
+    // flowgate.v02test.0025: 체크포인트 사용 comes after 전체; it carries no number box either.
+    expect(values.slice(-2)).toEqual(['all', 'checkpoint'])
     for (const preset of values.filter((v) => v !== 'custom' && v !== 'all') as string[]) {
       await select.setValue(preset)
       expect(find('conv-setting-turns').exists()).toBe(false)

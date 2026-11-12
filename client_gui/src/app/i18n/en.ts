@@ -1069,11 +1069,16 @@ export default {
       empty: 'No messages yet. Start the conversation below.',
       no_flow: 'Open a flow to see its conversations here.',
     },
+    // flowgate.v02test.0025: the message ⋯ menu and the divider (context setting 'Use checkpoint').
     checkpoint: {
-      set_here: 'Start the AI context here',
-      clear_here: 'Clear the AI context start',
-      line: 'AI context starts here: the AI is sent this message and later',
-      line_older: 'The AI context starts at message #{seq}',
+      menu: 'Message menu',
+      from_here: 'Send from this message',
+      after_here: 'Send from the next message',
+      clear_here: 'Clear checkpoint',
+      line: 'Checkpoint: the AI is sent this message and later',
+      line_after: 'Checkpoint: the AI is sent the messages after this one',
+      line_older: 'Checkpoint: the AI is sent message #{seq} and later',
+      line_older_after: 'Checkpoint: the AI is sent the messages after #{seq}',
       clear: 'Clear',
     },
     message: {
@@ -1224,6 +1229,7 @@ export default {
       context_turns: 'Last {n} turns',
       context_all: 'All',
       context_custom: 'Custom',
+      context_checkpoint: 'Use checkpoint',
       context_invalid: 'Enter a whole number from {min} to {max}',
     },
     notice: {

@@ -18,7 +18,7 @@
 //   AI call        POST  /api/v1/ai-invoke/start (action_scope chat) · GET /ai-invoke/{run}
 //                  POST  /api/v1/ai-invoke/{run}/cancel · GET /ai-invoke/active?group_id=
 //   chat settings  GET/PATCH /api/v1/me/chat-settings
-//   per-chat       GET/PATCH /api/v1/documents/{doc_id}/conversation/settings  { provider_id, context_checkpoint_seq }
+//   per-chat       GET/PATCH /api/v1/documents/{doc_id}/conversation/settings  { provider_id, context_checkpoint_seq, context_checkpoint_kind }
 //   mention copy   POST  /api/v1/token/issue                        (action_scope chat)
 
 import { extractApiErrorMessage, getRequest, patchRequest, postRequest } from '@shared/api'
@@ -728,7 +728,7 @@ export function toChatSettings(raw: RawChatSettings | null | undefined): ChatSet
   const s = raw?.settings ?? {}
   const d = raw?.domain ?? {}
   const sendAction = SEND_ACTIONS.find((v) => v === s.send_action) ?? DEFAULT_CHAT_SETTINGS.sendAction
-  const contextMode: ContextMode = s.context_mode === 'all' ? 'all' : 'recent'
+  const contextMode: ContextMode = s.context_mode === 'all' || s.context_mode === 'checkpoint' ? s.context_mode : 'recent'
   const sourceAccessMode = SOURCE_MODES.find((v) => v === s.source_access_mode) ?? DEFAULT_CHAT_SETTINGS.sourceAccessMode
   return {
     sendAction,
@@ -762,15 +762,17 @@ export async function saveChatSettings(patch: ChatSettingsPatch, scope?: Convers
 
 // ── Per-chat settings (flowgate.v02test.0025) ───────────────────────────────────────────
 interface RawChatDocSettings {
-  settings?: { provider_id?: string | null; context_checkpoint_seq?: number | null } | null
+  settings?: { provider_id?: string | null; context_checkpoint_seq?: number | null; context_checkpoint_kind?: string | null } | null
 }
 
 function toChatDocSettings(raw: RawChatDocSettings | null | undefined): ChatDocSettings {
   const s = raw?.settings ?? {}
   const seq = s.context_checkpoint_seq
+  const checkpointSeq = Number.isInteger(seq) && Number(seq) >= 1 ? Number(seq) : null
   return {
     providerId: typeof s.provider_id === 'string' && s.provider_id ? s.provider_id : null,
-    checkpointSeq: Number.isInteger(seq) && Number(seq) >= 1 ? Number(seq) : null,
+    checkpointSeq,
+    checkpointKind: checkpointSeq == null ? null : s.context_checkpoint_kind === 'exclude' ? 'exclude' : 'include',
   }
 }
 

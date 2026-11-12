@@ -2414,7 +2414,9 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
     The route's real token binding remains authoritative. ``recent N`` starts at
     max(0, head-N) and reads at most N turns, following next_after_seq when the byte cap
     splits that window. ``all`` starts at zero and follows next_after_seq until the
-    forward page chain ends. Provider participant last_read is never a context boundary.
+    forward page chain ends. ``checkpoint`` starts at the chat's checkpoint (from that message,
+    or from the next one) and reads to the end like ``all``; with no checkpoint it is ``recent 5``.
+    Provider participant last_read is never a context boundary.
     """
     from modules.flow_gate.api.v1 import conversation_routes
 
@@ -2427,18 +2429,15 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
     mode = settings["context_mode"]
     turns = int(settings["context_turns"])
     try:
-        head_seq = (
-            conversation_turns.current_head_seq(run["doc_ref"])
-            if mode == "recent"
-            else 0
+        # flowgate.v02test.0025: the same window helper as the mention ([checkpoint] = from / after the chat's
+        # checkpoint, unbounded; without one the last 5 turns). [recent]/[all] are what they were before.
+        window = chat_doc_settings_service.context_window(
+            run.get("issued_to"), run["doc_ref"], settings, head_seq_of=conversation_turns.current_head_seq,
         )
-        # flowgate.v02test.0025: the chat's context checkpoint floors the window (same helper as the mention).
-        checkpoint_seq = chat_doc_settings_service.checkpoint_seq_safe(run.get("issued_to"), run["doc_ref"])
-        after_seq, folded = chat_settings_service.resolve_context_window(
-            head_seq=head_seq, mode=mode, turns=turns, checkpoint_seq=checkpoint_seq
-        )
+        after_seq, folded = window["after_seq"], window["folded"]
+        checkpoint_seq = window["checkpoint_seq"]
         cursor = after_seq
-        remaining = turns if mode == "recent" else None
+        remaining = window["limit"]
         include_head = True
         merged = None
 
@@ -2492,6 +2491,7 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
         }
         if checkpoint_seq is not None:
             merged["context_window"]["checkpoint_seq"] = checkpoint_seq
+            merged["context_window"]["checkpoint_kind"] = window["checkpoint_kind"]
         if folded > 0:
             merged["older_history"] = {
                 "before_seq": after_seq + 1,

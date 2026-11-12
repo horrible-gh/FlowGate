@@ -1080,11 +1080,16 @@ export default {
       empty: '아직 메시지가 없습니다. 아래에서 대화를 시작하세요.',
       no_flow: '플로우를 열면 그 플로우의 대화가 여기에 표시됩니다.',
     },
+    // flowgate.v02test.0025: the message ⋯ menu and the divider (context setting 체크포인트 사용).
     checkpoint: {
-      set_here: '여기부터 AI 컨텍스트 시작',
-      clear_here: 'AI 컨텍스트 시작 지점 해제',
-      line: 'AI 컨텍스트 시작 지점: 이 메시지부터 AI에게 보냅니다',
-      line_older: 'AI 컨텍스트는 #{seq} 메시지부터 보냅니다',
+      menu: '메시지 메뉴',
+      from_here: '이 채팅부터 전송',
+      after_here: '이 채팅 다음부터 전송',
+      clear_here: '체크포인트 해제',
+      line: '체크포인트: 이 메시지부터 AI에게 보냅니다',
+      line_after: '체크포인트: 이 메시지 다음부터 AI에게 보냅니다',
+      line_older: '체크포인트: #{seq} 메시지부터 보냅니다',
+      line_older_after: '체크포인트: #{seq} 메시지 다음부터 보냅니다',
       clear: '해제',
     },
     message: {
@@ -1235,6 +1240,7 @@ export default {
       context_turns: '최근 {n}턴',
       context_all: '전체',
       context_custom: '사용자 입력',
+      context_checkpoint: '체크포인트 사용',
       context_invalid: '{min}~{max} 사이의 정수를 입력하세요',
     },
     notice: {

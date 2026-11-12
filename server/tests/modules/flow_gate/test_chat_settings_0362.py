@@ -387,10 +387,12 @@ class TestResolveSettings:
         body = css.settings_response("u1")
         assert body["domain"] == {
             "send_action": ["copy_mention", "invoke_ai", "none"],
-            "context_mode": ["recent", "all"],
+            # flowgate.v02test.0025: [checkpoint] and its no-checkpoint fallback.
+            "context_mode": ["recent", "all", "checkpoint"],
             "context_turns_presets": [5, 10, 15, 20, 30],
             "context_turns_min": 1,
             "context_turns_max": css.CONTEXT_TURNS_MAX,
+            "context_checkpoint_fallback_turns": 5,
             # 0515 T0009 §3.2/D0006 §2.2.
             "source_access_mode": ["read_only", "edit", "edit_once"],
             # 0670 T0004 / flowgate.v02.0032 T#1.
@@ -434,7 +436,7 @@ class TestSaveSettings:
             ({"send_action": "auto_copy"}, "send_action",
              "send_action must be one of copy_mention, invoke_ai, none."),
             ({"context_mode": "last_week"}, "context_mode",
-             "context_mode must be one of recent, all."),
+             "context_mode must be one of recent, all, checkpoint."),
             ({"context_turns": 0}, "context_turns",
              f"context_turns must be between 1 and {css.CONTEXT_TURNS_MAX}."),
             ({"context_turns": css.CONTEXT_TURNS_MAX + 1}, "context_turns",

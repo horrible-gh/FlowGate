@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import { createChatStart } from '@/features/conversation/chatStart'
+import { ConversationPanel } from '@/features/conversation'
 import ConversationTimeline from '@/features/conversation/ConversationTimeline.vue'
 import { createConversationSession } from '@/features/conversation/conversationSession'
 import { buildTimeline } from '@/features/conversation/timeline'
@@ -11,8 +12,9 @@ import { createFakeSource, turn } from './fakeConversationSource'
 
 registerAppMessages(i18n)
 
-// flowgate.v02test.0025 — each chat keeps its own AI (and the run uses it), and a chat's AI context can start at a
-// message of the user's choice (the checkpoint). Both are stored per chat on the server.
+// flowgate.v02test.0025 — each chat keeps its own AI (and the run uses it), and under the context setting 체크포인트 사용
+// a chat's AI context starts at a message of the user's choice (⋯ menu: from this message / from the next message).
+// Both are stored per chat on the server.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
 const A = 'p.m.0001.0002-CH'
 const B = 'p.m.0001.0004-CH'
@@ -32,11 +34,15 @@ async function setup(stored: Record<string, ChatDocSettings> = {}, init: Paramet
   })
   const server: Record<string, ChatDocSettings> = { ...stored }
   const source = fake.source
-  source.fetchChatDocSettings = vi.fn(async (chatId: string) => ({ providerId: null, checkpointSeq: null, ...server[chatId] }))
+  const empty: ChatDocSettings = { providerId: null, checkpointSeq: null, checkpointKind: null }
+  source.fetchChatDocSettings = vi.fn(async (chatId: string) => ({ ...empty, ...server[chatId] }))
   source.saveChatDocSettings = vi.fn(async (chatId: string, patch: ChatDocSettingsPatch) => {
-    const current = { providerId: null, checkpointSeq: null, ...server[chatId] }
+    const current: ChatDocSettings = { ...empty, ...server[chatId] }
     if ('provider_id' in patch) current.providerId = patch.provider_id ?? null
-    if ('context_checkpoint_seq' in patch) current.checkpointSeq = patch.context_checkpoint_seq ?? null
+    if ('context_checkpoint_seq' in patch) {
+      current.checkpointSeq = patch.context_checkpoint_seq ?? null
+      current.checkpointKind = current.checkpointSeq == null ? null : patch.context_checkpoint_kind ?? 'include'
+    }
     server[chatId] = current
     return { ...current }
   })
@@ -48,7 +54,7 @@ async function setup(stored: Record<string, ChatDocSettings> = {}, init: Paramet
 
 describe('v02test.0025 each chat keeps its own AI', () => {
   it('opens each chat on its stored AI, and a chat without one on my default AI', async () => {
-    const { session } = await setup({ [A]: { providerId: 'sonnet', checkpointSeq: null } })
+    const { session } = await setup({ [A]: { providerId: 'sonnet', checkpointSeq: null, checkpointKind: null } })
     expect(session.state.activeChatId).toBe(A)
     expect(session.state.selectedProviderId).toBe('sonnet')
     await session.selectChat(B)
@@ -71,7 +77,7 @@ describe('v02test.0025 each chat keeps its own AI', () => {
   })
 
   it('the run of a send uses the chat\'s own AI', async () => {
-    const { session, source } = await setup({ [B]: { providerId: 'sonnet', checkpointSeq: null } })
+    const { session, source } = await setup({ [B]: { providerId: 'sonnet', checkpointSeq: null, checkpointKind: null } })
     await session.selectChat(B)
     await flushPromises()
     expect(await session.send('go')).toBe(true)
@@ -80,12 +86,12 @@ describe('v02test.0025 each chat keeps its own AI', () => {
   })
 
   it('a stored AI that is no longer offered falls back to my default AI', async () => {
-    const { session } = await setup({ [A]: { providerId: 'ghost', checkpointSeq: null } })
+    const { session } = await setup({ [A]: { providerId: 'ghost', checkpointSeq: null, checkpointKind: null } })
     expect(session.state.selectedProviderId).toBe('opus')
   })
 
   it('a new chat starts on my default AI and keeps the AI picked in its draft', async () => {
-    const { session, source, server } = await setup({ [A]: { providerId: 'sonnet', checkpointSeq: null } })
+    const { session, source, server } = await setup({ [A]: { providerId: 'sonnet', checkpointSeq: null, checkpointKind: null } })
     const start = createChatStart({ session, source, defaultTitle: () => '새 대화' })
     start.startNew()
     expect(session.state.selectedProviderId).toBe('opus')
@@ -113,60 +119,144 @@ describe('v02test.0025 each chat keeps its own AI', () => {
 })
 
 describe('v02test.0025 context checkpoint', () => {
-  it('loads, sets and clears the open chat\'s checkpoint', async () => {
-    const { session, source } = await setup({ [A]: { providerId: null, checkpointSeq: 2 } })
-    expect(session.state.checkpointSeq).toBe(2)
-    await session.setCheckpoint(3)
-    expect(source.saveChatDocSettings).toHaveBeenLastCalledWith(A, { context_checkpoint_seq: 3 })
-    expect(session.state.checkpointSeq).toBe(3)
+  it('loads, sets (from this message / from the next) and clears the open chat\'s checkpoint', async () => {
+    const { session, source } = await setup({ [A]: { providerId: null, checkpointSeq: 2, checkpointKind: 'include' } })
+    expect([session.state.checkpointSeq, session.state.checkpointKind]).toEqual([2, 'include'])
+    await session.setCheckpoint(3, 'exclude')
+    expect(source.saveChatDocSettings).toHaveBeenLastCalledWith(A, { context_checkpoint_seq: 3, context_checkpoint_kind: 'exclude' })
+    expect([session.state.checkpointSeq, session.state.checkpointKind]).toEqual([3, 'exclude'])
+    await session.setCheckpoint(3, 'include') // same message, other kind: saved too
+    expect(source.saveChatDocSettings).toHaveBeenLastCalledWith(A, { context_checkpoint_seq: 3, context_checkpoint_kind: 'include' })
+    expect(session.state.checkpointKind).toBe('include')
     await session.selectChat(B)
     await flushPromises()
-    expect(session.state.checkpointSeq).toBeNull() // another chat, its own (none)
+    expect([session.state.checkpointSeq, session.state.checkpointKind]).toEqual([null, null]) // another chat, its own (none)
     await session.selectChat(A)
     await flushPromises()
-    expect(session.state.checkpointSeq).toBe(3)
+    expect([session.state.checkpointSeq, session.state.checkpointKind]).toEqual([3, 'include'])
     await session.setCheckpoint(null)
-    expect(session.state.checkpointSeq).toBeNull()
+    expect(source.saveChatDocSettings).toHaveBeenLastCalledWith(A, { context_checkpoint_seq: null })
+    expect([session.state.checkpointSeq, session.state.checkpointKind]).toEqual([null, null])
   })
 
   it('a refused save keeps the old checkpoint and says so', async () => {
-    const { session, source } = await setup({ [A]: { providerId: null, checkpointSeq: 2 } })
+    const { session, source } = await setup({ [A]: { providerId: null, checkpointSeq: 2, checkpointKind: 'include' } })
     source.saveChatDocSettings.mockRejectedValueOnce(new Error('nope'))
-    await session.setCheckpoint(3)
-    expect(session.state.checkpointSeq).toBe(2)
+    await session.setCheckpoint(3, 'exclude')
+    expect([session.state.checkpointSeq, session.state.checkpointKind]).toEqual([2, 'include'])
     expect(session.state.notice?.code).toBe('checkpoint_failed')
   })
 
-  it('the timeline marks the checkpoint message and offers set / clear', async () => {
-    const turns = [turn(1, 'user', 'look', null), turn(2, 'ai', 'done', null), turn(3, 'user', 'next', null)]
+  function mountTimeline(props: Record<string, unknown>, turns = [turn(1, 'user', 'look', null), turn(2, 'ai', 'done', null), turn(3, 'user', 'next', null)]) {
     const items = buildTimeline(turns, [], [], 0)
-    const wrapper = mount(ConversationTimeline, {
-      props: { items, status: 'ready', hasMoreBefore: false, loadingOlder: false, deciding: [], emptyText: '', chatId: A,
-        checkpointSeq: 2, canCheckpoint: true },
+    return mount(ConversationTimeline, {
+      props: { items, status: 'ready', hasMoreBefore: false, loadingOlder: false, deciding: [], emptyText: '', chatId: A, ...props },
+      attachTo: document.body,
       global: { plugins: [i18n] },
     })
-    const line = wrapper.find('[data-test="conv-checkpoint"]')
-    expect(line.exists()).toBe(true)
-    // The line sits right before message 2.
-    expect(line.element.nextElementSibling?.getAttribute('data-seq')).toBe('2')
-    const buttons = wrapper.findAll('[data-test="tl-checkpoint"]')
-    expect(buttons).toHaveLength(3)
-    expect(buttons[1].attributes('aria-pressed')).toBe('true')
-    await buttons[2].trigger('click')
-    await buttons[1].trigger('click')
-    await line.find('button').trigger('click')
-    expect(wrapper.emitted('checkpoint')).toEqual([[3], [null], [null]])
+  }
+
+  it('each message has a ⋯ menu right of its copy button: from this message / from the next / clear', async () => {
+    const wrapper = mountTimeline({ checkpointSeq: 2, checkpointKind: 'include', canCheckpoint: true })
+    const menus = wrapper.findAll('[data-test="tl-more"]')
+    expect(menus).toHaveLength(3)
+    // Right of the copy button.
+    expect(menus[0].element.closest('.tlm')?.previousElementSibling?.getAttribute('data-test')).toBe('tl-copy')
+    expect(menus[1].classes()).toContain('is-on')
+    // Message 3: no checkpoint here, so no clear item.
+    await menus[2].trigger('click')
+    expect(wrapper.find('[data-test="tl-checkpoint-clear"]').exists()).toBe(false)
+    await wrapper.find('[data-test="tl-checkpoint-exclude"]').trigger('click')
+    expect(wrapper.find('[data-test="tl-more-menu"]').exists()).toBe(false)
+    // Message 2 (the checkpoint, include): the current kind is checked; clear is offered.
+    await menus[1].trigger('click')
+    expect(wrapper.find('[data-test="tl-checkpoint-include"]').attributes('aria-checked')).toBe('true')
+    await wrapper.find('[data-test="tl-checkpoint-clear"]').trigger('click')
+    await menus[1].trigger('click')
+    await wrapper.find('[data-test="tl-checkpoint-include"]').trigger('click') // already include: nothing to save
+    await menus[0].trigger('click')
+    await wrapper.find('[data-test="tl-checkpoint-include"]').trigger('click')
+    expect(wrapper.emitted('checkpoint')).toEqual([[3, 'exclude'], [null], [1, 'include']])
     wrapper.unmount()
   })
 
+  it('the line sits where sending starts: above the message (from this) or below it (from the next)', async () => {
+    const include = mountTimeline({ checkpointSeq: 2, checkpointKind: 'include', canCheckpoint: true })
+    const above = include.find('[data-test="conv-checkpoint"]')
+    expect(above.attributes('data-kind')).toBe('include')
+    expect(above.element.nextElementSibling?.getAttribute('data-seq')).toBe('2')
+    await above.find('button').trigger('click')
+    expect(include.emitted('checkpoint')).toEqual([[null]])
+    include.unmount()
+
+    const exclude = mountTimeline({ checkpointSeq: 2, checkpointKind: 'exclude', canCheckpoint: true })
+    const below = exclude.find('[data-test="conv-checkpoint"]')
+    expect(below.attributes('data-kind')).toBe('exclude')
+    expect(below.element.previousElementSibling?.getAttribute('data-seq')).toBe('2')
+    expect(below.element.nextElementSibling?.getAttribute('data-seq')).toBe('3')
+    exclude.unmount()
+  })
+
   it('a checkpoint older than the loaded messages is shown at the top', async () => {
-    const items = buildTimeline([turn(40, 'user', 'late', null)], [], [], 0)
-    const wrapper = mount(ConversationTimeline, {
-      props: { items, status: 'ready', hasMoreBefore: true, loadingOlder: false, deciding: [], emptyText: '', chatId: A,
-        checkpointSeq: 12, canCheckpoint: true },
+    const turns = [turn(40, 'user', 'late', null)]
+    const include = mountTimeline({ hasMoreBefore: true, checkpointSeq: 12, checkpointKind: 'include', canCheckpoint: true }, turns)
+    expect(include.find('[data-test="conv-checkpoint"]').text()).toContain('12')
+    include.unmount()
+    const exclude = mountTimeline({ hasMoreBefore: true, checkpointSeq: 12, checkpointKind: 'exclude', canCheckpoint: true }, turns)
+    expect(exclude.find('[data-test="conv-checkpoint"]').attributes('data-kind')).toBe('exclude')
+    exclude.unmount()
+  })
+
+  it('without 체크포인트 사용 there is no ⋯ menu and no line', async () => {
+    const wrapper = mountTimeline({ checkpointSeq: null, checkpointKind: null, canCheckpoint: false })
+    expect(wrapper.find('[data-test="tl-more"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="conv-checkpoint"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-test="tl-copy"]')).toHaveLength(3) // the copy button is untouched
+    wrapper.unmount()
+  })
+})
+
+describe('v02test.0025 context setting 체크포인트 사용', () => {
+  async function mountPanel(stored: Record<string, ChatDocSettings>, contextMode: 'recent' | 'checkpoint') {
+    const { source, data } = await setup(stored)
+    data.settings.contextMode = contextMode
+    source.listProviders.mockResolvedValue({ providers: [{ id: 'opus', name: 'Opus' }, { id: 'sonnet', name: 'Sonnet' }], defaultProviderId: 'opus' })
+    const wrapper = mount(ConversationPanel, {
+      props: { projectId: 'p', groupId: 'p.m.0001', source },
+      attachTo: document.body,
       global: { plugins: [i18n] },
     })
-    expect(wrapper.find('[data-test="conv-checkpoint"]').text()).toContain('12')
+    await flushPromises()
+    return { wrapper, source, data }
+  }
+
+  it('is the last choice of the ⚙ context list; saving it keeps the turn count and shows the ⋯ menu', async () => {
+    i18n.global.locale.value = 'ko'
+    const { wrapper, source } = await mountPanel({ [A]: { providerId: null, checkpointSeq: 2, checkpointKind: 'exclude' } }, 'recent')
+    // [recent]: the stored checkpoint is kept but not drawn, and no ⋯ menu.
+    expect(wrapper.find('[data-test="tl-more"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="conv-checkpoint"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="conv-settings-btn"]').trigger('click')
+    const select = wrapper.find('[data-test="conv-setting-context"]')
+    const options = select.findAll('option')
+    expect(options.map((o) => o.attributes('value'))).toEqual(['5', '10', '15', '20', '30', 'custom', 'all', 'checkpoint'])
+    expect(options[options.length - 1].text()).toBe('체크포인트 사용')
+    await select.setValue('checkpoint')
+    await wrapper.find('[data-test="conv-settings-save"]').trigger('click')
+    await flushPromises()
+    const patch = source.saveChatSettings.mock.calls.at(-1)![0] as Record<string, unknown>
+    expect(patch.context_mode).toBe('checkpoint')
+    expect('context_turns' in patch).toBe(false)
+
+    expect(wrapper.findAll('[data-test="tl-more"]').length).toBeGreaterThan(0)
+    const line = wrapper.find('[data-test="conv-checkpoint"]')
+    expect(line.attributes('data-kind')).toBe('exclude')
+    expect(line.text()).toContain('다음부터')
+
+    // Reopening shows 체크포인트 사용 selected.
+    await wrapper.find('[data-test="conv-settings-btn"]').trigger('click')
+    expect((wrapper.find('[data-test="conv-setting-context"]').element as HTMLSelectElement).value).toBe('checkpoint')
     wrapper.unmount()
   })
 })

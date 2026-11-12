@@ -198,8 +198,9 @@ def patch_conversation_settings(
     body: dict = Body(...),
     current_user: dict = Depends(get_current_user),
 ):
-    """Save only the sent fields: ``provider_id`` (null = my default AI) and
-    ``context_checkpoint_seq`` (null = no checkpoint). 422 names the refused field."""
+    """Save only the sent fields: ``provider_id`` (null = my default AI), ``context_checkpoint_seq``
+    (null = no checkpoint) and ``context_checkpoint_kind`` (``include`` = from this message, ``exclude`` = from the
+    next message; defaults to ``include`` with a seq). 422 names the refused field."""
     doc = _conversation_doc(doc_id)
     try:
         settings = chat_doc_settings_service.save_settings(

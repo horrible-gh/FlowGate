@@ -1,13 +1,14 @@
 """flowgate.v02test.0025: chat AI settings.
 
 1. Each chat keeps its own AI pick (per user), validated against what the user may select.
-2. A per-chat context checkpoint floors the context window of BOTH context paths (the CLI/Agent
-   mention and the API model read), and nothing changes without one.
+2. The [checkpoint] context mode: the chat's checkpoint (from this message / from the next message) decides the
+   window of BOTH context paths (the CLI/Agent mention and the API model read); without one the last 5 turns go;
+   [recent] / [all] ignore a stored checkpoint.
 3. One display order over system AI and my AI (local and remote mixed). It orders the selection
    list; for an ordinary user the fallback chain stays the system order, for an administrator the
    system AI's relative order is saved as the fallback order in the same transaction.
 
-Runs on a full-chain migrated SQLite DB (migration 185 included).
+Runs on a full-chain migrated SQLite DB (migrations 185 and 186 included).
 """
 from __future__ import annotations
 
@@ -131,16 +132,62 @@ def _system_order(store) -> list[str]:
 # ── 2. context checkpoint ─────────────────────────────────────────────────────
 
 class TestResolveWindow:
-    @pytest.mark.parametrize("mode,head,turns,cp,expected", [
-        ("recent", 40, 10, None, 30),   # unchanged without a checkpoint
-        ("all", 0, 10, None, 0),
-        ("recent", 40, 10, 35, 34),     # checkpoint inside the window narrows it
-        ("recent", 40, 10, 12, 30),     # checkpoint older than the window changes nothing
-        ("all", 0, 10, 12, 11),         # all mode starts at the checkpoint
-        ("all", 0, 10, 1, 0),           # checkpoint at the first message = everything
+    @pytest.mark.parametrize("mode,head,turns,cp,include,expected", [
+        ("recent", 40, 10, None, True, 30),      # unchanged without a checkpoint
+        ("all", 0, 10, None, True, 0),
+        ("recent", 40, 10, 35, True, 30),        # [recent] ignores the checkpoint
+        ("all", 0, 10, 12, False, 0),            # [all] ignores the checkpoint
+        ("checkpoint", 40, 10, 35, True, 34),    # from this message (included)
+        ("checkpoint", 40, 10, 35, False, 35),   # from the next message (excluded)
+        ("checkpoint", 40, 10, 1, True, 0),      # from the first message = everything
+        ("checkpoint", 40, 10, 40, False, 40),   # after the newest message = only what comes next
+        ("checkpoint", 40, 10, None, True, 35),  # no checkpoint = the last 5 turns, whatever N is
+        ("checkpoint", 3, 10, None, True, 0),
     ])
-    def test_checkpoint_is_a_floor(self, mode, head, turns, cp, expected):
-        assert css.resolve_context_window(head_seq=head, mode=mode, turns=turns, checkpoint_seq=cp) == (expected, expected)
+    def test_window(self, mode, head, turns, cp, include, expected):
+        assert css.resolve_context_window(
+            head_seq=head, mode=mode, turns=turns, checkpoint_seq=cp, checkpoint_include=include,
+        ) == (expected, expected)
+
+    @pytest.mark.parametrize("mode,cp,needs_head,limit", [
+        ("recent", None, True, 10),
+        ("recent", 7, True, 10),
+        ("all", 7, False, None),
+        ("checkpoint", 7, False, None),
+        ("checkpoint", None, True, 5),
+    ])
+    def test_head_and_limit(self, mode, cp, needs_head, limit):
+        assert css.window_needs_head(mode, cp) is needs_head
+        assert css.context_turn_limit(mode, 10, cp) == limit
+
+    def test_checkpoint_is_a_settable_context_mode(self):
+        css.validate_patch({"context_mode": "checkpoint"})
+        assert "checkpoint" in css.domain()["context_mode"]
+        assert css.domain()["context_checkpoint_fallback_turns"] == 5
+        with pytest.raises(css.ChatSettingsError):
+            css.validate_patch({"context_mode": "since"})
+
+
+class TestMigration186:
+    def test_context_mode_accepts_checkpoint_only_after_widening(self, store):
+        store._execute(
+            "INSERT INTO user_chat_settings (user_id, send_action, context_mode, context_turns, created_at, updated_at) "
+            "VALUES ('u1', 'none', 'checkpoint', 20, 't', 't')"
+        )
+        assert store._fetch_one("SELECT context_mode FROM user_chat_settings WHERE user_id='u1'")["context_mode"] == "checkpoint"
+        with pytest.raises(sqlite3.IntegrityError):
+            store._execute(
+                "INSERT INTO user_chat_settings (user_id, send_action, context_mode, context_turns, created_at, updated_at) "
+                "VALUES ('u2', 'none', 'bogus', 20, 't', 't')"
+            )
+
+    def test_a_185_checkpoint_without_kind_reads_as_include(self, store):
+        store._execute(
+            "INSERT INTO user_conversation_settings (user_id, doc_id, context_checkpoint_seq, updated_at) "
+            "VALUES ('u1', ?, 9, 't')", [DOC_A],
+        )
+        assert cds.get_settings("u1", DOC_A)["context_checkpoint_kind"] == "include"
+        assert cds.checkpoint_safe("u1", DOC_A) == (9, True)
 
 
 class _WindowRoute:
@@ -158,7 +205,12 @@ class _WindowRoute:
         return SimpleNamespace(status_code=200, body=json.dumps(body).encode("utf-8"))
 
 
+CHECKPOINT = {"context_mode": "checkpoint", "context_turns": 20}
+
+
 class TestCheckpointReachesBothContextPaths:
+    """What is actually sent: the mention's after_seq (CLI/Agent) and the turns the API model reads."""
+
     def _mention(self, monkeypatch, user, head, settings):
         monkeypatch.setattr(ims, "_chat_lookup_sections", lambda **_k: [])
         monkeypatch.setattr(ims.conversation_turns, "current_head_seq", lambda _d: head)
@@ -182,48 +234,92 @@ class TestCheckpointReachesBothContextPaths:
         assert status == 200
         return payload, route
 
-    @pytest.mark.parametrize("settings", [
-        {"context_mode": "recent", "context_turns": 20},
-        {"context_mode": "all", "context_turns": 20},
-    ])
-    def test_both_paths_start_at_the_checkpoint(self, store, monkeypatch, settings):
+    def _set(self, monkeypatch, body, user="u1", doc=DOC_A):
         monkeypatch.setattr(cds.conversation_turns, "current_head_seq", lambda _d: 30)
-        cds.save_settings("u1", DOC_A, {"context_checkpoint_seq": 25}, project_id=PROJECT)
+        return cds.save_settings(user, doc, body, project_id=PROJECT)
 
-        after, text = self._mention(monkeypatch, "u1", 30, settings)
-        payload, route = self._api(monkeypatch, "u1", 30, settings)
+    def test_from_this_message_includes_it(self, store, monkeypatch):
+        self._set(monkeypatch, {"context_checkpoint_seq": 25, "context_checkpoint_kind": "include"})
+
+        after, text = self._mention(monkeypatch, "u1", 30, CHECKPOINT)
+        payload, route = self._api(monkeypatch, "u1", 30, CHECKPOINT)
 
         assert after == 24
         assert "context checkpoint at seq 25" in text
         assert "before_seq=25" in text  # earlier turns folded, still readable
         assert payload["context_window"]["after_seq"] == 24
-        assert payload["context_window"]["checkpoint_seq"] == 25
+        assert (payload["context_window"]["checkpoint_seq"], payload["context_window"]["checkpoint_kind"]) == (25, "include")
         assert [t["seq"] for t in payload["turns"]] == list(range(25, 31))
-        assert route.calls[0][0] == 24
+        assert route.calls[0] == (24, None)
+
+    def test_from_the_next_message_excludes_it(self, store, monkeypatch):
+        self._set(monkeypatch, {"context_checkpoint_seq": 25, "context_checkpoint_kind": "exclude"})
+
+        after, text = self._mention(monkeypatch, "u1", 30, CHECKPOINT)
+        payload, route = self._api(monkeypatch, "u1", 30, CHECKPOINT)
+
+        assert after == 25
+        assert "context checkpoint after seq 25" in text and "seq 25 itself is excluded" in text
+        assert "before_seq=26" in text
+        assert payload["context_window"]["checkpoint_kind"] == "exclude"
+        assert [t["seq"] for t in payload["turns"]] == list(range(26, 31))
+        assert route.calls[0] == (25, None)
+
+    def test_a_long_tail_after_the_checkpoint_is_sent_whole(self, store, monkeypatch):
+        """Not capped at N: everything after the checkpoint goes, across pages."""
+        monkeypatch.setattr(cds.conversation_turns, "current_head_seq", lambda _d: 500)
+        cds.save_settings("u1", DOC_A, {"context_checkpoint_seq": 3}, project_id=PROJECT)
+        payload, route = self._api(monkeypatch, "u1", 500, CHECKPOINT)
+        assert [t["seq"] for t in payload["turns"]] == list(range(3, 501))
+        assert len(route.calls) == 3
+
+    def test_no_checkpoint_sends_the_last_5_turns(self, store, monkeypatch):
+        after, text = self._mention(monkeypatch, "u1", 30, CHECKPOINT)
+        payload, route = self._api(monkeypatch, "u1", 30, CHECKPOINT)
+        assert after == 25 and "checkpoint" not in text
+        assert [t["seq"] for t in payload["turns"]] == list(range(26, 31))
+        assert route.calls[0] == (25, 5)
+        assert "checkpoint_seq" not in payload["context_window"]
+
+    @pytest.mark.parametrize("settings,expected_after,expected_limit", [
+        ({"context_mode": "recent", "context_turns": 20}, 10, 20),
+        ({"context_mode": "all", "context_turns": 20}, 0, None),
+    ])
+    def test_other_modes_ignore_a_stored_checkpoint(self, store, monkeypatch, settings, expected_after, expected_limit):
+        self._set(monkeypatch, {"context_checkpoint_seq": 25, "context_checkpoint_kind": "exclude"})
+
+        after, text = self._mention(monkeypatch, "u1", 30, settings)
+        payload, route = self._api(monkeypatch, "u1", 30, settings)
+
+        assert after == expected_after and "checkpoint" not in text
+        assert payload["context_window"] == {
+            "mode": settings["context_mode"], "context_turns": 20, "after_seq": expected_after, "folded": expected_after,
+        }
+        assert route.calls[0] == (expected_after, expected_limit)
+        # Kept, not cleared: going back to [checkpoint] applies it again.
+        assert self._mention(monkeypatch, "u1", 30, CHECKPOINT)[0] == 25
 
     def test_another_user_and_another_chat_are_untouched(self, store, monkeypatch):
-        settings = {"context_mode": "all", "context_turns": 20}
-        monkeypatch.setattr(cds.conversation_turns, "current_head_seq", lambda _d: 30)
-        cds.save_settings("u1", DOC_A, {"context_checkpoint_seq": 25}, project_id=PROJECT)
+        self._set(monkeypatch, {"context_checkpoint_seq": 25})
 
-        after_u2, text_u2 = self._mention(monkeypatch, "u2", 30, settings)
-        payload_u2, _ = self._api(monkeypatch, "u2", 30, settings)
-        assert after_u2 == 0 and "checkpoint" not in text_u2
-        assert payload_u2["context_window"] == {"mode": "all", "context_turns": 20, "after_seq": 0, "folded": 0}
-        assert cds.checkpoint_seq_safe("u1", DOC_B) is None
+        after_u2, text_u2 = self._mention(monkeypatch, "u2", 30, CHECKPOINT)
+        payload_u2, _ = self._api(monkeypatch, "u2", 30, CHECKPOINT)
+        assert after_u2 == 25 and "checkpoint" not in text_u2  # u2 has none: the last 5
+        assert payload_u2["context_window"]["after_seq"] == 25
+        assert cds.checkpoint_safe("u1", DOC_B) is None
 
-    def test_clearing_the_checkpoint_restores_the_window(self, store, monkeypatch):
-        settings = {"context_mode": "recent", "context_turns": 20}
-        monkeypatch.setattr(cds.conversation_turns, "current_head_seq", lambda _d: 30)
-        cds.save_settings("u1", DOC_A, {"context_checkpoint_seq": 25}, project_id=PROJECT)
-        cds.save_settings("u1", DOC_A, {"context_checkpoint_seq": None}, project_id=PROJECT)
-        after, _ = self._mention(monkeypatch, "u1", 30, settings)
-        assert after == 10
+    def test_clearing_the_checkpoint_falls_back_to_5_turns(self, store, monkeypatch):
+        self._set(monkeypatch, {"context_checkpoint_seq": 12, "context_checkpoint_kind": "exclude"})
+        settings = self._set(monkeypatch, {"context_checkpoint_seq": None})
+        assert (settings["context_checkpoint_seq"], settings["context_checkpoint_kind"]) == (None, None)
+        after, _ = self._mention(monkeypatch, "u1", 30, CHECKPOINT)
+        assert after == 25
 
     def test_a_broken_read_never_stops_the_chat(self, monkeypatch):
         def boom(*_a):
             raise RuntimeError("no table")
         monkeypatch.setattr(cds.store, "get", boom)
+        assert cds.checkpoint_safe("u1", DOC_A) is None
         assert cds.checkpoint_seq_safe("u1", DOC_A) is None
 
 
@@ -274,7 +370,23 @@ class TestChatAiSelection:
         settings = client.get(f"/documents/{DOC_A}/conversation/settings").json()["settings"]
         assert (settings["provider_id"], settings["context_checkpoint_seq"]) == (None, 7)
 
+    def test_checkpoint_kind_round_trip(self, store, monkeypatch):
+        client = _client(monkeypatch)
+        url = f"/documents/{DOC_A}/conversation/settings"
+        saved = client.patch(url, json={"context_checkpoint_seq": 7}).json()["settings"]
+        assert (saved["context_checkpoint_seq"], saved["context_checkpoint_kind"]) == (7, "include")
+        saved = client.patch(url, json={"context_checkpoint_seq": 9, "context_checkpoint_kind": "exclude"}).json()["settings"]
+        assert (saved["context_checkpoint_seq"], saved["context_checkpoint_kind"]) == (9, "exclude")
+        saved = client.patch(url, json={"context_checkpoint_kind": "include"}).json()["settings"]
+        assert (saved["context_checkpoint_seq"], saved["context_checkpoint_kind"]) == (9, "include")
+        saved = client.patch(url, json={"context_checkpoint_seq": None}).json()["settings"]
+        assert (saved["context_checkpoint_seq"], saved["context_checkpoint_kind"]) == (None, None)
+        refused = client.patch(url, json={"context_checkpoint_kind": "exclude"})
+        assert refused.status_code == 422 and refused.json()["reason"] == "no_checkpoint"
+
     @pytest.mark.parametrize("body,field", [
+        ({"context_checkpoint_seq": 3, "context_checkpoint_kind": "after"}, "context_checkpoint_kind"),
+        ({"context_checkpoint_seq": 3, "context_checkpoint_kind": None}, "context_checkpoint_kind"),
         ({"context_checkpoint_seq": 0}, "context_checkpoint_seq"),
         ({"context_checkpoint_seq": 31}, "context_checkpoint_seq"),
         ({"context_checkpoint_seq": "3"}, "context_checkpoint_seq"),

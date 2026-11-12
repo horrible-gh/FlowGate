@@ -47,8 +47,9 @@
       :empty-text="emptyText"
       :chat-id="state.activeChatId"
       :read-only="readOnly"
-      :checkpoint-seq="state.checkpointSeq"
-      :can-checkpoint="session.supportsChatDocSettings && !readOnly && !!state.activeChatId"
+      :checkpoint-seq="checkpointMode ? state.checkpointSeq : null"
+      :checkpoint-kind="checkpointMode ? state.checkpointKind : null"
+      :can-checkpoint="checkpointMode && session.supportsChatDocSettings && !readOnly && !!state.activeChatId"
       :checkpoint-busy="state.savingCheckpoint"
       @load-older="session.loadOlder"
       @reload="reloadChat"
@@ -217,6 +218,10 @@ const headerTitle = computed(() => {
   if (activeChat.value) return activeChat.value.title
   return start.isDraft.value ? (start.draftTitle.value ?? t('gui.conversation.header.new_title')) : ''
 })
+
+// flowgate.v02test.0025: the chat's checkpoint (⋯ menu, divider) exists only under 체크포인트 사용; another context
+// setting hides it but keeps it stored, so choosing 체크포인트 사용 again applies it again.
+const checkpointMode = computed(() => state.settings.contextMode === 'checkpoint')
 
 // A draft can be written once the Flow's chat list has been read (a send before that could
 // race the newest chat opening); an open chat once its turns are on screen.

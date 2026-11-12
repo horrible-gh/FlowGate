@@ -66,8 +66,11 @@ CONTEXT_TURNS_PRESETS = (5, 10, 15, 20, 30)
 # on the way in would buy one translation table, and that table is the accident.
 SEND_ACTION_DOMAIN = ("copy_mention", "invoke_ai", "none")
 SEND_ACTION_DEFAULT = "none"
-CONTEXT_MODE_DOMAIN = ("recent", "all")
+# flowgate.v02test.0025: "checkpoint" = the chat's context checkpoint decides the window (message menu: from this
+# message / from the next one). Without a checkpoint in that chat the last CONTEXT_CHECKPOINT_FALLBACK_TURNS go.
+CONTEXT_MODE_DOMAIN = ("recent", "all", "checkpoint")
 CONTEXT_MODE_DEFAULT = "recent"
+CONTEXT_CHECKPOINT_FALLBACK_TURNS = 5
 
 # -- 0515 D0006 §2.2 domain -- kept in its own separate storage (§3.1) ------
 SOURCE_ACCESS_DOMAIN = ("read_only", "edit", "edit_once")
@@ -125,6 +128,7 @@ def domain() -> dict:
         "context_turns_presets": list(CONTEXT_TURNS_PRESETS),
         "context_turns_min": CONTEXT_TURNS_MIN,
         "context_turns_max": CONTEXT_TURNS_MAX,
+        "context_checkpoint_fallback_turns": CONTEXT_CHECKPOINT_FALLBACK_TURNS,
         "source_access_mode": list(SOURCE_ACCESS_DOMAIN),
         "command_policy": list(COMMAND_POLICY_DOMAIN),
     }
@@ -477,20 +481,61 @@ def recover_stale_claim(user_id: str, project_id: str, group_id: str) -> str:
     return "LIVE_REVOKED"
 
 
+def _valid_checkpoint(checkpoint_seq: Any) -> bool:
+    return isinstance(checkpoint_seq, int) and not isinstance(checkpoint_seq, bool) and checkpoint_seq >= 1
+
+
+def window_needs_head(mode: str, checkpoint_seq: Optional[int] = None) -> bool:
+    """Whether the window depends on the conversation head (so the caller has to read it).
+
+    [all] and a set checkpoint start at a fixed seq; [recent] and [checkpoint] without one count back from the head.
+    """
+    if mode == "all":
+        return False
+    if mode == "checkpoint":
+        return not _valid_checkpoint(checkpoint_seq)
+    return True
+
+
+def context_turn_limit(mode: str, turns: int, checkpoint_seq: Optional[int] = None) -> Optional[int]:
+    """How many turns the window reads at most (None = everything after ``after_seq``)."""
+    if mode == "all":
+        return None
+    if mode == "checkpoint":
+        return None if _valid_checkpoint(checkpoint_seq) else CONTEXT_CHECKPOINT_FALLBACK_TURNS
+    return turns
+
+
 def resolve_context_window(
-    *, head_seq: int, mode: str, turns: int, checkpoint_seq: Optional[int] = None
+    *,
+    head_seq: int,
+    mode: str,
+    turns: int,
+    checkpoint_seq: Optional[int] = None,
+    checkpoint_include: bool = True,
 ) -> tuple[int, int]:
     """Return the invocation-local ``(after_seq, folded)`` context window.
 
     A provider participant cursor records delivery history, not memory carried by a new
     model invocation, so it does not participate in this calculation.
 
-    flowgate.v02test.0025: ``checkpoint_seq`` (the chat's context checkpoint, see
-    ``chat_doc_settings_service``) is a floor: the window never starts before that message,
-    in either mode. Turns before it are folded like any other older turn. With no checkpoint
-    the window is exactly what it was before.
+    flowgate.v02test.0025: the chat's context checkpoint (``chat_doc_settings_service``) applies in the
+    [checkpoint] mode only:
+
+    * checkpoint set, ``checkpoint_include`` (from this message): ``after_seq = seq - 1``
+    * checkpoint set, not ``checkpoint_include`` (from the next message): ``after_seq = seq``
+    * no checkpoint: the last :data:`CONTEXT_CHECKPOINT_FALLBACK_TURNS` turns
+
+    [recent] and [all] ignore ``checkpoint_seq`` entirely, so their window is exactly what it was before.
+    Turns before the window are folded like any other older turn.
     """
-    start = 0 if mode == "all" else max(0, head_seq - turns)
-    if isinstance(checkpoint_seq, int) and not isinstance(checkpoint_seq, bool) and checkpoint_seq > 1:
-        start = max(start, checkpoint_seq - 1)
+    if mode == "all":
+        start = 0
+    elif mode == "checkpoint":
+        if _valid_checkpoint(checkpoint_seq):
+            start = checkpoint_seq - 1 if checkpoint_include else checkpoint_seq
+        else:
+            start = max(0, head_seq - CONTEXT_CHECKPOINT_FALLBACK_TURNS)
+    else:
+        start = max(0, head_seq - turns)
     return start, start

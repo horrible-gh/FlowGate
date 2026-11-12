@@ -240,8 +240,14 @@ def _start_paragraph(folded: int) -> list[str]:
     ]
 
 
-def _checkpoint_notice(checkpoint_seq: int) -> list[str]:
+def _checkpoint_notice(checkpoint_seq: int, kind: str = "include") -> list[str]:
     """flowgate.v02test.0025: the user started this chat's AI context at a message of their choice."""
+    if kind == "exclude":
+        return [
+            f"The user set a context checkpoint after seq {checkpoint_seq}: this invocation's context starts",
+            f"at the next turn (seq {checkpoint_seq} itself is excluded). Treat seq {checkpoint_seq} and earlier",
+            "turns as background and read them only when the request depends on them.",
+        ]
     return [
         f"The user set a context checkpoint at seq {checkpoint_seq}: this invocation's context starts",
         "there. Treat earlier turns as background and read them only when the request depends on them.",
@@ -319,21 +325,16 @@ def build_conversation_mention(
     """
     del module, provider_id  # Public signature is retained; neither chooses the window.
     settings = chat_settings_service.resolve_chat_settings_safe(user_id)
-    context_mode = settings["context_mode"]
-    # [all] adds no query. With the whole conversation on offer the head cannot change
+    # [all] (and a set checkpoint) adds no head query. With a fixed start the head cannot change
     # the answer, and costing exactly what it cost before is what keeps "put it back on
     # [all] and compare" usable as a way to diagnose anything (L0010 §2-3).
-    head_seq = (
-        conversation_turns.current_head_seq(doc_id) if context_mode == "recent" else 0
+    # flowgate.v02test.0025: the same window helper as the API worker, so [checkpoint] (from / after the
+    # chat's checkpoint, or the last 5 turns without one) is sent identically on both paths.
+    window = chat_doc_settings_service.context_window(
+        user_id, doc_id, settings, head_seq_of=conversation_turns.current_head_seq,
     )
-    # flowgate.v02test.0025: the chat's context checkpoint floors the window (same helper as the API worker).
-    checkpoint_seq = chat_doc_settings_service.checkpoint_seq_safe(user_id, doc_id)
-    after_seq, folded = chat_settings_service.resolve_context_window(
-        head_seq=head_seq,
-        mode=context_mode,
-        turns=settings["context_turns"],
-        checkpoint_seq=checkpoint_seq,
-    )
+    after_seq, folded = window["after_seq"], window["folded"]
+    checkpoint_seq = window["checkpoint_seq"]
     api_base = api_base_url.rstrip("/")
     display_name = provider or "<your model name>"
     payload_lines = [
@@ -363,8 +364,8 @@ def build_conversation_mention(
         "",
         *_start_paragraph(folded),
     ]
-    if checkpoint_seq is not None and after_seq == checkpoint_seq - 1:
-        lines += [""] + _checkpoint_notice(checkpoint_seq)
+    if checkpoint_seq is not None:
+        lines += [""] + _checkpoint_notice(checkpoint_seq, window["checkpoint_kind"])
     # Right behind the paragraph that named the starting point, and ahead of the reply
     # instructions: said in that order the worker reads the two as one thought. Appended
     # at the end of the document it reads the first half and moves on (P0009 scenario 11).

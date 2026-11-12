@@ -21,17 +21,20 @@
       </button>
       <p v-if="items.length === 0" class="conv-log-state" data-test="conv-log-empty">{{ emptyText }}</p>
       <!-- flowgate.v02test.0025: the checkpoint message is older than what is loaded; it can still be cleared here. -->
-      <div v-if="checkpointAbove" class="conv-boundary conv-checkpoint" data-test="conv-checkpoint">
-        <span>{{ t('gui.conversation.checkpoint.line_older', { seq: checkpointSeq }) }}</span>
+      <div v-if="checkpointAbove" class="conv-boundary conv-checkpoint" data-test="conv-checkpoint" :data-kind="checkpointKindOf">
+        <span>{{ t(checkpointKindOf === 'exclude' ? 'gui.conversation.checkpoint.line_older_after' : 'gui.conversation.checkpoint.line_older', { seq: checkpointSeq }) }}</span>
         <button v-if="canCheckpoint" type="button" class="conv-checkpoint-clear" :disabled="checkpointBusy" @click="emit('checkpoint', null)">
           {{ t('gui.conversation.checkpoint.clear') }}
         </button>
       </div>
       <template v-for="item in items" :key="item.key">
+        <!-- The line sits where sending actually starts: above the checkpoint message (from this message), below it
+             (from the next message). -->
         <div
-          v-if="item.kind === 'message' && checkpointSeq != null && item.turn.seq === checkpointSeq && !item.pending"
+          v-if="isCheckpointItem(item) && checkpointKindOf === 'include'"
           class="conv-boundary conv-checkpoint"
           data-test="conv-checkpoint"
+          data-kind="include"
         >
           <span>{{ t('gui.conversation.checkpoint.line') }}</span>
           <button v-if="canCheckpoint" type="button" class="conv-checkpoint-clear" :disabled="checkpointBusy" @click="emit('checkpoint', null)">
@@ -48,10 +51,10 @@
           :failed="item.failed"
           :read-only="readOnly"
           :can-checkpoint="canCheckpoint"
-          :is-checkpoint="checkpointSeq != null && item.turn.seq === checkpointSeq"
+          :checkpoint-kind="isCheckpointItem(item) ? checkpointKindOf : null"
           :checkpoint-busy="checkpointBusy"
           @retry="item.localId && emit('retry', item.localId)"
-          @checkpoint="(seq) => emit('checkpoint', seq)"
+          @checkpoint="(seq, kind) => (seq == null ? emit('checkpoint', null) : emit('checkpoint', seq, kind))"
         />
         <TimelineAttachments v-else-if="item.kind === 'attachments'" :activity="item.activity" />
         <TimelineActivity
@@ -63,6 +66,17 @@
           @open-change="item.kind === 'change' && emit('open-change', item.activity)"
           @open-file="(runId, path) => emit('open-file', runId, path)"
         />
+        <div
+          v-if="isCheckpointItem(item) && checkpointKindOf === 'exclude'"
+          class="conv-boundary conv-checkpoint"
+          data-test="conv-checkpoint"
+          data-kind="exclude"
+        >
+          <span>{{ t('gui.conversation.checkpoint.line_after') }}</span>
+          <button v-if="canCheckpoint" type="button" class="conv-checkpoint-clear" :disabled="checkpointBusy" @click="emit('checkpoint', null)">
+            {{ t('gui.conversation.checkpoint.clear') }}
+          </button>
+        </div>
       </template>
     </template>
   </div>
@@ -75,7 +89,7 @@ import TimelineActivity from './TimelineActivity.vue'
 import TimelineAttachments from './TimelineAttachments.vue'
 import TimelineMessage from './TimelineMessage.vue'
 import type { TimelineItem } from './timeline'
-import type { CommandDecision, WorkChangeActivity } from './types'
+import type { CheckpointKind, CommandDecision, WorkChangeActivity } from './types'
 
 const props = defineProps<{
   items: TimelineItem[]
@@ -87,8 +101,12 @@ const props = defineProps<{
   /** Changes when another chat opens: the log jumps to its newest entry. */
   chatId: string | null
   readOnly?: boolean
-  /** flowgate.v02test.0025: the chat's context checkpoint (message seq) and whether it can be changed here. */
+  /**
+   * flowgate.v02test.0025: the chat's context checkpoint (message seq, kind) and whether it can be changed here. The
+   * panel passes null while the context setting is not 체크포인트 사용 (nothing is drawn then).
+   */
   checkpointSeq?: number | null
+  checkpointKind?: CheckpointKind | null
   canCheckpoint?: boolean
   checkpointBusy?: boolean
 }>()
@@ -101,8 +119,14 @@ const emit = defineEmits<{
   'open-change': [activity: WorkChangeActivity]
   'open-file': [runId: string, path: string]
   read: [seq: number]
-  checkpoint: [seq: number | null]
+  checkpoint: [seq: number | null, kind?: CheckpointKind]
 }>()
+
+const checkpointKindOf = computed<CheckpointKind>(() => (props.checkpointKind === 'exclude' ? 'exclude' : 'include'))
+
+function isCheckpointItem(item: TimelineItem): boolean {
+  return item.kind === 'message' && props.checkpointSeq != null && item.turn.seq === props.checkpointSeq && !item.pending
+}
 
 // The checkpoint message is not among the loaded messages (older pages not read yet): say so at the top.
 const checkpointAbove = computed(() => {

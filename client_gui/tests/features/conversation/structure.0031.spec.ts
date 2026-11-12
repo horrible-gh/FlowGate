@@ -45,6 +45,8 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         // flowgate.chat.0017 CH0002: the AI attachment request block of a run (rows drawn by the container's component).
         'TimelineAttachments.vue',
         'TimelineMessage.vue',
+        // flowgate.v02test.0025: a message's ⋯ menu (context checkpoint: from this message / from the next / clear).
+        'TimelineMessageMenu.vue',
         'api.ts',
         'changeDiff.ts',
         'chatStart.ts',
