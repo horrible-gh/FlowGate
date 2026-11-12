@@ -1083,13 +1083,11 @@ export default {
     // flowgate.v02test.0025: the message ⋯ menu and the divider (context setting 체크포인트 사용).
     checkpoint: {
       menu: '메시지 메뉴',
-      from_here: '이 채팅부터 전송',
-      after_here: '이 채팅 다음부터 전송',
+      from_here: '이 채팅부터 전송 (포함)',
+      after_here: '이 채팅 다음부터 전송 (제외)',
       clear_here: '체크포인트 해제',
-      line: '체크포인트: 이 메시지부터 AI에게 보냅니다',
-      line_after: '체크포인트: 이 메시지 다음부터 AI에게 보냅니다',
-      line_older: '체크포인트: #{seq} 메시지부터 보냅니다',
-      line_older_after: '체크포인트: #{seq} 메시지 다음부터 보냅니다',
+      // The same words above (from this message) or below (from the next) the message: the place tells which.
+      line: '▼ 여기부터 전송됩니다',
       clear: '해제',
     },
     message: {

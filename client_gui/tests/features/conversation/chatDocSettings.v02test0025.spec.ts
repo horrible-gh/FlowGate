@@ -197,14 +197,35 @@ describe('v02test.0025 context checkpoint', () => {
     exclude.unmount()
   })
 
-  it('a checkpoint older than the loaded messages is shown at the top', async () => {
-    const turns = [turn(40, 'user', 'late', null)]
-    const include = mountTimeline({ hasMoreBefore: true, checkpointSeq: 12, checkpointKind: 'include', canCheckpoint: true }, turns)
-    expect(include.find('[data-test="conv-checkpoint"]').text()).toContain('12')
+  it('the line reads the same both ways (▼ 여기부터 전송됩니다); the messages above it are dimmed', async () => {
+    i18n.global.locale.value = 'ko'
+    const include = mountTimeline({ checkpointSeq: 2, checkpointKind: 'include', canCheckpoint: true })
+    expect(include.find('[data-test="conv-checkpoint"] span').text()).toBe('▼ 여기부터 전송됩니다')
+    expect(include.findAll('[data-test="tl-message"]').map((m) => m.classes().includes('is-unsent'))).toEqual([true, false, false])
     include.unmount()
-    const exclude = mountTimeline({ hasMoreBefore: true, checkpointSeq: 12, checkpointKind: 'exclude', canCheckpoint: true }, turns)
-    expect(exclude.find('[data-test="conv-checkpoint"]').attributes('data-kind')).toBe('exclude')
+    const exclude = mountTimeline({ checkpointSeq: 2, checkpointKind: 'exclude', canCheckpoint: true })
+    expect(exclude.find('[data-test="conv-checkpoint"] span').text()).toBe('▼ 여기부터 전송됩니다')
+    expect(exclude.findAll('[data-test="tl-message"]').map((m) => m.classes().includes('is-unsent'))).toEqual([true, true, false])
     exclude.unmount()
+  })
+
+  it('a checkpoint message that is not on screen draws no line anywhere', async () => {
+    const turns = [turn(40, 'user', 'late', null), turn(41, 'ai', 'later', null)]
+    const wrapper = mountTimeline({ hasMoreBefore: true, checkpointSeq: 12, checkpointKind: 'include', canCheckpoint: true }, turns)
+    expect(wrapper.find('[data-test="conv-checkpoint"]').exists()).toBe(false)
+    expect(wrapper.findAll('.is-unsent')).toHaveLength(0) // every loaded message is after the checkpoint: all are sent
+    wrapper.unmount()
+  })
+
+  it('the ⋯ items carry where the line goes (⤒ above / ⤓ below / ✕ clear); ✓ sits at the right', async () => {
+    const wrapper = mountTimeline({ checkpointSeq: 2, checkpointKind: 'exclude', canCheckpoint: true })
+    await wrapper.findAll('[data-test="tl-more"]')[1].trigger('click')
+    const icon = (test: string) => wrapper.find(`[data-test="${test}"] .tlm-icon`).text()
+    expect([icon('tl-checkpoint-include'), icon('tl-checkpoint-exclude'), icon('tl-checkpoint-clear')]).toEqual(['⤒', '⤓', '✕'])
+    const exclude = wrapper.find('[data-test="tl-checkpoint-exclude"]')
+    expect(exclude.element.lastElementChild?.textContent).toBe('✓')
+    expect(wrapper.find('[data-test="tl-checkpoint-include"] .tlm-check').text()).toBe('')
+    wrapper.unmount()
   })
 
   it('without 체크포인트 사용 there is no ⋯ menu and no line', async () => {
@@ -252,11 +273,80 @@ describe('v02test.0025 context setting 체크포인트 사용', () => {
     expect(wrapper.findAll('[data-test="tl-more"]').length).toBeGreaterThan(0)
     const line = wrapper.find('[data-test="conv-checkpoint"]')
     expect(line.attributes('data-kind')).toBe('exclude')
-    expect(line.text()).toContain('다음부터')
+    expect(line.text()).toContain('여기부터 전송됩니다')
 
     // Reopening shows 체크포인트 사용 selected.
     await wrapper.find('[data-test="conv-settings-btn"]').trigger('click')
     expect((wrapper.find('[data-test="conv-setting-context"]').element as HTMLSelectElement).value).toBe('checkpoint')
     wrapper.unmount()
+  })
+})
+
+describe('v02test.0025 the checkpoint message is always loaded under 체크포인트 사용', () => {
+  // A 120-message chat: opening it reads the newest 50 (71~120); [이전 대화] reads 30 more each time.
+  const HEAD = 120
+  const ALL = Array.from({ length: HEAD }, (_, i) => turn(i + 1, i % 2 ? 'ai' : 'user', `m${i + 1}`, null))
+
+  async function setupLong(contextMode: 'recent' | 'checkpoint', checkpoint: ChatDocSettings | null) {
+    const fake = createFakeSource({
+      chats: [{ id: A, title: 'long', updatedAt: null }],
+      turns: { [A]: [] },
+      settings: { ...createFakeSource().data.settings, contextMode },
+    })
+    const source = fake.source
+    source.fetchTurns.mockImplementation(async (_chatId: string, query: { afterSeq?: number; beforeSeq?: number; limit?: number }) => {
+      const list = query.beforeSeq != null
+        ? ALL.filter((t) => t.seq < query.beforeSeq!).slice(-(query.limit ?? 30))
+        : query.afterSeq != null
+          ? ALL.filter((t) => t.seq > query.afterSeq!)
+          : ALL.slice(-(query.limit ?? 50))
+      const oldest = list[0]?.seq ?? 1
+      return { turns: list.map((t) => ({ ...t })), participants: [], myReadSeq: null, headSeq: HEAD, nextAfterSeq: null, prevBeforeSeq: oldest > 1 ? oldest : null }
+    })
+    source.fetchChatDocSettings = vi.fn(async () => checkpoint ?? { providerId: null, checkpointSeq: null, checkpointKind: null })
+    source.saveChatDocSettings = vi.fn(async () => checkpoint!)
+    const session = createConversationSession({ source, sleep: async () => undefined })
+    await session.setScope(SCOPE)
+    await flushPromises()
+    const olderReads = () => source.fetchTurns.mock.calls.map((c: unknown[]) => (c[1] as { beforeSeq?: number }).beforeSeq).filter((s: unknown) => s != null)
+    return { session, source, olderReads }
+  }
+
+  it('opening a chat whose checkpoint is older than the first page reads older pages until it is on screen', async () => {
+    const { session, olderReads } = await setupLong('checkpoint', { providerId: null, checkpointSeq: 12, checkpointKind: 'include' })
+    expect(session.state.turns[0].seq).toBe(11) // 41~70, then 11~40: #12 is loaded, no further page
+    expect(olderReads()).toEqual([71, 41])
+    expect(session.state.hasMoreBefore).toBe(true) // #1~#10 stay behind [이전 대화]
+  })
+
+  it('a checkpoint already on screen, none at all, or another context setting reads nothing more', async () => {
+    for (const [mode, checkpoint] of [
+      ['checkpoint', { providerId: null, checkpointSeq: 90, checkpointKind: 'exclude' }],
+      ['checkpoint', null],
+      ['recent', { providerId: null, checkpointSeq: 12, checkpointKind: 'include' }],
+    ] as const) {
+      const { session, olderReads } = await setupLong(mode, checkpoint)
+      expect(session.state.turns[0].seq).toBe(71)
+      expect(olderReads()).toEqual([])
+    }
+  })
+
+  it('switching the context setting to 체크포인트 사용 brings the stored checkpoint message on screen', async () => {
+    const { session, olderReads } = await setupLong('recent', { providerId: null, checkpointSeq: 12, checkpointKind: 'exclude' })
+    expect(session.state.turns[0].seq).toBe(71)
+    expect(await session.saveSettings({ context_mode: 'checkpoint' })).toBe(true)
+    await flushPromises()
+    expect(session.state.turns[0].seq).toBe(11)
+    expect(olderReads()).toEqual([71, 41])
+  })
+
+  it('a failed older read stops there (the [이전 대화] button stays)', async () => {
+    const { session, source, olderReads } = await setupLong('recent', { providerId: null, checkpointSeq: 12, checkpointKind: 'include' })
+    source.fetchTurns.mockRejectedValue(new Error('offline'))
+    await session.saveSettings({ context_mode: 'checkpoint' })
+    await flushPromises()
+    expect(olderReads()).toEqual([71]) // one try, no loop
+    expect(session.state.turns[0].seq).toBe(71)
+    expect(session.state.hasMoreBefore).toBe(true)
   })
 })

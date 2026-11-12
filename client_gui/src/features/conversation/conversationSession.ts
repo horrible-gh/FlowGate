@@ -762,7 +762,20 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
-  async function loadOlder(trace?: SubmissionTrace): Promise<void> {
+  /** The page read in flight, so a caller that needs it finished (revealCheckpoint) can wait for it. */
+  let olderLoad: Promise<void> | null = null
+
+  function loadOlder(trace?: SubmissionTrace): Promise<void> {
+    if (state.loadingOlder && olderLoad) return olderLoad
+    const load = loadOlderPage(trace)
+    olderLoad = load
+    void load.finally(() => {
+      if (olderLoad === load) olderLoad = null
+    })
+    return load
+  }
+
+  async function loadOlderPage(trace?: SubmissionTrace): Promise<void> {
     const chatId = state.activeChatId
     if (!chatId || state.loadingOlder) return
     const before = oldestSeq()
@@ -783,6 +796,41 @@ export function createConversationSession(options: ConversationSessionOptions = 
       if (gen === chatGen) state.loadingOlder = false
     }
   }
+
+  /**
+   * flowgate.v02test.0025: under 체크포인트 사용 the checkpoint message is always on screen, so the
+   * "▼ 여기부터 전송됩니다" line is drawn right next to it. When the chat opens on its recent messages only (or the
+   * mode is switched on later), older pages are read until the checkpoint message is loaded. Nothing is drawn for a
+   * message that is not on screen. A failed read stops here; the [이전 대화] button stays to try again.
+   */
+  let revealingCheckpoint = false
+
+  function checkpointOffScreen(): boolean {
+    const seq = state.checkpointSeq
+    return state.settings.contextMode === 'checkpoint' && seq != null && state.turnsStatus === 'ready' && state.hasMoreBefore && oldestSeq() > seq
+  }
+
+  async function revealCheckpoint(): Promise<void> {
+    if (revealingCheckpoint || !checkpointOffScreen()) return
+    const gen = chatGen
+    revealingCheckpoint = true
+    try {
+      while (!disposed && gen === chatGen && checkpointOffScreen()) {
+        const before = oldestSeq()
+        await loadOlder()
+        if (disposed || gen !== chatGen) return
+        // The read that was already out may have been someone else's; read again until one adds nothing.
+        if (oldestSeq() >= before && !state.loadingOlder) return
+      }
+    } finally {
+      revealingCheckpoint = false
+    }
+  }
+
+  const stopRevealWatch = watch(
+    () => [state.activeChatId, state.turnsStatus, state.settings.contextMode, state.checkpointSeq] as const,
+    () => void revealCheckpoint(),
+  )
 
   /** Explicit completion contract: errors / a remaining cursor are never a completed read. */
   async function readTurnPages(chatId: string, afterSeq: number, current: () => boolean): Promise<TurnReadResult> {
@@ -1685,6 +1733,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.changeWindowEpoch += 1
     disposed = true
     titleGuard.disposed = true
+    stopRevealWatch()
     const poll = livePoll
     livePoll = null
     poll?.wake?.()

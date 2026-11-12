@@ -1,6 +1,6 @@
 <template>
   <!-- flowgate.v02test.0025 — a message's ⋯ menu, right of its copy button. Shown while the context setting is
-       체크포인트 사용: send from this message (included) / from the next message (excluded) / clear the checkpoint.
+       체크포인트 사용: ⤒ send from this message (included) / ⤓ from the next message (excluded) / ✕ clear the checkpoint.
        Same popover behaviour as the composer's ⋯ menu (a press outside or Esc closes it). -->
   <div ref="rootEl" class="tlm">
     <button
@@ -16,6 +16,8 @@
       @click="toggleMenu"
     >⋯</button>
     <div v-if="open" ref="popEl" class="tlm-pop" role="menu" data-test="tl-more-menu" :aria-label="t('gui.conversation.checkpoint.menu')">
+      <!-- The icon says where the line goes: ⤒ above this message (it is sent), ⤓ below it (it is not). ✓ marks the
+           way in use, at the right. -->
       <button
         type="button"
         role="menuitemradio"
@@ -24,8 +26,9 @@
         :aria-checked="kind === 'include'"
         @click="pick(seq, 'include')"
       >
-        <span class="tlm-icon" aria-hidden="true">{{ kind === 'include' ? '✓' : '' }}</span>
-        <span>{{ t('gui.conversation.checkpoint.from_here') }}</span>
+        <span class="tlm-icon" aria-hidden="true">⤒</span>
+        <span class="tlm-label">{{ t('gui.conversation.checkpoint.from_here') }}</span>
+        <span class="tlm-check" aria-hidden="true">{{ kind === 'include' ? '✓' : '' }}</span>
       </button>
       <button
         type="button"
@@ -35,8 +38,9 @@
         :aria-checked="kind === 'exclude'"
         @click="pick(seq, 'exclude')"
       >
-        <span class="tlm-icon" aria-hidden="true">{{ kind === 'exclude' ? '✓' : '' }}</span>
-        <span>{{ t('gui.conversation.checkpoint.after_here') }}</span>
+        <span class="tlm-icon" aria-hidden="true">⤓</span>
+        <span class="tlm-label">{{ t('gui.conversation.checkpoint.after_here') }}</span>
+        <span class="tlm-check" aria-hidden="true">{{ kind === 'exclude' ? '✓' : '' }}</span>
       </button>
       <button
         v-if="kind"
@@ -46,8 +50,9 @@
         data-test="tl-checkpoint-clear"
         @click="pick(null)"
       >
-        <span class="tlm-icon" aria-hidden="true"></span>
-        <span>{{ t('gui.conversation.checkpoint.clear_here') }}</span>
+        <span class="tlm-icon" aria-hidden="true">✕</span>
+        <span class="tlm-label">{{ t('gui.conversation.checkpoint.clear_here') }}</span>
+        <span class="tlm-check" aria-hidden="true"></span>
       </button>
     </div>
   </div>
@@ -166,6 +171,17 @@ function pick(seq: number | null, kind?: CheckpointKind): void {
 
 .tlm-icon {
   flex: 0 0 14px;
+  text-align: center;
+  color: var(--fg2-status-info-fg);
+}
+
+.tlm-label {
+  flex: 1;
+}
+
+.tlm-check {
+  flex: 0 0 12px;
+  margin-left: 8px;
   text-align: center;
   color: var(--fg2-status-info-fg);
 }

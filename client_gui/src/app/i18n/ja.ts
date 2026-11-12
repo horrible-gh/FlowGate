@@ -1072,13 +1072,11 @@ export default {
     // flowgate.v02test.0025: the message ⋯ menu and the divider (context setting チェックポイントを使用).
     checkpoint: {
       menu: 'メッセージメニュー',
-      from_here: 'このメッセージから送信',
-      after_here: 'このメッセージの次から送信',
+      from_here: 'このメッセージから送信 (含む)',
+      after_here: 'このメッセージの次から送信 (除く)',
       clear_here: 'チェックポイントを解除',
-      line: 'チェックポイント: このメッセージから AI に送ります',
-      line_after: 'チェックポイント: このメッセージの次から AI に送ります',
-      line_older: 'チェックポイント: #{seq} のメッセージから送ります',
-      line_older_after: 'チェックポイント: #{seq} のメッセージの次から送ります',
+      // The same words above (from this message) or below (from the next) the message: the place tells which.
+      line: '▼ ここから送信されます',
       clear: '解除',
     },
     message: {

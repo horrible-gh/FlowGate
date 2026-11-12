@@ -20,16 +20,10 @@
         {{ loadingOlder ? t('gui.conversation.timeline.loading_older') : t('gui.conversation.timeline.load_older') }}
       </button>
       <p v-if="items.length === 0" class="conv-log-state" data-test="conv-log-empty">{{ emptyText }}</p>
-      <!-- flowgate.v02test.0025: the checkpoint message is older than what is loaded; it can still be cleared here. -->
-      <div v-if="checkpointAbove" class="conv-boundary conv-checkpoint" data-test="conv-checkpoint" :data-kind="checkpointKindOf">
-        <span>{{ t(checkpointKindOf === 'exclude' ? 'gui.conversation.checkpoint.line_older_after' : 'gui.conversation.checkpoint.line_older', { seq: checkpointSeq }) }}</span>
-        <button v-if="canCheckpoint" type="button" class="conv-checkpoint-clear" :disabled="checkpointBusy" @click="emit('checkpoint', null)">
-          {{ t('gui.conversation.checkpoint.clear') }}
-        </button>
-      </div>
       <template v-for="item in items" :key="item.key">
         <!-- The line sits where sending actually starts: above the checkpoint message (from this message), below it
-             (from the next message). -->
+             (from the next message). Same words both ways; only the place differs. It is drawn only next to a message
+             on screen: the session reads older pages until the checkpoint message is loaded. -->
         <div
           v-if="isCheckpointItem(item) && checkpointKindOf === 'include'"
           class="conv-boundary conv-checkpoint"
@@ -53,6 +47,7 @@
           :can-checkpoint="canCheckpoint"
           :checkpoint-kind="isCheckpointItem(item) ? checkpointKindOf : null"
           :checkpoint-busy="checkpointBusy"
+          :class="{ 'is-unsent': isUnsent(item) }"
           @retry="item.localId && emit('retry', item.localId)"
           @checkpoint="(seq, kind) => (seq == null ? emit('checkpoint', null) : emit('checkpoint', seq, kind))"
         />
@@ -72,7 +67,7 @@
           data-test="conv-checkpoint"
           data-kind="exclude"
         >
-          <span>{{ t('gui.conversation.checkpoint.line_after') }}</span>
+          <span>{{ t('gui.conversation.checkpoint.line') }}</span>
           <button v-if="canCheckpoint" type="button" class="conv-checkpoint-clear" :disabled="checkpointBusy" @click="emit('checkpoint', null)">
             {{ t('gui.conversation.checkpoint.clear') }}
           </button>
@@ -128,13 +123,12 @@ function isCheckpointItem(item: TimelineItem): boolean {
   return item.kind === 'message' && props.checkpointSeq != null && item.turn.seq === props.checkpointSeq && !item.pending
 }
 
-// The checkpoint message is not among the loaded messages (older pages not read yet): say so at the top.
-const checkpointAbove = computed(() => {
+// A stored message above the line is not sent to the AI: it is dimmed (the line alone says where sending starts).
+function isUnsent(item: TimelineItem): boolean {
   const seq = props.checkpointSeq
-  if (seq == null) return false
-  const first = props.items.find((item) => item.kind === 'message' && item.turn.seq > 0)
-  return !!first && first.kind === 'message' && first.turn.seq > seq
-})
+  if (seq == null || item.kind !== 'message' || item.pending || item.turn.seq <= 0) return false
+  return checkpointKindOf.value === 'exclude' ? item.turn.seq <= seq : item.turn.seq < seq
+}
 
 const { t } = useI18n()
 
@@ -348,6 +342,14 @@ defineExpose({ scrollToBottom })
 
 .conv-checkpoint {
   color: var(--fg2-status-info-fg);
+  font-weight: 600;
+}
+.is-unsent {
+  opacity: 0.45;
+}
+.is-unsent:hover,
+.is-unsent:focus-within {
+  opacity: 0.8;
 }
 .conv-checkpoint-clear {
   padding: 0 6px;

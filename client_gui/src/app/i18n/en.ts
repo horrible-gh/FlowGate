@@ -1072,13 +1072,11 @@ export default {
     // flowgate.v02test.0025: the message ⋯ menu and the divider (context setting 'Use checkpoint').
     checkpoint: {
       menu: 'Message menu',
-      from_here: 'Send from this message',
-      after_here: 'Send from the next message',
+      from_here: 'Send from this message (included)',
+      after_here: 'Send from the next message (excluded)',
       clear_here: 'Clear checkpoint',
-      line: 'Checkpoint: the AI is sent this message and later',
-      line_after: 'Checkpoint: the AI is sent the messages after this one',
-      line_older: 'Checkpoint: the AI is sent message #{seq} and later',
-      line_older_after: 'Checkpoint: the AI is sent the messages after #{seq}',
+      // The same words above (from this message) or below (from the next) the message: the place tells which.
+      line: '▼ Sent to the AI from here',
       clear: 'Clear',
     },
     message: {
