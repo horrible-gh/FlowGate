@@ -224,6 +224,24 @@ def _require_read_write(run: dict, token_id: Optional[str]) -> None:
                                "this AI chat run was issued without source write access")
 
 
+def token_allows_commands(run: Optional[dict]) -> bool:
+    """Whether the run's current token may run commands at all (read-only chats: never).
+
+    Offers the ``run_command`` tool only where :func:`_require_read_write` can pass; it is
+    never the gate itself. Any failure to read the token answers False (fail closed).
+    """
+    if not run or run.get("action_scope") != "chat":
+        return False
+    try:
+        _require_read_write(run, _live_token_id(run))
+    except ChatCommandError:
+        return False
+    except Exception:
+        logger.warning("chat command capability unreadable for %s", run.get("run_id"), exc_info=True)
+        return False
+    return True
+
+
 def _authorize_run(run: Optional[dict], token_id: Optional[str]) -> dict:
     if run and token_id:
         from modules.flow_gate.services import graph_source_hooks

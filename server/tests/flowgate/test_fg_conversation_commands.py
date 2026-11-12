@@ -13,9 +13,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fg_conversation_support import (  # noqa: E402
-    ADMIN, CHAT_DOC, OTHER_USER, RUN_ID, USER, FakeExecutor, bind_worktree, clean_commands_state,  # noqa: F401
-    clean_runs, fg_store, init_worktree, make_run, seed, set_policy, unregister_run, use_executor,  # noqa: F401
-    wait_until,
+    ADMIN, CHAT_DOC, GROUP, OTHER_USER, PROJECT, RUN_ID, USER, FakeExecutor, add_run_token,  # noqa: F401
+    bind_worktree, clean_commands_state, clean_runs, fg_store, init_worktree, make_run, seed,  # noqa: F401
+    set_policy, set_token, unregister_run, use_executor, wait_until,
 )
 
 from flowgate.conversation import commands  # noqa: E402
@@ -486,3 +486,168 @@ def test_cli_create_and_read_return_terminal_results(env, monkeypatch):
     with pytest.raises(c.ConversationError) as missing:
         commands.cli_read(make_run(run_id="aiv_other", source_root=env["root"]), rid, 0)
     assert (missing.value.status, missing.value.code) == (404, "chat_command_not_found")
+
+
+# ── issued token capability: read-only chats never run commands (0180 policy) ──
+#
+# The authority is the persisted row of the run's current token -- never the run's own
+# ``chat_command_capability`` flag nor the user's current source-access setting. Judged at
+# creation, approval and right before spawn; API and CLI share it.
+
+TOKEN = f"tok_{RUN_ID}"
+PAST = "2000-01-01T00:00:00+00:00"
+
+
+def _read_only_run(env, run_id="aiv_read", source_access="read"):
+    return make_run(run_id=run_id, source_root=env["root"], source_access=source_access)
+
+
+@pytest.mark.parametrize("source_access", ["read", None])
+def test_read_only_or_legacy_token_cannot_create_a_command(env, monkeypatch, source_access):
+    set_policy(monkeypatch, c.POLICY_ALWAYS_APPROVE)
+    run = _read_only_run(env, source_access=source_access)
+    assert run["chat_command_capability"] is True  # the run flag alone never grants it
+    with pytest.raises(c.ConversationError) as exc:
+        commands.create_request(run, _payload())
+    assert (exc.value.status, exc.value.code) == (403, "chat_command_capability_required")
+    assert repo.list_open_commands_for_run(run["run_id"]) == []
+    assert env["executor"].spawned == []
+
+
+def test_read_only_token_gets_the_refusal_as_an_api_tool_result(env, monkeypatch):
+    set_policy(monkeypatch, c.POLICY_ALWAYS_APPROVE)
+    status, result = commands.run_tool(_read_only_run(env), _payload())
+    assert status == 403 and result["ok"] is False
+    assert result["error"]["code"] == "chat_command_capability_required"
+    assert env["executor"].spawned == []
+
+
+def test_read_only_token_is_refused_on_the_cli_transport(env, monkeypatch):
+    set_policy(monkeypatch, c.POLICY_ALWAYS_APPROVE)
+    run = _read_only_run(env)
+    token = {"ai_run_id": run["run_id"], "project": PROJECT, "group_id": GROUP,
+             "token_id": run["current_token_id"]}
+    with pytest.raises(c.ConversationError) as exc:
+        commands.authorize_token(token, run)
+    assert (exc.value.status, exc.value.code) == (403, "chat_command_capability_required")
+    with pytest.raises(c.ConversationError) as created:
+        commands.cli_create(run, token, {**_payload(), "wait_seconds": 0})
+    assert created.value.code == "chat_command_capability_required"
+    assert env["executor"].spawned == []
+
+
+def test_missing_or_mismatched_token_rows_fail_closed(env):
+    run = env["run"]
+    # The token row names another run / is not a chat token ...
+    for over in ({"ai_run_id": "aiv_someone_else"}, {"action_scope": "edit"}):
+        set_token(TOKEN, **over)
+        with pytest.raises(c.ConversationError) as exc:
+            commands.create_request(run, _payload())
+        assert (exc.value.status, exc.value.code) == (403, "chat_command_forbidden"), over
+        set_token(TOKEN, ai_run_id=RUN_ID, action_scope="chat")
+    # ... or the run names another document / group than its token.
+    for key, value in (("doc_ref", "fgp.v02.0001.0099-CH"), ("group_id", "fgp.v02.0002")):
+        original = run[key]
+        run[key] = value
+        try:
+            with pytest.raises(c.ConversationError) as exc:
+                commands._authorize_run(run)
+            assert (exc.value.status, exc.value.code) == (403, "chat_command_forbidden"), key
+        finally:
+            run[key] = original
+    ghost = make_run(run_id="aiv_ghost", source_root=env["root"])
+    ghost["current_token_id"] = "tok_never_issued"
+    with pytest.raises(c.ConversationError) as missing:
+        commands.create_request(ghost, _payload())
+    assert (missing.value.status, missing.value.code) == (403, "chat_command_forbidden")
+    assert env["executor"].spawned == []
+
+
+def test_edit_once_token_keeps_running_after_the_setting_fell_back_to_read_only(env, monkeypatch):
+    """A won edit_once claim fixed read_write on the token at issue; admission then left the
+    stored mode read_only. Commands follow the token, not the setting."""
+    from modules.flow_gate.db import user_chat_source_access
+    from modules.flow_gate.db.connection import now_iso
+
+    user_chat_source_access.upsert(USER, PROJECT, GROUP, "read_only", now_iso())
+    assert user_chat_source_access.resolve_source_access_mode(USER, PROJECT, GROUP) == "read_only"
+    set_policy(monkeypatch, c.POLICY_ALWAYS_APPROVE)
+    row = commands.create_request(env["run"], _payload())
+    assert wait_until(lambda: repo.get_command(row["request_id"])["status"] == c.SUCCEEDED)
+    assert len(env["executor"].spawned) == 1
+
+
+@pytest.mark.parametrize("change", [
+    {"revoked_at": PAST}, {"consumed_at": PAST}, {"expires_at": PAST}, {"source_access": "read"},
+])
+def test_approval_re_judges_the_requests_token(env, change):
+    row = commands.create_request(env["run"], _payload())
+    set_token(TOKEN, **change)
+    with pytest.raises(c.ConversationError) as exc:
+        commands.decide(row["request_id"], {"user_id": USER}, "approve")
+    expected = "chat_command_capability_required" if "source_access" in change else "chat_command_forbidden"
+    assert (exc.value.status, exc.value.code) == (403, expected)
+    stored = repo.get_command(row["request_id"])
+    assert stored["status"] == c.CANCELLED and stored["error_code"] == expected
+    assert env["executor"].spawned == []
+
+
+def test_a_request_of_a_replaced_token_is_not_approved(env):
+    row = commands.create_request(env["run"], _payload())
+    assert row["token_id"] == TOKEN
+    add_run_token(RUN_ID, token_id="tok_next_hop")
+    env["run"]["current_token_id"] = "tok_next_hop"  # a live read_write token, but not the request's
+    with pytest.raises(c.ConversationError) as exc:
+        commands.decide(row["request_id"], {"user_id": USER}, "approve")
+    assert (exc.value.status, exc.value.code) == (403, "chat_command_forbidden")
+    assert repo.get_command(row["request_id"])["status"] == c.CANCELLED
+    # The new current token itself may still ask.
+    assert commands.create_request(env["run"], _payload())["token_id"] == "tok_next_hop"
+    assert env["executor"].spawned == []
+
+
+def test_the_spawn_gate_re_judges_the_token_after_approval(env, monkeypatch):
+    started = []
+    monkeypatch.setattr(commands, "_start", lambda row: started.append(row))
+    row = commands.create_request(env["run"], _payload())
+    commands.decide(row["request_id"], {"user_id": USER}, "approve")
+    assert [r["request_id"] for r in started] == [row["request_id"]]
+    set_token(TOKEN, source_access="read")
+    commands._execute(row["request_id"], env["run"]["source_root"])
+    stored = repo.get_command(row["request_id"])
+    assert stored["status"] == c.CANCELLED and stored["error_code"] == "chat_command_capability_required"
+    assert env["executor"].spawned == []
+
+
+def test_consuming_the_token_never_cuts_a_command_already_running(env, monkeypatch):
+    """The turn submit consumes the token. A command started before it runs to its end
+    (only finalize closes it); only new requests / approvals / spawns need a live token."""
+    slow = FakeExecutor(auto_release=False)
+    use_executor(monkeypatch, slow)
+    set_policy(monkeypatch, c.POLICY_ALWAYS_APPROVE)
+    row = commands.create_request(env["run"], _payload())
+    assert slow.spawned_event.wait(5)
+    assert wait_until(lambda: repo.get_command(row["request_id"])["status"] == c.RUNNING)
+    set_token(TOKEN, consumed_at=PAST)
+    slow.release.set()
+    assert wait_until(lambda: repo.get_command(row["request_id"])["status"] == c.SUCCEEDED)
+    with pytest.raises(c.ConversationError) as late:
+        commands.create_request(env["run"], _payload())
+    assert (late.value.status, late.value.code) == (403, "chat_command_forbidden")
+
+
+def test_run_state_refusals_keep_their_codes_before_the_token_check(env):
+    row = commands.create_request(env["run"], _payload())
+    set_token(TOKEN, source_access="read")
+    env["run"]["status"] = "finished"
+    with pytest.raises(c.ConversationError) as exc:
+        commands.decide(row["request_id"], {"user_id": USER}, "approve")
+    assert exc.value.code == "chat_command_run_finished"
+
+
+def test_token_allows_commands_is_the_offer_not_the_gate(env):
+    assert commands.token_allows_commands(env["run"]) is True
+    assert commands.token_allows_commands(_read_only_run(env)) is False
+    assert commands.token_allows_commands(_read_only_run(env, run_id="aiv_legacy", source_access=None)) is False
+    assert commands.token_allows_commands({"action_scope": "edit", "run_id": RUN_ID}) is False
+    assert commands.token_allows_commands(None) is False

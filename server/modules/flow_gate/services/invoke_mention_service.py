@@ -296,7 +296,8 @@ def build_conversation_mention(
     # 0670 T0004 / flowgate.v02.0032 T#1 (D0006 §3.4): True only from the in-app AI invoke
     # path, whose token is bound to a live run that a command request can belong to. The
     # sections come from the chat run hook port (or, with none registered, the in-module
-    # command section); the copy path (no run) never shows them.
+    # command section); the copy path (no run) never shows them, and neither does a token
+    # whose source_access is not read_write.
     command_execution: bool = False,
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
@@ -411,7 +412,9 @@ def build_conversation_mention(
         source_access=source_access,
     ):
         lines += ["", section]
-    if command_execution:
+    # A read-only chat token can never run a command (commands._authorize_run refuses it),
+    # so its mention does not offer the endpoint either: only the token's own read_write.
+    if command_execution and can_write:
         from modules.flow_gate.services import chat_run_hooks
 
         sections = chat_run_hooks.chat_mention_sections(api_base, raw_token)

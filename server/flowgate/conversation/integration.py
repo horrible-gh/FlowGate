@@ -33,8 +33,11 @@ logger = logging.getLogger(__name__)
 
 
 def on_chat_run_start(run: dict) -> None:
-    # The capability that lets this run ask for commands (D0006 §5.3 capability_required).
-    run["chat_command_capability"] = True
+    # The capability that lets this run ask for commands (D0006 §5.3 capability_required):
+    # only a run whose issued token may write source (edit, or an edit_once that won its
+    # claim). A read-only chat is never offered the tool; the gate itself stays
+    # commands._authorize_run, which re-judges the token at creation, approval and spawn.
+    run["chat_command_capability"] = commands.token_allows_commands(run)
     run["chat_start_seq"] = activity.run_start_seq(run.get("doc_ref"))
 
 
@@ -47,8 +50,9 @@ def on_chat_run_prepare(run: dict) -> None:
 
 
 def provide_chat_tools(run) -> list[dict]:
-    """``run_command`` for a run admitted through :func:`on_chat_run_start` (or, with
-    ``run=None``, the description for the CLI mention built before the run exists)."""
+    """``run_command`` for a run admitted through :func:`on_chat_run_start` with the command
+    capability (or, with ``run=None``, the description for the CLI mention built before the
+    run exists; the mention adds it only for a ``read_write`` token)."""
     from flowgate.card_document_edit import chat_tools, chat_adapter, chat_documents
 
     from flowgate.graph_read import tools as graph_read_tools
