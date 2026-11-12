@@ -1,7 +1,8 @@
 <template>
   <ModelessShell
+    ref="shellRef"
     :open="open && result !== null"
-    :title="t('gui.runResult.title')"
+    :title="windowTitle"
     :initial-x="initialX"
     :initial-y="initialY"
     :initial-width="460"
@@ -10,7 +11,11 @@
     :min-height="240"
     @close="emit('close')"
   >
-    <section v-if="result" class="run-result" data-test="run-result" :data-state="result.state" :data-scope="result.scope">
+    <!-- flowgate.v02gui.0001: the titlebar names the Flow the result is of (a long name ends in an ellipsis). -->
+    <template #header>
+      <span :title="windowTitle" data-test="run-result-title">{{ windowTitle }}</span>
+    </template>
+    <section v-if="result" ref="contentRef" class="run-result" data-test="run-result" :data-state="result.state" :data-scope="result.scope">
       <div class="run-result-state" :class="`is-${result.state}`" data-test="run-result-state">
         <span class="run-result-symbol" aria-hidden="true">{{ result.state === 'failed' ? '!' : '✓' }}</span>
         <strong>{{ stateLabel(tr, has, result) }}</strong>
@@ -55,7 +60,7 @@
 // branch, a few lines), the done / failed counts, the next state, the failure's one line, [상세] and [닫기]. No long output
 // or log here and no fixed sentence — the 2nd window holds the messages. ModelessShell: dragged, the clicked window
 // comes to the front, nothing behind it is blocked. The wire is the 0029-TR mock's resultWindow.
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
@@ -72,8 +77,10 @@ import {
   type HasKey,
   type Translate,
 } from './runResultView'
+import { useFitModelessHeight, type FittableShell } from './fitModelessHeight'
 
-const props = defineProps<{ result: FlowCommandResult | null; open: boolean }>()
+// flowgate.v02gui.0001: `flowName` — the name of the Flow the result is of (the caller's, taken when the result showed).
+const props = defineProps<{ result: FlowCommandResult | null; open: boolean; flowName?: string | null }>()
 const emit = defineEmits<{ close: []; detail: [] }>()
 
 const composer = useI18n({ useScope: 'global' })
@@ -86,15 +93,25 @@ const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth
 const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight
 const initialX = Math.max(8, Math.round(viewportWidth / 2 - 230))
 // flowgate.v02test.0015: no fixed 320 — the failed cards and their causes show without scrolling (the screen less 80).
-const initialHeight = Math.max(240, viewportHeight - 80)
+// flowgate.v02gui.0001: that is now the cap only — once laid out the window takes its content's height (a short result
+// leaves no empty space below) and is centred again; a longer one stops at the screen less 80 and scrolls.
+const VIEWPORT_MARGIN = 80
+const initialHeight = Math.max(240, viewportHeight - VIEWPORT_MARGIN)
 const initialY = Math.max(8, Math.round((viewportHeight - initialHeight) / 2))
+
+const shellRef = ref<FittableShell | null>(null)
+const contentRef = ref<HTMLElement | null>(null)
+useFitModelessHeight(shellRef, contentRef, VIEWPORT_MARGIN)
+
+const windowTitle = computed(() => (props.flowName ? t('gui.runResult.title_with_flow', { name: props.flowName }) : t('gui.runResult.title')))
 
 const steps = computed(() => (props.result ? stepLines(tr, has, props.result) : { lines: [], more: 0 }))
 const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))
 </script>
 
 <style scoped>
-.run-result { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; color: var(--fg2-text); font-size: 13px; }
+/* flowgate.v02gui.0001: no padding of its own — the shell's body already pads it (no doubled space around it). */
+.run-result { display: flex; flex-direction: column; gap: 12px; color: var(--fg2-text); font-size: 13px; }
 .run-result-state { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 .run-result-symbol { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-weight: 800;
   background: var(--fg2-status-success-bg, #12402c); color: var(--fg2-status-success-fg, #6fe0a8); }

@@ -68,6 +68,21 @@ export function closeFlowTab(state: FlowTabsState, flowId: string): FlowTabsStat
   return { tabs, activeFlowId: fallback ? fallback.flowId : null }
 }
 
+/**
+ * flowgate.v02gui.0001: moves an open tab so that it ends at `toIndex` in screen order (clamped to the tab range), the
+ * other tabs keeping their order. The active tab stays active; an unknown id or no move leaves the state unchanged.
+ */
+export function moveFlowTab(state: FlowTabsState, flowId: string, toIndex: number): FlowTabsState {
+  const from = state.tabs.findIndex((tab) => tab.flowId === flowId)
+  if (from === -1 || !Number.isFinite(toIndex)) return state
+  const to = Math.max(0, Math.min(state.tabs.length - 1, Math.trunc(toIndex)))
+  if (to === from) return state
+  const tabs = [...state.tabs]
+  const [moved] = tabs.splice(from, 1)
+  tabs.splice(to, 0, moved)
+  return { tabs, activeFlowId: state.activeFlowId }
+}
+
 /** The previous (-1) / next (+1) tab of `flowId`, wrapping around at both ends. */
 export function adjacentFlowTabId(state: FlowTabsState, flowId: string, direction: 1 | -1): string | null {
   const count = state.tabs.length

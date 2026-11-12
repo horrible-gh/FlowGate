@@ -338,6 +338,8 @@ export default {
       past_revision_notice: 'Showing revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',
       tabs_label: 'Open flows',
       close_tab: 'Close {name}',
+      // flowgate.v02gui.0001: a tab's run mark (its accessible name).
+      tab_run: { running: 'Running', paused: 'Paused', stopping: 'Stopping' },
       graph_loading: 'Loading graph',
       graph_load_failed: 'Could not load the graph',
       draft_action_failed: "The action could not be completed. Check the latest flow and try again. ({code})",
