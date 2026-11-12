@@ -134,10 +134,14 @@ function pick(providerId: string): void {
   left: 0;
   bottom: calc(100% + 4px);
   z-index: 30;
-  /* flowgate.v02gui.0003: wide enough for a full provider name; a longer one wraps instead of being cut. */
+  /* flowgate.v02gui.0003: wide enough for a full provider name; a longer one wraps instead of being cut.
+     The picker is the first item of the composer row, so the popover starts at the composer's
+     content edge; 100cqw (the composer is an inline-size container) keeps its right edge inside
+     the panel instead of past the screen edge (360px in a ~300px panel ran ~69px off-screen). */
+  box-sizing: border-box;
   width: max-content;
-  min-width: 220px;
-  max-width: min(360px, 80vw);
+  min-width: min(220px, 100cqw);
+  max-width: min(360px, 100cqw);
   max-height: 260px;
   overflow: auto;
   padding: 5px;
