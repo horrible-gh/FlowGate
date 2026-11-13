@@ -63,7 +63,8 @@ export interface DesignerMenuServerDeps {
   readonly group: (projectId: string, groupId: string) => { readonly name: string; readonly moduleName: string } | null
   /** The Flow's display name as the Project Explorer shows it now; null once gone. */
   readonly flow: (projectId: string, flowId: string) => string | null
-  readonly renameGroup: (projectId: string, groupId: string, title: string) => Promise<MenuActionResult>
+  /** `identifier` (v02gui.0012) is sent only when it changed; the Group node id stays (server keeps the permanent key). */
+  readonly renameGroup: (projectId: string, groupId: string, title: string, identifier?: string) => Promise<MenuActionResult>
   readonly renameFlow: (projectId: string, groupId: string, flowId: string, title: string) => Promise<MenuActionResult>
   /** The existing dispose (DC) with its required reason. */
   readonly disposeFlow: (projectId: string, groupId: string, flowId: string, reason: string) => Promise<MenuActionResult>
@@ -101,6 +102,21 @@ export function entryNameProblem(name: string): EntryNameProblem {
   if (!trimmed) return 'empty'
   if (INVALID_NAME.test(trimmed)) return 'chars'
   if (trimmed === '.' || trimmed === '..') return 'dots'
+  return null
+}
+
+// v02gui.0012 — a Group identifier: the server's module_identifiers.validate_identifier_format (M031 slug, at most
+// 40 characters, 'none'/'all' reserved). Whether another Group uses it is decided by the server only.
+export const GROUP_IDENTIFIER_MAX = 40
+const GROUP_IDENTIFIER = /^[a-z0-9_-]+$/
+const RESERVED_GROUP_IDENTIFIERS = new Set(['none', 'all'])
+export type GroupIdentifierProblem = 'empty' | 'upper' | 'chars' | 'long' | 'reserved' | null
+export function groupIdentifierProblem(value: string): GroupIdentifierProblem {
+  const trimmed = value.trim()
+  if (!trimmed) return 'empty'
+  if (!GROUP_IDENTIFIER.test(trimmed)) return GROUP_IDENTIFIER.test(trimmed.toLowerCase()) ? 'upper' : 'chars'
+  if (trimmed.length > GROUP_IDENTIFIER_MAX) return 'long'
+  if (RESERVED_GROUP_IDENTIFIERS.has(trimmed)) return 'reserved'
   return null
 }
 

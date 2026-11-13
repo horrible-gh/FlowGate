@@ -81,10 +81,28 @@ function focusFirst(level: number) {
   const list = buttons(level)
   ;(list.find((item) => item.getAttribute('aria-disabled') !== 'true') ?? list[0])?.focus()
 }
+// The element the menu was opened on (the right-clicked card, tab, row ... or the focused element for a
+// keyboard / programmatic open). A scroll closes the menu only when it can move this element: the
+// document itself or a scroll area that contains it. An unrelated panel scrolling on its own — the
+// chat log jumping to its bottom while the Flow's conversation loads — leaves the menu open (0001-B C).
+let anchor: Element | null = null
+let lastContextTarget: { element: Element; at: number } | null = null
+const ANCHOR_PRESS_WINDOW_MS = 1000
+function rememberContextTarget(event: Event) {
+  if (event.target instanceof Element && !inside(event)) lastContextTarget = { element: event.target, at: performance.now() }
+}
+function captureAnchor() {
+  const pressed = lastContextTarget
+  lastContextTarget = null
+  if (pressed?.element.isConnected && performance.now() - pressed.at <= ANCHOR_PRESS_WINDOW_MS) return pressed.element
+  const focused = document.activeElement
+  return focused && focused !== document.body && !root.value?.contains(focused) ? focused : null
+}
 watch(() => session.value?.generation, async (generation, previous) => {
   if (previous !== undefined) emit('close', previous)
   subKey.value = null
-  if (generation === undefined || !session.value) return
+  if (generation === undefined || !session.value) { anchor = null; return }
+  anchor = captureAnchor()
   mainPosition.value = { ...session.value.position }
   emit('open', generation)
   await nextTick()
@@ -146,6 +164,17 @@ function inside(event: Event) { return event.target instanceof Node && !!root.va
 function onOutside(event: Event) {
   if (session.value && !isRelayedPress(event) && !inside(event)) props.host.close()
 }
+function onContextMenu(event: Event) {
+  rememberContextTarget(event)
+  onOutside(event)
+}
+function onScroll(event: Event) {
+  if (!session.value || inside(event)) return
+  const target = event.target
+  if (!(target instanceof Element) || target === document.documentElement || target === document.body) { props.host.close(); return }
+  // Without a known anchor the old rule stays: any outside scroll closes.
+  if (!anchor?.isConnected || target.contains(anchor)) props.host.close()
+}
 function onEscape(event: KeyboardEvent) {
   if (!session.value || event.key !== 'Escape') return
   event.preventDefault()
@@ -156,16 +185,16 @@ function onResize() { props.host.close() }
 onMounted(() => {
   document.addEventListener('pointerdown', onOutside, true)
   document.addEventListener('mousedown', onOutside, true)
-  document.addEventListener('contextmenu', onOutside, true)
-  document.addEventListener('scroll', onOutside, true)
+  document.addEventListener('contextmenu', onContextMenu, true)
+  document.addEventListener('scroll', onScroll, true)
   document.addEventListener('keydown', onEscape, true)
   window.addEventListener('resize', onResize)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onOutside, true)
   document.removeEventListener('mousedown', onOutside, true)
-  document.removeEventListener('contextmenu', onOutside, true)
-  document.removeEventListener('scroll', onOutside, true)
+  document.removeEventListener('contextmenu', onContextMenu, true)
+  document.removeEventListener('scroll', onScroll, true)
   document.removeEventListener('keydown', onEscape, true)
   window.removeEventListener('resize', onResize)
   props.host.close()

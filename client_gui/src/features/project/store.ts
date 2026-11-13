@@ -569,8 +569,8 @@ export const useProjectStore = defineStore('project', () => {
   // ── Designer context menu server commands (flowgate.v02.0060 T#2) ───────────────────────────────
   // A Group / Flow name or a dispose changes the Project's tree: its cached trees are dropped (the Explorer re-reads
   // with its refreshToken). A refusal is thrown as the api.ts Error with its `refusal`; nothing is dropped then.
-  async function renameGroup(projectId: string, moduleName: string, title: string): Promise<void> {
-    await renameGroupApi(projectId, moduleName, title)
+  async function renameGroup(projectId: string, moduleName: string, title: string, identifier?: string): Promise<void> {
+    await renameGroupApi(projectId, moduleName, title, identifier)
     invalidateGroupTree(projectId)
   }
 

@@ -722,6 +722,9 @@ def create_workflow_root(
     if new_group_name:
         # Create a new group
         try:
+            # v02gui.0012: an exposed Group identifier is numbered under its permanent key.
+            from .db import module_identifiers
+            module = module_identifiers.resolve_module_key(project, module or "none")
             group_code = numbering_service.reserve_group(project, module or "none")
             final_group_id = f"{project}.{module or 'none'}.{group_code}"
             db.insert_group(
@@ -2274,6 +2277,10 @@ def create_group(
         from .services import git_service
         stored_work_base_ref = git_service.default_work_base_ref_for_new_group(project_id)
 
+    # v02gui.0012: the client sends the Group's exposed identifier; number and name the Flow
+    # under the module's permanent key so an existing module keeps one counter and one prefix.
+    from .db import module_identifiers
+    module = module_identifiers.resolve_module_key(project_id, module)
     group_code = numbering_service.reserve_group(project_id, module)
     group_id = f"{project_id}.{module}.{group_code}"
     now = db.now_iso()
@@ -5545,9 +5552,20 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
     def _module_label(module: str | None) -> str:
         return (module or "").strip() or "none"
 
+    # v02gui.0012 (0001-B item B): the node id stays built from the module's permanent key, so
+    # recent lists, F5 restore and every stored explorer id keep pointing at the same Group after
+    # its identifier changes; `label` (what the client shows and sends back as moduleName) is
+    # the exposed identifier and `module_key` carries the permanent key.
+    try:
+        from .db import module_identifiers as _module_identifiers
+        _exposed = _module_identifiers.current_identifiers([project_id]).get(project_id, {})
+    except Exception:
+        _exposed = {}
+
     def _module_node(module: str | None, title: str | None = None) -> dict[str, Any]:
-        label = _module_label(module)
-        node_id = f"module:{project_id}:{label}"
+        key = _module_label(module)
+        label = _exposed.get(key, key)
+        node_id = f"module:{project_id}:{key}"
         if node_id not in module_nodes:
             # For consistency with TR556, the "none" module uses the existing all-label title
             if label == "none":
@@ -5566,6 +5584,9 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
                 "has_md": False,
                 "md_path": None,
             }
+            if label != key:
+                # Only a Group whose identifier was changed carries its permanent key.
+                module_nodes[node_id]["module_key"] = key
             nodes.append(module_nodes[node_id])
         return module_nodes[node_id]
 

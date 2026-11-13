@@ -1503,10 +1503,12 @@ const menuServer: DesignerMenuServerDeps = {
     return group ? { name: group.name, moduleName: group.moduleName } : null
   },
   flow: (pid, flowId) => explorerProject(pid)?.groups.flatMap((group) => group.flows).find((flow) => flow.id === flowId)?.name ?? null,
-  renameGroup: async (pid, groupId, title) => {
+  renameGroup: async (pid, groupId, title, identifier) => {
     const group = explorerGroup(pid, groupId)
     if (!group) return { ok: false, refusal: { reason: 'not_found', status: null, code: null } }
-    const result = await attempt(() => projectStore.renameGroup(pid, group.moduleName, title))
+    // groupId (the Explorer node id) is built from the module's permanent key, so it stays valid after an identifier
+    // change: recent lists and F5 restore keep pointing at this Group (v02gui.0012).
+    const result = await attempt(() => projectStore.renameGroup(pid, group.moduleName, title, identifier))
     if (result.ok) {
       projectStore.renameRecent('group', groupId, title)
       explorerRefreshToken.value += 1

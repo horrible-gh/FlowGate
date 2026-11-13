@@ -195,3 +195,73 @@ def test_one_walk_resolves_each_directory_once(store, monkeypatch):
     calls.clear()
     assert len(gate.references([store['target']])) == before
     assert len(calls) - walk <= 4
+
+
+# ── 0001-B A (flowgate.v02gui.0012): only rows that can match are walked ────────────────────────────────────────────
+
+SOLO = "documents/p/main/m/0003/0005-R_document.md"
+
+
+def _solo(store):
+    """A target with one link count (no hard link anywhere), the rows that can reach it and the rows that cannot."""
+    root = store['roots']['p']
+    target = root / SOLO
+    target.parent.mkdir(parents=True)
+    target.write_text('solo', encoding='utf-8')
+    (root / 'solo_links').mkdir()
+    try:
+        os.symlink(target, root / 'solo_links' / 'renamed.md')
+        os.symlink(target.parent, root / 'solo_dir', target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f'symbolic links are not available here: {exc}')
+    store['rows'] += [
+        {'doc_id': 'solo.same', 'project_id': 'p', 'branch': 'main', 'file_path': SOLO},
+        {'doc_id': 'solo.legacy', 'project_id': 'p', 'branch': 'main', 'file_path': 'documents/p/m/0003/0005-R_document.md'},
+        {'doc_id': 'solo.case', 'project_id': 'p', 'branch': 'main', 'file_path': SOLO.replace('0005-R_document', '0005-r_DOCUMENT')},
+        {'doc_id': 'solo.abs', 'project_id': 'p', 'branch': None, 'file_path': str(target)},
+        {'doc_id': 'solo.storage', 'project_id': 'p', 'branch': 'main', 'file_path': '/storage/' + SOLO},
+        {'doc_id': 'solo.backslash', 'project_id': 'p', 'branch': 'main', 'file_path': ' ' + SOLO.replace('/', '\\') + ' '},
+        {'doc_id': 'solo.symlink_file', 'project_id': 'p', 'branch': 'main', 'file_path': 'solo_links/renamed.md'},
+        {'doc_id': 'solo.symlink_dir', 'project_id': 'p', 'branch': 'main', 'file_path': 'solo_dir/0005-R_document.md'},
+        {'doc_id': 'solo.dotdot', 'project_id': 'p', 'branch': 'main', 'file_path': 'documents/p/main/m/0003/x/..'},
+        {'doc_id': 'solo.neighbour', 'project_id': 'p', 'branch': 'main', 'file_path': 'documents/p/main/m/0003/0006-R_document.md'},
+    ]
+    return target
+
+
+def test_a_single_link_target_walks_only_rows_that_can_match_and_finds_the_same_rows(store, monkeypatch):
+    target = _solo(store)
+    assert os.stat(target).st_nlink == 1
+    expected = oracle([target])
+    walked = []
+    real = gate._cannot_match
+
+    def counting(doc, *args):
+        skipped = real(doc, *args)
+        if not skipped:
+            walked.append(doc['doc_id'])
+        return skipped
+
+    monkeypatch.setattr(gate, '_cannot_match', counting)
+    assert found([target]) == expected
+    ids = {doc_id for doc_id, _ in expected}
+    assert {'solo.same', 'solo.legacy', 'solo.case', 'solo.abs', 'solo.storage', 'solo.backslash',
+            'solo.symlink_file', 'solo.symlink_dir'} <= ids
+    assert 'solo.neighbour' not in ids and 'p.same' not in ids
+    # the 120 other rows, the earlier fixture's rows and the neighbour are never resolved
+    assert not any(doc_id.startswith(('p.other', 'q.other')) for doc_id in walked)
+    assert 'solo.neighbour' not in walked and 'solo.symlink_file' in walked and 'solo.dotdot' in walked
+    new = target.with_name('0007-R_document.md')
+    assert found([new]) == oracle([new]) == []
+
+
+def test_hard_links_symbolic_links_and_unplain_names_still_walk_every_row(store, tmp_path):
+    target = _solo(store)
+    assert gate._name_filter([target]) is not None
+    os.link(target, tmp_path / 'solo-hard.md')  # now nlink 2: an unrelated name may share the file
+    store['rows'].append({'doc_id': 'solo.hard', 'project_id': 'p', 'branch': None, 'file_path': str(tmp_path / 'solo-hard.md')})
+    assert gate._name_filter([target]) is None
+    assert found([target]) == oracle([target]) and 'solo.hard' in dict(found([target]))
+    assert gate._name_filter([store['roots']['p'] / 'solo_links' / 'renamed.md']) is None
+    for name in ('x.md.', 'x.md ', 'LONGNA~1.MD', 'x.md:stream', '한글.md', '..'):
+        assert gate._name_filter([target.with_name(name)]) is None, name
