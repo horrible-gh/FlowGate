@@ -17,7 +17,7 @@ import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } fro
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, type CreateChatOptions } from './api'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import { buildTimeline, mergeTurns, replaceServerActivities, sendFailureOf, upsertActivity, type PendingTurn, type SendFailure, type TimelineItem } from './timeline'
-import { runBelongsToChat, runBodyState, runStatusLines, type TurnReadResult } from './runAssessment'
+import { runBelongsToChat, runBodyState, runStatusLines, type RunBodyState, type TurnReadResult } from './runAssessment'
 import { chatErrorActivity, keepLocalChatError, newChatErrorId, readLocalChatErrors, redactChatError, type ChatErrorRecord } from './chatErrors'
 import type {
   AiRunState,
@@ -388,6 +388,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
   const terminalRuns = new Map<string, AiRunState>()
   const runChecks = new Map<string, number>()
   const settingsRefreshedRuns = new Set<string>()
+  // flowgate.v02gui.0011 A: a final read starts at seq 0 to look for a run's reply, but turns older than the oldest
+  // one on screen are never merged into the list (that put the whole chat on screen right after it opened and left
+  // nothing for scrolling up to load). What such a read saw is kept here only as evidence of a stored reply.
+  const offscreenReplies = new Set<string>()
+  let offscreenUnattributed = false
   let trackedRunId: string | null = null
   let historyRequest = 0
   // flowgate.v02test.0013 — the poll of the tracked run (pollRun). A signal sets `due` and calls `wake`, so the
@@ -497,9 +502,28 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return `local-status-run:${encodeURIComponent(chatId)}:${encodeURIComponent(runId)}:`
   }
 
+  /** runBodyState over the turns on screen plus the replies a final read saw above the oldest one on screen. */
+  function bodyState(runId: string, read: TurnReadResult['status']): RunBodyState {
+    if (offscreenReplies.has(runId)) return 'present'
+    const body = runBodyState(state.turns, runId, read)
+    return body === 'absent' && offscreenUnattributed ? 'unattributed' : body
+  }
+
+  /** Keeps a read page's turns from the oldest one on screen on; the older ones only leave their reply evidence. */
+  function keepOnScreen(page: Awaited<ReturnType<ConversationSource['fetchTurns']>>): Awaited<ReturnType<ConversationSource['fetchTurns']>> {
+    const floor = state.hasMoreBefore && state.turns.length > 0 ? state.turns[0].seq : null
+    if (floor == null || !page.turns.some((turn) => turn.seq < floor)) return page
+    for (const turn of page.turns) {
+      if (turn.seq >= floor || turn.seq <= 0 || turn.speaker !== 'ai' || !turn.body.trim()) continue
+      if (turn.sourceRunId) offscreenReplies.add(turn.sourceRunId)
+      else offscreenUnattributed = true
+    }
+    return { ...page, turns: page.turns.filter((turn) => turn.seq >= floor) }
+  }
+
   function renderTerminal(chatId: string, run: AiRunState, read: TurnReadResult): void {
     const prefix = runStatusPrefix(chatId, run.runId)
-    const body = runBodyState(state.turns, run.runId, read.status)
+    const body = bodyState(run.runId, read.status)
     state.activities = state.activities.filter((a) => !a.id.startsWith(prefix))
     for (const line of runStatusLines(run, body, read.status)) {
       state.activities = upsertActivity(state.activities, {
@@ -536,6 +560,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     terminalRuns.clear()
     runChecks.clear()
     settingsRefreshedRuns.clear()
+    offscreenReplies.clear()
+    offscreenUnattributed = false
     trackedRunId = null
     historyRequest += 1
     // The old chat's poll ends on its next check; waking it lets that happen now, not after its wait.
@@ -937,7 +963,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         return { status: current() ? 'failed' : 'discarded', nextAfterSeq: cursor }
       }
       if (!current()) return { status: 'discarded', nextAfterSeq: cursor }
-      applyPage(page, round === 0)
+      applyPage(keepOnScreen(page), round === 0)
       const next = page.nextAfterSeq
       if (next == null) return { status: 'complete', nextAfterSeq: null }
       if (next <= cursor) return { status: 'limited', nextAfterSeq: next }
@@ -1110,7 +1136,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
     // Do not make an already-proven reply depend on covering unrelated older history.
     // Each run belongs to exactly one read group, so its failed reads still total at most 3.
-    const withBody = confirmed.filter((run) => runBodyState(state.turns, run.runId, 'failed') === 'present')
+    const withBody = confirmed.filter((run) => bodyState(run.runId, 'failed') === 'present')
     const withoutBody = confirmed.filter((run) => !withBody.includes(run))
     for (const group of [withBody, withoutBody]) {
       if (!group.length) continue
@@ -1657,7 +1683,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         if (!current()) return
         continue
       }
-      const afterSeq = runBodyState(state.turns, runId, 'failed') === 'present' ? state.turns.at(-1)?.seq ?? 0 : 0
+      const afterSeq = bodyState(runId, 'failed') === 'present' ? state.turns.at(-1)?.seq ?? 0 : 0
       const result = await finalTurnRead(chatId, current, afterSeq)
       if (!current() || result.status === 'discarded') return
       terminalRuns.set(runId, run)
