@@ -18,6 +18,11 @@ follow it until every question it asked has an answer (``finalize.open_questions
   run's end (``follow``) — the step it left goes on as it would have at the run's end. An idle Graph run is woken
   first (``legacy.wake_graph_run``); a paused, stopping or stopped one is not, and its card waits for a person.
 
+flowgate.v02gui.0010: a chat AI's answer (the chat-only Q entry, ``card_document_edit.chat_questions``) is an AI answer
+the person-answer hook skips, and the chat run is never the item's responder. It is followed at the chat run's end
+instead (``follow``: the askers of the answers the run wrote, ``askers_answered_as_author``), once it released the Flow's
+lease; ``chat_answer_outlook`` tells the chat what to expect without starting anything.
+
 Nothing is stored for it: what waits is read from the questions' asker run and the node's state, so a restart loses
 nothing. A responder is never started while the Flow's AI is busy (the group lease, a Graph execution: the admission
 would refuse it); every run end of the Flow looks again (``follow``).
@@ -57,6 +62,15 @@ PASSED = "review_passed"
 EXITED = "exited"
 QUESTION_PENDING = "question_pending"
 SOURCE_REVIEW_AI = "card_review_ai"
+CHAT_SCOPE = "chat"
+
+# flowgate.v02gui.0010: what a chat AI's answer means for the card that asked (``chat_answer_outlook``).
+OUTLOOK_AFTER_CHAT_RUN = "resumes_after_chat_run"
+OUTLOOK_OTHER_QUESTIONS = "waiting_other_questions"
+OUTLOOK_RUN_NOT_RESUMABLE = "run_not_resumable"
+OUTLOOK_NOT_WAITING = "not_waiting"
+OUTLOOK_NOT_GRAPH = "not_graph"
+OUTLOOK_UNKNOWN = "unknown"
 
 _lock = threading.RLock()
 
@@ -286,13 +300,50 @@ def follow(run: dict) -> None:
     if not flow_id or not run.get("run_id"):
         return
     try:
-        askers = legacy.askers_answered_by(run["run_id"])
+        askers = set(legacy.askers_answered_by(run["run_id"]) or ())
+        if run.get("action_scope") == CHAT_SCOPE:
+            # flowgate.v02gui.0010: a chat AI's answers (its run is the answer row's author, never the item's
+            # responder) are followed here, after the chat run released the Flow's lease, as a responder's are.
+            askers |= set(legacy.askers_answered_as_author(run["run_id"]) or ())
         with _lock:
             for asker_run_id in sorted(askers):
                 _answered(flow_id, asker_run_id)
             _dispatch_waiting(flow_id)
     except Exception:  # noqa: BLE001 — the run's own end is not failed by it
         _log.warning("card question follow-up failed flow=%s run=%s", flow_id, run.get("run_id"), exc_info=True)
+
+
+def chat_answer_outlook(flow_id: Optional[str], asker_run_id: Optional[str]) -> dict:
+    """flowgate.v02gui.0010: read only — what a chat AI's answer to a question ``asker_run_id`` asked means for its card.
+
+    The card itself goes on at the chat run's end (``follow``), never here: the chat run may hold the Flow's lease now.
+    ``state``: ``resumes_after_chat_run`` (all its questions answered, the run may go on), ``waiting_other_questions``
+    (``open_questions`` left), ``run_not_resumable`` (the Flow's run is paused / stopping / stopped or absent: the card
+    waits for a person), ``not_waiting`` (no card step waits on it: a person's question, a run still working, a step
+    gone on), ``not_graph`` (not a Graph Flow) or ``unknown`` (unreadable)."""
+    if not flow_id or not asker_run_id:
+        return {"state": OUTLOOK_NOT_WAITING}
+    try:
+        if not repository.available() or not legacy.graph_owned(flow_id):
+            return {"state": OUTLOOK_NOT_GRAPH}
+        run = legacy.ai_run_record(asker_run_id)
+        if run is None or run.get("group_id") != flow_id or _waiting(flow_id, run) is None:
+            return {"state": OUTLOOK_NOT_WAITING}
+        items = open_questions(flow_id, asker_run_id)
+        if items is None:
+            return {"state": OUTLOOK_UNKNOWN}
+        if items:
+            return {"state": OUTLOOK_OTHER_QUESTIONS, "open_questions": len(items)}
+        found = legacy.graph_run_state(flow_id)
+        if found is None:
+            return {"state": OUTLOOK_RUN_NOT_RESUMABLE, "run_status": None}
+        status, idle_reason = found
+        if status == "running" or (status == "idle" and idle_reason != "stopped"):
+            return {"state": OUTLOOK_AFTER_CHAT_RUN, "run_status": status}
+        return {"state": OUTLOOK_RUN_NOT_RESUMABLE, "run_status": status, "idle_reason": idle_reason}
+    except Exception:  # noqa: BLE001 — the answer itself is committed; the outlook is only told
+        _log.warning("chat answer outlook failed flow=%s asker=%s", flow_id, asker_run_id, exc_info=True)
+        return {"state": OUTLOOK_UNKNOWN}
 
 
 def on_question_answered(answer: dict) -> None:

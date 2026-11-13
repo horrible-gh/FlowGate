@@ -187,6 +187,27 @@ def authorize_chat_run(via: str, token_raw: Optional[str], run_hint: Optional[di
     return run, token_row
 
 
+# ── flowgate.v02gui.0010: the live recheck of a non-edit write (a card question's answer) ──
+
+def chat_recheck_alive(run: dict, token_row: dict, holder: chat_gate.TicketHolder) -> None:
+    """Gate first, then one token read: the run is still alive and its current token is still this one.
+
+    No edit mode and no one-shot claim are asked: a question's answer is judged by the user's
+    ``perm_document_create`` alone (Q#600), in reading mode too. The gate ticket keeps the answer ahead of the
+    run's finalize, so the run-end follow-up sees it (``question_wait.follow``)."""
+    holder.ticket = chat_gate.enter(run.get("run_id"))
+    if run.get("status") == "cancelling" or _cancel_event_set(run):
+        raise chat_errors.run_cancelled(run.get("run_id"))
+    if run.get("finished_at") or run.get("status") not in (None, "running"):
+        raise chat_errors.run_finished(run.get("run_id"))
+    fresh = _guarded(_read_token, token_row.get("token_id"))
+    if token_live(fresh) != LIVE:
+        raise chat_errors.unauthorized()
+    check_run_token_binding(run, fresh)
+    if str(fresh.get("issued_to") or "") != str(token_row.get("issued_to") or ""):
+        raise chat_errors.forbidden()
+
+
 # ── §2.7 chat_recheck (inside the revise() boundary) ─────────────────────────
 
 def chat_recheck(run: dict, token_row: dict, holder: chat_gate.TicketHolder) -> None:

@@ -120,6 +120,7 @@
     "fail_responder_for_run": "UPDATE question_items SET responder_state = 'failed', responder_error_code = ?, responder_error_message = ?, responder_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND responder_run_id = ? AND answer_count = 0 AND responder_state = 'dispatched'",
     "escalate_responder_for_run": "UPDATE question_items SET responder_state = 'user_decision', responder_error_code = ?, responder_error_message = ?, responder_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND responder_run_id = ? AND answer_count = 0 AND responder_state = 'dispatched'",
     "list_by_responder_run": "SELECT * FROM question_items WHERE responder_run_id = ? ORDER BY seq ASC",
+    "list_by_answer_run": "SELECT qi.* FROM question_items qi WHERE EXISTS (SELECT 1 FROM answers a WHERE a.question_item_id = qi.id AND a.author_ai_run_id = ?) ORDER BY qi.id ASC",
     "list_dispatched_responder_items": "SELECT * FROM question_items WHERE responder_state = 'dispatched' ORDER BY id ASC",
         "get_max_seq": "SELECT COALESCE(MAX(seq), 0) AS max_seq FROM question_items WHERE question_id = ?",
         "increment_answer_count": "UPDATE question_items SET answer_count = answer_count + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND (responder_state IS NULL OR answer_count = 0)",

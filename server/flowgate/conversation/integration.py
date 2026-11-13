@@ -7,7 +7,8 @@ handler failure never fails the AI run (the hook port logs it and moves on).
     on_chat_run_start               admission: command capability, run start seq
     on_chat_run_prepare             worker, before any provider: start snapshot (0152)
     provide_chat_tools              API worker: the ``run_command`` tool (and the attachment
-                                    upload request, flowgate.chat.0017 CH0002)
+                                    upload request, flowgate.chat.0017 CH0002; the card question
+                                    list / answer, flowgate.v02gui.0010)
     on_chat_run_finalize            finalize: close open commands, record the run change, then
                                     the chat commit point (flowgate.v02test.0023)
     on_chat_run_cancel              cancel: close the run's commands before it is announced
@@ -57,7 +58,7 @@ def provide_chat_tools(run) -> list[dict]:
     """``run_command`` for a run admitted through :func:`on_chat_run_start` with the command
     capability (or, with ``run=None``, the description for the CLI mention built before the
     run exists; the mention adds it only for a token with command access -- edit or execute)."""
-    from flowgate.card_document_edit import chat_tools, chat_adapter, chat_documents
+    from flowgate.card_document_edit import chat_tools, chat_adapter, chat_documents, chat_questions
 
     from flowgate.graph_read import tools as graph_read_tools
 
@@ -75,6 +76,9 @@ def provide_chat_tools(run) -> list[dict]:
     # flowgate.chat.0017 CH0002: offered in reading mode too -- a request registers nothing
     # until a person approves it, and it never waits for that decision.
     tools.append(attachment_request_tools.chat_descriptor())
+    # flowgate.v02gui.0010: the Flow's card questions (Q) — list and answer. Offered in every mode: an answer is
+    # judged by the user's document create permission alone (Q#600), never by the chat's edit mode.
+    tools.extend(chat_questions.descriptors())
     return tools + chat_tools.descriptors({
         chat_tools.READ_TOOL: chat_adapter.read_card_document_call_handler,
         chat_tools.REVISE_TOOL: chat_adapter.revise_card_document_call_handler,

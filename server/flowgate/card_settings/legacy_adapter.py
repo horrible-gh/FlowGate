@@ -659,6 +659,23 @@ def askers_answered_by(responder_run_id: str) -> set[str]:
             if item.get("asker_ai_run_id")}
 
 
+def askers_answered_as_author(run_id: str) -> set[str]:
+    """flowgate.v02gui.0010: the AI runs that asked the questions ``run_id`` answered itself (an answer row with
+    ``author_ai_run_id`` = ``run_id``) — a chat AI's answers, followed at the chat run's end."""
+    from modules.flow_gate.db import question_items as db_question_items  # noqa: PLC0415
+
+    return {item["asker_ai_run_id"] for item in db_question_items.list_by_answer_run(run_id) or []
+            if item.get("asker_ai_run_id") and (item.get("asker_kind") or "") == "ai"}
+
+
+def graph_run_state(flow_id: str) -> Optional[tuple[str, Optional[str]]]:
+    """(status, idle_reason) of the Flow's active Graph run; None without one. Read only."""
+    run_row = run_store.active_run(flow_id)
+    if run_row is None:
+        return None
+    return run_row["status"], run_row.get("idle_reason")
+
+
 def ask_responder(anchor_doc_id: str, item_id: int, issued_to: str, provider_id: Optional[str],
                   provider_source: str, *, default_tail: bool = True,
                   invocation_origin: Optional[dict] = None) -> Optional[dict]:

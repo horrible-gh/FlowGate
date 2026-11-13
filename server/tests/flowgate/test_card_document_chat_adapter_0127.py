@@ -382,6 +382,7 @@ def test_cli_mention_and_descriptors_cover_contract_without_command_capability()
     # (chat.0017) come first; the card document contract is the last five.
     assert [t["name"] for t in offered] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards",
                                             "start_flow_run", "request_attachment_upload",
+                                            "list_card_questions", "answer_card_question",   # flowgate.v02gui.0010
                                             chat_tools.READ_TOOL, chat_tools.REVISE_TOOL, chat_tools.READ_DOC_TOOL,
                                             chat_tools.REVISE_DOC_TOOL, chat_tools.CREATE_DOC_TOOL]
     tools = offered[-5:]

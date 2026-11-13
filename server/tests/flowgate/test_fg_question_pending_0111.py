@@ -34,6 +34,7 @@ pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 ROOT = f"{FA}.0001-R"
 RESPONDER_RUN = "air_card_responder"
+CHAT_RUN = "aiv2_chat_answering"
 QUESTION = {"id": 901, "anchor_doc_id": ROOT, "asker_kind": "ai", "responder_state": None,
             "asker_actual_provider_id": "aip_assignee"}
 
@@ -57,7 +58,7 @@ def questions(monkeypatch):
     from modules.flow_gate.services.ai_invoke import finalize
 
     asked: dict[str, list[dict]] = {}
-    state = {"asked": asked, "responders": [], "answered_by": {}}
+    state = {"asked": asked, "responders": [], "answered_by": {}, "answered_as_author": {}}
     monkeypatch.setattr(finalize, "open_questions_raised_by_run",
                         lambda group_id, run_id: [dict(i) for i in asked.get(run_id, [])])
     monkeypatch.setattr(legacy, "independent_question_responder",
@@ -66,6 +67,9 @@ def questions(monkeypatch):
                         lambda doc_id, item_id, issued_to, provider, source, **kw:
                         state["responders"].append((item_id, provider)) or {"run_id": RESPONDER_RUN})
     monkeypatch.setattr(legacy, "askers_answered_by", lambda run_id: set(state["answered_by"].get(run_id, ())))
+    # flowgate.v02gui.0010: the questions a chat run answered itself (its answer rows' author_ai_run_id)
+    monkeypatch.setattr(legacy, "askers_answered_as_author",
+                        lambda run_id: set(state["answered_as_author"].get(run_id, ())))
     return state
 
 
@@ -181,6 +185,12 @@ def _answer(questions, asker, how):
     if how in ("ai", "both"):
         questions["answered_by"][RESPONDER_RUN] = {asker}
         question_wait.follow({"run_id": RESPONDER_RUN, "group_id": FA})
+    if how == "chat":
+        # flowgate.v02gui.0010: a chat AI's answer (author_kind ai) is skipped by the person hook and followed at the
+        # chat run's end instead
+        question_wait.on_question_answered({"author_kind": "ai", "group_id": FA, "asker_ai_run_id": asker})
+        questions["answered_as_author"][CHAT_RUN] = {asker}
+        question_wait.follow({"run_id": CHAT_RUN, "group_id": FA, "action_scope": "chat"})
 
 
 def _after_answers(env, key, before_execs, attempts):
@@ -201,7 +211,7 @@ def _after_answers(env, key, before_execs, attempts):
 
 # ── 1, 2, 7: instruction stage, nothing written (question_pending) ──────────
 
-@pytest.mark.parametrize("how", ["human", "ai", "both"])
+@pytest.mark.parametrize("how", ["human", "ai", "both", "chat"])
 def test_an_instruction_stage_that_asked_before_writing_waits_and_writes_again_once(env, decided, monkeypatch,
                                                                                    questions, how):
     """1 (a person's answer), 2 (the responder AI's answer), 7 (both: the same answers told twice) — the 0083 form."""
@@ -228,7 +238,7 @@ def test_an_instruction_stage_that_asked_before_writing_waits_and_writes_again_o
 
 # ── 3, 4: instruction stage, written (a clean end that asked — the 0084 form) ──
 
-@pytest.mark.parametrize("how", ["human", "ai"])
+@pytest.mark.parametrize("how", ["human", "ai", "chat"])
 def test_a_written_instruction_that_asked_is_approved_and_its_result_stage_starts_once(env, decided, monkeypatch,
                                                                                       questions, how):
     key, line_doc, _exec = _asked_instruction(env, monkeypatch, questions, stop_code=None,
@@ -373,7 +383,7 @@ def test_an_instruction_stage_whose_questions_are_answered_at_its_end_goes_on_at
 
 # ── 6: result stage, nothing written (question_pending) ─────────────────────
 
-@pytest.mark.parametrize("how", ["human", "ai", "both"])
+@pytest.mark.parametrize("how", ["human", "ai", "both", "chat"])
 def test_a_result_writer_that_asked_waits_without_error_and_is_retried_once(env, decided, monkeypatch, questions, how):
     from modules.flow_gate.services import graph_execution_hooks
 

@@ -211,6 +211,15 @@ def list_by_responder_run(run_id: str) -> list[dict]:
     return store._fetch_all(store._sql("question_items.list_by_responder_run"), [run_id])
 
 
+def list_by_answer_run(run_id: str) -> list[dict]:
+    """Items that have an answer row written by the AI run ``run_id`` (``answers.author_ai_run_id``), oldest first.
+
+    flowgate.v02gui.0010: a chat AI that answered a card's question is followed at its run's end like a responder
+    (``question_wait.follow``) — the chat run is never the item's ``responder_run_id``."""
+    store = get_store()
+    return store._fetch_all(store._sql("question_items.list_by_answer_run"), [run_id])
+
+
 def list_dispatched() -> list[dict]:
     """Every item still marked 'dispatched' (restart recovery sweep)."""
     store = get_store()

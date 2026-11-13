@@ -318,9 +318,11 @@ def test_integration_registers_every_port_including_call_acceptance(clean_hooks)
     tools = chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})
     # flowgate.v02test.0023: the control tower tools follow the Graph reads; the attachment request
     # (chat.0017) follows run_command. Neither uses the call ledger.
+    # flowgate.v02gui.0010: the card question list / answer follow the attachment request (both on the call ledger).
     assert [t["name"] for t in tools] == ["read_flow_canvas", "read_flow_current_run",
                                           "place_flow_cards", "start_flow_run",
                                           "run_command", "request_attachment_upload",
+                                          "list_card_questions", "answer_card_question",
                                           "read_card_document", "revise_card_document",
                                           "read_document_by_id", "revise_document_by_id", "create_new_document"]
     by_name = {t["name"]: t for t in tools}

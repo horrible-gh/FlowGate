@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Request
 from starlette.concurrency import run_in_threadpool
 from flowgate.card_documents import legacy_adapter as legacy
-from . import chat_adapter, chat_authz, chat_documents
+from . import chat_adapter, chat_authz, chat_documents, chat_questions
 
 router = APIRouter(prefix="/chat", tags=["ChatCardDocumentEdit"])
 BASE = "/flows/{flow_id}/nodes/{node_key}/slots/{slot}/document"
@@ -48,3 +48,18 @@ async def post_document(request: Request):
     raw = await request.body()
     return await run_in_threadpool(legacy.run, request, lambda: chat_documents.chat_create_document(
         chat_authz.CLI, token_raw=_bearer(request), request_body=raw, locale=legacy.locale_of(request)))
+
+
+# flowgate.v02gui.0010: card questions (Q) of the chat's Flow — list, and answer on the user's behalf.
+@router.get("/questions")
+def get_questions(request: Request):
+    return legacy.run(request, lambda: chat_questions.chat_list_questions(
+        chat_authz.CLI, token_raw=_bearer(request), query=dict(request.query_params)))
+
+
+@router.post("/questions/{doc_id}/items/{item_id}/answers")
+async def post_question_answer(doc_id: str, item_id: str, request: Request):
+    raw = await request.body()
+    return await run_in_threadpool(legacy.run, request, lambda: chat_questions.chat_answer_question(
+        chat_authz.CLI, token_raw=_bearer(request), doc_id=doc_id, item_id=item_id, request_body=raw,
+        locale=legacy.locale_of(request)))
