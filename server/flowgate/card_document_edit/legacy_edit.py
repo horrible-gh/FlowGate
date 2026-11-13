@@ -90,7 +90,9 @@ def edit(req):
                 # Legacy CH retains its full-body/migration guard, unlike card CH.
                 from .agent_rules import AgentRule
                 rule = AgentRule(req, type_rules.MarkdownRule(req))
-            text = rule.prepare(req.content, fresh, body)
+            # flowgate.v02gui.0009: the inbox body file may end with the token's encoding probe.
+            probe = common_checks.split_probe(req.content, req.origin)
+            text = rule.prepare(probe.text, fresh, body)
             from modules.flow_gate.api import inbox_routes as inbox
             from .agent_rules import reject_response
             reject_response(inbox._frontmatter_submission_guard(text,
@@ -98,7 +100,8 @@ def edit(req):
                 expected_group_id=fresh.get("group_id") or "", expected_doc_type=fresh["type_code"],
                 expected_doc_id=fresh["doc_id"], expected_target_id=fresh.get("target_id") or fresh.get("triggered_by"),
                 locale=req.locale), fresh, legacy=True)
-            common_checks.encoding_guard(req.content, fresh, req.transport_extras.get("encoding"), req.locale, legacy=True)
+            common_checks.encoding_guard(probe.text, fresh, req.transport_extras.get("encoding"), req.locale, legacy=True,
+                                         origin=req.origin, probe=probe)
             built = rule.validate_and_build(text, fresh, body)
             if req.validate_only:
                 raise Validated(built.result)

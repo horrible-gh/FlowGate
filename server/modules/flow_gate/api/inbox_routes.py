@@ -2047,32 +2047,61 @@ def _encoding_guard(
     locale: str = "ko",
     fingerprint_bypasses_corruption: bool = True,
     allow_force_bypass: bool = True,
+    probe_status: Optional[str] = None,
+    probe_received: Optional[str] = None,
+    fingerprint_texts: Optional[list[str]] = None,
+    trusted_transport: bool = False,
+    hard_signals: bool = True,
 ) -> Optional[JSONResponse]:
+    """Encoding verdict for one submission (None = accept).
+
+    flowgate.v02gui.0009 (language-neutral, see ``encoding_probe``):
+    - ``trusted_transport``: a browser session or FlowGate itself posts UTF-8 end to
+      end, whatever the language, so nothing is checked at all.
+    - ``probe_status`` (from ``encoding_probe.split_document_probe``): a broken probe is
+      proof the worker's path lost Unicode and rejects even with a force reason; a
+      matched probe proves the body file travelled intact, so the fingerprint field and
+      the ``title:`` line taken from it skip every corruption check ('?' is punctuation).
+      ``fields[fingerprint_field]`` is then the body WITHOUT the probe line.
+    - ``fingerprint_texts``: the texts a fingerprint may have been computed from (the
+      file as sent, probe line included, first). Defaults to the field value.
+    - ``hard_signals``: also reject U+FFFD / reversible mojibake on fields that are not
+      path-proven. Review keeps the legacy rule only (it has no force escape hatch).
+    """
+    from modules.flow_gate.services import encoding_probe
     from modules.flow_gate.services import workflow_decision_service as _wf_decision
+
+    if trusted_transport:
+        return None
 
     normalized_locale = template_provision.normalize_locale(locale)
     copy = _ENCODING_GUARD_COPY[normalized_locale]
     labels = _ENCODING_FIELD_LABELS[normalized_locale]
 
+    if probe_status == encoding_probe.PROBE_BROKEN:
+        return _fail(422, _probe_copy(
+            "probe_broken", normalized_locale,
+            received=encoding_probe.describe_received(probe_received),
+        ))
+    path_proven = probe_status == encoding_probe.PROBE_MATCHED
+    proven_fields = {fingerprint_field, "title_line"} if path_proven else set()
+
     check_fields = dict(fields)
+    fingerprint_matched_field: Optional[str] = None
     if fingerprint_field and (body_sha256 or body_chars is not None):
-        if fingerprint_bypasses_corruption:
-            text = check_fields.pop(fingerprint_field, None) or ""
-        else:
-            text = check_fields.get(fingerprint_field) or ""
-        actual_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        actual_chars = len(text)
-        mismatches = []
-        if body_sha256 and str(body_sha256).strip().lower() != actual_sha256:
-            mismatches.append(copy["sha256_mismatch"].format(expected=body_sha256, actual=actual_sha256))
-        if body_chars is not None:
-            try:
-                if int(body_chars) != actual_chars:
-                    mismatches.append(copy["chars_mismatch"].format(expected=body_chars, actual=actual_chars))
-            except (TypeError, ValueError):
-                mismatches.append(copy["chars_invalid"].format(value=repr(body_chars)))
+        candidates = list(fingerprint_texts or []) or [check_fields.get(fingerprint_field) or ""]
+        mismatches: list[str] = []
+        for index, text in enumerate(candidates):
+            found = _fingerprint_mismatches(copy, text or "", body_sha256, body_chars)
+            if not found:
+                mismatches = []
+                break
+            if index == 0:
+                mismatches = found
         if mismatches:
             return _fail(422, copy["fingerprint_mismatch"].format(mismatches="; ".join(mismatches)))
+        if fingerprint_bypasses_corruption:
+            fingerprint_matched_field = fingerprint_field
 
     # Fingerprint mismatches are rejected above unconditionally -- force only ever
     # reaches a corruption signal on text whose fingerprint (if any) already matched.
@@ -2085,10 +2114,58 @@ def _encoding_guard(
 
     corrupted_key = "corrupted" if allow_force_bypass else "corrupted_no_force"
     for name, value in check_fields.items():
+        if name in proven_fields:
+            continue
+        if hard_signals:
+            signal = encoding_probe.hard_corruption_signal(value)
+            if signal is not None:
+                return _fail(422, _probe_copy(signal, normalized_locale))
+        # A matched fingerprint is trusted over the question-mark heuristic (it proves
+        # the hop after the file was written; the hard signals above still ran).
+        if name == fingerprint_matched_field:
+            continue
         if _wf_decision._text_is_corrupted(value):
             display_name = labels.get(name, name)
             return _fail(422, copy[corrupted_key].format(field=display_name))
     return None
+
+
+def _fingerprint_mismatches(copy: dict, text: str, body_sha256, body_chars) -> list[str]:
+    actual_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    actual_chars = len(text)
+    mismatches: list[str] = []
+    if body_sha256 and str(body_sha256).strip().lower() != actual_sha256:
+        mismatches.append(copy["sha256_mismatch"].format(expected=body_sha256, actual=actual_sha256))
+    if body_chars is not None:
+        try:
+            if int(body_chars) != actual_chars:
+                mismatches.append(copy["chars_mismatch"].format(expected=body_chars, actual=actual_chars))
+        except (TypeError, ValueError):
+            mismatches.append(copy["chars_invalid"].format(value=repr(body_chars)))
+    return mismatches
+
+
+def _probe_copy(key: str, locale: str, **kwargs) -> str:
+    """The language-neutral verdict texts (probe_broken / replacement_char / mojibake).
+
+    One copy for chat turns and documents: they give the same cause and the same fix.
+    """
+    from modules.flow_gate.services import conversation_turn_service
+
+    return conversation_turn_service._encoding_violation_string(key, locale, **kwargs)
+
+
+def _document_probe(token_rec: Optional[dict], text: Optional[str]) -> tuple[Optional[str], str, Optional[str]]:
+    """Split this token's encoding probe off a submitted document body.
+
+    Returns ``(body_without_probe, status, received)``; ``text`` None stays None.
+    """
+    from modules.flow_gate.services import encoding_probe
+
+    if text is None:
+        return None, encoding_probe.PROBE_ABSENT, None
+    expected = encoding_probe.probe_for(str((token_rec or {}).get("token_id") or ""))
+    return encoding_probe.split_document_probe(text, expected)
 
 
 def _encoding_validation_result(
@@ -3465,6 +3542,9 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
         # 0474 T0007 §1.1 (NR0006 §2/§13.1): review is the one path where an AI-authored
         # force_encoding_reason can never bypass a real corruption signal.
         allow_force_bypass=False,
+        # flowgate.v02gui.0009: review fields are JSON values, not a body file, so they
+        # carry no probe; with no escape hatch the legacy rule alone stays in force.
+        hard_signals=False,
     )
     if _review_encoding_fail is not None:
         return _review_encoding_fail
@@ -4582,9 +4662,16 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         _raw_submission_text = _submission_text(doc_path, content)
     except OSError as exc:
         return _fail(422, f"doc_path file could not be read: {exc}")
-    if _raw_submission_text is not None:
+    # flowgate.v02gui.0009: the body file may end with this token's encoding probe. It
+    # is split off here, once, so every guard below and the stored document see the
+    # body without it; _raw_submission_text (the file as sent) stays the fingerprint
+    # basis, and a broken probe is refused at Step 5.9.
+    _probed_submission_text, _probe_status, _probe_received = _document_probe(
+        token_rec, _raw_submission_text
+    )
+    if _probed_submission_text is not None:
         body_for_guards, normalizations = _normalize_submission_body(
-            _raw_submission_text, where="new"
+            _probed_submission_text, where="new"
         )
     # 0672 T0004 stage 3: TR runs no longer reach Source Bundle (live source + Self-check),
     # so a TR body is never stamped with Bundle provenance; legacy Snapshot provenance stays.
@@ -4898,7 +4985,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # (0391 B0001 proposal 3+4, T0005 §5-1/§6) ──
     # Before the side effect (document-number reservation), and before the dry-run
     # branch, so a rejection leaves no trace.
-    _encoding_fields: dict[str, Optional[str]] = {"body": _raw_submission_text}
+    _encoding_fields: dict[str, Optional[str]] = {"body": _probed_submission_text}
     if title_override:
         _encoding_fields["title"] = title_override
     elif body_for_guards:
@@ -4918,6 +5005,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         body_chars=body.get("body_chars"),
         force_encoding_reason=body.get("force_encoding_reason"),
         locale=_locale,
+        probe_status=_probe_status,
+        probe_received=_probe_received,
+        fingerprint_texts=[_raw_submission_text or "", _probed_submission_text or ""],
     )
     if _encoding_fail is not None:
         return _encoding_fail
@@ -5014,7 +5104,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             # bytes that were normalized and checked.
             _write_submission_body(
                 stored_path,
-                body_for_guards if body_for_guards is not None else (_raw_submission_text or ""),
+                body_for_guards if body_for_guards is not None else (_probed_submission_text or ""),
             )
             # flowgate.v02.0157: the `doc_path` source (always inside the token scratch,
             # validate_doc_path) is no longer unlinked here. It used to go before the DB

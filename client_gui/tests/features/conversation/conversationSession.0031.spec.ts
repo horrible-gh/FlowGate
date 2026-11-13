@@ -244,24 +244,41 @@ describe('send', () => {
     expect(source.markRead).toHaveBeenLastCalledWith(B, 1)
   })
 
-  it('drops the send action when the chat changed before the send was accepted', async () => {
-    for (const sendAction of ['copy_mention', 'invoke_ai'] as const) {
-      const { session, source, onAutoCopyMention } = setup({ settings: { ...createFakeSource().data.settings, sendAction } })
-      await session.setScope(SCOPE)
-      await flushPromises()
-      let release!: () => void
-      source.postTurn.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve({ turn: turn(3, 'user', 'a'), headSeq: 3 }))))
-      const sending = session.send('a')
-      await session.selectChat(B)
-      release()
-      expect(await sending).toBe(true)
-      await flushPromises()
-      expect(source.postTurn).toHaveBeenCalledWith(A, expect.objectContaining({ body: 'a' }))
-      // Neither a mention nor an AI run lands in chat B, where no turn was sent.
-      expect(onAutoCopyMention).not.toHaveBeenCalled()
-      expect(source.startChatRun).not.toHaveBeenCalled()
-      expect(session.state.turns.map((t) => t.body)).toEqual(['other chat'])
-    }
+  it('drops the mention copy when the chat changed before the send was accepted', async () => {
+    const { session, source, onAutoCopyMention } = setup({ settings: { ...createFakeSource().data.settings, sendAction: 'copy_mention' } })
+    await session.setScope(SCOPE)
+    await flushPromises()
+    let release!: () => void
+    source.postTurn.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve({ turn: turn(3, 'user', 'a'), headSeq: 3 }))))
+    const sending = session.send('a')
+    await session.selectChat(B)
+    release()
+    expect(await sending).toBe(true)
+    await flushPromises()
+    expect(source.postTurn).toHaveBeenCalledWith(A, expect.objectContaining({ body: 'a' }))
+    // A clipboard act of a screen the user already left: not run.
+    expect(onAutoCopyMention).not.toHaveBeenCalled()
+    expect(source.startChatRun).not.toHaveBeenCalled()
+    expect(session.state.turns.map((t) => t.body)).toEqual(['other chat'])
+  })
+
+  it('flowgate.v02gui.0009: starts the AI run for the chat the message went to after a chat switch, never in the open one', async () => {
+    const { session, source } = setup({ settings: { ...createFakeSource().data.settings, sendAction: 'invoke_ai' } }, hold)
+    await session.setScope(SCOPE)
+    await flushPromises()
+    let release!: () => void
+    source.postTurn.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve({ turn: turn(3, 'user', 'a'), headSeq: 3 }))))
+    const sending = session.send('a')
+    await session.selectChat(B)
+    release()
+    expect(await sending).toBe(true)
+    await flushPromises()
+    expect(source.startChatRun).toHaveBeenCalledTimes(1)
+    expect(source.startChatRun).toHaveBeenCalledWith(A, 'opus', expect.any(String))
+    // Chat B, open now, shows no run of it.
+    expect(session.state.activeChatId).toBe(B)
+    expect(session.state.runId).toBeNull()
+    expect(session.state.turns.map((t) => t.body)).toEqual(['other chat'])
   })
 
   it('runs the send action once after an accepted retry', async () => {

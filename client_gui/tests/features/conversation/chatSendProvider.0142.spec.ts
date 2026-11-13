@@ -87,17 +87,20 @@ describe('0142 chat send pins the AI of the message', () => {
     expect(source.startChatRun).toHaveBeenCalledWith(A, 'opus', expect.any(String))
   })
 
-  it('4: leaving the chat before the turn is stored drops the run (generation guard kept)', async () => {
+  it('4: leaving the chat before the turn is stored runs the pinned AI on the sent chat only (flowgate.v02gui.0009)', async () => {
     const { session, source } = await setup()
     session.selectProvider('opus')
     const release = holdNextPost(source)
     const sending = session.send('a')
     await session.selectChat(B)
+    session.selectProvider('sonnet')
     release()
     expect(await sending).toBe(true)
     await flushPromises()
-    expect(source.startChatRun).not.toHaveBeenCalled()
+    expect(source.startChatRun).toHaveBeenCalledTimes(1)
+    expect(source.startChatRun).toHaveBeenCalledWith(A, 'opus', expect.any(String))
     expect(session.state.activeChatId).toBe(B)
+    expect(session.state.runId).toBeNull()
     expect(session.state.turns.map((t) => t.body)).toEqual(['other chat'])
   })
 

@@ -35,6 +35,7 @@ import type {
   ConversationTurn,
   ChatSourceAccess,
   RunDisplay,
+  SendAction,
   SourceAccessMode,
   StatusActivity,
   StatusTone,
@@ -162,8 +163,11 @@ export interface CreatedChat {
 /**
  * flowgate.v02.0142 T#1: what `send` addresses — the chat just made by a first send (`CreatedChat`), the AI the
  * message is pinned to (`providerId`), both, or neither (the open chat on the current selection).
+ * flowgate.v02gui.0009: `sendAction` is the send-time action read when the user pressed send (the first message of a
+ * new chat: before the chat was created, while the screen still showed its Flow); absent = the current setting.
  */
-export type SendTarget = (CreatedChat & { providerId?: string }) | { providerId?: string }
+interface SendPins { providerId?: string; sendAction?: SendAction }
+export type SendTarget = (CreatedChat & SendPins) | SendPins
 export type CreateChatResult = CreatedChat | { status: 'cancelled' | 'failed'; chatId: string | null; scope: ConversationScope | null; draftIntentId: string | null; createIntentId: string | null }
 export interface CreateChatContext {
   draftIntentId: string
@@ -335,6 +339,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
   const pendingDrafts = new Map<string, DraftSendSnapshot>()
   const retryReceipts = new Map<string, DraftSendSnapshot>()
   const ownerKey = (chatId: string) => JSON.stringify([draftUserId(), state.scope?.projectId, state.scope?.groupId, chatId])
+  // flowgate.v02gui.0009: the same owner, named by the chat's own Flow (a first send whose screen moved on to another one).
+  const scopedOwnerKey = (scope: ConversationScope, chatId: string) => JSON.stringify([draftUserId(), scope.projectId, scope.groupId, chatId])
   const submission = computed(() => state.activeChatId ? progress.get(ownerKey(state.activeChatId)) ?? null : null)
   const visibleOwner = (key: string) => state.activeChatId !== null && ownerKey(state.activeChatId) === key
   function publishOutbox(key: string, items: PendingTurn[]): void {
@@ -453,13 +459,16 @@ export function createConversationSession(options: ConversationSessionOptions = 
    * server keeps what it answered (4xx / 5xx); what got no answer — or whose record could not be stored — stays in
    * this browser. Only the code, the server's words and the time; never a token or a header.
    */
-  function recordChatError(chatId: string, gen: number, code: string, error: unknown, withDetail = true): void {
-    if (!isCurrentChat(chatId, gen)) return
+  function recordChatError(chatId: string, gen: number, code: string, error: unknown, withDetail = true, offScreen = false): void {
+    // flowgate.v02gui.0009: a failed send is recorded for the chat it went to even after the user left it (`offScreen`),
+    // so coming back (or F5) shows it; it is drawn now only when that chat is the open one.
+    const current = isCurrentChat(chatId, gen)
+    if (!current && !offScreen) return
     const record: ChatErrorRecord = {
       id: newChatErrorId(), code, occurredAt: new Date().toISOString(),
       message: withDetail && error != null ? redactChatError(messageOf(error)) : '',
     }
-    state.activities = upsertActivity(state.activities, chatErrorActivity(chatId, record))
+    if (current || (!disposed && state.activeChatId === chatId)) state.activities = upsertActivity(state.activities, chatErrorActivity(chatId, record))
     void persistChatError(chatId, record, error)
   }
 
@@ -1265,9 +1274,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
    */
   async function postPending(chatId: string, gen: number, key: string, item: PendingTurn, trace: SubmissionTrace, refresh = false): Promise<true | SendFailure> {
     let failure = sendFailureOf(null)
+    const userId = draftUserId()
+    // flowgate.v02gui.0009: a send belongs to its chat, not to the screen. Moving to another chat or Flow neither stops
+    // it nor its replays (same CH, body and idempotency key: the server stores the turn once); only a disposed session
+    // or another signed-in user does.
+    const ended = () => disposed || userId !== draftUserId()
     for (let attempt = 0; attempt <= SEND_RETRY_MAX; attempt++) {
-      // An in-flight POST may finish off screen; no later POST is started there.
-      if (attempt > 0 && !isCurrentChat(chatId, gen)) return failure
+      if (attempt > 0 && ended()) return failure
       publishProgress(key, { phase: 'sending', stage: 'send', attempt: attempt + 1 })
       try {
         trace.mark('turn_start', { docId: chatId, attempt: attempt + 1 })
@@ -1289,8 +1302,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
         const status = error instanceof ConversationRequestError ? error.status : null
         trace.mark('turn_end', { docId: chatId, attempt: attempt + 1, result: 'error', ...(status === null ? {} : { status }) })
         failure = sendFailureOf(status)
-        if ((status != null && [400, 404, 409, 422].includes(status)) || attempt === SEND_RETRY_MAX || !isCurrentChat(chatId, gen)) {
-          recordChatError(chatId, gen, 'send_failed', error)
+        if ((status != null && [400, 404, 409, 422].includes(status)) || attempt === SEND_RETRY_MAX || ended()) {
+          recordChatError(chatId, gen, 'send_failed', error, true, !ended())
           return failure
         }
       }
@@ -1300,29 +1313,44 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   /**
    * D0005 §3-2: the send-time action runs once, only after the turn was accepted, and only
-   * for the chat the turn went to. After a switch to another chat it is dropped: a mention
-   * or an AI run must never land in a chat where no turn was just sent.
+   * for the chat the turn went to — never in another chat: a mention or an AI run must never land in a chat where no
+   * turn was just sent.
+   *
+   * flowgate.v02gui.0009: a pressed send is expected to reach the AI. The action is the one pinned when the message was
+   * sent (`item.sendAction`, the setting of the message's own Flow), and an AI run still starts after the screen moved
+   * on (another chat, Flow or draft): off screen, for the chat the message went to (startAiRunOffScreen) — the screen
+   * open now is not touched, and coming back to that chat shows the run (adoptActiveRun). A mention copy is a clipboard
+   * act of the screen the user is on, so it runs only while the chat is still the open one.
    *
    * flowgate.v02.0142 T#1: the AI run uses `providerId`, the AI pinned when the message was sent — never the picker's
    * current value. Without a usable one startAiRun ends with the `no_provider` notice (the turn itself stays stored).
    */
-  function runSendAction(chatId: string, gen: number, trace: SubmissionTrace, providerId: string): void {
-    if (!isCurrentChat(chatId, gen)) return
-    if (state.settings.sendAction === 'copy_mention') options.onAutoCopyMention?.()
-    else if (state.settings.sendAction === 'invoke_ai') {
+  function runSendAction(chatId: string, gen: number, trace: SubmissionTrace, item: PendingTurn): void {
+    if (disposed) return
+    const action = item.sendAction ?? state.settings.sendAction
+    const onScreen = isCurrentChat(chatId, gen)
+    if (action === 'copy_mention') {
+      if (onScreen) options.onAutoCopyMention?.()
+    } else if (action === 'invoke_ai') {
       trace.mark('ai_start', { docId: chatId })
-      void startAiRun(providerId)
+      if (onScreen) void startAiRun(item.providerId)
+      else void startAiRunOffScreen(chatId, gen, item.providerId)
     }
   }
 
   async function send(text: string, target?: SendTarget, trace = createSubmissionTrace(), snapshot?: DraftSendSnapshot): Promise<boolean> {
     const created = target && 'status' in target ? target : undefined
-    // A first-send continuation can only address the CH bound to its original scope.
-    if (created && (disposed || state.scope?.projectId !== created.scope.projectId || state.scope?.groupId !== created.scope.groupId || state.activeChatId !== created.chatId)) return false
+    if (created && disposed) return false
+    // A first-send continuation only ever addresses the CH it made, in that CH's own Flow. flowgate.v02gui.0009: when
+    // the screen moved on (another Flow, chat or draft) while the chat was being made or opened — or came back while it
+    // opens again — the message still goes to that CH: off screen, never into the chat open now, shown once it is open.
+    const inScope = !!created && state.scope?.projectId === created.scope.projectId && state.scope?.groupId === created.scope.groupId
+    const offScreen = !!created && !(inScope && state.activeChatId === created.chatId && state.turnsStatus === 'ready')
     const chatId = created?.chatId ?? state.activeChatId
     const body = text.trim()
-    if (!chatId || !body || state.sending || running.value || state.turnsStatus !== 'ready') return false
-    const owner = ownerKey(chatId)
+    if (!chatId || !body) return false
+    if (!offScreen && (state.sending || running.value || state.turnsStatus !== 'ready')) return false
+    const owner = created && offScreen ? scopedOwnerKey(created.scope, chatId) : ownerKey(chatId)
     if (progress.get(owner)?.phase === 'sending') return false
     const receipt = retryReceipts.get(owner)
     retryReceipts.delete(owner)
@@ -1333,19 +1361,28 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const failed = (outbox.get(owner) ?? []).find((p) => p.body === body)
     if (failed) {
       if (snapshot) pendingDrafts.set(failed.localId, { ...snapshot, owner: { ...snapshot.owner } })
-      return retry(failed.localId, true)
+      if (!offScreen) return retry(failed.localId, true)
+      publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === failed.localId ? { ...p, failed: false, failure: null } : p))
+      publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
+      return finishSend(chatId, chatGen, owner, failed, traces.get(failed.localId) ?? trace)
     }
     const gen = chatGen
     const key = newIdempotencyKey()
     // flowgate.v02.0142 T#1: pinned in the same synchronous step as chatId / gen / key, before the first await.
     const providerId = target?.providerId ?? state.selectedProviderId
-    const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq: state.headSeq, createdAt: new Date().toISOString(), failed: false, providerId }
+    // flowgate.v02gui.0009: the send-time action is pinned with them — moving to another Flow before the server accepts
+    // the message must not swap it for that Flow's setting.
+    const sendAction = target?.sendAction ?? state.settings.sendAction
+    // flowgate.v02gui.0009: off screen nothing of the new CH was read; 0 is its head (always <= the server's).
+    const basedOnSeq = offScreen ? 0 : state.headSeq
+    const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq, createdAt: new Date().toISOString(), failed: false, providerId, sendAction }
     traces.set(key, trace)
     if (snapshot) pendingDrafts.set(key, { ...snapshot, owner: { ...snapshot.owner } })
     publishOutbox(owner, [...(outbox.get(owner) ?? []), item])
     publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
     trace.frame('pending_frame', chatId)
-    return finishSend(chatId, gen, owner, item, trace, !!created)
+    // The Flow shown now reads its list again only when it is the CH's own Flow.
+    return finishSend(chatId, gen, owner, item, trace, inScope)
   }
 
   async function finishSend(chatId: string, gen: number, owner: string, item: PendingTurn, trace: SubmissionTrace, refresh = false): Promise<boolean> {
@@ -1358,7 +1395,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
     pendingDrafts.delete(item.localId)
     publishProgress(owner, null)
-    runSendAction(chatId, gen, trace, item.providerId)
+    runSendAction(chatId, gen, trace, item)
     // flowgate.v02test.0013: a signal held while this message was on its way is served once it is stored.
     if (visibleOwner(owner)) flushDeferredRefresh()
     return true
@@ -1374,8 +1411,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
     const gen = chatGen
     const snapshot = pendingDrafts.get(localId)
-    // The first attempt failed before its send action, so the accepted retry runs it once — on the AI pinned at the
-    // first send (flowgate.v02.0142 T#1, `item.providerId` in finishSend), not on the selection of this moment.
+    // The first attempt failed before its send action, so the accepted retry runs it once — on the AI and the action
+    // pinned at the first send (flowgate.v02.0142 T#1, v02gui.0009: `item` in finishSend), not on those of this moment.
     const ok = await finishSend(chatId, gen, owner, item, traces.get(localId) ?? createSubmissionTrace())
     if (ok && !fromComposer && snapshot) retryReceipts.set(owner, snapshot)
     return ok
@@ -1710,6 +1747,63 @@ export function createConversationSession(options: ConversationSessionOptions = 
         return
       }
     }
+  }
+
+  /**
+   * flowgate.v02gui.0009: the AI run of a message whose screen moved on before its send action ran. It asks the server
+   * to run `providerId` on `chatId` — the chat the message went to, named explicitly; nothing of the screen open now
+   * is read or written (no run line, no notice, no running state there). The same press rules as startAiRun hold: one
+   * request id for every resend, a lost answer is resent and then looked up, and an empty AI never falls back to the
+   * server default. A refusal is recorded for that chat (shown when it is open again, kept over F5). When that chat is
+   * open again by the time the server names the run, the run is shown there; otherwise opening it adopts the run.
+   */
+  async function startAiRunOffScreen(chatId: string, gen: number, providerId: string): Promise<void> {
+    const userId = draftUserId()
+    const ended = () => disposed || userId !== draftUserId()
+    if (!providerId) {
+      recordChatError(chatId, gen, 'invoke_failed', null, false, true)
+      return
+    }
+    const requestId = newStartRequest()
+    const recoveryStarted = Date.now()
+    let resends = 0
+    for (;;) {
+      try {
+        const runId = await source.startChatRun(chatId, providerId, requestId)
+        if (runId && !ended()) showRunIfOpen(chatId, runId)
+        return
+      } catch (error) {
+        if (ended()) return
+        if (error instanceof ConversationRequestError && error.code === 'run_in_progress' && error.runId) {
+          showRunIfOpen(chatId, error.runId)
+          return
+        }
+        if ((isNoResponse(error) || isStartPending(error))
+          && resends < START_RESEND_MAX && Date.now() - recoveryStarted < START_RECOVERY_MS) {
+          resends += 1
+          await sleep(RUN_POLL_MS)
+          if (ended()) return
+          continue
+        }
+        if (isNoResponse(error) || isStartPending(error)) {
+          const adopted = await findActiveRun(chatId)
+          if (ended()) return
+          if (adopted) {
+            showRunIfOpen(chatId, adopted)
+            return
+          }
+        }
+        if (isSourceLocked(error)) recordChatError(chatId, gen, 'source_locked', error, false, true)
+        else recordChatError(chatId, gen, 'invoke_failed', error, true, true)
+        return
+      }
+    }
+  }
+
+  /** flowgate.v02gui.0009: an off-screen run is polled only once its chat is the open, loaded one again. */
+  function showRunIfOpen(chatId: string, runId: string): void {
+    if (disposed || state.activeChatId !== chatId || state.turnsStatus !== 'ready' || running.value) return
+    void pollRun(chatId, runId, chatGen)
   }
 
   async function findActiveRun(chatId: string): Promise<string | null> {

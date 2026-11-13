@@ -156,7 +156,7 @@ describe('late answers of a previous Flow or chat (scopeGen / chatGen races)', (
     expect(session.state.turns).toHaveLength(2)
   })
 
-  it('a slow create of Flow A that succeeds after the move neither opens nor sends anything in B', async () => {
+  it('a slow create of Flow A that succeeds after the move opens nothing in B and sends only to the chat made in A', async () => {
     const { session, start, source } = await setup()
     const slow = deferred<ChatSummary>()
     source.createChat.mockImplementationOnce(() => slow.promise)
@@ -165,12 +165,14 @@ describe('late answers of a previous Flow or chat (scopeGen / chatGen races)', (
     await session.setScope(FLOW_B)
     await flushPromises()
     slow.resolve({ id: 'p.m.0001.0099-CH', title: '새 대화', updatedAt: '2026-11-05T05:00:00Z' })
-    expect(await sending).toBe(false)
+    // flowgate.v02gui.0009: the message whose send started is delivered to the chat its create made (off screen).
+    expect(await sending).toBe(true)
     await flushPromises()
     expect(session.state.chats.map((c) => c.id)).toEqual([B1, B2])
     expect(session.state.activeChatId).toBe(B1)
     expect(session.state.notice).toBeNull()
-    expect(source.postTurn).not.toHaveBeenCalled()
+    expect(source.postTurn).toHaveBeenCalledTimes(1)
+    expect(source.postTurn).toHaveBeenCalledWith('p.m.0001.0099-CH', expect.objectContaining({ body: 'first' }))
   })
 
   it('a slow draft create that fails after an existing chat was picked raises nothing on that chat', async () => {

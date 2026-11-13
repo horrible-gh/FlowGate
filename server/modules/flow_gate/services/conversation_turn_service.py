@@ -20,6 +20,7 @@ from modules.flow_gate.db import ai_providers
 from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.documents import document_service
+from modules.flow_gate.services import encoding_probe
 from modules.flow_gate.storage import paths as storage_paths
 
 TURN_BODY_BYTE_MAX = 65_536
@@ -129,6 +130,25 @@ _ENCODING_VIOLATION_STRINGS = {
             "정말 이대로 보내야 하면 force_encoding_reason에 사유(공백 제외 10자 이상)를 "
             "적어 다시 보내세요."
         ),
+        # flowgate.v02gui.0009: language-neutral verdicts (encoding_probe).
+        "probe_broken": (
+            "본문 마지막 줄의 인코딩 탐침이 이 요청의 값과 다릅니다(받은 값: {received}). "
+            "전송 경로(셸 파이프·리다이렉트·명령줄 인자 등)에서 유니코드 문자가 손실됐다는 "
+            "뜻이라 본문도 함께 깨졌을 가능성이 높습니다. 본문을 UTF-8 파일로 쓰고, 그 파일을 "
+            "읽어 ensure_ascii JSON(예: Python json.dumps 기본값)으로 보내는 스크립트로 "
+            "다시 보내세요. 탐침은 프롬프트에 적힌 값을 그대로 본문 파일 마지막 줄에 넣으세요."
+        ),
+        "replacement_char": (
+            "본문에 대체 문자(U+FFFD)가 있습니다. 전송 중 디코딩이 실패했다는 신호입니다. "
+            "본문을 UTF-8 파일로 쓰고 ensure_ascii JSON으로 다시 보내세요. 이 글자가 정말 "
+            "본문의 일부라면 프롬프트의 인코딩 탐침을 본문 마지막 줄에 넣어 경로를 증명하세요."
+        ),
+        "mojibake": (
+            "본문에 잘못 디코딩된 글자(모지바케)로 보이는 줄이 있습니다. 전송 경로가 UTF-8 "
+            "바이트를 다른 코드페이지로 읽었다는 신호입니다. 본문을 UTF-8 파일로 쓰고 "
+            "ensure_ascii JSON으로 다시 보내세요. 정상 본문이라면 프롬프트의 인코딩 탐침을 "
+            "본문 마지막 줄에 넣어 경로를 증명하세요."
+        ),
     },
     "en": {
         "sha256_mismatch": "expected sha256={expected} actual={actual}",
@@ -144,6 +164,26 @@ _ENCODING_VIOLATION_STRINGS = {
             "file first, compute the char count/hash (body_chars/body_sha256) from "
             "that file, then resend. If you really must send it as-is, resend with "
             "force_encoding_reason (10+ non-whitespace characters)."
+        ),
+        "probe_broken": (
+            "The encoding probe on the last line of the body does not match this request's "
+            "value (received: {received}). The transport path (shell pipe, redirect, "
+            "command-line argument ...) lost Unicode characters, so the body is most likely "
+            "damaged too. Write the body to a UTF-8 file and resend it with a script that "
+            "reads the file and posts ensure_ascii JSON (e.g. Python json.dumps defaults). "
+            "Put the probe exactly as written in the prompt on the last line of the body file."
+        ),
+        "replacement_char": (
+            "The body contains the replacement character U+FFFD, a sign that decoding failed "
+            "in transit. Write the body to a UTF-8 file and resend it as ensure_ascii JSON. "
+            "If the character really belongs to the body, prove the path by putting the "
+            "prompt's encoding probe on the last line of the body."
+        ),
+        "mojibake": (
+            "The body has a line that reads as mis-decoded text (mojibake): the transport "
+            "path read UTF-8 bytes through another codepage. Write the body to a UTF-8 file "
+            "and resend it as ensure_ascii JSON. If the body is correct, prove the path by "
+            "putting the prompt's encoding probe on the last line of the body."
         ),
     },
     "ja": {
@@ -161,6 +201,24 @@ _ENCODING_VIOLATION_STRINGS = {
             "どうしてもこのまま送る必要がある場合は、force_encoding_reason に理由"
             "（空白を除き10文字以上）を書いて送り直してください。"
         ),
+        "probe_broken": (
+            "本文最終行のエンコーディング検査行がこのリクエストの値と一致しません（受信値: {received}）。"
+            "送信経路（シェルのパイプ・リダイレクト・コマンドライン引数など）でUnicode文字が失われた"
+            "ということなので、本文も壊れている可能性が高いです。本文をUTF-8ファイルとして書き出し、"
+            "そのファイルを読んで ensure_ascii JSON（例: Python json.dumps の既定値）で送るスクリプトで"
+            "送り直してください。検査行はプロンプトに書かれた値をそのまま本文ファイルの最終行に入れてください。"
+        ),
+        "replacement_char": (
+            "本文に置換文字（U+FFFD）があります。送信中にデコードが失敗した兆候です。本文をUTF-8"
+            "ファイルとして書き出し、ensure_ascii JSON で送り直してください。この文字が本当に本文の"
+            "一部であれば、プロンプトのエンコーディング検査行を本文の最終行に入れて経路を証明してください。"
+        ),
+        "mojibake": (
+            "本文に誤デコードされた文字（文字化け）に見える行があります。送信経路がUTF-8のバイトを"
+            "別のコードページで読んだ兆候です。本文をUTF-8ファイルとして書き出し、ensure_ascii JSON で"
+            "送り直してください。正しい本文であれば、プロンプトのエンコーディング検査行を本文の最終行に"
+            "入れて経路を証明してください。"
+        ),
     },
 }
 
@@ -170,6 +228,13 @@ def _encoding_violation_string(key: str, locale: str, **kwargs) -> str:
     return strings[key].format(**kwargs)
 
 
+def _expected_probe(actor: Optional[dict[str, Any]]) -> Optional[str]:
+    """The encoding probe a worker actor's token must end its body with (None otherwise)."""
+    if not actor or actor.get("kind") != "worker":
+        return None
+    return encoding_probe.probe_for(str((actor.get("token") or {}).get("token_id") or ""))
+
+
 def _encoding_violation(
     *,
     body_raw: str,
@@ -177,7 +242,29 @@ def _encoding_violation(
     body_chars: Optional[int],
     force_encoding_reason: Optional[str],
     locale: str = "ko",
+    probe_status: str = encoding_probe.PROBE_ABSENT,
+    probe_received: Optional[str] = None,
+    checked_body: Optional[str] = None,
+    trusted_transport: bool = False,
 ) -> Optional[str]:
+    """Encoding verdict for one turn body (None = accept).
+
+    flowgate.v02gui.0009: ``probe_status`` comes from ``encoding_probe.split_probe``.
+    A broken probe is proof the path lost Unicode, so it rejects even with a force
+    reason. A matched probe proves the body file travelled intact, so no corruption
+    heuristic runs at all -- '?' is just punctuation then. ``trusted_transport``
+    (a browser session or FlowGate itself, both UTF-8 end to end) skips the
+    heuristics the same way. ``checked_body`` is the body with the probe line
+    removed; the fingerprint is still checked against ``body_raw`` (the file the
+    sender hashed, probe line included).
+    """
+    if probe_status == encoding_probe.PROBE_BROKEN:
+        return _encoding_violation_string(
+            "probe_broken", locale, received=encoding_probe.describe_received(probe_received)
+        )
+    path_proven = trusted_transport or probe_status == encoding_probe.PROBE_MATCHED
+    text = body_raw if checked_body is None else checked_body
+
     reason = (force_encoding_reason or "").strip()
     if len(reason.replace(" ", "")) >= 10:
         return None
@@ -204,13 +291,46 @@ def _encoding_violation(
             return _encoding_violation_string(
                 "fingerprint_violation", locale, mismatches="; ".join(mismatches)
             )
-        return None  # fingerprint matched — trust it, skip the question-mark heuristic
+        # Fingerprint matched: trust it over the question-mark heuristic. It only proves
+        # the hop after the file was written, so the language-neutral signals still run.
+        return None if path_proven else _hard_signal_violation(text, locale)
+
+    if path_proven:
+        return None
+    hard = _hard_signal_violation(text, locale)
+    if hard is not None:
+        return hard
 
     from modules.flow_gate.services import workflow_decision_service
 
-    if workflow_decision_service._text_is_corrupted(body_raw):
+    # Legacy signal for a worker that sent neither probe nor fingerprint.
+    if workflow_decision_service._text_is_corrupted(text):
         return _encoding_violation_string("corrupted_body", locale)
     return None
+
+
+def _hard_signal_violation(text: str, locale: str) -> Optional[str]:
+    signal = encoding_probe.hard_corruption_signal(text)
+    if signal is None:
+        return None
+    return _encoding_violation_string(signal, locale)
+
+
+def _log_encoding_verdict(
+    doc_id: str, actor: dict[str, Any], probe_status: str, violation: Optional[str],
+    dry_run: bool = False,
+) -> None:
+    """Metering for the probe rollout: one line per worker verdict, never the body."""
+    if actor.get("kind") != "worker":
+        return
+    try:
+        token = actor.get("token") or {}
+        _log.info(
+            "chat_encoding_verdict doc=%s provider=%s probe=%s rejected=%s dry_run=%s",
+            doc_id, token.get("provider_id") or "-", probe_status, violation is not None, dry_run,
+        )
+    except Exception:
+        pass
 
 
 def _log_force_encoding_reason(doc_id: str, actor: dict[str, Any], reason: str) -> None:
@@ -504,7 +624,9 @@ def replay_turn(
     idempotency_key: str, display_name_hint: Optional[str] = None,
 ) -> Optional[dict]:
     """Replay a recorded request without requiring an unused worker token."""
-    body, _key, body_hash, idempotency_hash = _validate_input(body_raw, idempotency_key)
+    # The stored hash is of the body without the encoding probe (see append_turn).
+    checked_body, _status, _received = encoding_probe.split_probe(body_raw, _expected_probe(actor))
+    body, _key, body_hash, idempotency_hash = _validate_input(checked_body, idempotency_key)
     del body
     doc = document_service.get_document(doc_id)
     if doc is None:
@@ -565,16 +687,29 @@ def append_turn(
     timing: Optional[TurnTiming] = None,
 ) -> dict:
     """Append one turn for either a session user or a token-bound AI worker."""
-    body, key, body_hash, idempotency_hash = _validate_input(body_raw, idempotency_key)
+    # flowgate.v02gui.0009: a worker's body ends with its token's encoding probe; it is
+    # verified and removed here, so the stored turn (and its idempotency hash) never
+    # carries it.
+    checked_body, probe_status, probe_received = encoding_probe.split_probe(
+        body_raw, _expected_probe(actor)
+    )
+    body, key, body_hash, idempotency_hash = _validate_input(checked_body, idempotency_key)
     # 0391 T0005 §5-4: reject a corrupted/fingerprint-mismatched body here — before any
     # side effect, including _validate_document_for_append's possible migration write.
+    # flowgate.v02gui.0009: only a worker's transport can be lossy. A browser session
+    # posts UTF-8 JSON whatever the language, and a system turn is FlowGate's own text.
     _violation = _encoding_violation(
         body_raw=body_raw,
         body_sha256=body_sha256,
         body_chars=body_chars,
         force_encoding_reason=force_encoding_reason,
         locale=locale,
+        probe_status=probe_status,
+        probe_received=probe_received,
+        checked_body=checked_body,
+        trusted_transport=actor.get("kind") != "worker",
     )
+    _log_encoding_verdict(doc_id, actor, probe_status, _violation)
     if _violation is not None:
         raise ConversationTurnError(422, _violation)
     if (force_encoding_reason or "").strip():
@@ -728,8 +863,10 @@ def dry_run_append(
     the exact same _encoding_violation() append_turn uses, so a dry-run preview and the
     real submission never disagree.
     """
-    del actor
-    body, _key, _body_hash, _idempotency_hash = _validate_input(body_raw, idempotency_key)
+    checked_body, probe_status, probe_received = encoding_probe.split_probe(
+        body_raw, encoding_probe.probe_for(str(token_rec.get("token_id") or ""))
+    )
+    body, _key, _body_hash, _idempotency_hash = _validate_input(checked_body, idempotency_key)
     _validate_document_for_append(doc_id)
 
     limit = _dry_run_limit()
@@ -748,7 +885,11 @@ def dry_run_append(
         body_chars=body_chars,
         force_encoding_reason=force_encoding_reason,
         locale=locale,
+        probe_status=probe_status,
+        probe_received=probe_received,
+        checked_body=checked_body,
     )
+    _log_encoding_verdict(doc_id, actor, probe_status, _violation, dry_run=True)
     corrupted = _violation is not None
     message = _violation or (
         "Dry-run OK. Submitting this payload will register it; nothing was registered by this check."
@@ -757,6 +898,7 @@ def dry_run_append(
         "ok": True,
         "dry_run": True,
         "corrupted": corrupted,
+        "encoding_probe": probe_status,
         "dry_run_count": cnt + 1,
         "dry_run_remaining": limit - (cnt + 1),
         "message": message,
