@@ -35,6 +35,7 @@ import type {
   ConversationTurn,
   ChatSourceAccess,
   RunDisplay,
+  SendAction,
   SourceAccessMode,
   StatusActivity,
   StatusTone,
@@ -162,8 +163,11 @@ export interface CreatedChat {
 /**
  * flowgate.v02.0142 T#1: what `send` addresses — the chat just made by a first send (`CreatedChat`), the AI the
  * message is pinned to (`providerId`), both, or neither (the open chat on the current selection).
+ * flowgate.v02gui.0009: `sendAction` is the send-time action read when the user pressed send (the first message of a
+ * new chat: before the chat was created, while the screen still showed its Flow); absent = the current setting.
  */
-export type SendTarget = (CreatedChat & { providerId?: string }) | { providerId?: string }
+interface SendPins { providerId?: string; sendAction?: SendAction }
+export type SendTarget = (CreatedChat & SendPins) | SendPins
 export type CreateChatResult = CreatedChat | { status: 'cancelled' | 'failed'; chatId: string | null; scope: ConversationScope | null; draftIntentId: string | null; createIntentId: string | null }
 export interface CreateChatContext {
   draftIntentId: string
@@ -1309,18 +1313,28 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   /**
    * D0005 §3-2: the send-time action runs once, only after the turn was accepted, and only
-   * for the chat the turn went to. After a switch to another chat it is dropped: a mention
-   * or an AI run must never land in a chat where no turn was just sent.
+   * for the chat the turn went to — never in another chat: a mention or an AI run must never land in a chat where no
+   * turn was just sent.
+   *
+   * flowgate.v02gui.0009: a pressed send is expected to reach the AI. The action is the one pinned when the message was
+   * sent (`item.sendAction`, the setting of the message's own Flow), and an AI run still starts after the screen moved
+   * on (another chat, Flow or draft): off screen, for the chat the message went to (startAiRunOffScreen) — the screen
+   * open now is not touched, and coming back to that chat shows the run (adoptActiveRun). A mention copy is a clipboard
+   * act of the screen the user is on, so it runs only while the chat is still the open one.
    *
    * flowgate.v02.0142 T#1: the AI run uses `providerId`, the AI pinned when the message was sent — never the picker's
    * current value. Without a usable one startAiRun ends with the `no_provider` notice (the turn itself stays stored).
    */
-  function runSendAction(chatId: string, gen: number, trace: SubmissionTrace, providerId: string): void {
-    if (!isCurrentChat(chatId, gen)) return
-    if (state.settings.sendAction === 'copy_mention') options.onAutoCopyMention?.()
-    else if (state.settings.sendAction === 'invoke_ai') {
+  function runSendAction(chatId: string, gen: number, trace: SubmissionTrace, item: PendingTurn): void {
+    if (disposed) return
+    const action = item.sendAction ?? state.settings.sendAction
+    const onScreen = isCurrentChat(chatId, gen)
+    if (action === 'copy_mention') {
+      if (onScreen) options.onAutoCopyMention?.()
+    } else if (action === 'invoke_ai') {
       trace.mark('ai_start', { docId: chatId })
-      void startAiRun(providerId)
+      if (onScreen) void startAiRun(item.providerId)
+      else void startAiRunOffScreen(chatId, gen, item.providerId)
     }
   }
 
@@ -1356,9 +1370,12 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const key = newIdempotencyKey()
     // flowgate.v02.0142 T#1: pinned in the same synchronous step as chatId / gen / key, before the first await.
     const providerId = target?.providerId ?? state.selectedProviderId
+    // flowgate.v02gui.0009: the send-time action is pinned with them — moving to another Flow before the server accepts
+    // the message must not swap it for that Flow's setting.
+    const sendAction = target?.sendAction ?? state.settings.sendAction
     // flowgate.v02gui.0009: off screen nothing of the new CH was read; 0 is its head (always <= the server's).
     const basedOnSeq = offScreen ? 0 : state.headSeq
-    const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq, createdAt: new Date().toISOString(), failed: false, providerId }
+    const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq, createdAt: new Date().toISOString(), failed: false, providerId, sendAction }
     traces.set(key, trace)
     if (snapshot) pendingDrafts.set(key, { ...snapshot, owner: { ...snapshot.owner } })
     publishOutbox(owner, [...(outbox.get(owner) ?? []), item])
@@ -1378,7 +1395,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
     pendingDrafts.delete(item.localId)
     publishProgress(owner, null)
-    runSendAction(chatId, gen, trace, item.providerId)
+    runSendAction(chatId, gen, trace, item)
     // flowgate.v02test.0013: a signal held while this message was on its way is served once it is stored.
     if (visibleOwner(owner)) flushDeferredRefresh()
     return true
@@ -1394,8 +1411,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
     const gen = chatGen
     const snapshot = pendingDrafts.get(localId)
-    // The first attempt failed before its send action, so the accepted retry runs it once — on the AI pinned at the
-    // first send (flowgate.v02.0142 T#1, `item.providerId` in finishSend), not on the selection of this moment.
+    // The first attempt failed before its send action, so the accepted retry runs it once — on the AI and the action
+    // pinned at the first send (flowgate.v02.0142 T#1, v02gui.0009: `item` in finishSend), not on those of this moment.
     const ok = await finishSend(chatId, gen, owner, item, traces.get(localId) ?? createSubmissionTrace())
     if (ok && !fromComposer && snapshot) retryReceipts.set(owner, snapshot)
     return ok
@@ -1730,6 +1747,63 @@ export function createConversationSession(options: ConversationSessionOptions = 
         return
       }
     }
+  }
+
+  /**
+   * flowgate.v02gui.0009: the AI run of a message whose screen moved on before its send action ran. It asks the server
+   * to run `providerId` on `chatId` — the chat the message went to, named explicitly; nothing of the screen open now
+   * is read or written (no run line, no notice, no running state there). The same press rules as startAiRun hold: one
+   * request id for every resend, a lost answer is resent and then looked up, and an empty AI never falls back to the
+   * server default. A refusal is recorded for that chat (shown when it is open again, kept over F5). When that chat is
+   * open again by the time the server names the run, the run is shown there; otherwise opening it adopts the run.
+   */
+  async function startAiRunOffScreen(chatId: string, gen: number, providerId: string): Promise<void> {
+    const userId = draftUserId()
+    const ended = () => disposed || userId !== draftUserId()
+    if (!providerId) {
+      recordChatError(chatId, gen, 'invoke_failed', null, false, true)
+      return
+    }
+    const requestId = newStartRequest()
+    const recoveryStarted = Date.now()
+    let resends = 0
+    for (;;) {
+      try {
+        const runId = await source.startChatRun(chatId, providerId, requestId)
+        if (runId && !ended()) showRunIfOpen(chatId, runId)
+        return
+      } catch (error) {
+        if (ended()) return
+        if (error instanceof ConversationRequestError && error.code === 'run_in_progress' && error.runId) {
+          showRunIfOpen(chatId, error.runId)
+          return
+        }
+        if ((isNoResponse(error) || isStartPending(error))
+          && resends < START_RESEND_MAX && Date.now() - recoveryStarted < START_RECOVERY_MS) {
+          resends += 1
+          await sleep(RUN_POLL_MS)
+          if (ended()) return
+          continue
+        }
+        if (isNoResponse(error) || isStartPending(error)) {
+          const adopted = await findActiveRun(chatId)
+          if (ended()) return
+          if (adopted) {
+            showRunIfOpen(chatId, adopted)
+            return
+          }
+        }
+        if (isSourceLocked(error)) recordChatError(chatId, gen, 'source_locked', error, false, true)
+        else recordChatError(chatId, gen, 'invoke_failed', error, true, true)
+        return
+      }
+    }
+  }
+
+  /** flowgate.v02gui.0009: an off-screen run is polled only once its chat is the open, loaded one again. */
+  function showRunIfOpen(chatId: string, runId: string): void {
+    if (disposed || state.activeChatId !== chatId || state.turnsStatus !== 'ready' || running.value) return
+    void pollRun(chatId, runId, chatGen)
   }
 
   async function findActiveRun(chatId: string): Promise<string | null> {

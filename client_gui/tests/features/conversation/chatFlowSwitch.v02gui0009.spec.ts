@@ -6,7 +6,7 @@ import { ConversationPanel } from '@/features/conversation'
 import { ConversationRequestError } from '@/features/conversation/api'
 import { createChatStart } from '@/features/conversation/chatStart'
 import { createConversationSession, SEND_RETRY_MAX } from '@/features/conversation/conversationSession'
-import type { ChatSummary, ConversationTurn } from '@/features/conversation/types'
+import type { ChatSummary, ConversationScope, ConversationTurn, SendAction } from '@/features/conversation/types'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
 
 // flowgate.v02gui.0009 — "채팅 전송 직후 다른 플로우로 이동하면 메시지 유실". A message whose send started belongs
@@ -43,10 +43,21 @@ interface PostStep { gate?: Promise<unknown>; outcome?: 'ok' | 'lost' | number }
  * A fake server with one chat list per Flow whose turn store is keyed like the real one: a POST repeating a stored
  * (chat, idempotency key) answers the stored turn instead of adding one.
  */
-function server(opts: { aChats?: boolean } = {}) {
+interface ServerOptions {
+  aChats?: boolean
+  /** The send-time action (전송 후 동작) stored for Flow A and Flow B; default: none for both. */
+  sendActions?: { a: SendAction; b: SendAction }
+}
+
+function server(opts: ServerOptions = {}) {
   const fake = createFakeSource({
     turns: { [A1]: [turn(1, 'user', 'A 대화')], [B1]: [turn(1, 'user', B_TURNS[0]), turn(2, 'ai', B_TURNS[1])], [B2]: [turn(1, 'user', 'B 다른 채팅')] },
   })
+  const actions = opts.sendActions
+  if (actions) {
+    fake.source.fetchChatSettings.mockImplementation(async (scope?: ConversationScope) =>
+      ({ ...fake.data.settings, sendAction: scope?.groupId === FLOW_B.groupId ? actions.b : actions.a, sourceAccessScope: scope ?? null }))
+  }
   const chatsOf: Record<string, ChatSummary[]> = {
     [FLOW_A.groupId]: opts.aChats ? [{ id: A1, title: 'A 대화', updatedAt: '2026-11-13T04:00:00Z' }] : [],
     [FLOW_B.groupId]: [
@@ -90,7 +101,7 @@ function server(opts: { aChats?: boolean } = {}) {
   return { ...fake, chatsOf, steps, creates, posts, bodies }
 }
 
-async function setup(opts: { aChats?: boolean } = {}) {
+async function setup(opts: ServerOptions = {}) {
   const fake = server(opts)
   const session = createConversationSession({ source: fake.source, sleep: async () => undefined })
   const start = createChatStart({ session, source: fake.source, defaultTitle: () => '새 대화' })
@@ -400,5 +411,101 @@ describe('ConversationPanel: send in Flow A, move to Flow B at once, come back',
     const kept = Array.from({ length: localStorage.length }, (_, i) => localStorage.getItem(localStorage.key(i)!))
     expect(kept).not.toContain('패널에서 보낸 메시지')
     expect(x.posts()).toHaveLength(1)
+  })
+})
+
+// flowgate.v02gui.0009 (continued) — "엔터까지 쳤잖아 당연히 보내야지": a pressed send reaches the AI too. The send-time
+// action is the one of the message's own Flow, read when send was pressed; an AI run starts for the chat the message
+// went to even after the screen moved on, and the screen open now shows nothing of it. A mention copy (clipboard) is
+// not run off screen.
+describe('the send-time AI run follows the message, not the screen', () => {
+  it('an open chat: moved to Flow B before the send was accepted → the AI runs on A1; B untouched; back in A it shows', async () => {
+    const x = await setup({ aChats: true, sendActions: { a: 'invoke_ai', b: 'none' } })
+    const answer = deferred()
+    x.steps.push({ gate: answer.promise })
+    const sending = x.start.send('AI 불러줘')
+    await x.session.setScope(FLOW_B)
+    await flushPromises()
+    answer.resolve()
+    expect(await sending).toBe(true)
+    await flushPromises()
+    expect(x.source.startChatRun).toHaveBeenCalledTimes(1)
+    expect(x.source.startChatRun).toHaveBeenCalledWith(A1, 'opus', expect.any(String))
+    expectFlowBUntouched(x)
+    expect(x.session.state.runId).toBeNull()
+    expect(x.session.state.notice).toBeNull()
+
+    x.data.activeRun = 'run-1'
+    await x.session.setScope(FLOW_A)
+    await flushPromises()
+    expect(x.session.state.activeChatId).toBe(A1)
+    expect(x.source.fetchRun).toHaveBeenCalledWith('run-1')
+    expect(x.source.startChatRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('the action is the one of the Flow the message was sent in, not of the Flow shown when it was accepted', async () => {
+    const x = await setup({ aChats: true, sendActions: { a: 'none', b: 'invoke_ai' } })
+    const answer = deferred()
+    x.steps.push({ gate: answer.promise })
+    const sending = x.start.send('AI 없이')
+    await x.session.setScope(FLOW_B)
+    await flushPromises()
+    expect(x.session.state.settings.sendAction).toBe('invoke_ai')
+    answer.resolve()
+    expect(await sending).toBe(true)
+    await flushPromises()
+    expect(x.source.startChatRun).not.toHaveBeenCalled()
+    expectFlowBUntouched(x)
+  })
+
+  it('a new chat: moved during the create → its first message is sent and the AI runs on the chat made in A', async () => {
+    const x = await setup({ sendActions: { a: 'invoke_ai', b: 'none' } })
+    const create = deferred()
+    x.creates.push(create.promise)
+    const sending = x.start.send('첫 메시지')
+    await flushPromises()
+    await x.session.setScope(FLOW_B)
+    await flushPromises()
+    create.resolve()
+    expect(await sending).toBe(true)
+    await flushPromises()
+    const made = x.chatsOf[FLOW_A.groupId][0].id
+    expect(x.bodies(made)).toEqual(['첫 메시지'])
+    expect(x.source.startChatRun).toHaveBeenCalledTimes(1)
+    expect(x.source.startChatRun).toHaveBeenCalledWith(made, 'opus', expect.any(String))
+    expectFlowBUntouched(x)
+    expect(x.session.state.runId).toBeNull()
+  })
+
+  it('an off-screen AI start that is refused is recorded for A1, not shown on B', async () => {
+    const x = await setup({ aChats: true, sendActions: { a: 'invoke_ai', b: 'none' } })
+    x.source.startChatRun.mockRejectedValueOnce(httpError(500, 'start refused'))
+    const answer = deferred()
+    x.steps.push({ gate: answer.promise })
+    const sending = x.start.send('AI 실패')
+    await x.session.setScope(FLOW_B)
+    await flushPromises()
+    answer.resolve()
+    expect(await sending).toBe(true)
+    await flushPromises()
+    expect(x.source.recordChatError).toHaveBeenCalledWith(A1, expect.objectContaining({ code: 'invoke_failed' }))
+    expectFlowBUntouched(x)
+    expect(x.session.state.activities.filter((a) => a.kind === 'status' && a.code === 'invoke_failed')).toEqual([])
+    expect(x.session.state.notice).toBeNull()
+  })
+
+  it('a mention copy is not run once the screen moved on', async () => {
+    const x = await setup({ aChats: true, sendActions: { a: 'copy_mention', b: 'none' } })
+    const answer = deferred()
+    x.steps.push({ gate: answer.promise })
+    const sending = x.start.send('멘션')
+    await x.session.setScope(FLOW_B)
+    await flushPromises()
+    answer.resolve()
+    expect(await sending).toBe(true)
+    await flushPromises()
+    expect(x.source.issueChatMention).not.toHaveBeenCalled()
+    expect(x.source.startChatRun).not.toHaveBeenCalled()
+    expectFlowBUntouched(x)
   })
 })

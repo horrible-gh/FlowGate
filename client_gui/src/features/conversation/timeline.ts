@@ -9,6 +9,7 @@ import type {
   ConversationTurn,
   StatusActivity,
   WorkChangeActivity,
+  SendAction,
   WorkChangeFile,
 } from './types'
 
@@ -46,6 +47,12 @@ export interface PendingTurn {
    * every retry runs on this AI, whatever the picker shows later.
    */
   providerId: string
+  /**
+   * flowgate.v02gui.0009: the send-time action (전송 후 동작) of the message's own Flow at the moment it was sent. Set
+   * once like `providerId`: the action runs on this value even when the screen shows another Flow by the time the
+   * server accepts the message. Absent = read the current setting (a pending turn made before this field existed).
+   */
+  sendAction?: SendAction
   /** flowgate.v02gui.0007 A: why the last attempt failed (set with `failed`, cleared when a retry starts). */
   failure?: SendFailure | null
 }

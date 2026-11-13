@@ -392,7 +392,9 @@ describe('0151 T-A2 §2.6-3: catch-up reads turns, activities, then history', ()
     await flushPromises()
     expect(session.state.activeChatId).toBe(B)
     expect(snapshot()).toEqual(before)
-    expect(fake.source.startChatRun).not.toHaveBeenCalled()
+    // flowgate.v02gui.0009: the AI run of A's message still starts — for A, off screen; B shows nothing of it.
+    expect(fake.source.startChatRun).toHaveBeenCalledTimes(1)
+    expect(fake.source.startChatRun).toHaveBeenCalledWith(A, expect.any(String), expect.any(String))
     expect(session.running.value).toBe(false)
   })
 
