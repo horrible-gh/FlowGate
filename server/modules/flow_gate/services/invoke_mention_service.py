@@ -291,6 +291,35 @@ def _fold_notice(
     ]
 
 
+def _encoding_probe_paragraph(token_id: str) -> list[str]:
+    """flowgate.v02gui.0009: the per-token encoding probe and the transport rule.
+
+    The probe proves the path, whatever language the body is in
+    (``encoding_probe``); with it the question-mark heuristic never runs.
+    """
+    from modules.flow_gate.services import encoding_probe
+
+    probe = encoding_probe.probe_for(token_id)
+    return [
+        "Encoding probe: make the LAST line of the body exactly this line. FlowGate checks it",
+        "and removes it before saving:",
+        f"{probe}",
+        "If it arrives intact, the path carried every Unicode character and no corruption check",
+        "runs, so any text is fine ('??' included), in any language. If it arrives damaged, the",
+        "turn is refused with the cause; fix the transport, not the text.",
+        "Transport: write the body (probe line last) to a UTF-8 file, then send it with a script",
+        "that reads that file and posts ASCII-only JSON, e.g. Python",
+        "`json.dumps(payload).encode(\"ascii\")` (json.dumps escapes non-ASCII by default). Never",
+        "put the body or the probe on a command line, and never pass them through a console pipe,",
+        "redirect, Set-Content or Out-File: those can drop characters.",
+        "Without the probe, a body that looks corrupted (U+FFFD, mojibake, runs of '?') is",
+        "rejected. body_chars / body_sha256 are optional; compute them from that same file, probe",
+        "line included. A matching fingerprint is trusted over the question-mark heuristic. If the",
+        "fingerprint mismatches, or you must send the body as-is, put a reason (10+",
+        "non-whitespace characters) in force_encoding_reason; it never overrides a damaged probe.",
+    ]
+
+
 def build_conversation_mention(
     *,
     doc_id: str,
@@ -395,16 +424,11 @@ def build_conversation_mention(
         "from your last read — not a guess. If someone speaks while you are writing, your turn is",
         "still kept in order and marked as written without having seen theirs.",
         "",
-        "A body that looks corrupted (mojibake '?'s) is rejected. Calculation order: write the",
-        "body to a UTF-8 file first, compute its character count (body_chars) and sha256",
-        "(body_sha256) from that file, then build the request above. A matching fingerprint is",
-        "trusted over the question-mark heuristic; if neither field is sent, the heuristic runs",
-        "instead. If the fingerprint mismatches, or you must send the body as-is, put a reason",
-        "(10+ non-whitespace characters) in force_encoding_reason.",
+        *_encoding_probe_paragraph(token_id),
         "",
         f'To preview without registering, POST the same body to {api_base}/conversation/{doc_id}/turn',
         'with "dry_run": true added. Nothing is registered and the token is not consumed — only',
-        "the corruption/fingerprint verdict comes back.",
+        "the corruption/fingerprint verdict (and encoding_probe: matched/broken/absent) comes back.",
     ]
     if can_write:
         lines += [

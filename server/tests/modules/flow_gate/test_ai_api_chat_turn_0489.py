@@ -124,7 +124,16 @@ def test_conversation_turn_request_binds_token_and_provider(monkeypatch):
     assert (status, payload, captured["timeout"]) == (201, {"ok": True}, 120)
     assert request.full_url == "http://127.0.0.1:8089/flowgate/api/v1/conversation/flowgate.default.0489.0001-B/turn"
     assert request.get_header("Authorization") == "Bearer raw-token"
-    assert request.data == b'{"body": "reply", "idempotency_key": "tok_0489", "based_on_seq": 7, "display_name": "Deepinfra Test"}'
+    # flowgate.v02gui.0009: the reply carries its token's encoding probe as the last line
+    # (ensure_ascii JSON, so the supplementary-plane glyph travels as a surrogate escape).
+    from modules.flow_gate.services import encoding_probe
+    probe = encoding_probe.probe_for("tok_0489")
+    expected = json.dumps({
+        "body": f"reply\n{probe}", "idempotency_key": "tok_0489", "based_on_seq": 7,
+        "display_name": "Deepinfra Test",
+    }).encode("utf-8")
+    assert request.data == expected
+    assert request.data.isascii()
 
 
 @pytest.mark.parametrize("kind", ["openai", "claude"])

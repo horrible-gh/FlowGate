@@ -2554,8 +2554,16 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
         run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     api_base = provider_api._resolve_transport_api_base(run).rstrip("/")
+    # flowgate.v02gui.0009: this hop is Python -> ensure_ascii JSON, never a console, so the
+    # server-side probe check always matches and the reply is exempt from the corruption
+    # heuristics. An empty reply stays empty (the server still rejects it as empty).
+    from modules.flow_gate.services import encoding_probe
+    reply = tool_input.get("body") or ""
+    probe = encoding_probe.probe_for(run.get("token_id"))
+    if reply.strip() and probe:
+        reply = f"{reply.rstrip()}\n{probe}"
     body = {
-        "body": tool_input.get("body") or "",
+        "body": reply,
         "idempotency_key": run["token_id"],
         "based_on_seq": int(run.get("_chat_based_on_seq") or 0),
         "display_name": (run.get("provider") or {}).get("name") or "AI",
