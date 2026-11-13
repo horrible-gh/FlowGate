@@ -20,6 +20,7 @@
         {{ t('gui.git.push.retry') }}
       </button>
     </div>
+    <p v-if="retryBlockedText" class="gx-reason" data-test="git-retry-blocked">{{ retryBlockedText }}</p>
     <p v-if="stateText" class="gx-notice" data-test="git-state">{{ stateText }}</p>
     <p v-if="retryText" class="gx-notice" data-test="git-retry-outcome">{{ retryText }}</p>
     <p v-if="noticeText" class="gx-notice" data-test="git-notice">{{ noticeText }}</p>
@@ -55,6 +56,13 @@ const noticeText = computed(() => {
 const stateText = computed(() => props.operation?.gate.git_active ? t('gui.inspector.checkSettings.target.syncing')
   : props.operation?.gate.parked ? t('gui.inspector.checkSettings.target.parked') : null)
 const retryText = computed(() => retryOutcomeText(gateJobs?.retryOutcomeOf(props.operation) ?? null, t))
+// flowgate.v02gui.0004 (0001-B 관찰 5): why [다시 반영] is off, instead of a button that only looks usable.
+const retryBlockedText = computed(() => {
+  const operation = props.operation
+  if (!operation || operation.gate.recovery?.retryable) return null
+  if (operation.gate.git_active) return null
+  return t(operation.gate.recovery?.cancelable ? 'gui.git.gate_job.retry_blocked_cancel' : 'gui.git.gate_job.retry_blocked')
+})
 function detail() {
   if (props.operation) {
     gateJobs?.select(props.operation)

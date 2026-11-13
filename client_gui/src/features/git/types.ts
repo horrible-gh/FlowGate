@@ -59,6 +59,8 @@ export interface GitWindowDescriptor {
   minimized: boolean
   groupId: string | null
   mergeId: number | null
+  // flowgate.v02gui.0004: the conflict file the resolver window shows (conflict windows only).
+  path?: string | null
 }
 
 // ── Server reads (normalized) ──────────────────────────────────────────────────────────
@@ -67,6 +69,11 @@ export interface GitConflictFile {
   path: string
   // Conflict markers still in the file, counted by the server.
   conflictCount: number
+  // flowgate.v02gui.0004: the working file as the server read it (markers included) — what the
+  // direct resolver splits into chunks. '' when the server could not read it.
+  content: string
+  // The server recorded a resolution for this file (`resolved_paths`).
+  resolved: boolean
 }
 
 /** GET /groups/{gid}/git/merge/{merge_id}/conflicts. */
@@ -117,6 +124,25 @@ export interface GitRejectResult {
 export interface GitProviders {
   providerIds: string[]
   defaultProviderId: string | null
+  // flowgate.v02gui.0004: the same list with the names the AI picker shows.
+  providers: GitProviderOption[]
+}
+
+export interface GitProviderOption {
+  id: string
+  name: string
+}
+
+/** One chunk's resolution sent to POST …/merge/{id}/resolve (1-based, file order). */
+export interface GitChunkResolution {
+  chunk: number
+  content: string
+}
+
+/** What POST …/merge/{id}/resolve answered: `conflict` (markers left somewhere) or `resolved_pending_review`. */
+export interface GitResolveResult {
+  status: string
+  remaining: string[]
 }
 
 /** The finalize actions a planned (S1) finalize may carry; `wait` is not one. */

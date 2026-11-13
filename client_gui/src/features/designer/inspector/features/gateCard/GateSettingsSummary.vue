@@ -21,7 +21,12 @@ const k = (key: string) => `gui.inspector.checkSettings.${key}`
 const rejected = computed(() => props.decision?.result === 'rejected' || props.decision?.status === 'rejected')
 const summary = computed(() => checkSettingsSummary(props.node ?? null, props.decision))
 const unmergeBlocked = computed(() => (!!props.decision && summary.value.unmergeUnknown) || errorKey.value === 'target.unmerge_unknown')
-const errorKey = computed(() => checkOperationErrorKey(props.errorCode ?? props.decision?.last_error_code, props.decision))
+// flowgate.v02gui.0004: a merge conflict is told by the result pill and the Git tab's conflict card, not again here
+// (and not left behind once the conflict review is closed).
+const errorKey = computed(() => {
+  const key = checkOperationErrorKey(props.errorCode ?? props.decision?.last_error_code, props.decision)
+  return key === 'target.merge_conflict' ? null : key
+})
 </script>
 <style scoped>
 .inspector-gate-summary { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }

@@ -87,18 +87,22 @@ describe('DesignerGitPanel — header and nothing to do', () => {
 describe('DesignerGitPanel — cards', () => {
   it('conflict card: count, three files, more, buttons; badge !', async () => {
     const w = await mountPanel(createFakeGitSource({ status: status({ pending: [row()] }) }))
-    expect(text('git-conflict-card')).toContain('병합 충돌 · 5개 파일')
+    // flowgate.v02gui.0004: the title says where the apply stopped; the count splits open / resolved.
+    expect(text('git-conflict-card')).toContain('충돌 · main 반영 중단')
+    expect(text('git-conflict-count')).toBe('미해결 5 · 해결됨 0')
     expect(qa('[data-test="git-conflict-card"] .gx-file')).toHaveLength(3)
     expect(text('git-conflict-more')).toBe('외 2개 보기')
     expect(w.emitted('badge-change')?.at(-1)).toEqual([{ tone: 'danger', text: '!' }])
   })
 
-  it('a conflict file raises open-diff against the Base checkout', async () => {
+  // flowgate.v02gui.0004 (0001-B §A-3): a conflict file opens the direct resolver on it — no dead open-diff intent.
+  it('a conflict file opens the direct resolver on that file', async () => {
     const w = await mountPanel(createFakeGitSource({ status: status({ pending: [row()] }) }))
-    qa('[data-test="git-conflict-card"] .gx-file')[0].click()
-    expect(w.emitted('open-diff')?.[0]).toEqual([
-      { projectId: P, groupId: G, mergeId: null, path: 'src/f0.ts', status: 'C', origin: 'conflict', diffSource: 'base' },
-    ])
+    qa('[data-test="git-conflict-card"] .gx-file')[1].click()
+    await flushPromises()
+    expect(q('git-conflict-window')).not.toBeNull()
+    expect(document.body.querySelector('.gx-resolver-file[aria-selected="true"]')?.getAttribute('data-path')).toBe('src/f1.ts')
+    expect(w.emitted('open-diff')).toBeUndefined()
   })
 
   it('abort asks first and says the final approval ends with it when bound', async () => {
@@ -346,18 +350,18 @@ describe('DesignerGitPanel — remote apply failure and windows', () => {
     const w = await mountPanel(fake)
     await click('git-conflict-manual')
     expect(q('git-conflict-window')).not.toBeNull()
-    await click('git-window-manual')
-    expect(text('git-window-target')).toBe('main')
-    expect(text('git-window-count')).toBe('5개')
-    expect(text('git-window-branch')).toBe('flowgate_v02_0008')
-    expect(qa('[data-test="git-window-files"] .gx-file')).toHaveLength(5)
+    // flowgate.v02gui.0004: the window is the direct resolver — every file as a tab, the first open one shown.
+    expect(qa('[data-test="git-resolver-files"] .gx-resolver-file')).toHaveLength(5)
+    expect(qa('.gx-chunk')).toHaveLength(1)
+    expect(document.body.querySelector('.gx-chunk-side.ours')?.textContent).toContain('ours 0')
+    expect(document.body.querySelector('.gx-chunk-side.theirs')?.textContent).toContain('theirs 0')
 
     const id = `conflict:${G}:7`
     const minimize = qa('.ui-modeless-titlebar-actions button')[0]
     minimize.click()
     await flushPromises()
     expect(w.emitted('windows-change')?.at(-1)?.[0]).toEqual([
-      { id, kind: 'conflict', title: '충돌 해결', minimized: true, groupId: G, mergeId: 7 },
+      { id, kind: 'conflict', title: '충돌 해결', minimized: true, groupId: G, mergeId: 7, path: 'src/f0.ts' },
     ])
     ;(w.vm as unknown as { restoreWindow(id: string): void }).restoreWindow(id)
     await flushPromises()
@@ -368,12 +372,33 @@ describe('DesignerGitPanel — remote apply failure and windows', () => {
     expect(w.emitted('windows-change')?.at(-1)).toEqual([[]])
   })
 
-  it('the window AI button starts the resolver', async () => {
+  // flowgate.v02gui.0004 (0001-B §A-3): pick a side per chunk, save → POST resolve with that chunk.
+  it('the resolver saves the chosen chunk text and reads the conflict again', async () => {
     const fake = createFakeGitSource({ status: status({ pending: [row()] }) })
     await mountPanel(fake)
     await click('git-conflict-manual')
-    await click('git-window-ai')
-    expect(fake.source.startConflictAi).toHaveBeenCalledWith(G, 7)
+    expect((q('git-resolver-save') as HTMLButtonElement).disabled).toBe(true)
+    await click('git-chunk-both')
+    expect((q('git-chunk-result') as HTMLTextAreaElement).value).toBe('ours 0\ntheirs 0')
+    const reads = fake.source.fetchConflicts.mock.calls.length
+    await click('git-resolver-save')
+    expect(fake.source.resolveConflictFile).toHaveBeenCalledWith(G, 7, 'src/f0.ts', [{ chunk: 1, content: 'ours 0\ntheirs 0' }])
+    expect(fake.source.fetchConflicts.mock.calls.length).toBeGreaterThan(reads)
+  })
+
+  // flowgate.v02gui.0004 (0001-B §A-2): [AI 해결 ▾] opens the picker right under it; [시작] pins the chosen AI.
+  it('the AI picker starts the resolver with the picked AI', async () => {
+    const fake = createFakeGitSource({ status: status({ pending: [row()] }) })
+    await mountPanel(fake)
+    await click('git-conflict-ai')
+    expect(fake.source.startConflictAi).not.toHaveBeenCalled()
+    const picker = q('git-conflict-ai-picker')
+    expect(picker?.parentElement?.classList.contains('gx-ai-pick')).toBe(true)
+    expect(picker?.querySelector<HTMLInputElement>('input:checked')?.value).toBe('opus')
+    picker!.querySelectorAll<HTMLInputElement>('input')[1].click()
+    await flushPromises()
+    await click('git-conflict-ai-start')
+    expect(fake.source.startConflictAi).toHaveBeenCalledWith(G, 7, 'sonnet')
   })
 
   it('expose refresh reads the status again', async () => {

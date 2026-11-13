@@ -30,6 +30,7 @@ import type {
   GitBaseRevertResult,
   GitConfigSave,
   GitConfigView,
+  GitChunkResolution,
   GitConflictSession,
   GitConnectionTest,
   GitFinalizeAction,
@@ -38,6 +39,7 @@ import type {
   GitProvisionResult,
   GitProvisionView,
   GitRejectResult,
+  GitResolveResult,
   GitReview,
   ManualMergeResult,
   ManualMergeView,
@@ -101,7 +103,9 @@ export interface GitSource {
   loadReviewFileDiff(groupId: string, mergeId: number, path: string): Promise<MergeReviewFileDiff>
 
   fetchConflicts(groupId: string, mergeId: number): Promise<GitConflictSession>
-  startConflictAi(groupId: string, mergeId: number): Promise<string | null>
+  startConflictAi(groupId: string, mergeId: number, providerId?: string | null): Promise<string | null>
+  /** flowgate.v02gui.0004 — direct resolve of one conflict file (POST …/resolve, chunks). */
+  resolveConflictFile?(groupId: string, mergeId: number, path: string, chunks: GitChunkResolution[]): Promise<GitResolveResult>
   cancelAiRun(runId: string): Promise<string | null>
   abortMerge(groupId: string, mergeId: number): Promise<void>
 
@@ -151,6 +155,7 @@ export function createHttpGitSource(): GitSource {
     loadReviewFileDiff: (groupId, mergeId, path) => projectStore.loadMergeReviewFileDiff(groupId, mergeId, path),
     fetchConflicts: api.fetchConflicts,
     startConflictAi: api.startConflictAi,
+    resolveConflictFile: api.resolveConflictFile,
     cancelAiRun: api.cancelAiRun,
     abortMerge: api.abortMerge,
     fetchReview: api.fetchReview,

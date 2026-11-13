@@ -110,9 +110,18 @@ export function gateDecisionReason(
   if (target.readOnly === 'archived') return 'reason.read_only_archived'
   if (target.readOnly === 'conflict') return 'reason.read_only_conflict'
   if (!run || !['running', 'idle'].includes(run.status)) return 'reason.not_running'
-  if (run.nodes.find((node) => node.nodeKey === target.nodeId)?.status !== 'open') return 'reason.not_open'
+  const node = run.nodes.find((item) => item.nodeKey === target.nodeId)
+  if (node?.status !== 'open') return 'reason.not_open'
   if (busy) return 'reason.busy'
-  if (run.nodes.find(node => node.nodeKey === target.nodeId)?.gate?.can_decide !== true) return 'reason.not_open'
+  if (node.gate?.can_decide !== true) {
+    // flowgate.v02gui.0004 (0001-B §B, 관찰 6): an earlier approval still held — say that, not "wait for your turn".
+    const gate = node.gate
+    if (gate?.decision_in_progress) {
+      const conflict = gate.job?.phase_note === 'gate_conflict' || gate.recovery?.status === 'conflict'
+      return conflict ? 'reason.conflict' : 'reason.decision_in_progress'
+    }
+    return 'reason.not_open'
+  }
   return null
 }
 
@@ -172,6 +181,6 @@ export function gateResult(node: { status: string; attemptId?: string | null; ga
     key: state.key === 'pending' || state.key === 'waiting_confirm' ? 'before' : state.key,
     tone: state.tone,
     archived: !!(confirmed && current && gate?.archived && result?.archived && result.archive_id && result.result === 'confirmed' && result.status === 'succeeded'),
-    description: current && (confirmed || rejected) ? [result.actor_user_id, result.completed_at ?? result.decided_at, result.comment].filter(Boolean).join(' · ') : '',
+    description: current && (confirmed || rejected) ? (result.comment ?? '') : '',
   }
 }
