@@ -1034,6 +1034,15 @@ def _auto_approved_body(label: str, locale: str) -> str:
     return _AUTO_APPROVED_BODY.get(loc, _AUTO_APPROVED_BODY["ko"]).format(label=label)
 
 
+def _canonical_doc_module(project_id: str, group_id: str, requested: Optional[str]) -> str:
+    """Module a new document of ``group_id`` is numbered/stored under (v02gui.0012 0001-B item B)."""
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.db import module_identifiers
+    return module_identifiers.canonical_group_module(
+        project_id, db_groups.get_by_id(group_id), requested
+    ) or "none"
+
+
 @router.post("/related", status_code=201)
 @require_permission("perm_document_create")
 def create_related_document(
@@ -1063,12 +1072,21 @@ def create_related_document(
 
     _reject_if_group_ai_running({"group_id": body.group_id})
 
+    # v02gui.0012: number, store and record the document under the group's permanent module
+    # key, never under whatever module the request carried (an exposed Group identifier
+    # included) — one Flow keeps one id_counter row and one storage directory.
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.db import module_identifiers
+    doc_module = module_identifiers.canonical_group_module(
+        body.project_id, db_groups.get_by_id(body.group_id), body.module
+    )
+
     # Assign a number using D009 id_counter (numbering)
     try:
         doc_code = numbering_service.reserve_document(
             group_id=body.group_id,
             doc_type=body.type_code,
-            module=body.module,
+            module=doc_module,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1087,7 +1105,7 @@ def create_related_document(
         group_code=body.group_id,
         doc_code=doc_code,
         filename=f"{slug}.md",
-        module=body.module,
+        module=doc_module,
         branch=_get_project_branch(body.project_id),
     )
 
@@ -1116,7 +1134,7 @@ def create_related_document(
     data: dict[str, Any] = {
         "doc_id": doc_id,
         "project_id": body.project_id,
-        "module": body.module,
+        "module": doc_module,
         "group_id": body.group_id,
         "type_code": body.type_code,
         "seq": seq,
@@ -1162,7 +1180,8 @@ def create_next_empty_document(
 
     title = (body.title or "").strip()
     type_code = (body.type_code or "").strip().upper()
-    module = body.module or "none"
+    # v02gui.0012: the group's permanent module key wins over the request's module.
+    module = _canonical_doc_module(body.project_id, body.group_id, body.module)
     if type_code != WORK_PLAN_TYPE and not title:
         raise HTTPException(status_code=422, detail="Title is required.")
     if type_code != WORK_PLAN_TYPE and len(title) > 100:
@@ -2156,7 +2175,8 @@ def create_next_approved_document(
         return create_next_approved_core(
             project_id=body.project_id,
             group_id=body.group_id,
-            module=body.module or "none",
+            # v02gui.0012: the group's permanent module key wins over the request's module.
+            module=_canonical_doc_module(body.project_id, body.group_id, body.module),
             prev_doc_id=body.prev_doc_id,
             type_code=body.type_code,
             actor_user_id=current_user["user_id"],

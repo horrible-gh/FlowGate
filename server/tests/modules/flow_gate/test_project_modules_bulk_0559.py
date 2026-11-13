@@ -228,6 +228,9 @@ def warm_pm_probe(seed):
     from modules.flow_gate.db.connection import get_store
 
     assert projects._project_modules_table_exists(get_store()) is True
+    # v02gui.0012: the identifier-table probe (migration 187) is cached the same way.
+    from modules.flow_gate.db import module_identifiers
+    assert module_identifiers._table_exists(get_store()) is True
     yield
 
 

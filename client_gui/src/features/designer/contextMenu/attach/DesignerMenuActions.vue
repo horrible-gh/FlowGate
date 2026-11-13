@@ -37,11 +37,19 @@
 
         <!-- 이름 변경 -->
         <template v-if="shown.kind === 'group.rename' || shown.kind === 'flow.rename'">
-          <p class="dma-note">{{ t('rename.note') }}</p>
+          <p class="dma-note">{{ shown.kind === 'group.rename' ? t('rename.groupNote') : t('rename.note') }}</p>
           <label class="dma-label" for="dma-name">{{ t('rename.name') }}</label>
           <Input id="dma-name" :model-value="text" :invalid="!!nameError" data-modal-autofocus data-test="dma-input"
             @update:model-value="text = $event" @keydown.enter.prevent="submit" />
           <p v-if="nameError" class="dma-error" data-test="dma-input-error">{{ nameError }}</p>
+          <!-- v02gui.0012: the Group identifier changes on its own; the name may stay as it is. -->
+          <template v-if="shown.kind === 'group.rename'">
+            <label class="dma-label" for="dma-ident">{{ t('rename.ident') }}</label>
+            <Input id="dma-ident" :model-value="identText" :invalid="!!identError" data-test="dma-ident"
+              @update:model-value="identText = $event" @keydown.enter.prevent="submit" />
+            <p v-if="identError" class="dma-error" data-test="dma-ident-error">{{ identError }}</p>
+            <p v-else class="dma-hint" data-test="dma-ident-hint">{{ t('rename.identHint') }}</p>
+          </template>
         </template>
 
         <!-- Flow 삭제 = the existing dispose (DC) -->
@@ -177,6 +185,7 @@ import {
   baseName,
   diffRows,
   entryNameProblem,
+  groupIdentifierProblem,
   lineDiff,
   type DesignerMenuServerDeps,
   type DiffLine,
@@ -206,6 +215,8 @@ const pending = computed(() => props.actions.pending.value)
 const shown = computed<MenuActionTarget | null>(() => (pending.value && pending.value.target.kind !== 'file.download' ? pending.value.target : null))
 
 const text = ref('')
+/** 그룹 이름 변경: the identifier input (v02gui.0012). */
+const identText = ref('')
 const tried = ref(false)
 // The delete reason was typed in and left empty: the only moment its input error shows.
 const reasonTouched = ref(false)
@@ -240,6 +251,8 @@ const flowNow = computed(() => {
   return target && (target.kind === 'flow.rename' || target.kind === 'flow.delete') ? props.actions.server.flow(target.projectId, target.flowId) : null
 })
 const currentName = computed(() => groupNow.value?.name ?? flowNow.value ?? '')
+/** The Group's identifier now (the Explorer's moduleName: the server's exposed identifier). */
+const currentIdent = computed(() => groupNow.value?.moduleName ?? '')
 
 const title = computed(() => {
   switch (shown.value?.kind) {
@@ -273,7 +286,7 @@ const facts = computed(() => {
   if (target.kind === 'group.rename') {
     return [
       { key: 'target', label: t('target'), value: currentName.value || target.groupId },
-      { key: 'id', label: t('id'), value: groupNow.value?.moduleName ?? target.groupId },
+      { key: 'id', label: t('id'), value: currentIdent.value || target.groupId },
     ]
   }
   if (target.kind === 'flow.rename' || target.kind === 'flow.delete') {
@@ -300,7 +313,12 @@ const facts = computed(() => {
 
 const nameError = computed(() => {
   const kind = shown.value?.kind
-  if (kind === 'group.rename' || kind === 'flow.rename') {
+  if (kind === 'group.rename') {
+    if (!text.value.trim()) return tried.value ? t('rename.required') : null
+    // Name and identifier change independently: "same" only when neither changed.
+    return !groupChanged.value && !identError.value ? t('rename.unchanged') : null
+  }
+  if (kind === 'flow.rename') {
     if (!text.value.trim()) return tried.value ? t('rename.required') : null
     return text.value.trim() === currentName.value ? t('rename.same') : null
   }
@@ -312,13 +330,26 @@ const nameError = computed(() => {
   return null
 })
 
+/** The same rules as the server (module_identifiers.validate_identifier_format); the server still decides. */
+const identError = computed(() => {
+  if (shown.value?.kind !== 'group.rename') return null
+  const value = identText.value.trim()
+  if (value === currentIdent.value) return null
+  const problem = groupIdentifierProblem(value)
+  return problem ? t(`rename.identProblem.${problem}`) : null
+})
+const groupChanged = computed(() =>
+  text.value.trim() !== currentName.value || identText.value.trim() !== currentIdent.value)
+
 const conflicts = computed(() => (existing.value ? files.value.map((file) => file.name).filter((name) => existing.value!.includes(name)) : []))
 
 const canSubmit = computed(() => {
   const target = shown.value
   if (!target || busy.value || stale.value) return false
   switch (target.kind) {
-    case 'group.rename': case 'flow.rename':
+    case 'group.rename':
+      return !!text.value.trim() && !identError.value && groupChanged.value
+    case 'flow.rename':
       return !!text.value.trim() && text.value.trim() !== currentName.value
     case 'flow.delete': return !!text.value.trim()
     case 'folder.newFolder': case 'folder.newFile': return entryNameProblem(text.value) === null
@@ -361,6 +392,7 @@ function endMark(line: DiffLine): string {
 function reset() {
   windowSeq += 1
   text.value = ''
+  identText.value = ''
   tried.value = false
   reasonTouched.value = false
   busy.value = false
@@ -445,6 +477,7 @@ watch(() => pending.value?.seq, () => {
     return
   }
   if (target.kind === 'group.rename' || target.kind === 'flow.rename') text.value = currentName.value
+  if (target.kind === 'group.rename') identText.value = currentIdent.value
   if (target.kind === 'file.git.changes') void readDiff()
 }, { immediate: true })
 
@@ -482,7 +515,12 @@ async function submit() {
   const name = text.value.trim()
   let answer: { ok: boolean; refusal?: MenuActionRefusal; value?: unknown }
   switch (target.kind) {
-    case 'group.rename': answer = await server.renameGroup(target.projectId, target.groupId, name); break
+    case 'group.rename': {
+      // Only a changed identifier is sent; an unchanged one leaves the server's identifier alone.
+      const ident = identText.value.trim()
+      answer = await server.renameGroup(target.projectId, target.groupId, name, ident !== currentIdent.value ? ident : undefined)
+      break
+    }
     case 'flow.rename': answer = await server.renameFlow(target.projectId, target.groupId, target.flowId, name); break
     case 'flow.delete': answer = await server.disposeFlow(target.projectId, target.groupId, target.flowId, name); break
     case 'folder.newFolder': case 'folder.newFile':

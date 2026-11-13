@@ -167,6 +167,10 @@ def list_groups_for_module(
         return _fail(422, str(exc))
 
     store = get_store()
+    if project_id:
+        # v02gui.0012: a changed (or retired) identifier still lists the module's groups.
+        from modules.flow_gate.db import module_identifiers
+        module = module_identifiers.resolve_module_key(project_id, module, store)
 
     module_title_row = store._fetch_one(
         "SELECT title FROM project_modules WHERE project_id = ? AND name = ?",
@@ -408,6 +412,10 @@ def create_module(request: Request, project_id: str, body: _CreateModuleBody):
     )
     if existing:
         return _fail(409, f"Module '{name}' already exists")
+    from modules.flow_gate.db import module_identifiers
+    if module_identifiers.resolve_module_key(project_id, name, store) != name:
+        # v02gui.0012: an identifier another module uses (or used) stays reserved for it.
+        return _fail(409, f"Module '{name}' already exists")
 
     title = (body.title or "").strip() or name
     now = now_iso()
@@ -432,22 +440,44 @@ def create_module(request: Request, project_id: str, body: _CreateModuleBody):
 # ── PATCH /projects/{project_id}/modules/{module_name} (T559) ────────────────
 
 class _PatchModuleBody(BaseModel):
-    title: str
+    # Display name. Omitted (or unchanged) keeps the current title.
+    title: Optional[str] = None
+    # New exposed identifier (flowgate.v02gui.0012 0001-B item B). Omitted keeps it.
+    name: Optional[str] = None
+
+
+def _fail_code(status: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status,
+        content={"ok": False, "http_status": status, "code": code,
+                 "error_message": message, "help_url": help_url()},
+    )
 
 
 @router.patch("/projects/{project_id}/modules/{module_name}")
 def patch_module(request: Request, project_id: str, module_name: str, body: _PatchModuleBody):
-    """Update module display name (title) (T559).
+    """Update a module's display name (title) and/or exposed identifier (T559, v02gui.0012).
 
-    slug(name) is immutable. Only title is updated.
+    ``module_name`` may be the permanent key or any identifier the module had (current or retired).
+    The permanent key is never rewritten: ``groups.module``, ``documents.module``, ``group_id``,
+    ``id_counter`` and branch names keep it, so no document, Flow, chat, run history or Git state
+    moves. An identifier change only records the new exposed identifier
+    (module_identifiers.rename_identifier); the old one stays reserved and keeps resolving.
+    Title and identifier are independent: either, both or neither may change.
     """
+    from modules.flow_gate.db import module_identifiers
+
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
 
-    title = (body.title or "").strip()
-    if not title:
-        return _fail(400, "title is required")
+    if body.title is None and body.name is None:
+        return _fail_code(400, "module_patch_empty", "title or name is required")
+    title_in = None if body.title is None else body.title.strip()
+    if title_in is not None and not title_in:
+        return _fail_code(400, "module_title_required", "title is required")
+    if title_in is not None and len(title_in) > 100:
+        return _fail_code(422, "module_title_too_long", "title must be 100 characters or fewer")
 
     try:
         validate_module_name(module_name)
@@ -455,25 +485,69 @@ def patch_module(request: Request, project_id: str, module_name: str, body: _Pat
         return _fail(422, str(exc))
 
     store = get_store()
+    module_key = module_identifiers.resolve_module_key(project_id, module_name, store)
 
     existing = store._fetch_one(
         "SELECT module_id, name, title FROM project_modules WHERE project_id = ? AND name = ?",
-        [project_id, module_name],
+        [project_id, module_key],
     )
     if existing is None:
-        return _fail(404, f"Module '{module_name}' not found")
+        # A module known only through groups.module (created before project_modules) can still be
+        # edited: give it its project_modules row first.
+        in_groups = store._fetch_one(
+            "SELECT 1 AS hit FROM groups WHERE project_id = ? AND module = ? LIMIT 1",
+            [project_id, module_key],
+        )
+        if in_groups is None or module_key == "none":
+            return _fail_code(404, "module_not_found", f"Module '{module_name}' not found")
+
+    current_identifier = module_identifiers.exposed_identifier(project_id, module_key, store)
+    current_title = ((existing or {}).get("title") or "").strip() or module_key
+    new_title = title_in if title_in is not None else current_title
+    new_identifier = current_identifier
+    if body.name is not None:
+        new_identifier = body.name.strip()
+    title_changed = new_title != current_title
+    identifier_changed = new_identifier != current_identifier
 
     now = now_iso()
-    store._execute(
-        "UPDATE project_modules SET title = ?, updated_at = ? WHERE project_id = ? AND name = ?",
-        [title, now, project_id, module_name],
-    )
+    module_id = (existing or {}).get("module_id") or f"{project_id}:{module_key}"
+    if title_changed or identifier_changed:
+        try:
+            with store.transaction():
+                if existing is None:
+                    store._execute(
+                        "INSERT INTO project_modules (module_id, project_id, name, title, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        [module_id, project_id, module_key, new_title, now, now],
+                    )
+                elif title_changed:
+                    store._execute(
+                        "UPDATE project_modules SET title = ?, updated_at = ? WHERE project_id = ? AND name = ?",
+                        [new_title, now, project_id, module_key],
+                    )
+                if identifier_changed:
+                    new_identifier = module_identifiers.rename_identifier(
+                        project_id, module_key, new_identifier, store
+                    )
+        except module_identifiers.ModuleIdentifierError as exc:
+            return _fail_code(exc.status, exc.code, exc.message)
+        except Exception as exc:  # noqa: BLE001 — a lost race on the identifier PRIMARY KEY lands here
+            if identifier_changed and module_identifiers.resolve_module_key(project_id, new_identifier, store) != module_key:
+                return _fail_code(
+                    409, "module_identifier_taken",
+                    f"Identifier '{new_identifier}' already exists (another group uses it).",
+                )
+            raise exc
 
     return JSONResponse(content={
         "ok": True,
-        "module_id": existing["module_id"],
+        "module_id": module_id,
         "project_id": project_id,
-        "name": module_name,
-        "title": title,
+        "name": new_identifier,
+        "module_key": module_key,
+        "title": new_title,
+        "title_changed": title_changed,
+        "identifier_changed": identifier_changed,
         "updated_at": now,
     })

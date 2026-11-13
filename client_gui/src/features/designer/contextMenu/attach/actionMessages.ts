@@ -8,6 +8,13 @@ const ko = {
   rename: {
     groupTitle: '그룹 이름 변경', flowTitle: '플로우 이름 변경', name: '새 이름', submit: '이름 변경',
     note: '표시 이름만 바뀝니다. 식별자는 그대로입니다.', required: '이름을 입력하세요.', same: '지금 이름과 같습니다.',
+    groupNote: '이름과 식별자를 따로 바꿀 수 있습니다. 식별자를 바꿔도 플로우·문서 ID와 브랜치는 그대로이고, 이전 식별자는 이 그룹 몫으로 남습니다.',
+    ident: '식별자', identHint: '영문 소문자·숫자·-·_ (최대 40자)', unchanged: '이름과 식별자가 지금과 같습니다.',
+    identProblem: {
+      empty: '식별자를 입력하세요.', upper: '식별자는 소문자만 쓸 수 있습니다.',
+      chars: '식별자에는 영문 소문자·숫자·-·_만 쓸 수 있습니다.', long: '식별자는 40자 이하여야 합니다.',
+      reserved: '예약된 식별자라 쓸 수 없습니다.',
+    },
   },
   dispose: {
     title: '플로우 삭제', submit: '삭제', reason: '삭제 사유', reasonRequired: '사유를 입력해야 삭제할 수 있습니다.',
@@ -57,6 +64,13 @@ const en: Messages = {
   rename: {
     groupTitle: 'Rename group', flowTitle: 'Rename flow', name: 'New name', submit: 'Rename',
     note: 'Only the display name changes. The identifier stays.', required: 'Enter a name.', same: 'Same as the current name.',
+    groupNote: 'Name and identifier change independently. Flow and document ids and branches stay; the old identifier stays reserved for this group.',
+    ident: 'Identifier', identHint: 'Lowercase letters, digits, - and _ (up to 40)', unchanged: 'Name and identifier are unchanged.',
+    identProblem: {
+      empty: 'Enter an identifier.', upper: 'Identifiers are lowercase only.',
+      chars: 'Use only lowercase letters, digits, - and _.', long: 'Identifiers are 40 characters or fewer.',
+      reserved: 'This identifier is reserved.',
+    },
   },
   dispose: {
     title: 'Delete flow', submit: 'Delete', reason: 'Reason', reasonRequired: 'A reason is required to delete.',
@@ -104,6 +118,13 @@ const ja: Messages = {
   rename: {
     groupTitle: 'グループ名を変更', flowTitle: 'フロー名を変更', name: '新しい名前', submit: '名前を変更',
     note: '表示名だけが変わります。識別子はそのままです。', required: '名前を入力してください。', same: '今の名前と同じです。',
+    groupNote: '名前と識別子は別々に変更できます。識別子を変えてもフロー・文書IDとブランチはそのままで、以前の識別子はこのグループ用に残ります。',
+    ident: '識別子', identHint: '英小文字・数字・-・_(最大40文字)', unchanged: '名前と識別子が今と同じです。',
+    identProblem: {
+      empty: '識別子を入力してください。', upper: '識別子は小文字のみ使えます。',
+      chars: '識別子には英小文字・数字・-・_のみ使えます。', long: '識別子は40文字以下にしてください。',
+      reserved: '予約済みの識別子のため使えません。',
+    },
   },
   dispose: {
     title: 'フローを削除', submit: '削除', reason: '削除理由', reasonRequired: '理由を入力すると削除できます。',

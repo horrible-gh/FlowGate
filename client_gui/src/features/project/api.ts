@@ -847,12 +847,15 @@ function refused(error: unknown, fallback: string): Error {
 }
 
 /**
- * PATCH /api/v1/projects/{pid}/modules/{name} — a Group's display name (v0.1 module title). The module key
- * (`name`) and so the Group id stay as they are (server T559: slug immutable).
+ * PATCH /api/v1/projects/{pid}/modules/{name} — a Group's display name (v0.1 module title) and, when `identifier`
+ * is given, its exposed identifier (v02gui.0012). The server keeps the module's permanent key, so Flow ids,
+ * document ids/paths, branches and the Explorer's Group node id stay as they are; the old identifier keeps resolving.
  */
-export async function renameGroup(projectId: string, moduleName: string, title: string): Promise<void> {
+export async function renameGroup(projectId: string, moduleName: string, title: string, identifier?: string): Promise<void> {
   try {
-    await patchRequest(`${projectPath(projectId)}/modules/${encodeURIComponent(moduleName)}`, { title })
+    const body: { title: string; name?: string } = { title }
+    if (identifier !== undefined) body.name = identifier
+    await patchRequest(`${projectPath(projectId)}/modules/${encodeURIComponent(moduleName)}`, body)
   } catch (error) {
     throw refused(error, 'Failed to rename the group.')
   }
