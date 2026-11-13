@@ -142,7 +142,7 @@ class AgentService:
   raw=secret("agc_"); d=digest("enrollment",b["enrollment_token"]); ts=stamp()
   with self.s.transaction():
    e=self.s._fetch_one("""SELECT e.*,a.enabled,a.location FROM agent_enrollments e JOIN agents a ON a.agent_id=e.agent_id
- WHERE e.token_digest=? AND e.consumed_at IS NULL AND e.revoked_at IS NULL AND e.expires_at>?""",[d,ts])
+ WHERE e.token_digest=? AND e.consumed_at IS NULL AND e.revoked_at IS NULL AND e.expires_at>? AND a.deleted_at IS NULL""",[d,ts])
    if not e or not _bool(e["enabled"]) or e["location"]!="remote": raise AgentError(409,"enrollment_unavailable","Enrollment token is unavailable")
    if b["protocol_version"] not in SUPPORTED: raise AgentError(409,"protocol_incompatible","Unsupported Agent protocol version",{"received_version":b["protocol_version"],"supported_versions":SUPPORTED})
    if self.s._execute_affected("UPDATE agent_enrollments SET consumed_at=? WHERE enrollment_id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?",[ts,e["enrollment_id"],ts])!=1:
@@ -153,7 +153,9 @@ class AgentService:
   return {"agent_id":e["agent_id"],"agent_credential":raw,"protocol_version":1,"supported_protocol_versions":SUPPORTED,"heartbeat_interval_seconds":HEARTBEAT_INTERVAL,"online_ttl_seconds":ONLINE_TTL}
  def authenticate(self,raw):
   if not raw or not raw.startswith("agc_"): raise AgentError(401,"unauthorized","Invalid Agent credential")
-  r=self.s._fetch_one("""SELECT c.credential_id,c.agent_id,a.enabled,a.location,a.owner_user_id FROM agent_credentials c JOIN agents a ON a.agent_id=c.agent_id WHERE c.credential_digest=? AND c.revoked_at IS NULL""",[digest("agent_credential",raw)])
+  # flowgate.v02gui.0008: a deleted Agent never authenticates, even if a credential outlived delete()
+  # (an enroll committing between its credential and enrollment revocations). Same for enroll above.
+  r=self.s._fetch_one("""SELECT c.credential_id,c.agent_id,a.enabled,a.location,a.owner_user_id FROM agent_credentials c JOIN agents a ON a.agent_id=c.agent_id WHERE c.credential_digest=? AND c.revoked_at IS NULL AND a.deleted_at IS NULL""",[digest("agent_credential",raw)])
   if not r: raise AgentError(401,"unauthorized","Invalid Agent credential")
   if not _bool(r["enabled"]): raise AgentError(403,"agent_disabled","Agent is disabled")
   if r.get("owner_user_id"):

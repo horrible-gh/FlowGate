@@ -69,6 +69,29 @@ def test_personal_enrollment_authentication_and_invalid_scope_fields(env):
     assert env.client.get(ME+"/"+aid, headers=env.h("M")).status_code == 404
 
 
+def test_deleted_personal_agent_never_authenticates_or_enrolls(env):
+    # flowgate.v02gui.0008: an enroll committing between delete()'s credential and enrollment
+    # revocations can leave an active credential (and a consumed token) on a deleted Agent. Simulate
+    # the survivors directly: neither may authenticate, heartbeat, claim nor enroll. History stays.
+    from modules.flow_gate.api.v1.agent_job_routes import router
+    env.client.app.include_router(router, prefix=API)
+    aid = create_personal(env)["agent_id"]
+    token = env.client.post(ME+"/"+aid+"/enrollments", json={}, headers=env.h("M")).json()["enrollment_token"]
+    credential = env.enroll(token).json()["agent_credential"]
+    assert env.heartbeat(aid, credential).status_code == 200
+    pending = env.client.post(ME+"/"+aid+"/enrollments", json={}, headers=env.h("M")).json()["enrollment_token"]
+    # The new token revoked nothing of the credential; delete revokes both.
+    assert env.client.delete(ME+"/"+aid, headers=env.h("M")).status_code == 204
+    env.store._execute("UPDATE agent_credentials SET revoked_at=NULL WHERE agent_id=?", [aid])
+    env.store._execute("UPDATE agent_enrollments SET revoked_at=NULL WHERE agent_id=? AND consumed_at IS NULL", [aid])
+    assert env.heartbeat(aid, credential).status_code == 401
+    claim = env.client.post(API+"/agent/jobs/claim", json={}, headers={"Authorization": "Bearer "+credential})
+    assert claim.status_code == 401
+    assert env.enroll(pending).status_code == 409
+    assert env.store._fetch_one("SELECT COUNT(*) n FROM agent_credentials WHERE agent_id=?", [aid])["n"] == 1
+    assert env.store._fetch_one("SELECT deleted_at FROM agents WHERE agent_id=?", [aid])["deleted_at"]
+
+
 def test_personal_jobs_require_requester_project_and_live_permissions(env):
     from modules.flow_gate.rbac import role_service
     from modules.flow_gate.api.v1.agent_job_routes import router
