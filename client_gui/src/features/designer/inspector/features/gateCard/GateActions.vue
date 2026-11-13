@@ -17,8 +17,8 @@ const { t } = useI18n()
 const k = (key: string) => `gui.inspector.gateCard.${key}`
 const { actions, busy, failureKey, decide } = props.state ?? useGateDecision(() => props.target)
 // flowgate.v02gui.0004 (0001-B 관찰 5/6): a blocked [승인] says why beside it, not only in a tooltip. `busy` is the
-// button's own spinner and "not your turn yet" needs no line.
-const SHOWN_REASONS = ['reason.conflict', 'reason.decision_in_progress', 'reason.read_only_conflict', 'reason.read_only_archived']
+// button's own spinner, "not your turn yet" needs no line, and a conflict is already the result row's pill.
+const SHOWN_REASONS = ['reason.decision_in_progress', 'reason.read_only_conflict', 'reason.read_only_archived']
 const shownReason = computed(() => {
   const reason = actions.value.confirm.reason
   if (actions.value.confirm.enabled || !reason || !SHOWN_REASONS.includes(reason)) return null

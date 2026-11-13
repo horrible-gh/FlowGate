@@ -181,6 +181,6 @@ export function gateResult(node: { status: string; attemptId?: string | null; ga
     key: state.key === 'pending' || state.key === 'waiting_confirm' ? 'before' : state.key,
     tone: state.tone,
     archived: !!(confirmed && current && gate?.archived && result?.archived && result.archive_id && result.result === 'confirmed' && result.status === 'succeeded'),
-    description: current && (confirmed || rejected) ? [result.actor_user_id, result.completed_at ?? result.decided_at, result.comment].filter(Boolean).join(' · ') : '',
+    description: current && (confirmed || rejected) ? (result.comment ?? '') : '',
   }
 }

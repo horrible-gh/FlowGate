@@ -9,7 +9,6 @@
       <span v-if="decision.result.value.description" data-test="gate-result-description">{{ decision.result.value.description }}</span>
     </div>
     <div v-if="shape === 'gate' && decision.result.value.key === 'conflict_review'" class="inspector-gate-conflict" role="status" data-test="gate-conflict-line">
-      <span>{{ t(k('conflict.line')) }}</span>
       <button type="button" class="inspector-gate-conflict-go" data-test="gate-conflict-open-git" @click="openGit">{{ t(k('conflict.open')) }}</button>
     </div>
     <GateSettingsSummary v-if="shape === 'gate'" :node="decision.settings.value" :decision="decision.receipt.value" :error-code="decision.errorCode.value" hide-target />

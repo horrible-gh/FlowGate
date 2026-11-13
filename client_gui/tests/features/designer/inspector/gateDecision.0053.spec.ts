@@ -99,7 +99,7 @@ describe('gate Inspector — D §8-10', () => {
     stream.open(); stream.emit('gate_publish_job_changed', { groupId: target.flowId })
     await new Promise(r => setTimeout(r, 240)); await flushPromises()
     expect(w.find('[data-test="gate-result-value"]').exists()).toBe(false)
-    expect(w.get('[data-test="gate-result-description"]').text()).toContain('kim · 2026-10-24T12:00:00Z · reviewed')
+    expect(w.get('[data-test="gate-result-description"]').text()).toBe('reviewed')
     expect(w.find('[data-test="gate-archived"]').exists()).toBe(false)
     expect(w.find('[data-test="gate-confirm"]').exists()).toBe(false)
   })
