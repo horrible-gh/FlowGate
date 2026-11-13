@@ -307,6 +307,8 @@ def _encoding_probe_paragraph(token_id: str) -> list[str]:
         "If it arrives intact, the path carried every Unicode character and no corruption check",
         "runs, so any text is fine ('??' included), in any language. If it arrives damaged, the",
         "turn is refused with the cause; fix the transport, not the text.",
+        "The same line works for a document body you save from this chat (card document or",
+        "doc_id revisions): put it as the last line of `content`; it is removed before saving.",
         "Transport: write the body (probe line last) to a UTF-8 file, then send it with a script",
         "that reads that file and posts ASCII-only JSON, e.g. Python",
         "`json.dumps(payload).encode(\"ascii\")` (json.dumps escapes non-ASCII by default). Never",

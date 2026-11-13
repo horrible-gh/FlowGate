@@ -2873,6 +2873,25 @@ def _register_envelope(context: dict, run: dict, tool_input: Optional[dict]) -> 
     return body
 
 
+def _attach_document_probe(body: dict, token_rec) -> None:
+    """flowgate.v02gui.0009: end an API run's document body with its token's encoding probe.
+
+    This hop is Python -> JSON, never a console, so the probe always matches and the
+    body is exempt from the corruption heuristics ('?' stays punctuation). The server
+    splits the line off before any guard or the stored file sees it; a model-supplied
+    body fingerprint (computed without the probe) is still accepted against the body
+    without it. An empty body stays empty (the server still rejects it as empty).
+    """
+    from modules.flow_gate.services import encoding_probe
+    content = body.get("content")
+    token_id = token_rec.get("token_id") if isinstance(token_rec, dict) else None
+    probe = encoding_probe.probe_for(str(token_id or ""))
+    if not probe or not isinstance(content, str) or not content.strip():
+        return
+    separator = "" if content.endswith("\n") else "\n"
+    body["content"] = f"{content}{separator}{probe}\n"
+
+
 def _post_inbox_json(run: dict, raw_token: str, body: dict) -> tuple[int, dict]:
     """Send one strict UTF-8 JSON request to the local inbox boundary."""
     req = urllib.request.Request(
@@ -2941,6 +2960,8 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
 
     # Assemble review meaning once. The two requests only add transport fields.
     body = _svc()._register_envelope(context, run, tool_input)
+    if context["action"] in ("new", "edit"):
+        _attach_document_probe(body, _token_rec)
     if context["action"] != "review":
         try:
             status, result = _post_inbox_json(run, raw_token, body)

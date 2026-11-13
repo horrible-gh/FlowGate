@@ -140,6 +140,17 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
         onLoading: () => update({ phase: 'loading', stage: 'load', attempt: 1 }),
         trace,
       })
+      // flowgate.v02gui.0009: once the create made the chat, its first message is sent to it even when the screen
+      // moved on (another Flow, chat or draft) during the create or while the chat opened: the send goes on off screen,
+      // to that chat only, and the composer's draft clears only when the server accepted it. Never another user's.
+      const madeOffScreen = result.chatId !== null && result.scope !== null &&
+        (result.status === 'created' ? !ownsScreen(origin) : result.status === 'cancelled')
+      if (madeOffScreen) {
+        operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
+        if (origin.owner.userId !== draftUserId()) return false
+        return await session.send(text, { status: 'created', chatId: result.chatId!, scope: result.scope!, draftIntentId: result.draftIntentId,
+          createIntentId: result.createIntentId ?? origin.createIntentId!, providerId }, trace, origin)
+      }
       if (result.status !== 'created' || !ownsScreen(origin)) {
         if (result.status === 'failed') {
           const stage = currentOperation()?.status.stage ?? 'create'

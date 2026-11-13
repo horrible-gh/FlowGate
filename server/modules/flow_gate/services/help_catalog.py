@@ -1025,6 +1025,30 @@ def _module_and_group(ctx: dict) -> tuple[str, str]:
     return "none", ctx.get("group_id") or ""
 
 
+# flowgate.v02gui.0009: the per-token encoding probe for a document body (new / edit).
+# ASCII on purpose: the rule must survive the very consoles it warns about.
+_ENCODING_PROBE_RULE = (
+    "Make `line` the LAST line of the body file (content or doc_path), exactly as given. "
+    "FlowGate checks it and removes it before saving. Intact = the path carried every "
+    "Unicode character, so no corruption check runs on the body: any text in any language "
+    "is fine, '??' included. Damaged = refused with the cause, even with "
+    "force_encoding_reason; fix the transport, not the text: write the body to a UTF-8 file "
+    "and post it with a script that reads the file and sends ASCII-only JSON (e.g. Python "
+    "json.dumps defaults). Never put the body on a command line or through a console pipe, "
+    "redirect, Set-Content or Out-File. If you send body_chars/body_sha256, compute them "
+    "from that same file, probe line included."
+)
+
+
+def _encoding_probe_for(ctx: dict) -> Optional[str]:
+    from modules.flow_gate.services import encoding_probe
+
+    token_rec = ctx.get("token_rec") or {}
+    if ctx.get("principal_kind") != "worker" or not token_rec.get("token_id"):
+        return None
+    return encoding_probe.probe_for(str(token_rec["token_id"]))
+
+
 def _content_submit(ctx: dict) -> dict:
     base = ctx["base_url"]
     scope = ctx.get("action_scope")
@@ -1173,6 +1197,9 @@ def _content_submit(ctx: dict) -> dict:
         "dry_run": dry_run,
         "encoding_guard": encoding_guard,
     }
+    probe = _encoding_probe_for(ctx)
+    if probe and not is_work_plan:
+        payload["encoding_probe"] = {"line": probe, "rule": _ENCODING_PROBE_RULE}
     if is_work_plan:
         payload["content_format"] = {
             "format": "canonical_json",

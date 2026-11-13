@@ -67,7 +67,7 @@ describe('0141 first submission boundary', () => {
     session.dispose()
   })
 
-  it('cancels an unsent continuation after a Flow switch', async () => {
+  it('flowgate.v02gui.0009: finishes an unsent continuation in its own chat after a Flow switch', async () => {
     const { source, session, start } = await setup()
     const history = deferred<any>()
     source.fetchTurns.mockImplementationOnce(() => history.promise)
@@ -76,8 +76,9 @@ describe('0141 first submission boundary', () => {
     expect(start.phase.value?.phase).toBe('loading')
     await session.setScope({ projectId: 'p', groupId: 'p.m.0002' })
     history.resolve({ turns: [], headSeq: 0, participants: [], nextAfterSeq: null, prevBeforeSeq: null })
-    expect(await sending).toBe(false)
-    expect(source.postTurn).not.toHaveBeenCalled()
+    expect(await sending).toBe(true)
+    expect(source.postTurn).toHaveBeenCalledTimes(1)
+    expect(source.postTurn).toHaveBeenCalledWith('p.m.0001.0010-CH', expect.objectContaining({ body: 'A', basedOnSeq: 0 }))
     expect(start.phase.value).toBeNull()
     session.dispose()
   })

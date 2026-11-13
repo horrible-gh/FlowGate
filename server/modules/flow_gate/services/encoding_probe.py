@@ -79,6 +79,28 @@ def split_probe(text: Optional[str], expected: Optional[str]) -> tuple[str, str,
     return "\n".join(lines[:idx]).rstrip("\r\n"), PROBE_MATCHED, candidate
 
 
+def split_document_probe(
+    text: Optional[str], expected: Optional[str]
+) -> tuple[str, str, Optional[str]]:
+    """``split_probe`` for a document body: everything before the probe line is kept as is.
+
+    A chat turn is trimmed anyway, but a document is stored byte for byte, so the
+    trailing newline(s) the author wrote before the probe line must survive: for
+    ``"body\n" + probe + "\n"`` the stored text is exactly ``"body\n"``. A broken or
+    absent probe leaves the text untouched, as in ``split_probe``.
+    """
+    text = text or ""
+    _stripped, status, received = split_probe(text, expected)
+    if status != PROBE_MATCHED:
+        return text, status, received
+    end = len(text)
+    while True:
+        start = text.rfind("\n", 0, end) + 1
+        if text[start:end].strip():
+            return text[:start], status, received
+        end = start - 1
+
+
 def describe_received(received: Optional[str], limit: int = 80) -> str:
     """ASCII-only rendering of a received probe for an error message.
 

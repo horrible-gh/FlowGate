@@ -232,14 +232,16 @@ class NonCardRule:
             raise _not_editable(fresh, "body_unreadable", body_state=body.state)
         if self.size_guard is not None:
             self.size_guard(fresh, body)
-        text = req.content
+        # flowgate.v02gui.0009: a worker's body may end with its encoding probe line.
+        probe = common_checks.split_probe(req.content, req.origin)
+        text = probe.text
         if len(text) > CONTENT_MAX_CHARS:
             raise invalid("invalid_content", "content", "invalid_format", fresh,
                           validation={"reason": "too_long", "max": CONTENT_MAX_CHARS})
         if hasattr(rule, "prepare"):
             text = rule.prepare(text, fresh, body)
         common_checks.identity_frontmatter(text, fresh, rule, body)
-        common_checks.encoding_guard(text, fresh, None, self.locale)
+        common_checks.encoding_guard(text, fresh, None, self.locale, origin=req.origin, probe=probe)
         return rule.validate_and_build(text, fresh, body)
 
 
