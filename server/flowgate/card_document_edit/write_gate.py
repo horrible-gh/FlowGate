@@ -3,7 +3,9 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
+import logging
 import os
+import stat
 
 from fastapi import HTTPException
 from modules.flow_gate.db import connection, documents
@@ -72,6 +74,78 @@ def path_index(paths):
 
 def refuse():
     raise HTTPException(status_code=409, detail='card_document_edit_required')
+
+
+# flowgate.v02gui.0011 (0004-CH): internal housekeeping locations under the global storage root S0.
+# The delete journal G (S0/.flowgate-gc, storage/filesystem.py) and the token / AI-run scratch roots
+# (S0/work/<project>/tok_*, S0/scratch/<project>/aiv*_*) hold lock files, journal records and scratch
+# trees, never a document. Yet every file operation of a scratch delete (lock open/unlink, journal
+# write/remove, the tree delete: 5-6 per folder) walked every document row twice, the second time under
+# the database-wide path mutex (~6 s a walk on the 9k-row stg store). A 6,593-folder backlog then took
+# days, kept 1-2.6 cores busy after every restart and made chat starts wait on the same mutex.
+# Such a target now skips the walk, but only while no document row can point into those roots.
+INTERNAL_DIRS = ('.flowgate-gc', 'work', 'scratch')
+# A row whose stored path mentions none of these cannot resolve into an internal root by its string
+# ('..' climbs, '~' is an 8.3 short name); a row that does is resolved in full before it is cleared.
+_INTERNAL_HINTS = ('.flowgate-gc', 'work', 'scratch', '..', '~')
+_log = logging.getLogger(__name__)
+_internal_warned = False
+
+
+def _norm(path):
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def _under(path, roots, *, equal=False):
+    return any((equal and path == root) or path.startswith(root + os.sep) for root in roots)
+
+
+def internal_only(paths=(), trees=()):
+    """True when every target lies strictly inside an internal root and no document row can point there.
+
+    Fail-closed: an error, a target outside (logically or once resolved), a hard-linked target file, or a
+    document row that resolves into an internal root answers False, and the caller runs the full gate.
+    """
+    global _internal_warned
+    targets = [p for p in (*paths, *trees) if p is not None]
+    if not targets:
+        return False
+    try:
+        s0 = Path(os.path.abspath(str(storage_paths.get_storage_root())))
+        roots = set()
+        for name in INTERNAL_DIRS:
+            roots.add(_norm(s0 / name))
+            roots.add(_norm(os.path.realpath(s0 / name)))
+        roots = tuple(roots)
+        for target in targets:
+            if not (_under(_norm(target), roots) and _under(_norm(os.path.realpath(target)), roots)):
+                return False
+        for target in paths:
+            if target is None:
+                continue
+            try:
+                st = os.lstat(target)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
+                return False  # a hard link may share a document's content
+        clauses = ' OR '.join(['LOWER(file_path) LIKE ?'] * len(_INTERNAL_HINTS))
+        rows = connection.get_store()._fetch_all(
+            "SELECT doc_id, project_id, branch, file_path FROM documents "
+            f"WHERE file_path IS NOT NULL AND TRIM(file_path) <> '' AND ({clauses})",
+            [f'%{hint}%' for hint in _INTERNAL_HINTS])
+        project_roots = {}
+        for doc in rows:
+            for resolved in candidate_paths(doc, project_roots):
+                if _under(_norm(resolved), roots, equal=True):
+                    if not _internal_warned:
+                        _internal_warned = True
+                        _log.warning('write gate: document %s resolves into an internal storage root; '
+                                     'internal paths take the full gate', doc.get('doc_id'))
+                    return False
+        return True
+    except Exception:
+        return False
 
 
 def transaction():
@@ -326,6 +400,9 @@ def guarded(docs, body):
 @contextmanager
 def paths_scope(paths, *, trees=()):
     paths, trees = tuple(paths), tuple(trees)
+    if internal_only(paths, trees):
+        yield  # an internal housekeeping file/tree, no document can be there (see internal_only)
+        return
     names = frozenset(path_key(p) for p in paths)
     covered = _checked_paths.get()
     if covered and covered[0] is transaction() and not trees and names.issubset(covered[1]):
