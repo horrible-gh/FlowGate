@@ -21,13 +21,14 @@ Pause (``POST /runs/{run_id}/pause``, T#2) keeps the run's work going; Stop ends
 (d) in the same guard the open / review nodes that are not done go back to ``pending``; outside it the worktrees of
     the attempts this Stop invalidated are removed (``workspace.cleanup``: Git locks are never taken inside a Flow
     guard);
-(e) then, only once every one of those worktrees is confirmed removed, in a last guard, the run becomes ``idle`` with
-    the reason ``stopped`` and the Flow is unlocked. Done nodes keep their state.
+(e) once each workspace is removed or retained safely, in a last guard the run becomes ``idle`` with
+    the reason ``stopped`` and the Flow is unlocked. Done nodes keep their state. v02gui.0013: stopped work is
+    automatically snapshotted to lasting refs before removal; a snapshot/cleanup failure retains the original
+    workspace but does not keep the run locked. Requested/running processes still block completion.
 
 A process whose end is not confirmed within the wait keeps the run ``stopping`` (a ``stop_pending`` run event names
-the reason) and nothing of (c)~(e) happens; the fence goes on refusing. So does a worktree whose removal failed (Git
-busy and the like): the run stays ``stopping`` and locked (``stop_pending``, ``worktree_cleanup_pending``) and its
-removal is retried. T#9: the run's merge sessions (``graph_attempt_merge``) are aborted before (c) (the abort under the
+the reason) and nothing of (c)~(e) happens; the fence goes on refusing. Worktree disposal failures instead
+record ``cleanup_preserved`` and keep the source for startup cleanup; they no longer block Stop. T#9: the run's merge sessions (``graph_attempt_merge``) are aborted before (c) (the abort under the
 group's G, ``result_merge.abort_for_stop``); while one of them is still open (G busy, the Git abort failed) nothing of
 (c)~(e) happens — no attempt is invalidated, no token revoked, no worktree removed, no node reset — and the run stays
 stopping (``stop_pending``, ``merge_session_abort_pending``) until a repeated Stop or the server start aborts it. An
@@ -350,7 +351,7 @@ def advance(flow_id: str, run_id: str, *, actor: Optional[str] = None,
         if held.get("pending"):
             log.warning("Graph stop waits for unconfirmed process ends run=%s executions=%s", run_id, held["pending"])
         return list(held.get("pending") or []), []
-    deferred = [a for a in held["attempts"] if not workspace.cleanup(a)]
+    deferred = [a for a in held["attempts"] if not workspace.cleanup_for_stop(a)]
     if deferred:
         # (d) is not complete: the run stays stopping (fenced, locked) and says why; the removal is retried by the
         # next advance (the execution's end, a repeated Stop, the start-up recovery).

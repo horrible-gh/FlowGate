@@ -690,6 +690,10 @@ const menuTargets = computed<DesignerMenuTargets>(() => ({
   canRedo: center.activeEdit.value?.canRedo === true && center.activeRunMarks.value.lock === null,
   // flowgate.v02.0061 T#14: a run command of the open Flow is being answered.
   runBusy: !!center.activeRun.value?.action,
+  runStopping: center.activeRun.value?.action === 'stop',
+  runStopRetry: center.activeRun.value?.error?.action === 'stop'
+    && center.activeRun.value.error.targetRunId === center.activeRun.value.run?.runId
+    && (center.activeRun.value.error.status === null || center.activeRun.value.error.status >= 500),
   // flowgate.v02.0061 TR0031 rev1: the open Flow's run status is not confirmed yet (being read, or the read failed).
   runUnknown: center.canRun && !center.activeRunStatus.value.known,
   // flowgate.v02.0143 T#1: an automatic Q&A responder answers the open Flow's idle run — 다음 단계 / 전체 실행 wait.

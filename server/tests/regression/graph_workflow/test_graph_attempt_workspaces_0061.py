@@ -28,6 +28,10 @@ PROJECT, GROUP = "p", "p.default.1"
 
 @pytest.fixture
 def harness(tmp_path, monkeypatch):
+    # Owner markers use the startup document-write port; this isolated Git/ledger fixture has no documents.
+    from contextlib import nullcontext
+    from modules.flow_gate.graph_workflow.services import card_document_ports as ports
+    monkeypatch.setitem(ports._handlers, ports.DOCUMENT_WRITE_GATE, lambda *_a, **_k: nullcontext())
     db = Store()
     db.db.executescript("""
         CREATE TABLE graph_runs(run_id TEXT PRIMARY KEY, group_id TEXT, status TEXT,

@@ -466,6 +466,10 @@ export interface DesignerMenuTargets {
   selectedCount?: number
   /** flowgate.v02.0061 T#14: a run command of the open Flow is being answered (every run command waits). */
   runBusy?: boolean
+  /** A Stop request is awaiting its response; show progress immediately. */
+  runStopping?: boolean
+  /** A failed Stop request for this run can be sent again, never inferred from stopping alone. */
+  runStopRetry?: boolean
   /** flowgate.v02.0061 TR0031 rev1: the open Flow's run status is not confirmed yet (every run command waits). */
   runUnknown?: boolean
   /** flowgate.v02.0143 T#1: an automatic Q&A responder answers the open Flow's idle run (`runCommandHold`): 다음 단계 / 전체 실행 wait. */
@@ -524,6 +528,7 @@ export function isMenuCommandEnabled(
   const minimum = arrangeSelectionMinimum(cmd)
   if (minimum !== null) return (targets.selectedCount ?? 0) >= minimum
   if (cmd.startsWith('run.')) {
+    if (cmd === 'run.stop' && runPhase === 'stopping' && targets.runStopRetry !== true) return false
     if (targets.runHold === true && HELD_RUN_COMMANDS.has(cmd)) return false             // flowgate.v02.0143 T#1
     return targets.runBusy !== true && targets.runUnknown !== true && isRunCommandEnabled(cmd, runPhase)
   }

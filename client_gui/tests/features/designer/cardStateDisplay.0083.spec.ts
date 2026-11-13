@@ -189,9 +189,36 @@ describe('the run band (designerTop.runBandTone, DesignerToolbar)', () => {
     const buttons = w.findAll('[data-test="designer-tool-run"]')
     expect(buttons.map(button => button.attributes('data-command'))).toEqual(commands)
     expect(w.find('[data-command="run.validate"]').exists()).toBe(true)
-    // 0156 T4 D8: a stopping run offers an enabled re-stop (the server's repeated Stop is idempotent).
     for (const button of buttons) await button.trigger('click')
-    expect(w.emitted('command')).toEqual(commands.map((command) => [command]))
+    if (facts.status === 'stopping') {
+      expect(buttons[0].attributes('disabled')).toBeDefined()
+      expect(buttons[0].text()).toContain('중지 중')
+      expect(w.emitted('command')).toBeUndefined()
+    } else {
+      expect(w.emitted('command')).toEqual(commands.map((command) => [command]))
+    }
+  })
+
+  it('shows Stop progress immediately, retries only a failed request, and restores execution after server idle', async () => {
+    const targets = { project: true, group: true, flow: true }
+    const w = mountToolbar(runBandView({ status: 'running' }), { targets: { ...targets, runBusy: true, runStopping: true } })
+    let button = w.get('[data-command="run.stop"]')
+    expect(button.text()).toContain('중지 중')
+    expect(button.attributes('disabled')).toBeDefined()
+    await w.setProps({ runPhase: 'stopping', targets })
+    button = w.get('[data-command="run.stop"]')
+    expect(button.text()).toContain('중지 중')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(w.find('[data-command="run.all"]').exists()).toBe(false)
+    await w.setProps({ targets: { ...targets, runStopRetry: true } })
+    button = w.get('[data-command="run.stop"]')
+    expect(button.text()).toContain('중지 재시도')
+    expect(button.attributes('disabled')).toBeUndefined()
+    await button.trigger('click')
+    expect(w.emitted('command')).toEqual([['run.stop']])
+    await w.setProps({ runPhase: 'idle', targets })
+    expect(w.find('[data-command="run.stop"]').exists()).toBe(false)
+    expect(w.get('[data-command="run.all"]').attributes('disabled')).toBeUndefined()
   })
 
   it('has no status area without a run or work target', () => {

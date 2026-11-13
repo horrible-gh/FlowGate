@@ -34,6 +34,7 @@ from modules.flow_gate.graph_workflow.services import card_document_ports as doc
 import json
 import logging
 import os
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -590,6 +591,7 @@ def _removable(row):
 
 
 PRESERVED = "cleanup_preserved"
+PRESERVED_REF_PREFIX = "refs/flowgate/preserved/"
 
 
 class _Preserved(Exception):
@@ -634,7 +636,51 @@ def _unkept_commit(repo, tips):
     return bool(result.stdout.strip())
 
 
-def _kept_elsewhere(row, project_id):
+def _snapshot_stopped(row, root, repo, tips):
+    """v02gui.0013: keep HEAD, the index and non-ignored working files without changing any of them.
+
+    Called only for user_stop, after ownership and process checks, under G/W/M. A private index and
+    commit-tree avoid hooks, signing and mutations of the real index/HEAD. Content-addressed refs never
+    overwrite an earlier backup. Unmerged indexes and submodules fail closed (their files need more than
+    a superproject commit). A failed check leaves the original workspace for a later cleanup.
+    """
+    def checked(args, *, env=None):
+        result = git._run_git(args, cwd=root, extra_env=env)
+        if result.returncode:
+            raise _Preserved("unverifiable", "stop_snapshot_" + args[0])
+        return result.stdout.strip()
+
+    def commit(tree, parents, message):
+        args = ["-c", "user.name=FlowGate", "-c", "user.email=flowgate@localhost",
+                "commit-tree", tree]
+        for parent in dict.fromkeys(p for p in parents if p):
+            args.extend(["-p", parent])
+        return checked([*args, "-m", message])
+
+    own_head = checked(["rev-parse", "HEAD^{commit}"])
+    index_tree = checked(["write-tree"])
+    indexed = commit(index_tree, [own_head, *tips], "Preserve stopped attempt index " + row["attempt_id"])
+    with tempfile.TemporaryDirectory(prefix="flowgate-stop-") as scratch:
+        env = {"GIT_INDEX_FILE": str(Path(scratch) / "index")}
+        checked(["read-tree", index_tree], env=env)
+        checked(["add", "--all", "--", "."], env=env)
+        if any(line.startswith("160000 ") for line in checked(["ls-files", "--stage"], env=env).splitlines()):
+            raise _Preserved("unverifiable", "stop_snapshot_submodule")
+        tree = checked(["write-tree"], env=env)
+        snapshot = commit(tree, [indexed], "Preserve stopped attempt files " + row["attempt_id"])
+        ref = PRESERVED_REF_PREFIX + merge_target.workspace_key(row["attempt_id"]) + "/" + snapshot
+        checked(["update-ref", ref, snapshot])
+        if git._rev_parse(repo, ref + "^{tree}") != tree:
+            raise _Preserved("unverifiable", "stop_snapshot_verify")
+        # Check again before removal; an unexpected writer must not lose a change made during the snapshot.
+        checked(["add", "--all", "--", "."], env=env)
+        if (checked(["write-tree"], env=env) != tree or checked(["write-tree"]) != index_tree
+                or checked(["rev-parse", "HEAD^{commit}"]) != own_head):
+            raise _Preserved("unverifiable", "stop_snapshot_changed")
+    return ref
+
+
+def _kept_elsewhere(row, project_id, *, snapshot_stop=False):
     """0111 T#1 (D-1a-0), under the Git locks, before anything is removed: the owner marker, repository, registration
     and branch still match (else ``unverifiable``); the tree has no uncommitted or untracked change (``status
     --porcelain --untracked-files=all`` prints nothing; ignored files are not judged and go with the tree) and the
@@ -653,13 +699,15 @@ def _kept_elsewhere(row, project_id):
         if any(entry["branch"] != (None if detached else branch) for entry in owned):
             raise _Preserved("unverifiable", "ref_mismatch" if detached else "branch_mismatch")
         head, own_head = _head(marker, branch), None
+        dirty = False
         if owned:
             _validate_tree(root, branch, marker)
             status = git._run_git(["--no-optional-locks", "status", "--porcelain", "--untracked-files=all"],
                                   cwd=root)
             if status.returncode:
                 raise _Preserved("unverifiable", "status_failed")
-            if status.stdout.strip():
+            dirty = bool(status.stdout.strip())
+            if dirty and not snapshot_stop:
                 raise _Preserved("dirty", "status")
             if detached:
                 own_head = git._rev_parse(root, "HEAD")
@@ -669,7 +717,11 @@ def _kept_elsewhere(row, project_id):
             # A tree Git no longer lists (a lost link, an interrupted add): what it holds cannot be told.
             raise _Preserved("unverifiable", "worktree_unregistered")
         tip = _tip(repo, head)
-        if _unkept_commit(repo, [tip, own_head]):
+        unkept = _unkept_commit(repo, [tip, own_head])
+        if snapshot_stop and (dirty or unkept) and owned:
+            _snapshot_stopped(row, root, repo, [tip, own_head])
+            unkept = _unkept_commit(repo, [tip, own_head])
+        if unkept:
             raise _Preserved("unpreserved_commits", "rev_list")
         return directory, root, branch, repo, owned, head, tip
     except port.GraphSourceError as exc:
@@ -711,7 +763,9 @@ def _cleanup(attempt_id):
             if run_store._one("SELECT exec_id FROM graph_attempt_runs WHERE attempt_id = ? "
                               "AND status IN ('requested', 'running')", [attempt_id]):
                 raise _Preserved("executing", "execution_active")
-            directory, root, branch, repo, owned, head, tip = _kept_elsewhere(current, project_id)
+            directory, root, branch, repo, owned, head, tip = _kept_elsewhere(
+                current, project_id, snapshot_stop=current["status"] == "invalidated"
+                and current.get("invalidated_reason") == "user_stop")
             removing = True
             if owned:
                 result = git._run_git(["worktree", "remove", "--force", str(root)], cwd=repo)
@@ -730,7 +784,7 @@ def _cleanup(attempt_id):
             return "removed" if merge_target._remove_workspace(directory, repo) else None
     except _Preserved as kept:
         _note_preserved(row, kept)
-        return "preserved"
+        return "executing" if kept.reason == "executing" else "preserved"
     except Exception as exc:  # noqa: BLE001
         if not removing:
             # The check itself failed (a Git / lock / ownership error): nothing is removed until it can be made.
@@ -746,8 +800,28 @@ def cleanup(attempt_id):
     tree is never removed. 0111 T#1 (D-1a-0): and only once their source is kept elsewhere -- no uncommitted or
     untracked change, no commit only the attempt branch holds, no requested / running execution, the owner marker,
     repository, registered worktree and branch matching, all judged under the Git locks. Anything else keeps the tree
-    and branch (False) and records ``cleanup_preserved``; there is no forced removal."""
+    and branch (False) and records ``cleanup_preserved``. v02gui.0013: user_stop-invalidated attempts alone
+    may automatically snapshot their source under refs/flowgate/preserved before removal; a failed snapshot
+    keeps the original tree. Other invalidation and integrated cleanup retain the original D-1a-0 rule."""
     return _cleanup(attempt_id) == "removed"
+
+
+def cleanup_for_stop(attempt_id):
+    """Stop waits for processes, not resource disposal. Failed snapshots keep their originals.
+
+    Only user_stop-invalidated attempts qualify; a requested/running execution still blocks Stop.
+    Startup cleanup can retry retained workspaces, independently of the next run's fresh attempts.
+    """
+    row = attempt(attempt_id)
+    if not row or row["status"] != "invalidated" or row.get("invalidated_reason") != "user_stop":
+        return False
+    outcome = _cleanup(attempt_id)
+    if outcome in ("removed", "preserved"):
+        return True
+    if outcome is None:
+        _note_preserved(row, _Preserved("unverifiable", "stop_cleanup_deferred"))
+        return True
+    return False  # an execution is still live
 
 
 def cleanup_invalidated():
@@ -769,7 +843,7 @@ def cleanup_ended(attempt_id):
     outcome = _cleanup(attempt_id)
     if outcome == "removed":
         return True
-    if outcome == "preserved":
+    if outcome in ("preserved", "executing"):
         return False
     log.warning("Graph attempt workspace cleanup failed: %s", attempt_id)
 

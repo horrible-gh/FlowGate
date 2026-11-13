@@ -901,7 +901,7 @@ export default {
         pause: '일시정지',
         resume: '재개',
         stopping: '중지 중',
-        stop_retry: '중지 다시 시도',
+        stop_retry: '중지 재시도',
         zoom_fit: '화면 맞춤',
         zoom_out: '축소',
         zoom_in: '확대',

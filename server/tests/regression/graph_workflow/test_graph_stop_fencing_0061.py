@@ -36,6 +36,8 @@ def fenced(db, monkeypatch):
 
 @pytest.fixture
 def stopping(fenced, monkeypatch):
+    # Stop admission checks the group archive flag; the ledger fixture has no group catalog.
+    monkeypatch.setattr(stop.db_groups, "get_by_id", lambda _: {"group_id": "flow", "project_id": "p"})
     # The ledger-only parent suppresses startup recovery; Stop tests exercise the real recovery function.
     monkeypatch.setattr(stop, "recover", _RECOVER_STOP)
     def guard(_flow, body):
@@ -55,7 +57,7 @@ def stopping(fenced, monkeypatch):
     from modules.flow_gate.graph_workflow.services import run_service
     monkeypatch.setattr(run_service, "run_payload", lambda run_id, with_nodes: run_store.run_by_id(run_id))
     fenced.events, fenced.revoked, fenced.cleaned = events, [], []
-    monkeypatch.setattr(workspace, "cleanup", lambda attempt_id: fenced.cleaned.append(
+    monkeypatch.setattr(workspace, "cleanup_for_stop", lambda attempt_id: fenced.cleaned.append(
         (attempt_id, run_store.run_by_id("run")["status"])) or True)
     return fenced
 
@@ -251,14 +253,14 @@ def test_stop_completes_only_after_processes_end(stopping, monkeypatch):
 
 def test_failed_worktree_removal_keeps_the_run_stopping_until_a_retry(stopping, monkeypatch):
     process_state(monkeypatch, True)
-    monkeypatch.setattr(workspace, "cleanup", lambda attempt_id: False)
+    monkeypatch.setattr(workspace, "cleanup_for_stop", lambda attempt_id: False)
     answer = stop.stop_run({"group_id": "flow"}, "run", None, "u1")
     assert answer["run"]["status"] == "stopping"
     assert answer["cleanup_pending_attempt_ids"] == [stopping.attempt]
     assert ("run", "stopping", "stopping", stop.CAUSE_PENDING, stop.CLEANUP_PENDING_REASON) in stopping.events
     assert run_store._one("SELECT status FROM graph_node_attempts WHERE attempt_id=?",
                           [stopping.attempt])["status"] == "invalidated"
-    monkeypatch.setattr(workspace, "cleanup", lambda attempt_id: True)
+    monkeypatch.setattr(workspace, "cleanup_for_stop", lambda attempt_id: True)
     stop.recover()                                       # the start-up recovery retries the removal
     run = run_store.run_by_id("run")
     assert run["status"] == "idle" and run["idle_reason"] == "stopped"

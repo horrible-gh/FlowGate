@@ -280,12 +280,18 @@ const RUN_BUTTONS: Readonly<Record<DesignerRunPhase, readonly RunButton[]>> = {
     { key: 'resume', command: 'run.resume', label: 'resume', icon: 'next' },
     { key: 'stop', command: 'run.stop', label: 'stop', icon: 'stop' },
   ],
-  // 0156 T4 D8: a stopping run can be stopped again (the server's repeated Stop is idempotent and goes on with it).
-  stopping: [{ key: 'stopping', command: 'run.stop', label: 'stop_retry', icon: 'stop' }],
+  // v02gui.0013: an accepted Stop is progress, not a failed request.
+  stopping: [{ key: 'stopping', command: 'run.stop', label: 'stopping', icon: 'stop' }],
 }
 
 const runButtons = computed(() =>
-  RUN_BUTTONS[props.runPhase].map((run) => ({ ...run, enabled: isMenuCommandEnabled(run.command, props.runPhase, props.targets) })),
+  RUN_BUTTONS[props.runPhase].map((run) => ({
+    ...run,
+    label: run.command !== 'run.stop' ? run.label
+      : props.targets.runStopping ? 'stopping'
+      : props.targets.runStopRetry ? 'stop_retry' : run.label,
+    enabled: isMenuCommandEnabled(run.command, props.runPhase, props.targets),
+  })),
 )
 
 // flowgate.v02.0059 T#2: 정렬 / 배치 ▾ — the Edit menu's 정렬 / 배치 commands, then 자동 배치. The drop-down
