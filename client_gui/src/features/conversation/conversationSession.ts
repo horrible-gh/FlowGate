@@ -166,7 +166,15 @@ export interface CreatedChat {
  * flowgate.v02gui.0009: `sendAction` is the send-time action read when the user pressed send (the first message of a
  * new chat: before the chat was created, while the screen still showed its Flow); absent = the current setting.
  */
-interface SendPins { providerId?: string; sendAction?: SendAction }
+// flowgate.v02gui.0011 B: `stopAi` -- the user pressed stop while this message's chat was still being created; the
+// message is stored and its AI call is not started.
+interface SendPins { providerId?: string; sendAction?: SendAction; stopAi?: boolean }
+/**
+ * flowgate.v02gui.0011 B: the stop button of the composer from the press of send on. 'available' = it can be pressed
+ * (the message is being stored, the AI call is starting or running), 'requested' = a stop was asked and is under way,
+ * 'none' = nothing to stop.
+ */
+export type StartStopState = 'none' | 'available' | 'requested'
 export type SendTarget = (CreatedChat & SendPins) | SendPins
 export type CreateChatResult = CreatedChat | { status: 'cancelled' | 'failed'; chatId: string | null; scope: ConversationScope | null; draftIntentId: string | null; createIntentId: string | null }
 export interface CreateChatContext {
@@ -183,6 +191,8 @@ export interface ConversationSession {
   readonly activeChat: ComputedRef<DeepReadonly<ChatSummary> | null>
   readonly timeline: ComputedRef<TimelineItem[]>
   readonly running: ComputedRef<boolean>
+  /** flowgate.v02gui.0011 B: the stop button's state for the open chat (see StartStopState). */
+  readonly startStop: ComputedRef<StartStopState>
   readonly hasProviders: ComputedRef<boolean>
   readonly submission: ComputedRef<SubmissionPhase | null>
   readonly supportsActivities: boolean
@@ -230,6 +240,11 @@ export interface ConversationSession {
   /** Whether the source keeps per-chat settings (AI pick, context checkpoint). */
   readonly supportsChatDocSettings: boolean
   invokeAi(): Promise<void>
+  /**
+   * Stops the open chat's AI call wherever it is (flowgate.v02gui.0011 B): while its message is being stored the
+   * message is kept and the call is not started; while the call is starting the press is stopped by its request id
+   * (the run id is not known yet); a running call is cancelled by its run id.
+   */
   stopRun(): Promise<void>
   /** Resolves the chat mention; the screen writes it to the clipboard (it owns the click). */
   issueMention(): Promise<string | null>
@@ -287,6 +302,56 @@ function messageOf(error: unknown): string {
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/** flowgate.v02gui.0011 B: the server stopped this press before it started anything (409 `start_cancelled`). */
+function isStartCancelled(error: unknown): boolean {
+  return error instanceof ConversationRequestError && error.status === 409 && error.code === 'start_cancelled'
+}
+
+// flowgate.v02gui.0011 B: a stop pressed while the AI call was starting is kept in this tab's sessionStorage until the
+// server answered it, so an F5 in between still delivers it (the server keeps the stop under the press's request id).
+const START_STOPS_KEY = 'flowgate.conversation.startStops'
+const START_STOP_TTL_MS = 30 * 60 * 1000
+interface StoredStartStop { userId: string; chatId: string; requestId: string; at: number }
+
+function readStartStops(): StoredStartStop[] {
+  try {
+    const raw = globalThis.sessionStorage?.getItem(START_STOPS_KEY)
+    const list: unknown = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(list)) return []
+    return list.filter((e): e is StoredStartStop => !!e && typeof e.userId === 'string' && typeof e.chatId === 'string' &&
+      typeof e.requestId === 'string' && typeof e.at === 'number' && Date.now() - e.at < START_STOP_TTL_MS)
+  } catch {
+    return []
+  }
+}
+
+function writeStartStops(list: StoredStartStop[]): void {
+  try {
+    if (list.length) globalThis.sessionStorage?.setItem(START_STOPS_KEY, JSON.stringify(list))
+    else globalThis.sessionStorage?.removeItem(START_STOPS_KEY)
+  } catch {
+    // Storage unavailable: the stop still goes out now; only the F5 replay is lost.
+  }
+}
+
+function rememberStartStop(entry: StoredStartStop): void {
+  writeStartStops([...readStartStops().filter((e) => e.requestId !== entry.requestId), entry])
+}
+
+function forgetStartStop(requestId: string): void {
+  writeStartStops(readStartStops().filter((e) => e.requestId !== requestId))
+}
+
+/** flowgate.v02gui.0011 B: the AI-call press whose /start has not named its run yet. */
+interface LiveStart {
+  chatId: string
+  requestId: string
+  /** A stop was sent for this press. */
+  stopRequested: boolean
+  /** The server answered that nothing was or will be started: the press is over. */
+  stopped: boolean
+}
 
 export function createConversationSession(options: ConversationSessionOptions = {}): ConversationSession {
   const source = options.source ?? createHttpConversationSource()
@@ -418,6 +483,17 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return buildTimeline(state.turns, activities, state.pending, state.readSeq)
   })
   const running = computed(() => state.runId !== null)
+  // flowgate.v02gui.0011 B: messages (local ids) whose AI call the user stopped while they were being stored. Kept
+  // until the send action of that message runs (it starts no AI then) or its store fails.
+  const stoppedSends = reactive(new Set<string>())
+  let liveStart: LiveStart | null = null
+  const startStop = computed<StartStopState>(() => {
+    if (state.runId !== null) return state.cancelling ? 'requested' : 'available'
+    if (!state.sending) return 'none'
+    const calls = state.pending.filter((p) => !p.failed && (p.sendAction ?? state.settings.sendAction) === 'invoke_ai')
+    if (!calls.length) return 'none'
+    return calls.every((p) => stoppedSends.has(p.localId)) ? 'requested' : 'available'
+  })
   watch(() => state.runId, (runId) => { if (runId === null) state.runDisplay = null }, { flush: 'sync' })
   const hasProviders = computed(() => state.providersStatus === 'ready' && state.providers.length > 0)
 
@@ -1358,6 +1434,12 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (action === 'copy_mention') {
       if (onScreen) options.onAutoCopyMention?.()
     } else if (action === 'invoke_ai') {
+      // flowgate.v02gui.0011 B: stopped while the message was being stored (or its chat created): the message stays,
+      // the AI call is not started.
+      if (stoppedSends.delete(item.localId)) {
+        notifyIfCurrent(gen, 'info', 'start_stopped')
+        return
+      }
       trace.mark('ai_start', { docId: chatId })
       if (onScreen) void startAiRun(item.providerId)
       else void startAiRunOffScreen(chatId, gen, item.providerId)
@@ -1403,6 +1485,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const basedOnSeq = offScreen ? 0 : state.headSeq
     const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq, createdAt: new Date().toISOString(), failed: false, providerId, sendAction }
     traces.set(key, trace)
+    if (target?.stopAi) stoppedSends.add(key)
     if (snapshot) pendingDrafts.set(key, { ...snapshot, owner: { ...snapshot.owner } })
     publishOutbox(owner, [...(outbox.get(owner) ?? []), item])
     publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
@@ -1414,6 +1497,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
   async function finishSend(chatId: string, gen: number, owner: string, item: PendingTurn, trace: SubmissionTrace, refresh = false): Promise<boolean> {
     const result = await postPending(chatId, gen, owner, item, trace, refresh)
     if (result !== true) {
+      // A stop belonged to this press; a later retry is a new decision to call the AI.
+      stoppedSends.delete(item.localId)
       publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === item.localId ? { ...p, failed: true, failure: result } : p))
       publishProgress(owner, { phase: 'failed', stage: 'send', attempt: progress.get(owner)?.attempt ?? 1 })
       if (visibleOwner(owner)) flushDeferredRefresh()
@@ -1727,51 +1812,81 @@ export function createConversationSession(options: ConversationSessionOptions = 
     // flowgate.v02.0152: this press, named once. Every /start it sends carries the same id, so the server can answer
     // a resend with the run the first request admitted — running or already finished — instead of a second run.
     const requestId = newStartRequest()
+    // flowgate.v02gui.0011 B: until /start names the run, this press is stopped by its request id (stopStarting).
+    const press: LiveStart = { chatId, requestId, stopRequested: false, stopped: false }
+    liveStart = press
+    const endStopped = () => {
+      state.runId = null
+      state.cancelling = false
+      notifyIfCurrent(gen, 'info', 'start_stopped')
+    }
     const recoveryStarted = Date.now()
     let resends = 0
-    for (;;) {
-      try {
-        const runId = await source.startChatRun(chatId, providerId, requestId)
-        if (stale()) return
-        if (!runId) {
-          state.runId = null
-          return
-        }
-        void pollRun(chatId, runId, gen)
-        return
-      } catch (error) {
-        if (stale()) return
-        // 409 run_in_progress: adopt the run that already owns the group (L0008 §5).
-        if (error instanceof ConversationRequestError && error.code === 'run_in_progress' && error.runId) {
-          void pollRun(chatId, error.runId, gen)
-          return
-        }
-        // flowgate.v02.0152: no answer (the first call of a chat used to run past the 30s wait while the server went
-        // on to run the AI), or the server still admitting this press: send the same press again. state.runId stays
-        // 'starting' meanwhile, so another click cannot start a second press.
-        if ((isNoResponse(error) || isStartPending(error))
-          && resends < START_RESEND_MAX && Date.now() - recoveryStarted < START_RECOVERY_MS) {
-          resends += 1
-          await sleep(RUN_POLL_MS)
-          if (stale()) return
-          continue
-        }
-        // flowgate.v02.0084 T#2: recovery ran out without an answer naming a run — adopt the chat's active run if
-        // there is one.
-        if (isNoResponse(error) || isStartPending(error)) {
-          const adopted = await findActiveRun(chatId)
-          if (stale()) return
-          if (adopted) {
-            void pollRun(chatId, adopted, gen)
+    try {
+      for (;;) {
+        try {
+          const runId = await source.startChatRun(chatId, providerId, requestId)
+          if (press.stopped) {
+            // The server said nothing would start; a run named anyway (a restarted server) is stopped too.
+            if (runId) void source.cancelRun(runId).catch(() => undefined)
             return
           }
+          if (stale()) return
+          if (!runId) {
+            state.runId = null
+            if (press.stopRequested) endStopped()
+            return
+          }
+          // A stop sent meanwhile was applied to this run by the server; pollRun shows it stopping and ending.
+          void pollRun(chatId, runId, gen)
+          return
+        } catch (error) {
+          if (press.stopped || stale()) return
+          if (isStartCancelled(error)) {
+            endStopped()
+            return
+          }
+          // 409 run_in_progress: adopt the run that already owns the group (L0008 §5) -- unless this press was
+          // stopped: it started nothing, and the run that owns the group is not the one the user stopped.
+          if (error instanceof ConversationRequestError && error.code === 'run_in_progress' && error.runId) {
+            if (press.stopRequested) endStopped()
+            else void pollRun(chatId, error.runId, gen)
+            return
+          }
+          // flowgate.v02.0152: no answer (the first call of a chat used to run past the 30s wait while the server went
+          // on to run the AI), or the server still admitting this press: send the same press again. state.runId stays
+          // 'starting' meanwhile, so another click cannot start a second press.
+          if ((isNoResponse(error) || isStartPending(error))
+            && resends < START_RESEND_MAX && Date.now() - recoveryStarted < START_RECOVERY_MS) {
+            resends += 1
+            await sleep(RUN_POLL_MS)
+            if (press.stopped || stale()) return
+            continue
+          }
+          // flowgate.v02.0084 T#2: recovery ran out without an answer naming a run — adopt the chat's active run if
+          // there is one.
+          if (isNoResponse(error) || isStartPending(error)) {
+            const adopted = await findActiveRun(chatId)
+            if (press.stopped || stale()) return
+            if (adopted) {
+              void pollRun(chatId, adopted, gen)
+              return
+            }
+          }
+          state.runId = null
+          // flowgate.v02gui.0011 B: the user stopped this press and it ended without a run: that is the stop's result.
+          if (press.stopRequested) {
+            endStopped()
+            return
+          }
+          // flowgate.v02.0061 T#14: an edit / edit-once call while the Flow's Graph run is locked (WP answer 2).
+          if (isSourceLocked(error)) recordChatError(chatId, gen, 'source_locked', error, false)
+          else recordChatError(chatId, gen, 'invoke_failed', error)
+          return
         }
-        state.runId = null
-        // flowgate.v02.0061 T#14: an edit / edit-once call while the Flow's Graph run is locked (WP answer 2).
-        if (isSourceLocked(error)) recordChatError(chatId, gen, 'source_locked', error, false)
-        else recordChatError(chatId, gen, 'invoke_failed', error)
-        return
       }
+    } finally {
+      if (liveStart === press) liveStart = null
     }
   }
 
@@ -1860,10 +1975,73 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
+  /** flowgate.v02gui.0011 B: the open chat's message is being stored: keep it, start no AI call for it. */
+  function stopPendingSend(): void {
+    if (!state.sending) return
+    for (const item of state.pending) {
+      if (!item.failed && (item.sendAction ?? state.settings.sendAction) === 'invoke_ai') stoppedSends.add(item.localId)
+    }
+  }
+
+  /**
+   * flowgate.v02gui.0011 B: the AI call is starting and /start has not named its run. The press is stopped by its
+   * request id; the answer says whether anything was started:
+   * - `cancelled`: nothing was and nothing will be -- the press ends here ("stopped");
+   * - `cancel_pending` / `cancelling` / `finished`: the run exists or is about to; the server stops it and /start names
+   *   it, so pollRun shows it stopping and ending.
+   * A stop without an answer (network) is kept for an F5 and shown as unconfirmed; the button can be pressed again.
+   */
+  async function stopStarting(chatId: string): Promise<void> {
+    const press = liveStart
+    if (!press || press.chatId !== chatId || press.stopRequested || !source.cancelChatStart) return
+    press.stopRequested = true
+    state.cancelling = true
+    const gen = chatGen
+    rememberStartStop({ userId: draftUserId(), chatId, requestId: press.requestId, at: Date.now() })
+    try {
+      const answer = await source.cancelChatStart(chatId, press.requestId)
+      forgetStartStop(press.requestId)
+      if (answer.state !== 'cancelled') return
+      press.stopped = true
+      if (!isCurrentChat(chatId, gen) || state.runId !== 'starting' || liveStart !== press) return
+      state.runId = null
+      state.cancelling = false
+      notify('info', 'start_stopped')
+    } catch (error) {
+      if (!isNoResponse(error)) forgetStartStop(press.requestId)
+      press.stopRequested = false
+      if (!isCurrentChat(chatId, gen)) return
+      state.cancelling = false
+      if (isNoResponse(error)) notify('warning', 'cancel_unconfirmed')
+      else notify('danger', 'cancel_failed', messageOf(error))
+    }
+  }
+
+  /** flowgate.v02gui.0011 B: stops left in sessionStorage by a page that was reloaded before the server answered. */
+  function replayStartStops(): void {
+    if (!source.cancelChatStart) return
+    const userId = draftUserId()
+    for (const entry of readStartStops()) {
+      if (entry.userId !== userId) continue
+      void source.cancelChatStart(entry.chatId, entry.requestId).then(
+        () => forgetStartStop(entry.requestId),
+        (error: unknown) => { if (!isNoResponse(error)) forgetStartStop(entry.requestId) },
+      )
+    }
+  }
+
   async function stopRun(): Promise<void> {
     const runId = state.runId
     const chatId = state.activeChatId
-    if (!chatId || !runId || runId === 'starting' || state.cancelling) return
+    if (!chatId || state.cancelling) return
+    if (!runId) {
+      stopPendingSend()
+      return
+    }
+    if (runId === 'starting') {
+      await stopStarting(chatId)
+      return
+    }
     state.cancelling = true
     const gen = chatGen
     try {
@@ -1874,7 +2052,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
       const status = error instanceof ConversationRequestError ? error.status : null
       if (status === 404 || status === 410) return
       state.cancelling = false
-      notifyIfCurrent(gen, 'danger', 'cancel_failed', messageOf(error))
+      // flowgate.v02gui.0011 B: no answer is not a refusal -- the stop may have arrived; say so, and allow another press.
+      if (isNoResponse(error)) notifyIfCurrent(gen, 'warning', 'cancel_unconfirmed')
+      else notifyIfCurrent(gen, 'danger', 'cancel_failed', messageOf(error))
     }
   }
 
@@ -1961,12 +2141,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   void loadSettings(state.scope)
+  replayStartStops()
 
   return {
     state: readonly(state) as DeepReadonly<ConversationState>,
     activeChat,
     timeline,
     running,
+    startStop,
     hasProviders,
     submission,
     supportsActivities: source.supportsActivities,

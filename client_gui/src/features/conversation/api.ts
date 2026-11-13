@@ -713,6 +713,31 @@ export async function cancelRun(runId: string): Promise<void> {
   await call(() => postRequest<unknown>(`${API}/ai-invoke/${encodeURIComponent(runId)}/cancel`, {}))
 }
 
+/**
+ * flowgate.v02gui.0011 B: what a stop of a starting AI call found. `cancelled` = nothing was started and nothing will
+ * be; `cancel_pending` = the run is being admitted and is stopped as soon as it exists; `cancelling` / `finished` = the
+ * run (`runId`) existed and was stopped (or had already ended).
+ */
+export interface ChatStartCancel {
+  state: 'cancelled' | 'cancel_pending' | 'cancelling' | 'finished'
+  runId: string | null
+}
+
+/** flowgate.v02gui.0011 B: stops an [AI 호출] press by its `client_request_id`, before /start has named its run. */
+export async function cancelChatStart(chatId: string, clientRequestId: string): Promise<ChatStartCancel> {
+  const data = await call(
+    () => postRequest<{ state?: string; run_id?: string | null }>(`${API}/ai-invoke/start/cancel`, {
+      doc_ref: chatId,
+      client_request_id: clientRequestId,
+    }),
+  )
+  const state = data?.state
+  return {
+    state: state === 'cancelled' || state === 'cancel_pending' || state === 'finished' ? state : 'cancelling',
+    runId: textOrNull(data?.run_id),
+  }
+}
+
 /** The chat run still owning this CH document, if any (re-attach after a remount). */
 export async function fetchActiveChatRun(chatId: string): Promise<string | null> {
   const groupId = chatId.split('.').slice(0, 3).join('.')

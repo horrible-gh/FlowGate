@@ -19,6 +19,18 @@ registry answers a resend with what the first request did:
 
 A new press mints a new id, so a deliberate second call is never folded into the first.
 
+flowgate.v02gui.0011 B: the press can be stopped before the browser knows its run id
+(``cancel``). Whatever the press has reached, the stop is kept here under the same key:
+
+* nothing yet (the /start is still on its way, or never came) -- a ``cancelled`` entry is
+  left behind, and a /start that arrives later with this id starts nothing;
+* ``pending`` -- the entry is marked; when admission ends, ``complete`` tells the route to
+  cancel the run it just admitted (``release`` leaves a ``cancelled`` entry instead);
+* ``started`` -- the caller cancels the run id it gets back.
+
+Both the stop and the admission's outcome take the same lock, so no order of the two can
+let the run go on.
+
 The registry is in memory, like the active-run table ``/ai-invoke/active`` reads: a
 server restart ends the runs it describes as well. Entries are scoped by requester and
 chat document, so one user's id never answers another user's request.
@@ -41,7 +53,7 @@ PENDING_TTL_SEC = 15 * 60
 # A started entry must outlive the browser's recovery window for that press.
 STARTED_TTL_SEC = 30 * 60
 
-NEW, PENDING, STARTED = "new", "pending", "started"
+NEW, PENDING, STARTED, CANCELLED = "new", "pending", "started", "cancelled"
 
 
 @dataclass
@@ -56,6 +68,16 @@ class _Entry:
     state: str
     expires: float
     owner: object
+    run_id: Optional[str] = None
+    # flowgate.v02gui.0011 B: the user stopped this press while it was pending or started.
+    cancel_requested: bool = False
+
+
+@dataclass
+class CancelOutcome:
+    """What a stop found: CANCELLED (no run will start), PENDING (admission still running;
+    the run is cancelled as soon as it is admitted) or STARTED (``run_id`` to cancel)."""
+    state: str
     run_id: Optional[str] = None
 
 
@@ -83,6 +105,8 @@ def claim(user_id: str, doc_ref: str, request_id: str) -> Claim:
     with _lock:
         _sweep(now)
         entry = _entries.get(key)
+        if entry is not None and entry.state == CANCELLED:
+            return Claim(CANCELLED)
         if entry is not None and entry.state == STARTED:
             return Claim(STARTED, run_id=entry.run_id)
         if entry is not None:
@@ -92,22 +116,55 @@ def claim(user_id: str, doc_ref: str, request_id: str) -> Claim:
         return Claim(NEW, token=owner)
 
 
-def complete(user_id: str, doc_ref: str, request_id: str, token: object, run_id: str) -> None:
-    """The reserving request admitted ``run_id``."""
+def complete(user_id: str, doc_ref: str, request_id: str, token: object, run_id: str) -> bool:
+    """The reserving request admitted ``run_id``.
+
+    Returns True when the press was stopped while it was being admitted: the caller must
+    cancel ``run_id`` now (flowgate.v02gui.0011 B)."""
     key = _key(user_id, doc_ref, request_id)
     with _lock:
         entry = _entries.get(key)
         if entry is None or entry.owner is token:
-            _entries[key] = _Entry(STARTED, time.monotonic() + STARTED_TTL_SEC, token, run_id)
+            stopped = bool(entry is not None and entry.cancel_requested)
+            _entries[key] = _Entry(STARTED, time.monotonic() + STARTED_TTL_SEC, token, run_id,
+                                   cancel_requested=stopped)
+            return stopped
+    return False
 
 
 def release(user_id: str, doc_ref: str, request_id: str, token: object) -> None:
-    """The reserving request ended without a run: forget the press so a resend starts fresh."""
+    """The reserving request ended without a run: forget the press so a resend starts fresh.
+
+    A press the user stopped meanwhile stays stopped: a resend starts nothing."""
     key = _key(user_id, doc_ref, request_id)
     with _lock:
         entry = _entries.get(key)
         if entry is not None and entry.owner is token and entry.state == PENDING:
-            del _entries[key]
+            if entry.cancel_requested:
+                _entries[key] = _Entry(CANCELLED, time.monotonic() + STARTED_TTL_SEC, object())
+            else:
+                del _entries[key]
+
+
+def cancel(user_id: str, doc_ref: str, request_id: str) -> CancelOutcome:
+    """flowgate.v02gui.0011 B: the user stopped this press before (or without) knowing its run id.
+
+    Idempotent: stopping the same press again answers the same way."""
+    now = time.monotonic()
+    key = _key(user_id, doc_ref, request_id)
+    with _lock:
+        _sweep(now)
+        entry = _entries.get(key)
+        if entry is None:
+            # The /start has not reached admission (or never will): it must start nothing.
+            _entries[key] = _Entry(CANCELLED, now + STARTED_TTL_SEC, object())
+            return CancelOutcome(CANCELLED)
+        if entry.state == CANCELLED:
+            return CancelOutcome(CANCELLED)
+        entry.cancel_requested = True
+        if entry.state == STARTED:
+            return CancelOutcome(STARTED, run_id=entry.run_id)
+        return CancelOutcome(PENDING)
 
 
 def clear() -> None:

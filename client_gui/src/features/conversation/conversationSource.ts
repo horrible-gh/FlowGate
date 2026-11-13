@@ -58,6 +58,11 @@ export interface ConversationSource {
   fetchRun(runId: string): Promise<AiRunState>
   listRuns(scope: ConversationScope, limit: number): Promise<AiRunList>
   cancelRun(runId: string): Promise<void>
+  /**
+   * flowgate.v02gui.0011 B: stops a press by its `clientRequestId` before /start named its run. Optional: without it a
+   * starting call cannot be stopped (the behaviour before).
+   */
+  cancelChatStart?(chatId: string, clientRequestId: string): Promise<api.ChatStartCancel>
   fetchActiveChatRun(chatId: string): Promise<string | null>
 
   fetchChatSettings(scope?: ConversationScope): Promise<ChatSettings>
@@ -91,6 +96,7 @@ export function createHttpConversationSource(): ConversationSource {
     fetchRun: api.fetchRun,
     listRuns: api.fetchChatRuns,
     cancelRun: api.cancelRun,
+    cancelChatStart: api.cancelChatStart,
     fetchActiveChatRun: api.fetchActiveChatRun,
     fetchChatSettings: api.fetchChatSettings,
     saveChatSettings: api.saveChatSettings,

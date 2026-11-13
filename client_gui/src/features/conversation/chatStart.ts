@@ -15,8 +15,9 @@ import { computed, readonly, ref, watch, getCurrentScope, onScopeDispose, type C
 import { draftIntent, draftCreateIntent, draftUserId, type DraftSendSnapshot } from './drafts'
 import { ConversationRequestError } from './api'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
-import type { ConversationSession } from './conversationSession'
+import type { ConversationSession, StartStopState } from './conversationSession'
 import type { ConversationSource } from './conversationSource'
+import type { SendAction } from './types'
 
 export interface ChatStart {
   /** A Flow is open and no chat is: the composer starts a new one. */
@@ -26,6 +27,13 @@ export interface ChatStart {
   /** The draft's chat is being created and its first message sent. */
   readonly starting: Readonly<Ref<boolean>>
   readonly phase: ComputedRef<SubmissionPhase | null>
+  /**
+   * flowgate.v02gui.0011 B: the stop button while the draft's chat is being created (its first message will call the
+   * AI). Once the message is being stored the session's own `startStop` takes over.
+   */
+  readonly stopState: ComputedRef<StartStopState>
+  /** flowgate.v02gui.0011 B: the chat and its first message are still made; the AI call is not started. */
+  stopCreate(): void
   /** [+]: leave the open chat for a new, unsaved one. */
   readonly draftIntentId: Readonly<Ref<string | null>>
   startNew(): void
@@ -45,13 +53,23 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
   const state = session.state
   const draftTitle = ref<string | null>(null)
   const draftIntentId = ref<string | null>(null)
-  const operations = ref<{ origin: DraftSendSnapshot; status: SubmissionPhase; active: boolean }[]>([])
+  // flowgate.v02gui.0011 B: `sendAction` is the one pinned at the press; `stopAi` = the user pressed stop meanwhile.
+  const operations = ref<{ origin: DraftSendSnapshot; status: SubmissionPhase; active: boolean; sendAction: SendAction; stopAi: boolean }[]>([])
   const ownsScreen = (snapshot: DraftSendSnapshot) => snapshot.owner.userId === draftUserId() &&
     snapshot.owner.projectId === state.scope?.projectId && snapshot.owner.groupId === state.scope?.groupId &&
     snapshot.owner.intentId === draftIntentId.value &&
     (state.activeChatId === snapshot.owner.chatId || state.activeChatId === snapshot.createdChatId)
   const starting = computed(() => operations.value.some((op) => op.active && ownsScreen(op.origin)))
   const phase = computed(() => session.submission.value ?? [...operations.value].reverse().find((op) => ownsScreen(op.origin))?.status ?? null)
+  const stoppableOperation = () => operations.value.find((op) => op.active && ownsScreen(op.origin) && op.sendAction === 'invoke_ai')
+  const stopState = computed<StartStopState>(() => {
+    const op = stoppableOperation()
+    return !op ? 'none' : op.stopAi ? 'requested' : 'available'
+  })
+  function stopCreate(): void {
+    const op = stoppableOperation()
+    if (op) op.stopAi = true
+  }
   function clearSettledFailures(): void {
     operations.value = operations.value.filter((op) => op.active || (ownsScreen(op.origin) &&
       !(op.status.phase === 'failed' && op.status.stage === 'load' && state.turnsStatus === 'ready')))
@@ -124,7 +142,8 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     const typed = draftTitle.value
     const title = typed ?? defaultTitle()
     operations.value = operations.value.filter((op) => !ownsScreen(op.origin))
-    const operation = { origin, status: { phase: 'creating', stage: 'create', attempt: 1 } as SubmissionPhase, active: true }
+    const operation = { origin, status: { phase: 'creating', stage: 'create', attempt: 1 } as SubmissionPhase, active: true,
+      sendAction: state.settings.sendAction, stopAi: false }
     operations.value.push(operation)
     const currentOperation = () => operations.value.find((op) => op.origin.createIntentId === origin.createIntentId)
     const update = (status: SubmissionPhase) => { const op = currentOperation(); if (op) op.status = status }
@@ -133,7 +152,8 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     const providerId = state.selectedProviderId
     // flowgate.v02gui.0009: so is the send-time action of this Flow — the screen may show another Flow (with its own
     // setting) by the time the create answers.
-    const sendAction = state.settings.sendAction
+    const sendAction = operation.sendAction
+    const stopAi = () => currentOperation()?.stopAi === true
     try {
       const result = await session.createChat(title, typed === null ? { autoTitle: true } : undefined, {
         draftIntentId: origin.owner.intentId,
@@ -149,10 +169,11 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
       const madeOffScreen = result.chatId !== null && result.scope !== null &&
         (result.status === 'created' ? !ownsScreen(origin) : result.status === 'cancelled')
       if (madeOffScreen) {
+        const stopped = stopAi()
         operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
         if (origin.owner.userId !== draftUserId()) return false
         return await session.send(text, { status: 'created', chatId: result.chatId!, scope: result.scope!, draftIntentId: result.draftIntentId,
-          createIntentId: result.createIntentId ?? origin.createIntentId!, providerId, sendAction }, trace, origin)
+          createIntentId: result.createIntentId ?? origin.createIntentId!, providerId, sendAction, stopAi: stopped }, trace, origin)
       }
       if (result.status !== 'created' || !ownsScreen(origin)) {
         if (result.status === 'failed') {
@@ -166,7 +187,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
       // No await between this ownership check and the explicitly addressed first send.
       if (!ownsScreen(origin)) return false
       update({ phase: 'sending', stage: 'send', attempt: 1 })
-      const ok = await session.send(text, { ...result, providerId, sendAction }, trace, origin)
+      const ok = await session.send(text, { ...result, providerId, sendAction, stopAi: stopAi() }, trace, origin)
       // Session owns send progress (and its retained failure bubble).
       operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
       return settle(result.chatId, ok)
@@ -297,5 +318,5 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
   }
   if (getCurrentScope()) onScopeDispose(cleanup)
 
-  return { isDraft, phase, draftIntentId: readonly(draftIntentId), draftTitle: readonly(draftTitle), starting: readonly(starting), startNew, rename, send, retry }
+  return { isDraft, phase, stopState, stopCreate, draftIntentId: readonly(draftIntentId), draftTitle: readonly(draftTitle), starting: readonly(starting), startNew, rename, send, retry }
 }
