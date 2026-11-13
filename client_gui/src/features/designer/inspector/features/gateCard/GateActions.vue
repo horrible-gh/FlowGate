@@ -18,7 +18,9 @@ const k = (key: string) => `gui.inspector.gateCard.${key}`
 const { actions, busy, failureKey, decide } = props.state ?? useGateDecision(() => props.target)
 // flowgate.v02gui.0004 (0001-B 관찰 5/6): a blocked [승인] says why beside it, not only in a tooltip. `busy` is the
 // button's own spinner, "not your turn yet" needs no line, and a conflict is already the result row's pill.
-const SHOWN_REASONS = ['reason.decision_in_progress', 'reason.read_only_conflict', 'reason.read_only_archived']
+// reason.read_only_archived is not listed: the archive state is re-read after every approve/reject, and the line flashed
+// for that moment on Flows that are not archived. The disabled button keeps it as a tooltip.
+const SHOWN_REASONS = ['reason.decision_in_progress', 'reason.read_only_conflict']
 const shownReason = computed(() => {
   const reason = actions.value.confirm.reason
   if (actions.value.confirm.enabled || !reason || !SHOWN_REASONS.includes(reason)) return null
