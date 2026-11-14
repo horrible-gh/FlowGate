@@ -1251,6 +1251,9 @@ export default {
       no_provider: 'No AI is available to call',
       invoke_failed: 'Could not call the AI',
       cancel_failed: 'Could not stop the AI call',
+      // flowgate.v02gui.0011 B — a stop pressed before the AI call started.
+      start_stopped: 'AI call stopped. Your message was saved',
+      cancel_unconfirmed: 'Could not confirm the stop. Press stop again',
       mention_failed: 'Could not create the mention',
       mention_copied: 'Mention copied',
       settings_failed: 'Could not save chat settings',

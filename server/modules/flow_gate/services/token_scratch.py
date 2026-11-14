@@ -822,9 +822,24 @@ def carry_over(project_id: str, *, target_token_id: str, target_scratch: Path, l
 
 
 def startup_sweep() -> int:
+    """Sweep every known project once, under the same per-project claim as sweep_on_issue.
+
+    flowgate.v02gui.0011 (0004-CH): the boot sweep did not claim ``_sweeping``, so a token issued right
+    after a restart started a second sweep of the same project and both walked the same backlog side by
+    side. A project an issue sweep already holds is left to that sweep.
+    """
     projects = db_projects.list_projects()
     for project in projects:
-        sweep(project["project_id"])
+        project_id = project["project_id"]
+        with _sweep_lock:
+            if project_id in _sweeping:
+                continue
+            _sweeping.add(project_id)
+        try:
+            sweep(project_id)
+        finally:
+            with _sweep_lock:
+                _sweeping.discard(project_id)
     return len(projects)
 
 

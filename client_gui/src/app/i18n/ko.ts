@@ -1262,6 +1262,9 @@ export default {
       no_provider: '호출할 수 있는 AI가 없습니다',
       invoke_failed: 'AI를 호출하지 못했습니다',
       cancel_failed: 'AI 호출을 중지하지 못했습니다',
+      // flowgate.v02gui.0011 B — a stop pressed before the AI call started.
+      start_stopped: 'AI 호출을 중지했습니다. 보낸 메시지는 저장돼 있습니다',
+      cancel_unconfirmed: '중지 요청의 결과를 확인하지 못했습니다. 다시 눌러 주세요',
       mention_failed: '멘션을 만들지 못했습니다',
       mention_copied: '멘션을 복사했습니다',
       settings_failed: '대화 설정을 저장하지 못했습니다',

@@ -1251,6 +1251,9 @@ export default {
       no_provider: '呼び出せる AI がありません',
       invoke_failed: 'AI を呼び出せませんでした',
       cancel_failed: 'AI 呼び出しを停止できませんでした',
+      // flowgate.v02gui.0011 B — a stop pressed before the AI call started.
+      start_stopped: 'AI 呼び出しを停止しました。送信したメッセージは保存されています',
+      cancel_unconfirmed: '停止の結果を確認できませんでした。もう一度押してください',
       mention_failed: 'メンションを作成できませんでした',
       mention_copied: 'メンションをコピーしました',
       settings_failed: '会話設定を保存できませんでした',

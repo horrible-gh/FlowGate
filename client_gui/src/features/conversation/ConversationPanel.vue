@@ -92,6 +92,7 @@
       :running="session.running.value"
       :run-starting="state.runId === 'starting'"
       :cancelling="state.cancelling"
+      :stop-state="stopState"
       :copying-mention="state.copyingMention"
       :manual-copy-text="state.manualCopyText"
       :on-send="start.send"
@@ -100,7 +101,7 @@
       @set-source-mode="session.setSourceMode"
       @copy-mention="copyMention(false)"
       @invoke-ai="session.invokeAi"
-      @stop="session.stopRun"
+      @stop="onStop"
       @manual-copy-again="copyManualAgain"
       @manual-copy-dismiss="session.setManualCopyText(null)"
     />
@@ -262,6 +263,17 @@ function onCreate(): void {
 
 function reloadChat(): void {
   if (state.activeChatId) void session.selectChat(state.activeChatId)
+}
+
+// flowgate.v02gui.0011 B: the stop button from the press of send on. The session owns it once the message is being
+// stored (and while the AI call starts or runs); before that, while a new chat is being created, chatStart does.
+const stopState = computed(() => {
+  const own = session.startStop.value
+  return own !== 'none' ? own : start.stopState.value
+})
+function onStop(): void {
+  if (session.startStop.value !== 'none') void session.stopRun()
+  else start.stopCreate()
 }
 
 async function onSaveSettings(patch: ChatSettingsPatch, done: (ok: boolean) => void): Promise<void> {

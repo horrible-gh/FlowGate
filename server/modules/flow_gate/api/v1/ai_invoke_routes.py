@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Optional
 import functools
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
@@ -44,6 +45,7 @@ from modules.flow_gate.utils.id_validators import (
 )
 
 router = APIRouter(prefix="/api/v1/ai-invoke", tags=["AiInvoke"])
+logger = logging.getLogger(__name__)
 
 
 def _operator_facing_api_base(request: Request) -> str:
@@ -346,7 +348,16 @@ def _settling_start_claim(claim, user_id: str, body: "AiInvokeStartRequest"):
                 raise
             run_id = str((result or {}).get("run_id") or "")
             if run_id:
-                chat_start_requests.complete(user_id, doc_ref, request_id, claim.token, run_id)
+                if chat_start_requests.complete(user_id, doc_ref, request_id, claim.token, run_id):
+                    # flowgate.v02gui.0011 B: the user stopped this press while it was being
+                    # admitted. Its run is cancelled before this answer leaves, so the browser
+                    # follows a run that is already stopping.
+                    try:
+                        ai_invoke_service.cancel_run(run_id)
+                    except Exception:
+                        logger.warning("chat start: cancel after admission failed run_id=%s", run_id,
+                                       exc_info=True)
+                    result = {**result, "status": "cancelling", "start_cancelled": True}
             else:
                 chat_start_requests.release(user_id, doc_ref, request_id, claim.token)
             return result
@@ -1074,6 +1085,12 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "code": "start_pending",
                 "message": "This AI call is still starting; ask again shortly.",
             })
+        if start_claim.kind == chat_start_requests.CANCELLED:
+            # flowgate.v02gui.0011 B: the user stopped this press before it reached admission.
+            return JSONResponse(status_code=409, content={
+                "code": "start_cancelled",
+                "message": "This AI call was stopped before it started.",
+            })
     recovery_exec_id = None
     try:
         # 0145 T#2: an explicit legacy-result re-review first proves its original
@@ -1173,6 +1190,58 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             return JSONResponse(status_code=409, content={"code": "run_lease_lost", "message": "Project run lease was lost."})
         result.update({"group_id": None, "doc_ref": "", "docs_target": 0})
     return JSONResponse(status_code=200, content=result)
+
+
+class ChatStartCancelRequest(BaseModel):
+    doc_ref: str
+    client_request_id: str
+
+
+# Declared before ``/{run_id}/cancel`` on purpose: that pattern would otherwise take
+# ``/start/cancel`` with run_id="start".
+@router.post("/start/cancel")
+def cancel_chat_start(body: ChatStartCancelRequest, request: Request):
+    """flowgate.v02gui.0011 B: stop a chat AI-call press by its ``client_request_id``.
+
+    The browser has no run id until /start answers, and that answer can take many seconds
+    (worktree, scratch and token preparation). This stops the press wherever it is:
+
+    * ``cancelled`` -- nothing was started and nothing will be (a /start still on its way
+      with this id is refused with 409 ``start_cancelled``);
+    * ``cancel_pending`` -- admission is still running; the run is cancelled as soon as it
+      is admitted, and the /start answer names that run (``start_cancelled: true``);
+    * ``cancelling`` / ``finished`` -- the run already existed; it was cancelled like
+      ``POST /{run_id}/cancel`` (``finished``: it had ended already).
+
+    Scoped to the caller and the chat document, like the start registry itself."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    errors: list[dict] = []
+    if not (body.doc_ref or "").strip():
+        errors.append({"loc": "doc_ref", "msg": "doc_ref is required"})
+    if not chat_start_requests.valid(body.client_request_id):
+        errors.append({"loc": chat_start_requests.FIELD,
+                       "msg": "must be 8..200 letters, digits, '.', '_', ':' or '-'"})
+    if errors:
+        return _validation_failed(errors)
+    outcome = chat_start_requests.cancel(auth["issued_to"], body.doc_ref, body.client_request_id)
+    if outcome.state == chat_start_requests.STARTED and outcome.run_id:
+        try:
+            answer = ai_invoke_service.cancel_run(outcome.run_id)
+            status = (answer or {}).get("status")
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                return _err(exc)
+            status = "finished"  # purged from memory: the run has ended
+        return JSONResponse(status_code=200, content={
+            "ok": True, "run_id": outcome.run_id,
+            "state": "finished" if status == "finished" else "cancelling",
+        })
+    return JSONResponse(status_code=200, content={
+        "ok": True, "run_id": None,
+        "state": "cancel_pending" if outcome.state == chat_start_requests.PENDING else "cancelled",
+    })
 
 
 @router.get("/providers")

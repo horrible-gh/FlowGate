@@ -30,18 +30,19 @@
         @input="onInput"
         @keydown.enter.exact.prevent="submit"
       ></textarea>
-      <!-- 0264 R0001: while a chat AI run is in flight the send button is a STOP button. -->
+      <!-- 0264 R0001: while a chat AI run is in flight the send button is a STOP button. flowgate.v02gui.0011 B: with
+           `stopState` it is one from the press of send on (chat created, message stored, AI call starting). -->
       <button
-        :type="running ? 'button' : 'submit'"
+        :type="isStop ? 'button' : 'submit'"
         class="conv-send"
-        :class="{ 'is-stop': running }"
+        :class="{ 'is-stop': isStop }"
         data-test="conv-send"
         :title="sendTitle"
         :aria-label="sendTitle"
-        :disabled="running ? cancelling || runStarting : disabled || readOnly || sending || draft.trim() === ''"
-        @click="running && emit('stop')"
+        :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || draft.trim() === ''"
+        @click="isStop && emit('stop')"
       >
-        <span aria-hidden="true">{{ running ? '■' : sending ? '…' : '➤' }}</span>
+        <span aria-hidden="true">{{ isStop ? '■' : sending ? '…' : '➤' }}</span>
       </button>
     </div>
 
@@ -121,6 +122,11 @@ const props = defineProps<{
   running: boolean
   runStarting: boolean
   cancelling: boolean
+  /**
+   * flowgate.v02gui.0011 B: the stop button's state from the press of send on ('available' = can be pressed,
+   * 'requested' = a stop is under way). Absent: the stop button follows `running` / `runStarting` / `cancelling`.
+   */
+  stopState?: 'none' | 'available' | 'requested'
   copyingMention: boolean
   manualCopyText: string | null
   /** Sends one message; resolves true when the server accepted it (the draft clears then). */
@@ -173,9 +179,17 @@ watch(
   },
 )
 
+// null = no stop button (the send button shows).
+const stopMode = computed<'available' | 'requested' | null>(() => {
+  if (props.stopState !== undefined) return props.stopState === 'none' ? null : props.stopState
+  if (!props.running) return null
+  return props.cancelling || props.runStarting ? 'requested' : 'available'
+})
+const isStop = computed(() => stopMode.value !== null)
+
 const sendTitle = computed(() => {
-  if (props.cancelling) return t('gui.conversation.composer.stopping')
-  if (props.running) return t('gui.conversation.composer.stop')
+  if (props.cancelling || (props.stopState !== undefined && stopMode.value === 'requested')) return t('gui.conversation.composer.stopping')
+  if (isStop.value) return t('gui.conversation.composer.stop')
   return t('gui.conversation.composer.send')
 })
 
