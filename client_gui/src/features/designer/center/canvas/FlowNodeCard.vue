@@ -91,7 +91,7 @@
         data-test="designer-canvas-node-approve" @pointerdown.stop @mousedown.stop @click.stop="emit('approve', id)">
         {{ t('gui.inspector.gateCard.confirm') }}
       </button>
-      <div v-if="data.integration" class="flow-node-flags" data-test="designer-canvas-node-flags">
+      <div v-if="data.integration || data.uncarried" class="flow-node-flags" data-test="designer-canvas-node-flags">
         <button
           v-if="data.integration === 'conflict'"
           type="button"
@@ -106,9 +106,19 @@
           v-else-if="data.integration"
           class="flow-node-flag"
           :class="`is-${data.integration}`"
+          :title="data.verificationFailed ? t('gui.designer.center.integration.verification_failed') : undefined"
           data-test="designer-canvas-node-integration"
           :data-integration="data.integration"
         >{{ t(`gui.designer.center.integration.${data.integration}`) }}</span>
+        <!-- v02gui.0015 T2: an earlier attempt's uncommitted changes this attempt did not take (kept, not carried). -->
+        <span
+          v-if="data.uncarried"
+          class="flow-node-flag is-uncarried"
+          role="note"
+          :title="uncarriedTitle"
+          data-test="designer-canvas-node-uncarried"
+          :data-files="data.uncarried.files"
+        >{{ uncarriedLabel }}</span>
       </div>
     </div>
     <Handle
@@ -171,6 +181,21 @@ const headerTitle = computed(() => {
   // (cardStateReasonText); any other reason as sent.
   const reason = cardStateReasonText(shown, t)
   return reason ? `${label} (${reason})` : label
+})
+
+/** v02gui.0015 T2: the 미인계 chip's text and its hover sentence (a count that could not be read is said so). */
+const uncarriedLabel = computed(() => {
+  const value = props.data.uncarried
+  if (!value) return ''
+  return value.unknown && value.files === 0
+    ? t('gui.designer.center.uncarried.flag_unknown')
+    : t('gui.designer.center.uncarried.flag', { files: value.files })
+})
+const uncarriedTitle = computed(() => {
+  const value = props.data.uncarried
+  if (!value) return undefined
+  const base = t('gui.designer.center.uncarried.title', { attempts: value.attempts, files: value.files })
+  return value.unknown ? `${base} ${t('gui.designer.center.uncarried.unknown')}` : base
 })
 
 /** The title is shown unless it only repeats the kind name of the head row. */
@@ -437,6 +462,12 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   border-color: var(--fg2-status-danger-border);
   background: var(--fg2-status-danger-bg);
   color: var(--fg2-status-danger-fg);
+}
+
+.flow-node-flag.is-uncarried {
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
 }
 
 .flow-node-flag.is-conflict {

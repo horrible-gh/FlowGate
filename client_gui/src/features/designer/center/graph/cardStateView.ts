@@ -72,6 +72,8 @@ export const CARD_FAILURE_REASONS = ['provider_capacity', 'provider_failed', 'ti
  * (`gui.designer.center.card_intervention_reasons.*`). Q #544: an exhausted review is re-reviewed by `다음 단계` / `전체 실행`. */
 export const CARD_INTERVENTION_REASONS: Readonly<Record<string, string>> = {
   'review_not_passed:review_count_exhausted': 'review_count_exhausted',
+  // flowgate.v02gui.0015 T3: the answers require a new attempt nobody opened — the card is not called again until then.
+  'action_required:new_attempt': 'action_required_new_attempt',
 }
 
 /**

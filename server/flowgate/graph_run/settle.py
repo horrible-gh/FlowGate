@@ -165,6 +165,8 @@ def _needs_intervention(ctx, row: dict) -> bool:
     if kind == engine.SYSTEM_ERROR:
         return False                                                      # 0119 T-2 rework: its error family first
     if row["status"] == "open":
+        if kind == engine.NEEDS_INTERVENTION:
+            return True                                                   # v02gui.0015 T3: answered, the action not taken
         from modules.flow_gate.graph_workflow.services import card_settings_ports
         judged = card_settings_ports.stage_waits(ctx.flow_id, row)       # 0113 T#3: an assigned attempt's stage
         if judged == card_settings_ports.STAGE_UNREADABLE:

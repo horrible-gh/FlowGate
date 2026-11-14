@@ -503,8 +503,21 @@ export interface FlowCanvasCardDocument {
   historyCount?: number
 }
 
+/**
+ * v02gui.0015 T2 (NR0006 §6-6): `node_run.uncarried_changes` — the earlier attempts of the card whose uncommitted
+ * changes its current attempt did not take (they stay kept: the old tree or a Stop snapshot), their changed files and
+ * whether a count could not be read.
+ */
+export interface UncarriedChanges {
+  attempts: number
+  files: number
+  unknown: boolean
+}
+
 /** P0008 §2.6 `node_run`: what the Inspector shows of a Graph node's run (status kept as the server sends it). */
 export interface FlowCanvasNodeRun extends RoleRunFields {
+  /** v02gui.0015 T2: null when none; absent when not sent. */
+  uncarriedChanges?: UncarriedChanges | null
   /** Existing node_run.dispatch.error_code; no result is still an open card. */
   dispatchErrorCode?: string | null
   /** flowgate.v02.0121 T#4: node_run.dispatch.error_detail, the failed AI call's short cause; absent when not sent. */
@@ -786,6 +799,8 @@ export interface FlowRunNode extends RoleRunFields {
   stage?: string | null
   /** flowgate.v02.0061 T#14: the node attempt's result integration status (open key) or null; absent when not sent. */
   integrationStatus?: string | null
+  /** v02gui.0015 T4: the integration's reason (open key, e.g. `verification_failed`) or null; absent when not sent. */
+  integrationReason?: string | null
   /** flowgate.v02.0061 T#14: the card is held (T#11); absent when not sent. */
   hold?: boolean
   /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
@@ -803,6 +818,8 @@ export interface FlowRunNode extends RoleRunFields {
   attemptId?: string | null
   /** flowgate.v02.0105 T#2 (B-2): why the result was not approved automatically while the card awaits its approval (the latest B-1 reason, e.g. `approval_refused`, `review_not_passed:review_count_exhausted`), or null; absent when not sent. */
   approvalWaitReason?: string | null
+  /** v02gui.0015 T2: the earlier attempts' uncommitted changes not carried over, null when none; absent when not sent. */
+  uncarriedChanges?: UncarriedChanges | null
   /** D0007 §6: abandoned gate recovery waits for the existing Time Machine. */
   gateRecoveryResetRequired?: boolean
 }

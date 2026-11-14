@@ -364,6 +364,15 @@ export default {
         conflict: '병합 충돌',
         failed: '병합 실패',
         open_conflict: 'Git 패널에서 충돌을 해결합니다',
+        // v02gui.0015 T4 — the result failed the integration's syntax check.
+        verification_failed: '결과에 구문 오류가 있는 파일이 있어 병합하지 않았습니다. 다시 작업하려면 중지한 뒤 실행하세요(새 시도로 열립니다).',
+      },
+      // v02gui.0015 T2 — an earlier attempt's uncommitted changes the card's attempt did not take.
+      uncarried: {
+        flag: '미인계 {files}',
+        flag_unknown: '미인계 ?',
+        title: '이전 시도 {attempts}개의 커밋 안 된 변경 {files}개 파일을 이번 시도는 이어받지 않았습니다. 변경은 지워지지 않고 이전 작업 폴더(또는 중지 시 보존본)에 남아 있습니다.',
+        unknown: '일부 시도는 변경 수를 읽지 못했습니다.',
       },
       hold: 'Hold',
       // flowgate.v02.0061 T#15 — the Hold mark, a card's context menu and the Graph Time Machine dialog.
@@ -426,6 +435,8 @@ export default {
       // flowgate.v02.0125 T#2 — a needs_intervention card's known reason as a sentence (cardStateReasonText); other reasons are shown as sent.
       card_intervention_reasons: {
         review_count_exhausted: '검수 횟수를 모두 사용했고 마지막 수정본은 아직 검수되지 않았습니다. `다음 단계` 또는 `전체 실행`으로 다시 검수하세요. 승인만으로는 완료되지 않습니다.',
+        // flowgate.v02gui.0015 T3
+        action_required_new_attempt: 'Q&A 답변에서 새 attempt가 필요하다고 정했지만 아직 열리지 않아 카드를 다시 부르지 않았습니다. `다음 단계` 또는 `전체 실행`을 누르면 새 attempt로 다시 엽니다. 검토 중인 카드는 중지한 뒤 실행하세요.',
       },
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.

@@ -27,6 +27,10 @@ nor its review) and whose latest reason recorded for that instruction is one of 
 node run tells it and the run is in its error family. Anything else of an open card stays as it was (working, a
 person's write or setup wait: no intervention here); a gate is never one.
 
+flowgate.v02gui.0015 T3 (NR flowgate.v02gui.0015.0006 §6-3): a general open card whose AI's answers require a new attempt
+nobody opened yet (``card_settings_ports.action_required``: ``action_required:new_attempt``) is ``needs_intervention`` too —
+the answers' step is held (``action_guard``) and the person's explicit command opens it as a new attempt.
+
 ``refusal`` names why a node cannot be approved; it never answers None any more (the card approval API, removed by T-3,
 answers 409 with it — ``needs_intervention`` / ``system_error`` for a card in review that nothing completes), so
 ``awaiting_approval`` is always False. A gate card is decided by its own confirm, never approved here. A code node whose
@@ -100,13 +104,22 @@ def _instruction_error(flow_id: str, row: dict, node_type: Optional[str]) -> Opt
     return found if found["kind"] == SYSTEM_ERROR and found.get("reason") else None
 
 
+def _action_required(flow_id: str, row: dict, node_type: Optional[str]) -> Optional[dict]:
+    """flowgate.v02gui.0015 T3: ``{"kind": needs_intervention, "reason": action_required:…}`` of a general open card whose
+    AI's answers require an action nobody took yet (a new attempt), else None (a gate, none required)."""
+    if node_type == GATE_NODE_TYPE:
+        return None
+    reason = card_settings_ports.action_required(flow_id, row)
+    return {"kind": NEEDS_INTERVENTION, "reason": reason} if reason else None
+
+
 def intervention(flow_id: str, row: dict, node_type: Optional[str] = None) -> Optional[dict]:
     """0119 T-2: ``{"kind": needs_intervention | system_error, "reason": …}`` of a general card in review that nothing
     completes, else None (not in review with a result, a gate, AI still working, its integration waiting). 0119 T-2
     rework: a card open in its instruction stage whose instruction's automatic path failed is a ``system_error``
     (``_instruction_error``)."""
     if row.get("status") == "open":
-        return _instruction_error(flow_id, row, node_type)
+        return _instruction_error(flow_id, row, node_type) or _action_required(flow_id, row, node_type)
     if _settled_refusal(flow_id, row, node_type) is not None:
         return None
     return _state(flow_id, row)

@@ -95,7 +95,8 @@ __all__ = ["GraphApiError", "GitServiceError", "judge_merge_target", "merge_targ
            "person_plan_reviewed", "active_run", "node_run", "active_attempt_id", "run_issuer", "person_stage_open",
            "person_hold", "attempt_node", "submission_judged", "revision_reviewed", "submission_passed", "explicit_request",
            "AUTOMATION", "AUTOMATION_APPROVE_PERMISSIONS", "record_approval_wait", "record_approval_authority",
-           "approval_waits", "approval_wait_reason", "node_runs", "result_ai_run", "stage_ai_run", "review_loops"]
+           "approval_waits", "approval_wait_reason", "node_runs", "result_ai_run", "stage_ai_run", "review_loops",
+           "answered_requirements", "latest_execution", "record_action_required", "held_nodes"]
 
 _log = logging.getLogger(__name__)
 
@@ -666,6 +667,79 @@ def askers_answered_as_author(run_id: str) -> set[str]:
 
     return {item["asker_ai_run_id"] for item in db_question_items.list_by_answer_run(run_id) or []
             if item.get("asker_ai_run_id") and (item.get("asker_kind") or "") == "ai"}
+
+
+# ── the common guard of an answered step (flowgate.v02gui.0015 T3, ``action_guard``) ──
+
+ACTION_REQUIRED_CAUSE = "action_required"
+
+
+def _json_list(raw) -> list:
+    """A stored JSON array (``question_items.options`` / ``answers.selected_options``), else []."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def answered_requirements(asker_ai_run_id: str) -> frozenset:
+    """v02gui.0015 T3: the ``requires`` of the options the latest answer of each AI question ``asker_ai_run_id`` asked
+    selected (``q_service``: an option ``{"id", "label", "requires"}``), e.g. ``{"new_attempt"}``; empty when none.
+    Raises on a failed read."""
+    rows = get_store()._fetch_all(
+        "SELECT i.id AS item_id, i.options, a.selected_options FROM question_items i "
+        "JOIN answers a ON a.question_item_id = i.id WHERE i.asker_ai_run_id = ? AND i.asker_kind = 'ai' "
+        "ORDER BY i.id, a.id", [asker_ai_run_id]) or []
+    latest: dict = {}
+    for row in rows:                                        # the latest answer of each item decides
+        latest[row["item_id"]] = row
+    found: set = set()
+    for row in latest.values():
+        selected = {s for s in _json_list(row.get("selected_options")) if isinstance(s, str)}
+        for option in _json_list(row.get("options")):
+            if isinstance(option, dict) and option.get("id") in selected and isinstance(option.get("requires"), str):
+                found.add(option["requires"])
+    return frozenset(found)
+
+
+def latest_execution(run_id: str, node_key: str) -> Optional[dict]:
+    """v02gui.0015 T3: ``{attempt_id, exec_id, kind, status, ai_run_id}`` of the latest execution of the node's active
+    attempt, or None (no active attempt, no execution, no ledger). Raises on a failed read."""
+    attempt_id = run_store.active_attempt_id(run_id, node_key)
+    if not attempt_id or not get_store().table_exists("graph_attempt_runs"):
+        return None
+    row = get_store()._fetch_one("SELECT exec_id, kind, status, ai_run_id FROM graph_attempt_runs WHERE attempt_id = ? "
+                                 "ORDER BY created_at DESC, exec_id DESC LIMIT 1", [attempt_id])
+    return {**dict(row), "attempt_id": attempt_id} if row else None
+
+
+def record_action_required(flow_id: str, node_key: str, attempt_id: Optional[str], asker_ai_run_id: Optional[str],
+                           phase: str, reason: str, next_action: str) -> bool:
+    """v02gui.0015 T3: the ``action_required`` run event (status unchanged, as B-1's) of a step ``action_guard`` held —
+    once per asker run and attempt of the Flow's active run. True when written now. Never raises."""
+    try:
+        run_row = run_store.active_run(flow_id)
+        if run_row is None:
+            return False
+        for row in run_store._all("SELECT payload_json FROM graph_run_events WHERE run_id = ? AND cause = ?",
+                                  [run_row["run_id"], ACTION_REQUIRED_CAUSE]):
+            try:
+                data = json.loads(row.get("payload_json") or "null")
+            except (TypeError, ValueError):
+                continue
+            if isinstance(data, dict) and data.get("asker_ai_run_id") == asker_ai_run_id \
+                    and data.get("attempt_id") == attempt_id:
+                return False
+    except Exception:  # noqa: BLE001 — the hold itself stands; only its record is skipped
+        _log.warning("card action required record read failed flow=%s node=%s", flow_id, node_key, exc_info=True)
+        return False
+    _run_event(flow_id, ACTION_REQUIRED_CAUSE, reason, {"node_key": node_key, "attempt_id": attempt_id,
+                                                        "asker_ai_run_id": asker_ai_run_id, "phase": phase,
+                                                        "next_action": next_action})
+    return True
 
 
 def graph_run_state(flow_id: str) -> Optional[tuple[str, Optional[str]]]:

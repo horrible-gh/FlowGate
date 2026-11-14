@@ -29,6 +29,9 @@ root (``startup.py``) calls :func:`register` once at startup.
                      (``flowgate.card_intervention.judge``, flowgate.v02.0119 T#3 T-2)
     command_review   an explicit step / full command: a spent result review count of an AI card asked again for the
                      revision no review answered (``assigned_review.command_review``, flowgate.v02.0125 T#1)
+    action_required  the node judgement / a run read: a card whose answers require a new attempt that was not opened
+                     (``action_guard.node_reason``, flowgate.v02gui.0015 T3); ``stage_needs_dispatch`` answers
+                     ``reopen_new_attempt`` for such an open card, so the explicit command opens it as a new attempt
     after_registration   the inbox's card title candidate of a registration (``modules.flow_gate.services.
                      node_title_hooks``): the Graph's AI naming applies it (``node_title_ai``, 0064 T-B4d)
 """
@@ -70,6 +73,8 @@ def register() -> None:
     from flowgate.card_settings import assigned_review  # 0038-T T#3 A-4
     ports.register(ports.RESULT_REVIEW_PENDING, assigned_review.taken_review_pending)
     ports.register(ports.COMMAND_REVIEW, assigned_review.command_review)   # flowgate.v02.0125 T#1 (Q #544)
+    from flowgate.card_settings import action_guard  # flowgate.v02gui.0015 T3
+    ports.register(ports.ACTION_REQUIRED, action_guard.node_reason)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDING, review_stage.on_run_ending)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_QUESTION_ANSWERED, question_wait.on_question_answered)
@@ -78,10 +83,17 @@ def register() -> None:
 
 
 def _needs_dispatch(ctx, row):
-    """``stage_needs_dispatch``: None for a pre-feature attempt (the current judgement)."""
-    from flowgate.card_settings import stage_assignment  # noqa: PLC0415
+    """``stage_needs_dispatch``: None for a pre-feature attempt (the current judgement).
+
+    flowgate.v02gui.0015 T3: an open card ``action_guard`` holds (its answers require a new attempt that was not opened)
+    is ``reopen_new_attempt`` for any attempt — the explicit command opens it again as a new attempt (the existing
+    replacement, judged again under its fence), never the same attempt dispatched again. A held card keeps its verdict."""
+    from flowgate.card_settings import action_guard, stage_assignment  # noqa: PLC0415
 
     verdict = stage_assignment.needs_dispatch(ctx, row)
+    if row.get("status") == "open" and row.get("node_key") not in legacy_adapter.held_nodes(ctx.flow_id) \
+            and action_guard.node_reason(ctx.flow_id, row) is not None:
+        return stage_assignment.REOPEN_NEW_ATTEMPT
     return None if verdict == stage_assignment.LEGACY else verdict
 
 

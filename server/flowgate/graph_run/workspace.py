@@ -7,8 +7,15 @@ guard/transaction and are released before admission or any provider is started.
 (``run_base``), one predecessor from its ended attempt's ``result_commit``, a Join from those results merged in the
 attempt worktree in node_key order (``predecessors``); a predecessor with no attempt commit (a gate) hands its own
 input on. Inputs that reach the start without a commit (an approved root, a gate) start from the run's base
-(``_run_base``): the commit the run's first ``run_base`` attempt recorded, not the group branch HEAD that has moved
-since, so a branch integrated meanwhile stays out. Every predecessor attempt in the input is recorded, also those
+(``_run_base``): the commit a valid (not invalidated) ``run_base`` attempt of the current base window recorded, not
+the group branch HEAD that has moved since, so a branch integrated meanwhile stays out of the window; a window with no
+such attempt starts from the group branch HEAD. v02gui.0015 (0001-B, NR0003): the window is what follows the run's
+last command start -- a ``user_start`` / ``user_command`` / ``user_resume`` run status event to ``running`` not from
+``paused`` / legacy ``stopped`` (not ``command_result._is_command_start``: a paused re-command and an idle
+acknowledge keep the base) -- so a person's new command on an idle run starts its first card from the group HEAD of
+that moment. An attempt belongs to the window its owner marker pinned its base in (``base_since``, copied to its
+workspace event); an event without it (a marker made before) only when its attempt was created in the window.
+Every predecessor attempt in the input is recorded, also those
 sharing a commit; the merge uses each commit once. A Join whose results conflict starts from the group branch HEAD,
 which holds them all (``integration_head``, recorded by a run event). An ended attempt whose integration ended
 (``integrated``) loses its tree and branch (``cleanup_ended``; its result stays a parent on the group branch), as an
@@ -27,6 +34,11 @@ attempt commit moves the ref to its result; a removal deletes it (``update-ref -
 counts neither ``graph_attempt_*`` branches nor ``refs/flowgate/attempts/*`` refs as keeping a commit. An attempt
 prepared before keeps its ``graph_attempt_<key>`` branch (its marker names ``branch``) and is checked, committed and
 removed as it was: nothing is migrated or renamed.
+
+v02gui.0015 T2 (NR0006 §6-6): a new attempt never takes what an earlier attempt of its node left uncommitted (its
+input is its predecessors' results or the run base). Its owner marker pins those earlier attempts and their changed
+files (``uncarried``, read under the Git locks from the kept tree or the user_stop snapshot), its preparation records
+them (``prior_changes_not_carried``) and the card's run read counts them (``uncarried_wire``); nothing is carried over.
 """
 from __future__ import annotations
 from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
@@ -36,6 +48,7 @@ import logging
 import os
 import tempfile
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from modules.flow_gate.db import groups as db_groups
@@ -282,25 +295,107 @@ def _inputs(row):
     return sorted(found, key=lambda i: i[0])
 
 
+# v02gui.0015 (NR0003 §2, §3.3): the run status events that open a new base window -- a person's command that moves
+# the run to ``running`` from a new run (no ``from_status``) or from idle. Deliberately not
+# ``command_result._is_command_start``: a re-command of a paused run and an idle -> idle acknowledge cut the command
+# window but keep the base (the cards still open of a paused command, and none opened by an acknowledge).
+_BASE_WINDOW_SQL = (
+    "SELECT MAX(event_seq) AS seq FROM graph_run_events WHERE run_id = ? "
+    "AND event_type = 'graph_run_status_changed' AND to_status = 'running' "
+    "AND cause IN ('user_start', 'user_command', 'user_resume') "
+    "AND (from_status IS NULL OR from_status NOT IN ('paused', 'stopped'))")
+
+
+def _utc(value):
+    """v02gui.0015: a stored timestamp (``+00:00`` or ``Z``) as a UTC instant, compared as such and never as text;
+    None when it cannot be read (no value, no zone, not ISO 8601)."""
+    if isinstance(value, datetime):
+        moment = value
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        text = text[:-1] + "+00:00" if text[-1:] in ("Z", "z") else text
+        try:
+            moment = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    return moment.astimezone(timezone.utc) if moment.tzinfo is not None else None
+
+
+def _base_window(run_id):
+    """v02gui.0015: ``(since, since_at)`` -- the event_seq of the run's last base window start and that event's
+    ``created_at``; ``(0, None)`` for a run with none (before migration 151, a bare harness): the whole run."""
+    found = run_store._one(_BASE_WINDOW_SQL, [run_id])
+    since = int(found["seq"]) if found and found.get("seq") is not None else 0
+    if not since:
+        return 0, None
+    event = run_store._one("SELECT created_at FROM graph_run_events WHERE run_id = ? AND event_seq = ?",
+                           [run_id, since])
+    return since, (event or {}).get("created_at")
+
+
+def _in_window(data, attempt_row, since, since_at):
+    """v02gui.0015 (NR0003 §3.5): whether a ``run_base`` workspace event's attempt belongs to the current window. A
+    tagged event by its ``base_since`` (the window its marker pinned the base in, kept by a recovery); an untagged one
+    (a marker made before the tag) never by its event_seq, only in a run with no window or when its attempt was
+    created at or after the window start. Anything unreadable is not in it: the card then starts from the group HEAD."""
+    tag = data.get("base_since")
+    if tag is not None:  # 0 is a window (a run with no command start), so never a falsy test
+        try:
+            return int(tag) == since
+        except (TypeError, ValueError):
+            return False
+    if since == 0:
+        return True
+    created, start = _utc(attempt_row.get("created_at")), _utc(since_at)
+    return created is not None and start is not None and created >= start
+
+
 def _run_base(row, group_root):
-    """T#10, under the Git locks: the run's base — the commit its first ``run_base`` attempt started from (the group
-    branch HEAD then). Every attempt of the run with no input commit starts there, so a branch integrated since
-    (one done before it under the same root) is not in its input. The first one starts from the group branch HEAD:
-    a result of the run is integrated only after an attempt that started from the base recorded it."""
-    base = run_store._one("SELECT input_commit FROM graph_node_attempts WHERE run_id = ? AND input_source = 'run_base' "
-                          "AND input_commit IS NOT NULL ORDER BY created_at, attempt_id LIMIT 1", [row["run_id"]])
-    sha = base["input_commit"] if base else git._rev_parse(group_root, "HEAD^{commit}")
+    """T#10, under the Git locks: ``(sha, since)`` -- the run's base for an attempt with no input commit, and the base
+    window it belongs to (``since``, pinned in the marker as ``base_since``). v02gui.0015 (0001-B, NR0003 §7): the
+    commit a valid (not invalidated) ``run_base`` attempt recorded first in the window that follows the run's last
+    command start (``_base_window``); an attempt done meanwhile in the window and integrated (under the same root) is
+    so not in the input of the window's later start cards. With no such attempt -- the window's first card, a new
+    command on an idle run, only invalidated ones left -- the group branch HEAD: a result of the window is integrated
+    only after an attempt that started from its base recorded it. ``since`` is read before the HEAD, so a HEAD read
+    once a new command committed is never tagged with the window before it (the two reads are outside the Flow guard
+    and not atomic; the worst case leaves the attempt out of the newer window)."""
+    since, since_at = _base_window(row["run_id"])
+    sha = None
+    for event in run_store._all(
+            "SELECT payload_json FROM graph_run_events WHERE run_id = ? AND event_type = 'graph_run_status_changed' "
+            "AND cause = ? AND reason = 'worktree' AND event_seq > ? ORDER BY event_seq", [row["run_id"], CAUSE, since]):
+        try:
+            data = json.loads(event["payload_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(data, dict) or data.get("input_source") != "run_base" or not data.get("input_commit") \
+                or not data.get("attempt_id"):
+            continue
+        base = run_store._one(
+            "SELECT input_commit, created_at FROM graph_node_attempts WHERE attempt_id = ? AND run_id = ? "
+            "AND input_source = 'run_base' AND input_commit IS NOT NULL AND status <> 'invalidated'",
+            [data["attempt_id"], row["run_id"]])
+        if base and _in_window(data, base, since, since_at):
+            sha = base["input_commit"]
+            break
+    if sha is None:
+        sha = git._rev_parse(group_root, "HEAD^{commit}")
     if not sha or git._rev_parse(group_root, sha + "^{commit}") != sha:
         raise port.GraphSourceError("graph_worktree_unavailable", reason="input_missing")
-    return sha
+    return sha, since
 
 
 def _start(row, group_root):
     """The marker's input half, under the Git locks: ``input_commit`` (the worktree's first commit), its source, the
-    attempts in it, and the Join's other heads still to merge (``join_inputs``)."""
+    attempts in it, and the Join's other heads still to merge (``join_inputs``); a ``run_base`` one also its base
+    window (``base_since``, v02gui.0015), pinned with the base so a recovery keeps both."""
     inputs = _inputs(row)
     if not inputs:
-        return {"input_commit": _run_base(row, group_root), "input_source": "run_base", "input_attempt_ids": []}
+        sha, since = _run_base(row, group_root)
+        return {"input_commit": sha, "input_source": "run_base", "input_attempt_ids": [], "base_since": since}
     # Predecessors sharing a result commit are all recorded; the merge takes the commit once.
     shas = list(dict.fromkeys(sha for _key, _attempt_id, sha in inputs))
     if any(git._rev_parse(group_root, sha + "^{commit}") != sha for sha in shas):
@@ -367,6 +462,103 @@ def _join(row, directory, root, branch, marker, group_root):
 # v02test.0021: what a failed preparation keeps for its diagnosis (the run event and the log), beyond its reason.
 _FAILURE_DETAILS = ("provision_error", "git_stderr")
 
+# v02gui.0015 T2 (NR0006 §2.3, §6-5, §6-6): an attempt starts from its predecessors' results or the run base
+# (``_start``), never from an earlier attempt of its own node, and an attempt's changes are committed only when its
+# result is integrated -- so what an earlier (invalidated) attempt of the node left uncommitted is not carried into the
+# new one. It is kept (``cleanup``'s D-1a-0 keeps a dirty tree; a user_stop snapshot keeps it under
+# ``refs/flowgate/preserved``) and, from now on, told: the new attempt's preparation records those attempts and their
+# changed files (``prior_changes_not_carried``) and the card's run read shows the count (``uncarried_wire``). Nothing
+# is carried over automatically.
+UNCARRIED = "prior_changes_not_carried"
+UNCARRIED_PATHS = 20
+
+
+def _porcelain_paths(text):
+    """The paths of ``status --porcelain -z`` entries (a rename / copy names its new path; its old one follows)."""
+    items, paths, index = (text or "").split("\0"), [], 0
+    while index < len(items):
+        entry = items[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        paths.append(entry[3:])
+        if entry[0] in "RC":
+            index += 1
+    return paths
+
+
+def _left_over(prior, project_id, group_root):
+    """What an earlier attempt of the node left uncommitted, or None (nothing, or no source of it left): its kept tree's
+    uncommitted and untracked files, else (the tree removed after a user_stop snapshot) the files its latest snapshot
+    changed against the tree's HEAD (``_snapshot_stopped``: snapshot -> index commit -> HEAD). ``changed_files`` None:
+    the source is there but could not be read."""
+    _directory, root, _name = location(prior, project_id)
+    if root.is_dir() and git._worktree_link_ok(root):
+        status = git._run_git(["--no-optional-locks", "status", "--porcelain", "-z", "--untracked-files=all"],
+                              cwd=root)
+        if status.returncode:
+            return {"kept": "worktree", "changed_files": None, "paths": []}
+        paths = _porcelain_paths(status.stdout)
+        return {"kept": "worktree", "changed_files": len(paths), "paths": paths[:UNCARRIED_PATHS]} if paths else None
+    listed = git._run_git(["for-each-ref", "--sort=-creatordate", "--count=1", "--format=%(refname)",
+                           PRESERVED_REF_PREFIX + merge_target.workspace_key(prior["attempt_id"])], cwd=group_root)
+    ref = "" if listed.returncode else listed.stdout.strip()
+    if not ref:
+        return None
+    diff = git._run_git(["diff", "--name-only", "-z", ref + "^1^1", ref], cwd=group_root)
+    if diff.returncode:
+        return {"kept": "preserved_ref", "ref": ref, "changed_files": None, "paths": []}
+    paths = [path for path in diff.stdout.split("\0") if path]
+    return {"kept": "preserved_ref", "ref": ref, "changed_files": len(paths),
+            "paths": paths[:UNCARRIED_PATHS]} if paths else None
+
+
+def _uncarried(row, project_id, group_root):
+    """v02gui.0015 T2, under the Git locks (G: no cleanup removes an earlier tree meanwhile), when the owner marker is
+    made: the node's earlier invalidated attempts of the run whose uncommitted changes the new attempt does not take,
+    oldest first -- ``[{attempt_id, invalidated_reason, kept, changed_files, paths, (ref)}]``. A notice only: a failed
+    read is told as unknown (``changed_files`` None) and never stops the preparation."""
+    found = []
+    for prior in run_store._all(
+            "SELECT a.*, r.group_id FROM graph_node_attempts a JOIN graph_runs r ON r.run_id = a.run_id "
+            "WHERE a.run_id = ? AND a.node_key = ? AND a.attempt_id <> ? AND a.status = 'invalidated' "
+            "ORDER BY a.created_at, a.attempt_id", [row["run_id"], row["node_key"], row["attempt_id"]]):
+        try:
+            left = _left_over(prior, project_id, group_root)
+        except Exception:  # noqa: BLE001 — the notice only; the preparation goes on
+            log.warning("earlier attempt %s of %s not read for uncarried changes", prior["attempt_id"],
+                        row["attempt_id"], exc_info=True)
+            left = {"kept": "unknown", "changed_files": None, "paths": []}
+        if left:
+            found.append({"attempt_id": prior["attempt_id"], "invalidated_reason": prior.get("invalidated_reason"),
+                          **left})
+    return found
+
+
+def uncarried_wire(run_id, attempt_id):
+    """v02gui.0015 T2: ``{"uncarried_changes": {"attempts", "files", "unknown"}}`` -- the earlier attempts of the node
+    whose uncommitted changes the attempt did not take (its ``prior_changes_not_carried`` record), their changed files
+    and whether a count could not be read; null when there are none. A failed read tells none; the run read goes on."""
+    if not run_id or not attempt_id:
+        return {"uncarried_changes": None}
+    try:
+        for event in run_store._all(
+                "SELECT payload_json FROM graph_run_events WHERE run_id = ? AND event_type = 'graph_run_status_changed' "
+                "AND cause = ? AND reason = ? ORDER BY event_seq DESC", [run_id, CAUSE, UNCARRIED]):
+            data = json.loads(event["payload_json"] or "{}")
+            if not isinstance(data, dict) or data.get("attempt_id") != attempt_id:
+                continue
+            prior = [p for p in data.get("prior_attempts") or [] if isinstance(p, dict)]
+            if not prior:
+                break
+            return {"uncarried_changes": {
+                "attempts": len(prior),
+                "files": sum(int(p["changed_files"]) for p in prior if isinstance(p.get("changed_files"), int)),
+                "unknown": any(not isinstance(p.get("changed_files"), int) for p in prior)}}
+    except Exception:  # noqa: BLE001 — the run read goes on
+        log.warning("uncarried changes read failed run=%s attempt=%s", run_id, attempt_id, exc_info=True)
+    return {"uncarried_changes": None}
+
 
 def _git_error(proc):
     """v02test.0021: a failed Git command's stderr (credentials scrubbed, bounded) for the failure's details."""
@@ -421,6 +613,10 @@ def _materialize(row, project_id):
                       "repository": str(group_root), "common_dir": str(_common_dir(group_root))}
             if not marker.get("join_inputs"):
                 marker.pop("join_inputs", None)
+            # v02gui.0015 T2: pinned with the input, so a recovery records the same notice.
+            uncarried = _uncarried(current, project_id, group_root)
+            if uncarried:
+                marker["uncarried"] = uncarried
             directory.mkdir(parents=True, exist_ok=False)
             # Exclusive owner marker precedes branch/worktree creation, as in merge_target.
             with document_write_ports.write_paths([directory / merge_target.OWNER_MARKER]), (directory / merge_target.OWNER_MARKER).open("x", encoding="utf-8") as stream:
@@ -458,11 +654,15 @@ def _materialize(row, project_id):
 
 
 def _input_record(row, project_id):
-    """The input the marker recorded (a marker before T#10 started from the group branch HEAD)."""
+    """The input the marker recorded (a marker before T#10 started from the group branch HEAD); v02gui.0015: its base
+    window as pinned (``base_since``, None for a marker made before or a non-``run_base`` input); T2: the earlier
+    attempts of the node whose uncommitted changes it does not take (``uncarried``, [] for none or a marker before)."""
     marker = merge_target.read_owner_marker(location(row, project_id)[0]) or {}
+    uncarried = marker.get("uncarried")
     return {"input_source": marker.get("input_source") or "integration_head",
             "input_attempt_ids": list(marker.get("input_attempt_ids") or []),
-            "join_conflict": marker.get("join_conflict")}
+            "join_conflict": marker.get("join_conflict"), "base_since": marker.get("base_since"),
+            "uncarried": [p for p in uncarried if isinstance(p, dict)] if isinstance(uncarried, list) else []}
 
 
 def _failed(exec_id, cause, **detail):
@@ -539,14 +739,29 @@ def prepare(exec_id, project_id, group_id):
                                     "input_attempt_ids = ? WHERE attempt_id = ? AND status = 'active'",
                                     [sha, record["input_source"], json.dumps(record["input_attempt_ids"]),
                                      row["attempt_id"]])
+                # v02gui.0015: the base window the marker pinned (not the window read now: a recovery after a new
+                # command would tag an old base with the new window); absent when the marker has none.
+                window = {} if record.get("base_since") is None else {"base_since": record["base_since"]}
                 _event(current, mode, input_commit=sha, input_source=record["input_source"],
-                       input_attempt_ids=record["input_attempt_ids"])
+                       input_attempt_ids=record["input_attempt_ids"], **window)
                 if record["join_conflict"]:
                     # After the mode record (``_mode`` reads the attempt's first event): the Join's results conflict,
                     # so its input is the group branch HEAD and may hold branches unrelated to it (T#12 reads this).
                     _event(current, "join_input_conflict", input_commit=sha, input_source=record["input_source"],
                            input_attempt_ids=record["input_attempt_ids"], **record["join_conflict"])
+                uncarried = record.get("uncarried") or []
+                if uncarried:
+                    # v02gui.0015 T2 (NR0006 §6-6): after the mode record too; the earlier attempts' uncommitted
+                    # changes stay where they are kept and are not in this attempt's input -- told, not silent.
+                    _event(current, UNCARRIED, input_commit=sha, input_source=record["input_source"],
+                           prior_attempts=uncarried,
+                           changed_files=sum(p["changed_files"] for p in uncarried
+                                             if isinstance(p.get("changed_files"), int)))
         with_flow_guard(group_id, record_ready)
+        uncarried = record.get("uncarried") or []
+        if uncarried:
+            log.warning("attempt %s does not carry the uncommitted changes of earlier attempts %s", row["attempt_id"],
+                        [(p.get("attempt_id"), p.get("kept"), p.get("changed_files")) for p in uncarried])
         return source_root(row["attempt_id"], project_id=project_id, group_id=group_id, document_ok=True)
     except ledger.LeaseLost:
         cleanup(row["attempt_id"])

@@ -361,6 +361,15 @@ export default {
         conflict: 'Merge conflict',
         failed: 'Merge failed',
         open_conflict: 'Resolve the conflict in the Git panel',
+        // v02gui.0015 T4 — the result failed the integration's syntax check.
+        verification_failed: 'Not merged: a file of the result has a syntax error. To redo the work, stop and run again (a new attempt opens).',
+      },
+      // v02gui.0015 T2 — an earlier attempt's uncommitted changes the card's attempt did not take.
+      uncarried: {
+        flag: 'Not carried {files}',
+        flag_unknown: 'Not carried ?',
+        title: 'This attempt did not take the uncommitted changes ({files} files) of {attempts} earlier attempt(s). They are not deleted: they stay in the earlier workspace (or the snapshot kept at Stop).',
+        unknown: 'The changes of some attempts could not be counted.',
       },
       hold: 'Hold',
       // flowgate.v02.0061 T#15 — the Hold mark, a card's context menu and the Graph Time Machine dialog.
@@ -423,6 +432,8 @@ export default {
       // flowgate.v02.0125 T#2 — a needs_intervention card's known reason as a sentence (cardStateReasonText); other reasons are shown as sent.
       card_intervention_reasons: {
         review_count_exhausted: 'Review attempts are used up and the last revision has not been reviewed. Re-review it with `Next step` or `Run all`; approval alone does not complete it.',
+        // flowgate.v02gui.0015 T3
+        action_required_new_attempt: 'A Q&A answer requires a new attempt, but none was opened, so the card was not called again. `Next step` or `Run all` reopens it as a new attempt. For a card in review, stop the run first.',
       },
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.

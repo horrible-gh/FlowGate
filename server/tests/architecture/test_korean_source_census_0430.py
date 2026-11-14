@@ -222,7 +222,11 @@ FILE_LINE_CAPS: dict[str, int] = {
     # New file (flowgate.v02.0064 T#5, T-B4d): the ko title requests P0006 §4.2.6 fixes for a claiming AI start's
     # mention (CLI and API wordings, three source lines each). Mention copy for the AI, not comments.
     "modules/flow_gate/services/node_title_hooks.py": 6,
-    "modules/flow_gate/services/remote_tool_service.py": 14,
+    # 14 -> 19: v02gui 0015 T5, measured with _korean_lines. HEAD already measured 15 (drift from
+    # other merged groups); the write/patch content guards add exactly four ko entries to
+    # _CUSTOM_ERROR_MESSAGES (base_changed, masked_substitution_suspect, replacement_char_introduced,
+    # override_reason_required), each with complete en/ja siblings. No comment or docstring Korean.
+    "modules/flow_gate/services/remote_tool_service.py": 19,
     "modules/flow_gate/services/test_run_service.py": 28,
     # 45 -> 97. Measured, split into its two causes: 55 lines were already there before
     # 0523 touched this file (drift merged in by other groups, the same untracked-by-this-

@@ -361,6 +361,15 @@ export default {
         conflict: 'マージ競合',
         failed: 'マージ失敗',
         open_conflict: 'Git パネルで競合を解決します',
+        // v02gui.0015 T4 — the result failed the integration's syntax check.
+        verification_failed: '結果に構文エラーのあるファイルがあるため、マージしませんでした。やり直すには停止してから実行してください（新しい試行で開きます）。',
+      },
+      // v02gui.0015 T2 — an earlier attempt's uncommitted changes the card's attempt did not take.
+      uncarried: {
+        flag: '未引継 {files}',
+        flag_unknown: '未引継 ?',
+        title: '以前の試行 {attempts} 件のコミットされていない変更（{files} ファイル）を、この試行は引き継いでいません。変更は削除されず、以前の作業フォルダ（または停止時の保存版）に残っています。',
+        unknown: '一部の試行は変更数を読み取れませんでした。',
       },
       hold: 'Hold',
       // flowgate.v02.0061 T#15 — the Hold mark, a card's context menu and the Graph Time Machine dialog.
@@ -423,6 +432,8 @@ export default {
       // flowgate.v02.0125 T#2 — a needs_intervention card's known reason as a sentence (cardStateReasonText); other reasons are shown as sent.
       card_intervention_reasons: {
         review_count_exhausted: 'レビュー回数を使い切り、最後の修正版は未レビューです。`次のステップ`または`全体実行`で再レビューしてください。承認だけでは完了しません。',
+        // flowgate.v02gui.0015 T3
+        action_required_new_attempt: 'Q&Aの回答で新しい attempt が必要とされましたが、まだ開かれていないためカードを再呼び出ししていません。`次のステップ`または`全体実行`で新しい attempt として開き直します。レビュー中のカードは停止してから実行してください。',
       },
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.

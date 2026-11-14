@@ -221,7 +221,9 @@ def _options(item):
         parsed = json.loads(raw) if isinstance(raw, str) else (raw or [])
     except ValueError:
         return []
-    return [{"id": o.get("id"), "label": o.get("label", "")} for o in parsed if isinstance(o, dict)]
+    # flowgate.v02gui.0015 T3: ``requires`` only when the option has one (selecting it holds the card until then)
+    return [{"id": o.get("id"), "label": o.get("label", ""), **({"requires": o["requires"]} if o.get("requires") else {})}
+            for o in parsed if isinstance(o, dict)]
 
 
 def _cut(text, limit):

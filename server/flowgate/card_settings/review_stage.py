@@ -195,7 +195,7 @@ from flowgate.card_documents import lines as card_lines
 from flowgate.card_intervention import reasons as intervention
 from flowgate.card_settings import fields
 from flowgate.card_settings import legacy_adapter as legacy
-from flowgate.card_settings import question_wait, repository, settings
+from flowgate.card_settings import action_guard, question_wait, repository, settings
 
 _log = logging.getLogger(__name__)
 
@@ -316,6 +316,8 @@ def _after_instruction(flow_id: str, run: dict, node: dict, row: dict) -> None:
         return
     if question_wait.hold(flow_id, run, node, asked_by_instruction=True):
         return                                  # 0063: its questions are answered first
+    if action_guard.blocks(flow_id, run, key, "instruction"):
+        return                                  # v02gui.0015 T3: answered before its end, the action not taken
     doc_id = written_instruction(flow_id, node, row)
     if doc_id is None:
         _log.info("card instruction stage failed flow=%s node=%s run=%s: no instruction written",
@@ -361,6 +363,8 @@ def continue_instruction_after_answers(flow_id: str, run: dict, node: dict, row:
         _log.info("card instruction stage not continued flow=%s node=%s run=%s: not the stage's latest run, or asking",
                   flow_id, key, asker)
         return
+    if action_guard.blocks(flow_id, run, key, "instruction"):
+        return                                  # v02gui.0015 T3: the answers require a new attempt, none was opened
     doc_id = written_instruction(flow_id, node, row) if ended_cleanly(run) else None
     if doc_id is None:
         _log.info("card instruction stage written again flow=%s node=%s run=%s: answered, %s",
@@ -529,6 +533,8 @@ def _after_work(flow_id: str, run: dict, answered: bool = False) -> None:
         return
     if question_wait.hold(flow_id, run, node):
         return                                  # 0063: its questions are answered first
+    if action_guard.blocks(flow_id, run, node["node_key"], "work"):
+        return                                  # v02gui.0015 T3: no review, no automatic approval until a new attempt
     if assigned:                                # 0113 T#3 (L-2 §2.9): the result's review assignment
         from flowgate.card_settings import assigned_review  # noqa: PLC0415
 
@@ -910,6 +916,8 @@ def reconcile(flow_id: str) -> None:
         return
     for row in rows:
         try:
+            if action_guard.node_reason(flow_id, row) is not None:
+                continue                        # v02gui.0015 T3: held until a new attempt — no lost step is taken
             if _assigned_attempt(legacy.active_attempt_id(run_row["run_id"], row["node_key"])):
                 from flowgate.card_settings import assigned_review  # noqa: PLC0415
 

@@ -199,13 +199,23 @@ def _resolve_writer(
 
 # ── Request schemas ──────────────────────────────────────────────────────────
 
+class QuestionOptionIn(BaseModel):
+    """flowgate.v02gui.0015 T3: an option with what it requires before the asking card goes on when an answer selects
+    it (``q_service.OPTION_REQUIREMENTS``: ``new_attempt``). Never an id: ids stay server-assigned."""
+    model_config = {"extra": "forbid"}
+
+    label: str
+    requires: Optional[str] = None
+
+
 class QuestionItemIn(BaseModel):
     title: Optional[str] = None
     body: str
     # Plain label strings — ids are always server-assigned (L0008 §2.1/§2.3), so the
     # request surface never takes one. q_service re-validates: it is the final gate for
     # callers that reach the service without passing through this route.
-    options: List[str] = []
+    # flowgate.v02gui.0015 T3: or ``{"label", "requires"}`` (``QuestionOptionIn``).
+    options: List[Union[str, QuestionOptionIn]] = []
 
     @field_validator("body")
     @classmethod

@@ -106,6 +106,8 @@ export interface FlowRunNodeInfo extends CardRunFacts, RoleRunFields {
   readonly runningExecutionCount?: number
   readonly requestedExecutionCount?: number
   readonly attemptId?: string | null
+  /** v02gui.0015 T2: the earlier attempts' uncommitted changes the attempt did not take, null when none. */
+  readonly uncarriedChanges?: import('@/features/project/types').UncarriedChanges | null
 }
 
 /** flowgate.v02.0061 T#14: the server's step / full command (다음 단계 / 전체 실행). */
