@@ -294,12 +294,12 @@ describe('2-B in the Shell — 그룹 / 플로우 이름 변경 (display name on
   })
 
   it.each([
-    ['module_identifier_taken', 409, '다른 그룹이 쓰고 있거나 예전에 쓴 식별자입니다.'],
-    ['module_identifier_unsupported', 409, '이 서버는 아직 식별자 변경을 지원하지 않습니다'],
-    ['module_title_too_long', 422, '이름은 100자 이하여야 합니다.'],
-  ] as const)('v02gui.0012: a Group rename refused with %s says why (not the general sentence)', async (code, status, words) => {
+    ['module_identifier_taken', 409, '"v0.2.test" 그룹이 쓰는 식별자입니다.', { holder: { kind: 'group', module: 'ui2', title: 'v0.2.test' } }],
+    ['module_rename_busy', 409, '이 그룹에서 실행 중인 작업이 있습니다(p.ui.0001)', { busy: [{ group_id: 'p.ui.0001', reason: 'flow_run_active' }] }],
+    ['module_title_too_long', 422, '이름은 100자 이하여야 합니다.', undefined],
+  ] as const)('v02gui.0012: a Group rename refused with %s says why (not the general sentence)', async (code, status, words, details) => {
     const w = await mountShell()
-    patchRequest.mockRejectedValue(axiosError(status, { ok: false, code, error_message: 'refused' }))
+    patchRequest.mockRejectedValue(axiosError(status, { ok: false, code, error_message: 'refused', ...(details ? { details } : {}) }))
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
     await choose('group.rename')

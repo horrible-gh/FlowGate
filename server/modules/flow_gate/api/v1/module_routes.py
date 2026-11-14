@@ -167,10 +167,6 @@ def list_groups_for_module(
         return _fail(422, str(exc))
 
     store = get_store()
-    if project_id:
-        # v02gui.0012: a changed (or retired) identifier still lists the module's groups.
-        from modules.flow_gate.db import module_identifiers
-        module = module_identifiers.resolve_module_key(project_id, module, store)
 
     module_title_row = store._fetch_one(
         "SELECT title FROM project_modules WHERE project_id = ? AND name = ?",
@@ -412,10 +408,6 @@ def create_module(request: Request, project_id: str, body: _CreateModuleBody):
     )
     if existing:
         return _fail(409, f"Module '{name}' already exists")
-    from modules.flow_gate.db import module_identifiers
-    if module_identifiers.resolve_module_key(project_id, name, store) != name:
-        # v02gui.0012: an identifier another module uses (or used) stays reserved for it.
-        return _fail(409, f"Module '{name}' already exists")
 
     title = (body.title or "").strip() or name
     now = now_iso()
@@ -456,16 +448,19 @@ def _fail_code(status: int, code: str, message: str) -> JSONResponse:
 
 @router.patch("/projects/{project_id}/modules/{module_name}")
 def patch_module(request: Request, project_id: str, module_name: str, body: _PatchModuleBody):
-    """Update a module's display name (title) and/or exposed identifier (T559, v02gui.0012).
+    """Update a module's display name (title) and/or its identifier (T559, v02gui.0012).
 
-    ``module_name`` may be the permanent key or any identifier the module had (current or retired).
-    The permanent key is never rewritten: ``groups.module``, ``documents.module``, ``group_id``,
-    ``id_counter`` and branch names keep it, so no document, Flow, chat, run history or Git state
-    moves. An identifier change only records the new exposed identifier
-    (module_identifiers.rename_identifier); the old one stays reserved and keeps resolving.
+    The identifier is the module's key itself. Changing it renames the key everywhere
+    (``services.module_rename.rename_module``): ``groups.module``, ``documents.module``, every
+    group / document id, ``id_counter``, the storage directories, front matter and the group
+    branches / worktrees. The old identifier is free afterwards. Refused while anything runs in the
+    module's groups (409 ``module_rename_busy``) or when another group uses the identifier
+    (409 ``module_identifier_taken``, ``details`` names that group).
     Title and identifier are independent: either, both or neither may change.
     """
     from modules.flow_gate.db import module_identifiers
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    from modules.flow_gate.services import module_rename
 
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
@@ -485,69 +480,81 @@ def patch_module(request: Request, project_id: str, module_name: str, body: _Pat
         return _fail(422, str(exc))
 
     store = get_store()
-    module_key = module_identifiers.resolve_module_key(project_id, module_name, store)
-
     existing = store._fetch_one(
         "SELECT module_id, name, title FROM project_modules WHERE project_id = ? AND name = ?",
-        [project_id, module_key],
+        [project_id, module_name],
     )
     if existing is None:
         # A module known only through groups.module (created before project_modules) can still be
         # edited: give it its project_modules row first.
         in_groups = store._fetch_one(
             "SELECT 1 AS hit FROM groups WHERE project_id = ? AND module = ? LIMIT 1",
-            [project_id, module_key],
+            [project_id, module_name],
         )
-        if in_groups is None or module_key == "none":
+        if in_groups is None or module_name == "none":
             return _fail_code(404, "module_not_found", f"Module '{module_name}' not found")
 
-    current_identifier = module_identifiers.exposed_identifier(project_id, module_key, store)
-    current_title = ((existing or {}).get("title") or "").strip() or module_key
+    current_title = ((existing or {}).get("title") or "").strip() or module_name
     new_title = title_in if title_in is not None else current_title
-    new_identifier = current_identifier
-    if body.name is not None:
-        new_identifier = body.name.strip()
+    new_identifier = module_name if body.name is None else body.name.strip()
     title_changed = new_title != current_title
-    identifier_changed = new_identifier != current_identifier
+    identifier_changed = new_identifier != module_name
 
-    now = now_iso()
-    module_id = (existing or {}).get("module_id") or f"{project_id}:{module_key}"
-    if title_changed or identifier_changed:
+    if identifier_changed:
         try:
-            with store.transaction():
-                if existing is None:
-                    store._execute(
-                        "INSERT INTO project_modules (module_id, project_id, name, title, created_at, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                        [module_id, project_id, module_key, new_title, now, now],
-                    )
-                elif title_changed:
-                    store._execute(
-                        "UPDATE project_modules SET title = ?, updated_at = ? WHERE project_id = ? AND name = ?",
-                        [new_title, now, project_id, module_key],
-                    )
-                if identifier_changed:
-                    new_identifier = module_identifiers.rename_identifier(
-                        project_id, module_key, new_identifier, store
-                    )
+            module_identifiers.validate_identifier_format(new_identifier)
         except module_identifiers.ModuleIdentifierError as exc:
             return _fail_code(exc.status, exc.code, exc.message)
-        except Exception as exc:  # noqa: BLE001 — a lost race on the identifier PRIMARY KEY lands here
-            if identifier_changed and module_identifiers.resolve_module_key(project_id, new_identifier, store) != module_key:
-                return _fail_code(
-                    409, "module_identifier_taken",
-                    f"Identifier '{new_identifier}' already exists (another group uses it).",
+
+    now = now_iso()
+    module_id = (existing or {}).get("module_id") or f"{project_id}:{module_name}"
+    if existing is None or title_changed:
+        with store.transaction():
+            if existing is None:
+                store._execute(
+                    "INSERT INTO project_modules (module_id, project_id, name, title, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    [module_id, project_id, module_name, new_title, now, now],
                 )
-            raise exc
+            else:
+                store._execute(
+                    "UPDATE project_modules SET title = ?, updated_at = ? WHERE project_id = ? AND name = ?",
+                    [new_title, now, project_id, module_name],
+                )
+
+    renamed = None
+    if identifier_changed:
+        try:
+            renamed = module_rename.rename_module(
+                project_id, module_name, new_identifier, actor=_actor_id(auth),
+            )
+        except ModuleRenameRefused as exc:
+            return JSONResponse(
+                status_code=exc.status,
+                content={"ok": False, "http_status": exc.status, "code": exc.code,
+                         "error_message": exc.message, "details": exc.details,
+                         "help_url": help_url(),
+                         # The title above is already saved; say so, so the client does not resend it.
+                         "title_changed": title_changed, "title": new_title},
+            )
+        module_id = f"{project_id}:{new_identifier}"
 
     return JSONResponse(content={
         "ok": True,
         "module_id": module_id,
         "project_id": project_id,
         "name": new_identifier,
-        "module_key": module_key,
+        "previous_name": module_name,
         "title": new_title,
         "title_changed": title_changed,
         "identifier_changed": identifier_changed,
+        # Old id -> new id for every renamed group (the client follows open tabs, recents, the tree).
+        "renamed_groups": (renamed or {}).get("groups", {}),
         "updated_at": now,
     })
+
+
+def _actor_id(auth) -> Optional[str]:
+    if isinstance(auth, dict):
+        return auth.get("issued_to") or auth.get("user_id") or auth.get("sub")
+    return getattr(auth, "user_id", None)

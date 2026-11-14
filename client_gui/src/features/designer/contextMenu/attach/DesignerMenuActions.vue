@@ -254,7 +254,7 @@ const flowNow = computed(() => {
   return target && (target.kind === 'flow.rename' || target.kind === 'flow.delete') ? props.actions.server.flow(target.projectId, target.flowId) : null
 })
 const currentName = computed(() => groupNow.value?.name ?? flowNow.value ?? '')
-/** The Group's identifier now (the Explorer's moduleName: the server's exposed identifier). */
+/** The Group's identifier now (the Explorer's moduleName: the module key itself). */
 const currentIdent = computed(() => groupNow.value?.moduleName ?? '')
 
 const title = computed(() => {
@@ -361,7 +361,10 @@ const canSubmit = computed(() => {
 const GROUP_REFUSAL_TEXT: Readonly<Record<string, string>> = {
   module_identifier_taken: 'rename.server.taken',
   module_identifier_reserved: 'rename.server.reserved',
-  module_identifier_unsupported: 'rename.server.unsupported',
+  module_rename_busy: 'rename.server.busy',
+  module_rename_branch_exists: 'rename.server.branchExists',
+  module_rename_path_exists: 'rename.server.pathExists',
+  module_rename_git_failed: 'rename.server.gitFailed',
   module_identifier_required: 'rename.identProblem.empty',
   module_identifier_uppercase: 'rename.identProblem.upper',
   module_identifier_invalid: 'rename.identProblem.chars',
@@ -374,7 +377,8 @@ const refusalText = computed(() => {
   const r = refusal.value
   if (!r) return ''
   const own = shown.value?.kind === 'group.rename' && r.code ? GROUP_REFUSAL_TEXT[r.code] : undefined
-  return own ? t(own) : t(`refusal.${r.reason}`)
+  // `subject` is what the server named: the group holding the identifier, the busy Flows, the existing branches.
+  return own ? t(own, { group: r.subject ?? '' }) : t(`refusal.${r.reason}`)
 })
 
 const refusalTip = computed(() => {

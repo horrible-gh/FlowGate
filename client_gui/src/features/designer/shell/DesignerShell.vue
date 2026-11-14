@@ -1483,6 +1483,23 @@ function explorerGroup(pid: string, groupId: string) {
   return explorerProject(pid)?.groups.find((group) => group.id === groupId) ?? null
 }
 
+/**
+ * v02gui.0012: Flows whose id changed with a Group identifier change. Each open tab closes under its old id (that id
+ * no longer exists on the server) and opens under the new one with the same name, in the same order; the tab that
+ * was active stays active.
+ */
+function followRenamedFlowTabs(pid: string, renamed: Record<string, string>) {
+  const moved = center.state.tabs.filter((tab) => renamed[tab.flowId])
+  if (!moved.length) return
+  const active = center.state.activeFlowId
+  for (const tab of moved) {
+    center.closeFlow(tab.flowId)
+    center.openFlow({ projectId: pid, flowId: renamed[tab.flowId], flowName: tab.name })
+  }
+  const nextActive = active !== null ? (renamed[active] ?? active) : null
+  if (nextActive !== null && center.state.tabs.some((tab) => tab.flowId === nextActive)) center.activateFlow(nextActive)
+}
+
 /** A renamed Flow's open tab takes the new name through the Center's open path; the active tab stays the active one. */
 function renameFlowTab(pid: string, flowId: string, name: string) {
   if (!center.state.tabs.some((tab) => tab.flowId === flowId)) return
@@ -1506,14 +1523,22 @@ const menuServer: DesignerMenuServerDeps = {
   renameGroup: async (pid, groupId, title, identifier) => {
     const group = explorerGroup(pid, groupId)
     if (!group) return { ok: false, refusal: { reason: 'not_found', status: null, code: null } }
-    // groupId (the Explorer node id) is built from the module's permanent key, so it stays valid after an identifier
-    // change: recent lists and F5 restore keep pointing at this Group (v02gui.0012).
     const result = await attempt(() => projectStore.renameGroup(pid, group.moduleName, title, identifier))
     if (result.ok) {
       projectStore.renameRecent('group', groupId, title)
+      // v02gui.0012: an identifier change renamed the module key on the server — the Group node id
+      // (`module:{project}:{identifier}`) and each Flow id. Recent lists and open tabs follow the new ids.
+      const renamed = result.value.renamedGroups
+      if (result.value.name !== result.value.previousName) {
+        const newGroupId = groupId.endsWith(`:${result.value.previousName}`)
+          ? `${groupId.slice(0, groupId.length - result.value.previousName.length)}${result.value.name}`
+          : groupId
+        projectStore.rekeyRecents(newGroupId !== groupId ? { [groupId]: newGroupId } : {}, renamed)
+        followRenamedFlowTabs(pid, renamed)
+      }
       explorerRefreshToken.value += 1
     }
-    return result
+    return result.ok ? { ok: true, value: undefined } : result
   },
   renameFlow: async (pid, _groupId, flowId, title) => {
     const result = await attempt(() => projectStore.renameFlow(pid, flowId, title))

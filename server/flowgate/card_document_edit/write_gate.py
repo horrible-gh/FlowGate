@@ -562,9 +562,56 @@ def project(project_id, call):
             _project_rows.reset(token)
 
 
+def module_rename(group_ids, docs, call):
+    """Hold every Flow of a module (and its non-card documents) for a module key rename (v02gui.0012).
+
+    The rename moves every document of the module — card documents included, which no other gate lets a
+    non-card writer touch — so it takes what each of those writers takes, all at once: the Flow lock and guard
+    row of every group (no run, card work or card document save starts meanwhile), the document lock of each
+    non-card document, the row locks, then the path namespace. ``call`` runs inside that one transaction.
+    Locks are taken in sorted order like ``guard_scope``; in-process locks first, never inside a transaction.
+    """
+    if transaction() is not None:
+        refuse()
+    flows = sorted(set(group_ids) | {d['group_id'] for d in docs
+                                     if flow_guard.document_guard_key(d, d['doc_id'])[0] == 'flow'})
+    loose = sorted(d['doc_id'] for d in docs if flow_guard.document_guard_key(d, d['doc_id'])[0] != 'flow')
+    locks = []
+    try:
+        for flow_id in flows:
+            lock = flow_guard._flow_lock(flow_id)
+            if not lock.acquire(timeout=flow_guard.FLOW_LOCK_WAIT_SEC):
+                raise flow_guard.FlowLockTimeout(flow_id)
+            locks.append(lock)
+            flow_guard.layout_store.ensure_guard_row(flow_id)
+        for doc_id in loose:
+            lock = flow_guard._named_lock(flow_guard._doc_locks, doc_id)
+            if not lock.acquire(timeout=flow_guard.FLOW_LOCK_WAIT_SEC):
+                raise flow_guard.FlowLockTimeout(doc_id)
+            locks.append(lock)
+        with connection.get_store().transaction():
+            for flow_id in flows:
+                if flow_guard.layout_store.bump_guard(flow_id) == 0:
+                    refuse()
+            for doc in sorted(docs, key=lambda d: d['doc_id']):
+                flow_guard.lock_document_row(doc['doc_id'])
+            token = _guard_keys.set(frozenset([('flow', f) for f in flows] + [('document', d) for d in loose]))
+            try:
+                lock_path_namespace()
+                return call()
+            finally:
+                _guard_keys.reset(token)
+    finally:
+        for lock in reversed(locks):
+            lock.release()
+        from modules.flow_gate.graph_workflow.services.card_document_ports import document_write_released
+        document_write_released()
+
+
 def dispatch(operation, *args, **kwargs):
     if operation == "inventory":
         from .inventory_gate import dispatch as inventory
         return inventory(*args, **kwargs)
     return {'paths': paths, 'row': row, 'stage': stage, 'none': require_none,
-            'create': create, 'project': project, 'paths_scope': paths_scope}[operation](*args, **kwargs)
+            'create': create, 'project': project, 'paths_scope': paths_scope,
+            'module_rename': module_rename}[operation](*args, **kwargs)

@@ -71,6 +71,7 @@ import type {
   SourceDownload,
   SourceMutationRefusal,
   SourceUploadResult,
+  GroupRenameResult,
 } from './types'
 import {
   createFlow as createFlowApi,
@@ -354,6 +355,24 @@ export const useProjectStore = defineStore('project', () => {
     writeRecentFlows(recentFlows.value)
   }
 
+  // v02gui.0012: a Group identifier change renames the module key, so the Group's Explorer node id
+  // (`module:{project}:{identifier}`) and every Flow id of it change. Recent entries follow the new ids (same place,
+  // same name); entries of other Groups are untouched.
+  function rekeyRecents(groupIds: Record<string, string>, flowIds: Record<string, string>): void {
+    if (recentGroups.value.some((entry) => groupIds[entry.id])) {
+      recentGroups.value = recentGroups.value.map((entry) => (groupIds[entry.id] ? { ...entry, id: groupIds[entry.id] } : entry))
+      writeRecentGroups(recentGroups.value)
+    }
+    if (recentFlows.value.some((entry) => flowIds[entry.id] || (entry.groupId && groupIds[entry.groupId]))) {
+      recentFlows.value = recentFlows.value.map((entry) => ({
+        ...entry,
+        id: flowIds[entry.id] ?? entry.id,
+        ...(entry.groupId && groupIds[entry.groupId] ? { groupId: groupIds[entry.groupId] } : {}),
+      }))
+      writeRecentFlows(recentFlows.value)
+    }
+  }
+
   function forgetRecentFlow(id: string): void {
     if (!recentFlows.value.some((entry) => entry.id === id)) return
     recentFlows.value = recentFlows.value.filter((entry) => entry.id !== id)
@@ -569,9 +588,10 @@ export const useProjectStore = defineStore('project', () => {
   // ── Designer context menu server commands (flowgate.v02.0060 T#2) ───────────────────────────────
   // A Group / Flow name or a dispose changes the Project's tree: its cached trees are dropped (the Explorer re-reads
   // with its refreshToken). A refusal is thrown as the api.ts Error with its `refusal`; nothing is dropped then.
-  async function renameGroup(projectId: string, moduleName: string, title: string, identifier?: string): Promise<void> {
-    await renameGroupApi(projectId, moduleName, title, identifier)
+  async function renameGroup(projectId: string, moduleName: string, title: string, identifier?: string): Promise<GroupRenameResult> {
+    const result = await renameGroupApi(projectId, moduleName, title, identifier)
     invalidateGroupTree(projectId)
+    return result
   }
 
   async function renameFlow(projectId: string, flowId: string, title: string): Promise<void> {
@@ -783,6 +803,7 @@ export const useProjectStore = defineStore('project', () => {
     recordRecentGroup,
     recordRecentFlow,
     renameRecent,
+    rekeyRecents,
     forgetRecentFlow,
     requestExplicitOpen,
     takeExplicitOpen,
