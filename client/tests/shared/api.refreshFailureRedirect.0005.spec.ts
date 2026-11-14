@@ -142,3 +142,88 @@ describe('401 refresh-failure redirect round trip (0005)', () => {
     expect(window.location.href).toBe('/')
   })
 })
+
+// flowgate.v02gui.0017 B1: a refresh that never reached a verdict (network error, timeout, 5xx —
+// e.g. the server restarting) used to take the same path as a rejected one: every token was
+// deleted and the browser sent to /login although the session was valid. Only a definitive
+// answer (401/403 from /auth/refresh, or no refresh token) may end the session now.
+describe('401 refresh failure without a verdict keeps the session (v02gui.0017 B1)', () => {
+  const rejectedHandler = async () => {
+    const api = (await import('@shared/api')).default
+    return (api.interceptors.response as unknown as {
+      handlers: { rejected: (error: unknown) => Promise<unknown> }[]
+    }).handlers[0].rejected
+  }
+
+  const arrangeSession = () => {
+    setLocation('/app/projects', '?tab=x')
+    ;(window as { __accessToken__?: string }).__accessToken__ = 'stale-access-token'
+    sessionStorage.setItem('fg_access_token', 'stale-access-token')
+    localStorage.setItem('fg_refresh_token', 'valid-refresh-token')
+  }
+
+  const expectSessionKept = () => {
+    expect(window.location.href).toBe('')
+    expect(sessionStorage.getItem('fg_access_token')).toBe('stale-access-token')
+    expect((window as { __accessToken__?: string }).__accessToken__).toBe('stale-access-token')
+    expect(localStorage.getItem('fg_refresh_token')).toBe('valid-refresh-token')
+  }
+
+  const original401 = () => ({ response: { status: 401, data: {} }, config: { headers: {}, url: '/auth/me' } })
+
+  it('keeps every token and stays on the page when /auth/refresh fails with a network error', async () => {
+    const rejected = await rejectedHandler()
+    arrangeSession()
+    const networkError = { code: 'ERR_NETWORK', message: 'Network Error' }
+    postMock.mockRejectedValue(networkError)
+
+    await expect(rejected(original401())).rejects.toBe(networkError)
+
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expectSessionKept()
+  })
+
+  it('keeps the session when /auth/refresh times out', async () => {
+    const rejected = await rejectedHandler()
+    arrangeSession()
+    postMock.mockRejectedValue({ code: 'ECONNABORTED', message: 'timeout of 30000ms exceeded' })
+
+    await expect(rejected(original401())).rejects.toBeTruthy()
+
+    expectSessionKept()
+  })
+
+  it('keeps the session when /auth/refresh answers 503', async () => {
+    const rejected = await rejectedHandler()
+    arrangeSession()
+    postMock.mockRejectedValue({ response: { status: 503, data: {} } })
+
+    await expect(rejected(original401())).rejects.toBeTruthy()
+
+    expectSessionKept()
+  })
+
+  it('still ends the session when /auth/refresh answers 401 (session revoked)', async () => {
+    const rejected = await rejectedHandler()
+    arrangeSession()
+    postMock.mockRejectedValue({ response: { status: 401, data: { detail: 'session_revoked' } } })
+
+    await expect(rejected(original401())).rejects.toBeTruthy()
+
+    expect(window.location.href).toBe(`/login?next=${encodeURIComponent('/app/projects?tab=x')}`)
+    expect(sessionStorage.getItem('fg_access_token')).toBeNull()
+    expect(localStorage.getItem('fg_refresh_token')).toBeNull()
+  })
+
+  it('isAuthRejection tells a verdict apart from a failed connection', async () => {
+    const { isAuthRejection } = await import('@shared/api')
+    expect(isAuthRejection({ response: { status: 401 } })).toBe(true)
+    expect(isAuthRejection({ response: { status: 403 } })).toBe(true)
+    expect(isAuthRejection({ code: 'ERR_NO_REFRESH_TOKEN' })).toBe(true)
+    expect(isAuthRejection({ code: 'ERR_NETWORK' })).toBe(false)
+    expect(isAuthRejection({ code: 'ECONNABORTED' })).toBe(false)
+    expect(isAuthRejection({ response: { status: 502 } })).toBe(false)
+    expect(isAuthRejection({ response: { status: 503 } })).toBe(false)
+    expect(isAuthRejection(null)).toBe(false)
+  })
+})

@@ -79,6 +79,7 @@ from modules.flow_gate.graph_workflow.api.canvas_routes import router as _graph_
 from modules.flow_gate.graph_workflow.api.graph_routes import router as _graph_definition_router
 from modules.flow_gate.graph_workflow.api.run_routes import router as _graph_run_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
+from modules.flow_gate.api.request_observability import RequestIdMiddleware, install_access_log_redaction
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.git.credentials import git_error_envelope
 from modules.flow_gate.workflow.pipeline_service import WorkflowSlotConflictError
@@ -291,8 +292,14 @@ app.add_middleware(
     allow_credentials=resolve_allow_credentials(ALLOWED_ORIGIN),
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "X-Request-ID"],
 )
+# flowgate.v02gui.0017 (NR 0003 B-R8): added last, so it is the outermost layer -- every response
+# (CORS preflight, rate-limit rejections, errors) carries X-Request-ID, and handlers such as
+# /auth/refresh can put the same id in their log lines.
+app.add_middleware(RequestIdMiddleware)
+# The SSE stream passes the access token as ?token=; keep its value out of the uvicorn access log.
+install_access_log_redaction()
 
 # ── Built client (staging/prod) ──────────────────────────────────
 # Serve client/dist when present (produced by client/build.sh). Mirrors the

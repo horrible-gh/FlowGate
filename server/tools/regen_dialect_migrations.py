@@ -88,6 +88,10 @@ _PG_HAND_AUTHORED_FILES = {
     "075_test_run_cases_fk_repair.sql",
     "092_ai_invoke_document_review_loop_live_run.sql",
     "107_tokens_failure_origin_review_scope.sql",
+    # flowgate.v02gui.0017: PG-only sequence realign + CH/WP re-seed (no SQLite source; setval is
+    # PostgreSQL-only). Listed so a future same-named SQLite file can never make regen overwrite them.
+    "046a_pg_document_types_sequence_realign.sql",
+    "189_repair_pg_conversation_work_plan_doctypes.sql",
 }
 
 # SQLite-only JSON DML the converter cannot translate (table-valued json_each and

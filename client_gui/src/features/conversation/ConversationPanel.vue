@@ -308,6 +308,9 @@ useChatEvents(
     return scope && chatId ? { projectId: scope.projectId, groupId: scope.groupId, chatId } : null
   },
   (parts) => void session.recover(parts),
+  // flowgate.v02gui.0017 B3: a chat list whose read failed (dropped connection, server restart) used to stay failed
+  // until [다시 시도] was pressed. When the stream reconnects or the browser is online again it reads again by itself.
+  { projectId: () => state.scope?.projectId ?? null, restored: () => void session.recoverChatList() },
 )
 
 // flowgate.v02.0151 T-A2 (NR §2.6-3 ②): coming back to the panel — the tab visible again, the window focused again —
@@ -320,6 +323,8 @@ let lastRevisitCatchUp = Number.NEGATIVE_INFINITY
 
 function onRevisit(): void {
   if (document.visibilityState === 'hidden' || !props.active) return
+  // flowgate.v02gui.0017 B3: a failed chat list reads again on return as well (no-op unless it failed).
+  void session.recoverChatList()
   if (!state.activeChatId || state.turnsStatus !== 'ready') return
   const now = Date.now()
   if (now - lastRevisitCatchUp < REVISIT_CATCHUP_MIN_MS) return

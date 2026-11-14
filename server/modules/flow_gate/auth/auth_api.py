@@ -1,4 +1,5 @@
 """Authentication API including per-login session management."""
+import logging
 from datetime import datetime,timezone
 from typing import Optional
 import jwt
@@ -13,6 +14,7 @@ from .token_store import blacklist_token,get_refresh_token,revoke_refresh_token,
 from .session_store import create_request_session,create_session,get_session,list_active_sessions,revoke_all_sessions,revoke_other_sessions,revoke_session,touch_session
 from .totp_service import TOTP_LOCK_MAX_ATTEMPTS,TOTP_LOCK_MINUTES,encrypt_totp_secret,generate_totp_secret,get_totp_provisioning_uri,verify_totp_code
 from modules.flow_gate.settings import security_policy_service as _security
+from modules.flow_gate.api.request_observability import current_request_id
 router=APIRouter()
 # 0275 T0005 (NR0003 cause 2): every handler here does sync DB work (and login/
 # password_change run bcrypt, ~100ms+ of CPU), so they are plain `def` — FastAPI
@@ -136,30 +138,42 @@ def invite_accept(body:InviteAcceptRequest):
     except SystemUserError as exc:
         if exc.code=="invalid_password_policy":raise HTTPException(400,{"code":"invalid_password_policy","violations":validate_password(body.password)})
         raise HTTPException(exc.status,exc.code)
+# flowgate.v02gui.0017 (NR 0003 B-R8): every refused refresh leaves one WARNING line with a reason
+# code, the user/session ids when known, the request id (X-Request-ID) and the client address --
+# never the token. Before this a refused refresh left no application log at all, so "why did this
+# browser get logged out" could not be answered. Response status/detail are unchanged.
+_refresh_log=logging.getLogger("flowgate.auth.refresh")
+def _client_host(request):
+    client=getattr(request,"client",None)
+    return getattr(client,"host",None) or "-"
+def _refresh_reject(request,reason,detail,uid=None,sid=None):
+    _refresh_log.warning("auth.refresh rejected reason=%s user_id=%s session_id=%s request_id=%s client=%s",
+        reason,uid or "-",sid or "-",current_request_id() or "-",_client_host(request))
+    return HTTPException(401,detail)
 @router.post("/refresh")
 def refresh(request:Request,body:RefreshRequest):
     try:payload=decode_token(body.refresh_token)
-    except jwt.ExpiredSignatureError:raise HTTPException(401,"Token has expired")
-    except jwt.InvalidTokenError:raise HTTPException(401,"Invalid authentication credentials")
-    if payload.get("type")!="refresh" or not payload.get("jti") or not payload.get("sub"):raise HTTPException(401,"Invalid authentication credentials")
+    except jwt.ExpiredSignatureError:raise _refresh_reject(request,"token_expired","Token has expired")
+    except jwt.InvalidTokenError:raise _refresh_reject(request,"token_invalid","Invalid authentication credentials")
+    if payload.get("type")!="refresh" or not payload.get("jti") or not payload.get("sub"):raise _refresh_reject(request,"token_not_refresh","Invalid authentication credentials",payload.get("sub"),payload.get("sid"))
     jti,uid=payload["jti"],payload["sub"]; row=get_refresh_token(jti)
-    if not row:raise HTTPException(401,"Invalid authentication credentials")
+    if not row:raise _refresh_reject(request,"token_unknown","Invalid authentication credentials",uid,payload.get("sid"))
     if row.get("revoked_at"):
         sid=row.get("session_id"); session=get_session(sid) if sid else None
-        if sid and session and session.get("revoked_at") and not row.get("replaced_by"):raise HTTPException(401,"session_revoked")
-        revoke_all_sessions(uid,"reuse_detected"); raise HTTPException(401,"Token reuse detected. All sessions revoked.")
+        if sid and session and session.get("revoked_at") and not row.get("replaced_by"):raise _refresh_reject(request,"session_revoked","session_revoked",uid,sid)
+        revoke_all_sessions(uid,"reuse_detected"); raise _refresh_reject(request,"reuse_detected","Token reuse detected. All sessions revoked.",uid,sid)
     expires=datetime.fromisoformat(row["expires_at"])
     if expires.tzinfo is None:expires=expires.replace(tzinfo=timezone.utc)
-    if _now_utc()>expires:revoke_refresh_token(jti); raise HTTPException(401,"Token has expired")
+    if _now_utc()>expires:revoke_refresh_token(jti); raise _refresh_reject(request,"token_expired","Token has expired",uid,row.get("session_id"))
     user=db_users.get_by_id(uid)
-    if not user or not user.get("is_active"):raise HTTPException(401,"Invalid authentication credentials")
+    if not user or not user.get("is_active"):raise _refresh_reject(request,"user_inactive","Invalid authentication credentials",uid,row.get("session_id"))
     sid=row.get("session_id")
     if sid:
         session=get_session(sid)
-        if not session or session.get("revoked_at"):raise HTTPException(401,"session_revoked")
+        if not session or session.get("revoked_at"):raise _refresh_reject(request,"session_revoked","session_revoked",uid,sid)
         # 시스템 › 보안 › 자동 로그아웃: the background token refresh is not activity, so it
         # neither extends last_used_at (API requests do, see middleware) nor survives idleness.
-        if _session_idle(session):revoke_session(sid,uid,"admin"); raise HTTPException(401,"session_idle")
+        if _session_idle(session):revoke_session(sid,uid,"admin"); raise _refresh_reject(request,"session_idle","session_idle",uid,sid)
     else:sid=create_session(uid); touch_session(sid)
     access,_=create_access_token(uid,user["username"],_roles(uid),bool(user.get("is_admin")),sid=sid)
     refresh_token,new_jti,_=create_refresh_token(uid,expires,sid); rotate_refresh_token(jti,new_jti,uid,expires,sid)
