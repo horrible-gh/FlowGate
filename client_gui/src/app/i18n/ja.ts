@@ -176,8 +176,8 @@ export default {
 },
   flow_base: {
     "title": "ベースブランチ",
-    "current": "現在",
-    "change": "変更",
+    "current": "現在のブランチ",
+    "change": "変更後のブランチ",
     "select": "ブランチを選択",
     "denied": "変更権限がありません",
     "disposed": "破棄済みのFlowです",

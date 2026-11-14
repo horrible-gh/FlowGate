@@ -1,23 +1,62 @@
 <template>
-  <ModalShell :open="open" size="md" @close="emit('close')">
+  <!-- Same frame as File › 새 Flow (DesignerFlowCreateDialog): header + ✕, labelled branch fields, right-aligned actions. -->
+  <ModalShell :open="open" size="md" surface-class="flow-base-dialog" @close="emit('close')">
     <template #header="{ titleId }">
-      <div class="flow-base-head">
-        <h2 :id="titleId" class="flow-base-title">{{ t('gui.flow_base.title') }}</h2>
-        <IconButton :label="t('gui.designer.file_menu.close')" variant="ghost" @click="emit('close')">✕</IconButton>
+      <div class="fbd-head">
+        <h2 :id="titleId" class="fbd-title">{{ t('gui.flow_base.title') }}</h2>
+        <button type="button" class="fbd-close" :aria-label="t('gui.designer.file_menu.close')"
+          :title="t('gui.designer.file_menu.close')" data-test="flow-base-close" @click="emit('close')">
+          <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+          </svg>
+        </button>
       </div>
     </template>
-    <div data-test="flow-base" :data-state="state" class="flow-base">
-      <p data-test="flow-base-current">{{ t('gui.flow_base.current') }}: {{ state === 'loading' ? t('gui.common.loading') : view?.effectiveWorkBaseRef ?? '—' }}</p>
-      <p v-if="message" role="status" data-test="flow-base-message">{{ t('gui.flow_base.' + message) }}</p>
-      <template v-if="state === 'editable'">
-        <label for="flow-base-choice">{{ t('gui.flow_base.change') }}</label>
-        <Select id="flow-base-choice" v-model="selected" :options="options" :disabled="submitting"
-          :placeholder="t('gui.flow_base.select')" data-test="flow-base-choice" />
-      </template>
-      <Button v-if="state !== 'loading'" variant="secondary" :disabled="submitting" class="flow-base-retry" data-test="flow-base-retry" @click="load()">{{ t('gui.common.refresh') }}</Button>
+
+    <div data-test="flow-base" :data-state="state" class="fbd-form">
+      <div class="fbd-field">
+        <span class="fbd-label">{{ t('gui.flow_base.current') }}</span>
+        <div class="fbd-control fbd-branch-control is-readonly" :aria-busy="state === 'loading' || undefined">
+          <svg class="fbd-branch-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="5.5" cy="4.5" r="2" stroke="currentColor" stroke-width="1.5" />
+            <circle cx="5.5" cy="15.5" r="2" stroke="currentColor" stroke-width="1.5" />
+            <circle cx="15" cy="8" r="2" stroke="currentColor" stroke-width="1.5" />
+            <path d="M5.5 6.5v7M13 8h-3.2C7.5 8 5.5 10 5.5 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+          <span class="fbd-value" :title="currentText" data-test="flow-base-current">{{ currentText }}</span>
+          <span v-if="state === 'loading'" class="fbd-spinner" role="status" :aria-label="t('gui.common.loading')" />
+          <button v-else type="button" class="fbd-retry" :disabled="submitting"
+            :aria-label="t('gui.common.refresh')" :title="t('gui.common.refresh')"
+            data-test="flow-base-retry" @click="load()">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M15.8 6.8A6.2 6.2 0 1 0 16 12M16 3v4.5h-4.5" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div v-if="state === 'editable'" class="fbd-field">
+        <label class="fbd-label" for="flow-base-choice">{{ t('gui.flow_base.change') }}</label>
+        <div class="fbd-control fbd-branch-control" :class="{ 'is-disabled': submitting }">
+          <svg class="fbd-branch-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="5.5" cy="4.5" r="2" stroke="currentColor" stroke-width="1.5" />
+            <circle cx="5.5" cy="15.5" r="2" stroke="currentColor" stroke-width="1.5" />
+            <circle cx="15" cy="8" r="2" stroke="currentColor" stroke-width="1.5" />
+            <path d="M5.5 6.5v7M13 8h-3.2C7.5 8 5.5 10 5.5 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+          <Select id="flow-base-choice" v-model="selected" :options="options" :disabled="submitting"
+            :placeholder="t('gui.flow_base.select')" data-test="flow-base-choice" />
+          <svg class="fbd-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </div>
+      </div>
+
+      <p v-if="message" role="status" class="fbd-message" :class="{ 'is-error': messageIsError }" data-test="flow-base-message">{{ t('gui.flow_base.' + message) }}</p>
     </div>
+
     <template #footer>
-      <div class="flow-base-actions">
+      <div class="fbd-actions">
         <Button variant="secondary" data-test="flow-base-cancel" @click="emit('close')">{{ t('gui.common.cancel') }}</Button>
         <Button v-if="state === 'editable'" variant="primary" :disabled="!canSave" :loading="submitting" data-test="flow-base-save" @click="save">{{ t('gui.common.save') }}</Button>
       </div>
@@ -32,7 +71,6 @@ import { useCurrentUser } from '@/core/auth/currentUser'
 import { useProjectStore, type FlowWorkBase } from '@/features/project'
 import ModalShell from '../../../components/ui/ModalShell.vue'
 import Button from '../../../components/ui/Button.vue'
-import IconButton from '../../../components/ui/IconButton.vue'
 import Select, { type SelectOption } from '../../../components/ui/Select.vue'
 
 const props = defineProps<{ open: boolean; projectId: string | null; groupId: string | null }>()
@@ -65,6 +103,11 @@ const failures: Record<string, string> = {
   group_work_base_not_commit: 'not_commit', group_work_base_update_failed: 'save_failed',
 }
 const failure = (error: unknown) => error as { status?: number; code?: string }
+const currentText = computed(() => state.value === 'loading'
+  ? t('gui.common.loading') : view.value?.effectiveWorkBaseRef ?? '—')
+// Read-only reasons are information; everything else that lands in `message` is a failure.
+const notices = new Set(['denied', 'disposed', 'git_disabled', 'checkout_unavailable', 'locked', 'busy'])
+const messageIsError = computed(() => !!message.value && !notices.has(message.value))
 
 async function load() {
   const seq = ++generation
@@ -141,30 +184,157 @@ watch([() => props.open, () => props.projectId, () => props.groupId, user, userS
 onBeforeUnmount(() => { generation += 1 })
 </script>
 
+<style>
+/* Same surface as DesignerFlowCreateDialog (.dfm-create-dialog); explicit class keeps the shared shell unchanged elsewhere. */
+.flow-base-dialog.ui-modal-surface {
+  max-width: 480px;
+  background: linear-gradient(150deg, #132238 0%, #101d30 53%, #101b2c 100%);
+  border: 1px solid rgba(143, 169, 203, .21);
+  border-radius: 15px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .32), 0 4px 16px rgba(0, 0, 0, .2), inset 0 1px rgba(255, 255, 255, .035);
+  color: var(--fg2-text, #ecf3fb);
+}
+.flow-base-dialog > .ui-modal-body {
+  padding: 0 29px;
+  overflow: visible;
+}
+@media (max-width: 500px) {
+  .flow-base-dialog > .ui-modal-body { padding: 0 20px; }
+}
+</style>
+
 <style scoped>
-.flow-base-head {
+.fbd-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 20px 24px 0;
+  padding: 27px 29px 25px;
 }
-
-.flow-base-title {
+.fbd-title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--fg2-text);
+  font-size: 17px;
+  line-height: 24px;
+  font-weight: 670;
+  letter-spacing: -.5px;
 }
-
-.flow-base { display: grid; gap: 12px; padding: 16px 0 4px; }
-.flow-base p { margin: 0; overflow-wrap: anywhere; }
-.flow-base-retry { justify-self: start; }
-
-.flow-base-actions {
+.fbd-close, .fbd-retry {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8fa4bb;
+  cursor: pointer;
+}
+.fbd-close {
+  width: 30px;
+  height: 30px;
+  margin: -3px -7px -3px 0;
+  border-radius: 8px;
+}
+.fbd-close:hover, .fbd-retry:hover:not(:disabled) { background: rgba(255, 255, 255, .07); color: #e8f2ff; }
+.fbd-close:focus-visible, .fbd-retry:focus-visible {
+  outline: 2px solid var(--fg2-focus, #77aaff);
+  outline-offset: 2px;
+}
+.fbd-form { display: grid; gap: 20px; }
+.fbd-field { min-width: 0; }
+.fbd-label {
+  display: block;
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 570;
+  color: #a6b9cd;
+}
+.fbd-control {
+  position: relative;
   display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 16px 24px 20px;
+  align-items: center;
+  height: 43px;
+  box-sizing: border-box;
+  border: 1px solid #2b4058;
+  border-radius: 9px;
+  background: rgba(7, 17, 31, .54);
+  transition: border-color .16s, background .16s, box-shadow .16s;
+}
+.fbd-control:hover:not(.is-disabled):not(.is-readonly) { background: rgba(12, 28, 47, .85); border-color: #38526d; }
+.fbd-control:focus-within { border-color: #639af4; box-shadow: 0 0 0 3px rgba(72, 139, 242, .10); }
+.fbd-control.is-readonly { background: rgba(7, 17, 31, .32); }
+.fbd-control :deep(.ui-select) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 42px 0 36px;
+  background: transparent;
+  border: 0;
+  border-radius: inherit;
+  color: var(--fg2-text, #ecf3fb);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+}
+.fbd-control :deep(.ui-select:disabled) { color: #7f96ae; cursor: default; opacity: 1; }
+.fbd-control :deep(.ui-select option) { background: #15253a; color: #ecf3fb; }
+.fbd-value {
+  flex: 1;
+  min-width: 0;
+  padding: 0 44px 0 36px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--fg2-text, #ecf3fb);
+  font-size: 13px;
+  font-weight: 500;
+}
+.fbd-chevron {
+  position: absolute;
+  right: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: #92aac4;
+  pointer-events: none;
+}
+.fbd-branch-icon { position: absolute; left: 13px; width: 15px; height: 15px; color: #7b9ac1; pointer-events: none; }
+.fbd-spinner {
+  position: absolute;
+  right: 14px;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 1.8px solid rgba(160, 185, 220, .2);
+  border-top-color: #8bb5ef;
+  border-radius: 50%;
+  animation: fbd-spin .8s linear infinite;
+}
+@keyframes fbd-spin { to { transform: rotate(360deg); } }
+.fbd-retry { position: absolute; right: 6px; width: 31px; height: 31px; border-radius: 7px; color: #a7bcd3; }
+.fbd-retry svg { width: 16px; height: 16px; }
+.fbd-retry:disabled { cursor: default; opacity: .43; }
+.fbd-message { margin: -8px 0 0; color: #8fa4bb; font-size: 11.5px; line-height: 16px; overflow-wrap: anywhere; }
+.fbd-message.is-error { color: #e0a6a1; }
+.fbd-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 28px 29px 24px; }
+.fbd-actions :deep(.ui-btn) { height: 37px; padding: 0 17px; border-radius: 8px; font-size: 12.5px; font-weight: 620; }
+.fbd-actions :deep(.ui-btn--secondary) { background: transparent; border-color: #36506b; color: #c2d0df; }
+.fbd-actions :deep(.ui-btn--secondary:hover) { background: rgba(255, 255, 255, .05); border-color: #506985; }
+.fbd-actions :deep(.ui-btn--primary) { min-width: 74px; background: linear-gradient(#508ff0, #3373d7); border-color: #548fe9; color: #fff; box-shadow: inset 0 1px rgba(255, 255, 255, .15); }
+.fbd-actions :deep(.ui-btn--primary:hover:not(:disabled)) { background: linear-gradient(#69a0f7, #4783e6); filter: none; }
+.fbd-actions :deep(.ui-btn--primary:disabled) { opacity: .43; box-shadow: none; }
+@media (max-width: 500px) {
+  .fbd-head { padding: 23px 20px 21px; }
+  .fbd-form { gap: 17px; }
+  .fbd-actions { padding: 28px 20px 21px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fbd-spinner { animation: none; }
+  .fbd-control, .fbd-close, .fbd-retry, .fbd-actions :deep(.ui-btn) { transition: none; }
 }
 </style>

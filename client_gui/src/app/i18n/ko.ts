@@ -179,8 +179,8 @@ export default {
 },
   flow_base: {
     "title": "베이스 브랜치",
-    "current": "현재",
-    "change": "변경",
+    "current": "현재 브랜치",
+    "change": "변경할 브랜치",
     "select": "브랜치를 선택하세요",
     "denied": "변경 권한이 없습니다",
     "disposed": "폐기된 Flow입니다",

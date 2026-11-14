@@ -176,8 +176,8 @@ export default {
 },
   flow_base: {
     "title": "Base branch",
-    "current": "Current",
-    "change": "Change",
+    "current": "Current branch",
+    "change": "New branch",
     "select": "Select a branch",
     "denied": "You cannot edit this setting",
     "disposed": "This flow is disposed",
