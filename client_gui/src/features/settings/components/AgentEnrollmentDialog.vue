@@ -1,5 +1,5 @@
 <template>
-  <ModalShell :open="true" surface-class="agent-enrollment-dialog" close-on-backdrop :aria-label="t('gui.agent_screen.enroll_title')" @close="emit('close')">
+  <ModalShell :open="true" surface-class="agent-enrollment-dialog" :aria-label="t('gui.agent_screen.enroll_title')" @close="emit('close')">
     <template #header="{ titleId }"><header class="enroll-head"><h2 :id="titleId">{{ t('gui.agent_screen.enroll_title') }}</h2><Button variant="ghost" :aria-label="t('gui.common.close')" data-testid="enrollment-close" @click="emit('close')"><SettingsIcon name="x" /></Button></header></template>
     <div class="enroll-body" data-testid="agent-enrollment">
       <strong>{{ agent.name }}</strong>

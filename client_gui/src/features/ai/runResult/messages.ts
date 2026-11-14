@@ -1,6 +1,8 @@
 // flowgate.v02.0113 T#5 — the run result windows' words (ko / en / ja), merged under `gui.runResult` by the windows.
 const ko = {
   title: '실행 결과',
+  origin_flow: '발생 플로우: {flow}',
+  origin_unknown: '확인 불가',
   detail_title: '실행 결과 상세',
   // flowgate.v02gui.0001: the window titles naming the result's Flow.
   title_with_flow: '실행 결과 · {name}',
@@ -47,6 +49,8 @@ const ko = {
 
 const en: typeof ko = {
   title: 'Run result',
+  origin_flow: 'Origin flow: {flow}',
+  origin_unknown: 'Unknown',
   detail_title: 'Run result details',
   title_with_flow: 'Run result · {name}',
   detail_title_with_flow: 'Run result details · {name}',
@@ -92,6 +96,8 @@ const en: typeof ko = {
 
 const ja: typeof ko = {
   title: '実行結果',
+  origin_flow: '発生フロー: {flow}',
+  origin_unknown: '確認不可',
   detail_title: '実行結果の詳細',
   title_with_flow: '実行結果 · {name}',
   detail_title_with_flow: '実行結果の詳細 · {name}',

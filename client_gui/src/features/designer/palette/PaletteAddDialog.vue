@@ -4,7 +4,7 @@
        builds the item and emits it — the Palette decides where it goes.
        flowgate.v02.0053 T#8 (0053 CH): titled "카드 추가" (was "팔레트 종류 추가"), as the [+] tooltip; the
        dialog itself is unchanged. The card it adds is placed as a Custom card (paletteNodeSpec). -->
-  <ModalShell :open="open" size="md" close-on-backdrop @close="emit('close')">
+  <ModalShell :open="open" size="md" @close="emit('close')">
     <template #header="{ titleId }">
       <div class="palette-add-head">
         <h2 :id="titleId" class="palette-add-title">{{ t('gui.designer.palette.add_dialog.title') }}</h2>

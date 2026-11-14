@@ -3,7 +3,7 @@
        with the two fields that contract reads — display name and key — and the existing key
        suggestion (POST /slug/romanize), as the v0.1 create modal and the Project create child
        offer them. Emits the created Group; the Shell re-reads the tree and opens it. -->
-  <ModalShell :open="open" size="md" close-on-backdrop :aria-describedby="submitError ? errorId : undefined" @close="emit('close')">
+  <ModalShell :open="open" size="md" :aria-describedby="submitError ? errorId : undefined" @close="emit('close')">
     <template #header="{ titleId }">
       <div class="dfm-head">
         <h2 :id="titleId" class="dfm-title">{{ t('gui.designer.file_menu.group_new_title') }}</h2>

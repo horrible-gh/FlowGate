@@ -41,7 +41,7 @@
       </section>
     </section>
 
-    <ModalShell :open="mode === 'create'" surface-class="agent-registration-drawer fgs-drawer narrow" close-on-backdrop :aria-label="t('gui.settings.agents.create')" @close="closeEditor">
+    <ModalShell :open="mode === 'create'" surface-class="agent-registration-drawer fgs-drawer narrow" :aria-label="t('gui.settings.agents.create')" @close="closeEditor">
       <template #header="{ titleId }">
           <div class="fgs-d-head">
             <div>

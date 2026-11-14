@@ -20,6 +20,9 @@
         <span class="run-result-symbol" aria-hidden="true">{{ result.state === 'failed' ? '!' : '✓' }}</span>
         <strong>{{ stateLabel(tr, has, result) }}</strong>
       </div>
+      <p class="run-result-flow" data-test="run-result-flow" :title="originFlow">
+        {{ t('gui.runResult.origin_flow', { flow: originFlow }) }}
+      </p>
       <div class="run-result-metrics">
         <div class="run-result-metric">
           <span class="run-result-label">{{ t('gui.runResult.label.scope') }}</span>
@@ -105,6 +108,14 @@ useFitModelessHeight(shellRef, contentRef, VIEWPORT_MARGIN)
 
 const windowTitle = computed(() => (props.flowName ? t('gui.runResult.title_with_flow', { name: props.flowName }) : t('gui.runResult.title')))
 
+// Resolve identity from the result only; a name without its origin ID is unverified.
+const originFlow = computed(() => {
+  const flowId = props.result?.flowId?.trim()
+  if (!flowId) return t('gui.runResult.origin_unknown')
+  const name = props.flowName?.trim()
+  return name && name !== flowId ? `${name} (${flowId})` : flowId
+})
+
 const steps = computed(() => (props.result ? stepLines(tr, has, props.result) : { lines: [], more: 0 }))
 const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))
 </script>
@@ -112,6 +123,7 @@ const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))
 <style scoped>
 /* flowgate.v02gui.0001: no padding of its own — the shell's body already pads it (no doubled space around it). */
 .run-result { display: flex; flex-direction: column; gap: 12px; color: var(--fg2-text); font-size: 13px; }
+.run-result-flow { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-result-state { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 .run-result-symbol { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-weight: 800;
   background: var(--fg2-status-success-bg, #12402c); color: var(--fg2-status-success-fg, #6fe0a8); }

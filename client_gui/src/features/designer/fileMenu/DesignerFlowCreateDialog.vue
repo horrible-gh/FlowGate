@@ -1,6 +1,6 @@
 <template>
   <!-- Group/tree and work-base reads run independently; only server-confirmed options allow creation. -->
-  <ModalShell :open="open" size="md" surface-class="dfm-create-dialog" close-on-backdrop
+  <ModalShell :open="open" size="md" surface-class="dfm-create-dialog"
     :aria-describedby="submitError ? errorId : undefined" @close="emit('close')">
     <template #header="{ titleId }">
       <div class="dfm-head">

@@ -1,5 +1,5 @@
 <template>
-  <ModalShell :open="store.dialogOpen" size="lg" close-on-backdrop @close="store.closeDialog()">
+  <ModalShell :open="store.dialogOpen" size="lg" @close="store.closeDialog()">
     <template #header="{ titleId }">
       <div class="pd-head">
         <div class="pd-head-titles">

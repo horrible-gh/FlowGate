@@ -1,5 +1,5 @@
 <template>
-  <ModalShell :open="true" surface-class="agent-settings-dialog" close-on-backdrop :aria-label="title" @close="emit('close')">
+  <ModalShell :open="true" surface-class="agent-settings-dialog" :aria-label="title" @close="emit('close')">
     <template #header="{ titleId }">
       <header class="agent-dialog-head"><h2 :id="titleId">{{ title }}</h2><Button variant="ghost" :disabled="busy" :aria-label="t('gui.common.close')" data-testid="agent-editor-close" @click="emit('close')"><SettingsIcon name="x" /></Button></header>
     </template>

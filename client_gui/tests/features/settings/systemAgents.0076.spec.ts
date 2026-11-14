@@ -889,18 +889,19 @@ describe('V17 — row deletion and failed mutation confirmation', () => {
 })
 
 describe('0120 modals and unsaved edits', () => {
-  it('close, backdrop and Escape use ModalShell; unsaved input asks first and sends nothing', async () => {
+  it('backdrop preserves unsaved input; explicit close asks first and Escape still closes', async () => {
     const w = await open('/settings/system/agents')
     await pick(w,'agt_e_new')
     document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))
     await flushPromises()
     expect(w.find('[data-testid="agent-detail"]').exists()).toBe(false)
     await pick(w,'agt_e_new')
+    await type(w,'[data-testid="edit-name"]','unsaved')
     const overlay = w.get('.ui-modal-overlay')
     await overlay.trigger('mousedown'); await overlay.trigger('mouseup'); await flushPromises()
-    expect(w.find('[data-testid="agent-detail"]').exists()).toBe(false)
-    await pick(w,'agt_e_new')
-    await type(w,'[data-testid="edit-name"]','unsaved')
+    expect(w.find('[data-testid="agent-detail"]').exists()).toBe(true)
+    expect(editName(w)).toBe('unsaved')
+    expect(w.find('[data-testid="leave-confirm"]').exists()).toBe(false)
     await click(w,'[data-testid="agent-editor-close"]')
     await click(w,'[data-testid="leave-stay"]')
     expect(editName(w)).toBe('unsaved')

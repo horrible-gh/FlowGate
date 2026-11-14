@@ -480,12 +480,18 @@ describe('features/project/ProjectDialog', () => {
     wrapper.unmount()
   })
 
-  it('closes on Escape and on a backdrop click', async () => {
+  it('ignores backdrop clicks and still closes on Escape', async () => {
     fetchActiveProjects.mockResolvedValue([])
     const wrapper = mountDialog()
     const store = useProjectStore()
     store.openDialog()
     await wrapper.vm.$nextTick()
+
+    const overlay = document.querySelector('.ui-modal-overlay')!
+    overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    overlay.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(store.dialogOpen).toBe(true)
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await wrapper.vm.$nextTick()

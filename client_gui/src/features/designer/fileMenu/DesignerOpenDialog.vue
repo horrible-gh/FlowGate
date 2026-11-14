@@ -3,7 +3,7 @@
        Flows under their Groups, from the same group tree the Project Explorer shows (the store's
        cached read). Choosing a row emits it; the Shell does the opening (Explorer selection,
        Center tab). No text beyond the title, the search field and the rows. -->
-  <ModalShell :open="open" size="md" close-on-backdrop @close="emit('close')">
+  <ModalShell :open="open" size="md" @close="emit('close')">
     <template #header="{ titleId }">
       <div class="dfm-head">
         <h2 :id="titleId" class="dfm-title">{{ title }}</h2>

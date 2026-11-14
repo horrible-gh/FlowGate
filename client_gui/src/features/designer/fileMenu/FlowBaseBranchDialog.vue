@@ -1,5 +1,5 @@
 <template>
-  <ModalShell :open="open" size="md" close-on-backdrop @close="emit('close')">
+  <ModalShell :open="open" size="md" @close="emit('close')">
     <template #header="{ titleId }">
       <h2 :id="titleId">{{ t('gui.flow_base.title') }}</h2>
     </template>

@@ -9,7 +9,6 @@
     :open="!!shown"
     :size="shown?.kind === 'file.git.changes' ? 'lg' : 'md'"
     :role="danger ? 'alertdialog' : 'dialog'"
-    close-on-backdrop
     :aria-describedby="refusal ? refusalId : undefined"
     @close="close"
   >

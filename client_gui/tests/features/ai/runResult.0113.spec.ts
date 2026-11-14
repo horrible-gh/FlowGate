@@ -173,6 +173,35 @@ describe('a command that waits and may still go on (review rework: P1)', () => {
 })
 
 describe('the 1st window', () => {
+  it.each([
+    ['completed', 'full'], ['failed', 'step'], ['stopped', 'full'],
+  ])('shows the origin name and ID for %s / %s', (state, scope) => {
+    wrapper = mount(RunResultWindow, { props: {
+      result: toFlowCommandResult(raw({ state, scope, flow_id: 'flow-a' })), open: true, flowName: 'Same name',
+    }, global: { plugins: [i18n] }, attachTo: document.body })
+    const line = document.querySelector('[data-test="run-result-flow"]')!
+    expect(line.textContent).toContain('발생 플로우: Same name (flow-a)')
+    expect(line.getAttribute('title')).toBe('Same name (flow-a)')
+  })
+
+  it('distinguishes same-name sequential results and falls back only to the origin ID', async () => {
+    wrapper = mount(RunResultWindow, { props: {
+      result: toFlowCommandResult(raw({ flow_id: 'flow-a' })), open: true, flowName: 'Same name',
+    }, global: { plugins: [i18n] }, attachTo: document.body })
+    const line = () => document.querySelector('[data-test="run-result-flow"]')!.textContent
+    expect(line()).toContain('Same name (flow-a)')
+    await wrapper.setProps({ result: toFlowCommandResult(raw({ flow_id: 'flow-b', run_id: 'run_2' })) })
+    expect(line()).toContain('Same name (flow-b)')
+    expect(line()).not.toContain('flow-a')
+    await wrapper.setProps({ flowName: null })
+    expect(line()?.trim()).toBe('발생 플로우: flow-b')
+    await wrapper.setProps({ flowName: 'flow-b' })
+    expect(line()?.trim()).toBe('발생 플로우: flow-b')
+    await wrapper.setProps({ result: toFlowCommandResult(raw({ flow_id: null })), flowName: 'Unverified name' })
+    expect(line()?.trim()).toBe('발생 플로우: 확인 불가')
+    expect(line()).not.toContain('Unverified name')
+  })
+
   it('shows the state, scope, cards, counts and next state — no fixed sentence — with [상세] and [닫기]', async () => {
     wrapper = mount(RunResultWindow, { props: { result: toFlowCommandResult(raw()), open: true }, global: { plugins: [i18n] }, attachTo: document.body })
     const win = document.querySelector('[data-test="run-result"]')!

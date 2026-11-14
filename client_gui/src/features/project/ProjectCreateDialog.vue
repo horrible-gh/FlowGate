@@ -2,7 +2,6 @@
   <ModalShell
     :open="open"
     size="md"
-    close-on-backdrop
     :aria-describedby="submitError ? errorId : undefined"
     @close="requestClose"
   >
