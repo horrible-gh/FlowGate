@@ -787,6 +787,8 @@ export interface FlowRunNode extends RoleRunFields {
   stage?: string | null
   /** flowgate.v02.0061 T#14: the node attempt's result integration status (open key) or null; absent when not sent. */
   integrationStatus?: string | null
+  /** v02gui.0015 T4: the integration's reason (open key, e.g. `verification_failed`) or null; absent when not sent. */
+  integrationReason?: string | null
   /** flowgate.v02.0061 T#14: the card is held (T#11); absent when not sent. */
   hold?: boolean
   /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */

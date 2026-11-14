@@ -15,7 +15,10 @@ Flow guard and DB transaction (``integrate``):
     in its own guard (``run_apply.apply_decision``, cause ``work_resumed``) before this, so no idle hold is taken and
     (e) opens the next cards with no further resume; the idle hold is left to the integrations no approval woke for
     (a step's, the next command's drain, the server start);
-(b) the attempt's result commit (T#8 ``result_commit.commit_result``, reused when it exists);
+(b) the attempt's result commit (T#8 ``result_commit.commit_result``, reused when it exists); v02gui.0015 T4: a result
+    that changed its input is then checked (``result_verify.check``: the ``.py`` / ``.json`` files the attempt broke) —
+    a failure leaves it ``failed`` (``verification_failed``) with nothing merged, whichever approval it had (a
+    person's or the automatic one); a Stop then opens a new attempt;
 (c) a result equal to its input (no source change) already in the group branch goes to (e) with no merge (T#10: a
     Join's merged input is not, and is merged as any result so the branch keeps it);
 (d) ``integrating``, then the group's G (``commit._acquire_group_lock``, no wait) for one merge only: the result is
@@ -80,7 +83,7 @@ from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.services import git_service as git, graph_source_hooks as port, tr_commit_service
 from modules.flow_gate.services.git import branches, commit as git_commit, conflict, lock_manager
 from modules.flow_gate.services.git.credentials import GitServiceError
-from flowgate.graph_run import fencing, result_commit, workspace
+from flowgate.graph_run import fencing, result_commit, result_verify, workspace
 
 log = logging.getLogger(__name__)
 
@@ -224,8 +227,9 @@ def _note(row: dict, status: str, reason: Optional[str], **extra) -> None:
     run_events.queue(_project_of(run["group_id"]), run["group_id"], run_events.RUN_STATUS, payload)
 
 
-def _set(attempt_id: str, status: str, reason: Optional[str], expect) -> bool:
-    """One guarded conditional move of an active attempt's integration from one of ``expect``."""
+def _set(attempt_id: str, status: str, reason: Optional[str], expect, extra: Optional[dict] = None) -> bool:
+    """One guarded conditional move of an active attempt's integration from one of ``expect`` (``extra``: more fields
+    of its run event)."""
     row = workspace.attempt(attempt_id)
     if not row:
         return False
@@ -240,7 +244,7 @@ def _set(attempt_id: str, status: str, reason: Optional[str], expect) -> bool:
                 "WHERE attempt_id = ? AND status = 'active' AND COALESCE(integration_status, 'none') = ?",
                 [status, reason, attempt_id, before]) != 1:
             raise AssertionError("attempt integration changed while recording")
-        _note(current, status, reason)
+        _note(current, status, reason, **(extra or {}))
         return True
     return with_flow_guard(row["group_id"], body)
 
@@ -607,6 +611,8 @@ def integrate(attempt_id: str) -> str:
         row = workspace.attempt(attempt_id)
         if row["result_commit"] == row["input_commit"] and _in_group(row):
             status = _finish(attempt_id, row["result_commit"], (PENDING,))                  # (c)
+        elif (refused := _verification_refused(row)) is not None:                          # v02gui.0015 T4
+            status = refused
         elif not _begin(attempt_id, row["group_id"]):
             return SKIPPED
         else:
@@ -639,6 +645,30 @@ def integrate(attempt_id: str) -> str:
                         _left_open[attempt_id] = (row["group_id"], merge_id)
     _after(attempt_id)
     return status
+
+
+def _verification_refused(row: dict) -> Optional[str]:
+    """v02gui.0015 T4 (0006-NR §6-4), after (b): the result commit's syntax check (``result_verify.check``) before any
+    merge. A failure: ``failed`` / ``verification_failed`` (the failed files on the run event) and None merged — the
+    outcome (``failed``, or ``skipped`` when the attempt moved meanwhile). None: the integration goes on (passed, or
+    the commits unreadable or the check itself raising — never a reason to block). A requeued integration (the next
+    command) is checked again; the result commit stays, so only a new attempt (a Stop, then a run) carries a new
+    result."""
+    try:
+        _project_id, root, _branch = _group_root(row)
+        verdict = result_verify.check(root, row.get("input_commit"), row.get("result_commit"))
+    except Exception:  # noqa: BLE001 — the check never stops an integration by raising
+        log.exception("Graph result verification raised attempt=%s", row["attempt_id"])
+        return None
+    if verdict["status"] == result_verify.UNAVAILABLE:
+        log.warning("Graph result verification could not read the result attempt=%s", row["attempt_id"])
+        return None
+    if verdict["status"] != result_verify.FAILED:
+        return None
+    log.warning("Graph result verification failed attempt=%s files=%s", row["attempt_id"],
+                [f["path"] for f in verdict["failures"]])
+    recorded = _set(row["attempt_id"], FAILED, result_verify.REASON, (PENDING,), {"verification": verdict})
+    return FAILED if recorded else SKIPPED
 
 
 def request(flow_id: str, failed: bool = False) -> None:

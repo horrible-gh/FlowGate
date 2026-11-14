@@ -361,6 +361,8 @@ export default {
         conflict: 'マージ競合',
         failed: 'マージ失敗',
         open_conflict: 'Git パネルで競合を解決します',
+        // v02gui.0015 T4 — the result failed the integration's syntax check.
+        verification_failed: '結果に構文エラーのあるファイルがあるため、マージしませんでした。やり直すには停止してから実行してください（新しい試行で開きます）。',
       },
       // v02gui.0015 T2 — an earlier attempt's uncommitted changes the card's attempt did not take.
       uncarried: {

@@ -106,6 +106,7 @@
           v-else-if="data.integration"
           class="flow-node-flag"
           :class="`is-${data.integration}`"
+          :title="data.verificationFailed ? t('gui.designer.center.integration.verification_failed') : undefined"
           data-test="designer-canvas-node-integration"
           :data-integration="data.integration"
         >{{ t(`gui.designer.center.integration.${data.integration}`) }}</span>

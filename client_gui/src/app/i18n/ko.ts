@@ -364,6 +364,8 @@ export default {
         conflict: '병합 충돌',
         failed: '병합 실패',
         open_conflict: 'Git 패널에서 충돌을 해결합니다',
+        // v02gui.0015 T4 — the result failed the integration's syntax check.
+        verification_failed: '결과에 구문 오류가 있는 파일이 있어 병합하지 않았습니다. 다시 작업하려면 중지한 뒤 실행하세요(새 시도로 열립니다).',
       },
       // v02gui.0015 T2 — an earlier attempt's uncommitted changes the card's attempt did not take.
       uncarried: {

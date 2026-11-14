@@ -83,6 +83,8 @@ export interface FlowGateNodeData {
    * `pending` | `integrating` (open key); absent otherwise.
    */
   integration?: string
+  /** v02gui.0015 T4: the result failed the integration's syntax check (`failed` / `verification_failed`). */
+  verificationFailed?: boolean
   /** flowgate.v02.0061 T#14: the card is held (T#11 Hold). */
   hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered (the [Q] mark). */
@@ -175,6 +177,8 @@ export function toVueFlowNodes(
     const runNode = marks.nodeRuns.get(node.id)
     const integration = (runNode && 'integrationStatus' in runNode ? runNode.integrationStatus : node.nodeRun?.integrationStatus) ?? null
     if (integration && SHOWN_INTEGRATIONS.includes(integration)) data.integration = integration
+    const integrationReason = (runNode && 'integrationReason' in runNode ? runNode.integrationReason : node.nodeRun?.integrationReason) ?? null
+    if (integration === 'failed' && integrationReason === 'verification_failed') data.verificationFailed = true
     const hold = options.holds
       ? options.holds.get(node.id)
       : runNode && typeof runNode.hold === 'boolean' ? runNode.hold : node.nodeRun?.hold

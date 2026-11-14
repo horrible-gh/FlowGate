@@ -43,6 +43,8 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...(typeof raw.awaiting_approval === 'boolean' ? { awaitingApproval: raw.awaiting_approval } : {}),
     ...('stage' in raw ? { stage: str(raw.stage) } : {}),
     ...('integration_status' in raw ? { integrationStatus: str(raw.integration_status) } : {}),
+    // v02gui.0015 T4: why a failed integration failed (`verification_failed`: the result's syntax check).
+    ...('integration_reason' in raw ? { integrationReason: str(raw.integration_reason) } : {}),
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
     ...(typeof raw.node_running === 'boolean' ? { nodeRunning: raw.node_running } : {}),

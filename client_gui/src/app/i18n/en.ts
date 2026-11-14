@@ -361,6 +361,8 @@ export default {
         conflict: 'Merge conflict',
         failed: 'Merge failed',
         open_conflict: 'Resolve the conflict in the Git panel',
+        // v02gui.0015 T4 — the result failed the integration's syntax check.
+        verification_failed: 'Not merged: a file of the result has a syntax error. To redo the work, stop and run again (a new attempt opens).',
       },
       // v02gui.0015 T2 — an earlier attempt's uncommitted changes the card's attempt did not take.
       uncarried: {
