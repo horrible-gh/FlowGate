@@ -1,7 +1,6 @@
 // flowgate.v02.0113 T#5 — the run result windows' words (ko / en / ja), merged under `gui.runResult` by the windows.
 const ko = {
   title: '실행 결과',
-  origin_flow: '발생 플로우: {flow}',
   origin_unknown: '확인 불가',
   detail_title: '실행 결과 상세',
   // flowgate.v02gui.0001: the window titles naming the result's Flow.
@@ -9,7 +8,7 @@ const ko = {
   detail_title_with_flow: '실행 결과 상세 · {name}',
   state: { completed: '완료', failed: '실패', waiting: '대기', running: '실행 중', stopped: '중지', superseded: '다른 명령으로 넘어감' },
   scope: { step: '다음 단계', full: '전체 실행' },
-  label: { scope: '실행 범위', steps: '처리 단계', counts: '완료 / 실패', next: '다음 상태', reason: '실패 사유' },
+  label: { scope: '실행 범위', steps: '처리 단계', counts: '완료 / 실패', next: '다음 상태', origin_flow: '발생 플로우', reason: '실패 사유' },
   outcome: { done: '완료', failed: '실패', waiting: '대기', running: '실행 중', pending: '대기 전' },
   wait: { manual_write_wait: '수동 작성 대기', ai_setup_required: 'AI 설정 필요', ai_unavailable: 'AI 사용 불가', review: '검수·승인 대기' },
   next: {
@@ -49,14 +48,13 @@ const ko = {
 
 const en: typeof ko = {
   title: 'Run result',
-  origin_flow: 'Origin flow: {flow}',
   origin_unknown: 'Unknown',
   detail_title: 'Run result details',
   title_with_flow: 'Run result · {name}',
   detail_title_with_flow: 'Run result details · {name}',
   state: { completed: 'Completed', failed: 'Failed', waiting: 'Waiting', running: 'Running', stopped: 'Stopped', superseded: 'Taken over by another command' },
   scope: { step: 'Next step', full: 'Run all' },
-  label: { scope: 'Scope', steps: 'Steps processed', counts: 'Done / failed', next: 'Next state', reason: 'Failure' },
+  label: { scope: 'Scope', steps: 'Steps processed', counts: 'Done / failed', next: 'Next state', origin_flow: 'Origin flow', reason: 'Failure' },
   outcome: { done: 'Done', failed: 'Failed', waiting: 'Waiting', running: 'Running', pending: 'Not started' },
   wait: { manual_write_wait: 'Waiting for manual writing', ai_setup_required: 'AI setup required', ai_unavailable: 'AI unavailable', review: 'Waiting for review / approval' },
   next: {
@@ -96,14 +94,13 @@ const en: typeof ko = {
 
 const ja: typeof ko = {
   title: '実行結果',
-  origin_flow: '発生フロー: {flow}',
   origin_unknown: '確認不可',
   detail_title: '実行結果の詳細',
   title_with_flow: '実行結果 · {name}',
   detail_title_with_flow: '実行結果の詳細 · {name}',
   state: { completed: '完了', failed: '失敗', waiting: '待機', running: '実行中', stopped: '停止', superseded: '別のコマンドに引き継ぎ' },
   scope: { step: '次のステップ', full: '全体実行' },
-  label: { scope: '実行範囲', steps: '処理ステップ', counts: '完了 / 失敗', next: '次の状態', reason: '失敗理由' },
+  label: { scope: '実行範囲', steps: '処理ステップ', counts: '完了 / 失敗', next: '次の状態', origin_flow: '発生フロー', reason: '失敗理由' },
   outcome: { done: '完了', failed: '失敗', waiting: '待機', running: '実行中', pending: '未開始' },
   wait: { manual_write_wait: '手動作成待ち', ai_setup_required: 'AI設定が必要', ai_unavailable: 'AI使用不可', review: 'レビュー・承認待ち' },
   next: {

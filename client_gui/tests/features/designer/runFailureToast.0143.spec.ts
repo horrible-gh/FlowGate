@@ -182,15 +182,17 @@ describe('0143 T-C real Shell publisher and v0.1 fallback', () => {
     result.state.seq += 1
     result.state.resultOpen = true
     await settle()
-    const origin = () => document.querySelector('[data-test="run-result-flow"]')!.textContent
-    expect(origin()).toContain('Canvas (p.ui.0001)')
+    const origin = () => [
+      document.querySelector('[data-test="run-result-flow-name"]')!.textContent,
+      document.querySelector('[data-test="run-result-flow-id"]')!.textContent,
+    ]
+    expect(origin()).toEqual(['Canvas', 'p.ui.0001'])
     c.openFlow({ projectId: 'p', flowId: 'p.ui.0002', flowName: 'Other' })
     await settle()
-    expect(origin()).toContain('Canvas (p.ui.0001)')
-    expect(origin()).not.toContain('Other')
+    expect(origin()).toEqual(['Canvas', 'p.ui.0001'])
     c.closeFlow('p.ui.0001')
     await settle()
-    expect(origin()).toContain('Canvas (p.ui.0001)')
+    expect(origin()).toEqual(['Canvas', 'p.ui.0001'])
   })
 
   it('C7 same original re-delivery makes only one toast in the same observation', async()=>{

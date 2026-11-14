@@ -20,9 +20,6 @@
         <span class="run-result-symbol" aria-hidden="true">{{ result.state === 'failed' ? '!' : '✓' }}</span>
         <strong>{{ stateLabel(tr, has, result) }}</strong>
       </div>
-      <p class="run-result-flow" data-test="run-result-flow" :title="originFlow">
-        {{ t('gui.runResult.origin_flow', { flow: originFlow }) }}
-      </p>
       <div class="run-result-metrics">
         <div class="run-result-metric">
           <span class="run-result-label">{{ t('gui.runResult.label.scope') }}</span>
@@ -35,6 +32,11 @@
         <div class="run-result-metric">
           <span class="run-result-label">{{ t('gui.runResult.label.next') }}</span>
           <strong class="run-result-value" data-test="run-result-next">{{ nextLabel(tr, has, result) }}</strong>
+        </div>
+        <div class="run-result-metric" data-test="run-result-flow" :title="originFlow.title">
+          <span class="run-result-label">{{ t('gui.runResult.label.origin_flow') }}</span>
+          <strong class="run-result-value" data-test="run-result-flow-name" :title="originFlow.name">{{ originFlow.name }}</strong>
+          <span v-if="originFlow.id && originFlow.id !== originFlow.name" class="run-result-value run-result-flow-id" data-test="run-result-flow-id" :title="originFlow.id">{{ originFlow.id }}</span>
         </div>
         <div class="run-result-metric run-result-metric--steps">
           <span class="run-result-label">{{ t('gui.runResult.label.steps') }}</span>
@@ -111,9 +113,12 @@ const windowTitle = computed(() => (props.flowName ? t('gui.runResult.title_with
 // Resolve identity from the result only; a name without its origin ID is unverified.
 const originFlow = computed(() => {
   const flowId = props.result?.flowId?.trim()
-  if (!flowId) return t('gui.runResult.origin_unknown')
-  const name = props.flowName?.trim()
-  return name && name !== flowId ? `${name} (${flowId})` : flowId
+  if (!flowId) {
+    const unknown = t('gui.runResult.origin_unknown')
+    return { name: unknown, id: '', title: unknown }
+  }
+  const name = props.flowName?.trim() || flowId
+  return { name, id: flowId, title: name !== flowId ? `${name} (${flowId})` : flowId }
 })
 
 const steps = computed(() => (props.result ? stepLines(tr, has, props.result) : { lines: [], more: 0 }))
@@ -123,17 +128,17 @@ const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))
 <style scoped>
 /* flowgate.v02gui.0001: no padding of its own — the shell's body already pads it (no doubled space around it). */
 .run-result { display: flex; flex-direction: column; gap: 12px; color: var(--fg2-text); font-size: 13px; }
-.run-result-flow { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-result-state { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 .run-result-symbol { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-weight: 800;
   background: var(--fg2-status-success-bg, #12402c); color: var(--fg2-status-success-fg, #6fe0a8); }
 .run-result-state.is-failed .run-result-symbol { background: var(--fg2-status-danger-bg, #4a1c1c); color: var(--fg2-status-danger-fg, #f0a2a2); }
-.run-result-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.run-result-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .run-result-metric { min-width: 0; padding: 9px 11px; border: 1px solid var(--fg2-line); border-radius: var(--fg2-control-radius); background: var(--fg2-control-surface-flat); }
 .run-result-metric--steps { grid-column: 1 / -1; }
 .run-result-label { display: block; margin-bottom: 5px; color: var(--fg2-muted); font-size: 11px; }
 .run-result-issue .run-result-label { display: inline; }
 .run-result-value { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-result-flow-id { margin-top: 3px; color: var(--fg2-muted); font-size: 11px; }
 .run-result-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
 .run-result-steps li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-result-more { color: var(--fg2-muted); }

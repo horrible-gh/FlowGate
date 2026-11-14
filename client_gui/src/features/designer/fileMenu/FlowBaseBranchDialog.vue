@@ -1,7 +1,10 @@
 <template>
   <ModalShell :open="open" size="md" @close="emit('close')">
     <template #header="{ titleId }">
-      <h2 :id="titleId">{{ t('gui.flow_base.title') }}</h2>
+      <div class="flow-base-head">
+        <h2 :id="titleId" class="flow-base-title">{{ t('gui.flow_base.title') }}</h2>
+        <IconButton :label="t('gui.designer.file_menu.close')" variant="ghost" @click="emit('close')">✕</IconButton>
+      </div>
     </template>
     <div data-test="flow-base" :data-state="state" class="flow-base">
       <p data-test="flow-base-current">{{ t('gui.flow_base.current') }}: {{ state === 'loading' ? t('gui.common.loading') : view?.effectiveWorkBaseRef ?? '—' }}</p>
@@ -11,11 +14,13 @@
         <Select id="flow-base-choice" v-model="selected" :options="options" :disabled="submitting"
           :placeholder="t('gui.flow_base.select')" data-test="flow-base-choice" />
       </template>
-      <Button v-if="state !== 'loading'" variant="secondary" :disabled="submitting" data-test="flow-base-retry" @click="load()">{{ t('gui.common.refresh') }}</Button>
+      <Button v-if="state !== 'loading'" variant="secondary" :disabled="submitting" class="flow-base-retry" data-test="flow-base-retry" @click="load()">{{ t('gui.common.refresh') }}</Button>
     </div>
     <template #footer>
-      <Button variant="secondary" data-test="flow-base-cancel" @click="emit('close')">{{ t('gui.common.cancel') }}</Button>
-      <Button v-if="state === 'editable'" variant="primary" :disabled="!canSave" :loading="submitting" data-test="flow-base-save" @click="save">{{ t('gui.common.save') }}</Button>
+      <div class="flow-base-actions">
+        <Button variant="secondary" data-test="flow-base-cancel" @click="emit('close')">{{ t('gui.common.cancel') }}</Button>
+        <Button v-if="state === 'editable'" variant="primary" :disabled="!canSave" :loading="submitting" data-test="flow-base-save" @click="save">{{ t('gui.common.save') }}</Button>
+      </div>
     </template>
   </ModalShell>
 </template>
@@ -27,6 +32,7 @@ import { useCurrentUser } from '@/core/auth/currentUser'
 import { useProjectStore, type FlowWorkBase } from '@/features/project'
 import ModalShell from '../../../components/ui/ModalShell.vue'
 import Button from '../../../components/ui/Button.vue'
+import IconButton from '../../../components/ui/IconButton.vue'
 import Select, { type SelectOption } from '../../../components/ui/Select.vue'
 
 const props = defineProps<{ open: boolean; projectId: string | null; groupId: string | null }>()
@@ -136,7 +142,29 @@ onBeforeUnmount(() => { generation += 1 })
 </script>
 
 <style scoped>
-.flow-base { display: grid; gap: 12px; }
-h2 { font-size: 1rem; margin: 0; }
-p { margin: 0; overflow-wrap: anywhere; }
+.flow-base-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 24px 0;
+}
+
+.flow-base-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg2-text);
+}
+
+.flow-base { display: grid; gap: 12px; padding: 16px 0 4px; }
+.flow-base p { margin: 0; overflow-wrap: anywhere; }
+.flow-base-retry { justify-self: start; }
+
+.flow-base-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px 20px;
+}
 </style>
