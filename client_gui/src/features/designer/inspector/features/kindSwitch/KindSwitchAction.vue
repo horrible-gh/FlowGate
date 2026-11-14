@@ -101,9 +101,6 @@ const names = computed(() => ({
   from: from.value ? t(k(`kinds.${from.value}`)) : '',
 }))
 
-/** `…0001-R` -> `0001-R`: the document number the switch changes. */
-const codeOf = (docId: string | null) => (docId ?? '').split('.').pop() ?? ''
-
 /** Hover text of the badge: the disabled reason, else the v7 hint ("종류 전환: 그룹의 첫 실행 전까지"). */
 const badgeTitle = computed(() => {
   const item = availability.value.switch
@@ -111,13 +108,10 @@ const badgeTitle = computed(() => {
   return t(k('badge_hint'))
 })
 
-/** One line beside the badge: a refusal, else the finished switch (the disabled reason is the badge's hover text). */
+/** One line beside the badge: only a refusal (the disabled reason is the badge's hover text). flowgate.v02gui.0012:
+ *  a finished switch shows no line — the badge already shows the new kind (`from`), locked until the Canvas read. */
 const line = computed(() => {
   if (failureKey.value) return { kind: 'failure', tone: 'danger' as const, text: t(k(failureKey.value)) }
-  if (done.value) {
-    const kind = done.value.document.typeCode === 'B' ? 'B' : 'R'
-    return { kind: 'done', tone: 'muted' as const, text: t(k('done'), { to: t(k(`kinds.${kind}`)), doc: codeOf(done.value.document.docId) }) }
-  }
   return null
 })
 

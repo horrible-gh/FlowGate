@@ -288,7 +288,7 @@ describe('the switch button and its menu', () => {
 })
 
 describe('a switch (D#2 §3.4)', () => {
-  it('R -> B: one converter call, refresh-flow once, a done line, and no second switch on the old id', async () => {
+  it('R -> B: one converter call, refresh-flow once, no done line, and no second switch on the old id', async () => {
     await mountSwitch(TARGET_R)
     documentRead.mockClear()
     activityRead.mockClear()
@@ -301,8 +301,8 @@ describe('a switch (D#2 §3.4)', () => {
     expect(docs.get(ROOT_B)?.typeCode).toBe('B')
     // The old id is gone on the server: it is not read again.
     expect(documentRead).not.toHaveBeenCalled()
-    expect(line().attributes('data-kind')).toBe('done')
-    expect(line().text()).toBe('버그 문서(0001-B)로 바꿨습니다. Canvas를 다시 읽는 중입니다.')
+    // flowgate.v02gui.0012: a finished switch shows no line beside the badge.
+    expect(line().exists()).toBe(false)
     // Until the Canvas moves the selection, the target still names the old id.
     expect(openButton().attributes('disabled')).toBeDefined()
     // flowgate.v02gui.0003: the badge already shows the kind the server switched to (no wait for the Canvas read).
