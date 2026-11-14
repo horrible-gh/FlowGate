@@ -7,8 +7,15 @@ guard/transaction and are released before admission or any provider is started.
 (``run_base``), one predecessor from its ended attempt's ``result_commit``, a Join from those results merged in the
 attempt worktree in node_key order (``predecessors``); a predecessor with no attempt commit (a gate) hands its own
 input on. Inputs that reach the start without a commit (an approved root, a gate) start from the run's base
-(``_run_base``): the commit the run's first ``run_base`` attempt recorded, not the group branch HEAD that has moved
-since, so a branch integrated meanwhile stays out. Every predecessor attempt in the input is recorded, also those
+(``_run_base``): the commit a valid (not invalidated) ``run_base`` attempt of the current base window recorded, not
+the group branch HEAD that has moved since, so a branch integrated meanwhile stays out of the window; a window with no
+such attempt starts from the group branch HEAD. v02gui.0015 (0001-B, NR0003): the window is what follows the run's
+last command start -- a ``user_start`` / ``user_command`` / ``user_resume`` run status event to ``running`` not from
+``paused`` / legacy ``stopped`` (not ``command_result._is_command_start``: a paused re-command and an idle
+acknowledge keep the base) -- so a person's new command on an idle run starts its first card from the group HEAD of
+that moment. An attempt belongs to the window its owner marker pinned its base in (``base_since``, copied to its
+workspace event); an event without it (a marker made before) only when its attempt was created in the window.
+Every predecessor attempt in the input is recorded, also those
 sharing a commit; the merge uses each commit once. A Join whose results conflict starts from the group branch HEAD,
 which holds them all (``integration_head``, recorded by a run event). An ended attempt whose integration ended
 (``integrated``) loses its tree and branch (``cleanup_ended``; its result stays a parent on the group branch), as an
@@ -36,6 +43,7 @@ import logging
 import os
 import tempfile
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from modules.flow_gate.db import groups as db_groups
@@ -282,25 +290,107 @@ def _inputs(row):
     return sorted(found, key=lambda i: i[0])
 
 
+# v02gui.0015 (NR0003 §2, §3.3): the run status events that open a new base window -- a person's command that moves
+# the run to ``running`` from a new run (no ``from_status``) or from idle. Deliberately not
+# ``command_result._is_command_start``: a re-command of a paused run and an idle -> idle acknowledge cut the command
+# window but keep the base (the cards still open of a paused command, and none opened by an acknowledge).
+_BASE_WINDOW_SQL = (
+    "SELECT MAX(event_seq) AS seq FROM graph_run_events WHERE run_id = ? "
+    "AND event_type = 'graph_run_status_changed' AND to_status = 'running' "
+    "AND cause IN ('user_start', 'user_command', 'user_resume') "
+    "AND (from_status IS NULL OR from_status NOT IN ('paused', 'stopped'))")
+
+
+def _utc(value):
+    """v02gui.0015: a stored timestamp (``+00:00`` or ``Z``) as a UTC instant, compared as such and never as text;
+    None when it cannot be read (no value, no zone, not ISO 8601)."""
+    if isinstance(value, datetime):
+        moment = value
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        text = text[:-1] + "+00:00" if text[-1:] in ("Z", "z") else text
+        try:
+            moment = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    return moment.astimezone(timezone.utc) if moment.tzinfo is not None else None
+
+
+def _base_window(run_id):
+    """v02gui.0015: ``(since, since_at)`` -- the event_seq of the run's last base window start and that event's
+    ``created_at``; ``(0, None)`` for a run with none (before migration 151, a bare harness): the whole run."""
+    found = run_store._one(_BASE_WINDOW_SQL, [run_id])
+    since = int(found["seq"]) if found and found.get("seq") is not None else 0
+    if not since:
+        return 0, None
+    event = run_store._one("SELECT created_at FROM graph_run_events WHERE run_id = ? AND event_seq = ?",
+                           [run_id, since])
+    return since, (event or {}).get("created_at")
+
+
+def _in_window(data, attempt_row, since, since_at):
+    """v02gui.0015 (NR0003 §3.5): whether a ``run_base`` workspace event's attempt belongs to the current window. A
+    tagged event by its ``base_since`` (the window its marker pinned the base in, kept by a recovery); an untagged one
+    (a marker made before the tag) never by its event_seq, only in a run with no window or when its attempt was
+    created at or after the window start. Anything unreadable is not in it: the card then starts from the group HEAD."""
+    tag = data.get("base_since")
+    if tag is not None:  # 0 is a window (a run with no command start), so never a falsy test
+        try:
+            return int(tag) == since
+        except (TypeError, ValueError):
+            return False
+    if since == 0:
+        return True
+    created, start = _utc(attempt_row.get("created_at")), _utc(since_at)
+    return created is not None and start is not None and created >= start
+
+
 def _run_base(row, group_root):
-    """T#10, under the Git locks: the run's base — the commit its first ``run_base`` attempt started from (the group
-    branch HEAD then). Every attempt of the run with no input commit starts there, so a branch integrated since
-    (one done before it under the same root) is not in its input. The first one starts from the group branch HEAD:
-    a result of the run is integrated only after an attempt that started from the base recorded it."""
-    base = run_store._one("SELECT input_commit FROM graph_node_attempts WHERE run_id = ? AND input_source = 'run_base' "
-                          "AND input_commit IS NOT NULL ORDER BY created_at, attempt_id LIMIT 1", [row["run_id"]])
-    sha = base["input_commit"] if base else git._rev_parse(group_root, "HEAD^{commit}")
+    """T#10, under the Git locks: ``(sha, since)`` -- the run's base for an attempt with no input commit, and the base
+    window it belongs to (``since``, pinned in the marker as ``base_since``). v02gui.0015 (0001-B, NR0003 §7): the
+    commit a valid (not invalidated) ``run_base`` attempt recorded first in the window that follows the run's last
+    command start (``_base_window``); an attempt done meanwhile in the window and integrated (under the same root) is
+    so not in the input of the window's later start cards. With no such attempt -- the window's first card, a new
+    command on an idle run, only invalidated ones left -- the group branch HEAD: a result of the window is integrated
+    only after an attempt that started from its base recorded it. ``since`` is read before the HEAD, so a HEAD read
+    once a new command committed is never tagged with the window before it (the two reads are outside the Flow guard
+    and not atomic; the worst case leaves the attempt out of the newer window)."""
+    since, since_at = _base_window(row["run_id"])
+    sha = None
+    for event in run_store._all(
+            "SELECT payload_json FROM graph_run_events WHERE run_id = ? AND event_type = 'graph_run_status_changed' "
+            "AND cause = ? AND reason = 'worktree' AND event_seq > ? ORDER BY event_seq", [row["run_id"], CAUSE, since]):
+        try:
+            data = json.loads(event["payload_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(data, dict) or data.get("input_source") != "run_base" or not data.get("input_commit") \
+                or not data.get("attempt_id"):
+            continue
+        base = run_store._one(
+            "SELECT input_commit, created_at FROM graph_node_attempts WHERE attempt_id = ? AND run_id = ? "
+            "AND input_source = 'run_base' AND input_commit IS NOT NULL AND status <> 'invalidated'",
+            [data["attempt_id"], row["run_id"]])
+        if base and _in_window(data, base, since, since_at):
+            sha = base["input_commit"]
+            break
+    if sha is None:
+        sha = git._rev_parse(group_root, "HEAD^{commit}")
     if not sha or git._rev_parse(group_root, sha + "^{commit}") != sha:
         raise port.GraphSourceError("graph_worktree_unavailable", reason="input_missing")
-    return sha
+    return sha, since
 
 
 def _start(row, group_root):
     """The marker's input half, under the Git locks: ``input_commit`` (the worktree's first commit), its source, the
-    attempts in it, and the Join's other heads still to merge (``join_inputs``)."""
+    attempts in it, and the Join's other heads still to merge (``join_inputs``); a ``run_base`` one also its base
+    window (``base_since``, v02gui.0015), pinned with the base so a recovery keeps both."""
     inputs = _inputs(row)
     if not inputs:
-        return {"input_commit": _run_base(row, group_root), "input_source": "run_base", "input_attempt_ids": []}
+        sha, since = _run_base(row, group_root)
+        return {"input_commit": sha, "input_source": "run_base", "input_attempt_ids": [], "base_since": since}
     # Predecessors sharing a result commit are all recorded; the merge takes the commit once.
     shas = list(dict.fromkeys(sha for _key, _attempt_id, sha in inputs))
     if any(git._rev_parse(group_root, sha + "^{commit}") != sha for sha in shas):
@@ -458,11 +548,12 @@ def _materialize(row, project_id):
 
 
 def _input_record(row, project_id):
-    """The input the marker recorded (a marker before T#10 started from the group branch HEAD)."""
+    """The input the marker recorded (a marker before T#10 started from the group branch HEAD); v02gui.0015: its base
+    window as pinned (``base_since``, None for a marker made before or a non-``run_base`` input)."""
     marker = merge_target.read_owner_marker(location(row, project_id)[0]) or {}
     return {"input_source": marker.get("input_source") or "integration_head",
             "input_attempt_ids": list(marker.get("input_attempt_ids") or []),
-            "join_conflict": marker.get("join_conflict")}
+            "join_conflict": marker.get("join_conflict"), "base_since": marker.get("base_since")}
 
 
 def _failed(exec_id, cause, **detail):
@@ -539,8 +630,11 @@ def prepare(exec_id, project_id, group_id):
                                     "input_attempt_ids = ? WHERE attempt_id = ? AND status = 'active'",
                                     [sha, record["input_source"], json.dumps(record["input_attempt_ids"]),
                                      row["attempt_id"]])
+                # v02gui.0015: the base window the marker pinned (not the window read now: a recovery after a new
+                # command would tag an old base with the new window); absent when the marker has none.
+                window = {} if record.get("base_since") is None else {"base_since": record["base_since"]}
                 _event(current, mode, input_commit=sha, input_source=record["input_source"],
-                       input_attempt_ids=record["input_attempt_ids"])
+                       input_attempt_ids=record["input_attempt_ids"], **window)
                 if record["join_conflict"]:
                     # After the mode record (``_mode`` reads the attempt's first event): the Join's results conflict,
                     # so its input is the group branch HEAD and may hold branches unrelated to it (T#12 reads this).
