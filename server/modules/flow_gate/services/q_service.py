@@ -42,6 +42,9 @@ QuestionInput = Union[str, dict]
 # validation below is the ONLY enforcement of every invariant in DB0007 §5.
 MAX_OPTIONS = 10          # hard cap on options per question item (abuse guard)
 MAX_OPTION_LABEL = 200    # max label length (after strip); long proposals go in the question body
+# flowgate.v02gui.0015 T3: what an option may require before the asking card goes on when an answer selects it
+# (``flowgate.card_settings.action_guard``): ``new_attempt`` — the card's work cannot go on in the attempt that asked.
+OPTION_REQUIREMENTS = ("new_attempt",)
 MAX_SELECTED = 1          # v1 is single-select
 
 
@@ -135,11 +138,13 @@ def _notify_responder_state(
 
 # ── Input normalization ──────────────────────────────────────────────────────────
 
-def _validate_options(raw_options: Any) -> list[str]:
-    """Validate a query item's raw options payload → list of stripped labels (L0008 §2.2).
+def _option_entries(raw_options: Any) -> list[tuple[str, Optional[str]]]:
+    """Validate a query item's raw options payload → [(stripped label, requires or None)] (L0008 §2.2).
 
     The request carries plain label strings; ids are always server-assigned
     (_assign_option_ids), so the request surface never accepts one.
+    flowgate.v02gui.0015 T3: an option may also be ``{"label": ..., "requires": "new_attempt"}`` — the asking card does
+    not go on after an answer selects it until that action happened (``OPTION_REQUIREMENTS``). No other key is taken.
     """
     if not isinstance(raw_options, list):
         raise HTTPException(status_code=400, detail="options must be an array of strings")
@@ -148,8 +153,23 @@ def _validate_options(raw_options: Any) -> list[str]:
             status_code=400, detail=f"options must contain at most {MAX_OPTIONS} items"
         )
     labels: list[str] = []
+    entries: list[tuple[str, Optional[str]]] = []
     for item in raw_options:
-        if not isinstance(item, str):
+        requires: Optional[str] = None
+        if isinstance(item, dict):
+            if set(item) - {"label", "requires"} or not isinstance(item.get("label"), str):
+                raise HTTPException(
+                    status_code=400,
+                    detail='each option must be a string label or {"label", "requires"}',
+                )
+            requires = item.get("requires")
+            if requires is not None and requires not in OPTION_REQUIREMENTS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"option requires must be one of: {', '.join(OPTION_REQUIREMENTS)}",
+                )
+            item = item["label"]
+        elif not isinstance(item, str):
             raise HTTPException(status_code=400, detail="each option must be a string label")
         label = item.strip()
         if not label:
@@ -165,10 +185,16 @@ def _validate_options(raw_options: Any) -> list[str]:
         if label in labels:
             raise HTTPException(status_code=400, detail=f"duplicate option label: {label}")
         labels.append(label)
-    return labels
+        entries.append((label, requires))
+    return entries
 
 
-def _assign_option_ids(labels: list[str]) -> list[dict]:
+def _validate_options(raw_options: Any) -> list[str]:
+    """The stripped labels of a valid options payload (``_option_entries``)."""
+    return [label for label, _requires in _option_entries(raw_options)]
+
+
+def _assign_option_ids(labels: list[str], requires: Optional[list[Optional[str]]] = None) -> list[dict]:
     """Labels → [{"id": "o1", "label": ...}, ...] (L0008 §2.3).
 
     An id only has to be unique within its item (an answer references it in item scope),
@@ -176,7 +202,14 @@ def _assign_option_ids(labels: list[str]) -> list[dict]:
     — v1 has no edit/delete API — so ids are never reassigned and selected_options keeps
     referential integrity over time (DB0007 §5).
     """
-    return [{"id": f"o{n}", "label": label} for n, label in enumerate(labels, start=1)]
+    out: list[dict] = []
+    for n, label in enumerate(labels, start=1):
+        option = {"id": f"o{n}", "label": label}
+        need = requires[n - 1] if requires and n - 1 < len(requires) else None
+        if need:
+            option["requires"] = need              # v02gui.0015 T3: only when set — other options stay byte-identical
+        out.append(option)
+    return out
 
 
 def _dump_json(value: Any) -> str:
@@ -209,7 +242,9 @@ def _normalize_questions(
             )
         if not body or not body.strip():
             raise HTTPException(status_code=400, detail="question body must not be empty")
-        out.append((title, body, _assign_option_ids(_validate_options(raw_options))))
+        entries = _option_entries(raw_options)
+        out.append((title, body, _assign_option_ids([label for label, _ in entries],
+                                                    [need for _, need in entries])))
     return out
 
 

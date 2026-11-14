@@ -73,6 +73,9 @@ flowgate.v02.0113 T#3 (L-2): the stage assignments of a role card's attempt, kep
                      not passed it yet — the old approval completes nothing (True), else False (no handler: False)
 
     node_running_cause   run read: handoff, Graph execution, group lease or review loop
+    action_required  the node judgement and a run read (flowgate.v02gui.0015 T3): ``action_required:<requirement>`` of a
+                     card whose AI's answers require an action that was not taken (a new attempt), or None — an open
+                     card so held is ``needs_intervention`` (``node_approval.intervention``); no handler: None
 
 * With no handler registered ``run_settings`` answers ``{}``, ``result_type`` None,
   ``ai_working`` False, ``instruction_document`` ``{}``, ``approve_instruction`` False and ``node_running``
@@ -112,11 +115,12 @@ STAGE_FAILED = "stage_failed"
 RESULT_REVIEW_PENDING = "result_review_pending"                  # 0038-T T#3 A-4
 INTERVENTION = "intervention"                                    # flowgate.v02.0119 T#3 (T-2)
 COMMAND_REVIEW = "command_review"                                # flowgate.v02.0125 T#1 (Q #544)
+ACTION_REQUIRED = "action_required"                              # flowgate.v02gui.0015 T3
 INTERVENTION_NEEDED = "needs_intervention"                       # the default kind (no handler, an unknown answer)
 PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING, NODE_RUNNING_CAUSE,
               PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE, CARDS_CREATED, STAGE_DISPATCH, STAGE_RESULT_START,
               STAGE_NEEDS_DISPATCH, STAGE_RETRY, STAGE_VIEW, STAGE_WAITS, INSTRUCTION_SAVED, STAGE_FAILED,
-              RESULT_REVIEW_PENDING, INTERVENTION, COMMAND_REVIEW)
+              RESULT_REVIEW_PENDING, INTERVENTION, COMMAND_REVIEW, ACTION_REQUIRED)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -267,6 +271,16 @@ def intervention(flow_id: str, row: dict) -> dict:
         return {"kind": INTERVENTION_NEEDED, "reason": approval_wait_reason(flow_id, row)}
     found = handler(flow_id, row)
     return dict(found) if isinstance(found, dict) else {"kind": INTERVENTION_NEEDED, "reason": None}
+
+
+def action_required(flow_id: str, row: dict) -> Optional[str]:
+    """flowgate.v02gui.0015 T3: ``action_required:<requirement>`` of the node run ``row`` whose AI's answers require an
+    action nobody took yet (a new attempt), or None (no handler: None)."""
+    handler = _handler(ACTION_REQUIRED)
+    if handler is None:
+        return None
+    reason = handler(flow_id, row)
+    return reason if isinstance(reason, str) and reason else None
 
 
 # ── stage assignments (flowgate.v02.0113 T#3) ────────────────────────────────

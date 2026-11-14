@@ -430,6 +430,8 @@ export default {
       // flowgate.v02.0125 T#2 — a needs_intervention card's known reason as a sentence (cardStateReasonText); other reasons are shown as sent.
       card_intervention_reasons: {
         review_count_exhausted: 'レビュー回数を使い切り、最後の修正版は未レビューです。`次のステップ`または`全体実行`で再レビューしてください。承認だけでは完了しません。',
+        // flowgate.v02gui.0015 T3
+        action_required_new_attempt: 'Q&Aの回答で新しい attempt が必要とされましたが、まだ開かれていないためカードを再呼び出ししていません。`次のステップ`または`全体実行`で新しい attempt として開き直します。レビュー中のカードは停止してから実行してください。',
       },
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.

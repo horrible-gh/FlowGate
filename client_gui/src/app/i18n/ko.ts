@@ -433,6 +433,8 @@ export default {
       // flowgate.v02.0125 T#2 — a needs_intervention card's known reason as a sentence (cardStateReasonText); other reasons are shown as sent.
       card_intervention_reasons: {
         review_count_exhausted: '검수 횟수를 모두 사용했고 마지막 수정본은 아직 검수되지 않았습니다. `다음 단계` 또는 `전체 실행`으로 다시 검수하세요. 승인만으로는 완료되지 않습니다.',
+        // flowgate.v02gui.0015 T3
+        action_required_new_attempt: 'Q&A 답변에서 새 attempt가 필요하다고 정했지만 아직 열리지 않아 카드를 다시 부르지 않았습니다. `다음 단계` 또는 `전체 실행`을 누르면 새 attempt로 다시 엽니다. 검토 중인 카드는 중지한 뒤 실행하세요.',
       },
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.

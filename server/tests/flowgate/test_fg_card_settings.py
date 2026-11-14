@@ -785,7 +785,8 @@ def test_the_feature_is_in_the_v02_package_and_the_graph_holds_only_the_port():
     assert {p.stem for p in pkg.glob("*.py")} == {
         "__init__", "fields", "settings", "review_stage", "routes", "repository", "legacy_adapter", "integration",
         "assigned_review", "context", "manual_stage", "question_wait", "report_baseline",
-        "stage_assignment", "stage_view"}
+        "stage_assignment", "stage_view",
+        "action_guard"}                     # flowgate.v02gui.0015 T3: the answered step's common guard
     graph = _SERVER_DIR / "modules" / "flow_gate" / "graph_workflow"
     callers = sorted(p.relative_to(graph).as_posix() for p in graph.rglob("*.py")
                      if "card_settings_ports" in p.read_text(encoding="utf-8") and p.name != "card_settings_ports.py")

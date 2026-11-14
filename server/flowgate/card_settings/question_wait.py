@@ -46,6 +46,13 @@ Every phase's step is therefore judged under ``legacy.person_hold`` with ``idle_
 still its attempt's latest (``legacy.result_continuation_due``, judged here and again under the step's hold) — the same
 answers told again after its review was requested (a person's and the responder's, or late after that review ended
 without passing) request no second review.
+
+flowgate.v02gui.0015 T3 (NR flowgate.v02gui.0015.0006 §6-3): an answer is never the action it asked for. Before an
+instruction / work / no_result step goes on, ``action_guard.blocks`` judges whether the answers selected an option that
+requires a new attempt while the node's active attempt is still the asker's: then the run is not woken, no AI is called
+and nothing is approved — the card is ``needs_intervention`` (``action_required:new_attempt``) until a new attempt is opened
+(an explicit command reopens an open card; a card in review is moved by a Stop). The chat AI's outlook tells it
+(``action_required``).
 """
 from __future__ import annotations
 
@@ -53,6 +60,7 @@ import logging
 import threading
 from typing import Optional
 
+from flowgate.card_settings import action_guard
 from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
 
@@ -71,6 +79,7 @@ OUTLOOK_RUN_NOT_RESUMABLE = "run_not_resumable"
 OUTLOOK_NOT_WAITING = "not_waiting"
 OUTLOOK_NOT_GRAPH = "not_graph"
 OUTLOOK_UNKNOWN = "unknown"
+OUTLOOK_ACTION_REQUIRED = "action_required"     # v02gui.0015 T3: answered, but the action they require was not taken
 
 _lock = threading.RLock()
 
@@ -231,6 +240,11 @@ def _answered(flow_id: str, asker_run_id: str) -> None:
         if not any(item.get("responder_state") for item in items):
             _dispatch(flow_id, node, run, items, phase == "instruction")
         return
+    if action_guard.blocks(flow_id, run, node["node_key"], phase):
+        # v02gui.0015 T3: the answers require a new attempt that was not opened — not woken, nothing called; the run's
+        # idle reason follows the card (``needs_intervention``)
+        legacy.settle_graph_run(flow_id)
+        return
     if not legacy.wake_graph_run(flow_id):
         _log.info("card step not resumed flow=%s node=%s run=%s: the Graph run does not go on", flow_id,
                   node["node_key"], asker_run_id)
@@ -320,20 +334,31 @@ def chat_answer_outlook(flow_id: Optional[str], asker_run_id: Optional[str]) -> 
     ``state``: ``resumes_after_chat_run`` (all its questions answered, the run may go on), ``waiting_other_questions``
     (``open_questions`` left), ``run_not_resumable`` (the Flow's run is paused / stopping / stopped or absent: the card
     waits for a person), ``not_waiting`` (no card step waits on it: a person's question, a run still working, a step
-    gone on), ``not_graph`` (not a Graph Flow) or ``unknown`` (unreadable)."""
+    gone on), ``not_graph`` (not a Graph Flow) or ``unknown`` (unreadable). v02gui.0015 T3: ``action_required`` (all
+    answered, but an answer requires a new attempt that was not opened: the card does not go on — ``reason`` and
+    ``next_action`` tell what a person must do)."""
     if not flow_id or not asker_run_id:
         return {"state": OUTLOOK_NOT_WAITING}
     try:
         if not repository.available() or not legacy.graph_owned(flow_id):
             return {"state": OUTLOOK_NOT_GRAPH}
         run = legacy.ai_run_record(asker_run_id)
-        if run is None or run.get("group_id") != flow_id or _waiting(flow_id, run) is None:
+        waiting = _waiting(flow_id, run) if run is not None and run.get("group_id") == flow_id else None
+        if waiting is None:
             return {"state": OUTLOOK_NOT_WAITING}
         items = open_questions(flow_id, asker_run_id)
         if items is None:
             return {"state": OUTLOOK_UNKNOWN}
         if items:
             return {"state": OUTLOOK_OTHER_QUESTIONS, "open_questions": len(items)}
+        phase, node = waiting[0], waiting[1]
+        reason = None
+        if phase in action_guard.PHASES and action_guard.requirement(asker_run_id) is not None:
+            reason = action_guard.reason_for(legacy.active_run_id(flow_id), node.get("node_key"), asker_run_id,
+                                             legacy.attempt_of_ai_run(run))
+        if reason is not None:
+            return {"state": OUTLOOK_ACTION_REQUIRED, "reason": reason,
+                    "next_action": action_guard.NEXT_ACTION["review" if phase == "work" else "open"]}
         found = legacy.graph_run_state(flow_id)
         if found is None:
             return {"state": OUTLOOK_RUN_NOT_RESUMABLE, "run_status": None}

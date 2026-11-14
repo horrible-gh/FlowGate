@@ -241,6 +241,9 @@ def build_answer_mention(
         lines.append("- 보기(선택지): 아래 id 중 하나를 selected_option_ids 에 넣으십시오.")
         for opt in options:
             lines.append(f"    [{opt.get('id')}] {opt.get('label')}")
+            if opt.get("requires") == "new_attempt":
+                # flowgate.v02gui.0015 T3: what selecting it does to the asking card
+                lines.append("        (이 보기를 고르면 새 attempt가 실제로 열릴 때까지 질의한 카드는 다시 실행되지 않고 개입 필요로 멈춥니다.)")
     lines.append("")
     lines.append("[답변 등록 방법]")
     lines.append(f"POST {answers_url}")

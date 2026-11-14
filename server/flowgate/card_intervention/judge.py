@@ -12,7 +12,14 @@ from flowgate.card_intervention import reasons
 
 
 def intervention(flow_id: str, row: dict) -> dict:
-    """``{"kind": needs_intervention | system_error, "reason": <recorded reason> | completion_missing}``."""
+    """``{"kind": needs_intervention | system_error, "reason": <recorded reason> | completion_missing}``.
+
+    flowgate.v02gui.0015 T3: a card whose AI's answers require a new attempt nobody opened (``action_guard``) is
+    ``needs_intervention`` with ``action_required:<requirement>`` first — its answers' step is held, whatever was recorded."""
+    from flowgate.card_settings import action_guard  # noqa: PLC0415
     from flowgate.card_settings import legacy_adapter  # noqa: PLC0415 — the B-1 reader of the card stage
 
+    held = action_guard.node_reason(flow_id, row)
+    if held is not None:
+        return {"kind": reasons.NEEDS_INTERVENTION, "reason": held}
     return reasons.state(legacy_adapter.approval_wait_reason(flow_id, row))
