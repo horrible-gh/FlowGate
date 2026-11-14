@@ -1183,6 +1183,8 @@ _ACTIONS = {
     "approval_wakes": command.approval_wakes, "wake_approval": command.wake_approval,
     "defer_done": result_merge.defer_done, "integration_waiting": result_merge.integration_waiting,
     "integration_wire": result_merge.integration_wire, "retry_integrations": result_merge.retry_integrations,
+    # v02gui.0015 T2: the earlier attempts' uncommitted changes the node's attempt did not take (the run read).
+    "uncarried_wire": workspace.uncarried_wire,
     "hold_command": result_merge.hold_command, "propagation_held": result_merge.propagation_held,
     # T#11: the Flow's held node keys, never opened (``run_apply.read_run_state`` -> ``RunState.held``).
     "held_nodes": hold.held,

@@ -702,7 +702,22 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
             "intervention": state,                                                                  # 0119 T-2
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
             "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked,
-            "node_running": running, "node_running_cause": running_cause(flow_id, row, running), **stage_view(flow_id, row, attempt_id, reason)}
+            "node_running": running, "node_running_cause": running_cause(flow_id, row, running), **stage_view(flow_id, row, attempt_id, reason),
+            **uncarried_changes(row, attempt_id)}
+
+
+def uncarried_changes(row: dict, attempt_id: Optional[str]) -> dict:
+    """v02gui.0015 T2 (NR0006 §6-6): ``uncarried_changes`` -- ``{"attempts", "files", "unknown"}`` of the earlier
+    attempts of the node whose uncommitted changes its attempt did not take, null when none. A notice only: a failed
+    read is null; the run read goes on."""
+    from modules.flow_gate.services import graph_execution_hooks
+    try:
+        value = (graph_execution_hooks.call("uncarried_wire", row.get("run_id"), attempt_id) or {}).get(
+            "uncarried_changes")
+    except Exception:  # noqa: BLE001 — the run read goes on
+        _log.warning("graph uncarried changes read failed node=%s", row.get("node_key"), exc_info=True)
+        value = None
+    return {"uncarried_changes": value if isinstance(value, dict) else None}
 
 
 def stage_view(flow_id: str, row: dict, attempt_id: Optional[str], reason: Optional[str]) -> dict:

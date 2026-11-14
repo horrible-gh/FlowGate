@@ -12,7 +12,7 @@ import { toRunGateState } from '@/features/document/api/run'
 
 import { extractApiErrorMessage, getRequest, putRequest } from '@shared/api'
 import { toAiRoleValue } from '@/features/ai/roles/roleValues'
-import type { RoleRunFields, RoleSubmission } from './types'
+import type { RoleRunFields, RoleSubmission, UncarriedChanges } from './types'
 import { normalizeApiError } from '@shared/apiErrors'
 import type {
   FlowCanvas,
@@ -121,6 +121,7 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
     ...('approval_wait_reason' in raw ? { approvalWaitReason: str(raw.approval_wait_reason) } : {}),
+    ...('uncarried_changes' in raw ? { uncarriedChanges: toUncarriedChanges(raw.uncarried_changes) } : {}),
     ...toRoleRunFields(raw),
     ...('intervention' in raw ? { intervention: raw.intervention ?? null } : {}),
     ...('gate' in raw ? { gate: toRunGateState(raw.gate) } : {}),
@@ -129,6 +130,15 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
 
 /** A count the server sent as a whole number of zero or more; null otherwise. */
 const count = (value: unknown): number | null => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null)
+
+/** v02gui.0015 T2: the server's `uncarried_changes` -> UncarriedChanges, or null (none, or not its shape). */
+export function toUncarriedChanges(raw: unknown): UncarriedChanges | null {
+  if (!raw || typeof raw !== 'object') return null
+  const value = raw as Raw
+  const attempts = count(value.attempts)
+  if (!attempts) return null
+  return { attempts, files: count(value.files) ?? 0, unknown: value.unknown === true }
+}
 
 // flowgate.v02.0053 T#5: the card's document lines (T#1 `card_documents`), in the server's order.
 // flowgate.v02.0056 F2-2 (O3 0009-TR §4-1): `has_body` and the history counts (`review_count`, `rejection_count`,

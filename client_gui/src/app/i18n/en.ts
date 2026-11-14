@@ -362,6 +362,13 @@ export default {
         failed: 'Merge failed',
         open_conflict: 'Resolve the conflict in the Git panel',
       },
+      // v02gui.0015 T2 — an earlier attempt's uncommitted changes the card's attempt did not take.
+      uncarried: {
+        flag: 'Not carried {files}',
+        flag_unknown: 'Not carried ?',
+        title: 'This attempt did not take the uncommitted changes ({files} files) of {attempts} earlier attempt(s). They are not deleted: they stay in the earlier workspace (or the snapshot kept at Stop).',
+        unknown: 'The changes of some attempts could not be counted.',
+      },
       hold: 'Hold',
       // flowgate.v02.0061 T#15 — the Hold mark, a card's context menu and the Graph Time Machine dialog.
       hold_icon: 'Hold — a run does not open this card',

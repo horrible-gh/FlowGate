@@ -365,6 +365,13 @@ export default {
         failed: '병합 실패',
         open_conflict: 'Git 패널에서 충돌을 해결합니다',
       },
+      // v02gui.0015 T2 — an earlier attempt's uncommitted changes the card's attempt did not take.
+      uncarried: {
+        flag: '미인계 {files}',
+        flag_unknown: '미인계 ?',
+        title: '이전 시도 {attempts}개의 커밋 안 된 변경 {files}개 파일을 이번 시도는 이어받지 않았습니다. 변경은 지워지지 않고 이전 작업 폴더(또는 중지 시 보존본)에 남아 있습니다.',
+        unknown: '일부 시도는 변경 수를 읽지 못했습니다.',
+      },
       hold: 'Hold',
       // flowgate.v02.0061 T#15 — the Hold mark, a card's context menu and the Graph Time Machine dialog.
       hold_icon: 'Hold — 이 카드는 실행에서 열리지 않습니다',

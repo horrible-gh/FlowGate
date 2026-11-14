@@ -88,6 +88,11 @@ export interface FlowGateNodeData {
   /** flowgate.v02.0063: the card's document holds a question still unanswered (the [Q] mark). */
   question?: boolean
   bodyUnreadable?: boolean
+  /**
+   * v02gui.0015 T2 (NR0006 §6-6): the earlier attempts of the card whose uncommitted changes its attempt did not take
+   * (kept, never carried over automatically) — the `미인계` chip; absent when none.
+   */
+  uncarried?: { files: number; attempts: number; unknown: boolean }
 }
 
 /** flowgate.v02.0061 T#14: integration states the card chip names (an integrated / absent one says nothing). */
@@ -176,6 +181,9 @@ export function toVueFlowNodes(
     if (hold === true) data.hold = true
     const question = runNode && typeof runNode.question === 'boolean' ? runNode.question : node.nodeRun?.question
     if (question === true) data.question = true
+    // v02gui.0015 T2: from the run read's node run first, as the integration chip.
+    const uncarried = runNode && 'uncarriedChanges' in runNode ? runNode.uncarriedChanges : node.nodeRun?.uncarriedChanges
+    if (uncarried && uncarried.attempts > 0) data.uncarried = { files: uncarried.files, attempts: uncarried.attempts, unknown: uncarried.unknown }
     const mapped: FlowGateVueFlowNode = {
       id: node.id,
       type: FLOWGATE_NODE_TYPE,

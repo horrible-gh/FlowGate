@@ -27,7 +27,7 @@ import { toRunGateState } from '@/features/document/api/run'
 // The run events (P0008 §8.2 `graph_run_status_changed` / `graph_node_state_changed`) are refresh
 // signals of the Canvas (flowCanvasEvents.ts), never state.
 import { getRequest, postRequest } from '@shared/api'
-import { canvasHeaders, num, str, toRoleRunFields, type Raw } from './flowCanvasApi'
+import { canvasHeaders, num, str, toRoleRunFields, toUncarriedChanges, type Raw } from './flowCanvasApi'
 import { FlowGraphApiError, toGraphError, serverRequestIdOf } from './flowGraphApi'
 import type { FlowRun, FlowRunNode, FlowRunTimeMachine, FlowRunTimeMachineRefusal } from './types'
 
@@ -50,6 +50,8 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
     ...('approval_wait_reason' in raw ? { approvalWaitReason: str(raw.approval_wait_reason) } : {}),
+    // v02gui.0015 T2: the earlier attempts' uncommitted changes the card's attempt did not take.
+    ...('uncarried_changes' in raw ? { uncarriedChanges: toUncarriedChanges(raw.uncarried_changes) } : {}),
     ...toRoleRunFields(raw),
     ...('intervention' in raw ? { intervention: raw.intervention ?? null } : {}),
     ...('gate' in raw ? { gate: toRunGateState(raw.gate) } : {}),

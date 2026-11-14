@@ -362,6 +362,13 @@ export default {
         failed: 'マージ失敗',
         open_conflict: 'Git パネルで競合を解決します',
       },
+      // v02gui.0015 T2 — an earlier attempt's uncommitted changes the card's attempt did not take.
+      uncarried: {
+        flag: '未引継 {files}',
+        flag_unknown: '未引継 ?',
+        title: '以前の試行 {attempts} 件のコミットされていない変更（{files} ファイル）を、この試行は引き継いでいません。変更は削除されず、以前の作業フォルダ（または停止時の保存版）に残っています。',
+        unknown: '一部の試行は変更数を読み取れませんでした。',
+      },
       hold: 'Hold',
       // flowgate.v02.0061 T#15 — the Hold mark, a card's context menu and the Graph Time Machine dialog.
       hold_icon: 'Hold — このカードは実行で開かれません',

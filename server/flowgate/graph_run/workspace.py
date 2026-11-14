@@ -34,6 +34,11 @@ attempt commit moves the ref to its result; a removal deletes it (``update-ref -
 counts neither ``graph_attempt_*`` branches nor ``refs/flowgate/attempts/*`` refs as keeping a commit. An attempt
 prepared before keeps its ``graph_attempt_<key>`` branch (its marker names ``branch``) and is checked, committed and
 removed as it was: nothing is migrated or renamed.
+
+v02gui.0015 T2 (NR0006 §6-6): a new attempt never takes what an earlier attempt of its node left uncommitted (its
+input is its predecessors' results or the run base). Its owner marker pins those earlier attempts and their changed
+files (``uncarried``, read under the Git locks from the kept tree or the user_stop snapshot), its preparation records
+them (``prior_changes_not_carried``) and the card's run read counts them (``uncarried_wire``); nothing is carried over.
 """
 from __future__ import annotations
 from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
@@ -457,6 +462,103 @@ def _join(row, directory, root, branch, marker, group_root):
 # v02test.0021: what a failed preparation keeps for its diagnosis (the run event and the log), beyond its reason.
 _FAILURE_DETAILS = ("provision_error", "git_stderr")
 
+# v02gui.0015 T2 (NR0006 §2.3, §6-5, §6-6): an attempt starts from its predecessors' results or the run base
+# (``_start``), never from an earlier attempt of its own node, and an attempt's changes are committed only when its
+# result is integrated -- so what an earlier (invalidated) attempt of the node left uncommitted is not carried into the
+# new one. It is kept (``cleanup``'s D-1a-0 keeps a dirty tree; a user_stop snapshot keeps it under
+# ``refs/flowgate/preserved``) and, from now on, told: the new attempt's preparation records those attempts and their
+# changed files (``prior_changes_not_carried``) and the card's run read shows the count (``uncarried_wire``). Nothing
+# is carried over automatically.
+UNCARRIED = "prior_changes_not_carried"
+UNCARRIED_PATHS = 20
+
+
+def _porcelain_paths(text):
+    """The paths of ``status --porcelain -z`` entries (a rename / copy names its new path; its old one follows)."""
+    items, paths, index = (text or "").split("\0"), [], 0
+    while index < len(items):
+        entry = items[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        paths.append(entry[3:])
+        if entry[0] in "RC":
+            index += 1
+    return paths
+
+
+def _left_over(prior, project_id, group_root):
+    """What an earlier attempt of the node left uncommitted, or None (nothing, or no source of it left): its kept tree's
+    uncommitted and untracked files, else (the tree removed after a user_stop snapshot) the files its latest snapshot
+    changed against the tree's HEAD (``_snapshot_stopped``: snapshot -> index commit -> HEAD). ``changed_files`` None:
+    the source is there but could not be read."""
+    _directory, root, _name = location(prior, project_id)
+    if root.is_dir() and git._worktree_link_ok(root):
+        status = git._run_git(["--no-optional-locks", "status", "--porcelain", "-z", "--untracked-files=all"],
+                              cwd=root)
+        if status.returncode:
+            return {"kept": "worktree", "changed_files": None, "paths": []}
+        paths = _porcelain_paths(status.stdout)
+        return {"kept": "worktree", "changed_files": len(paths), "paths": paths[:UNCARRIED_PATHS]} if paths else None
+    listed = git._run_git(["for-each-ref", "--sort=-creatordate", "--count=1", "--format=%(refname)",
+                           PRESERVED_REF_PREFIX + merge_target.workspace_key(prior["attempt_id"])], cwd=group_root)
+    ref = "" if listed.returncode else listed.stdout.strip()
+    if not ref:
+        return None
+    diff = git._run_git(["diff", "--name-only", "-z", ref + "^1^1", ref], cwd=group_root)
+    if diff.returncode:
+        return {"kept": "preserved_ref", "ref": ref, "changed_files": None, "paths": []}
+    paths = [path for path in diff.stdout.split("\0") if path]
+    return {"kept": "preserved_ref", "ref": ref, "changed_files": len(paths),
+            "paths": paths[:UNCARRIED_PATHS]} if paths else None
+
+
+def _uncarried(row, project_id, group_root):
+    """v02gui.0015 T2, under the Git locks (G: no cleanup removes an earlier tree meanwhile), when the owner marker is
+    made: the node's earlier invalidated attempts of the run whose uncommitted changes the new attempt does not take,
+    oldest first -- ``[{attempt_id, invalidated_reason, kept, changed_files, paths, (ref)}]``. A notice only: a failed
+    read is told as unknown (``changed_files`` None) and never stops the preparation."""
+    found = []
+    for prior in run_store._all(
+            "SELECT a.*, r.group_id FROM graph_node_attempts a JOIN graph_runs r ON r.run_id = a.run_id "
+            "WHERE a.run_id = ? AND a.node_key = ? AND a.attempt_id <> ? AND a.status = 'invalidated' "
+            "ORDER BY a.created_at, a.attempt_id", [row["run_id"], row["node_key"], row["attempt_id"]]):
+        try:
+            left = _left_over(prior, project_id, group_root)
+        except Exception:  # noqa: BLE001 — the notice only; the preparation goes on
+            log.warning("earlier attempt %s of %s not read for uncarried changes", prior["attempt_id"],
+                        row["attempt_id"], exc_info=True)
+            left = {"kept": "unknown", "changed_files": None, "paths": []}
+        if left:
+            found.append({"attempt_id": prior["attempt_id"], "invalidated_reason": prior.get("invalidated_reason"),
+                          **left})
+    return found
+
+
+def uncarried_wire(run_id, attempt_id):
+    """v02gui.0015 T2: ``{"uncarried_changes": {"attempts", "files", "unknown"}}`` -- the earlier attempts of the node
+    whose uncommitted changes the attempt did not take (its ``prior_changes_not_carried`` record), their changed files
+    and whether a count could not be read; null when there are none. A failed read tells none; the run read goes on."""
+    if not run_id or not attempt_id:
+        return {"uncarried_changes": None}
+    try:
+        for event in run_store._all(
+                "SELECT payload_json FROM graph_run_events WHERE run_id = ? AND event_type = 'graph_run_status_changed' "
+                "AND cause = ? AND reason = ? ORDER BY event_seq DESC", [run_id, CAUSE, UNCARRIED]):
+            data = json.loads(event["payload_json"] or "{}")
+            if not isinstance(data, dict) or data.get("attempt_id") != attempt_id:
+                continue
+            prior = [p for p in data.get("prior_attempts") or [] if isinstance(p, dict)]
+            if not prior:
+                break
+            return {"uncarried_changes": {
+                "attempts": len(prior),
+                "files": sum(int(p["changed_files"]) for p in prior if isinstance(p.get("changed_files"), int)),
+                "unknown": any(not isinstance(p.get("changed_files"), int) for p in prior)}}
+    except Exception:  # noqa: BLE001 — the run read goes on
+        log.warning("uncarried changes read failed run=%s attempt=%s", run_id, attempt_id, exc_info=True)
+    return {"uncarried_changes": None}
+
 
 def _git_error(proc):
     """v02test.0021: a failed Git command's stderr (credentials scrubbed, bounded) for the failure's details."""
@@ -511,6 +613,10 @@ def _materialize(row, project_id):
                       "repository": str(group_root), "common_dir": str(_common_dir(group_root))}
             if not marker.get("join_inputs"):
                 marker.pop("join_inputs", None)
+            # v02gui.0015 T2: pinned with the input, so a recovery records the same notice.
+            uncarried = _uncarried(current, project_id, group_root)
+            if uncarried:
+                marker["uncarried"] = uncarried
             directory.mkdir(parents=True, exist_ok=False)
             # Exclusive owner marker precedes branch/worktree creation, as in merge_target.
             with document_write_ports.write_paths([directory / merge_target.OWNER_MARKER]), (directory / merge_target.OWNER_MARKER).open("x", encoding="utf-8") as stream:
@@ -549,11 +655,14 @@ def _materialize(row, project_id):
 
 def _input_record(row, project_id):
     """The input the marker recorded (a marker before T#10 started from the group branch HEAD); v02gui.0015: its base
-    window as pinned (``base_since``, None for a marker made before or a non-``run_base`` input)."""
+    window as pinned (``base_since``, None for a marker made before or a non-``run_base`` input); T2: the earlier
+    attempts of the node whose uncommitted changes it does not take (``uncarried``, [] for none or a marker before)."""
     marker = merge_target.read_owner_marker(location(row, project_id)[0]) or {}
+    uncarried = marker.get("uncarried")
     return {"input_source": marker.get("input_source") or "integration_head",
             "input_attempt_ids": list(marker.get("input_attempt_ids") or []),
-            "join_conflict": marker.get("join_conflict"), "base_since": marker.get("base_since")}
+            "join_conflict": marker.get("join_conflict"), "base_since": marker.get("base_since"),
+            "uncarried": [p for p in uncarried if isinstance(p, dict)] if isinstance(uncarried, list) else []}
 
 
 def _failed(exec_id, cause, **detail):
@@ -640,7 +749,19 @@ def prepare(exec_id, project_id, group_id):
                     # so its input is the group branch HEAD and may hold branches unrelated to it (T#12 reads this).
                     _event(current, "join_input_conflict", input_commit=sha, input_source=record["input_source"],
                            input_attempt_ids=record["input_attempt_ids"], **record["join_conflict"])
+                uncarried = record.get("uncarried") or []
+                if uncarried:
+                    # v02gui.0015 T2 (NR0006 §6-6): after the mode record too; the earlier attempts' uncommitted
+                    # changes stay where they are kept and are not in this attempt's input -- told, not silent.
+                    _event(current, UNCARRIED, input_commit=sha, input_source=record["input_source"],
+                           prior_attempts=uncarried,
+                           changed_files=sum(p["changed_files"] for p in uncarried
+                                             if isinstance(p.get("changed_files"), int)))
         with_flow_guard(group_id, record_ready)
+        uncarried = record.get("uncarried") or []
+        if uncarried:
+            log.warning("attempt %s does not carry the uncommitted changes of earlier attempts %s", row["attempt_id"],
+                        [(p.get("attempt_id"), p.get("kept"), p.get("changed_files")) for p in uncarried])
         return source_root(row["attempt_id"], project_id=project_id, group_id=group_id, document_ok=True)
     except ledger.LeaseLost:
         cleanup(row["attempt_id"])
