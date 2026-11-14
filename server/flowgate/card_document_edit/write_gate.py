@@ -7,6 +7,7 @@ import logging
 import os
 import stat
 import stat as stat_module
+import time
 
 from fastapi import HTTPException
 from modules.flow_gate.db import connection, documents
@@ -22,6 +23,7 @@ _guard_keys = ContextVar('card_document_gate_guard_keys', default=frozenset())
 _project_rows = ContextVar('card_document_gate_project_rows', default=None)
 _namespace_tx = ContextVar('card_document_path_namespace_transaction', default=None)
 _checked_paths = ContextVar('card_document_checked_paths', default=None)
+_link_listings = ContextVar('card_document_gate_link_listings', default=None)
 
 
 def lock_path_namespace():
@@ -214,19 +216,28 @@ def references(paths=(), trees=()):
                         identity = file_key(path)
                         if identity is not None:
                             identities.add(identity)
-        rows = connection.get_store()._fetch_all(
-            "SELECT * FROM documents WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''")
+        store = connection.get_store()
         roots = {}
-        resolve = storage_paths.memo_resolver()
         target_names = None if trees else _name_filter(paths)
+        clock = _WalkClock()
+        if target_names is None:
+            rows = store._fetch_all(_ROWS_SQL)
+            clock.mark('sql', rows=len(rows))
+        else:
+            light = store._fetch_all(_WALK_SQL)
+            clock.mark('sql', rows=len(light))
+            row_links = _walk_link_listings()
+            listed = len(row_links)
+            light = [d for d in light if not _cannot_match(d, target_names, roots, row_links)]
+            clock.mark('filter', dirs_listed=len(row_links) - listed)
+            rows = _full_rows(store, light)
+            clock.mark('full', walked=len(rows))
+        resolve = storage_paths.memo_resolver()
         # Every target exists, each its own file of one link: a row matches exactly when one of its candidates is
         # that file (a path equal to a target's names the target itself), so a stat answers without resolving.
         by_identity = target_names is not None and len(identities) == len(paths)
-        row_links = {}
         result = []
         for doc in rows:
-            if target_names is not None and _cannot_match(doc, target_names, roots, row_links):
-                continue
             if by_identity and _identity_row(doc):
                 matched = _identity_match(doc, roots, identities)
                 if matched is not None:
@@ -241,9 +252,102 @@ def references(paths=(), trees=()):
                     resolved = resolved.resolve(strict=False)  # a match: the exact path, as before
                     result.append((doc, storage_paths.within_allowed_roots(resolved, doc['project_id'])))
                     break
+        clock.mark('match', matched=len(result))
+        clock.report('references', trees=bool(trees), filtered=target_names is not None)
         return result
     except Exception:
         refuse()
+
+
+# 0001-B A, second pass (flowgate.v02gui.0012 0004-CH turn 49): after the name filter a card type switch on stg still
+# took ~7 s (R<->B) and a save ~4.4 s: every walk kept a fixed cost -- the whole documents table (9,454 rows, ~13 MB
+# with every column) and a listing of every row's directory (1,343) to rule out links -- and a switch walks 7-9 times.
+# A filtered walk now reads only the four columns it decides on and the full rows of the rows it walks; the
+# directory listings are shared by every walk of one transaction; and paths_scope no longer repeats a walk that
+# already ran under the path namespace mutex. The rows found are the same.
+_ROWS_SQL = "SELECT * FROM documents WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''"
+_WALK_SQL = ("SELECT doc_id, project_id, branch, file_path FROM documents "
+             "WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''")
+_FULL_ROWS_CHUNK = 200
+# A walk slower than this writes one timing line to logs/default.log (logger flowgate.write_gate.timing): the
+# breakdown (database read, directory listings, full rows, matching) that 0001-B A could only estimate from outside.
+SLOW_WALK_MS = 150
+_timing_log = None
+
+
+def _timing_logger():
+    global _timing_log
+    if _timing_log is None:
+        from modules.flow_gate.services.route_logging import forward_to_file_log
+        logger = logging.getLogger('flowgate.write_gate.timing')
+        logger.setLevel(logging.INFO)
+        _timing_log = forward_to_file_log(logger, logging.INFO)
+    return _timing_log
+
+
+class _WalkClock:
+    """Per-phase milliseconds of one walk, logged only when the whole walk is slow (``SLOW_WALK_MS``)."""
+
+    def __init__(self):
+        self.start = self.last = time.perf_counter()
+        self.parts = {}
+
+    def mark(self, phase, **facts):
+        now = time.perf_counter()
+        self.parts[phase + '_ms'] = round((now - self.last) * 1000)
+        self.parts.update(facts)
+        self.last = now
+
+    def report(self, what, **facts):
+        total = round((time.perf_counter() - self.start) * 1000)
+        if total < SLOW_WALK_MS:
+            return
+        try:
+            fields = ' '.join(f'{k}={v}' for k, v in {**self.parts, **facts}.items())
+            _timing_logger().info('write gate %s slow: total_ms=%s %s', what, total, fields)
+        except Exception:  # noqa: BLE001 -- timing must never break a write
+            pass
+
+
+def _walk_link_listings():
+    """The link listings of ``_cannot_match`` (per project, branch and stored parent), shared by every walk of the
+    current transaction and dropped when it ends; outside a transaction, one walk's own.
+
+    A write in progress makes regular files and directories only (a new file, its revision snapshot, an orphan moved
+    aside), never a link, so a listing taken by an earlier walk of the same transaction still names every link.
+    """
+    tx = transaction()
+    if tx is None:
+        return {}
+    held = _link_listings.get()
+    if held is not None and held[0] is tx:
+        return held[1]
+    listings = {}
+    _link_listings.set((tx, listings))
+
+    def clear():
+        current = _link_listings.get()
+        if current is not None and current[0] is tx:
+            _link_listings.set(None)
+    connection.after_commit(clear)
+    connection.after_rollback(clear)
+    return listings
+
+
+def _full_rows(store, light):
+    """The full rows of the light rows a walk goes on with, in their order.
+
+    A row deleted since the light read is gone; a row whose path emptied since is skipped like the full read skips
+    it. A path attached in between is what the second walk under the namespace mutex is there to see.
+    """
+    ids = [d['doc_id'] for d in light]
+    full = {}
+    for start in range(0, len(ids), _FULL_ROWS_CHUNK):
+        chunk = ids[start:start + _FULL_ROWS_CHUNK]
+        for row in store._fetch_all(
+                "SELECT * FROM documents WHERE doc_id IN (" + ', '.join('?' * len(chunk)) + ")", chunk):
+            full.setdefault(row['doc_id'], row)
+    return [full[i] for i in ids if i in full and (full[i].get('file_path') or '').strip()]
 
 
 def _plain_name(name):
@@ -518,6 +622,9 @@ def paths_scope(paths, *, trees=()):
     if covered and covered[0] is transaction() and not trees and names.issubset(covered[1]):
         yield
         return
+    # Already under the path namespace mutex (a revision, a creation, an earlier gated write of this transaction):
+    # no path can be attached until it ends, so the walk under the mutex below would find exactly these rows.
+    locked = transaction() is not None and _namespace_tx.get() is transaction()
     initial = references(paths, trees)
     if len({d.get('group_id') for d, _ in initial if d.get('group_id')}) > 1:
         refuse()
@@ -526,7 +633,7 @@ def paths_scope(paths, *, trees=()):
         require_none(d)
     with guard_scope(ungranted):
         lock_path_namespace()
-        fresh = references(paths, trees)
+        fresh = initial if locked else references(paths, trees)
         if {d['doc_id'] for d, _ in fresh} - {d['doc_id'] for d, _ in initial}:
             refuse()
         for doc, inside in fresh:

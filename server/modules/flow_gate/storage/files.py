@@ -18,7 +18,7 @@ from typing import Optional
 
 from modules.flow_gate.db.connection import get_store, track_new_file
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
-from .paths import storage_path_candidates
+from . import paths as storage_paths
 
 _log = logging.getLogger(__name__)
 CLEANUP_RETRY_MAX = 0
@@ -60,13 +60,20 @@ def document_using_file(abs_path, exclude_doc_ids=()) -> Optional[dict]:
     rows = get_store()._fetch_all(
         "SELECT doc_id, project_id, branch, file_path FROM documents "
         "WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''")
+    # flowgate.v02gui.0012 (0001-B A, second pass): each same-name row read the storage settings again (project
+    # override, then system setting) to find its project's root; a card save checks 2-4 files against ~50 such rows
+    # on stg. The root is now read once per project and call; the candidates and their order are unchanged.
+    roots = {}
     for row in rows:
         stored = row["file_path"].strip().replace("\\", "/")
         if row["doc_id"] in excluded or stored.rsplit("/", 1)[-1].casefold() != name:
             continue
-        for candidate, _inside in storage_path_candidates(stored, row["project_id"], row.get("branch") or "main"):
+        project_id = row["project_id"]
+        if project_id not in roots:
+            roots[project_id] = storage_paths.get_storage_root(project_id).resolve()
+        for candidate in storage_paths.storage_candidate_paths(stored, roots[project_id], row.get("branch") or "main"):
             if same_file(candidate, path):
-                return {"doc_id": row["doc_id"], "project_id": row["project_id"]}
+                return {"doc_id": row["doc_id"], "project_id": project_id}
     return None
 
 

@@ -22,16 +22,27 @@ from flowgate.card_document_edit import write_gate as gate
 from modules.flow_gate.storage import paths as storage_paths
 
 SQL = "SELECT * FROM documents WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''"
+LIGHT = "SELECT doc_id, project_id, branch, file_path FROM documents WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''"
+FULL = "SELECT * FROM documents WHERE doc_id IN ("
 CH = "documents/p/main/m/0001/0002-CH_document.md"
 
 
 class Rows:
+    """The three reads of a walk: every full row, the four columns a filtered walk decides on, and full rows by id."""
+
     def __init__(self, rows):
         self.rows = rows
+        self.sql = []
 
     def _fetch_all(self, sql, params=None):
-        assert " ".join(sql.split()) == SQL
-        return [dict(r) for r in self.rows]
+        sql = " ".join(sql.split())
+        self.sql.append((sql, params))
+        if sql == SQL:
+            return [dict(r) for r in self.rows]
+        if sql == LIGHT:
+            return [{k: r.get(k) for k in ('doc_id', 'project_id', 'branch', 'file_path')} for r in self.rows]
+        assert sql.startswith(FULL) and sql.count('?') == len(params), sql
+        return [dict(r) for r in self.rows if r['doc_id'] in params]
 
 
 def oracle(paths=(), trees=()):
@@ -92,8 +103,9 @@ def store(tmp_path, monkeypatch):
     ]
     rows += [{'doc_id': f'{pid}.other{i}', 'project_id': pid, 'branch': 'main',
               'file_path': f'documents/{pid}/main/m/{i:04d}/0001-R_document.md'} for i in range(60) for pid in 'pq']
-    monkeypatch.setattr(gate.connection, 'get_store', lambda: Rows(rows))
-    return {'roots': roots, 'target': target, 'reads': reads, 'rows': rows}
+    db = Rows(rows)
+    monkeypatch.setattr(gate.connection, 'get_store', lambda: db)
+    return {'roots': roots, 'target': target, 'reads': reads, 'rows': rows, 'db': db}
 
 
 def found(paths=(), trees=()):
@@ -265,3 +277,115 @@ def test_hard_links_symbolic_links_and_unplain_names_still_walk_every_row(store,
     assert gate._name_filter([store['roots']['p'] / 'solo_links' / 'renamed.md']) is None
     for name in ('x.md.', 'x.md ', 'LONGNA~1.MD', 'x.md:stream', '한글.md', '..'):
         assert gate._name_filter([target.with_name(name)]) is None, name
+
+
+# ── 0001-B A, second pass (flowgate.v02gui.0012 0004-CH turn 49): the fixed cost of each walk ──────────────────────
+
+def _plain_target(store, rel='documents/p/main/m/0004/0007-R_document.md'):
+    target = store['roots']['p'] / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('plain', encoding='utf-8')
+    return target
+
+
+def test_a_filtered_walk_reads_four_columns_and_the_full_rows_of_the_walked_rows_only(store):
+    target = _plain_target(store)
+    store['rows'] += [
+        {'doc_id': 'f.same', 'project_id': 'p', 'branch': 'main', 'title': 'full',
+         'file_path': 'documents/p/main/m/0004/0007-R_document.md'},
+        {'doc_id': 'f.legacy', 'project_id': 'p', 'branch': 'main', 'title': 'full',
+         'file_path': 'documents/p/m/0004/0007-R_document.md'},
+    ]
+    store['db'].sql.clear()
+    result = gate.references([target])
+    reads = list(store['db'].sql)
+    assert [(d['doc_id'], inside) for d, inside in result] == oracle([target])
+    assert {d['doc_id'] for d, _ in result} == {'f.same', 'f.legacy'}
+    assert all(d['title'] == 'full' for d, _ in result)  # the callers still get every column of a matched row
+    assert reads[0][0] == LIGHT and all(sql != SQL for sql, _ in reads)
+    assert sorted(i for sql, params in reads if sql.startswith(FULL) for i in params) == ['f.legacy', 'f.same']
+
+
+def test_a_filtered_walk_skips_a_row_deleted_or_emptied_since_the_light_read(store, monkeypatch):
+    target = _plain_target(store)
+    store['rows'] += [{'doc_id': 'f.gone', 'project_id': 'p', 'branch': 'main',
+                       'file_path': 'documents/p/main/m/0004/0007-R_document.md'},
+                      {'doc_id': 'f.emptied', 'project_id': 'p', 'branch': 'main',
+                       'file_path': 'documents/p/main/m/0004/0007-R_document.md'}]
+    db, real = store['db'], store['db']._fetch_all
+
+    def racing(sql, params=None):
+        rows = real(sql, params)
+        if ' '.join(sql.split()).startswith(FULL):
+            rows = [dict(r, file_path='  ') if r['doc_id'] == 'f.emptied' else r
+                    for r in rows if r['doc_id'] != 'f.gone']
+        return rows
+    monkeypatch.setattr(db, '_fetch_all', racing)
+    assert gate.references([target]) == []
+
+
+def test_link_listings_are_shared_by_the_walks_of_one_transaction(store, monkeypatch):
+    target = _solo(store)
+    expected = oracle([target])
+    tx, ended = object(), []
+    monkeypatch.setattr(gate, 'transaction', lambda: tx)
+    monkeypatch.setattr(gate.connection, 'after_commit', ended.append)
+    monkeypatch.setattr(gate.connection, 'after_rollback', ended.append)
+    listed, real = [], gate._links_in
+    monkeypatch.setattr(gate, '_links_in', lambda directory: listed.append(directory) or real(directory))
+    assert found([target]) == expected and 'solo.symlink_file' in dict(expected)
+    first = len(listed)
+    assert first > 0
+    assert found([target]) == expected  # the link with another name is still found from the shared listing
+    assert len(listed) == first  # no directory listed again within the transaction
+    for clear in ended:
+        clear()
+    assert found([target]) == expected
+    assert len(listed) == 2 * first  # the next transaction lists afresh
+    other = target.with_name('0008-R_document.md')
+    assert found([other]) == oracle([other])  # another target in the same transaction: the same rows as before
+
+
+def test_paths_scope_walks_once_when_the_namespace_mutex_is_already_held(store, monkeypatch):
+    from contextlib import contextmanager
+    tx = object()
+    monkeypatch.setattr(gate, 'transaction', lambda: tx)
+    monkeypatch.setattr(gate, 'internal_only', lambda *a, **k: False)
+    monkeypatch.setattr(gate, 'lock_path_namespace', lambda: None)
+
+    @contextmanager
+    def no_guard(docs):
+        assert docs == []
+        yield
+    monkeypatch.setattr(gate, 'guard_scope', no_guard)
+    walks, real = [], gate.references
+    monkeypatch.setattr(gate, 'references', lambda *a, **k: walks.append(a) or real(*a, **k))
+    new = store['roots']['p'] / 'documents/p/main/m/0005/0009-X_document.md'
+    mutex = gate._namespace_tx.set(None)
+    checked = gate._checked_paths.set(None)
+    try:
+        with gate.paths_scope([new]):
+            pass
+        assert len(walks) == 2  # the mutex taken here: walked again under it
+        walks.clear()
+        gate._namespace_tx.set(tx)
+        with gate.paths_scope([new]):
+            pass
+        assert len(walks) == 1  # already held before the first walk: nothing can attach a path in between
+    finally:
+        gate._checked_paths.reset(checked)
+        gate._namespace_tx.reset(mutex)
+
+
+def test_a_file_usage_check_reads_each_projects_storage_root_once(store, monkeypatch):
+    from modules.flow_gate.storage import files
+    monkeypatch.setattr(files, 'get_store', lambda: store['db'])
+    missing = store['roots']['p'] / 'documents/p/main/m/0006/0002-CH_document.md'
+    store['reads'].clear()
+    assert files.document_using_file(missing) is None
+    assert sorted(store['reads']) == ['p', 'q']  # six same-name rows, one root read per project
+    used = _plain_target(store, 'documents/p/main/m/0006/0002-CH_document.md')
+    store['rows'].append({'doc_id': 'u.same', 'project_id': 'p', 'branch': 'main',
+                          'file_path': 'documents/p/m/0006/0002-CH_document.md'})  # legacy form, found by fallback
+    assert files.document_using_file(used) == {'doc_id': 'u.same', 'project_id': 'p'}
+    assert files.document_using_file(used, ('u.same',)) is None
