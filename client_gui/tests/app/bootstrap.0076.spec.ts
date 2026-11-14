@@ -212,6 +212,30 @@ describe('V03 실제 초기 진입 — main.ts shows a neutral loading state unt
   }, 15000)
 })
 
+// flowgate.v02gui.0017 B2: F5 while the server restarts — /auth/me fails without a verdict (network
+// error, 5xx). The session may be valid, so the access token stays, the app opens on the requested
+// URL instead of /login, and /auth/me is asked again in the background.
+describe('bootstrap without a verdict keeps the session (v02gui.0017 B2)', () => {
+  it('a network error on /auth/me keeps the token, opens the app and asks again', async () => {
+    const router = await startApp('/projects?tab=x')
+    expectStartupLoadingOnly(router, '/projects?tab=x')
+
+    net.me!.reject(Object.assign(new Error('Network Error'), { code: 'ERR_NETWORK' }))
+    await waitUntil(() => $('.gui-app-shell') !== null)
+    expect(location()).toBe('/app/projects?tab=x')
+    expect(router.currentRoute.value.fullPath).toBe('/projects?tab=x')
+    expect(sessionStorage.getItem('fg_access_token')).toBe('token-bootstrap-0076')
+    expect(window.__accessToken__).toBe('token-bootstrap-0076')
+
+    // The background re-ask (first one after ~2s) — answered, it stops.
+    const firstMe = net.me
+    await waitUntil(() => net.me !== firstMe)
+    expect(net.requests.filter((r) => r === 'GET /auth/me')).toHaveLength(2)
+    net.me!.resolve({ data: ADMIN_ME })
+    await flushPromises()
+  }, 15000)
+})
+
 describe('login redirect contract is unchanged', () => {
   const realLocation = window.location
   let redirectedTo = ''

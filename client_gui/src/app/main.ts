@@ -7,7 +7,7 @@ import { registerAppMessages } from './i18n'
 import './styles/theme.css'
 import App from './App.vue'
 import StartupLoadingView from './views/StartupLoadingView.vue'
-import { ensureValidAccessToken, startTokenAutoRefresh } from '@shared/api'
+import { ensureValidAccessToken, isAuthRejection, startTokenAutoRefresh } from '@shared/api'
 import { loadCurrentUser, setCurrentUser } from '@/core/auth/currentUser'
 
 // Mirrors client/src/main/main.ts's bootstrap exactly (T0005 §5: auth reuse, not a
@@ -16,6 +16,22 @@ import { loadCurrentUser, setCurrentUser } from '@/core/auth/currentUser'
 // router guard makes its first decision.
 const getStoredAccessToken = (): string | null =>
   window.__accessToken__ || sessionStorage.getItem('fg_access_token') || null
+
+// flowgate.v02gui.0017 B2: background re-ask of /auth/me after a bootstrap failure without a
+// verdict. Stops on success, on a definitive rejection (the 401 interceptor already handles the
+// session then) or after CURRENT_USER_RETRY_MAX attempts.
+const CURRENT_USER_RETRY_MAX = 6
+const CURRENT_USER_RETRY_BASE_MS = 2_000
+const CURRENT_USER_RETRY_MAX_DELAY_MS = 30_000
+
+function retryCurrentUser(attempt: number): void {
+  const delay = Math.min(CURRENT_USER_RETRY_BASE_MS * 2 ** attempt, CURRENT_USER_RETRY_MAX_DELAY_MS)
+  setTimeout(() => {
+    loadCurrentUser().catch((error) => {
+      if (!isAuthRejection(error) && attempt + 1 < CURRENT_USER_RETRY_MAX) retryCurrentUser(attempt + 1)
+    })
+  }, delay)
+}
 
 async function initializeApp() {
   registerAppMessages(i18n)
@@ -38,11 +54,19 @@ async function initializeApp() {
       // The /auth/me validation request also tells the Topbar who is signed in.
       await loadCurrentUser()
       startTokenAutoRefresh()
-    } catch {
-      // Token is invalid/expired — clear it so the router guard sends us to /login.
-      setCurrentUser(null)
-      sessionStorage.removeItem('fg_access_token')
-      delete window.__accessToken__
+    } catch (error) {
+      if (isAuthRejection(error)) {
+        // Token is invalid/expired — clear it so the router guard sends us to /login.
+        setCurrentUser(null)
+        sessionStorage.removeItem('fg_access_token')
+        delete window.__accessToken__
+      } else {
+        // flowgate.v02gui.0017 B2: /auth/me never got a verdict (F5 while the server restarts, a
+        // network drop, a 5xx). That says nothing about the session, so the tokens stay and the
+        // app opens; who is signed in is asked again in the background until the server answers.
+        startTokenAutoRefresh()
+        retryCurrentUser(0)
+      }
     }
   }
 

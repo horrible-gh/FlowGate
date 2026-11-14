@@ -21,6 +21,8 @@ interface RefreshResponse {
 
 interface RetryableRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean
+  /** flowgate.v02gui.0017 B4: how many times this GET was already re-sent after a transient failure. */
+  _getRetryCount?: number
 }
 
 const getBaseUrl = (): string =>
@@ -95,11 +97,92 @@ const getLockManager = (): MinimalLockManager | null => {
   return nav?.locks && typeof nav.locks.request === 'function' ? nav.locks : null
 }
 
-// @internal — runs `fn` under a cross-tab Web Lock when available; otherwise inline.
+// --- flowgate.v02gui.0017 B6: cross-tab refresh without Web Locks ---------------------
+// `navigator.locks` exists only in a secure context (HTTPS, localhost). Opened over plain HTTP
+// on a LAN address, the Web Lock above is missing and two remember-me tabs whose proactive
+// timers fire together (they adopted the same access token, so the same expiry) both POST the
+// same refresh token; the server rotates on the first and treats the second as reuse, revoking
+// every session. Without Web Locks we therefore take a small localStorage mutex: claim the key
+// with this tab's id, wait a moment, and only proceed if the claim is still ours (the last
+// writer wins, so of two near-simultaneous claims exactly one survives the re-read). The
+// waiting tab polls until the holder releases (or its claim expires), then runs the critical
+// section, which finds the sibling's published rotation and reuses it instead of POSTing.
+// Only used for the remember-me (shared localStorage) case; session-only logins keep their own
+// refresh token per tab and need no coordination.
+export const REFRESH_MUTEX_KEY = 'fg_refresh_mutex'
+// The holder's POST /auth/refresh times out at DEFAULT_TIMEOUT_MS; a claim older than that plus
+// a margin belongs to a tab that died mid-refresh and may be taken over.
+const REFRESH_MUTEX_TTL_MS = 35_000
+const REFRESH_MUTEX_SETTLE_MS = 75
+const REFRESH_MUTEX_POLL_MS = 100
+const REFRESH_MUTEX_WAIT_MAX_MS = REFRESH_MUTEX_TTL_MS + 5_000
+
+const TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+
+interface RefreshMutexRecord {
+  owner: string
+  exp: number
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+const readRefreshMutex = (): RefreshMutexRecord | null => {
+  try {
+    const raw = localStorage.getItem(REFRESH_MUTEX_KEY)
+    const parsed = raw ? (JSON.parse(raw) as RefreshMutexRecord) : null
+    return parsed && typeof parsed.owner === 'string' && typeof parsed.exp === 'number' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+const tryClaimRefreshMutex = async (owner: string): Promise<boolean> => {
+  const held = readRefreshMutex()
+  if (held && held.owner !== owner && held.exp > Date.now()) return false
+  try {
+    localStorage.setItem(
+      REFRESH_MUTEX_KEY,
+      JSON.stringify({ owner, exp: Date.now() + REFRESH_MUTEX_TTL_MS } satisfies RefreshMutexRecord),
+    )
+  } catch {
+    return true // storage unavailable: no coordination possible, behave as before
+  }
+  await sleep(REFRESH_MUTEX_SETTLE_MS)
+  return readRefreshMutex()?.owner === owner
+}
+
+const releaseRefreshMutex = (owner: string) => {
+  try {
+    if (readRefreshMutex()?.owner === owner) localStorage.removeItem(REFRESH_MUTEX_KEY)
+  } catch {
+    // nothing to release
+  }
+}
+
+// @internal — exported for the B6 tests; `owner` defaults to this tab.
+export const withStorageRefreshMutex = async <T>(fn: () => Promise<T>, owner: string = TAB_ID): Promise<T> => {
+  const deadline = Date.now() + REFRESH_MUTEX_WAIT_MAX_MS
+  while (!(await tryClaimRefreshMutex(owner))) {
+    // A claim always expires, so this ends; the deadline only guards against a clock jump.
+    if (Date.now() > deadline) break
+    await sleep(REFRESH_MUTEX_POLL_MS + Math.floor(Math.random() * 50))
+  }
+  try {
+    return await fn()
+  } finally {
+    releaseRefreshMutex(owner)
+  }
+}
+
+// @internal — runs `fn` under a cross-tab Web Lock when available; without Web Locks a shared
+// (remember-me) session falls back to the localStorage mutex (B6); otherwise inline.
 export const withRefreshLock = async <T>(fn: () => Promise<T>): Promise<T> => {
   const locks = getLockManager()
   if (locks) {
     return locks.request(REFRESH_LOCK_NAME, fn as LockGrantedCallback) as Promise<T>
+  }
+  if (refreshIsShared()) {
+    return withStorageRefreshMutex(fn)
   }
   return fn()
 }
@@ -504,11 +587,66 @@ export const buildRefreshFailureRedirect = (): string => {
   return safeNext ? `/login?next=${encodeURIComponent(safeNext)}` : '/'
 }
 
+// flowgate.v02gui.0017 B1/B2: only a definitive answer from the server ends the session — the
+// refresh/identity request was answered 401/403, or there is no refresh token at all. A network
+// error, a timeout or a 5xx (server restarting, proxy hiccup) says nothing about the session,
+// so the tokens are kept and the caller just sees the failed request.
+// @internal — exported for main.ts (bootstrap) and the refresh-failure tests.
+export const isAuthRejection = (error: unknown): boolean => {
+  const e = error as { code?: unknown; response?: { status?: unknown } } | null | undefined
+  if (!e || typeof e !== 'object') return false
+  if (e.code === 'ERR_NO_REFRESH_TOKEN') return true
+  const status = e.response?.status
+  return status === 401 || status === 403
+}
+
+// --- flowgate.v02gui.0017 B4: bounded retry of idempotent GETs ------------------------------
+// A dropped connection, a server restart or a gateway error used to surface at once as a failed
+// list ("채팅 목록을 불러오지 못했습니다", "새로고침에 실패했습니다") that stayed until the user
+// pressed [다시 시도]. GETs are re-sent a few times with a short exponential backoff. Only GET:
+// writes are never re-sent here (a POST may have been applied; POST /auth/refresh in particular
+// would be reuse) — callers that need it resend with their own idempotency key. A timeout is
+// re-sent once only, since each attempt already waited the full path timeout. The re-sent request
+// goes through the request interceptor again with its already-raised timeout, so the per-path
+// ceiling (30s / 130s / 330s) is kept.
+const GET_RETRY_MAX = 2
+const GET_RETRY_MAX_AFTER_TIMEOUT = 1
+const GET_RETRY_BASE_MS = 300
+const GET_RETRY_MAX_DELAY_MS = 3_000
+const GET_RETRY_STATUSES = new Set([502, 503, 504])
+
+const isTimeoutError = (error: AxiosError): boolean =>
+  error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'
+
+// @internal — exported for the retry tests.
+export const getRetryDelayMs = (attempt: number): number =>
+  Math.min(GET_RETRY_BASE_MS * 2 ** attempt, GET_RETRY_MAX_DELAY_MS) + Math.floor(Math.random() * 100)
+
+// @internal — whether this failed request may be re-sent once more.
+export const shouldRetryGet = (error: AxiosError): boolean => {
+  const config = error.config as RetryableRequestConfig | undefined
+  if (!config || config.method?.toLowerCase() !== 'get') return false
+  if (error.code === 'ERR_CANCELED' || config.signal?.aborted) return false
+  const count = config._getRetryCount ?? 0
+  if (error.response) {
+    return GET_RETRY_STATUSES.has(error.response.status) && count < GET_RETRY_MAX
+  }
+  if (isTimeoutError(error)) return count < GET_RETRY_MAX_AFTER_TIMEOUT
+  return error.code === 'ERR_NETWORK' && count < GET_RETRY_MAX
+}
+
 api.interceptors.response.use(
   (response: AxiosResponse) => response,
   async (error: AxiosError) => {
     localizeApiError(error)
     const originalRequest = error.config as RetryableRequestConfig | undefined
+
+    if (originalRequest && shouldRetryGet(error)) {
+      const attempt = originalRequest._getRetryCount ?? 0
+      originalRequest._getRetryCount = attempt + 1
+      await sleep(getRetryDelayMs(attempt))
+      return api(originalRequest)
+    }
 
     if (error.response?.status !== 401 || !originalRequest || originalRequest._retry) {
       return Promise.reject(error)
@@ -530,7 +668,14 @@ api.interceptors.response.use(
       originalRequest.headers.Authorization = `Bearer ${newToken}`
       return api(originalRequest)
     } catch (refreshError) {
-      // Refresh failed (token expired/revoked or reuse detected): drop the session and, if it
+      // flowgate.v02gui.0017 B1: the refresh could not reach a verdict (network error, timeout,
+      // 5xx — e.g. the server is restarting). The session may well be valid: keep every token,
+      // stay on this screen and fail only this request. The next request, the proactive timer or
+      // a visibility return refreshes again once the server answers.
+      if (!isAuthRejection(refreshError)) {
+        return Promise.reject(refreshError)
+      }
+      // Refresh rejected (token expired/revoked or reuse detected): drop the session and, if it
       // was shared, tell sibling tabs to do the same, then bounce to login. (Finding C)
       if (refreshIsShared()) {
         tokenChannel?.postMessage({ type: 'logout' })

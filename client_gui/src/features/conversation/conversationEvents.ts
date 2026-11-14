@@ -69,6 +69,16 @@ export function chatEventRefresh(frame: ChatEventFrame, target: ChatEventTarget)
   return docId === target.chatId ? parts : null
 }
 
+/**
+ * flowgate.v02gui.0017 B3: who wants to hear that the connection is back — the stream reopened after a drop, or the
+ * browser went online again. Given, the subscription follows `projectId` (the panel's scope) instead of the open chat,
+ * so it exists while no chat is open: the chat list fails exactly when none could be opened.
+ */
+export interface ChatConnectionRestored {
+  projectId: () => string | null
+  restored: () => void
+}
+
 const targetKey = (target: ChatEventTarget | null) => (target ? `${target.projectId}\n${target.groupId}\n${target.chatId}` : '')
 
 /**
@@ -76,11 +86,13 @@ const targetKey = (target: ChatEventTarget | null) => (target ? `${target.projec
  * CHAT_EVENT_COALESCE_MS, or everything after a reconnect. One subscription per project, kept across chat and Flow
  * switches of that project; the target is read when a frame arrives, and a pending request belongs to the target
  * it was raised for. Must run in a component setup or an effect scope; stops with it. No subscriber: nothing.
+ * `connection` (flowgate.v02gui.0017 B3) is told when the stream reconnects or the browser is online again.
  */
 export function useChatEvents(
   subscribe: SubscribeChatEvents | null | undefined,
   target: () => ChatEventTarget | null,
   refresh: (parts: ChatRefresh) => void,
+  connection?: ChatConnectionRestored,
 ): void {
   let pending: { timer: ReturnType<typeof setTimeout>; parts: ChatRefresh } | null = null
 
@@ -105,7 +117,7 @@ export function useChatEvents(
   }
 
   watch(
-    () => target()?.projectId ?? null,
+    () => connection?.projectId() ?? target()?.projectId ?? null,
     (projectId, _previous, onCleanup) => {
       if (!subscribe || projectId === null) return
       onCleanup(
@@ -117,6 +129,7 @@ export function useChatEvents(
             if (parts) signal(parts)
           },
           resync: () => {
+            connection?.restored()
             if (target() !== null) signal(FULL_CHAT_REFRESH)
           },
         }),
@@ -126,4 +139,9 @@ export function useChatEvents(
   )
   watch(() => targetKey(target()), cancel)
   onScopeDispose(cancel)
+  if (connection && typeof window !== 'undefined') {
+    const online = () => connection.restored()
+    window.addEventListener('online', online)
+    onScopeDispose(() => window.removeEventListener('online', online))
+  }
 }

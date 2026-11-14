@@ -105,8 +105,10 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
     assert current.dependency_overrides == reference.dependency_overrides == {}
     assert [(m.cls, m.args, m.kwargs) for m in current.user_middleware] == [
         (m.cls, m.args, m.kwargs) for m in reference.user_middleware]
+    # flowgate.v02gui.0017: RequestIdMiddleware is the outermost layer (X-Request-ID on every response).
     assert [m.cls.__name__ for m in current.user_middleware] == [
-        "CORSMiddleware", "GroupMutationPolicyMiddleware", "RequestScopeMiddleware", "SlowAPIMiddleware"]
+        "RequestIdMiddleware", "CORSMiddleware", "GroupMutationPolicyMiddleware", "RequestScopeMiddleware",
+        "SlowAPIMiddleware"]
     assert {k: _call_name(v) for k, v in current.exception_handlers.items()} == {
         k: _call_name(v) for k, v in reference.exception_handlers.items()}
     for new in added:

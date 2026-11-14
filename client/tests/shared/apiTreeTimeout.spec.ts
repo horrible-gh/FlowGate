@@ -20,7 +20,7 @@
  * timeout actually applied to the request is what gets asserted.
  */
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios'
+import { AxiosError, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios'
 
 import api from '@shared/api'
 
@@ -111,5 +111,70 @@ describe('shared/api timeout policy', () => {
     // Only requests still on the default are raised: a caller that has already decided
     // must not be overridden, on a tree GET least of all.
     expect(await appliedTimeout(FILE_TREE_URL, { timeout: 5_000 })).toBe(5_000)
+  })
+})
+
+// flowgate.v02gui.0017 B4: transient GET failures (network drop, gateway 502/503/504, timeout) are
+// re-sent a bounded number of times. A re-sent request must keep the timeout its path was given —
+// a tree GET retried on the 30s default would fail exactly the walks the 130s ceiling exists for.
+describe('shared/api GET retry keeps the per-path timeout (v02gui.0017 B4)', () => {
+  const stubAdapter = api.defaults.adapter
+
+  afterAll(() => {
+    api.defaults.adapter = stubAdapter
+  })
+
+  /** Fails the first `failures` calls with `fail(config)`, then answers 200; returns every config seen. */
+  function flakyAdapter(failures: number, fail: (config: InternalAxiosRequestConfig) => never) {
+    const seen: InternalAxiosRequestConfig[] = []
+    api.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+      seen.push({ ...config })
+      if (seen.length <= failures) fail(config)
+      return { data: {}, status: 200, statusText: 'OK', headers: {}, config }
+    }
+    return seen
+  }
+
+  const networkError = (config: InternalAxiosRequestConfig): never => {
+    throw new AxiosError('Network Error', 'ERR_NETWORK', config)
+  }
+  const gateway = (status: number) => (config: InternalAxiosRequestConfig): never => {
+    throw new AxiosError(`Request failed with status code ${status}`, 'ERR_BAD_RESPONSE', config, null, {
+      data: {}, status, statusText: '', headers: {}, config,
+    })
+  }
+
+  it('re-sends a group-tree GET after a network error on the same 130s ceiling', async () => {
+    const seen = flakyAdapter(1, networkError)
+    await api.get(GROUP_TREE_URL)
+    expect(seen).toHaveLength(2)
+    expect(seen.map((c) => c.timeout)).toEqual([LONG_TIMEOUT_MS, LONG_TIMEOUT_MS])
+  })
+
+  it('re-sends an ordinary GET after 503 on the 30s default, at most twice', async () => {
+    const seen = flakyAdapter(5, gateway(503))
+    await expect(api.get('/api/v1/documents')).rejects.toMatchObject({ response: { status: 503 } })
+    expect(seen).toHaveLength(3) // first try + 2 retries
+    expect(seen.every((c) => c.timeout === DEFAULT_TIMEOUT_MS)).toBe(true)
+  })
+
+  it('re-sends a timed-out GET only once', async () => {
+    const seen = flakyAdapter(5, (config) => {
+      throw new AxiosError('timeout of 30000ms exceeded', 'ECONNABORTED', config)
+    })
+    await expect(api.get('/api/v1/documents')).rejects.toMatchObject({ code: 'ECONNABORTED' })
+    expect(seen).toHaveLength(2)
+  })
+
+  it('never re-sends a POST', async () => {
+    const seen = flakyAdapter(1, networkError)
+    await expect(api.post('/api/v1/documents', {})).rejects.toMatchObject({ code: 'ERR_NETWORK' })
+    expect(seen).toHaveLength(1)
+  })
+
+  it('does not re-send a GET the server answered with an ordinary error', async () => {
+    const seen = flakyAdapter(1, gateway(500))
+    await expect(api.get('/api/v1/documents')).rejects.toMatchObject({ response: { status: 500 } })
+    expect(seen).toHaveLength(1)
   })
 })

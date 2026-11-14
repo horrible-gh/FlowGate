@@ -204,6 +204,12 @@ export interface ConversationSession {
   /** Settles once the provider list of the current scope has loaded (or failed to). */
   providersLoaded(): Promise<void>
   reloadChats(trace?: SubmissionTrace): Promise<void>
+  /**
+   * flowgate.v02gui.0017 B3: reads the chat list again only when its last read failed (a dropped connection, a
+   * server restart). Called on signals that the connection is back — the event stream reconnected, the browser is
+   * online again, the tab is shown again. Any other list state is left alone, so these signals cost nothing.
+   */
+  recoverChatList(): Promise<void>
   selectChat(chatId: string, trace?: SubmissionTrace): Promise<void>
   renameActiveChat(title: string): Promise<boolean>
   createChat(title: string, options?: CreateChatOptions): Promise<boolean>
@@ -821,6 +827,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
       state.chatsStatus = 'error'
       state.chatsError = messageOf(error)
     }
+  }
+
+  function recoverChatList(): Promise<void> {
+    if (disposed || !state.scope || state.chatsStatus !== 'error') return Promise.resolve()
+    return reloadChats()
   }
 
   async function setScope(scope: ConversationScope | null): Promise<void> {
@@ -2157,6 +2168,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     setScope,
     providersLoaded,
     reloadChats,
+    recoverChatList,
     selectChat,
     renameActiveChat,
     createChat,
