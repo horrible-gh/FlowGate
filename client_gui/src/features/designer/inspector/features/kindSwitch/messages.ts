@@ -13,6 +13,7 @@ export default {
     badge_hint: '종류 전환: 그룹의 첫 실행 전까지',
     menu_title: '종류 (그룹 첫 실행 전까지)',
     // flowgate.v02.0070 (0015-T T2): a pick switches at once — no confirmation strings (number swap or succession).
+    // flowgate.v02gui.0012: no finished-switch line either — the badge already shows the new kind.
     reason: {
       read_only_conflict: '소유 충돌 플로우라 바꿀 수 없습니다.',
       read_only_archived: '읽기 전용입니다. 보관 상태를 확인하거나 복원한 뒤 변경하세요.',
@@ -40,7 +41,6 @@ export default {
       identity_unsafe: '문서 머리말의 종류·번호를 안전하게 바꿀 수 없어 전환할 수 없습니다. 머리말을 고친 뒤 다시 전환하세요.',
       attachment: '첨부 파일 때문에 전환할 수 없습니다. 아무것도 바뀌지 않았습니다. 첨부를 확인한 뒤 다시 전환하세요.',
     },
-    done: '{to} 문서({doc})로 바꿨습니다. Canvas를 다시 읽는 중입니다.',
   },
   en: {
     label: 'Kind switch',
@@ -79,7 +79,6 @@ export default {
       identity_unsafe: 'Refused: the kind and number in the front matter cannot be changed safely. Fix the front matter and switch again.',
       attachment: 'Refused because of an attachment; nothing was changed. Check the attachments and switch again.',
     },
-    done: 'Switched to a {to} ({doc}). Reading the Canvas again.',
   },
   ja: {
     label: '種類の切り替え',
@@ -118,6 +117,5 @@ export default {
       identity_unsafe: 'フロントマターの種類・番号を安全に変えられないため切り替えできません。フロントマターを直してから切り替えてください。',
       attachment: '添付ファイルのため切り替えできません。何も変更されていません。添付を確認してから切り替えてください。',
     },
-    done: '{to}文書({doc})に切り替えました。Canvasを読み直しています。',
   },
 }

@@ -173,10 +173,11 @@ describe('a pick switches at once, whatever the judgement (0015-T T2, P0006 §6.
     expect(convertCall).toHaveBeenCalledTimes(1)
     expect(convertCall).toHaveBeenCalledWith(back ? ROOT_B : ROOT_R, back ? 'R' : 'B', SWITCH_ID)
     expect(intents).toEqual([SWITCHED])
-    expect(find('kind-switch-line').attributes('data-kind')).toBe('done')
+    // flowgate.v02gui.0012: a finished switch shows no line beside the badge.
+    expect(find('kind-switch-line').exists()).toBe(false)
   })
 
-  it('a chained succession: the done line names the number the server gave', async () => {
+  it('a chained succession: the switch asks once and shows no done line', async () => {
     judgement = judged('succession', { new_doc_id: `${FLOW}.0005-B`, new_doc_exact: false, chained: true })
     convertCall.mockImplementationOnce(async (docId: string) =>
       toKindSwitchResult({ data: rowOf(`${FLOW}.0005-B`, 'B'), conversion: { mode: 'succession', old_doc_id: docId, new_doc_id: `${FLOW}.0005-B`, child_count: 3 } }, docId),
@@ -185,7 +186,8 @@ describe('a pick switches at once, whatever the judgement (0015-T T2, P0006 §6.
     await pickOther()
     expect(confirmButtons()).toEqual([])
     expect(convertCall).toHaveBeenCalledWith(ROOT_R, 'B', SWITCH_ID)
-    expect(find('kind-switch-line').text()).toBe('버그 문서(0005-B)로 바꿨습니다. Canvas를 다시 읽는 중입니다.')
+    expect(find('kind-switch-line').exists()).toBe(false)
+    expect(openButton().attributes('data-kind')).toBe('B')
   })
 
   it('a pick while the judgement is still being read does not wait for it: the switch is asked at once', async () => {
