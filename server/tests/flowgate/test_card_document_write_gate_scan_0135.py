@@ -41,8 +41,19 @@ class Rows:
             return [dict(r) for r in self.rows]
         if sql == LIGHT:
             return [{k: r.get(k) for k in ('doc_id', 'project_id', 'branch', 'file_path')} for r in self.rows]
+        if sql.startswith(LIGHT + " AND ("):  # files.document_using_file narrowed by name (v02gui.0012)
+            pattern, *chars = params
+            return [{k: r.get(k) for k in ('doc_id', 'project_id', 'branch', 'file_path')} for r in self.rows
+                    if like(r['file_path'].lower(), pattern) or any(like(r['file_path'], c) for c in chars)]
         assert sql.startswith(FULL) and sql.count('?') == len(params), sql
         return [dict(r) for r in self.rows if r['doc_id'] in params]
+
+
+def like(value, pattern):
+    """SQL ``value LIKE pattern`` without an escape character."""
+    import re
+    regex = ''.join('.*' if ch == '%' else '.' if ch == '_' else re.escape(ch) for ch in pattern)
+    return re.fullmatch(regex, value, re.DOTALL) is not None
 
 
 def oracle(paths=(), trees=()):
@@ -389,3 +400,65 @@ def test_a_file_usage_check_reads_each_projects_storage_root_once(store, monkeyp
                           'file_path': 'documents/p/m/0006/0002-CH_document.md'})  # legacy form, found by fallback
     assert files.document_using_file(used) == {'doc_id': 'u.same', 'project_id': 'p'}
     assert files.document_using_file(used, ('u.same',)) is None
+
+
+def using_file_oracle(abs_path, exclude_doc_ids=()):
+    """``files.document_using_file`` as it was before flowgate.v02gui.0012 0004-CH turn 60: every row read, the
+    target stat-ed and resolved again for each candidate (``files.same_file``)."""
+    from modules.flow_gate.storage import files
+    path = Path(abs_path)
+    if path.is_symlink() or (path.exists() and path.stat().st_nlink > 1):
+        return {"doc_id": None, "project_id": None}
+    name = path.name.casefold()
+    for row in files.get_store()._fetch_all(LIGHT):
+        stored = row["file_path"].strip().replace("\\", "/")
+        if row["doc_id"] in exclude_doc_ids or stored.rsplit("/", 1)[-1].casefold() != name:
+            continue
+        root = storage_paths.get_storage_root(row["project_id"]).resolve()
+        for candidate in storage_paths.storage_candidate_paths(stored, root, row.get("branch") or "main"):
+            if files.same_file(candidate, path):
+                return {"doc_id": row["doc_id"], "project_id": row["project_id"]}
+    return None
+
+
+def test_a_file_usage_check_reads_only_rows_that_may_have_its_name_and_answers_as_before(store, monkeypatch):
+    """flowgate.v02gui.0012 (0004-CH turn 60): an R<->B switch asks 4 times; each call read 4 columns of every row
+    (9,454 on stg) to keep the ~50 with the same name. The database now drops the rest; the answer is the same."""
+    from modules.flow_gate.storage import files
+    monkeypatch.setattr(files, 'get_store', lambda: store['db'])
+    root = store['roots']['p']
+    store['rows'].extend([
+        {'doc_id': 'p.upper', 'project_id': 'p', 'branch': 'main', 'file_path': 'documents/p/main/m/0007/FILE.MD'},
+        {'doc_id': 'p.ligature', 'project_id': 'p', 'branch': 'main',
+         'file_path': 'documents/p/main/m/0008/ﬁle.md'},             # 'ﬁle.md'.casefold() == 'file.md'
+        {'doc_id': 'p.dotless', 'project_id': 'p', 'branch': 'main',
+         'file_path': 'documents/p/main/m/0009/fıle.md'},            # a Turkish LOWER('I'): kept by the pattern
+        {'doc_id': 'p.padded', 'project_id': 'p', 'branch': 'main', 'file_path': ' documents/p/main/m/0010/file.md  '},
+    ])
+    existing = root / 'documents/p/main/m/0010/file.md'
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.write_text('x', encoding='utf-8')
+    targets = [store['target'], root / 'documents/p/main/m/0006/0002-CH_document.md', root / 'documents/p/main/m/0007/file.md',
+               existing, root / 'documents/p/main/m/0011/file.md', root / 'documents/p/main/m/0001/nothing.md']
+    for target in targets:
+        for excluded in ((), ('p.same',), ('p.padded',)):
+            assert files.document_using_file(target, excluded) == using_file_oracle(target, excluded), (target, excluded)
+
+    store['db'].sql.clear()
+    files.document_using_file(root / 'documents/p/main/m/0007/file.md')  # the row found differs by OS (normcase)
+    [(sql, params)] = store['db'].sql
+    assert sql.startswith(LIGHT + " AND (") and params[0] == '%f_le.md%'
+    narrowed = store['db']._fetch_all(sql, params)
+    assert {r['doc_id'] for r in narrowed} == {'p.upper', 'p.ligature', 'p.dotless', 'p.padded'}  # of 132 rows
+
+
+def test_a_file_usage_check_of_a_name_sql_cannot_narrow_reads_every_row(store, monkeypatch):
+    from modules.flow_gate.storage import files
+    monkeypatch.setattr(files, 'get_store', lambda: store['db'])
+    assert files._same_name_filter('0002-CH_document.md') is not None
+    for name in ('문서.md', 'a\\b.md', ''):
+        assert files._same_name_filter(name) is None
+    target = store['roots']['p'] / 'documents/p/main/m/0012/문서.md'
+    store['db'].sql.clear()
+    assert files.document_using_file(target) is None
+    assert [sql for sql, _ in store['db'].sql] == [LIGHT]

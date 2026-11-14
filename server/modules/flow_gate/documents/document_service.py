@@ -495,6 +495,46 @@ _DOC_REFERENCE_ID_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _by_table(columns: tuple[tuple[str, str], ...]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    tables: dict[str, list[str]] = {}
+    for table, column in columns:
+        tables.setdefault(table, []).append(column)
+    return tuple((table, tuple(cols)) for table, cols in tables.items())
+
+
+# flowgate.v02gui.0012 (0004-CH turn 60): the columns above, one entry per table. A number swap rewrote them with one
+# UPDATE per column (22): ``documents`` was scanned six times, ``events`` three times, and every column without an
+# index (``events.related_*``, ``tokens.doc_ref``, ``documents.previous_*`` ...) cost a whole-table scan of its own.
+# One UPDATE per table (14) now sets each column only where it held the old id, the same rows and values as before.
+_DOC_REFERENCE_TABLES = _by_table(_DOC_REFERENCE_COLUMNS)
+_DOC_REFERENCE_ID_TABLES = _by_table(_DOC_REFERENCE_ID_COLUMNS)
+
+
+def _repoint_references(store, tables, old_value, new_value) -> None:
+    """``UPDATE t SET c = new WHERE c = old`` for every (table, column), one statement per table.
+
+    Each column of a table takes ``CASE WHEN c = old THEN new ELSE c END``, the row filter is any of them holding the
+    old value, so a row changes exactly in the columns that held it. When the table statement fails (a column absent
+    for this dialect or migration level), its columns are tried one by one and an absent one is skipped, as before.
+    """
+    for table, columns in tables:
+        if len(columns) > 1:
+            setters = ", ".join(f"{c} = CASE WHEN {c} = ? THEN ? ELSE {c} END" for c in columns)
+            condition = " OR ".join(f"{c} = ?" for c in columns)
+            try:
+                store._execute(f"UPDATE {table} SET {setters} WHERE {condition}",
+                               [*(v for _ in columns for v in (old_value, new_value)), *([old_value] * len(columns))])
+                continue
+            except Exception:
+                pass  # one column (or the table) is absent: fall back to the columns one by one
+        for column in columns:
+            try:
+                store._execute(f"UPDATE {table} SET {column} = ? WHERE {column} = ?", [new_value, old_value])
+            except Exception:
+                # Table/column absent for this dialect or migration level — skip.
+                continue
+
+
 def compute_converted_doc_id(doc_id: str, new_type: str) -> str:
     """Return the doc_id with its trailing document-code type suffix swapped.
 
@@ -580,26 +620,11 @@ def convert_by_number_swap(
     new_int_id = (inserted or {}).get("id")
 
     # Repoint every inbound / self reference keyed on the textual doc_id.
-    for table, column in _DOC_REFERENCE_COLUMNS:
-        try:
-            store._execute(
-                f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
-                [new_doc_id, doc_id],
-            )
-        except Exception:
-            # Table/column absent for this dialect or migration level — skip.
-            continue
+    _repoint_references(store, _DOC_REFERENCE_TABLES, doc_id, new_doc_id)
 
     # Repoint references keyed on the integer documents.id (new SERIAL).
     if old_int_id is not None and new_int_id is not None:
-        for table, column in _DOC_REFERENCE_ID_COLUMNS:
-            try:
-                store._execute(
-                    f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
-                    [new_int_id, old_int_id],
-                )
-            except Exception:
-                continue
+        _repoint_references(store, _DOC_REFERENCE_ID_TABLES, old_int_id, new_int_id)
 
     if before_delete is not None:
         before_delete()

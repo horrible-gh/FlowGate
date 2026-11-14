@@ -47,6 +47,34 @@ def referenced_by_any_document(abs_path, exclude_doc_ids=()) -> bool:
     return document_using_file(abs_path, exclude_doc_ids) is not None
 
 
+_USING_FILE_SQL = ("SELECT doc_id, project_id, branch, file_path FROM documents "
+                   "WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''")
+# The characters outside ASCII whose casefold is ASCII (U+00DF, U+017F, U+1E9E, U+212A, U+FB00-U+FB06): a stored name
+# holding one of them may casefold to an ASCII target name, so the SQL narrowing below keeps every row that has one.
+_CASEFOLD_TO_ASCII = ("ß", "ſ", "ẞ", "K", "ﬀ", "ﬁ", "ﬂ", "ﬃ", "ﬄ",
+                      "ﬅ", "ﬆ")
+
+
+def _same_name_filter(name: str):
+    """(SQL condition, params) keeping at least every row whose stored file name casefolds to ``name``, or None.
+
+    flowgate.v02gui.0012 (0004-CH turn 60): an R<->B switch asks this 4 times (the staged body before the CAS, the body
+    write, the new-file check and the old body after the commit), and each call read 4 columns of every document row
+    (9,454 on stg) only to keep the ~50 with the same file name. The database now drops the rows that cannot have it;
+    the Python check below stays the judge, so the rows it sees are a superset and the answer is the same.
+
+    A row can match only when ``LOWER(file_path)`` contains the lower-cased name. Every ``i`` of the pattern is a
+    single-character wildcard (a Turkish collation lowers ``I`` to dotless ``ı``), ``_`` / ``%`` of the name only widen
+    it, and the rows holding a character of ``_CASEFOLD_TO_ASCII`` are kept as they are. A name that is not ASCII or
+    holds a backslash (an escape character of PostgreSQL / MySQL LIKE) reads every row, as before.
+    """
+    if not name or not name.isascii() or "\\" in name:
+        return None
+    pattern = "%" + "".join("_" if ch == "i" else ch for ch in name.lower()) + "%"
+    clauses = ["LOWER(file_path) LIKE ?"] + ["file_path LIKE ?"] * len(_CASEFOLD_TO_ASCII)
+    return " AND (" + " OR ".join(clauses) + ")", [pattern, *(f"%{ch}%" for ch in _CASEFOLD_TO_ASCII)]
+
+
 def document_using_file(abs_path, exclude_doc_ids=()) -> Optional[dict]:
     """``{doc_id, project_id}`` of the row that uses this very file (L0005 2.3.1), or None.
 
@@ -57,13 +85,16 @@ def document_using_file(abs_path, exclude_doc_ids=()) -> Optional[dict]:
         return {"doc_id": None, "project_id": None}
     name = path.name.casefold()
     excluded = set(exclude_doc_ids)
-    rows = get_store()._fetch_all(
-        "SELECT doc_id, project_id, branch, file_path FROM documents "
-        "WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''")
+    narrowed = _same_name_filter(path.name)
+    if narrowed is None:
+        rows = get_store()._fetch_all(_USING_FILE_SQL)
+    else:
+        rows = get_store()._fetch_all(_USING_FILE_SQL + narrowed[0], narrowed[1])
     # flowgate.v02gui.0012 (0001-B A, second pass): each same-name row read the storage settings again (project
     # override, then system setting) to find its project's root; a card save checks 2-4 files against ~50 such rows
     # on stg. The root is now read once per project and call; the candidates and their order are unchanged.
     roots = {}
+    target = _Target(path)
     for row in rows:
         stored = row["file_path"].strip().replace("\\", "/")
         if row["doc_id"] in excluded or stored.rsplit("/", 1)[-1].casefold() != name:
@@ -72,9 +103,37 @@ def document_using_file(abs_path, exclude_doc_ids=()) -> Optional[dict]:
         if project_id not in roots:
             roots[project_id] = storage_paths.get_storage_root(project_id).resolve()
         for candidate in storage_paths.storage_candidate_paths(stored, roots[project_id], row.get("branch") or "main"):
-            if same_file(candidate, path):
+            if target.same_file(candidate):
                 return {"doc_id": row["doc_id"], "project_id": project_id}
     return None
+
+
+class _Target:
+    """``same_file(candidate, target)`` for one target and many candidates (flowgate.v02gui.0012, 0004-CH turn 60).
+
+    ``same_file`` stats and resolves both sides on every call; with ~50 same-name rows of 1-2 candidates each, the
+    target alone was stat-ed and resolved some 100-200 times per check. Its existence and its resolved name are taken
+    once per check here, which is what one check of a target means; the comparison is ``same_file``'s.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self._exists = None
+        self._key = None
+
+    def exists(self) -> bool:
+        if self._exists is None:
+            self._exists = self.path.exists()
+        return self._exists
+
+    def same_file(self, candidate) -> bool:
+        """``candidate`` as ``storage_candidate_paths`` yields it: resolved already, so it is not resolved again."""
+        candidate = Path(candidate)
+        if self.exists() and candidate.exists():
+            return os.path.samefile(candidate, self.path)
+        if self._key is None:
+            self._key = os.path.normcase(str(self.path.resolve()))
+        return os.path.normcase(str(candidate)) == self._key
 
 
 def file_identity(abs_path) -> Optional[tuple]:
