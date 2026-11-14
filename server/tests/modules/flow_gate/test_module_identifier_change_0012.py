@@ -438,3 +438,79 @@ def test_git_worktree_and_branch_move_and_revert(tmp_path):
     mr._revert_git(base, plans)
     assert (old_wt / "a.txt").is_file() and not new_wt.exists()
     assert _git(old_wt, "rev-parse", "--abbrev-ref", "HEAD") == f"{P}_v02gui_0001"
+
+
+# ── statement count: a rename must not cost one round trip per column or per value (0004-CH) ──────
+
+def test_rewrite_statements_do_not_grow_with_values(conn):
+    from modules.flow_gate.db.module_rename import KeyRewriter, defer_foreign_keys, rewrite_database
+    for i in range(2, 402):
+        conn.execute("INSERT INTO events VALUES (?, ?, ?)", [i, DOC, f"note {P}.v02gui.0001.{i:04d}-R"])
+        body = f"turn {i} about {DOC}"
+        conn.execute("INSERT INTO conversation_turns VALUES (?, ?, ?, ?)",
+                     [i, CH, body, hashlib.sha256(body.encode()).hexdigest()])
+    statements: list[str] = []
+
+    class _Counting(_Store):
+        def _fetch_all(self, sql, params=None):
+            statements.append(sql)
+            return super()._fetch_all(sql, params)
+
+        def _execute(self, sql, params=None):
+            statements.append(sql)
+            return super()._execute(sql, params)
+
+        def _execute_affected(self, sql, params=None):
+            statements.append(sql)
+            return super()._execute_affected(sql, params)
+
+    store = _Counting(conn)
+    rw = KeyRewriter(P, "v02gui", "v02chat", P, {f"{P}_v02gui_0001": f"{P}_v02chat_0001"})
+    with store.transaction():
+        defer_foreign_keys(store)
+        statements.clear()
+        result = rewrite_database(store, rw)
+
+    q = lambda sql, *a: [tuple(r) for r in conn.execute(sql, a).fetchall()]  # noqa: E731
+    new_g = f"{P}.v02chat.0001"
+    notes = dict(q("SELECT event_id, note FROM events"))
+    assert notes[1] == f"see x{P}.v02gui.0001 and {new_g}.0002-CH"
+    assert all(notes[i] == f"note {new_g}.{i:04d}-R" for i in range(2, 402))
+    assert q("SELECT DISTINCT doc_id FROM events") == [(f"{new_g}.0001-R",)]
+    for doc_id, body, digest in q("SELECT doc_id, body, body_hash FROM conversation_turns"):
+        assert doc_id == f"{new_g}.0002-CH" and f"{new_g}.0001-R" in body
+        assert digest == hashlib.sha256(body.encode()).hexdigest()
+    assert q("PRAGMA foreign_key_check") == []
+    assert result["values"] >= 802
+    # One schema read plus one search per table (10 tables), whatever the number of columns.
+    assert sum(1 for s in statements if s.lstrip().upper().startswith("SELECT")) == 11
+    # A changed column is written in chunks, not per value: 401 notes -> 3 statements, doc_id -> 1.
+    assert sum(1 for s in statements if s.startswith('UPDATE "events"')) == 4
+    assert sum(1 for s in statements if s.startswith('UPDATE "conversation_turns"')) == 4
+
+
+def test_git_check_lists_refs_once(tmp_path):
+    import shutil as _shutil
+    if _shutil.which("git") is None:
+        pytest.skip("git is not on PATH")
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    from modules.flow_gate.services import module_rename as mr
+
+    base = tmp_path / "src" / "MI" / "main"
+    base.mkdir(parents=True)
+    _git(base, "init", "-q", "-b", "main")
+    (base / "a.txt").write_text("a", encoding="utf-8")
+    _git(base, "add", "a.txt")
+    _git(base, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
+    _git(base, "update-ref", f"refs/remotes/origin/{P}_v02chat_0002", "HEAD")
+    _git(base, "branch", f"{P}_v02chat_0003")
+    plans = [mr._BranchMove(f"{P}.v02gui.{n:04d}", f"{P}_v02gui_{n:04d}", f"{P}_v02chat_{n:04d}", None, None)
+             for n in (1, 2, 3)]
+    calls: list[str] = []
+    real = mr._git
+    with patch.object(mr, "_git", side_effect=lambda b, args: calls.append(args[0]) or real(b, args)):
+        with pytest.raises(ModuleRenameRefused) as exc:
+            mr._check_git(base, plans)
+    assert calls == ["for-each-ref"]
+    assert exc.value.details["branches"] == [
+        {"branch": f"{P}_v02chat_0002", "where": "origin"}, {"branch": f"{P}_v02chat_0003", "where": "local"}]

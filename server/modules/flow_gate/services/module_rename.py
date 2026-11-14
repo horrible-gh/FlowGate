@@ -300,18 +300,39 @@ def _ref_exists(base: Path, ref: str) -> bool:
     return _git(base, ["show-ref", "--verify", "--quiet", ref]).returncode == 0
 
 
+class _Refs:
+    """The local and origin branch refs of ``base``, read with one ``git for-each-ref``.
+
+    One Git process per check instead of up to three ``show-ref`` per group (0004-CH: each Git call
+    costs 0.5-0.7 s on stg, held under the module's Flow locks). Falls back to ``show-ref`` per ref
+    when the listing fails.
+    """
+
+    def __init__(self, base: Path):
+        self._base = base
+        proc = _git(base, ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"])
+        self._names = ({line.strip() for line in (proc.stdout or "").splitlines() if line.strip()}
+                       if proc.returncode == 0 else None)
+
+    def __contains__(self, ref: str) -> bool:
+        if self._names is None:
+            return _ref_exists(self._base, ref)
+        return ref in self._names
+
+
 def _check_git(base: Optional[Path], plans: list[_BranchMove]) -> None:
     if not plans:
         return
     blocked = []
+    refs = _Refs(base) if base is not None and base.is_dir() else None
     for plan in plans:
-        if base is not None and base.is_dir():
-            if _ref_exists(base, f"refs/heads/{plan.new_branch}"):
+        if refs is not None:
+            if f"refs/heads/{plan.new_branch}" in refs:
                 blocked.append({"branch": plan.new_branch, "where": "local"})
             # A remote branch of that name would be adopted by the next provisioning
             # (worktree add --track -b {branch} origin/{branch}): the new group would start from the
             # old group's history.
-            if _ref_exists(base, f"refs/remotes/origin/{plan.new_branch}"):
+            if f"refs/remotes/origin/{plan.new_branch}" in refs:
                 blocked.append({"branch": plan.new_branch, "where": "origin"})
         if plan.new_path is not None and plan.new_path.exists():
             blocked.append({"branch": plan.new_branch, "where": "worktree", "path": str(plan.new_path)})
@@ -325,8 +346,10 @@ def _check_git(base: Optional[Path], plans: list[_BranchMove]) -> None:
 
 def _apply_git(base: Optional[Path], plans: list[_BranchMove]) -> None:
     """Move each worktree, then rename its branch (git updates the worktree HEAD). Raises on failure."""
-    if base is None or not base.is_dir():
+    if base is None or not base.is_dir() or not plans:
         return
+    # Read once: each plan renames only its own old branch, so the listing stays valid for the rest.
+    refs = _Refs(base)
     for plan in plans:
         if plan.old_path is not None and plan.old_path.is_dir() and (plan.old_path / ".git").exists():
             plan.new_path.parent.mkdir(parents=True, exist_ok=True)
@@ -337,7 +360,7 @@ def _apply_git(base: Optional[Path], plans: list[_BranchMove]) -> None:
                     f"git worktree move failed for {plan.old_branch}: {(proc.stderr or '').strip()[:300]}",
                     status=500, details={"branch": plan.old_branch})
             plan.moved_worktree = True
-        if _ref_exists(base, f"refs/heads/{plan.old_branch}"):
+        if f"refs/heads/{plan.old_branch}" in refs:
             proc = _git(base, ["branch", "-m", plan.old_branch, plan.new_branch])
             if proc.returncode != 0:
                 raise ModuleRenameRefused(
@@ -450,4 +473,5 @@ def _forget_caches(project_id: str, group_ids: list[str]) -> None:
             invalidate_check_targets(project_id, gid)
     except Exception:  # noqa: BLE001 — a cache miss later is harmless
         _log.debug("module rename: cache invalidation skipped", exc_info=True)
+
 

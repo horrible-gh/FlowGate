@@ -16,6 +16,12 @@ This module only does the database part, inside the caller's transaction:
   covered without touching this file. Values are rewritten by exact old value -> new value, so no
   primary key is needed and rows are never matched by position.
 
+The walk keeps the number of statements small, because every statement is a round trip inside the
+transaction that holds the module's Flow locks (0004-CH: ~2,150 statements made a rename take 8 s
+even with no group). It reads the schema with one query, searches each table with one query that
+covers all of its text columns, and writes each changed column with one ``CASE`` UPDATE per chunk of
+values instead of one UPDATE (one table scan) per value.
+
 The orchestration (guards, refusal while work is running, file moves, Git) lives in
 ``modules.flow_gate.services.module_rename``.
 """
@@ -138,52 +144,49 @@ def _quote(store, name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _tables(store) -> list[str]:
+def _row_value(row: dict, *keys: str):
+    for key in keys:
+        if key in row:
+            return row[key]
+        if key.upper() in row:
+            return row[key.upper()]
+    return None
+
+
+def _schema(store) -> list[tuple[str, list[str], list[_Column]]]:
+    """``[(table, all column names, text columns)]`` of every base table, read with one query."""
     if store.dialect == _dialect.SQLITE:
-        rows = store._fetch_all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
-    elif store.dialect == _dialect.MYSQL:
         rows = store._fetch_all(
-            "SELECT table_name AS name FROM information_schema.tables"
-            " WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'")
+            "SELECT m.name AS tbl, p.name AS name, p.type AS type"
+            " FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p"
+            " WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' ORDER BY m.name, p.cid")
     else:
+        schema = "DATABASE()" if store.dialect == _dialect.MYSQL else "current_schema()"
         rows = store._fetch_all(
-            "SELECT table_name AS name FROM information_schema.tables"
-            " WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'")
-    names = sorted({(r.get("name") or r.get("NAME") or r.get("table_name") or r.get("TABLE_NAME")) for r in rows})
-    return [n for n in names if n and n.lower() not in _SKIP_TABLES]
-
-
-def _all_columns(store, table: str) -> list[str]:
-    if store.dialect == _dialect.SQLITE:
-        return [r["name"] for r in store._fetch_all("SELECT name FROM pragma_table_info(?)", [table])]
-    schema = "DATABASE()" if store.dialect == _dialect.MYSQL else "current_schema()"
-    rows = store._fetch_all(
-        f"SELECT column_name AS name FROM information_schema.columns WHERE table_schema = {schema} AND table_name = ?",
-        [table])
-    return [r.get("name") or r.get("NAME") or r.get("column_name") or r.get("COLUMN_NAME") for r in rows]
-
-
-def _text_columns(store, table: str) -> list[_Column]:
-    out: list[_Column] = []
-    if store.dialect == _dialect.SQLITE:
-        for r in store._fetch_all("SELECT name, type FROM pragma_table_info(?)", [table]):
-            declared = (r.get("type") or "").upper()
-            # No declared type means TEXT affinity is possible (BLOB/none); include it, values decide.
-            if not declared or any(t in declared for t in _SQLITE_TEXT):
-                out.append(_Column(r["name"]))
-        return out
-    schema = "DATABASE()" if store.dialect == _dialect.MYSQL else "current_schema()"
-    rows = store._fetch_all(
-        f"SELECT column_name AS name, data_type AS type FROM information_schema.columns"
-        f" WHERE table_schema = {schema} AND table_name = ?", [table])
+            "SELECT c.table_name AS tbl, c.column_name AS name, c.data_type AS type"
+            " FROM information_schema.columns c JOIN information_schema.tables t"
+            " ON t.table_schema = c.table_schema AND t.table_name = c.table_name"
+            f" WHERE c.table_schema = {schema} AND t.table_type = 'BASE TABLE'"
+            " ORDER BY c.table_name, c.ordinal_position")
+    tables: dict[str, tuple[list[str], list[_Column]]] = {}
     for r in rows:
-        name = r.get("name") or r.get("NAME") or r.get("column_name") or r.get("COLUMN_NAME")
-        dtype = str(r.get("type") or r.get("TYPE") or r.get("data_type") or r.get("DATA_TYPE") or "").lower()
-        if store.dialect == _dialect.MYSQL and dtype in _MYSQL_TEXT:
-            out.append(_Column(name))
-        elif store.dialect == _dialect.POSTGRESQL and dtype in _PG_TEXT:
-            out.append(_Column(name, dtype if dtype in ("json", "jsonb") else None))
-    return out
+        table = _row_value(r, "tbl", "table_name")
+        name = _row_value(r, "name", "column_name")
+        if not table or not name or str(table).lower() in _SKIP_TABLES:
+            continue
+        columns, text = tables.setdefault(table, ([], []))
+        columns.append(name)
+        declared = str(_row_value(r, "type", "data_type") or "")
+        if store.dialect == _dialect.SQLITE:
+            # No declared type means TEXT affinity is possible (BLOB/none); include it, values decide.
+            if not declared or any(t in declared.upper() for t in _SQLITE_TEXT):
+                text.append(_Column(name))
+        elif store.dialect == _dialect.MYSQL:
+            if declared.lower() in _MYSQL_TEXT:
+                text.append(_Column(name))
+        elif declared.lower() in _PG_TEXT:
+            text.append(_Column(name, declared.lower() if declared.lower() in ("json", "jsonb") else None))
+    return [(table, columns, text) for table, (columns, text) in sorted(tables.items())]
 
 
 # ── foreign keys: renamed keys are referenced (groups.group_id, documents.doc_id, ...) ──────────
@@ -232,18 +235,48 @@ def _hash_partner(column: str, columns: set[str]) -> Optional[str]:
     return None
 
 
+# One CASE UPDATE carries at most this many values (5 parameters each with a hash partner, under
+# SQLite's historic 999-parameter limit) and roughly this many characters of parameters (well under
+# MySQL's max_allowed_packet).
+_UPDATE_CHUNK_VALUES = 150
+_UPDATE_CHUNK_CHARS = 1_000_000
+
+
+def _chunks(pairs: list[tuple[str, str]]) -> Iterable[list[tuple[str, str]]]:
+    chunk: list[tuple[str, str]] = []
+    size = 0
+    for old_value, new_value in pairs:
+        weight = len(old_value) + len(new_value)
+        if chunk and (len(chunk) >= _UPDATE_CHUNK_VALUES or size + weight > _UPDATE_CHUNK_CHARS):
+            yield chunk
+            chunk, size = [], 0
+        chunk.append((old_value, new_value))
+        size += weight
+    if chunk:
+        yield chunk
+
+
+def _decoded(value):
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    return value
+
+
 def rewrite_database(store, rw: KeyRewriter) -> dict:
     """Rewrite every stored form of the module key. Runs inside the caller's transaction.
 
     Returns ``{"tables": {table: rows_changed}, "values": n}`` for the report.
     """
     q = lambda name: _quote(store, name)  # noqa: E731
+    binary = "BINARY " if store.dialect == _dialect.MYSQL else ""
     changed: dict[str, int] = {}
     total = 0
     # Module names are validated slugs ([a-z0-9_-]): no '%'; a '_' only widens the coarse filter.
     like = "%" + rw.coarse + "%"
-    for table in _tables(store):
-        columns = _all_columns(store, table)
+    for table, columns, text_columns in _schema(store):
         colset = set(columns)
         n_table = 0
         # (1) bare module columns: only rows of this project (the same name may exist elsewhere).
@@ -257,34 +290,48 @@ def rewrite_database(store, rw: KeyRewriter) -> dict:
             store._execute("UPDATE project_modules SET name = ? WHERE project_id = ? AND name = ?",
                            [rw.new, rw.project_id, rw.old])
         # (2) every text column: exact value -> rewritten value.
-        for col in _text_columns(store, table):
-            if col.name in ("module", "module_key") and project_col:
-                continue  # (1) did it; a bare name needs the project filter
-            cast = f"CAST({q(col.name)} AS TEXT)" if col.json_type else q(col.name)
-            binary = "BINARY " if store.dialect == _dialect.MYSQL else ""
-            rows = store._fetch_all(
-                f"SELECT DISTINCT {cast} AS v FROM {q(table)} WHERE {cast} LIKE ?", [like])
-            partner = _hash_partner(col.name, colset)
+        cols = [c for c in text_columns if not (c.name in ("module", "module_key") and project_col)]
+        if not cols:
+            continue  # (1) did the bare module columns; a bare name needs the project filter
+        exprs = [f"CAST({q(c.name)} AS TEXT)" if c.json_type else q(c.name) for c in cols]
+        # One search per table: only the columns that match come back, the others are NULL.
+        picks = ", ".join(f"CASE WHEN {e} LIKE ? THEN {e} END AS v{i}" for i, e in enumerate(exprs))
+        where = " OR ".join(f"{e} LIKE ?" for e in exprs)
+        rows = store._fetch_all(f"SELECT {picks} FROM {q(table)} WHERE {where}", [like] * (2 * len(exprs)))
+        if not rows:
+            continue
+        for i, (col, cast) in enumerate(zip(cols, exprs)):
+            rewrites: dict[str, str] = {}
             for r in rows:
-                old_value = r.get("v")
-                if isinstance(old_value, (bytes, bytearray)):
-                    try:
-                        old_value = old_value.decode("utf-8")
-                    except UnicodeDecodeError:
-                        continue
-                new_value = rw.text(old_value)
-                if not isinstance(old_value, str) or new_value == old_value:
+                old_value = _decoded(_row_value(r, f"v{i}"))
+                if not isinstance(old_value, str) or old_value in rewrites:
                     continue
-                target = f"CAST(? AS {col.json_type})" if col.json_type else "?"
-                sets, params = [f"{q(col.name)} = {target}"], [new_value]
+                new_value = rw.text(old_value)
+                if new_value != old_value:
+                    rewrites[old_value] = new_value
+            if not rewrites:
+                continue
+            partner = _hash_partner(col.name, colset)
+            target = f"CAST(? AS {col.json_type})" if col.json_type else "?"
+            for chunk in _chunks(list(rewrites.items())):
+                sets, params = [], []
                 if partner:
-                    sets.append(f"{q(partner)} = ?")
-                    params.append(hashlib.sha256(new_value.encode("utf-8")).hexdigest())
-                params.append(old_value)
+                    # First: MySQL evaluates single-table SET assignments left to right, so the
+                    # partner must be computed while the column still holds the old value.
+                    sets.append(f"{q(partner)} = CASE {binary}{cast}"
+                                + " WHEN ? THEN ?" * len(chunk) + f" ELSE {q(partner)} END")
+                    for old_value, new_value in chunk:
+                        params += [old_value, hashlib.sha256(new_value.encode("utf-8")).hexdigest()]
+                sets.append(f"{q(col.name)} = CASE {binary}{cast}"
+                            + f" WHEN ? THEN {target}" * len(chunk) + f" ELSE {q(col.name)} END")
+                for old_value, new_value in chunk:
+                    params += [old_value, new_value]
+                params += [old_value for old_value, _ in chunk]
                 count = store._execute_affected(
-                    f"UPDATE {q(table)} SET {', '.join(sets)} WHERE {binary}{cast} = ?", params)
+                    f"UPDATE {q(table)} SET {', '.join(sets)}"
+                    f" WHERE {binary}{cast} IN ({', '.join('?' for _ in chunk)})", params)
                 n_table += count
-                total += 1
+                total += len(chunk)
         if n_table:
             changed[table] = n_table
     return {"tables": changed, "values": total}
@@ -323,3 +370,4 @@ def module_in_use(store, project_id: str, name: str) -> Optional[dict]:
     if counter:
         return {"kind": "numbering", "module": name, "title": name}
     return None
+
