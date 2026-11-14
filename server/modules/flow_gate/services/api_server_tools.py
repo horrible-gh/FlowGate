@@ -87,6 +87,13 @@ def normalize_read_help_input(value: Any) -> dict:
         raise ToolError(422, "schema_validation_failed", "input.child requires input.item")
     return dict(value)
 
+_WRITE_GUARD_PROPERTIES = {
+    "base_sha256": {"type": "string"},
+    "allow_mask_substitution": {"type": "boolean"},
+    "allow_replacement_char": {"type": "boolean"},
+    "reason": {"type": "string"},
+}
+
 SCHEMAS = {
     # start_line/end_line (0608 T0007, NR0003 §3.5): the /remote/read line selector the
     # HTTP tool always had -- how a conflict chunk's advertised range is read back.
@@ -98,8 +105,9 @@ SCHEMAS = {
     "log_source": _obj({"path": {"type": "string"}, "target_ref": {"type": "string", "minLength": 1}, "max_count": {"type": "integer", "minimum": 1}, "side": {"type": "string", "enum": ["head", "target"]}}),
     "show_commit_source": _obj({"sha": {"type": "string", "minLength": 4}}, ["sha"]),
     "merge_preview_source": _obj({"target_ref": {"type": "string", "minLength": 1}}),
-    "patch_source_file": _obj({"path": {"type": "string", "minLength": 1}, "old_string": {"type": "string", "minLength": 1}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean"}, "encoding": {"type": "string"}}, ["path", "old_string", "new_string"]),
-    "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}}, ["path", "content"]),
+    # v02gui 0015 T5: base_sha256 + override flags (plain string/boolean, no anyOf).
+    "patch_source_file": _obj({"path": {"type": "string", "minLength": 1}, "old_string": {"type": "string", "minLength": 1}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean"}, "encoding": {"type": "string"}, **_WRITE_GUARD_PROPERTIES}, ["path", "old_string", "new_string"]),
+    "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}, **_WRITE_GUARD_PROPERTIES}, ["path", "content"]),
     "move_source_file": _obj({"source_path": {"type": "string", "minLength": 1}, "target_path": {"type": "string", "minLength": 1}}, ["source_path", "target_path"]),
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
     # 0114 T#4: parallel_share -- the processors (workers) the run wishes to use; default 1.
@@ -150,6 +158,17 @@ REGISTER_SCHEMAS = {
 }
 
 DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *SOURCE_NAMES, *SELF_CHECK_NAMES)}
+_WRITE_GUARD_NOTE = (
+    " Optional base_sha256 (read's source_sha256 or the previous write/patch response's sha256) "
+    "refuses the edit with 409 base_changed if the file changed since. A change that replaces original "
+    "text with '***' (masked_substitution_suspect) or adds U+FFFD not on disk (replacement_char_introduced) "
+    "is refused with 422 unless allow_mask_substitution / allow_replacement_char is true with a reason. "
+    "The response carries sha256 and, for .py/.json, post_write_check (syntax result, not blocking)."
+)
+DESCRIPTIONS["patch_source_file"] = "Replace exact matching text within one source file." + _WRITE_GUARD_NOTE
+DESCRIPTIONS["write_source_file"] = (
+    "Create a source file or replace/append its whole content (mode create|overwrite|append)." + _WRITE_GUARD_NOTE
+)
 DESCRIPTIONS["move_source_file"] = (
     "Move or rename one regular file inside the authorized worktree without overwriting any target. "
     "source_path and target_path are source-root-relative; missing target parents are created. "

@@ -52,6 +52,8 @@ from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import token_service, graph_source_hooks
 # flowgate.v02.0053 T#2: the Designer card port of the step type judgement (stdlib only).
 from modules.flow_gate.services import worker_step_type_hooks
+# v02gui 0015 T5: base_sha256 / masked-substitution / U+FFFD guards and post_write_check.
+from modules.flow_gate.services import remote_write_guard
 from modules.flow_gate.storage.paths import src_root
 from modules.flow_gate import template_provision
 from modules.flow_gate.storage.safe_path import (
@@ -454,6 +456,10 @@ def _validate_required(op: str, body: dict) -> None:
         if mode is not None and mode not in ("create", "overwrite", "append"):
             raise _OpError(422)
         _validate_encoding(body)
+        _validate_guard_fields(body)
+        if mode == "create" and body.get("base_sha256") is not None:
+            # create means "no file yet": there is no base to compare against.
+            raise _OpError(422, details={"reason": remote_write_guard.REASON_BASE_NOT_APPLICABLE})
     elif op == "move":
         _require_str(body, "source_path")
         _require_str(body, "target_path")
@@ -488,6 +494,7 @@ def _validate_required(op: str, body: dict) -> None:
                 details={"reason": "no_op_edit"},
             )
         _validate_encoding(body)
+        _validate_guard_fields(body)
     elif op == "resolve_base_dirty":
         decisions = body.get("decisions")
         if not isinstance(decisions, list) or not isinstance(body.get("complete"), bool):
@@ -533,6 +540,13 @@ def _validate_max_int(body: dict, key: str) -> None:
         raise _OpError(422)
 
 
+def _validate_guard_fields(body: dict) -> None:
+    """v02gui 0015 T5 -- shape of base_sha256 / allow_* / reason (write, patch)."""
+    details = remote_write_guard.validate_fields(body)
+    if details is not None:
+        raise _OpError(422, details=details)
+
+
 # 0507 T0004 (NR0003): an unknown field used to be silently dropped, so a worker
 # that sent start_line/end_line got the WHOLE file back (≈163KB into the tool
 # result, prompt tokens 15K→72K). The per-op contract below is now explicit:
@@ -547,8 +561,10 @@ _ALLOWED_FIELDS: dict = {
     "log": frozenset({"path", "target_ref", "max_count", "side"}),
     "show": frozenset({"sha"}),
     "merge_preview": frozenset({"target_ref"}),
-    "write": frozenset({"path", "content", "mode", "encoding"}),
-    "patch": frozenset({"path", "old_string", "new_string", "replace_all", "encoding"}),
+    # v02gui 0015 T5: base_sha256 + the two override flags and their reason.
+    "write": frozenset({"path", "content", "mode", "encoding"}) | remote_write_guard.GUARD_FIELDS,
+    "patch": frozenset({"path", "old_string", "new_string", "replace_all", "encoding"})
+    | remote_write_guard.GUARD_FIELDS,
     "remove": frozenset({"path", "recursive"}),
     "move": frozenset({"source_path", "target_path"}),
     # 0482 T0011: the base-dirty decision batch. Listed here so main's
@@ -1299,7 +1315,8 @@ def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         end_line = body["end_line"]
         if size > _MAX_READ_BYTES:
             raise _OpError(413)
-        text = target.read_bytes().decode(encoding, errors="replace")
+        raw_all = target.read_bytes()
+        text = raw_all.decode(encoding, errors="replace")
         content, returned_start, returned_end, total_lines, eof = _slice_by_lines(text, start_line, end_line)
         returned_bytes = len(content.encode(encoding))
         return (
@@ -1316,6 +1333,13 @@ def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
                 "returned_bytes": returned_bytes,
                 "eof": eof,
                 "truncated": not eof,
+                # v02gui 0015 T5 (0006-NR §6-2 a/e): what the disk holds, and whether
+                # decoding replaced bytes with U+FFFD anywhere in the file.
+                "source_sha256": (
+                    remote_write_guard.sha256_hex(raw_all)
+                    if size <= remote_write_guard.HASH_LIMIT_BYTES else None
+                ),
+                "transformed": remote_write_guard.is_transformed(raw_all, encoding),
             },
             returned_bytes,
         )
@@ -1371,6 +1395,10 @@ def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
             "returned_bytes": returned_bytes,
             "eof": consumed >= size,
             "truncated": consumed < size,
+            # v02gui 0015 T5: whole-file sha256 (None above HASH_LIMIT_BYTES) and whether
+            # THIS window's decode replaced bytes with U+FFFD.
+            "source_sha256": remote_write_guard.file_sha256(target, size),
+            "transformed": remote_write_guard.is_transformed(raw, encoding),
         },
         returned_bytes,
     )
@@ -1439,6 +1467,10 @@ def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     except (UnicodeDecodeError, ValueError):
         raise _OpError(422, details={"reason": "not_text", "path": body["path"]})
 
+    # v02gui 0015 T5 (a): the caller's base must still be what is on disk.
+    if body.get("base_sha256") is not None:
+        _raise_on_base_mismatch(body, remote_write_guard.sha256_hex(raw_bytes))
+
     eol = _detect_dominant_eol(raw_bytes)
     match_count = text.count(old_string)
     eol_normalized = False
@@ -1485,23 +1517,26 @@ def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     if len(new_bytes) > _MAX_WRITE_BYTES:
         raise _OpError(413)
 
+    # v02gui 0015 T5 (c)(e): judge the whole-line change, not just new_string, so a
+    # masked value spliced into the middle of a line is seen with its line head.
+    override = _judge_content(body, "patch", text, new_text)
+
     # All-or-nothing: match, replace and encode all succeeded, so this is the one
     # and only touch of the disk (P0004 §1.4).
     _atomic_write_bytes(target, new_bytes, original_mode)
 
-    return (
-        {
-            "path": body["path"],
-            "replacements": replacements,
-            "size_before": len(raw_bytes),
-            "size_after": len(new_bytes),
-            "bytes_written": len(new_bytes),
-            "encoding": encoding,
-            "eol": eol,
-            "eol_normalized": eol_normalized,
-        },
-        len(new_bytes),
-    )
+    extra = {
+        "path": body["path"],
+        "replacements": replacements,
+        "size_before": len(raw_bytes),
+        "size_after": len(new_bytes),
+        "bytes_written": len(new_bytes),
+        "encoding": encoding,
+        "eol": eol,
+        "eol_normalized": eol_normalized,
+    }
+    _add_write_report(extra, body["path"], new_bytes, encoding, override)
+    return extra, len(new_bytes)
 
 
 def _exec_stat(body: dict, root: Path) -> tuple[dict, Optional[int]]:
@@ -1584,20 +1619,73 @@ def _exec_write(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         raise _OpError(409)
 
     with document_write_ports.write_paths([target]):
+        # v02gui 0015 T5: read the original under the same lock the write takes, so
+        # the base check and the content judgement see exactly what gets replaced.
+        original = target.read_bytes() if existed and target.is_file() else None
+        if body.get("base_sha256") is not None:
+            _raise_on_base_mismatch(
+                body, remote_write_guard.sha256_hex(original) if original is not None else None
+            )
+        if mode == "append":
+            # Appended text has no removed line to pair with: only (e) applies.
+            override = _judge_content(body, "write", None, body["content"])
+        else:
+            old_text = (
+                remote_write_guard.decode_for_compare(original, encoding)
+                if original is not None else None
+            )
+            override = _judge_content(body, "write", old_text, body["content"])
+
         target.parent.mkdir(parents=True, exist_ok=True)
         file_mode = "ab" if mode == "append" else "wb"
         with open(target, file_mode) as fh:
             fh.write(data)
 
         created = not existed
-        return (
-            {
-                "path": body["path"],
-                "bytes_written": len(data),
-                "created": created,
-            },
-            len(data),
+        stored = (original or b"") + data if mode == "append" else data
+        extra = {
+            "path": body["path"],
+            "bytes_written": len(data),
+            "created": created,
+        }
+        _add_write_report(extra, body["path"], stored, encoding, override)
+        return extra, len(data)
+
+
+def _raise_on_base_mismatch(body: dict, current_sha256: Optional[str]) -> None:
+    details = remote_write_guard.base_mismatch(body, current_sha256)
+    if details is not None:
+        raise _OpError(409, details={**details, "path": body["path"]})
+
+
+def _judge_content(body: dict, op: str, old_text: Optional[str], new_text: str) -> Optional[dict]:
+    """(c)+(e): refuse with 422, or return the override report (audit-logged here)."""
+    refusal, override = remote_write_guard.judge(body, old_text, new_text)
+    if refusal is not None:
+        raise _OpError(422, details={**refusal, "path": body["path"]})
+    if override is not None:
+        # Audit trail of an accepted override. Line numbers only: the removed line
+        # may be the very secret a masking layer hid.
+        _logger.warning(
+            "remote %s content guard overridden: path=%s findings=%s reason=%r",
+            op, body["path"], override["overridden"], override["reason"],
         )
+    return override
+
+
+def _add_write_report(extra: dict, path: str, stored: bytes, encoding: str,
+                      override: Optional[dict]) -> None:
+    """sha256 of the stored file (chain it as the next base_sha256), the (f) syntax
+    check and any accepted override -- all report-only."""
+    extra["sha256"] = (
+        remote_write_guard.sha256_hex(stored)
+        if len(stored) <= remote_write_guard.HASH_LIMIT_BYTES else None
+    )
+    check = remote_write_guard.post_write_check(path, stored, encoding)
+    if check is not None:
+        extra["post_write_check"] = check
+    if override is not None:
+        extra["content_guard"] = override
 
 
 def _clear_readonly_and_retry(func, path, _exc_info) -> None:
@@ -1965,6 +2053,27 @@ _CUSTOM_ERROR_MESSAGES = {
         "ko": "재귀 삭제는 도구가 남긴 흔적에만 허용됩니다. '{path}' 는 작업 산출물로 판정되므로 파일 단위로 지우세요.",
         "en": "Recursive delete is allowed only for tool-generated artifacts. '{path}' is judged real work — delete it file by file.",
         "ja": "再帰削除はツールが残した痕跡にのみ許可されます。'{path}' は作業成果物と判定されるため、ファイル単位で削除してください。",
+    },
+    # v02gui 0015 T5 -- write/patch content guards.
+    "base_changed": {
+        "ko": "읽은 뒤 파일이 바뀌었습니다(base_sha256 불일치). 다시 read해서 최신 내용 기준으로 수정하세요.",
+        "en": "The file changed after you read it (base_sha256 mismatch). Read it again and edit from the current content.",
+        "ja": "読み取り後にファイルが変更されました(base_sha256 不一致)。再度 read して最新の内容から編集してください。",
+    },
+    "masked_substitution_suspect": {
+        "ko": "원문 값이 '***'로 바뀐 줄이 있어 거부했습니다(줄 {lines}). 마스킹된 read 결과를 되쓴 것일 수 있습니다. 원문을 바꾸지 않는 patch로 고치고, 정말 의도한 치환이면 allow_mask_substitution=true와 reason을 보내세요.",
+        "en": "Refused: line(s) {lines} replace original text with '***', which looks like a masked read written back. Edit with a patch that leaves the original intact; if the substitution is intended, send allow_mask_substitution=true with a reason.",
+        "ja": "原文の値が '***' に置き換わった行があるため拒否しました(行 {lines})。マスクされた read 結果を書き戻した可能性があります。原文を変えない patch で直し、本当に意図した置換なら allow_mask_substitution=true と reason を送ってください。",
+    },
+    "replacement_char_introduced": {
+        "ko": "디스크에 없던 U+FFFD(대체 문자)가 새로 들어간 줄이 있어 거부했습니다(줄 {lines}). 디코딩이 바꾼 read 결과를 되쓰면 원래 바이트가 사라집니다. 의도한 문자라면 allow_replacement_char=true와 reason을 보내세요.",
+        "en": "Refused: line(s) {lines} add U+FFFD replacement characters that are not on disk. Writing back a read whose decoding replaced bytes destroys the original bytes. If intended, send allow_replacement_char=true with a reason.",
+        "ja": "ディスクになかった U+FFFD(置換文字)が新たに入った行があるため拒否しました(行 {lines})。デコードで置換された read 結果を書き戻すと元のバイトが失われます。意図した文字なら allow_replacement_char=true と reason を送ってください。",
+    },
+    "override_reason_required": {
+        "ko": "allow_mask_substitution 또는 allow_replacement_char를 쓰려면 비어 있지 않은 reason이 필요합니다.",
+        "en": "allow_mask_substitution or allow_replacement_char requires a non-empty reason.",
+        "ja": "allow_mask_substitution または allow_replacement_char を使うには空でない reason が必要です。",
     },
     "no_op_edit": {
         "ko": "old_string과 new_string이 동일합니다.",
