@@ -26,9 +26,9 @@
         <!-- Only the sentence shows; the server's status and code are the sentence's tooltip (Alert's title is a heading). -->
         <Alert v-if="refusal" :id="refusalId" tone="danger" class="dma-alert" data-test="dma-refusal" :data-reason="refusal.reason"
           :data-status="refusal.status ?? undefined" :data-code="refusal.code ?? undefined"
-          ><span data-test="dma-refusal-text" :title="refusalTip">{{ t(`refusal.${refusal.reason}`) }}</span></Alert>
+          ><span data-test="dma-refusal-text" :title="refusalTip">{{ refusalText }}</span></Alert>
 
-        <dl class="dma-facts">
+        <dl v-if="facts.length" class="dma-facts">
           <div v-for="fact in facts" :key="fact.key" class="dma-fact" :data-test="`dma-fact-${fact.key}`">
             <dt>{{ fact.label }}</dt>
             <dd :title="fact.value">{{ fact.value }}</dd>
@@ -37,8 +37,10 @@
 
         <!-- 이름 변경 -->
         <template v-if="shown.kind === 'group.rename' || shown.kind === 'flow.rename'">
-          <p class="dma-note">{{ shown.kind === 'group.rename' ? t('rename.groupNote') : t('rename.note') }}</p>
-          <label class="dma-label" for="dma-name">{{ t('rename.name') }}</label>
+          <!-- v02gui.0012 (0004-CH seq 19/20): the Group window is the two inputs only — no facts, note or hint, and
+               nothing is flagged before the user types; the button stays off until something changed. -->
+          <p v-if="shown.kind === 'flow.rename'" class="dma-note">{{ t('rename.note') }}</p>
+          <label class="dma-label" for="dma-name">{{ shown.kind === 'group.rename' ? t('rename.groupName') : t('rename.name') }}</label>
           <Input id="dma-name" :model-value="text" :invalid="!!nameError" data-modal-autofocus data-test="dma-input"
             @update:model-value="text = $event" @keydown.enter.prevent="submit" />
           <p v-if="nameError" class="dma-error" data-test="dma-input-error">{{ nameError }}</p>
@@ -48,7 +50,6 @@
             <Input id="dma-ident" :model-value="identText" :invalid="!!identError" data-test="dma-ident"
               @update:model-value="identText = $event" @keydown.enter.prevent="submit" />
             <p v-if="identError" class="dma-error" data-test="dma-ident-error">{{ identError }}</p>
-            <p v-else class="dma-hint" data-test="dma-ident-hint">{{ t('rename.identHint') }}</p>
           </template>
         </template>
 
@@ -207,6 +208,8 @@ const props = defineProps<{ actions: DesignerMenuActionsHandle }>()
 const { t } = useI18n({ useScope: 'local', messages: menuActionMessages, inheritLocale: true })
 
 const refusalId = 'designer-menu-action-refusal'
+/** The server's limit of a Group display name (module_routes.patch_module). */
+const GROUP_TITLE_MAX = 100
 /** Rows of the 수정 확인 diff shown at first and added by each 더 보기. */
 const DIFF_PAGE_ROWS = 2000
 
@@ -251,7 +254,7 @@ const flowNow = computed(() => {
   return target && (target.kind === 'flow.rename' || target.kind === 'flow.delete') ? props.actions.server.flow(target.projectId, target.flowId) : null
 })
 const currentName = computed(() => groupNow.value?.name ?? flowNow.value ?? '')
-/** The Group's identifier now (the Explorer's moduleName: the server's exposed identifier). */
+/** The Group's identifier now (the Explorer's moduleName: the module key itself). */
 const currentIdent = computed(() => groupNow.value?.moduleName ?? '')
 
 const title = computed(() => {
@@ -283,12 +286,8 @@ const submitLabel = computed(() => {
 const facts = computed(() => {
   const target = shown.value
   if (!target) return []
-  if (target.kind === 'group.rename') {
-    return [
-      { key: 'target', label: t('target'), value: currentName.value || target.groupId },
-      { key: 'id', label: t('id'), value: currentIdent.value || target.groupId },
-    ]
-  }
+  // The Group window shows its name and identifier in the inputs themselves.
+  if (target.kind === 'group.rename') return []
   if (target.kind === 'flow.rename' || target.kind === 'flow.delete') {
     return [
       { key: 'target', label: t('flow'), value: currentName.value || target.flowId },
@@ -313,14 +312,10 @@ const facts = computed(() => {
 
 const nameError = computed(() => {
   const kind = shown.value?.kind
-  if (kind === 'group.rename') {
+  // An unchanged name is not an error: the window opens with it, and the button just stays off.
+  if (kind === 'group.rename' || kind === 'flow.rename') {
     if (!text.value.trim()) return tried.value ? t('rename.required') : null
-    // Name and identifier change independently: "same" only when neither changed.
-    return !groupChanged.value && !identError.value ? t('rename.unchanged') : null
-  }
-  if (kind === 'flow.rename') {
-    if (!text.value.trim()) return tried.value ? t('rename.required') : null
-    return text.value.trim() === currentName.value ? t('rename.same') : null
+    return kind === 'group.rename' && text.value.trim().length > GROUP_TITLE_MAX ? t('rename.nameLong') : null
   }
   if (kind === 'folder.newFolder' || kind === 'folder.newFile') {
     const problem = entryNameProblem(text.value)
@@ -348,7 +343,7 @@ const canSubmit = computed(() => {
   if (!target || busy.value || stale.value) return false
   switch (target.kind) {
     case 'group.rename':
-      return !!text.value.trim() && !identError.value && groupChanged.value
+      return !!text.value.trim() && !nameError.value && !identError.value && groupChanged.value
     case 'flow.rename':
       return !!text.value.trim() && text.value.trim() !== currentName.value
     case 'flow.delete': return !!text.value.trim()
@@ -357,6 +352,33 @@ const canSubmit = computed(() => {
     case 'folder.upload': return files.value.length > 0 && !checking.value && overwrite.value
     default: return true
   }
+})
+
+/**
+ * The Group rename's own refusals (module_routes.patch_module / module_identifiers) say what is wrong; any other
+ * refusal keeps the general sentence of its reason.
+ */
+const GROUP_REFUSAL_TEXT: Readonly<Record<string, string>> = {
+  module_identifier_taken: 'rename.server.taken',
+  module_identifier_reserved: 'rename.server.reserved',
+  module_rename_busy: 'rename.server.busy',
+  module_rename_branch_exists: 'rename.server.branchExists',
+  module_rename_path_exists: 'rename.server.pathExists',
+  module_rename_git_failed: 'rename.server.gitFailed',
+  module_identifier_required: 'rename.identProblem.empty',
+  module_identifier_uppercase: 'rename.identProblem.upper',
+  module_identifier_invalid: 'rename.identProblem.chars',
+  module_identifier_too_long: 'rename.identProblem.long',
+  module_title_required: 'rename.required',
+  module_title_too_long: 'rename.nameLong',
+  module_not_found: 'rename.server.notFound',
+}
+const refusalText = computed(() => {
+  const r = refusal.value
+  if (!r) return ''
+  const own = shown.value?.kind === 'group.rename' && r.code ? GROUP_REFUSAL_TEXT[r.code] : undefined
+  // `subject` is what the server named: the group holding the identifier, the busy Flows, the existing branches.
+  return own ? t(own, { group: r.subject ?? '' }) : t(`refusal.${r.reason}`)
 })
 
 const refusalTip = computed(() => {

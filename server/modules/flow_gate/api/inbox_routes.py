@@ -1753,12 +1753,7 @@ def _frontmatter_identity_mismatch(
 
     declared_module = _present(header.get("module"))
     if declared_module and declared_module != expected_module:
-        # v02gui.0012: a Group's changed or retired identifier names the same module.
-        from modules.flow_gate.db import module_identifiers
-        if module_identifiers.resolve_module_key(
-            expected_project, declared_module
-        ) != module_identifiers.resolve_module_key(expected_project, expected_module):
-            mismatches.append(f"module={declared_module!r} expected {expected_module!r}")
+        mismatches.append(f"module={declared_module!r} expected {expected_module!r}")
 
     for key in ("group_id", "group"):
         declared_group = _present(header.get(key))
@@ -4645,9 +4640,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if disposed is not None:
         return disposed
 
-    # v02gui.0012 (0001-B item B): from here on the module is the group's permanent key, not
-    # the request's value — numbering, the storage path and documents.module must never split
-    # one Flow across two module keys (an exposed Group identifier in the request included).
+    # v02gui.0012 (0001-B item B): from here on the module is the group row's module, not the
+    # request's value — numbering, the storage path and documents.module must never split one
+    # Flow across two module keys (a stale module from before a Group rename included).
     from modules.flow_gate.db import module_identifiers
     module = module_identifiers.canonical_group_module(project, group, module) or module
 

@@ -31,6 +31,8 @@ export interface MenuActionRefusal {
   readonly reason: MenuActionRefusalReason
   readonly status: number | null
   readonly code: string | null
+  /** A name the server's refusal carries (e.g. the group that holds an identifier); optional. */
+  readonly subject?: string
 }
 export type MenuActionResult<T = void> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly refusal: MenuActionRefusal }
 
@@ -63,7 +65,7 @@ export interface DesignerMenuServerDeps {
   readonly group: (projectId: string, groupId: string) => { readonly name: string; readonly moduleName: string } | null
   /** The Flow's display name as the Project Explorer shows it now; null once gone. */
   readonly flow: (projectId: string, flowId: string) => string | null
-  /** `identifier` (v02gui.0012) is sent only when it changed; the Group node id stays (server keeps the permanent key). */
+  /** `identifier` (v02gui.0012) is sent only when it changed; it renames the module key, so the Group's Flow ids change. */
   readonly renameGroup: (projectId: string, groupId: string, title: string, identifier?: string) => Promise<MenuActionResult>
   readonly renameFlow: (projectId: string, groupId: string, flowId: string, title: string) => Promise<MenuActionResult>
   /** The existing dispose (DC) with its required reason. */

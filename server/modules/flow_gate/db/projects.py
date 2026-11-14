@@ -76,9 +76,6 @@ def list_modules_bulk(project_ids: list[str]) -> dict[str, list[dict]]:
     # Same guard as the single-id path: a DB predating migration 028 has no
     # project_modules table, and labels then come from groups alone.
     has_pm = _project_modules_table_exists(store)
-    from . import module_identifiers
-    has_ident = has_pm and module_identifiers._table_exists(store)
-    exposed: dict[str, dict[str, str]] = {pid: {} for pid in ids}
     # project_modules titles (first-class; authoritative title when present)
     pm_titles: dict[str, dict[str, str]] = {pid: {} for pid in ids}
     # union of module labels from both sources, per project
@@ -96,26 +93,16 @@ def list_modules_bulk(project_ids: list[str]) -> dict[str, list[dict]]:
         chunk = ids[i:i + chunk_size]
         placeholders = ",".join(["?"] * len(chunk))
         if has_pm:
-            # v02gui.0012: the current exposed identifier rides on the same statement (a module whose
-            # identifier was changed always has its project_modules row), so the query budget stays flat.
-            sql = (
-                f"SELECT pm.project_id AS project_id, pm.name AS name, pm.title AS title,"
-                f" pmi.identifier AS identifier FROM project_modules pm"
-                f" LEFT JOIN project_module_identifiers pmi ON pmi.project_id = pm.project_id"
-                f" AND pmi.module_key = pm.name AND pmi.is_current = 1"
-                f" WHERE pm.project_id IN ({placeholders})"
-                if has_ident else
+            for r in store._fetch_all(
                 f"SELECT project_id, name, title FROM project_modules"
-                f" WHERE project_id IN ({placeholders})"
-            )
-            for r in store._fetch_all(sql, chunk):
+                f" WHERE project_id IN ({placeholders})",
+                chunk,
+            ):
                 pid = r.get("project_id")
                 if pid not in pm_titles:
                     continue
                 name = (r.get("name") or "").strip() or "none"
                 pm_titles[pid][name] = (r.get("title") or "").strip() or name
-                if r.get("identifier"):
-                    exposed[pid][name] = r["identifier"]
         for r in store._fetch_all(
             f"SELECT DISTINCT project_id, module FROM groups"
             f" WHERE project_id IN ({placeholders})",
@@ -125,28 +112,17 @@ def list_modules_bulk(project_ids: list[str]) -> dict[str, list[dict]]:
             if pid in seen:
                 _add(pid, r.get("module"))
 
-    # v02gui.0012 (0001-B item B): labels above are permanent module keys; `name` is what a
-    # client shows and sends back, so it carries the exposed identifier, `module_key` the key.
     for pid in ids:
         titles = pm_titles[pid]
         for name in titles:
             _add(pid, name)
-        idents = exposed.get(pid, {})
-        # 'none'/All first, then the rest alphabetically (by what is shown)
-        ordered = sorted(labels[pid], key=lambda l: (l != "none", idents.get(l, l)))
+        # 'none'/All first, then the rest alphabetically
+        ordered = sorted(labels[pid], key=lambda l: (l != "none", l))
         result[pid] = [
-            _module_entry(label, idents.get(label, label), titles)
+            {"name": label, "title": "All" if label == "none" else (titles.get(label) or label)}
             for label in ordered
         ]
     return result
-
-
-def _module_entry(key: str, name: str, titles: dict[str, str]) -> dict:
-    entry = {"name": name, "title": "All" if key == "none" else (titles.get(key) or name)}
-    if name != key:
-        # Only a module whose identifier was changed carries its permanent key (v02gui.0012).
-        entry["module_key"] = key
-    return entry
 
 
 def list_modules(project_id: str) -> list[dict]:

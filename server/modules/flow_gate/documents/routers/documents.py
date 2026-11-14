@@ -1072,8 +1072,8 @@ def create_related_document(
 
     _reject_if_group_ai_running({"group_id": body.group_id})
 
-    # v02gui.0012: number, store and record the document under the group's permanent module
-    # key, never under whatever module the request carried (an exposed Group identifier
+    # v02gui.0012: number, store and record the document under the group row's module, never
+    # under whatever module the request carried (a stale one from before a Group rename
     # included) — one Flow keeps one id_counter row and one storage directory.
     from modules.flow_gate.db import groups as db_groups
     from modules.flow_gate.db import module_identifiers

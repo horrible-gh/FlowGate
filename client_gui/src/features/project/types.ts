@@ -378,6 +378,18 @@ export interface SourceMutationRefusal {
     | 'failed'
   status: number | null
   code: string | null
+  /** A name the refusal carries (the group holding an identifier, busy Flows, existing branches); optional. */
+  subject?: string
+}
+
+/**
+ * The answer of a Group rename (v02gui.0012). An identifier change renames the module key everywhere, so each Flow
+ * of the Group has a new id: `renamedGroups` maps old Flow id -> new Flow id (empty when only the title changed).
+ */
+export interface GroupRenameResult {
+  name: string
+  previousName: string
+  renamedGroups: Record<string, string>
 }
 
 /** A downloaded worktree file or folder ZIP: the bytes and the name the server gave them. */

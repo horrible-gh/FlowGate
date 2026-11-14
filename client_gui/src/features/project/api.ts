@@ -59,6 +59,7 @@ import type {
   SourceDownload,
   SourceMutationRefusal,
   SourceUploadResult,
+  GroupRenameResult,
 } from './types'
 
 // flowgate.v02.0088 F10: the Project / Group / Flow list and create calls below throw an Error whose
@@ -780,7 +781,7 @@ export async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
 const projectPath = (projectId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}`
 
 /** The server code and message of a refused call, from the shapes these routes answer with. */
-function refusalParts(error: unknown): { status: number | null; code: string | null; text: string } {
+function refusalParts(error: unknown): { status: number | null; code: string | null; text: string; subject?: string } {
   const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response
   const data = response?.data && typeof response.data === 'object' ? (response.data as Record<string, any>) : null
   const nested = data?.error && typeof data.error === 'object' ? data.error : data?.detail && typeof data.detail === 'object' ? data.detail : null
@@ -788,7 +789,20 @@ function refusalParts(error: unknown): { status: number | null; code: string | n
   const text = [nested?.message, typeof data?.detail === 'string' ? data.detail : null, data?.message]
     .filter((part): part is string => typeof part === 'string')
     .join(' ')
-  return { status: typeof response?.status === 'number' ? response.status : null, code: typeof code === 'string' ? code : null, text }
+  return { status: typeof response?.status === 'number' ? response.status : null, code: typeof code === 'string' ? code : null, text,
+    subject: refusalSubject(data?.details) }
+}
+
+/** The name a Group rename refusal carries (module_routes.patch_module `details`), for the window's sentence. */
+function refusalSubject(details: unknown): string | undefined {
+  if (!details || typeof details !== 'object') return undefined
+  const d = details as Record<string, any>
+  if (d.holder && typeof d.holder === 'object') return String(d.holder.title || d.holder.module || '') || undefined
+  const listed = (items: unknown, key: string) => Array.isArray(items)
+    ? [...new Set(items.map((item) => (item && typeof item === 'object' ? String((item as Record<string, unknown>)[key] ?? '') : '')).filter(Boolean))]
+    : []
+  const names = [...listed(d.busy, 'group_id'), ...listed(d.branches, 'branch')]
+  return names.length ? names.join(', ') : undefined
 }
 
 /**
@@ -813,7 +827,7 @@ export function sourceMutationRefusal(error: unknown): SourceMutationRefusal {
   if (own) return own
   const transport = transportError(error)
   const hasResponse = !!(transport as { response?: unknown } | null)?.response
-  const { status, code, text } = refusalParts(transport)
+  const { status, code, text, subject } = refusalParts(transport)
   const lower = text.toLowerCase()
   const reason: SourceMutationRefusal['reason'] = !hasResponse
     ? 'network'
@@ -836,7 +850,7 @@ export function sourceMutationRefusal(error: unknown): SourceMutationRefusal {
                     : status === 400 || status === 409 || status === 422
                       ? 'invalid'
                       : 'failed'
-  return { reason, status, code }
+  return subject ? { reason, status, code, subject } : { reason, status, code }
 }
 
 function refused(error: unknown, fallback: string): Error {
@@ -848,14 +862,23 @@ function refused(error: unknown, fallback: string): Error {
 
 /**
  * PATCH /api/v1/projects/{pid}/modules/{name} — a Group's display name (v0.1 module title) and, when `identifier`
- * is given, its exposed identifier (v02gui.0012). The server keeps the module's permanent key, so Flow ids,
- * document ids/paths, branches and the Explorer's Group node id stay as they are; the old identifier keeps resolving.
+ * is given, its identifier (v02gui.0012). The identifier is the module key itself: changing it renames every Flow
+ * id, document id/path and branch of the Group on the server, so the answer lists old -> new Flow ids for the screen
+ * to follow. The old identifier is free afterwards.
  */
-export async function renameGroup(projectId: string, moduleName: string, title: string, identifier?: string): Promise<void> {
+export async function renameGroup(projectId: string, moduleName: string, title: string, identifier?: string): Promise<GroupRenameResult> {
   try {
     const body: { title: string; name?: string } = { title }
     if (identifier !== undefined) body.name = identifier
-    await patchRequest(`${projectPath(projectId)}/modules/${encodeURIComponent(moduleName)}`, body)
+    const response = await patchRequest<{ name?: string; previous_name?: string; renamed_groups?: Record<string, string> }>(
+      `${projectPath(projectId)}/modules/${encodeURIComponent(moduleName)}`, body)
+    const data: unknown = response?.data
+    const answer = (data && typeof data === 'object' ? data : {}) as { name?: string; previous_name?: string; renamed_groups?: Record<string, string> }
+    return {
+      name: answer.name ?? identifier ?? moduleName,
+      previousName: answer.previous_name ?? moduleName,
+      renamedGroups: answer.renamed_groups && typeof answer.renamed_groups === 'object' ? answer.renamed_groups : {},
+    }
   } catch (error) {
     throw refused(error, 'Failed to rename the group.')
   }
