@@ -7,13 +7,18 @@ const ko = {
   stale: '메뉴를 연 뒤 대상이 바뀌었거나 사라져 실행하지 않습니다.',
   rename: {
     groupTitle: '그룹 이름 변경', flowTitle: '플로우 이름 변경', name: '새 이름', submit: '이름 변경',
-    note: '표시 이름만 바뀝니다. 식별자는 그대로입니다.', required: '이름을 입력하세요.', same: '지금 이름과 같습니다.',
-    groupNote: '이름과 식별자를 따로 바꿀 수 있습니다. 식별자를 바꿔도 플로우·문서 ID와 브랜치는 그대로이고, 이전 식별자는 이 그룹 몫으로 남습니다.',
-    ident: '식별자', identHint: '영문 소문자·숫자·-·_ (최대 40자)', unchanged: '이름과 식별자가 지금과 같습니다.',
+    note: '표시 이름만 바뀝니다. 식별자는 그대로입니다.', required: '이름을 입력하세요.',
+    groupName: '이름', nameLong: '이름은 100자 이하여야 합니다.', ident: '식별자',
     identProblem: {
       empty: '식별자를 입력하세요.', upper: '식별자는 소문자만 쓸 수 있습니다.',
       chars: '식별자에는 영문 소문자·숫자·-·_만 쓸 수 있습니다.', long: '식별자는 40자 이하여야 합니다.',
       reserved: '예약된 식별자라 쓸 수 없습니다.',
+    },
+    server: {
+      taken: '다른 그룹이 쓰고 있거나 예전에 쓴 식별자입니다.',
+      reserved: '이 그룹의 식별자는 바꿀 수 없습니다.',
+      unsupported: '이 서버는 아직 식별자 변경을 지원하지 않습니다(DB 마이그레이션 187 필요).',
+      notFound: '그룹을 찾을 수 없습니다(이미 지워졌거나 옮겨졌습니다).',
     },
   },
   dispose: {
@@ -63,13 +68,18 @@ const en: Messages = {
   stale: 'The target changed or is gone since the menu opened; nothing runs.',
   rename: {
     groupTitle: 'Rename group', flowTitle: 'Rename flow', name: 'New name', submit: 'Rename',
-    note: 'Only the display name changes. The identifier stays.', required: 'Enter a name.', same: 'Same as the current name.',
-    groupNote: 'Name and identifier change independently. Flow and document ids and branches stay; the old identifier stays reserved for this group.',
-    ident: 'Identifier', identHint: 'Lowercase letters, digits, - and _ (up to 40)', unchanged: 'Name and identifier are unchanged.',
+    note: 'Only the display name changes. The identifier stays.', required: 'Enter a name.',
+    groupName: 'Name', nameLong: 'Names are 100 characters or fewer.', ident: 'Identifier',
     identProblem: {
       empty: 'Enter an identifier.', upper: 'Identifiers are lowercase only.',
       chars: 'Use only lowercase letters, digits, - and _.', long: 'Identifiers are 40 characters or fewer.',
       reserved: 'This identifier is reserved.',
+    },
+    server: {
+      taken: 'Another group uses or used this identifier.',
+      reserved: "This group's identifier cannot change.",
+      unsupported: 'This server does not support identifier changes yet (database migration 187).',
+      notFound: 'The group is not there (deleted or moved).',
     },
   },
   dispose: {
@@ -117,13 +127,18 @@ const ja: Messages = {
   stale: 'メニューを開いた後に対象が変わったか、なくなったため実行しません。',
   rename: {
     groupTitle: 'グループ名を変更', flowTitle: 'フロー名を変更', name: '新しい名前', submit: '名前を変更',
-    note: '表示名だけが変わります。識別子はそのままです。', required: '名前を入力してください。', same: '今の名前と同じです。',
-    groupNote: '名前と識別子は別々に変更できます。識別子を変えてもフロー・文書IDとブランチはそのままで、以前の識別子はこのグループ用に残ります。',
-    ident: '識別子', identHint: '英小文字・数字・-・_(最大40文字)', unchanged: '名前と識別子が今と同じです。',
+    note: '表示名だけが変わります。識別子はそのままです。', required: '名前を入力してください。',
+    groupName: '名前', nameLong: '名前は100文字以下にしてください。', ident: '識別子',
     identProblem: {
       empty: '識別子を入力してください。', upper: '識別子は小文字のみ使えます。',
       chars: '識別子には英小文字・数字・-・_のみ使えます。', long: '識別子は40文字以下にしてください。',
       reserved: '予約済みの識別子のため使えません。',
+    },
+    server: {
+      taken: '他のグループが使っている、または以前使った識別子です。',
+      reserved: 'このグループの識別子は変更できません。',
+      unsupported: 'このサーバーはまだ識別子の変更に対応していません(DBマイグレーション187が必要)。',
+      notFound: 'グループが見つかりません(削除または移動されました)。',
     },
   },
   dispose: {

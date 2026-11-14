@@ -238,9 +238,15 @@ describe('2-B in the Shell — 그룹 / 플로우 이름 변경 (display name on
     expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현']])
     await choose('group.rename')
     expect(dialog()?.dataset.kind).toBe('group.rename')
-    expect(q('dma-fact-target')!.textContent).toContain('UI 개선')
-    expect(q('dma-fact-id')!.textContent).toContain('ui')
+    // 0004-CH seq 19/20: only the name and identifier inputs — no facts, note, hint, and no message before typing.
+    expect(q('dma-fact-target')).toBeNull()
+    expect(q('dma-fact-id')).toBeNull()
+    expect(dialog()!.querySelector('.dma-note')).toBeNull()
+    expect(q('dma-ident-hint')).toBeNull()
+    expect(q('dma-input-error')).toBeNull()
+    expect(q('dma-ident-error')).toBeNull()
     expect(q<HTMLInputElement>('dma-input')!.value).toBe('UI 개선')
+    expect(q<HTMLInputElement>('dma-ident')!.value).toBe('ui')
     // The same name or no name does not run.
     expect(submitButton().disabled).toBe(true)
     type('dma-input', '   ')
@@ -285,6 +291,37 @@ describe('2-B in the Shell — 그룹 / 플로우 이름 변경 (display name on
     await settle()
     expect(mutations()).toEqual([['PATCH', '/api/v1/projects/p/modules/ui', { title: 'UI 개선', name: 'ui2' }]])
     expect(dialog()).toBeNull()
+  })
+
+  it.each([
+    ['module_identifier_taken', 409, '다른 그룹이 쓰고 있거나 예전에 쓴 식별자입니다.'],
+    ['module_identifier_unsupported', 409, '이 서버는 아직 식별자 변경을 지원하지 않습니다'],
+    ['module_title_too_long', 422, '이름은 100자 이하여야 합니다.'],
+  ] as const)('v02gui.0012: a Group rename refused with %s says why (not the general sentence)', async (code, status, words) => {
+    const w = await mountShell()
+    patchRequest.mockRejectedValue(axiosError(status, { ok: false, code, error_message: 'refused' }))
+    rightClick(explorerRow(w, 'UI 개선').element)
+    await settle()
+    await choose('group.rename')
+    type('dma-ident', 'ui2')
+    await settle()
+    submitButton().click()
+    await settle()
+    expect(q('dma-refusal')?.dataset.code).toBe(code)
+    expect(q('dma-refusal-text')!.textContent).toContain(words)
+    expect(q('dma-refusal-text')!.textContent).not.toContain('서버가 요청을 거절했습니다')
+    expect(dialog()).not.toBeNull()
+  })
+
+  it('v02gui.0012: a Group name over 100 characters is flagged in the window and does not run', async () => {
+    const w = await mountShell()
+    rightClick(explorerRow(w, 'UI 개선').element)
+    await settle()
+    await choose('group.rename')
+    type('dma-input', 'x'.repeat(101))
+    await settle()
+    expect(q('dma-input-error')!.textContent).toContain('100자')
+    expect(submitButton().disabled).toBe(true)
   })
 
   it('a refused Group rename (403) is shown in the window; nothing is re-read and the name stays', async () => {
