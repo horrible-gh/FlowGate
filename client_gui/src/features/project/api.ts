@@ -781,7 +781,7 @@ export async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
 const projectPath = (projectId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}`
 
 /** The server code and message of a refused call, from the shapes these routes answer with. */
-function refusalParts(error: unknown): { status: number | null; code: string | null; text: string } {
+function refusalParts(error: unknown): { status: number | null; code: string | null; text: string; subject?: string } {
   const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response
   const data = response?.data && typeof response.data === 'object' ? (response.data as Record<string, any>) : null
   const nested = data?.error && typeof data.error === 'object' ? data.error : data?.detail && typeof data.detail === 'object' ? data.detail : null
