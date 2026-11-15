@@ -1,5 +1,5 @@
-// Refuse every real HTTP request made from a test. Mirrors
-// client/tests/setup/blockNetwork.ts (flowgate.default.0394 T0004, NR0003 §5.4/§13-11):
+// Refuse every real HTTP request made from a test (flowgate.default.0394 T0004,
+// NR0003 §5.4/§13-11):
 // a unit test must never reach a real server, so this failure mode stays deterministic
 // across machines instead of depending on whether something happens to be listening.
 

@@ -110,12 +110,12 @@ pip install -r requirements.txt
 python dev.py                 # serves on http://0.0.0.0:8088  (auto-reload)
 
 # 2. Frontend (separate terminal)
-cd client
+cd client_gui
 npm install
-npm run dev                   # Vite dev server with HMR
+npm run dev                   # Vite dev server with HMR on http://localhost:3001/app/
 ```
 
-Create the first user with `server/create_dev_user.py`, then open the client and log in.
+Create the first user with `server/create_dev_user.py`, then sign in. With the Vite dev server the sign-in page is `http://localhost:3001/app/login.html`; a built client (`client_gui/build.sh`) is served by the server itself, with the sign-in page at `/` and `/login` and the app under `/app`.
 
 For a one-command staging deploy on **Linux** (venv + `.env` + client build + `systemd` install + admin account), run `./setup.sh` from the repo root. On **Windows**, run `.\setup.ps1` (venv + `.env` + client build + generated `run.bat` launcher + admin account). Both default to SQLite; target MySQL/MariaDB or PostgreSQL by presetting `DB_TYPE` (e.g. `DB_TYPE=postgres DB_HOST=… ./setup.sh`, or `.\setup.ps1 -DbType postgres -DbHost …`).
 
@@ -181,9 +181,11 @@ FlowGate/
 │   ├── sql/migrations/         # 130+ ordered migrations in each of {sqlite, mysql, postgres}
 │   ├── tools/                  # maintenance/one-off scripts, incl. the dialect migration generator (regen_dialect_migrations.py)
 │   └── tests/                  # backend regression tests
-├── client/src/main/            # Vue 3 + Pinia + Vite SPA
-│   ├── components/             # WorkPlanEditor/ProposalDialog, AiInvokeDialog, Git* (status/diff/conflict/finalize), ConversationView, TimeMachineDialog…
-│   └── stores/  composables/  router/  workflow/  views/
+├── client_gui/                 # Vue 3 + Pinia + Vite client (served under /app)
+│   ├── index.html  login.html  # two entries: the /app SPA and the sign-in page (/ and /login)
+│   ├── src/app/  src/features/ # app shell, router, Designer, documents, git, settings…
+│   ├── src/login/              # sign-in page (password, TOTP, backup code, invitation, password change)
+│   └── src/shared/             # transport (api.ts), auth, i18n shared by the app and the sign-in page
 ├── Dockerfile                 # multi-stage: build client → Python runtime
 ├── docker-compose.yml         # one-command stack (SQLite / Postgres / MySQL profiles)
 ├── deploy/

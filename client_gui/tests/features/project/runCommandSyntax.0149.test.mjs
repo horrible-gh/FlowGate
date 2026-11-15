@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { stripTypeScriptTypes } from 'node:module'
 import { resolve } from 'node:path'
 const files = [
-  'client/shared/api.ts',
+  'client_gui/src/shared/api.ts',
   'client_gui/src/features/project/flowRunApi.ts',
   'client_gui/src/features/project/store.ts',
   'client_gui/src/features/designer/center/graph/flowGraphSource.ts',
@@ -18,7 +18,7 @@ const files = [
   'client_gui/src/features/designer/shell/DesignerShell.vue',
   'client_gui/tests/features/project/runCommandRecovery.0149.spec.ts',
   'client_gui/tests/features/designer/cardInterventionShell.0125.spec.ts',
-  'client/tests/shared/apiRunCommandTimeout.0149.spec.ts',
+  'client_gui/tests/shared/apiRunCommandTimeout.0149.spec.ts',
   'client_gui/src/app/i18n/ko.ts', 'client_gui/src/app/i18n/en.ts', 'client_gui/src/app/i18n/ja.ts',
 ]
 for (const file of files) test(`TypeScript syntax parses: ${file}`, () => {

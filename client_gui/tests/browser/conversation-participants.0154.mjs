@@ -19,7 +19,7 @@ const server = await createServer({
   configFile: false, root: process.cwd(), cacheDir: resolve(out, 'vite-cache'),
   plugins: [vue()], define: { __FG_GUI_BUILD__: JSON.stringify('test') },
   resolve: { preserveSymlinks: true, alias: {
-    '@': resolve('src'), '@shared': resolve('../client/shared'), vue: pkg('vue'), 'vue-i18n': pkg('vue-i18n'), axios: pkg('axios'),
+    '@': resolve('src'), '@shared': resolve('src/shared'), vue: pkg('vue'), 'vue-i18n': pkg('vue-i18n'), axios: pkg('axios'),
   } }, server: { host: '127.0.0.1', port: 0 },
 })
 let chrome, ws

@@ -596,21 +596,21 @@ def test_layout_approval_and_run_with_executable_extensions_in_the_worktree(exe_
 
 
 def test_this_repository_worktree_executables_are_captured():
-    # The real FlowGate worktree these tests run in tracks client/run.bat and
-    # server/run-dev.bat. Every executable-extension file goes through the capture's own
+    # The real FlowGate worktree these tests run in tracks server/run-dev.bat (v0.1's
+    # client/run.bat went away with client/ in flowgate.v02gui.0024). Every executable-extension file goes through the capture's own
     # scan and safe hash (DirEntry.stat vs lstat/fstat). The whole-tree capture is not
     # repeated here: other suites in the same run write server/logs while it is measured.
     import time
     from pathlib import Path
     from modules.flow_gate.services import source_fingerprint as fingerprint
     root = Path(__file__).resolve().parents[5]
-    if not (root / ".git").exists() or not (root / "client" / "run.bat").is_file():
+    if not (root / ".git").exists() or not (root / "server" / "run-dev.bat").is_file():
         pytest.skip("not running inside the FlowGate repository worktree")
     deadline = time.monotonic() + fingerprint.MEASURE_SECONDS
     files, _dirs = fingerprint._scan(root, deadline)
     launchers = [(name, st) for name, st in files
                  if name.rsplit(".", 1)[-1].lower() in ("bat", "cmd", "exe", "com")]
-    assert "client/run.bat" in {name for name, _st in launchers}
+    assert "server/run-dev.bat" in {name for name, _st in launchers}
     for name, st in launchers:
         item = fingerprint._hash_file(root, name, st, deadline)
         assert item["sha256"] == _hash(root, name)

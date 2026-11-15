@@ -3,7 +3,7 @@
 # FlowGate staging setup (Linux) — end to end:
 #   - server: python venv + dependencies
 #   - server/.env: working defaults (CONTEXT, DB, SECRET_KEY, token pepper, storage)
-#   - client: build → client/dist (same-origin API base)
+#   - client: build → client_gui/dist (same-origin API base; /app + sign-in page)
 #   - systemd: install, enable, and start the service
 #   - admin: prompt for username/password and create the first account
 #   - AI provider: offer to register the first one (server/seed_ai_provider.py)
@@ -206,19 +206,10 @@ else
     echo "    to your service URL to allow a separately-hosted client, or to '*' to allow any origin."
 fi
 
-echo "==> Client: build → dist"
-bash "$ROOT/client/build.sh"
-
-echo "==> Client (v0.2, /app): build → dist"
-# Non-fatal (unlike the v0.1 build above): T0005 §8 requires a broken/failing v0.2
-# GUI to never block v0.1's own install/startup. Under `set -e` a bare failure here
-# would abort the rest of this script — systemd install/start, admin bootstrap — over
-# a client that server/routers/main.py already serves independently of client/dist
-# (client_gui/dist simply won't exist yet, and /app 404s until it's rebuilt).
-if ! bash "$ROOT/client_gui/build.sh"; then
-    echo "[!] client_gui (v0.2) build failed — continuing without /app; v0.1 is unaffected."
-    echo "    Rebuild later with: $ROOT/client_gui/build.sh"
-fi
+echo "==> Client: build → client_gui/dist"
+# flowgate.v02gui.0024: client_gui is the only client (the sign-in page and every screen), so
+# a failed build stops setup here (`set -e`) instead of starting a server with nothing to serve.
+bash "$ROOT/client_gui/build.sh"
 
 echo "==> systemd: install & start (sudo)"
 sed -e "s|__ROOT__|$ROOT|g" \
@@ -321,15 +312,14 @@ Done. FlowGate staging should be running on port $FLOWGATE_PORT.
   Logs:     journalctl -u flowgate -f
   Restart:  sudo systemctl restart flowgate
   Rebuild client after FE changes:
-            ./client/build.sh        (then hard-refresh the browser; no restart needed)
-            ./client_gui/build.sh    (v0.2, served under /app)
+            ./client_gui/build.sh    (then hard-refresh the browser; no restart needed)
 
 Notes:
   - DB: $DB_TYPE (schema auto-migrates on first boot from sql/migrations/).
   - Server runs as user '$RUN_USER', listening on $FLOWGATE_BIND_HOST:$FLOWGATE_PORT.
   - CORS origin: $(grep '^ALLOWED_ORIGIN=' "$ENV_FILE" | cut -d= -f2-)
   - For outbound/external token links, rebuild with an absolute URL:
-      ./client/build.sh https://<public-host>/flowgate
+      ./client_gui/build.sh https://<public-host>/flowgate
   - If 'status' above is not active, check:  journalctl -u flowgate -n 50 --no-pager
 ──────────────────────────────────────────────────────────────
 EOF

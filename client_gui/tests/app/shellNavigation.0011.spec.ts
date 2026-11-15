@@ -114,8 +114,8 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
     expect(placeholder.get('h1').text()).toBe(title)
     expect(placeholder.get('.gui-coming-soon-badge').text()).toBe('준비 중')
     expect(placeholder.text()).toContain('아직 구현되지 않았습니다')
-    // Points at the existing v0.1 screens via the real switch label, and back home.
-    expect(placeholder.text()).toContain('[v0.1로 전환]')
+    // flowgate.v02gui.0024: v0.1 is gone, so the placeholder no longer points at its screens.
+    expect(placeholder.text()).not.toContain('v0.1')
     expect(placeholder.get('a.gui-coming-soon-back').attributes('href')).toBe('/app/')
     // A placeholder never embeds a v0.1 screen.
     expect(wrapper.find('iframe').exists()).toBe(false)

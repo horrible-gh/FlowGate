@@ -44,9 +44,9 @@ if _FLOWGATE_TESTS_DIR not in sys.path:
 # 본다 — 저장소 안에 썼다는 사실 자체가 잡아야 할 일이다.
 _SCRATCH_GLOB = ".test-tmp*"
 # 전수 탐색(rglob)은 node_modules 때문에 세션마다 수 초를 먹는다. 실제로 흔적이
-# 생겼던 자리만 본다: 저장소 루트, server/, server/tests/, client/.
+# 생겼던 자리만 본다: 저장소 루트, server/, server/tests/, client_gui/.
 _SCRATCH_SCAN_DIRS = (
-    _REPO_ROOT, _SERVER_DIR, _SERVER_DIR / "tests", _REPO_ROOT / "client",
+    _REPO_ROOT, _SERVER_DIR, _SERVER_DIR / "tests", _REPO_ROOT / "client_gui",
 )
 _POLLUTION_LIST_MAX = 20
 

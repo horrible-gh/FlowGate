@@ -1057,13 +1057,12 @@ def test_16_production_shape_sequence_head_returns_to_the_ts(auto_store, monkeyp
 # the workflow strip's colour and the action bar's buttons are computed in the
 # browser from the document-detail payload, so a server assertion can be green while
 # the strip still paints [테스트시나리오지시] 녹색(완료) and the action bar still shows
-# no 승인/반려. This test pins the exact payload the browser receives; the client spec
-# client/tests/main/workflowHead.autoReopen.0381.spec.ts reads the SAME file and asserts
-# what the real components render from it. Neither side can drift alone.
+# no 승인/반려. This test pins the exact payload the browser receives. (The v0.1 client
+# spec that rendered the real components from the same fixture went away with client/ in
+# flowgate.v02gui.0024; the fixture now lives with the server tests.)
 
 _UI_CONTRACT_FIXTURE = (
-    Path(__file__).resolve().parents[4]
-    / "client" / "tests" / "main" / "fixtures" / "autoReopenWorkflowHead.0381.json"
+    Path(__file__).resolve().parents[2] / "fixtures" / "autoReopenWorkflowHead.0381.json"
 )
 _UI_CONTRACT_KEYS = (
     "doc_id", "type_code", "project_id", "group_id", "doc_review_status",

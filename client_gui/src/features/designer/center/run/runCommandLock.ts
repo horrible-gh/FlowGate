@@ -23,7 +23,7 @@
 // Waiting: a live lease of another owner is polled up to `maxWaitMs`; then `run_command_busy` before anything is sent.
 // Release: the owner deletes the record; a closed tab's lease simply runs out (`leaseMs`).
 // The lease never touches the command record itself: identity retention stays runCommandStore's (age never removes it).
-import { randomUuid } from '../../../../../../client/shared/utils/uuid.ts'
+import { randomUuid } from '../../../../shared/utils/uuid.ts'
 
 export const RUN_COMMAND_LOCK_PREFIX = 'flowgate.runCommandLock.v1.'
 /** IndexedDB database (one object store `lease`) holding the per-scope leases. */

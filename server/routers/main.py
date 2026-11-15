@@ -302,35 +302,27 @@ app.add_middleware(RequestIdMiddleware)
 install_access_log_redaction()
 
 # ── Built client (staging/prod) ──────────────────────────────────
-# Serve client/dist when present (produced by client/build.sh). Mirrors the
-# dev-server multi-page routing in vite.config.ts: /main → main.html,
-# /settings → settings.html, everything else → index.html (login). Skipped
-# entirely in dev (no dist), where Vite serves the client on its own port.
+# Serve client_gui/dist when present (produced by client_gui/build.sh). flowgate.v02gui.0024:
+# client_gui is the only client. Its build has two HTML entries — index.html is the /app SPA
+# (every /app/* deep link), login.html the sign-in page served at / and /login (invitation
+# links are /login?invite=<token>). v0.1's old /main and /settings addresses redirect into
+# /app. In dev (no dist) Vite serves the client on its own port; the redirects still apply.
 import os as _os
+from typing import Optional as _Optional
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from .client_fallback import api_aware_fallback
 
-_CLIENT_DIST = _os.path.normpath(
-    _os.path.join(_os.path.dirname(__file__), "..", "..", "client", "dist")
-)
-# v0.2 (T0005): a physically separate client with its own build output, mounted under
-# /app and /app/assets/*. Kept independent of every _CLIENT_DIST check below so a
-# missing/broken client_gui build can never block v0.1's own startup or static serving,
-# and vice versa.
 _CLIENT_GUI_DIST = _os.path.normpath(
     _os.path.join(_os.path.dirname(__file__), "..", "..", "client_gui", "dist")
 )
-_client_dist_exists = _os.path.isdir(_CLIENT_DIST)
+_LOGIN_HTML = "login.html"
 
 
 def _dist_ready(dist_dir: str) -> bool:
     """A dist dir counts as ready only once it has an index.html, not merely once the
-    directory exists. The Docker image's client_gui build stage (Dockerfile) creates
-    an empty client_gui/dist as a failure fallback so the runtime stage's COPY never
-    fails outright — plain isdir() would then be True and _serve_client's
-    FileResponse(index.html) would error on a file that isn't there, instead of the
-    clean 404 a genuinely-missing v0.2 build gives everywhere else.
-    """
+    directory exists — a half-written or emptied dist must give the clean 404 a missing
+    build gives, not a FileResponse error on a file that isn't there."""
     return _os.path.isdir(dist_dir) and _os.path.isfile(_os.path.join(dist_dir, "index.html"))
 
 
@@ -338,7 +330,6 @@ _client_gui_dist_exists = _dist_ready(_CLIENT_GUI_DIST)
 # Symlink-resolved once at startup so every per-request containment check below
 # compares against the real on-disk directory, not a path an on-disk symlink
 # could redirect elsewhere.
-_CLIENT_DIST_REAL = _os.path.realpath(_CLIENT_DIST)
 _CLIENT_GUI_DIST_REAL = _os.path.realpath(_CLIENT_GUI_DIST)
 
 
@@ -357,77 +348,98 @@ def _safe_dist_file(dist_dir_real: str, relative: str):
         return None
     return candidate
 
-if _client_dist_exists:
-    _assets_dir = _os.path.join(_CLIENT_DIST, "assets")
-    if _os.path.isdir(_assets_dir):
-        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+
+# flowgate.v02gui.0024 (R0001 §4.3): v0.1 address -> v0.2 address. A prefix matches itself and
+# everything below it (`/settings/users/123` -> /app/settings/system/users); the v0.1 sub-path
+# itself is not carried over because the v0.2 routes are laid out differently. More specific
+# prefixes come first: settings/system/agents and settings/system/ai before settings/system,
+# and the bare `settings` catch-all last.
+_LEGACY_REDIRECTS = (
+    ("main", "/app"),
+    ("settings/security", "/app/settings/me/security"),
+    ("settings/users", "/app/settings/system/users"),
+    ("settings/projects", "/app/settings/system/projects"),
+    ("settings/system/agents", "/app/settings/system/agents"),
+    ("settings/system/ai", "/app/ai"),
+    ("settings/system", "/app/settings/system/general"),
+    ("settings/project", "/app/settings/project"),
+    ("settings/ai-run-monitor", "/app/settings/me/account"),
+    ("settings", "/app/settings"),
+)
+
+
+def _legacy_redirect_target(full_path: str) -> _Optional[str]:
+    """The v0.2 address for a v0.1 /main or /settings path, or None for any other path."""
+    path = full_path.strip("/")
+    for prefix, target in _LEGACY_REDIRECTS:
+        if path == prefix or path.startswith(prefix + "/"):
+            return target
+    return None
+
 
 if _client_gui_dist_exists:
-    # Deliberately its own mount, not shared with /assets above, so a v0.2 rebuild's
-    # hashed filenames can never collide with or shadow v0.1's (T0005 §3).
     _app_assets_dir = _os.path.join(_CLIENT_GUI_DIST, "assets")
     if _os.path.isdir(_app_assets_dir):
         app.mount("/app/assets", StaticFiles(directory=_app_assets_dir), name="app_assets")
 
-if _client_dist_exists or _client_gui_dist_exists:
-    _CTX = CONTEXT.strip("/")
+_CTX = CONTEXT.strip("/")
 
-    # The HTML entry shells (index/main/settings.html, and v0.2's index.html) are NOT
-    # content-hashed, so a browser that heuristically caches them keeps loading an OLD
-    # shell that still references a pre-rebuild `main-<oldhash>.js` — the app renders
-    # entirely from cache and a fresh rebuild never reaches the screen (group 0126: the
-    # accordion was built into dist but the cached shell hid it). Force the shells to
-    # revalidate every load; the hashed /assets/* and /app/assets/* stay immutably
-    # cacheable.
-    def _html(path: str) -> FileResponse:
-        return FileResponse(path, headers={"Cache-Control": "no-cache, max-age=0"})
 
-    async def _serve_client(full_path: str):
-        # Never shadow the API surface; let those 404 as JSON.
-        if _CTX and (full_path == _CTX or full_path.startswith(f"{_CTX}/")):
-            return JSONResponse(status_code=404, content={"detail": "Not Found"})
-        if full_path == "api" or full_path.startswith("api/"):
-            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+# The HTML entry shells (index.html, login.html) are NOT content-hashed, so a browser that
+# heuristically caches them keeps loading an OLD shell that still references a pre-rebuild
+# `main-<oldhash>.js` — the app renders entirely from cache and a fresh rebuild never reaches
+# the screen (group 0126). Force the shells to revalidate every load; the hashed
+# /app/assets/* stay immutably cacheable.
+def _html(path: str) -> FileResponse:
+    return FileResponse(path, headers={"Cache-Control": "no-cache, max-age=0"})
 
-        # v0.2 SPA (T0005 §6): /app and every /app/* deep-link/refresh resolve to the
-        # client_gui shell, independent of whether v0.1's own dist exists. This branch is
-        # checked before v0.1's real-file/main/settings handling below so a v0.2 route
-        # can never fall through into v0.1's index.html (the /login shell).
-        if full_path == "app" or full_path.startswith("app/"):
-            if not _client_gui_dist_exists:
-                return JSONResponse(status_code=404, content={"detail": "Not Found"})
-            # /app/assets/* is served by the mount above; a request that still reaches
-            # here under app/assets/ is a genuine miss (e.g. a stale hashed filename),
-            # not a route to fall back to the SPA shell for.
-            if full_path == "app/assets" or full_path.startswith("app/assets/"):
-                return JSONResponse(status_code=404, content={"detail": "Not Found"})
-            app_relative = full_path[len("app/") :] if full_path != "app" else ""
-            if app_relative:
-                app_candidate = _safe_dist_file(_CLIENT_GUI_DIST_REAL, app_relative)
-                if app_candidate and _os.path.isfile(app_candidate) and not app_candidate.endswith(".html"):
-                    return FileResponse(app_candidate)
-            return _html(_os.path.join(_CLIENT_GUI_DIST, "index.html"))
 
-        if not _client_dist_exists:
-            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+def _not_found() -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
-        # Real file on disk (favicon, etc.; /assets handled by the mount above).
-        # An HTML shell requested by its real name must still revalidate.
-        candidate = _safe_dist_file(_CLIENT_DIST_REAL, full_path) if full_path else None
-        if candidate and _os.path.isfile(candidate):
-            if candidate.endswith(".html"):
-                return _html(candidate)
-            return FileResponse(candidate)
 
-        # Multi-page history fallback (mirrors vite.config multiPageHistoryFallback).
-        if full_path == "main" or full_path.startswith("main/"):
-            return _html(_os.path.join(_CLIENT_DIST, "main.html"))
-        if full_path == "settings" or full_path.startswith("settings/"):
-            return _html(_os.path.join(_CLIENT_DIST, "settings.html"))
-        return _html(_os.path.join(_CLIENT_DIST, "index.html"))
+async def _serve_client(full_path: str, request: Request):
+    # Never shadow the API surface; let those 404 as JSON.
+    if _CTX and (full_path == _CTX or full_path.startswith(f"{_CTX}/")):
+        return _not_found()
+    if full_path == "api" or full_path.startswith("api/"):
+        return _not_found()
 
-    app.router.add_api_route(
-        "/{full_path:path}", _serve_client, methods=["GET"], include_in_schema=False,
-        route_class_override=api_aware_fallback(CONTEXT),
-    )
+    # v0.1's old addresses (bookmarks, links in old documents) — whether or not a build is
+    # present. The query string is kept; an unauthenticated visitor is sent on to
+    # /login?next=... by the /app guard.
+    target = _legacy_redirect_target(full_path)
+    if target:
+        query = request.url.query
+        return RedirectResponse(f"{target}?{query}" if query else target, status_code=302)
+
+    if not _client_gui_dist_exists:
+        return _not_found()
+
+    # /app and every /app/* deep-link/refresh resolve to the SPA shell (T0005 §6).
+    if full_path == "app" or full_path.startswith("app/"):
+        # /app/assets/* is served by the mount above; a request that still reaches
+        # here under app/assets/ is a genuine miss (e.g. a stale hashed filename),
+        # not a route to fall back to the SPA shell for.
+        if full_path == "app/assets" or full_path.startswith("app/assets/"):
+            return _not_found()
+        app_relative = full_path[len("app/") :] if full_path != "app" else ""
+        if app_relative:
+            app_candidate = _safe_dist_file(_CLIENT_GUI_DIST_REAL, app_relative)
+            if app_candidate and _os.path.isfile(app_candidate) and not app_candidate.endswith(".html"):
+                return FileResponse(app_candidate)
+        return _html(_os.path.join(_CLIENT_GUI_DIST, "index.html"))
+
+    # Everything else is the sign-in page: / and /login (also /login?invite=<token> and
+    # /login?next=...), and any other unknown path, as v0.1's index.html shell was before.
+    login_html = _os.path.join(_CLIENT_GUI_DIST, _LOGIN_HTML)
+    if not _os.path.isfile(login_html):
+        return _not_found()
+    return _html(login_html)
+
+
+app.router.add_api_route(
+    "/{full_path:path}", _serve_client, methods=["GET"], include_in_schema=False,
+    route_class_override=api_aware_fallback(CONTEXT),
+)
 

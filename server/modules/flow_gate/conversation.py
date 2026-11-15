@@ -38,7 +38,7 @@ USER_SPEAKER = "🧑 사용자"  # canonical ko form; also the fallback for unkn
 AI_SPEAKER = "🤖 AI"
 
 # Canonical (emoji-bearing) user label per UI locale. Unknown/missing locales fall back
-# to ko, matching the client's X-Locale default (client/shared/api.ts).
+# to ko, matching the client's X-Locale default (client_gui/src/shared/api.ts).
 _USER_SPEAKER_BY_LOCALE: dict[str, str] = {
     "ko": "🧑 사용자",
     "en": "🧑 User",

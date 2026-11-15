@@ -24,8 +24,9 @@ const BUILD_STAMP = [
   String(buildDate.getDate()).padStart(2, '0'),
 ].join('.')
 
-// T0005 §3: v0.2 is a single SPA served under /app, with its own hashed assets under
-// /app/assets/* so a rebuild can never collide with v0.1's /assets/* (server/routers/main.py).
+// T0005 §3: v0.2 is served under /app with its hashed assets under /app/assets/*
+// (server/routers/main.py). flowgate.v02gui.0024: the build has two HTML entries — index.html
+// (the /app SPA) and login.html (the sign-in page the server returns for / and /login).
 export default defineConfig({
   base: '/app/',
   plugins: [vue()],
@@ -40,38 +41,15 @@ export default defineConfig({
     // own drive. No effect on a plain (non-symlinked) node_modules install.
     preserveSymlinks: true,
     alias: {
-      // T0005 §2/§7: client/shared owns the reusable auth/transport/i18n boundary; v0.2
-      // reuses it directly instead of forking a second copy.
-      '@shared': resolve(__dirname, '../client/shared'),
+      // flowgate.v02gui.0024: the reusable auth/transport/i18n modules (formerly v0.1's
+      // client/shared) now live inside this package at src/shared, still imported as @shared.
+      '@shared': resolve(__dirname, 'src/shared'),
       '@': resolve(__dirname, 'src'),
-      // client/shared/i18n creates its i18n instance (and AppIcon.vue its components)
-      // against whichever 'vue'/'vue-i18n' resolve from client/shared's own directory.
-      // Node's plain upward module resolution would find THOSE from client/node_modules
-      // (shared physically lives inside the client/ package), a different install than
-      // client_gui/src's own client_gui/node_modules copy — app.use(i18n) would then
-      // wire together two different Vue runtimes (broken provide/inject, mismatched
-      // Plugin types) or two different vue-i18n copies (useI18n()'s injection key is a
-      // module-scoped Symbol, so two copies can't see each other's provide()).
-      //
-      // client_gui declares vue/vue-i18n/axios as its own direct dependencies
-      // (package.json) precisely so it never needs client/ installed first or a
-      // shared/hoisted node_modules — these aliases just force every importer inside
-      // THIS build (client_gui/src and the @shared files it pulls in) onto client_gui's
-      // own single copy of each, located with `require.resolve` of its package.json (see
-      // pkgDir above) so this keeps working whatever the installed version actually is
-      // (no hardcoded path/version).
-      //
-      // axios needs the same treatment as vue/vue-i18n even though it has no
-      // provide/inject-style singleton requirement: client/shared/api.ts does a bare
-      // `import axios from 'axios'`, and Node's bare-specifier resolution walks UP from
-      // the importing file's own directory looking for a node_modules that has it. From
-      // client/shared/api.ts that walk finds (or fails to find) something under client/,
-      // never the sibling client_gui/node_modules this build actually installed axios
-      // into — a clean `client_gui`-only install (no client/node_modules, e.g. the
-      // Docker client-gui-build stage) can resolve every other import but fails on this
-      // one alone, dropping vue-tsc/vite out to a broken build. Aliasing it here — like
-      // vue/vue-i18n above — makes the resolution explicit instead of relying on
-      // whatever happens to be installed as a side effect under client/.
+      // Pin every importer in this build onto client_gui's own single copy of vue, vue-i18n and
+      // axios (package directories located with `require.resolve` of their package.json — see
+      // pkgDir above — so this keeps working whatever version is installed). Two Vue runtimes
+      // would break provide/inject and Plugin typing, two vue-i18n copies can't see each other's
+      // useI18n() injection Symbol, and the explicit axios alias keeps the browser ESM entry.
       vue: pkgDir('vue'),
       'vue-i18n': pkgDir('vue-i18n'),
       axios: pkgDir('axios'),
@@ -79,6 +57,12 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      input: {
+        index: resolve(__dirname, 'index.html'),
+        login: resolve(__dirname, 'login.html'),
+      },
+    },
   },
   server: {
     port: 3001,

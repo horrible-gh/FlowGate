@@ -12,7 +12,7 @@ const APP_VUE_SRC = readFileSync(resolve(__dirname, '../../src/app/App.vue'), 'u
 registerAppMessages(i18n)
 
 // T0009 §8: App.vue (the App Shell) owns the Topbar, not any per-view component, so
-// every /app/* route rendered through RouterView gets the switch for free. This mounts
+// every /app/* route rendered through RouterView gets it for free. This mounts
 // the real App.vue + router combination (like tests/app/router.deepLink.spec.ts) rather
 // than Topbar in isolation, to prove the shell actually wraps whatever route matches.
 async function loadRouterFresh() {
@@ -29,7 +29,7 @@ describe('client_gui App Shell renders a persistent Topbar (T0009 §8)', () => {
     i18n.global.locale.value = 'ko'
   })
 
-  it('renders the Topbar switch button alongside the matched route, on a deep /app/* path too', async () => {
+  it('renders the Topbar alongside the matched route, on a deep /app/* path too', async () => {
     window.__accessToken__ = 'token-shell-test'
     window.history.replaceState({}, '', '/app/projects')
     const router = await loadRouterFresh()
@@ -42,7 +42,9 @@ describe('client_gui App Shell renders a persistent Topbar (T0009 §8)', () => {
     })
     await router.isReady()
 
-    expect(wrapper.find('.app-header .gui-switch-btn').exists()).toBe(true)
+    expect(wrapper.find('.app-header.gui-topbar').exists()).toBe(true)
+    // flowgate.v02gui.0024: v0.1 is gone, so there is no switch back to it.
+    expect(wrapper.find('.gui-switch-btn').exists()).toBe(false)
     // The route content (T0011: the /app/projects "준비 중" placeholder) still renders
     // beneath/alongside the shell, inside the shell's content area.
     expect(wrapper.find('.gui-route-content .gui-coming-soon').exists()).toBe(true)
@@ -51,7 +53,7 @@ describe('client_gui App Shell renders a persistent Topbar (T0009 §8)', () => {
   })
 
   // Rejection (rev0): App.vue reused the shared `.app-shell` class from
-  // client/shared/app.css, whose grid is `grid-template-columns: var(--sdb-w) 1fr` for
+  // v0.1's shared app.css (now removed), whose grid is `grid-template-columns: var(--sdb-w) 1fr` for
   // v0.1's sidebar layout. Only `.app-header` (the Topbar) carries `grid-column: 1/-1`
   // there, so `RouterView`'s route root had no grid-column of its own and CSS grid
   // auto-placed it into the 280px sidebar cell instead of the full width. jsdom doesn't

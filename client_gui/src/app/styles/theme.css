@@ -1,7 +1,7 @@
 /* FlowGate v0.2 (/app) design tokens and document base (T0011 §11).
  *
  * Values come from the approved MirageGlass mockup 01-dashboard.html (deck 1jnmunhp v1).
- * This SPA deliberately does NOT load v0.1's client/shared/variables.css or app.css: those
+ * This SPA deliberately does NOT load v0.1's old variables.css or app.css (now removed): those
  * are v0.1's global light-theme rules (body, *, .app-header, .hdr-btn, ...), and sharing
  * global selectors between the two GUIs is what T0011 §11 forbids. Every token here is
  * `--fg2-` prefixed so it can never shadow a v0.1 variable, and all component styling

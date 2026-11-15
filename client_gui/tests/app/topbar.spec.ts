@@ -1,13 +1,10 @@
 import { mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import i18n from '@shared/i18n'
 import Topbar from '@/app/components/Topbar.vue'
 import { registerAppMessages } from '@/app/i18n'
 import { setCurrentUser } from '@/core/auth/currentUser'
-
-const switchGuiGeneration = vi.hoisted(() => vi.fn())
-vi.mock('@shared/guiSwitch', () => ({ switchGuiGeneration }))
 
 registerAppMessages(i18n)
 
@@ -21,41 +18,19 @@ function mountTopbar() {
 
 beforeEach(() => {
   i18n.global.locale.value = 'ko'
-  switchGuiGeneration.mockReset()
 })
 
 afterEach(() => {
   setCurrentUser(null)
 })
 
-// T0009 §2/§8/§9: the switch here must mirror v0.1's AppHeader placement/rules:
-// labeled (not icon-only), keyboard-focusable, low-priority secondary action.
-describe('client_gui Topbar GUI-generation switch (T0009)', () => {
-  it('renders a labeled switch button to v0.1', () => {
+// flowgate.v02gui.0024: v0.1 is gone, so the Topbar no longer offers a switch back to it.
+describe('client_gui Topbar without the v0.1 switch (0024)', () => {
+  it('renders no GUI-generation switch', () => {
     const wrapper = mountTopbar()
 
-    const button = wrapper.get('.gui-switch-btn')
-    expect(button.element.tagName).toBe('BUTTON')
-    expect(button.text()).toBe('v0.1로 전환')
-
-    wrapper.unmount()
-  })
-
-  it('performs the switch to v0.1 (legacy) on click', async () => {
-    const wrapper = mountTopbar()
-
-    await wrapper.get('.gui-switch-btn').trigger('click')
-
-    expect(switchGuiGeneration).toHaveBeenCalledTimes(1)
-    expect(switchGuiGeneration).toHaveBeenCalledWith('legacy')
-
-    wrapper.unmount()
-  })
-
-  it('lives in the shared header nav, not inside a Dashboard-owned element', () => {
-    const wrapper = mountTopbar()
-
-    expect(wrapper.get('.app-header').find('.header-nav .gui-switch-btn').exists()).toBe(true)
+    expect(wrapper.find('.gui-switch-btn').exists()).toBe(false)
+    expect(wrapper.find('.header-nav').exists()).toBe(false)
 
     wrapper.unmount()
   })

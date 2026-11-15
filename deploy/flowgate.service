@@ -11,14 +11,14 @@ Group=__GROUP__
 # must be injected here rather than in .env (the .env file forbids extra keys).
 Environment=FLOWGATE_STORAGE_DIR=__STORAGE__
 WorkingDirectory=__ROOT__/server
-# Rebuild the client before each start so `systemctl restart flowgate` picks up
-# FE changes (server + client in one command). Leading '-' makes a failed build
-# non-fatal — the server still starts on the previous dist instead of looping
-# against Restart=always. '-lc' uses a login shell so node/npm from the user's
-# profile (nvm, /usr/local/bin) are on PATH (systemd's default PATH lacks them).
-ExecStartPre=-/bin/bash -lc '__ROOT__/client/build.sh'
-# v0.2 client (T0005), served under /app by the same process — see
-# server/routers/main.py. Same non-fatal '-' / login-shell rationale as above.
+# Rebuild the client (client_gui: the /app screens and the sign-in page at / and /login)
+# before each start so `systemctl restart flowgate` picks up FE changes (server + client in
+# one command). The leading '-' stays even though client_gui is now the only client
+# (flowgate.v02gui.0024): a failed rebuild must not stop the server and loop against
+# Restart=always — it starts on the previous dist instead, and the build error is in the
+# journal. A first install has no previous dist, which is why setup.sh/setup.ps1 and the
+# Dockerfile treat the same build as fatal. '-lc' uses a login shell so node/npm from the
+# user's profile (nvm, /usr/local/bin) are on PATH (systemd's default PATH lacks them).
 ExecStartPre=-/bin/bash -lc '__ROOT__/client_gui/build.sh'
 # Start the server through the SAME login shell as the build step. This is what
 # fixes B0001: the FlowGate process (and therefore the test-run runner, which

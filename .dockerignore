@@ -1,4 +1,4 @@
-# Keep the build context small and the image clean. Source (server/, client/)
+# Keep the build context small and the image clean. Source (server/, client_gui/)
 # is copied in by the Dockerfile; everything below is host-only or rebuilt.
 
 # VCS / editor / CI
@@ -23,7 +23,6 @@ pytest-cache-files-*
 # Node (client deps reinstalled in the build stage; dist rebuilt in-image)
 node_modules
 **/node_modules
-client/dist
 client_gui/dist
 
 # Host-only runtime state — must never leak into the image
