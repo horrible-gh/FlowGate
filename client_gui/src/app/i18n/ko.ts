@@ -2,6 +2,7 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
+  accountMenu: {"settings": "내 설정", "profile": "내 프로필", "password": "비밀번호 변경", "logout": "로그아웃", "confirmLogout": "로그아웃하시겠습니까?"},
   notification_ai: {"detail": "상세보기", "provider": "제공자", "finished": "종료 시간", "reason": "종료 사유", "success": "성공", "failure": "실패", "stopped": "중단", "unknown": "상태 확인 필요"},
   // flowgate.chat.0017 CH0002 — AI 첨부 승인 요청 (채팅 메시지 하단 · 카드 첨부 탭 · 실행 결과 · 설정).
   attachment_request: {

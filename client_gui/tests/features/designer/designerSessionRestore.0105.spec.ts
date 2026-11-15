@@ -1,3 +1,4 @@
+import { createRouter, createMemoryHistory, type Router } from 'vue-router'
 /**
  * flowgate.v02.0105 T#1 — an F5 brings the Designer's working screen back (NR flowgate.v02.0101.0003 §5.4 / §5.5,
  * Q #510 E-1): the current Project, its Explorer Group context (selection and open Groups), the Flow tabs in order,
@@ -162,13 +163,13 @@ async function settle() {
 }
 
 /** A Designer entry: a new app state, the Project already current only when given (the Dialog's 열기). */
-async function mountShell(projectId: string | null = null, beforeMount?: () => void) {
+async function mountShell(projectId: string | null = null, beforeMount?: () => void, router?: Router) {
   wrapper?.unmount()
   const pinia = createPinia()
   setActivePinia(pinia)
   if (projectId) useProjectStore().setCurrentProject(project(projectId))
   beforeMount?.()
-  wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
+  wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: router ? [i18n, pinia, router] : [i18n, pinia] } })
   await settle()
   return wrapper
 }
@@ -241,6 +242,31 @@ const treeReads = (full: boolean) =>
 const canvasReads = (flowId: string) => getRequest.mock.calls.filter(([url]) => url === `/api/v1/flows/${flowId}/canvas`)
 
 describe('F5 restore of the Designer screen (NR 0101-0003 §5.5)', () => {
+  it('personal settings navigation preserves the snapshot through Designer unmount and return', async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/designer', name: 'designer', component: { template: '<div />' } },
+      { path: '/settings/me/account', name: 'settings-me-account', component: { template: '<div />' } },
+    ] })
+    await router.push('/designer')
+    let w = await mountShell('p', undefined, router)
+    await doubleClick(w, 'UI 개선')
+    await doubleClick(w, 'Designer v0.2')
+    await pickTab(w, 'designer-right-tool-tabs', 2)
+    const before = stored()
+    await get(w, 'designer-header-settings').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.name).toBe('settings-me-account')
+    w.unmount()
+    wrapper = null
+    expect(stored()).toEqual(before)
+    await router.push('/designer')
+    w = await mountShell(null, undefined, router)
+    expect(tabIds(w)).toEqual(['p.ui.0001'])
+    expect(activeTab(w)).toBe('p.ui.0001')
+    expect(rightTool(w)).toBe('git')
+    expect(useProjectStore().currentProjectId).toBe('p')
+  })
+
   it('기본: tabs in order, the active Flow and both panel tabs come back — no run, no draft save, no duplicate tab', async () => {
     let w = await mountShell('p')
     await doubleClick(w, 'UI 개선')
