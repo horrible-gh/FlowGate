@@ -39,7 +39,7 @@
       </div>
     </div>
     <div v-if="layout === 'run' && advancedOpen" class="inspector-run-settings-advanced" data-test="inspector-run-settings-advanced-panel">
-      <div v-for="name in ADVANCED" :key="name" class="inspector-run-settings-card">
+      <div v-for="name in advancedFields" :key="name" class="inspector-run-settings-card">
         <InspectorControlRow :label="labelOf(name)" :hint="fields[name]?.reason ?? null">
           <Select
             :model-value="fields[name]?.value ?? ''"
@@ -65,7 +65,7 @@ import InspectorBlock from './InspectorBlock.vue'
 import InspectorControlRow from './InspectorControlRow.vue'
 import InspectorFailureIcon from './InspectorFailureIcon.vue'
 
-export type InspectorRunSettingsField = 'run_ai' | 'restart' | 'review_ai' | 'review_count' | 'time_limit' | 'review_basis'
+export type InspectorRunSettingsField = 'run_ai' | 'restart' | 'review_ai' | 'review_count' | 'time_limit' | 'review_basis' | 'after_review_exhausted'
 
 export interface InspectorRunSettingsValue {
   /** The shown value ('' = none / the placeholder). */
@@ -89,7 +89,8 @@ const RUN_COLUMNS: readonly (readonly InspectorRunSettingsField[])[] = [
 ]
 /** v7 testSettings: 작성 AI | 검수 AI · 검수 횟수. */
 const SCENARIO_COLUMNS: readonly (readonly InspectorRunSettingsField[])[] = [['run_ai'], ['review_ai', 'review_count']]
-const ADVANCED: readonly InspectorRunSettingsField[] = ['time_limit', 'review_basis']
+const ADVANCED: readonly InspectorRunSettingsField[] = ['time_limit', 'review_basis', 'after_review_exhausted']
+const advancedFields = computed(() => ADVANCED.filter(name => name !== 'after_review_exhausted' || props.fields[name]))
 
 const props = withDefaults(
   defineProps<{

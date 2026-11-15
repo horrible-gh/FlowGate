@@ -7,6 +7,13 @@
 // reasons a value is refused are added.
 export default {
   ko: {
+    after_review_exhausted: {
+      label: '검수 횟수 소진 시', continue: '승인 후 진행', stop: '미통과로 중단',
+      continue_hint: '마지막 재작업본을 승인하고 다음 카드로 넘어갑니다. 검수 소진 기록은 남습니다.',
+      stop_hint: '미통과로 표시하고 이 카드에서 멈춥니다. 다음 카드도 대기합니다.',
+      instruction_hint: '지시서 검수 횟수를 다 썼을 때도 같은 설정을 따릅니다.',
+      approved: '검수 소진 후 승인',
+    },
     "result_check": "결과 확인",
     "result_cause": {"label": "원인 판정", "ai": "AI 판단 후 확정", "human": "사람만"},
     "follow_scope": {"label": "후속 전달", "summary": "결함 요약", "full": "요약 + 로그 · 증거"},
@@ -119,6 +126,13 @@ export default {
     },
   },
   en: {
+    after_review_exhausted: {
+      label: 'When reviews run out', continue: 'Approve and continue', stop: 'Stop without passing',
+      continue_hint: 'Approve the final rework and continue. The exhausted review remains on record.',
+      stop_hint: 'Mark as not passed and stop this card. Following cards wait.',
+      instruction_hint: 'The same setting applies when instruction reviews run out.',
+      approved: 'Approved after reviews ran out',
+    },
     "result_check": "Result confirmation",
     "result_cause": {"label": "Cause decision", "ai": "Confirm AI judgment", "human": "Human only"},
     "follow_scope": {"label": "Follow-up", "summary": "Defect summary", "full": "Summary + logs · evidence"},
@@ -226,6 +240,13 @@ export default {
     },
   },
   ja: {
+    after_review_exhausted: {
+      label: '検収回数消化時', continue: '承認して続行', stop: '未通過で停止',
+      continue_hint: '最後の修正版を承認して次のカードへ進みます。検収回数消化の記録は残ります。',
+      stop_hint: '未通過としてこのカードで停止し、次のカードも待機します。',
+      instruction_hint: '指示書の検収回数を使い切った場合も同じ設定に従います。',
+      approved: '検収回数消化後に承認',
+    },
     "result_check": "結果確認",
     "result_cause": {"label": "原因判定", "ai": "AI 判断を確認", "human": "人のみ"},
     "follow_scope": {"label": "後続への引継ぎ", "summary": "不具合概要", "full": "概要 + ログ・証拠"},

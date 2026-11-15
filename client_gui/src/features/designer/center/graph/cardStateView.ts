@@ -16,6 +16,7 @@ export interface CardRunFacts {
   /** flowgate.v02.0083 T#4: the card's document holds a question still unanswered. */
   readonly question?: boolean
   /** flowgate.v02.0105 T#2 (B-2): why the result was not approved automatically, or null / absent. */
+  readonly reviewExhaustionApproval?: { review_count?: number | null; stage?: string | null } | null
   readonly approvalWaitReason?: string | null
   /** flowgate.v02.0113 T#1: the card is actually running (the server's `node_running`); absent: not known. */
   readonly nodeRunning?: boolean
@@ -87,6 +88,10 @@ export function cardStateReasonText(
   t: (key: string) => string,
 ): string | null {
   if (!state || !state.reason) return null
+  if (state.reason.startsWith('approved_after_review_exhausted:')) {
+    const count = state.reason.split(':')[1]
+    return t('gui.inspector.settings.after_review_exhausted.approved') + (count ? ` · ${count}` : '')
+  }
   if (state.key === 'incomplete' && (CARD_FAILURE_REASONS as readonly string[]).includes(state.reason)) {
     return t(`gui.designer.center.card_failure_reasons.${state.reason}`)
   }
@@ -117,7 +122,7 @@ function runCardStateView(run: CardRunFacts | null | undefined): CardStateView |
   }
   switch (status) {
     case 'done':
-      return view('approved', 'approved', 'success')
+      return view('approved', 'approved', 'success', run?.reviewExhaustionApproval ? `approved_after_review_exhausted:${run.reviewExhaustionApproval.review_count ?? ''}` : null)
     case 'review': {
       if (run?.awaitingApproval !== true) return run?.nodeRunning === false ? view('waiting', 'awaiting', 'neutral') : view('working', 'working', 'info')
       const reason = run.approvalWaitReason?.trim() || null

@@ -109,27 +109,23 @@
           </InspectorControlRow>
         </InspectorBlock>
         <template v-if="advancedRun.length || instructionReviewFields.length">
-          <div class="inspector-ai-advanced-line">
-            <Button size="sm" variant="secondary" :disabled="locked" :aria-expanded="advancedOpen" data-test="inspector-run-settings-advanced" @click="advancedOpen = !advancedOpen">
-              {{ t(runKey('advanced')) }} {{ advancedOpen ? '▴' : '▾' }}
-            </Button>
-          </div>
-          <InspectorBlock v-if="advancedOpen" :locked="locked" data-test="inspector-ai-advanced">
+          <InspectorBlock :locked="locked" data-test="inspector-ai-advanced">
             <template v-if="advancedRun.length">
               <div class="inspector-ai-advanced-title" data-test="inspector-ai-advanced-run">{{ t(runKey('title')) }}</div>
               <div class="inspector-ai-advanced-grid">
-                <InspectorControlRow v-for="field in advancedRun" :key="field" :label="t(runKey(field))" :hint="hintOf(field)">
+                <InspectorControlRow v-for="field in advancedRun" :key="field" :label="fieldLabel(field)" :hint="hintOf(field)">
                   <Select
                     :model-value="views[field].value"
                     :options="optionsOf(field)"
                     :disabled="locked || views[field].disabled"
-                    :aria-label="t(runKey(field))"
+                    :aria-label="fieldLabel(field)"
                     :data-test="`inspector-run-settings-${field}`"
                     @update:model-value="(value: string) => onAiChange(field, value)"
                   />
                   <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" :data-field="field" />
                 </InspectorControlRow>
               </div>
+              <p v-if="advancedRun.includes('after_review_exhausted')" class="inspector-exhaustion-hint" data-test="exhaustion-hint">{{ t(k(`after_review_exhausted.${views.after_review_exhausted.value === 'stop' ? 'stop' : 'continue'}_hint`)) }}</p>
             </template>
             <template v-if="instructionReviewFields.length">
               <hr v-if="advancedRun.length" class="inspector-ai-advanced-split" />
@@ -145,6 +141,7 @@
                 />
                 <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
               </InspectorControlRow>
+              <p class="inspector-exhaustion-hint">{{ t(k('after_review_exhausted.instruction_hint')) }}</p>
             </template>
           </InspectorBlock>
         </template>
@@ -179,7 +176,6 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTestCard } from '../testSpec/useTestCard'
-import Button from '../../../../../components/ui/Button.vue'
 import Select from '../../../../../components/ui/Select.vue'
 import Toggle from '../../../../../components/ui/Toggle.vue'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
@@ -354,6 +350,11 @@ function cardField(field: CardSettingsField): FieldView {
   if (reason === null && field === 'review_ai' && cardSettingsReviewOff(cardSettingsValue(node, card.pending.value, 'review_count'))) reason = 'reason.review_off'
   const reviewSelected = 'review_role' in card.pending.value ? card.pending.value.review_role as AiRoleValue : node?.aiRoles?.roles.review?.selected
   if (!reason && (field === 'review_count' || field === 'review_basis') && reviewSelected?.kind === 'not_used') reason = 'reason.review_off'
+  if (!reason && field === 'after_review_exhausted') {
+    const resultOff = reviewSelected?.kind === 'not_used' || cardSettingsReviewOff(cardSettingsValue(node, card.pending.value, 'review_count'))
+    const instructionOff = kind.value !== 'run' || instructionHeld.value || cardSettingsReviewOff(cardSettingsValue(node, card.pending.value, 'instruction_review_count'))
+    if (resultOff && instructionOff) reason = 'reason.review_off'
+  }
   return { value: cardSettingsText(value), options, disabled: reason !== null, reason }
 }
 
@@ -425,16 +426,21 @@ function failureOf(field: CardSettingsField): string | null {
   return last && SEQUENCE_FIELD[field] === last.field ? t(k(last.key)) : null
 }
 
-const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis']
+const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis', 'after_review_exhausted']
+
+function fieldLabel(field: CardSettingsField): string {
+  return field === 'after_review_exhausted' ? t(k('after_review_exhausted.label')) : t(runKey(field))
+}
 
 /** flowgate.v02.0072 T#3 — the WP card names its run AI 작업 AI; the other cards keep the common names. */
-const runLabels = computed<Partial<Record<InspectorRunSettingsField, string>>>(() => (kind.value === 'plan' ? { run_ai: t(k('plan.run_ai')) } : {}))
+const runLabels = computed<Partial<Record<InspectorRunSettingsField, string>>>(() => ({ after_review_exhausted: t(k('after_review_exhausted.label')), ...(kind.value === 'plan' ? { run_ai: t(k('plan.run_ai')) } : {}) }))
 
 const runFields = computed<InspectorRunSettingsFields>(() => {
   const out: Partial<Record<InspectorRunSettingsField, InspectorRunSettingsFields[InspectorRunSettingsField]>> = {}
   const shown = kind.value === 'test' ? CARD_SETTINGS_FIELDS.test : RUN_BLOCK_FIELDS
   for (const name of RUN_BLOCK_FIELDS) {
     if (!shown.includes(name)) continue
+    if (name === 'after_review_exhausted' && !card.node.value?.fields.after_review_exhausted) continue
     if (card.node.value?.aiRoles && (name === 'run_ai' || name === 'review_ai')) continue
     const view = views.value[name]
     out[name] = {
@@ -495,6 +501,7 @@ function reload() {
 </script>
 
 <style scoped>
+.inspector-exhaustion-hint { color: #94a8bd; font-size: 11px; line-height: 1.5; margin: 8px 0 0; }
 .inspector-settings {
   display: flex;
   flex-direction: column;

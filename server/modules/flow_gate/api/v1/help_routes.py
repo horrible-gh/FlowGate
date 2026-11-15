@@ -77,7 +77,7 @@ def get_help_question(request: Request):
         return auth
 
     locale = template_provision.normalize_locale(auth.get("continuation_locale"))
-    return JSONResponse(content=help_catalog.build_question_content(locale))
+    return JSONResponse(content=help_catalog.build_question_content(locale, {"token_rec": auth, "group_id": auth.get("group_id"), "action_scope": auth.get("action_scope")}))
 
 
 _logger = logging.getLogger(__name__)

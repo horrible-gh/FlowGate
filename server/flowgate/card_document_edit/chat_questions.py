@@ -242,7 +242,8 @@ def _item_view(item, include_answer):
     answered = int(item.get("answer_count") or 0) > 0
     view = {"item_id": item["id"], "seq": item.get("seq"), "title": item.get("title"), "body": body,
             "options": _options(item), "asker_kind": item.get("asker_kind"), "answered": answered,
-            "answer_count": int(item.get("answer_count") or 0), "responder_state": item.get("responder_state")}
+            "answer_count": int(item.get("answer_count") or 0), "responder_state": item.get("responder_state"),
+            "responder_error_code": item.get("responder_error_code")}
     if cut:
         view["body_truncated"] = True
     if include_answer and answered:

@@ -25,7 +25,7 @@ import json
 import logging
 from typing import Optional
 
-from flowgate.card_settings import fields, repository
+from flowgate.card_settings import fields, repository, review_exhaustion
 from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import stage_assignment as sa
 
@@ -161,7 +161,7 @@ def review_loop_active(a: Optional[dict]) -> bool:
     return loop is None or loop.get("current_stage") != STOPPED
 
 
-def _claim(flow_id: str, a: dict, verdict: str) -> bool:
+def _claim(flow_id: str, a: dict, verdict: str, on_claim=None) -> bool:
     """Inside a new guard: the verdict recorded once (``done``); False when another consumer did it first."""
     def body() -> bool:
         cur = store.read(a["attempt_id"], a["stage"], a["seq"])
@@ -170,8 +170,11 @@ def _claim(flow_id: str, a: dict, verdict: str) -> bool:
             return False                         # a late callback cannot decide a newer command's stage
         if cur is None or cur.get("verdict") or cur["stage_state"] not in (sa.ACTIVE, sa.WAITING):
             return False
-        return store.update_state(cur["attempt_id"], cur["stage"], cur["seq"], cur["stage_state"], sa.DONE,
-                                  verdict=verdict)
+        claimed = store.update_state(cur["attempt_id"], cur["stage"], cur["seq"], cur["stage_state"], sa.DONE,
+                                     verdict=verdict)
+        if claimed and on_claim is not None:
+            on_claim()
+        return claimed
     return bool(legacy.with_flow_guard(flow_id, body))
 
 
@@ -503,6 +506,13 @@ def rerequest_due(flow_id: str, run_row: dict, row: dict, attempt_id: Optional[s
     return node, cur, doc
 
 
+def _auto_approval_matches(a: dict, doc: dict) -> bool:
+    decision = review_exhaustion.decision(a["run_id"], a["node_key"], a["attempt_id"], a["stage"], a["seq"])
+    if decision:
+        return decision["doc_id"] == doc["doc_id"] and decision["revision_no"] == int(doc.get("revision_no") or 0)
+    return sa.basis_of(a) == sa.mark(doc)
+
+
 def _passed_completion_due(ctx, row: dict) -> Optional[dict]:
     """Explicit completion repair after bounded approval retries; a valid pass calls no AI again."""
     from flowgate.card_intervention import reasons
@@ -527,7 +537,7 @@ def _passed_completion_due(ctx, row: dict) -> Optional[dict]:
         return None
     if a["verdict"] == sa.PASSED:
         return a if legacy.submission_passed(doc["doc_id"]) else None
-    return a if sa.basis_of(a) == sa.mark(doc) else None
+    return a if _auto_approval_matches(a, doc) else None
 
 
 def _repair_passed_completion(flow_id: str, a: dict) -> None:
@@ -545,7 +555,7 @@ def _repair_passed_completion(flow_id: str, a: dict) -> None:
         if doc.get("doc_review_status") not in APPROVED:
             if a["verdict"] == sa.PASSED and not legacy.submission_passed(doc["doc_id"]):
                 return
-            if a["verdict"] == sa.AUTO_APPROVED and sa.basis_of(a) != sa.mark(doc):
+            if a["verdict"] == sa.AUTO_APPROVED and not _auto_approval_matches(a, doc):
                 return
             # Explicit intent retries only the approval, under the same body/test/RBAC gates.
             if approve_for(flow_id, a, doc, HELD, int(doc.get("revision_no") or 0)) == MOVED:
@@ -883,6 +893,8 @@ def consume_loop_verdict(flow_id: str, a: dict, loop: dict, mode: str, jobs: lis
     elif stop == PASSED_STOP:
         if _claim(flow_id, a, sa.PASSED):
             take_over_submission(flow_id, a, mode, jobs)
+    elif stop == EXHAUSTED and doc and _approve_exhausted(flow_id, a, loop, doc, mode, jobs):
+        return
     elif a.get("author") != sa.AI and AUTHOR_REVISION in (stop, loop.get("stop_detail")):
         # the engine's no-rework issues end (0083 WP-4: stop_reason review_count_exhausted, detail awaiting_author_revision)
         if _claim(flow_id, a, sa.ISSUES):                  # rejected by the engine; no B-1 (L-2 §2.8.4)
@@ -893,6 +905,20 @@ def consume_loop_verdict(flow_id: str, a: dict, loop: dict, mode: str, jobs: lis
                         review_stage.not_passed(loop), sa.basis_of(a), _b1_stage(a))
             if a.get("author") != sa.AI:
                 take_over_submission(flow_id, a, mode, jobs)
+
+
+def _approve_exhausted(flow_id, a, loop, doc, mode, jobs):
+    _run, node = _context(flow_id, a["run_id"], a["node_key"])
+    if node is None or not review_exhaustion.eligible(flow_id, node, loop, author=a.get("author")):
+        return False
+    with hold_of(mode, flow_id, a["run_id"], a["node_key"], a["attempt_id"], "exhaustion_approval") as owned:
+        if not owned:
+            return True
+        def remember():
+            review_exhaustion.remember(a["run_id"], a["node_key"], a["attempt_id"], a["stage"], loop, doc, a["seq"])
+        if _claim(flow_id, a, sa.AUTO_APPROVED, remember):
+            after_verdict(flow_id, {**a, "verdict": sa.AUTO_APPROVED}, mode, jobs)
+    return True
 
 
 MOVED = "submission_moved"                         # the reviewed submission is no longer the document's current one
@@ -917,6 +943,11 @@ def approve_for(flow_id: str, a: dict, doc: Optional[dict], mode: str, reviewed:
         return False
     issuer = sa.issued_to_of(node, run_row)
     basis = sa.basis_of(a) or {}
+    exhaustion = review_exhaustion.decision(a["run_id"], a["node_key"], a["attempt_id"], a["stage"], a["seq"])
+    if exhaustion:
+        if exhaustion["doc_id"] != doc["doc_id"]:
+            return MOVED
+        reviewed = exhaustion["revision_no"]
     expected = int(reviewed if reviewed is not None else basis.get("revision_no", doc.get("revision_no") or 0))
     with hold_of(mode, flow_id, a["run_id"], a["node_key"], a["attempt_id"],
                  "instruction_approval" if a["stage"] == sa.INSTRUCTION_REVIEW else "result_approval") as owned:
@@ -943,6 +974,8 @@ def approve_for(flow_id: str, a: dict, doc: Optional[dict], mode: str, reviewed:
             done = legacy.approve(flow_id, current["doc_id"], issuer, legacy.AUTOMATION, node_key=a["node_key"],
                                   attempt_id=a["attempt_id"], mark=submission, expected_revision=expected,
                                   author=a.get("author"))
+        if done is True and exhaustion:
+            review_exhaustion.approved(flow_id, a["run_id"], exhaustion)
         return MOVED if done == legacy.REVISION_MOVED else done
 
 

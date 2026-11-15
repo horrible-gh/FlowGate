@@ -46,7 +46,7 @@ def _loop_ended(env, a, stop_reason, run_id=REVIEW_RUN, doc_id=None):
                      "failure_restart_max_attempts": 0, "total_timeout_sec": 14400, "review_baseline_id": 0,
                      "baseline_revision_no": 0, "starts_with_rework": 0, "started_at": "t", "deadline_at": "t",
                      "current_stage": "review"})
-    detail = None
+    detail = None if stop_reason == "review_passed" else stop_reason
     if stop_reason == "awaiting_author_revision":           # the engine's encoding of a no-rework issues end
         stop_reason, detail = "review_count_exhausted", "awaiting_author_revision"
     _sql(env["db"], "UPDATE ai_invoke_document_review_loops SET current_stage = 'stopped', stop_reason = ?, "

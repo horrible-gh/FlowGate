@@ -976,12 +976,26 @@ def _content_doc_type(ctx: dict) -> dict:
     }
 
 
-def build_question_content(locale: str) -> dict:
+def build_question_content(locale: str, ctx: Optional[dict] = None) -> dict:
     """The body of ``GET /help/question`` and of the ``question`` help item."""
     copy = QUESTION_HELP_COPY[normalize_locale(locale)]
     titles = copy["titles"]
     bodies = copy["bodies"]
+    from modules.flow_gate.services import question_policy
+    ctx = ctx or {}
+    token = ctx.get("token_rec") or {}
+    policy = question_policy.block(question_policy.text(
+        token.get("issued_to"), ctx.get("group_id"), card=ctx.get("action_scope") != "chat")) if ctx else ""
+    search_note = {
+        "ko": "Q 등록 전에 질의 방침을 확인하고 과거 Q&A를 먼저 검색하십시오. 기존 답이 있으면 적용하고, 방침상 AI가 결정할 일은 스스로 진행하십시오. 사용자 판단이 필요한 미해결 사항만 질문하십시오.",
+        "en": "Before posting a Q, read the question policy and search past Q&A. Apply existing answers and decide matters delegated to AI yourself. Ask only unresolved questions requiring user judgment.",
+        "ja": "Q登録前に質問方針を確認し、過去のQ&Aを検索してください。既存の回答を適用し、AIに任された事項は自ら決定してください。ユーザーの判断が必要な未解決事項だけ質問してください。",
+    }[normalize_locale(locale)]
     return {
+        **({"question_policy": policy} if policy else {}),
+        "before_asking": search_note,
+        "search": {"method": "GET", "url": "/flowgate/api/v1/q/{doc_id}/search?q=<keyword>&limit=10",
+                   "headers": {"Authorization": "Bearer <YOUR_TOKEN>"}},
         "note": copy["note"],
         "options_requires": copy["requires_note"],          # flowgate.v02gui.0015 T3
         "example": {
@@ -1011,7 +1025,7 @@ def build_question_content(locale: str) -> dict:
 
 
 def _content_question(ctx: dict) -> dict:
-    return {**build_question_content(ctx["locale"]), "answers": _answers_lookup(ctx)}
+    return {**build_question_content(ctx["locale"], ctx), "answers": _answers_lookup(ctx)}
 
 
 def _prev_doc_id(ctx: dict) -> Optional[str]:

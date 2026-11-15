@@ -534,6 +534,7 @@ export interface FlowCanvasNodeRun extends RoleRunFields {
   /** flowgate.v02.0056 F2-1 (O2 0007-TR §4-2): the card run's instruction document; absent when not sent. */
   instructionDocId?: string | null
   /** flowgate.v02.0105 T#2 (B-2): why the result was not approved automatically while the card awaits its approval (the latest B-1 reason, e.g. `approval_refused`, `review_not_passed:review_count_exhausted`), or null; absent when not sent. */
+  reviewExhaustionApproval?: { review_count?: number | null; stage?: string | null } | null
   approvalWaitReason?: string | null
   /**
    * flowgate.v02.0061 T#14: the node's attempt result integration (`pending` | `integrating` | `integrated` |
@@ -818,6 +819,7 @@ export interface FlowRunNode extends RoleRunFields {
   /** flowgate.v02.0061 T#15: the node's current attempt (active, else last ended), null when none; absent when not sent. */
   attemptId?: string | null
   /** flowgate.v02.0105 T#2 (B-2): why the result was not approved automatically while the card awaits its approval (the latest B-1 reason, e.g. `approval_refused`, `review_not_passed:review_count_exhausted`), or null; absent when not sent. */
+  reviewExhaustionApproval?: { review_count?: number | null; stage?: string | null } | null
   approvalWaitReason?: string | null
   /** v02gui.0015 T2: the earlier attempts' uncommitted changes not carried over, null when none; absent when not sent. */
   uncarriedChanges?: UncarriedChanges | null
