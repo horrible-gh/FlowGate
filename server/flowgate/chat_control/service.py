@@ -27,7 +27,8 @@ from modules.flow_gate.graph_workflow.domain import draft_request as dr
 from modules.flow_gate.graph_workflow.domain.graph_model import LABEL_MAX_LEN
 from modules.flow_gate.graph_workflow.domain.root_binding import doc_key, resolve_root
 from modules.flow_gate.graph_workflow.projection.flow_snapshot import alive_documents, read_snapshot
-from modules.flow_gate.graph_workflow.services import confirm_service, graph_service, run_service
+from modules.flow_gate.graph_workflow.services import confirm_service, graph_service, root_start, run_service
+from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.graph_workflow.services.node_title_names import PALETTE_KEY_OF_DOC_TYPE, PALETTE_NAMES
 from modules.flow_gate.graph_workflow.services.root_conversion_cards import ROOT_NAMES, ROOT_PALETTE_IDS
@@ -132,9 +133,13 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None) ->
     """Place the chat's work cards (and a confirm card when needed) on the Flow's draft. Nothing is confirmed or run."""
     flow_id = group["group_id"]
     cards, after, want_gate = parse_place(body, locale)
+    # flowgate.v02gui.0019: the Flow's start card first, whatever the draft already holds (the one rule of
+    # ``root_start``, also run when the root is registered); no edge is made to or from it here.
+    started = with_flow_guard(flow_id, lambda: root_start.ensure_start_card(group, user_id, _locale(locale)))
     record, version = _definition(flow_id)
     rows = _run_rows(flow_id)
     protected = {k for k, r in rows.items() if r.get("status") in PROTECTED}
+    # A definition still without any card: no single live root to start from (none, or ambiguous: 409).
     root = _root(flow_id) if not record.get("nodes") else None
     try:
         chosen = placement.plan(record.get("nodes", []), record.get("edges", []), protected, after, want_gate,
@@ -168,6 +173,10 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None) ->
     if chosen.new_root is not None:
         start_card = {"node_key": key_map[placement.CLIENT_ROOT], "doc_type": chosen.new_root,
                       "doc_id": root["doc_id"], "created": True}
+    elif started is not None:
+        made = _root(flow_id)
+        start_card = {"node_key": started, "doc_type": made["doc_type"] if made else None,
+                      "doc_id": made["doc_id"] if made else None, "created": True}
     return {"flow_id": flow_id, "draft_version": saved.get("draft_version"),
             "after": key_map.get(chosen.anchor, chosen.anchor), "root": start_card,
             "cards": placed, "gate": gate, "next": NEXT_AFTER_PLACE}

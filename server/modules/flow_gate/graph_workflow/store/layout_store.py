@@ -146,3 +146,16 @@ def retire(flow_id: str, node_key: str, reason: str) -> None:
         "ON CONFLICT (group_id, node_key) DO NOTHING",
         [flow_id, node_key, reason, utc_now_ms()],
     )
+
+
+def release_retired(flow_id: str, node_keys: Iterable[str], reason: str = "draft_removed") -> int:
+    """flowgate.v02gui.0019: a card a draft save left out comes back to the draft under its own key once the run
+    opened it (``flowgate.graph_run.draft_restore``): its retirement row of ``reason`` goes. A key retired for any
+    other reason stays retired. Returns the rows removed."""
+    removed = 0
+    for key in sorted(set(node_keys)):
+        removed += get_store()._execute_affected(
+            "DELETE FROM graph_retired_node_keys WHERE group_id = ? AND node_key = ? AND reason = ?",
+            [flow_id, key, reason],
+        )
+    return removed

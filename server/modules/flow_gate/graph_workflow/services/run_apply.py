@@ -157,6 +157,10 @@ def emit_node_state(ctx: RunContext, node_key: str, from_status: str, to_status:
                            reason=(note or {}).get("reason"))
     ctx.run["last_event_seq"] = seq
     run_events.queue(ctx.project_id, ctx.flow_id, run_events.NODE_STATE, payload, doc_id=result_doc_id)
+    if to_status != from_status:
+        # flowgate.v02gui.0019: a card the run opens / finishes / reviews is put back into the Flow's draft when a
+        # draft save left it out (``flowgate.graph_run.draft_restore``; nothing when no handler is registered).
+        graph_execution_hooks.call("node_state_changed", ctx, node_key, to_status)
     return seq
 
 

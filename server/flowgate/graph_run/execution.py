@@ -1197,4 +1197,11 @@ _ACTIONS = {
     "time_machine_refusal": lambda flow_id: _time_machine().require_no_operation(flow_id),
     # T#14: a chat's edit / edit-once source access while the Flow's run is locked (``token_service.issue``).
     "chat_source_refusal": editing.chat_source_refusal,
+    # flowgate.v02gui.0019: a card whose run state changed is put back into the Flow's draft when a save left it out.
+    "node_state_changed": lambda ctx, node_key, to_status: _draft_restore().on_node_state(ctx, node_key, to_status),
 }
+
+
+def _draft_restore():
+    from flowgate.graph_run import draft_restore
+    return draft_restore
