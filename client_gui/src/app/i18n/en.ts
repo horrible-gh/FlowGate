@@ -338,6 +338,9 @@ export default {
       past_revision_notice: 'Showing revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',
       tabs_label: 'Open flows',
       close_tab: 'Close {name}',
+      // flowgate.v02gui.0023: the tab strip's list button (only while the tabs overflow) and its list header.
+      open_tabs_list: 'Show all open flows',
+      open_tabs_count: 'Open flows ({count})',
       // flowgate.v02gui.0001: a tab's run mark (its accessible name).
       tab_run: { running: 'Running', paused: 'Paused', stopping: 'Stopping' },
       tab_chat: 'Chat AI responding',

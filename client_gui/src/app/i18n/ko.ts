@@ -341,6 +341,9 @@ export default {
       past_revision_notice: '개정 {revision} 표시 중 (최신 {latest}). 이 화면에서는 편집할 수 없습니다. 최신 개정에 추가된 카드는 표시되지 않습니다.',
       tabs_label: '열린 플로우',
       close_tab: '{name} 닫기',
+      // flowgate.v02gui.0023: the tab strip's list button (only while the tabs overflow) and its list header.
+      open_tabs_list: '열린 플로우 목록',
+      open_tabs_count: '열린 플로우 {count}개',
       // flowgate.v02gui.0001: a tab's run mark (its accessible name).
       tab_run: { running: '실행 중', paused: '일시정지', stopping: '중지 중' },
       tab_chat: '채팅 AI 응답 중',

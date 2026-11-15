@@ -9,7 +9,11 @@
        flowgate.v02gui.0001: a tab dragged sideways (primary pointer, past a few px — a shorter press stays a click; the
        close button never starts a drag) or moved with Alt+←/→ raises `reorder` (its final index); a drop line shows
        where it lands; held near the strip's ends it keeps scrolling the strip (a requestAnimationFrame loop) until
-       moved away. A tab whose Flow's run is running / paused / stopping shows that state's mark before its name. -->
+       moved away. A tab whose Flow's run is running / paused / stopping shows that state's mark before its name.
+       flowgate.v02gui.0023: the strip never shows a scrollbar (it used to take its height out of the 36px and squash the
+       tabs). The wheel scrolls it sideways, and only while the tabs overflow a list button (VS Code style) sits at the
+       right end, outside the tablist: it opens every open Flow in tab order (ui/Dropdown); picking one activates it. -->
+  <div ref="barRef" class="flow-tab-bar" data-test="designer-flow-tab-bar">
   <div
     ref="stripRef"
     class="flow-tab-strip"
@@ -18,6 +22,8 @@
     :aria-label="t('gui.designer.center.tabs_label')"
     data-test="designer-flow-tabs"
     @contextmenu="contextMenu?.tab($event, null)"
+    @scroll.passive="updateOverflow"
+    @wheel="onWheel"
   >
     <div
       v-for="tab in tabs"
@@ -76,13 +82,67 @@
       </IconButton>
     </div>
   </div>
+  <div v-if="overflowing" class="flow-tab-list-slot">
+    <Dropdown ref="listRef">
+      <template #trigger="{ toggle, triggerAttrs }">
+        <IconButton
+          class="flow-tab-list-button"
+          size="sm"
+          :label="t('gui.designer.center.open_tabs_list')"
+          :title="t('gui.designer.center.open_tabs_list')"
+          v-bind="triggerAttrs"
+          data-test="designer-flow-tab-list-button"
+          @click="toggle"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4 6.25l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </IconButton>
+      </template>
+      <template #default="{ close }">
+        <div class="flow-tab-list" data-test="designer-flow-tab-list">
+          <div class="flow-tab-list-head" aria-hidden="true">{{ t('gui.designer.center.open_tabs_count', { count: tabs.length }) }}</div>
+          <div ref="listItemsRef" class="flow-tab-list-items" @keydown="onListKeydown">
+            <button
+              v-for="tab in tabs"
+              :key="tab.flowId"
+              type="button"
+              role="menuitemradio"
+              class="flow-tab-list-item"
+              :class="{ 'is-active': tab.flowId === activeFlowId }"
+              :aria-checked="tab.flowId === activeFlowId ? 'true' : 'false'"
+              :title="tab.name"
+              data-test="designer-flow-tab-list-item"
+              :data-flow-id="tab.flowId"
+              @click="pickFromList(tab.flowId, close)"
+            >
+              <span class="flow-tab-list-check" aria-hidden="true">
+                <svg v-if="tab.flowId === activeFlowId" viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </span>
+              <span
+                v-if="runStateOf(tab.flowId)"
+                class="flow-tab-run"
+                :class="`is-${runStateOf(tab.flowId)}`"
+                role="img"
+                :aria-label="t(`gui.designer.center.tab_run.${runStateOf(tab.flowId)}`)"
+              />
+              <span v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" role="img" :aria-label="t('gui.designer.center.tab_chat')"><ChatBubbleIcon :size="14" /></span>
+              <span class="flow-tab-list-name">{{ tab.name }}</span>
+            </button>
+          </div>
+        </div>
+      </template>
+    </Dropdown>
+  </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import IconButton from '../../../components/ui/IconButton.vue'
 import ChatBubbleIcon from '../../../components/ui/ChatBubbleIcon.vue'
+import Dropdown from '../../../components/ui/Dropdown.vue'
 
 export interface FlowTabStripItem {
   readonly flowId: string
@@ -329,32 +389,269 @@ watch(
 onBeforeUnmount(() => {
   endDrag()
   if (suppressTimer !== null) clearTimeout(suppressTimer)
+  resizeObserver?.disconnect()
+  resizeObserver = null
 })
 
+function revealTab(flowId: string | null) {
+  if (flowId === null) return
+  nextTick(() => buttonRefs.get(flowId)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }))
+}
+
 // A newly active tab is scrolled into view inside the strip.
+watch(() => props.activeFlowId, revealTab)
+
+/* ─────────────── flowgate.v02gui.0023: hidden scrollbar, wheel, list button ─────────────── */
+
+const barRef = ref<HTMLElement | null>(null)
+const listRef = ref<{ close: () => void; isOpen: boolean } | null>(null)
+const listItemsRef = ref<HTMLElement | null>(null)
+/** The tabs do not fit: the list button shows. Measured against the whole bar (not the strip, which the button itself
+ *  narrows), so the button never keeps itself shown once the tabs would fit without it. */
+const overflowing = ref(false)
+let resizeObserver: ResizeObserver | null = null
+
+function updateOverflow() {
+  const strip = stripRef.value
+  const bar = barRef.value
+  if (!strip || !bar) return
+  overflowing.value = strip.scrollWidth - bar.clientWidth > 1
+}
+
+onMounted(() => {
+  updateOverflow()
+  if (typeof ResizeObserver === 'function') {
+    resizeObserver = new ResizeObserver(() => updateOverflow())
+    if (barRef.value) resizeObserver.observe(barRef.value)
+  }
+})
+
+// Tabs opened / closed / renamed, or a run / chat mark that widens a tab, change the content width.
 watch(
-  () => props.activeFlowId,
-  (flowId) => {
-    if (flowId === null) return
-    nextTick(() => buttonRefs.get(flowId)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }))
-  },
+  () => [props.tabs.map((tab) => `${tab.flowId}\t${tab.name}`).join('\n'), JSON.stringify(props.runStates ?? {}),
+    JSON.stringify(props.chatStates ?? {})],
+  () => nextTick(updateOverflow),
 )
+
+// The button narrows the strip when it appears: keep the active tab in view.
+watch(overflowing, () => revealTab(props.activeFlowId))
+
+/** A vertical wheel scrolls the strip sideways while the tabs overflow (there is no scrollbar to grab). */
+function onWheel(event: WheelEvent) {
+  const strip = stripRef.value
+  if (!strip || !overflowing.value) return
+  const delta = Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+  if (delta === 0) return
+  event.preventDefault()
+  strip.scrollLeft += event.deltaMode === 1 ? delta * 16 : event.deltaMode === 2 ? delta * strip.clientWidth : delta
+}
+
+function listItems(): HTMLElement[] {
+  return [...(listItemsRef.value?.querySelectorAll<HTMLElement>('[data-test="designer-flow-tab-list-item"]') ?? [])]
+}
+
+// The list opens on the active Flow: focus it and scroll it into the list's view (the menu focuses its first item).
+watch(
+  () => listRef.value?.isOpen === true,
+  (open) => {
+    if (!open) return
+    nextTick(() => {
+      const items = listItems()
+      const active = items.find((item) => item.dataset.flowId === props.activeFlowId) ?? items[0]
+      active?.focus()
+      active?.scrollIntoView?.({ block: 'nearest' })
+    })
+  },
+  { flush: 'post' },
+)
+
+function onListKeydown(event: KeyboardEvent) {
+  const items = listItems()
+  if (items.length === 0) return
+  const at = items.indexOf(document.activeElement as HTMLElement)
+  let next = -1
+  if (event.key === 'ArrowDown') next = at < 0 ? 0 : (at + 1) % items.length
+  else if (event.key === 'ArrowUp') next = at < 0 ? items.length - 1 : (at - 1 + items.length) % items.length
+  else if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = items.length - 1
+  if (next === -1) return
+  event.preventDefault()
+  items[next].focus()
+  items[next].scrollIntoView?.({ block: 'nearest' })
+}
+
+function pickFromList(flowId: string, close: () => void) {
+  close()
+  if (flowId !== props.activeFlowId) emit('activate', flowId)
+  else revealTab(flowId)
+  focusTab(flowId)
+}
 </script>
 
 <style scoped>
-.flow-tab-strip {
+/* flowgate.v02gui.0023: the bar holds the height; the strip scrolls without a scrollbar, so the tabs keep it. */
+.flow-tab-bar {
   display: flex;
   flex: none;
   align-items: stretch;
-  gap: 2px;
   min-width: 0;
   height: 36px;
+  border-bottom: 1px solid var(--fg2-line);
+  background: var(--fg2-panel);
+}
+
+.flow-tab-strip {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
   padding: 0 6px;
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 1px solid var(--fg2-line);
-  background: var(--fg2-panel);
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.flow-tab-strip::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.flow-tab-list-slot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding: 0 6px 0 2px;
+  border-left: 1px solid var(--fg2-line);
+}
+
+.flow-tab-list-button {
+  width: 24px;
+  height: 24px;
+}
+
+.flow-tab-list-button[aria-expanded='true'] {
+  color: var(--fg2-text);
+  background: rgba(75, 163, 255, 0.12);
+}
+
+/* The list is teleported into the ui/Dropdown menu (its 8px corners and strong surface). */
+.flow-tab-list {
+  display: flex;
+  flex-direction: column;
+  width: min(320px, 80vw);
+  min-width: 220px;
+}
+
+.flow-tab-list-head {
+  flex: none;
+  padding: 4px 8px 6px;
+  color: var(--fg2-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.flow-tab-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: min(60vh, 360px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The app-wide `*` scrollbar-width/color make Chromium ignore ::-webkit-scrollbar (arrowed track): undo them here. */
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
+.flow-tab-list-items::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.flow-tab-list-items::-webkit-scrollbar-track,
+.flow-tab-list-items::-webkit-scrollbar-corner {
+  background: transparent;
+  border: 0;
+}
+
+.flow-tab-list-items::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.flow-tab-list-items::-webkit-scrollbar-thumb {
+  border: 0;
+  border-radius: 999px;
+  background: rgba(154, 181, 210, 0.26);
+  box-shadow: none;
+}
+
+.flow-tab-list-items:hover::-webkit-scrollbar-thumb {
+  background: rgba(154, 181, 210, 0.42);
+}
+
+@supports (-moz-appearance: none) {
+  .flow-tab-list-items {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(154, 181, 210, 0.26) transparent;
+  }
+}
+
+.flow-tab-list-item {
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg2-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.flow-tab-list-item:hover,
+.flow-tab-list-item:focus-visible {
+  background: rgba(75, 163, 255, 0.1);
+  color: var(--fg2-text);
+}
+
+.flow-tab-list-item:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: -2px;
+}
+
+.flow-tab-list-item.is-active {
+  color: var(--fg2-text);
+}
+
+.flow-tab-list-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  color: var(--fg2-blue);
+}
+
+.flow-tab-list-check svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.flow-tab-list-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .flow-tab-strip.is-reordering {
