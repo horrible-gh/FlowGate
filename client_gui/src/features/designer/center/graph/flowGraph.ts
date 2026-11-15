@@ -72,6 +72,11 @@ export interface FlowGraphNode {
    * (document / gate / custom) has one; null / absent elsewhere and from an older server — its title is not editable.
    */
   readonly titleState?: FlowGraphTitleState | null
+  /**
+   * flowgate.v02gui.0020: the `tmp_` key the node had until its draft save answered its server key (draft remapGraph).
+   * The Canvas keeps dragging a card held through that rename under the name it grabbed it with. Absent otherwise.
+   */
+  readonly renamedFrom?: string
 }
 
 /**

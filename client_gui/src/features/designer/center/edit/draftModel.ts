@@ -209,7 +209,8 @@ function lineDocument(lines: readonly FlowGraphCardDocument[]): FlowGraphNodeDoc
 export function remapGraph(graph: FlowGraph, keyMap: Readonly<Record<string, string>>): FlowGraph {
   return {
     ...graph,
-    nodes: graph.nodes.map((node) => (keyMap[node.id] ? { ...node, id: keyMap[node.id] } : node)),
+    // flowgate.v02gui.0020: a renamed node names its `tmp_` key, so a card held in a drag stays the same card.
+    nodes: graph.nodes.map((node) => (keyMap[node.id] ? { ...node, id: keyMap[node.id], renamedFrom: node.id } : node)),
     edges: graph.edges.map((edge) => ({
       ...edge, id: mapKey(edge.id, keyMap), source: mapKey(edge.source, keyMap), target: mapKey(edge.target, keyMap),
     })),
