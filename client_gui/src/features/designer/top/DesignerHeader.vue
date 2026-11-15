@@ -1,10 +1,9 @@
 <template>
-  <!-- flowgate.v02.0038 — Designer Header (0001-R §2): brand, notification and AI entry on the
+  <!-- flowgate.v02.0038 — Designer Header (0001-R §2): brand, notification entry on the
        left, the search assist in the middle, language / settings / user on the right.
        The side groups never shrink below their content; the search takes what is left
        (up to 680px), and narrow windows switch the side groups to a compact form.
-       Notification, AI, settings and the user button are entry points only: they emit a
-       command and a later Feature connects them. The language switch is the existing shared
+       Notifications are connected through the Shell; settings and the user button emit commands. The language switch is the existing shared
        contract (vue-i18n locale + `preferred_locale`, as v0.1's switches do). -->
   <div class="designer-header" data-test="designer-header">
     <div class="designer-header-left">
@@ -18,6 +17,10 @@
           class="designer-header-btn is-icon"
           :aria-label="t('gui.designer.top.header.notifications')"
           :title="t('gui.designer.top.header.notifications')"
+          ref="notificationAnchor"
+          :aria-expanded="notificationsOpen"
+          aria-haspopup="dialog"
+          :aria-controls="notificationsOpen ? 'designer-notifications' : undefined"
           data-test="designer-header-notifications"
           @click="emit('command', 'header.notifications')"
         >
@@ -26,14 +29,7 @@
             <path d="M10 21h4" />
           </svg>
         </button>
-        <button
-          type="button"
-          class="designer-header-btn is-ai"
-          data-test="designer-header-ai"
-          @click="emit('command', 'header.ai')"
-        >
-          <span aria-hidden="true">🤖</span><b>{{ t('gui.designer.top.header.ai') }}</b>
-        </button>
+        <DesignerNotifications v-if="notificationsOpen" :project-id="notificationProjectId" :project="notificationProject" :anchor="notificationAnchor" @close="emit('close-notifications')" />
       </div>
     </div>
 
@@ -80,13 +76,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import DesignerNotifications from './notifications/DesignerNotifications.vue'
+import type { ExplorerProject } from '../projectExplorer/projectExplorerTree'
 import { useI18n } from 'vue-i18n'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import GlobalSearch from './GlobalSearch.vue'
 import { DESIGNER_LOCALES, type DesignerLocale, type DesignerSearchRequest, type DesignerTopCommand } from './designerTop'
 
+withDefaults(defineProps<{ notificationsOpen?: boolean; notificationProjectId?: string | null; notificationProject?: ExplorerProject | null }>(), { notificationsOpen: false, notificationProjectId: null, notificationProject: null })
+const notificationAnchor = ref<HTMLElement | null>(null)
+
 const emit = defineEmits<{
+  'close-notifications': []
   command: [command: DesignerTopCommand]
   search: [request: DesignerSearchRequest]
 }>()
@@ -105,7 +107,7 @@ function setLocale(code: DesignerLocale) {
 <style scoped>
 .designer-header {
   display: grid;
-  /* Side columns are at least as wide as their content, so the brand / notification / AI
+  /* Side columns are at least as wide as their content, so the brand / notification
      group and the language / settings / user group never run under the search. The search
      keeps its 680px cap on wide screens and gives way first on medium ones. */
   grid-template-columns: minmax(max-content, 1fr) minmax(220px, 680px) minmax(max-content, 1fr);
@@ -214,11 +216,6 @@ function setLocale(code: DesignerLocale) {
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.designer-header-btn.is-ai {
-  border-color: #356eff;
-  background: #10265a;
 }
 
 .designer-header-locale {

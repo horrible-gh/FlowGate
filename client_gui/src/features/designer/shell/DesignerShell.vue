@@ -19,6 +19,10 @@
        flowgate.v02.0060 T#2 (2-B): the windows of its 11 existing server commands are mounted here too (the connector's). -->
   <div class="designer-shell" data-test="designer-shell" @keydown.esc="selectedPalette = null">
     <DesignerTop
+      :notifications-open="notificationsOpen"
+      :notification-project-id="projectId"
+      :notification-project="notificationProject"
+      @close-notifications="notificationsOpen = false"
       :run-phase="runPhase"
       :density="top.density"
       :zoom="zoom"
@@ -329,6 +333,9 @@ const layout = reactive(createDesignerLayout())
 const top = reactive(createDesignerTopState())
 
 const projectId = computed<string | null>(() => projectStore.currentProjectId)
+const notificationsOpen = ref(false)
+const notificationProject = computed(() => projectId.value ? explorerProject(projectId.value) : null)
+watch([projectId, () => projectStore.designerSessionOwner], () => { notificationsOpen.value = false }, { flush: 'sync' })
 
 // flowgate.v02.0045 S1: real Flow Graphs through the project store's Canvas loaders (the sample
 // source stays the session default for tests and previews only).
@@ -865,6 +872,10 @@ function onDensity(level: DesignerDensity) {
 const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
 
 function onTopCommand(command: DesignerTopCommand) {
+  if (command === 'header.notifications') {
+    notificationsOpen.value = !notificationsOpen.value
+    return
+  }
   // The parts disable what has no target; this is the same rule for a command that still arrives.
   if (!isMenuCommandEnabled(command, runPhase.value, menuTargets.value)) return
   // flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the open Flow's selected cards (the command names the kind).
