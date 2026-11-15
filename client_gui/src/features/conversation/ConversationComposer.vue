@@ -35,14 +35,20 @@
       <button
         :type="isStop ? 'button' : 'submit'"
         class="conv-send"
-        :class="{ 'is-stop': isStop }"
+        :class="{ 'is-stop': isStop, 'is-stopping': stopMode === 'requested' }"
         data-test="conv-send"
         :title="sendTitle"
         :aria-label="sendTitle"
         :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || draft.trim() === ''"
         @click="isStop && emit('stop')"
       >
-        <span aria-hidden="true">{{ isStop ? '■' : sending ? '…' : '➤' }}</span>
+        <!-- flowgate.v02gui.0011 T: a stop under way is a muted spinning ring instead of ■ (… with reduced motion), so a
+             pressed stop button no longer looks like the one that can still be pressed. -->
+        <span v-if="stopMode === 'requested'" class="conv-send-stopping" data-test="conv-send-stopping" aria-hidden="true">
+          <span class="conv-send-ring"></span>
+          <span class="conv-send-dots">…</span>
+        </span>
+        <span v-else aria-hidden="true">{{ isStop ? '■' : sending ? '…' : '➤' }}</span>
       </button>
     </div>
 
@@ -355,6 +361,55 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 .conv-send:disabled {
   cursor: not-allowed;
   opacity: var(--fg2-control-disabled-opacity);
+}
+
+/* flowgate.v02gui.0011 T: a stop under way — muted, full opacity (a faded ring would be harder to see), spinning ring. */
+.conv-send.is-stopping {
+  border-color: var(--fg2-line-strong);
+  background: var(--fg2-control-surface);
+  color: var(--fg2-muted);
+}
+
+.conv-send.is-stopping:disabled {
+  cursor: progress;
+  opacity: 1;
+}
+
+.conv-send-stopping {
+  display: grid;
+  place-items: center;
+}
+
+.conv-send-ring {
+  display: block;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 2px solid var(--fg2-line-strong);
+  border-top-color: var(--fg2-muted);
+  border-radius: 50%;
+  animation: conv-send-spin 0.8s linear infinite;
+}
+
+.conv-send-dots {
+  display: none;
+}
+
+@keyframes conv-send-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conv-send-ring {
+    display: none;
+    animation: none;
+  }
+
+  .conv-send-dots {
+    display: inline;
+  }
 }
 
 .conv-send:focus-visible {
