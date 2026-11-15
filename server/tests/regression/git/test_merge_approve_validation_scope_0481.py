@@ -43,7 +43,7 @@ _GIT = shutil.which("git") is not None
 needs_git = pytest.mark.skipif(not _GIT, reason="git binary unavailable")
 needs_node_syntax = pytest.mark.skipif(
     not (Path(git_service._FLOWGATE_CLIENT_DIR) / "node_modules" / "typescript").is_dir(),
-    reason="client/node_modules (real css/ts parsers) unavailable in this checkout",
+    reason="client_gui/node_modules (real css/ts parsers) unavailable in this checkout",
 )
 
 _IDENT = ["-c", "user.name=T", "-c", "user.email=t@t"]

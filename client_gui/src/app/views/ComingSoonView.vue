@@ -5,7 +5,6 @@
       <span class="gui-coming-soon-badge">{{ t('gui.placeholder.badge') }}</span>
       <h1 id="gui-coming-soon-title">{{ t(`gui.nav.${navKey}.title`) }}</h1>
       <p>{{ t('gui.placeholder.body') }}</p>
-      <p class="gui-coming-soon-hint">{{ t('gui.placeholder.legacy_hint', { label: t('nav.switch_to_legacy') }) }}</p>
       <RouterLink to="/" class="gui-coming-soon-back">{{ t('gui.placeholder.back') }}</RouterLink>
     </div>
   </section>
@@ -80,11 +79,6 @@ p {
   line-height: 1.7;
   color: #a5b6c9;
   word-break: keep-all;
-}
-
-.gui-coming-soon-hint {
-  font-size: 12px;
-  color: var(--fg2-muted);
 }
 
 .gui-coming-soon-back {

@@ -214,7 +214,7 @@ describe('V07 개인 정보 / 언어', () => {
     }
     expect(seen).toEqual(['ja', 'en'])
     // 재진입: leave and come back — still English. A reload starts from preferred_locale, which the
-    // shared i18n reads at start-up (client/tests/shared/api.locale.0589 pins that part).
+    // shared i18n reads at start-up (tests/shared/api.locale.0589 pins that part).
     await go('/settings/me/security')
     await go('/settings/me/account')
     expect(w.get('[data-locale="en"]').attributes('aria-pressed')).toBe('true')

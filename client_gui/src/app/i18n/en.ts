@@ -258,7 +258,6 @@ export default {
     search_aria: 'Search (coming soon)',
     search_unavailable: 'Search is not available yet.',
     notifications_aria: 'Notifications (coming soon)',
-    switch_aria: 'Switch GUI',
     user_role_admin: 'Administrator',
     user_role_member: 'Member',
   },
@@ -2167,7 +2166,6 @@ export default {
   placeholder: {
     badge: 'Coming soon',
     body: 'This screen is not implemented in FlowGate v0.2 yet.',
-    legacy_hint: 'If you need this feature now, use the [{label}] button at the top to open the v0.1 screens.',
     back: 'Back to dashboard',
   },
   not_found: {

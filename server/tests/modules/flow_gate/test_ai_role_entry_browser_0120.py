@@ -30,7 +30,7 @@ def test_role_entry_create_save_refresh_and_general_preservation(world):
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
     # No source-tree caches or generated browser files.
-    aliases = {'@': str(client/'src'), '@shared': str(repo/'client/shared')}
+    aliases = {'@': str(client/'src'), '@shared': str(client/'src'/'shared')}
     aliases.update({name:str(client/'node_modules'/name) for name in ['vue','vue-i18n','axios']})
     config = scratch/'browser-vite.config.mjs'
     config.write_text('import vue from '+json.dumps((client/'node_modules/@vitejs/plugin-vue/dist/index.mjs').as_uri())+';\nexport default '+json.dumps({

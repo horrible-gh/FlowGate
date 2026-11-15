@@ -68,11 +68,13 @@ python -m pytest tests                   # release / 대규모 리팩터링 (= f
 
 ### 클라이언트
 
-계층을 나누지 않는다. 1,192 건 전체가 **30 초**다. 항상 전부 돌린다.
+계층을 나누지 않는다. 항상 전부 돌린다. 클라이언트는 `client_gui` 하나뿐이다
+(flowgate.v02gui.0024에서 0.1 `client/`를 지웠다).
 
 ```bash
-cd client
-npx vitest run
+cd client_gui
+npm run typecheck   # vue-tsc -b
+npm test            # vitest run
 ```
 
 ### 병렬 실행 (pytest-xdist)

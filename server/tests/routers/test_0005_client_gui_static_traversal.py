@@ -1,8 +1,8 @@
-"""Regression coverage for the encoded path-traversal fix in the `/app` and legacy
-static-file catch-all (server/routers/main.py `_safe_dist_file` / `_serve_client`).
+"""Regression coverage for the encoded path-traversal fix in the `/app` static-file
+catch-all (server/routers/main.py `_safe_dist_file` / `_serve_client`).
 
 Before the fix, the catch-all joined the URL-decoded `full_path` straight onto
-`_CLIENT_GUI_DIST` / `_CLIENT_DIST` and served whatever `FileResponse` found there.
+the dist directory and served whatever `FileResponse` found there.
 Starlette's `{full_path:path}` converter hands the route the already-decoded value, so
 a request for `/app/%2e%2e/%2e%2e/<file outside dist>` arrived as the literal string
 "app/../../<file outside dist>" — joining that onto the dist dir and never resolving
@@ -13,7 +13,6 @@ server/.env). `_safe_dist_file` closes this by resolving the joined path with
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -27,38 +26,14 @@ os.environ.setdefault("ALLOWED_ORIGIN", "")
 
 _SERVER_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_SERVER_DIR))
-_REPO_ROOT = _SERVER_DIR.parent
-
-# The SPA catch-all route in routers/main.py is only registered (at import time) when
-# at least one of client/dist or client_gui/dist already exists on disk. A fresh
-# checkout that hasn't run either build.sh yet would otherwise silently skip every test
-# below (the route wouldn't exist to monkeypatch). Guarantee registration by pre-seeding
-# a throwaway client_gui/dist before the first import — the path is gitignored
-# (.gitignore: /client_gui/dist/), so this never shows up as repo pollution, and it is
-# removed again immediately after import regardless of whether we created it.
-_CLIENT_GUI_DIST_PATH = _REPO_ROOT / "client_gui" / "dist"
-_CLIENT_DIST_PATH = _REPO_ROOT / "client" / "dist"
-_seeded_client_gui_dist = False
-if "routers.main" not in sys.modules and not _CLIENT_GUI_DIST_PATH.is_dir() and not _CLIENT_DIST_PATH.is_dir():
-    (_CLIENT_GUI_DIST_PATH / "assets").mkdir(parents=True, exist_ok=True)
-    (_CLIENT_GUI_DIST_PATH / "index.html").write_text("<html>import-time fixture</html>", encoding="utf-8")
-    _seeded_client_gui_dist = True
 
 from fastapi.testclient import TestClient  # noqa: E402
 
 import routers.main as main_module  # noqa: E402
 
-if _seeded_client_gui_dist:
-    shutil.rmtree(_CLIENT_GUI_DIST_PATH, ignore_errors=True)
-
-pytestmark = pytest.mark.skipif(
-    not (main_module._client_dist_exists or main_module._client_gui_dist_exists),
-    reason=(
-        "neither client/dist nor client_gui/dist existed when routers.main was first "
-        "imported in this test session, so the SPA catch-all route was never registered "
-        "(it is defined inside `if _client_dist_exists or _client_gui_dist_exists:`)."
-    ),
-)
+# flowgate.v02gui.0024: the catch-all route is registered whether or not a client build
+# exists (the v0.1 /main and /settings redirects must work either way), so these tests no
+# longer need a pre-seeded dist to run; each integration test points the dist at a fixture.
 
 
 # ── Unit coverage: _safe_dist_file/_dist_ready always run, independent of route state ──
@@ -108,7 +83,7 @@ def test_safe_dist_file_rejects_traversal_outside_dist(tmp_path, relative):
     assert main_module._safe_dist_file(dist_real, relative) is None
 
 
-# ── Integration coverage: the real /app and legacy catch-all route, through TestClient ──
+# ── Integration coverage: the real /app catch-all route, through TestClient ──
 
 @pytest.fixture
 def app_dist_fixture(tmp_path, monkeypatch):
@@ -125,23 +100,6 @@ def app_dist_fixture(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module, "_CLIENT_GUI_DIST", str(dist))
     monkeypatch.setattr(main_module, "_CLIENT_GUI_DIST_REAL", dist_real)
     monkeypatch.setattr(main_module, "_client_gui_dist_exists", True)
-    return {"dist": dist, "index_html": index_html, "outside_secret": outside_secret}
-
-
-@pytest.fixture
-def legacy_dist_fixture(tmp_path, monkeypatch):
-    """Point the legacy (v0.1) dist at a throwaway fixture dir with a sibling secret file."""
-    dist = tmp_path / "client_dist"
-    dist.mkdir(parents=True)
-    index_html = "<html><body>legacy-spa-shell-sentinel</body></html>"
-    (dist / "index.html").write_text(index_html, encoding="utf-8")
-    outside_secret = tmp_path / "server.env"
-    outside_secret.write_text("SECRET_KEY=leaked-if-this-is-returned", encoding="utf-8")
-
-    dist_real = os.path.realpath(str(dist))
-    monkeypatch.setattr(main_module, "_CLIENT_DIST", str(dist))
-    monkeypatch.setattr(main_module, "_CLIENT_DIST_REAL", dist_real)
-    monkeypatch.setattr(main_module, "_client_dist_exists", True)
     return {"dist": dist, "index_html": index_html, "outside_secret": outside_secret}
 
 
@@ -163,11 +121,10 @@ def test_app_catch_all_rejects_encoded_traversal_outside_dist(app_dist_fixture):
     assert resp.text == app_dist_fixture["index_html"]
 
 
-def test_app_catch_all_404s_cleanly_on_a_docker_fallback_empty_dist(tmp_path, monkeypatch):
-    """Mirrors the Dockerfile's client_gui build-failure fallback: the stage still
-    creates client_gui/dist (`mkdir -p dist`) so the runtime stage's COPY doesn't fail,
-    but it has no index.html. /app must 404 like a genuinely-absent build, not error
-    trying to FileResponse a file that was never written."""
+def test_app_catch_all_404s_cleanly_on_an_empty_dist(tmp_path, monkeypatch):
+    """A client_gui/dist without an index.html (half-written or emptied build): /app must
+    404 like a genuinely-absent build, not error trying to FileResponse a file that was
+    never written."""
     dist = tmp_path / "client_gui_dist_empty"
     dist.mkdir(parents=True)
 
@@ -189,13 +146,3 @@ def test_app_catch_all_still_serves_a_real_file_inside_dist(app_dist_fixture):
 
     assert resp.status_code == 200
     assert resp.content == b"ICO-BYTES"
-
-
-def test_legacy_catch_all_rejects_encoded_traversal_outside_dist(legacy_dist_fixture):
-    client = TestClient(main_module.app)
-    rel = os.path.relpath(str(legacy_dist_fixture["outside_secret"]), start=str(legacy_dist_fixture["dist"]))
-    resp = client.get(f"/{_encode_dot_segments(rel)}")
-
-    assert resp.status_code == 200
-    assert "leaked-if-this-is-returned" not in resp.text
-    assert resp.text == legacy_dist_fixture["index_html"]

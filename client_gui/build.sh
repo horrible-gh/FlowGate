@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Build the FlowGate v0.2 client into client_gui/dist (single SPA, base=/app/).
-# Mirrors client/build.sh: the staging server serves the resulting dist/ as static
-# files on the same origin (server/routers/main.py), so the client talks to the API
-# via a relative base URL.
+# Build the FlowGate client into client_gui/dist (base=/app/): index.html is the /app SPA and
+# login.html the sign-in page served at / and /login. The server serves the resulting dist/
+# as static files on the same origin (server/routers/main.py), so the client talks to the
+# API via a relative base URL.
 #
 # IMPORTANT: client_gui/.env holds a dev machine's API URL. This script writes
 # .env.production.local (Vite's highest-precedence env file) so the build does

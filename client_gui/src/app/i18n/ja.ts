@@ -258,7 +258,6 @@ export default {
     search_aria: '検索 (準備中)',
     search_unavailable: '検索はまだ準備中です。',
     notifications_aria: '通知 (準備中)',
-    switch_aria: 'GUI 切り替え',
     user_role_admin: '管理者',
     user_role_member: 'ユーザー',
   },
@@ -2168,7 +2167,6 @@ export default {
   placeholder: {
     badge: '準備中',
     body: 'この画面は FlowGate v0.2 ではまだ実装されていません。',
-    legacy_hint: '現在この機能が必要な場合は、上部の [{label}] ボタンから v0.1 画面をご利用ください。',
     back: 'ダッシュボードに戻る',
   },
   not_found: {

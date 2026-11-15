@@ -4,7 +4,7 @@
  * TIMEOUT_SEC). Under the 30s default the browser gave up first on a CLI model, the error was
  * swallowed and the chat kept its provisional title on screen. Asserted through the real
  * axios instance (a stub adapter captures the config the interceptor produced), as
- * client/tests/shared/apiGitApprovalTimeout.0607.spec.ts does.
+ * tests/shared/apiGitApprovalTimeout.0607.spec.ts does.
  */
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import type { InternalAxiosRequestConfig } from 'axios'

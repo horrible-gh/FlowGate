@@ -70,7 +70,7 @@ await viteMod.build({
   resolve: {
     preserveSymlinks: true,
     alias: {
-      '@shared': resolve(cwd, '../client/shared'),
+      '@shared': resolve(cwd, 'src/shared'),
       '@': resolve(cwd, 'src'),
       vue: pkgDir('vue'),
       'vue-i18n': pkgDir('vue-i18n'),

@@ -25,11 +25,6 @@
     </div>
 
     <div class="gui-user-area">
-      <!-- GUI generation switch (T0009 §2/§8): owned by the App Shell Topbar, not by any
-           route view, so every /app/* screen keeps the way back to v0.1. -->
-      <nav class="header-nav" :aria-label="t('gui.topbar.switch_aria')">
-        <GuiGenerationSwitch target="legacy" />
-      </nav>
       <IconButton
         class="gui-bell"
         size="sm"
@@ -55,7 +50,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
-import GuiGenerationSwitch from '@shared/GuiGenerationSwitch.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import IconButton from '@/components/ui/IconButton.vue'
 import Input from '@/components/ui/Input.vue'
@@ -213,35 +207,6 @@ const roleLabel = computed(() =>
   justify-content: flex-end;
   gap: 18px;
   padding: 0 28px 0 8px;
-}
-
-.header-nav {
-  display: flex;
-  align-items: center;
-}
-
-/* The shared switch button carries v0.1's `.hdr-btn` class, whose rules live in
-   client/shared/app.css — deliberately not loaded here (T0011 §11) — so the v0.2 look is
-   defined locally. */
-.header-nav :deep(.gui-switch-btn) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--fg2-line-strong);
-  border-radius: 16px;
-  background: rgba(12, 24, 38, 0.78);
-  color: #c7d5e6;
-  font-size: 12px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: 0.16s ease;
-}
-
-.header-nav :deep(.gui-switch-btn:hover) {
-  border-color: rgba(130, 170, 220, 0.45);
-  color: var(--fg2-text);
 }
 
 .gui-bell {

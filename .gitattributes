@@ -2,4 +2,4 @@
 *.service text eol=lf
 # 0608 T0005: a Windows text-mode conflict write turned these LF files CRLF (6132cf58)
 # and every later merge touching them became one whole-file conflict. Pin them to LF.
-client/shared/i18n/*.ts text eol=lf
+client_gui/src/shared/i18n/*.ts text eol=lf

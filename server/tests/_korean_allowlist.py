@@ -134,17 +134,6 @@ PROTECTED = [
         "tests": [],
     },
     {
-        "file": "client/src/main/stores/docTypeStore.ts",
-        "symbols": ["INSTRUCTION_SUFFIXES"],
-        "reason": (
-            "getSetName() strips N/T/TS document-name suffixes ('지시'/'指示'/' Instruction') "
-            "by literal match — out of this T's server-only scope (§1.3), registered here "
-            "for completeness per NR0008 §4 #9. No unit test currently pins it "
-            "(NR0008 §6 미해결 질문 1)."
-        ),
-        "tests": [],
-    },
-    {
         "file": "tests/test_mention_reduction_0372.py",
         "symbols": ["_HELP_HEADERS"],
         "reason": (

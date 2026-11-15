@@ -2117,19 +2117,21 @@ _VOID_HTML_ELEMENTS = {
 
 
 _FLOWGATE_REPO_ROOT = Path(__file__).resolve().parents[4]
-_FLOWGATE_CLIENT_DIR = _FLOWGATE_REPO_ROOT / "client"
+# flowgate.v02gui.0024: client_gui is FlowGate's only client (v0.1's client/ is gone); the
+# checker script and the compiler packages it imports live there.
+_FLOWGATE_CLIENT_DIR = _FLOWGATE_REPO_ROOT / "client_gui"
 _SYNTAX_CHECK_SCRIPT = _FLOWGATE_CLIENT_DIR / "scripts" / "git-review-syntax-check.mjs"
 _NODE_SYNTAX_CHECK_TIMEOUT_SEC = 20
 
 
 def _run_node_syntax_check(ext: str, text: str) -> Optional[dict]:
     """Real-parser syntax check for JS/TS/CSS/SCSS/Vue (D0006 §3.5 / L0007 §2.7):
-    shells out to ``client/scripts/git-review-syntax-check.mjs``, which parses
+    shells out to ``client_gui/scripts/git-review-syntax-check.mjs``, which parses
     ``text`` with the SAME compiler packages the client build already depends on
     (typescript's no-emit `transpileModule`, `@vue/compiler-sfc`, `postcss`,
     `@babel/parser`) — a real ECMAScript/TypeScript/Vue-SFC/CSS grammar check,
     not a delimiter-balance heuristic. Runs against THIS server's own
-    ``client/node_modules`` (``cwd=_FLOWGATE_CLIENT_DIR``), never the reviewed
+    ``client_gui/node_modules`` (``cwd=_FLOWGATE_CLIENT_DIR``), never the reviewed
     project's own checkout — ``text`` goes over stdin and nothing touches disk,
     so this works for any target project regardless of whether it has a JS
     toolchain of its own. Returns ``None`` on success, or

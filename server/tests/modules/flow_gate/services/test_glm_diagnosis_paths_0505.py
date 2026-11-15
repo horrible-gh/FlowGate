@@ -212,7 +212,7 @@ class TestTurnLimitExhausted:
 
 class TestUiLabels:
     def test_spawn_failed_and_no_output_are_different_labels(self):
-        ko_path = _SERVER_DIR.parent / "client" / "shared" / "i18n" / "ko.ts"
+        ko_path = _SERVER_DIR.parent / "client_gui" / "src" / "shared" / "i18n" / "ko.ts"
         text = ko_path.read_text(encoding="utf-8")
         assert "reason_spawn_failed: '기동 실패'" in text
         assert "reason_no_output: '결과물 없음'" in text

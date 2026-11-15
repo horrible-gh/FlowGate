@@ -10,9 +10,9 @@ const getStoredToken = (): string | null =>
  * the browser to the shared /login entry point with `next` set to the exact /app URL
  * that was requested, so a successful login can return here (T0005 §5).
  *
- * This reuses the SAME token-presence check client/src/main/router/index.ts already
- * uses for /main (window.__accessToken__ / sessionStorage 'fg_access_token') rather
- * than inventing a second auth-state convention.
+ * The token-presence check reads what the sign-in page (src/login) stores
+ * (window.__accessToken__ / sessionStorage 'fg_access_token') rather than inventing a
+ * second auth-state convention.
  */
 export function installAuthGuard(router: Router): void {
   router.beforeEach(() => {

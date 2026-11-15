@@ -261,7 +261,6 @@ export default {
     search_aria: '검색 (준비 중)',
     search_unavailable: '검색은 아직 준비 중입니다.',
     notifications_aria: '알림 (준비 중)',
-    switch_aria: 'GUI 전환',
     user_role_admin: '관리자',
     user_role_member: '사용자',
   },
@@ -2179,7 +2178,6 @@ export default {
   placeholder: {
     badge: '준비 중',
     body: '이 화면은 FlowGate v0.2에서 아직 구현되지 않았습니다.',
-    legacy_hint: '지금 이 기능이 필요하면 상단의 [{label}] 버튼으로 v0.1 화면을 사용하세요.',
     back: '대시보드로 돌아가기',
   },
   not_found: {
