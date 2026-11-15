@@ -681,14 +681,16 @@ export async function fetchRun(runId: string): Promise<ChatRunState> {
       finished_at?: string | null; fallback_history?: unknown; succeeded?: boolean | null; stop_code?: string | null;
       api_turns_used?: number | null; provider_id?: string | null;
       started_at?: string | null; provider?: { id?: unknown; name?: unknown } | null; provider_name?: string | null;
-      requested_provider_id?: string | null; source_access?: string | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
+      requested_provider_id?: string | null; source_access?: string | null; command_access?: string | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
   )
   const endReason = data?.end_reason ?? null
   const failure = endReason === 'all_providers_failed' ? runFailure(data?.fallback_history) : null
   // flowgate.v02test.0024 D: a live detail names its AI in `provider` (null until it spawned one — then the pinned
   // `requested_provider_id`), a finished one in `provider_id` / `provider_name`.
   const live = data?.provider && typeof data.provider === 'object' ? data.provider : null
-  const sourceAccess = data?.source_access === 'read' || data?.source_access === 'read_write' ? data.source_access : null
+  // flowgate.v02gui.0026: an execute-mode run keeps `source_access=read` and says `command_access=execute`.
+  const sourceAccess = data?.source_access === 'read' && data?.command_access === 'execute' ? 'execute'
+    : data?.source_access === 'read' || data?.source_access === 'read_write' ? data.source_access : null
   return {
     runId: textOrNull(data?.run_id) ?? runId,
     status: data?.status === 'finished' ? 'finished' :

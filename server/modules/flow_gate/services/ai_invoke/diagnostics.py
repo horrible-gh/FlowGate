@@ -186,6 +186,7 @@ def get_run_detail(run_id: str) -> dict:
     payload["project_id"] = project_id
     payload["succeeded"] = ai_run_succeeded(payload)
     payload["source_access"] = chat_source_access(token_id)
+    payload["command_access"] = chat_command_access(token_id)
     payload["doc_title"] = None
     if payload.get("doc_ref"):
         try:
@@ -205,6 +206,25 @@ def chat_source_access(token_id: Optional[str]) -> Optional[str]:
     button state. ``read`` / ``read_write`` for a chat token; None for any other run, for a
     token row that is gone, or when the lookup fails -- never a guess.
     """
+    token = _chat_token(token_id)
+    value = token.get("source_access") if token else None
+    return value if value in ("read", "read_write") else None
+
+
+def chat_command_access(token_id: Optional[str]) -> Optional[str]:
+    """flowgate.v02gui.0026 (0004-CH): ``execute`` when a chat run got the execute mode, else None.
+
+    An execute-mode token keeps ``source_access="read"`` and carries ``command_access="execute"``
+    (token_service), so ``source_access`` alone made the run line say "read". Any other token,
+    a token row that is gone or a failed lookup is None -- never a guess.
+    """
+    token = _chat_token(token_id)
+    if not token or token.get("source_access") != "read":
+        return None
+    return "execute" if token.get("command_access") == "execute" else None
+
+
+def _chat_token(token_id: Optional[str]) -> Optional[dict]:
     if not token_id:
         return None
     try:
@@ -214,10 +234,7 @@ def chat_source_access(token_id: Optional[str]) -> Optional[str]:
     except Exception:
         logger.debug("chat source access lookup skipped", exc_info=True)
         return None
-    if not token or token.get("action_scope") != "chat":
-        return None
-    value = token.get("source_access")
-    return value if value in ("read", "read_write") else None
+    return token if token and token.get("action_scope") == "chat" else None
 
 
 def _persisted_register_failures(run_id: str) -> list:

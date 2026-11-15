@@ -153,11 +153,13 @@
     v-else
     ref="rootEl"
     class="tl-status"
-    :class="`tl-status--${activity.tone}`"
+    :class="[`tl-status--${activity.tone}`, { 'tl-status--running': running }]"
     data-test="tl-status"
     :data-code="activity.code ?? undefined"
     role="status"
   >
+    <!-- flowgate.v02gui.0026: the run in progress looks like the question policy conversation's "AI가 답하는 중…". -->
+    <span v-if="running" class="tl-dots" data-test="tl-running-dots" aria-hidden="true"><i /><i /><i /></span>
     <span class="tl-status-text">{{ statusText }}</span>
     <span v-if="activity.createdAt" class="tl-status-time" :title="activity.createdAt">{{ formatTimelineTime(activity.createdAt) }}</span>
     <!-- flowgate.v02test.0024 C: a warning / error line copies its whole text (the wording and the server detail). -->
@@ -277,12 +279,14 @@ const commandReason = computed(() => {
   return ''
 })
 
+const running = computed(() => props.activity.kind === 'status' && props.activity.code === 'run_running')
 const statusText = computed(() => {
   const a = props.activity
   if (a.kind !== 'status') return ''
   // flowgate.v02test.0024 D: the run in progress line — which AI runs and with which access, each once it is known.
   if (a.code === 'run_running') {
     const access = a.run?.access === 'read_write' ? t('gui.conversation.composer.source.edit')
+      : a.run?.access === 'execute' ? t('gui.conversation.composer.source.execute')
       : a.run?.access === 'read' ? t('gui.conversation.composer.source.read_only') : ''
     return [t('gui.conversation.status.run_running'), a.run?.providerName, access].filter(Boolean).join(' · ')
   }
@@ -683,6 +687,45 @@ async function copyError(): Promise<void> {
 .tl-status-text {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* flowgate.v02gui.0026: same look as the question policy conversation (QuestionPolicyPanel .qp-thinking / .qp-dots). */
+.tl-status--running {
+  align-self: flex-start;
+  padding: 2px 4px;
+  border-color: transparent;
+  font-size: 11px;
+}
+
+.tl-dots {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 3px;
+}
+
+.tl-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--fg2-violet, currentColor);
+  animation: tl-blink 1.2s infinite ease-in-out;
+}
+
+.tl-dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.tl-dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes tl-blink {
+  0%, 80%, 100% { opacity: 0.25; }
+  40% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tl-dots i { animation: none; opacity: 0.6; }
 }
 
 .tl-status-time {

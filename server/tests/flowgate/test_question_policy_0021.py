@@ -141,7 +141,8 @@ def test_assistant_asks_once_more_before_failing_0004_ch(monkeypatch):
     assistant._worker("r", "u1", {}, "prompt")
     assert assistant.result("u1", "r")["reply"]["message"] == "ok"
     assert prompts[0] == "prompt" and assistant.RETRY_NOTES["reply_invalid"] in prompts[1]
-    answers = iter(["not json", "still not json"])
+    # 0026 (0004-CH): three attempts in all before a failure reaches the screen.
+    answers = iter(["not json", "still not json", "again not json"])
     assistant._requests["r"] = {"user_id": "u1", "status": "running"}
     assistant._worker("r", "u1", {}, "prompt")
     assert assistant.result("u1", "r") == {"status": "failed", "error_code": "reply_invalid"}
@@ -149,7 +150,45 @@ def test_assistant_asks_once_more_before_failing_0004_ch(monkeypatch):
     monkeypatch.setattr(assistant, "_execute", lambda *a: calls.append(1) or (_ for _ in ()).throw(ValueError("timeout")))
     assistant._requests["r"] = {"user_id": "u1", "status": "running"}
     assistant._worker("r", "u1", {}, "prompt")
-    assert assistant.result("u1", "r")["error_code"] == "timeout" and len(calls) == 1
+    assert assistant.result("u1", "r")["error_code"] == "timeout" and len(calls) == 2
+
+
+def _failing_then(codes, final):
+    """An _execute that raises each code in turn, then answers `final`; it records every prompt."""
+    seen, pending = [], list(codes)
+
+    def run(provider, text, *a):
+        seen.append(text)
+        if pending:
+            raise ValueError(pending.pop(0))
+        return final
+    return run, seen
+
+
+def test_assistant_retries_transient_failures_silently_0026(monkeypatch):
+    ok = '{"message":"ok","choices":[],"policy":null}'
+    for codes in (["execution_failed", "remote_execution_failed"], ["timeout", "transport_failed"],
+                  ["reply_invalid", "execution_failed"]):
+        run, seen = _failing_then(codes, ok)
+        monkeypatch.setattr(assistant, "_execute", run)
+        monkeypatch.setattr(assistant, "_requests", {"r": {"user_id": "u1", "status": "running"}})
+        assistant._worker("r", "u1", {}, "prompt")
+        assert assistant.result("u1", "r")["reply"]["message"] == "ok" and len(seen) == 3
+    # A format note, once given, stays on the later attempts.
+    assert assistant.RETRY_NOTES["reply_invalid"] in seen[1] and assistant.RETRY_NOTES["reply_invalid"] in seen[2]
+    # An AI that is off or misconfigured is not asked again.
+    for code in ("provider_unavailable", "remote_agent_offline", "provider_launch_failed"):
+        run, seen = _failing_then([code], ok)
+        monkeypatch.setattr(assistant, "_execute", run)
+        monkeypatch.setattr(assistant, "_requests", {"r": {"user_id": "u1", "status": "running"}})
+        assistant._worker("r", "u1", {}, "prompt")
+        assert assistant.result("u1", "r") == {"status": "failed", "error_code": code} and len(seen) == 1
+
+
+def test_assistant_prompt_assesses_the_user_0026():
+    text = assistant.prompt("", [], "ko")
+    assert "sample questions" in text and "assessment" in text
+    assert "run the assessment again" in text and "Reply in Korean" in text
 
 
 def test_assistant_explicit_selection_owner_and_no_auto_save(monkeypatch):

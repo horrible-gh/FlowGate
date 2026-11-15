@@ -30,7 +30,12 @@ class Reply(BaseModel):
     policy: str | None = Field(default=None, max_length=4000)
 
 
-# 0021 (0004-CH): one more request to the same AI before the user sees a failure.
+# 0021 (0004-CH): ask the same AI again before the user sees a failure.
+# 0026 (0004-CH): up to two more times (three in all), also after a timeout or a transient run failure; a
+# second timeout ends it so the user never waits more than two TIMEOUTs on one reply. An AI that is off or
+# misconfigured (provider_unavailable, remote_agent_*, provider_launch_failed) is not asked again.
+MAX_ATTEMPTS = 3
+RETRY_SILENT = {"timeout", "execution_failed", "transport_failed", "remote_execution_failed"}
 RETRY_NOTES = {
     "reply_invalid": "Your previous reply could not be read. Reply again with ONLY the JSON object described "
                      "above: no text, heading or code fence before or after it.",
@@ -51,7 +56,22 @@ def prompt(body, messages, locale):
             "Ask ONE question at a time in at most two short sentences, with 2-4 short choices and one "
             "recommendation where helpful. The screen shows the choices as buttons: never repeat them in message. "
             "Accept free-form answers. Existing policy is provided: when editing, ask only what should change. "
-            "Do not invent user preferences. Once understood, put a one-sentence summary in message and the "
+            # 0026 (0004-CH): the conversation also assesses which questions this user can answer.
+            "This conversation also assesses the user: between the policy questions, show 3-5 sample questions "
+            "that an AI working on a task might really ask, one per turn and each of a different kind (an "
+            "implementation detail such as an index or a library, a choice between two visible screen results, a "
+            "speed the user would notice, an infrastructure or permission need, deleting production data). Put the "
+            "sample question itself in message, e.g. 'If the working AI asked you this, could you answer? - ...', "
+            "with choices such as answer right away / could decide if shown the result / do not know, let the AI "
+            "decide; the user may also simply answer it. From the answers judge which kinds of question the user "
+            "can answer, which they cannot (the AI should decide those) and which must always be asked, and in "
+            "which form questions get answered. Put that judgement into the policy as bullets under the matching "
+            "headings with a short reason, e.g. 'decide on its own: index or library choices (the user cannot "
+            "judge these)' or 'ask with the visible result as A/B'. When there is no existing policy the "
+            "assessment is part of the conversation. When a policy exists, ask once in the first question whether "
+            "to run the assessment again, as a choice, and run it only if the user agrees. "
+            "Do not invent user preferences. Once understood, put a one-sentence summary in message (with the "
+            "assessment in one more sentence when it was run) and the "
             "complete policy draft in policy for the user to confirm; do not repeat the draft in message. "
             "The user alone confirms and saves. Write the policy as Markdown bullet lists under three headings, "
             "in this order: what the AI decides on its own, what the AI asks the user, exceptions. "
@@ -113,13 +133,17 @@ def parse_reply(text):
 
 
 def _ask(provider, text, user_id, request_id):
-    try:
-        return parse_reply(_execute(provider, text, user_id, request_id))
-    except ValueError as exc:
-        note = RETRY_NOTES.get(str(exc))
-        if note is None:
-            raise
-    return parse_reply(_execute(provider, text + "\n" + note, user_id, request_id))
+    note, timeouts = "", 0
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            return parse_reply(_execute(provider, text + note, user_id, request_id))
+        except ValueError as exc:
+            code = str(exc)
+            timeouts += code == "timeout"
+            retriable = code in RETRY_NOTES or code in RETRY_SILENT
+            if not retriable or attempt == MAX_ATTEMPTS or timeouts > 1:
+                raise
+            note = "\n" + RETRY_NOTES[code] if code in RETRY_NOTES else note
 
 
 def _remote(provider, text, user_id, request_id):

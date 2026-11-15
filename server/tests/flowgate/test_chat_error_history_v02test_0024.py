@@ -164,13 +164,28 @@ def test_the_application_mounts_the_record_route_with_its_reason():
 
 # ── D: the applied read/edit access of a chat run ────────────────────────────
 
-def _token(token_id, *, action_scope="chat", source_access="read_write"):
+def _token(token_id, *, action_scope="chat", source_access="read_write", command_access=None):
     from modules.flow_gate.db import tokens
 
     tokens.create({"token_id": token_id, "hash": f"hash-{token_id}", "pepper_id": "test", "project": PROJECT,
                    "group_id": GROUP, "doc_ref": CHAT_DOC, "action_scope": action_scope, "issued_to": USER,
-                   "source_access": source_access, "created_at": "2026-01-01T00:00:00+00:00",
-                   "expires_at": "2099-01-01T00:00:00+00:00"})
+                   "source_access": source_access, "command_access": command_access,
+                   "created_at": "2026-01-01T00:00:00+00:00", "expires_at": "2099-01-01T00:00:00+00:00"})
+
+
+def test_chat_command_access_names_the_execute_mode_0026(env):
+    # flowgate.v02gui.0026 (0004-CH): an execute-mode run is "read" + "execute", not just "read".
+    _token("tok_exec", source_access="read", command_access="execute")
+    _token("tok_read", source_access="read")
+    _token("tok_edit", source_access="read_write")
+    _token("tok_review_exec", action_scope="review", source_access="read", command_access="execute")
+    assert diagnostics.chat_source_access("tok_exec") == "read"
+    assert diagnostics.chat_command_access("tok_exec") == "execute"
+    assert diagnostics.chat_command_access("tok_read") is None
+    assert diagnostics.chat_command_access("tok_edit") is None
+    assert diagnostics.chat_command_access("tok_review_exec") is None
+    assert diagnostics.chat_command_access("tok_missing") is None
+    assert diagnostics.chat_command_access(None) is None
 
 
 def test_chat_source_access_reads_the_token_row(env):

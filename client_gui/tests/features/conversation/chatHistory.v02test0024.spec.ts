@@ -123,9 +123,14 @@ describe('D: the run in progress line', () => {
   it('the line reads AI · name · access, each once it is known', async () => {
     const line = (run: StatusActivity['run']): StatusActivity => ({ kind: 'status', id: 'x', createdAt: null, tone: 'info', code: 'run_running', text: null, run })
     const mounted = mount(TimelineActivity, { props: { activity: line({ providerName: 'Claude Opus 5.5 (AG)', access: 'read_write' }) }, global: { plugins: [i18n] } })
-    expect(mounted.get('[data-test="tl-status"]').text()).toBe('AI 호출 중 · Claude Opus 5.5 (AG) · 편집')
+    expect(mounted.get('[data-test="tl-status"]').text()).toBe('AI가 답하는 중… · Claude Opus 5.5 (AG) · 편집')
+    // flowgate.v02gui.0026: the question policy conversation's blinking dots, and the execute mode by its own name.
+    expect(mounted.findAll('[data-test="tl-running-dots"] i')).toHaveLength(3)
+    expect(mounted.get('[data-test="tl-status"]').classes()).toContain('tl-status--running')
+    await mounted.setProps({ activity: line({ providerName: 'Claude Opus 5.5 (AG)', access: 'execute' }) })
+    expect(mounted.get('[data-test="tl-status"]').text()).toBe('AI가 답하는 중… · Claude Opus 5.5 (AG) · 실행')
     await mounted.setProps({ activity: line({ providerName: null, access: 'read' }) })
-    expect(mounted.get('[data-test="tl-status"]').text()).toBe('AI 호출 중 · 읽기')
+    expect(mounted.get('[data-test="tl-status"]').text()).toBe('AI가 답하는 중… · 읽기')
     // Not an error: nothing to copy.
     expect(mounted.find('[data-test="tl-status-copy"]').exists()).toBe(false)
     mounted.unmount()
