@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field
 from modules.flow_gate.settings import ai_settings_service as settings
 from modules.flow_gate.services import ai_connection_test_service as connection
 from modules.flow_gate.services.ai_invoke import runtime, provider_remote, provider_cli
@@ -20,16 +20,23 @@ _requests = {}
 
 
 class Choice(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     label: str = Field(min_length=1, max_length=300)
     recommended: bool = False
 
 
 class Reply(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    message: str = Field(min_length=1, max_length=4000)
+    message: str = Field(default="", max_length=4000)
     choices: list[Choice] = Field(default_factory=list, max_length=4)
     policy: str | None = Field(default=None, max_length=4000)
+
+
+# 0021 (0004-CH): one more request to the same AI before the user sees a failure.
+RETRY_NOTES = {
+    "reply_invalid": "Your previous reply could not be read. Reply again with ONLY the JSON object described "
+                     "above: no text, heading or code fence before or after it.",
+    "policy_too_long": "Your previous policy draft was longer than 4000 characters. Reply again in the same JSON "
+                       "shape with a shorter policy (under 3000 characters).",
+}
 
 
 def providers(user_id):
@@ -41,25 +48,78 @@ def prompt(body, messages, locale):
     language = {"ko": "Korean", "ja": "Japanese", "en": "English"}.get(locale, "Korean")
     return ("Help the user define when an AI should ask them questions versus decide autonomously. "
             "This is a conversation only: do not use tools, read files, run commands or change anything. "
-            "Ask ONE short question at a time with 2-4 choices and one recommendation where helpful. "
+            "Ask ONE question at a time in at most two short sentences, with 2-4 short choices and one "
+            "recommendation where helpful. The screen shows the choices as buttons: never repeat them in message. "
             "Accept free-form answers. Existing policy is provided: when editing, ask only what should change. "
-            "Do not invent user preferences. Once understood, explain your understanding and return the complete "
-            "policy draft for the user to confirm. The user alone confirms and saves. "
+            "Do not invent user preferences. Once understood, put a one-sentence summary in message and the "
+            "complete policy draft in policy for the user to confirm; do not repeat the draft in message. "
+            "The user alone confirms and saves. Write the policy as Markdown bullet lists under three headings, "
+            "in this order: what the AI decides on its own, what the AI asks the user, exceptions. "
+            "Keep each bullet to one line. "
             "Do not repeatedly ask questions already answered. Reply in " + language + ". "
             "Return ONLY JSON: {message: string, choices: [{label: string, recommended: boolean}], "
-            "policy: null or complete policy text up to 4000 characters}. Keys must be quoted. "
+            "policy: null or complete policy text up to 3000 characters}. Keys must be quoted. "
             "Use policy=null while asking; nonempty policy when ready to confirm.\n" +
             json.dumps({"existing_policy": body, "conversation": messages}, ensure_ascii=False))
 
 
+def _json_objects(text):
+    """Every JSON object in the text, outermost first: a sentence or a code fence around it is ignored."""
+    decoder = json.JSONDecoder()
+    index = text.find("{")
+    while index != -1:
+        try:
+            value, _ = decoder.raw_decode(text, index)
+        except ValueError:
+            value = None
+        if isinstance(value, dict):
+            yield value
+        index = text.find("{", index + 1)
+
+
+def _choices(raw):
+    choices = []
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, str):
+            item = {"label": item}
+        label = item.get("label") if isinstance(item, dict) else None
+        if not isinstance(label, str) or not label.strip():
+            continue
+        recommended = item.get("recommended") in (True, "true")
+        choices.append({"label": label.strip()[:300], "recommended": recommended})
+        if len(choices) == 4:
+            break
+    return choices
+
+
 def parse_reply(text):
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-    reply = Reply.model_validate_json(text)
-    if reply.policy is not None and not reply.policy.strip():
-        raise ValueError("empty policy")
-    return reply.model_dump()
+    """Reads the AI's answer leniently: unknown keys are dropped, choices past four are cut and a blank policy
+    means it is still asking. Only an answer without any readable object or one whose policy is too long to save
+    fails (reply_invalid / policy_too_long), and the worker asks the same AI once more first."""
+    for data in _json_objects(text or ""):
+        if "message" not in data and "policy" not in data:
+            continue
+        message = data.get("message")
+        message = message.strip()[:4000] if isinstance(message, str) else ""
+        policy = data.get("policy")
+        policy = policy.strip() if isinstance(policy, str) and policy.strip() else None
+        if not message and not policy:
+            continue
+        if policy is not None and len(policy) > 4000:
+            raise ValueError("policy_too_long")
+        return Reply.model_validate({"message": message, "choices": _choices(data.get("choices")),
+                                     "policy": policy}).model_dump()
+    raise ValueError("reply_invalid")
+
+
+def _ask(provider, text, user_id, request_id):
+    try:
+        return parse_reply(_execute(provider, text, user_id, request_id))
+    except ValueError as exc:
+        note = RETRY_NOTES.get(str(exc))
+        if note is None:
+            raise
+    return parse_reply(_execute(provider, text + "\n" + note, user_id, request_id))
 
 
 def _remote(provider, text, user_id, request_id):
@@ -126,14 +186,14 @@ def _execute(provider, text, user_id, request_id):
 
 def _worker(request_id, user_id, provider, text):
     try:
-        reply = parse_reply(_execute(provider, text, user_id, request_id))
-        result = {"status": "completed", "reply": reply}
+        result = {"status": "completed", "reply": _ask(provider, text, user_id, request_id)}
     except Exception as exc:
         # Transport diagnostics can contain prompts or credentials. Return a code only.
         code = str(exc) if isinstance(exc, ValueError) and str(exc) in {
             "provider_unavailable", "remote_agent_offline", "remote_agent_unavailable",
-            "remote_agent_workdir_unset", "timeout", "remote_execution_failed",
-            "transport_failed", "provider_launch_failed", "execution_failed"} else "policy_assistant_failed"
+            "remote_agent_workdir_unset", "remote_agent_workdir_unverified", "timeout", "remote_execution_failed",
+            "transport_failed", "provider_launch_failed", "execution_failed", "reply_invalid",
+            "policy_too_long"} else "policy_assistant_failed"
         result = {"status": "failed", "error_code": code}
     with _lock:
         _requests[request_id].update(result, ended=time.monotonic())

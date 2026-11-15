@@ -113,9 +113,43 @@ def test_search_only_answered_project_scoped_literal_and_paged(store):
 def test_assistant_validates_draft_and_keeps_existing_policy_in_context():
     reply = assistant.parse_reply(json.dumps({"message": "이렇게 이해했습니다", "choices": [], "policy": "UI만 질문"}))
     assert reply["policy"] == "UI만 질문"
-    with pytest.raises(ValueError):
-        assistant.parse_reply('{"message":"ok","policy":""}')
+    assert assistant.parse_reply('{"message":"ok","policy":""}')["policy"] is None
+    with pytest.raises(ValueError, match="reply_invalid"):
+        assistant.parse_reply('{"message":"","policy":"  "}')
     assert "existing" in assistant.prompt("existing", [{"role": "user", "content": "change UI"}], "en")
+
+
+def test_assistant_reads_imperfect_replies_0004_ch():
+    # A sentence and a code fence around the object, an unknown key, plain-string and extra choices.
+    text = ('다음 질문입니다.\n```json\n{"message": "어디까지 맡길까요?", "note": "x", '
+            '"choices": ["A", {"label": "B", "recommended": true}, "C", "D", "E"], "policy": null}\n```')
+    reply = assistant.parse_reply(text)
+    assert reply["message"] == "어디까지 맡길까요?" and reply["policy"] is None
+    assert [c["label"] for c in reply["choices"]] == ["A", "B", "C", "D"]
+    assert [c["recommended"] for c in reply["choices"]] == [False, True, False, False]
+    with pytest.raises(ValueError, match="reply_invalid"):
+        assistant.parse_reply("I could not do that.")
+    with pytest.raises(ValueError, match="policy_too_long"):
+        assistant.parse_reply(json.dumps({"message": "ok", "policy": "x" * 4001}))
+
+
+def test_assistant_asks_once_more_before_failing_0004_ch(monkeypatch):
+    prompts = []
+    answers = iter(["not json", '{"message":"ok","choices":[],"policy":null}'])
+    monkeypatch.setattr(assistant, "_execute", lambda provider, text, *a: prompts.append(text) or next(answers))
+    monkeypatch.setattr(assistant, "_requests", {"r": {"user_id": "u1", "status": "running"}})
+    assistant._worker("r", "u1", {}, "prompt")
+    assert assistant.result("u1", "r")["reply"]["message"] == "ok"
+    assert prompts[0] == "prompt" and assistant.RETRY_NOTES["reply_invalid"] in prompts[1]
+    answers = iter(["not json", "still not json"])
+    assistant._requests["r"] = {"user_id": "u1", "status": "running"}
+    assistant._worker("r", "u1", {}, "prompt")
+    assert assistant.result("u1", "r") == {"status": "failed", "error_code": "reply_invalid"}
+    calls = []
+    monkeypatch.setattr(assistant, "_execute", lambda *a: calls.append(1) or (_ for _ in ()).throw(ValueError("timeout")))
+    assistant._requests["r"] = {"user_id": "u1", "status": "running"}
+    assistant._worker("r", "u1", {}, "prompt")
+    assert assistant.result("u1", "r")["error_code"] == "timeout" and len(calls) == 1
 
 
 def test_assistant_explicit_selection_owner_and_no_auto_save(monkeypatch):
