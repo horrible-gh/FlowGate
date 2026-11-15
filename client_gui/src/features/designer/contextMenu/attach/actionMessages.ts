@@ -3,7 +3,7 @@
 // vue-i18n scope that follows the app locale, as the menu's own strings are (contextMenu/messages.ts).
 
 const ko = {
-  close: '닫기', cancel: '취소', target: '대상', id: '식별자', location: '위치', root: '루트 폴더', flow: '플로우',
+  close: '닫기', cancel: '취소', target: '대상', id: '식별자', location: '위치', root: '루트 폴더', flow: '플로우', group: '그룹',
   stale: '메뉴를 연 뒤 대상이 바뀌었거나 사라져 실행하지 않습니다.',
   rename: {
     groupTitle: '그룹 이름 변경', flowTitle: '플로우 이름 변경', name: '새 이름', submit: '이름 변경',
@@ -27,6 +27,11 @@ const ko = {
   dispose: {
     title: '플로우 삭제', submit: '삭제', reason: '삭제 사유', reasonRequired: '사유를 입력해야 삭제할 수 있습니다.',
     note: '목록에서 제거됩니다. 기록은 유지됩니다.',
+  },
+  archive: {
+    title: '그룹 아카이브', submit: '아카이브', note: '기록은 보존하고 기본 목록에서 숨깁니다.',
+    hint: '안의 플로우·문서·실행 기록·Git은 그대로 남습니다. "아카이브 포함"을 켜면 다시 보이고, 그룹 메뉴의 그룹 복원으로 되돌릴 수 있습니다.',
+    server: { already: '이미 아카이브된 그룹입니다.' },
   },
   create: {
     folderTitle: '새 폴더', fileTitle: '새 파일', name: '이름', submit: '만들기',
@@ -67,7 +72,7 @@ const ko = {
 type Messages = typeof ko
 
 const en: Messages = {
-  close: 'Close', cancel: 'Cancel', target: 'Target', id: 'Identifier', location: 'Location', root: 'Root folder', flow: 'Flow',
+  close: 'Close', cancel: 'Cancel', target: 'Target', id: 'Identifier', location: 'Location', root: 'Root folder', flow: 'Flow', group: 'Group',
   stale: 'The target changed or is gone since the menu opened; nothing runs.',
   rename: {
     groupTitle: 'Rename group', flowTitle: 'Rename flow', name: 'New name', submit: 'Rename',
@@ -91,6 +96,11 @@ const en: Messages = {
   dispose: {
     title: 'Delete flow', submit: 'Delete', reason: 'Reason', reasonRequired: 'A reason is required to delete.',
     note: 'Removed from the list. Records are kept.',
+  },
+  archive: {
+    title: 'Archive group', submit: 'Archive', note: 'Records are kept; the group is hidden from the default list.',
+    hint: 'Its flows, documents, run history and Git stay as they are. Turn on "Include archived" to see it again, and use Restore group in its menu to bring it back.',
+    server: { already: 'This group is already archived.' },
   },
   create: {
     folderTitle: 'New folder', fileTitle: 'New file', name: 'Name', submit: 'Create',
@@ -129,7 +139,7 @@ const en: Messages = {
 }
 
 const ja: Messages = {
-  close: '閉じる', cancel: 'キャンセル', target: '対象', id: '識別子', location: '場所', root: 'ルートフォルダー', flow: 'フロー',
+  close: '閉じる', cancel: 'キャンセル', target: '対象', id: '識別子', location: '場所', root: 'ルートフォルダー', flow: 'フロー', group: 'グループ',
   stale: 'メニューを開いた後に対象が変わったか、なくなったため実行しません。',
   rename: {
     groupTitle: 'グループ名を変更', flowTitle: 'フロー名を変更', name: '新しい名前', submit: '名前を変更',
@@ -153,6 +163,11 @@ const ja: Messages = {
   dispose: {
     title: 'フローを削除', submit: '削除', reason: '削除理由', reasonRequired: '理由を入力すると削除できます。',
     note: '一覧から削除されます。記録は保持されます。',
+  },
+  archive: {
+    title: 'グループをアーカイブ', submit: 'アーカイブ', note: '記録は保持したまま、既定の一覧から非表示にします。',
+    hint: '中のフロー・文書・実行履歴・Git はそのまま残ります。「アーカイブを含める」をオンにすると再び表示され、グループメニューの「グループを復元」で元に戻せます。',
+    server: { already: 'すでにアーカイブ済みのグループです。' },
   },
   create: {
     folderTitle: '新規フォルダー', fileTitle: '新規ファイル', name: '名前', submit: '作成',

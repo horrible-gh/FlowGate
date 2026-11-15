@@ -6,12 +6,12 @@
 
 /** The 2-B commands and the dialog each opens (파일 다운로드 runs at once: no dialog). */
 export type MenuActionKind =
-  | 'group.rename' | 'flow.rename' | 'flow.delete'
+  | 'group.rename' | 'group.archive' | 'flow.rename' | 'flow.delete'
   | 'folder.newFolder' | 'folder.newFile' | 'folder.download' | 'folder.upload' | 'folder.delete'
   | 'file.download' | 'file.git.changes' | 'file.delete'
 
 export type MenuActionTarget =
-  | { readonly kind: 'group.rename'; readonly projectId: string; readonly groupId: string }
+  | { readonly kind: 'group.rename' | 'group.archive'; readonly projectId: string; readonly groupId: string }
   | { readonly kind: 'flow.rename' | 'flow.delete'; readonly projectId: string; readonly groupId: string; readonly flowId: string }
   | {
     readonly kind: 'folder.newFolder' | 'folder.newFile' | 'folder.download' | 'folder.upload' | 'folder.delete'
@@ -67,6 +67,12 @@ export interface DesignerMenuServerDeps {
   readonly flow: (projectId: string, flowId: string) => string | null
   /** `identifier` (v02gui.0012) is sent only when it changed; it renames the module key, so the Group's Flow ids change. */
   readonly renameGroup: (projectId: string, groupId: string, title: string, identifier?: string) => Promise<MenuActionResult>
+  /**
+   * v02gui.0027: a Group's display-only archive (the 그룹 아카이브 window) and restore (그룹 복원 runs at once). Its
+   * Flows, documents, runs and Git stay as they are. Absent: the Group menu shows neither item.
+   */
+  readonly archiveGroup?: (projectId: string, groupId: string) => Promise<MenuActionResult>
+  readonly restoreGroup?: (projectId: string, groupId: string) => Promise<MenuActionResult>
   readonly renameFlow: (projectId: string, groupId: string, flowId: string, title: string) => Promise<MenuActionResult>
   /** The existing dispose (DC) with its required reason. */
   readonly disposeFlow: (projectId: string, groupId: string, flowId: string, reason: string) => Promise<MenuActionResult>

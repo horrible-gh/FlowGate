@@ -1480,7 +1480,11 @@ async function attempt<T>(work: () => Promise<T>): Promise<MenuActionResult<T>> 
 }
 
 function explorerGroup(pid: string, groupId: string) {
-  return explorerProject(pid)?.groups.find((group) => group.id === groupId) ?? null
+  const shown = explorerProject(pid)?.groups.find((group) => group.id === groupId)
+  if (shown) return shown
+  // v02gui.0027: an archived Group is only in the "아카이브 포함" tree the Explorer may be showing.
+  const withArchived = projectStore.getCachedGroupTree(pid, false, true)
+  return (withArchived ? buildExplorerProject(withArchived, projectNodeId(pid))?.groups.find((group) => group.id === groupId) : null) ?? null
 }
 
 /**
@@ -1514,6 +1518,27 @@ function menuToast(message: string | (() => string), tone: 'success' | 'warning'
   toasts.value = [...toasts.value.slice(-2), { id: `menu-${toastSeq}`, text, tone, duration: 4000 }]
 }
 
+/** v02gui.0027: the Group's module key — the Explorer's, else from its tree node id (`module:{project}:{key}`). */
+function groupModuleName(pid: string, groupId: string): string | null {
+  const known = explorerGroup(pid, groupId)?.moduleName
+  if (known) return known
+  const prefix = `module:${pid}:`
+  return groupId.startsWith(prefix) && groupId.length > prefix.length ? groupId.slice(prefix.length) : null
+}
+
+/**
+ * v02gui.0027: a Group's display-only archive / restore through the store (which drops the Project's cached trees); the
+ * Explorer re-reads at once, other screens follow the server's group_view_refresh.
+ */
+async function changeGroupArchive(pid: string, groupId: string, archived: boolean): Promise<MenuActionResult> {
+  const moduleName = groupModuleName(pid, groupId)
+  if (!moduleName) return { ok: false, refusal: { reason: 'not_found', status: null, code: null } }
+  const result = await attempt(() => projectStore.setGroupArchived(pid, moduleName, archived))
+  if (!result.ok) return result
+  explorerRefreshToken.value += 1
+  return { ok: true, value: undefined }
+}
+
 const menuServer: DesignerMenuServerDeps = {
   group: (pid, groupId) => {
     const group = explorerGroup(pid, groupId)
@@ -1539,6 +1564,13 @@ const menuServer: DesignerMenuServerDeps = {
       explorerRefreshToken.value += 1
     }
     return result.ok ? { ok: true, value: undefined } : result
+  },
+  archiveGroup: (pid, groupId) => changeGroupArchive(pid, groupId, true),
+  // 그룹 복원 has no window: a refusal is said in a note.
+  restoreGroup: async (pid, groupId) => {
+    const result = await changeGroupArchive(pid, groupId, false)
+    if (!result.ok) menuToast(() => t('gui.designer.archive.group_restore_failed'), 'warning')
+    return result
   },
   renameFlow: async (pid, _groupId, flowId, title) => {
     const result = await attempt(() => projectStore.renameFlow(pid, flowId, title))

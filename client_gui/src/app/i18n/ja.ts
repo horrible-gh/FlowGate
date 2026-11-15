@@ -608,6 +608,7 @@ export default {
       already_archived: 'アーカイブ済みです。',
       unavailable: 'アーカイブ状態を確認できません。',
       failed: 'アーカイブ状態を変更できませんでした。',
+      group_restore_failed: 'グループを復元できませんでした。',
     },
     project_explorer: {
       title: 'プロジェクト',
@@ -620,6 +621,7 @@ export default {
       retry: '再試行',
       no_groups: 'グループがありません。',
       no_flows: 'フローがありません。',
+      group_menu: 'グループメニュー',
       no_results: '一致するプロジェクト・グループ・フローがありません。',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.

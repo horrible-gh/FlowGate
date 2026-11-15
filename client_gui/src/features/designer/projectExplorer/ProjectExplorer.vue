@@ -340,7 +340,7 @@ function onSelectFlow(flow: ExplorerFlow) {
 // flowgate.v02.0060 T#2: the Designer context menu's project tree side, provided by the Designer Shell; null elsewhere.
 type ContextRowRef =
   | { kind: 'project'; projectId: string }
-  | { kind: 'group'; projectId: string; groupId: string }
+  | { kind: 'group'; projectId: string; groupId: string; archived?: boolean }
   | { kind: 'flow'; projectId: string; groupId: string; flowId: string }
 interface ProjectContextMenu {
   project(event: MouseEvent, row: ContextRowRef, fallback?: HTMLElement | null, alive?: () => boolean): boolean
@@ -356,7 +356,10 @@ function rowInTree(row: ContextRowRef): boolean {
   return !!group && (row.kind === 'group' || group.flows.some((flow) => flow.id === row.flowId))
 }
 
-/** A right click on a row (the innermost row first): only the menu opens, nothing is selected or toggled. */
+/**
+ * A right click on a row (the innermost row first), or a Group's ⋯ button (v02gui.0027: the click event, anchored at
+ * the button): only the menu opens, nothing is selected or toggled.
+ */
 function onContext(event: MouseEvent, row: { kind: 'project' } | { kind: 'group'; group: ExplorerGroup } | { kind: 'flow'; flow: ExplorerFlow }) {
   const pid = projectId.value
   if (!contextMenu || !pid) return
@@ -364,7 +367,8 @@ function onContext(event: MouseEvent, row: { kind: 'project' } | { kind: 'group'
   const target: ContextRowRef = row.kind === 'project'
     ? { kind: 'project', projectId: pid }
     : row.kind === 'group'
-      ? { kind: 'group', projectId: pid, groupId: row.group.id }
+      // v02gui.0027: the Group's archive state as this row shows it (the menu offers 그룹 아카이브 or 그룹 복원).
+      ? { kind: 'group', projectId: pid, groupId: row.group.id, archived: !!row.group.archived }
       : { kind: 'flow', projectId: pid, groupId: row.flow.groupId, flowId: row.flow.id }
   // The menu checks the row against the tree while it is open and again right before a command runs.
   contextMenu.project(event, target, fallback, () => rowInTree(target))

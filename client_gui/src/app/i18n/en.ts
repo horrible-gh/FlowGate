@@ -608,6 +608,7 @@ export default {
       already_archived: 'This flow is already archived.',
       unavailable: 'Archive status is unavailable.',
       failed: 'Could not change archive status.',
+      group_restore_failed: 'Could not restore the group.',
     },
     project_explorer: {
       title: 'Project',
@@ -620,6 +621,7 @@ export default {
       retry: 'Retry',
       no_groups: 'No groups.',
       no_flows: 'No flows.',
+      group_menu: 'Group menu',
       no_results: 'No matching project, group or flow.',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.

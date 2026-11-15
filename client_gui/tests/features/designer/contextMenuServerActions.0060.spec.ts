@@ -235,7 +235,8 @@ describe('2-B in the Shell — 그룹 / 플로우 이름 변경 (display name on
     const w = await mountShell()
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현']])
+    // v02gui.0027: the Shell also connects 그룹 아카이브 (after its separator).
+    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현'], ['group.archive', 'false', '']])
     await choose('group.rename')
     expect(dialog()?.dataset.kind).toBe('group.rename')
     // 0004-CH seq 19/20: only the name and identifier inputs — no facts, note, hint, and no message before typing.
@@ -1094,5 +1095,100 @@ describe('2-B — the 수정 확인 line diff keeps how each line ends and folds
     const next = old.replace('l10\n', 'L10\n')
     const rows = diffRows(lineDiff(old, next)).map((row) => (row.kind === 'gap' ? `gap${row.count}` : row.kind))
     expect(rows).toEqual(['gap7', 'context', 'context', 'context', 'del', 'add', 'context', 'context', 'context', 'gap6'])
+  })
+})
+
+// ── v02gui.0027: 그룹 아카이브 / 복원 (display-only Group archive) ─────────────────────────────────────────
+
+describe('v02gui.0027 in the Shell — 그룹 아카이브 / 그룹 복원 from the ⋯ button and the right-click menu', () => {
+  /** The server's tree: the "ui" Group (with its Flows) only in an include_archived read while it is archived. */
+  let uiArchived = false
+  function serveArchive() {
+    const base = getRequest.getMockImplementation()!
+    getRequest.mockImplementation(async (url: string, params: Record<string, unknown> = {}) => {
+      if (/^\/api\/v1\/projects\/p\/groups\/tree$/.test(url)) {
+        const inUi = (node: Record<string, unknown>) => node.id === 'module:p:ui' || node.parent_id === 'module:p:ui'
+        const nodes = !uiArchived ? TREE
+          : params.include_archived === 'true'
+            ? TREE.map((node) => (node.id === 'module:p:ui' ? { ...node, archived: true, archived_at: '2026-11-15T00:00:00Z', archived_by: 'alice' } : node))
+            : TREE.filter((node) => !inUi(node))
+        return { data: { data: { nodes } } }
+      }
+      return base(url, params)
+    })
+    postRequest.mockImplementation(async (url: string) => {
+      const hit = /^\/api\/v1\/projects\/p\/modules\/ui\/(archive|restore)$/.exec(url)
+      if (!hit) throw new Error(`unexpected POST ${url}`)
+      uiArchived = hit[1] === 'archive'
+      return { data: { ok: true, name: 'ui', archived: uiArchived, archived_at: uiArchived ? '2026-11-15T00:00:00Z' : null } }
+    })
+  }
+  beforeEach(() => { uiArchived = false })
+  const menuButton = (w: VueWrapper<any>, label: string) =>
+    explorerRow(w, label).find('[data-test="project-explorer-group-menu"]').element as HTMLButtonElement
+
+  it('⋯ opens the same Group menu without selecting or toggling; 그룹 아카이브 asks, then hides the Group and its Flows', async () => {
+    serveArchive()
+    const w = await mountShell()
+    const ui = () => explorerRow(w, 'UI 개선')
+    expect(ui().attributes('aria-expanded')).toBe('false')
+    menuButton(w, 'UI 개선').click()
+    await settle()
+    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현'], ['group.archive', 'false', '']])
+    expect(item('group.archive').textContent).toContain('그룹 아카이브')
+    expect(ui().attributes('aria-expanded')).toBe('false')
+    expect(ui().attributes('aria-selected')).toBe('false')
+
+    await choose('group.archive')
+    expect(dialog()?.dataset.kind).toBe('group.archive')
+    expect(q('dma-group-archive-note')!.textContent).toBe('기록은 보존하고 기본 목록에서 숨깁니다.')
+    expect(q('dma-fact-target')!.textContent).toContain('UI 개선')
+    expect(mutations()).toEqual([])  // nothing runs before the confirmation
+    submitButton().click()
+    await settle()
+    expect(mutations()).toEqual([['POST', '/api/v1/projects/p/modules/ui/archive', {}]])
+    expect(dialog()).toBeNull()
+    expect(labels(w)).not.toContain('UI 개선')
+    expect(labels(w)).toContain('서버')
+  })
+
+  it('"아카이브 포함" shows the archived Group dimmed with 그룹 복원 (no window), which brings it back as it was', async () => {
+    serveArchive()
+    uiArchived = true
+    const w = await mountShell()
+    expect(labels(w)).not.toContain('UI 개선')
+    await w.get('[data-test="project-explorer-include-archived"]').setValue(true)
+    await settle()
+    expect(explorerRow(w, 'UI 개선').classes()).toContain('is-archived')
+    expect(explorerRow(w, '서버').classes()).not.toContain('is-archived')
+    // Its Flows are listed under it.
+    await doubleClick(w, 'UI 개선')
+    expect(labels(w)).toEqual(expect.arrayContaining(['Designer v0.2', 'Canvas']))
+
+    rightClick(explorerRow(w, 'UI 개선').element)
+    await settle()
+    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현'], ['group.restore', 'false', '']])
+    expect(item('group.restore').textContent).toContain('그룹 복원')
+    await choose('group.restore')
+    expect(dialog()).toBeNull()
+    expect(mutations()).toEqual([['POST', '/api/v1/projects/p/modules/ui/restore', {}]])
+    expect(explorerRow(w, 'UI 개선').classes()).not.toContain('is-archived')
+    await w.get('[data-test="project-explorer-include-archived"]').setValue(false)
+    await settle()
+    expect(labels(w)).toContain('UI 개선')
+  })
+
+  it('a refused archive stays in its window and nothing on screen changes', async () => {
+    serveArchive()
+    postRequest.mockImplementation(async () => { throw axiosError(409, { ok: false, code: 'already_archived', error_message: 'x' }) })
+    const w = await mountShell()
+    menuButton(w, 'UI 개선').click()
+    await settle()
+    await choose('group.archive')
+    submitButton().click()
+    await settle()
+    expect(q('dma-refusal-text')!.textContent).toBe('이미 아카이브된 그룹입니다.')
+    expect(dialog()?.dataset.kind).toBe('group.archive')
+    expect(labels(w)).toContain('UI 개선')
   })
 })
