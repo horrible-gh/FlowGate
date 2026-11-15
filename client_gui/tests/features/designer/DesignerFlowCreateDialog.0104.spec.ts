@@ -57,39 +57,120 @@ function open(props: Record<string, unknown> = {}) {
 const el = <T extends HTMLElement = HTMLElement>(name: string) => document.querySelector<T>(`[data-test="designer-flow-create-${name}"]`)!
 const disabled = () => el<HTMLButtonElement>('submit').disabled
 async function input(name: string, value: string) {
+  if (name === 'base') return pickBase(value)
   const node = el<HTMLInputElement>(name)
   node.value = value
   node.dispatchEvent(new Event(name === 'title' ? 'input' : 'change', { bubbles: true }))
   await flushPromises()
 }
 async function click(name: string) { el(name).click(); await flushPromises() }
+/** 0020 mock ①: the base branch is a listbox opened from its trigger, not a native select. */
+async function pickBase(value: string) {
+  if (!document.querySelector('[data-test="designer-flow-create-base-list"]')) el('base').click()
+  await flushPromises()
+  document.querySelector<HTMLElement>(`[data-test="designer-flow-create-base-option"][data-value="${value}"]`)!.click()
+  await flushPromises()
+}
 const optionReads = () => get.mock.calls.filter(([url]) => url.endsWith('/git/work-base-options'))
 
 describe('remote branch import', () => {
-  it.each([true, false])('allows selecting a muted remote branch and gates import by permission (%s)', async allowed => {
+  const remoteOptions = (allowed: boolean, imported: () => boolean) => async (url: string) => url.endsWith('/groups/tree') ? tree('p') : {
+    data: { git_enabled: true, base_branch: 'main', can_import: allowed, branches: [
+      { name: 'main', is_project_base: true, remote_only: false },
+      { name: 'feature/remote', is_project_base: false, remote_only: !imported() },
+    ] } }
+  const importButton = () => document.querySelector<HTMLButtonElement>('[data-test="designer-flow-import-branch"]')!
+  const hint = () => el('base-hint').textContent?.trim()
+
+  it.each([true, false])('lists a muted remote branch under its own group and gates import by permission (%s)', async allowed => {
     let imported = false
-    get.mockImplementation(async (url: string) => url.endsWith('/groups/tree') ? tree('p') : {
-      data: { git_enabled: true, base_branch: 'main', can_import: allowed, branches: [
-        { name: 'main', is_project_base: true, remote_only: false },
-        { name: 'feature/remote', is_project_base: false, remote_only: !imported },
-      ] } })
-    post.mockImplementation(async () => { imported = true; return { data: {} } })
+    const finish = deferred()
+    get.mockImplementation(remoteOptions(allowed, () => imported))
+    post.mockImplementation(async () => { await finish.promise; imported = true; return { data: {} } })
     open()
     await flushPromises()
     await input('title', 'Flow')
-    const option = el<HTMLSelectElement>('base').querySelector<HTMLOptionElement>('option[value="feature/remote"]')!
-    expect(option.disabled).toBe(false)
-    expect(option.classList.contains('is-muted')).toBe(true)
+    // [Import] sits beside the field from the start and is off until a remote branch is chosen.
+    expect(importButton().disabled).toBe(true)
+    expect(importButton().textContent?.trim()).toBe('가져오기')
+    el('base').click()
+    await flushPromises()
+    const list = el('base-list')
+    expect(el('base').getAttribute('aria-expanded')).toBe('true')
+    expect([...list.children].map(item => item.textContent?.trim())).toEqual(['main', '원격에만 있음', 'origin/feature/remote가져오기 필요'])
+    const option = list.querySelector<HTMLElement>('[data-value="feature/remote"]')!
+    expect(option.classList.contains('is-remote')).toBe(true)
+    expect(option.querySelector('.dfm-remote-badge')?.textContent).toBe('가져오기 필요')
     await input('base', 'feature/remote')
+    expect(el('base-list')).toBeNull()
+    expect(el('base').value).toBe('feature/remote')
+    expect(el('base').textContent?.trim()).toBe('origin/feature/remote · 가져오기 필요')
     expect(disabled()).toBe(true)
-    const button = document.querySelector<HTMLButtonElement>('[data-test="designer-flow-import-branch"]')!
-    expect(button.disabled).toBe(!allowed)
-    if (!allowed) { expect(button.title).toContain('권한'); return }
-    button.click()
+    expect(importButton().disabled).toBe(!allowed)
+    if (!allowed) {
+      expect(el('base-hint').textContent).toContain('원격 브랜치입니다')
+      expect(document.querySelector('[data-test="designer-flow-import-tip"]')?.textContent).toBe('프로젝트 설정 권한이 필요합니다')
+      expect(importButton().getAttribute('aria-describedby')).toBe('dfc-import-tip')
+      return
+    }
+    expect(importButton().classList.contains('is-on')).toBe(true)
+    expect(hint()).toBe('원격 브랜치입니다. 가져온 뒤에 플로우를 만들 수 있습니다.')
+    importButton().click()
+    await flushPromises()
+    expect(importButton().textContent?.trim()).toBe('가져오는 중')
+    expect(importButton().classList.contains('is-busy')).toBe(true)
+    expect(el('base').textContent?.trim()).toBe('origin/feature/remote')
+    finish.resolve(undefined)
     await flushPromises()
     expect(post).toHaveBeenCalledWith('/api/v1/projects/p/git/branches/import', { name: 'feature/remote' })
-    expect(el<HTMLSelectElement>('base').value).toBe('feature/remote')
+    expect(el('base').value).toBe('feature/remote')
+    expect(el('base').textContent?.trim()).toBe('feature/remote')
+    expect(hint()).toBe('가져왔습니다.')
+    expect(el('base-hint').classList.contains('is-ok')).toBe(true)
+    expect(importButton().disabled).toBe(true)
+    expect(importButton().textContent?.trim()).toBe('가져오기')
     expect(disabled()).toBe(false)
+  })
+
+  it.each([
+    [{ status: 409, data: { detail: { code: 'branch_name_exists', message: 'local branch already exists' } } }, '같은 이름의 로컬 브랜치(feature/remote)가 이미 있어 가져오지 않았습니다.'],
+    [{ status: 409, data: { detail: { code: 'branch_import_failed', message: 'Could not fetch the remote branch' } } }, '원격 브랜치를 가져오지 못했습니다. 원격 연결을 확인하세요.'],
+  ])('shows one localized line when import fails, never the server words', async (response, text) => {
+    get.mockImplementation(remoteOptions(true, () => false))
+    post.mockRejectedValue({ response })
+    open()
+    await flushPromises()
+    await input('base', 'feature/remote')
+    importButton().click()
+    await flushPromises()
+    expect(hint()).toBe(text)
+    expect(el('base-hint').classList.contains('is-error')).toBe(true)
+    expect(document.querySelector('.dfm-create-dialog')!.textContent).not.toContain('Could not')
+    expect(importButton().disabled).toBe(false)
+    expect(el('base').value).toBe('feature/remote')
+    expect(disabled()).toBe(true)
+  })
+
+  it('opens with the keyboard, moves with arrows and closes on Escape without closing the dialog', async () => {
+    get.mockImplementation(remoteOptions(true, () => false))
+    const w = open()
+    await flushPromises()
+    const key = (k: string) => el('base').dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+    key('ArrowDown')
+    await flushPromises()
+    expect(el('base').getAttribute('aria-activedescendant')).toBe('dfc-base-opt-0')
+    key('ArrowDown')
+    await flushPromises()
+    expect(el('base').getAttribute('aria-activedescendant')).toBe('dfc-base-opt-1')
+    key('Escape')
+    await flushPromises()
+    expect(el('base-list')).toBeNull()
+    expect(w.emitted('close')).toBeUndefined()
+    key('Enter')
+    key('ArrowDown')
+    key('Enter')
+    await flushPromises()
+    expect(el('base').value).toBe('feature/remote')
   })
 })
 
@@ -105,7 +186,7 @@ describe('creation states and independent reads', () => {
     expect(post).not.toHaveBeenCalled()
     c.resolve(options())
     await flushPromises()
-    expect(el<HTMLSelectElement>('base').disabled).toBe(false)
+    expect(el<HTMLButtonElement>('base').disabled).toBe(false)
     expect(el<HTMLSelectElement>('group').disabled).toBe(true)
     await input('base', 'feature')
     g.resolve(tree('p'))
@@ -139,7 +220,7 @@ describe('creation states and independent reads', () => {
     await flushPromises()
     await input('title', 'Flow')
     expect(disabled()).toBe(true)
-    expect(el<HTMLSelectElement>('base').value).toBe('')
+    expect(el<HTMLButtonElement>('base').value).toBe('')
     await input('base', 'feature')
     expect(disabled()).toBe(false)
   })
@@ -160,14 +241,14 @@ describe('creation states and independent reads', () => {
     expect(el('base-error')).not.toBeNull()
     get.mockImplementation(async (url: string) => url.endsWith('/groups/tree') ? tree('p') : options())
     await click('base-retry')
-    expect(el<HTMLSelectElement>('base').value).toBe('feature')
+    expect(el<HTMLButtonElement>('base').value).toBe('feature')
     expect(el<HTMLInputElement>('title').value).toBe('Keep me')
     expect(el<HTMLSelectElement>('group').value).toBe('module:p:m')
     expect(el('base-retry')).toBeNull()
     get.mockImplementation(async (url: string) => url.endsWith('/groups/tree') ? tree('p') : options(['main']))
     account()
     await flushPromises()
-    expect(el<HTMLSelectElement>('base').value).toBe('')
+    expect(el<HTMLButtonElement>('base').value).toBe('')
     expect(disabled()).toBe(true)
   })
 
@@ -183,7 +264,7 @@ describe('creation states and independent reads', () => {
     submit.reject({ response: { status: 409, data: { detail: { code: 'group_work_base_internal', message: 'Owned branch' } } } })
     await flushPromises()
     expect(el('error')).not.toBeNull()
-    expect(el<HTMLSelectElement>('base').value).toBe('feature')
+    expect(el<HTMLButtonElement>('base').value).toBe('feature')
     expect(post).toHaveBeenCalledTimes(1)
   })
 
@@ -195,12 +276,12 @@ describe('creation states and independent reads', () => {
     await flushPromises()
     slow.resolve(options())
     await flushPromises()
-    expect(el<HTMLSelectElement>('base').value).toBe('other')
+    expect(el<HTMLButtonElement>('base').value).toBe('other')
     expect(el<HTMLSelectElement>('group').value).toBe('module:q:m')
     get.mockResolvedValue(options(['other', 'main'], 'main'))
     await w.setProps({ projectId: 'r' })
     await flushPromises()
-    expect(el<HTMLSelectElement>('base').value).toBe('other')
+    expect(el<HTMLButtonElement>('base').value).toBe('other')
   })
 
   it('close/reopen ignores old create success/error and refreshes options for the new session', async () => {
@@ -231,7 +312,7 @@ describe('creation states and independent reads', () => {
     get.mockImplementation(async (url: string) => url.endsWith('/groups/tree') ? tree('p') : options(['new'], 'new'))
     await w.setProps({ open: true })
     await flushPromises()
-    expect(el<HTMLSelectElement>('base').value).toBe('new')
+    expect(el<HTMLButtonElement>('base').value).toBe('new')
     expect(el('error')).toBeNull()
   })
 
@@ -367,7 +448,7 @@ describe('T0014 compact dialog and accessible lookup feedback', () => {
     await flushPromises()
     old.reject(new Error('old project failed'))
     await flushPromises()
-    expect(el<HTMLSelectElement>('base').value).toBe('other')
+    expect(el<HTMLButtonElement>('base').value).toBe('other')
     expect(el('base-error')).toBeNull()
     expect(el('base-retry')).toBeNull()
     expect(disabled()).toBe(false)
@@ -426,7 +507,7 @@ describe('v02test.0006 context-menu group selection', () => {
     await flushPromises()
     expect(selected()).toBe('G_PICKED')
     expect(el<HTMLInputElement>('title').value).toBe('Keep selection')
-    expect(el<HTMLSelectElement>('base').value).toBe('feature')
+    expect(el<HTMLButtonElement>('base').value).toBe('feature')
     await click('submit')
     expect(post).toHaveBeenCalledWith('/api/v1/groups', expect.objectContaining({ module: 'picked-module', work_base_ref: 'feature' }))
   })
@@ -451,7 +532,7 @@ describe('v02test.0006 context-menu group selection', () => {
     await flushPromises()
     expect(selected()).toBe(groupId === 'G_MENU' ? 'G_MENU' : '')
     expect(el<HTMLInputElement>('title').value).toBe('Preserved title')
-    expect(el<HTMLSelectElement>('base').value).toBe('feature')
+    expect(el<HTMLButtonElement>('base').value).toBe('feature')
     expect(treeReads()).toHaveLength(1)
     expect(optionReads()).toHaveLength(1)
     await click('submit')

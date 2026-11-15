@@ -14,7 +14,7 @@ function word(t: Translate, te: HasKey, key: string, raw: string): string {
 }
 
 export function heldCount(result: FlowCommandResult): number {
-  const keys = new Set(result.nodes.filter(node => node.outcome === 'waiting' && node.reason === 'review_hold').map(node => node.nodeKey))
+  const keys = new Set(result.nodes.filter(isHeldNode).map(node => node.nodeKey))
   for (const item of result.blocking) if (item.reason === 'review_not_passed:review_verdict_hold' || item.reason === 'review_verdict_hold') keys.add(item.nodeKey)
   return keys.size
 }
@@ -33,7 +33,7 @@ export function scopeLabel(t: Translate, result: FlowCommandResult): string {
 }
 
 export function nextLabel(t: Translate, te: HasKey, result: FlowCommandResult): string {
-  if (isReviewHold(result) && result.nextState === 'needs_intervention') return t(k('review_hold'))
+  if (isReviewHold(result) && result.nextState === 'needs_intervention') return t(k('next_review_hold'))
   const next = result.nextState ?? ''
   return next ? word(t, te, `next.${next}`, next) : '—'
 }
@@ -51,13 +51,18 @@ export function attachmentPendingLine(t: Translate, result: FlowCommandResult | 
     : line
 }
 
+/** A card that waits because its review was held (shown orange, never as a failure). */
+export function isHeldNode(node: FlowCommandNode): boolean {
+  return node.outcome === 'waiting' && node.reason === 'review_hold'
+}
+
 export function countsLabel(result: FlowCommandResult): string {
   return `${result.counts.done} / ${result.counts.failed}`
 }
 
 /** One card of the command in a short line: its title and outcome (with why it waits or failed). */
 export function nodeLine(t: Translate, te: HasKey, node: FlowCommandNode): string {
-  if (node.outcome === 'waiting' && node.reason === 'review_hold') return `${node.title ?? node.nodeKey} · ${t(k('review_hold'))}`
+  if (isHeldNode(node)) return `${node.title ?? node.nodeKey} · ${t(k('review_hold'))}`
   const outcome = word(t, te, `outcome.${node.outcome}`, node.outcome)
   const why = node.reason
     ? (node.outcome === 'failed' ? word(t, te, `failure.${node.reason}`, node.reason) : word(t, te, `wait.${node.reason}`, node.reason))

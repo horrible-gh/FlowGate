@@ -58,10 +58,9 @@
           data-test="designer-flow-tab-run"
           :data-run-status="runStateOf(tab.flowId)"
         />
-        <svg v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" viewBox="0 0 16 16" fill="none"
-          role="img" :aria-label="chatLabel" :title="chatLabel" data-test="designer-flow-tab-chat">
-          <path d="M2 2.5h12v8H7l-4 3v-3H2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
-        </svg>{{ tab.name }}
+        <!-- flowgate.v02gui.0020: the right dock's '대화' icon itself, at its 14px size, never rotating. -->
+        <span v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" role="img" :aria-label="t('gui.designer.center.tab_chat')"
+          :title="t('gui.designer.center.tab_chat')" data-test="designer-flow-tab-chat"><ChatBubbleIcon :size="14" /></span>{{ tab.name }}
       </button>
       <IconButton
         class="flow-tab-close"
@@ -83,6 +82,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import IconButton from '../../../components/ui/IconButton.vue'
+import ChatBubbleIcon from '../../../components/ui/ChatBubbleIcon.vue'
 
 export interface FlowTabStripItem {
   readonly flowId: string
@@ -110,9 +110,7 @@ const emit = defineEmits<{
   reorder: [flowId: string, toIndex: number]
 }>()
 
-const { t, locale } = useI18n()
-const chatLabel = computed(() => locale.value.startsWith('ko') ? '채팅 AI 응답 중'
-  : locale.value.startsWith('ja') ? 'チャットAI応答中' : 'Chat AI responding')
+const { t } = useI18n()
 
 /** flowgate.v02.0060 T#2: the Designer context menu's tab side, provided by the Designer Shell; null elsewhere. */
 interface TabContextMenu {
@@ -437,7 +435,8 @@ watch(
 }
 
 /* flowgate.v02gui.0001: the run mark — running spins, stopping spins dimmed, paused shows two bars. */
-.flow-tab-chat { width: 10px; height: 10px; margin-right: 6px; color: var(--fg2-blue, #8bb5ef); vertical-align: -1px; }
+.flow-tab-chat { display: inline-flex; width: 14px; height: 14px; margin-right: 6px; vertical-align: -3px; }
+.flow-tab-chat :deep(svg) { display: block; }
 
 .flow-tab-run {
   display: inline-block;
