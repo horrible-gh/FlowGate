@@ -338,6 +338,9 @@ export default {
       past_revision_notice: 'リビジョン {revision} を表示中（最新 {latest}）。この画面では編集できません。最新リビジョンに追加されたカードは表示されません。',
       tabs_label: '開いているフロー',
       close_tab: '{name} を閉じる',
+      // flowgate.v02gui.0023: the tab strip's list button (only while the tabs overflow) and its list header.
+      open_tabs_list: '開いているフローの一覧',
+      open_tabs_count: '開いているフロー {count}件',
       // flowgate.v02gui.0001: a tab's run mark (its accessible name).
       tab_run: { running: '実行中', paused: '一時停止', stopping: '停止中' },
       tab_chat: 'チャットAI応答中',

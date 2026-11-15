@@ -109,11 +109,11 @@ def _targets(flow_id, node_key, node, docs, slot, action, *, recovering=False):
         report = docs.get("report")
         if report and report.get("doc_review_status") in APPROVED:
             targets.append(("report", report, doc["doc_id"]))
-    stale = outputs.legacy.stale_documents(flow_id, node_key)
+    # flowgate.v02gui.0023: a person may approve or reject a document an ended attempt
+    # left behind (``stale_documents``, e.g. after a Stop). It stays card history for
+    # the completion until a person approves it (``card_completion.human._document``);
+    # old worker tokens stay fenced. Only the body/test gates and rejection safety apply.
     for target_slot, target, _cause in targets:
-        from flowgate.graph_time_machine import rejection_store
-        if target["doc_id"] in stale and not rejection_store.recoverable(flow_id, node_key, target):
-            context.refuse("document_decision_stale_document", slot=target_slot)
         try:
             gates.require_body(target)
             if action == "approve":

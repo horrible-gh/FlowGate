@@ -21,7 +21,11 @@ def _document(flow_id, node, slot):
     doc = line.get('document')
     if not doc or doc.get('group_id') != flow_id or not lines.legacy.is_alive(doc, flow_id):
         return None
-    if doc['doc_id'] in legacy.stale_documents(flow_id, node['node_key']):
+    # A document an ended attempt left behind is history, unless a person approved
+    # this exact revision/body afterwards (flowgate.v02gui.0023): that human decision
+    # is the evidence, the same as outputs.card_lines_of treats an approved line.
+    if doc['doc_id'] in legacy.stale_documents(flow_id, node['node_key']) \
+            and not decision_repository.valid_approval(flow_id, node['node_key'], slot, doc):
         return None
     return doc
 
