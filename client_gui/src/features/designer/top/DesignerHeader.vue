@@ -56,28 +56,44 @@
         type="button"
         class="designer-header-btn"
         data-test="designer-header-settings"
-        @click="emit('command', 'header.settings')"
+        :title="t('gui.accountMenu.settings')"
+        @click="openSettings()"
       >
         <span aria-hidden="true">⚙</span><span class="designer-header-label">{{ t('gui.designer.top.header.settings') }}</span>
       </button>
+      <div v-if="user" ref="accountRoot" class="designer-account">
       <button
-        v-if="user"
+        ref="accountTrigger"
         type="button"
         class="designer-header-user"
         :aria-label="t('gui.designer.top.header.user', { name: user.username })"
         data-test="designer-header-user"
-        @click="emit('command', 'header.user')"
+        aria-haspopup="menu"
+        :aria-expanded="accountOpen"
+        :aria-controls="accountOpen ? 'designer-account-menu' : undefined"
+        @keydown.down.prevent="showAccount()"
+        @click="toggleAccount()"
       >
         <span class="designer-header-avatar" aria-hidden="true">{{ initial }}</span>
         <b class="designer-header-label">{{ user.username }}</b>
         <span aria-hidden="true">⌄</span>
       </button>
+      <div v-if="accountOpen" id="designer-account-menu" ref="accountMenu" role="menu" class="designer-account-menu" @keydown="menuKey">
+        <div class="designer-account-heading">{{ user.username }}<small v-if="user.email">{{ user.email }}</small></div>
+        <button v-for="item in accountItems" :key="item.key" role="menuitem" type="button" :data-test="'account-' + item.key" :title="t('gui.accountMenu.' + item.key)" @click="accountAction(item.key)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.path" /></svg>
+          {{ t('gui.accountMenu.' + item.key) }}
+        </button>
+      </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, inject, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
+import { routerKey } from 'vue-router'
+import { logout } from '@/core/auth/logout'
 import { useNotificationBadge } from './notifications/useNotificationBadge'
 import DesignerNotifications from './notifications/DesignerNotifications.vue'
 import type { ExplorerProject } from '../projectExplorer/projectExplorerTree'
@@ -99,6 +115,79 @@ const emit = defineEmits<{
 const { t, locale } = useI18n()
 const { user } = useCurrentUser()
 
+// Keep routing at the header boundary; the Designer Shell remains router independent.
+const router = inject(routerKey, null)
+const accountOpen = ref(false)
+const accountRoot = ref<HTMLElement | null>(null)
+const accountTrigger = ref<HTMLButtonElement | null>(null)
+const accountMenu = ref<HTMLElement | null>(null)
+const accountItems = [
+  { key: 'profile', path: 'M20 21v-2a7 7 0 0 0-14 0v2 M12 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8' },
+  { key: 'password', path: 'M6 11h12v10H6z M8 11V7a4 4 0 0 1 8 0v4' },
+  { key: 'logout', path: 'M10 3H4v18h6 M10 12h11 M17 8l4 4-4 4' },
+] as const
+function closeAccount(restoreFocus = false) {
+  accountOpen.value = false
+  if (restoreFocus) accountTrigger.value?.focus()
+}
+async function showAccount() {
+  accountOpen.value = true
+  await nextTick()
+  accountMenu.value?.querySelector<HTMLButtonElement>('button')?.focus()
+}
+function toggleAccount() {
+  emit('command', 'header.user')
+  if (accountOpen.value) closeAccount(true)
+  else void showAccount()
+}
+function openSettings() {
+  closeAccount()
+  emit('command', 'header.settings')
+  void router?.push({ name: 'settings-me-account' })
+}
+async function accountAction(key: typeof accountItems[number]['key']) {
+  closeAccount(true)
+  if (key === 'logout') {
+    if (window.confirm(t('gui.accountMenu.confirmLogout'))) await logout()
+  } else {
+    await router?.push({ name: key === 'profile' ? 'settings-me-account' : 'settings-me-security' })
+  }
+}
+function menuKey(event: KeyboardEvent) {
+  if (event.key === 'Tab') { closeAccount(); return }
+  const buttons = Array.from(accountMenu.value?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+  const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+  let target: number
+  if (event.key === 'ArrowDown') target = (index + 1) % buttons.length
+  else if (event.key === 'ArrowUp') target = (index - 1 + buttons.length) % buttons.length
+  else if (event.key === 'Home') target = 0
+  else if (event.key === 'End') target = buttons.length - 1
+  else return
+  event.preventDefault()
+  buttons[target]?.focus()
+}
+function outside(event: PointerEvent) {
+  if (event.target instanceof Node && !accountRoot.value?.contains(event.target)) closeAccount()
+}
+function escape(event: KeyboardEvent) {
+  if (accountOpen.value && event.key === 'Escape') { event.preventDefault(); closeAccount(true) }
+}
+function focusOutside(event: FocusEvent) {
+  if (event.target instanceof Node && !accountRoot.value?.contains(event.target)) closeAccount()
+}
+onMounted(() => {
+  document.addEventListener('pointerdown', outside)
+  document.addEventListener('keydown', escape)
+  document.addEventListener('focusin', focusOutside)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', outside)
+  document.removeEventListener('keydown', escape)
+  document.removeEventListener('focusin', focusOutside)
+})
+watch(() => user.value?.username, () => closeAccount())
+watch(() => props.notificationsOpen, (open) => { if (open) closeAccount() })
+
 const initial = computed(() => user.value?.username.charAt(0).toUpperCase() ?? '')
 
 function setLocale(code: DesignerLocale) {
@@ -108,6 +197,14 @@ function setLocale(code: DesignerLocale) {
 </script>
 
 <style scoped>
+.designer-account { position: relative; }
+.designer-account-menu { position: absolute; right: 0; top: calc(100% + 10px); z-index: 100; width: 230px; max-width: calc(100vw - 24px); padding: 6px; border: 1px solid var(--fg2-line-strong); border-radius: 8px; background: #10213a; color: var(--fg2-text); box-shadow: 0 8px 24px #0008; }
+.designer-account-heading { padding: 8px; overflow-wrap: anywhere; border-bottom: 1px solid var(--fg2-line); }
+.designer-account-heading small { display: block; color: #899db5; }
+.designer-account-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.designer-account-menu button:hover, .designer-account-menu button:focus-visible { background: #203c60; outline: 2px solid var(--fg2-focus); }
+.designer-account-menu svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+
 .designer-header {
   display: grid;
   /* Side columns are at least as wide as their content, so the brand / notification

@@ -1,4 +1,5 @@
 export default {
+  accountMenu: {"settings": "My settings", "profile": "My profile", "password": "Change password", "logout": "Log out", "confirmLogout": "Log out?"},
   notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
   // flowgate.chat.0017 CH0002 — AI attachment upload requests (chat message, card attachments tab, run result, settings).
   attachment_request: {

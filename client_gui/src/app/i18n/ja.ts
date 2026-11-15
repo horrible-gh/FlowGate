@@ -1,4 +1,5 @@
 export default {
+  accountMenu: {"settings": "自分の設定", "profile": "プロフィール", "password": "パスワード変更", "logout": "ログアウト", "confirmLogout": "ログアウトしますか？"},
   notification_ai: {"detail": "詳細を見る", "provider": "プロバイダー", "finished": "終了時刻", "reason": "終了理由", "success": "成功", "failure": "失敗", "stopped": "中断", "unknown": "状態を確認"},
   // flowgate.chat.0017 CH0002 — AI添付の承認依頼(チャットのメッセージ下・カードの添付タブ・実行結果・設定)。
   attachment_request: {
