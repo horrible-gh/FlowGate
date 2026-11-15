@@ -68,6 +68,20 @@ def publish_archive_changed(*, project_id: str, flow_id: str, archived: bool, ac
     ))
 
 
+def publish_module_archive_changed(*, project_id: str, module: str, archived: bool, actor_user_id: Optional[str]) -> None:
+    """flowgate.v02gui.0027: a Group (module) archive / restore refreshes every open tree of the project.
+
+    The same ``group_view_refresh`` stream as the Flow archive, project-wide: no Flow is named
+    (``group_id`` None), so per-Flow listeners (inspector, document windows) ignore it."""
+    _queue(FlowEvent(
+        event_type=EventType.GROUP_VIEW_REFRESH.value,
+        payload={"group_id": None, "module": module,
+                 "reason": "module_archived" if archived else "module_restored",
+                 "actor_user_id": actor_user_id},
+        audience="*", project=project_id, group_id=None,
+    ))
+
+
 def publish_ownership_changed(
     *,
     project_id: Optional[str],

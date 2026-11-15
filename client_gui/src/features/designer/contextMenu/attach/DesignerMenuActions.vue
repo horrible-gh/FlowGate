@@ -52,6 +52,12 @@
           </template>
         </template>
 
+        <!-- 그룹 아카이브 (v02gui.0027): display-only; the Group's Flows, documents, runs and Git stay as they are. -->
+        <template v-else-if="shown.kind === 'group.archive'">
+          <p class="dma-lead" data-test="dma-group-archive-note">{{ t('archive.note') }}</p>
+          <p class="dma-note" data-test="dma-group-archive-hint">{{ t('archive.hint') }}</p>
+        </template>
+
         <!-- Flow 삭제 = the existing dispose (DC) -->
         <template v-else-if="shown.kind === 'flow.delete'">
           <p class="dma-note" data-test="dma-dispose-note">{{ t('dispose.note') }}</p>
@@ -246,7 +252,7 @@ const stale = computed(() => !!pending.value && !uploadResult.value && !pending.
 
 const groupNow = computed(() => {
   const target = shown.value
-  return target?.kind === 'group.rename' ? props.actions.server.group(target.projectId, target.groupId) : null
+  return target?.kind === 'group.rename' || target?.kind === 'group.archive' ? props.actions.server.group(target.projectId, target.groupId) : null
 })
 const flowNow = computed(() => {
   const target = shown.value
@@ -259,6 +265,7 @@ const currentIdent = computed(() => groupNow.value?.moduleName ?? '')
 const title = computed(() => {
   switch (shown.value?.kind) {
     case 'group.rename': return t('rename.groupTitle')
+    case 'group.archive': return t('archive.title')
     case 'flow.rename': return t('rename.flowTitle')
     case 'flow.delete': return t('dispose.title')
     case 'folder.newFolder': return t('create.folderTitle')
@@ -274,6 +281,7 @@ const submitLabel = computed(() => {
   switch (shown.value?.kind) {
     case 'group.rename': case 'flow.rename': return t('rename.submit')
     case 'flow.delete': return t('dispose.submit')
+    case 'group.archive': return t('archive.submit')
     case 'folder.upload': return t('upload.submit')
     case 'folder.download': return t('download.submit')
     case 'folder.delete': case 'file.delete': return t('remove.submit')
@@ -287,6 +295,7 @@ const facts = computed(() => {
   if (!target) return []
   // The Group window shows its name and identifier in the inputs themselves.
   if (target.kind === 'group.rename') return []
+  if (target.kind === 'group.archive') return [{ key: 'target', label: t('group'), value: currentName.value || target.groupId }]
   if (target.kind === 'flow.rename' || target.kind === 'flow.delete') {
     return [
       { key: 'target', label: t('flow'), value: currentName.value || target.flowId },
@@ -372,10 +381,18 @@ const GROUP_REFUSAL_TEXT: Readonly<Record<string, string>> = {
   module_title_too_long: 'rename.nameLong',
   module_not_found: 'rename.server.notFound',
 }
+/** v02gui.0027: the Group archive's own refusals (module_routes archive_module). */
+const GROUP_ARCHIVE_REFUSAL_TEXT: Readonly<Record<string, string>> = {
+  already_archived: 'archive.server.already',
+  module_not_found: 'rename.server.notFound',
+}
 const refusalText = computed(() => {
   const r = refusal.value
   if (!r) return ''
-  const own = shown.value?.kind === 'group.rename' && r.code ? GROUP_REFUSAL_TEXT[r.code] : undefined
+  const kind = shown.value?.kind
+  const own = r.code
+    ? (kind === 'group.rename' ? GROUP_REFUSAL_TEXT[r.code] : kind === 'group.archive' ? GROUP_ARCHIVE_REFUSAL_TEXT[r.code] : undefined)
+    : undefined
   // `subject` is what the server named: the group holding the identifier, the busy Flows, the existing branches.
   return own ? t(own, { group: r.subject ?? '' }) : t(`refusal.${r.reason}`)
 })
@@ -542,6 +559,11 @@ async function submit() {
       answer = await server.renameGroup(target.projectId, target.groupId, name, ident !== currentIdent.value ? ident : undefined)
       break
     }
+    case 'group.archive':
+      answer = server.archiveGroup
+        ? await server.archiveGroup(target.projectId, target.groupId)
+        : { ok: false, refusal: { reason: 'failed', status: null, code: null } }
+      break
     case 'flow.rename': answer = await server.renameFlow(target.projectId, target.groupId, target.flowId, name); break
     case 'flow.delete': answer = await server.disposeFlow(target.projectId, target.groupId, target.flowId, name); break
     case 'folder.newFolder': case 'folder.newFile':

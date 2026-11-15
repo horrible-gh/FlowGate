@@ -33,6 +33,8 @@ export interface ExplorerGroup {
   /** v0.1 module key (the server's `label`), the value a Flow create sends as `module`. */
   moduleName: string
   flows: ExplorerFlow[]
+  /** v02gui.0027: the Group is display-archived (only present in an "아카이브 포함" tree). */
+  archived?: boolean
 }
 
 export interface ExplorerProject {
@@ -138,6 +140,7 @@ export function buildExplorerProject(
       name: moduleNode.title || moduleNode.label,
       moduleName: moduleNode.label,
       flows: [],
+      ...(moduleNode.archivedAt ? { archived: true } : {}),
     }
     // Depth-first over non-document descendants so nested groups stay in reading order.
     const stack = [...(byParent.get(moduleNode.id) ?? [])].reverse()

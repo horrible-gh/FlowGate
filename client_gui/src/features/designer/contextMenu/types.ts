@@ -22,7 +22,8 @@ export const COMMANDS = [
   'edge.disconnect', 'palette.addCard',
 ] as const
 /** flowgate.v02gui.0003: `node.copyId` (the card's document id, as the Inspector's ID 복사) is outside the mockup's 40 as well. */
-export type MenuCommand = typeof COMMANDS[number] | 'flow.baseBranch' | 'flow.archive' | 'flow.restore' | 'node.copyId'
+/** flowgate.v02gui.0027: `group.archive` / `group.restore` (the Group's display-only archive) are outside the 40 too. */
+export type MenuCommand = typeof COMMANDS[number] | 'flow.baseBranch' | 'flow.archive' | 'flow.restore' | 'node.copyId' | 'group.archive' | 'group.restore'
 /** 0006-D §5.3 후속 연결 (2-B): an existing server contract a later T connects — '연결 예정' until then. */
 export const PLANNED_COMMANDS: readonly MenuCommand[] = Object.freeze([
   'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile', 'folder.download',
@@ -37,7 +38,8 @@ export type ConnectedCommands = ReadonlySet<MenuItemCommand> | readonly MenuItem
 export interface Point { readonly x: number; readonly y: number }
 export type ProjectTarget =
   | { readonly kind: 'project'; readonly projectId: string }
-  | { readonly kind: 'group'; readonly projectId: string; readonly groupId: string }
+  /** `archived` (v02gui.0027): the Group's archive state as its row shows it; absent = not archived. */
+  | { readonly kind: 'group'; readonly projectId: string; readonly groupId: string; readonly archived?: boolean }
   | { readonly kind: 'flow'; readonly projectId: string; readonly groupId: string; readonly flowId: string }
 interface FileScope {
   readonly projectId: string

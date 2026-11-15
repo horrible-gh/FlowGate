@@ -393,6 +393,12 @@ export interface GroupRenameResult {
   renamedGroups: Record<string, string>
 }
 
+/** The answer of a Group archive / restore (v02gui.0027): display-only, the Group's Flows are not touched. */
+export interface GroupArchiveResult {
+  archived: boolean
+  archivedAt: string | null
+}
+
 /** A downloaded worktree file or folder ZIP: the bytes and the name the server gave them. */
 export interface SourceDownload {
   filename: string

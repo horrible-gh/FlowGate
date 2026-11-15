@@ -71,6 +71,7 @@ import type {
   SourceDownload,
   SourceMutationRefusal,
   SourceUploadResult,
+  GroupArchiveResult,
   GroupRenameResult,
 } from './types'
 import {
@@ -97,6 +98,7 @@ import {
   renameFlow as renameFlowApi,
   sourceMutationRefusal,
   renameGroup as renameGroupApi,
+  setGroupArchived as setGroupArchivedApi,
   suggestProjectSlug,
   uploadSourceFiles as uploadSourceFilesApi,
 } from './api'
@@ -601,6 +603,13 @@ export const useProjectStore = defineStore('project', () => {
     return result
   }
 
+  /** v02gui.0027: a Group's display-only archive / restore. Every cached tree of the Project is dropped on success. */
+  async function setGroupArchived(projectId: string, moduleName: string, archived: boolean): Promise<GroupArchiveResult> {
+    const result = await setGroupArchivedApi(projectId, moduleName, archived)
+    invalidateGroupTree(projectId)
+    return result
+  }
+
   async function renameFlow(projectId: string, flowId: string, title: string): Promise<void> {
     await renameFlowApi(flowId, title)
     invalidateGroupTree(projectId)
@@ -833,6 +842,7 @@ export const useProjectStore = defineStore('project', () => {
     createGroup,
     createFlow,
     renameGroup,
+    setGroupArchived,
     renameFlow,
     disposeFlow,
     createSourceEntry,

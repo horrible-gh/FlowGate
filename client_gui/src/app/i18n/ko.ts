@@ -612,6 +612,7 @@ export default {
       already_archived: '이미 아카이브된 플로우입니다.',
       unavailable: '아카이브 상태를 확인할 수 없습니다.',
       failed: '아카이브 상태를 변경하지 못했습니다.',
+      group_restore_failed: '그룹을 복원하지 못했습니다.',
     },
     project_explorer: {
       title: '프로젝트',
@@ -624,6 +625,7 @@ export default {
       retry: '다시 시도',
       no_groups: '그룹이 없습니다.',
       no_flows: '플로우가 없습니다.',
+      group_menu: '그룹 메뉴',
       no_results: '일치하는 프로젝트, 그룹, 플로우가 없습니다.',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.

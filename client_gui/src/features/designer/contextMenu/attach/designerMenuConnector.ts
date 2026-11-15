@@ -102,8 +102,15 @@ const RUN_KEYS = Object.fromEntries(Object.entries(RUN_COMMANDS).map(([key, comm
 
 export type ProjectRowRef =
   | { readonly kind: 'project'; readonly projectId: string }
-  | { readonly kind: 'group'; readonly projectId: string; readonly groupId: string }
+  | { readonly kind: 'group'; readonly projectId: string; readonly groupId: string; readonly archived?: boolean }
   | { readonly kind: 'flow'; readonly projectId: string; readonly groupId: string; readonly flowId: string }
+
+/**
+ * v02gui.0027: the "All" bucket of Flows without a Group (server tree node `module:{project}:none`) is not a Group of
+ * its own and cannot be archived (the server refuses it too).
+ */
+const isUngroupedBucket = (target: { readonly projectId: string; readonly groupId: string }) =>
+  target.groupId === `module:${target.projectId}:none`
 
 /** ② A File Explorer row (or its blank area, the root folder). `available` reads the explorer now; null = gone. */
 export interface FileMenuEntry {
@@ -206,7 +213,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   /** The menu the host shows now, with what it was built from (replaced on every open). */
   const open = shallowRef<OpenMenu | null>(null)
   /** What runs: the 2-B commands only while the Shell lends their server paths. */
-  const connected: readonly MenuCommand[] = [...(deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS), ...(deps.openFlowBaseBranch ? ['flow.baseBranch' as const] : []), ...(deps.archive ? ['flow.archive' as const, 'flow.restore' as const] : []), ...(deps.copyDocumentId ? ['node.copyId' as const] : [])]
+  const connected: readonly MenuCommand[] = [...(deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS), ...(deps.openFlowBaseBranch ? ['flow.baseBranch' as const] : []), ...(deps.archive ? ['flow.archive' as const, 'flow.restore' as const] : []), ...(deps.copyDocumentId ? ['node.copyId' as const] : []), ...(deps.server?.archiveGroup && deps.server?.restoreGroup ? ['group.archive' as const, 'group.restore' as const] : [])]
   /** T#2: the one 2-B window open now (a new one replaces it). */
   const pending = shallowRef<PendingMenuAction | null>(null)
   let actionSeq = 0
@@ -253,7 +260,10 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
       target,
       available: { currentProject: deps.projectId() === target.projectId, gitEnabled: deps.projectGitEnabled?.(target.projectId),
         archived: archive?.archived, archiveEligible: archive?.eligible,
-        archiveBusy: target.kind === 'flow' ? deps.archive?.busy(target.flowId) : false },
+        archiveBusy: target.kind === 'flow' ? deps.archive?.busy(target.flowId) : false,
+        // v02gui.0027: the Group's archive state as its row showed it when the menu opened.
+        groupArchived: target.kind === 'group' ? target.archived === true : undefined,
+        groupArchivable: target.kind === 'group' ? !isUngroupedBucket(target) : undefined },
       connected,
     }) : null
     const opened = show(event, build, live, (request, recheck) => {
@@ -264,6 +274,10 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
       else if (request.command === 'flow.baseBranch' && scope.kind === 'flow') deps.openFlowBaseBranch?.(scope.projectId, scope.flowId)
       else if (request.command === 'flow.archive' && scope.kind === 'flow' && recheck()) void deps.archive?.archiveFlow(scope.flowId)
       else if (request.command === 'flow.restore' && scope.kind === 'flow' && recheck()) void deps.archive?.restoreFlow(scope.flowId)
+      // v02gui.0027: 그룹 아카이브 asks first (its window); 그룹 복원 runs at once (the Shell reports a refusal).
+      else if (request.command === 'group.archive' && scope.kind === 'group') {
+        openAction({ kind: 'group.archive', projectId: scope.projectId, groupId: scope.groupId }, recheck)
+      } else if (request.command === 'group.restore' && scope.kind === 'group' && recheck()) void deps.server?.restoreGroup?.(scope.projectId, scope.groupId)
       else if (!SERVER_SET.has(request.command)) return
       // T#2: 이름 변경 (Group / Flow) and Flow 삭제 (the existing dispose, DC) open their windows on this row.
       else if (request.command === 'group.rename' && scope.kind === 'group') {
