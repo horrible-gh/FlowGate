@@ -4,6 +4,7 @@ Real SQLite, files, CAS, revisions, events and contacts (the 0127 T#1 ``env`` fi
 permission and notifications are mocked there. A card-bound document keeps the coordinate routes.
 """
 import json
+import pytest
 import sys
 from pathlib import Path
 
@@ -192,29 +193,57 @@ def test_a_plain_markdown_upload_keeps_the_current_front_matter_on_both_designer
     assert len(document_revisions.list_by_doc(D)) == 2
 
 
-def test_a_file_with_its_own_front_matter_is_checked_as_sent(env):
-    """The document's own file (downloaded, edited) is stored byte for byte; another document's file is refused."""
-    card_url = f"/flowgate/api/v2/flows/{F}/nodes/research/slots/instruction/document/revisions"
-    foreign = HEADER.replace("doc_number: 0002-N", "doc_number: 0002-N\ndoc_id: " + F + ".0009-N") + "body\n"
-    partial = "---\ntitle: note\n---\nbody\n"
+@pytest.mark.parametrize("card_bound", [True, False])
+@pytest.mark.parametrize("uploaded_header", [
+    HEADER,
+    HEADER.replace("doc_number: 0002-N", "doc_number: 0002-N\ndoc_id: foreign.doc")
+          .replace("group_id: " + F, "group_id: foreign.group"),
+    "---\ntitle: Uploaded title\n---\n",
+    "---\nproject: other module: wrong\n---\n",
+    "---\nnot valid YAML: [\n---\n",
+])
+def test_uploaded_headers_are_replaced_on_both_designer_routes(env, card_bound, uploaded_header):
+    if not card_bound:
+        non_card()
+    url = (f"/flowgate/api/v2/flows/{F}/nodes/research/slots/instruction/document/revisions"
+           if card_bound else URL + "/revisions")
+    # A second fenced block belongs to the body and must not bypass header replacement.
+    markdown = "---\nbody section\n---\n# Uploaded body\n"
+    payload = {"expected_revision": 0, "content": uploaded_header + markdown,
+               "idempotency_key": "replace-upload-header"}
+    if card_bound:
+        payload["expected_doc_id"] = D
+    original = documents.get_by_id(D)
+    response = env.client.post(url, headers=USER, json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()["revision_no"] == 1
+    assert env.path.read_bytes().decode() == HEADER + markdown
+    current = documents.get_by_id(D)
+    for key in ("doc_id", "group_id", "title", "type_code"):
+        assert current[key] == original[key]
+    again = env.client.post(url, headers=USER, json=payload)
+    assert again.status_code == 200 and again.json()["replayed"] is True, again.text
+    assert len(document_revisions.list_by_doc(D)) == 1
+
+
+@pytest.mark.parametrize("card_bound", [True, False])
+def test_empty_upload_is_still_refused_and_unclosed_fence_is_preserved(env, card_bound):
+    if not card_bound:
+        non_card()
+    url = (f"/flowgate/api/v2/flows/{F}/nodes/research/slots/instruction/document/revisions"
+           if card_bound else URL + "/revisions")
+    payload = {"expected_revision": 0, "content": "", "idempotency_key": "empty-upload"}
+    if card_bound:
+        payload["expected_doc_id"] = D
     before = unchanged(env)
-    for index, content in enumerate((foreign, partial)):
-        res = env.client.post(card_url, headers=USER, json={"expected_doc_id": D, "expected_revision": 0,
-                                                             "content": content, "idempotency_key": f"own-card-{index}"})
-        assert res.status_code == 422, res.text
-        assert res.json()["error"]["params"]["errors"][0]["reason"] == "document_identity_changed"
-    empty = env.client.post(card_url, headers=USER, json={"expected_doc_id": D, "expected_revision": 0,
-                                                           "content": "", "idempotency_key": "own-card-empty"})
-    assert empty.status_code == 422, empty.text
+    response = env.client.post(url, headers=USER, json=payload)
+    assert response.status_code == 422, response.text
     assert unchanged(env) == before
-    non_card()
-    for index, content in enumerate((foreign, partial)):
-        refused = save(env, {"expected_revision": 0, "content": content, "idempotency_key": f"own-doc-{index}"})
-        assert error(refused, 422, "invalid_content")["errors"][0]["reason"] == "document_identity_changed"
-    assert unchanged(env) == before
-    own = HEADER + "내려받아 고친 본문\n"
-    saved = save(env, {"expected_revision": 0, "content": own, "idempotency_key": "own-doc-ok"})
-    assert saved[0] == 200 and env.path.read_bytes().decode() == own, saved
+    markdown = "---\n# A leading horizontal rule\nBody\n"
+    payload.update(content=markdown, idempotency_key="unclosed-upload")
+    response = env.client.post(url, headers=USER, json=payload)
+    assert response.status_code == 200, response.text
+    assert env.path.read_bytes().decode() == HEADER + "\n" + markdown
 
 
 def test_not_editable_documents_stay_refused(env, monkeypatch):

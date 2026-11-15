@@ -59,18 +59,28 @@ def _idempotency_key(value):
 
 
 def _kept_frontmatter(doc, content):
-    """flowgate.v02gui.0003: a Designer save sent WITHOUT front matter (an uploaded plain ``.md``) keeps the document's
-    current front matter, as the chat paths do (``chat_documents.with_current_frontmatter``). A body that brings its own
-    front matter is passed as sent, so ``common_checks.identity_frontmatter`` still refuses another document's file;
-    an empty body, an identity-free type (WP / TR2) and an unreadable current body are left to the existing checks."""
-    if not isinstance(content, str) or not content.strip() or _split_frontmatter(content)[0] is not None:
+    """Designer saves keep the current document header, ignoring an uploaded header.
+
+    Only the first closed front matter block is replaced; the remaining Markdown is
+    kept verbatim, including any further fences. AI saves retain their identity checks.
+    Empty input, identity-free types and unreadable current bodies keep existing checks.
+    """
+    if not isinstance(content, str) or not content.strip():
         return content
     if doc.get("type_code") in IDENTITY_FREE_TYPES:
         return content
     _current, body = read._snapshot_parts(doc["doc_id"])
     if body.state != "readable":
         return content
-    return with_current_frontmatter(content, body.text)
+    uploaded_header, uploaded_body = _split_frontmatter(content)
+    if uploaded_header is None:
+        return with_current_frontmatter(content, body.text)
+    current_header, _ = _split_frontmatter(body.text or "")
+    if current_header is None:
+        return uploaded_body
+    if not current_header.endswith("\n"):
+        current_header += "\n"
+    return current_header + uploaded_body
 
 
 def keep_card_frontmatter(req):
