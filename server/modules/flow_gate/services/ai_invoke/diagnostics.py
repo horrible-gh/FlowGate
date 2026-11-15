@@ -425,11 +425,15 @@ def list_runs(*, group_id: Optional[str] = None, project: Optional[str] = None,
 
 def get_active_status(group_id: str) -> dict:
     """Return the live run for a group, if any, without exposing token/process state."""
+    chat_runs = [{"run_id": item["run_id"], "doc_ref": item.get("doc_ref"), "status": item.get("status")}
+                 for item in list_live_runs(group_id=group_id)
+                 if str(item.get("doc_ref") or "").endswith("-CH")]
     run = _svc()._active_run_for_group(group_id)
     if run is None:
-        return {"ok": True, "active": False, "group_id": group_id}
+        return {"ok": True, "active": False, "group_id": group_id, "chat_runs": chat_runs}
     return {
         **get_status(run["run_id"]),
+        "chat_runs": chat_runs,
         "active": True,
         "group_id": group_id,
         "doc_ref": run["doc_ref"],

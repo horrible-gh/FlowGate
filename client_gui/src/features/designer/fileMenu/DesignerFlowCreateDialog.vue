@@ -42,36 +42,74 @@
 
         <div v-if="baseState !== 'ready-disabled'" class="dfm-field" data-test="designer-flow-create-base-field">
           <label class="dfm-label" for="dfc-base">{{ t('gui.designer.file_menu.base_branch') }}</label>
-          <div class="dfm-control dfm-branch-control"
-            :class="{ 'is-disabled': baseState !== 'ready-enabled' || submitting, 'has-error': baseState === 'error' }"
-            :aria-busy="baseBusy || undefined">
-            <svg class="dfm-branch-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <circle cx="5.5" cy="4.5" r="2" stroke="currentColor" stroke-width="1.5" />
-              <circle cx="5.5" cy="15.5" r="2" stroke="currentColor" stroke-width="1.5" />
-              <circle cx="15" cy="8" r="2" stroke="currentColor" stroke-width="1.5" />
-              <path d="M5.5 6.5v7M13 8h-3.2C7.5 8 5.5 10 5.5 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-            </svg>
-            <Select id="dfc-base" :model-value="baseState === 'ready-enabled' ? workBaseRef : ''"
-              :options="baseState === 'ready-enabled' ? branchOptions : []" :placeholder="basePlaceholder"
-              :disabled="baseState !== 'ready-enabled' || submitting" :invalid="baseState === 'error'"
-              :aria-invalid="baseState === 'error' || undefined"
-              :aria-describedby="baseHint ? 'dfc-base-hint' : undefined"
-              data-test="designer-flow-create-base" @update:model-value="workBaseRef = $event" />
-            <span v-if="baseBusy" class="dfm-spinner" role="status"
-              :aria-label="t('gui.designer.file_menu.base_branch_loading')" data-test="designer-flow-create-base-loading" />
-            <button v-else-if="baseState === 'error'" type="button" class="dfm-retry" :disabled="submitting"
-              :aria-label="t('gui.designer.file_menu.base_branch_retry')" :title="t('gui.designer.file_menu.base_branch_retry')"
-              data-test="designer-flow-create-base-retry" @click="retryOptions">
-              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="M15.8 6.8A6.2 6.2 0 1 0 16 12M16 3v4.5h-4.5" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" />
+          <!-- 0020 mock ①: own list (local branches, then a "remote only" group with badges) and an
+               always-present [Import] beside the field that turns on for a remote branch. -->
+          <div class="dfm-branch-row">
+            <div class="dfm-control dfm-branch-control"
+              :class="{ 'is-disabled': baseTriggerDisabled, 'has-error': baseState === 'error' }"
+              :aria-busy="baseBusy || undefined">
+              <svg class="dfm-branch-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <circle cx="5.5" cy="4.5" r="2" stroke="currentColor" stroke-width="1.5" />
+                <circle cx="5.5" cy="15.5" r="2" stroke="currentColor" stroke-width="1.5" />
+                <circle cx="15" cy="8" r="2" stroke="currentColor" stroke-width="1.5" />
+                <path d="M5.5 6.5v7M13 8h-3.2C7.5 8 5.5 10 5.5 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
               </svg>
-            </button>
-            <svg v-else class="dfm-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
+              <button id="dfc-base" ref="baseTrigger" type="button" class="dfm-base-trigger" role="combobox"
+                aria-haspopup="listbox" :aria-expanded="listOpen ? 'true' : 'false'" aria-controls="dfc-base-list"
+                :aria-activedescendant="listOpen && activeIndex >= 0 ? `dfc-base-opt-${activeIndex}` : undefined"
+                :value="baseState === 'ready-enabled' ? workBaseRef : ''" :disabled="baseTriggerDisabled"
+                :aria-invalid="baseState === 'error' || undefined"
+                :aria-describedby="baseHint ? 'dfc-base-hint' : undefined"
+                data-test="designer-flow-create-base" @click="toggleList" @keydown="onTriggerKeydown" @blur="closeList">
+                <span class="dfm-base-text" :class="`is-${baseDisplay.tone}`">{{ baseDisplay.text }}</span>
+              </button>
+              <span v-if="baseBusy" class="dfm-spinner" role="status"
+                :aria-label="t('gui.designer.file_menu.base_branch_loading')" data-test="designer-flow-create-base-loading" />
+              <button v-else-if="baseState === 'error'" type="button" class="dfm-retry" :disabled="submitting"
+                :aria-label="t('gui.designer.file_menu.base_branch_retry')" :title="t('gui.designer.file_menu.base_branch_retry')"
+                data-test="designer-flow-create-base-retry" @click="retryOptions">
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path d="M15.8 6.8A6.2 6.2 0 1 0 16 12M16 3v4.5h-4.5" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <svg v-else class="dfm-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <ul v-if="listOpen" id="dfc-base-list" class="dfm-branch-list" role="listbox"
+                :aria-label="t('gui.designer.file_menu.base_branch')" data-test="designer-flow-create-base-list"
+                @mousedown.prevent>
+                <li v-for="(branch, index) in localBranches" :id="`dfc-base-opt-${index}`" :key="branch" role="option"
+                  class="dfm-branch-option" :class="{ 'is-selected': branch === workBaseRef, 'is-active': index === activeIndex }"
+                  :aria-selected="branch === workBaseRef ? 'true' : 'false'" :data-value="branch"
+                  data-test="designer-flow-create-base-option" @click="pickBranch(branch)" @mousemove="activeIndex = index">
+                  <span class="dfm-branch-name">{{ branch }}</span>
+                </li>
+                <li v-if="remoteBranches.length" role="presentation" class="dfm-branch-group"
+                  data-test="designer-flow-create-base-remote-group">{{ t('gui.designer.file_menu.remote_group') }}</li>
+                <li v-for="(branch, offset) in remoteBranches" :id="`dfc-base-opt-${localBranches.length + offset}`" :key="`remote:${branch}`"
+                  role="option" class="dfm-branch-option is-remote"
+                  :class="{ 'is-selected': branch === workBaseRef, 'is-active': localBranches.length + offset === activeIndex }"
+                  :aria-selected="branch === workBaseRef ? 'true' : 'false'" :data-value="branch"
+                  data-test="designer-flow-create-base-option" @click="pickBranch(branch)"
+                  @mousemove="activeIndex = localBranches.length + offset">
+                  <span class="dfm-branch-name">origin/{{ branch }}</span>
+                  <span class="dfm-remote-badge">{{ t('gui.designer.file_menu.remote_needed') }}</span>
+                </li>
+              </ul>
+            </div>
+            <span class="dfm-import-wrap" :class="{ 'is-denied': importDenied }">
+              <button type="button" class="dfm-import" :class="{ 'is-on': importReady, 'is-busy': importing }"
+                :disabled="!importReady" :aria-describedby="importDenied ? 'dfc-import-tip' : undefined"
+                data-test="designer-flow-import-branch" @click="importBranch">
+                <span v-if="importing" class="dfm-import-spinner" aria-hidden="true" />
+                {{ t(importing ? 'gui.designer.file_menu.importing' : 'gui.designer.file_menu.import') }}
+              </button>
+              <span v-if="importDenied" id="dfc-import-tip" class="dfm-import-tip" role="tooltip"
+                data-test="designer-flow-import-tip">{{ t('gui.designer.file_menu.import_permission') }}</span>
+            </span>
           </div>
-          <p v-show="baseHint" id="dfc-base-hint" class="dfm-field-error" role="status" aria-live="polite"
-            :data-test="baseState === 'error' ? 'designer-flow-create-base-error' : undefined">{{ baseHint }}</p>
+          <p v-show="baseHint" id="dfc-base-hint" class="dfm-hint" :class="`is-${baseHintTone}`" role="status" aria-live="polite"
+            :data-test="baseState === 'error' ? 'designer-flow-create-base-error' : 'designer-flow-create-base-hint'">{{ baseHint }}</p>
         </div>
       </form>
     </template>
@@ -157,16 +195,131 @@ type BaseState = 'unknown' | 'loading' | 'ready-enabled' | 'ready-disabled' | 'e
 const baseState = ref<BaseState>('unknown')
 const branchOptions = ref<SelectOption[]>([])
 const workBaseRef = ref('')
+const remoteNames = ref<string[]>([])
+const canImport = ref(false)
+const importing = ref(false)
+const importError = ref('')
+/** The branch this dialog just imported; "가져왔습니다." stays until another branch is picked. */
+const importedName = ref('')
+const remoteSelected = computed(() => remoteNames.value.includes(workBaseRef.value))
+const importReady = computed(() => baseState.value === 'ready-enabled' && remoteSelected.value && canImport.value
+  && !importing.value && !submitting.value)
+const importDenied = computed(() => baseState.value === 'ready-enabled' && remoteSelected.value && !canImport.value)
+const localBranches = computed(() => branchOptions.value.filter(option => !option.muted).map(option => option.value))
+const remoteBranches = computed(() => branchOptions.value.filter(option => option.muted).map(option => option.value))
+const flatBranches = computed(() => [...localBranches.value, ...remoteBranches.value])
+
+/** Each failure gets one localized line under the field; server words never reach the screen. */
+function importFailureText(error: unknown, name: string): string {
+  const { status, code } = (error ?? {}) as { status?: number | null; code?: string | null }
+  if (code === 'branch_name_exists') return t('gui.designer.file_menu.import_exists', { name })
+  if (status === 403) return t('gui.designer.file_menu.import_permission')
+  return t('gui.designer.file_menu.import_failed')
+}
+
+async function importBranch() {
+  const pid = props.projectId, name = workBaseRef.value, session = generation
+  if (!pid || !importReady.value) return
+  closeList()
+  importing.value = true
+  importError.value = ''
+  importedName.value = ''
+  try {
+    await projectStore.importRemoteBranch(pid, name)
+    if (session !== generation) return
+    await loadOptions(true)
+    if (session !== generation) return
+    if (localBranches.value.includes(name)) {
+      workBaseRef.value = name
+      importedName.value = name
+    }
+  } catch (error) {
+    if (session === generation) importError.value = importFailureText(error, name)
+  } finally { if (session === generation) importing.value = false }
+}
+
+watch(workBaseRef, next => {
+  importError.value = ''
+  if (next !== importedName.value) importedName.value = ''
+})
+
 const baseBusy = computed(() => baseState.value === 'unknown' || baseState.value === 'loading')
+const baseTriggerDisabled = computed(() => baseState.value !== 'ready-enabled' || submitting.value || importing.value)
 const basePlaceholder = computed(() => t(baseBusy.value
   ? 'gui.designer.file_menu.loading'
   : baseState.value === 'error' ? 'gui.designer.file_menu.base_branch_unavailable' : 'gui.designer.file_menu.base_branch_required'))
+const baseDisplay = computed<{ text: string; tone: 'placeholder' | 'dim' | 'value' }>(() => {
+  const name = baseState.value === 'ready-enabled' ? workBaseRef.value : ''
+  if (!name) return { text: basePlaceholder.value, tone: 'placeholder' }
+  if (remoteSelected.value) {
+    return { text: importing.value ? `origin/${name}` : `origin/${name} · ${t('gui.designer.file_menu.remote_needed')}`, tone: 'dim' }
+  }
+  return { text: name, tone: 'value' }
+})
 // Branch lookup failures stay concise and localized; transport exceptions are never UI copy.
-const baseHint = computed(() => baseState.value === 'error'
-  ? t('gui.designer.file_menu.base_branch_failed')
-  : baseState.value === 'ready-enabled' && !branchValid.value ? t('gui.designer.file_menu.base_branch_required') : '')
-const branchValid = computed(() => workBaseRef.value !== '' && branchOptions.value.some((o) => o.value === workBaseRef.value))
+const baseHintState = computed<{ text: string; tone: 'error' | 'info' | 'ok' }>(() => {
+  if (baseState.value === 'error') return { text: t('gui.designer.file_menu.base_branch_failed'), tone: 'error' }
+  if (baseState.value !== 'ready-enabled') return { text: '', tone: 'info' }
+  if (importError.value) return { text: importError.value, tone: 'error' }
+  if (importing.value) return { text: '', tone: 'info' }
+  if (remoteSelected.value) return { text: t('gui.designer.file_menu.remote_selected'), tone: 'info' }
+  if (importedName.value && importedName.value === workBaseRef.value) return { text: t('gui.designer.file_menu.imported'), tone: 'ok' }
+  if (!branchValid.value) return { text: t('gui.designer.file_menu.base_branch_required'), tone: 'error' }
+  return { text: '', tone: 'info' }
+})
+const baseHint = computed(() => baseHintState.value.text)
+const baseHintTone = computed(() => baseHintState.value.tone)
+const branchValid = computed(() => !remoteSelected.value && workBaseRef.value !== '' && branchOptions.value.some((o) => o.value === workBaseRef.value))
 const baseReady = computed(() => baseState.value === 'ready-disabled' || (baseState.value === 'ready-enabled' && branchValid.value))
+
+const baseTrigger = ref<HTMLButtonElement | null>(null)
+const listOpen = ref(false)
+const activeIndex = ref(-1)
+function openList() {
+  if (baseTriggerDisabled.value || !flatBranches.value.length) return
+  listOpen.value = true
+  activeIndex.value = Math.max(0, flatBranches.value.indexOf(workBaseRef.value))
+}
+function closeList() {
+  listOpen.value = false
+  activeIndex.value = -1
+}
+function toggleList() {
+  if (listOpen.value) closeList()
+  else openList()
+}
+function pickBranch(name: string) {
+  workBaseRef.value = name
+  closeList()
+  baseTrigger.value?.focus()
+}
+function onTriggerKeydown(event: KeyboardEvent) {
+  if (!listOpen.value) {
+    if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
+      event.preventDefault()
+      openList()
+    }
+    return
+  }
+  const last = flatBranches.value.length - 1
+  if (event.key === 'ArrowDown') activeIndex.value = Math.min(last, activeIndex.value + 1)
+  else if (event.key === 'ArrowUp') activeIndex.value = Math.max(0, activeIndex.value - 1)
+  else if (event.key === 'Home') activeIndex.value = 0
+  else if (event.key === 'End') activeIndex.value = last
+  else if (event.key === 'Enter' || event.key === ' ') {
+    const name = flatBranches.value[activeIndex.value]
+    if (name !== undefined) pickBranch(name)
+  } else if (event.key === 'Escape') {
+    // Close only the list; the dialog's own Escape must not fire on the same press.
+    event.stopPropagation()
+    closeList()
+  } else {
+    if (event.key === 'Tab') closeList()
+    return
+  }
+  event.preventDefault()
+}
+watch(baseTriggerDisabled, isDisabled => { if (isDisabled) closeList() })
 let selectedOnce = false
 let optionsGeneration = 0
 
@@ -180,9 +333,11 @@ async function loadOptions(retry = false) {
   try {
     const options = await projectStore.loadWorkBaseOptions(pid, { force: true })
     if (session !== generation || request !== optionsGeneration) return
-    branchOptions.value = options.branches.map((branch) => ({ value: branch.name, label: branch.name }))
+    remoteNames.value = options.branches.filter(branch => branch.remoteOnly).map(branch => branch.name)
+    canImport.value = options.canImport === true
+    branchOptions.value = options.branches.map((branch) => ({ value: branch.name, label: branch.name, muted: branch.remoteOnly === true }))
     if (selectedOnce) {
-      if (!branchValid.value) workBaseRef.value = ''
+      if (!branchOptions.value.some(option => option.value === workBaseRef.value)) workBaseRef.value = ''
     } else {
       workBaseRef.value = options.baseBranch && branchOptions.value.some((b) => b.value === options.baseBranch) ? options.baseBranch : ''
     }
@@ -250,6 +405,12 @@ watch(
     optionsGeneration += 1
     baseState.value = 'unknown'
     submitting.value = false
+    importing.value = false
+    importError.value = ''
+    importedName.value = ''
+    closeList()
+    remoteNames.value = []
+    canImport.value = false
     if (!isOpen) return
     const opening = !previous?.[0]
     const projectChanged = previous && previous[1] !== pid
@@ -320,6 +481,8 @@ async function submit() {
   border-radius: 15px;
   box-shadow: 0 28px 80px rgba(0, 0, 0, .32), 0 4px 16px rgba(0, 0, 0, .2), inset 0 1px rgba(255, 255, 255, .035);
   color: var(--fg2-text, #ecf3fb);
+  /* The base-branch list drops below the field and may reach past the footer. */
+  overflow: visible;
 }
 .dfm-create-dialog > .ui-modal-body {
   padding: 0 29px;
@@ -410,7 +573,132 @@ async function submit() {
 .dfm-control :deep(.ui-select) { padding-right: 42px; cursor: pointer; }
 .dfm-control :deep(.ui-select:disabled) { color: #7f96ae; cursor: default; opacity: 1; }
 .dfm-control :deep(.ui-select option) { background: #15253a; color: #ecf3fb; }
-.dfm-branch-control :deep(.ui-select) { padding-left: 36px; }
+.dfm-branch-row { display: flex; align-items: center; gap: 8px; }
+.dfm-branch-row .dfm-branch-control { flex: 1; min-width: 0; }
+.dfm-base-trigger {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 42px 0 36px;
+  background: transparent;
+  border: 0;
+  border-radius: inherit;
+  color: var(--fg2-text, #ecf3fb);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+}
+.dfm-base-trigger:disabled { cursor: default; }
+.dfm-base-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dfm-base-text.is-placeholder { color: #7f96ae; }
+.dfm-base-text.is-dim { color: #6e8299; }
+.dfm-branch-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: -1px;
+  right: -1px;
+  z-index: 5;
+  max-height: 248px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid #2f4864;
+  border-radius: 9px;
+  background: #13233a;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .7);
+  font-size: 13px;
+}
+.dfm-branch-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 13px;
+  color: #ecf3fb;
+  cursor: pointer;
+}
+.dfm-branch-option.is-active { background: #1a3048; }
+.dfm-branch-option.is-selected { background: #1d3a5c; }
+.dfm-branch-option.is-remote { color: #6e8299; }
+.dfm-branch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dfm-remote-badge {
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid #2b3d52;
+  border-radius: 4px;
+  background: #1b2838;
+  color: #8a9db3;
+  font-size: 10.5px;
+  line-height: 14px;
+}
+.dfm-branch-group {
+  padding: 6px 13px 4px;
+  border-top: 1px solid #22344a;
+  color: #7a8ea6;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.dfm-import-wrap { position: relative; flex: none; display: inline-flex; }
+.dfm-import {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 43px;
+  padding: 0 14px;
+  box-sizing: border-box;
+  border: 1px solid #36506b;
+  border-radius: 9px;
+  background: transparent;
+  color: #c2d0df;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dfm-import:disabled { opacity: .42; cursor: not-allowed; }
+.dfm-import.is-on { background: linear-gradient(#508ff0, #3373d7); border-color: #548fe9; color: #fff; }
+.dfm-import.is-on:hover { background: linear-gradient(#69a0f7, #4783e6); }
+.dfm-import.is-busy, .dfm-import.is-busy:disabled { opacity: 1; background: #1b3a5a; border-color: #3a6a96; color: #d4ecff; cursor: default; }
+.dfm-import:focus-visible { outline: 2px solid var(--fg2-focus, #77aaff); outline-offset: 2px; }
+.dfm-import-spinner {
+  width: 13px;
+  height: 13px;
+  box-sizing: border-box;
+  border: 1.8px solid rgba(160, 185, 220, .25);
+  border-top-color: #8bb5ef;
+  border-radius: 50%;
+  animation: dfm-spin .8s linear infinite;
+}
+.dfm-import-tip {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 6;
+  padding: 6px 9px;
+  border: 1px solid #3a4d63;
+  border-radius: 6px;
+  background: #1d2b3c;
+  color: #dbe6f2;
+  font-size: 11.5px;
+  white-space: nowrap;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity .12s;
+  pointer-events: none;
+}
+.dfm-import-wrap.is-denied:hover .dfm-import-tip,
+.dfm-import-wrap.is-denied:focus-within .dfm-import-tip { visibility: visible; opacity: 1; }
+.dfm-hint { margin: 6px 0 0; font-size: 11.5px; line-height: 16px; color: #9fb2c6; }
+.dfm-hint.is-error { color: #e0a6a1; }
+.dfm-hint.is-ok { color: #7fe3d6; }
 .dfm-chevron {
   position: absolute;
   right: 13px;
@@ -451,7 +739,7 @@ async function submit() {
   .dfm-actions { padding: 28px 20px 21px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dfm-spinner { animation: none; }
+  .dfm-spinner, .dfm-import-spinner { animation: none; }
   .dfm-control, .dfm-close, .dfm-retry, .dfm-actions :deep(.ui-btn) { transition: none; }
 }
 </style>

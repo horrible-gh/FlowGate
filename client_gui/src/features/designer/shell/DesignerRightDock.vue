@@ -39,8 +39,10 @@
         @update:model-value="onSelect"
       >
         <template #tab="{ tab }">
-          <!-- Original vector artwork: palette / chat; the existing Git geometry is retained. -->
-          <svg class="designer-right-tab-icon" :class="'is-' + tab.key" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+          <!-- Original vector artwork: palette / chat; the existing Git geometry is retained. The chat bubble is
+               shared with the flow tab's "chat AI responding" mark (flowgate.v02gui.0020). -->
+          <ChatBubbleIcon v-if="tab.key === 'conversation'" class="designer-right-tab-icon is-conversation" :size="14" />
+          <svg v-else class="designer-right-tab-icon" :class="'is-' + tab.key" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
             <g v-if="tab.key === 'palette'">
               <path d="M8 1.25C4.2 1.25 1.25 4 1.25 7.5c0 4 3 7.25 6.5 7.25h1.1c1.2 0 1.9-1.3 1.2-2.3l-.4-.6c-.5-.7 0-1.6.9-1.6H12c1.7 0 2.75-1.2 2.75-2.9 0-3.4-3-6.1-6.75-6.1Z" fill="#ffe0a6" stroke="#d89b58" stroke-width="0.75" />
               <circle cx="4.3" cy="5.4" r="1.2" fill="#f15b68" />
@@ -48,14 +50,6 @@
               <circle cx="11.1" cy="5.1" r="1.2" fill="#55c98d" />
               <circle cx="4.2" cy="9" r="1.2" fill="#b584ef" />
               <circle cx="7.1" cy="11.9" r="1.1" fill="#efaa38" />
-            </g>
-            <g v-else-if="tab.key === 'conversation'">
-              <path d="M3 2.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7l-4 3v-3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z" fill="#61c6ff" stroke="#b9eaff" stroke-width="0.75" stroke-linejoin="round" />
-              <g fill="#174c78">
-                <circle cx="5" cy="7" r="0.85" />
-                <circle cx="8" cy="7" r="0.85" />
-                <circle cx="11" cy="7" r="0.85" />
-              </g>
             </g>
             <g v-else fill="none" stroke="currentColor" stroke-width="1.3">
               <path d="M4 5v6m8-6v1a3 3 0 0 1-3 3H7a3 3 0 0 0-3 3" />
@@ -109,6 +103,7 @@ import { ConversationPanel } from '@/features/conversation'
 import { DesignerGitPanel } from '@/features/git'
 import { useProjectStore, type FlowRef, type ProjectEventSubscription } from '@/features/project'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
+import ChatBubbleIcon from '../../../components/ui/ChatBubbleIcon.vue'
 import PalettePanel from '../palette/PalettePanel.vue'
 import type { PaletteItemDefinition } from '../palette/paletteCatalog'
 import { DESIGNER_RIGHT_TOOLS, type DesignerRightTool } from './designerLayout'

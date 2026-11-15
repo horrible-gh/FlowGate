@@ -620,11 +620,15 @@ export async function fetchProviders(projectId: string): Promise<ProviderList> {
  * got no answer, and the server answers that resend with the run the first request admitted (running or finished)
  * instead of starting a second one; 409 `start_pending` means the first request is still being admitted.
  */
+import { beginChatActivity } from './flowChatActivity'
+
 export async function startChatRun(chatId: string, providerId: string | null, clientRequestId?: string): Promise<string | null> {
   const parts = splitGroupId(chatId)
   if (!parts) throw clientCheckFailure()
   // A CH id is `project.module.group.seq-TYPE`; the group is the third segment.
   const group = chatId.split('.')[2]
+  const finishActivity = beginChatActivity(chatId.split('.').slice(0, 3).join('.'))
+  try {
   const data = await call(
     () => postRequest<{ run_id?: string }>(`${API}/ai-invoke/start`, {
       project: parts.project,
@@ -638,6 +642,7 @@ export async function startChatRun(chatId: string, providerId: string | null, cl
     }),
   )
   return data?.run_id ?? null
+  } finally { finishActivity() }
 }
 
 interface RawFallbackEntry {

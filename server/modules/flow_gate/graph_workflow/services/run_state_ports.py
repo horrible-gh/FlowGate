@@ -76,8 +76,11 @@ def require_editable(flow_id: str) -> None:
     _handler(REQUIRE_EDITABLE)(flow_id)
 
 
-def protect_definition(flow_id: str, nodes: list, edges: list) -> None:
-    _handler(PROTECT_DEFINITION)(flow_id, nodes, edges)
+def protect_definition(flow_id: str, nodes: list, edges: list, *, restore_missing=False) -> None:
+    if restore_missing:
+        _handler(PROTECT_DEFINITION)(flow_id, nodes, edges, restore_missing=True)
+    else:
+        _handler(PROTECT_DEFINITION)(flow_id, nodes, edges)
 
 
 def adopt_revision(group: dict, run: dict, actor: str, jobs: list) -> bool:

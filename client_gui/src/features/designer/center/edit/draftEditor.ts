@@ -19,6 +19,7 @@
 //   removed card comes back where it was. An editor without `save` edits nothing: it keeps the move
 //   history of a Flow whose Graph is no editable draft.
 // Pure TypeScript, no Vue: the Center session mirrors `status` into its reactive state.
+import { readPending, writePending, rebaseDraft, type PendingDraft } from './pendingDraft'
 import type { FlowDraftError, FlowDraftSaveResult } from '../graph/flowGraphSource'
 import { CLIENT_KEY_PREFIX, draftContent, remapDraft, type DraftModel } from './draftModel'
 import { createHistoryStacks, editEntry, moveEntry, movePlacements, remapEntry, renameEntry, type NodeMove, type NodePlacement } from './editHistory'
@@ -31,6 +32,9 @@ const UNDO_LIMIT = 100
 export type DraftEditStatus = 'idle' | 'pending' | 'saving' | 'error' | 'conflict'
 
 export interface DraftEditorOptions {
+  storageKey?: string
+  recover?(): Promise<{ model: DraftModel; version: number }>
+  onRecovered?(): void
   /** Absent: a moves-only history (no structure edit applies). */
   save?(version: number, content: ReturnType<typeof draftContent>): Promise<FlowDraftSaveResult>
   /** The draft (and undo) after a save renamed `tmp_` keys. */
@@ -75,6 +79,10 @@ export interface DraftEditor {
 let keySeq = 0
 
 export function newClientKey(): string {
+  if (globalThis.crypto?.getRandomValues) {
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16))
+    return CLIENT_KEY_PREFIX + [...bytes].map(value => value.toString(16).padStart(2, '0')).join('')
+  }
   keySeq += 1
   return `${CLIENT_KEY_PREFIX}${Date.now().toString(36)}${keySeq.toString(36)}`
 }
@@ -89,12 +97,18 @@ const storedKeys = (model: DraftModel) =>
 export function createDraftEditor(model: DraftModel, version: number, options: DraftEditorOptions): DraftEditor {
   const delay = options.delayMs ?? DRAFT_SAVE_DELAY_MS
   let current = model
+  let base = model
   let saved = version
+  const restored = readPending<PendingDraft>(options.storageKey)
+  if (restored?.model?.nodes && restored.model.edges && restored.base?.nodes && restored.base.edges) {
+    current = rebaseDraft(restored.base, restored.model, model).model
+  }
+  let failures = 0
   let status: DraftEditStatus = 'idle'
   let errorCode: string | null = null
   const history = createHistoryStacks(UNDO_LIMIT)
   let timer: ReturnType<typeof setTimeout> | null = null
-  let editSeq = 0
+  let editSeq = current === model ? 0 : 1
   let sentSeq = 0
   let inFlight = false
   let disposed = false
@@ -102,7 +116,10 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
   let sentModel: DraftModel | null = null
   let waiters: Array<(ok: boolean) => void> = []
 
-  const busy = () => timer !== null || inFlight || (editSeq !== sentSeq && status !== 'error' && status !== 'conflict')
+  const busy = () => inFlight || (!disposed && (timer !== null || editSeq !== sentSeq))
+  function persist() {
+    writePending(options.storageKey, editSeq !== sentSeq ? { model: current, base, version: saved } : null)
+  }
 
   function settle(ok: boolean) {
     const list = waiters
@@ -112,22 +129,23 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
 
   function setStatus(next: DraftEditStatus) {
     status = next
+    persist()
     options.onChange()
   }
 
   function schedule() {
-    if (disposed || status === 'conflict') return
+    if (disposed) return
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
       timer = null
       send()
-    }, delay)
+    }, failures ? Math.min(30000, 1000 * 2 ** Math.min(failures - 1, 5)) : delay)
     setStatus(inFlight ? 'saving' : 'pending')
   }
 
   function send() {
     const save = options.save
-    if (!save || inFlight || status === 'conflict' || editSeq === sentSeq) return
+    if (!save || inFlight || editSeq === sentSeq) return
     inFlight = true
     const seq = editSeq
     const sent = current
@@ -144,6 +162,8 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
         inFlight = false
         sentSeq = seq
         saved = result.version
+        base = remapDraft(sent, result.keyMap)
+        failures = 0
         errorCode = null
         if (Object.keys(result.keyMap).length) {
           current = remapDraft(current, result.keyMap)
@@ -164,10 +184,22 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
       (error: FlowDraftError) => {
         inFlight = false
         sentModel = null
-        sentSeq = seq
         errorCode = (error && typeof error.code === 'string' && error.code) || 'save_failed'
+        failures += 1
         setStatus(errorCode === 'draft_version_conflict' ? 'conflict' : 'error')
         settle(false)
+        if (disposed) return
+        if (errorCode === 'draft_version_conflict' && options.recover) {
+          inFlight = true
+          options.recover().then(latest => {
+            const rebased = rebaseDraft(base, current, latest.model)
+            current = rebased.model
+            base = latest.model
+            saved = latest.version
+            if (Object.keys(rebased.keys).length) options.onKeys(rebased.keys)
+            options.onRecovered?.()
+          }).catch(() => {}).finally(() => { inFlight = false; schedule() })
+        } else if (errorCode !== 'draft_version_conflict') schedule()
       },
     )
   }
@@ -225,6 +257,11 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
     return true
   }
 
+  if (editSeq !== sentSeq) {
+    status = 'pending'
+    timer = setTimeout(() => { timer = null; send() }, delay)
+  }
+
   return {
     model: () => current,
     version: () => saved,
@@ -252,9 +289,11 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
       const at = new Map(placements.map((p) => [p.nodeId, p] as const))
       if (!current.nodes.some((n) => at.has(n.key))) return
       current = { ...current, nodes: current.nodes.map((n) => (at.has(n.key) ? { ...n, x: at.get(n.key)!.x, y: at.get(n.key)!.y } : n)) }
+      persist()
     },
     flush,
     settled() {
+      if (status === 'error' || status === 'conflict') { flush(); return Promise.resolve(false) }
       if (!busy()) return Promise.resolve(status === 'idle')
       return new Promise((resolve) => {
         waiters.push(resolve)
@@ -265,6 +304,7 @@ export function createDraftEditor(model: DraftModel, version: number, options: D
       if (timer) clearTimeout(timer)
       timer = null
       current = model
+      base = model
       saved = version
       history.clear()
       editSeq = sentSeq

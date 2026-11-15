@@ -6,9 +6,9 @@
  * with issues (S4-4). No DOM.
  * TR0020 rev3: no start-draft / switch-view actions — a Graph Flow's latest revision is edited as
  * is (its first save creates the draft), a stored draft is shown without asking, and 실행 shows
- * the run again. TR0020 rev4: a refused save (conflict / error) reads the Flow again by itself —
- * what the removed 다시 불러오기 button did. flowgate.v02gui.0019: the cards it refused are put on the read
- * draft and saved once more (a second refusal drops them).
+ * the run again. A refused save (conflict / error) keeps its edits and is retried (a version conflict
+ * rebased on the stored draft) instead of reading the Flow again; flowgate.v02gui.0019: the placed card is
+ * saved again.
  * Rework (TR0014 r1): a tab closed / project changed while a new node's draft save runs still
  * stores the node's position once the save answers its key, and a reopened tab reads it.
  */
@@ -106,11 +106,11 @@ describe('Center session draft editing', () => {
     await vi.runAllTimersAsync()
     vi.mocked(source.saveDraft!).mockRejectedValueOnce({ code: 'document_storage_unwritable' })
     center.dropOnCanvas('f1', dataTransfer('task'), 560, 320)
-    await vi.runAllTimersAsync()
+    await vi.advanceTimersByTimeAsync(60)
     expect(loads).toHaveLength(1)
     expect(shown(center).draft?.version).toBe(0)
     expect(shown(center).nodes.filter((n) => n.id.startsWith('tmp_'))).toHaveLength(1)
-    expect(center.state.edits.f1).toMatchObject({ status: 'error', errorCode: 'document_storage_unwritable' })
+    expect(center.state.edits.f1.errorCode).toBe('document_storage_unwritable')
     center.dropOnCanvas('f1', dataTransfer('task'), 800, 320)
     await vi.runAllTimersAsync()
     expect(drafts[0].version).toBe(0)
@@ -166,57 +166,25 @@ describe('Center session draft editing', () => {
     expect(drafts.at(-1)!.content.nodes.map((n) => n.key)).toEqual(['gn_a', 'gn_b'])
   })
 
-  it('a refused save reads the Flow again by itself and keeps the placed card: it is saved again on the read draft (v02gui.0019)', async () => {
-    for (const code of ['draft_version_conflict', 'graph_node_protected']) {
-      const { center, source, loads } = setup([unassigned(1)])
+  it('a refused save keeps the card and retries without rolling back its position: the placed card is saved again (v02gui.0019)', async () => {
+    for (const code of ['draft_version_conflict', 'request_failed', 'graph_node_protected']) {
+      const { center, source } = setup([unassigned(1)])
       await vi.runAllTimersAsync()
-      let refuse = true
-      const saveDraft = vi.fn(async (_p: string, _f: string, version: number, content: FlowDraftContent) => {
-        if (refuse) {
-          refuse = false
-          throw Object.assign(new Error('refused'), { code })
-        }
-        const keyMap: Record<string, string> = {}
-        content.nodes.filter((n) => n.isNew).forEach((n, i) => (keyMap[n.key] = `gn_kept${i}`))
-        return { version: version + 1, keyMap }
-      })
-      source.saveDraft = saveDraft
-      const before = loads.length
+      const save = source.saveDraft!
+      source.saveDraft = vi.fn().mockRejectedValueOnce({ code }).mockImplementation(save)
       center.dropOnCanvas('f1', dataTransfer('task'), 10, 10)
+      const id = shown(center).nodes.find(node => node.id.startsWith('tmp_'))!.id
+      center.moveNode('f1', id, 500, 700)
+      await vi.advanceTimersByTimeAsync(60)
       expect(shown(center).nodes).toHaveLength(2)
-      await vi.runAllTimersAsync()
-      expect(loads.length, code).toBe(before + 1)
-      expect(saveDraft).toHaveBeenCalledTimes(2)
-      expect(saveDraft.mock.calls[1][2], code).toBe(1)                     // on the version just read
-      expect(saveDraft.mock.calls[1][3].nodes.map((n) => [n.label, n.isNew])).toEqual([['구현', true]])
-      expect(center.state.edits.f1.status, code).toBe('idle')
-      expect(center.state.edits.f1.errorCode).toBeNull()
-      expect(shown(center).nodes.map((n) => n.id)).toEqual(['doc:r', 'gn_kept0'])
-    }
-  })
-
-  it('a card refused twice is dropped (no save loop); a save with no answer carries nothing (v02gui.0019)', async () => {
-    for (const code of ['draft_version_conflict', null]) {
-      const { center, source, loads } = setup([unassigned(1)])
-      await vi.runAllTimersAsync()
-      source.saveDraft = vi.fn(async () => {
-        throw Object.assign(new Error('refused'), { code })
-      })
-      const before = loads.length
-      center.dropOnCanvas('f1', dataTransfer('task'), 10, 10)
-      await vi.runAllTimersAsync()
-      const tries = code === null ? 1 : 2
-      expect(source.saveDraft, String(code)).toHaveBeenCalledTimes(tries)
-      expect(loads.length, String(code)).toBe(before + tries)
+      expect(shown(center).nodes.find(node => node.id === id)).toMatchObject({ x: 500, y: 700 })
+      await vi.advanceTimersByTimeAsync(1100)
+      expect(source.saveDraft).toHaveBeenCalledTimes(2)
+      const retried = vi.mocked(source.saveDraft!).mock.calls[1][3] as FlowDraftContent
+      expect(retried.nodes.filter((n) => n.isNew).map((n) => n.label), code).toEqual(['구현'])
       expect(center.state.edits.f1.status).toBe('idle')
-      expect(shown(center).nodes.map((n) => n.id)).toEqual(['doc:r'])
-      // Editing goes on from the stored draft; the next save is tried again.
-      source.saveDraft = vi.fn(async (_p, _f, version) => ({ version: version + 1, keyMap: {} }))
-      expect(center.dropOnCanvas('f1', dataTransfer('task'), 10, 10)).toBe(true)
-      await vi.runAllTimersAsync()
-      expect(source.saveDraft).toHaveBeenCalledWith('p', 'f1', 1, expect.anything())
-      expect(center.state.edits.f1.status).toBe('idle')
-      expect(loads.length).toBe(before + tries)
+      expect(shown(center).nodes.find(node => node.id.startsWith('gn_'))).toMatchObject({ x: 500, y: 700 })
+      center.dispose()
     }
   })
 

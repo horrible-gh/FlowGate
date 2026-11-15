@@ -145,6 +145,8 @@ export interface RunResultWindowsState {
   seq: number
 }
 
+import { isReviewHold } from './runResultView'
+
 export const SHOWN_STATES: readonly string[] = ['completed', 'failed']
 
 /** flowgate.v02.0117 T#4 / 0124 T#2: the idle reasons a waiting command is told for — a person's waits. */
@@ -351,6 +353,11 @@ export function createRunResultWatch(deps: RunResultWatchDeps) {
         watch.failures = 0
         watch.stalled = false
         if (!result.ended) return again()                                        // it goes on
+        if (isReviewHold(result)) {
+          if (markShown(flowId, result)) show(result)
+          if (!result.continues) drop(flowId)
+          return again()
+        }
         if (SHOWN_STATES.includes(result.state)) {
           drop(flowId)
           if (markShown(flowId, result)) show(result)                            // T#1: never a result shown already

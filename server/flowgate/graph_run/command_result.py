@@ -508,6 +508,7 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
     done_in_command: set[str] = set()
     failures: list[dict] = []
     stage_waits: dict[str, str] = {}
+    review_holds: dict[str, str] = {}
     roles: dict[str, list[dict]] = {"instruction": [], "execution": [], "review": []}
     messages: list[dict] = []
 
@@ -570,7 +571,13 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
             fail(key, "stage_failed", _stage_failed_detail(data, event), at, ROLE_OF_STAGE.get(data.get("stage")))
         elif cause == APPROVAL_SKIPPED and event.get("reason") not in PERSON_APPROVAL_WAITS:
             touch(key)
-            fail(key, "auto_approval_failed", event.get("reason"), at)
+            reason = event.get("reason")
+            if reason in ("review_verdict_hold", "review_not_passed:review_verdict_hold") and key:
+                review_holds[key] = reason
+                messages.append({"kind": "event", "event": "review_hold", "code": reason,
+                                 "node_key": key, **titles.of(key), "at": at, "error": False})
+            else:
+                fail(key, "auto_approval_failed", reason, at)
 
     # The §3.10 role invocation records of the command: attributed by the run event their request was made at.
     all_records = record_store.for_graph_run(run_id) if record_store.available() else []
@@ -672,7 +679,8 @@ def payload(run_id: str, command_seq: Optional[int] = None) -> dict:
         elif outcome == "failed":
             reason = "review_rejected"
         elif outcome == "waiting":
-            reason = stage_waits.get(key) or ("review" if status == "review" else None)
+            reason = "review_hold" if key in review_holds else stage_waits.get(key) or ("review" if status == "review" else None)
+            detail = review_holds.get(key)
         nodes.append({"node_key": key, **titles.of(key), "status": status, "outcome": outcome,
                       "stage": (rows.get(key) or {}).get("stage"), "done_in_command": key in done_in_command,
                       "reason": reason, "detail": detail})

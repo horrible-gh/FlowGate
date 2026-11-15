@@ -90,6 +90,7 @@ import {
   fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
   fetchWorkBaseOptions,
+  importRemoteBranch as importRemoteBranchApi,
   fetchFlowWorkBase,
   updateFlowWorkBase,
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
@@ -196,6 +197,12 @@ export const useProjectStore = defineStore('project', () => {
     })
     optionRequests.set(key, request)
     return request
+  }
+  /** flowgate.v02gui.0020: fetch one remote-only branch into a local tracking branch, then drop the cached options
+   * so the next read lists it as an ordinary branch. Failures keep the server's status/code for the screen's words. */
+  async function importRemoteBranch(projectId: string, name: string): Promise<void> {
+    await importRemoteBranchApi(projectId, name)
+    invalidateWorkBaseOptions(projectId)
   }
   const projects = ref<Project[]>([])
   const loading = ref(false)
@@ -816,6 +823,7 @@ export const useProjectStore = defineStore('project', () => {
     readFlowWorkBaseForDisplay,
     saveFlowWorkBase,
     invalidateWorkBaseOptions,
+    importRemoteBranch,
     readFlowArchive,
     setFlowArchived,
     archiveBusy,

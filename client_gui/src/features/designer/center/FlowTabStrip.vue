@@ -57,7 +57,10 @@
           :title="t(`gui.designer.center.tab_run.${runStateOf(tab.flowId)}`)"
           data-test="designer-flow-tab-run"
           :data-run-status="runStateOf(tab.flowId)"
-        />{{ tab.name }}
+        />
+        <!-- flowgate.v02gui.0020: the right dock's '대화' icon itself, at its 14px size, never rotating. -->
+        <span v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" role="img" :aria-label="t('gui.designer.center.tab_chat')"
+          :title="t('gui.designer.center.tab_chat')" data-test="designer-flow-tab-chat"><ChatBubbleIcon :size="14" /></span>{{ tab.name }}
       </button>
       <IconButton
         class="flow-tab-close"
@@ -79,6 +82,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import IconButton from '../../../components/ui/IconButton.vue'
+import ChatBubbleIcon from '../../../components/ui/ChatBubbleIcon.vue'
 
 export interface FlowTabStripItem {
   readonly flowId: string
@@ -93,6 +97,7 @@ const props = withDefaults(
     tabs: readonly FlowTabStripItem[]
     activeFlowId: string | null
     /** flowgate.v02gui.0001: a tab's run state by flow id; a tab not in it (or unknown) shows no mark. */
+    chatStates?: Readonly<Record<string, boolean>>
     runStates?: Readonly<Record<string, FlowTabRunState | undefined>>
   }>(),
   { runStates: () => ({}) },
@@ -430,6 +435,9 @@ watch(
 }
 
 /* flowgate.v02gui.0001: the run mark — running spins, stopping spins dimmed, paused shows two bars. */
+.flow-tab-chat { display: inline-flex; width: 14px; height: 14px; margin-right: 6px; vertical-align: -3px; }
+.flow-tab-chat :deep(svg) { display: block; }
+
 .flow-tab-run {
   display: inline-block;
   box-sizing: border-box;

@@ -270,7 +270,23 @@ def get_git_work_base_options(
     requirement author actually holds -- rather than the Branch Manager's
     ``project.settings.read``, and limited to the names a new group may store."""
     try:
-        return git_service.list_group_work_base_options(project_id)
+        result = git_service.list_group_work_base_options(project_id)
+        result["can_import"] = _has_permission(user, "project.settings.edit", project_id)
+        return result
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class BranchImportBody(BaseModel):
+    name: str
+
+
+@router.post("/projects/{project_id}/git/branches/import")
+def post_import_remote_branch(project_id: str, body: BranchImportBody,
+                              user=Depends(require_permission("project.settings.edit", "project_id"))):
+    from modules.flow_gate.services.git.branches import import_remote_branch
+    try:
+        return import_remote_branch(project_id, body.name)
     except GitServiceError as exc:
         return _guard(exc)
 

@@ -346,7 +346,8 @@ export interface FlowWorkBaseUpdate {
 export interface WorkBaseOptions {
   gitEnabled: boolean
   baseBranch: string | null
-  branches: Array<{ name: string; isProjectBase: boolean }>
+  canImport?: boolean
+  branches: Array<{ name: string; isProjectBase: boolean; remoteOnly?: boolean }>
 }
 
 /** The created Flow: `id` is the v0.1 group id the server reserved. */

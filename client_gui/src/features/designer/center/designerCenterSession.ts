@@ -144,6 +144,7 @@ import { isEdgeProgressed } from './graph/edgeProgress'
 import type { FlowGraph, FlowGraphNode, FlowGraphRun, FlowGraphSelection, FlowGraphTitleState } from './graph/flowGraph'
 import type { FlowGraphSource, FlowLayoutChange, FlowRunError, FlowRunInfo } from './graph/flowGraphSource'
 import { applyTitleState, nodeTitleEdit, takeTitleStates, type NodeTitleSaveOutcome } from './graph/nodeTitle'
+import { pendingKey, readPending, writePending } from './edit/pendingDraft'
 import { createLayoutSaveQueue } from './layoutSaveQueue'
 import {
   createFlowRunControl,
@@ -624,29 +625,37 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     if (projectId === null || !source.saveLayout || isFlowReadOnly(flowId)) return undefined
     // Not at once: a newer batch of the Flow may be waiting or about to go out. The queue's idle
     // report (createQueue) reads once nothing of the Flow is waiting or running.
-    const reread = () => {
-      if (isOpen(projectId, flowId)) staleFlows.add(flowId)
-    }
     let request: Promise<{ ignoredNodeIds: readonly string[] }>
     try {
       request = source.saveLayout(projectId, flowId, change)
     } catch (error) {
       request = Promise.reject(error)
     }
-    return request.then((result) => {
-      if (result.ignoredNodeIds.length > 0) reread()
-    }, reread)
+    return request.then(async (result) => {
+      if (result.ignoredNodeIds.length === 0) return
+      if (drafts.busy(flowId)) throw new Error('Layout not stored yet')
+      // Removed cards have no position to save. Check the current draft before retiring their batch.
+      let latest = await source.loadGraph(projectId, flowId)
+      if (latest.draft && !latest.draft.editable) latest = await source.loadGraph(projectId, flowId, 'draft')
+      if (latest.nodes.some(node => result.ignoredNodeIds.includes(node.id))) throw new Error('Layout not stored yet')
+      staleFlows.add(flowId)
+    })
   }
 
   function createQueue(projectId: string | null) {
+    const storageKey = projectId ? pendingKey(projectId, '', 'layout') : undefined
     return createLayoutSaveQueue(
-      (flowId, change) => sendLayout(projectId, flowId, change),
+      (flowId, change) => {
+        if (projectId && pendingKey(projectId, '', 'layout') !== storageKey) throw new Error('Session changed')
+        return sendLayout(projectId, flowId, change)
+      },
       options.layoutSaveDelayMs,
       (flowId) => {
         if (projectId !== null && !drafts.busy(flowId) && staleFlows.delete(flowId) && isOpen(projectId, flowId)) {
           readGraph(flowId, true)
         }
       },
+      storageKey,
     )
   }
 
@@ -672,6 +681,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     setGraph: (flowId, graph) => {
       if (!state.graphs[flowId]) return
       state.graphs[flowId] = { status: 'ready', graph: markRaw(graph) }
+      if (state.projectId) writePending(pendingKey(state.projectId, flowId, 'canvas'), graph)
       // An edit, its undo or its redo may take selected Nodes away (flowgate.v02.0059 T#1).
       keepShownSelection(flowId, graph)
     },
@@ -1102,7 +1112,13 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           return
         }
         // flowgate.v02.0064 T#4: a card keeps a newer title this tab already shows (a save answered after the read went).
+        const pendingPositions = layoutQueue.positions(flowId)
+        graph = { ...graph, nodes: graph.nodes.map(node => {
+          const position = pendingPositions.get(node.id)
+          return position ? { ...node, ...position, positionSource: 'saved' as const } : node
+        }) }
         const shown = takeTitleStates(source.saveDraft ? editableRevision(graph) ?? graph : graph, titlesOf(flowId))
+        writePending(pendingKey(projectId, flowId, 'canvas'), shown)
         setShownLoad(flowId, { status: 'ready', graph: markRaw(shown) })
         takeHolds(flowId, graph.holds, holdWritesAtSend)
         drafts.graphLoaded(flowId, shown)
@@ -1134,7 +1150,18 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           return
         }
         if (keepShown && state.graphs[flowId]?.status === 'ready') return
-        setShownLoad(flowId, { status: 'error', message: error instanceof Error ? error.message : '', ...readFailure(error) })
+        const failure = readFailure(error)
+        const cached = failure.network || (failure.httpStatus !== undefined && failure.httpStatus >= 500)
+          ? readPending<FlowGraph>(pendingKey(projectId, flowId, 'canvas')) : null
+        if (cached?.flowId === flowId && Array.isArray(cached.nodes) && Array.isArray(cached.edges)) {
+          const positions = layoutQueue.positions(flowId)
+          const shown = { ...cached, nodes: cached.nodes.map(node => ({ ...node, ...(positions.get(node.id) ?? {}) })) }
+          setShownLoad(flowId, { status: 'ready', graph: markRaw(shown) })
+          drafts.graphLoaded(flowId, shown)
+          staleFlows.add(flowId)
+          return
+        }
+        setShownLoad(flowId, { status: 'error', message: error instanceof Error ? error.message : '', ...failure })
       },
     )
   }
@@ -1142,6 +1169,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   function setProject(projectId: string | null) {
     if (projectId === state.projectId) return
     layoutQueue.flushAll()
+    layoutQueue.dispose()
     drafts.closeAll()
     layoutQueue = createQueue(projectId)
     nodeSizes.value = {}
@@ -1298,6 +1326,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     })
     if (moves.length === 0) return moves
     state.graphs[flowId] = { status: 'ready', graph: markRaw({ ...load.graph, nodes }) }
+    if (state.projectId) writePending(pendingKey(state.projectId, flowId, 'canvas'), { ...load.graph, nodes })
     moveCounts.set(flowId, (moveCounts.get(flowId) ?? 0) + 1)
     for (const { nodeId, to } of moves) {
       // A node created here is stored with its position once its draft save answers its key.
@@ -1380,6 +1409,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     runControl.clear()
     drafts.closeAll()
     layoutQueue.flushAll()
+    layoutQueue.dispose()
     stopWatching?.()
     stopWatching = null
     staleFlows.clear()

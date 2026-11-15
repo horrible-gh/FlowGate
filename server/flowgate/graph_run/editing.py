@@ -79,7 +79,7 @@ def settings_locked(flow_id: str, node_key: str) -> bool:
     return False
 
 
-def protect_definition(flow_id: str, nodes: list, edges: list, run=None) -> None:
+def protect_definition(flow_id: str, nodes: list, edges: list, run=None, *, restore_missing=False) -> None:
     """Compare against the execution revision, never the mutable draft/latest revision.
 
     Called before draft side effects as well as confirmation and revision adoption.
@@ -96,6 +96,24 @@ def protect_definition(flow_id: str, nodes: list, edges: list, run=None) -> None
     rows = run_store.node_runs(run["run_id"])
     protected = {r["node_key"] for r in rows if r["status"] in PROTECTED}
     protected |= _unresolved_gates(flow_id, old, rows)
+    if restore_missing:
+        # Repair omissions only. Definitions/inputs of present protected nodes remain immutable.
+        missing = (protected & set(old)) - set(new)
+        restored = set(missing)
+        while missing:
+            key = missing.pop()
+            nodes.append(dict(old[key]))
+            new[key] = nodes[-1]
+            for edge in before["edges"]:
+                if edge["target"] != key:
+                    continue
+                source = edge["source"]
+                if source not in new and source in old and source not in restored:
+                    restored.add(source)
+                    missing.add(source)
+        existing_edges = {e["edge_id"] for e in edges}
+        edges.extend(dict(e) for e in before["edges"]
+                     if e["target"] in restored and e["edge_id"] not in existing_edges)
     changed = {k for k in protected if old.get(k) != new.get(k) or k not in new}
     def incoming(items, key):
         return {e["edge_id"]: e for e in items if e["target"] == key}

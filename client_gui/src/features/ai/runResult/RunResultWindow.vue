@@ -16,8 +16,16 @@
       <span :title="windowTitle" data-test="run-result-title">{{ windowTitle }}</span>
     </template>
     <section v-if="result" ref="contentRef" class="run-result" data-test="run-result" :data-state="result.state" :data-scope="result.scope">
-      <div class="run-result-state" :class="`is-${result.state}`" data-test="run-result-state">
-        <span class="run-result-symbol" aria-hidden="true">{{ result.state === 'failed' ? '!' : '✓' }}</span>
+      <div class="run-result-state" :class="held ? 'is-held' : `is-${result.state}`" data-test="run-result-state">
+        <span class="run-result-symbol" aria-hidden="true">
+          <!-- flowgate.v02gui.0020 mock ②: an orange warning triangle, not a glyph in a circle. -->
+          <svg v-if="held" class="run-result-warning" width="24" height="22" viewBox="0 0 24 22" data-test="run-result-warning">
+            <path d="M12 2 23 20H1Z" fill="#3a2a12" stroke="#ffae57" stroke-width="1.8" stroke-linejoin="round" />
+            <path d="M12 8.5v5.2" stroke="#ffae57" stroke-width="2" stroke-linecap="round" />
+            <circle cx="12" cy="16.6" r="1.2" fill="#ffae57" />
+          </svg>
+          <template v-else>{{ result.state === 'failed' ? '!' : '✓' }}</template>
+        </span>
         <strong>{{ stateLabel(tr, has, result) }}</strong>
       </div>
       <div class="run-result-metrics">
@@ -26,8 +34,11 @@
           <strong class="run-result-value" data-test="run-result-scope">{{ scopeLabel(tr, result) }}</strong>
         </div>
         <div class="run-result-metric">
-          <span class="run-result-label">{{ t('gui.runResult.label.counts') }}</span>
-          <strong class="run-result-value" data-test="run-result-counts">{{ countsLabel(result) }}</strong>
+          <span class="run-result-label">{{ t(heldCards ? 'gui.runResult.label.counts_held' : 'gui.runResult.label.counts') }}</span>
+          <strong class="run-result-value" data-test="run-result-counts">
+            <template v-if="heldCards">{{ t('gui.runResult.count_done', { n: result.counts.done }) }} · <span class="run-result-held">{{ t('gui.runResult.held_count', { n: heldCards }) }}</span> · {{ t('gui.runResult.count_failed', { n: result.counts.failed }) }}</template>
+            <template v-else>{{ countsLabel(result) }}</template>
+          </strong>
         </div>
         <div class="run-result-metric">
           <span class="run-result-label">{{ t('gui.runResult.label.next') }}</span>
@@ -41,13 +52,16 @@
         <div class="run-result-metric run-result-metric--steps">
           <span class="run-result-label">{{ t('gui.runResult.label.steps') }}</span>
           <ul class="run-result-steps" data-test="run-result-steps">
-            <li v-for="(line, i) in steps.lines" :key="i" :title="line">{{ line }}</li>
+            <li v-for="(line, i) in steps.lines" :key="i" :class="{ 'is-held': stepHeld[i] }" :title="line">{{ line }}</li>
             <li v-if="steps.more > 0" class="run-result-more">{{ t('gui.runResult.more', { n: steps.more }) }}</li>
           </ul>
         </div>
       </div>
       <p v-if="result.failure" class="run-result-issue" data-test="run-result-failure">
         <span class="run-result-label">{{ t('gui.runResult.label.reason') }}</span> {{ failureLine(tr, has, result) }}
+      </p>
+      <p v-if="held" class="run-result-issue is-held" data-test="run-result-hold">
+        <span class="run-result-label">{{ t('gui.runResult.label.hold_reason') }}</span> {{ t('gui.runResult.hold_reason') }}
       </p>
       <!-- flowgate.chat.0017 CH0002: AI attachment requests waiting for a decision (each card's attachments tab). -->
       <p v-if="attachmentLine" class="run-result-attachments" data-test="run-result-attachments">{{ attachmentLine }}</p>
@@ -73,6 +87,9 @@ import type { FlowCommandResult } from '@/features/project'
 import { installRunResultMessages } from './messages'
 import {
   attachmentPendingLine,
+  isHeldNode,
+  isReviewHold,
+  heldCount,
   countsLabel,
   failureLine,
   nextLabel,
@@ -122,6 +139,9 @@ const originFlow = computed(() => {
 })
 
 const steps = computed(() => (props.result ? stepLines(tr, has, props.result) : { lines: [], more: 0 }))
+const held = computed(() => (props.result ? isReviewHold(props.result) : false))
+const heldCards = computed(() => (props.result ? heldCount(props.result) : 0))
+const stepHeld = computed(() => (props.result?.nodes ?? []).slice(0, steps.value.lines.length).map(isHeldNode))
 const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))
 </script>
 
@@ -132,6 +152,11 @@ const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))
 .run-result-symbol { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-weight: 800;
   background: var(--fg2-status-success-bg, #12402c); color: var(--fg2-status-success-fg, #6fe0a8); }
 .run-result-state.is-failed .run-result-symbol { background: var(--fg2-status-danger-bg, #4a1c1c); color: var(--fg2-status-danger-fg, #f0a2a2); }
+.run-result-state.is-held { font-size: 16px; }
+.run-result-state.is-held .run-result-symbol { width: 26px; height: 26px; border-radius: 0; background: transparent; }
+.run-result-state.is-held strong { color: #ffc58a; }
+.run-result-warning { display: block; }
+.run-result-held, .run-result-steps li.is-held { color: #ffc58a; }
 .run-result-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .run-result-metric { min-width: 0; padding: 9px 11px; border: 1px solid var(--fg2-line); border-radius: var(--fg2-control-radius); background: var(--fg2-control-surface-flat); }
 .run-result-metric--steps { grid-column: 1 / -1; }
@@ -144,5 +169,7 @@ const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))
 .run-result-more { color: var(--fg2-muted); }
 .run-result-issue { margin: 0; color: var(--fg2-status-danger-fg, #f0a2a2); line-height: 1.5; overflow-wrap: anywhere; }
 .run-result-footer { display: flex; justify-content: flex-end; gap: 8px; }
+.run-result-issue.is-held { padding: 9px 11px; border: 1px solid #6b5326; border-radius: 7px; background: #2a2213; color: #ffd79a; font-size: 12px; }
+.run-result-issue.is-held .run-result-label { color: #ffd79a; font-weight: 700; margin-right: 4px; }
 .run-result-attachments { margin: 0; color: var(--fg2-status-warning-fg, #e3b341); }
 </style>
