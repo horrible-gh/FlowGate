@@ -235,8 +235,8 @@ describe('2-B in the Shell — 그룹 / 플로우 이름 변경 (display name on
     const w = await mountShell()
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    // v02gui.0027: the Shell also connects 그룹 아카이브 (after its separator).
-    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현'], ['group.archive', 'false', '']])
+    // v02gui.0027: the Shell also connects 그룹 아카이브 and 그룹 삭제 (each after its separator).
+    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현'], ['group.archive', 'false', ''], ['group.delete', 'false', '']])
     await choose('group.rename')
     expect(dialog()?.dataset.kind).toBe('group.rename')
     // 0004-CH seq 19/20: only the name and identifier inputs — no facts, note, hint, and no message before typing.
@@ -1134,7 +1134,7 @@ describe('v02gui.0027 in the Shell — 그룹 아카이브 / 그룹 복원 from 
     expect(ui().attributes('aria-expanded')).toBe('false')
     menuButton(w, 'UI 개선').click()
     await settle()
-    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현'], ['group.archive', 'false', '']])
+    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현'], ['group.archive', 'false', ''], ['group.delete', 'false', '']])
     expect(item('group.archive').textContent).toContain('그룹 아카이브')
     expect(ui().attributes('aria-expanded')).toBe('false')
     expect(ui().attributes('aria-selected')).toBe('false')
@@ -1167,7 +1167,7 @@ describe('v02gui.0027 in the Shell — 그룹 아카이브 / 그룹 복원 from 
 
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현'], ['group.restore', 'false', '']])
+    expect(states()).toEqual([['group.newFlow', 'false', ''], ['group.rename', 'false', ''], ['group.info', 'true', '미구현'], ['group.restore', 'false', ''], ['group.delete', 'false', '']])
     expect(item('group.restore').textContent).toContain('그룹 복원')
     await choose('group.restore')
     expect(dialog()).toBeNull()
@@ -1190,5 +1190,151 @@ describe('v02gui.0027 in the Shell — 그룹 아카이브 / 그룹 복원 from 
     expect(q('dma-refusal-text')!.textContent).toBe('이미 아카이브된 그룹입니다.')
     expect(dialog()?.dataset.kind).toBe('group.archive')
     expect(labels(w)).toContain('UI 개선')
+  })
+})
+
+// ── v02gui.0027 (0008-T): 그룹 삭제 — empty Groups only, 대신 아카이브 otherwise ──────────────────────────────
+
+describe('v02gui.0027 in the Shell — 그룹 삭제 (empty Groups only) and 대신 아카이브', () => {
+  /**
+   * The server: "ui" has 3 Flows (one archived, so the default tree lists 2) and "api" (서버) none. A deleted Group
+   * leaves every tree read; an archived one leaves the default read.
+   */
+  let deleted: string[] = []
+  let archived: string[] = []
+  let deleteAnswer: ((module: string) => unknown) | null = null
+  function serveDelete(totals: Record<string, number> = { ui: 3, api: 0 }) {
+    const base = getRequest.getMockImplementation()!
+    getRequest.mockImplementation(async (url: string, params: Record<string, unknown> = {}) => {
+      if (/^\/api\/v1\/projects\/p\/groups\/tree$/.test(url)) {
+        const moduleOf = (node: Record<string, unknown>) => String(node.node_type === 'module' ? node.id : node.parent_id ?? '').replace('module:p:', '')
+        const nodes = TREE
+          .filter((node) => !deleted.includes(moduleOf(node)))
+          .filter((node) => params.include_archived === 'true' || !archived.includes(moduleOf(node)))
+          .map((node) => {
+            if (node.node_type !== 'module') return node
+            const key = String(node.label)
+            return { ...node, flow_total: totals[key] ?? 0,
+              ...(archived.includes(key) ? { archived: true, archived_at: '2026-11-15T00:00:00Z', archived_by: 'alice' } : {}) }
+          })
+        return { data: { data: { nodes } } }
+      }
+      return base(url, params)
+    })
+    deleteRequest.mockImplementation(async (url: string) => {
+      const hit = /^\/api\/v1\/projects\/p\/modules\/([^/]+)$/.exec(url)
+      if (!hit) throw new Error(`unexpected DELETE ${url}`)
+      if (deleteAnswer) return deleteAnswer(hit[1])
+      deleted.push(hit[1])
+      return { data: { ok: true, deleted: true, name: hit[1] } }
+    })
+    postRequest.mockImplementation(async (url: string) => {
+      const hit = /^\/api\/v1\/projects\/p\/modules\/([^/]+)\/archive$/.exec(url)
+      if (!hit) throw new Error(`unexpected POST ${url}`)
+      archived.push(hit[1])
+      return { data: { ok: true, name: hit[1], archived: true, archived_at: '2026-11-15T00:00:00Z' } }
+    })
+  }
+  beforeEach(() => { deleted = []; archived = []; deleteAnswer = null })
+  const menuButton = (w: VueWrapper<any>, label: string) =>
+    explorerRow(w, label).find('[data-test="project-explorer-group-menu"]').element as HTMLButtonElement
+  const hintOf = (key: string) => item(key).querySelector('[data-test="designer-context-hint"]')?.textContent ?? null
+
+  it('an empty Group: the menu says it can be deleted; the window confirms, DELETE runs once and the Group leaves the tree', async () => {
+    serveDelete()
+    const w = await mountShell()
+    menuButton(w, '서버').click()
+    await settle()
+    expect(item('group.delete').classList.contains('danger')).toBe(true)
+    expect(item('group.delete').getAttribute('aria-disabled')).toBe('false')
+    expect(item('group.delete').querySelector('.designer-context-label')!.textContent).toBe('그룹 삭제')
+    expect(hintOf('group.delete')).toBe('빈 그룹이라 삭제할 수 있음')
+    await choose('group.delete')
+    expect(dialog()?.dataset.kind).toBe('group.delete')
+    expect(q('dma-group-delete-note')).not.toBeNull()
+    expect(q('dma-group-delete-blocked')).toBeNull()
+    expect(q('dma-fact-target')!.textContent).toContain('서버')
+    expect(q('dma-archive-instead')).toBeNull()
+    expect(mutations()).toEqual([])  // nothing runs before the confirmation
+    submitButton().click()
+    await settle()
+    expect(mutations()).toEqual([['DELETE', '/api/v1/projects/p/modules/api', undefined]])
+    expect(dialog()).toBeNull()
+    expect(labels(w)).not.toContain('서버')
+    expect(labels(w)).toContain('UI 개선')
+  })
+
+  it('a Group with Flows (archived ones count): the menu says why, the window refuses without a DELETE and 대신 아카이브 archives it', async () => {
+    serveDelete()
+    const w = await mountShell()
+    rightClick(explorerRow(w, 'UI 개선').element)
+    await settle()
+    // 3 from the server although the tree lists only 2 Flows of it.
+    expect(hintOf('group.delete')).toBe('Flow 3개가 있어 지금은 삭제할 수 없음')
+    await choose('group.delete')
+    expect(dialog()?.dataset.kind).toBe('group.delete')
+    expect(q('dma-group-delete-blocked')!.textContent!.trim()).toBe('Flow 3개가 남아 있어 삭제할 수 없습니다. 먼저 아카이브하세요.')
+    expect(q('dma-submit')).toBeNull()
+    expect(mutations()).toEqual([])
+    q<HTMLButtonElement>('dma-archive-instead')!.click()
+    await settle()
+    expect(mutations()).toEqual([['POST', '/api/v1/projects/p/modules/ui/archive', {}]])
+    expect(dialog()).toBeNull()
+    expect(labels(w)).not.toContain('UI 개선')
+    expect(labels(w)).toContain('서버')
+  })
+
+  it('the server has the last word: an "empty" Group that has a Flow by now is refused (409) and nothing changes', async () => {
+    serveDelete()
+    deleteAnswer = () => { throw axiosError(409, { ok: false, http_status: 409, code: 'module_not_empty', flow_count: 1, error_message: 'x' }) }
+    const w = await mountShell()
+    menuButton(w, '서버').click()
+    await settle()
+    await choose('group.delete')
+    submitButton().click()
+    await settle()
+    expect(mutations()).toEqual([['DELETE', '/api/v1/projects/p/modules/api', undefined]])
+    expect(dialog()?.dataset.kind).toBe('group.delete')
+    expect(q('dma-group-delete-blocked')!.textContent!.trim()).toBe('Flow 1개가 남아 있어 삭제할 수 없습니다. 먼저 아카이브하세요.')
+    expect(q('dma-refusal')).toBeNull()
+    expect(q('dma-archive-instead')).not.toBeNull()
+    expect(labels(w)).toContain('서버')
+  })
+
+  it('an archived Group follows the same rule: with Flows it is only told why (no 대신 아카이브); empty it is deleted', async () => {
+    serveDelete({ ui: 2, api: 0 })
+    archived = ['ui', 'api']
+    const w = await mountShell()
+    await w.get('[data-test="project-explorer-include-archived"]').setValue(true)
+    await settle()
+    rightClick(explorerRow(w, 'UI 개선').element)
+    await settle()
+    expect(hintOf('group.delete')).toBe('Flow 2개가 있어 지금은 삭제할 수 없음')
+    await choose('group.delete')
+    expect(q('dma-group-delete-blocked')!.textContent!.trim()).toBe('Flow 2개가 남아 있어 삭제할 수 없습니다.')
+    expect(q('dma-archive-instead')).toBeNull()
+    q<HTMLButtonElement>('dma-cancel')!.click()
+    await settle()
+    rightClick(explorerRow(w, '서버').element)
+    await settle()
+    await choose('group.delete')
+    submitButton().click()
+    await settle()
+    expect(mutations()).toEqual([['DELETE', '/api/v1/projects/p/modules/api', undefined]])
+    expect(labels(w)).not.toContain('서버')
+  })
+
+  it('a refused DELETE of another kind stays in the window as a sentence (the Group is gone elsewhere)', async () => {
+    serveDelete()
+    deleteAnswer = () => { throw axiosError(404, { ok: false, code: 'module_not_found', error_message: 'x' }) }
+    const w = await mountShell()
+    menuButton(w, '서버').click()
+    await settle()
+    await choose('group.delete')
+    submitButton().click()
+    await settle()
+    expect(q('dma-refusal')!.dataset.code).toBe('module_not_found')
+    expect(q('dma-group-delete-blocked')).toBeNull()
+    expect(dialog()?.dataset.kind).toBe('group.delete')
   })
 })

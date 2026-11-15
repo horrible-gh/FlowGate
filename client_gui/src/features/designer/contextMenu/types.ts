@@ -23,7 +23,8 @@ export const COMMANDS = [
 ] as const
 /** flowgate.v02gui.0003: `node.copyId` (the card's document id, as the Inspector's ID 복사) is outside the mockup's 40 as well. */
 /** flowgate.v02gui.0027: `group.archive` / `group.restore` (the Group's display-only archive) are outside the 40 too. */
-export type MenuCommand = typeof COMMANDS[number] | 'flow.baseBranch' | 'flow.archive' | 'flow.restore' | 'node.copyId' | 'group.archive' | 'group.restore'
+/** flowgate.v02gui.0027 (0008-T): `group.delete` (an empty Group only; never a Flow, document or run) as well. */
+export type MenuCommand = typeof COMMANDS[number] | 'flow.baseBranch' | 'flow.archive' | 'flow.restore' | 'node.copyId' | 'group.archive' | 'group.restore' | 'group.delete'
 /** 0006-D §5.3 후속 연결 (2-B): an existing server contract a later T connects — '연결 예정' until then. */
 export const PLANNED_COMMANDS: readonly MenuCommand[] = Object.freeze([
   'group.rename', 'flow.rename', 'flow.delete', 'folder.newFolder', 'folder.newFile', 'folder.download',
@@ -39,7 +40,8 @@ export interface Point { readonly x: number; readonly y: number }
 export type ProjectTarget =
   | { readonly kind: 'project'; readonly projectId: string }
   /** `archived` (v02gui.0027): the Group's archive state as its row shows it; absent = not archived. */
-  | { readonly kind: 'group'; readonly projectId: string; readonly groupId: string; readonly archived?: boolean }
+  /** `flowTotal` (v02gui.0027 0008-T): every Flow of the Group on the server as its row knows it; absent = unknown. */
+  | { readonly kind: 'group'; readonly projectId: string; readonly groupId: string; readonly archived?: boolean; readonly flowTotal?: number }
   | { readonly kind: 'flow'; readonly projectId: string; readonly groupId: string; readonly flowId: string }
 interface FileScope {
   readonly projectId: string
@@ -80,6 +82,8 @@ interface ItemDisplay {
   readonly danger?: boolean
   readonly disabled?: boolean
   readonly disabledReason?: DisabledReason
+  /** v02gui.0027 (0008-T): a small line under the label (a message key of the menu and its values), e.g. 그룹 삭제's state. */
+  readonly hint?: { readonly key: string; readonly params?: Readonly<Record<string, string | number>> }
 }
 export interface MenuAction extends ItemDisplay {
   readonly kind: 'action'

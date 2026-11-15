@@ -33,6 +33,13 @@ const ko = {
     hint: '안의 플로우·문서·실행 기록·Git은 그대로 남습니다. "아카이브 포함"을 켜면 다시 보이고, 그룹 메뉴의 그룹 복원으로 되돌릴 수 있습니다.',
     server: { already: '이미 아카이브된 그룹입니다.' },
   },
+  groupDelete: {
+    title: '그룹 삭제', submit: '삭제', archiveInstead: '대신 아카이브',
+    note: '빈 그룹입니다. 삭제하면 프로젝트 트리에서 사라집니다.',
+    hint: '그룹만 지워지고, 이력이 지워지는 일은 없습니다.',
+    blocked: 'Flow {n}개가 남아 있어 삭제할 수 없습니다. 먼저 아카이브하세요.',
+    blockedArchived: 'Flow {n}개가 남아 있어 삭제할 수 없습니다.',
+  },
   create: {
     folderTitle: '새 폴더', fileTitle: '새 파일', name: '이름', submit: '만들기',
     empty: '이름을 입력하세요.', chars: '이름에 / \\ : * ? " < > {\'|\'} 는 쓸 수 없습니다.', dots: '. 이나 .. 은 이름으로 쓸 수 없습니다.',
@@ -102,6 +109,13 @@ const en: Messages = {
     hint: 'Its flows, documents, run history and Git stay as they are. Turn on "Include archived" to see it again, and use Restore group in its menu to bring it back.',
     server: { already: 'This group is already archived.' },
   },
+  groupDelete: {
+    title: 'Delete group', submit: 'Delete', archiveInstead: 'Archive instead',
+    note: 'This group is empty. Deleting it removes it from the project tree.',
+    hint: 'Only the group goes; no history is erased.',
+    blocked: '{n} flow(s) remain, so this group cannot be deleted. Archive it first.',
+    blockedArchived: '{n} flow(s) remain, so this group cannot be deleted.',
+  },
   create: {
     folderTitle: 'New folder', fileTitle: 'New file', name: 'Name', submit: 'Create',
     empty: 'Enter a name.', chars: 'A name cannot contain / \\ : * ? " < > {\'|\'}.', dots: '. and .. cannot be names.',
@@ -168,6 +182,13 @@ const ja: Messages = {
     title: 'グループをアーカイブ', submit: 'アーカイブ', note: '記録は保持したまま、既定の一覧から非表示にします。',
     hint: '中のフロー・文書・実行履歴・Git はそのまま残ります。「アーカイブを含める」をオンにすると再び表示され、グループメニューの「グループを復元」で元に戻せます。',
     server: { already: 'すでにアーカイブ済みのグループです。' },
+  },
+  groupDelete: {
+    title: 'グループを削除', submit: '削除', archiveInstead: '代わりにアーカイブ',
+    note: '空のグループです。削除するとプロジェクトツリーから消えます。',
+    hint: 'グループだけが削除され、履歴が消えることはありません。',
+    blocked: 'フローが{n}件残っているため削除できません。先にアーカイブしてください。',
+    blockedArchived: 'フローが{n}件残っているため削除できません。',
   },
   create: {
     folderTitle: '新規フォルダー', fileTitle: '新規ファイル', name: '名前', submit: '作成',

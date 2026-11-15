@@ -102,7 +102,7 @@ const RUN_KEYS = Object.fromEntries(Object.entries(RUN_COMMANDS).map(([key, comm
 
 export type ProjectRowRef =
   | { readonly kind: 'project'; readonly projectId: string }
-  | { readonly kind: 'group'; readonly projectId: string; readonly groupId: string; readonly archived?: boolean }
+  | { readonly kind: 'group'; readonly projectId: string; readonly groupId: string; readonly archived?: boolean; readonly flowTotal?: number }
   | { readonly kind: 'flow'; readonly projectId: string; readonly groupId: string; readonly flowId: string }
 
 /**
@@ -213,7 +213,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
   /** The menu the host shows now, with what it was built from (replaced on every open). */
   const open = shallowRef<OpenMenu | null>(null)
   /** What runs: the 2-B commands only while the Shell lends their server paths. */
-  const connected: readonly MenuCommand[] = [...(deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS), ...(deps.openFlowBaseBranch ? ['flow.baseBranch' as const] : []), ...(deps.archive ? ['flow.archive' as const, 'flow.restore' as const] : []), ...(deps.copyDocumentId ? ['node.copyId' as const] : []), ...(deps.server?.archiveGroup && deps.server?.restoreGroup ? ['group.archive' as const, 'group.restore' as const] : [])]
+  const connected: readonly MenuCommand[] = [...(deps.server ? CONNECTED_COMMANDS : CLIENT_COMMANDS), ...(deps.openFlowBaseBranch ? ['flow.baseBranch' as const] : []), ...(deps.archive ? ['flow.archive' as const, 'flow.restore' as const] : []), ...(deps.copyDocumentId ? ['node.copyId' as const] : []), ...(deps.server?.archiveGroup && deps.server?.restoreGroup ? ['group.archive' as const, 'group.restore' as const] : []), ...(deps.server?.deleteGroup ? ['group.delete' as const] : [])]
   /** T#2: the one 2-B window open now (a new one replaces it). */
   const pending = shallowRef<PendingMenuAction | null>(null)
   let actionSeq = 0
@@ -263,7 +263,9 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
         archiveBusy: target.kind === 'flow' ? deps.archive?.busy(target.flowId) : false,
         // v02gui.0027: the Group's archive state as its row showed it when the menu opened.
         groupArchived: target.kind === 'group' ? target.archived === true : undefined,
-        groupArchivable: target.kind === 'group' ? !isUngroupedBucket(target) : undefined },
+        groupArchivable: target.kind === 'group' ? !isUngroupedBucket(target) : undefined,
+        // v02gui.0027 (0008-T): the server's Flow count of the Group as its row knew it (the 그룹 삭제 line).
+        groupFlowTotal: target.kind === 'group' ? target.flowTotal : undefined },
       connected,
     }) : null
     const opened = show(event, build, live, (request, recheck) => {
@@ -278,6 +280,10 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
       else if (request.command === 'group.archive' && scope.kind === 'group') {
         openAction({ kind: 'group.archive', projectId: scope.projectId, groupId: scope.groupId }, recheck)
       } else if (request.command === 'group.restore' && scope.kind === 'group' && recheck()) void deps.server?.restoreGroup?.(scope.projectId, scope.groupId)
+      // v02gui.0027 (0008-T): 그룹 삭제 opens its window — the confirmation of an empty Group, or the refusal with 대신 아카이브.
+      else if (request.command === 'group.delete' && scope.kind === 'group') {
+        openAction({ kind: 'group.delete', projectId: scope.projectId, groupId: scope.groupId }, recheck)
+      }
       else if (!SERVER_SET.has(request.command)) return
       // T#2: 이름 변경 (Group / Flow) and Flow 삭제 (the existing dispose, DC) open their windows on this row.
       else if (request.command === 'group.rename' && scope.kind === 'group') {

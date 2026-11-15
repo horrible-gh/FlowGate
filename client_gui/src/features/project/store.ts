@@ -99,6 +99,7 @@ import {
   sourceMutationRefusal,
   renameGroup as renameGroupApi,
   setGroupArchived as setGroupArchivedApi,
+  deleteGroup as deleteGroupApi,
   suggestProjectSlug,
   uploadSourceFiles as uploadSourceFilesApi,
 } from './api'
@@ -382,6 +383,13 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
+  /** v02gui.0027: a deleted Group leaves the recent Group list. */
+  function forgetRecentGroup(id: string): void {
+    if (!recentGroups.value.some((entry) => entry.id === id)) return
+    recentGroups.value = recentGroups.value.filter((entry) => entry.id !== id)
+    writeRecentGroups(recentGroups.value)
+  }
+
   function forgetRecentFlow(id: string): void {
     if (!recentFlows.value.some((entry) => entry.id === id)) return
     recentFlows.value = recentFlows.value.filter((entry) => entry.id !== id)
@@ -610,6 +618,12 @@ export const useProjectStore = defineStore('project', () => {
     return result
   }
 
+  /** v02gui.0027 (0008-T): deletes an empty Group (the server refuses one with Flows). The Project's trees are dropped. */
+  async function deleteGroup(projectId: string, moduleName: string): Promise<void> {
+    await deleteGroupApi(projectId, moduleName)
+    invalidateGroupTree(projectId)
+  }
+
   async function renameFlow(projectId: string, flowId: string, title: string): Promise<void> {
     await renameFlowApi(flowId, title)
     invalidateGroupTree(projectId)
@@ -820,6 +834,7 @@ export const useProjectStore = defineStore('project', () => {
     recordRecentFlow,
     renameRecent,
     rekeyRecents,
+    forgetRecentGroup,
     forgetRecentFlow,
     requestExplicitOpen,
     takeExplicitOpen,
@@ -843,6 +858,7 @@ export const useProjectStore = defineStore('project', () => {
     createFlow,
     renameGroup,
     setGroupArchived,
+    deleteGroup,
     renameFlow,
     disposeFlow,
     createSourceEntry,

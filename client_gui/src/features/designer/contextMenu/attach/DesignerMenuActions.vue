@@ -58,6 +58,17 @@
           <p class="dma-note" data-test="dma-group-archive-hint">{{ t('archive.hint') }}</p>
         </template>
 
+        <!-- 그룹 삭제 (v02gui.0027 0008-T): an empty Group only. With Flows (archived and discarded count) nothing is deleted:
+             the window says why and offers 대신 아카이브. Only the Group's record goes; no history is erased. -->
+        <template v-else-if="shown.kind === 'group.delete'">
+          <Alert v-if="deleteBlockedShown" tone="danger" class="dma-alert" data-test="dma-group-delete-blocked"
+            :data-count="deleteBlockedCount ?? undefined">{{ deleteBlockedText }}</Alert>
+          <template v-else>
+            <p class="dma-lead" data-test="dma-group-delete-note">{{ t('groupDelete.note') }}</p>
+            <p class="dma-note" data-test="dma-group-delete-hint">{{ t('groupDelete.hint') }}</p>
+          </template>
+        </template>
+
         <!-- Flow 삭제 = the existing dispose (DC) -->
         <template v-else-if="shown.kind === 'flow.delete'">
           <p class="dma-note" data-test="dma-dispose-note">{{ t('dispose.note') }}</p>
@@ -166,6 +177,12 @@
           <Button variant="secondary" data-test="dma-cancel" @click="close">{{ t('close') }}</Button>
         </template>
         <Button v-else-if="uploadResult" variant="primary" data-test="dma-cancel" @click="close">{{ t('close') }}</Button>
+        <!-- v02gui.0027: a Group with Flows is not deleted; 대신 아카이브 runs the Group archive (none for an archived Group). -->
+        <template v-else-if="deleteBlockedShown">
+          <Button variant="secondary" data-test="dma-cancel" @click="close">{{ t('close') }}</Button>
+          <Button v-if="canArchiveInstead" variant="primary" :disabled="busy || stale" :loading="busy" data-test="dma-archive-instead"
+            @click="archiveInstead">{{ t('groupDelete.archiveInstead') }}</Button>
+        </template>
         <template v-else>
           <Button variant="secondary" data-test="dma-cancel" @click="close">{{ t('cancel') }}</Button>
           <Button :variant="danger ? 'danger' : 'primary'" :disabled="!canSubmit" :loading="busy" data-test="dma-submit" @click="submit">
@@ -246,13 +263,16 @@ let windowSeq = 0
 let checkSeq = 0
 let diffSeq = 0
 
-const danger = computed(() => ['flow.delete', 'folder.delete', 'file.delete'].includes(shown.value?.kind ?? ''))
+const danger = computed(() => ['flow.delete', 'folder.delete', 'file.delete', 'group.delete'].includes(shown.value?.kind ?? ''))
+/** 그룹 삭제: the Flow count of a 409 `module_not_empty` (the server's final word), else null. */
+const serverFlowCount = ref<number | null>(null)
 /** The menu built again from now still has the item (the target is there, in the same scope, still enabled). */
 const stale = computed(() => !!pending.value && !uploadResult.value && !pending.value.stillValid())
 
 const groupNow = computed(() => {
   const target = shown.value
-  return target?.kind === 'group.rename' || target?.kind === 'group.archive' ? props.actions.server.group(target.projectId, target.groupId) : null
+  return target?.kind === 'group.rename' || target?.kind === 'group.archive' || target?.kind === 'group.delete'
+    ? props.actions.server.group(target.projectId, target.groupId) : null
 })
 const flowNow = computed(() => {
   const target = shown.value
@@ -266,6 +286,7 @@ const title = computed(() => {
   switch (shown.value?.kind) {
     case 'group.rename': return t('rename.groupTitle')
     case 'group.archive': return t('archive.title')
+    case 'group.delete': return t('groupDelete.title')
     case 'flow.rename': return t('rename.flowTitle')
     case 'flow.delete': return t('dispose.title')
     case 'folder.newFolder': return t('create.folderTitle')
@@ -282,6 +303,7 @@ const submitLabel = computed(() => {
     case 'group.rename': case 'flow.rename': return t('rename.submit')
     case 'flow.delete': return t('dispose.submit')
     case 'group.archive': return t('archive.submit')
+    case 'group.delete': return t('groupDelete.submit')
     case 'folder.upload': return t('upload.submit')
     case 'folder.download': return t('download.submit')
     case 'folder.delete': case 'file.delete': return t('remove.submit')
@@ -295,7 +317,7 @@ const facts = computed(() => {
   if (!target) return []
   // The Group window shows its name and identifier in the inputs themselves.
   if (target.kind === 'group.rename') return []
-  if (target.kind === 'group.archive') return [{ key: 'target', label: t('group'), value: currentName.value || target.groupId }]
+  if (target.kind === 'group.archive' || target.kind === 'group.delete') return [{ key: 'target', label: t('group'), value: currentName.value || target.groupId }]
   if (target.kind === 'flow.rename' || target.kind === 'flow.delete') {
     return [
       { key: 'target', label: t('flow'), value: currentName.value || target.flowId },
@@ -344,6 +366,22 @@ const identError = computed(() => {
 const groupChanged = computed(() =>
   text.value.trim() !== currentName.value || identText.value.trim() !== currentIdent.value)
 
+/**
+ * 그룹 삭제: how many Flows keep the Group — the server's 409 count once it answered, else the Flow count the tree read
+ * gave (`flowTotal`, archived and discarded included). null = the Group may be deleted (the DELETE still decides).
+ */
+const deleteBlockedCount = computed<number | null>(() => {
+  if (shown.value?.kind !== 'group.delete') return null
+  if (serverFlowCount.value !== null) return serverFlowCount.value
+  const total = groupNow.value?.flowTotal
+  return typeof total === 'number' && total > 0 ? total : null
+})
+const deleteBlockedShown = computed(() => deleteBlockedCount.value !== null)
+/** An archived Group is told only why (it is archived already); any other is asked to archive first. */
+const deleteBlockedText = computed(() => deleteBlockedCount.value === null ? ''
+  : t(groupNow.value?.archived ? 'groupDelete.blockedArchived' : 'groupDelete.blocked', { n: deleteBlockedCount.value }))
+const canArchiveInstead = computed(() => !!props.actions.server.archiveGroup && !groupNow.value?.archived)
+
 const conflicts = computed(() => (existing.value ? files.value.map((file) => file.name).filter((name) => existing.value!.includes(name)) : []))
 
 const canSubmit = computed(() => {
@@ -355,6 +393,7 @@ const canSubmit = computed(() => {
     case 'flow.rename':
       return !!text.value.trim() && text.value.trim() !== currentName.value
     case 'flow.delete': return !!text.value.trim()
+    case 'group.delete': return !deleteBlockedShown.value
     case 'folder.newFolder': case 'folder.newFile': return entryNameProblem(text.value) === null
     // Always confirmed: a name the tree read does not show (ignored, unreadable, read failed) is overwritten too.
     case 'folder.upload': return files.value.length > 0 && !checking.value && overwrite.value
@@ -386,12 +425,18 @@ const GROUP_ARCHIVE_REFUSAL_TEXT: Readonly<Record<string, string>> = {
   already_archived: 'archive.server.already',
   module_not_found: 'rename.server.notFound',
 }
+/** v02gui.0027 (0008-T): the Group delete's refusals (module_routes delete_module) and those of its 대신 아카이브. */
+const GROUP_DELETE_REFUSAL_TEXT: Readonly<Record<string, string>> = {
+  ...GROUP_ARCHIVE_REFUSAL_TEXT,
+}
 const refusalText = computed(() => {
   const r = refusal.value
   if (!r) return ''
   const kind = shown.value?.kind
   const own = r.code
-    ? (kind === 'group.rename' ? GROUP_REFUSAL_TEXT[r.code] : kind === 'group.archive' ? GROUP_ARCHIVE_REFUSAL_TEXT[r.code] : undefined)
+    ? (kind === 'group.rename' ? GROUP_REFUSAL_TEXT[r.code]
+      : kind === 'group.archive' ? GROUP_ARCHIVE_REFUSAL_TEXT[r.code]
+        : kind === 'group.delete' ? GROUP_DELETE_REFUSAL_TEXT[r.code] : undefined)
     : undefined
   // `subject` is what the server named: the group holding the identifier, the busy Flows, the existing branches.
   return own ? t(own, { group: r.subject ?? '' }) : t(`refusal.${r.reason}`)
@@ -445,6 +490,7 @@ function reset() {
   diff.value = null
   diffLoading.value = false
   rowLimit.value = DIFF_PAGE_ROWS
+  serverFlowCount.value = null
 }
 
 function close() {
@@ -564,6 +610,11 @@ async function submit() {
         ? await server.archiveGroup(target.projectId, target.groupId)
         : { ok: false, refusal: { reason: 'failed', status: null, code: null } }
       break
+    case 'group.delete':
+      answer = server.deleteGroup
+        ? await server.deleteGroup(target.projectId, target.groupId)
+        : { ok: false, refusal: { reason: 'failed', status: null, code: null } }
+      break
     case 'flow.rename': answer = await server.renameFlow(target.projectId, target.groupId, target.flowId, name); break
     case 'flow.delete': answer = await server.disposeFlow(target.projectId, target.groupId, target.flowId, name); break
     case 'folder.newFolder': case 'folder.newFile':
@@ -584,8 +635,14 @@ async function submit() {
   if (win !== windowSeq) return
   busy.value = false
   if (!answer.ok) {
+    const refused = answer.refusal ?? { reason: 'failed', status: null, code: null }
+    // v02gui.0027: the Group still has Flows — the window turns into the refusal with 대신 아카이브 (nothing deleted).
+    if (target.kind === 'group.delete' && refused.code === 'module_not_empty') {
+      serverFlowCount.value = Math.max(1, refused.count ?? groupNow.value?.flowTotal ?? 1)
+      return
+    }
     // The server's refusal is final: it is shown here and nothing on screen changes.
-    refusal.value = answer.refusal ?? { reason: 'failed', status: null, code: null }
+    refusal.value = refused
     return
   }
   if (target.kind === 'folder.upload') {
@@ -596,6 +653,25 @@ async function submit() {
     const file = answer.value as { filename: string; blob: Blob }
     save(file)
     server.notify?.(() => t('download.done', { name: file.filename }), 'success')
+  }
+  close()
+}
+
+/** 그룹 삭제 → 대신 아카이브 (v02gui.0027 0008-T): the existing Group archive, right here; a refusal stays in the window. */
+async function archiveInstead() {
+  const target = shown.value
+  const server = props.actions.server
+  if (target?.kind !== 'group.delete' || busy.value || !server.archiveGroup || !canArchiveInstead.value) return
+  if (!stillValid()) return
+  const win = windowSeq
+  busy.value = true
+  refusal.value = null
+  const answer = await server.archiveGroup(target.projectId, target.groupId)
+  if (win !== windowSeq) return
+  busy.value = false
+  if (!answer.ok) {
+    refusal.value = answer.refusal
+    return
   }
   close()
 }

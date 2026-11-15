@@ -35,6 +35,11 @@ export interface ExplorerGroup {
   flows: ExplorerFlow[]
   /** v02gui.0027: the Group is display-archived (only present in an "아카이브 포함" tree). */
   archived?: boolean
+  /**
+   * v02gui.0027 (0008-T): every Flow of the Group on the server (archived and discarded included), unlike `flows`,
+   * which follows the tree's filters. What the Group menu says ahead of a delete; absent when the server did not say.
+   */
+  flowTotal?: number
 }
 
 export interface ExplorerProject {
@@ -141,6 +146,7 @@ export function buildExplorerProject(
       moduleName: moduleNode.label,
       flows: [],
       ...(moduleNode.archivedAt ? { archived: true } : {}),
+      ...(typeof moduleNode.flowTotal === 'number' ? { flowTotal: moduleNode.flowTotal } : {}),
     }
     // Depth-first over non-document descendants so nested groups stay in reading order.
     const stack = [...(byParent.get(moduleNode.id) ?? [])].reverse()

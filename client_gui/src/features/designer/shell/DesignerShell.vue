@@ -1542,7 +1542,11 @@ async function changeGroupArchive(pid: string, groupId: string, archived: boolea
 const menuServer: DesignerMenuServerDeps = {
   group: (pid, groupId) => {
     const group = explorerGroup(pid, groupId)
-    return group ? { name: group.name, moduleName: group.moduleName } : null
+    // v02gui.0027: its archive state and the server's count of all its Flows (the 그룹 삭제 window reads both).
+    return group ? {
+      name: group.name, moduleName: group.moduleName, archived: !!group.archived,
+      ...(typeof group.flowTotal === 'number' ? { flowTotal: group.flowTotal } : {}),
+    } : null
   },
   flow: (pid, flowId) => explorerProject(pid)?.groups.flatMap((group) => group.flows).find((flow) => flow.id === flowId)?.name ?? null,
   renameGroup: async (pid, groupId, title, identifier) => {
@@ -1571,6 +1575,17 @@ const menuServer: DesignerMenuServerDeps = {
     const result = await changeGroupArchive(pid, groupId, false)
     if (!result.ok) menuToast(() => t('gui.designer.archive.group_restore_failed'), 'warning')
     return result
+  },
+  // v02gui.0027 (0008-T): an empty Group's delete. The Explorer re-reads at once and the Group leaves the recent list;
+  // other screens follow the server's group_view_refresh (module_deleted). A refusal stays in the window.
+  deleteGroup: async (pid, groupId) => {
+    const moduleName = groupModuleName(pid, groupId)
+    if (!moduleName) return { ok: false, refusal: { reason: 'not_found', status: null, code: null } }
+    const result = await attempt(() => projectStore.deleteGroup(pid, moduleName))
+    if (!result.ok) return result
+    projectStore.forgetRecentGroup(groupId)
+    explorerRefreshToken.value += 1
+    return { ok: true, value: undefined }
   },
   renameFlow: async (pid, _groupId, flowId, title) => {
     const result = await attempt(() => projectStore.renameFlow(pid, flowId, title))
