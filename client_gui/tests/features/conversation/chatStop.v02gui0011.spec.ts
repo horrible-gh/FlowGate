@@ -1,9 +1,16 @@
-import { flushPromises } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import i18n from '@shared/i18n'
+import { registerAppMessages } from '@/app/i18n'
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS } from '@/features/conversation/api'
+import ConversationComposer from '@/features/conversation/ConversationComposer.vue'
 import { createConversationSession } from '@/features/conversation/conversationSession'
 import type { AiRunState } from '@/features/conversation/types'
 import { createFakeSource, httpError, turn } from './fakeConversationSource'
+
+registerAppMessages(i18n)
 
 // flowgate.v02gui.0011 B — stop right after the send. Measured on stage: from the press of send the stop button stayed
 // off while the chat was created (7.8s), the message stored and /ai-invoke/start answered (17-50s): no run id existed
@@ -179,5 +186,96 @@ describe('v02gui.0011 B: stop right after the send', () => {
     expect(source.cancelRun).not.toHaveBeenCalled()
     start.resolve(null)
     await pressing
+  })
+})
+
+// flowgate.v02gui.0011 T — "중지 버튼을 누른것과 안누른게 아이콘이 똑같아서 ... 알아보기가 어려운데": a pressed stop
+// (stop under way) is a muted spinning ring instead of the red ■ (… when the user asks for reduced motion).
+const COMPOSER_STYLE = readFileSync(resolve(__dirname, '../../../src/features/conversation/ConversationComposer.vue'), 'utf8')
+  .split('<style')[1] ?? ''
+const cssRule = (selector: string) => {
+  const at = COMPOSER_STYLE.indexOf(`${selector} {`)
+  expect(at, selector).toBeGreaterThanOrEqual(0)
+  return COMPOSER_STYLE.slice(at, COMPOSER_STYLE.indexOf('}', at))
+}
+
+function mountComposer(stopState: 'none' | 'available' | 'requested') {
+  return mount(ConversationComposer, {
+    props: {
+      chatId: A,
+      disabled: false,
+      settings: DEFAULT_CHAT_SETTINGS,
+      savingSettings: false,
+      pendingSourceMode: null,
+      providers: [],
+      selectedProviderId: '',
+      providersStatus: 'ready',
+      hasProviders: false,
+      sending: stopState !== 'none',
+      running: false,
+      runStarting: false,
+      cancelling: false,
+      stopState,
+      copyingMention: false,
+      manualCopyText: null,
+      onSend: async () => true,
+    },
+    global: {
+      plugins: [i18n],
+      stubs: { ComposerModelPicker: true, ComposerSourceModes: true, ComposerSettings: true, ComposerToolsMenu: true },
+    },
+  })
+}
+
+describe('v02gui.0011 T: a pressed stop button looks pressed', () => {
+  let locale: typeof i18n.global.locale.value
+  beforeEach(() => {
+    locale = i18n.global.locale.value
+    i18n.global.locale.value = 'ko'
+  })
+  afterEach(() => {
+    i18n.global.locale.value = locale
+  })
+
+  it('a stop that can be pressed stays the red ■', () => {
+    const button = mountComposer('available').get('[data-test="conv-send"]')
+    expect(button.classes()).toContain('is-stop')
+    expect(button.classes()).not.toContain('is-stopping')
+    expect(button.text()).toBe('■')
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(button.attributes('aria-label')).toBe('AI 호출 중지')
+  })
+
+  it('a stop under way is a ring, not ■, and cannot be pressed again', () => {
+    const wrapper = mountComposer('requested')
+    const button = wrapper.get('[data-test="conv-send"]')
+    expect(button.classes()).toContain('is-stopping')
+    expect(button.text()).not.toContain('■')
+    expect(wrapper.find('[data-test="conv-send-stopping"] .conv-send-ring').exists()).toBe(true)
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(button.attributes('aria-label')).toBe('중지하는 중')
+    expect(button.attributes('title')).toBe('중지하는 중')
+  })
+
+  it('no stop: the send button (➤) without either class', () => {
+    const wrapper = mountComposer('none')
+    const button = wrapper.get('[data-test="conv-send"]')
+    expect(button.classes()).not.toContain('is-stop')
+    expect(button.classes()).not.toContain('is-stopping')
+    expect(button.text()).toBe('➤')
+    expect(wrapper.find('[data-test="conv-send-stopping"]').exists()).toBe(false)
+  })
+
+  it('the ring spins in a muted color, stays fully visible, and gives way to … with reduced motion', () => {
+    expect(cssRule('.conv-send.is-stopping')).toMatch(/color:\s*var\(--fg2-muted\);/)
+    expect(cssRule('.conv-send.is-stopping:disabled')).toMatch(/opacity:\s*1;/)
+    expect(cssRule('.conv-send-ring')).toMatch(/animation:\s*conv-send-spin\b[^;]*infinite;/)
+    expect(cssRule('.conv-send-dots')).toMatch(/display:\s*none;/)
+    const at = COMPOSER_STYLE.indexOf('@media (prefers-reduced-motion: reduce)')
+    expect(at).toBeGreaterThanOrEqual(0)
+    const reduced = COMPOSER_STYLE.slice(at)
+    expect(reduced).toMatch(/\.conv-send-ring\s*\{[^}]*animation:\s*none;/)
+    expect(reduced).toMatch(/\.conv-send-ring\s*\{[^}]*display:\s*none;/)
+    expect(reduced).toMatch(/\.conv-send-dots\s*\{[^}]*display:\s*inline;/)
   })
 })
