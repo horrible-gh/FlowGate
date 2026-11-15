@@ -112,6 +112,8 @@ beforeEach(() => {
     if (/^\/api\/v1\/projects\/[^/]+\/git\/status$/.test(url)) {
       return { data: { ok: true, status: { enabled: true, base_branch: 'v0.2', base_branch_configured: true, slots: [] } } }
     }
+    if (url === '/api/v1/ai-invoke/active-all') return { data: { runs: [], paused: [] } }
+    if (url === '/api/v1/projects/p/notifications') return { data: { ai_invoke_runs: { items: [] }, open_questions: { items: [] } } }
     if (url === '/api/v1/ai-invoke/active') return { data: { ok: true, active: false, group_id: params.group_id } }
     throw new Error(`unexpected request ${url}`)
   })
@@ -179,6 +181,50 @@ async function clickOutside() {
 }
 
 describe('Designer top band — structure', () => {
+  it('closes the real notification popover on owner change and restores collapsed ARIA', async () => {
+    const w = await mountShell()
+    const bell = get(w, 'designer-header-notifications')
+    await bell.trigger('click'); await settle()
+    expect(w.find('#designer-notifications').exists()).toBe(true)
+    setCurrentUser({ username: 'another-owner', email: null, isAdmin: false })
+    await settle()
+    expect(w.find('#designer-notifications').exists()).toBe(false)
+    expect(bell.attributes('aria-expanded')).toBe('false')
+  })
+
+  it.each([{ nodes: undefined }, { nodes: [] }])('shows unavailable project context for an absent or empty Explorer cache ($nodes)', async ({ nodes }) => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useProjectStore()
+    store.setCurrentProject(project('p', 'Alpha'))
+    const cache = vi.spyOn(store, 'getCachedGroupTree').mockReturnValue(nodes)
+    try {
+      wrapper = mount(DesignerShell, { attachTo: document.body, global: { plugins: [i18n, pinia] } })
+      await settle()
+      await get(wrapper, 'designer-header-notifications').trigger('click'); await settle()
+      expect(wrapper.get('#designer-notifications').text()).toContain('Flow 목록을 확인할 수 없습니다')
+      expect(wrapper.get('#designer-notifications').text()).not.toContain('진행 중이거나 대기 중인 실행이 없습니다.')
+    } finally { cache.mockRestore() }
+  })
+
+
+  it('connects the bell to the three-tab popover and closes it on project change', async () => {
+    const w = await mountShell()
+    const bell = get(w, 'designer-header-notifications')
+    expect(bell.attributes('aria-expanded')).toBe('false')
+    expect(w.find('[data-test="designer-header-ai"]').exists()).toBe(false)
+    await bell.trigger('click'); await settle()
+    expect(bell.attributes('aria-expanded')).toBe('true')
+    expect(w.findAll('#designer-notifications [role="tab"]').map((tab) => tab.text())).toEqual(['실행', 'AI', '질의응답'])
+    await bell.trigger('click')
+    expect(bell.attributes('aria-expanded')).toBe('false')
+    expect(w.find('#designer-notifications').exists()).toBe(false)
+    await bell.trigger('click'); await settle()
+    useProjectStore().setCurrentProject(project('other', 'Other'))
+    await nextTick()
+    expect(w.find('#designer-notifications').exists()).toBe(false)
+  })
+
   it('stacks Header, Menu Bar and Toolbar inside the Top container, above the Body', async () => {
     const w = await mountShell()
     const shell = get(w, 'designer-shell').element
@@ -191,12 +237,12 @@ describe('Designer top band — structure', () => {
     expect(get(w, 'designer-top').find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
   })
 
-  it('shows the Header entries: brand, notification, AI, search, language, settings and user', async () => {
+  it('shows the Header entries: brand, notification, search, language, settings and user', async () => {
     const w = await mountShell()
     const header = get(w, 'designer-header')
     expect(header.get('[data-test="designer-header-brand"]').text()).toContain('FlowGate Designer')
     expect(header.get('[data-test="designer-header-notifications"]').attributes('aria-label')).toBe('알림')
-    expect(header.get('[data-test="designer-header-ai"]').text()).toContain('AI')
+    expect(header.find('[data-test="designer-header-ai"]').exists()).toBe(false)
     expect(header.get('[data-test="designer-search-input"]').attributes('placeholder')).toBe('프로젝트 전체에서 검색...')
     expect(header.findAll('[data-test="designer-header-locale"] button').map((b) => b.text())).toEqual(['KO', 'EN', 'JA'])
     expect(header.get('[data-test="designer-header-settings"]').text()).toContain('설정')
@@ -687,10 +733,9 @@ describe('Designer top band — part events', () => {
   it('the Header entry points emit commands and Enter hands out the scoped query', async () => {
     const header = mount(DesignerHeader, { attachTo: document.body, global: { plugins: [i18n] } })
     await header.get('[data-test="designer-header-notifications"]').trigger('click')
-    await header.get('[data-test="designer-header-ai"]').trigger('click')
     await header.get('[data-test="designer-header-settings"]').trigger('click')
     await header.get('[data-test="designer-header-user"]').trigger('click')
-    expect(header.emitted('command')).toEqual([['header.notifications'], ['header.ai'], ['header.settings'], ['header.user']])
+    expect(header.emitted('command')).toEqual([['header.notifications'], ['header.settings'], ['header.user']])
 
     await header.get('[data-test="designer-search-input"]').trigger('focus')
     await header.get('[data-scope="document"]').trigger('click')

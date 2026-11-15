@@ -12,7 +12,7 @@
        flowgate.v02.0061 T#14: the run phase goes to both (the run commands of each phase) and the run band (status,
        command, idle reason, executions) to the Toolbar, in place of 0056's waiting cards line. -->
   <header class="designer-top" data-test="designer-top">
-    <DesignerHeader @command="emit('command', $event)" @search="emit('search', $event)" />
+    <DesignerHeader :notifications-open="notificationsOpen" :notification-project-id="notificationProjectId" :notification-project="notificationProject" @close-notifications="emit('close-notifications')" @command="emit('command', $event)" @search="emit('search', $event)" />
     <DesignerMenuBar
       :run-phase="runPhase"
       :density="density"
@@ -48,6 +48,7 @@
 </template>
 
 <script setup lang="ts">
+import type { ExplorerProject } from '../projectExplorer/projectExplorerTree'
 import DesignerHeader from '../top/DesignerHeader.vue'
 import DesignerMenuBar from '../top/DesignerMenuBar.vue'
 import DesignerToolbar from '../top/DesignerToolbar.vue'
@@ -69,6 +70,9 @@ import {
 withDefaults(
   defineProps<{
     /** flowgate.v02.0061 T#14: the open Flow's run phase. */
+    notificationsOpen?: boolean
+    notificationProjectId?: string | null
+    notificationProject?: ExplorerProject | null
     runPhase: DesignerRunPhase
     density: DesignerDensity
     /** Zoom of the active Flow's Canvas, in percent. */
@@ -92,6 +96,7 @@ withDefaults(
 )
 
 const emit = defineEmits<{
+  'close-notifications': []
   archive: []
   command: [command: DesignerTopCommand]
   search: [request: DesignerSearchRequest]

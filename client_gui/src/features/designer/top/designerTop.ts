@@ -64,7 +64,6 @@ export type DesignerTopCommand =
   | 'help.guide'
   | 'help.about'
   | 'header.notifications'
-  | 'header.ai'
   | 'header.settings'
   | 'header.user'
 
@@ -493,7 +492,6 @@ const ALWAYS_COMMANDS: ReadonlySet<DesignerTopCommand> = new Set<DesignerTopComm
   'help.guide',
   'help.about',
   'header.notifications',
-  'header.ai',
   'header.settings',
   'header.user',
 ])
