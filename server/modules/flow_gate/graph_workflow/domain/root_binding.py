@@ -52,6 +52,21 @@ def _blocked(code: str, node_keys, **extra) -> BindingCheck:
     return BindingCheck(status="blocked", issues=[issue(code, node_keys, [], **extra)])
 
 
+def bindable_starts(graph: Graph, doc_type: Optional[str]) -> list[str]:
+    """The start nodes a root document of ``doc_type`` may be bound to, stored order (flowgate.v02gui.0019).
+
+    The run start nodes of that type (``run_scope``: no incoming live edge, at least one outgoing) come first, so a
+    connected root card always wins over an isolated one (flowgate.v02.0061). Only when there is none, the start
+    nodes of that type with no edge at all qualify: the root card a person has not connected yet still holds its
+    document, and a run of such a revision opens nothing instead of being refused (an isolated card is not run).
+    """
+    starts = set(run_scope(graph).starts)
+    def of_type(keys: set) -> list[str]:
+        return [n.key for n in graph.nodes
+                if n.key in keys and n.node_type == "document" and n.doc_type == doc_type]
+    return of_type(starts) or of_type(set(graph.start_keys()))
+
+
 def check_root_binding(
     graph: Graph,
     ownership: str,
@@ -63,14 +78,14 @@ def check_root_binding(
 
     ``current``: the Flow's binding record (``node_key``, ``doc_id``, ``doc_type``) or None.
     """
-    starts = set(run_scope(graph).starts)
     if ownership in ("graph", "conflict"):
         if current is None:
             return BindingCheck(status="not_needed")
         node = graph.node(current["node_key"])
         if node is None:
             return _blocked("root_binding_start_removed", [], removed_node_key=current["node_key"])
-        if node.key not in starts or node.node_type != "document" or node.doc_type != current.get("doc_type"):
+        if node.key not in bindable_starts(graph, current.get("doc_type")) or node.node_type != "document" \
+                or node.doc_type != current.get("doc_type"):
             return _blocked("root_binding_start_removed", [node.key], removed_node_key=node.key,
                             _condition_changed=True)
         return BindingCheck(status="inherited", node_key=node.key, doc_id=follow_supersede(current["doc_id"]),
@@ -83,8 +98,7 @@ def check_root_binding(
                         _root_count=len(candidates))
     root = candidates[0]
     root_type = str(root.get("type_code") or "").upper()
-    same = [n.key for n in graph.nodes
-            if n.key in starts and n.node_type == "document" and n.doc_type == root_type]
+    same = bindable_starts(graph, root_type)
     if not same:
         return _blocked("root_binding_no_start_node", [doc_key(root["doc_id"])], _root_doc_type=root_type)
     if len(same) >= 2:

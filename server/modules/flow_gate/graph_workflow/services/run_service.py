@@ -77,7 +77,7 @@ from modules.flow_gate.graph_workflow.domain.run_policies import (
     undecided_for,
 )
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
-from modules.flow_gate.graph_workflow.domain.run_scope_ports import run_scope
+from modules.flow_gate.graph_workflow.domain.root_binding import bindable_starts
 
 from . import card_settings_ports, node_approval, node_dispatch, result_binder, run_state_ports
 from .engine_router import Ownership, read_ownership
@@ -188,7 +188,8 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
         if missing:
             raise _undecided(flow_id, number, missing)
         root = probe.root_document() if probe.binding else None                 # 7 결합 문서
-        if probe.binding and (root is None or probe.binding["node_key"] not in run_scope(probe.revision).starts):
+        if probe.binding and (root is None or probe.binding["node_key"] not in bindable_starts(
+                probe.revision, probe.binding.get("doc_type"))):
             raise GraphApiError(409, "root_binding_lost", {"flow_id": flow_id, "node_key": probe.binding["node_key"],
                                                            "doc_id": probe.binding["doc_id"]})
         command = mode or MODE_FULL
