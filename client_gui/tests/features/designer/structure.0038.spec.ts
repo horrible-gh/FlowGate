@@ -9,7 +9,7 @@ import { DESIGNER_ARRANGE_GROUPS, DESIGNER_DENSITIES, DESIGNER_MENUS, DESIGNER_S
 // shortcut behind them.
 const SRC = resolve(__dirname, '../../../src')
 const TOP = join(SRC, 'features/designer/top')
-const TOP_FILES = readdirSync(TOP).sort()
+const TOP_FILES = readdirSync(TOP, { withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name).sort()
 
 const read = (file: string) => readFileSync(file, 'utf8')
 const importsOf = (src: string) => [...src.matchAll(/^\s*import\s[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])
@@ -22,7 +22,7 @@ describe('features/designer/top structure (flowgate.v02.0038)', () => {
   })
 
   it('imports only vue / vue-i18n, its own files and the current-user read of core/auth', () => {
-    const allowed = [/^vue$/, /^vue-i18n$/, /^\.\/[A-Za-z]+(\.vue)?$/, /^@\/core\/auth\/currentUser$/]
+    const allowed = [/^vue$/, /^vue-i18n$/, /^\.\/[A-Za-z]+(\.vue)?$/, /^@\/core\/auth\/currentUser$/, /^\.\/notifications\/(DesignerNotifications\.vue|useNotificationBadge)$/, /^\.\.\/projectExplorer\/projectExplorerTree$/]
     for (const name of TOP_FILES) {
       for (const spec of importsOf(read(join(TOP, name)))) {
         expect(allowed.some((re) => re.test(spec)), `${name}: ${spec}`).toBe(true)

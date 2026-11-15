@@ -1,4 +1,5 @@
 export default {
+  notification_ai: {"detail": "詳細を見る", "provider": "プロバイダー", "finished": "終了時刻", "reason": "終了理由", "success": "成功", "failure": "失敗", "stopped": "中断", "unknown": "状態を確認"},
   // flowgate.chat.0017 CH0002 — AI添付の承認依頼(チャットのメッセージ下・カードの添付タブ・実行結果・設定)。
   attachment_request: {
     title: 'AI添付の承認依頼',
@@ -824,6 +825,12 @@ export default {
         project_only: '現在のプロジェクト {name} の実行のみ表示します。',
         empty_runs: '実行中・待機中の実行はありません。',
         empty_ai: 'AI通知はありません。',
+          question_all: "全体表示",
+          question_reply: "すぐに回答",
+          question_robot: "ロボ",
+          question_waiting: "回答待ち",
+          question_running: "AI回答中",
+          question_done: "回答済み",
         empty_questions: '回答待ちの質問はありません。',
         open_document: '文書を開く',
         stop: '停止',

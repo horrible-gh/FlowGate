@@ -288,3 +288,11 @@ export function qaErrorOf(error: unknown): QaError {
   else kind = 'other'
   return { kind, status, code }
 }
+
+/** Complete project open-question snapshot; never use the truncated notification feed. */
+export interface QaOpenItem { doc_id: string; seq: number; title: string; type_code: string }
+export async function qaOpenItems(projectId: string): Promise<QaOpenItem[]> {
+  const response = await getRequest<{ items: QaOpenItem[] }>(`${API}/q`, { project_id: projectId })
+  if (!Array.isArray(response.data.items)) throw new Error('Invalid open-question snapshot')
+  return response.data.items
+}

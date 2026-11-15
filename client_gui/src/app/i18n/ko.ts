@@ -2,6 +2,7 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
+  notification_ai: {"detail": "상세보기", "provider": "제공자", "finished": "종료 시간", "reason": "종료 사유", "success": "성공", "failure": "실패", "stopped": "중단", "unknown": "상태 확인 필요"},
   // flowgate.chat.0017 CH0002 — AI 첨부 승인 요청 (채팅 메시지 하단 · 카드 첨부 탭 · 실행 결과 · 설정).
   attachment_request: {
     title: 'AI 첨부 승인 요청',
@@ -835,6 +836,12 @@ export default {
         project_only: '현재 프로젝트 {name}의 실행만 표시합니다.',
         empty_runs: '진행 중이거나 대기 중인 실행이 없습니다.',
         empty_ai: 'AI 알림이 없습니다.',
+          question_all: "전체보기",
+          question_reply: "바로답변",
+          question_robot: "로보",
+          question_waiting: "답변 대기",
+          question_running: "AI 답변 중",
+          question_done: "답변 완료",
         empty_questions: '답변 대기 질문이 없습니다.',
         open_document: '문서 열기',
         stop: '중지',

@@ -28,6 +28,7 @@
             <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
             <path d="M10 21h4" />
           </svg>
+          <span v-if="badge" data-test="notification-bell-count">{{ badge }}</span>
         </button>
         <DesignerNotifications v-if="notificationsOpen" :project-id="notificationProjectId" :project="notificationProject" :anchor="notificationAnchor" @close="emit('close-notifications')" />
       </div>
@@ -77,6 +78,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useNotificationBadge } from './notifications/useNotificationBadge'
 import DesignerNotifications from './notifications/DesignerNotifications.vue'
 import type { ExplorerProject } from '../projectExplorer/projectExplorerTree'
 import { useI18n } from 'vue-i18n'
@@ -84,7 +86,8 @@ import { useCurrentUser } from '@/core/auth/currentUser'
 import GlobalSearch from './GlobalSearch.vue'
 import { DESIGNER_LOCALES, type DesignerLocale, type DesignerSearchRequest, type DesignerTopCommand } from './designerTop'
 
-withDefaults(defineProps<{ notificationsOpen?: boolean; notificationProjectId?: string | null; notificationProject?: ExplorerProject | null }>(), { notificationsOpen: false, notificationProjectId: null, notificationProject: null })
+const props = withDefaults(defineProps<{ notificationsOpen?: boolean; notificationProjectId?: string | null; notificationProject?: ExplorerProject | null }>(), { notificationsOpen: false, notificationProjectId: null, notificationProject: null })
+const badge = useNotificationBadge(() => props.notificationProjectId, () => props.notificationProject)
 const notificationAnchor = ref<HTMLElement | null>(null)
 
 const emit = defineEmits<{

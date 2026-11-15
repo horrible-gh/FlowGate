@@ -1,4 +1,5 @@
 export default {
+  notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
   // flowgate.chat.0017 CH0002 — AI attachment upload requests (chat message, card attachments tab, run result, settings).
   attachment_request: {
     title: 'AI attachment requests',
@@ -824,6 +825,12 @@ export default {
         project_only: 'Only runs in the current project {name} are shown.',
         empty_runs: 'No running or waiting runs.',
         empty_ai: 'No AI notifications.',
+          question_all: "View all",
+          question_reply: "Answer now",
+          question_robot: "Robot",
+          question_waiting: "Awaiting answer",
+          question_running: "AI answering",
+          question_done: "Answered",
         empty_questions: 'No questions awaiting answers.',
         open_document: 'Open document',
         stop: 'Stop',
