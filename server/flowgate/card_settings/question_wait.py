@@ -165,14 +165,17 @@ def _dispatch(flow_id: str, node: dict, run: dict, items: list[dict], asked_by_i
     if target is None or not target.get("anchor_doc_id") or legacy.flow_ai_busy(flow_id):
         return False
     from flowgate.ai_roles import qa_adapter
-    provider, source, reason, default_tail, card_class = qa_adapter.choose(
-        flow_id, node, target.get("asker_actual_provider_id") or run.get("provider_id"))
+    picks, reason, default_tail, card_class = qa_adapter.candidates(
+        flow_id, node, target.get("asker_actual_provider_id") or run.get("provider_id"),
+        qa_adapter.asking_role(run, asked_by_instruction))
+    provider, source = picks[0] if picks else (None, None)
     try:
         if provider is None:
             legacy.mark_question_responder_failed(target["id"], run.get("issued_to"), reason)
             return False
         started = legacy.ask_responder(target["anchor_doc_id"], target["id"], run.get("issued_to") or "",
                                        provider, source, default_tail=default_tail,
+                                       responder_candidates=picks[1:],
                                        invocation_origin=qa_adapter.origin(flow_id, node, target, run, source,
                                                                            card_class, provider))
     except Exception:  # noqa: BLE001 — a refusal is on the item (dispatch_answer_run); a person answers it

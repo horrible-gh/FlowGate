@@ -57,7 +57,7 @@ describe('AiSettingsView (0015 T0003, AI 관리 since 0017 CH0006)', () => {
 
     const wrapper = await mountView()
 
-    expect(wrapper.findAll('.ui-tab').map((tab) => tab.text())).toEqual(['AI 목록', 'AI 평가', 'AI 그룹'])
+    expect(wrapper.findAll('.ui-tab').map((tab) => tab.text())).toEqual(['AI 목록', 'AI 평가', 'AI 그룹', '질의 방침'])
     expect(wrapper.findComponent({ name: 'AiProvidersPanel' }).exists()).toBe(true)
     expect(wrapper.find('.no-project-box').exists()).toBe(false)
     // The AI list loads its own data; evaluation/group data waits for those tabs.

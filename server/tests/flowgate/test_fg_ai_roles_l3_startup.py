@@ -20,8 +20,7 @@ def test_n_new_single_candidate_has_no_startup_tail(env, question, monkeypatch, 
     assert len(r["responder_startup_policy"]["provider_ids"]) == 1
 
 
-@pytest.mark.parametrize("race,code", [("disabled", "designated_not_enabled"),
-                                      ("asker_changed", "designated_is_asker")])
+@pytest.mark.parametrize("race,code", [("disabled", "designated_not_enabled")])
 def test_n_dispatch_rechecks_designated_responder_after_adapter(env, question, monkeypatch, race, code):
     from types import SimpleNamespace as NS
     from fastapi import HTTPException

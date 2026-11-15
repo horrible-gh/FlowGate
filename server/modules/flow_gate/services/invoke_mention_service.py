@@ -474,6 +474,10 @@ def build_conversation_mention(
             sections.append(conversation_commands.execute_mode_mention_section())
         for section in sections:
             lines += ["", section]
+    from modules.flow_gate.services import question_policy
+    policy = question_policy.block(question_policy.text(user_id))
+    if policy:
+        lines += ["", policy]
     return "\n".join(lines)
 
 def _single_line(value: Optional[str]) -> str:

@@ -301,6 +301,10 @@ def definitions_for_run(run: dict) -> list[dict]:
     if not step_type:
         raise ToolError(409, "toolset_unavailable")
     names = list(BASE_NAMES)
+    from modules.flow_gate.services import question_tools
+    item_id = question_tools.responder_item(run)
+    if item_id is not None:
+        names = [name for name in names if name not in ("register_document", "create_question")]
     # One judgment for both halves (0349 D0004 D-2): tool_registry.kind_for_step decides what
     # is advertised here, and remote_tool_service grants that same kind at call time, so an
     # API provider can never be handed a tool its live token would 403 on -- nor be denied one
@@ -338,6 +342,7 @@ def definitions_for_run(run: dict) -> list[dict]:
             if card_document_ports.registered(card_document_ports.CARD_DOCUMENT_EDIT):
                 schema = card_document_ports.card_edit("schema", run, schema)
         result.append({"name": name, "description": DESCRIPTIONS[name], "schema": schema, "completion": name == "register_document"})
+    result += question_tools.definitions(item_id)
     return result
 
 

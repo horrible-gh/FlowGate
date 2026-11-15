@@ -197,6 +197,25 @@ def _resolve_writer(
     return user["user_id"], None, None
 
 
+@router.get("/q/{doc_id}/search")
+def search_answers(request: Request, doc_id: str, q: str = Query(min_length=1, max_length=200),
+                   limit: int = Query(default=10, ge=1, le=50),
+                   before_id: Optional[int] = Query(default=None, ge=1)):
+    # The worker is bound to this document; the searched project comes from it,
+    # never from a caller-supplied project id. Read permission is checked even for workers.
+    identity = _resolve_writer(request, doc_id)
+    if isinstance(identity, JSONResponse):
+        return identity
+    project = _doc_project_or_403(doc_id, identity[0], "perm_document_read")
+    if isinstance(project, JSONResponse):
+        return project
+    from modules.flow_gate.services import question_search
+    try:
+        return question_search.search(project, q, limit, before_id)
+    except ValueError as exc:
+        return _fail(422, str(exc))
+
+
 # ── Request schemas ──────────────────────────────────────────────────────────
 
 class QuestionOptionIn(BaseModel):

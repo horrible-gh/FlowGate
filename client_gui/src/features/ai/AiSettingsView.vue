@@ -16,7 +16,10 @@
       <AiProvidersPanel @changed="onProvidersChanged" />
     </main>
 
-    <template v-else>
+    <main v-show="activeTab === 'question-policy'" class="view-content">
+      <QuestionPolicyPanel v-if="policyOpened" />
+    </main>
+    <template v-if="activeTab !== 'ai' && activeTab !== 'question-policy'">
       <!-- Full-screen loading only before the first data arrives: a refresh after an edit
            keeps the open tab (and its selection/dialog state) mounted. -->
       <div v-if="loading && !loaded" class="view-loading">
@@ -84,15 +87,19 @@ import type { AiGroup, ProviderItem } from './types'
 import AiProvidersPanel from './providers/AiProvidersPanel.vue'
 import AiEvaluationPanel from './evaluation/AiEvaluationPanel.vue'
 import AiGroupsPanel from './groups/AiGroupsPanel.vue'
+import QuestionPolicyPanel from './policy/QuestionPolicyPanel.vue'
+import { installPolicyMessages } from './policy/messages'
 
-const { t } = useI18n()
+const composer = useI18n({ useScope: 'global' }); installPolicyMessages(composer)
+const { t } = composer
 const route = useRoute()
 const router = useRouter()
 
 // AI 관리 (flowgate.v02.0017 CH0006): one screen that needs no project. The AI list, the
 // evaluations and the groups all belong to the system, not to a project.
-type TabKey = 'ai' | 'evaluation' | 'groups'
+type TabKey = 'ai' | 'evaluation' | 'groups' | 'question-policy'
 const activeTab = ref<TabKey>('ai')
+const policyOpened = ref(false)
 
 const loading = ref(false)
 const loaded = ref(false)
@@ -109,6 +116,7 @@ const tabs = computed<TabItem[]>(() => [
   { key: 'ai', label: t('gui.ai.tabs.ai') },
   { key: 'evaluation', label: t('gui.ai.tabs.evaluation') },
   { key: 'groups', label: t('gui.ai.tabs.groups') },
+  { key: 'question-policy', label: t('gui.questionPolicy.title') },
 ])
 
 const activeProviders = computed<ProviderItem[]>(() =>
@@ -117,12 +125,13 @@ const activeProviders = computed<ProviderItem[]>(() =>
 
 // Links from before AI 관리 (overview / system-ai / my-ai / policy / providers) open the AI list.
 function parseTab(tabParam: unknown): TabKey {
-  if (tabParam === 'evaluation' || tabParam === 'groups') return tabParam
+  if (tabParam === 'evaluation' || tabParam === 'groups' || tabParam === 'question-policy') return tabParam
   return 'ai'
 }
 
 function onTabChange(newTab: string) {
   activeTab.value = parseTab(newTab)
+  if (activeTab.value === 'question-policy') policyOpened.value = true
   if (route.query.tab !== newTab) {
     void router.replace({ query: { ...route.query, tab: newTab } })
   }
@@ -177,6 +186,7 @@ watch(
   () => route.query.tab,
   (tabVal) => {
     activeTab.value = parseTab(tabVal)
+    if (activeTab.value === 'question-policy') policyOpened.value = true
   },
   { immediate: true }
 )
@@ -185,7 +195,7 @@ watch(
 watch(
   activeTab,
   (tab) => {
-    if (tab !== 'ai' && !loaded.value && !loading.value) void loadData()
+    if (tab !== 'ai' && tab !== 'question-policy' && !loaded.value && !loading.value) void loadData()
   },
   { immediate: true }
 )

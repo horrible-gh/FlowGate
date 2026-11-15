@@ -671,6 +671,10 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
         selfcheck_progress.open_attempt(run, durable=True)
         attempt_owner = run.get("self_check_scope")
         classification = "provider_exception"
+        if policy and policy.get("role_sources"):
+            run["invocation_origin"] = {**(run.get("invocation_origin") or {}),
+                                        "role_source": policy["role_sources"][index],
+                                        "requested_ai_id": provider.get("id")}
         role_invocations.begin(run, provider)
         try:
             if provider.get("exec_type") == "api":
@@ -700,9 +704,10 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
             # retains the existing no_answer_registered policy.
             if (not run.get("cancel_event").is_set() and not run.get("timed_out")
                     and not run.get("pause_requested") and policy["may_fallback"]()
-                    and not run.get("last_message_received") and not run.get("last_message")
-                    and not run.get("stdout_tail")):
-                classification, detail = "zero_output", "Responder exited without output or an answer."
+                    and (policy.get("retry_without_answer") or (
+                        not run.get("last_message_received") and not run.get("last_message")
+                        and not run.get("stdout_tail")))):
+                classification, detail = "zero_output", "Responder exited without registering an answer."
         if (classification != "started_ok" and provider_remote.is_remote_cli(provider)
                 and not run.get("remote_final_failure")):
             # flowgate.v02.0129 T#2 (D0005 §3-3): whatever ended a remote CLI attempt, the
@@ -734,7 +739,13 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
                     "code", "target_agent_id", "claimed_agent_id", "job_id", "attempt_id",
                     "cause", "message", "workdir")}
             run["last_message"] = detail
-            break
+            # Only the explicit two-role Q chain may retry a settled remote failure.
+            # An Agent whose termination is uncertain still owns its work and blocks retry.
+            if not (policy and policy.get("retry_without_answer") and not run.get("remote_job_active")
+                    and not run.get("timed_out") and not run.get("pause_requested")
+                    and policy["may_fallback"]()):
+                break
+            run.pop("remote_final_failure", None)
         if run["cancel_event"].is_set():
             break
 
@@ -1901,6 +1912,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         _status, resp = api_server_tools.run_source_snapshot(
                             run, current_token, call["input"], _svc()._remaining_sec(run)
                         )
+                    elif call["name"] == "search_question_answers":
+                        from modules.flow_gate.services import question_tools
+                        _status, resp = question_tools.search(run, current_token, call["input"])
                     elif call["name"] == "read_document":
                         _status, resp = _svc()._api_read_document(run, current_token, call["input"])
                     elif call["name"] == "read_help":
@@ -2108,6 +2122,23 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 kind, tool_call,
                 f"Conflict resolve failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
+            continue
+
+        if tool_call.get("name") in ("answer_question", "escalate_question"):
+            from modules.flow_gate.services import question_tools
+            item_id = question_tools.responder_item(run)
+            if item_id is None:
+                status, resp = 409, {"error": "question_responder_claim_lost"}
+            else:
+                operation = "answers" if tool_call["name"] == "answer_question" else "escalate"
+                status, resp = _api_bound_request(run, current_token,
+                    f"/q/{run['doc_ref']}/items/{item_id}/{operation}", "POST", tool_call["input"])
+            run["last_tool_name"], run["last_tool_status"] = tool_call["name"], status
+            conversation.append(_svc()._tool_result_msg(kind, tool_call, json.dumps(resp, ensure_ascii=False)))
+            if 200 <= status < 300:
+                registered += 1
+                break
+            run["last_tool_error"] = _registration_error_summary(resp)[:500]
             continue
 
         if is_chat:
