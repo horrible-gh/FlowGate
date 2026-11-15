@@ -16,8 +16,8 @@
       <span :title="windowTitle" data-test="run-result-title">{{ windowTitle }}</span>
     </template>
     <section v-if="result" ref="contentRef" class="run-result" data-test="run-result" :data-state="result.state" :data-scope="result.scope">
-      <div class="run-result-state" :class="`is-${result.state}`" data-test="run-result-state">
-        <span class="run-result-symbol" aria-hidden="true">{{ result.state === 'failed' ? '!' : '✓' }}</span>
+      <div class="run-result-state" :class="isReviewHold(result) ? 'is-held' : `is-${result.state}`" data-test="run-result-state">
+        <span class="run-result-symbol" aria-hidden="true">{{ result.state === 'failed' ? '!' : isReviewHold(result) ? '⚠' : '✓' }}</span>
         <strong>{{ stateLabel(tr, has, result) }}</strong>
       </div>
       <div class="run-result-metrics">
@@ -27,7 +27,7 @@
         </div>
         <div class="run-result-metric">
           <span class="run-result-label">{{ t('gui.runResult.label.counts') }}</span>
-          <strong class="run-result-value" data-test="run-result-counts">{{ countsLabel(result) }}</strong>
+          <strong class="run-result-value" data-test="run-result-counts">{{ countsLabel(result) }}<span v-if="heldCount(result)"> · {{ t('gui.runResult.held_count', { n: heldCount(result) }) }}</span></strong>
         </div>
         <div class="run-result-metric">
           <span class="run-result-label">{{ t('gui.runResult.label.next') }}</span>
@@ -73,6 +73,8 @@ import type { FlowCommandResult } from '@/features/project'
 import { installRunResultMessages } from './messages'
 import {
   attachmentPendingLine,
+  isReviewHold,
+  heldCount,
   countsLabel,
   failureLine,
   nextLabel,
@@ -132,6 +134,7 @@ const attachmentLine = computed(() => attachmentPendingLine(tr, props.result))
 .run-result-symbol { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-weight: 800;
   background: var(--fg2-status-success-bg, #12402c); color: var(--fg2-status-success-fg, #6fe0a8); }
 .run-result-state.is-failed .run-result-symbol { background: var(--fg2-status-danger-bg, #4a1c1c); color: var(--fg2-status-danger-fg, #f0a2a2); }
+.run-result-state.is-held .run-result-symbol { background: #4b3519; color: #f5b95f; }
 .run-result-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .run-result-metric { min-width: 0; padding: 9px 11px; border: 1px solid var(--fg2-line); border-radius: var(--fg2-control-radius); background: var(--fg2-control-surface-flat); }
 .run-result-metric--steps { grid-column: 1 / -1; }

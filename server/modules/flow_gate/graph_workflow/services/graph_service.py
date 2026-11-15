@@ -185,12 +185,23 @@ def check_draft(flow_id: str, own: Ownership, draft: dict) -> tuple[list[dict], 
 
 def _resolve(req: dr.DraftRequest, taken: set[str]) -> tuple[list[dict], list[dict], dict]:
     key_map: dict[str, str] = {}
+    def resolve_client(prefix, client_key):
+        # New clients use random 128-bit identities. Retries can recognize a committed
+        # card even when the response/key_map was lost, without creating it twice.
+        import re
+        if re.fullmatch(r"tmp_[0-9a-f]{32}", client_key):
+            key = prefix + client_key[4:]
+            if key in taken:
+                raise GraphApiError(409, "draft_version_conflict", {})
+            taken.add(key)
+            return key
+        return new_key(prefix, taken)
     for n in req.nodes:
         if n.client_key:
-            key_map[n.client_key] = new_key(NODE_KEY_PREFIX, taken)
+            key_map[n.client_key] = resolve_client(NODE_KEY_PREFIX, n.client_key)
     for e in req.edges:
         if e.client_key:
-            key_map[e.client_key] = new_key(EDGE_ID_PREFIX, taken)
+            key_map[e.client_key] = resolve_client(EDGE_ID_PREFIX, e.client_key)
     nodes = [{
         "node_key": n.node_key or key_map[n.client_key], "node_type": n.node_type, "doc_type": n.doc_type,
         "palette_item_id": n.palette_item_id, "label": n.label, "assignee_kind": n.assignee_kind,
@@ -252,7 +263,7 @@ def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, clien
             raise GraphApiError(422, "invalid_request", {"errors": dr.sort_errors(errors)})
         taken = known_nodes | known_edges | layout_store.retired_keys(flow_id) | set(layout_store.positions(flow_id))
         nodes, edges, key_map = _resolve(req, taken)
-        run_state_ports.protect_definition(flow_id, nodes, edges)
+        run_state_ports.protect_definition(flow_id, nodes, edges, restore_missing=True)
         if req.draft_version == 0:
             base = latest_no if own.state == "graph" else None
             written = definition_store.create_draft(flow_id, base, user_id)

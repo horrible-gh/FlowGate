@@ -26,6 +26,7 @@
       :tabs="center.state.tabs"
       :active-flow-id="center.state.activeFlowId"
       :run-states="tabRunStates"
+        :chat-states="tabChatStates"
       @activate="center.activateFlow"
       @close="center.closeFlow"
       @reorder="center.moveFlow"
@@ -91,10 +92,6 @@
         />
         <DraftActionNotice :notice="edit?.notice ?? null" />
         <RevisionNotice v-if="load?.status === 'ready'" :graph="load.graph" />
-        <p
-          v-if="edit?.status === 'error' && edit.errorCode === 'document_storage_unwritable'"
-          class="designer-storage-error" role="alert" data-test="designer-storage-error"
-        >{{ t('gui.designer.center.document_storage_unwritable') }}</p>
       </template>
     </div>
     <GraphTimeMachineDialog
@@ -114,6 +111,7 @@ import ErrorState from '../../../components/ui/ErrorState.vue'
 import LoadingState from '../../../components/ui/LoadingState.vue'
 import FlowCanvas from './canvas/FlowCanvas.vue'
 import type { DesignerCenterSession, FlowCardMenuKey } from './designerCenterSession'
+import { useFlowChatActivity } from '@/features/conversation/flowChatActivity'
 import FlowTabStrip, { type FlowTabRunState } from './FlowTabStrip.vue'
 import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
 import RevisionNotice from './RevisionNotice.vue'
@@ -157,6 +155,7 @@ const holds = computed(() => (activeTab.value ? props.center.cardHolds(activeTab
  * paused / stopping) and confirmed by a read; a status not confirmed yet shows no mark. Every opened tab reads its run
  * with its Graph, so inactive tabs are known too.
  */
+const tabChatStates = useFlowChatActivity(() => props.center.state.projectId, () => props.center.state.tabs.map(tab => tab.flowId))
 const tabRunStates = computed(() => {
   const states: Record<string, FlowTabRunState> = {}
   for (const tab of props.center.state.tabs) {

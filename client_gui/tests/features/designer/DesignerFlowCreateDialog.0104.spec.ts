@@ -11,7 +11,7 @@ import { createFlow, fetchWorkBaseOptions } from '@/features/project/api'
 
 const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 vi.mock('@shared/api', () => ({
-  default: { get },
+  default: { get, post },
   getRequest: get,
   postRequest: post,
   extractApiErrorMessage: (_error: unknown, fallback: string) => fallback,
@@ -64,6 +64,34 @@ async function input(name: string, value: string) {
 }
 async function click(name: string) { el(name).click(); await flushPromises() }
 const optionReads = () => get.mock.calls.filter(([url]) => url.endsWith('/git/work-base-options'))
+
+describe('remote branch import', () => {
+  it.each([true, false])('allows selecting a muted remote branch and gates import by permission (%s)', async allowed => {
+    let imported = false
+    get.mockImplementation(async (url: string) => url.endsWith('/groups/tree') ? tree('p') : {
+      data: { git_enabled: true, base_branch: 'main', can_import: allowed, branches: [
+        { name: 'main', is_project_base: true, remote_only: false },
+        { name: 'feature/remote', is_project_base: false, remote_only: !imported },
+      ] } })
+    post.mockImplementation(async () => { imported = true; return { data: {} } })
+    open()
+    await flushPromises()
+    await input('title', 'Flow')
+    const option = el<HTMLSelectElement>('base').querySelector<HTMLOptionElement>('option[value="feature/remote"]')!
+    expect(option.disabled).toBe(false)
+    expect(option.classList.contains('is-muted')).toBe(true)
+    await input('base', 'feature/remote')
+    expect(disabled()).toBe(true)
+    const button = document.querySelector<HTMLButtonElement>('[data-test="designer-flow-import-branch"]')!
+    expect(button.disabled).toBe(!allowed)
+    if (!allowed) { expect(button.title).toContain('권한'); return }
+    button.click()
+    await flushPromises()
+    expect(post).toHaveBeenCalledWith('/api/v1/projects/p/git/branches/import', { name: 'feature/remote' })
+    expect(el<HTMLSelectElement>('base').value).toBe('feature/remote')
+    expect(disabled()).toBe(false)
+  })
+})
 
 describe('creation states and independent reads', () => {
   it('blocks unknown and loading, and enables branch selection before the tree completes', async () => {

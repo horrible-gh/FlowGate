@@ -177,14 +177,24 @@ def list_group_work_base_options(project_id: str) -> dict:
             "group_work_base_checkout_unavailable",
             "project Git checkout is not available for group work-base validation",
         )
-    names = sorted(local_branch_refs(base_root))
+    local = local_branch_refs(base_root)
+    proc = _gs._run_git(["for-each-ref", "--format=%(refname)%09%(symref)", "refs/remotes/origin/"], cwd=base_root)
+    if proc.returncode != 0:
+        raise GitServiceError(500, "group_work_base_options_failed", "Git could not list remote branches")
+    # Symbolic origin/HEAD is never a selectable branch.
+    remote = set()
+    for line in (proc.stdout or "").splitlines():
+        ref, _, symbolic = line.partition("\t")
+        if ref.startswith("refs/remotes/origin/") and not symbolic and ref != "refs/remotes/origin/HEAD":
+            remote.add(ref[len("refs/remotes/origin/"):])
+    names = sorted(set(local) | remote)
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     # Include historical/unregistered failure rows, just like get_state_by_branch.
     owned_branches = {
         row.get("branch") for row in _gs.db_git.list_states_of_project_any(project_id)
     }
     branches = [
-        {"name": name, "is_project_base": name == base_branch}
+        {"name": name, "is_project_base": name == base_branch, "remote_only": name not in local}
         for name in names
         if name not in owned_branches
     ]

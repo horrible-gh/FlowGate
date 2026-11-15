@@ -286,7 +286,7 @@ describe('Center session redo', () => {
     expect(source.saveDraft).toHaveBeenCalled()
   })
 
-  it('a new connect after an undo empties redo; a refused save re-reads and empties it too', async () => {
+  it('a new connect empties redo; a refused save keeps its undo history', async () => {
     const { center, source } = open()
     await vi.runAllTimersAsync()
     center.connectNodes('f1', 'gn_a', 'gn_b')
@@ -301,9 +301,10 @@ describe('Center session redo', () => {
     })
     center.connectNodes('f1', 'gn_a', 'gn_b')
     center.undoEdit('f1')
-    await vi.runAllTimersAsync()
-    expect(center.state.edits.f1).toMatchObject({ canUndo: false, canRedo: false, status: 'idle' })
-    expect(center.redoEdit('f1')).toBe(false)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(center.state.edits.f1.canRedo).toBe(true)
+    expect(center.redoEdit('f1')).toBe(true)
+    center.dispose()
   })
 
   it('closing the Flow forgets its redo state', async () => {
@@ -319,7 +320,7 @@ describe('Center session redo', () => {
 describe('Toolbar and Edit menu state', () => {
   const i18n = createI18n({ legacy: false, locale: 'ko', messages: { ko } })
   const buttons = (props: Record<string, unknown>) => {
-    const w = mount(DesignerToolbar, { props: { runMode: null, density: 'normal', zoom: 100, ...props }, global: { plugins: [i18n] } })
+    const w = mount(DesignerToolbar, { props: { runMode: null, runPhase: 'idle', density: 'normal', zoom: 100, ...props }, global: { plugins: [i18n] } })
     const state = (command: string) => (w.find(`[data-command="${command}"]`).element as HTMLButtonElement).disabled
     return { w, state }
   }
@@ -344,7 +345,7 @@ describe('Toolbar and Edit menu state', () => {
     expect(isMenuCommandEnabled('edit.redo', null, { ...targets, canUndo: false, canRedo: true })).toBe(true)
     expect(isMenuCommandEnabled('edit.redo', null, { ...targets, canRedo: false })).toBe(false)
     expect(isMenuCommandEnabled('edit.redo', null, { ...targets, flow: false, canRedo: true })).toBe(false)
-    expect(isMenuCommandEnabled('run.rerun', null, { ...targets, canRedo: false })).toBe(true)
-    expect(isMenuCommandEnabled('run.rerun', 'next', targets)).toBe(false)
+    expect(isMenuCommandEnabled('run.rerun', 'idle', { ...targets, canRedo: false })).toBe(false)
+    expect(isMenuCommandEnabled('run.rerun', 'running', targets)).toBe(false)
   })
 })

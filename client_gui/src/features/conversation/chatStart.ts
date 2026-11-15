@@ -11,6 +11,7 @@
 // message beat it, so a list still loading does not lose it either. A title the user typed (on the draft or afterwards) wins: the draft's typed title
 // is used as is and owes nothing, and the server pays the debt once and drops it on any manual
 // rename.
+import { beginChatActivity } from './flowChatActivity'
 import { computed, readonly, ref, watch, getCurrentScope, onScopeDispose, type ComputedRef, type Ref } from 'vue'
 import { draftIntent, draftCreateIntent, draftUserId, type DraftSendSnapshot } from './drafts'
 import { ConversationRequestError } from './api'
@@ -133,7 +134,8 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     if (!isDraft.value) {
       const chatId = state.activeChatId
       operations.value = operations.value.filter((op) => !ownsScreen(op.origin))
-      return settle(chatId, await session.send(text, undefined, trace, snapshot))
+      const finish = state.settings.sendAction === 'invoke_ai' && state.scope ? beginChatActivity(state.scope.groupId) : () => {}
+      try { return settle(chatId, await session.send(text, undefined, trace, snapshot)) } finally { finish() }
     }
     if (starting.value || !text.trim() || !state.scope || !draftIntentId.value) return false
     const origin: DraftSendSnapshot = snapshot ?? { owner: { ...state.scope, userId: draftUserId(), intentId: draftIntentId.value, chatId: null }, body: text, revision: 0 }
@@ -153,6 +155,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     // flowgate.v02gui.0009: so is the send-time action of this Flow — the screen may show another Flow (with its own
     // setting) by the time the create answers.
     const sendAction = operation.sendAction
+    const finishActivity = sendAction === 'invoke_ai' ? beginChatActivity(origin.owner.groupId) : () => {}
     const stopAi = () => currentOperation()?.stopAi === true
     try {
       const result = await session.createChat(title, typed === null ? { autoTitle: true } : undefined, {
@@ -192,6 +195,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
       operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
       return settle(result.chatId, ok)
     } finally {
+      finishActivity()
       const op = currentOperation()
       if (op) op.active = false
       clearSettledFailures()

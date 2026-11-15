@@ -57,7 +57,11 @@
           :title="t(`gui.designer.center.tab_run.${runStateOf(tab.flowId)}`)"
           data-test="designer-flow-tab-run"
           :data-run-status="runStateOf(tab.flowId)"
-        />{{ tab.name }}
+        />
+        <svg v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" viewBox="0 0 16 16" fill="none"
+          role="img" :aria-label="chatLabel" :title="chatLabel" data-test="designer-flow-tab-chat">
+          <path d="M2 2.5h12v8H7l-4 3v-3H2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+        </svg>{{ tab.name }}
       </button>
       <IconButton
         class="flow-tab-close"
@@ -93,6 +97,7 @@ const props = withDefaults(
     tabs: readonly FlowTabStripItem[]
     activeFlowId: string | null
     /** flowgate.v02gui.0001: a tab's run state by flow id; a tab not in it (or unknown) shows no mark. */
+    chatStates?: Readonly<Record<string, boolean>>
     runStates?: Readonly<Record<string, FlowTabRunState | undefined>>
   }>(),
   { runStates: () => ({}) },
@@ -105,7 +110,9 @@ const emit = defineEmits<{
   reorder: [flowId: string, toIndex: number]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const chatLabel = computed(() => locale.value.startsWith('ko') ? '채팅 AI 응답 중'
+  : locale.value.startsWith('ja') ? 'チャットAI応答中' : 'Chat AI responding')
 
 /** flowgate.v02.0060 T#2: the Designer context menu's tab side, provided by the Designer Shell; null elsewhere. */
 interface TabContextMenu {
@@ -430,6 +437,8 @@ watch(
 }
 
 /* flowgate.v02gui.0001: the run mark — running spins, stopping spins dimmed, paused shows two bars. */
+.flow-tab-chat { width: 10px; height: 10px; margin-right: 6px; color: var(--fg2-blue, #8bb5ef); vertical-align: -1px; }
+
 .flow-tab-run {
   display: inline-block;
   box-sizing: border-box;

@@ -50,6 +50,25 @@ describe('command result read', () => {
 })
 
 describe('when the 1st window opens', () => {
+  it('shows review hold as a warning with its count and no raw reason in the summary', async () => {
+    const result = toFlowCommandResult(raw({ state: 'waiting', next_state: 'needs_intervention',
+      counts: { done: 0, failed: 0, waiting: 1 }, nodes: [{ node_key: 'gn_1', title: 'Review',
+        status: 'review', outcome: 'waiting', reason: 'review_hold', detail: 'review_not_passed:review_verdict_hold' }] }))
+    const watch = createRunResultWatch({ load: vi.fn(async () => result) })
+    watch.arm('f', null)
+    watch.observe('f', { runId: 'run_1', status: 'idle', lastEventSeq: 1 })
+    await flushPromises()
+    expect(watch.state.resultOpen).toBe(true)
+    wrapper = mount(RunResultWindow, { props: { result, open: true }, global: { plugins: [i18n] }, attachTo: document.body })
+    await flushPromises()
+    const view = document.querySelector('[data-test="run-result"]')!
+    expect(view.querySelector('.is-held')).not.toBeNull()
+    expect(view.textContent).toContain('검토 보류')
+    expect(view.textContent).toContain('보류 1')
+    expect(view.textContent).not.toContain('review_not_passed')
+    expect(view.textContent).not.toContain('needs_intervention')
+  })
+
   it.each([['completed', true], ['failed', true], ['waiting', false], ['stopped', false]])('%s -> shown %s', async (state, shown) => {
     const load = vi.fn(async () => toFlowCommandResult(raw({ state })))
     const watch = createRunResultWatch({ load })

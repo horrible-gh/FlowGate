@@ -699,6 +699,12 @@ interface RawCreatedGroup {
 
 /** Uses the shared authenticated transport; store owns deduplication by auth session.
  * Bypass getRequest's path-only dedupe so invalidation/user changes can start a fresh read. */
+export async function importRemoteBranch(projectId: string, name: string): Promise<void> {
+  try {
+    await api.post(`/api/v1/projects/${encodeURIComponent(projectId)}/git/branches/import`, { name })
+  } catch (error) { throw workBaseFailure(error) }
+}
+
 export async function fetchWorkBaseOptions(projectId: string): Promise<WorkBaseOptions> {
   try {
     const response = await api.get(`/api/v1/projects/${encodeURIComponent(projectId)}/git/work-base-options`)
@@ -710,7 +716,8 @@ export async function fetchWorkBaseOptions(projectId: string): Promise<WorkBaseO
     return {
       gitEnabled: raw.git_enabled,
       baseBranch: typeof raw.base_branch === 'string' ? raw.base_branch : null,
-      branches: raw.branches.map((branch: any) => ({ name: branch.name, isProjectBase: branch.is_project_base === true })),
+      canImport: raw.can_import === true,
+      branches: raw.branches.map((branch: any) => ({ name: branch.name, isProjectBase: branch.is_project_base === true, remoteOnly: branch.remote_only === true })),
     }
   } catch (error) {
     throw workBaseFailure(error)

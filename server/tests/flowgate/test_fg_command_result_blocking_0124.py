@@ -195,6 +195,11 @@ def test_s5_a_manual_write_wait_beside_an_intervention_card_blocks_nothing_and_k
     for n in r["nodes"]:
         tally[n["outcome"]] += 1
     assert r["counts"] == tally and r["counts"]["waiting"] >= 1
+    if excluded == "review_verdict_hold":
+        assert r["state"] == "waiting" and r["counts"]["failed"] == 0
+        assert by[a]["reason"] == "review_hold"
+        assert by[a]["detail"] == "review_not_passed:review_verdict_hold"
+        assert r["failure"] is None
     # ... and nothing but ``blocking`` differs from the result before T#2 (the same read with the intervention read failing)
     with monkeypatch.context() as patched:
         def broken(*_a, **_k):

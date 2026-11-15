@@ -105,11 +105,11 @@ describe('Center session draft editing', () => {
     await vi.runAllTimersAsync()
     vi.mocked(source.saveDraft!).mockRejectedValueOnce({ code: 'document_storage_unwritable' })
     center.dropOnCanvas('f1', dataTransfer('task'), 560, 320)
-    await vi.runAllTimersAsync()
+    await vi.advanceTimersByTimeAsync(60)
     expect(loads).toHaveLength(1)
     expect(shown(center).draft?.version).toBe(0)
     expect(shown(center).nodes.filter((n) => n.id.startsWith('tmp_'))).toHaveLength(1)
-    expect(center.state.edits.f1).toMatchObject({ status: 'error', errorCode: 'document_storage_unwritable' })
+    expect(center.state.edits.f1.errorCode).toBe('document_storage_unwritable')
     center.dropOnCanvas('f1', dataTransfer('task'), 800, 320)
     await vi.runAllTimersAsync()
     expect(drafts[0].version).toBe(0)
@@ -165,29 +165,23 @@ describe('Center session draft editing', () => {
     expect(drafts.at(-1)!.content.nodes.map((n) => n.key)).toEqual(['gn_a', 'gn_b'])
   })
 
-  it('a refused save reads the Flow again by itself and drops the refused edits (rev4)', async () => {
+  it('a refused save keeps the card and retries without rolling back its position', async () => {
     for (const code of ['draft_version_conflict', 'request_failed']) {
-      const { center, source, loads } = setup([unassigned(1)])
+      const { center, source } = setup([unassigned(1)])
       await vi.runAllTimersAsync()
-      source.saveDraft = vi.fn(async () => {
-        throw Object.assign(new Error('refused'), { code })
-      })
-      const before = loads.length
+      const save = source.saveDraft!
+      source.saveDraft = vi.fn().mockRejectedValueOnce({ code }).mockImplementation(save)
       center.dropOnCanvas('f1', dataTransfer('task'), 10, 10)
+      const id = shown(center).nodes.find(node => node.id.startsWith('tmp_'))!.id
+      center.moveNode('f1', id, 500, 700)
+      await vi.advanceTimersByTimeAsync(60)
       expect(shown(center).nodes).toHaveLength(2)
-      await vi.runAllTimersAsync()
-      expect(source.saveDraft).toHaveBeenCalledTimes(1)
-      expect(loads.length, code).toBe(before + 1)
-      expect(center.state.edits.f1.status, code).toBe('idle')
-      expect(center.state.edits.f1.errorCode).toBeNull()
-      expect(shown(center).nodes.map((n) => n.id)).toEqual(['doc:r'])
-      // Editing goes on from the stored draft; the next save is tried again.
-      source.saveDraft = vi.fn(async (_p, _f, version) => ({ version: version + 1, keyMap: {} }))
-      expect(center.dropOnCanvas('f1', dataTransfer('task'), 10, 10)).toBe(true)
-      await vi.runAllTimersAsync()
-      expect(source.saveDraft).toHaveBeenCalledWith('p', 'f1', 1, expect.anything())
+      expect(shown(center).nodes.find(node => node.id === id)).toMatchObject({ x: 500, y: 700 })
+      await vi.advanceTimersByTimeAsync(1100)
+      expect(source.saveDraft).toHaveBeenCalledTimes(2)
       expect(center.state.edits.f1.status).toBe('idle')
-      expect(loads.length, code).toBe(before + 1)
+      expect(shown(center).nodes.find(node => node.id.startsWith('gn_'))).toMatchObject({ x: 500, y: 700 })
+      center.dispose()
     }
   })
 

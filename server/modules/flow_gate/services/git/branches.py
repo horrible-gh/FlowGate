@@ -858,6 +858,34 @@ def run_merge(
             merge_target.release_workspace(ctx)
 
 
+def import_remote_branch(project_id: str, name: str) -> dict:
+    """Fetch one origin ref, then create a tracking branch without checking it out."""
+    from modules.flow_gate.services import git_service as _gs
+    from . import base_slot
+    cfg, base_root, base_branch = _branch_context(project_id)
+    if not name or name != name.strip() or name.startswith("-") or name == "HEAD":
+        raise GitServiceError(422, "branch_ref_format_invalid", "Invalid branch name")
+    validate_new_branch_name(project_id, base_root, base_branch, name)
+    if _gs.db_git.get_state_by_branch(project_id, name) is not None:
+        raise GitServiceError(409, "branch_source_internal_slot", "Internal branch cannot be imported")
+    remote_ref = f"refs/remotes/origin/{name}"
+    with base_slot._domain_locks(project_id, "R"):
+        _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
+        fetched = _gs._run_git(["fetch", "--no-tags", "origin", f"refs/heads/{name}:{remote_ref}"],
+                              cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
+                              username=cfg.get("username"), secret=_gs._load_secret_for(cfg) or "")
+        if fetched.returncode != 0:
+            raise GitServiceError(409, "branch_import_failed", "Could not fetch the remote branch")
+        with _meta_lock(project_id):
+            validate_new_branch_name(project_id, base_root, base_branch, name)
+            if _gs.db_git.get_state_by_branch(project_id, name) is not None:
+                raise GitServiceError(409, "branch_source_internal_slot", "Internal branch cannot be imported")
+            made = _gs._run_git(["branch", "--track", name, remote_ref], cwd=base_root)
+            if made.returncode != 0:
+                raise GitServiceError(409, "branch_import_failed", "Could not create the local tracking branch")
+    return {"ok": True, "branch": name, "published": False}
+
+
 def create_branch(project_id: str, name: str, source_branch: str) -> dict:
     """Create one local branch. This operation intentionally never publishes it."""
     from modules.flow_gate.services import git_service as _gs

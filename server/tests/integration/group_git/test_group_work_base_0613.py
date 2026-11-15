@@ -822,11 +822,14 @@ def test_work_base_options_list_exactly_what_group_creation_accepts(repo, monkey
         "git_enabled": True,
         "base_branch": "main",
         "branches": [
-            {"name": "flowgate-v0.2", "is_project_base": False},
-            {"name": "main", "is_project_base": True},
+            {"name": "flowgate-v0.2", "is_project_base": False, "remote_only": False},
+            {"name": "main", "is_project_base": True, "remote_only": False},
+            {"name": "remote-base", "is_project_base": False, "remote_only": True},
         ],
     }
     for row in result["branches"]:
+        if row["remote_only"]:
+            continue
         assert git_service.validate_group_work_base_ref("p", row["name"]) == row["name"]
     for rejected in ("slot-owned", "remote-base"):
         with pytest.raises(GitServiceError):
@@ -1004,11 +1007,14 @@ def test_options_batch_ownership_matches_old_filter_once(repo, monkeypatch, bran
     monkeypatch.setattr(group_work_base, "local_branch_refs", lambda _root: dict.fromkeys(reversed(names)))
     monkeypatch.setattr(git_service.db_git, "list_states_of_project_any", batch)
     monkeypatch.setattr(git_service.db_git, "get_state_by_branch", lambda *a: pytest.fail("per-branch ownership query"))
-    monkeypatch.setattr(git_service, "_run_git", lambda *a, **kw: pytest.fail("no fetch/checkout or extra Git call"))
+    def read_remote(args, **kwargs):
+        assert args == ["for-each-ref", "--format=%(refname)%09%(symref)", "refs/remotes/origin/"]
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(git_service, "_run_git", read_remote)
     result = git_service.list_group_work_base_options("p")
     batch.assert_called_once_with("p")
     assert result == {"ok": True, "git_enabled": True, "base_branch": "missing",
-                      "branches": [{"name": name, "is_project_base": False} for name in expected]}
+                      "branches": [{"name": name, "is_project_base": False, "remote_only": False} for name in expected]}
 
 
 def test_options_keep_checkout_and_listing_errors(repo, monkeypatch):

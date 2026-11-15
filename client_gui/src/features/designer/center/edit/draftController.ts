@@ -22,11 +22,12 @@
 // flowgate.v02.0059 T#2 (0011-CH contract C): card moves (`recordMove`) share the Flow's undo / redo with
 // the structure edits; a stepped move goes back through the host's `placeNodes` (Graph + layout save). A
 // Flow whose Graph is no editable draft keeps a moves-only history (an editor without save).
+import { pendingKey } from './pendingDraft'
 import type { FlowGraph } from '../graph/flowGraph'
 import type { FlowDraftCheck, FlowDraftSaveResult, FlowGraphSource } from '../graph/flowGraphSource'
 import { checkConnection, type ConnectionCheck } from './connectionRules'
 import { createDraftActions } from './draftActions'
-import { EMPTY_DRAFT, draftFromGraph, remapGraph, withCardDocuments, withDraft, type CanvasNodeSpec, type DraftModel } from './draftModel'
+import { EMPTY_DRAFT, editableRevision, draftFromGraph, remapGraph, withCardDocuments, withDraft, type CanvasNodeSpec, type DraftModel } from './draftModel'
 import { createDraftEditor, type DraftEditor, type DraftEditStatus } from './draftEditor'
 import type { NodeMove, NodePlacement } from './editHistory'
 import type { EditCommand } from './graphEditCommands'
@@ -89,16 +90,12 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
   function mirror(flowId: string) {
     const editor = editors.get(flowId)
     const state = stateOf(flowId)
-    const before = state.status
     state.status = editor?.status() ?? 'idle'
     state.errorCode = editor?.errorCode() ?? null
     state.canUndo = historyOf(flowId)?.canUndo() ?? false
     state.canRedo = historyOf(flowId)?.canRedo() ?? false
-    // A save just refused: read the Flow again as stored (no note, no button — TR0020 rev4).
-    const storageFailure = state.status === 'error' && state.errorCode === 'document_storage_unwritable'
-    if (editor && refused(state.status) && !refused(before) && !storageFailure) host.reread(flowId)
-    // Storage refusal saves nothing. Keep the local edit for a retry, including deferred reads.
-    if (editor && !editor.busy() && !storageFailure) host.settled?.(flowId)
+    // Unacknowledged edits stay visible; the editor retries and rebases version conflicts.
+    if (editor && !editor.busy() && !refused(state.status)) host.settled?.(flowId)
   }
 
   function show(flowId: string, editor: DraftEditor) {
@@ -132,8 +129,17 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
   }
 
   function openEditor(flowId: string, pid: string, model: DraftModel, version: number): DraftEditor {
+    const storageKey = pendingKey(pid, flowId, 'draft')
     const editor: DraftEditor = createDraftEditor(model, version, {
-      save: (v, content) => host.canWrite?.(flowId) === false
+      storageKey,
+      recover: async () => {
+        const graph = await host.source.loadGraph(pid, flowId)
+        const editable = editableRevision(graph) ?? graph
+        if (!editable.draft?.editable) throw new Error('Draft is not editable')
+        return { model: draftFromGraph(editable), version: editable.draft.version }
+      },
+      onRecovered: () => show(flowId, editor),
+      save: (v, content) => host.canWrite?.(flowId) === false || storageKey !== pendingKey(pid, flowId, 'draft')
         ? Promise.reject(Object.assign(new Error('Flow is read only'), { code: 'flow_archived' }))
         : host.source.saveDraft!(pid, flowId, v, content),
       onKeys: (keyMap) => {
@@ -141,7 +147,9 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
         else keepStoppedPositions(pid, flowId, editor, keyMap)
       },
       onSaved: (result) => {
-        if (editors.get(flowId) === editor && result.cardDocuments) showLines(flowId, result.cardDocuments)
+        if (editors.get(flowId) === editor) {
+          if (result.cardDocuments) showLines(flowId, result.cardDocuments)
+        }
       },
       onMove: (placements) => editors.get(flowId) === editor && host.placeNodes(flowId, placements),
       onChange: () => {
@@ -197,6 +205,16 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     const version = graph.draft!.version
     if (existing) existing.reset(model, version)
     else editors.set(flowId, openEditor(flowId, pid, model, version))
+    const opened = editors.get(flowId)
+    if (opened?.busy()) {
+      const positions = new Map(opened.model().nodes.map(node => [node.key, node]))
+      const shown = withDraft(graph, opened.model())
+      host.setGraph(flowId, { ...shown, nodes: shown.nodes.map(node => {
+        const saved = positions.get(node.id)
+        return saved ? { ...node, x: saved.x, y: saved.y } : node
+      }) })
+      for (const node of opened.model().nodes) if (!node.isNew) host.queuePosition(flowId, node.key, node.x, node.y)
+    }
     mirror(flowId)
   }
 

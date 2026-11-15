@@ -53,7 +53,7 @@
             </svg>
             <Select id="dfc-base" :model-value="baseState === 'ready-enabled' ? workBaseRef : ''"
               :options="baseState === 'ready-enabled' ? branchOptions : []" :placeholder="basePlaceholder"
-              :disabled="baseState !== 'ready-enabled' || submitting" :invalid="baseState === 'error'"
+              :disabled="baseState !== 'ready-enabled' || submitting || importing" :invalid="baseState === 'error'"
               :aria-invalid="baseState === 'error' || undefined"
               :aria-describedby="baseHint ? 'dfc-base-hint' : undefined"
               data-test="designer-flow-create-base" @update:model-value="workBaseRef = $event" />
@@ -70,6 +70,10 @@
               <path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </div>
+          <Button v-if="remoteSelected" type="button" :disabled="!canImport || importing" :loading="importing"
+            :title="canImport ? importWords.button : importWords.permission" data-test="designer-flow-import-branch"
+            @click="importBranch">{{ importWords.button }}</Button>
+          <p v-if="importError" class="dfm-field-error" role="status">{{ importError }}</p>
           <p v-show="baseHint" id="dfc-base-hint" class="dfm-field-error" role="status" aria-live="polite"
             :data-test="baseState === 'error' ? 'designer-flow-create-base-error' : undefined">{{ baseHint }}</p>
         </div>
@@ -89,6 +93,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { importRemoteBranch } from '@/features/project/api'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import { useI18n } from 'vue-i18n'
 import Alert from '../../../components/ui/Alert.vue'
@@ -157,6 +162,31 @@ type BaseState = 'unknown' | 'loading' | 'ready-enabled' | 'ready-disabled' | 'e
 const baseState = ref<BaseState>('unknown')
 const branchOptions = ref<SelectOption[]>([])
 const workBaseRef = ref('')
+const remoteNames = ref<string[]>([])
+const canImport = ref(false)
+const importing = ref(false)
+const importError = ref('')
+const remoteSelected = computed(() => remoteNames.value.includes(workBaseRef.value))
+const { locale } = useI18n()
+const importWords = computed(() => locale.value.startsWith('ko')
+  ? { button: '가져오기', needed: '가져오기 필요', permission: '프로젝트 설정 권한이 필요합니다', failed: '브랜치를 가져오지 못했습니다' }
+  : locale.value.startsWith('ja') ? { button: '取得', needed: '取得が必要', permission: 'プロジェクト設定権限が必要です', failed: 'ブランチを取得できませんでした' }
+  : { button: 'Import', needed: 'Import required', permission: 'Project settings permission required', failed: 'Could not import branch' })
+async function importBranch() {
+  const pid = props.projectId, name = workBaseRef.value, session = generation
+  if (!pid || !remoteSelected.value || !canImport.value || importing.value) return
+  importing.value = true
+  importError.value = ''
+  try {
+    await importRemoteBranch(pid, name)
+    projectStore.invalidateWorkBaseOptions(pid)
+    if (session !== generation) return
+    await loadOptions(true)
+    if (session === generation) workBaseRef.value = name
+  } catch (error) {
+    if (session === generation) importError.value = error instanceof Error && error.message ? error.message : importWords.value.failed
+  } finally { if (session === generation) importing.value = false }
+}
 const baseBusy = computed(() => baseState.value === 'unknown' || baseState.value === 'loading')
 const basePlaceholder = computed(() => t(baseBusy.value
   ? 'gui.designer.file_menu.loading'
@@ -165,7 +195,7 @@ const basePlaceholder = computed(() => t(baseBusy.value
 const baseHint = computed(() => baseState.value === 'error'
   ? t('gui.designer.file_menu.base_branch_failed')
   : baseState.value === 'ready-enabled' && !branchValid.value ? t('gui.designer.file_menu.base_branch_required') : '')
-const branchValid = computed(() => workBaseRef.value !== '' && branchOptions.value.some((o) => o.value === workBaseRef.value))
+const branchValid = computed(() => !remoteSelected.value && workBaseRef.value !== '' && branchOptions.value.some((o) => o.value === workBaseRef.value))
 const baseReady = computed(() => baseState.value === 'ready-disabled' || (baseState.value === 'ready-enabled' && branchValid.value))
 let selectedOnce = false
 let optionsGeneration = 0
@@ -180,9 +210,11 @@ async function loadOptions(retry = false) {
   try {
     const options = await projectStore.loadWorkBaseOptions(pid, { force: true })
     if (session !== generation || request !== optionsGeneration) return
-    branchOptions.value = options.branches.map((branch) => ({ value: branch.name, label: branch.name }))
+    remoteNames.value = options.branches.filter(branch => branch.remoteOnly).map(branch => branch.name)
+    canImport.value = options.canImport === true
+    branchOptions.value = options.branches.map((branch) => ({ value: branch.name, label: branch.remoteOnly ? `${branch.name} · ${importWords.value.needed}` : branch.name, muted: branch.remoteOnly }))
     if (selectedOnce) {
-      if (!branchValid.value) workBaseRef.value = ''
+      if (!branchOptions.value.some(option => option.value === workBaseRef.value)) workBaseRef.value = ''
     } else {
       workBaseRef.value = options.baseBranch && branchOptions.value.some((b) => b.value === options.baseBranch) ? options.baseBranch : ''
     }
@@ -250,6 +282,10 @@ watch(
     optionsGeneration += 1
     baseState.value = 'unknown'
     submitting.value = false
+    importing.value = false
+    importError.value = ''
+    remoteNames.value = []
+    canImport.value = false
     if (!isOpen) return
     const opening = !previous?.[0]
     const projectChanged = previous && previous[1] !== pid

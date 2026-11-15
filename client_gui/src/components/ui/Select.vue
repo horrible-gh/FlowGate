@@ -1,7 +1,7 @@
 <template>
   <select class="ui-select" :class="{ 'is-invalid': invalid }" :value="modelValue" :disabled="disabled" @change="onChange">
     <option v-if="placeholder" value="" disabled hidden>{{ placeholder }}</option>
-    <option v-for="opt in options" :key="opt.value" :value="opt.value" :disabled="opt.disabled">{{ opt.label }}</option>
+    <option v-for="opt in options" :key="opt.value" :value="opt.value" :disabled="opt.disabled" :class="{ 'is-muted': opt.muted }">{{ opt.label }}</option>
   </select>
 </template>
 
@@ -11,6 +11,7 @@
 export interface SelectOption {
   value: string
   label: string
+  muted?: boolean
   disabled?: boolean
 }
 
@@ -63,6 +64,8 @@ function onChange(event: Event) {
 .ui-select.is-invalid {
   border-color: var(--fg2-control-invalid-border);
 }
+
+.ui-select option.is-muted { color: var(--fg2-muted, #7f96ae); }
 
 .ui-select option {
   background: #0d1a28;

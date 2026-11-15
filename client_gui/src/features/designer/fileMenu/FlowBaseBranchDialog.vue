@@ -136,7 +136,7 @@ async function load() {
       if (!candidates.gitEnabled) {
         state.value = 'readonly'; message.value = 'git_disabled'; return
       }
-      options.value = candidates.branches.map((branch) => ({ value: branch.name, label: branch.name }))
+      options.value = candidates.branches.filter(branch => !branch.remoteOnly).map((branch) => ({ value: branch.name, label: branch.name }))
       state.value = 'editable'
       // Deliberately no default: a new read (especially after 409) requires a new selection.
     } catch (error) {
