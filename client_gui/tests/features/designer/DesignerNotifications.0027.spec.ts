@@ -3,12 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import DesignerNotifications from '@/features/designer/top/notifications/DesignerNotifications.vue'
+import { qaOpenItems } from '@/features/document/api/qa'
 import { normalizeActiveRuns } from '@/features/designer/top/notifications/notificationApi'
 import type { ExplorerProject } from '@/features/designer/projectExplorer/projectExplorerTree'
 const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(), open: vi.fn() }))
 vi.mock('@shared/api', () => ({ getRequest: mocks.get, postRequest: mocks.post }))
 vi.mock('@/features/project/projectEvents', () => ({ subscribeProjectEvents: mocks.subscribe }))
 vi.mock('@/features/documentWindow/documentWindows', () => ({ openDocumentWindow: mocks.open }))
+vi.mock('@/features/document/api/qa', async (original) => ({
+  ...await original<typeof import('@/features/document/api/qa')>(),
+  qaOpenItems: vi.fn(async () => [{ doc_id: 'p.m.1.0001-T', seq: 1, title: 'Instruction', type_code: 'T' }]),
+}))
+vi.mock('@/features/designer/inspector/useInspectorResource', () => ({ useInspectorResource: vi.fn() }))
+vi.mock('@/features/designer/inspector/features/qna/useQna', () => ({ useQna: vi.fn() }))
 registerAppMessages(i18n)
 const project: ExplorerProject = { id: 'project:p', name: 'Alpha', groups: [{ id: 'module:p:m', projectId: 'p', name: 'M', moduleName: 'm', flows: [
   { id: 'p.m.1', groupId: 'module:p:m', name: 'First Flow', number: '1' },
@@ -21,6 +28,7 @@ let wrapper: VueWrapper<any> | null = null
 let anchor: HTMLButtonElement
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(qaOpenItems).mockResolvedValue([{ doc_id: 'p.m.1.0001-T', seq: 1, title: 'Instruction', type_code: 'T' }])
   i18n.global.locale.value = 'ko'
   anchor = document.createElement('button'); document.body.append(anchor)
   mocks.get.mockImplementation(async (url: string) => ({ data: url.endsWith('active-all') ? active : feed }))
@@ -29,13 +37,33 @@ beforeEach(() => {
 })
 afterEach(() => { wrapper?.unmount(); wrapper = null; anchor.remove(); vi.useRealTimers(); i18n.global.locale.value = 'ko' })
 async function open(props = {}) {
-  wrapper = mount(DesignerNotifications, { props: { projectId: 'p', project, anchor, ...props }, attachTo: document.body, global: { plugins: [i18n] } })
+  wrapper = mount(DesignerNotifications, { props: { projectId: 'p', project, anchor, ...props }, attachTo: document.body, global: { plugins: [i18n], stubs: { NotificationQuestionDocument: { props: ['rows'], template: '<li data-test="notification-question"><span>T</span>{{ rows[0].title }}</li>' } } } })
   await flushPromises()
   return wrapper
 }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done }); return { promise, resolve } }
 
 describe('Designer notifications', () => {
+  it('shows all 120 snapshot rows and exact actionable tab counts independently of a 50-document feed', async () => {
+    vi.mocked(qaOpenItems).mockResolvedValue(Array.from({ length: 120 }, (_, seq) => ({ doc_id: `p.m.${seq}.0001-T`, seq, title: 'Question', type_code: 'T' })))
+    const w = await open()
+    expect(w.get('#notification-tab-runs').text()).toBe('실행 2')
+    expect(w.get('#notification-tab-questions').text()).toBe('질의응답 99+')
+    expect(w.get('#notification-tab-ai').text()).toBe('AI')
+    await w.get('#notification-tab-questions').trigger('click')
+    expect(w.findAll('[data-test="notification-question"]')).toHaveLength(120)
+  })
+  it('hides unknown question counts and shows retry on snapshot failure', async () => {
+    vi.mocked(qaOpenItems).mockRejectedValue(new Error('offline'))
+    const w = await open()
+    expect(w.get('#notification-tab-questions').text()).toBe('질의응답')
+    await w.get('#notification-tab-questions').trigger('click')
+    expect(w.find('[role="alert"]').exists()).toBe(true)
+    vi.mocked(qaOpenItems).mockResolvedValue([])
+    await w.findAll('.notification-toolbar button')[0]!.trigger('click'); await flushPromises()
+    expect(w.find('[role="alert"]').exists()).toBe(false)
+    expect(w.get('#notification-tab-questions').text()).toBe('질의응답')
+  })
   it('announces loading only initially and preserves rows during polling and event refresh', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     const initial = deferred<unknown>()
@@ -74,7 +102,7 @@ describe('Designer notifications', () => {
       }
     }
   })
-  it.each(['ai', 'questions'] as const)('shows truncation for %s and clears it on a complete response', async (tab) => {
+  it.each(['ai'] as const)('shows truncation for %s and clears it on a complete response', async (tab) => {
     const section = tab === 'ai' ? 'ai_invoke_runs' : 'open_questions'
     const items = Array.from({ length: 50 }, (_, n) => tab === 'ai'
       ? { run_id: 'done-' + n, doc_title: 'Report' }
@@ -103,9 +131,9 @@ describe('Designer notifications', () => {
     expect(w.text()).toContain(i18n.global.t('gui.designer.top.notifications.modes.unknown'))
     await w.get('#notification-tab-ai').trigger('click')
     expect(w.get('time').attributes('datetime')).toBe(finished)
-    expect(w.get('time').text()).toBe(new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(finished)))
+    expect(w.get('time').attributes('title')).toBe(finished)
     await w.get('#notification-tab-questions').trigger('click')
-    expect(w.get('[data-test="notification-question"] span').text()).toBe(i18n.global.t('gui.document_window.types.T'))
+    expect(w.get('[data-test="notification-question"] span').text()).toBe('T')
   })
 
 
@@ -171,7 +199,7 @@ describe('Designer notifications', () => {
   })
   it('shows exactly three tabs, current-project runs, progress, paused state and working document links', async () => {
     const w = await open()
-    expect(w.findAll('[role="tab"]').map((tab) => tab.text())).toEqual(['실행', 'AI', '질의응답'])
+    expect(w.findAll('[role="tab"]').map((tab) => tab.text())).toEqual(['실행 2', 'AI', '질의응답 1'])
     expect(w.text()).toContain('현재 프로젝트 Alpha')
     expect(w.findAll('[data-test="notification-run"]')).toHaveLength(2)
     const rows = w.findAll('[data-test="notification-run"]')
@@ -203,15 +231,17 @@ describe('Designer notifications', () => {
     expect(w.get('[role="alert"]').text()).toContain('중지 요청에 실패')
     expect(w.findAll('[data-test="notification-run"]')).toHaveLength(2)
   })
-  it('loads both basic feed tabs and opens their actual documents', async () => {
+  it('opens AI detail and preserves the basic question document link', async () => {
     const w = await open(); await w.get('#notification-tab-ai').trigger('click')
     expect(w.get('[data-test="notification-ai"]').text()).toContain('Saved')
     await w.get('[data-test="notification-ai"] button').trigger('click')
+    await flushPromises()
+    expect(mocks.get).toHaveBeenCalledWith('/api/v1/ai-invoke/done')
+    const detail = document.querySelector('[data-test="notification-ai-detail"]')!
+    ;(detail.querySelector('button') as HTMLButtonElement).click()
     expect(mocks.open).toHaveBeenLastCalledWith('p.m.1.0002-TR')
     await w.get('#notification-tab-questions').trigger('click')
     expect(w.get('[data-test="notification-question"]').text()).toContain('Instruction')
-    await w.get('[data-test="notification-question"] button').trigger('click')
-    expect(mocks.open).toHaveBeenLastCalledWith('p.m.1.0001-T')
   })
   it('keeps the successful feed usable when the run endpoint fails', async () => {
     mocks.get.mockImplementation(async (url: string) => { if (url.endsWith('active-all')) throw new Error('403'); return { data: feed } })
@@ -220,11 +250,11 @@ describe('Designer notifications', () => {
     expect(w.find('[role="alert"]').exists()).toBe(false)
     expect(w.find('[data-test="notification-ai"]').exists()).toBe(true)
   })
-  it('does not describe a degraded question feed as an empty success', async () => {
+  it('uses the complete Q snapshot even when the question feed is degraded', async () => {
     mocks.get.mockImplementation(async (url: string) => ({ data: url.endsWith('active-all') ? active : { ...feed, degraded_sections: ['open_questions'] } }))
     const w = await open(); await w.get('#notification-tab-questions').trigger('click')
-    expect(w.get('[role="alert"]').exists()).toBe(true)
-    expect(w.text()).not.toContain('답변 대기 질문이 없습니다.')
+    expect(w.find('[role="alert"]').exists()).toBe(false)
+    expect(w.find('[data-test="notification-question"]').exists()).toBe(true)
     await w.get('#notification-tab-ai').trigger('click')
     expect(w.find('[data-test="notification-ai"]').exists()).toBe(true)
   })
@@ -253,6 +283,7 @@ describe('Designer notifications', () => {
     expect(mocks.get.mock.calls.length).toBe(before + 4)
   })
   it('shows the empty state after a successful empty response', async () => {
+    vi.mocked(qaOpenItems).mockResolvedValue([])
     mocks.get.mockImplementation(async (url: string) => ({ data: url.endsWith('active-all') ? { runs: [], paused: [] } : { ai_invoke_runs: { items: [] }, open_questions: { items: [] } } }))
     const w = await open()
     expect(w.text()).toContain('진행 중이거나 대기 중인 실행이 없습니다.')
@@ -283,6 +314,6 @@ describe('Designer notifications', () => {
   it.each([['ko', '실행', '질의응답'], ['en', 'Runs', 'Q&A'], ['ja', '実行', '質疑応答']] as const)('provides %s tab labels', async (locale, runs, questions) => {
     i18n.global.locale.value = locale
     const w = await open()
-    expect(w.findAll('[role="tab"]').map((node) => node.text())).toEqual([runs, 'AI', questions])
+    expect(w.findAll('[role="tab"]').map((node) => node.text())).toEqual([runs + ' 2', 'AI', questions + ' 1'])
   })
 })

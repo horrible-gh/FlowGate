@@ -17,6 +17,11 @@ export interface AiNotification {
   doc_ref?: string | null
   doc_title?: string | null
   succeeded?: boolean | null
+  stop_code?: string | null
+  end_reason?: string | null
+  provider_name?: string | null
+  docs_reached?: number | null
+  docs_target?: number | null
   outcome?: string | null
   last_message_excerpt?: string | null
   finished_at?: string | null
@@ -67,4 +72,13 @@ export async function fetchNotificationFeed(projectId: string): Promise<Notifica
 }
 export async function cancelInvokeRun(runId: string): Promise<void> {
   await postRequest(`/api/v1/ai-invoke/${encodeURIComponent(runId)}/cancel`, {})
+}
+
+export interface AiNotificationDetail extends AiNotification {
+  stop_reason?: string | null
+  last_message?: string | null
+  provider?: { name?: string | null } | null
+}
+export async function fetchAiNotificationDetail(runId: string): Promise<AiNotificationDetail> {
+  return (await getRequest<AiNotificationDetail>(`/api/v1/ai-invoke/${encodeURIComponent(runId)}`)).data
 }

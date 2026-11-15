@@ -5,18 +5,18 @@
       <button @click="close(true)">{{ t('gui.designer.top.notifications.close') }}</button>
     </div>
     <div role="tablist" :aria-label="t('gui.designer.top.header.notifications')" class="notification-tabs" @keydown="tabKey">
-      <button v-for="name in tabs" :id="`notification-tab-${name}`" :key="name" role="tab" :aria-selected="tab === name" :tabindex="tab === name ? 0 : -1" :aria-controls="tab === name ? `notification-panel-${name}` : undefined" @click="tab = name">{{ t(`gui.designer.top.notifications.tabs.${name}`) }}</button>
+      <button v-for="name in tabs" :id="`notification-tab-${name}`" :key="name" role="tab" :aria-selected="tab === name" :tabindex="tab === name ? 0 : -1" :aria-controls="tab === name ? `notification-panel-${name}` : undefined" @click="tab = name">{{ t(`gui.designer.top.notifications.tabs.${name}`) }}<span v-if="name !== 'ai' && countLabel(name === 'runs' ? counts.runs : counts.questions)" data-test="notification-tab-count"> {{ ' ' + countLabel(name === 'runs' ? counts.runs : counts.questions) }}</span></button>
     </div>
     <div :id="`notification-panel-${tab}`" role="tabpanel" :aria-labelledby="`notification-tab-${tab}`" tabindex="0" :aria-busy="loading">
       <p v-if="!projectId">{{ t('gui.designer.top.notifications.no_project') }}</p>
       <template v-else>
         <p v-if="initialLoading" role="status">{{ t('gui.designer.top.notifications.loading') }}</p>
-        <p v-if="(tab === 'runs' ? runsError : feedError) || degraded" role="alert">{{ t('gui.designer.top.notifications.load_error') }}</p>
+        <p v-if="(tab === 'runs' ? runsError : tab === 'questions' ? questionsError : feedError) || degraded" role="alert">{{ t('gui.designer.top.notifications.load_error') }}</p>
         <p v-if="cancelError" role="alert">{{ t('gui.designer.top.notifications.cancel_error') }}</p>
         <p v-if="tab === 'runs' && !project" role="status">{{ t('gui.designer.top.notifications.project_unknown') }}</p>
         <NotificationRunsTab v-if="tab === 'runs' && project && !runsError && (!initialLoading || rows.length > 0)" :rows="rows" :project-name="project?.name || projectId" :busy="busy" @stop="stop" @open-document="openDocumentWindow" />
         <NotificationAiTab v-if="tab === 'ai' && !initialLoading && !feedError && !degraded" :items="feed?.ai_invoke_runs?.items || []" :total="feed?.ai_invoke_runs?.total" :has-more="feed?.ai_invoke_runs?.has_more" @open-document="openDocumentWindow" />
-        <NotificationQuestionsTab v-if="tab === 'questions' && !initialLoading && !feedError && !degraded" :items="feed?.open_questions?.items || []" :total="feed?.open_questions?.total" :has-more="feed?.open_questions?.has_more" @open-document="openDocumentWindow" />
+        <NotificationQuestionsTab v-show="tab === 'questions'" v-if="!initialLoading && !questionsError" :items="displayQuestions" :project-id="projectId" :project="project" :refresh-key="refreshKey" />
       </template>
     </div>
   </section>
@@ -31,6 +31,10 @@ import { cancelInvokeRun, fetchActiveRuns, fetchNotificationFeed, type InvokeRun
 import NotificationRunsTab from './NotificationRunsTab.vue'
 import NotificationAiTab from './NotificationAiTab.vue'
 import NotificationQuestionsTab from './NotificationQuestionsTab.vue'
+import { qaOpenItems, qaRead, type QaOpenItem } from '@/features/document/api/qa'
+import { countLabel, notificationCounts } from './notificationCounts'
+const displayQuestions = ref<QaOpenItem[]>([])
+const questions = ref<QaOpenItem[] | null>(null), questionsError = ref(false), refreshKey = ref(0)
 const props = defineProps<{ projectId: string | null; project: ExplorerProject | null; anchor: HTMLElement | null }>()
 const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
@@ -49,7 +53,8 @@ const rows = computed(() => {
   const flows = new Map(props.project?.groups.flatMap((group) => group.flows.map((flow) => [flow.id, flow.name] as const)) ?? [])
   return runs.value.filter((run) => flows.has(run.groupId)).map((run) => ({ ...run, flowName: flows.get(run.groupId)! }))
 })
-const degraded = computed(() => feed.value?.degraded_sections?.includes(tab.value === 'ai' ? 'ai_runs' : tab.value === 'questions' ? 'open_questions' : '') ?? false)
+const counts = computed(() => notificationCounts(rows.value, questions.value))
+const degraded = computed(() => feed.value?.degraded_sections?.includes(tab.value === 'ai' ? 'ai_runs' : '') ?? false)
 async function refresh() {
   const pid = props.projectId
   if (!pid || disposed) return
@@ -57,8 +62,19 @@ async function refresh() {
   refreshQueued = false
   const ticket = generation
   loading.value = true
-  const [active, notifications] = await Promise.allSettled([fetchActiveRuns(), fetchNotificationFeed(pid)])
+  const [active, notifications, open] = await Promise.allSettled([fetchActiveRuns(), fetchNotificationFeed(pid), qaOpenItems(pid)])
   if (disposed || ticket !== generation) return
+  if (open.status === 'fulfilled') {
+    const current = new Set(open.value.map(row => `${row.doc_id}:${row.seq}`))
+    const missing = (questions.value ?? []).filter(row => !current.has(`${row.doc_id}:${row.seq}`))
+    const documents = await Promise.allSettled([...new Set(missing.map(row => row.doc_id))].map(qaRead))
+    if (disposed || ticket !== generation) return
+    const answered = missing.filter(row => documents.some(result => result.status === 'fulfilled' && result.value.docId === row.doc_id && result.value.items.some(item => item.seq === row.seq && (item.answerCount > 0 || item.answers.length > 0))))
+    displayQuestions.value = [...open.value, ...answered]
+  } else displayQuestions.value = []
+  questionsError.value = open.status === 'rejected'
+  questions.value = open.status === 'fulfilled' ? open.value : null
+  refreshKey.value++
   runsError.value = active.status === 'rejected'
   feedError.value = notifications.status === 'rejected'
   runs.value = active.status === 'fulfilled' ? active.value : []
@@ -111,12 +127,12 @@ watch(() => props.projectId, () => {
   refreshQueued = false
   unsubscribe?.()
   clearInterval(timer)
-  runs.value = []; feed.value = null; busy.value = []
+  displayQuestions.value = []; questions.value = null; questionsError.value = false; runs.value = []; feed.value = null; busy.value = []
   initialLoading.value = !!props.projectId
   loading.value = false; runsError.value = false; feedError.value = false; cancelError.value = false
   if (!props.projectId) return
   const reload = () => { void refresh() }
-  unsubscribe = subscribeProjectEvents(props.projectId, { events: ['group_view_refresh', 'ai_invoke_started', 'ai_invoke_finished'], event: reload, resync: reload })
+  unsubscribe = subscribeProjectEvents(props.projectId, { events: ['group_view_refresh', 'ai_invoke_started', 'ai_invoke_finished', 'qna_q_registered', 'qna_answer_registered'], event: reload, resync: reload })
   // The feed has no complete event stream; poll only for this mounted, open popover.
   timer = setInterval(reload, 5000)
   reload()
