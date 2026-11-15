@@ -467,6 +467,42 @@ def recover_graph_time_machine():
         logger.warning(f"[startup] graph time machine recovery failed: {exc}")
 
 
+def _repair_graph_drafts_in_background():
+    """flowgate.v02gui.0019 (0004-CH), once the Graph ports are registered: the Flows left blocked before the fix.
+
+    1. A draft that lost a card the run has opened since (``draft_restore.restore_all``: the card goes back into the
+       draft, e.g. flowgate.v02gui.0011, whose every save was refused).
+    2. A bug / requirement Flow without its start card (``root_start.ensure_all``: e.g. flowgate.v02gui.0014,
+       flowgate.tr-update.0001, flowgate.v02.0080); the cards already placed stay, no edge is made.
+    Both are idempotent: a later boot finds nothing to do."""
+    try:
+        from flowgate.graph_run import draft_restore
+        fixed = draft_restore.restore_all()
+        if fixed:
+            logger.info(f"[startup] graph drafts given back their open cards: {fixed}")
+    except Exception as exc:
+        logger.warning(f"[startup] graph draft repair failed: {exc}")
+    try:
+        from modules.flow_gate.graph_workflow.services import root_start
+        placed = root_start.ensure_all()
+        if placed:
+            logger.info(f"[startup] start cards placed: {placed}")
+    except Exception as exc:
+        logger.warning(f"[startup] start card placement failed: {exc}")
+
+
+def repair_graph_drafts():
+    """Runs ``_repair_graph_drafts_in_background`` on its own daemon thread (never holds the lifespan)."""
+    try:
+        thread = threading.Thread(target=_repair_graph_drafts_in_background, name="startup-graph-draft-repair",
+                                  daemon=True)
+        thread.start()
+    except Exception as exc:
+        logger.warning(f"[startup] graph draft repair thread could not start: {exc}")
+        return None
+    return thread
+
+
 def check_runtime_dependencies():
     """flowgate.v02.0137 T0004 §4-2/§4-3: make dependency drift and pool shortfall loud.
 
@@ -516,6 +552,7 @@ def run_all():
         recover_graph_executions()
     except Exception as exc:
         logger.warning(f"[startup] graph execution recovery failed: {exc}")
+    repair_graph_drafts()            # flowgate.v02gui.0019: after the Graph recovery, off the lifespan
     start_remote_ai_supervisor()     # flowgate.v02.0129 T#2: after the Graph recovery it may resume
     encrypt_ai_provider_keys()
     check_agent_pepper()

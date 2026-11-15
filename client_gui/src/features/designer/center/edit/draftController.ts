@@ -14,7 +14,11 @@
 //
 // TR0020 rev4: nothing about saving is shown. A save the server refuses (`conflict`: saved
 // elsewhere first; `error`) is answered the way the removed 다시 불러오기 button was: the Flow is
-// read again as stored, which drops the refused local edits (the editor is reset from the read).
+// read again as stored and the editor is reset from the read.
+// flowgate.v02gui.0019: that read keeps the cards and edges the person placed and the refused save did not store
+// (`carry`): they go onto the read draft and are saved again, so a placed card never vanishes. Once only: when that
+// save is refused too, the next read drops them (no save loop); any stored save allows it again. A save that got no
+// answer at all (`save_failed`: it may still be stored, flowgate.v02.0135) carries nothing.
 //
 // flowgate.v02.0053 T#5: a stored save's card lines (the documents the server made for a placed card,
 // T#1) go onto the shown Graph at once, so the Inspector's documents tab has them without a read.
@@ -78,6 +82,10 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
   const historyOf = (flowId: string) => editors.get(flowId) ?? moveOnly.get(flowId)
   // Stopped editors whose save still runs: their Flow and the positions of their `tmp_` nodes.
   const stopped = new Map<DraftEditor, { flowId: string; positions: Map<string, { x: number; y: number }> }>()
+  // flowgate.v02gui.0019: the editor model of a refused save, waiting for the Flow's next read (`carry`), and the
+  // Flows whose carried edits were not stored yet (a second refusal drops them).
+  const carried = new Map<string, DraftModel>()
+  const carriedOnce = new Set<string>()
 
   function stateOf(flowId: string): DraftEditState {
     if (!edits[flowId]) edits[flowId] = { status: 'idle', errorCode: null, canUndo: false, canRedo: false, action: null, check: null, notice: null }
@@ -96,7 +104,11 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     state.canRedo = historyOf(flowId)?.canRedo() ?? false
     // A save just refused: read the Flow again as stored (no note, no button — TR0020 rev4).
     const storageFailure = state.status === 'error' && state.errorCode === 'document_storage_unwritable'
-    if (editor && refused(state.status) && !refused(before) && !storageFailure) host.reread(flowId)
+    if (editor && refused(state.status) && !refused(before) && !storageFailure) {
+      // Only a refusal the server answered: a save with no answer may still be stored (v02.0135 keeps that case).
+      if (!carriedOnce.has(flowId) && state.errorCode !== 'save_failed') carried.set(flowId, editor.model())
+      host.reread(flowId)
+    }
     // Storage refusal saves nothing. Keep the local edit for a retry, including deferred reads.
     if (editor && !editor.busy() && !storageFailure) host.settled?.(flowId)
   }
@@ -104,6 +116,27 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
   function show(flowId: string, editor: DraftEditor) {
     const graph = host.graph(flowId)
     if (graph) host.setGraph(flowId, withDraft(graph, editor.model()))
+  }
+
+  /**
+   * flowgate.v02gui.0019: the cards (`tmp_` nodes) and edges a refused save left unsaved, put onto the draft just read
+   * and saved again. An edge whose card is gone from the read draft stays out.
+   */
+  function carry(flowId: string, kept: DraftModel) {
+    const editor = editors.get(flowId)
+    if (!editor) return
+    let applied = false
+    const nodes = new Set(editor.model().nodes.map((n) => n.key))
+    for (const node of kept.nodes) {
+      if (node.isNew && !nodes.has(node.key)) applied = editor.apply({ type: 'add_node', node }) || applied
+    }
+    const edges = new Set(editor.model().edges.map((e) => e.key))
+    for (const edge of kept.edges) {
+      if (edge.isNew && !edges.has(edge.key)) applied = editor.apply({ type: 'connect', edge }) || applied
+    }
+    if (!applied) return
+    carriedOnce.add(flowId)
+    show(flowId, editor)
   }
 
   function onKeys(flowId: string, keyMap: Readonly<Record<string, string>>) {
@@ -141,6 +174,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
         else keepStoppedPositions(pid, flowId, editor, keyMap)
       },
       onSaved: (result) => {
+        carriedOnce.delete(flowId)
         if (editors.get(flowId) === editor && result.cardDocuments) showLines(flowId, result.cardDocuments)
       },
       onMove: (placements) => editors.get(flowId) === editor && host.placeNodes(flowId, placements),
@@ -186,6 +220,8 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     const pid = host.projectId()
     const editable = graph.draft?.editable === true && !!host.source.saveDraft && pid !== null
     const existing = editors.get(flowId)
+    const kept = carried.get(flowId)
+    carried.delete(flowId)
     if (!editable) {
       stop(flowId)
       keepMoves(flowId)
@@ -197,6 +233,7 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
     const version = graph.draft!.version
     if (existing) existing.reset(model, version)
     else editors.set(flowId, openEditor(flowId, pid, model, version))
+    if (kept) carry(flowId, kept)
     mirror(flowId)
   }
 
@@ -265,6 +302,8 @@ export function createDraftController(host: DraftHost, edits: Record<string, Dra
   function close(flowId: string) {
     stop(flowId)
     moveOnly.delete(flowId)
+    carried.delete(flowId)
+    carriedOnce.delete(flowId)
     delete edits[flowId]
   }
 

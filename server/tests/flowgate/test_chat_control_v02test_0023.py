@@ -368,7 +368,8 @@ def test_a_new_group_with_only_its_root_document_gets_root_work_confirm_and_runs
     placed = service.place(_group(), "u_kim", {"cards": [{"label": "버그 수정"}]}, "ko")
     root = placed["root"]
     assert root["doc_type"] == "R" and root["doc_id"] == f"{FA}.0001-R" and root["created"] is True
-    assert placed["after"] == root["node_key"] and placed["draft_version"] == 1
+    # flowgate.v02gui.0019: the start card is saved first (root_start), then the chat's cards: two draft saves
+    assert placed["after"] == root["node_key"] and placed["draft_version"] == 2
     card, gate = placed["cards"][0]["node_key"], placed["gate"]["node_key"]
     draft = _draft()
     kinds = {n["node_key"]: (n["node_type"], n.get("doc_type"), n.get("palette_item_id"), n.get("label"))

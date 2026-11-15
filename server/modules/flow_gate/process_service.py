@@ -867,6 +867,11 @@ def create_workflow_root(
         raise
     db.insert_event(doc_id, "created", memo_file=filename)
 
+    # flowgate.v02gui.0019: from its registration on, the bug / requirement is the Flow's start card (a real draft card
+    # holding this root, not a document node drawn like one). Never fails the registration.
+    from modules.flow_gate.graph_workflow.services import root_start
+    root_start.ensure_in_guard(final_group_id, None, locale)
+
     # groups-table registration was already handled above (for new groups)
 
     return {

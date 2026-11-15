@@ -224,7 +224,7 @@ describe('FlowCanvas editing a Graph draft (flowgate.v02.0045 S3)', () => {
     expect([...area.element.children].map((el) => el.getAttribute('data-test'))).toEqual(['designer-canvas'])
   })
 
-  it('a refused save shows nothing either: the Flow is read again as stored (rev4)', async () => {
+  it('a refused save shows nothing either: the Flow is read again (rev4); the edge is tried once more on it (v02gui.0019)', async () => {
     const loads: number[] = []
     const w = await mountWith(() => {
       loads.push(1)
@@ -236,10 +236,12 @@ describe('FlowCanvas editing a Graph draft (flowgate.v02.0045 S3)', () => {
     }
     const before = loads.length
     expect(center.connectNodes('f1', 'gn_a', 'gn_b')).toBe(true)
+    // refused, read again, the edge put on the read draft and saved once more, refused again: read again, dropped
+    await vi.waitFor(() => expect(loads.length).toBe(before + 2))
     await wait()
     await settle()
     saveDraft = stored
-    expect(loads.length).toBe(before + 1)
+    expect(loads.length).toBe(before + 2)
     expect(center.state.edits.f1.status).toBe('idle')
     const load = center.state.graphs.f1
     expect(load?.status === 'ready' && load.graph.edges).toEqual([])
