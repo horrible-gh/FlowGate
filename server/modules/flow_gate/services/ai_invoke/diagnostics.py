@@ -440,18 +440,33 @@ def list_runs(*, group_id: Optional[str] = None, project: Optional[str] = None,
     return result
 
 
+def _group_mutation_locked(group_id: str) -> bool:
+    """0026 (0009-CH): the fact the write guard refuses a person's change on (mutation_policy: an active group
+    lease). `active` also counts a chat answer or an unfinished run that holds no lease, so a screen that locks
+    writes on `active` refused uploads the server would have taken. An unreadable lease does not lock: the
+    server still refuses on the same fact."""
+    try:
+        from modules.flow_gate.db import group_ai_leases
+        return group_ai_leases.get_active(group_id) is not None
+    except Exception:
+        return False
+
+
 def get_active_status(group_id: str) -> dict:
     """Return the live run for a group, if any, without exposing token/process state."""
     chat_runs = [{"run_id": item["run_id"], "doc_ref": item.get("doc_ref"), "status": item.get("status")}
                  for item in list_live_runs(group_id=group_id)
                  if str(item.get("doc_ref") or "").endswith("-CH")]
     run = _svc()._active_run_for_group(group_id)
+    locked = _group_mutation_locked(group_id)
     if run is None:
-        return {"ok": True, "active": False, "group_id": group_id, "chat_runs": chat_runs}
+        return {"ok": True, "active": False, "group_id": group_id, "chat_runs": chat_runs,
+                "mutation_locked": locked}
     return {
         **get_status(run["run_id"]),
         "chat_runs": chat_runs,
         "active": True,
         "group_id": group_id,
         "doc_ref": run["doc_ref"],
+        "mutation_locked": locked,
     }

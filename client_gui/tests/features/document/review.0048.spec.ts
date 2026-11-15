@@ -133,13 +133,19 @@ describe('ai-invoke start / active (flowgate.v02.0048 T#6)', () => {
     getRequest.mockResolvedValue({ data: { ok: true, run_id: 'run_42', status: 'running', active: true, group_id: 'flowgate.v02.0048', doc_ref: DOC } })
     const activity = await reviewActivityRead('flowgate.v02.0048')
     expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/active', { group_id: 'flowgate.v02.0048' })
-    expect(activity).toEqual({ active: true, runId: 'run_42', status: 'running', docRef: DOC, actionScope: null })
+    expect(activity).toEqual({ active: true, runId: 'run_42', status: 'running', docRef: DOC, actionScope: null, mutationLocked: false })
   })
 
   it('no run, or a finished one, is not active', () => {
-    expect(toReviewActivity({ ok: true, active: false, group_id: 'g' })).toEqual({ active: false, runId: null, status: null, docRef: null, actionScope: null })
+    expect(toReviewActivity({ ok: true, active: false, group_id: 'g' })).toEqual({ active: false, runId: null, status: null, docRef: null, actionScope: null, mutationLocked: false })
     expect(toReviewActivity({ active: true, run_id: 'r', status: 'finished' }).active).toBe(false)
     expect(toReviewActivity(null).active).toBe(false)
+  })
+
+  it('0009-CH: the write lock is the server mutation_locked, apart from a live run', () => {
+    expect(toReviewActivity({ active: true, status: 'running', doc_ref: 'g.0009-CH', mutation_locked: false })).toMatchObject({ active: true, mutationLocked: false })
+    expect(toReviewActivity({ active: false, mutation_locked: true }).mutationLocked).toBe(true)
+    expect(toReviewActivity({ active: true, status: 'running', mutation_locked: 'yes' }).mutationLocked).toBe(false)
   })
 })
 

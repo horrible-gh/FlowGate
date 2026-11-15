@@ -99,3 +99,30 @@ def test_active_query_includes_chats_even_when_first_live_run_is_a_card(monkeypa
     monkeypatch.setattr(diagnostics, "get_status", lambda _: {"run_id": "card"})
     assert diagnostics.get_active_status("p.m.1")["chat_runs"] == [
         {"run_id": "chat", "doc_ref": "p.m.1.0002-CH", "status": "cancelling"}]
+
+
+def test_active_query_reports_the_write_lock_apart_from_live_runs_0009_ch(monkeypatch):
+    """0026 (0009-CH): a chat answer or a stopped Flow's leftover run is `active` but holds no group lease, so the
+    server takes a person's upload; `mutation_locked` follows the lease the write guard checks."""
+    from modules.flow_gate.db import group_ai_leases
+    from modules.flow_gate.services.ai_invoke import diagnostics
+    monkeypatch.setattr(diagnostics, "list_live_runs", lambda **_: [
+        {"run_id": "chat", "doc_ref": "p.m.1.0002-CH", "status": "running"}])
+    class Service:
+        run = {"run_id": "chat", "doc_ref": "p.m.1.0002-CH"}
+        def _active_run_for_group(self, _): return self.run
+    monkeypatch.setattr(diagnostics, "_svc", lambda: Service())
+    monkeypatch.setattr(diagnostics, "get_status", lambda _: {"run_id": "chat"})
+    lease = {}
+    monkeypatch.setattr(group_ai_leases, "get_active", lambda group_id: lease.get(group_id))
+    status = diagnostics.get_active_status("p.m.1")
+    assert status["active"] is True and status["mutation_locked"] is False
+    lease["p.m.1"] = {"run_id": "card", "group_id": "p.m.1"}
+    assert diagnostics.get_active_status("p.m.1")["mutation_locked"] is True
+    Service.run = None
+    assert diagnostics.get_active_status("p.m.1") == {
+        "ok": True, "active": False, "group_id": "p.m.1",
+        "chat_runs": [{"run_id": "chat", "doc_ref": "p.m.1.0002-CH", "status": "running"}], "mutation_locked": True}
+    def broken(group_id): raise RuntimeError("db down")
+    monkeypatch.setattr(group_ai_leases, "get_active", broken)
+    assert diagnostics.get_active_status("p.m.1")["mutation_locked"] is False

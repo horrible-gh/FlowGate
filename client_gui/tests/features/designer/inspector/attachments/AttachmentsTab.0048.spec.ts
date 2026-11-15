@@ -85,6 +85,8 @@ interface ServerRow {
 
 const rows = new Map<string, ServerRow[]>()
 let running = false
+/** A live run that holds no group lease (a chat answer, a stopped Flow's leftover run): the server takes changes. */
+let liveWithoutLease = false
 let disposed = false
 /** The next call of that name is this refusal (once). */
 const refusals = new Map<string, unknown>()
@@ -154,7 +156,11 @@ function serve() {
     return { filename, blob: new Blob([`content of ${filename}`]) }
   })
   activityRead.mockImplementation(async (groupId: string) =>
-    toReviewActivity(running ? { active: true, run_id: 'run_1', status: 'running', group_id: groupId } : { active: false, group_id: groupId }),
+    toReviewActivity(
+      running ? { active: true, run_id: 'run_1', status: 'running', group_id: groupId, mutation_locked: true }
+        : liveWithoutLease ? { active: true, run_id: 'chat_1', status: 'running', group_id: groupId, doc_ref: `${groupId}.0009-CH`, mutation_locked: false }
+          : { active: false, group_id: groupId, mutation_locked: false },
+    ),
   )
   documentRead.mockImplementation(async (docId: string) => toReviewDocument(docRow(docId)))
   detailRead.mockImplementation(async (docId: string) => toDocumentDetail(docRow(docId)))
@@ -183,6 +189,7 @@ beforeEach(() => {
   rows.clear()
   refusals.clear()
   running = false
+  liveWithoutLease = false
   disposed = false
   for (const mock of [listCall, uploadCall, deleteCall, downloadCall, activityRead, documentRead, detailRead, relationsRead, qaReadCall, cardRequests, decideMany]) mock.mockReset()
   cardRequests.mockImplementation(async (flowId: string, nodeKey: string) => ({ flowId, nodeKey, requests: [], pending: 0 }))
@@ -560,6 +567,18 @@ describe('attachments tab — not mutable (409 DOCUMENT_NOT_MUTABLE / 423) and t
     await itemEl(w, '요구사항.xlsx').find('[data-test="attachments-open"]').trigger('click')
     await flushPromises()
     expect(saved).toHaveLength(1)
+  })
+
+  it('0009-CH: a live run without the group lease (chat answer, stopped Flow) does not close adding; the upload goes through', async () => {
+    liveWithoutLease = true
+    const w = await mountTab(v01Target())
+    expect(w.find('[data-test="attachments-reason"]').exists()).toBe(false)
+    expect(isDisabled(addButton(w))).toBe(false)
+    expect(isDisabled(deleteButton(w, '요구사항.xlsx'))).toBe(false)
+    await pick(w, [file('a.txt')])
+    await flushPromises()
+    expect(uploadCall).toHaveBeenCalledTimes(1)
+    expect(names(w)).toContain('a.txt')
   })
 
   it('a disposed group: adding and deleting are disabled with the disposed reason', async () => {

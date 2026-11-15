@@ -105,7 +105,7 @@ function serve() {
     return toAttachmentsUploadResult({ data: { doc_id: docId, attachments: added, count: added.length } })
   })
   activityRead.mockImplementation(async (groupId: string) =>
-    toReviewActivity(running ? { active: true, run_id: 'run_1', status: 'running', group_id: groupId } : { active: false, group_id: groupId }),
+    toReviewActivity(running ? { active: true, run_id: 'run_1', status: 'running', group_id: groupId, mutation_locked: true } : { active: false, group_id: groupId }),
   )
   documentRead.mockImplementation(async (docId: string) => toReviewDocument(docRow(docId)))
   detailRead.mockImplementation(async (docId: string) => toDocumentDetail(docRow(docId)))

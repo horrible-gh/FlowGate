@@ -156,7 +156,9 @@ export function useAttachments(target: () => InspectorTarget | null): Attachment
       const flowId = target()?.flowId
       if (!flowId) throw new Error('no target Flow')
       const [activity, document] = await Promise.all([reviewActivityRead(flowId), reviewDocumentRead(id)])
-      return { aiRunning: activity.active, groupDisposed: document.groupDisposed }
+      // 0026 (0009-CH): lock on the server's write lease, not on any live run: a chat answer or a stopped Flow's
+      // leftover run kept uploads closed while the server (and the document editor) took changes.
+      return { aiRunning: activity.mutationLocked, groupDisposed: document.groupDisposed }
     },
     events: ATTACHMENTS_GUARD_EVENTS,
     matches: attachmentsGuardMatches,

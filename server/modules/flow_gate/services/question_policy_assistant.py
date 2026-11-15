@@ -4,6 +4,7 @@ Local/API calls reuse the shared prompt transport. Remote CLI calls use addresse
 Agent jobs with private result retrieval; no project, worktree or worker write token.
 """
 import json
+import logging
 import secrets
 import threading
 import time
@@ -14,7 +15,12 @@ from modules.flow_gate.settings import ai_settings_service as settings
 from modules.flow_gate.services import ai_connection_test_service as connection
 from modules.flow_gate.services.ai_invoke import runtime, provider_remote, provider_cli
 
-TIMEOUT = 180
+# 0026 (0009-CH): the final turn returns the whole draft and is the slowest one. A remote Agent's queue and
+# start-up time no longer count against this: TIMEOUT starts when the Job is STARTED (see _remote).
+TIMEOUT = 240
+# Output ceiling of one API reply: a 4000-character Korean draft plus message and JSON must never be cut off.
+MAX_TOKENS = 8000
+_log = logging.getLogger(__name__)
 _lock = threading.RLock()
 _requests = {}
 
@@ -85,7 +91,8 @@ def prompt(body, messages, locale):
 
 def _json_objects(text):
     """Every JSON object in the text, outermost first: a sentence or a code fence around it is ignored."""
-    decoder = json.JSONDecoder()
+    # 0026 (0009-CH): strict=False reads a multi-line Markdown draft whose newlines were not escaped.
+    decoder = json.JSONDecoder(strict=False)
     index = text.find("{")
     while index != -1:
         try:
@@ -135,10 +142,17 @@ def parse_reply(text):
 def _ask(provider, text, user_id, request_id):
     note, timeouts = "", 0
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        answer = None
         try:
-            return parse_reply(_execute(provider, text + note, user_id, request_id))
+            answer = _execute(provider, text + note, user_id, request_id)
+            return parse_reply(answer)
         except ValueError as exc:
             code = str(exc)
+            # 0026 (0009-CH): leave the cause on the server. Code, attempt and sizes only: never prompt or reply text.
+            _log.warning("question policy assistant attempt failed: request=%s attempt=%d/%d code=%s exec=%s "
+                         "kind=%s prompt_chars=%d reply_chars=%s", request_id, attempt, MAX_ATTEMPTS, code,
+                         provider.get("exec_type"), provider.get("kind"), len(text + note),
+                         len(answer) if isinstance(answer, str) else "-")
             timeouts += code == "timeout"
             retriable = code in RETRY_NOTES or code in RETRY_SILENT
             if not retriable or attempt == MAX_ATTEMPTS or timeouts > 1:
@@ -168,22 +182,34 @@ def _remote(provider, text, user_id, request_id):
         cwd=provider_remote.job_workdir(template, job), timeout_seconds=TIMEOUT,
         job_id=job, attempt_id=attempt, target_agent_id=target,
         requested_by_user_id=requester, ai_run_id=request_id, retrieval_owner=owner)
-    deadline = time.monotonic() + TIMEOUT
+    # 0026 (0009-CH): TIMEOUT counts from STARTED. Before that the server itself ends a Job nobody claimed
+    # (AI_CLAIM_WAIT_SECONDS) or started (AI_START_WAIT_SECONDS); this cap only guards against a stuck row.
+    waiting_until = time.monotonic() + agent_jobs.AI_CLAIM_WAIT_SECONDS + agent_jobs.AI_START_WAIT_SECONDS + 30
+    deadline = None
     terminal = False
     try:
-        while time.monotonic() < deadline:
+        while True:
             row = svc.get_ai_job(job, attempt)
             if row["status"] in agent_jobs.TERMINAL:
                 terminal = True
                 result = svc.collect_ai_result(job, attempt, owner)
+                if result.get("status") != "DONE" and result.get("started_at") is None:
+                    # Never picked up or never started (the Agent was busy or gone): a wait, not a bad run.
+                    raise ValueError("timeout")
                 if (not result.get("collected") or result.get("child_exit_code") != 0
                         or result.get("status") != "DONE"):
                     raise ValueError("remote_execution_failed")
                 kind = "claude" if provider["kind"] == "codex" else provider["kind"]
                 return provider_cli._cli_last_message(kind, result.get("stdout") or "",
                     Path("__remote_no_last_message_file__")) or ""
+            now = time.monotonic()
+            if deadline is None and row["status"] == "STARTED":
+                deadline = now + TIMEOUT
+            if deadline is None and now >= waiting_until:
+                raise ValueError("timeout")
+            if deadline is not None and now >= deadline:
+                raise ValueError("timeout")
             time.sleep(1)
-        raise ValueError("timeout")
     finally:
         if not terminal:
             svc.cancel_ai_job(job, attempt)
@@ -202,7 +228,7 @@ def _execute(provider, text, user_id, request_id):
         provider["name"], provider["exec_type"], provider["kind"], command,
         (provider.get("api_base_url") or "").rstrip("/"), provider.get("api_model"), credential,
         "", connection.FINGERPRINT_VERSION)
-    outcome = connection.execute_prompt(subject, text, runtime.ProbeHandle(), TIMEOUT, max_tokens=3500)
+    outcome = connection.execute_prompt(subject, text, runtime.ProbeHandle(), TIMEOUT, max_tokens=MAX_TOKENS)
     if outcome.kind != runtime.PROBE_OK:
         raise ValueError(connection.FAILURE_REASON.get(outcome.kind, "execution_failed"))
     return outcome.text
@@ -218,6 +244,8 @@ def _worker(request_id, user_id, provider, text):
             "remote_agent_workdir_unset", "remote_agent_workdir_unverified", "timeout", "remote_execution_failed",
             "transport_failed", "provider_launch_failed", "execution_failed", "reply_invalid",
             "policy_too_long"} else "policy_assistant_failed"
+        if code == "policy_assistant_failed":
+            _log.warning("question policy assistant failed: request=%s error=%s", request_id, type(exc).__name__)
         result = {"status": "failed", "error_code": code}
     with _lock:
         _requests[request_id].update(result, ended=time.monotonic())

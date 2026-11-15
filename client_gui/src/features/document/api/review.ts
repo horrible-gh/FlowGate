@@ -151,13 +151,21 @@ export interface ReviewActivity {
   /** The document the run works on. */
   readonly docRef: string | null
   readonly actionScope: string | null
+  /**
+   * 0026 (0009-CH): an AI run holds the group's write lease, so the server refuses a person's change. Unlike `active`,
+   * a chat answer or a stopped Flow's leftover run without the lease does not count. False when the server does not say.
+   */
+  readonly mutationLocked: boolean
 }
 
 /** The /ai-invoke/active response -> ReviewActivity (a finished run is not active). */
 export function toReviewActivity(raw: unknown): ReviewActivity {
   const row = record(raw)
   const status = text(row.status)
-  return { active: row.active === true && status !== 'finished', runId: text(row.run_id), status, docRef: text(row.doc_ref), actionScope: text(row.action_scope) }
+  return {
+    active: row.active === true && status !== 'finished', runId: text(row.run_id), status, docRef: text(row.doc_ref), actionScope: text(row.action_scope),
+    mutationLocked: row.mutation_locked === true,
+  }
 }
 
 /** Reads whether an AI run owns the group now. */

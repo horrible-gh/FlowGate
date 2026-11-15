@@ -244,3 +244,109 @@ def test_assistant_uses_selected_personal_provider(monkeypatch):
                         seen.append(subject) or NS(kind=assistant.runtime.PROBE_OK, text="reply"))
     assert assistant._execute({"id": "personal", "name": "Mine", "exec_type": "api", "kind": "openai", "api_base_url": "https://example.invalid/", "api_model": "test"}, "prompt", "u1", "r") == "reply"
     assert seen[0].provider_id == "personal" and seen[0].credential == "private-key"
+
+
+# 0026 (0009-CH): the final turn (summary + whole draft) failed again and again while the short turns worked.
+def test_assistant_reads_draft_with_raw_newlines_0009_ch():
+    draft = "## AI가 스스로 결정하는 것\n- 테스트는 AI가 진행\n\n## 예외\n- 운영 배포는 하지 않는다"
+    raw = '{"message": "정리했습니다", "choices": [], "policy": "' + draft + '"}'
+    assert "\n" in raw  # unescaped newlines inside the JSON string
+    assert assistant.parse_reply(raw)["policy"] == draft
+
+
+def test_assistant_api_reply_has_room_for_the_whole_draft_0009_ch(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(assistant.settings, "get_provider_secret", lambda scope, pid: "key")
+    monkeypatch.setattr(assistant.connection, "execute_prompt", lambda subject, text, handle, timeout, **kw:
+                        seen.update(kw, timeout=timeout) or NS(kind=assistant.runtime.PROBE_OK, text="reply"))
+    assistant._execute({"id": "p", "name": "P", "exec_type": "api", "kind": "claude",
+                        "api_base_url": "https://example.invalid", "api_model": "m"}, "prompt", "u1", "r")
+    # 4000 Korean characters plus message and JSON stay well under the ceiling.
+    assert seen["max_tokens"] >= 8000 and seen["timeout"] == assistant.TIMEOUT
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+def _remote_env(monkeypatch, states):
+    """A remote Agent whose Job goes through `states`: a list of (seconds_from_enqueue, status, started)."""
+    from modules.flow_gate.services import agent_jobs
+    clock, calls = _Clock(), {"cancel": 0}
+
+    class Svc:
+        def enqueue_remote_cli(self, **kw):
+            calls["timeout_seconds"] = kw["timeout_seconds"]
+
+        def _state(self):
+            current = states[0]
+            for state in states:
+                if clock.now >= state[0]:
+                    current = state
+            return current
+
+        def get_ai_job(self, job, attempt):
+            return {"status": self._state()[1]}
+
+        def collect_ai_result(self, job, attempt, owner):
+            _, status, started = self._state()
+            return {"collected": True, "status": status, "child_exit_code": 0 if status == "DONE" else 1,
+                    "started_at": "2026-11-15T00:00:00Z" if started else None, "stdout": "answer"}
+
+        def cancel_ai_job(self, job, attempt):
+            calls["cancel"] += 1
+
+        def release_ai_retrieval(self, job, attempt, owner):
+            pass
+
+    monkeypatch.setattr(agent_jobs, "AgentJobService", Svc)
+    monkeypatch.setattr(agent_jobs, "retrieval_owner_for", lambda request_id: "owner")
+    monkeypatch.setattr(assistant.provider_remote, "_binding", lambda provider: {"target_agent_id": "a", "requester": "u1"})
+    monkeypatch.setattr(assistant.provider_remote, "agent_failure", lambda target, requester: None)
+    monkeypatch.setattr(assistant.provider_remote, "AGENT_WORKDIR_CONTRACT_VERIFIED", True)
+    monkeypatch.setattr(assistant.provider_remote, "_agent_workdir", lambda target: "tmpl")
+    monkeypatch.setattr(assistant.provider_remote, "job_workdir", lambda template, job: "cwd")
+    monkeypatch.setattr(assistant.settings, "normalize_cli_command", lambda kind, command: "cmd")
+    monkeypatch.setattr(assistant.provider_cli, "_cli_last_message", lambda kind, out, path: out)
+    monkeypatch.setattr(assistant, "time", clock)
+    return clock, calls
+
+
+def test_assistant_remote_wait_in_queue_does_not_count_0009_ch(monkeypatch):
+    provider = {"kind": "claude", "cli_command": ""}
+    # Queued and starting for 200 s, then a long run just under TIMEOUT: still an answer.
+    run = assistant.TIMEOUT - 10
+    clock, calls = _remote_env(monkeypatch, [(0, "NEW", False), (150, "CLAIMED", False), (200, "STARTED", True),
+                                             (200 + run, "DONE", True)])
+    assert assistant._remote(provider, "prompt", "u1", "r") == "answer"
+    assert calls["cancel"] == 0 and calls["timeout_seconds"] == assistant.TIMEOUT
+    # A run past TIMEOUT from its start is a timeout and the Job is cancelled.
+    clock, calls = _remote_env(monkeypatch, [(0, "NEW", False), (30, "STARTED", True)])
+    with pytest.raises(ValueError, match="timeout"):
+        assistant._remote(provider, "prompt", "u1", "r")
+    assert calls["cancel"] == 1 and 30 + assistant.TIMEOUT <= clock.now <= 30 + assistant.TIMEOUT + 2
+    # A Job the server ended because nobody claimed it is a wait (timeout), not a failed run.
+    clock, calls = _remote_env(monkeypatch, [(0, "NEW", False), (120, "CANCELLED", False)])
+    with pytest.raises(ValueError, match="timeout"):
+        assistant._remote(provider, "prompt", "u1", "r")
+    assert calls["cancel"] == 0
+
+
+def test_assistant_logs_failure_cause_without_text_0009_ch(monkeypatch, caplog):
+    answers = iter(["SECRET-REPLY not json", "SECRET-REPLY", "SECRET-REPLY"])
+    monkeypatch.setattr(assistant, "_execute", lambda provider, text, *a: next(answers))
+    monkeypatch.setattr(assistant, "_requests", {"r": {"user_id": "u1", "status": "running"}})
+    with caplog.at_level("WARNING", logger=assistant.__name__):
+        assistant._worker("r", "u1", {"exec_type": "api", "kind": "claude"}, "SECRET-PROMPT")
+    assert assistant.result("u1", "r")["error_code"] == "reply_invalid"
+    lines = [r.getMessage() for r in caplog.records if r.name == assistant.__name__]
+    assert len(lines) == 3 and all("code=reply_invalid" in line for line in lines)
+    assert "attempt=1/3" in lines[0] and "reply_chars=21" in lines[0]
+    assert not any("SECRET" in line for line in lines)
