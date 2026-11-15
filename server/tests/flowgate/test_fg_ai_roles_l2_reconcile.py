@@ -65,7 +65,7 @@ def test_k4_rc4_a_lost_end_of_a_passed_instruction_review_approves_and_starts_th
 
 @pytest.mark.parametrize("ledger_kept", [True, False])
 def test_k10_rc1_a_review_assignment_left_without_its_intent_gets_one_request(env, decided, starts, ledger_kept):
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1)))
     roles(key, execution="not_used", review=B)
     start(env)
     write_line(env, key, "report", "## 결과\n\n본문\n")

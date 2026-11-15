@@ -326,6 +326,12 @@ def _review_count(value) -> Optional[int]:
 
 def with_result_review_plan(a: dict, attempt_id: str, author: str, r, stored: dict) -> dict:
     """L-2 §2.8.1: rounds and rework AI of a result review assignment."""
+    count = stored.get("review_count")
+    # A disabled result review overrides a slot's AI too. Do not turn an unreadable
+    # settings store into an automatic approval, or alter explicit not_used reasons.
+    if (a["actor"] != NO_REVIEW and getattr(r, "source", None) != STORE_ERROR
+            and (count is None or (type(count) is int and count == 0))):
+        return _a(NO_REVIEW, NO_REVIEW_SETTING, source=a["source"])
     if a["actor"] != AI:
         return a
     if author != AI:

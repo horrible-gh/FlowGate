@@ -219,7 +219,7 @@ def test_k12_feature_off_opens_with_the_current_dispatch_and_writes_no_assignmen
 def test_g1_person_instruction_then_ai_result_once_and_its_review_by_b_reworked_by_x(env, decided, monkeypatch, starts):
     """G-1: person / AI(X) / AI(B). The saved instruction gets NO_REVIEW(no_review_setting), the system approves it and
     X starts once with the instruction attached; the node is not done. X's result: B reviews it, X reworks."""
-    key = flow(env)
+    key = flow(env, extra_settings=(("review_count", 1),))
     roles(key, "not_used", X, B)
     start(env)
     ia = one(env, key, "instruction")
@@ -239,7 +239,7 @@ def test_g1_person_instruction_then_ai_result_once_and_its_review_by_b_reworked_
     assert (ra["actor"], ra["provider_id"], ra["stage_state"], ra["intent_kind"]) == ("ai", X, "active", "execution")
     [job] = env["jobs"]
     assert (job["provider_id"], job["result_doc_type"], job["ref_doc_ids"], job["stage"]) == \
-        (X, "TR", [instruction], "result")
+        (X, "TR", [f"{FA}.0001-R", instruction], "result")
     assert job["assignment_ref"] == {"attempt_id": ra["attempt_id"], "stage": "result", "seq": 0}
     assert node_run(env, key)["status"] == "open"                                  # not done yet
     result = ai_writes_result(env, monkeypatch, key, job)
@@ -485,7 +485,7 @@ def test_a_refused_review_request_rolls_back_to_its_savepoint_and_keeps_the_fail
     ``failed(review_not_started)`` and the B-1 of this submission is recorded once after the commit."""
     from flowgate.graph_run import execution
 
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("review_count", 1), ("instruction", "omit"),))
     roles(key, execution="not_used", review=B)
     start(env)
     monkeypatch.setattr(execution, "request_loop_locked", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fenced")))
@@ -500,7 +500,7 @@ def test_a_refused_review_request_rolls_back_to_its_savepoint_and_keeps_the_fail
 
 
 def test_an_ai_review_assignment_and_its_ledger_request_commit_together_with_the_ref(env, decided, starts):
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("review_count", 1), ("instruction", "omit"),))
     roles(key, execution="not_used", review=B)
     start(env)
     answer = write_line(env, key, "report", "## 결과\n\n본문\n")
@@ -518,3 +518,41 @@ def test_an_ai_review_assignment_and_its_ledger_request_commit_together_with_the
     assert (rr["review_rounds"], rr["rework_provider_id"]) == (1, None)            # a person's result: 1 round, no rework
     [loop] = [c for c in starts if c.get("document_review_loop")]
     assert loop["graph_exec_id"] == req["exec_id"] and loop["invocation_origin"]["purpose"] == "result_review_round"
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, -1])
+@pytest.mark.parametrize("author", ["ai", "person"])
+def test_result_review_configured_rounds_and_rework_are_preserved(monkeypatch, count, author):
+    from flowgate.card_settings import stage_assignment as sa
+    from flowgate.ai_roles.resolve import Resolution
+    monkeypatch.setattr(sa.store, "read", lambda *a: {"actor": "ai", "provider_id": A})
+    assignment = sa._a(sa.AI, source="creation_copy", provider_id=B)
+    result = sa.with_result_review_plan(assignment, "attempt", author,
+        Resolution("review", "ai", "creation_copy", B), {"review_count": count})
+    assert result["actor"] == "ai"
+    assert result["review_rounds"] == (count if author == "ai" else 1)
+    assert result["rework_provider_id"] == (A if author == "ai" else None)
+
+
+@pytest.mark.parametrize("count", [None, 0])
+def test_disabled_review_does_not_hide_an_unreadable_store(count):
+    from flowgate.card_settings import stage_assignment as sa
+    from flowgate.ai_roles.resolve import Resolution
+    assignment = sa._a(sa.WAIT_SETUP, source=sa.STORE_ERROR)
+    assert sa.with_result_review_plan(assignment, "attempt", "ai",
+        Resolution("review", "needs_setup", "store_error"), {"review_count": count}) == assignment
+
+
+def test_group_creation_copy_matches_inspector_and_execution_assignment(env, decided):
+    from test_fg_ai_roles_l1_card_init import group_defaults
+    from flowgate.ai_roles import card_roles
+    from flowgate.card_settings import repository
+    group_defaults(dict(instruction=A, execution=X, review=B))
+    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1)))
+    view = card_roles.card_role_view(FA, repository.card_node(FA, key), "run", "u_kim", "flowgate")
+    for role, pid in (("instruction", A), ("execution", X), ("review", B)):
+        assert view["roles"][role]["selected"]["provider_id"] == pid
+        assert view["roles"][role]["source"] == "creation_copy"
+    start(env)
+    assert one(env, key, "result")["provider_id"] == X
+    assert env["jobs"][0]["provider_id"] == X

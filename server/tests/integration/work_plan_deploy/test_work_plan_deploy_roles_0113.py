@@ -13,7 +13,6 @@ def defaults(uid="u_kim",pid="aip_assignee"):
 def plan(doc,instruction="aip_card",execution="aip_assignee",review="aip_card",first=False):
     from modules.flow_gate.services import work_plan_service as wp
     from modules.flow_gate.services.work_plan_card_stages import upgrade
-    from modules.flow_gate.db import documents
     row=_doc_row(doc)
     if first:
         _write_plan(doc,{"T":1})
@@ -24,8 +23,11 @@ def plan(doc,instruction="aip_card",execution="aip_assignee",review="aip_card",f
     result.update(provider_id=execution,provider_display_name=execution,review_count=1 if review else 0,
                   reviewer_provider_id=review,reviewer_provider_display_name=review)
     validated=wp.validate(body,project_id="flowgate",doc_id=doc,action="save",enforce_provider_scope=False)
-    wp.write_body_atomically(wp.plan_path_for_doc(row),validated)
-    documents.update(doc,{"revision_no":int(row.get("revision_no") or 0)+1})
+    # Seed fixture bytes/revision as _write_plan does; production card edits use their own API.
+    from modules.flow_gate.db.connection import get_store
+    wp.plan_path_for_doc(row).write_text(wp.dumps(validated), encoding="utf-8")
+    get_store()._execute("UPDATE documents SET revision_no = ? WHERE doc_id = ?",
+                         [int(row.get("revision_no") or 0) + 1, doc])
 
 
 def card_state(key):
@@ -189,3 +191,18 @@ def test_redeploy_preserves_explicit_slot_and_partial_legacy_state(dep,monkeypat
     before=card_state(key)
     assert with_flow_guard(FA,lambda:card_init.apply_wp_redeploy_roles(FA,key,"run","u_kim",{"execution":"aip_card","review":"aip_card"}))=="NO_CHANGE"
     assert card_state(key)==before and card_state(key)[1] is None
+
+
+def test_wp_plan_roles_win_and_missing_roles_copy_group(dep):
+    from test_fg_ai_roles_l1_card_init import group_defaults
+    _, doc, _ = _flow(dep)
+    plan(doc, instruction=None, first=True)
+    defaults()
+    group_defaults(dict(instruction="aip_card", execution="not_used", review="not_used"), "T")
+    [key] = _execute(dep, doc, "first")["created_node_keys"]
+    slots, init, _ = card_state(key)
+    assert slots["instruction"].source == "creation_copy"
+    assert slots["instruction"].value.provider_id == "aip_card"
+    assert slots["execution"].source == slots["review"].source == "wp_plan"
+    assert slots["execution"].value.kind == slots["review"].value.kind == "assigned"
+    assert init.state == "initialized"

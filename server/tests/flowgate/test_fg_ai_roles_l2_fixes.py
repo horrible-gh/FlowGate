@@ -340,7 +340,7 @@ def _edit_between(monkeypatch, doc_id):
 def test_k6_a_pass_of_revision_0_never_approves_revision_1_edited_after_the_check(env, decided, monkeypatch, starts):
     from flowgate.card_settings import legacy_adapter
 
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1)))
     roles(key, execution="not_used", review=B)
     start(env)
     report = write_line(env, key, "report", "## 결과\n\n본문\n")["doc_id"]
@@ -603,7 +603,7 @@ def test_t46_a_loop_end_contact_with_an_unreadable_assignment_records_it_once_an
                                                                                                  monkeypatch, starts):
     from flowgate.card_settings import assigned_review, legacy_adapter
 
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1)))
     roles(key, execution="not_used", review=B)
     start(env)
     report = write_line(env, key, "report", "## 결과\n\n본문\n")["doc_id"]
@@ -679,7 +679,7 @@ def test_e13_a_refused_result_review_loop_fails_with_its_own_code_and_no_other_a
 
     assert reasons.SYSTEM_ERROR_RETRY_LIMIT == LIMIT
     calls: list = []
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1)))
     roles(key, execution="not_used", review=B)
     start(env)
     _refusing_loops(monkeypatch, calls)
@@ -708,7 +708,7 @@ def test_e13_a_result_review_whose_start_failed_for_a_moment_starts_on_the_next_
     from flowgate.card_settings import legacy_adapter
 
     calls: list = []
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1)))
     roles(key, execution="not_used", review=B)
     start(env)
     _refusing_loops(monkeypatch, calls)
@@ -791,7 +791,7 @@ def test_rc1_a_lost_end_of_a_review_that_did_not_pass_records_its_b1_once(env, d
     """The AI result's review loop stopped without passing and its run-end contact was lost: the next reads consume the
     verdict once — B-1 ``review_not_passed:<stop>`` with the submission's mark, verdict ``not_passed:<stop>``, nothing
     approved (an AI author: no takeover)."""
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1)))
     roles(key, execution=X, review=B)
     start(env)
     [job] = env["jobs"]

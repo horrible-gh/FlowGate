@@ -182,3 +182,113 @@ def test_failed_account_select_recovers_aborted_transaction_before_following_rea
     assert card_init._read_account("creator","flow","node",True) is None
     assert statements==["SAVEPOINT fg_role_acc_read","ROLLBACK TO SAVEPOINT fg_role_acc_read","RELEASE SAVEPOINT fg_role_acc_read"]
     assert not store.aborted
+
+
+def group_defaults(cells, type_key="common"):
+    from modules.flow_gate.db import ai_groups, ai_group_role_profiles as profiles
+    from modules.flow_gate.db.connection import get_store
+    with get_store().transaction():
+        if ai_groups.get_role_group() is None:
+            ai_groups.create(dict(ai_group_id="roles", name="Roles", name_key="roles",
+                                  name_key_hash="a" * 64, description="", group_type="role"))
+            profiles.create("roles", "common")
+        if profiles.get("roles", type_key) is None:
+            from modules.flow_gate.services import ai_group_role_profile_service
+            ai_group_role_profile_service.add("roles", type_key)
+        for role, value in cells.items():
+            kind = value if value in ("unset", "inherit", "not_used") else "assigned"
+            profiles.set_cell("roles", type_key, role, kind,
+                              value if kind == "assigned" else None, None)
+
+
+@pytest.mark.parametrize("doc_type", ["T", "N", "D", "P", "L", "DB", "TS", "WP"])
+def test_group_creation_common_and_type_precedence(env, doc_type):
+    save_defaults()
+    group_defaults(dict(instruction="aip_assignee", execution="aip_assignee", review="aip_assignee"))
+    group_defaults(dict(execution="aip_card", review="not_used"), doc_type)
+    result = put_draft(env, FA, 0, [node("tmp_new", doc_type)])
+    slots, init, _ = state(FA, result["key_map"]["tmp_new"])
+    assert slots["execution"].value.provider_id == "aip_card"
+    assert slots["review"].value.kind == "not_used"
+    if doc_type != "WP":
+        assert slots["instruction"].value.provider_id == "aip_assignee"
+    assert init.state == "initialized"
+    assert all(s.source == "creation_copy" for s in slots.values())
+
+
+def test_group_creation_fallback_and_existing_pending_remain_account_based(env):
+    from flowgate.ai_roles import card_init
+    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+    pending = placed(env, FA)
+    before = state(FA, pending)
+    save_defaults()
+    group_defaults(dict(instruction="not_used", execution="aip_assignee"))
+    result = put_draft(env, FA, 1, [node(pending), node("tmp_new")])
+    assert state(FA, pending) == before
+    key = result["key_map"]["tmp_new"]
+    slots = state(FA, key)[0]
+    assert slots["instruction"].value.kind == "not_used"
+    assert slots["execution"].value.provider_id == "aip_assignee"
+    assert slots["review"].value.provider_id == "aip_card"
+    snapshot = state(FA, key)
+    group_defaults(dict(instruction="aip_card", execution="not_used", review="not_used"))
+    assert state(FA, key) == snapshot
+    with_flow_guard(FA, lambda: card_init.initialize_pending_card(FA, pending, "run"))
+    assert all(s.value.provider_id == "aip_card" and s.source == "pending_fill"
+               for s in state(FA, pending)[0].values())
+
+
+def test_group_creation_common_only_copies_all_roles_and_keeps_unavailable_id(env):
+    from flowgate.ai_roles import resolve
+    from flowgate.card_settings import repository
+    save_defaults()
+    group_defaults(dict(instruction="deleted", execution="deleted", review="deleted"))
+    key = placed(env, FA)
+    assert all(s.value.provider_id == "deleted" for s in state(FA, key)[0].values())
+    r = resolve.resolve_role(FA, repository.card_node(FA, key), "execution", project_id="flowgate")
+    assert (r.outcome, r.provider_id, r.cause) == ("unavailable", "deleted", "deleted")
+
+
+def test_group_failed_select_falls_back_and_draft_commits(env, monkeypatch):
+    from flowgate.ai_roles import card_init
+    from modules.flow_gate.db.connection import get_store
+    save_defaults()
+    def broken():
+        return get_store()._fetch_all("SELECT * FROM missing_group_profiles", [])
+    monkeypatch.setattr(card_init, "creation_group_profiles", broken)
+    key = placed(env, FA)
+    assert state(FA, key)[1].state == "initialized"
+    assert all(s.value.provider_id == "aip_card" for s in state(FA, key)[0].values())
+
+
+def test_group_empty_common_preserves_account_copy(env):
+    save_defaults()
+    group_defaults({})
+    key = placed(env, FA)
+    assert all(s.value.provider_id == "aip_card" for s in state(FA, key)[0].values())
+
+
+def test_group_failed_select_recovers_aborted_transaction(monkeypatch):
+    from flowgate.ai_roles import card_init, legacy_adapter
+    from modules.flow_gate.db import connection
+    statements = []
+    class AbortingStore:
+        aborted = False
+        def _execute(self, sql):
+            statements.append(sql)
+            if sql.startswith("ROLLBACK TO"):
+                self.aborted = False
+            elif self.aborted:
+                raise AssertionError("transaction still aborted")
+    store = AbortingStore()
+    def broken():
+        store.aborted = True
+        raise RuntimeError("failed group SELECT")
+    monkeypatch.setattr(legacy_adapter, "get_store", lambda: store)
+    monkeypatch.setattr(legacy_adapter, "in_transaction", lambda: True)
+    monkeypatch.setattr(connection, "_open_sqlite_transaction", lambda txn: None)
+    monkeypatch.setattr(card_init, "creation_group_profiles", broken)
+    assert card_init._read_group("flow", "node") == {}
+    assert statements == ["SAVEPOINT fg_role_group_read", "ROLLBACK TO SAVEPOINT fg_role_group_read",
+                          "RELEASE SAVEPOINT fg_role_group_read"]
+    assert not store.aborted

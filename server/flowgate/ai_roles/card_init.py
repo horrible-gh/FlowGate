@@ -8,7 +8,9 @@ from flowgate.ai_roles import availability, role_store
 from flowgate.ai_roles.account import valid_value, same_value
 from flowgate.ai_roles.resolve import applicable_roles
 from flowgate.card_settings import fields, repository
-from flowgate.ai_roles.legacy_adapter import get_store, in_transaction, held_guard
+from flowgate.ai_roles.legacy_adapter import (
+    get_store, in_transaction, held_guard, isolated_read, creation_group_profiles,
+)
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +39,34 @@ def _read_account(user_id, flow_id, node_key, wp=False):
         return account
 
 
+def _read_group(flow_id, node_key):
+    """Copy-time defaults only; pending initialization never reads today's group."""
+    def read():
+        rows = {row["type_key"]: row for row in creation_group_profiles()}
+        if not rows:
+            return {}
+        node = repository.card_node(flow_id, node_key) or {}
+        # Profile type_key is the document type (T/N/TS/...), not the palette label.
+        typed = rows.get(node.get("doc_type"), {})
+        common = rows.get("common", {})
+        values = {}
+        for role in role_store.ROLES:
+            cell = typed if typed.get(role + "_kind") in ("assigned", "not_used") else common
+            kind = cell.get(role + "_kind")
+            if kind == "not_used":
+                values[role] = role_store.RoleValue("not_used")
+            elif kind == "assigned":
+                pid = cell.get(role + "_provider_id")
+                values[role] = role_store.RoleValue("assigned", pid, availability.display_name(pid))
+        return values
+
+    try:
+        return isolated_read(read, "fg_role_group_read")
+    except Exception:
+        log.warning("GROUP_ROLE_READ_FAILED flow_id=%s node_key=%s", flow_id, node_key, exc_info=True)
+        return {}
+
+
 def slot_from_account(value, source="creation_copy", actor=None, role=None):
     if not valid_value(value):
         return None
@@ -63,14 +93,17 @@ def _initialize(flow_id, node_key, kind, creator_id, plan_roles, wp):
         return "NO_CHANGE"
     _require_guard(flow_id)
     roles = applicable_roles(kind)
-    acc = _read_account(creator_id, flow_id, node_key, wp) if any(r not in plan_roles for r in roles) else None
+    group = _read_group(flow_id, node_key) if any(r not in plan_roles for r in roles) else {}
+    acc = _read_account(creator_id, flow_id, node_key, wp) if any(
+        r not in plan_roles and r not in group for r in roles) else None
     for role in roles:
         if role in plan_roles:
             pid = plan_roles[role]
             value = role_store.RoleValue("assigned", pid, availability.display_name(pid))
             slot = role_store.RoleSlot(role, value, "wp_plan", creator_id, role_store._now())
         else:
-            slot = slot_from_account(acc.values.get(role) if acc else None, "creation_copy", creator_id, role)
+            value = group[role] if role in group else (acc.values.get(role) if acc else None)
+            slot = slot_from_account(value, "creation_copy", creator_id, role)
         if slot:
             role_store.write_slot(flow_id, node_key, slot)
     state = "initialized" if all(r in role_store.slots(flow_id, node_key) for r in roles) else "pending_init"

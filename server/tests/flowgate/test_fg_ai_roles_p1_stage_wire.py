@@ -126,7 +126,7 @@ def test_p1_null_and_empty_contracts(env, decided, monkeypatch, case):
 # ── §6.3 / §6.4: setup, unavailable, the resubmission wait, the B-1 mark ──────
 
 def test_p1_6_3_a_result_review_wait_setup_is_shown_on_the_node_in_review(env, decided):
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1)))
     roles(key, execution="not_used")
     start(env)
     write_line(env, key, "report", "## 결과\n\n본문\n")

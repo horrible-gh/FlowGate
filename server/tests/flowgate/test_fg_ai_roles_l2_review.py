@@ -109,7 +109,7 @@ def test_g5_k14_a_person_result_is_reviewed_once_with_no_rework_and_a_resubmissi
     from flowgate.card_settings import legacy_adapter
     from modules.flow_gate.db import documents as db_documents
 
-    key = flow(env)
+    key = flow(env, extra_settings=(("review_count", 1),))
     roles(key, A, "not_used", B)
     start(env)
     instruction = _ai_writes_instruction(env, monkeypatch)
@@ -139,7 +139,7 @@ def test_g5_k14_a_person_result_is_reviewed_once_with_no_rework_and_a_resubmissi
 
 
 def test_g6_a_person_result_with_an_unset_review_and_ais_to_choose_waits_for_setup(env, decided, starts):
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("review_count", 1), ("instruction", "omit"),))
     roles(key, execution="not_used")
     start(env)
     report = write_line(env, key, "report", "## 결과\n\n본문\n")["doc_id"]
@@ -261,7 +261,7 @@ def test_k11_an_ai_rework_keeps_the_same_assignment_and_a_later_role_change_is_n
     from modules.flow_gate.graph_workflow.services import card_settings_ports
     from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 
-    key = flow(env, extra_settings=(("instruction", "omit"),))
+    key = flow(env, extra_settings=(("review_count", 1), ("instruction", "omit"),))
     roles(key, execution=X, review=B)
     start(env)
     [job] = env["jobs"]
@@ -296,7 +296,7 @@ def test_k14_the_rework_target_of_each_purpose_is_never_the_reviewer():
 def test_g11_k1_an_ai_test_card_writes_ts_then_tsr_reviewed_by_b_and_reworked_by_x(env, decided, monkeypatch, starts):
     from flowgate.card_settings import legacy_adapter
 
-    key = flow(env, "TS")
+    key = flow(env, "TS", extra_settings=(("review_count", 1),))
     roles(key, A, X, B)
     start(env)
     ia = one(env, key, "instruction")
@@ -306,7 +306,7 @@ def test_g11_k1_an_ai_test_card_writes_ts_then_tsr_reviewed_by_b_and_reworked_by
     ts = _ai_writes_instruction(env, monkeypatch, provider=A, body="## 시험 시나리오\n\nA가 쓴 TS\n")
     assert _review_status(ts) == "approved"                                  # the system's approval of the TS
     [rjob] = env["jobs"]
-    assert (rjob["provider_id"], rjob["result_doc_type"], rjob["ref_doc_ids"]) == (X, "TSR", [ts])
+    assert (rjob["provider_id"], rjob["result_doc_type"], rjob["ref_doc_ids"]) == (X, "TSR", [f"{FA}.0001-R", ts])
     result = ai_writes_result(env, monkeypatch, key, rjob, typ="TSR")
     assert node_run(env, key)["result_doc_id"] == result                     # K-2: the binder takes the TSR
     record_starts(monkeypatch, starts)
@@ -341,3 +341,19 @@ def test_k5_a_person_instruction_s_issues_reject_it_without_b1_and_its_revision_
     save_instruction(env, key, "## 작업\n\n지적을 반영한 지시서\n")
     i2 = one(env, key, "instruction_review", 2)
     assert (i2["actor"], i2["basis_revision_no"], i2["author"]) == ("ai", 1, "person")
+
+
+@pytest.mark.parametrize("count", [None, 0])
+def test_slot_result_review_disabled_auto_approves_without_start(env, decided, monkeypatch, starts, count):
+    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", count)))
+    roles(key, execution=A, review=B)
+    start(env)
+    [job] = env["jobs"]
+    report = ai_writes_result(env, monkeypatch, key, job)
+    record_starts(monkeypatch, starts)
+    _run_ended(WORK_RUN, provider_id=A)
+    rr = one(env, key, "result_review", 1)
+    assert rr["actor"] == "no_review"
+    assert rr["verdict"] == "auto_approved"
+    assert _review_status(rr["basis_doc_id"]) == "approved"
+    assert not [c for c in starts if c.get("document_review_loop")]
