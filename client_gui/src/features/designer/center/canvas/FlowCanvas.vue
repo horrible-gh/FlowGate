@@ -28,7 +28,9 @@
        Canvas goes to the Designer context menu, which also carries the card's menu above; the right button's press and
        its held move / release never reach Vue Flow (the menu's gesture guard on this root). -->
        flowgate.v02.0064 T#4: keys typed into any text field never reach the Canvas keys (remove, undo, Escape).
-       flowgate.v02.0070 T#1 (B1): a card only shows its title; it is edited in the Inspector header. -->
+       flowgate.v02.0070 T#1 (B1): a card only shows its title; it is edited in the Inspector header.
+       flowgate.v02gui.0020: a card held in a drag stays under the pointer when the Graph is drawn again meanwhile
+       (its save answering its key, a mark); nothing is shown for it. -->
   <div
     ref="canvasEl"
     class="flow-canvas"
@@ -328,16 +330,60 @@ const issueMap = computed(() => {
 const selection = computed<readonly string[]>(() =>
   props.selectedNodeIds.length > 0 ? props.selectedNodeIds : props.selectedNodeId === null ? [] : [props.selectedNodeId],
 )
-const nodes = computed(() =>
-  toVueFlowNodes(props.graph, selection.value, issueMap.value, {
+// ── flowgate.v02gui.0020: a card held in a drag stays under the pointer ──────────────────────────────────────
+// Vue Flow is handed the whole Graph again whenever it changes — a placed card's draft save answering its key (the
+// `tmp_` card is renamed), another edit, a validation or run mark — and puts every card where the Graph has it. A
+// card the person holds is not put back: it stays where the drag shows it, and a held card the Graph renamed keeps
+// the name Vue Flow grabbed it with until the drop (its drag follows that name), which goes up under the Graph's name.
+
+/** Each card held in the drag now, by the Vue Flow id it was grabbed with: where the drag shows it. Not reactive. */
+let heldAt = new Map<string, { x: number; y: number }>()
+/** Graph id -> the Vue Flow id it was grabbed with, for each held card the Graph renamed during the drag. */
+let heldNames = new Map<string, string>()
+/** Bumped by a drop that held a renamed card: the Canvas draws it under its Graph name again. */
+const heldRedraw = ref(0)
+
+/** The held cards' Graph names learnt from the Graph shown now (kept until the drop: a later redraw may not say). */
+function heldRenames(): ReadonlyMap<string, string> {
+  if (heldAt.size === 0) return heldNames
+  for (const node of props.graph.nodes) {
+    if (node.renamedFrom && heldAt.has(node.renamedFrom)) heldNames.set(node.id, node.renamedFrom)
+  }
+  return heldNames
+}
+
+/** The Graph id of a card Vue Flow reports by `id`. */
+function graphIdOf(id: string): string {
+  for (const [graphId, held] of heldNames) if (held === id) return graphId
+  return id
+}
+
+const nodes = computed(() => {
+  void heldRedraw.value
+  const mapped = toVueFlowNodes(props.graph, selection.value, issueMap.value, {
     selectMode: props.selectMode,
     canApprove: props.canApprove,
     approvingNodeId: props.approvingNodeId,
     marks: props.marks,
     holds: props.holds,
-  }),
-)
-const edges = computed(() => toVueFlowEdges(props.graph, issueMap.value, selectedEdgeId.value, props.marks))
+  })
+  if (heldAt.size === 0) return mapped
+  const names = heldRenames()
+  return mapped.map((node) => {
+    const id = names.get(node.id) ?? node.id
+    const shown = heldAt.get(id)
+    return shown ? { ...node, id, position: { x: shown.x, y: shown.y } } : node
+  })
+})
+const edges = computed(() => {
+  void heldRedraw.value
+  const drawn = toVueFlowEdges(props.graph, issueMap.value, selectedEdgeId.value, props.marks)
+  const names = heldAt.size === 0 ? heldNames : heldRenames()
+  if (names.size === 0) return drawn
+  return drawn.map((edge) => (names.has(edge.source) || names.has(edge.target)
+    ? { ...edge, source: names.get(edge.source) ?? edge.source, target: names.get(edge.target) ?? edge.target }
+    : edge))
+})
 /** The selected Edge as drawn, or null (also when it left the Graph). */
 const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selectedEdgeId.value) ?? null)
 
@@ -572,14 +618,21 @@ function onViewportChangeEnd({ x, y, zoom }: ViewportTransform) {
 // already shows each dragged card where the pointer left it; the clamped position is put back on
 // the card itself, because a group clamped back onto the place it started from leaves the Graph
 // unchanged (moveNode keeps it) and then no redraw from the Graph would follow.
+// flowgate.v02gui.0020: the drop goes up under the Graph's names; a held card the Graph renamed is drawn under its
+// Graph name again right after (at the dropped place: the move is on the Graph by then).
 function onNodeDragStop({ node, nodes: dragged }: NodeDragEvent) {
   const drops = clampGroupToCanvas(steppedPositions(dragged, node?.id), props.moveStep)
   dragStarts = new Map()
+  heldAt = new Map()
   for (const drop of drops) {
     const shown = flow.value?.findNode(drop.nodeId)
     if (shown && (shown.position.x !== drop.x || shown.position.y !== drop.y)) shown.position = { x: drop.x, y: drop.y }
   }
-  if (drops.length) emit('nodes-move', drops)
+  const renamed = heldNames.size > 0
+  const moves = drops.map((drop) => ({ ...drop, nodeId: graphIdOf(drop.nodeId) }))
+  heldNames = new Map()
+  if (moves.length) emit('nodes-move', moves)
+  if (renamed) heldRedraw.value += 1
 }
 
 // flowgate.v02.0059 0017-T: where each dragged card was shown when its drag started. A drop seen without
@@ -588,6 +641,13 @@ let dragStarts = new Map<string, { x: number; y: number }>()
 
 function onNodeDragStart({ nodes: dragged }: NodeDragEvent) {
   dragStarts = new Map(dragged.map((node) => [node.id, { x: node.position.x, y: node.position.y }]))
+  heldNames = new Map()
+  holdShown(dragged)
+}
+
+/** flowgate.v02gui.0020: where the drag shows each held card now (a redraw of the Graph keeps it there). */
+function holdShown(dragged: readonly GraphNode[]) {
+  heldAt = new Map(dragged.map((node) => [node.id, { x: node.position.x, y: node.position.y }]))
 }
 
 /** The card under the pointer on its nearest step point, the others at its offset; without a step, where Vue Flow put them. */
@@ -604,11 +664,13 @@ function steppedPositions(dragged: readonly GraphNode[], anchorId?: string | nul
 // on their steps right then, before anything is drawn. Each gets a new position object: the one Vue Flow set
 // is its own drag state, which it keeps following the pointer from.
 function onNodeDrag({ node, nodes: dragged }: NodeDragEvent) {
-  if (!props.moveStep) return
-  for (const place of steppedPositions(dragged, node?.id)) {
-    const shown = dragged.find((candidate) => candidate.id === place.nodeId)
-    if (shown && (shown.position.x !== place.x || shown.position.y !== place.y)) shown.position = { x: place.x, y: place.y }
+  if (props.moveStep) {
+    for (const place of steppedPositions(dragged, node?.id)) {
+      const shown = dragged.find((candidate) => candidate.id === place.nodeId)
+      if (shown && (shown.position.x !== place.x || shown.position.y !== place.y)) shown.position = { x: place.x, y: place.y }
+    }
   }
+  holdShown(dragged)
 }
 
 // ── flowgate.v02.0045 S3: structure edits of an editable draft ─────────────────────────────
