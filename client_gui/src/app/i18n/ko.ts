@@ -1206,7 +1206,7 @@ export default {
       more_lines: '{n}줄 더 있음',
     },
     status: {
-      run_running: 'AI 호출 중',
+      run_running: 'AI가 답하는 중…',
       run_cancelled: 'AI 호출을 중지했습니다',
       run_no_reply: 'AI 호출이 답변 없이 끝났습니다',
       run_query_unconfirmed: 'AI 실행은 종료되었지만 저장 답변 조회를 확인하지 못했습니다',

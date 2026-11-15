@@ -528,7 +528,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   /** The access a call made now gets: the user's stored mode decides the run's token (an edit once is an edit). */
   function accessOfMode(mode: SourceAccessMode): ChatSourceAccess {
-    return mode === 'read_only' ? 'read' : 'read_write'
+    return mode === 'read_only' ? 'read' : mode === 'execute' ? 'execute' : 'read_write'
   }
 
   /** The server's run detail is the applied value; what it does not say yet keeps what the line already shows. */

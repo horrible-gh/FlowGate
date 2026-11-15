@@ -45,7 +45,7 @@
           </template>
           <p v-if="applied" class="qp-note">{{ t('applied') }}</p>
           <p v-if="assistantError" class="qp-error" role="alert">{{ assistantError }}
-            <button type="button" class="qp-link" :disabled="busy || !provider" @click="send()">{{ t('retry') }}</button></p>
+            <button v-if="retryable" type="button" class="qp-link" :disabled="busy || !provider" @click="send()">{{ t('retry') }}</button></p>
         </div>
         <Button v-if="!entries.length" :disabled="!provider || busy" @click="send()">{{ t('begin') }}</Button>
         <form v-else class="qp-pill" @submit.prevent="send(input)">
@@ -80,7 +80,24 @@ const ERROR_KEYS: Record<string, string> = {
   remote_agent_unavailable: 'errorUnavailable', remote_agent_workdir_unset: 'errorUnavailable', remote_agent_workdir_unverified: 'errorUnavailable',
   reply_invalid: 'errorReply', policy_too_long: 'errorReply', policy_assistant_busy: 'errorBusy', policy_conversation_too_long: 'errorTooLong',
 }
+/**
+ * 0026 (0004-CH): failures a button cannot fix — the AI is off or misconfigured, or the conversation is too long —
+ * say why and show no [다시 시도]. Everything else the panel and the server first retry on their own.
+ */
+const NOT_RETRYABLE = new Set(['provider_unavailable', 'remote_agent_offline', 'remote_agent_unavailable', 'remote_agent_workdir_unset',
+  'remote_agent_workdir_unverified', 'provider_launch_failed', 'policy_conversation_too_long'])
+/** Quiet re-tries of one start / result call that did not get through (network, 5xx, 429, busy) before it is shown. */
+const QUIET_LIMIT = 20
+/** A request the server no longer knows (404: it restarted) is sent again with the same conversation this often. */
+const RESEND_LIMIT = 2
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+const backoff = (misses: number) => Math.min(1000 * 2 ** (misses - 1), 5000)
+function transient(e: ReturnType<typeof normalizeApiError>) {
+  return e.network || e.status === null || e.status >= 500 || e.status === 429 || e.status === 408 || e.code === 'policy_assistant_busy'
+}
 const body = ref(''), saved = ref(''), provider = ref(''), input = ref(''), error = ref(''), assistantError = ref('')
+const failureCode = ref<string | null>(null)
+const retryable = computed(() => !NOT_RETRYABLE.has(failureCode.value ?? ''))
 const providers = ref<{ id: string; name: string }[]>([]), entries = ref<Entry[]>([]), reply = ref<Reply | null>(null)
 const loading = ref(true), loaded = ref(false), saving = ref(false), open = ref(false), busy = ref(false), applied = ref(false)
 const logEl = ref<HTMLElement | null>(null), inputEl = ref<HTMLTextAreaElement | null>(null)
@@ -128,7 +145,7 @@ async function load() {
 }
 function restart() {
   if (busy.value) return
-  entries.value = []; reply.value = null; applied.value = false; input.value = ''; assistantError.value = ''; pendingId = null
+  entries.value = []; reply.value = null; applied.value = false; input.value = ''; assistantError.value = ''; failureCode.value = null; pendingId = null
 }
 async function save() {
   if (busy.value) return
@@ -145,7 +162,7 @@ function confirm() {
 }
 async function send(answer?: string) {
   if (busy.value || !provider.value) return
-  busy.value = true; assistantError.value = ''; applied.value = false; reply.value = null
+  busy.value = true; assistantError.value = ''; failureCode.value = null; applied.value = false; reply.value = null
   if (answer?.trim()) {
     const text = answer.trim()
     entries.value.push({ role: 'user', text, wire: text, name: null }); input.value = ''; pendingId = null
@@ -153,27 +170,53 @@ async function send(answer?: string) {
   }
   void reveal('end')
   let failure: string | null = null
-  try {
-    if (!pendingId) {
-      const locale = ['ko', 'ja', 'en'].includes(composer.locale.value) ? composer.locale.value : 'ko'
-      const messages = entries.value.map(entry => ({ role: entry.role, content: entry.wire }))
-      pendingId = (await startAssistant(provider.value, body.value, messages, locale)).request_id
-    }
-    while (!disposed) {
-      const result = await assistantResult(pendingId)
-      if (result.status === 'failed') { pendingId = null; failure = result.error_code ?? 'policy_assistant_failed'; break }
-      if (result.status === 'completed' && result.reply) {
-        const name = providers.value.find(p => p.id === provider.value)?.name ?? null
-        reply.value = result.reply; pendingId = null
-        entries.value.push({ role: 'assistant', text: result.reply.message || t('understood'), wire: wireOf(result.reply), name })
-        break
-      }
-      await new Promise(resolve => setTimeout(resolve, 1000))
-    }
-  } catch (caught) { failure = normalizeApiError(caught).code ?? 'policy_assistant_failed' }
+  try { failure = await converse() }
+  catch { failure = 'policy_assistant_failed' }
   finally { busy.value = false }
-  if (failure) { assistantError.value = errorText(failure); void reveal('end') }
+  if (failure) { failureCode.value = failure; assistantError.value = errorText(failure); void reveal('end') }
   else if (reply.value) void reveal('question', true)
+}
+/**
+ * 0026 (0004-CH): one answer from the AI, or the code of a failure worth showing. A start or result call that does not
+ * get through is tried again quietly (growing gaps, up to QUIET_LIMIT in a row); a request the server lost on a restart
+ * (404) is sent again with the same conversation. A `failed` result is final: the server already asked the AI again.
+ */
+async function converse(): Promise<string | null> {
+  let misses = 0, resends = 0
+  while (!disposed) {
+    if (!pendingId) {
+      try {
+        const locale = ['ko', 'ja', 'en'].includes(composer.locale.value) ? composer.locale.value : 'ko'
+        const messages = entries.value.map(entry => ({ role: entry.role, content: entry.wire }))
+        pendingId = (await startAssistant(provider.value, body.value, messages, locale)).request_id; misses = 0
+      } catch (caught) {
+        const e = normalizeApiError(caught)
+        if (!transient(e) || ++misses > QUIET_LIMIT) return e.code ?? 'policy_assistant_failed'
+        await wait(backoff(misses)); continue
+      }
+    }
+    let result: Awaited<ReturnType<typeof assistantResult>>
+    try { result = await assistantResult(pendingId); misses = 0 }
+    catch (caught) {
+      const e = normalizeApiError(caught)
+      if (e.status === 404) {
+        pendingId = null
+        if (++resends > RESEND_LIMIT) return 'policy_assistant_failed'
+        continue
+      }
+      if (!transient(e) || ++misses > QUIET_LIMIT) return e.code ?? 'policy_assistant_failed'
+      await wait(backoff(misses)); continue
+    }
+    if (result.status === 'failed') { pendingId = null; return result.error_code ?? 'policy_assistant_failed' }
+    if (result.status === 'completed' && result.reply) {
+      const name = providers.value.find(p => p.id === provider.value)?.name ?? null
+      reply.value = result.reply; pendingId = null
+      entries.value.push({ role: 'assistant', text: result.reply.message || t('understood'), wire: wireOf(result.reply), name })
+      return null
+    }
+    await wait(1000)
+  }
+  return null
 }
 onMounted(load)
 </script>

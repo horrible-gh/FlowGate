@@ -214,6 +214,11 @@ describe('AI run', () => {
     // Finished: `provider_id` / `provider_name`; an unknown access value is not guessed.
     getRequest.mockResolvedValueOnce({ data: { run_id: 'r3', status: 'finished', provider_id: 'aip_3', provider_name: 'Sonnet', source_access: 'edit' } })
     expect(await fetchRun('r3')).toMatchObject({ providerId: 'aip_3', providerName: 'Sonnet', sourceAccess: null })
+    // flowgate.v02gui.0026: an execute-mode run is a read token that may run commands — shown as "execute", not "read".
+    getRequest.mockResolvedValueOnce({ data: { run_id: 'r4', status: 'running', source_access: 'read', command_access: 'execute' } })
+    expect(await fetchRun('r4')).toMatchObject({ sourceAccess: 'execute' })
+    getRequest.mockResolvedValueOnce({ data: { run_id: 'r5', status: 'running', source_access: 'read_write', command_access: 'execute' } })
+    expect(await fetchRun('r5')).toMatchObject({ sourceAccess: 'read_write' })
   })
 
   it('flowgate.v02.0152: names the press with client_request_id and maps 409 start_pending', async () => {

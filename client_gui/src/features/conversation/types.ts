@@ -194,8 +194,11 @@ export interface StatusActivity {
   chatError?: boolean
 }
 
-/** flowgate.v02test.0024 D: the read / edit access a chat run actually got (its token's `source_access`). */
-export type ChatSourceAccess = 'read' | 'read_write'
+/**
+ * flowgate.v02test.0024 D: the read / edit access a chat run actually got (its token's `source_access`).
+ * flowgate.v02gui.0026: `execute` is a read token that may run commands (`command_access=execute`).
+ */
+export type ChatSourceAccess = 'read' | 'execute' | 'read_write'
 
 /** flowgate.v02test.0024 D: what the one run in progress line shows. */
 export interface RunDisplay {
