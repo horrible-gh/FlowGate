@@ -15,6 +15,11 @@ last command start -- a ``user_start`` / ``user_command`` / ``user_resume`` run 
 acknowledge keep the base) -- so a person's new command on an idle run starts its first card from the group HEAD of
 that moment. An attempt belongs to the window its owner marker pinned its base in (``base_since``, copied to its
 workspace event); an event without it (a marker made before) only when its attempt was created in the window.
+v02gui.0025 (Q #622): an automatic wake (``work_resumed``: an approval, a gate publish, a question answered) or an
+automatic settle opens no window, by intent: a card it opens after the run waited idle takes the base of the last
+person's command, also when the group HEAD moved meanwhile; a newer base needs a person's command. F1: a base pinned
+in a valid attempt's owner marker and not recorded yet is the window's base too (``_pinned_base``), so start cards
+prepared across that gap share it.
 Every predecessor attempt in the input is recorded, also those
 sharing a commit; the merge uses each commit once. A Join whose results conflict starts from the group branch HEAD,
 which holds them all (``integration_head``, recorded by a run event). An ended attempt whose integration ended
@@ -299,6 +304,10 @@ def _inputs(row):
 # the run to ``running`` from a new run (no ``from_status``) or from idle. Deliberately not
 # ``command_result._is_command_start``: a re-command of a paused run and an idle -> idle acknowledge cut the command
 # window but keep the base (the cards still open of a paused command, and none opened by an acknowledge).
+# v02gui.0025 (Q #622, intended): an automatic wake -- ``work_resumed`` (an approval, a gate publish, a question
+# answered) or an automatic settle (``run_idle`` to ``running``) -- opens no window either. A card such a wake opens on
+# a run that waited idle (``waiting_confirm`` ...) since a person's command takes that command's base even if the group
+# HEAD moved meanwhile; a newer base needs a person's command. Do not widen the causes below.
 _BASE_WINDOW_SQL = (
     "SELECT MAX(event_seq) AS seq FROM graph_run_events WHERE run_id = ? "
     "AND event_type = 'graph_run_status_changed' AND to_status = 'running' "
@@ -352,16 +361,43 @@ def _in_window(data, attempt_row, since, since_at):
     return created is not None and start is not None and created >= start
 
 
-def _run_base(row, group_root):
+def _pinned_base(row, project_id, since, since_at):
+    """v02gui.0025 (0003-NR §4.2, §7-A, F1), under the Git locks: the base a valid (not invalidated) ``run_base``
+    attempt of the run pinned in its owner marker in the current window but has not recorded yet (``input_commit``
+    still NULL: its workspace event is written by ``record_ready`` only once the Git locks are released). Without it a
+    start card prepared in that gap read the group HEAD of its own moment, so one window had two bases. The marker
+    belongs to the window by its ``base_since`` as an event does (``_in_window``); the first by ``created_at``,
+    ``attempt_id``. None when there is none."""
+    for other in run_store._all(
+            "SELECT attempt_id, created_at FROM graph_node_attempts WHERE run_id = ? AND attempt_id <> ? "
+            "AND input_commit IS NULL AND status <> 'invalidated' ORDER BY created_at, attempt_id",
+            [row["run_id"], row["attempt_id"]]):
+        try:
+            marker = merge_target.read_owner_marker(location({**row, "attempt_id": other["attempt_id"]},
+                                                             project_id)[0])
+        except (port.GraphSourceError, OSError, ValueError):
+            continue
+        if not isinstance(marker, dict) or marker.get("attempt_id") != other["attempt_id"] \
+                or marker.get("input_source") != "run_base" or not marker.get("input_commit"):
+            continue
+        if _in_window(marker, other, since, since_at):
+            return marker["input_commit"]
+    return None
+
+
+def _run_base(row, group_root, project_id=None):
     """T#10, under the Git locks: ``(sha, since)`` -- the run's base for an attempt with no input commit, and the base
     window it belongs to (``since``, pinned in the marker as ``base_since``). v02gui.0015 (0001-B, NR0003 §7): the
     commit a valid (not invalidated) ``run_base`` attempt recorded first in the window that follows the run's last
     command start (``_base_window``); an attempt done meanwhile in the window and integrated (under the same root) is
-    so not in the input of the window's later start cards. With no such attempt -- the window's first card, a new
-    command on an idle run, only invalidated ones left -- the group branch HEAD: a result of the window is integrated
-    only after an attempt that started from its base recorded it. ``since`` is read before the HEAD, so a HEAD read
-    once a new command committed is never tagged with the window before it (the two reads are outside the Flow guard
-    and not atomic; the worst case leaves the attempt out of the newer window)."""
+    so not in the input of the window's later start cards. v02gui.0025 (F1): with none recorded yet, the commit such an
+    attempt already pinned in its owner marker (``_pinned_base``), so the window's start cards share one base whatever
+    the order and timing of their preparations. With no such attempt -- the window's first card, a new command on an
+    idle run, only invalidated ones left -- the group branch HEAD: a result of the window is integrated only after an
+    attempt that started from its base pinned it. ``since`` is read before the HEAD, so a HEAD read once a new command
+    committed is never tagged with the window before it (the two reads are outside the Flow guard and not atomic; the
+    worst case leaves the attempt out of the newer window). Only a person's command opens a window: an automatic wake
+    (``work_resumed``: an approval, a gate publish, a question answered) or an automatic settle keeps it (Q #622)."""
     since, since_at = _base_window(row["run_id"])
     sha = None
     for event in run_store._all(
@@ -382,19 +418,21 @@ def _run_base(row, group_root):
             sha = base["input_commit"]
             break
     if sha is None:
+        sha = _pinned_base(row, project_id or _project(row), since, since_at)
+    if sha is None:
         sha = git._rev_parse(group_root, "HEAD^{commit}")
     if not sha or git._rev_parse(group_root, sha + "^{commit}") != sha:
         raise port.GraphSourceError("graph_worktree_unavailable", reason="input_missing")
     return sha, since
 
 
-def _start(row, group_root):
+def _start(row, group_root, project_id=None):
     """The marker's input half, under the Git locks: ``input_commit`` (the worktree's first commit), its source, the
     attempts in it, and the Join's other heads still to merge (``join_inputs``); a ``run_base`` one also its base
     window (``base_since``, v02gui.0015), pinned with the base so a recovery keeps both."""
     inputs = _inputs(row)
     if not inputs:
-        sha, since = _run_base(row, group_root)
+        sha, since = _run_base(row, group_root, project_id)
         return {"input_commit": sha, "input_source": "run_base", "input_attempt_ids": [], "base_since": since}
     # Predecessors sharing a result commit are all recorded; the merge takes the commit once.
     shas = list(dict.fromkeys(sha for _key, _attempt_id, sha in inputs))
@@ -609,7 +647,7 @@ def _materialize(row, project_id):
             if directory.exists() or git._ref_exists(group_root, "refs/heads/" + branch) \
                     or git._ref_exists(group_root, ATTEMPT_REF_PREFIX + merge_target.workspace_key(row["attempt_id"])):
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="workspace_occupied")
-            marker = {**owner, **_start(current, group_root),
+            marker = {**owner, **_start(current, group_root, project_id),
                       "repository": str(group_root), "common_dir": str(_common_dir(group_root))}
             if not marker.get("join_inputs"):
                 marker.pop("join_inputs", None)
