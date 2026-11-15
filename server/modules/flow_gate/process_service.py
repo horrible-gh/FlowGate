@@ -5398,6 +5398,13 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
     _tree_started = time.perf_counter()
     # Query the group list (based on the main DB)
     groups = db.get_groups_by_projects([project_id])
+    # flowgate.v02gui.0027 (0008-T): every Flow of a Group (live `groups` row), archived or discarded
+    # alike, counted before any visibility filter. The Group menu shows it ahead of a delete, which
+    # only an empty Group allows (the DELETE route makes the final call).
+    flow_totals: dict[str, int] = {}
+    for _row in groups:
+        _label = (dict(_row).get("module") or "").strip() or "none"
+        flow_totals[_label] = flow_totals.get(_label, 0) + 1
     # flowgate.v02gui.0027 (0006-T): a v0.2 Group (module) can be display-archived through its
     # project_modules row. Hidden by default together with its Flows and their documents; with
     # include_archived the module node is kept and marked `archived`. Nothing is written here.
@@ -5586,6 +5593,7 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
                 "title": resolved_title,
                 "has_md": False,
                 "md_path": None,
+                "flow_total": flow_totals.get(label, 0),
             }
             archived_row = archived_modules.get(label)
             if archived_row is not None:

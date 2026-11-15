@@ -340,7 +340,7 @@ function onSelectFlow(flow: ExplorerFlow) {
 // flowgate.v02.0060 T#2: the Designer context menu's project tree side, provided by the Designer Shell; null elsewhere.
 type ContextRowRef =
   | { kind: 'project'; projectId: string }
-  | { kind: 'group'; projectId: string; groupId: string; archived?: boolean }
+  | { kind: 'group'; projectId: string; groupId: string; archived?: boolean; flowTotal?: number }
   | { kind: 'flow'; projectId: string; groupId: string; flowId: string }
 interface ProjectContextMenu {
   project(event: MouseEvent, row: ContextRowRef, fallback?: HTMLElement | null, alive?: () => boolean): boolean
@@ -368,7 +368,9 @@ function onContext(event: MouseEvent, row: { kind: 'project' } | { kind: 'group'
     ? { kind: 'project', projectId: pid }
     : row.kind === 'group'
       // v02gui.0027: the Group's archive state as this row shows it (the menu offers 그룹 아카이브 or 그룹 복원).
-      ? { kind: 'group', projectId: pid, groupId: row.group.id, archived: !!row.group.archived }
+      // v02gui.0027 (0008-T): and its server Flow count, which the 그룹 삭제 item says ahead of a delete.
+      ? { kind: 'group', projectId: pid, groupId: row.group.id, archived: !!row.group.archived,
+          ...(typeof row.group.flowTotal === 'number' ? { flowTotal: row.group.flowTotal } : {}) }
       : { kind: 'flow', projectId: pid, groupId: row.flow.groupId, flowId: row.flow.id }
   // The menu checks the row against the tree while it is open and again right before a command runs.
   contextMenu.project(event, target, fallback, () => rowInTree(target))

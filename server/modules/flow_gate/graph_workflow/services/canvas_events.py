@@ -82,6 +82,18 @@ def publish_module_archive_changed(*, project_id: str, module: str, archived: bo
     ))
 
 
+def publish_module_deleted(*, project_id: str, module: str, actor_user_id: Optional[str]) -> None:
+    """flowgate.v02gui.0027 (0008-T): an empty Group (module) was deleted; refresh every open tree.
+
+    Same project-wide ``group_view_refresh`` as the Group archive (``group_id`` None)."""
+    _queue(FlowEvent(
+        event_type=EventType.GROUP_VIEW_REFRESH.value,
+        payload={"group_id": None, "module": module, "reason": "module_deleted",
+                 "actor_user_id": actor_user_id},
+        audience="*", project=project_id, group_id=None,
+    ))
+
+
 def publish_ownership_changed(
     *,
     project_id: Optional[str],

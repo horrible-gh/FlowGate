@@ -8,6 +8,7 @@ Endpoints:
   POST /flowgate/api/v1/projects/{project_id}/modules                Module creation (T505)
   POST /flowgate/api/v1/projects/{project_id}/modules/{name}/archive Group archive (v02gui.0027)
   POST /flowgate/api/v1/projects/{project_id}/modules/{name}/restore Group restore (v02gui.0027)
+  DELETE /flowgate/api/v1/projects/{project_id}/modules/{name}       Empty Group delete (v02gui.0027)
 
 Document identifier format: {module}/{group_code}/{seq}/{doc_code}
   e.g.) server/0001/1/R0001
@@ -673,3 +674,74 @@ def archive_module(request: Request, project_id: str, module_name: str):
 def restore_module(request: Request, project_id: str, module_name: str):
     """Show an archived Group in the default project tree again. Its Flows' own archive state is kept."""
     return _change_module_archive(request, project_id, module_name, False)
+
+
+# ── DELETE /projects/{project_id}/modules/{module_name} (v02gui.0027 0008-T) ──────────────────
+
+_COUNT_MODULE_FLOWS = (
+    "SELECT COUNT(*) AS n FROM groups g WHERE g.project_id = ? AND g.module = ? AND g.deleted_at IS NULL"
+)
+
+
+@router.delete("/projects/{project_id}/modules/{module_name}")
+def delete_module(request: Request, project_id: str, module_name: str):
+    """Delete an empty Group (flowgate.v02gui.0027 0008-T §4).
+
+    "Empty" = no Flow of the Group (``groups`` row with ``deleted_at IS NULL``) at all, whatever its
+    Flow archive or discard (DC) state: a discarded Flow is history too. Only the Group's
+    ``project_modules`` row is removed; ``groups``, documents, runs and Git tables are never touched
+    (deleting a ``groups`` row would cascade into the run history). The emptiness check and the
+    delete are one conditional statement, so a Flow created in between keeps the Group.
+    A Group with Flows answers 409 ``module_not_empty`` with ``flow_count``; an unknown Group (or
+    the ``none`` "All" bucket) 404 ``module_not_found``. Same authentication as create / archive.
+    """
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    try:
+        validate_module_name(module_name)
+    except ValueError as exc:
+        return _fail(422, str(exc))
+    if module_name == "none":
+        return _fail_code(404, "module_not_found", f"Module '{module_name}' not found")
+
+    store = get_store()
+    with store.transaction():
+        row = store._fetch_one(
+            "SELECT * FROM project_modules WHERE project_id = ? AND name = ?", [project_id, module_name],
+        )
+        deleted = 0
+        if row is not None:
+            deleted = store._execute_affected(
+                "DELETE FROM project_modules WHERE project_id = ? AND name = ? AND NOT EXISTS ("
+                + _COUNT_MODULE_FLOWS.replace("COUNT(*) AS n", "1") + ")",
+                [project_id, module_name, project_id, module_name],
+            )
+        flow_count = 0
+        if not deleted:
+            counted = store._fetch_one(_COUNT_MODULE_FLOWS, [project_id, module_name]) or {}
+            flow_count = int(counted.get("n") or 0)
+
+    if not deleted:
+        if flow_count > 0:
+            return JSONResponse(status_code=409, content={
+                "ok": False, "http_status": 409, "code": "module_not_empty", "flow_count": flow_count,
+                "error_message": f"Module '{module_name}' still has {flow_count} Flow(s)",
+                "help_url": help_url(),
+            })
+        return _fail_code(404, "module_not_found", f"Module '{module_name}' not found")
+
+    actor = _actor_id(auth)
+    try:
+        from modules.flow_gate.graph_workflow.services import canvas_events
+        canvas_events.publish_module_deleted(project_id=project_id, module=module_name, actor_user_id=actor)
+    except Exception:
+        pass  # Best-effort refresh signal; the stored state is the source of truth.
+    return JSONResponse(content={
+        "ok": True,
+        "deleted": True,
+        "module_id": row.get("module_id") or f"{project_id}:{module_name}",
+        "project_id": project_id,
+        "name": module_name,
+    })
