@@ -23,7 +23,8 @@ Validation failures return 422 {code: "validation_failed", errors: [...]} (P0003
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Literal
 
 from modules.flow_gate.db.ai_providers import ProviderInUseError
 from modules.flow_gate.auth.middleware import get_current_user
@@ -89,6 +90,56 @@ class ProjectAiSettingsPut(SystemAiSettingsPut):
 
 class UserAiSettingsPut(BaseModel):
     providers: list[ProviderIn] | None = None
+
+
+class PolicyMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=10000)
+
+
+class PolicyAssistantPost(BaseModel):
+    provider_id: str = Field(min_length=1, max_length=191)
+    body: str = Field(default="", max_length=4000)
+    messages: list[PolicyMessage] = Field(default_factory=list, max_length=100)
+    locale: Literal["ko", "ja", "en"] = "ko"
+
+
+@router.get("/me/question-policy/assistant/providers")
+def policy_assistant_providers(user=Depends(get_current_user)):
+    from modules.flow_gate.services import question_policy_assistant as assistant
+    return {"providers": assistant.providers(user["user_id"])}
+
+
+@router.post("/me/question-policy/assistant")
+def start_policy_assistant(body: PolicyAssistantPost, user=Depends(get_current_user)):
+    from modules.flow_gate.services import question_policy_assistant as assistant
+    return assistant.start(user["user_id"], body.provider_id, body.body,
+                           [m.model_dump() for m in body.messages], body.locale)
+
+
+@router.get("/me/question-policy/assistant/{request_id}")
+def policy_assistant_result(request_id: str, user=Depends(get_current_user)):
+    from modules.flow_gate.services import question_policy_assistant as assistant
+    return assistant.result(user["user_id"], request_id)
+
+
+class QuestionPolicyPut(BaseModel):
+    body: str
+
+
+@router.get("/me/question-policy")
+def get_question_policy(user=Depends(get_current_user)):
+    from modules.flow_gate.db import user_question_policies
+    return {"ok": True, **user_question_policies.get(user["user_id"])}
+
+
+@router.put("/me/question-policy")
+def put_question_policy(body: QuestionPolicyPut, user=Depends(get_current_user)):
+    from modules.flow_gate.db import user_question_policies
+    try:
+        return {"ok": True, **user_question_policies.save(user["user_id"], body.body)}
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": str(exc)}) from exc
 
 
 class UserAiDefaultPut(BaseModel):

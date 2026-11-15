@@ -9,7 +9,39 @@ import pytest
 from fastapi import HTTPException
 
 from tests.modules.flow_gate import test_ai_invoke_no_output_retry_0359 as base
-from tests.modules.flow_gate.test_ai_invoke_no_output_retry_0359 import env  # noqa: F401
+
+
+@pytest.fixture
+def env(monkeypatch, tmp_path, migrated_sqlite_db):
+    # The engine now reserves durable run identities even when document persistence is fake.
+    from modules.flow_gate.db import ai_run_identity
+    from tests.modules.flow_gate.test_qa_container import _MockDB
+    import os
+    monkeypatch.setenv("FLOWGATE_AGENT_PEPPER_ID", os.environ.get("FLOWGATE_AGENT_PEPPER_ID", "test-pepper"))
+    value = base.env.__wrapped__(monkeypatch, tmp_path)
+    from modules.flow_gate.db.connection import FlowGateStore
+    identity_store = FlowGateStore()
+    identity_store._db = _MockDB(migrated_sqlite_db("qa-identities.db"))
+    monkeypatch.setattr(ai_run_identity, "get_store", lambda: identity_store)
+    from modules.flow_gate.db import connection
+    monkeypatch.setattr(connection, "STORE", identity_store)
+    def scratch(project_id, run_id, execution_nonce=None):
+        path = tmp_path / run_id
+        path.mkdir()
+        return path
+    monkeypatch.setattr(base.svc, "_create_scratch", scratch)
+    from modules.flow_gate.db import ai_providers
+    monkeypatch.setattr(ai_providers, "get_runnable_row", lambda pid, user: next(
+        (p for p in value["chain"]["providers"] if p["id"] == pid), None))
+    yield value
+    # Finished state is published before terminal cleanup returns. Keep the test DB
+    # alive until each worker has actually exited, before monkeypatch restores it.
+    import threading
+    for thread in threading.enumerate():
+        if thread.name in {"ai-invoke-" + rid for rid in base.svc._runs}:
+            thread.join(timeout=10)
+            assert not thread.is_alive()
+    identity_store._db.close()
 from tests.modules.flow_gate.test_q_responder_chain_0661 import FakeItems, _item
 from modules.flow_gate.services import q_answer_invoke_service as answer, q_service
 from modules.flow_gate.services.ai_invoke import finalize, review
@@ -38,7 +70,7 @@ def dispatch(**kw):
         doc={"doc_id": base.DOC_REF, "project_id": "flowgate", "group_id": base.GROUP},
         item={"id": 201, "asker_provider": {"ai_provider_id": "aip_3"}},
         issued_to="owner", api_base_url="http://localhost/flowgate/api/v1",
-        provider_id="aip_1", provider_source="card_review_ai", **kw,
+        provider_id="aip_1", provider_source="card_review_role" if kw.get("default_tail") is False else "card_review_ai", **kw,
     )
 
 
@@ -250,7 +282,7 @@ def test_question_wait_legacy_adapter_enables_automatic_startup_chain(env, quest
         "doc_id": doc_id, "project_id": "flowgate", "group_id": base.GROUP,
     })
     monkeypatch.setattr(answer, "resolve_item", lambda doc_id, item_id: {"id": item_id})
-    monkeypatch.setattr(ai_node_starter, "api_base_url", lambda: "http://localhost/flowgate/api/v1")
+    monkeypatch.setattr(ai_node_starter, "api_base_url", lambda user=None: "http://localhost/flowgate/api/v1")
     launches = script(monkeypatch, row, "fast_fail")
     run = finish(legacy_adapter.ask_responder(base.DOC_REF, 201, "owner", "aip_1", "card_review_ai"), row)
     assert launches == ["aip_1", "aip_2"] and run["outcome"] == "complete"

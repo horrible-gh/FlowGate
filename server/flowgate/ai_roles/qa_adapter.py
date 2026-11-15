@@ -4,42 +4,72 @@ from flowgate.ai_roles.account import valid_value
 from flowgate.card_settings import fields, legacy_adapter as legacy, repository
 
 
-def choose(flow_id, node, asker):
-    """(provider, source, handoff reason, default tail, card class)."""
+def candidates(flow_id, node, asker, asker_role=None):
+    """New cards: review -> instruction, excluding the asking role, never defaults.
+
+    Two roles may intentionally use the same provider. If the asking role is unknown,
+    conservatively exclude its provider until provenance can identify the role.
+    Legacy cards retain their independent default chain.
+    """
     try:
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
         new, inputs = False, None
         if "review" in resolve.applicable_roles(kind) and role_store.available():
             inputs = resolve.read_card_role_inputs(flow_id, node)
             if inputs.store_error:
-                return None, None, "card_settings_unreadable", False, None
-            new = "review" in inputs.slots or (inputs.init is not None and
-                                                inputs.init.state in ("initialized", "pending_init"))
+                return [], "card_settings_unreadable", False, None
+            new = any(r in inputs.slots for r in ("review", "instruction")) or (
+                inputs.init is not None and inputs.init.state in ("initialized", "pending_init"))
         project = legacy.project_of(flow_id)
         if not new:
             stored = repository.values(flow_id, node["node_key"])
             pid, src = legacy.independent_question_responder(project, asker, [
                 (stored.get("review_ai"), "card_review_ai"), (legacy.default_reviewer(project), "default")])
-            return pid, src, None if pid else "no_independent_responder", True, "qa_legacy"
-        slot = inputs.slots.get("review")
-        if slot is not None and (not valid_value(slot.value) or slot.source not in role_store.SLOT_SOURCES):
-            return None, None, "card_settings_unreadable", False, "qa_new"
-        designated = slot.value.provider_id if slot is not None and slot.value.kind == "assigned" else None
-        if not designated:
-            reason = "responder_not_designated"
-        elif not isinstance(asker, str) or not asker.strip():
-            reason = "asker_unknown"
-        elif designated == asker:
-            reason = "designated_is_asker"
-        else:
-            from modules.flow_gate.services.ai_invoke import review
-            enabled = {p.get("id") for p in review._enabled_provider_chain(project)}
-            if designated in enabled:
-                return designated, "card_review_role", None, False, "qa_new"
-            reason = "designated_not_enabled"
-        return None, None, reason, False, "qa_new"
+            return ([(pid, src)] if pid else []), None if pid else "no_independent_responder", True, "qa_legacy"
+        from modules.flow_gate.services.ai_invoke import review
+        enabled = {p.get("id") for p in review._enabled_provider_chain(project)}
+        picks, reason = [], "responder_not_designated"
+        for role in ("review", "instruction"):
+            if role not in resolve.applicable_roles(kind):
+                continue
+            slot = inputs.slots.get(role)
+            if slot is not None and (not valid_value(slot.value) or slot.source not in role_store.SLOT_SOURCES):
+                return [], "card_settings_unreadable", False, "qa_new"
+            pid = slot.value.provider_id if slot is not None and slot.value.kind == "assigned" else None
+            if not pid:
+                continue
+            if role == asker_role or (not asker_role and pid == asker):
+                reason = "designated_is_asker"
+            elif not asker_role and not asker:
+                reason = "asker_unknown"
+            elif pid not in enabled:
+                reason = "designated_not_enabled"
+            else:
+                picks.append((pid, "card_" + role + "_role"))
+        return picks, None if picks else reason, False, "qa_new"
     except Exception:
-        return None, None, "card_settings_unreadable", False, None
+        return [], "card_settings_unreadable", False, None
+
+
+def choose(flow_id, node, asker, asker_role=None):
+    picks, reason, tail, card_class = candidates(flow_id, node, asker, asker_role)
+    pid, source = picks[0] if picks else (None, "default" if tail else None)
+    return pid, source, reason, tail, card_class
+
+
+def asking_role(run, asked_by_instruction=False):
+    records = run.get("invocations") or []
+    if not records and run.get("run_id") and record_store.available():
+        records = record_store.by_run(run["run_id"])
+    records = [r for r in records if r.get("inv_role") in ("instruction", "execution", "review")]
+    if records:
+        return max(records, key=lambda r: r.get("launch_no") or 0)["inv_role"]
+    origin_role = (run.get("invocation_origin") or {}).get("role")
+    if origin_role in ("instruction", "execution", "review"):
+        return origin_role
+    if run.get("document_review_loop"):
+        return "review" if run.get("hop_kind") == "review" else "execution"
+    return "instruction" if asked_by_instruction else "execution"
 
 
 def origin(flow_id, node, item, run, source, card_class, provider_id):

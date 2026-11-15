@@ -726,6 +726,12 @@ def _content_notices(ctx: dict) -> dict:
             "en": "TR may create test code, fixtures, and mocks and run available self-checks. Formal PASS and the test gate belong to TS/TSR; do not request an approval-based Snapshot for formal testing.",
             "ja": "TRではテストコード・fixture・mockを作成し、利用可能な環境でself-checkできます。正式なPASSとgateはTS/TSRが担当し、正式試験のために承認型Snapshotを要求しません。",
         }.get(ctx["locale"], ""))
+    from modules.flow_gate.services import question_policy
+    token = ctx.get("token_rec") or {}
+    policy = question_policy.block(question_policy.text(
+        token.get("issued_to"), ctx.get("group_id"), card=ctx.get("action_scope") != "chat"))
+    if policy:
+        lines.append(policy)
     return {"lines": lines}
 
 

@@ -29,10 +29,10 @@ REQUEST = [tools.ATTACHMENT_REQUEST_NAME]
 
 # 0672 T0004: Source Bundle left the general path -- a T step gets live source tools only.
 @pytest.mark.parametrize("scope, expected", [
-    ("new", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST),
-    ("edit", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST),
-    ("review", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST),
-    ("test_run", list(tools.BASE_NAMES)),
+    ("new", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST + ["search_question_answers"]),
+    ("edit", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST + ["search_question_answers"]),
+    ("review", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST + ["search_question_answers"]),
+    ("test_run", list(tools.BASE_NAMES) + ["search_question_answers"]),
 ])
 def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope, expected):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": "T"})
@@ -40,12 +40,6 @@ def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope, ex
     definitions = tools.definitions_for_run(run)
     assert [d["name"] for d in definitions] == expected
     expected_schema = tools.REGISTER_SCHEMAS[scope]
-    if scope == "edit":
-        # P#2 §8: this fixture has no card group, so advertise the legacy descriptor.
-        import copy
-        expected_schema = copy.deepcopy(expected_schema)
-        expected_schema["properties"].pop("expected_revision")
-        expected_schema["required"].remove("expected_revision")
     assert next(d for d in definitions if d["name"] == "register_document")["schema"] == expected_schema
     assert all("oneOf" in d["schema"] or d["schema"]["additionalProperties"] is False for d in definitions)
 
@@ -70,7 +64,7 @@ def test_tr_review_uses_live_reads_and_selfcheck_evidence_without_bundle(monkeyp
 def test_non_mutating_types_get_read_tier(monkeypatch, tmp_path, step_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
     monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: (step_type, False))
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES) + REQUEST + ["search_question_answers"]
 
 
 # 0684 T#4: Source Bundle is gone. The kind -- and so the live source tools -- still follows
@@ -87,7 +81,7 @@ def test_mutating_types_get_read_write_tier(monkeypatch, tmp_path, doc_type, hea
     monkeypatch.setattr(tools.remote_tool_service, "_worker_token_step_type_result", lambda _rec: (head_type, False))
     # 0638 T#1: a TR(new) step (head TR) also gets Self-check, owned by its token until it registers the TR.
     self_check = list(tools.SELF_CHECK_NAMES) if head_type == "TR" else []
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + self_check + REQUEST
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + self_check + REQUEST + ["search_question_answers"]
 
 
 @pytest.mark.parametrize("scope", ["new", "edit", "review"])
@@ -251,7 +245,7 @@ def test_full_remote_source_toolset_is_exposed_without_worktree(monkeypatch, tmp
     names = [item["name"] for item in tools.definitions_for_run(_run(tmp_path))]
     # 0672 T0004: TR(new) keeps the full live toolset and no longer receives Bundle tools.
     # 0638 T#1: ...and runs Self-check before its TR exists.
-    assert names == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + list(tools.SELF_CHECK_NAMES) + REQUEST
+    assert names == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + list(tools.SELF_CHECK_NAMES) + REQUEST + ["search_question_answers"]
     assert {"read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "patch", "write", "remove", "move"} == set(tools.SOURCE_OPS.values())
     for name in tools.SOURCE_OPS:
         assert tools.SCHEMAS[name]["additionalProperties"] is False

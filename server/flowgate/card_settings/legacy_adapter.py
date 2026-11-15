@@ -752,6 +752,7 @@ def graph_run_state(flow_id: str) -> Optional[tuple[str, Optional[str]]]:
 
 def ask_responder(anchor_doc_id: str, item_id: int, issued_to: str, provider_id: Optional[str],
                   provider_source: str, *, default_tail: bool = True,
+                  responder_candidates: Optional[list] = None,
                   invocation_origin: Optional[dict] = None) -> Optional[dict]:
     """Automatically start one question's responder with bounded startup fallback.
 
@@ -769,7 +770,7 @@ def ask_responder(anchor_doc_id: str, item_id: int, issued_to: str, provider_id:
     return q_answer_invoke_service.dispatch_answer_run(
         doc={**doc, "doc_id": anchor_doc_id}, item=item, issued_to=issued_to, api_base_url=api_base_url(issued_to),
         provider_id=provider_id, provider_source=provider_source, actor_user_id=issued_to,
-        responder_candidates=[], default_tail=default_tail, invocation_origin=invocation_origin)
+        responder_candidates=responder_candidates or [], default_tail=default_tail, invocation_origin=invocation_origin)
 
 
 def independent_question_responder(project_id: Optional[str], asker_provider_id: Optional[str],

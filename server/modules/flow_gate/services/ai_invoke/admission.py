@@ -1487,7 +1487,9 @@ def start_run(
         if mode != "single" or action_scope != "edit" or completion_oracle is None or issue_builder is None:
             raise _http_error(422, "invalid_responder_startup_policy", "Q-answer startup policy required.")
         enabled = {provider.get("id"): provider for provider in chain}
-        provider_ids = list(dict.fromkeys(responder_startup_policy["provider_ids"]))
+        provider_ids = responder_startup_policy["provider_ids"]
+        if not responder_startup_policy.get("retry_without_answer"):
+            provider_ids = list(dict.fromkeys(provider_ids))
         chain = [enabled[pid] for pid in provider_ids if pid in enabled]
         selected_provider_source = "question_responder"
     elif step_override_provider:
