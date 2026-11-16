@@ -1257,6 +1257,16 @@ export default {
       too_large: '파일이 커서 내용을 비교하지 않습니다.',
       empty: '내용 차이가 없습니다.',
       more_lines: '{n}줄 더 있음',
+      // flowgate.v02test.0031 B/C: change window view mode, full text basis and context projection wording.
+      mode_label: '보기 방식',
+      mode_changes: '변경',
+      mode_full: '전체',
+      full_basis_after: '실행 후',
+      full_basis_before_delete: '삭제 전',
+      show_more: '더 보기',
+      omitted_lines: '… {n}줄 생략',
+      alignment_limit: '파일이 커서 정밀 비교를 하지 못했습니다. 중간 부분을 전부 삭제 후 추가로 표시합니다. \'전체\'에서 원문을 볼 수 있습니다.',
+      remaining_changes: '아래에 변경 {n}줄이 더 있습니다.',
     },
     status: {
       run_running: 'AI가 답하는 중…',
