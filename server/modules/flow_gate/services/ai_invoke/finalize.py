@@ -1890,6 +1890,7 @@ def _persist_run_record(run: dict) -> bool:
             "execution_nonce": run.get("execution_nonce"),
             "invocation_origin_kind": (run.get("invocation_origin") or {}).get("origin_kind"),
             "graph_exec_id": run.get("graph_exec_id"),
+            "client_provider_origin": run.get("client_provider_origin"),
             "group_id": run["group_id"],
             "project_id": run["project_id"],
             "requested_ai_group_id": run.get("requested_ai_group_id"),

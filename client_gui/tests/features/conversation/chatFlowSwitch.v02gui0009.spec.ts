@@ -432,7 +432,7 @@ describe('the send-time AI run follows the message, not the screen', () => {
     expect(await sending).toBe(true)
     await flushPromises()
     expect(x.source.startChatRun).toHaveBeenCalledTimes(1)
-    expect(x.source.startChatRun).toHaveBeenCalledWith(A1, 'opus', expect.any(String))
+    expect(x.source.startChatRun).toHaveBeenCalledWith(A1, 'opus', expect.any(String), expect.any(String))
     expectFlowBUntouched(x)
     expect(x.session.state.runId).toBeNull()
     expect(x.session.state.notice).toBeNull()
@@ -474,7 +474,7 @@ describe('the send-time AI run follows the message, not the screen', () => {
     const made = x.chatsOf[FLOW_A.groupId][0].id
     expect(x.bodies(made)).toEqual(['첫 메시지'])
     expect(x.source.startChatRun).toHaveBeenCalledTimes(1)
-    expect(x.source.startChatRun).toHaveBeenCalledWith(made, 'opus', expect.any(String))
+    expect(x.source.startChatRun).toHaveBeenCalledWith(made, 'opus', expect.any(String), expect.any(String))
     expectFlowBUntouched(x)
     expect(x.session.state.runId).toBeNull()
   })

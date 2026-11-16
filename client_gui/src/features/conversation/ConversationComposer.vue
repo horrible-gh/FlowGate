@@ -39,7 +39,7 @@
         data-test="conv-send"
         :title="sendTitle"
         :aria-label="sendTitle"
-        :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || draft.trim() === ''"
+        :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || aiPending || draft.trim() === ''"
         @click="isStop && emit('stop')"
       >
         <!-- flowgate.v02gui.0011 T: a stop under way is a muted spinning ring instead of ■ (… with reduced motion), so a
@@ -54,6 +54,17 @@
 
     <!-- flowgate.v02gui.0007 A: a failed send says why on its own bubble (with 다시 시도) and in the timeline's error
          line; the composer no longer repeats it. -->
+    <!-- flowgate.v02test.0030: the chat's AI is still being read (send waits), or could not be read (why, and a retry):
+         nothing is sent on an AI the user did not see chosen. -->
+    <div v-if="aiPickStatus === 'loading'" class="conv-ai-pick" role="status" aria-live="polite" data-test="conv-ai-pick-loading">
+      {{ t('gui.conversation.composer.ai_pick_loading') }}
+    </div>
+    <div v-else-if="aiPickStatus === 'error'" class="conv-ai-pick is-error" role="alert" data-test="conv-ai-pick-error">
+      <span>{{ aiPickError ? `${t('gui.conversation.composer.ai_pick_failed')} (${aiPickError})` : t('gui.conversation.composer.ai_pick_failed') }}</span>
+      <button type="button" class="conv-link" data-test="conv-ai-pick-retry" @click="emit('retry-ai-pick')">
+        {{ t('gui.conversation.composer.ai_pick_retry') }}
+      </button>
+    </div>
     <div v-if="submission?.phase === 'failed' && submission.stage !== 'send'" role="status" aria-live="polite" data-test="conv-submission">
       {{ t(`gui.conversation.composer.failed_${submission.stage}`, { attempt: submission.attempt }) }}
     </div>
@@ -122,6 +133,12 @@ const props = defineProps<{
   providers: readonly ChatProvider[]
   selectedProviderId: string
   providersStatus: string
+  /**
+   * flowgate.v02test.0030: whether the open chat's AI is settled ('loading' / 'error': send waits). Absent = 'ready'.
+   */
+  aiPickStatus?: 'ready' | 'loading' | 'error'
+  /** flowgate.v02test.0030: why the chat's AI could not be read (with 'error'). */
+  aiPickError?: string | null
   hasProviders: boolean
   sending: boolean
   submission?: SubmissionPhase | null
@@ -141,6 +158,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'select-provider': [providerId: string]
+  'retry-ai-pick': []
   'save-settings': [patch: ChatSettingsPatch, done: (ok: boolean) => void]
   'set-source-mode': [mode: SourceAccessMode]
   'copy-mention': []
@@ -192,6 +210,7 @@ const stopMode = computed<'available' | 'requested' | null>(() => {
   return props.cancelling || props.runStarting ? 'requested' : 'available'
 })
 const isStop = computed(() => stopMode.value !== null)
+const aiPending = computed(() => props.aiPickStatus !== undefined && props.aiPickStatus !== 'ready')
 
 const sendTitle = computed(() => {
   if (props.cancelling || (props.stopState !== undefined && stopMode.value === 'requested')) return t('gui.conversation.composer.stopping')
@@ -221,7 +240,7 @@ async function submit(): Promise<void> {
   trace.mark('submit')
   const text = draft.value.trim()
   const owner = visibleOwner
-  if (!owner || !text || props.disabled || props.readOnly || props.sending || props.running) return
+  if (!owner || !text || props.disabled || props.readOnly || props.sending || props.running || aiPending.value) return
   if ([...pending].some((p) => draftKey(p.snapshot.owner) === draftKey(owner))) return
   const snapshot: DraftSendSnapshot = { owner: { ...owner }, body: draft.value, revision: revisions.get(draftKey(owner)) ?? 0 }
   const send = { snapshot, owners: [snapshot.owner] }
@@ -261,6 +280,19 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   padding: 7px 8px;
   border-top: 1px solid var(--fg2-line);
   background: var(--fg2-control-surface-flat);
+}
+
+.conv-ai-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--fg2-muted);
+}
+
+.conv-ai-pick.is-error {
+  color: var(--fg2-status-danger-fg);
 }
 
 .conv-manual {

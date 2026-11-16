@@ -1356,6 +1356,10 @@ def start_run(
     review_intent: Optional[str] = None,
     # A single-request acknowledgement. It is intentionally never persisted or forwarded.
     capability_warning_ack: Optional[bool] = None,
+    # flowgate.v02test.0030: a chat call's own account of how the browser picked provider_id
+    # (user_pick / stored / last_answered / default_fallback; validated by the route). Recorded
+    # on the run only -- provider selection never reads it.
+    client_provider_origin: Optional[str] = None,
     # flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9: only meaningful for
     # action_scope="resolve_conflict" — whether THIS hop is the merge review's
     # explicit [수정 적용] conversation turn (vs. the ordinary resolve/[반려] retry/
@@ -2265,6 +2269,7 @@ def start_run(
         "tool_calls_executed": 0,
         "chain_source": chain_source,
         "selected_provider_source": selected_provider_source,
+        "client_provider_origin": client_provider_origin,
         "fallback_allowed": selected_provider_source == "project_default",
         "action_scope": action_scope,
         # Top-level review provenance while the run is live. Finished review provenance

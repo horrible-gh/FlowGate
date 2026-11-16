@@ -1284,6 +1284,10 @@ export default {
       provider: 'AI を選択',
       provider_loading: '読み込み中',
       provider_failed: 'AI 一覧エラー',
+      // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
+      ai_pick_loading: 'このチャットの AI を確認しています。確認できると送信できます',
+      ai_pick_failed: 'このチャットの AI を確認できないため送信を止めています',
+      ai_pick_retry: '再試行',
       provider_none: 'AI なし',
       copy_mention: 'メンションをコピー',
       invoke_ai: 'AI 呼び出し',
@@ -1337,6 +1341,7 @@ export default {
       source_mode_failed: 'AI ソースモードを変更できませんでした',
       checkpoint_failed: 'AI コンテキストの開始位置を保存できませんでした',
       chat_ai_save_failed: 'このチャットの AI 選択を保存できませんでした',
+      chat_ai_fallback: 'このチャットの AI を使えないため既定の AI に切り替わりました',
       source_locked: 'このフローの Graph 実行中はチャットでソースを変更できません。読み取りモードを使用してください',
       create_forbidden: 'このフローに新しいチャットを作成する権限がありません',
       create_group_disposed: '廃棄されたフローには新しいチャットを作成できません',

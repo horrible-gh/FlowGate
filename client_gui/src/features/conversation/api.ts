@@ -54,6 +54,7 @@ import type {
   RunFileDiffSide,
   SendAction,
   SourceAccessMode,
+  ProviderOrigin,
   TurnsPage,
   WorkChangeActivity,
   WorkChangeFile,
@@ -622,7 +623,7 @@ export async function fetchProviders(projectId: string): Promise<ProviderList> {
  */
 import { beginChatActivity } from './flowChatActivity'
 
-export async function startChatRun(chatId: string, providerId: string | null, clientRequestId?: string): Promise<string | null> {
+export async function startChatRun(chatId: string, providerId: string | null, clientRequestId?: string, providerOrigin?: ProviderOrigin): Promise<string | null> {
   const parts = splitGroupId(chatId)
   if (!parts) throw clientCheckFailure()
   // A CH id is `project.module.group.seq-TYPE`; the group is the third segment.
@@ -639,6 +640,8 @@ export async function startChatRun(chatId: string, providerId: string | null, cl
       mode: 'single',
       provider_id: providerId || undefined,
       ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+      // flowgate.v02test.0030: how the AI was chosen (user_pick / stored / last_answered / default_fallback).
+      ...(providerOrigin ? { client_provider_origin: providerOrigin } : {}),
     }),
   )
   return data?.run_id ?? null
