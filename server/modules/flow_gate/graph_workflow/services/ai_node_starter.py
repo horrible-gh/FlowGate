@@ -162,6 +162,11 @@ def start_ai_invoke(job: dict) -> dict:
         messages = [value for value in (stage_note, stage_prompt) if value]
         if messages:
             mention = invoke_mention_service.prepend_messages_section(mention or "", messages, job.get("locale") or "ko")
+        # v02gui.0029: the earlier cards approved after their review count ran out, as a section of its own (both stages).
+        from . import card_settings_ports                                # noqa: PLC0415
+        notice = card_settings_ports.upstream_notice(job)
+        if notice:
+            mention = notice + invoke_mention_service.SECTION_SEPARATOR + (mention or "")
         mention = ai_start_precheck.node_mention(mention or "", job, ai_run_id)    # 0064 T-B1e: memos go in front of it
         mention = card_memo_hooks.prepend_memo_section(mention or "", flow_id, node_key=job["node_key"])
         if title_requested:                     # 0064 T-B4d: worded at the provider boundary, at the very end

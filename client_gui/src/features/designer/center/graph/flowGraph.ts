@@ -190,7 +190,7 @@ export interface FlowGraphNodeRun extends RoleRunFields {
   /** flowgate.v02.0061 T#15: the node's current attempt (null: none). Absent = not sent. */
   readonly attemptId?: string | null
   /** flowgate.v02.0105 T#2 (B-2): why the result was not approved automatically while the card awaits its approval (the latest B-1 reason, e.g. `approval_refused`, `review_not_passed:review_count_exhausted`), or null; absent when not sent. */
-  readonly reviewExhaustionApproval?: { review_count?: number | null; stage?: string | null } | null
+  readonly reviewExhaustionApproval?: { review_count?: number | null; stage?: string | null; doc_id?: string | null; revision_no?: number | null } | null
   readonly approvalWaitReason?: string | null
   /** v02gui.0015 T2: the earlier attempts' uncommitted changes the attempt did not take, null when none; absent when not sent. */
   readonly uncarriedChanges?: import('@/features/project/types').UncarriedChanges | null

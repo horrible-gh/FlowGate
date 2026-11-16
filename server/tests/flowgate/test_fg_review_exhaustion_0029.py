@@ -1,7 +1,7 @@
 """0029: real assigned review/approval with durable exhaustion evidence."""
 import json
 import pytest
-from test_fg_ai_roles_l2_assignment import (
+from test_fg_ai_roles_l2_assignment import (  # noqa: F401 - fixtures used by name
     A, B, FA, WORK_RUN, _sql, _run_ended, ai_writes_result, b1, db_path, decided, env,
     flow, node_run, one, record_starts, roles, start, starts, wired,
 )
@@ -116,3 +116,46 @@ def test_only_continue_opens_the_next_card(env, fork_join, monkeypatch, starts, 
     _, result, review = _reviewed_ai_result(env, monkeypatch, starts, a)
     _review_end(env, review, "review_count_exhausted")
     assert node_run(env, next_key)["status"] == next_status
+
+
+def test_next_card_ai_is_told_which_earlier_card_skipped_its_review(env, fork_join, monkeypatch, starts):
+    """0002-CH turn 35-36 item 3: the AI of a card after an exhaustion approval gets a section naming that card (its
+    document, revision and review count); a card on another branch and the approved card itself get none."""
+    from flowgate.card_settings import review_exhaustion
+    from test_fg_card_intervention_assigned_0119 import _branches, _reviewed_ai_result, command, stored
+    a, next_key, independent = _branches(env)
+    stored(a, "after_review_exhausted", "continue")
+    command(env, "full")
+    _, result, review = _reviewed_ai_result(env, monkeypatch, starts, a)
+    _sql(env["db"], "UPDATE documents SET revision_no = 2 WHERE doc_id = ?", (result,))
+    _review_end(env, review, "review_count_exhausted")
+    assert node_run(env, next_key)["status"] == "open"
+    run_id = node_run(env, next_key)["run_id"]
+    [found] = review_exhaustion.upstream(run_id, next_key)
+    assert (found["node_key"], found["doc_id"], found["revision_no"], found["review_count"]) == (a, result, 2, 1)
+    notice = review_exhaustion.upstream_notice({"run_id": run_id, "node_key": next_key, "locale": "ko"})
+    assert notice.startswith("## 앞 카드 검수 알림\n---\n") and f"문서 {result} 2판, 검수 1회 모두 미통과" in notice
+    assert "Earlier card review notice" in review_exhaustion.upstream_notice(
+        {"run_id": run_id, "node_key": next_key, "locale": "en"})
+    assert review_exhaustion.upstream_notice({"run_id": run_id, "node_key": independent}) is None
+    assert review_exhaustion.upstream_notice({"run_id": run_id, "node_key": a}) is None
+
+
+def test_upstream_notice_port_is_quiet_without_a_notice(monkeypatch):
+    from modules.flow_gate.graph_workflow.services import card_settings_ports as ports
+    from flowgate.card_settings import review_exhaustion
+    saved = ports._handler(ports.UPSTREAM_NOTICE)
+    try:
+        ports.unregister(ports.UPSTREAM_NOTICE)
+        assert ports.upstream_notice({"run_id": "r", "node_key": "n"}) is None
+        ports.register(ports.UPSTREAM_NOTICE, lambda job: "  ")
+        assert ports.upstream_notice({}) is None
+        ports.register(ports.UPSTREAM_NOTICE, lambda job: "## x\n---\ny")
+        assert ports.upstream_notice({}) == "## x\n---\ny"
+        monkeypatch.setattr(review_exhaustion, "upstream", lambda *a: (_ for _ in ()).throw(RuntimeError("db")))
+        assert review_exhaustion.upstream_notice({"run_id": "r", "node_key": "n"}) is None
+    finally:
+        if saved is None:
+            ports.unregister(ports.UPSTREAM_NOTICE)
+        else:
+            ports.register(ports.UPSTREAM_NOTICE, saved)
