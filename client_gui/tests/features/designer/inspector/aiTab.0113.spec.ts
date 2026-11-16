@@ -20,6 +20,7 @@ import { toFlowGraph } from '@/features/designer/center/graph/serverFlowGraphSou
 import { toVueFlowNodes } from '@/features/designer/center/canvas/vueFlowMapping'
 import { target, cardRoles } from '../../ai/rolesFixtures.0113'
 import { prepareInspectorI18n } from './support/inspectorSupport'
+import { INSPECTOR_BODY } from '@/features/designer/inspector/inspectorHost'
 import aiMessages from '@/features/designer/inspector/features/ai/messages'
 import roleMessages from '@/features/ai/roles/messages'
 import ko from '@/app/i18n/ko'
@@ -333,5 +334,48 @@ describe('flowgate.v02gui.0029 (0003-CH C안): each AI row ⚙', () => {
     await gear(w, 'review')
     await w.setProps({ target: { ...target(), nodeId: 'gn_2' } }); await flushPromises()
     expect(w.find('[data-test="inspector-ai-advanced"]').exists()).toBe(false)
+  })
+  it('0003-CH QA: a value picked in the window keeps it open, also when the same card comes back as a new target', async () => {
+    const w = await tab('ai')
+    await gear(w, 'execution')
+    await w.get('[data-test="inspector-run-settings-time_limit"]').setValue('120'); await flushPromises()
+    expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({ field: 'time_limit', value: 120 })
+    await w.setProps({ target: { ...target() } }); await flushPromises()
+    expect(w.find('[data-test="inspector-ai-advanced"][data-for="execution"]').exists()).toBe(true)
+    await w.setProps({ panel: 'settings' }); await flushPromises()
+    await w.setProps({ panel: 'ai' }); await flushPromises()
+    expect(w.find('[data-test="inspector-ai-advanced"]').exists()).toBe(false)
+  })
+  it('0003-CH QA: opens under its row when it fits, above it when only that fits, else under it capped to the Inspector body', async () => {
+    const body = document.createElement('div'); document.body.appendChild(body)
+    const box = (top: number, bottom: number) => ({ top, bottom, height: bottom - top, left: 0, right: 300, width: 300, x: 0, y: top, toJSON() { return {} } }) as DOMRect
+    let rowTop = 150; let popHeight = 120
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this === body) return box(0, 216)
+      if (this.classList.contains('inspector-ai-role-line')) return box(rowTop, rowTop + 32)
+      return box(0, 0)
+    })
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('inspector-ai-pop') ? popHeight : 0 })
+    try {
+      raw = settingsRaw()
+      wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, attachTo: body, global: { plugins: [i18n], provide: { [INSPECTOR_BODY as symbol]: { element: ref(body) } } } })
+      await flushPromises()
+      const open = async (role: string) => { await gear(wrapper!, role); await flushPromises(); return wrapper!.get(`[data-test="inspector-ai-advanced"][data-for="${role}"]`) }
+      let pop = await open('review')
+      expect(pop.attributes('data-place')).toBe('above'); expect(pop.classes()).toContain('is-above'); expect(pop.attributes('style') ?? '').not.toContain('max-height')
+      expect(wrapper.find('.inspector-ai-pop-room').exists()).toBe(false)
+      rowTop = 40
+      pop = await open('execution')
+      expect(pop.attributes('data-place')).toBe('below'); expect(pop.classes()).not.toContain('is-above')
+      expect(wrapper.get('[data-role="execution"] .inspector-ai-pop-room').attributes('style')).toContain('top: 165px')
+      rowTop = 100; popHeight = 190
+      pop = await open('review')
+      expect(pop.attributes('data-place')).toBe('below'); expect(pop.attributes('style')).toContain('max-height: 162px')
+      expect(wrapper.get('[data-role="review"] .inspector-ai-pop-room').attributes('style')).toContain('top: 207px')
+      await wrapper.get('[data-gear="review"]').trigger('click'); await flushPromises()
+      expect(wrapper.find('.inspector-ai-pop-room').exists()).toBe(false)
+    } finally {
+      rect.mockRestore(); height.mockRestore(); wrapper?.unmount(); wrapper = null; body.remove()
+    }
   })
 })
