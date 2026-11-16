@@ -2,11 +2,14 @@
 // this fixed order for every Node.
 // flowgate.v02.0113 T#4 (0030-M §1, 0029-TR 시안, D 개정 §6.3): the AI tab goes right after 문서 —
 // 문서 · AI · Q&A · 첨부 · 설정.
+// flowgate.v02gui.0031 C (0001-B §3-C): 설정 is used often, so it moves right after 문서 —
+// 문서 · 설정 · AI · Q&A · 첨부. 첨부 stays in place here; removing it is flow-level attachment work
+// (group 0030), after which the strip is 문서 · 설정 · AI · Q&A.
 // flowgate.v02.0048 T#1 (D#1 §5.3): a tab is shown only when a registered feature contributes to
 // it for the selected Node — no empty tab and no placeholder. The order never changes; which tabs
 // exist comes from the registry, never from a per-Node flag.
 
-export const INSPECTOR_TABS = ['documents', 'ai', 'qna', 'attachments', 'settings'] as const
+export const INSPECTOR_TABS = ['documents', 'settings', 'ai', 'qna', 'attachments'] as const
 
 export type InspectorTabKey = (typeof INSPECTOR_TABS)[number]
 

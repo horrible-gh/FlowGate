@@ -15,7 +15,10 @@
           {{ isUser ? t('gui.conversation.message.user') : isSystem ? t('gui.conversation.message.system') : t('gui.conversation.message.ai') }}
         </span>
         <!-- 0293 R0001: the model name is a badge only; identity is participant_key. -->
-        <span v-if="!isUser && !isSystem && turn.displayName" class="tl-provider" data-test="tl-provider" :title="turn.displayName">{{ turn.displayName }}</span>
+        <!-- flowgate.v02gui.0031 B: the bubble widens to show the whole name; only a line with no more room ends it in an ellipsis. -->
+        <span v-if="!isUser && !isSystem && turn.displayName" class="tl-provider-slot">
+          <span class="tl-provider" data-test="tl-provider" :title="turn.displayName">{{ turn.displayName }}</span>
+        </span>
         <span v-if="pending" class="tl-time">{{ t('gui.conversation.message.sending') }}</span>
         <span v-else-if="turn.createdAt" class="tl-time" :title="turn.createdAt">{{ formatTimelineTime(turn.createdAt) }}</span>
         <!-- flowgate.v02.0157: the message as written (Markdown source, not the rendered page), on both sides. -->
@@ -269,11 +272,23 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
   color: var(--fg2-muted);
 }
 
+/* flowgate.v02gui.0031 B: no fixed cap -- the name is shown in full and the bubble widens to fit it (up to its own
+   max-width, 92% of the panel), so a short reply such as "ok" still shows the whole name. Only when the line has no
+   more room (narrow panel, zoom) does the slot shrink (flex-shrink 1, min-width 0) and the badge end in an ellipsis;
+   the speaker / time / copy / menu never shrink. The title keeps the full name. */
+.tl-provider-slot {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+
 .tl-provider {
   min-width: 0;
-  max-width: 110px;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 1px 5px;
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-control-radius-pill);

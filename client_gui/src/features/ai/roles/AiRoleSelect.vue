@@ -1,6 +1,6 @@
 <template>
   <span class="ai-role-select">
-    <Select :model-value="selected" :options="options" :placeholder="t('gui.aiRoles.unset')" :disabled="disabled" :aria-label="label" @update:model-value="choose" />
+    <Select class="ai-base-select" :model-value="selected" :options="options" :placeholder="t('gui.aiRoles.unset')" :disabled="disabled" :aria-label="label" @update:model-value="choose" />
     <span v-if="unavailable && !plain" role="img" :aria-label="t('gui.inspector.settings.option.missing', { name: displayName || providerId })" :title="cause || state || ''">⚠</span>
   </span>
 </template>
@@ -8,6 +8,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/ui/Select.vue'
+import '../aiBaseSelect.css'
 import { installAiRoleMessages } from './messages'
 import type { AiRoleValue, AiRoleOption } from './types'
 const props = defineProps<{ modelValue: AiRoleValue | null; providers: readonly AiRoleOption[]; label: string; displayName?: string | null; state?: string; cause?: string | null; disabled?: boolean; plain?: boolean }>()
@@ -32,4 +33,8 @@ function choose(value: string) {
 <style scoped>
 .ai-role-select { display: flex; align-items: center; gap: 6px; min-width: 0; width: 100%; }
 .ai-role-select > select { flex: 1; }
+/* Select.vue paints its own arrow with background gradients and right padding; base-select draws ::picker-icon instead. */
+@supports (appearance: base-select) {
+  .ai-role-select > select.ai-base-select { padding-right: var(--fg2-control-pad-x); background: var(--fg2-control-surface); }
+}
 </style>

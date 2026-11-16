@@ -325,7 +325,8 @@ function onRevisit(): void {
   if (document.visibilityState === 'hidden' || !props.active) return
   // flowgate.v02gui.0017 B3: a failed chat list reads again on return as well (no-op unless it failed).
   void session.recoverChatList()
-  if (!state.activeChatId || state.turnsStatus !== 'ready') return
+  // flowgate.v02gui.0031 T0005 ③: a chat whose first read failed is read again too (session.recover opens it again).
+  if (!state.activeChatId || (state.turnsStatus !== 'ready' && state.turnsStatus !== 'error')) return
   const now = Date.now()
   if (now - lastRevisitCatchUp < REVISIT_CATCHUP_MIN_MS) return
   lastRevisitCatchUp = now

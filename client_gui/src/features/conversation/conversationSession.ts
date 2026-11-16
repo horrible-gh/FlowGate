@@ -258,6 +258,9 @@ export interface ConversationSession {
    * is dropped and nothing is read twice side by side. A run already polled is not read beside its poll: the poll's
    * wait is cut short instead. While the chat is still opening, or a message of it is being sent, the request waits
    * and runs right after (a turn read then could show the message twice: once sending, once stored).
+   * flowgate.v02gui.0031 T0005 ③: a chat whose first read failed (turnsStatus 'error') is opened again instead, the
+   * way its [다시 시도] does (selectChat of the same chat), so a reconnect, online or a return to the panel brings it
+   * back without a page reload.
    */
   recover(parts?: ChatRefresh): Promise<void>
   /**
@@ -1368,7 +1371,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
       deferredRefresh = { gen, parts: mergeChatRefresh(deferredRefresh?.gen === gen ? deferredRefresh.parts : null, parts) }
       return Promise.resolve()
     }
-    // A chat whose first read failed shows its own [다시 시도]; nothing to bring up to date.
+    // T0005 ③: a chat whose first read failed is opened again through its own [다시 시도] path. That read sets
+    // 'loading' at once, so a signal meanwhile is held (mustDefer) and served after it succeeds.
+    if (state.turnsStatus === 'error') return selectChat(chatId)
     if (state.turnsStatus !== 'ready') return Promise.resolve()
     const ongoing = recovery
     if (ongoing && ongoing.chatId === chatId && ongoing.gen === gen) {

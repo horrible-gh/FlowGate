@@ -1,0 +1,50 @@
+/* v02gui.0031.0011-T (D): AI model pickers (plus the review-count cell that shares their row in AiRoleMatrix). Opt in with class="ai-base-select" on a native <select>.
+ * Chrome 135+ `appearance: base-select` lets the open list (::picker(select)) be styled while the select, its options,
+ * value and change events stay native. Browsers without it fail the @supports test and keep today's look unchanged.
+ * Nothing here touches theme.css, the shared Select.vue or any select that does not carry the class. */
+@supports (appearance: base-select) {
+  /* Doubled class: outranks a component's own scoped select rule (e.g. .ui-select { appearance: none }). */
+  select.ai-base-select.ai-base-select,
+  select.ai-base-select.ai-base-select::picker(select) {
+    appearance: base-select;
+  }
+
+  select.ai-base-select.ai-base-select::picker-icon {
+    color: var(--fg2-muted);
+  }
+
+  /* The open list. Scrollbar uses the standard properties (not thin), so thumb and track are told apart. */
+  select.ai-base-select.ai-base-select::picker(select) {
+    box-sizing: border-box;
+    max-height: min(320px, 60vh);
+    margin: 4px 0;
+    padding: 4px;
+    overflow-y: auto;
+    border: 1px solid var(--fg2-line-strong);
+    border-radius: var(--fg2-control-radius);
+    background: var(--fg2-panel);
+    color: var(--fg2-text);
+    scrollbar-width: auto;
+    scrollbar-color: var(--fg2-muted) var(--fg2-bg);
+  }
+
+  select.ai-base-select option {
+    padding: 6px 10px;
+    border-radius: var(--fg2-control-radius-sm);
+    background: transparent;
+    color: var(--fg2-text);
+  }
+
+  select.ai-base-select option:hover,
+  select.ai-base-select option:focus-visible {
+    background: rgba(75, 163, 255, 0.18);
+  }
+
+  select.ai-base-select option:checked {
+    background: rgba(75, 163, 255, 0.28);
+  }
+
+  select.ai-base-select option:disabled {
+    color: var(--fg2-muted-2);
+  }
+}

@@ -752,9 +752,9 @@ describe('settings tab in the Frame (real registry, flowgate.v02.0048 T#9 / flow
     await flushPromises()
   }
 
-  it('a v0.1 step Node with a document: 설정 is the last tab; it reads nothing until opened', async () => {
+  it('a v0.1 step Node with a document: 설정 is the tab right after 문서; it reads nothing until opened', async () => {
     const w = await mountFrame(selectionOf(GRAPH, STARTED.id))
-    expect(tabLabels(w).at(-1)).toBe('설정')
+    expect(tabLabels(w).slice(0, 2)).toEqual(['문서', '설정'])
     expect(sequenceRead).not.toHaveBeenCalled()
     await openTab(w, '설정')
     expect(w.get('[data-test="inspector-settings"]').attributes('data-source')).toBe('sequence')

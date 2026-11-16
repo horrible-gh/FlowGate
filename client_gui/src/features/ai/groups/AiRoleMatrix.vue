@@ -28,7 +28,7 @@
               :aria-label="t('gui.role_profiles.remove', { name: typeLabel(row.type_key) })"
               :disabled="busy" @click="mutate((id) => deleteAiRoleProfile(id, row.type_key))">×</button>
           </div>
-          <select v-for="role in PROFILE_ROLES" :key="role" class="role-select"
+          <select v-for="role in PROFILE_ROLES" :key="role" class="role-select ai-base-select"
             :class="{ 'role-inherited': row.roles[role].kind === 'inherit' }"
             :data-role="role" :value="profileValueKey(row.roles[role])" :disabled="!canEdit || busy"
             :aria-label="`${typeLabel(row.type_key)} · ${t(`gui.role_profiles.${role}`)}`"
@@ -39,7 +39,7 @@
             <option v-if="unavailable(row.roles[role])" :value="profileValueKey(row.roles[role])" disabled>{{ valueLabel(row.roles[role]) }}</option>
             <option v-for="provider in options.providers" :key="provider.provider_id" :value="`provider:${provider.provider_id}`">{{ provider.provider_name }}</option>
           </select>
-          <select class="role-select" :class="{ 'role-inherited': storedCount(row.type_key) === null }"
+          <select class="role-select ai-base-select" :class="{ 'role-inherited': storedCount(row.type_key) === null }"
             data-role="review_count" :value="countKey(row)" :disabled="!canEdit || busy || !loaded"
             :aria-label="`${typeLabel(row.type_key)} · ${t('gui.role_profiles.review_count')}`"
             @change="changeCount($event, row)">
@@ -61,6 +61,7 @@ import { reviewCountKind, reviewCountValues } from '@shared/utils/reviewCountCho
 import { addAiRoleProfile, deleteAiRoleProfile, getAiRoleProfileOptions, getAiRoleProfiles, setAiRoleProfileCell, setAiRoleProfileReviewCount } from '../api'
 import type { AiRoleProfile, AiRoleProfileOptions, AiRoleProfiles, RoleProfileReviewCount, RoleProfileRole, RoleProfileValue } from '../types'
 import { inProfileQueue, PROFILE_ROLES, profileValue, profileValueKey, reviewCountKey, reviewCountValue } from './roleProfileValues'
+import '../aiBaseSelect.css'
 
 const EMPTY_OPTIONS: AiRoleProfileOptions = { types: [], providers: [], review_count_choices: [], review_count_default: 0 }
 
