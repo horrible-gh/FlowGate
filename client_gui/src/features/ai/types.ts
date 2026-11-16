@@ -298,11 +298,23 @@ export interface AiRoleProfile {
   position: number
   roles: Record<RoleProfileRole, RoleProfileValue>
 }
+// Review count of one row: `review_count` is the stored value (null = inherit the common row, or the default 0 on the
+// common row; it may lie outside the current choices), `effective_review_count` is what a new card copies.
+export interface RoleProfileReviewCount {
+  review_count: number | null
+  effective_review_count: number
+  source: 'type' | 'common' | 'default'
+}
 export interface AiRoleProfiles {
   ai_group_id: string
   items: AiRoleProfile[]
+  // Keyed like `items[].type_key`, a row each.
+  review_counts: Record<string, RoleProfileReviewCount>
 }
 export interface AiRoleProfileOptions {
   types: { type_key: string; label: string }[]
   providers: { provider_id: string; provider_name: string }[]
+  // The server's review-count choices (0 = none, 1..max); -1 is not offered.
+  review_count_choices: number[]
+  review_count_default: number
 }

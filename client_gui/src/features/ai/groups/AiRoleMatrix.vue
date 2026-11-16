@@ -17,6 +17,7 @@
         <div class="role-matrix-head">
           <span>{{ t('gui.role_profiles.card_type') }}</span>
           <span v-for="role in PROFILE_ROLES" :key="role">{{ t(`gui.role_profiles.${role}`) }}</span>
+          <span>{{ t('gui.role_profiles.review_count') }}</span>
         </div>
         <div v-for="row in rows" :key="row.type_key" class="role-matrix-row" :class="{ shared: row.type_key === 'common' }" :data-type="row.type_key">
           <div class="role-kind">
@@ -38,6 +39,14 @@
             <option v-if="unavailable(row.roles[role])" :value="profileValueKey(row.roles[role])" disabled>{{ valueLabel(row.roles[role]) }}</option>
             <option v-for="provider in options.providers" :key="provider.provider_id" :value="`provider:${provider.provider_id}`">{{ provider.provider_name }}</option>
           </select>
+          <select class="role-select" :class="{ 'role-inherited': storedCount(row.type_key) === null }"
+            data-role="review_count" :value="countKey(row)" :disabled="!canEdit || busy || !loaded"
+            :aria-label="`${typeLabel(row.type_key)} · ${t('gui.role_profiles.review_count')}`"
+            @change="changeCount($event, row)">
+            <option v-if="row.type_key === 'common'" value="unset">{{ t('gui.role_profiles.count_default') }}</option>
+            <option v-else value="inherit">{{ t('gui.role_profiles.inherit', { value: countLabel(common ? effectiveCount(common.type_key) : options.review_count_default) }) }}</option>
+            <option v-for="count in countValues(row.type_key)" :key="count" :value="`count:${count}`">{{ countLabel(count) }}</option>
+          </select>
         </div>
       </div>
     </div>
@@ -48,14 +57,18 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { DEFAULT_PALETTE_ITEMS } from '@/features/designer/palette/paletteCatalog'
-import { addAiRoleProfile, deleteAiRoleProfile, getAiRoleProfileOptions, getAiRoleProfiles, setAiRoleProfileCell } from '../api'
-import type { AiRoleProfile, AiRoleProfileOptions, AiRoleProfiles, RoleProfileRole, RoleProfileValue } from '../types'
-import { inProfileQueue, PROFILE_ROLES, profileValue, profileValueKey } from './roleProfileValues'
+import { reviewCountKind, reviewCountValues } from '@shared/utils/reviewCountChoices'
+import { addAiRoleProfile, deleteAiRoleProfile, getAiRoleProfileOptions, getAiRoleProfiles, setAiRoleProfileCell, setAiRoleProfileReviewCount } from '../api'
+import type { AiRoleProfile, AiRoleProfileOptions, AiRoleProfiles, RoleProfileReviewCount, RoleProfileRole, RoleProfileValue } from '../types'
+import { inProfileQueue, PROFILE_ROLES, profileValue, profileValueKey, reviewCountKey, reviewCountValue } from './roleProfileValues'
+
+const EMPTY_OPTIONS: AiRoleProfileOptions = { types: [], providers: [], review_count_choices: [], review_count_default: 0 }
 
 const props = defineProps<{ groupId: string; canEdit: boolean }>()
 const { t, locale } = useI18n()
 const rows = ref<AiRoleProfile[]>([])
-const options = ref<AiRoleProfileOptions>({ types: [], providers: [] })
+const options = ref<AiRoleProfileOptions>({ ...EMPTY_OPTIONS })
+const counts = ref<Record<string, RoleProfileReviewCount>>({})
 const loaded = ref(false)
 const busy = ref(false)
 const error = ref('')
@@ -83,8 +96,16 @@ function valueLabel(value?: RoleProfileValue): string {
 }
 function current(id: string, stamp: number): boolean { return id === props.groupId && stamp === epoch }
 function apply(data: AiRoleProfiles, id: string, stamp: number): void {
-  if (current(id, stamp) && data.ai_group_id === id) rows.value = data.items
+  if (!current(id, stamp) || data.ai_group_id !== id) return
+  rows.value = data.items
+  counts.value = data.review_counts ?? {}
 }
+function storedCount(key: string): number | null { return counts.value[key]?.review_count ?? null }
+function effectiveCount(key: string): number { return counts.value[key]?.effective_review_count ?? options.value.review_count_default }
+function countLabel(count: number): string { return t(`gui.role_profiles.count_${reviewCountKind(count)}`, { n: count }) }
+// The server's choices without "until it passes"; a stored value outside them stays listed (same rule as the Inspector).
+function countValues(key: string): number[] { return reviewCountValues(options.value.review_count_choices ?? [], storedCount(key)) }
+function countKey(row: AiRoleProfile): string { return reviewCountKey(storedCount(row.type_key), row.type_key === 'common' ? 'unset' : 'inherit') }
 async function load(): Promise<void> {
   const id = props.groupId, stamp = epoch, language = locale.value
   busy.value = true
@@ -137,6 +158,13 @@ function changeCell(event: Event, row: AiRoleProfile, role: RoleProfileRole): vo
   element.value = profileValueKey(row.roles[role])
   void mutate(id => setAiRoleProfileCell(id, row.type_key, role, next))
 }
+function changeCount(event: Event, row: AiRoleProfile): void {
+  const element = event.target as HTMLSelectElement
+  const next = reviewCountValue(element.value)
+  // Keep the last confirmed value visible until the server commits.
+  element.value = countKey(row)
+  void mutate(id => setAiRoleProfileReviewCount(id, row.type_key, next))
+}
 function addType(event: Event): void {
   const element = event.target as HTMLSelectElement, key = element.value
   element.value = ''
@@ -145,7 +173,8 @@ function addType(event: Event): void {
 watch(() => [props.groupId, locale.value], () => {
   epoch++
   rows.value = []
-  options.value = { types: [], providers: [] }
+  counts.value = {}
+  options.value = { ...EMPTY_OPTIONS }
   loaded.value = false
   error.value = ''
   retryRead.value = false
@@ -157,10 +186,10 @@ onBeforeUnmount(() => { epoch++ })
 <style scoped>
 .role-profile-settings { min-width: 0; }
 .role-grid-wrap { border: 1px solid #2a4863; border-radius: 10px; overflow-x: auto; background: #0b1e31; }
-.role-matrix { min-width: 745px; }
+.role-matrix { min-width: 880px; }
 .role-matrix-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 56px; padding: 9px 16px; border-bottom: 1px solid #2b4b67; background: #0d2339; box-sizing: border-box; }
 .role-matrix-toolbar strong { color: #d3e5f7; font-size: 12px; font-weight: 700; }
-.role-matrix-head, .role-matrix-row { display: grid; grid-template-columns: 116px repeat(3, minmax(160px, 1fr)); gap: 11px; align-items: center; padding: 0 16px; box-sizing: border-box; }
+.role-matrix-head, .role-matrix-row { display: grid; grid-template-columns: 116px repeat(3, minmax(160px, 1fr)) minmax(120px, 0.7fr); gap: 11px; align-items: center; padding: 0 16px; box-sizing: border-box; }
 .role-matrix-head { height: 42px; background: #122b44; color: #92afc9; font-size: 10.5px; font-weight: 720; border-bottom: 1px solid #2b4b67; }
 .role-matrix-row { height: 59px; border-bottom: 1px solid #203b53; }
 .role-matrix-row:last-child { border-bottom: 0; }

@@ -446,6 +446,10 @@ export function setAiRoleProfileCell(groupId: string, typeKey: string, role: Rol
   const body = value.kind === 'assigned' ? { kind: value.kind, provider_id: value.provider_id } : { kind: value.kind }
   return call(() => putRequest<AiRoleProfiles>(`${profile(groupId, typeKey)}/roles/${role}`, body), 'gui.role_profiles.save_failed')
 }
+/** Save one row's review count (null = inherit / default). Separate from the AI cells; answered with the profiles. */
+export function setAiRoleProfileReviewCount(groupId: string, typeKey: string, value: number | null): Promise<AiRoleProfiles> {
+  return call(() => putRequest<AiRoleProfiles>(`${profile(groupId, typeKey)}/review-count`, { review_count: value }), 'gui.role_profiles.save_failed')
+}
 export function deleteAiRoleProfile(groupId: string, typeKey: string): Promise<AiRoleProfiles> {
   return call(() => deleteRequest<AiRoleProfiles>(profile(groupId, typeKey)), 'gui.role_profiles.save_failed')
 }
