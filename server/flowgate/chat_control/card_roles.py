@@ -24,12 +24,17 @@ and API tools (``tools``: ``get_card_roles`` / ``set_card_roles``).
   request may change several roles: all or nothing, the version moves once, one ``graph_canvas_changed``.
 - Audit: one ``chat_card_role_audit`` row per requested role, in the same transaction (token, AI run, CH, user, card,
   role, before / after, changed, version).
-- Only the three roles: nothing else of the card (hold, merge, assignee, other settings) and never the account
-  defaults (``/api/v1/me/ai-roles``) are written here.
+- Only the three roles (and the three run settings below): nothing else of the card (hold, merge, assignee, other
+  settings) and never the account defaults (``/api/v1/me/ai-roles``) are written here.
 - flowgate.v02gui.0032 (decision 6): ``from_group`` (an AI group id with role profiles, ``ai-options``
   ``role_groups``) fills the roles from that group's profile for the card's document type (typed cell, else common;
   ``placement_roles.group_values``), only when the user named the group. Roles the card does not have are skipped;
   ``roles`` sent with it win over the group's. The same checks, write, audit and version move as above.
+- flowgate.v02gui.0032 (0002-CH seq 15-17): ``settings`` changes the card's run settings the AI tab shows next to the
+  roles — review count, restarts, time limit (``run_settings``; the card's kind decides which: a test card has only the
+  review count) — and nothing else. Same request as the roles: the same checks and locks, all or nothing, the version
+  moves once, one ``chat_card_setting_audit`` row per requested setting. The read answers their value, default and
+  choices (``settings``). Without migration 191 a settings change is 409 ``chat_card_settings_unavailable``.
 """
 from __future__ import annotations
 
@@ -48,17 +53,20 @@ from flowgate.graph_run import editing
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.rbac.permission_service import has_permission
 
-from . import authz, card_role_store, placement_roles
+from . import authz, card_role_store, placement_roles, run_settings
 
 ROLES = role_store.ROLES
 NOT_OWNED = "chat_card_not_owned"
 UNAVAILABLE = "chat_card_roles_unavailable"
-BODY_KEYS = frozenset({"roles", "expected_settings_version", "expected_context", "from_group"})
+BODY_KEYS = frozenset({"roles", "settings", "expected_settings_version", "expected_context", "from_group"})
 STATE_KEYS = ("state", "outcome", "source", "provider_id", "display_name", "cause", "selected")
-NEXT_AFTER_READ = ("To change a role send PATCH (set_card_roles) with `roles` and this settings_version (and context). "
-                   "Pick provider_id only from `options`.")
+NEXT_AFTER_READ = ("To change a role or a run setting send PATCH (set_card_roles) with `roles` and / or `settings` and "
+                   "this settings_version (and context). Pick provider_id only from `options` and a setting value only "
+                   "from its `choices`.")
 NEXT_AFTER_CHANGE = ("Read the card's roles again (GET / get_card_roles): only that read showing the new selection "
                      "confirms the change. Tell the user what changed.")
+SETTING_NOTE = ("review_count: AI reviews of the result (0 none, -1 until it passes); restart: restarts after a failed "
+                "run (-1 until done); time_limit: minutes per run. null in a change takes the default back.")
 
 
 def _invalid(errors: list[dict]) -> GraphApiError:
@@ -105,6 +113,9 @@ def _answer(caller: authz.Caller, node_key: str, record: dict) -> dict:
         "options_state": (block or {}).get("options_state", "unavailable"),
         "options": list((block or {}).get("options") or []),
         "placed": {"chat_doc_id": record.get("chat_doc_id"), "placed_at": record.get("placed_at")},
+        "applicable_settings": run_settings.applicable(kind),
+        "settings": run_settings.view(read),
+        "settings_note": SETTING_NOTE,
     }
 
 
@@ -122,16 +133,30 @@ def view(caller: authz.Caller, node_key: Any) -> dict:
 
 def parse_change(body: Any) -> tuple[dict, int, Optional[dict]]:
     """``(roles, expected_settings_version, expected_context)`` of a PATCH body, else 422 naming every fault."""
+    roles, _settings, version, expected_context = parse_request(body)
+    return roles, version, expected_context
+
+
+def parse_request(body: Any) -> tuple[dict, dict, int, Optional[dict]]:
+    """``(roles, settings, expected_settings_version, expected_context)`` of a PATCH body, else 422 naming every fault.
+    ``roles`` may be left out when ``from_group`` or ``settings`` is there (flowgate.v02gui.0032)."""
     if not isinstance(body, dict):
         raise _invalid([{"field": "body", "reason": "not_an_object"}])
     errors = [{"field": key, "reason": "unknown_field"} for key in sorted(set(body) - BODY_KEYS)]
     group = body.get("from_group")
     if "from_group" in body and (not isinstance(group, str) or not group.strip()):
         errors.append({"field": "from_group", "reason": "not_an_ai_group_id"})
+    try:
+        settings_req = run_settings.parse(body.get("settings"), "settings")
+    except GraphApiError as exc:
+        errors += (exc.params or {}).get("errors") or []
+        settings_req = {}
+    if "settings" in body and body.get("settings") is not None and not settings_req and not errors:
+        errors.append({"field": "settings", "reason": "required_non_empty_object"})
     roles = body.get("roles")
-    if group and roles is None:
-        roles = {}                                       # flowgate.v02gui.0032: the group gives the roles
-    elif not isinstance(roles, dict) or (not roles and not group):
+    if (group or settings_req) and roles is None:
+        roles = {}                                       # flowgate.v02gui.0032: the group / the settings alone
+    elif not isinstance(roles, dict) or (not roles and not group and not settings_req):
         errors.append({"field": "roles", "reason": "required_non_empty_object"})
         roles = {}
     for name in sorted(set(roles) - set(ROLES)):
@@ -158,7 +183,7 @@ def parse_change(body: Any) -> tuple[dict, int, Optional[dict]]:
         errors.append({"field": "expected_context", "reason": "invalid_context"})
     if errors:
         raise _invalid(errors)
-    return {name: roles[name] for name in ROLES if name in roles}, version, expected_context
+    return {name: roles[name] for name in ROLES if name in roles}, settings_req, version, expected_context
 
 
 def _role_states(flow_id: str, node: dict, kind: Optional[str], project_id: Optional[str]) -> dict:
@@ -199,14 +224,17 @@ def _write_role(flow_id: str, node_key: str, kind: str, role: str, value: dict, 
 
 
 def change(caller: authz.Caller, node_key: Any, body: Any) -> dict:
-    """``PATCH .../nodes/{node_key}/roles``: one or more of the three roles, all or nothing."""
+    """``PATCH .../nodes/{node_key}/roles``: one or more of the three roles and / or the run settings, all or
+    nothing."""
     flow_id = caller.group["group_id"]
     project_id = caller.group.get("project_id")
     user_id = caller.scope.user_id
     require_owned(flow_id, node_key, caller.chat_doc_id)
-    explicit, expected_version, expected_context = parse_change(body)
+    explicit, settings_req, expected_version, expected_context = parse_request(body)
     group_id = body.get("from_group") if isinstance(body, dict) else None
     requested = dict(explicit)
+    if settings_req:
+        run_settings.require_available()
     legacy.require_writable(flow_id)
     if not repository.available():
         raise GraphApiError(409, "card_settings_unavailable", {"flow_id": flow_id},
@@ -231,7 +259,7 @@ def change(caller: authz.Caller, node_key: Any, body: Any) -> dict:
             editing.require_settings_editable(flow_id)
         node = settings._card(flow_id, node_key)
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
-        if not role_store.available():
+        if (explicit or group_id) and not role_store.available():
             raise GraphApiError(409, "card_roles_unavailable", {"flow_id": flow_id, "node_key": node_key},
                                 message="Card AI roles are not available on this server yet.")
         applicable = applicable_roles(kind)
@@ -246,23 +274,32 @@ def change(caller: authz.Caller, node_key: Any, body: Any) -> dict:
         if kind != fields.CHECK and legacy.node_running(flow_id, node_key):
             raise GraphApiError(409, "node_settings_locked", {"flow_id": flow_id, "node_key": node_key},
                                 message="The card is running; its settings cannot change now.")
-        if not roles:
+        if group_id and not roles:
             raise _invalid([{"field": "from_group", "reason": "no_applicable_role", "ai_group_id": group_id}])
-        before = _role_states(flow_id, node, kind, project_id)
+        if settings_req:
+            run_settings.check(kind, settings_req, "settings")     # every value judged before any role is written
+        before = _role_states(flow_id, node, kind, project_id) if roles else {}
         changed = [role for role, value in roles.items() if _write_role(flow_id, node_key, kind, role, value, user_id)]
+        changed_settings, settings_before, settings_after = (
+            run_settings.write(flow_id, node_key, kind, settings_req, user_id) if settings_req else ([], {}, {}))
         version = current_version
-        if changed:
+        if changed or changed_settings:
             repository.bump_version(flow_id, node_key)
             version = repository.settings_version(flow_id, node_key)
             from modules.flow_gate.graph_workflow.services import canvas_events
             canvas_events.publish_canvas_changed(project_id=project_id, flow_id=flow_id, reason="settings",
                                                  actor_user_id=user_id, origin_client_id=None, node_keys=[node_key])
-        after = _role_states(flow_id, node, kind, project_id)
+        after = _role_states(flow_id, node, kind, project_id) if roles else {}
         at = card_role_store._now()
         audit_ids = [card_role_store.write_audit(
             flow_id, node_key, role, before.get(role), after.get(role), role in changed, version,
             caller.scope.token_id, caller.scope.ai_run_id, caller.chat_doc_id, user_id, at) for role in roles]
+        setting_audit_ids = run_settings.audit(
+            flow_id, node_key, settings_req, settings_before, settings_after, changed_settings, version,
+            {"token_id": caller.scope.token_id, "ai_run_id": caller.scope.ai_run_id, "chat_doc_id": caller.chat_doc_id},
+            user_id) if settings_req else []
         return {"changed_roles": changed, "audit_ids": audit_ids,
+                "changed_settings": changed_settings, "setting_audit_ids": setting_audit_ids,
                 **({"from_group": group_id, "applied_roles": sorted(roles)} if group_id else {})}
 
     try:

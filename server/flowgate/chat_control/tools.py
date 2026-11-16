@@ -5,7 +5,11 @@ placed (``card_roles``), the API twins of ``GET`` / ``PATCH .../nodes/{node_key}
 
 flowgate.v02gui.0032 (decisions 6-8): the chat chooses each placed card's AI itself — ``get_ai_options`` (``GET
 .../ai-options``) before placing, ``roles`` per card in ``place_flow_cards``; a group preset (``from_group`` of
-``set_card_roles``) only when the user names the group."""
+``set_card_roles``) only when the user names the group.
+
+flowgate.v02gui.0032 (0002-CH seq 15-17): the run settings the AI tab shows next to the roles (review count, restarts,
+time limit; ``run_settings``) — ``settings`` per card in ``place_flow_cards`` and in ``set_card_roles``, their values and
+choices in ``get_card_roles``. The chat decides each card's review count itself."""
 from __future__ import annotations
 
 import json
@@ -31,8 +35,10 @@ GUIDE = (
     "instruction not_used when you write the card's instruction yourself, else an AI; execution an AI that fits the "
     "card's work; review preferably another AI than the execution (not_used only when the user wants it). The AI "
     "role group defaults only stand in for a person who chose nothing: apply a group (from_group) only when the user "
-    "names it. After placing, tell the user each card's AI with a short reason; when no AI fits, say the default "
-    "stayed."
+    "names it. Decide each card's review count yourself from the card's work (`settings.review_count`, e.g. 2 for "
+    "error-prone work, 1 for a small change whose done criteria are easy to check, 0 only when the user wants no "
+    "review); leave restart and time_limit at their defaults unless the work needs otherwise. After placing, tell the "
+    "user each card's AI and review count with a short reason; when no AI fits, say the default stayed."
 )
 
 PLACE_DESCRIPTION = (
@@ -46,7 +52,9 @@ PLACE_DESCRIPTION = (
     "{kind: assigned, provider_id: <get_ai_options id>} or {kind: not_used}}): choose them yourself; another user's "
     "or a disabled AI is 422 ai_not_selectable and nothing is placed. The answer names each new card's node_key, "
     "instruction line and roles (source chat / default / unset; `defaults_used` lists the roles you left to the "
-    "defaults); write the instruction into the line (card document edit, slot=instruction) before starting the run."
+    "defaults); write the instruction into the line (card document edit, slot=instruction) before starting the run. "
+    "Each card may also carry `settings` ({review_count, restart, time_limit}; a TS card only review_count): choose "
+    "the review count yourself; a value the card cannot take is 422 with its `choices` and nothing is placed."
 )
 START_DESCRIPTION = (
     "Start this chat's Flow (edit mode only): the draft is confirmed as a new revision and the run starts in full "
@@ -68,6 +76,16 @@ _ROLE_VALUE = {
 }
 _ROLES_OBJECT = {"type": "object", "additionalProperties": False,
                  "properties": {role: _ROLE_VALUE for role in card_roles.ROLES}}
+_SETTING_INT = {"type": ["integer", "null"]}
+_SETTINGS_OBJECT = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "review_count": {**_SETTING_INT, "description": "AI reviews of the result: 0 none, -1 until it passes, 1..max."},
+        "restart": {**_SETTING_INT, "description": "Restarts after a failed run: -1 until done, 0 none, 1..max (T only)."},
+        "time_limit": {**_SETTING_INT, "description": "Minutes per run: 30, 45, 60, 90, 120, 180 or 240 (T only)."},
+    },
+    "description": "The card's run settings (null takes the default back); get_card_roles lists each one's choices.",
+}
 PLACE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -79,7 +97,8 @@ PLACE_SCHEMA = {
                 "doc_type": {"type": "string", "enum": list(service.WORK_TYPES),
                              "description": "T (work, default) or TS (test)."},
                 "roles": {**_ROLES_OBJECT, "description": "The card's AI per role, chosen by you (omitted roles take "
-                                                          "the defaults)."}},
+                                                          "the defaults)."},
+                "settings": _SETTINGS_OBJECT},
                 "additionalProperties": False},
         },
         "after": {"type": "string", "minLength": 1, "description": "node_key of the card the chain follows."},
@@ -89,8 +108,9 @@ PLACE_SCHEMA = {
     "additionalProperties": False,
 }
 GET_ROLES_DESCRIPTION = (
-    "Read the instruction / execution / review AI of a work card this chat placed (any mode). The answer has each "
-    "applicable role's state and selection, settings_version and context (send them back with set_card_roles), "
+    "Read the instruction / execution / review AI and the run settings (review count, restart, time limit) of a work "
+    "card this chat placed (any mode). The answer has each applicable role's state and selection, `settings` (each "
+    "one's value, default and choices), settings_version and context (send them back with set_card_roles), "
     "whether the card is locked (running) and `options`: the AIs you may pick (id, name, kind). Other cards are "
     "refused (403 chat_card_not_owned, with the node_keys this chat placed)."
 )
@@ -99,9 +119,12 @@ SET_ROLES_DESCRIPTION = (
     "roles: {role: {kind: assigned, provider_id: <an id from get_card_roles options>} or {kind: not_used}}; "
     "from_group: an AI group id (get_ai_options role_groups) whose role profile fills the roles — only when the user "
     "names that group (roles sent with it win); "
+    "settings: {review_count, restart, time_limit} (a value from its get_card_roles `choices`, null = default; a TS "
+    "card has only review_count) — roles, settings or both; "
     "expected_settings_version (and expected_context) from get_card_roles. All or nothing. Refusals: 403 "
     "chat_edit_mode_required / chat_card_not_owned, 422 role_not_applicable / ai_not_selectable (another user's or a "
-    "disabled AI), 409 node_settings_locked (the card runs) / gate_context_changed (stale version: read again). "
+    "disabled AI) / setting_not_applicable / not_a_choice, 409 node_settings_locked (the card runs) / "
+    "gate_context_changed (stale version: read again). "
     "Nothing else of the card and never the account defaults change. Only a get_card_roles read after it that shows "
     "the new selection confirms the change; on a refusal tell the user its code and message."
 )
@@ -121,6 +144,7 @@ SET_ROLES_SCHEMA = {
         "flow_id": {"type": "string", "minLength": 1, "description": "This chat's Flow (its group id); defaults to it."},
         "node_key": {"type": "string", "minLength": 1, "description": "A card this chat placed (place_flow_cards)."},
         "roles": {**_ROLES_OBJECT, "minProperties": 1},
+        "settings": {**_SETTINGS_OBJECT, "minProperties": 1},
         "from_group": {"type": "string", "minLength": 1,
                        "description": "An AI group id (get_ai_options role_groups); only when the user names it."},
         "expected_settings_version": {"type": "integer", "minimum": 0,
@@ -156,7 +180,8 @@ OPTIONS_SCHEMA = {
 PROMPT_HINT = ("Card run (control tower): `get_ai_options`, `place_flow_cards` with each card's `roles`, then write "
                "each card's instruction with the card "
                "document edit tool, then `start_flow_run`. " + GUIDE + " The AI of each role of a card you placed: "
-               "`get_card_roles` / `set_card_roles` (edit mode, only cards this chat placed).")
+               "`get_card_roles` / `set_card_roles` (edit mode, only cards this chat placed); the same two read and change "
+               "its review count, restart and time limit (`settings`).")
 
 
 def _result(handler):
@@ -248,9 +273,12 @@ def cli_mention(api_base, raw_token):
         f"Authorization: Bearer {raw_token}",
         '{"cards": [{"label": "<card title>", "doc_type": "T", "roles": {"instruction": {"kind": "not_used"},',
         '  "execution": {"kind": "assigned", "provider_id": "<options id>"}, "review": {"kind": "assigned",',
-        '  "provider_id": "<another options id>"}}}], "after": "<node_key, optional>", "gate": true}',
+        '  "provider_id": "<another options id>"}}, "settings": {"review_count": 1}}],',
+        ' "after": "<node_key, optional>", "gate": true}',
         "`roles` per card is yours to choose (omitted roles take the defaults; `defaults_used` in the answer lists",
         "them). Another user's or a disabled AI: 422 ai_not_selectable and nothing is placed.",
+        "`settings` per card: review_count (0 none, -1 until it passes, 1..max), restart and time_limit (minutes;",
+        "T only). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
         "Places up to 5 work cards (T, or TS for a test) in one chain after a card and ends it in a confirm card",
         "(the anchor's unstarted confirm card, else a new one). Without `after` the server picks the only",
         "work card -> unstarted confirm card edge, else the only tail; otherwise 409 chat_cards_anchor_ambiguous",
@@ -272,6 +300,7 @@ def cli_mention(api_base, raw_token):
         "The instruction / execution / review AI of a work card this chat placed (any mode): each role's state and",
         "selection, settings_version and context (send them back with a change), locked, and `options` (the AIs",
         "you may pick: id, name, kind). Other cards: 403 chat_card_not_owned (lists the node_keys this chat placed).",
+        "`settings`: the card's review_count / restart / time_limit, each with value, default and choices.",
         "",
         f"PATCH {base}/api/v2/chat/flows/{{flow_id}}/nodes/{{node_key}}/roles",
         f"Authorization: Bearer {raw_token}",
@@ -283,6 +312,9 @@ def cli_mention(api_base, raw_token):
         "shows the new selection counts as confirmed; on a refusal report its code and message to the user.",
         '{"from_group": "<role_groups ai_group_id>", "expected_settings_version": <from GET>} applies that AI',
         "group's role profile to the card: only when the user names the group (roles sent with it win).",
+        '{"settings": {"review_count": 2}, "expected_settings_version": <from GET>} changes the run settings',
+        "(review_count, restart, time_limit; a value from its `choices`, null = default; with or without roles, one",
+        "save). 422 setting_not_applicable (a TS card has only review_count) / not_a_choice.",
         "",
         "flow_id is this chat's group id. Edit mode only: reading mode answers 403 chat_edit_mode_required.",
         "You are not woken when the run stops: report what you started and ask the user to message you when it",

@@ -17,6 +17,9 @@ The chat keeps its direct source edits (turn 32: both paths stay); this package 
 - ``placement_roles`` flowgate.v02gui.0032: the AI roles a chat chooses for the cards it places (``roles`` per card,
                  written in the draft save's guard), the AI list before a placement (``GET .../ai-options``, tool
                  ``get_ai_options``) and a named AI group's preset (``from_group`` of the card role change)
+- ``run_settings`` flowgate.v02gui.0032 (0002-CH seq 15-17): the review count, restarts and time limit of a card the
+                 chat placed (``settings`` of a placement and of the card role change; audit ``chat_card_setting_audit``,
+                 migration 191) — nothing else of the card's settings
 
 The instruction of a placed card is written by the chat with the existing card document edit
 (``card_document_edit``: slot ``instruction``); a written instruction skips the instruction AI at run time
