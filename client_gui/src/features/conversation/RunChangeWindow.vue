@@ -33,7 +33,24 @@
         </li>
       </ul>
       <div class="rc-window-detail">
-        <RunChangeDiff v-if="selectedDiff" :file-diff="selectedDiff" />
+        <!-- flowgate.v02test.0031 B: window-local view mode. Switching it re-renders the cached stored diff only. -->
+        <div v-if="selectedDiff" class="rc-window-modes" data-test="rc-mode" role="group" :aria-label="t('gui.conversation.diff.mode_label')">
+          <button
+            type="button"
+            class="rc-window-mode"
+            data-test="rc-mode-changes"
+            :aria-pressed="mode === 'changes'"
+            @click="mode = 'changes'"
+          >{{ t('gui.conversation.diff.mode_changes') }}</button>
+          <button
+            type="button"
+            class="rc-window-mode"
+            data-test="rc-mode-full"
+            :aria-pressed="mode === 'full'"
+            @click="mode = 'full'"
+          >{{ t('gui.conversation.diff.mode_full') }}</button>
+        </div>
+        <RunChangeDiff v-if="selectedDiff" :file-diff="selectedDiff" :mode="mode" />
         <p v-else data-test="rc-window-empty">{{ t('gui.conversation.diff.empty') }}</p>
         <button v-if="selectedDiff?.status === 'error'" type="button" data-test="rc-window-retry" @click="selectFile(selectedDiff.path)">
           {{ t('gui.conversation.retry') }}
@@ -68,6 +85,10 @@ const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 const minimized = ref(false)
 const closed = ref(false)
 const selectedPath = ref<string | null>(null)
+// flowgate.v02test.0031 B: 'changes' (stored diff) or 'full' (stored run-end text). Owned by this
+// window instance only: kept across file selection and chat/run invalidation, reset by a new mount,
+// never stored in `files` and never a reason to read the diff again.
+const mode = ref<'changes' | 'full'>('changes')
 const files = reactive(new Map<string, OpenFileDiff>())
 const selectedDiff = computed(() => selectedPath.value === null ? null : files.get(selectedPath.value) ?? null)
 const title = computed(() => t('gui.conversation.change.window_title', { run: props.activity.runId }))
@@ -166,5 +187,27 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 .rc-window-detail > .rc-diff { flex: 1; }
-.rc-window-detail > button { align-self: flex-start; margin-top: 6px; }
+.rc-window-modes {
+  display: flex;
+  gap: 2px;
+  align-self: flex-start;
+  margin-bottom: 6px;
+}
+.rc-window-mode {
+  padding: 2px 10px;
+  border: 1px solid var(--fg2-line);
+  border-radius: var(--fg2-control-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.rc-window-mode[aria-pressed='true'] {
+  background: var(--fg2-status-info-bg);
+}
+.rc-window-mode:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: -2px;
+}
+.rc-window-detail > button[data-test='rc-window-retry'] { align-self: flex-start; margin-top: 6px; }
 </style>

@@ -1246,6 +1246,16 @@ export default {
       too_large: 'ファイルが大きいため内容を比較しません。',
       empty: '内容の差分はありません。',
       more_lines: 'あと {n} 行',
+      // flowgate.v02test.0031 B/C: change window view mode, full text basis and context projection wording.
+      mode_label: '表示方式',
+      mode_changes: '変更',
+      mode_full: '全体',
+      full_basis_after: '実行後',
+      full_basis_before_delete: '削除前',
+      show_more: 'もっと見る',
+      omitted_lines: '… {n} 行省略',
+      alignment_limit: 'ファイルが大きいため精密な比較ができませんでした。中間部分をすべて削除してから追加した形で表示します。「全体」で原文を確認できます。',
+      remaining_changes: 'この下にさらに変更が {n} 行あります。',
     },
     status: {
       run_running: 'AIが回答中…',
