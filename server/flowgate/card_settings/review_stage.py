@@ -904,13 +904,13 @@ def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id
 # ── a lost run-end stage (flowgate.v02.0105 T#2 B-3, NR flowgate.v02.0101.0003 §3.9.2) ──────────
 
 NO_REVIEW, NEEDS_REVIEW = "none", "review"
-REVIEW_COUNTS = (1, 2, 3, -1)                   # a review loop's own review_count (its table CHECK)
 
 
 def review_setting(flow_id: str, node_key: str, field: str = "review_count") -> Optional[str]:
     """The card's review setting as stored, not as ``fields.after_result`` reads it (that one takes a value it cannot
-    read for 'none'): ``NO_REVIEW`` (no row, or the integer 0), ``NEEDS_REVIEW`` (the integer 1, 2, 3 or -1), else None —
-    unknown (a row that does not parse, a string, any other number)."""
+    read for 'none'): ``NO_REVIEW`` (no row, or the integer 0), ``NEEDS_REVIEW`` (a non-zero value of the card's own
+    choices, ``legacy.repeat_choices``: -1, 1..the configured max — flowgate.v02test.0027, no frozen 1, 2, 3), else
+    None — unknown (a row that does not parse, a string, any other number)."""
     value = repository.stored(flow_id, node_key, field)
     if value is repository.ABSENT:
         return NO_REVIEW
@@ -918,7 +918,7 @@ def review_setting(flow_id: str, node_key: str, field: str = "review_count") -> 
         return None
     if value == 0:
         return NO_REVIEW
-    return NEEDS_REVIEW if value in REVIEW_COUNTS else None
+    return NEEDS_REVIEW if value in legacy.repeat_choices() else None
 
 
 def reconcile(flow_id: str) -> None:

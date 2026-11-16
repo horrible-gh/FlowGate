@@ -2,11 +2,36 @@
 
 Providers deliberately have no FK: deletion retains the id and last assigned name.
 Callers own the transaction; locking the parent serializes edits and row positions.
+flowgate.v02test.0027 (migration 191): ``review_count`` is the row's default review count (NULL: a type row inherits
+the common row, the common row means the existing card default 0). It is copied into a card only when the card is
+created; nothing reads it at run time.
 """
 from .connection import get_store, now_iso
 
 ROLES = ("instruction", "execution", "review")
 COMMON = "common"
+
+
+def stored_review_count(typed: dict | None, common: dict | None) -> tuple[int | None, str]:
+    """(stored value, its level) before any policy judgment: the type row's non-NULL value ("type"), else the common
+    row's ("common"), else (None, "default")."""
+    for row, source in ((typed, "type"), (common, "common")):
+        value = (row or {}).get("review_count")
+        if value is not None:
+            return int(value), source
+    return None, "default"
+
+
+def effective_review_count(typed: dict | None, common: dict | None, choices) -> tuple[int, str]:
+    """(review count, where it came from) a new card of a type copies, judged against ``choices`` (the card 검수 횟수
+    values the policy allows today): the type row's non-NULL value ("type"), else the common row's ("common"), else the
+    existing card default 0 ("default"). A stored value outside ``choices`` (e.g. 5 kept after the max was lowered to
+    3) is not copied: the card gets 0 ("default"). The API's effective value and the creation copy both use this one
+    judgment, so what the API shows is what a new card stores. The stored value itself is never changed here."""
+    value, source = stored_review_count(typed, common)
+    if value is None or value not in choices:
+        return 0, "default"
+    return value, source
 
 
 def lock_group(ai_group_id: str) -> None:
@@ -51,6 +76,12 @@ def set_cell(ai_group_id: str, type_key: str, role: str, kind: str,
         f"UPDATE ai_group_role_profiles SET {role}_kind = ?, {role}_provider_id = ?, "
         f"{role}_provider_name = ?, updated_at = ? WHERE ai_group_id = ? AND type_key = ?",
         [kind, provider_id, provider_name, now_iso(), ai_group_id, type_key])
+
+
+def set_review_count(ai_group_id: str, type_key: str, review_count: int | None) -> None:
+    get_store()._execute(
+        "UPDATE ai_group_role_profiles SET review_count = ?, updated_at = ? WHERE ai_group_id = ? AND type_key = ?",
+        [review_count, now_iso(), ai_group_id, type_key])
 
 
 def delete(ai_group_id: str, type_key: str) -> None:
