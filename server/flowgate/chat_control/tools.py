@@ -1,17 +1,22 @@
 """API chat tools and the CLI mention section of the control tower (stage 1).
 
 flowgate.v02gui.0028: ``get_card_roles`` / ``set_card_roles`` read and change the AI roles of a work card this chat
-placed (``card_roles``), the API twins of ``GET`` / ``PATCH .../nodes/{node_key}/roles``."""
+placed (``card_roles``), the API twins of ``GET`` / ``PATCH .../nodes/{node_key}/roles``.
+
+flowgate.v02gui.0032 (decisions 6-8): the chat chooses each placed card's AI itself — ``get_ai_options`` (``GET
+.../ai-options``) before placing, ``roles`` per card in ``place_flow_cards``; a group preset (``from_group`` of
+``set_card_roles``) only when the user names the group."""
 from __future__ import annotations
 
 import json
 
-from . import authz, card_roles, routes, service
+from . import authz, card_roles, placement_roles, routes, service
 
 PLACE_TOOL = "place_flow_cards"
 START_TOOL = "start_flow_run"
 GET_ROLES_TOOL = "get_card_roles"
 SET_ROLES_TOOL = "set_card_roles"
+OPTIONS_TOOL = "get_ai_options"
 
 GUIDE = (
     "Two ways to change source exist side by side. Direct edit (default): in edit mode you change files yourself "
@@ -22,7 +27,12 @@ GUIDE = (
     "Flow runs, edit-mode chat is refused (graph_run_locked) but reading and messages work. Keep one change per card "
     "and do not place research/design/plan cards: that part stays in this chat. An instruction is not a summary: put "
     "in the user's own words, facts you checked (file:line), what was decided and rejected, the done criteria and "
-    "what not to do."
+    "what not to do. Choose each card's AI yourself when you place it (the AI list first, then `roles` per card): "
+    "instruction not_used when you write the card's instruction yourself, else an AI; execution an AI that fits the "
+    "card's work; review preferably another AI than the execution (not_used only when the user wants it). The AI "
+    "role group defaults only stand in for a person who chose nothing: apply a group (from_group) only when the user "
+    "names it. After placing, tell the user each card's AI with a short reason; when no AI fits, say the default "
+    "stayed."
 )
 
 PLACE_DESCRIPTION = (
@@ -32,8 +42,11 @@ PLACE_DESCRIPTION = (
     "card edge, else the single tail card; when that is ambiguous it answers 409 chat_cards_anchor_ambiguous with "
     "candidates and you pass `after` (a node_key from the canvas read). A Flow with no card yet (a new group whose "
     "bug/requirement is only a document on the canvas) starts the chain with a new start card of that root document "
-    "(answer `root`). Nothing is confirmed or run. The answer names each new card's node_key and instruction line; "
-    "write the instruction into it (card document edit, slot=instruction) before starting the run."
+    "(answer `root`). Nothing is confirmed or run. Each card may carry `roles` ({instruction|execution|review: "
+    "{kind: assigned, provider_id: <get_ai_options id>} or {kind: not_used}}): choose them yourself; another user's "
+    "or a disabled AI is 422 ai_not_selectable and nothing is placed. The answer names each new card's node_key, "
+    "instruction line and roles (source chat / default / unset; `defaults_used` lists the roles you left to the "
+    "defaults); write the instruction into the line (card document edit, slot=instruction) before starting the run."
 )
 START_DESCRIPTION = (
     "Start this chat's Flow (edit mode only): the draft is confirmed as a new revision and the run starts in full "
@@ -44,6 +57,17 @@ START_DESCRIPTION = (
     "This chat is not woken when the run stops: tell the user and ask them to message you when it is done."
 )
 
+_ROLE_VALUE = {
+    "type": "object",
+    "properties": {"kind": {"type": "string", "enum": ["assigned", "not_used"]},
+                   "provider_id": {"type": "string", "minLength": 1,
+                                   "description": "With kind=assigned: an id from get_ai_options / get_card_roles "
+                                                  "options."}},
+    "required": ["kind"],
+    "additionalProperties": False,
+}
+_ROLES_OBJECT = {"type": "object", "additionalProperties": False,
+                 "properties": {role: _ROLE_VALUE for role in card_roles.ROLES}}
 PLACE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -53,7 +77,9 @@ PLACE_SCHEMA = {
             "items": {"type": "object", "properties": {
                 "label": {"type": "string", "minLength": 1, "description": "Card title shown on the canvas."},
                 "doc_type": {"type": "string", "enum": list(service.WORK_TYPES),
-                             "description": "T (work, default) or TS (test)."}},
+                             "description": "T (work, default) or TS (test)."},
+                "roles": {**_ROLES_OBJECT, "description": "The card's AI per role, chosen by you (omitted roles take "
+                                                          "the defaults)."}},
                 "additionalProperties": False},
         },
         "after": {"type": "string", "minLength": 1, "description": "node_key of the card the chain follows."},
@@ -71,6 +97,8 @@ GET_ROLES_DESCRIPTION = (
 SET_ROLES_DESCRIPTION = (
     "Change one or more of the instruction / execution / review AI of a work card this chat placed (edit mode only). "
     "roles: {role: {kind: assigned, provider_id: <an id from get_card_roles options>} or {kind: not_used}}; "
+    "from_group: an AI group id (get_ai_options role_groups) whose role profile fills the roles — only when the user "
+    "names that group (roles sent with it win); "
     "expected_settings_version (and expected_context) from get_card_roles. All or nothing. Refusals: 403 "
     "chat_edit_mode_required / chat_card_not_owned, 422 role_not_applicable / ai_not_selectable (another user's or a "
     "disabled AI), 409 node_settings_locked (the card runs) / gate_context_changed (stale version: read again). "
@@ -78,14 +106,6 @@ SET_ROLES_DESCRIPTION = (
     "the new selection confirms the change; on a refusal tell the user its code and message."
 )
 
-_ROLE_VALUE = {
-    "type": "object",
-    "properties": {"kind": {"type": "string", "enum": ["assigned", "not_used"]},
-                   "provider_id": {"type": "string", "minLength": 1,
-                                   "description": "With kind=assigned: an id from get_card_roles options."}},
-    "required": ["kind"],
-    "additionalProperties": False,
-}
 GET_ROLES_SCHEMA = {
     "type": "object",
     "properties": {
@@ -100,13 +120,14 @@ SET_ROLES_SCHEMA = {
     "properties": {
         "flow_id": {"type": "string", "minLength": 1, "description": "This chat's Flow (its group id); defaults to it."},
         "node_key": {"type": "string", "minLength": 1, "description": "A card this chat placed (place_flow_cards)."},
-        "roles": {"type": "object", "minProperties": 1, "additionalProperties": False,
-                  "properties": {role: _ROLE_VALUE for role in card_roles.ROLES}},
+        "roles": {**_ROLES_OBJECT, "minProperties": 1},
+        "from_group": {"type": "string", "minLength": 1,
+                       "description": "An AI group id (get_ai_options role_groups); only when the user names it."},
         "expected_settings_version": {"type": "integer", "minimum": 0,
                                       "description": "settings_version from get_card_roles."},
         "expected_context": {"type": "object", "description": "context from get_card_roles (optional)."},
     },
-    "required": ["node_key", "roles", "expected_settings_version"],
+    "required": ["node_key", "expected_settings_version"],
     "additionalProperties": False,
 }
 
@@ -120,7 +141,20 @@ START_SCHEMA = {
     "additionalProperties": False,
 }
 
-PROMPT_HINT = ("Card run (control tower): `place_flow_cards` then write each card's instruction with the card "
+OPTIONS_DESCRIPTION = (
+    "The AIs you may choose for this chat's cards (any mode): `options` (id, name, exec type, kind) and "
+    "`role_groups` (AI groups with role profiles, for from_group when the user names one). Read it before "
+    "place_flow_cards and send each card's `roles` from these ids."
+)
+OPTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {"flow_id": {"type": "string", "minLength": 1,
+                               "description": "This chat's Flow (its group id); defaults to it."}},
+    "additionalProperties": False,
+}
+
+PROMPT_HINT = ("Card run (control tower): `get_ai_options`, `place_flow_cards` with each card's `roles`, then write "
+               "each card's instruction with the card "
                "document edit tool, then `start_flow_run`. " + GUIDE + " The AI of each role of a card you placed: "
                "`get_card_roles` / `set_card_roles` (edit mode, only cards this chat placed).")
 
@@ -185,6 +219,18 @@ def set_roles_call(run, tool_input):
     return _result(handle)
 
 
+def options_call(run, tool_input):
+    def handle():
+        from modules.flow_gate.graph_workflow.services.errors import GraphApiError
+        flow_id, body = _split(tool_input if tool_input is not None else {})
+        if body:
+            raise GraphApiError(422, "invalid_request", {"errors": [
+                {"field": name, "reason": "unknown_field"} for name in sorted(body)]})
+        caller = authz.caller_from_run(run, flow_id or (run or {}).get("group_id"), write=False)
+        return placement_roles.options(caller.scope.user_id, caller.group["group_id"])
+    return _result(handle)
+
+
 def cli_mention(api_base, raw_token):
     base = str(api_base or "").rstrip("/")
     base = base[:-len("/api/v1")] if base.endswith("/api/v1") else base
@@ -193,9 +239,18 @@ def cli_mention(api_base, raw_token):
         "---",
         GUIDE,
         "",
+        f"GET {base}/api/v2/chat/flows/{{flow_id}}/ai-options",
+        f"Authorization: Bearer {raw_token}",
+        "The AIs you may choose for your cards (`options`: id, name, kind) and the AI groups with role profiles",
+        "(`role_groups`, for from_group only when the user names one). Read it before placing cards.",
+        "",
         f"POST {base}/api/v2/chat/flows/{{flow_id}}/cards",
         f"Authorization: Bearer {raw_token}",
-        '{"cards": [{"label": "<card title>", "doc_type": "T"}], "after": "<node_key, optional>", "gate": true}',
+        '{"cards": [{"label": "<card title>", "doc_type": "T", "roles": {"instruction": {"kind": "not_used"},',
+        '  "execution": {"kind": "assigned", "provider_id": "<options id>"}, "review": {"kind": "assigned",',
+        '  "provider_id": "<another options id>"}}}], "after": "<node_key, optional>", "gate": true}',
+        "`roles` per card is yours to choose (omitted roles take the defaults; `defaults_used` in the answer lists",
+        "them). Another user's or a disabled AI: 422 ai_not_selectable and nothing is placed.",
         "Places up to 5 work cards (T, or TS for a test) in one chain after a card and ends it in a confirm card",
         "(the anchor's unstarted confirm card, else a new one). Without `after` the server picks the only",
         "work card -> unstarted confirm card edge, else the only tail; otherwise 409 chat_cards_anchor_ambiguous",
@@ -226,6 +281,8 @@ def cli_mention(api_base, raw_token):
         "other settings or your account defaults). 422 role_not_applicable / ai_not_selectable, 409",
         "node_settings_locked (the card runs) / gate_context_changed (stale: GET again). Only a GET after it that",
         "shows the new selection counts as confirmed; on a refusal report its code and message to the user.",
+        '{"from_group": "<role_groups ai_group_id>", "expected_settings_version": <from GET>} applies that AI',
+        "group's role profile to the card: only when the user names the group (roles sent with it win).",
         "",
         "flow_id is this chat's group id. Edit mode only: reading mode answers 403 chat_edit_mode_required.",
         "You are not woken when the run stops: report what you started and ask the user to message you when it",
@@ -242,4 +299,5 @@ def descriptors():
          "handler": get_roles_call},
         {"name": SET_ROLES_TOOL, "description": SET_ROLES_DESCRIPTION, "schema": SET_ROLES_SCHEMA,
          "handler": set_roles_call},
+        {"name": OPTIONS_TOOL, "description": OPTIONS_DESCRIPTION, "schema": OPTIONS_SCHEMA, "handler": options_call},
     ]

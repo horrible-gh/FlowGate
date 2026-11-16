@@ -215,8 +215,12 @@ def _resolve(req: dr.DraftRequest, taken: set[str]) -> tuple[list[dict], list[di
 
 
 def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optional[str],
-               locale: Optional[str] = None) -> dict:
-    """P0008 S3-1~S3-4 ``PUT /flows/{flow_id}/graph/draft``; ``locale`` is the request's (flowgate.v02.0088)."""
+               locale: Optional[str] = None, after_save=None) -> dict:
+    """P0008 S3-1~S3-4 ``PUT /flows/{flow_id}/graph/draft``; ``locale`` is the request's (flowgate.v02.0088).
+
+    flowgate.v02gui.0032: ``after_save(saved)`` (optional) runs in the same Flow guard after the new cards were
+    created and their settings initialized, so what it writes (a chat placement's chosen card AI roles) commits with
+    the draft or not at all."""
     flow_id = group["group_id"]
     require_writable(flow_id)
     registered = registered_doc_types(group.get("project_id"))
@@ -228,6 +232,8 @@ def save_draft(group: dict, user_id: str, req: dr.DraftRequest, client_id: Optio
             current = definition_store.draft(flow_id)
             card_settings_ports.cards_created(group, user_id,
                                              [node for node in current["nodes"] if node["node_key"] in issued])
+        if after_save is not None:
+            after_save(saved)
         return saved
 
     return with_flow_guard(flow_id, save_and_initialize)

@@ -383,6 +383,7 @@ def test_cli_mention_and_descriptors_cover_contract_without_command_capability()
     assert [t["name"] for t in offered] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards",
                                             "start_flow_run",
                                             "get_card_roles", "set_card_roles",              # flowgate.v02gui.0028
+                                            "get_ai_options",                                # flowgate.v02gui.0032
                                             "request_attachment_upload",
                                             "list_card_questions", "answer_card_question",   # flowgate.v02gui.0010
                                             chat_tools.READ_TOOL, chat_tools.REVISE_TOOL, chat_tools.READ_DOC_TOOL,

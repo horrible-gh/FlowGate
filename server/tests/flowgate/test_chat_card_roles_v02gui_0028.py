@@ -470,7 +470,8 @@ def test_tools_and_cli_mention_offer_the_card_role_api():
 
     by_name = {t["name"]: t for t in tools.descriptors()}
     assert {"get_card_roles", "set_card_roles"} <= set(by_name)
-    assert by_name["set_card_roles"]["schema"]["required"] == ["node_key", "roles", "expected_settings_version"]
+    # flowgate.v02gui.0032: roles or from_group (a named AI group's preset) — the server judges which is there
+    assert by_name["set_card_roles"]["schema"]["required"] == ["node_key", "expected_settings_version"]
     assert set(by_name["set_card_roles"]["schema"]["properties"]["roles"]["properties"]) == {"instruction", "execution", "review"}
     assert all(callable(t["handler"]) for t in by_name.values())
     text = tools.cli_mention("http://h/flowgate/api/v1", "TOKEN")

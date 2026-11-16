@@ -89,7 +89,7 @@
         </InspectorControlRow>
       </InspectorBlock>
       <template v-if="panel === 'ai' && card.node.value?.aiRoles">
-        <InspectorBlock v-for="item in roleRows" :key="item.role" :locked="locked" :data-role="item.role" :data-held="item.held ? 'true' : undefined">
+        <InspectorBlock v-for="item in roleRows" :key="item.role" :locked="locked" :data-role="item.role" :data-held="item.held ? 'true' : undefined" :data-written="item.written ? 'true' : undefined">
           <InspectorControlRow :label="roleLabel(item.role)">
             <AiRoleSelect plain :model-value="item.selected" :providers="card.node.value.aiRoles.options" :label="roleLabel(item.role)" :display-name="item.displayName" :state="item.state" :cause="item.cause" :disabled="item.held || roleDisabled(item.field)" @update:model-value="value => changeRole(item.field, value)" />
             <InspectorFailureIcon v-if="failureOf(item.field)" :name="t(k('failed'))" :reason="failureOf(item.field)!" />
@@ -207,7 +207,7 @@ import { settingsRowPhase, type SettingsField, type SettingsOption } from './set
 import { useSharedCardSettings } from './useCardSettings'
 import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
 import type { AiRoleValue } from '@/features/document'
-import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_REVIEW_COUNT_HIDDEN, cardRoleRows } from './cardRolesModel'
+import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_REVIEW_COUNT_HIDDEN, cardRoleRows, instructionWritten } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
 const props = withDefaults(defineProps<{ target: InspectorTarget; panel?: 'settings' | 'ai' }>(), { panel: 'settings' })
@@ -241,7 +241,9 @@ const card = {
 }
 const resultFields = ['result_cause', 'follow_scope'] as const
 const instructionReviewFields = computed(() => AI_ADVANCED_FIELDS.instructionReview.filter(field => aiFieldOf(field)))
-const roleRows = computed(() => cardRoleRows(card.node.value?.aiRoles, cardSettingsValue(card.node.value, card.pending.value, 'instruction'), card.pending.value))
+/** flowgate.v02gui.0032: a written 지시서 shows its 지시 AI as 사용하지 않음 (held). */
+const instructionHasBody = computed(() => instructionWritten(props.target.cardDocuments))
+const roleRows = computed(() => cardRoleRows(card.node.value?.aiRoles, cardSettingsValue(card.node.value, card.pending.value, 'instruction'), card.pending.value, instructionHasBody.value))
 function roleLabel(role: string): string {
   if (role === 'execution' && kind.value === 'plan') return t(k('plan.run_ai'))
   if (role === 'execution' && kind.value === 'test') return t('gui.designer.inspector.run_settings.writer_ai')
@@ -251,7 +253,7 @@ function roleDisabled(field: string): boolean {
   return cardReason.value !== null || !!card.pending.value[field] || !card.node.value?.aiRoles || card.node.value.aiRoles.optionsState !== 'ok' || card.node.value.settingsVersion === undefined
 }
 function changeRole(field: 'instruction_role' | 'execution_role' | 'review_role', value: AiRoleValue) {
-  if (field === 'instruction_role' && instructionHeld.value) return
+  if (field === 'instruction_role' && (instructionHeld.value || instructionHasBody.value)) return
   if (!roleDisabled(field)) void card.change(field, value)
 }
 /** flowgate.v02.0113 T#4: an omitted instruction keeps its 지시 AI and 지시서 검수 values, off. */
