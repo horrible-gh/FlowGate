@@ -42,7 +42,7 @@ GUIDE = (
 )
 
 PLACE_DESCRIPTION = (
-    "Place work cards on this chat's Flow (edit mode only). One call puts up to 5 cards in one chain after a card "
+    "Place work cards on this chat's Flow (edit mode only). Without links, one call puts up to 5 cards in one chain after a card "
     "of the Flow and ends the chain in a confirm card: the anchor's unstarted confirm card when it has one, else a "
     "new confirm card (gate=false: none). Without `after` the server picks the single work card -> unstarted confirm "
     "card edge, else the single tail card; when that is ambiguous it answers 409 chat_cards_anchor_ambiguous with "
@@ -56,6 +56,24 @@ PLACE_DESCRIPTION = (
     "Each card may also carry `settings` ({review_count, restart, time_limit}; a TS card only review_count): choose "
     "the review count yourself; a value the card cannot take is 422 with its `choices` and nothing is placed."
 )
+TOPOLOGY_GUIDE = """Explicit fork/join: supply links [{source, target}]. References are card:0..card:4 (cards list order),
+$after (resolved anchor), $end (reused/new confirm, or join). Existing node_keys may be sources;
+targets must be new cards or $end. join=<unstarted existing node_key> selects an existing work/confirm
+card as $end and preserves its outgoing edges. No general edge removal or condition editing.
+All links are explicit: no implicit chain. With gate=false and no reused confirm/join, omit $end.
+cards=[] is allowed only with links (join existing branches). At most 30 links; all new cards must
+be reachable in the run and lead to $end when present. Cycles/excluded_path_join are refused before
+saving (422 chat_cards_graph_invalid, issues); unknown sources/join and protected joins are refused.
+Example X -> {A,B} -> C -> confirm: after=X, cards=[{label:A},{label:B},{label:C}],
+links=[{source:$after,target:card:0},{source:$after,target:card:1},
+{source:card:0,target:card:2},{source:card:1,target:card:2},{source:card:2,target:$end}].
+Join existing branches: cards=[], after=A, join=C,
+links=[{source:$after,target:$end},{source:B,target:$end}].
+Choose roles/settings on every new card as usual. Existing join ownership does not change.
+JSON example (add each card's roles/settings):
+{"after": "<X node_key>", "cards": [{"label": "A"}, {"label": "B"}, {"label": "C"}], "links": [{"source": "$after", "target": "card:0"}, {"source": "$after", "target": "card:1"}, {"source": "card:0", "target": "card:2"}, {"source": "card:1", "target": "card:2"}, {"source": "card:2", "target": "$end"}]}"""
+PLACE_DESCRIPTION += " " + TOPOLOGY_GUIDE
+
 START_DESCRIPTION = (
     "Start this chat's Flow (edit mode only): the draft is confirmed as a new revision and the run starts in full "
     "mode (an idle or paused run goes on with the latest revision). Work cards that still have an empty instruction "
@@ -91,7 +109,7 @@ PLACE_SCHEMA = {
     "properties": {
         "flow_id": {"type": "string", "minLength": 1, "description": "This chat's Flow (its group id); defaults to it."},
         "cards": {
-            "type": "array", "minItems": 1, "maxItems": service.MAX_CARDS,
+            "type": "array", "minItems": 0, "maxItems": service.MAX_CARDS,
             "items": {"type": "object", "properties": {
                 "label": {"type": "string", "minLength": 1, "description": "Card title shown on the canvas."},
                 "doc_type": {"type": "string", "enum": list(service.WORK_TYPES),
@@ -103,6 +121,14 @@ PLACE_SCHEMA = {
         },
         "after": {"type": "string", "minLength": 1, "description": "node_key of the card the chain follows."},
         "gate": {"type": "boolean", "description": "End in a new confirm card when needed (default true)."},
+        "join": {"type": "string", "minLength": 1,
+                 "description": "With links: existing unstarted end node ($end); no new confirm."},
+        "links": {"type": "array", "minItems": 1, "maxItems": 30,
+                  "description": "Explicit edges; references card:0..4, $after, $end, existing source node_keys.",
+                  "items": {"type": "object", "required": ["source", "target"],
+                            "additionalProperties": False,
+                            "properties": {"source": {"type": "string", "minLength": 1},
+                                           "target": {"type": "string", "minLength": 1}}}},
     },
     "required": ["cards"],
     "additionalProperties": False,
@@ -179,7 +205,7 @@ OPTIONS_SCHEMA = {
 
 PROMPT_HINT = ("Card run (control tower): `get_ai_options`, `place_flow_cards` with each card's `roles`, then write "
                "each card's instruction with the card "
-               "document edit tool, then `start_flow_run`. " + GUIDE + " The AI of each role of a card you placed: "
+               "document edit tool, then `start_flow_run`. " + GUIDE + " " + TOPOLOGY_GUIDE + " The AI of each role of a card you placed: "
                "`get_card_roles` / `set_card_roles` (edit mode, only cards this chat placed); the same two read and change "
                "its review count, restart and time limit (`settings`).")
 
@@ -279,7 +305,8 @@ def cli_mention(api_base, raw_token):
         "them). Another user's or a disabled AI: 422 ai_not_selectable and nothing is placed.",
         "`settings` per card: review_count (0 none, -1 until it passes, 1..max), restart and time_limit (minutes;",
         "T only). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
-        "Places up to 5 work cards (T, or TS for a test) in one chain after a card and ends it in a confirm card",
+        TOPOLOGY_GUIDE,
+        "Without links: places up to 5 work cards (T, or TS) in one chain and ends it in a confirm card",
         "(the anchor's unstarted confirm card, else a new one). Without `after` the server picks the only",
         "work card -> unstarted confirm card edge, else the only tail; otherwise 409 chat_cards_anchor_ambiguous",
         "lists candidates. A Flow with no card yet starts the chain with a start card of its bug/requirement",

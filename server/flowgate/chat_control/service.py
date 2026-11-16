@@ -51,7 +51,7 @@ from modules.flow_gate.graph_workflow.services.node_title_names import PALETTE_K
 from modules.flow_gate.graph_workflow.services.root_conversion_cards import ROOT_NAMES, ROOT_PALETTE_IDS
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
 
-from . import card_role_store, placement, placement_roles, run_settings
+from . import card_role_store, placement, placement_roles, run_settings, topology
 
 _log = logging.getLogger(__name__)
 WORK_TYPES = ("T", "TS")
@@ -86,11 +86,11 @@ def _locale(locale: Optional[str]) -> str:
 def parse_place(body: Any, locale: Optional[str]) -> tuple[list[dict], Optional[str], bool]:
     if not isinstance(body, dict):
         raise _invalid("body", "not_an_object")
-    unknown = set(body) - {"cards", "after", "gate"}
+    unknown = set(body) - {"cards", "after", "gate", "links", "join"}
     if unknown:
         raise _invalid(sorted(unknown)[0], "unknown_field")
     raw = body.get("cards")
-    if not isinstance(raw, list) or not raw:
+    if not isinstance(raw, list) or (not raw and "links" not in body):
         raise _invalid("cards", "required_non_empty_list")
     if len(raw) > MAX_CARDS:
         raise _invalid("cards", f"at_most_{MAX_CARDS}")
@@ -121,6 +121,7 @@ def parse_place(body: Any, locale: Optional[str]) -> tuple[list[dict], Optional[
     gate = body.get("gate", True)
     if not isinstance(gate, bool):
         raise _invalid("gate", "not_a_boolean")
+    topology.parse(body, len(cards))
     return cards, after, gate
 
 
@@ -225,20 +226,26 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, ow
     ``owner`` (``authz.owner``): the placing chat, recorded for each new work card (flowgate.v02gui.0028)."""
     flow_id = group["group_id"]
     cards, after, want_gate = parse_place(body, locale)
+    links = topology.parse(body, len(cards))
     placement_roles.precheck(cards, user_id)
     _precheck_settings(cards)
     # flowgate.v02gui.0019: the Flow's start card first, whatever the draft already holds (the one rule of
     # ``root_start``, also run when the root is registered); no edge is made to or from it here.
-    started = with_flow_guard(flow_id, lambda: root_start.ensure_start_card(group, user_id, _locale(locale)))
+    # Explicit topology must not create a root before a rejected request.
+    started = (with_flow_guard(flow_id, lambda: root_start.ensure_start_card(group, user_id, _locale(locale)))
+               if links is None else None)
     record, version = _definition(flow_id)
     rows = _run_rows(flow_id)
     protected = {k for k, r in rows.items() if r.get("status") in PROTECTED}
     # A definition still without any card: no single live root to start from (none, or ambiguous: 409).
     root = _root(flow_id) if not record.get("nodes") else None
     try:
-        chosen = placement.plan(record.get("nodes", []), record.get("edges", []), protected, after, want_gate,
-                                root_type=root["doc_type"] if root else None,
-                                root_keys=[doc_key(root["doc_id"])] if root else ())
+        if links is not None:
+            chosen = topology.choose(record, protected, after, want_gate, body.get("join"), root)
+        else:
+            chosen = placement.plan(record.get("nodes", []), record.get("edges", []), protected, after, want_gate,
+                                    root_type=root["doc_type"] if root else None,
+                                    root_keys=[doc_key(root["doc_id"])] if root else ())
     except placement.PlacementError as exc:
         status = 404 if exc.code == "chat_cards_anchor_unknown" else 409
         raise GraphApiError(status, exc.code, {"flow_id": flow_id, **exc.params}) from exc
@@ -246,8 +253,11 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, ow
     if chosen.new_root is not None:
         root_card = {"label": ROOT_NAMES[chosen.new_root][_locale(locale)],
                      "palette_item_id": ROOT_PALETTE_IDS[chosen.new_root]}
-    request = dr.parse_draft(placement.draft_body(record, version, chosen, cards, GATE_LABELS[_locale(locale)],
-                                                  root_card))
+    if links is None:
+        draft = placement.draft_body(record, version, chosen, cards, GATE_LABELS[_locale(locale)], root_card)
+    else:
+        draft = topology.draft_body(record, version, chosen, cards, GATE_LABELS[_locale(locale)], root_card, links)
+    request = dr.parse_draft(draft)
     if request.errors or request.draft_version is None:
         raise GraphApiError(422, "chat_cards_draft_invalid", {"flow_id": flow_id,
                                                               "errors": dr.sort_errors(request.errors)})
@@ -277,7 +287,8 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, ow
     _record_owner(flow_id, [card["node_key"] for card in placed], owner)
     defaults = placement_roles.defaults_used({c["node_key"]: c["roles"] for c in placed})
     gate = None
-    if chosen.before is not None:
+    if chosen.before is not None and any(n["node_key"] == chosen.before and placement.is_gate(n)
+                                         for n in record.get("nodes", [])):
         gate = {"node_key": chosen.before, "created": False}
     elif chosen.new_gate:
         gate = {"node_key": key_map[placement.CLIENT_GATE], "created": True}
@@ -292,6 +303,7 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, ow
     return {"flow_id": flow_id, "draft_version": saved.get("draft_version"),
             "after": key_map.get(chosen.anchor, chosen.anchor), "root": start_card,
             "cards": placed, "gate": gate, "defaults_used": defaults,
+            **({"join": body.get("join")} if links is not None else {}),
             "next": NEXT_AFTER_PLACE + (" " + NEXT_DEFAULTS_USED if defaults else "")}
 
 
