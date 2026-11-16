@@ -15,7 +15,10 @@
           {{ isUser ? t('gui.conversation.message.user') : isSystem ? t('gui.conversation.message.system') : t('gui.conversation.message.ai') }}
         </span>
         <!-- 0293 R0001: the model name is a badge only; identity is participant_key. -->
-        <span v-if="!isUser && !isSystem && turn.displayName" class="tl-provider" data-test="tl-provider" :title="turn.displayName">{{ turn.displayName }}</span>
+        <!-- flowgate.v02gui.0031 B: the slot takes only the room the line has left and adds nothing to the bubble's width. -->
+        <span v-if="!isUser && !isSystem && turn.displayName" class="tl-provider-slot">
+          <span class="tl-provider" data-test="tl-provider" :title="turn.displayName">{{ turn.displayName }}</span>
+        </span>
         <span v-if="pending" class="tl-time">{{ t('gui.conversation.message.sending') }}</span>
         <span v-else-if="turn.createdAt" class="tl-time" :title="turn.createdAt">{{ formatTimelineTime(turn.createdAt) }}</span>
         <!-- flowgate.v02.0157: the message as written (Markdown source, not the rendered page), on both sides. -->
@@ -269,11 +272,29 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
   color: var(--fg2-muted);
 }
 
+/* flowgate.v02gui.0031 B: no fixed cap -- the name is shown in full while the line has room, and only when it does
+   not (narrow panel, zoom) does the badge shrink (flex-shrink 1, min-width 0) and end in an ellipsis. The title
+   keeps the full name.
+   The name never widens the bubble: the slot has no size of its own (flex-basis 0, width 0), so the bubble is as wide
+   as its text and the speaker / time / copy / menu need, and the slot only grows into whatever the line has left. Its
+   margin-right (-5px) cancels one .tl-meta gap, so a bubble with a name is as wide as one without; the badge's own
+   margin-right (5px) puts the gap back when the slot has room. */
+.tl-provider-slot {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  margin-right: -5px;
+  display: flex;
+  overflow: hidden;
+}
+
 .tl-provider {
   min-width: 0;
-  max-width: 110px;
+  flex: 0 1 auto;
+  margin-right: 5px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 1px 5px;
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-control-radius-pill);
