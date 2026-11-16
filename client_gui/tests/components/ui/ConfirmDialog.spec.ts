@@ -103,4 +103,21 @@ describe('components/ui/ConfirmDialog (T0006)', () => {
     expect(surface.getAttribute('aria-describedby')).toBe('external-desc')
     wrapper.unmount()
   })
+
+  it('v02gui.0029: leads with a badge above the title — the caller\'s icon, else ⚠ for danger and ? otherwise', () => {
+    let wrapper = mountConfirm({ danger: true })
+    const badge = () => document.querySelector<HTMLElement>('[data-test="ui-confirm-badge"]')!
+    expect(badge().dataset.icon).toBe('alert')
+    expect(document.querySelector('.ui-confirm-header')!.classList.contains('is-danger')).toBe(true)
+    expect(document.querySelector('.ui-modal-surface')!.classList.contains('ui-confirm-surface')).toBe(true)
+    wrapper.unmount()
+    wrapper = mountConfirm({ danger: true, icon: 'trash' })
+    expect(badge().dataset.icon).toBe('trash')
+    wrapper.unmount()
+    wrapper = mountConfirm()
+    expect(badge().dataset.icon).toBe('help-circle')
+    expect(document.querySelector('.ui-confirm-header')!.classList.contains('is-danger')).toBe(false)
+    expect(badge().getAttribute('aria-hidden')).toBe('true')
+    wrapper.unmount()
+  })
 })

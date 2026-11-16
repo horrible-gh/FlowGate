@@ -27,7 +27,10 @@
        flowgate.v02.0113 T#4 (0030-M §1, 0029-TR 시안, D 개정 §6.3): the AI tab of a card with AI roles shows four rows —
        지시 AI · 실행 AI · 검수 AI (each its own select with 사용하지 않음; none chosen shows 미설정) and 검수 횟수 (안 함 · 1회 ·
        2회 · 3회) — then [고급 ▾], which opens 실행 설정 (재시작 · 실행 제한 시간 · 검수 기준) and 지시서 검수 (지시서 검수 AI ·
-       지시서 검수 횟수). A WP card has no 지시 AI; a card that omits its instruction keeps its 지시 AI and 지시서 검수 off with
+       지시서 검수 횟수). flowgate.v02gui.0029 (0003-CH C안): the fold is gone — each AI row has a ⚙ on its right that opens
+       that AI's own advanced settings in a small window under the row (지시 AI: 지시서 검수 AI · 횟수, 실행 AI: 재시작 ·
+       실행 제한 시간, 검수 AI: 검수 기준 · 검수 횟수 소진 시); a click outside or Esc closes it, one at a time, closed when a
+       card opens. A ⚙ whose settings differ from their defaults carries a yellow dot. A WP card has no 지시 AI; a card that omits its instruction keeps its 지시 AI and 지시서 검수 off with
        their values kept; 검수 횟수 and 검수 기준 are off while the review AI is 사용하지 않음. No notice, warning or status
        line is drawn. Values are saved through the same card settings change as before. -->
   <div class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
@@ -89,11 +92,52 @@
         </InspectorControlRow>
       </InspectorBlock>
       <template v-if="panel === 'ai' && card.node.value?.aiRoles">
-        <InspectorBlock v-for="item in roleRows" :key="item.role" :locked="locked" :data-role="item.role" :data-held="item.held ? 'true' : undefined">
-          <InspectorControlRow :label="roleLabel(item.role)">
-            <AiRoleSelect plain :model-value="item.selected" :providers="card.node.value.aiRoles.options" :label="roleLabel(item.role)" :display-name="item.displayName" :state="item.state" :cause="item.cause" :disabled="item.held || roleDisabled(item.field)" @update:model-value="value => changeRole(item.field, value)" />
-            <InspectorFailureIcon v-if="failureOf(item.field)" :name="t(k('failed'))" :reason="failureOf(item.field)!" />
-          </InspectorControlRow>
+        <InspectorBlock v-for="item in roleRows" :key="item.role" :locked="locked" class="inspector-ai-role" :class="{ 'is-gear-open': gearOpen === item.role }" :data-role="item.role" :data-held="item.held ? 'true' : undefined">
+          <div class="inspector-ai-role-line">
+            <InspectorControlRow :label="roleLabel(item.role)">
+              <AiRoleSelect plain :model-value="item.selected" :providers="card.node.value.aiRoles.options" :label="roleLabel(item.role)" :display-name="item.displayName" :state="item.state" :cause="item.cause" :disabled="item.held || roleDisabled(item.field)" @update:model-value="value => changeRole(item.field, value)" />
+              <InspectorFailureIcon v-if="failureOf(item.field)" :name="t(k('failed'))" :reason="failureOf(item.field)!" />
+              <button
+                v-if="gearFields(item.role).length"
+                type="button"
+                class="inspector-ai-gear"
+                :class="{ 'is-open': gearOpen === item.role, 'is-modified': gearModified(item.role) }"
+                :aria-label="t('gui.inspector.ai.advanced_open', { role: roleLabel(item.role) })"
+                :aria-expanded="gearOpen === item.role ? 'true' : 'false'"
+                :title="gearTitle(item.role)"
+                :data-modified="gearModified(item.role) ? 'true' : undefined"
+                :data-gear="item.role"
+                data-test="inspector-ai-gear"
+                @click="toggleGear(item.role)"
+              ><LineIcon name="settings" /></button>
+            </InspectorControlRow>
+            <div
+              v-if="gearOpen === item.role"
+              class="inspector-ai-pop"
+              role="dialog"
+              :aria-label="t('gui.inspector.ai.advanced_title', { role: roleLabel(item.role) })"
+              :data-for="item.role"
+              data-test="inspector-ai-advanced"
+            >
+              <div class="inspector-ai-pop-title">{{ t('gui.inspector.ai.advanced_title', { role: roleLabel(item.role) }) }}</div>
+              <InspectorControlRow v-for="field in gearFields(item.role)" :key="field" :label="advancedLabel(field)" :hint="hintOf(field)">
+                <Select
+                  :class="{ 'is-modified': fieldModified(field) }"
+                  :model-value="views[field].value"
+                  :options="optionsOf(field)"
+                  :disabled="locked || (isInstructionReview(field) && instructionHeld) || views[field].disabled"
+                  :aria-label="advancedLabel(field)"
+                  :data-test="isInstructionReview(field) ? undefined : `inspector-run-settings-${field}`"
+                  :data-field="field"
+                  :data-modified="fieldModified(field) ? 'true' : undefined"
+                  @update:model-value="(value: string) => onAiChange(field, value)"
+                />
+                <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
+              </InspectorControlRow>
+              <p v-if="gearFields(item.role).includes('after_review_exhausted')" class="inspector-exhaustion-hint" data-test="exhaustion-hint">{{ t(k(`after_review_exhausted.${views.after_review_exhausted.value === 'stop' ? 'stop' : 'continue'}_hint`)) }}</p>
+              <p v-if="gearFields(item.role).some(isInstructionReview)" class="inspector-exhaustion-hint">{{ t(k('after_review_exhausted.instruction_hint')) }}</p>
+            </div>
+          </div>
         </InspectorBlock>
         <InspectorBlock v-if="card.node.value.fields.review_count" :locked="locked" data-test="ai-review-count">
           <InspectorControlRow :label="t(runKey('review_count'))" :hint="hintOf('review_count')">
@@ -108,43 +152,6 @@
             <InspectorFailureIcon v-if="failureOf('review_count')" :name="t(k('failed'))" :reason="failureOf('review_count')!" data-field="review_count" />
           </InspectorControlRow>
         </InspectorBlock>
-        <template v-if="advancedRun.length || instructionReviewFields.length">
-          <InspectorBlock :locked="locked" data-test="inspector-ai-advanced">
-            <template v-if="advancedRun.length">
-              <div class="inspector-ai-advanced-title" data-test="inspector-ai-advanced-run">{{ t(runKey('title')) }}</div>
-              <div class="inspector-ai-advanced-grid">
-                <InspectorControlRow v-for="field in advancedRun" :key="field" :label="fieldLabel(field)" :hint="hintOf(field)">
-                  <Select
-                    :model-value="views[field].value"
-                    :options="optionsOf(field)"
-                    :disabled="locked || views[field].disabled"
-                    :aria-label="fieldLabel(field)"
-                    :data-test="`inspector-run-settings-${field}`"
-                    @update:model-value="(value: string) => onAiChange(field, value)"
-                  />
-                  <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" :data-field="field" />
-                </InspectorControlRow>
-              </div>
-              <p v-if="advancedRun.includes('after_review_exhausted')" class="inspector-exhaustion-hint" data-test="exhaustion-hint">{{ t(k(`after_review_exhausted.${views.after_review_exhausted.value === 'stop' ? 'stop' : 'continue'}_hint`)) }}</p>
-            </template>
-            <template v-if="instructionReviewFields.length">
-              <hr v-if="advancedRun.length" class="inspector-ai-advanced-split" />
-              <div class="inspector-ai-advanced-title" data-test="instruction-review">{{ t('gui.inspector.ai.instruction_review') }}</div>
-              <InspectorControlRow v-for="field in instructionReviewFields" :key="field" :label="t(`gui.inspector.ai.${field}`)" :hint="hintOf(field)">
-                <Select
-                  :model-value="views[field].value"
-                  :options="optionsOf(field)"
-                  :disabled="locked || instructionHeld || views[field].disabled"
-                  :aria-label="t(`gui.inspector.ai.${field}`)"
-                  :data-field="field"
-                  @update:model-value="(value: string) => onAiChange(field, value)"
-                />
-                <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
-              </InspectorControlRow>
-              <p class="inspector-exhaustion-hint">{{ t(k('after_review_exhausted.instruction_hint')) }}</p>
-            </template>
-          </InspectorBlock>
-        </template>
       </template>
       <InspectorRunSettings v-if="(panel === 'ai' && legacyAiShown) || source === 'sequence'"
         :layout="kind === 'test' ? 'scenario' : 'run'"
@@ -173,11 +180,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTestCard } from '../testSpec/useTestCard'
 import Select from '../../../../../components/ui/Select.vue'
 import Toggle from '../../../../../components/ui/Toggle.vue'
+import LineIcon from '../../../../../components/ui/LineIcon.vue'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
 import InspectorControlRow from '../../parts/InspectorControlRow.vue'
 import InspectorFailureIcon from '../../parts/InspectorFailureIcon.vue'
@@ -207,7 +215,7 @@ import { settingsRowPhase, type SettingsField, type SettingsOption } from './set
 import { useSharedCardSettings } from './useCardSettings'
 import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
 import type { AiRoleValue } from '@/features/document'
-import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_REVIEW_COUNT_HIDDEN, cardRoleRows } from './cardRolesModel'
+import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, AI_REVIEW_COUNT_HIDDEN, cardRoleRows } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
 const props = withDefaults(defineProps<{ target: InspectorTarget; panel?: 'settings' | 'ai' }>(), { panel: 'settings' })
@@ -260,8 +268,56 @@ const instructionHeld = computed(() => cardSettingsValue(card.node.value, card.p
 function aiFieldOf(field: CardSettingsField): boolean {
   return (AI_FIELDS[kind.value] as readonly string[]).includes(field) && !!card.node.value?.fields[field]
 }
-/** flowgate.v02.0113 T#4: the [고급 ▾] 실행 설정 items of the card (a 테스트 card has none). */
-const advancedRun = computed(() => AI_ADVANCED_FIELDS.run.filter(field => aiFieldOf(field)))
+type GearRole = keyof typeof AI_GEAR_FIELDS
+/**
+ * flowgate.v02gui.0029 (0003-CH C안): the advanced items each AI row's ⚙ opens, for the fields the card has (a 테스트
+ * card has none, so no ⚙). An item whose AI row the server does not give stays reachable under the 실행 AI's ⚙ (else
+ * the last row's), so no setting drops off the tab.
+ */
+const gearGroups = computed(() => {
+  const rows = roleRows.value.map(row => row.role)
+  const own = (role: GearRole) => (AI_GEAR_FIELDS[role] as readonly CardSettingsField[]).filter(field => aiFieldOf(field))
+  const out: Partial<Record<GearRole, CardSettingsField[]>> = {}
+  for (const role of rows) out[role] = own(role)
+  const orphans = (Object.keys(AI_GEAR_FIELDS) as GearRole[]).filter(role => !rows.includes(role)).flatMap(own)
+  const host = rows.includes('execution') ? 'execution' : rows[rows.length - 1]
+  if (orphans.length && host) out[host] = [...(out[host] ?? []), ...orphans]
+  return out
+})
+function gearFields(role: string): readonly CardSettingsField[] {
+  return gearGroups.value[role as GearRole] ?? []
+}
+const isInstructionReview = (field: CardSettingsField) => (AI_ADVANCED_FIELDS.instructionReview as readonly string[]).includes(field)
+function advancedLabel(field: CardSettingsField): string {
+  return isInstructionReview(field) ? t(`gui.inspector.ai.${field}`) : fieldLabel(field)
+}
+/** A field whose shown value (a sent one included) is not the server's default for it. */
+function fieldModified(field: CardSettingsField): boolean {
+  const item = card.node.value?.fields[field]
+  return !!item && cardSettingsText(cardSettingsValue(card.node.value, card.pending.value, field)) !== cardSettingsText(item.default)
+}
+const gearModified = (role: string) => gearFields(role).some(fieldModified)
+function gearTitle(role: string): string {
+  const name = t('gui.inspector.ai.advanced_open', { role: roleLabel(role) })
+  return gearModified(role) ? `${name} · ${t('gui.inspector.ai.advanced_changed')}` : name
+}
+/** The one ⚙ window open now (its AI role), or null; a card opens with none. */
+const gearOpen = ref<string | null>(null)
+function toggleGear(role: string) {
+  gearOpen.value = gearOpen.value === role ? null : role
+}
+watch(() => [props.target.nodeId, props.panel], () => { gearOpen.value = null })
+function onOutside(event: Event) {
+  if (gearOpen.value === null) return
+  const at = event.target as Element | null
+  if (at?.closest?.('.inspector-ai-pop, .inspector-ai-gear')) return
+  gearOpen.value = null
+}
+function onKey(event: KeyboardEvent) {
+  if (event.key === 'Escape') gearOpen.value = null
+}
+onMounted(() => { document.addEventListener('pointerdown', onOutside, true); document.addEventListener('keydown', onKey) })
+onBeforeUnmount(() => { document.removeEventListener('pointerdown', onOutside, true); document.removeEventListener('keydown', onKey) })
 const runKey = (key: string) => `gui.designer.inspector.run_settings.${key}`
 const sequence = useSettings(() => (source.value === 'sequence' ? props.target : null))
 
@@ -537,46 +593,96 @@ function reload() {
   font-size: 12px;
 }
 
-/* flowgate.v02.0113 T#4 (0029-TR 시안): the AI tab — selects as tall as the run settings', the [고급 ▾] button on its
-   own line at the right, and the fold's two titled sections (실행 설정 in two columns, then 지시서 검수). */
+/* flowgate.v02.0113 T#4 (0029-TR 시안): the AI tab — selects as tall as the run settings'. */
 .inspector-settings :deep(.ui-select) {
   height: 32px;
   font-size: 12px;
 }
 
-.inspector-ai-advanced-line {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
+/* flowgate.v02gui.0029 (0003-CH C안): each AI row's ⚙ on its right, and that AI's advanced settings in a small window
+   under the row. The block of an open ⚙ is lifted over the blocks below it (each block is its own stacking context);
+   the ⚙ and its window still take a click on a locked card (its values are seen, its selects stay off). */
+.inspector-ai-role.is-gear-open {
+  position: relative;
+  z-index: 5;
 }
 
-.inspector-ai-advanced-line + .inspector-block {
-  margin-top: 8px;
+.inspector-ai-role-line {
+  position: relative;
 }
 
-.inspector-ai-advanced-title {
+.inspector-ai-role-line > :deep(.inspector-control-row) {
+  margin: 0;
+}
+
+.inspector-ai-gear {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #2c4b64;
+  border-radius: 6px;
+  background: #0d1924;
+  color: #94a8bd;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.inspector-ai-gear :deep(svg) {
+  width: 15px;
+  height: 15px;
+}
+
+.inspector-ai-gear:hover,
+.inspector-ai-gear:focus-visible {
+  border-color: #4aa3ff;
+  color: #dce7f2;
+  outline: none;
+}
+
+.inspector-ai-gear.is-open {
+  border-color: #4aa3ff;
+  background: #1c3247;
+  color: #fff;
+}
+
+.inspector-ai-gear.is-modified::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c9a14a;
+}
+
+.inspector-ai-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  box-sizing: border-box;
+  width: min(300px, 100%);
+  padding: 10px 12px;
+  border: 1px solid #4aa3ff;
+  border-radius: 8px;
+  background: #16293c;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 56%);
+  pointer-events: auto;
+}
+
+.inspector-ai-pop-title {
   margin: 0 0 8px;
   color: #dce7f2;
   font-size: 12px;
   font-weight: 750;
 }
 
-.inspector-ai-advanced-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 10px;
-}
-
-.inspector-ai-advanced-split {
-  height: 1px;
-  margin: 12px 0;
-  border: 0;
-  background: #2c4b64;
-}
-
-@container (max-width: 480px) {
-  .inspector-ai-advanced-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.inspector-ai-pop :deep(.ui-select.is-modified) {
+  border-color: #c9a14a;
 }
 </style>

@@ -26,7 +26,10 @@ const ko = {
   },
   dispose: {
     title: '플로우 삭제', submit: '삭제', reason: '삭제 사유', reasonRequired: '사유를 입력해야 삭제할 수 있습니다.',
-    note: '목록에서 제거됩니다. 기록은 유지됩니다.',
+    // v02gui.0029 (0003-CH): the confirm's sentence, its two points, the input's placeholder and the reason chips.
+    lead: '이 플로우를 목록에서 제거합니다.', placeholder: '왜 삭제하는지 적어 주세요. 기록에 남습니다.',
+    points: { kept: '기록은 그대로 남습니다.', hidden: '플로우 목록에서는 더 이상 보이지 않습니다.' },
+    chips: { duplicate: '중복', test: '테스트용', unused: '더 이상 안 씀', mistake: '잘못 만듦' },
   },
   archive: {
     title: '그룹 아카이브', submit: '아카이브', note: '기록은 보존하고 기본 목록에서 숨깁니다.',
@@ -48,11 +51,11 @@ const ko = {
     points: { archiveAlt: '기록을 남기고 숨기기만 하려면 아카이브를 쓰세요.' },
   },
   create: {
-    folderTitle: '새 폴더', fileTitle: '새 파일', name: '이름', submit: '만들기',
+    folderTitle: '새 폴더', fileTitle: '새 파일', name: '이름', submit: '만들기', where: '만들 위치',
     empty: '이름을 입력하세요.', chars: '이름에 / \\ : * ? " < > {\'|\'} 는 쓸 수 없습니다.', dots: '. 이나 .. 은 이름으로 쓸 수 없습니다.',
   },
   upload: {
-    title: '업로드', pick: '파일 선택', none: '선택한 파일이 없습니다.', submit: '업로드', checking: '같은 이름의 파일을 확인하는 중…',
+    title: '업로드', where: '올릴 위치', pick: '파일 선택', none: '선택한 파일이 없습니다.', submit: '업로드', checking: '같은 이름의 파일을 확인하는 중…',
     overwriteTitle: '이미 있는 것으로 확인된 파일', noKnown: '탐색기에 보이는 파일 중 같은 이름은 없습니다.',
     overwriteNote: '이 폴더에 같은 이름의 파일이 있으면 덮어씁니다. 탐색기에 보이지 않는 파일(.gitignore로 제외된 파일, 읽기 권한이 없는 파일 등)도 덮어쓸 수 있습니다.',
     overwrite: '같은 이름의 파일이 있으면 덮어써도 됩니다', checkFailed: '이 폴더의 기존 파일을 확인하지 못했습니다. 선택한 파일은 모두 덮어쓸 수 있는 것으로 봅니다.',
@@ -63,7 +66,8 @@ const ko = {
     failed: '다운로드하지 못했습니다', done: '다운로드했습니다: {name}',
   },
   remove: {
-    title: '삭제', submit: '삭제', file: '이 파일 하나를 삭제합니다.', folder: '이 폴더와 그 안의 모든 파일·폴더를 삭제합니다.',
+    fileTitle: '파일 삭제', folderTitle: '폴더 삭제', submit: '삭제', folderSubmit: '폴더 삭제',
+    file: '이 파일 하나를 삭제합니다.', folderLead: '이 폴더를 삭제합니다.', contents: '안에 있는 모든 파일·폴더가 함께 지워집니다.',
     irreversible: '이 작업은 되돌릴 수 없습니다.',
   },
   diff: {
@@ -109,7 +113,9 @@ const en: Messages = {
   },
   dispose: {
     title: 'Delete flow', submit: 'Delete', reason: 'Reason', reasonRequired: 'A reason is required to delete.',
-    note: 'Removed from the list. Records are kept.',
+    lead: 'This flow is removed from the list.', placeholder: 'Why is it deleted? The reason is kept in the records.',
+    points: { kept: 'Its records stay as they are.', hidden: 'It no longer shows in the flow list.' },
+    chips: { duplicate: 'Duplicate', test: 'For testing', unused: 'No longer used', mistake: 'Made by mistake' },
   },
   archive: {
     title: 'Archive group', submit: 'Archive', note: 'Records are kept; the group is hidden from the default list.',
@@ -130,11 +136,11 @@ const en: Messages = {
     points: { archiveAlt: 'To keep the records and only hide it, use Archive instead.' },
   },
   create: {
-    folderTitle: 'New folder', fileTitle: 'New file', name: 'Name', submit: 'Create',
+    folderTitle: 'New folder', fileTitle: 'New file', name: 'Name', submit: 'Create', where: 'Created here',
     empty: 'Enter a name.', chars: 'A name cannot contain / \\ : * ? " < > {\'|\'}.', dots: '. and .. cannot be names.',
   },
   upload: {
-    title: 'Upload', pick: 'Choose files', none: 'No file chosen.', submit: 'Upload', checking: 'Checking for files with the same name…',
+    title: 'Upload', where: 'Uploaded here', pick: 'Choose files', none: 'No file chosen.', submit: 'Upload', checking: 'Checking for files with the same name…',
     overwriteTitle: 'Files known to exist', noKnown: 'No file shown in the explorer has the same name.',
     overwriteNote: 'A file with the same name in this folder is overwritten, even one the explorer does not show (ignored by .gitignore, not readable, and so on).',
     overwrite: 'Files with the same name may be overwritten', checkFailed: 'Could not read the files in this folder. Any chosen file may overwrite one.',
@@ -145,7 +151,8 @@ const en: Messages = {
     failed: 'Download failed', done: 'Downloaded: {name}',
   },
   remove: {
-    title: 'Delete', submit: 'Delete', file: 'This one file is deleted.', folder: 'This folder and every file and folder in it are deleted.',
+    fileTitle: 'Delete file', folderTitle: 'Delete folder', submit: 'Delete', folderSubmit: 'Delete folder',
+    file: 'This one file is deleted.', folderLead: 'This folder is deleted.', contents: 'Every file and folder in it is deleted with it.',
     irreversible: 'This cannot be undone.',
   },
   diff: {
@@ -189,7 +196,9 @@ const ja: Messages = {
   },
   dispose: {
     title: 'フローを削除', submit: '削除', reason: '削除理由', reasonRequired: '理由を入力すると削除できます。',
-    note: '一覧から削除されます。記録は保持されます。',
+    lead: 'このフローを一覧から削除します。', placeholder: '削除する理由を書いてください。記録に残ります。',
+    points: { kept: '記録はそのまま残ります。', hidden: 'フロー一覧には表示されなくなります。' },
+    chips: { duplicate: '重複', test: 'テスト用', unused: 'もう使わない', mistake: '誤って作成' },
   },
   archive: {
     title: 'グループをアーカイブ', submit: 'アーカイブ', note: '記録は保持したまま、既定の一覧から非表示にします。',
@@ -210,11 +219,11 @@ const ja: Messages = {
     points: { archiveAlt: '記録を残して非表示にするだけなら、アーカイブを使ってください。' },
   },
   create: {
-    folderTitle: '新規フォルダー', fileTitle: '新規ファイル', name: '名前', submit: '作成',
+    folderTitle: '新規フォルダー', fileTitle: '新規ファイル', name: '名前', submit: '作成', where: '作成先',
     empty: '名前を入力してください。', chars: '名前に / \\ : * ? " < > {\'|\'} は使えません。', dots: '. と .. は名前に使えません。',
   },
   upload: {
-    title: 'アップロード', pick: 'ファイルを選択', none: '選択したファイルはありません。', submit: 'アップロード', checking: '同じ名前のファイルを確認中…',
+    title: 'アップロード', where: 'アップロード先', pick: 'ファイルを選択', none: '選択したファイルはありません。', submit: 'アップロード', checking: '同じ名前のファイルを確認中…',
     overwriteTitle: 'あることを確認したファイル', noKnown: 'エクスプローラーに表示されるファイルに同じ名前はありません。',
     overwriteNote: 'このフォルダーに同じ名前のファイルがあれば上書きします。エクスプローラーに表示されないファイル(.gitignoreで除外されたファイル、読み取り権限のないファイルなど)も上書きされることがあります。',
     overwrite: '同じ名前のファイルがあれば上書きしてかまいません', checkFailed: 'このフォルダーの既存ファイルを確認できませんでした。選択したファイルはすべて上書きする可能性があります。',
@@ -225,7 +234,8 @@ const ja: Messages = {
     failed: 'ダウンロードできませんでした', done: 'ダウンロードしました: {name}',
   },
   remove: {
-    title: '削除', submit: '削除', file: 'このファイル1つを削除します。', folder: 'このフォルダーと中のすべてのファイル・フォルダーを削除します。',
+    fileTitle: 'ファイルを削除', folderTitle: 'フォルダーを削除', submit: '削除', folderSubmit: 'フォルダーを削除',
+    file: 'このファイル1つを削除します。', folderLead: 'このフォルダーを削除します。', contents: '中のすべてのファイル・フォルダーも一緒に削除されます。',
     irreversible: 'この操作は元に戻せません。',
   },
   diff: {

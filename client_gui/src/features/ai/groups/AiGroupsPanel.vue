@@ -290,6 +290,7 @@
       :title="t('gui.ai.groups.delete_confirm_title')"
       :message="t('gui.ai.groups.delete_confirm_msg', { name: deleting?.name })"
       danger
+      icon="trash"
       :confirm-label="t('gui.common.delete')"
       :cancel-label="t('gui.common.cancel')"
       @confirm="onDeleteGroup"
@@ -300,6 +301,7 @@
       :title="t('gui.ai.groups.role_delete_title')"
       :message="t('gui.ai.groups.role_delete_msg', { name: deletingRole?.name })"
       danger
+      icon="trash"
       :confirm-label="t('gui.common.delete')"
       :cancel-label="t('gui.common.cancel')"
       @confirm="onDeleteRole"

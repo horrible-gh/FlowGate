@@ -182,6 +182,7 @@
     <ConfirmDialog
       :open="confirmDelete"
       danger
+      icon="trash"
       :title="t('gui.settings.workspaces.delete_title', { name: menuFor?.name ?? '' })"
       :message="t('gui.settings.workspaces.delete_message')"
       :confirm-label="t('gui.common.delete')"
