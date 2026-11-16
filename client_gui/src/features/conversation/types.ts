@@ -16,6 +16,14 @@ export interface ChatSummary {
   updatedAt: string | null
 }
 
+/**
+ * flowgate.v02test.0030: how a chat's AI came to be the selected one — sent with the AI call and kept on the
+ * run (`ai_invoke_runs.client_provider_origin`), so a run on an unexpected AI can be traced to the path that chose it.
+ * 'user_pick' = picked on this screen, 'stored' = the chat's stored pick, 'last_answered' = the AI that last answered
+ * in the chat (no stored pick), 'default_fallback' = my default AI (nothing else usable, or a new chat untouched).
+ */
+export type ProviderOrigin = 'user_pick' | 'stored' | 'last_answered' | 'default_fallback'
+
 /** Where the conversations live: the Designer's active Flow is a v0.1 group. */
 export interface ConversationScope {
   projectId: string

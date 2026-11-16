@@ -153,9 +153,11 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     // flowgate.v02.0142 T#1: the AI chosen now is the one of this first message, whatever the picker shows once the
     // chat has been created.
     const providerId = state.selectedProviderId
+    // flowgate.v02test.0030: and how it was chosen, kept with it for the AI call's record.
+    const providerOrigin = state.providerOrigin
     // flowgate.v02gui.0028: the bubble shows now (전송 중), before the create; a held try of this text keeps its intent.
     const held = session.holdFirstSend({ intentId: origin.owner.intentId, createIntentId: draftCreateIntent(origin.owner),
-      body: text, providerId, sendAction: state.settings.sendAction })
+      body: text, providerId, providerOrigin, sendAction: state.settings.sendAction })
     origin.createIntentId = held?.createIntentId ?? draftCreateIntent(origin.owner)
     const heldSendId = held?.localId
     const typed = draftTitle.value
@@ -180,6 +182,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
         onLoading: () => update({ phase: 'loading', stage: 'load', attempt: 1 }),
         trace,
         heldSendId,
+        providerId,
       })
       // flowgate.v02gui.0009: once the create made the chat, its first message is sent to it even when the screen
       // moved on (another Flow, chat or draft) during the create or while the chat opened: the send goes on off screen,
@@ -191,7 +194,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
         operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
         if (origin.owner.userId !== draftUserId()) return false
         return await session.send(text, { status: 'created', chatId: result.chatId!, scope: result.scope!, draftIntentId: result.draftIntentId,
-          createIntentId: result.createIntentId ?? origin.createIntentId!, providerId, sendAction, stopAi: stopped, heldSendId }, trace, origin)
+          createIntentId: result.createIntentId ?? origin.createIntentId!, providerId, providerOrigin, sendAction, stopAi: stopped, heldSendId }, trace, origin)
       }
       if (result.status !== 'created' || !ownsScreen(origin)) {
         if (result.status === 'failed') {
@@ -205,7 +208,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
       // No await between this ownership check and the explicitly addressed first send.
       if (!ownsScreen(origin)) return false
       update({ phase: 'sending', stage: 'send', attempt: 1 })
-      const ok = await session.send(text, { ...result, providerId, sendAction, stopAi: stopAi(), heldSendId }, trace, origin)
+      const ok = await session.send(text, { ...result, providerId, providerOrigin, sendAction, stopAi: stopAi(), heldSendId }, trace, origin)
       // Session owns send progress (and its retained failure bubble).
       operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
       return settle(result.chatId, ok)

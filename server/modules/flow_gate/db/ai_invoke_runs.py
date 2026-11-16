@@ -116,6 +116,11 @@ _STATUS_INSERT_AT = 5  # after (run_id, group_id, project_id, doc_ref, mode)
 # them would fail and the finished run's row would be lost, so a row without them writes exactly as before.
 _LINK_COLUMNS = ("invocation_origin_kind", "graph_exec_id")
 
+# flowgate.v02test.0030 (migration 193): how the browser picked a chat call's AI (user_pick / stored /
+# last_answered / default_fallback). Bound like the link columns above: only when the row carries a value
+# AND the column exists, so a server ahead of its migration still writes the finished run's row.
+_CLIENT_ORIGIN_COLUMNS = ("client_provider_origin",)
+
 # flowgate.v02.0129 T#2 (migration 172): the remote Job identity of a remote CLI run (target /
 # claiming Agent, job_id / attempt_id, states). Bound like the link columns above: only when
 # the run used a remote connection AND the column exists.
@@ -345,7 +350,7 @@ def upsert(row: dict[str, Any]) -> None:
         "updated_at": row["updated_at"],
     }
     store = get_store()
-    links = tuple(col for col in _LINK_COLUMNS
+    links = tuple(col for col in (*_LINK_COLUMNS, *_CLIENT_ORIGIN_COLUMNS)
                   if row.get(col) is not None and store.column_exists("ai_invoke_runs", col))
     bound = (*_BOUND_COLUMNS, *links, "execution_nonce")
     values["execution_nonce"] = row.get("execution_nonce")

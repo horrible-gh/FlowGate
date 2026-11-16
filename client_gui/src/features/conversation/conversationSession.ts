@@ -34,6 +34,7 @@ import type {
   ConversationScope,
   ConversationTurn,
   ChatSourceAccess,
+  ProviderOrigin,
   RunDisplay,
   SendAction,
   SourceAccessMode,
@@ -96,6 +97,15 @@ export function mergeChatRefresh(a: ChatRefresh | null, b: ChatRefresh): ChatRef
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
+export type { ProviderOrigin }
+
+/**
+ * flowgate.v02test.0030: whether the open chat's AI is settled. 'loading' = its stored pick is still being read (and
+ * this screen has none of its own): sending waits. 'error' = that read failed: sending waits, the composer says why
+ * and offers another try — the AI is never swapped for my default without a word.
+ */
+export type ChatProviderStatus = 'ready' | 'loading' | 'error'
+
 /** Inline feedback line (the part opens no dialog — 0235 R0001: chat stays dialog-free). */
 export interface ConversationNotice {
   id: number
@@ -125,6 +135,12 @@ export interface ConversationState {
   providersStatus: LoadStatus
   /** flowgate.v02test.0025: the open chat's AI (each chat keeps its own; a new chat starts on my default AI). */
   selectedProviderId: string
+  /** flowgate.v02test.0030: how `selectedProviderId` was chosen (sent with the AI call). */
+  providerOrigin: ProviderOrigin
+  /** flowgate.v02test.0030: whether the open chat's AI is settled (sending waits until 'ready'). */
+  chatProviderStatus: ChatProviderStatus
+  /** flowgate.v02test.0030: why the open chat's stored AI could not be read ('error'); null otherwise. */
+  chatProviderError: string | null
   /** flowgate.v02test.0025: seq of the message the open chat's AI context starts from; null = no checkpoint. */
   checkpointSeq: number | null
   /** 'include' = the AI context starts at that message, 'exclude' = at the next one; null without a checkpoint. */
@@ -170,7 +186,8 @@ export interface CreatedChat {
 // message is stored and its AI call is not started.
 // flowgate.v02gui.0028: `heldSendId` -- the bubble shown for this first message since the press of send (holdFirstSend):
 // it is sent as that message, with the idempotency key it was given then.
-interface SendPins { providerId?: string; sendAction?: SendAction; stopAi?: boolean; heldSendId?: string }
+// flowgate.v02test.0030: `providerOrigin` -- how `providerId` was chosen, pinned with it.
+interface SendPins { providerId?: string; providerOrigin?: ProviderOrigin; sendAction?: SendAction; stopAi?: boolean; heldSendId?: string }
 /**
  * flowgate.v02gui.0011 B: the stop button of the composer from the press of send on. 'available' = it can be pressed
  * (the message is being stored, the AI call is starting or running), 'requested' = a stop was asked and is under way,
@@ -188,6 +205,11 @@ export interface CreateChatContext {
   trace?: SubmissionTrace
   /** flowgate.v02gui.0028: the first message held for this draft (holdFirstSend); handed over to the chat made. */
   heldSendId?: string
+  /**
+   * flowgate.v02test.0030: the AI picked in the draft when send was pressed. It is stored as the new chat's pick as soon
+   * as the chat exists — also when the screen moved on meanwhile. Absent: the selection at the start of createChat.
+   */
+  providerId?: string
 }
 
 /** flowgate.v02gui.0028: the first message of a new chat, held from the press of send on (before its chat exists). */
@@ -198,6 +220,8 @@ export interface FirstSendHold {
   createIntentId: string
   body: string
   providerId: string
+  /** flowgate.v02test.0030: how `providerId` was chosen. */
+  providerOrigin?: ProviderOrigin
   sendAction: SendAction
 }
 
@@ -273,6 +297,8 @@ export interface ConversationSession {
   decideCommand(commandId: string, decision: CommandDecision): Promise<void>
   /** Picks the open chat's AI and stores it as that chat's pick (a draft keeps it for the chat its first send makes). */
   selectProvider(providerId: string): void
+  /** flowgate.v02test.0030: reads the open chat's stored AI again after the read failed (chatProviderStatus 'error'). */
+  retryChatProvider(): void
   /**
    * flowgate.v02test.0025: the open chat's checkpoint: send from message `seq` ('include') or from the next one
    * ('exclude'); null clears it. Applied while the context setting is 체크포인트 사용.
@@ -538,6 +564,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
     providers: [],
     providersStatus: 'idle',
     selectedProviderId: '',
+    providerOrigin: 'default_fallback',
+    chatProviderStatus: 'ready',
+    chatProviderError: null,
     checkpointSeq: null,
     checkpointKind: null,
     savingCheckpoint: false,
@@ -639,8 +668,18 @@ export function createConversationSession(options: ConversationSessionOptions = 
   let createOperation = 0
   let providersProject: string | null = null
   let providersDefaultId: string | null = null
-  // flowgate.v02test.0025: each chat's AI pick as last read or picked on this screen (key: ownerKey); null = my default.
-  const chatProviders = new Map<string, string | null>()
+  // flowgate.v02test.0030: the project whose AI list is the one shown (null: none yet, or its read failed).
+  let providersShownProject: string | null = null
+  // flowgate.v02test.0025: each chat's AI pick as last read or picked on this screen (key: ownerKey).
+  // flowgate.v02test.0030: with how it was chosen. A chat found here opens on it at once (sending need not wait).
+  interface ChatPick { providerId: string; origin: ProviderOrigin }
+  const chatProviders = new Map<string, ChatPick>()
+  // flowgate.v02test.0030: settles once the open chat's first turn pages were read (or failed): the AI that last
+  // answered in it is known then.
+  let openTurnsRead: Promise<void> = Promise.resolve()
+  // flowgate.v02test.0030: the chat that was open when the scope went away (null): the same Flow coming back reopens
+  // it instead of the newest chat (a Designer panel that blinks must not change the chat or its AI).
+  let parkedChat: { userId: string; projectId: string; groupId: string; chatId: string } | null = null
   let providersRequest = 0
   let providersLoad: Promise<void> = Promise.resolve()
   let noticeSeq = 0
@@ -914,10 +953,41 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return id && state.providers.some((p) => p.id === id) ? id : state.providers[0]?.id ?? ''
   }
 
-  /** Shows `pick` when it is still offered; anything else (none, removed, not runnable) is my default AI. */
-  function applyChatProvider(pick: string | null): void {
-    if (state.providersStatus !== 'ready') return
-    state.selectedProviderId = pick && state.providers.some((p) => p.id === pick) ? pick : defaultProviderId()
+  const offeredProvider = (id: string | null | undefined): id is string => !!id && state.providers.some((p) => p.id === id)
+
+  /** flowgate.v02test.0030: the AI that wrote the newest AI turn of the open chat (`provider:<id>`), if any. */
+  function lastAnsweredProvider(): { providerId: string; name: string | null } | null {
+    for (let i = state.turns.length - 1; i >= 0; i--) {
+      const turn = state.turns[i]
+      const key = turn.speaker === 'ai' ? turn.participantKey ?? '' : ''
+      if (key.startsWith('provider:') && key.length > 'provider:'.length) {
+        return { providerId: key.slice('provider:'.length), name: turn.displayName ?? null }
+      }
+    }
+    return null
+  }
+
+  /**
+   * Shows the chat's AI and returns it (null while the AI list is not ready). Its own pick when that is still offered;
+   * else — flowgate.v02test.0030 — the AI that last answered in it (`answered`) when still offered; else my default AI.
+   * Falling back to my default because the chat's AI (its pick or the AI that answered last) can no longer be used is
+   * said on screen (`chat_ai_fallback`, naming that AI): the AI never changes silently.
+   */
+  function applyChatProvider(pick: ChatPick | null, answered: { providerId: string; name: string | null } | null = null): ChatPick | null {
+    if (state.providersStatus !== 'ready') return null
+    let shown: ChatPick
+    let lost: string | null = null
+    if (pick && offeredProvider(pick.providerId)) shown = pick
+    else if (!pick && answered && offeredProvider(answered.providerId)) shown = { providerId: answered.providerId, origin: 'last_answered' }
+    else {
+      shown = { providerId: defaultProviderId(), origin: 'default_fallback' }
+      const gone = pick ? { providerId: pick.providerId, name: null } : answered
+      if (gone && gone.providerId !== shown.providerId) lost = gone.name ?? providerName(gone.providerId) ?? gone.providerId
+    }
+    state.selectedProviderId = shown.providerId
+    state.providerOrigin = shown.origin
+    if (lost) notify('warning', 'chat_ai_fallback', lost)
+    return shown
   }
 
   function persistChatProvider(chatId: string, providerId: string): void {
@@ -927,23 +997,58 @@ export function createConversationSession(options: ConversationSessionOptions = 
     })
   }
 
+  /**
+   * flowgate.v02test.0025: reads the chat's stored AI pick and context checkpoint.
+   * flowgate.v02test.0030: a chat this screen has no pick for waits here ('loading': sending waits) until the stored
+   * pick is read; with none stored, the AI that last answered in the chat is taken (its turns are read for that). A
+   * failed read leaves the chat 'error' — sending waits and the composer offers another try — instead of carrying on
+   * with my default AI unnoticed. A chat that has this screen's pick keeps sending on it while the read is out.
+   */
   async function loadChatDocSettings(chatId: string, gen: number): Promise<void> {
     const key = ownerKey(chatId)
     const before = chatProviders.get(key)
     if (!source.fetchChatDocSettings) return
     try {
-      const [settings] = await Promise.all([source.fetchChatDocSettings(chatId), providersLoad])
+      // A server without per-chat settings (404: no such route) stores nothing: the chat has no stored pick.
+      const read = source.fetchChatDocSettings(chatId).catch((error: unknown) => {
+        if (error instanceof ConversationRequestError && error.status === 404) return null
+        throw error
+      })
+      const [stored] = await Promise.all([read, providersLoad])
       if (!isCurrentChat(chatId, gen)) return
+      const settings = stored ?? { providerId: null, checkpointSeq: state.checkpointSeq, checkpointKind: state.checkpointKind }
       state.checkpointSeq = settings.checkpointSeq
       state.checkpointKind = settings.checkpointKind
       // A pick made on this screen while the read was out wins: it is the newer one (and is being saved).
       if (chatProviders.get(key) !== before) return
-      const pick = settings.providerId ?? before ?? null
-      chatProviders.set(key, pick)
-      applyChatProvider(pick)
-    } catch {
-      // Keep chatting on the shown selection (my default AI or this screen's last pick); never block.
+      let answered: { providerId: string; name: string | null } | null = null
+      if (!settings.providerId && !before) {
+        await openTurnsRead
+        if (!isCurrentChat(chatId, gen) || chatProviders.get(key) !== before) return
+        answered = lastAnsweredProvider()
+      }
+      const pick: ChatPick | null = settings.providerId
+        ? (before?.providerId === settings.providerId ? before : { providerId: settings.providerId, origin: 'stored' })
+        : before ?? null
+      const shown = applyChatProvider(pick, answered)
+      if (shown) chatProviders.set(key, shown)
+      state.chatProviderStatus = 'ready'
+      state.chatProviderError = null
+    } catch (error) {
+      if (!isCurrentChat(chatId, gen) || chatProviders.get(key) !== before) return
+      // This screen's own pick of the chat stays usable; without one, nothing is sent until the AI is known.
+      if (before) return
+      state.chatProviderStatus = 'error'
+      state.chatProviderError = messageOf(error)
     }
+  }
+
+  function retryChatProvider(): void {
+    const chatId = state.activeChatId
+    if (disposed || !chatId || state.chatProviderStatus !== 'error') return
+    state.chatProviderStatus = 'loading'
+    state.chatProviderError = null
+    void loadChatDocSettings(chatId, chatGen)
   }
 
   async function fetchProviders(projectId: string): Promise<void> {
@@ -952,6 +1057,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
     try {
       const list = await source.listProviders(projectId)
       if (disposed || providersProject !== projectId || request !== providersRequest || userId !== draftUserId()) return
+      const before = state.selectedProviderId
+      const beforeName = providerName(before)
+      // Only a list read again for the same project can take the shown AI away; another project's chats pick their own.
+      const relisted = providersShownProject === projectId
       state.providers = list.providers
       providersDefaultId = list.defaultProviderId
       const keep = list.providers.some((p) => p.id === state.selectedProviderId)
@@ -960,12 +1069,17 @@ export function createConversationSession(options: ConversationSessionOptions = 
         : list.defaultProviderId && list.providers.some((p) => p.id === list.defaultProviderId)
           ? list.defaultProviderId
           : list.providers[0]?.id ?? ''
+      if (!keep) state.providerOrigin = 'default_fallback'
       state.providersStatus = 'ready'
+      providersShownProject = projectId
+      // flowgate.v02test.0030: a list read again that no longer offers the AI shown changes it — said on screen.
+      if (!keep && relisted && before && before !== state.selectedProviderId) notify('warning', 'chat_ai_fallback', beforeName ?? before)
     } catch {
       if (disposed || providersProject !== projectId || request !== providersRequest || userId !== draftUserId()) return
       state.providers = []
       state.selectedProviderId = ''
       state.providersStatus = 'error'
+      providersShownProject = null
     }
   }
 
@@ -1043,6 +1157,15 @@ export function createConversationSession(options: ConversationSessionOptions = 
   async function setScope(scope: ConversationScope | null): Promise<void> {
     const same = scope && state.scope && scope.projectId === state.scope.projectId && scope.groupId === state.scope.groupId
     if (same || (!scope && !state.scope)) return
+    // flowgate.v02test.0030: the scope going away (null) parks the chat open in it; only the same Flow coming right
+    // back (for the same user) reopens it. Moving to another Flow forgets it.
+    const leaving = state.scope && state.activeChatId !== null
+      ? { userId: draftUserId(), projectId: state.scope.projectId, groupId: state.scope.groupId, chatId: state.activeChatId }
+      : null
+    const parked = parkedChat
+    parkedChat = scope ? null : leaving
+    const resumeChatId = scope && parked && parked.userId === draftUserId() && parked.projectId === scope.projectId &&
+      parked.groupId === scope.groupId ? parked.chatId : null
     scopeGen += 1
     chatGen += 1
     unlistedChats.clear()
@@ -1054,6 +1177,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.activeChatId = null
     state.notice = null
     clearChat()
+    state.chatProviderStatus = 'ready'
+    state.chatProviderError = null
     state.settings = { ...state.settings, sourceAccessMode: 'read_only', sourceAccessScope: null }
     state.savingSettings = false
     state.pendingSourceMode = scope ? 'read_only' : null
@@ -1069,7 +1194,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     // The newest conversation of the Flow opens first — flowgate.v02gui.0028: unless an earlier page (F5, a closed
     // panel) left the first message of the draft shown unconfirmed: that draft stays open with the message and its
     // retry, so it is not hidden behind another chat. Within one session the Flow opens as before.
-    const first = state.chats[0]
+    // flowgate.v02test.0030: the same Flow back after a blink (scope null) reopens the chat that was open, on its AI.
+    const first = (resumeChatId !== null ? state.chats.find((c) => c.id === resumeChatId) : undefined) ?? state.chats[0]
     if (first && !(restoredDraft && state.activeChatId === null && state.pending.some((p) => p.failed))) await selectChat(first.id)
   }
 
@@ -1136,10 +1262,17 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.sending = progress.get(ownerKey(chatId))?.phase === 'sending'
     state.turnsStatus = 'loading'
     // flowgate.v02test.0025: this chat's own AI, never the previous chat's; the stored pick follows from the server.
+    // flowgate.v02test.0030: a pick this screen already has for the chat is shown and usable at once; without one the
+    // chat waits for its stored pick ('loading': sending waits) instead of sending on my default AI meanwhile.
+    let turnsRead: () => void = () => undefined
+    openTurnsRead = new Promise<void>((resolve) => { turnsRead = resolve })
+    state.chatProviderError = null
     if (source.fetchChatDocSettings) {
-      applyChatProvider(chatProviders.get(ownerKey(chatId)) ?? null)
+      const cached = chatProviders.get(ownerKey(chatId)) ?? null
+      state.chatProviderStatus = cached ? 'ready' : 'loading'
+      if (cached) applyChatProvider(cached)
       void loadChatDocSettings(chatId, gen)
-    }
+    } else state.chatProviderStatus = 'ready'
     try {
       // No cursor: the server resumes from the position it remembers (D0002 §3-4).
       const first = await readTurns(chatId, { includeHead: true, limit: TURN_PAGE_SIZE }, trace, 'history')
@@ -1161,6 +1294,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
       state.turnsStatus = 'error'
       state.turnsError = messageOf(error)
       return
+    } finally {
+      turnsRead()
     }
     void openActivities(chatId, gen).then(() => restoreRuns(chatId, gen))
     void adoptActiveRun(chatId, gen, ACTIVE_RUN_ADOPT_ATTEMPTS)
@@ -1531,6 +1666,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.creatingChat = true
     const gen = scopeGen
     const draftGen = chatGen
+    // flowgate.v02test.0030: the AI picked in the draft, taken now — not when the create answers, by which time the
+    // screen may show another chat (and that chat's AI).
+    const draftPick = context?.providerId ?? state.selectedProviderId
+    // Once stored it is the chat's stored pick; one the user made in the draft stays their pick.
+    const draftOrigin: ProviderOrigin = state.providerOrigin === 'user_pick' ? 'user_pick' : 'stored'
     // flowgate.v02.0135 T#3: a try of the same draft re-sends its intent; the server answers the chat an earlier try
     // made (its answer lost, the chat committed late) instead of making another one. flowgate.v02gui.0028: a held
     // first message names its own intent (one restored after F5 keeps the intent of the page that sent it).
@@ -1572,13 +1712,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
       if (createIntent?.key === intent) createIntent = null
       // flowgate.v02gui.0028: the held first message belongs to this chat from now on — also when the screen moved on.
       if (context?.heldSendId) handOverFirstSend(context.heldSendId, scope, created.id)
-      if (!currentDraft()) return finish('cancelled')
       // flowgate.v02test.0025: the AI picked in the draft becomes the new chat's own pick.
-      const draftPick = state.selectedProviderId
-      if (draftPick && source.saveChatDocSettings) {
-        chatProviders.set(ownerKey(created.id), draftPick)
+      // flowgate.v02test.0030: stored before anything else is checked — also when the screen left the draft while the
+      // chat was being made: a chat left without its pick reopened later on my default AI.
+      if (draftPick && source.saveChatDocSettings && !disposed) {
+        chatProviders.set(scopedOwnerKey(scope, created.id), { providerId: draftPick, origin: draftOrigin })
         persistChatProvider(created.id, draftPick)
       }
+      if (!currentDraft()) return finish('cancelled')
       // A list read that failed (or does not show it yet) still gets the chat the server made.
       if (!state.chats.some((c) => c.id === created.id)) {
         unlistedChats.set(created.id, created)
@@ -1613,6 +1754,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.activeChatId = null
     state.pending = visiblePending()
     // flowgate.v02test.0025: a new chat starts on my default AI, not on the AI of the chat left behind.
+    state.chatProviderStatus = 'ready'
+    state.chatProviderError = null
     if (source.fetchChatDocSettings) applyChatProvider(null)
   }
 
@@ -1632,7 +1775,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const item: PendingTurn = same
       ? { ...same, failed: false, failure: null }
       : { localId: '', idempotencyKey: '', body, basedOnSeq: 0, createdAt: new Date().toISOString(), failed: false,
-          providerId: hold.providerId, sendAction: hold.sendAction, createIntentId: hold.createIntentId }
+          providerId: hold.providerId, ...(hold.providerOrigin ? { providerOrigin: hold.providerOrigin } : {}),
+          sendAction: hold.sendAction, createIntentId: hold.createIntentId }
     if (!same) item.localId = item.idempotencyKey = newIdempotencyKey()
     publishOutbox(key, same ? list.map((p) => p.localId === same.localId ? item : p) : [...list, item])
     persistSend(item, scope, null, hold.intentId, 'creating')
@@ -1771,8 +1915,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
         return
       }
       trace.mark('ai_start', { docId: chatId })
-      if (onScreen) void startAiRun(item.providerId)
-      else void startAiRunOffScreen(chatId, gen, item.providerId)
+      if (onScreen) void startAiRun(item.providerId, item.providerOrigin)
+      else void startAiRunOffScreen(chatId, gen, item.providerId, item.providerOrigin)
     }
   }
 
@@ -1788,6 +1932,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const body = text.trim()
     if (!chatId || !body) return false
     if (!offScreen && (state.sending || running.value || state.turnsStatus !== 'ready')) return false
+    // flowgate.v02test.0030: a message on the open chat's selection waits until that chat's AI is known.
+    if (!offScreen && target?.providerId === undefined && state.chatProviderStatus !== 'ready') return false
     const owner = created && offScreen ? scopedOwnerKey(created.scope, chatId) : ownerKey(chatId)
     if (progress.get(owner)?.phase === 'sending') return false
     const ownerScope = created?.scope ?? state.scope
@@ -1825,12 +1971,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const key = newIdempotencyKey()
     // flowgate.v02.0142 T#1: pinned in the same synchronous step as chatId / gen / key, before the first await.
     const providerId = target?.providerId ?? state.selectedProviderId
+    const providerOrigin = target?.providerId !== undefined ? target.providerOrigin : state.providerOrigin
     // flowgate.v02gui.0009: the send-time action is pinned with them — moving to another Flow before the server accepts
     // the message must not swap it for that Flow's setting.
     const sendAction = target?.sendAction ?? state.settings.sendAction
     // flowgate.v02gui.0009: off screen nothing of the new CH was read; 0 is its head (always <= the server's).
     const basedOnSeq = offScreen ? 0 : state.headSeq
-    const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq, createdAt: new Date().toISOString(), failed: false, providerId, sendAction }
+    const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq, createdAt: new Date().toISOString(), failed: false, providerId,
+      ...(providerOrigin ? { providerOrigin } : {}), sendAction }
     traces.set(key, trace)
     if (target?.stopAi) stoppedSends.add(key)
     if (snapshot) pendingDrafts.set(key, { ...snapshot, owner: { ...snapshot.owner } })
@@ -1946,12 +2094,16 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!state.providers.some((p) => p.id === providerId)) return
     const changed = state.selectedProviderId !== providerId
     state.selectedProviderId = providerId
+    state.providerOrigin = 'user_pick'
     const chatId = state.activeChatId
     // flowgate.v02test.0025: stored as this chat's pick; a draft keeps it until its first send makes the chat.
     if (!chatId || !source.saveChatDocSettings) return
+    // flowgate.v02test.0030: the user's own pick settles the chat's AI (a stored pick still being read is not waited for).
+    state.chatProviderStatus = 'ready'
+    state.chatProviderError = null
     const key = ownerKey(chatId)
-    if (!changed && chatProviders.get(key) === providerId) return
-    chatProviders.set(key, providerId)
+    if (!changed && chatProviders.get(key)?.providerId === providerId) return
+    chatProviders.set(key, { providerId, origin: 'user_pick' })
     persistChatProvider(chatId, providerId)
   }
 
@@ -2143,7 +2295,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   /** The [AI 호출] button: the AI selected at the moment of the press. */
   async function invokeAi(): Promise<void> {
-    await startAiRun(state.selectedProviderId)
+    // flowgate.v02test.0030: not before the open chat's AI is known.
+    if (state.chatProviderStatus !== 'ready') return
+    await startAiRun(state.selectedProviderId, state.providerOrigin)
   }
 
   /**
@@ -2151,7 +2305,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
    * selection again here, and an empty / unknown / unlisted id never falls back to the server default or to another
    * connection: the run ends with the `no_provider` notice and no /start request.
    */
-  async function startAiRun(providerId: string): Promise<void> {
+  async function startAiRun(providerId: string, providerOrigin?: ProviderOrigin): Promise<void> {
     const chatId = state.activeChatId
     if (!chatId || running.value) return
     if (!providerId || !hasProviders.value || !state.providers.some((p) => p.id === providerId)) {
@@ -2180,7 +2334,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     try {
       for (;;) {
         try {
-          const runId = await source.startChatRun(chatId, providerId, requestId)
+          const runId = await source.startChatRun(chatId, providerId, requestId, providerOrigin)
           if (press.stopped) {
             // The server said nothing would start; a run named anyway (a restarted server) is stopped too.
             if (runId) void source.cancelRun(runId).catch(() => undefined)
@@ -2253,7 +2407,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
    * server default. A refusal is recorded for that chat (shown when it is open again, kept over F5). When that chat is
    * open again by the time the server names the run, the run is shown there; otherwise opening it adopts the run.
    */
-  async function startAiRunOffScreen(chatId: string, gen: number, providerId: string): Promise<void> {
+  async function startAiRunOffScreen(chatId: string, gen: number, providerId: string, providerOrigin?: ProviderOrigin): Promise<void> {
     const userId = draftUserId()
     const ended = () => disposed || userId !== draftUserId()
     if (!providerId) {
@@ -2265,7 +2419,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     let resends = 0
     for (;;) {
       try {
-        const runId = await source.startChatRun(chatId, providerId, requestId)
+        const runId = await source.startChatRun(chatId, providerId, requestId, providerOrigin)
         if (runId && !ended()) showRunIfOpen(chatId, runId)
         return
       } catch (error) {
@@ -2530,6 +2684,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     reportRead,
     decideCommand,
     selectProvider,
+    retryChatProvider,
     setCheckpoint,
     supportsChatDocSettings: !!(source.fetchChatDocSettings && source.saveChatDocSettings),
     invokeAi,

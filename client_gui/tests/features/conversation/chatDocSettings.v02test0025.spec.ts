@@ -82,7 +82,7 @@ describe('v02test.0025 each chat keeps its own AI', () => {
     await flushPromises()
     expect(await session.send('go')).toBe(true)
     await flushPromises()
-    expect(source.startChatRun).toHaveBeenCalledWith(B, 'sonnet', expect.any(String))
+    expect(source.startChatRun).toHaveBeenCalledWith(B, 'sonnet', expect.any(String), 'stored')
   })
 
   it('a stored AI that is no longer offered falls back to my default AI', async () => {
@@ -102,7 +102,7 @@ describe('v02test.0025 each chat keeps its own AI', () => {
     const chatId = session.state.activeChatId!
     expect(server[chatId]?.providerId).toBe('sonnet')
     expect(session.state.selectedProviderId).toBe('sonnet')
-    expect(source.startChatRun).toHaveBeenCalledWith(chatId, 'sonnet', expect.any(String))
+    expect(source.startChatRun).toHaveBeenCalledWith(chatId, 'sonnet', expect.any(String), 'user_pick')
   })
 
   it('a source without per-chat settings keeps one selection (behaviour before)', async () => {

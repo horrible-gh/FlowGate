@@ -159,6 +159,15 @@ class AiInvokeStartRequest(BaseModel):
     # and gets the run the first request admitted -- running or finished -- instead of a
     # second run. Chat only; see services/chat_start_requests.py.
     client_request_id: Optional[str] = None
+    # flowgate.v02test.0030: how the browser came to pick provider_id for this chat call --
+    # user_pick / stored / last_answered / default_fallback. Recorded on the run
+    # (ai_invoke_runs.client_provider_origin) so a run on an unexpected AI can be traced to the
+    # screen path that chose it. Chat only; it never changes which provider runs.
+    client_provider_origin: Optional[str] = None
+
+
+# flowgate.v02test.0030: the values client_provider_origin may take.
+CLIENT_PROVIDER_ORIGINS = frozenset({"user_pick", "stored", "last_answered", "default_fallback"})
 
 
 # Wire scope → token scope. The extra invoke scopes reuse the edit/new token
@@ -542,6 +551,12 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         elif not chat_start_requests.valid(body.client_request_id):
             errors.append({"loc": chat_start_requests.FIELD,
                            "msg": "must be 8..200 letters, digits, '.', '_', ':' or '-'"})
+    if body.client_provider_origin is not None:
+        if body.action_scope != "chat":
+            errors.append({"loc": "client_provider_origin", "msg": "only available for action_scope=chat"})
+        elif body.client_provider_origin not in CLIENT_PROVIDER_ORIGINS:
+            errors.append({"loc": "client_provider_origin",
+                           "msg": "must be one of " + ", ".join(sorted(CLIENT_PROVIDER_ORIGINS))})
     if errors:
         return _validation_failed(errors)
 
@@ -1135,6 +1150,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             document_review_loop=(body.document_review_loop.dict() if body.document_review_loop else None),
             review_intent=(body.review_intent if body.action_scope == "review" else None),
             capability_warning_ack=body.capability_warning_ack,
+            client_provider_origin=body.client_provider_origin,
         )
     except HTTPException as exc:
         if recovery_exec_id:

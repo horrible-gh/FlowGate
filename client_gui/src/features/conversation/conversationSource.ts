@@ -26,6 +26,7 @@ import type {
   ConversationTurn,
   AiRunState,
   AiRunList,
+  ProviderOrigin,
   ProviderList,
   RunFileDiff,
   TurnsPage,
@@ -54,7 +55,8 @@ export interface ConversationSource {
 
   listProviders(projectId: string): Promise<ProviderList>
   /** flowgate.v02.0152: `clientRequestId` names the press; a resend with the same id gets the run already admitted. */
-  startChatRun(chatId: string, providerId: string | null, clientRequestId?: string): Promise<string | null>
+  /** flowgate.v02test.0030: `providerOrigin` — how the AI was chosen; kept on the run (client_provider_origin). */
+  startChatRun(chatId: string, providerId: string | null, clientRequestId?: string, providerOrigin?: ProviderOrigin): Promise<string | null>
   fetchRun(runId: string): Promise<AiRunState>
   listRuns(scope: ConversationScope, limit: number): Promise<AiRunList>
   cancelRun(runId: string): Promise<void>

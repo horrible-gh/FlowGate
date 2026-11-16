@@ -1284,6 +1284,10 @@ export default {
       provider: 'Choose AI',
       provider_loading: 'Loading',
       provider_failed: 'AI list error',
+      // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
+      ai_pick_loading: 'Checking this chat\'s AI. You can send once it is known',
+      ai_pick_failed: 'Sending is paused: this chat\'s AI could not be checked',
+      ai_pick_retry: 'Try again',
       provider_none: 'No AI',
       copy_mention: 'Copy mention',
       invoke_ai: 'Call AI',
@@ -1337,6 +1341,7 @@ export default {
       source_mode_failed: 'Could not change the AI source mode',
       checkpoint_failed: 'Could not save the AI context start',
       chat_ai_save_failed: 'Could not save the AI choice of this chat',
+      chat_ai_fallback: 'This chat\'s AI is not available; switched to the default AI',
       source_locked: 'A chat cannot change the source while this flow\'s Graph run goes on. Use the read mode',
       create_forbidden: 'You may not create a chat in this Flow',
       create_group_disposed: 'A disposed Flow cannot get a new chat',

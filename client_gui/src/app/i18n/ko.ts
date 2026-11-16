@@ -1295,6 +1295,10 @@ export default {
       provider: 'AI 선택',
       provider_loading: '불러오는 중',
       provider_failed: 'AI 목록 오류',
+      // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
+      ai_pick_loading: '이 채팅의 AI를 확인하는 중입니다. 확인되면 보낼 수 있습니다',
+      ai_pick_failed: '이 채팅의 AI를 확인하지 못해 전송을 멈췄습니다',
+      ai_pick_retry: '다시 시도',
       provider_none: 'AI 없음',
       copy_mention: '멘션 복사',
       invoke_ai: 'AI 호출',
@@ -1348,6 +1352,7 @@ export default {
       source_mode_failed: 'AI 소스 모드를 바꾸지 못했습니다',
       checkpoint_failed: 'AI 컨텍스트 시작 지점을 저장하지 못했습니다',
       chat_ai_save_failed: '이 채팅의 AI 선택을 저장하지 못했습니다',
+      chat_ai_fallback: '이 채팅의 AI를 쓸 수 없어 기본 AI로 바뀌었습니다',
       source_locked: '이 흐름의 Graph 실행 중에는 채팅으로 소스를 수정할 수 없습니다. 읽기 모드로 사용하세요',
       create_forbidden: '이 플로우에 새 채팅을 만들 권한이 없습니다',
       create_group_disposed: '폐기된 플로우에는 새 채팅을 만들 수 없습니다',
