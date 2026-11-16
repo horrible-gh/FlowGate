@@ -736,6 +736,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 # flowgate.v02.0032 T#1: this token belongs to a live run, so the CLI
                 # provider is told how to request commands for it (chat run hook port).
                 command_execution=True,
+                locale=locale,
             )
         if body.action_scope == "rework":
             base = _standard_mention(raw_token, scratch_dir)

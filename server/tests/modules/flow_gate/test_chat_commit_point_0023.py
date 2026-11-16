@@ -16,6 +16,15 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _text_only_message_images(monkeypatch):
+    # This suite's chat fixtures predate message images and contain no images.
+    # Actual linked images are covered by test_message_image_delivery_0029.
+    from modules.flow_gate.services import message_image_delivery
+    monkeypatch.setattr(message_image_delivery, "image_count", lambda *args: 0)
+
+
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("DB_TYPE", "sqlite")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")

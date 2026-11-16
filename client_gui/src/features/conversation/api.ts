@@ -646,6 +646,7 @@ export async function startChatRun(chatId: string, providerId: string | null, cl
 }
 
 interface RawFallbackEntry {
+  reason?: string | null
   detail?: string | null
   remote_final?: { cause?: string | null; message?: string | null; workdir?: string | null } | null
 }
@@ -655,7 +656,9 @@ const textOrNull = (value: unknown): string | null => (typeof value === 'string'
 /** flowgate.v02.0135 CH0006: the last failed connection of a run that started none. */
 function runFailure(history: unknown): AiRunFailure | null {
   if (!Array.isArray(history) || !history.length) return null
-  const last = (history[history.length - 1] ?? {}) as RawFallbackEntry
+  // Older runs may have image diagnostics after the actual startup failure.
+  const attempts = history.filter((entry) => entry?.reason !== 'message_images')
+  const last = (attempts[attempts.length - 1] ?? {}) as RawFallbackEntry
   const remote = last.remote_final ?? {}
   const failure = {
     cause: textOrNull(remote.cause),

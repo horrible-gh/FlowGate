@@ -1883,6 +1883,7 @@ def _persist_run_record(run: dict) -> bool:
     """
     try:
         from modules.flow_gate.db import ai_invoke_runs as db_runs
+        from modules.flow_gate.services import message_image_delivery
 
         stamp = now_iso()
         db_runs.upsert({
@@ -1913,7 +1914,9 @@ def _persist_run_record(run: dict) -> bool:
             "attempt_no": int(run.get("attempt_no") or 0),
             "attempts_used": int(run.get("attempts_used") or 0),
             "attempts_max": run.get("attempts_max"),
-            "fallback_history": list(run.get("fallback_history") or []),
+            # Keep diagnostics before attempts: readers use the last failure, and
+            # the persistence cap drops entries from the head first.
+            "fallback_history": message_image_delivery.diagnostic_history(run) + list(run.get("fallback_history") or []),
             "register_errors": list(run.get("register_errors") or []),
             "tool_call_misses": int(run.get("tool_call_misses") or 0),
             "turn_limit_exhausted": bool(run.get("turn_limit_exhausted")),
