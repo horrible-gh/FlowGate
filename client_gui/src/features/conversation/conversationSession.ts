@@ -168,7 +168,9 @@ export interface CreatedChat {
  */
 // flowgate.v02gui.0011 B: `stopAi` -- the user pressed stop while this message's chat was still being created; the
 // message is stored and its AI call is not started.
-interface SendPins { providerId?: string; sendAction?: SendAction; stopAi?: boolean }
+// flowgate.v02gui.0028: `heldSendId` -- the bubble shown for this first message since the press of send (holdFirstSend):
+// it is sent as that message, with the idempotency key it was given then.
+interface SendPins { providerId?: string; sendAction?: SendAction; stopAi?: boolean; heldSendId?: string }
 /**
  * flowgate.v02gui.0011 B: the stop button of the composer from the press of send on. 'available' = it can be pressed
  * (the message is being stored, the AI call is starting or running), 'requested' = a stop was asked and is under way,
@@ -184,6 +186,19 @@ export interface CreateChatContext {
   onCreated(result: CreatedChat): void
   onLoading?(): void
   trace?: SubmissionTrace
+  /** flowgate.v02gui.0028: the first message held for this draft (holdFirstSend); handed over to the chat made. */
+  heldSendId?: string
+}
+
+/** flowgate.v02gui.0028: the first message of a new chat, held from the press of send on (before its chat exists). */
+export interface FirstSendHold {
+  /** The draft intent (chatStart.draftIntentId) the message was written in. */
+  intentId: string
+  /** The create intent its chat is made with (used only when the draft holds no bubble for this text yet). */
+  createIntentId: string
+  body: string
+  providerId: string
+  sendAction: SendAction
 }
 
 export interface ConversationSession {
@@ -216,6 +231,23 @@ export interface ConversationSession {
   createChat(title: string, options: CreateChatOptions | undefined, context: CreateChatContext): Promise<CreateChatResult>
   /** Leaves the open chat for an unsaved new one: nothing exists until its first send. */
   startDraft(): void
+  /**
+   * flowgate.v02gui.0028: the draft intent the composer writes in (chatStart.draftIntentId). While no chat is open the
+   * timeline shows the first messages held for it (holdFirstSend).
+   */
+  showDraft(intentId: string | null): void
+  /**
+   * flowgate.v02gui.0028: shows the first message of a new chat at once — before its chat is created — as a bubble
+   * marked 전송 중, and keeps it in this browser until the server answers (F5). Keyed by user x Flow x draft intent;
+   * createChat hands it over to the chat it made and `send` sends it there with the key it was given now. The same
+   * text held already in this draft (a failed try) is reused, with its key and create intent. Null: nothing to hold.
+   */
+  holdFirstSend(hold: FirstSendHold): { localId: string; createIntentId: string } | null
+  /**
+   * flowgate.v02gui.0028: the draft intent of the current Flow whose first message an earlier page (F5, a closed panel)
+   * left unconfirmed — the newest one — so the composer reopens that draft; null when none.
+   */
+  heldDraftIntent(): string | null
   /** Shows a title the server already stored (the AI title of a new chat). */
   setChatTitle(chatId: string, title: string, marker?: ChatAutoTitle): void
   loadOlder(trace?: SubmissionTrace): Promise<void>
@@ -349,6 +381,127 @@ function forgetStartStop(requestId: string): void {
   writeStartStops(readStartStops().filter((e) => e.requestId !== requestId))
 }
 
+// flowgate.v02gui.0028 — every send the server has not confirmed yet is kept in this browser's localStorage, per signed-in
+// user and project, until the server answers it: an F5 or a closed panel no longer loses it. A new session of the same
+// user restores the entries of the Flow it opens: a message whose chat exists and that was still on its way is shown
+// 전송 중 and sent again with the SAME idempotency key (the server answers a stored turn by that key, never a second
+// one); a message whose sending had already failed comes back as the failed bubble with its retry; the first message
+// of a chat never confirmed made comes back as a failed bubble in its draft — a reload never creates a chat by itself.
+// An entry goes once the server stored the message, or refused it for good (400 / 404 / 409 / 422: the failed bubble
+// stays on screen with its same-key retry). Another user's session never reads them; entries older than OUTBOX_TTL_MS
+// are dropped.
+export const OUTBOX_TTL_MS = 24 * 60 * 60 * 1000
+const OUTBOX_LIMIT = 50
+const OUTBOX_KEY = /^flowgate\.user\..+\.chat\.outbox\./
+/** A send's state when it was last written: creating / loading its chat (first message), sending, failed. */
+export type StoredSendPhase = SubmissionPhase['phase']
+export interface StoredSend {
+  localId: string
+  idempotencyKey: string
+  body: string
+  basedOnSeq: number
+  /** The bubble's time (ISO); the TTL counts from it. */
+  createdAt: string
+  projectId: string
+  groupId: string
+  /** The chat it goes to; null while that chat is not made (a first message, then `intentId` is its draft). */
+  chatId: string | null
+  intentId: string | null
+  createIntentId: string | null
+  phase: StoredSendPhase
+  providerId: string
+  sendAction?: SendAction
+}
+
+export function outboxStorageKey(userId: string, projectId: string): string {
+  return `flowgate.user.${userId}.chat.outbox.${encodeURIComponent(projectId)}`
+}
+
+function validStoredSend(value: unknown): value is StoredSend {
+  const e = value as Partial<StoredSend> | null
+  return !!e && typeof e.localId === 'string' && typeof e.idempotencyKey === 'string' && !!e.idempotencyKey &&
+    typeof e.body === 'string' && !!e.body.trim() && typeof e.basedOnSeq === 'number' && typeof e.createdAt === 'string' &&
+    typeof e.projectId === 'string' && typeof e.groupId === 'string' && (e.chatId === null || typeof e.chatId === 'string') &&
+    (e.intentId === null || typeof e.intentId === 'string') && (e.chatId !== null || !!e.intentId) &&
+    ['creating', 'loading', 'sending', 'failed'].includes(e.phase as string) && typeof e.providerId === 'string'
+}
+
+function storedFresh(entry: StoredSend, now: number): boolean {
+  const at = Date.parse(entry.createdAt)
+  return Number.isFinite(at) && now - at < OUTBOX_TTL_MS
+}
+
+function writeStoredList(key: string, list: StoredSend[]): void {
+  try {
+    if (list.length) localStorage.setItem(key, JSON.stringify(list.slice(-OUTBOX_LIMIT)))
+    else localStorage.removeItem(key)
+  } catch {
+    // Storage unavailable or full: the send still goes out now; only the F5 restore is lost.
+  }
+}
+
+/** The valid, unexpired entries under `key`; anything else found there is dropped from storage. */
+function readStoredList(key: string, now = Date.now()): StoredSend[] {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    const list = Array.isArray(parsed) ? parsed : []
+    const kept = list.filter((e): e is StoredSend => validStoredSend(e) && storedFresh(e, now))
+    if (kept.length !== list.length) writeStoredList(key, kept)
+    return kept
+  } catch {
+    writeStoredList(key, [])
+    return []
+  }
+}
+
+export function readStoredSends(userId: string, projectId: string, now = Date.now()): StoredSend[] {
+  return readStoredList(outboxStorageKey(userId, projectId), now)
+}
+
+function keepStoredSend(userId: string, entry: StoredSend): void {
+  const key = outboxStorageKey(userId, entry.projectId)
+  writeStoredList(key, [...readStoredList(key).filter((e) => e.localId !== entry.localId), entry])
+}
+
+function patchStoredSend(userId: string, projectId: string, localId: string, patch: Partial<Pick<StoredSend, 'chatId' | 'phase'>>): void {
+  const key = outboxStorageKey(userId, projectId)
+  const list = readStoredList(key)
+  if (list.some((e) => e.localId === localId)) writeStoredList(key, list.map((e) => e.localId === localId ? { ...e, ...patch } : e))
+}
+
+function forgetStoredSend(userId: string, projectId: string, localId: string): void {
+  const key = outboxStorageKey(userId, projectId)
+  const list = readStoredList(key)
+  if (list.some((e) => e.localId === localId)) writeStoredList(key, list.filter((e) => e.localId !== localId))
+}
+
+/** Drops the expired entries of every user of this browser (each user's list is otherwise read only by that user). */
+export function sweepStoredSends(now = Date.now()): void {
+  try {
+    const keys: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && OUTBOX_KEY.test(key)) keys.push(key)
+    }
+    for (const key of keys) readStoredList(key, now)
+  } catch {
+    // Best effort.
+  }
+}
+
+/** flowgate.v02gui.0028: the server refused this message for good; resending it (now or after F5) cannot help. */
+function isTerminalSendFailure(failure: SendFailure): boolean {
+  return failure.status != null && [400, 404, 409, 422].includes(failure.status)
+}
+
+/** flowgate.v02gui.0028: the server refused to make the chat for good (also the readOnly meanings: 403, disposed). */
+function isTerminalCreateFailure(error: unknown): boolean {
+  return error instanceof ConversationRequestError && error.status !== null &&
+    ([400, 403, 404, 409, 422].includes(error.status) || error.code === 'conversation_group_disposed')
+}
+
 /** flowgate.v02gui.0011 B: the AI-call press whose /start has not named its run yet. */
 interface LiveStart {
   chatId: string
@@ -413,7 +566,57 @@ export function createConversationSession(options: ConversationSessionOptions = 
   // flowgate.v02gui.0009: the same owner, named by the chat's own Flow (a first send whose screen moved on to another one).
   const scopedOwnerKey = (scope: ConversationScope, chatId: string) => JSON.stringify([draftUserId(), scope.projectId, scope.groupId, chatId])
   const submission = computed(() => state.activeChatId ? progress.get(ownerKey(state.activeChatId)) ?? null : null)
-  const visibleOwner = (key: string) => state.activeChatId !== null && ownerKey(state.activeChatId) === key
+  // flowgate.v02gui.0028: a first message held before its chat exists belongs to the user, the Flow and the draft intent
+  // it was written in (never a chat id: the null slot keeps the two kinds of owner apart).
+  const draftOwnerKey = (scope: ConversationScope, userId: string, intentId: string) => JSON.stringify([userId, scope.projectId, scope.groupId, null, intentId])
+  // The draft intent the composer shows while no chat is open (chatStart).
+  let shownDraftIntent: string | null = null
+  function visibleKey(): string | null {
+    if (state.activeChatId !== null) return ownerKey(state.activeChatId)
+    return state.scope && shownDraftIntent ? draftOwnerKey(state.scope, draftUserId(), shownDraftIntent) : null
+  }
+  const visibleOwner = (key: string) => visibleKey() === key
+  function visiblePending(): PendingTurn[] {
+    const key = visibleKey()
+    return key ? outbox.get(key) ?? [] : []
+  }
+  // flowgate.v02gui.0028: the unconfirmed sends of this session and where they are kept in this browser (local id ->
+  // owner). An entry's user is the one who sent it; only that user's storage is ever written for it.
+  interface SendOwner { userId: string; projectId: string; groupId: string; chatId: string | null; intentId: string | null; createIntentId: string | null }
+  const sendOwners = new Map<string, SendOwner>()
+  function storedOf(item: PendingTurn, owner: SendOwner, phase: StoredSendPhase): StoredSend {
+    return {
+      localId: item.localId, idempotencyKey: item.idempotencyKey, body: item.body, basedOnSeq: item.basedOnSeq, createdAt: item.createdAt,
+      projectId: owner.projectId, groupId: owner.groupId, chatId: owner.chatId, intentId: owner.intentId, createIntentId: owner.createIntentId,
+      phase, providerId: item.providerId, ...(item.sendAction ? { sendAction: item.sendAction } : {}),
+    }
+  }
+  /** Writes the send as `phase` (starting to keep it when this session did not yet). */
+  function persistSend(item: PendingTurn, scope: ConversationScope, chatId: string | null, intentId: string | null, phase: StoredSendPhase): void {
+    let owner = sendOwners.get(item.localId)
+    if (!owner) {
+      owner = { userId: draftUserId(), projectId: scope.projectId, groupId: scope.groupId, chatId, intentId, createIntentId: item.createIntentId ?? null }
+      sendOwners.set(item.localId, owner)
+    } else if (chatId !== null) owner.chatId = chatId
+    if (disposed || owner.userId !== draftUserId()) return
+    keepStoredSend(owner.userId, storedOf(item, owner, phase))
+  }
+  /**
+   * A new phase of a kept send. Not written once the session is gone or another user signed in: what stopped the send
+   * then is not the server's answer, so the entry stays as it was and that user's next session sends it again.
+   */
+  function storeSendPhase(localId: string, phase: StoredSendPhase): void {
+    const owner = sendOwners.get(localId)
+    if (!owner || disposed || owner.userId !== draftUserId()) return
+    patchStoredSend(owner.userId, owner.projectId, localId, { phase })
+  }
+  /** The server answered for good (stored, or refused for good): the send is no longer kept. */
+  function settleStoredSend(localId: string): void {
+    const owner = sendOwners.get(localId)
+    if (!owner) return
+    sendOwners.delete(localId)
+    forgetStoredSend(owner.userId, owner.projectId, localId)
+  }
   function publishOutbox(key: string, items: PendingTurn[]): void {
     if (items.length) outbox.set(key, items)
     else outbox.delete(key)
@@ -853,13 +1056,52 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.pendingSourceMode = scope ? 'read_only' : null
     void loadSettings(scope)
     if (!scope) return
+    // flowgate.v02gui.0028: what an earlier page left unconfirmed in this Flow comes back now (and is sent again).
+    const restoredDraft = restoreStoredSends(scope)
+    state.pending = visiblePending()
     void loadProviders(scope.projectId)
     const gen = scopeGen
     await reloadChats()
     if (disposed || gen !== scopeGen) return
-    // The newest conversation of the Flow opens first.
+    // The newest conversation of the Flow opens first — flowgate.v02gui.0028: unless an earlier page (F5, a closed
+    // panel) left the first message of the draft shown unconfirmed: that draft stays open with the message and its
+    // retry, so it is not hidden behind another chat. Within one session the Flow opens as before.
     const first = state.chats[0]
-    if (first) await selectChat(first.id)
+    if (first && !(restoredDraft && state.activeChatId === null && state.pending.some((p) => p.failed))) await selectChat(first.id)
+  }
+
+  /**
+   * flowgate.v02gui.0028: the unconfirmed sends this browser kept for the scope's Flow (this user's only) that this
+   * session does not already own. A chat's message still on its way is sent again (same key, its own AI and action);
+   * one that had failed shows failed with its retry; a first message whose chat was never confirmed made shows failed
+   * in its draft — no chat is created by a reload. True when such a first message is restored into the draft shown.
+   */
+  function restoreStoredSends(scope: ConversationScope): boolean {
+    const userId = draftUserId()
+    const gen = chatGen
+    let restoredDraft = false
+    for (const entry of readStoredSends(userId, scope.projectId)) {
+      if (entry.groupId !== scope.groupId || sendOwners.has(entry.localId)) continue
+      const resend = entry.chatId !== null && entry.phase !== 'failed'
+      const item: PendingTurn = {
+        localId: entry.localId, idempotencyKey: entry.idempotencyKey, body: entry.body, basedOnSeq: entry.basedOnSeq,
+        createdAt: entry.createdAt, failed: !resend, failure: null, providerId: entry.providerId,
+        ...(entry.sendAction ? { sendAction: entry.sendAction } : {}),
+        ...(entry.createIntentId ? { createIntentId: entry.createIntentId } : {}),
+      }
+      const key = entry.chatId !== null ? scopedOwnerKey(scope, entry.chatId) : draftOwnerKey(scope, userId, entry.intentId!)
+      if ((outbox.get(key) ?? []).some((p) => p.localId === item.localId)) continue
+      sendOwners.set(item.localId, { userId, projectId: scope.projectId, groupId: scope.groupId, chatId: entry.chatId,
+        intentId: entry.intentId, createIntentId: entry.createIntentId })
+      publishOutbox(key, [...(outbox.get(key) ?? []), item])
+      if (entry.chatId === null && visibleOwner(key)) restoredDraft = true
+      if (!resend) {
+        if (entry.phase !== 'failed') storeSendPhase(item.localId, 'failed')
+        continue
+      }
+      void finishSend(entry.chatId!, gen, key, item, createSubmissionTrace())
+    }
+    return restoredDraft
   }
 
   async function readTurns(chatId: string, query: Parameters<ConversationSource['fetchTurns']>[1], trace: SubmissionTrace | undefined, stage: 'history' | 'catchup' | 'older') {
@@ -1277,13 +1519,18 @@ export function createConversationSession(options: ConversationSessionOptions = 
       ? { status, chatId: createdId, scope, draftIntentId: context.draftIntentId, createIntentId: intent }
       : false
     const next = title.trim()
-    if (!scope || !next || state.creatingChat) return finish('failed')
+    if (!scope || !next || state.creatingChat) {
+      failHeldSend(context?.heldSendId, false)
+      return finish('failed')
+    }
     state.creatingChat = true
     const gen = scopeGen
     const draftGen = chatGen
     // flowgate.v02.0135 T#3: a try of the same draft re-sends its intent; the server answers the chat an earlier try
-    // made (its answer lost, the chat committed late) instead of making another one.
-    if (!createIntent || createIntent.scopeGen !== gen || createIntent.chatGen !== draftGen) {
+    // made (its answer lost, the chat committed late) instead of making another one. flowgate.v02gui.0028: a held
+    // first message names its own intent (one restored after F5 keeps the intent of the page that sent it).
+    if (!createIntent || createIntent.scopeGen !== gen || createIntent.chatGen !== draftGen ||
+      (context?.createIntentId && createIntent.key !== context.createIntentId)) {
       createIntent = { key: context?.createIntentId ?? newCreateIntent(), scopeGen: gen, chatGen: draftGen }
     }
     intent = createIntent.key
@@ -1310,6 +1557,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         // flowgate.v02.0135 T#3: without an answer the server may still have made the chat (on stg it did, minutes
         // later): the Flow's list is read again so that chat shows instead of the next try making another one.
         if (!disposed && gen === scopeGen && isNoResponse(error)) void reloadChats()
+        failHeldSend(context?.heldSendId, isTerminalCreateFailure(error))
         return finish('failed')
       }
       if (options?.autoTitle && created.autoTitle === undefined) {
@@ -1317,6 +1565,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
       }
       createdId = created.id
       if (createIntent?.key === intent) createIntent = null
+      // flowgate.v02gui.0028: the held first message belongs to this chat from now on — also when the screen moved on.
+      if (context?.heldSendId) handOverFirstSend(context.heldSendId, scope, created.id)
       if (!currentDraft()) return finish('cancelled')
       // flowgate.v02test.0025: the AI picked in the draft becomes the new chat's own pick.
       const draftPick = state.selectedProviderId
@@ -1336,7 +1586,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
       const selectedGen = chatGen
       await selection
       if (!currentScope() || selectedGen !== chatGen || state.activeChatId !== created.id || (context && !context.isCurrent())) return finish('cancelled')
-      if (state.turnsStatus === 'error') return finish('failed')
+      if (state.turnsStatus === 'error') {
+        // Nothing was posted (the head is unknown): the bubble shows failed; its retry / a resubmission reuses its key.
+        failHeldSend(context?.heldSendId, false)
+        return finish('failed')
+      }
       // Standalone creation still refreshes; a first send refreshes only after POST starts.
       if (!context) void reloadChats()
       return context ? result : true
@@ -1352,8 +1606,68 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.notice = null
     clearChat()
     state.activeChatId = null
+    state.pending = visiblePending()
     // flowgate.v02test.0025: a new chat starts on my default AI, not on the AI of the chat left behind.
     if (source.fetchChatDocSettings) applyChatProvider(null)
+  }
+
+  function showDraft(intentId: string | null): void {
+    shownDraftIntent = intentId
+    if (state.activeChatId === null) state.pending = visiblePending()
+  }
+
+  function holdFirstSend(hold: FirstSendHold): { localId: string; createIntentId: string } | null {
+    const scope = state.scope ? { ...state.scope } : null
+    const body = hold.body.trim()
+    if (disposed || !scope || !body || !hold.intentId) return null
+    const key = draftOwnerKey(scope, draftUserId(), hold.intentId)
+    const list = outbox.get(key) ?? []
+    // A try of the same text in this draft (after a failure, or restored after F5) is that message again.
+    const same = list.find((p) => p.body === body)
+    const item: PendingTurn = same
+      ? { ...same, failed: false, failure: null }
+      : { localId: '', idempotencyKey: '', body, basedOnSeq: 0, createdAt: new Date().toISOString(), failed: false,
+          providerId: hold.providerId, sendAction: hold.sendAction, createIntentId: hold.createIntentId }
+    if (!same) item.localId = item.idempotencyKey = newIdempotencyKey()
+    publishOutbox(key, same ? list.map((p) => p.localId === same.localId ? item : p) : [...list, item])
+    persistSend(item, scope, null, hold.intentId, 'creating')
+    return { localId: item.localId, createIntentId: item.createIntentId ?? hold.createIntentId }
+  }
+
+  /** Moves the held first message to the chat its create made (same item, same key). */
+  function handOverFirstSend(localId: string, scope: ConversationScope, chatId: string): void {
+    const owner = sendOwners.get(localId)
+    if (!owner || owner.chatId !== null || !owner.intentId) return
+    const from = draftOwnerKey(scope, owner.userId, owner.intentId)
+    const item = (outbox.get(from) ?? []).find((p) => p.localId === localId)
+    if (!item) return
+    publishOutbox(from, (outbox.get(from) ?? []).filter((p) => p.localId !== localId))
+    const to = JSON.stringify([owner.userId, scope.projectId, scope.groupId, chatId])
+    publishOutbox(to, [...(outbox.get(to) ?? []).filter((p) => p.localId !== localId), item])
+    owner.chatId = chatId
+    // The chat exists now: from here on an F5 sends the message to it (same key) instead of asking for a new chat.
+    if (!disposed && owner.userId === draftUserId()) patchStoredSend(owner.userId, owner.projectId, localId, { chatId, phase: 'loading' })
+  }
+
+  /** The held first message could not be sent (its chat not made, or not opened): a failed bubble with its retry. */
+  function failHeldSend(localId: string | undefined, terminal: boolean): void {
+    if (!localId) return
+    for (const [key, list] of [...outbox]) {
+      if (list.some((p) => p.localId === localId && !p.failed)) {
+        publishOutbox(key, list.map((p) => p.localId === localId ? { ...p, failed: true, failure: null } : p))
+      }
+    }
+    if (terminal) settleStoredSend(localId)
+    else storeSendPhase(localId, 'failed')
+  }
+
+  function heldDraftIntent(): string | null {
+    const scope = state.scope
+    if (!scope) return null
+    const waiting = readStoredSends(draftUserId(), scope.projectId)
+      .filter((e) => e.groupId === scope.groupId && e.chatId === null && !!e.intentId && !sendOwners.has(e.localId))
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    return waiting[0]?.intentId ?? null
   }
 
   function setChatTitle(chatId: string, title: string, marker?: ChatAutoTitle): void {
@@ -1471,6 +1785,22 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!offScreen && (state.sending || running.value || state.turnsStatus !== 'ready')) return false
     const owner = created && offScreen ? scopedOwnerKey(created.scope, chatId) : ownerKey(chatId)
     if (progress.get(owner)?.phase === 'sending') return false
+    const ownerScope = created?.scope ?? state.scope
+    // flowgate.v02gui.0028: the first message shown since the press of send (handed over to this chat by createChat)
+    // is sent as itself: same bubble, same idempotency key, the AI and action pinned at the press.
+    const heldId = target?.heldSendId
+    const held = heldId ? (outbox.get(owner) ?? []).find((p) => p.localId === heldId) : undefined
+    if (held && ownerScope) {
+      const item: PendingTurn = { ...held, failed: false, failure: null }
+      traces.set(item.localId, trace)
+      if (target?.stopAi) stoppedSends.add(item.localId)
+      if (snapshot) pendingDrafts.set(item.localId, { ...snapshot, owner: { ...snapshot.owner } })
+      publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === item.localId ? item : p))
+      publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
+      persistSend(item, ownerScope, chatId, null, 'sending')
+      trace.frame('pending_frame', chatId)
+      return finishSend(chatId, chatGen, owner, item, trace, inScope)
+    }
     const receipt = retryReceipts.get(owner)
     retryReceipts.delete(owner)
     if (receipt && snapshot && receipt.body.trim() === body && receipt.body === snapshot.body && receipt.revision === snapshot.revision &&
@@ -1483,6 +1813,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       if (!offScreen) return retry(failed.localId, true)
       publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === failed.localId ? { ...p, failed: false, failure: null } : p))
       publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
+      if (ownerScope) persistSend(failed, ownerScope, chatId, null, 'sending')
       return finishSend(chatId, chatGen, owner, failed, traces.get(failed.localId) ?? trace)
     }
     const gen = chatGen
@@ -1500,6 +1831,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (snapshot) pendingDrafts.set(key, { ...snapshot, owner: { ...snapshot.owner } })
     publishOutbox(owner, [...(outbox.get(owner) ?? []), item])
     publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
+    // flowgate.v02gui.0028: kept in this browser until the server answers (F5 sends it again with this key).
+    if (ownerScope) persistSend(item, ownerScope, chatId, null, 'sending')
     trace.frame('pending_frame', chatId)
     // The Flow shown now reads its list again only when it is the CH's own Flow.
     return finishSend(chatId, gen, owner, item, trace, inScope)
@@ -1512,9 +1845,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
       stoppedSends.delete(item.localId)
       publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === item.localId ? { ...p, failed: true, failure: result } : p))
       publishProgress(owner, { phase: 'failed', stage: 'send', attempt: progress.get(owner)?.attempt ?? 1 })
+      // flowgate.v02gui.0028: refused for good → no longer kept (the bubble stays with its retry); any other failure
+      // (no answer, 5xx, retries used up) stays kept as failed: F5 shows it again with the same key.
+      if (isTerminalSendFailure(result)) settleStoredSend(item.localId)
+      else storeSendPhase(item.localId, 'failed')
       if (visibleOwner(owner)) flushDeferredRefresh()
       return false
     }
+    settleStoredSend(item.localId)
     pendingDrafts.delete(item.localId)
     publishProgress(owner, null)
     runSendAction(chatId, gen, trace, item)
@@ -1531,6 +1869,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (progress.get(owner)?.phase === 'sending') return false
     publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === localId ? { ...p, failed: false, failure: null } : p))
     publishProgress(owner, { phase: 'sending', stage: 'send', attempt: 1 })
+    if (state.scope) persistSend(item, state.scope, chatId, null, 'sending')
     const gen = chatGen
     const snapshot = pendingDrafts.get(localId)
     // The first attempt failed before its send action, so the accepted retry runs it once — on the AI and the action
@@ -2153,6 +2492,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   void loadSettings(state.scope)
   replayStartStops()
+  sweepStoredSends()
 
   return {
     state: readonly(state) as DeepReadonly<ConversationState>,
@@ -2173,6 +2513,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
     renameActiveChat,
     createChat,
     startDraft,
+    showDraft,
+    holdFirstSend,
+    heldDraftIntent,
     setChatTitle,
     loadOlder,
     catchUp,

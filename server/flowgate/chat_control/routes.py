@@ -1,4 +1,7 @@
-"""CLI chat transport of the control tower (stage 1). Authentication runs before the body is parsed."""
+"""CLI chat transport of the control tower (stage 1). Authentication runs before the body is parsed.
+
+flowgate.v02gui.0028: ``GET`` / ``PATCH /api/v2/chat/flows/{flow_id}/nodes/{node_key}/roles`` — the AI roles of a work
+card this chat placed (``card_roles``)."""
 from __future__ import annotations
 
 import json
@@ -9,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from modules.flow_gate.graph_workflow.api import envelope
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 
-from . import authz, service
+from . import authz, card_roles, service
 
 router = APIRouter(prefix="/api/v2/chat", tags=["ChatControl"])
 
@@ -50,8 +53,9 @@ async def post_cards(flow_id: str, request: Request):
     raw = await request.body()
 
     def handle():
-        scope, group = authz.from_bearer(_bearer(request), flow_id)
-        return service.place(group, scope.user_id, _body(raw), _locale(request))
+        caller = authz.caller_from_bearer(_bearer(request), flow_id, write=True)
+        return service.place(caller.group, caller.scope.user_id, _body(raw), _locale(request),
+                             owner=authz.owner(caller.scope, caller.chat_doc_id))
 
     return await run_in_threadpool(response, request, handle, 201)
 
@@ -65,3 +69,25 @@ async def post_run(flow_id: str, request: Request):
         return service.start(group, scope.user_id, _body(raw))
 
     return await run_in_threadpool(response, request, handle, 201)
+
+
+# flowgate.v02gui.0028: the AI roles of a card this chat placed (``card_roles``).
+
+@router.get("/flows/{flow_id}/nodes/{node_key}/roles")
+async def get_card_roles(flow_id: str, node_key: str, request: Request):
+    def handle():
+        caller = authz.caller_from_bearer(_bearer(request), flow_id, write=False)
+        return card_roles.view(caller, node_key)
+
+    return await run_in_threadpool(response, request, handle)
+
+
+@router.patch("/flows/{flow_id}/nodes/{node_key}/roles")
+async def patch_card_roles(flow_id: str, node_key: str, request: Request):
+    raw = await request.body()
+
+    def handle():
+        caller = authz.caller_from_bearer(_bearer(request), flow_id, write=True)
+        return card_roles.change(caller, node_key, _body(raw))
+
+    return await run_in_threadpool(response, request, handle)

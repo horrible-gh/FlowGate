@@ -55,6 +55,11 @@ export interface PendingTurn {
   sendAction?: SendAction
   /** flowgate.v02gui.0007 A: why the last attempt failed (set with `failed`, cleared when a retry starts). */
   failure?: SendFailure | null
+  /**
+   * flowgate.v02gui.0028: the first message of a new chat, shown from the press of send on (before its chat exists):
+   * the create intent its chat is made with, kept so a try after a failure or an F5 asks for the same chat.
+   */
+  createIntentId?: string
 }
 
 export type TimelineItem =
