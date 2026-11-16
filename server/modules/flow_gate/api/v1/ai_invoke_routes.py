@@ -1262,6 +1262,13 @@ def get_ai_invoke_providers(project: str, request: Request):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
                                                       "message": "perm_document_read required"})
     effective = ai_invoke_service.list_runtime_providers(project, user_id)
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.services.message_image_service import provider_accepts_images
+    for provider in effective.get("providers", []):
+        row = get_store()._fetch_one(
+            "SELECT exec_type, kind, exec_location FROM ai_providers WHERE provider_id = ?",
+            [provider["id"]])
+        provider["accepts_images"] = provider_accepts_images(row or {})
     return JSONResponse(status_code=200, content=effective)
 
 

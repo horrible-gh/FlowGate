@@ -20,7 +20,7 @@ from modules.flow_gate.db import ai_providers
 from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.documents import document_service
-from modules.flow_gate.services import encoding_probe
+from modules.flow_gate.services import encoding_probe, message_image_service
 from modules.flow_gate.storage import paths as storage_paths
 
 TURN_BODY_BYTE_MAX = 65_536
@@ -417,7 +417,7 @@ def resolve_actor(actor: dict[str, Any], display_name_hint: Optional[str] = None
     raise ConversationTurnError(401, "Invalid conversation actor.")
 
 
-def _turn_wire(row: dict) -> dict:
+def _turn_wire(row: dict, *, images=None) -> dict:
     return {
         "seq": int(row["seq"]),
         "speaker": row["speaker"],
@@ -425,6 +425,8 @@ def _turn_wire(row: dict) -> dict:
         "display_name": row.get("display_name"),
         "locale": row.get("locale"),
         "body": row["body"],
+        "images": (message_image_service.for_turn(row.get("doc_id"), int(row["seq"]))
+                   if images is None else images),
         "based_on_seq": int(row.get("based_on_seq") or 0),
         "stale_since_seq": (
             int(row["stale_since_seq"]) if row.get("stale_since_seq") is not None else None
@@ -434,14 +436,14 @@ def _turn_wire(row: dict) -> dict:
     }
 
 
-def turn_wire(row: dict) -> dict:
+def turn_wire(row: dict, *, images=None) -> dict:
     """Public alias — the turn object of P0003 §0-2, built in exactly one place.
 
     Both HTTP families and the SSE payload must serialize a turn identically (P0003
     §0-1); the query adapter and the event publisher call this rather than each
     growing their own copy.
     """
-    return _turn_wire(row)
+    return _turn_wire(row, images=images)
 
 
 def participant_wire(row: dict) -> dict:
@@ -487,8 +489,12 @@ def _result(doc_id: str, row: dict, resolved: dict, replayed: bool) -> dict:
 
 
 def _replay_or_conflict(
-    doc_id: str, existing: dict, body_hash: str, resolved: dict
+    doc_id: str, existing: dict, body_hash: str, resolved: dict, images=None
 ) -> dict:
+    expected_images = [] if images is None else images
+    actual_images = [i["image_id"] for i in message_image_service.for_turn(doc_id, existing["seq"])]
+    if actual_images != expected_images:
+        raise ConversationTurnError(409, "idempotency_key already used with different images.")
     if existing.get("body_hash") != body_hash:
         raise ConversationTurnError(409, "idempotency_key already used with a different body.")
     if existing.get("participant_key") != resolved["participant_key"]:
@@ -685,6 +691,7 @@ def append_turn(
     force_encoding_reason: Optional[str] = None,
     locale: str = "ko",
     timing: Optional[TurnTiming] = None,
+    images: Optional[list[str]] = None,
 ) -> dict:
     """Append one turn for either a session user or a token-bound AI worker."""
     # flowgate.v02gui.0009: a worker's body ends with its token's encoding probe; it is
@@ -717,13 +724,18 @@ def append_turn(
     doc = _validate_document_for_append(doc_id)
     resolved = resolve_actor(actor, display_name_hint)
 
+    try:
+        images = message_image_service.validate_ids(images)
+    except message_image_service.MessageImageError as exc:
+        raise ConversationTurnError(exc.status, exc.code) from exc
+
     # Cheap replay path.  The unique constraints remain the authority for the race
     # where two requests both observe absence below.
     existing = turn_store.get_turn_by_idempotency_hash(doc_id, idempotency_hash)
     if existing is not None:
         if timing is not None:
             timing.mark("replay")
-        return _replay_or_conflict(doc_id, existing, body_hash, resolved)
+        return _replay_or_conflict(doc_id, existing, body_hash, resolved, images)
 
     last_exc: Optional[BaseException] = None
     for attempt in range(SEQ_RETRY_MAX + 1):
@@ -751,6 +763,10 @@ def append_turn(
                     created_at=now_iso(),
                 )
                 assigned = int(row["seq"])
+                try:
+                    message_image_service.link(doc, assigned, actor.get("user_id"), images)
+                except message_image_service.MessageImageError as exc:
+                    raise ConversationTurnError(exc.status, exc.code) from exc
                 previous_head = assigned - 1
                 if based > previous_head:
                     raise ConversationTurnError(
@@ -824,7 +840,7 @@ def append_turn(
             if existing is not None:
                 if timing is not None:
                     timing.mark("replay")
-                return _replay_or_conflict(doc_id, existing, body_hash, resolved)
+                return _replay_or_conflict(doc_id, existing, body_hash, resolved, images)
             if attempt >= SEQ_RETRY_MAX:
                 break
             time.sleep(SEQ_RETRY_BACKOFF_MS[attempt] / 1000.0)

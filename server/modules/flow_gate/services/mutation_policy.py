@@ -346,11 +346,21 @@ _FLOW_ATTACHMENT_PATH = re.compile(r"^(?:/flowgate)?/api/v1/flows/[^/]+/attachme
 _FLOW_ATTACHMENT_ZIP_PATH = re.compile(r"^(?:/flowgate)?/api/v1/flows/[^/]+/attachments-zip/?$")
 
 
+_MESSAGE_IMAGE_PATH = re.compile(r"^(?:/flowgate)?/api/v1/flows/[^/]+/message-images(?:/[^/]+)?/?$")
+_SESSION_TURN_PATH = re.compile(r"^(?:/flowgate)?/api/v1/documents/[^/]+/conversation/turn/?$")
+
+
 def is_group_lease_exempt_path(path: str, method: str = "POST") -> bool:
     """Explicit lease exemptions (D0006 §3.10.3), next to -- not inside --
     ``is_policy_control_path``, whose ai-invoke meaning stays unchanged. The handlers
     still check permission and group state themselves."""
     verb = str(method or "").upper()
+    # Message images and session appends do not modify the worker's source tree.
+    # Their handlers retain project permission and disposed/closed document checks.
+    if _MESSAGE_IMAGE_PATH.search(path) and verb in {"POST", "DELETE"}:
+        return True
+    if _SESSION_TURN_PATH.search(path) and verb == "POST":
+        return True
     # Files are outside the source worktree. Their handlers enforce project RBAC,
     # open Flow state, expected hashes and the same Flow guard used by AI approval.
     if _FLOW_ATTACHMENT_PATH.search(path) and verb in {"POST", "DELETE"}:
@@ -370,6 +380,10 @@ def is_group_lease_exempt_path(path: str, method: str = "POST") -> bool:
 def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResource, str]:
     if not (methods & MUTATION_METHODS):
         return "system", "read_only"
+    if _MESSAGE_IMAGE_PATH.search(path):
+        return "group", "message_images_lease_exempt"
+    if _SESSION_TURN_PATH.search(path):
+        return "group", "conversation_turn_lease_exempt"
     # flowgate.v02.0032 T#1 (D0006 §3.10.3): explicit reasons for the Conversation routes.
     if _CONVERSATION_CREATE_PATH.search(path):
         return "group", "conversation_create_lease_exempt"
