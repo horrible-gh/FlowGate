@@ -63,7 +63,7 @@ def _reviewed_ai_result(env, monkeypatch, starts, key=None):
     """An AI card (result X, review B with X as its rework AI, count 1): X wrote its result and B's review loop of it
     was requested by the run end (the assigned path). -> (key, result, the review assignment)."""
     if key is None:
-        key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1)))
+        key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1), ("after_review_exhausted", "stop")))
         roles(key, execution=X, review=B)
         start(env)
     [job] = [j for j in env["jobs"] if j.get("provider_id") == X]
@@ -293,6 +293,7 @@ def _branches(env):
     for key in (a, a2, b):
         stored(key, "instruction", "omit")
     stored(a, "review_count", 1)
+    stored(a, "after_review_exhausted", "stop")
     res = env["client"].post(f"/api/v1/flows/{FA}/graph/revisions", json={"draft_version": 1}, headers=_h())
     assert res.status_code == 201, res.text
     roles(a, execution=X, review=B)

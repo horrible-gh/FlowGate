@@ -22,6 +22,8 @@ const FLOW_A = { projectId: 'p', groupId: 'p.m.0001' } // 테스트: no chat yet
 const FLOW_B = { projectId: 'p', groupId: 'p.m.0002' } // 플로우 후속처리: one chat with history
 const B1 = 'p.m.0002.0002-CH'
 const B2 = 'p.m.0002.0003-CH'
+// flowgate.v02gui.0028: unconfirmed sends are kept in localStorage across sessions (F5 restore); each case starts with none.
+beforeEach(() => localStorage.clear())
 
 function deferred<T>() {
   let resolve!: (value: T) => void

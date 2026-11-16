@@ -2,13 +2,15 @@
   <ModalShell
     :open="open"
     size="sm"
+    surface-class="ui-confirm-surface"
     :close-on-escape="closeOnEscape && !busy"
     :close-on-backdrop="closeOnBackdrop && !busy"
     :aria-describedby="ariaDescribedby"
     @close="!busy && emit('cancel')"
   >
     <template #header="{ titleId }">
-      <div class="ui-confirm-header">
+      <div class="ui-confirm-header" :class="{ 'is-danger': danger }">
+        <span class="ui-confirm-badge" aria-hidden="true" data-test="ui-confirm-badge" :data-icon="badgeIcon"><LineIcon :name="badgeIcon" /></span>
         <h2 :id="titleId" class="ui-confirm-title">{{ title }}</h2>
       </div>
     </template>
@@ -26,6 +28,10 @@
 </template>
 
 <script setup lang="ts">
+// v02gui.0029 (0003-CH, 시안 tfi2zm20 "공용 확인창"): drawn like the Designer's Group archive confirm — a badge above the
+// title (`icon`, else ⚠ for a danger confirm and ? for any other), the rounded pop surface and two wide buttons. Only
+// the look changed: the caller's words, the events, Escape and the focus order stay as they were.
+//
 // Short Yes/No confirmation, built on ModalShell (T0006 §7). This is choice A from
 // T0006 §7 ("공용 ConfirmDialog component") — plain declarative props, no separate
 // confirm() service layer, because the caller here already owns `open` the same way
@@ -42,6 +48,7 @@
 // case `danger` at all (T0006 §7 "무조건 기본 focus가 가지 않도록").
 import { computed } from 'vue'
 import Button from './Button.vue'
+import LineIcon, { type LineIconName } from './LineIcon.vue'
 import ModalShell from './ModalShell.vue'
 
 const props = withDefaults(
@@ -52,6 +59,8 @@ const props = withDefaults(
     confirmLabel?: string
     cancelLabel?: string
     danger?: boolean
+    /** The header badge's icon; by default ⚠ (`alert`) for a danger confirm, ? (`help-circle`) for any other. */
+    icon?: LineIconName
     busy?: boolean
     closeOnEscape?: boolean
     closeOnBackdrop?: boolean
@@ -65,6 +74,7 @@ const props = withDefaults(
     confirmLabel: undefined,
     cancelLabel: undefined,
     danger: false,
+    icon: undefined,
     busy: false,
     closeOnEscape: true,
     closeOnBackdrop: false,
@@ -76,32 +86,70 @@ const emit = defineEmits<{ confirm: []; cancel: [] }>()
 
 const confirmLabelText = computed(() => props.confirmLabel ?? 'Confirm')
 const cancelLabelText = computed(() => props.cancelLabel ?? 'Cancel')
+const badgeIcon = computed<LineIconName>(() => props.icon ?? (props.danger ? 'alert' : 'help-circle'))
 </script>
 
 <style scoped>
+:global(.ui-modal-surface.ui-modal-surface--sm.ui-confirm-surface) {
+  max-width: 420px;
+  background: var(--fg2-pop-surface);
+  border-radius: var(--fg2-pop-radius);
+  box-shadow: var(--fg2-pop-shadow);
+}
+
 .ui-confirm-header {
-  padding: 20px 24px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 24px 24px 0;
+}
+
+.ui-confirm-badge {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(75, 163, 255, 0.14);
+  color: #8fc8ff;
+}
+
+.ui-confirm-badge :deep(svg) {
+  width: 22px;
+  height: 22px;
+}
+
+.ui-confirm-header.is-danger .ui-confirm-badge {
+  background: rgba(255, 100, 120, 0.14);
+  color: #ff8c9c;
 }
 
 .ui-confirm-title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 650;
+  font-size: 18px;
+  font-weight: 700;
   color: var(--fg2-text);
 }
 
 .ui-confirm-message {
   margin: 0;
-  padding: 12px 0;
-  color: var(--fg2-muted);
-  font-size: 13px;
-  line-height: 1.6;
+  padding: 10px 0 14px;
+  color: var(--fg2-text-2);
+  font-size: 14px;
+  line-height: 1.55;
 }
 
+/* Two equal, taller buttons across the confirm's width (Cancel first, as before). */
 .ui-confirm-actions {
   display: flex;
-  justify-content: flex-end;
   gap: 10px;
-  padding: 16px 24px 20px;
+  padding: 8px 24px 24px;
+}
+
+.ui-confirm-actions > :deep(.ui-btn) {
+  flex: 1;
+  height: 40px;
+  border-radius: var(--fg2-inset-radius);
 }
 </style>

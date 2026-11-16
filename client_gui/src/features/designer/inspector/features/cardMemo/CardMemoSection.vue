@@ -62,6 +62,7 @@
       :confirm-label="t(k('delete'))"
       :cancel-label="t(k('cancel'))"
       danger
+      icon="trash"
       @confirm="confirmRemove"
       @cancel="removeAsked = null"
     />

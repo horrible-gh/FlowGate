@@ -7,6 +7,7 @@
 // the Inspector header edits the title; the title text rules it checks before sending are the Canvas's (nodeTitle.ts).
 import { cardApprovalFailureView, cardStateView, type CardApprovalFailureView, type CardStateView } from '../center/graph/cardStateView'
 import type {
+  FlowGraph,
   FlowGraphCardDocument,
   FlowGraphNodeRun,
   FlowGraphNodeSlot,
@@ -41,6 +42,19 @@ export const INSPECTOR_OWNERSHIPS = ['unassigned', 'v01', 'graph', 'conflict'] a
 
 /** One document line of a card (FlowGraphCardDocument). */
 export type InspectorCardDocument = FlowGraphCardDocument
+
+/**
+ * v02gui.0029: a card before a 확인 card that came through with its review count spent — approved without passing a
+ * review (the node run's `review_exhaustion_approval`, as the server sends it).
+ */
+export interface InspectorExhaustedCard {
+  readonly nodeId: string
+  readonly kind: string
+  readonly docType: string | null
+  readonly title: string
+  readonly reviewCount: number | null
+  readonly revisionNo: number | null
+}
 
 /** Why the Inspector may not change anything: ownership conflict, or a Graph revision view. */
 export type InspectorReadOnly = 'conflict' | 'revision' | 'archived' | null
@@ -99,6 +113,11 @@ export interface InspectorTarget {
   readonly canEditTitle?: boolean
   /** flowgate.v02.0070 T#1: why it may not — the card runs (an open edit then closes with the lock note). */
   readonly titleLock?: 'running' | null
+  /**
+   * v02gui.0029: on a 확인 card (gate), the cards before it (every ancestor along execution edges, in the Graph's order)
+   * approved after their review count ran out; empty / absent on any other card or when there is none.
+   */
+  readonly exhaustedUpstream?: readonly InspectorExhaustedCard[]
 }
 
 const CARD_KIND_BY_DOC_TYPE: ReadonlyMap<string, InspectorCardKind> = new Map(
@@ -190,6 +209,35 @@ export function withWrittenCardLines(target: InspectorTarget | null, written: re
   return { ...target, cardDocuments: [...lines, ...added] }
 }
 
+const wholeOrNull = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+
+/** v02gui.0029: the done cards before `nodeId` (ancestors along execution edges) approved after their review count ran out. */
+export function exhaustedUpstream(graph: Pick<FlowGraph, 'nodes' | 'edges'>, nodeId: string): InspectorExhaustedCard[] {
+  const parents = new Map<string, string[]>()
+  for (const edge of graph.edges) {
+    if (edge.edgeClass === 'reference') continue
+    parents.set(edge.target, [...(parents.get(edge.target) ?? []), edge.source])
+  }
+  const seen = new Set<string>()
+  const stack = [...(parents.get(nodeId) ?? [])]
+  while (stack.length) {
+    const key = stack.pop()!
+    if (key === nodeId || seen.has(key)) continue
+    seen.add(key)
+    stack.push(...(parents.get(key) ?? []))
+  }
+  return graph.nodes
+    .filter((node) => seen.has(node.id) && node.nodeRun?.status === 'done' && !!node.nodeRun.reviewExhaustionApproval)
+    .map((node) => ({
+      nodeId: node.id,
+      kind: node.kind,
+      docType: node.definition?.docType ?? node.docType ?? null,
+      title: node.title,
+      reviewCount: wholeOrNull(node.nodeRun!.reviewExhaustionApproval!.review_count),
+      revisionNo: wholeOrNull(node.nodeRun!.reviewExhaustionApproval!.revision_no),
+    }))
+}
+
 /** Selection context -> InspectorTarget; null when nothing is selected. */
 export function toInspectorTarget(selection: FlowGraphSelection | null | undefined): InspectorTarget | null {
   if (!selection) return null
@@ -233,6 +281,7 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     titleState: node.titleState ?? null,
     canEditTitle: selection.titleEdit?.editable === true,
     titleLock: selection.titleEdit?.lock ?? null,
+    ...(node.definition?.nodeType === 'gate' ? { exhaustedUpstream: exhaustedUpstream(graph, node.id) } : {}),
   }
 }
 

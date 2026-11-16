@@ -1,0 +1,41 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createUndoQueue } from '@/features/designer/flowAttachments/undo'
+
+afterEach(() => vi.useRealTimers())
+describe('Flow attachment undo (delete at once, ↶ for five seconds)', () => {
+  it('sends nothing before five seconds and a row undo keeps that file only', async () => {
+    vi.useFakeTimers()
+    const commit = vi.fn(async () => {})
+    const queue = createUndoQueue(commit, () => {})
+    queue.stage([{ key: 'a' }, { key: 'b' }])
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(commit).not.toHaveBeenCalled()
+    queue.undoItem('a')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(commit.mock.calls).toEqual([[[{ key: 'b' }]]])
+  })
+  it('Ctrl+Z undoes the latest group; the numbered ↶ is the latest group of more than one', async () => {
+    vi.useFakeTimers()
+    const commit = vi.fn(async () => {})
+    const queue = createUndoQueue(commit, () => {})
+    queue.stage([{ key: 'a' }, { key: 'b' }]); queue.stage([{ key: 'c' }])
+    expect(queue.bulk()?.items.map(i => i.key)).toEqual(['a', 'b'])
+    expect(queue.undoLast()).toBe(true)
+    expect(queue.pending('c')).toBeUndefined()
+    expect(queue.undoGroup(queue.bulk())).toBe(true)
+    expect(queue.groups).toHaveLength(0)
+    expect(queue.undoLast()).toBe(false)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(commit).not.toHaveBeenCalled()
+  })
+  it('close cancels the countdown and a staged file is never staged twice', async () => {
+    vi.useFakeTimers()
+    const commit = vi.fn(async () => {})
+    const queue = createUndoQueue(commit, () => {})
+    queue.stage([{ key: 'same' }]); queue.stage([{ key: 'same' }])
+    expect(queue.groups).toHaveLength(1)
+    queue.clear()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(commit).not.toHaveBeenCalled()
+  })
+})

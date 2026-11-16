@@ -30,6 +30,9 @@ export default {
     "execution": "실행",
     "review": "검수",
     "instruction_review": "지시서 검수",
+    "advanced_open": "{role} 고급 설정",
+    "advanced_title": "{role} · 고급",
+    "advanced_changed": "기본값에서 바꾼 값이 있습니다",
     "rework": "재작업",
     "qa_response": "Q&A 응답",
     "outcome": {
@@ -71,6 +74,9 @@ export default {
     "execution": "Execution",
     "review": "Review",
     "instruction_review": "Instruction review",
+    "advanced_open": "{role} advanced settings",
+    "advanced_title": "{role} · Advanced",
+    "advanced_changed": "Some values differ from the defaults",
     "rework": "Rework",
     "qa_response": "Q&A response",
     "outcome": {
@@ -112,6 +118,9 @@ export default {
     "execution": "実行",
     "review": "レビュー",
     "instruction_review": "指示書レビュー",
+    "advanced_open": "{role} の詳細設定",
+    "advanced_title": "{role} · 詳細",
+    "advanced_changed": "既定値から変更した値があります",
     "rework": "再作業",
     "qa_response": "Q&A応答",
     "outcome": {

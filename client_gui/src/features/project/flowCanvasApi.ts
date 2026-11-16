@@ -120,6 +120,7 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
     ...('attempt_id' in raw ? { attemptId: str(raw.attempt_id) } : {}),
+    ...('review_exhaustion_approval' in raw ? { reviewExhaustionApproval: raw.review_exhaustion_approval ?? null } : {}),
     ...('approval_wait_reason' in raw ? { approvalWaitReason: str(raw.approval_wait_reason) } : {}),
     ...('uncarried_changes' in raw ? { uncarriedChanges: toUncarriedChanges(raw.uncarried_changes) } : {}),
     ...toRoleRunFields(raw),

@@ -31,6 +31,7 @@
           <span v-if="badge" data-test="notification-bell-count">{{ badge }}</span>
         </button>
         <DesignerNotifications v-if="notificationsOpen" :project-id="notificationProjectId" :project="notificationProject" :anchor="notificationAnchor" @close="emit('close-notifications')" />
+        <NotificationAiDetailHost :project-id="notificationProjectId" />
       </div>
     </div>
 
@@ -103,6 +104,7 @@ import { routerKey } from 'vue-router'
 import { logout } from '@/core/auth/logout'
 import { useNotificationBadge } from './notifications/useNotificationBadge'
 import DesignerNotifications from './notifications/DesignerNotifications.vue'
+import NotificationAiDetailHost from './notifications/NotificationAiDetailHost.vue'
 import type { ExplorerProject } from '../projectExplorer/projectExplorerTree'
 import { useI18n } from 'vue-i18n'
 import { useCurrentUser } from '@/core/auth/currentUser'

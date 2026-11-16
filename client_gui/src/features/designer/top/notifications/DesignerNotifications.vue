@@ -19,7 +19,7 @@
         <p v-if="cancelError" class="notification-note is-alert" role="alert">{{ t('gui.designer.top.notifications.cancel_error') }}</p>
         <p v-if="tab === 'runs' && !project" class="notification-note" role="status">{{ t('gui.designer.top.notifications.project_unknown') }}</p>
         <NotificationRunsTab v-if="tab === 'runs' && project && !runsError && (!initialLoading || rows.length > 0)" :rows="rows" :project-name="project?.name || projectId" :busy="busy" @stop="stop" @open-document="openDocumentWindow" />
-        <NotificationAiTab v-if="tab === 'ai' && !initialLoading && !feedError && !degraded" :items="feed?.ai_invoke_runs?.items || []" :total="feed?.ai_invoke_runs?.total" :has-more="feed?.ai_invoke_runs?.has_more" @open-document="openDocumentWindow" />
+        <NotificationAiTab v-if="tab === 'ai' && !initialLoading && !feedError && !degraded" :items="feed?.ai_invoke_runs?.items || []" :total="feed?.ai_invoke_runs?.total" :has-more="feed?.ai_invoke_runs?.has_more" />
         <NotificationQuestionsTab v-show="tab === 'questions'" v-if="!initialLoading && !questionsError" :items="displayQuestions" :project-id="projectId" :project="project" :refresh-key="refreshKey" />
       </template>
     </div>
@@ -109,11 +109,17 @@ function close(restoreFocus = false) {
   if (restoreFocus) props.anchor?.focus()
   emit('close')
 }
+// 0002-CH: a modeless window (AI detail, document windows; teleported to body) is not "outside" the popover.
+// Pressing its title bar / resize handle or Escape inside it works on that window only.
+function inModeless(target: EventTarget | null): boolean {
+  const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null
+  return !!element?.closest('.ui-modeless-panel')
+}
 function escape(event: KeyboardEvent) {
-  if (event.key === 'Escape') { event.preventDefault(); close(true) }
+  if (event.key === 'Escape' && !inModeless(event.target)) { event.preventDefault(); close(true) }
 }
 function outside(event: PointerEvent) {
-  if (event.target instanceof Node && !panel.value?.contains(event.target) && !props.anchor?.contains(event.target)) close()
+  if (event.target instanceof Node && !inModeless(event.target) && !panel.value?.contains(event.target) && !props.anchor?.contains(event.target)) close()
 }
 function place() {
   const rect = props.anchor?.getBoundingClientRect()

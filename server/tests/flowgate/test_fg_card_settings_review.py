@@ -460,12 +460,12 @@ def test_the_review_loop_request_follows_the_card_within_the_loop_ranges():
 
 @pytest.mark.parametrize("stop_reason, status, review", [
     ("review_passed", "done", "approved"),
-    ("review_count_exhausted", "review", "pending_review"),
+    ("review_count_exhausted", "done", "approved"),
     ("review_verdict_hold", "review", "pending_review"),
     ("review_stalled", "review", "pending_review"),
     ("user_cancelled", "review", "pending_review"),
 ])
-def test_when_the_card_review_ends_only_a_passed_result_is_approved(
+def test_pass_or_default_exhaustion_approves_but_other_stops_do_not(
         env, decided, monkeypatch, stop_reason, status, review):
     from modules.flow_gate.services import ai_run_end_hooks
 

@@ -1,6 +1,6 @@
 /**
- * flowgate.v02gui.0027 (0008-T) — 그룹 삭제 (empty Groups only) on the client: the Group menu part (danger item and the
- * line under it from the server's Flow count), the Explorer display tree / ⋯ target carrying `flowTotal`, and the store /
+ * flowgate.v02gui.0027 (0008-T) — 그룹 삭제 (empty Groups only) on the client: the Group menu part (danger item, one line,
+ * no hint under it — v02test.0027 0005-T), the Explorer display tree / ⋯ target carrying `flowTotal`, and the store /
  * API path (DELETE, 409 `module_not_empty` with its count). The Shell end to end (window, 대신 아카이브, refresh) is in
  * contextMenuServerActions.0060.spec.ts; the server side in server/tests/.../test_group_delete_v02gui_0027.py.
  */
@@ -36,46 +36,45 @@ const deleteItem = (model: ReturnType<typeof projectTreeMenu>) =>
 const group = { kind: 'group' as const, projectId: 'p', groupId: 'module:p:ui' }
 
 describe('v02gui.0027 0008-T — the Group menu part', () => {
-  it('ends with 그룹 삭제 (danger) after its own separator, enabled whatever the Flow count', () => {
-    const empty = projectTreeMenu({ target: group, available: { currentProject: true, groupFlowTotal: 0 }, connected: ALL })
+  it('ends with 그룹 삭제 (danger) after its own separator, enabled, with no hint line, whatever the Flow count', () => {
+    const empty = projectTreeMenu({ target: group, available: { currentProject: true }, connected: ALL })
     expect(keysOf(empty)).toEqual(['group.newFlow', '|', 'group.rename', 'group.info', '|', 'group.archive', '|', 'group.delete'])
-    expect(deleteItem(empty)).toMatchObject({ danger: true, disabled: false, icon: '×', labelKey: 'groupDelete',
-      hint: { key: 'groupDeleteHint.empty' } })
+    expect(deleteItem(empty)).toMatchObject({ danger: true, disabled: false, icon: '×', labelKey: 'groupDelete' })
+    expect('hint' in deleteItem(empty)!).toBe(false)
     expect(empty.request('group.delete')).toEqual({ command: 'group.delete', target: group })
-    // With Flows it still opens (the refusal window with 대신 아카이브); the line says why it cannot delete now.
-    const busy = projectTreeMenu({ target: group, available: { currentProject: true, groupFlowTotal: 3 }, connected: ALL })
-    expect(deleteItem(busy)).toMatchObject({ disabled: false, hint: { key: 'groupDeleteHint.busy', params: { n: 3 } } })
+    // A Group with Flows is the same menu (no count / cannot-delete line); pressing it opens the refusal window (대신 아카이브).
+    // The menu no longer takes the Flow count at all, so a target carrying `flowTotal` changes nothing here.
+    const busy = projectTreeMenu({ target: { ...group, flowTotal: 3 } as typeof group, available: { currentProject: true }, connected: ALL })
+    expect(deleteItem(busy)).toMatchObject({ disabled: false })
+    expect('hint' in deleteItem(busy)!).toBe(false)
+    expect(keysOf(busy)).toEqual(keysOf(empty))
     expect(busy.request('group.delete')?.command).toBe('group.delete')
     // An archived Group keeps the same rule.
-    const archived = projectTreeMenu({ target: { ...group, archived: true }, available: { currentProject: true, groupArchived: true, groupFlowTotal: 0 }, connected: ALL })
+    const archived = projectTreeMenu({ target: { ...group, archived: true }, available: { currentProject: true, groupArchived: true }, connected: ALL })
     expect(keysOf(archived).slice(-3)).toEqual(['group.restore', '|', 'group.delete'])
   })
 
-  it('has no line when the count is unknown; hidden where not connected; never for the "All" bucket; off in another project', () => {
-    const unknown = projectTreeMenu({ target: group, available: { currentProject: true }, connected: ALL })
-    expect(deleteItem(unknown)).toBeDefined()
-    expect('hint' in deleteItem(unknown)!).toBe(false)
-    const unconnected = projectTreeMenu({ target: group, available: { currentProject: true, groupFlowTotal: 0 }, connected: ALL.filter((c) => c !== 'group.delete') })
+  it('is hidden where not connected; never for the "All" bucket; off in another project', () => {
+    const unconnected = projectTreeMenu({ target: group, available: { currentProject: true }, connected: ALL.filter((c) => c !== 'group.delete') })
     expect(keysOf(unconnected)).not.toContain('group.delete')
     expect(keysOf(unconnected).at(-1)).toBe('group.archive')
-    const bucket = projectTreeMenu({ target: group, available: { currentProject: true, groupArchivable: false, groupFlowTotal: 0 }, connected: ALL })
+    const bucket = projectTreeMenu({ target: group, available: { currentProject: true, groupArchivable: false }, connected: ALL })
     expect(keysOf(bucket)).toEqual(['group.newFlow', '|', 'group.rename', 'group.info'])
-    const otherProject = projectTreeMenu({ target: group, available: { currentProject: false, groupFlowTotal: 0 }, connected: ALL })
+    const otherProject = projectTreeMenu({ target: group, available: { currentProject: false }, connected: ALL })
     expect(otherProject.request('group.delete')).toBeNull()
   })
 
-  it.each(['ko', 'en', 'ja'] as const)('has its label, the two lines and the window strings in %s', (locale) => {
+  it.each(['ko', 'en', 'ja'] as const)('has its label and the window strings in %s, and no hint lines', (locale) => {
     const m = contextMenuMessages[locale] as typeof contextMenuMessages.ko
     expect(m.groupDelete).toBeTruthy()
-    expect(m.groupDeleteHint.busy).toContain('{n}')
-    expect(m.groupDeleteHint.empty).toBeTruthy()
+    expect('groupDeleteHint' in m).toBe(false)
     const w = menuActionMessages[locale].groupDelete
     for (const key of ['title', 'submit', 'archiveInstead', 'note', 'hint', 'blockedArchived'] as const) expect(w[key]).toBeTruthy()
     expect(w.blocked).toContain('{n}')
   })
 
   it('says the confirmed wording in Korean', () => {
-    expect(contextMenuMessages.ko.groupDeleteHint).toEqual({ busy: 'Flow {n}개가 있어 지금은 삭제할 수 없음', empty: '빈 그룹이라 삭제할 수 있음' })
+    expect(contextMenuMessages.ko.groupDelete).toBe('그룹 삭제')
     expect(menuActionMessages.ko.groupDelete.blocked).toBe('Flow {n}개가 남아 있어 삭제할 수 없습니다. 먼저 아카이브하세요.')
     expect(menuActionMessages.ko.groupDelete.archiveInstead).toBe('대신 아카이브')
   })

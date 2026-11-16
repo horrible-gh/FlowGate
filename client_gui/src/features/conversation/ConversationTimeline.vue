@@ -2,11 +2,25 @@
   <!-- flowgate.v02.0031 — the one chronological conversation flow (R0001 §3): messages,
        command requests, work changes and status events in a single scrolling log. -->
   <div ref="scrollEl" class="conv-log" data-test="conv-log" @scroll.passive="onScroll">
-    <p v-if="status === 'loading'" class="conv-log-state" data-test="conv-log-loading">{{ t('gui.conversation.timeline.loading') }}</p>
-    <p v-else-if="status === 'error'" class="conv-log-state conv-log-state--error" data-test="conv-log-error">
-      {{ t('gui.conversation.timeline.load_failed') }}
-      <button type="button" class="conv-log-retry" @click="emit('reload')">{{ t('gui.conversation.retry') }}</button>
-    </p>
+    <template v-if="status === 'loading' || status === 'error'">
+      <p v-if="status === 'loading'" class="conv-log-state" data-test="conv-log-loading">{{ t('gui.conversation.timeline.loading') }}</p>
+      <p v-else class="conv-log-state conv-log-state--error" data-test="conv-log-error">
+        {{ t('gui.conversation.timeline.load_failed') }}
+        <button type="button" class="conv-log-retry" @click="emit('reload')">{{ t('gui.conversation.retry') }}</button>
+      </p>
+      <!-- flowgate.v02gui.0028: this client's own messages not stored yet (the first message of a chat that is opening,
+           or whose opening failed) stay visible under the line: 전송 중, or failed. Their retry waits for the chat to be
+           open (the line's 다시 시도 first). -->
+      <TimelineMessage
+        v-for="item in localMessages"
+        :key="item.key"
+        :turn="item.turn"
+        :pending="item.pending"
+        :failed="item.failed"
+        :failure="item.failure ?? null"
+        :read-only="true"
+      />
+    </template>
     <template v-else>
       <!-- Earlier turns are fetched on demand (D0002 §6); never the whole conversation at once. -->
       <button
@@ -117,6 +131,11 @@ const emit = defineEmits<{
   read: [seq: number]
   checkpoint: [seq: number | null, kind?: CheckpointKind]
 }>()
+
+// flowgate.v02gui.0028: the messages of this client still on their way or failed (no server seq).
+const localMessages = computed(() =>
+  props.items.filter((item): item is Extract<TimelineItem, { kind: 'message' }> => item.kind === 'message' && item.localId !== null),
+)
 
 const checkpointKindOf = computed<CheckpointKind>(() => (props.checkpointKind === 'exclude' ? 'exclude' : 'include'))
 

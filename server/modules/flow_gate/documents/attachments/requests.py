@@ -428,6 +428,19 @@ card_resolver: Callable[[str, str], TargetView] = _project_card
 
 
 def resolve_card(flow_id: str, node_key: str) -> TargetView:
+    if node_key == "__flow__":
+        from modules.flow_gate.db.connection import get_store
+        from modules.flow_gate.db import groups
+        group = groups.get_by_id(flow_id)
+        if not group:
+            raise RequestError(404, "attachment_target_flow_not_found", "Flow not found")
+        docs = get_store()._fetch_all(
+            "SELECT * FROM documents WHERE group_id = ? AND project_id = ? ORDER BY seq, doc_id",
+            [flow_id, group["project_id"]])
+        doc = next((d for d in docs if d.get("type_code") in ("B", "R")), docs[0] if docs else None)
+        if not doc:
+            raise RequestError(409, "attachment_target_document_missing", "The Flow has no document yet")
+        return TargetView(flow_id, "__flow__", True, doc["doc_id"], group.get("title") or flow_id)
     try:
         return card_resolver(flow_id, node_key)
     except RequestError:
@@ -455,6 +468,11 @@ def _assert_flow_open(flow_id: str) -> None:
 
 
 def _target_for(requester: Requester, target: Any) -> TargetView:
+    # New requests belong to the bound Flow. Explicit legacy targets remain readable
+    # and approvable so pending approvals and old CLI prompts are not invalidated.
+    if target in (None, {}):
+        _assert_flow_open(requester.flow_id)
+        return resolve_card(requester.flow_id, "__flow__")
     if requester.origin == "card":
         if target not in (None, {}) and not (
             isinstance(target, dict) and set(target) <= {"flow_id", "node_key"}
@@ -737,10 +755,12 @@ def _conflict(row: dict) -> Optional[dict]:
 
     try:
         folded = (row.get("filename") or "").casefold()
-        for existing in registry_list(doc_id):
-            name = existing.get("filename") or ""
+        from .flow import rows as flow_rows
+        existing_rows = flow_rows(row["target_flow_id"]) if row.get("target_node_key") == "__flow__" else registry_list(doc_id)
+        for existing in existing_rows:
+            name = existing.get("display_name") or existing.get("filename") or ""
             if name.casefold() == folded:
-                return {"doc_id": doc_id, "filename": name, "case_only": name != row.get("filename"),
+                return {"doc_id": existing.get("doc_id") or doc_id, "filename": name, "case_only": name != row.get("filename"),
                         "size": int(existing.get("size") or 0), "content_sha256": existing.get("content_sha256"),
                         "uploaded_at": existing.get("uploaded_at")}
     except Exception:
@@ -985,6 +1005,12 @@ def _ai_active(group_id: str) -> bool:
 
 
 def _target_check(row: dict, expected_doc_id: str) -> TargetView:
+    if row["target_node_key"] == "__flow__":
+        _assert_flow_open(row["target_flow_id"])
+        doc = _load_doc(expected_doc_id)
+        if doc.get("group_id") != row["target_flow_id"] or doc.get("project_id") != row["project_id"]:
+            raise RequestError(409, "attachment_target_changed", "The attachment belongs to another Flow")
+        return resolve_card(row["target_flow_id"], "__flow__")
     view = resolve_card(row["target_flow_id"], row["target_node_key"])
     if not view.exists:
         raise RequestError(409, "attachment_target_unavailable", "the target card is no longer on the Flow",
@@ -1148,6 +1174,18 @@ def _approve(row: dict, actor: Optional[str], expected_doc_id: str, conflict: st
     from .locator import resolve_attach_dir
 
     request_id = row["request_id"]
+    if row.get("target_node_key") == "__flow__":
+        _target_check(row, expected_doc_id)
+        if conflict == "overwrite":
+            from .flow import rows as flow_rows
+            existing = next((r for r in flow_rows(row["target_flow_id"])
+                             if r["display_name"] == row["filename"]), None)
+            if not existing or existing["content_sha256"] != existing_sha:
+                raise RequestError(409, "attachment_existing_changed", "The file changed; check it again")
+            expected_doc_id = existing["doc_id"]
+            row = {**row, "filename": existing["filename"]}
+        else:
+            expected_doc_id = resolve_card(row["target_flow_id"], "__flow__").doc_id
     # ① Pre-checks outside the guard (cheap refusals; everything is checked again inside it).
     doc = _load_doc(expected_doc_id)
     if doc.get("group_id") != row["target_flow_id"] or doc.get("project_id") != row["project_id"]:
@@ -1156,9 +1194,6 @@ def _approve(row: dict, actor: Optional[str], expected_doc_id: str, conflict: st
     _assert_doc_mutable(doc)
     _target_check(row, expected_doc_id)
     if conflict == "overwrite":
-        if _ai_active(row["group_id"]):
-            raise RequestError(409, "attachment_overwrite_blocked_ai_running",
-                               "an AI run is working in this Flow; keep both now, or overwrite after it ends")
         _check_overwrite_target(expected_doc_id, row["filename"], existing_sha)
     blob = staged_file(row)
     if not blob.is_file():
@@ -1300,7 +1335,14 @@ def _commit_approval(row: dict, actor: Optional[str], expected_doc_id: str, conf
             if registry_count(expected_doc_id) >= limit:
                 raise RequestError(409, "attachment_doc_full",
                                    f"the document already holds {limit} attachments", limit=limit)
-            final_name, fd = resolve_unique_name(room, expected_doc_id, row["filename"], set(), registry_has)
+            proposed_name = row["filename"]
+            if row.get("target_node_key") == "__flow__":
+                from .flow import rows as flow_rows, unique_name
+                current_files = flow_rows(row["target_flow_id"])
+                if len(current_files) >= limit:
+                    raise RequestError(409, "attachment_doc_full", "The Flow attachment limit was reached")
+                proposed_name = unique_name(proposed_name, {r["display_name"].casefold() for r in current_files})
+            final_name, fd = resolve_unique_name(room, expected_doc_id, proposed_name, set(), registry_has)
             os.close(fd)
             final_path = room / final_name
             placed["final_path"] = final_path
@@ -1316,9 +1358,6 @@ def _commit_approval(row: dict, actor: Optional[str], expected_doc_id: str, conf
             )
             fields["final_filename"] = final_name
         else:
-            if _ai_active(row["group_id"]):
-                raise RequestError(409, "attachment_overwrite_blocked_ai_running",
-                                   "an AI run started in this Flow; keep both now, or overwrite after it ends")
             existing = _check_overwrite_target(expected_doc_id, row["filename"], existing_sha)
             _reg, existing_path = resolve_registered_attachment(fresh, existing["filename"])
             backup = staging_dir(project_id, request_id) / BACKUP_NAME

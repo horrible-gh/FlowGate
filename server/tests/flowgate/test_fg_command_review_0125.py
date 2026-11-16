@@ -140,6 +140,7 @@ def _spent(env, monkeypatch, starts, mode, follow=True):
         a = flow(env, extra_settings=(("instruction", "omit"),))
         roles(a, execution=X, review=B)
         a2 = b = None
+    stored(a, "after_review_exhausted", "stop")
     stored(a, "review_count", ROUNDS)
     command(env, mode)
     assert node_run(env, a)["status"] == "open"

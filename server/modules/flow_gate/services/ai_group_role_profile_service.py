@@ -1,7 +1,14 @@
-"""0120 T#1: group role settings only; does not resolve or mutate card/runtime AI."""
+"""0120 T#1: group role settings only; does not resolve or mutate card/runtime AI.
+
+flowgate.v02test.0027 (0007-T, A-server): each profile row also keeps a default review count (``review_count``,
+migration 191). NULL on a type row inherits the common row; NULL on the common row is the existing card default 0;
+0 is an explicit "no review". It has its own write (``set_review_count``), separate from the AI cells, and is copied
+into a card only when the card is created (``flowgate.ai_roles.card_init``) — existing cards never change.
+"""
 from modules.flow_gate.db import ai_group_role_profiles as repo
 from modules.flow_gate.graph_workflow.services.node_title_names import PALETTE_KEY_OF_DOC_TYPE, PALETTE_NAMES
 from modules.flow_gate.services import ai_group_service as groups
+from modules.flow_gate.settings import ai_execution_policy_service as policy
 
 
 def _group(ai_group_id: str) -> dict:
@@ -21,11 +28,27 @@ def _types(locale: str = "ko") -> list[dict]:
     ]
 
 
+def review_count_choices() -> tuple[int, ...]:
+    """The values a new group review count may take: the server policy's choices with 0 ("안 함"), without -1
+    ("until it passes") — the same new-selection rule as the card Inspector's 검수 횟수 (SettingsTab ``optionsOf``).
+    The finite tail follows the effective repeat-count maximum; no fixed list."""
+    return policy.repeat_count_choices(allow_zero=True, allow_unlimited=False)
+
+
+def card_review_count_choices() -> tuple[int, ...]:
+    """The card 검수 횟수 values a new card may store (-1, 0, 1..the effective max) — the same policy call as the
+    creation copy's ``flowgate.ai_roles.legacy_adapter.card_review_count_choices``. ``effective_review_count`` is
+    judged against these, so the API's effective value is what a new card copies today."""
+    return policy.repeat_count_choices(allow_zero=True)
+
+
 def options(ai_group_id: str, locale: str = "ko") -> dict:
     _group(ai_group_id)
     return {"types": _types(locale), "providers": [
         {"provider_id": pid, "provider_name": p["name"]}
-        for pid, p in groups._available().items()]}
+        for pid, p in groups._available().items()],
+        "review_count_choices": list(review_count_choices()),
+        "review_count_default": 0}
 
 
 def profiles(ai_group_id: str) -> dict:
@@ -34,7 +57,9 @@ def profiles(ai_group_id: str) -> dict:
     if not any(row["type_key"] == repo.COMMON for row in rows):
         raise groups.AIGroupError("ai_role_profiles_inconsistent", 500)
     available, registry = groups._available(), {}
-    items = []
+    common = next(row for row in rows if row["type_key"] == repo.COMMON)
+    card_choices = card_review_count_choices()
+    items, counts = [], {}
     for row in rows:
         values = {}
         for role in repo.ROLES:
@@ -47,7 +72,15 @@ def profiles(ai_group_id: str) -> dict:
                 value.update(ref)
             values[role] = value
         items.append({"type_key": row["type_key"], "position": row["position"], "roles": values})
-    return {"ai_group_id": ai_group_id, "items": items}
+        stored = row.get("review_count")
+        typed = None if row["type_key"] == repo.COMMON else row
+        effective, source = repo.effective_review_count(typed, common, card_choices)
+        # Kept apart from the AI cells: the stored value as it is (null = inherit / the default 0; one outside today's
+        # choices is kept) and what a new card of the type copies today, by the same policy judgment as the creation
+        # copy (source: type / common / default; a stored value outside today's card choices copies 0 = default).
+        counts[row["type_key"]] = {"review_count": None if stored is None else int(stored),
+                                   "effective_review_count": effective, "source": source}
+    return {"ai_group_id": ai_group_id, "items": items, "review_counts": counts}
 
 
 def add(ai_group_id: str, type_key: str) -> dict:
@@ -90,6 +123,29 @@ def set_cell(ai_group_id: str, type_key: str, role: str, data: dict) -> dict:
             else:
                 raise groups.AIGroupError("ai_group_provider_unavailable")
         repo.set_cell(ai_group_id, type_key, role, kind, pid, name)
+    return profiles(ai_group_id)
+
+
+def set_review_count(ai_group_id: str, type_key: str, data: dict) -> dict:
+    """One profile row's default review count. ``{"review_count": null}`` clears it (type row: inherit the common row,
+    common row: the card default 0). A new value must be one of ``review_count_choices``; the value already stored is
+    accepted again unchanged even when today's choices no longer offer it (it is never cleared by a read)."""
+    if set(data) != {"review_count"}:
+        raise groups.AIGroupError("ai_role_profile_review_count_invalid")
+    value = data["review_count"]
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+        raise groups.AIGroupError("ai_role_profile_review_count_invalid")
+    with repo.get_store().transaction():
+        repo.lock_group(ai_group_id)
+        _group(ai_group_id)
+        row = repo.get(ai_group_id, type_key)
+        if row is None:
+            raise groups.AIGroupError("ai_role_profile_not_found", 404)
+        stored = row.get("review_count")
+        kept = stored is not None and value is not None and int(stored) == value
+        if value is not None and not kept and value not in review_count_choices():
+            raise groups.AIGroupError("ai_role_profile_review_count_invalid")
+        repo.set_review_count(ai_group_id, type_key, value)
     return profiles(ai_group_id)
 
 

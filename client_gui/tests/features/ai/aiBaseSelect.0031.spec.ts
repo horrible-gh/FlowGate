@@ -59,7 +59,7 @@ describe('0031 D: class wiring and unchanged behaviour', () => {
     wrapper.unmount()
   })
 
-  it('AiRoleMatrix model selects carry the class, the add-kind select does not, and a pick still saves', async () => {
+  it('AiRoleMatrix model and review-count selects carry the class, the add-kind select does not, and a pick still saves', async () => {
     const saved: AiRoleProfiles = { ai_group_id: 'g', items: [{ type_key: 'common', position: 0, roles: { instruction: { kind: 'unset' }, execution: { kind: 'unset' }, review: { kind: 'unset' } } }] }
     vi.spyOn(api, 'getAiRoleProfiles').mockResolvedValue(JSON.parse(JSON.stringify(saved)))
     vi.spyOn(api, 'getAiRoleProfileOptions').mockResolvedValue({ types: [], providers: [{ provider_id: 'p1', provider_name: 'Model One' }] })
@@ -67,7 +67,9 @@ describe('0031 D: class wiring and unchanged behaviour', () => {
     const wrapper = mount(AiRoleMatrix, { props: { groupId: 'g', canEdit: true }, global: { plugins: [i18n] } })
     await flushPromises()
     const cells = wrapper.findAll('select.role-select')
-    expect(cells).toHaveLength(3)
+    // Three AI cells plus the review-count cell (0027): one row, one look.
+    expect(cells).toHaveLength(4)
+    expect(cells.map(cell => cell.attributes('data-role'))).toEqual(['instruction', 'execution', 'review', 'review_count'])
     cells.forEach(cell => expect(cell.classes()).toContain('ai-base-select'))
     expect(wrapper.get('select.add-kind-select').classes()).not.toContain('ai-base-select')
     await wrapper.get('[data-role="execution"]').setValue('provider:p1')

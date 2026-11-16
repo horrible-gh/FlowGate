@@ -319,14 +319,18 @@ def test_integration_registers_every_port_including_call_acceptance(clean_hooks)
     # flowgate.v02test.0023: the control tower tools follow the Graph reads; the attachment request
     # (chat.0017) follows run_command. Neither uses the call ledger.
     # flowgate.v02gui.0010: the card question list / answer follow the attachment request (both on the call ledger).
+    # flowgate.v02gui.0028: the card role read / change follow the control tower tools (no call ledger either).
+    # flowgate.v02gui.0032: the AI list read before a placement follows them.
     assert [t["name"] for t in tools] == ["read_flow_canvas", "read_flow_current_run",
                                           "place_flow_cards", "start_flow_run",
+                                          "get_card_roles", "set_card_roles", "get_ai_options",
                                           "run_command", "request_attachment_upload",
                                           "list_card_questions", "answer_card_question",
                                           "read_card_document", "revise_card_document",
                                           "read_document_by_id", "revise_document_by_id", "create_new_document"]
     by_name = {t["name"]: t for t in tools}
-    plain = {"run_command", "request_attachment_upload", "place_flow_cards", "start_flow_run"}
+    plain = {"run_command", "request_attachment_upload", "place_flow_cards", "start_flow_run",
+             "get_card_roles", "set_card_roles", "get_ai_options"}
     assert all("call_handler" not in by_name[name] for name in plain)
     assert all(callable(t["call_handler"]) for t in tools if t["name"] not in plain)
     assert all(by_name[name]["own_validation"] and not by_name[name]["completion"]

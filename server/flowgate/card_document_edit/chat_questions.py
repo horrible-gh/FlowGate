@@ -78,6 +78,8 @@ _RULES = (
 LIST_DESCRIPTION = (
     "List the questions (Q) that card AIs left on the documents of this chat's Flow, per document: item_id, seq (the "
     "Q number the user sees, Q1 = seq 1), title, body, options, answered and the card the document belongs to. "
+    "responder_state is the automatic answer's state; when it failed, responder_error_code says why (e.g. "
+    "no_enabled_provider, no_independent_responder, provider_unavailable): tell the user that cause. "
     "Without doc_id: the documents with open questions; with doc_id: that document's questions. include_answered "
     "adds answered ones with their latest answer. Use it to turn \"card X's Q1\" into doc_id + item_id."
 )
@@ -242,7 +244,11 @@ def _item_view(item, include_answer):
     answered = int(item.get("answer_count") or 0) > 0
     view = {"item_id": item["id"], "seq": item.get("seq"), "title": item.get("title"), "body": body,
             "options": _options(item), "asker_kind": item.get("asker_kind"), "answered": answered,
-            "answer_count": int(item.get("answer_count") or 0), "responder_state": item.get("responder_state")}
+            "answer_count": int(item.get("answer_count") or 0), "responder_state": item.get("responder_state"),
+            # flowgate.v02gui.0028: why the automatic answer failed (no_enabled_provider, provider_unavailable, ...), so
+            # the chat can tell the user the cause (None when it did not fail). Only the code: the stored message is
+            # internal text.
+            "responder_error_code": item.get("responder_error_code")}
     if cut:
         view["body_truncated"] = True
     if include_answer and answered:
@@ -450,7 +456,8 @@ def cli_mention_section(api_base: str, raw_token: str) -> str:
         f"POST {base}/questions/{{doc_id}}/items/{{item_id}}/answers\n"
         f"Authorization: Bearer {raw_token}\n"
         "GET lists the questions card AIs left on this chat's Flow documents: item_id, seq (Q1 = seq 1), body, "
-        "options, answered and the card of each document. POST answers one of them on the user's behalf with "
+        "options, answered and the card of each document; responder_error_code says why an automatic answer failed "
+        "(tell the user). POST answers one of them on the user's behalf with "
         '{"body": "<answer>"} and/or {"selected_option_ids": ["<one option id>"]}. Reading mode may answer; the '
         "user needs document create permission. A question that already has an answer is 409 "
         "question_already_answered. card_resume in the answer tells whether the card goes on after this chat run "

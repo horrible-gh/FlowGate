@@ -606,11 +606,14 @@ def _after_review(flow_id: str, run: dict, answered: bool = False) -> None:
 
         assigned_review.after_loop_end(flow_id, run, ref, answered)      # 0113 T#3 (L-2 §2.8.4, §2.9)
         return
+    from flowgate.card_settings import review_exhaustion
+
     instruction = legacy.instruction_node_of_document(flow_id, doc_id)
     if instruction is not None:
         node, row = instruction
         loop = legacy.review_loop_row(run["run_id"]) or run.get("document_review_loop") or {}
-        if loop.get("stop_reason") != PASSED:
+        exhausted = review_exhaustion.eligible(flow_id, node, loop)
+        if loop.get("stop_reason") != PASSED and not exhausted:
             legacy.record_approval_wait(flow_id, node["node_key"], doc_id, not_passed(loop),
                                         stage=fields.INSTRUCTION_STAGE)
             return
@@ -621,9 +624,17 @@ def _after_review(flow_id: str, run: dict, answered: bool = False) -> None:
                         "instruction_review_approval", answered) as owned:
             if not owned:
                 return
+            decision = None
+            if exhausted:
+                decision = legacy.with_flow_guard(flow_id, lambda: review_exhaustion.remember(
+                    row["run_id"], node["node_key"], legacy.attempt_of_ai_run(run), fields.INSTRUCTION_STAGE,
+                    {**loop, "run_id": run["run_id"]}, completion_records.document(doc_id)))
             # 0119 T-2 rework: a failed automatic approval keeps the instruction stage (a system error, retried)
             if approve_instruction(flow_id, node, doc_id, run.get("issued_to") or "",
-                                   attempt_id=legacy.attempt_of_ai_run(run)) is True:
+                                   attempt_id=legacy.attempt_of_ai_run(run),
+                                   expected_revision=decision["revision_no"] if decision else None) is True:
+                if decision:
+                    review_exhaustion.approved(flow_id, row["run_id"], decision)
                 legacy.start_result_stage(flow_id, row["run_id"], node["node_key"], doc_id,
                                           run.get("issued_to") or "", legacy.attempt_of_ai_run(run), defer=jobs,
                                           idle_ok=answered)
@@ -637,7 +648,8 @@ def _after_review(flow_id: str, run: dict, answered: bool = False) -> None:
     loop = legacy.review_loop_row(run["run_id"]) or run.get("document_review_loop") or {}
     person = legacy.person_plan_reviewed(flow_id, node)
     attempt_id = legacy.attempt_of_ai_run(run)
-    if loop.get("stop_reason") != PASSED:
+    exhausted = not person and review_exhaustion.eligible(flow_id, node, loop)
+    if loop.get("stop_reason") != PASSED and not exhausted:
         if not person:                          # B-1: an AI card's review that ended without passing (H1)
             legacy.record_approval_wait(flow_id, node["node_key"], doc_id, not_passed(loop), attempt_id=attempt_id)
         _take_over_submission(flow_id, run)     # 0083 WP-4: likewise (a person's revision made in place)
@@ -654,10 +666,18 @@ def _after_review(flow_id: str, run: dict, answered: bool = False) -> None:
     # flowgate.v02.0105 T#2 (B-4): an AI card's under the system's authority, a person's work plan under the issuer's.
     with _step_hold(flow_id, run_id, node["node_key"], attempt_id, "review_approval", answered) as owned:
         if owned:
-            legacy.approve(flow_id, doc_id, run.get("issued_to") or "",
-                           _person_authority(node) if person else legacy.AUTOMATION,
-                           node_key=node["node_key"], attempt_id=attempt_id,
-                           author=PERSON_AUTHOR if person else legacy.AUTHOR_AI)
+            decision = None
+            if exhausted:
+                decision = legacy.with_flow_guard(flow_id, lambda: review_exhaustion.remember(
+                    run_id, node["node_key"], attempt_id, fields.RESULT_STAGE,
+                    {**loop, "run_id": run["run_id"]}, completion_records.document(doc_id)))
+            done = legacy.approve(flow_id, doc_id, run.get("issued_to") or "",
+                                  _person_authority(node) if person else legacy.AUTOMATION,
+                                  node_key=node["node_key"], attempt_id=attempt_id,
+                                  expected_revision=decision["revision_no"] if decision else None,
+                                  author=PERSON_AUTHOR if person else legacy.AUTHOR_AI)
+            if done is True and decision:
+                review_exhaustion.approved(flow_id, run_id, decision)
 
 
 def not_passed(loop: dict) -> str:
@@ -884,13 +904,13 @@ def review_instruction(flow_id: str, node: dict, doc_id: str, actor: str, run_id
 # ── a lost run-end stage (flowgate.v02.0105 T#2 B-3, NR flowgate.v02.0101.0003 §3.9.2) ──────────
 
 NO_REVIEW, NEEDS_REVIEW = "none", "review"
-REVIEW_COUNTS = (1, 2, 3, -1)                   # a review loop's own review_count (its table CHECK)
 
 
 def review_setting(flow_id: str, node_key: str, field: str = "review_count") -> Optional[str]:
     """The card's review setting as stored, not as ``fields.after_result`` reads it (that one takes a value it cannot
-    read for 'none'): ``NO_REVIEW`` (no row, or the integer 0), ``NEEDS_REVIEW`` (the integer 1, 2, 3 or -1), else None —
-    unknown (a row that does not parse, a string, any other number)."""
+    read for 'none'): ``NO_REVIEW`` (no row, or the integer 0), ``NEEDS_REVIEW`` (a non-zero value of the card's own
+    choices, ``legacy.repeat_choices``: -1, 1..the configured max — flowgate.v02test.0027, no frozen 1, 2, 3), else
+    None — unknown (a row that does not parse, a string, any other number)."""
     value = repository.stored(flow_id, node_key, field)
     if value is repository.ABSENT:
         return NO_REVIEW
@@ -898,7 +918,7 @@ def review_setting(flow_id: str, node_key: str, field: str = "review_count") -> 
         return None
     if value == 0:
         return NO_REVIEW
-    return NEEDS_REVIEW if value in REVIEW_COUNTS else None
+    return NEEDS_REVIEW if value in legacy.repeat_choices() else None
 
 
 def reconcile(flow_id: str) -> None:
@@ -974,6 +994,9 @@ def _reconcile_result(flow_id: str, run_id: str, row: dict) -> None:
         latest = loops[0]
         if latest.get("current_stage") != legacy.STOPPED_LOOP_STAGE:
             return                              # ④-b not finished
+        from flowgate.card_settings import review_exhaustion
+        if review_exhaustion.eligible(flow_id, node, latest):
+            return _reconcile_exhausted(flow_id, run_id, node, doc_id, issuer, attempt_id, latest, fields.RESULT_STAGE)
         if latest.get("stop_reason") != PASSED:
             return legacy.record_approval_wait(flow_id, key, doc_id, not_passed(latest), attempt_id=attempt_id)
         if not _loop_of_attempt(latest, attempt_id) or not legacy.submission_passed(doc_id):
@@ -984,6 +1007,31 @@ def _reconcile_result(flow_id: str, run_id: str, row: dict) -> None:
     except Exception:  # noqa: BLE001 — ④-d a read that failed: nothing is approved, nor tried again
         _log.warning("card result reconciliation failed flow=%s node=%s", flow_id, key, exc_info=True)
         unknown()
+
+
+def _reconcile_exhausted(flow_id, run_id, node, doc_id, issuer, attempt_id, loop, stage):
+    from flowgate.card_settings import review_exhaustion
+    if not _loop_of_attempt(loop, attempt_id) or _review_asks(flow_id, loop):
+        return
+    key = node["node_key"]
+    jobs = []
+    with legacy.person_hold(flow_id, run_id, key, attempt_id, "reconcile_exhaustion") as owned:
+        if not owned:
+            return
+        decision = legacy.with_flow_guard(flow_id, lambda: review_exhaustion.remember(
+            run_id, key, attempt_id, stage, loop, completion_records.document(doc_id)))
+        if stage == fields.INSTRUCTION_STAGE:
+            done = approve_instruction(flow_id, node, doc_id, issuer, attempt_id=attempt_id,
+                                       expected_revision=decision["revision_no"])
+        else:
+            done = legacy.approve(flow_id, doc_id, issuer, legacy.AUTOMATION, node_key=key,
+                                  attempt_id=attempt_id, expected_revision=decision["revision_no"], author=legacy.AUTHOR_AI)
+        if done is True:
+            review_exhaustion.approved(flow_id, run_id, decision)
+            if stage == fields.INSTRUCTION_STAGE:
+                legacy.start_result_stage(flow_id, run_id, key, doc_id, issuer, attempt_id, defer=jobs, idle_ok=True)
+    for job in jobs:
+        job()
 
 
 def _person_card(flow_id: str, node_key: str) -> Optional[dict]:
@@ -1104,6 +1152,9 @@ def _reconcile_instruction(flow_id: str, run_id: str, row: dict) -> None:
             latest = loops[0]
             if latest.get("current_stage") != legacy.STOPPED_LOOP_STAGE:
                 return
+            from flowgate.card_settings import review_exhaustion
+            if review_exhaustion.eligible(flow_id, node, latest):
+                return _reconcile_exhausted(flow_id, run_id, node, doc_id, issuer, attempt_id, latest, fields.INSTRUCTION_STAGE)
             if latest.get("stop_reason") != PASSED:
                 return legacy.record_approval_wait(flow_id, key, doc_id, not_passed(latest),
                                                    stage=fields.INSTRUCTION_STAGE)

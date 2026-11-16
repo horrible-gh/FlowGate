@@ -355,7 +355,7 @@ describe('2-B in the Shell — 그룹 / 플로우 이름 변경 (display name on
     })
     rightClick(explorerRow(w, 'Canvas').element)
     await settle()
-    expect(states()).toEqual([['flow.rename', 'false', ''], ['flow.delete', 'false', '']])
+    expect(states()).toEqual([['flow.rename', 'false', ''], ['flow.baseBranch', 'false', ''], ['flow.archive', 'true', ''], ['flow.delete', 'false', '']])
     await choose('flow.rename')
     expect(q('dma-fact-target')!.textContent).toContain('Canvas')
     expect(q('dma-fact-id')!.textContent).toContain('p.ui.0002')
@@ -428,8 +428,12 @@ describe('2-B in the Shell — 플로우 삭제 is the existing dispose (DC) (00
     expect(dialog()!.closest('[role]')?.getAttribute('role')).toBe('alertdialog')
     expect(q('dma-fact-target')!.textContent).toContain('Canvas')
     expect(q('dma-fact-id')!.textContent).toContain('p.ui.0002')
-    // flowgate.v02test.0001 T#1: one line, no bullets, no standing help under the input.
-    expect(q('dma-dispose-note')!.textContent).toBe('목록에서 제거됩니다. 기록은 유지됩니다.')
+    // v02gui.0029 (0003-CH, 시안 tfi2zm20): the Group delete's look — the red badge above the title, one sentence, the
+    // Flow in its box (identifier faint), two points; still no standing help under the input.
+    expect(q('dma-badge')!.dataset.icon).toBe('trash')
+    expect(document.querySelector('.dma-head')!.getAttribute('data-look')).toBe('hero')
+    expect(q('dma-dispose-note')!.textContent).toBe('이 플로우를 목록에서 제거합니다.')
+    expect(Array.from(q('dma-dispose-points')!.querySelectorAll('li')).map((li) => li.textContent)).toEqual(['기록은 그대로 남습니다.', '플로우 목록에서는 더 이상 보이지 않습니다.'])
     expect(q('dma-dispose-effects')).toBeNull()
     expect(q('dma-reason-required')).toBeNull()
     expect(submitButton().disabled).toBe(true)
@@ -447,6 +451,25 @@ describe('2-B in the Shell — 플로우 삭제 is the existing dispose (DC) (00
     expect(dialog()).toBeNull()
     expect(mutations()).toEqual([])
     expect(tabNames(w)).toEqual(['Canvas'])
+  })
+
+  it('v02gui.0029: a reason chip fills the reason (still editable) and turns the button on; it sends that reason', async () => {
+    const w = await mountShell()
+    await openFlow(w, 'Canvas')
+    await openDispose(w)
+    postRequest.mockResolvedValue({ data: { status: 'success', group_id: 'p.ui.0002', project: 'p', doc_id: 'p.ui.0002.0003-DC' } })
+    expect(Array.from(q('dma-reason-chips')!.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['중복', '테스트용', '더 이상 안 씀', '잘못 만듦'])
+    expect(submitButton().disabled).toBe(true)
+    q('dma-reason-chips')!.querySelector<HTMLButtonElement>('[data-chip="test"]')!.click()
+    await settle()
+    expect(q<HTMLTextAreaElement>('dma-reason')!.value).toBe('테스트용')
+    expect(submitButton().disabled).toBe(false)
+    expect(mutations()).toEqual([])
+    type('dma-reason', '테스트용 — 데모 끝')
+    await settle()
+    submitButton().click()
+    await settle()
+    expect(mutations()).toEqual([['POST', '/api/v1/groups/p.ui.0002/dispose', { reason_detail: '테스트용 — 데모 끝' }]])
   })
 
   it('with a reason: only the dispose API, once (no permanent / document / branch delete); then the tree re-reads, the recent Flow and the open tab go', async () => {
@@ -581,6 +604,10 @@ describe('2-B in the Shell — the File Explorer commands on the open Flow workt
     await settle()
     await choose('folder.newFolder')
     expect(q('dma-fact-location')!.textContent).toContain('src')
+    // v02gui.0029: an input window — the small badge beside the title, no standing danger look.
+    expect(document.querySelector('.dma-head')!.getAttribute('data-look')).toBe('compact')
+    expect(q('dma-badge')!.dataset.icon).toBe('folder-plus')
+    expect(q('dma-target-meta')!.textContent).toBe('만들 위치')
     type('dma-input', 'a/b')
     await settle()
     expect(q('dma-input-error')!.textContent).toContain('쓸 수 없습니다')
@@ -727,7 +754,13 @@ describe('2-B in the Shell — the File Explorer commands on the open Flow workt
     await choose('folder.delete')
     expect(dialog()!.closest('[role]')?.getAttribute('role')).toBe('alertdialog')
     expect(q('dma-fact-target')!.textContent).toContain('src')
-    expect(q('dma-scope')!.textContent).toContain('그 안의 모든 파일·폴더')
+    // v02gui.0029: titled 폴더 삭제; the folder in a red-edged box; what goes with it and "cannot be undone" as red points.
+    expect(document.querySelector('.dma-title')!.textContent).toBe('폴더 삭제')
+    expect(submitButton().textContent).toContain('폴더 삭제')
+    expect(q('dma-fact-target')!.classList.contains('is-danger')).toBe(true)
+    expect(q('dma-scope')!.textContent).toBe('이 폴더를 삭제합니다.')
+    expect(q('dma-remove-points')!.textContent).toContain('안에 있는 모든 파일·폴더가 함께 지워집니다.')
+    expect(q('dma-remove-points')!.textContent).toContain('되돌릴 수 없습니다')
     const reads = fileTreeReads()
     submitButton().click()
     await settle()
@@ -761,7 +794,12 @@ describe('2-B in the Shell — the File Explorer commands on the open Flow workt
     rightClick(file(w, 'src/util.ts'))
     await settle()
     await choose('file.delete')
-    expect(q('dma-fact-target')!.textContent).toContain('src/util.ts')
+    // v02gui.0029: titled 파일 삭제; the file's name large, its folder faint, the whole path as the box's tooltip.
+    expect(document.querySelector('.dma-title')!.textContent).toBe('파일 삭제')
+    expect(q('dma-fact-target')!.dataset.path).toBe('src/util.ts')
+    expect(q('dma-fact-target')!.querySelector('.dma-target-name')!.textContent).toBe('util.ts')
+    expect(q('dma-target-meta')!.textContent).toBe('src/')
+    expect(q('dma-remove-points')!.textContent).not.toContain('안에 있는')
     const reads = fileTreeReads()
     submitButton().click()
     await settle()
@@ -1240,7 +1278,7 @@ describe('v02gui.0027 in the Shell — 그룹 삭제 (empty Groups only) and 대
     explorerRow(w, label).find('[data-test="project-explorer-group-menu"]').element as HTMLButtonElement
   const hintOf = (key: string) => item(key).querySelector('[data-test="designer-context-hint"]')?.textContent ?? null
 
-  it('an empty Group: the menu says it can be deleted; the window confirms, DELETE runs once and the Group leaves the tree', async () => {
+  it('an empty Group: the menu shows 그룹 삭제 on one line; the window confirms, DELETE runs once and the Group leaves the tree', async () => {
     serveDelete()
     const w = await mountShell()
     menuButton(w, '서버').click()
@@ -1248,7 +1286,7 @@ describe('v02gui.0027 in the Shell — 그룹 삭제 (empty Groups only) and 대
     expect(item('group.delete').classList.contains('danger')).toBe(true)
     expect(item('group.delete').getAttribute('aria-disabled')).toBe('false')
     expect(item('group.delete').querySelector('.designer-context-label')!.textContent).toBe('그룹 삭제')
-    expect(hintOf('group.delete')).toBe('빈 그룹이라 삭제할 수 있음')
+    expect(hintOf('group.delete')).toBeNull()  // one line: the item name only (v02test.0027 0005-T)
     await choose('group.delete')
     expect(dialog()?.dataset.kind).toBe('group.delete')
     expect(q('dma-group-delete-note')).not.toBeNull()
@@ -1264,13 +1302,13 @@ describe('v02gui.0027 in the Shell — 그룹 삭제 (empty Groups only) and 대
     expect(labels(w)).toContain('UI 개선')
   })
 
-  it('a Group with Flows (archived ones count): the menu says why, the window refuses without a DELETE and 대신 아카이브 archives it', async () => {
+  it('a Group with Flows (archived ones count): the menu has no hint line, the window refuses without a DELETE and 대신 아카이브 archives it', async () => {
     serveDelete()
     const w = await mountShell()
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    // 3 from the server although the tree lists only 2 Flows of it.
-    expect(hintOf('group.delete')).toBe('Flow 3개가 있어 지금은 삭제할 수 없음')
+    // The window's 3 comes from the server although the tree lists only 2 Flows of it.
+    expect(hintOf('group.delete')).toBeNull()
     await choose('group.delete')
     expect(dialog()?.dataset.kind).toBe('group.delete')
     expect(q('dma-group-delete-blocked')!.textContent!.trim()).toBe('Flow 3개가 남아 있어 삭제할 수 없습니다. 먼저 아카이브하세요.')
@@ -1309,7 +1347,7 @@ describe('v02gui.0027 in the Shell — 그룹 삭제 (empty Groups only) and 대
     await settle()
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    expect(hintOf('group.delete')).toBe('Flow 2개가 있어 지금은 삭제할 수 없음')
+    expect(hintOf('group.delete')).toBeNull()
     await choose('group.delete')
     expect(q('dma-group-delete-blocked')!.textContent!.trim()).toBe('Flow 2개가 남아 있어 삭제할 수 없습니다.')
     expect(q('dma-archive-instead')).toBeNull()

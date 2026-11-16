@@ -263,9 +263,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
         archiveBusy: target.kind === 'flow' ? deps.archive?.busy(target.flowId) : false,
         // v02gui.0027: the Group's archive state as its row showed it when the menu opened.
         groupArchived: target.kind === 'group' ? target.archived === true : undefined,
-        groupArchivable: target.kind === 'group' ? !isUngroupedBucket(target) : undefined,
-        // v02gui.0027 (0008-T): the server's Flow count of the Group as its row knew it (the 그룹 삭제 line).
-        groupFlowTotal: target.kind === 'group' ? target.flowTotal : undefined },
+        groupArchivable: target.kind === 'group' ? !isUngroupedBucket(target) : undefined },
       connected,
     }) : null
     const opened = show(event, build, live, (request, recheck) => {

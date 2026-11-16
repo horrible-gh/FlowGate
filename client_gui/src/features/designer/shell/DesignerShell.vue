@@ -18,6 +18,10 @@
        connectors the five areas reach through inject; a chosen command runs through the paths below.
        flowgate.v02.0060 T#2 (2-B): the windows of its 11 existing server commands are mounted here too (the connector's). -->
   <div class="designer-shell" data-test="designer-shell" @keydown.esc="selectedPalette = null">
+    <FlowAttachmentHost ref="attachmentHost" :key="projectStore.designerSessionOwner ?? ''"
+      :flow-id="center.state.activeFlowId" :project-id="projectId"
+      :title="center.state.tabs.find(tab => tab.flowId === center.state.activeFlowId)?.name ?? ''"
+      :is-read-only="id => center.isFlowReadOnly(id)" />
     <DesignerTop
       :notifications-open="notificationsOpen"
       :notification-project-id="projectId"
@@ -307,6 +311,7 @@ import DesignerCenterColumn from './DesignerCenterColumn.vue'
 import DesignerLeftDock from './DesignerLeftDock.vue'
 import DesignerRightDock from './DesignerRightDock.vue'
 import DesignerTop from './DesignerTop.vue'
+import FlowAttachmentHost from '../flowAttachments/FlowAttachmentHost.vue'
 import {
   DESIGNER_LEFT_MODES,
   DESIGNER_RIGHT_TOOLS,
@@ -382,6 +387,8 @@ const center = createDesignerCenterSession({
 // The Project Explorer's Flow id is the v0.1 group id, which is exactly FlowRef.groupId of
 // the File Explorer — no lookup or conversion needed.
 const activeFlowRef = center.activeFlowRef
+// flowgate.v02gui.0030: the Flow attachment windows; the host also owns the full-screen file drop.
+const attachmentHost = ref<InstanceType<typeof FlowAttachmentHost> | null>(null)
 
 const hasWorkTarget = computed(() => activeFlowRef.value !== null)
 
@@ -872,6 +879,7 @@ function onDensity(level: DesignerDensity) {
 const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
 
 function onTopCommand(command: DesignerTopCommand) {
+  if (command === 'view.attachments') { void attachmentHost.value?.open(); return }
   if (command === 'header.notifications') {
     notificationsOpen.value = !notificationsOpen.value
     return

@@ -256,6 +256,7 @@
       :title="t('gui.ai.providers.delete_confirm_title')"
       :message="t('gui.ai.providers.delete_confirm_msg', { name: deleting?.item.name })"
       danger
+      icon="trash"
       :busy="saving"
       :confirm-label="t('gui.common.delete')"
       :cancel-label="t('gui.common.cancel')"

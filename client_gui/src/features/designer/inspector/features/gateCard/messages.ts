@@ -46,6 +46,13 @@ export default {
       cancel: '취소',
       submit: '반려',
     },
+    exhausted: {
+      title: '검수를 통과하지 못하고 넘어온 카드 {count}개',
+      detail: '검수 {count}회 모두 사용, 마지막 수정본({revision}판)은 검수되지 않음',
+      detail_count: '검수 {count}회 모두 사용, 마지막 수정본은 검수되지 않음',
+      detail_unknown: '검수 횟수를 모두 써서 마지막 수정본은 검수되지 않음',
+      hint: '승인하기 전에 이 카드 결과물을 먼저 확인하세요. 이름을 누르면 그 카드로 이동합니다.',
+    },
   },
   en: {
     result: { before: 'Before check', confirmed: 'Confirmed', rejected: 'Rejected', archived: 'Archived', publishing: 'Publishing', conflict_review: 'Waiting for conflict review', recovery_required: 'Recovery required' },
@@ -91,6 +98,13 @@ export default {
       cancel: 'Cancel',
       submit: 'Reject',
     },
+    exhausted: {
+      title: 'Cards that came through without passing review: {count}',
+      detail: 'All {count} review(s) used; the last revision ({revision}) was not reviewed',
+      detail_count: 'All {count} review(s) used; the last revision was not reviewed',
+      detail_unknown: 'The review count ran out; the last revision was not reviewed',
+      hint: 'Check these results before you approve. Click a name to go to that card.',
+    },
   },
   ja: {
     result: { before: '確認前', confirmed: '確認完了', rejected: '差し戻し', archived: 'アーカイブ済み', publishing: '反映中', conflict_review: '競合レビュー待ち', recovery_required: '復旧が必要' },
@@ -135,6 +149,13 @@ export default {
       placeholder: '差し戻しの理由（任意）',
       cancel: 'キャンセル',
       submit: '差し戻す',
+    },
+    exhausted: {
+      title: '検収を通過せずに進んだカード {count}件',
+      detail: '検収{count}回をすべて使用、最後の修正版（第{revision}版）は未検収',
+      detail_count: '検収{count}回をすべて使用、最後の修正版は未検収',
+      detail_unknown: '検収回数を使い切り、最後の修正版は未検収',
+      hint: '承認する前にこのカードの成果物を先に確認してください。名前を押すとそのカードへ移動します。',
     },
   },
 }

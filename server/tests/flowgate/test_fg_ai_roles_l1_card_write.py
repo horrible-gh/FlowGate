@@ -27,7 +27,8 @@ def test_save_decision_table_s1_through_s20(env,case):
     from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
     human={"kind":"human","user_id":"u_kim"} if case in ("S2","S3") else None
     if case in ("S15","S16","S19"):
-        key=placed(env,FA); preserved={}
+        # flowgate.v02test.0027: a new card stores its creation review count explicitly (no role group: 0).
+        key=placed(env,FA); preserved={"review_count":0}
     else:
         key,preserved=setup_legacy(env,assignee=human)
     if case in ("S4","S5"):

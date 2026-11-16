@@ -27,9 +27,13 @@
        flowgate.v02.0113 T#4 (0030-M §1, 0029-TR 시안, D 개정 §6.3): the AI tab of a card with AI roles shows four rows —
        지시 AI · 실행 AI · 검수 AI (each its own select with 사용하지 않음; none chosen shows 미설정) and 검수 횟수 (안 함 · 1회 ·
        2회 · 3회) — then [고급 ▾], which opens 실행 설정 (재시작 · 실행 제한 시간 · 검수 기준) and 지시서 검수 (지시서 검수 AI ·
-       지시서 검수 횟수). A WP card has no 지시 AI; a card that omits its instruction keeps its 지시 AI and 지시서 검수 off with
-       their values kept; 검수 횟수 and 검수 기준 are off while the review AI is 사용하지 않음. No notice, warning or status
-       line is drawn. Values are saved through the same card settings change as before. -->
+       지시서 검수 횟수). flowgate.v02gui.0029 (0003-CH C안): the fold is gone — each AI row has a ⚙ on its right that opens
+       that AI's own advanced settings in a small window under the row (지시 AI: 지시서 검수 AI · 횟수, 실행 AI: 재시작 ·
+       실행 제한 시간, 검수 AI: 검수 기준 · 검수 횟수 소진 시); a click outside or Esc closes it, one at a time, closed when a
+       card opens; a value picked in it keeps it open. It opens above its row when the Inspector has no room under it
+       (else the body scrolls to show it, capped to the body). A ⚙ whose settings differ from their defaults carries a yellow dot. A WP card has no 지시 AI; a card that omits its instruction keeps its 지시 AI and 지시서 검수 off with
+       their values kept; 검수 횟수 and 검수 기준 are off while the review AI is 사용하지 않음. No notice, warning, status or
+       explanation line is drawn, in the ⚙ window either (0003-CH: what 검수 횟수 소진 시 does is its label's tooltip). Values are saved through the same card settings change as before. -->
   <div class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
     <InspectorReadFailure v-if="errorKey" :reason="t(k(errorKey))" @retry="reload" />
     <template v-else>
@@ -89,11 +93,55 @@
         </InspectorControlRow>
       </InspectorBlock>
       <template v-if="panel === 'ai' && card.node.value?.aiRoles">
-        <InspectorBlock v-for="item in roleRows" :key="item.role" :locked="locked" :data-role="item.role" :data-held="item.held ? 'true' : undefined">
-          <InspectorControlRow :label="roleLabel(item.role)">
-            <AiRoleSelect plain :model-value="item.selected" :providers="card.node.value.aiRoles.options" :label="roleLabel(item.role)" :display-name="item.displayName" :state="item.state" :cause="item.cause" :disabled="item.held || roleDisabled(item.field)" @update:model-value="value => changeRole(item.field, value)" />
-            <InspectorFailureIcon v-if="failureOf(item.field)" :name="t(k('failed'))" :reason="failureOf(item.field)!" />
-          </InspectorControlRow>
+        <InspectorBlock v-for="item in roleRows" :key="item.role" :locked="locked" class="inspector-ai-role" :class="{ 'is-gear-open': gearOpen === item.role }" :data-role="item.role" :data-held="item.held ? 'true' : undefined" :data-written="item.written ? 'true' : undefined">
+          <div class="inspector-ai-role-line">
+            <InspectorControlRow :label="roleLabel(item.role)">
+              <AiRoleSelect plain :model-value="item.selected" :providers="card.node.value.aiRoles.options" :label="roleLabel(item.role)" :display-name="item.displayName" :state="item.state" :cause="item.cause" :disabled="item.held || roleDisabled(item.field)" @update:model-value="value => changeRole(item.field, value)" />
+              <InspectorFailureIcon v-if="failureOf(item.field)" :name="t(k('failed'))" :reason="failureOf(item.field)!" />
+              <button
+                v-if="gearFields(item.role).length"
+                type="button"
+                class="inspector-ai-gear"
+                :class="{ 'is-open': gearOpen === item.role, 'is-modified': gearModified(item.role) }"
+                :aria-label="t('gui.inspector.ai.advanced_open', { role: roleLabel(item.role) })"
+                :aria-expanded="gearOpen === item.role ? 'true' : 'false'"
+                :title="gearTitle(item.role)"
+                :data-modified="gearModified(item.role) ? 'true' : undefined"
+                :data-gear="item.role"
+                data-test="inspector-ai-gear"
+                @click="toggleGear(item.role)"
+              ><LineIcon name="settings" /></button>
+            </InspectorControlRow>
+            <div
+              v-if="gearOpen === item.role"
+              :ref="setGearPop"
+              class="inspector-ai-pop"
+              :class="{ 'is-above': gearPlace === 'above' }"
+              :style="gearMaxHeight !== null ? { maxHeight: `${gearMaxHeight}px` } : undefined"
+              :data-place="gearPlace"
+              role="dialog"
+              :aria-label="t('gui.inspector.ai.advanced_title', { role: roleLabel(item.role) })"
+              :data-for="item.role"
+              data-test="inspector-ai-advanced"
+            >
+              <div class="inspector-ai-pop-title">{{ t('gui.inspector.ai.advanced_title', { role: roleLabel(item.role) }) }}</div>
+              <InspectorControlRow v-for="field in gearFields(item.role)" :key="field" :label="advancedLabel(field)" :hint="hintOf(field)">
+                <Select
+                  :class="{ 'is-modified': fieldModified(field) }"
+                  :model-value="views[field].value"
+                  :options="optionsOf(field)"
+                  :disabled="locked || (isInstructionReview(field) && instructionHeld) || views[field].disabled"
+                  :aria-label="advancedLabel(field)"
+                  :data-test="isInstructionReview(field) ? undefined : `inspector-run-settings-${field}`"
+                  :data-field="field"
+                  :data-modified="fieldModified(field) ? 'true' : undefined"
+                  @update:model-value="(value: string) => onAiChange(field, value)"
+                />
+                <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
+              </InspectorControlRow>
+            </div>
+            <div v-if="gearOpen === item.role && gearRoom !== null" class="inspector-ai-pop-room" aria-hidden="true" :style="{ top: `${gearRoom}px` }" />
+          </div>
         </InspectorBlock>
         <InspectorBlock v-if="card.node.value.fields.review_count" :locked="locked" data-test="ai-review-count">
           <InspectorControlRow :label="t(runKey('review_count'))" :hint="hintOf('review_count')">
@@ -108,46 +156,6 @@
             <InspectorFailureIcon v-if="failureOf('review_count')" :name="t(k('failed'))" :reason="failureOf('review_count')!" data-field="review_count" />
           </InspectorControlRow>
         </InspectorBlock>
-        <template v-if="advancedRun.length || instructionReviewFields.length">
-          <div class="inspector-ai-advanced-line">
-            <Button size="sm" variant="secondary" :disabled="locked" :aria-expanded="advancedOpen" data-test="inspector-run-settings-advanced" @click="advancedOpen = !advancedOpen">
-              {{ t(runKey('advanced')) }} {{ advancedOpen ? '▴' : '▾' }}
-            </Button>
-          </div>
-          <InspectorBlock v-if="advancedOpen" :locked="locked" data-test="inspector-ai-advanced">
-            <template v-if="advancedRun.length">
-              <div class="inspector-ai-advanced-title" data-test="inspector-ai-advanced-run">{{ t(runKey('title')) }}</div>
-              <div class="inspector-ai-advanced-grid">
-                <InspectorControlRow v-for="field in advancedRun" :key="field" :label="t(runKey(field))" :hint="hintOf(field)">
-                  <Select
-                    :model-value="views[field].value"
-                    :options="optionsOf(field)"
-                    :disabled="locked || views[field].disabled"
-                    :aria-label="t(runKey(field))"
-                    :data-test="`inspector-run-settings-${field}`"
-                    @update:model-value="(value: string) => onAiChange(field, value)"
-                  />
-                  <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" :data-field="field" />
-                </InspectorControlRow>
-              </div>
-            </template>
-            <template v-if="instructionReviewFields.length">
-              <hr v-if="advancedRun.length" class="inspector-ai-advanced-split" />
-              <div class="inspector-ai-advanced-title" data-test="instruction-review">{{ t('gui.inspector.ai.instruction_review') }}</div>
-              <InspectorControlRow v-for="field in instructionReviewFields" :key="field" :label="t(`gui.inspector.ai.${field}`)" :hint="hintOf(field)">
-                <Select
-                  :model-value="views[field].value"
-                  :options="optionsOf(field)"
-                  :disabled="locked || instructionHeld || views[field].disabled"
-                  :aria-label="t(`gui.inspector.ai.${field}`)"
-                  :data-field="field"
-                  @update:model-value="(value: string) => onAiChange(field, value)"
-                />
-                <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
-              </InspectorControlRow>
-            </template>
-          </InspectorBlock>
-        </template>
       </template>
       <InspectorRunSettings v-if="(panel === 'ai' && legacyAiShown) || source === 'sequence'"
         :layout="kind === 'test' ? 'scenario' : 'run'"
@@ -176,12 +184,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTestCard } from '../testSpec/useTestCard'
-import Button from '../../../../../components/ui/Button.vue'
 import Select from '../../../../../components/ui/Select.vue'
 import Toggle from '../../../../../components/ui/Toggle.vue'
+import LineIcon from '../../../../../components/ui/LineIcon.vue'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
 import InspectorControlRow from '../../parts/InspectorControlRow.vue'
 import InspectorFailureIcon from '../../parts/InspectorFailureIcon.vue'
@@ -190,6 +198,7 @@ import InspectorReadFailure from '../../parts/InspectorReadFailure.vue'
 import InspectorRunSettings, { type InspectorRunSettingsField, type InspectorRunSettingsFields } from '../../parts/InspectorRunSettings.vue'
 import InspectorSegment, { type InspectorSegmentOption } from '../../parts/InspectorSegment.vue'
 import { inspectorSettingsKind, type InspectorTarget } from '../../inspectorTarget'
+import { INSPECTOR_BODY } from '../../inspectorHost'
 import {
   CARD_SETTINGS_FIELDS,
   cardSettingsAiOptions,
@@ -211,7 +220,8 @@ import { settingsRowPhase, type SettingsField, type SettingsOption } from './set
 import { useSharedCardSettings } from './useCardSettings'
 import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
 import type { AiRoleValue } from '@/features/document'
-import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_REVIEW_COUNT_HIDDEN, cardRoleRows } from './cardRolesModel'
+import { visibleReviewCountOptions } from '@shared/utils/reviewCountChoices'
+import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, cardRoleRows, instructionWritten } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
 const props = withDefaults(defineProps<{ target: InspectorTarget; panel?: 'settings' | 'ai' }>(), { panel: 'settings' })
@@ -245,7 +255,9 @@ const card = {
 }
 const resultFields = ['result_cause', 'follow_scope'] as const
 const instructionReviewFields = computed(() => AI_ADVANCED_FIELDS.instructionReview.filter(field => aiFieldOf(field)))
-const roleRows = computed(() => cardRoleRows(card.node.value?.aiRoles, cardSettingsValue(card.node.value, card.pending.value, 'instruction'), card.pending.value))
+/** flowgate.v02gui.0032: a written 지시서 shows its 지시 AI as 사용하지 않음 (held). */
+const instructionHasBody = computed(() => instructionWritten(props.target.cardDocuments))
+const roleRows = computed(() => cardRoleRows(card.node.value?.aiRoles, cardSettingsValue(card.node.value, card.pending.value, 'instruction'), card.pending.value, instructionHasBody.value))
 function roleLabel(role: string): string {
   if (role === 'execution' && kind.value === 'plan') return t(k('plan.run_ai'))
   if (role === 'execution' && kind.value === 'test') return t('gui.designer.inspector.run_settings.writer_ai')
@@ -255,7 +267,7 @@ function roleDisabled(field: string): boolean {
   return cardReason.value !== null || !!card.pending.value[field] || !card.node.value?.aiRoles || card.node.value.aiRoles.optionsState !== 'ok' || card.node.value.settingsVersion === undefined
 }
 function changeRole(field: 'instruction_role' | 'execution_role' | 'review_role', value: AiRoleValue) {
-  if (field === 'instruction_role' && instructionHeld.value) return
+  if (field === 'instruction_role' && (instructionHeld.value || instructionHasBody.value)) return
   if (!roleDisabled(field)) void card.change(field, value)
 }
 /** flowgate.v02.0113 T#4: an omitted instruction keeps its 지시 AI and 지시서 검수 values, off. */
@@ -264,8 +276,121 @@ const instructionHeld = computed(() => cardSettingsValue(card.node.value, card.p
 function aiFieldOf(field: CardSettingsField): boolean {
   return (AI_FIELDS[kind.value] as readonly string[]).includes(field) && !!card.node.value?.fields[field]
 }
-/** flowgate.v02.0113 T#4: the [고급 ▾] 실행 설정 items of the card (a 테스트 card has none). */
-const advancedRun = computed(() => AI_ADVANCED_FIELDS.run.filter(field => aiFieldOf(field)))
+type GearRole = keyof typeof AI_GEAR_FIELDS
+/**
+ * flowgate.v02gui.0029 (0003-CH C안): the advanced items each AI row's ⚙ opens, for the fields the card has (a 테스트
+ * card has none, so no ⚙). An item whose AI row the server does not give stays reachable under the 실행 AI's ⚙ (else
+ * the last row's), so no setting drops off the tab.
+ */
+const gearGroups = computed(() => {
+  const rows = roleRows.value.map(row => row.role)
+  const own = (role: GearRole) => (AI_GEAR_FIELDS[role] as readonly CardSettingsField[]).filter(field => aiFieldOf(field))
+  const out: Partial<Record<GearRole, CardSettingsField[]>> = {}
+  for (const role of rows) out[role] = own(role)
+  const orphans = (Object.keys(AI_GEAR_FIELDS) as GearRole[]).filter(role => !rows.includes(role)).flatMap(own)
+  const host = rows.includes('execution') ? 'execution' : rows[rows.length - 1]
+  if (orphans.length && host) out[host] = [...(out[host] ?? []), ...orphans]
+  return out
+})
+function gearFields(role: string): readonly CardSettingsField[] {
+  return gearGroups.value[role as GearRole] ?? []
+}
+const isInstructionReview = (field: CardSettingsField) => (AI_ADVANCED_FIELDS.instructionReview as readonly string[]).includes(field)
+function advancedLabel(field: CardSettingsField): string {
+  return isInstructionReview(field) ? t(`gui.inspector.ai.${field}`) : fieldLabel(field)
+}
+/** A field whose shown value (a sent one included) is not the server's default for it. */
+function fieldModified(field: CardSettingsField): boolean {
+  const item = card.node.value?.fields[field]
+  return !!item && cardSettingsText(cardSettingsValue(card.node.value, card.pending.value, field)) !== cardSettingsText(item.default)
+}
+const gearModified = (role: string) => gearFields(role).some(fieldModified)
+function gearTitle(role: string): string {
+  const name = t('gui.inspector.ai.advanced_open', { role: roleLabel(role) })
+  return gearModified(role) ? `${name} · ${t('gui.inspector.ai.advanced_changed')}` : name
+}
+/** The one ⚙ window open now (its AI role), or null; a card opens with none. */
+const gearOpen = ref<string | null>(null)
+function toggleGear(role: string) {
+  gearOpen.value = gearOpen.value === role ? null : role
+}
+// flowgate.v02gui.0029 (0003-CH QA): only another card or tab closes the window. Each source is compared on its own:
+// a value saved from the window re-reads the Flow and hands down a new target object for the same card, which the
+// former single getter (a new array every time) took for a card change and so closed the window on every pick.
+watch([() => props.target.nodeId, () => props.panel], () => { gearOpen.value = null })
+function onOutside(event: Event) {
+  if (gearOpen.value === null) return
+  const at = event.target as Element | null
+  if (at?.closest?.('.inspector-ai-pop, .inspector-ai-gear')) return
+  gearOpen.value = null
+}
+function onKey(event: KeyboardEvent) {
+  if (event.key === 'Escape') gearOpen.value = null
+}
+
+/**
+ * flowgate.v02gui.0029 (0003-CH QA): where the open window goes inside the Inspector's scrolling body. Under its row
+ * when it fits there; else above the row when it fits there; else under the row with the body scrolled just enough to
+ * show it whole — its height capped (scrolling inside) only when even the whole body is too low for it. Under the row
+ * an invisible 1px mark is kept GEAR_EDGE past the window, so the body can scroll the window clear of its bottom edge
+ * (a margin does not count to a scroll area). Placed when it opens and when the window is resized; with no body
+ * measured (outside the Frame, no layout) it stays under the row.
+ */
+const inspectorBody = inject(INSPECTOR_BODY, null)
+const GEAR_GAP = 6
+const GEAR_EDGE = 8
+const GEAR_MIN_HEIGHT = 96
+const gearPlace = ref<'below' | 'above'>('below')
+const gearMaxHeight = ref<number | null>(null)
+/** Top of the 1px scroll mark under the open window, from its row's top (px), or null for none. */
+const gearRoom = ref<number | null>(null)
+let gearPop: HTMLElement | null = null
+let gearPlacing = 0
+function setGearPop(element: Element | ComponentPublicInstance | null) {
+  gearPop = element instanceof HTMLElement ? element : null
+}
+function scrollBoxOf(element: HTMLElement): HTMLElement | null {
+  const body = inspectorBody?.element.value
+  if (body?.contains(element)) return body
+  for (let at = element.parentElement; at; at = at.parentElement) {
+    const overflow = getComputedStyle(at).overflowY
+    if (overflow === 'auto' || overflow === 'scroll') return at
+  }
+  return null
+}
+async function placeGear() {
+  const turn = ++gearPlacing
+  gearPlace.value = 'below'
+  gearMaxHeight.value = null
+  gearRoom.value = null
+  await nextTick()
+  const pop = gearPop
+  const line = pop?.parentElement
+  const box = pop ? scrollBoxOf(pop) : null
+  if (turn !== gearPlacing || !pop || !line || !box) return
+  const view = box.getBoundingClientRect()
+  if (view.height <= 0) return
+  const row = line.getBoundingClientRect()
+  const full = pop.offsetHeight
+  if (full + GEAR_GAP + GEAR_EDGE > view.bottom - row.bottom && full + GEAR_GAP + GEAR_EDGE <= row.top - view.top) {
+    gearPlace.value = 'above'
+    return
+  }
+  const fit = Math.floor(view.height - row.height - GEAR_GAP - 2 * GEAR_EDGE)
+  const height = full > fit ? Math.max(GEAR_MIN_HEIGHT, fit) : full
+  if (height < full) gearMaxHeight.value = height
+  gearRoom.value = Math.ceil(row.height + GEAR_GAP + height + GEAR_EDGE - 1)
+  const shift = Math.min(row.bottom + GEAR_GAP + height + GEAR_EDGE - view.bottom, row.top - view.top - GEAR_EDGE)
+  if (shift <= 0) return
+  await nextTick()
+  if (turn === gearPlacing) box.scrollTop += shift
+}
+watch(gearOpen, (role) => { if (role !== null) void placeGear() }, { flush: 'post' })
+function onResize() {
+  if (gearOpen.value !== null) void placeGear()
+}
+onMounted(() => { document.addEventListener('pointerdown', onOutside, true); document.addEventListener('keydown', onKey); window.addEventListener('resize', onResize) })
+onBeforeUnmount(() => { document.removeEventListener('pointerdown', onOutside, true); document.removeEventListener('keydown', onKey); window.removeEventListener('resize', onResize) })
 const runKey = (key: string) => `gui.designer.inspector.run_settings.${key}`
 const sequence = useSettings(() => (source.value === 'sequence' ? props.target : null))
 
@@ -354,6 +479,11 @@ function cardField(field: CardSettingsField): FieldView {
   if (reason === null && field === 'review_ai' && cardSettingsReviewOff(cardSettingsValue(node, card.pending.value, 'review_count'))) reason = 'reason.review_off'
   const reviewSelected = 'review_role' in card.pending.value ? card.pending.value.review_role as AiRoleValue : node?.aiRoles?.roles.review?.selected
   if (!reason && (field === 'review_count' || field === 'review_basis') && reviewSelected?.kind === 'not_used') reason = 'reason.review_off'
+  if (!reason && field === 'after_review_exhausted') {
+    const resultOff = reviewSelected?.kind === 'not_used' || cardSettingsReviewOff(cardSettingsValue(node, card.pending.value, 'review_count'))
+    const instructionOff = kind.value !== 'run' || instructionHeld.value || cardSettingsReviewOff(cardSettingsValue(node, card.pending.value, 'instruction_review_count'))
+    if (resultOff && instructionOff) reason = 'reason.review_off'
+  }
   return { value: cardSettingsText(value), options, disabled: reason !== null, reason }
 }
 
@@ -425,16 +555,21 @@ function failureOf(field: CardSettingsField): string | null {
   return last && SEQUENCE_FIELD[field] === last.field ? t(k(last.key)) : null
 }
 
-const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis']
+const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis', 'after_review_exhausted']
+
+function fieldLabel(field: CardSettingsField): string {
+  return field === 'after_review_exhausted' ? t(k('after_review_exhausted.label')) : t(runKey(field))
+}
 
 /** flowgate.v02.0072 T#3 — the WP card names its run AI 작업 AI; the other cards keep the common names. */
-const runLabels = computed<Partial<Record<InspectorRunSettingsField, string>>>(() => (kind.value === 'plan' ? { run_ai: t(k('plan.run_ai')) } : {}))
+const runLabels = computed<Partial<Record<InspectorRunSettingsField, string>>>(() => ({ after_review_exhausted: t(k('after_review_exhausted.label')), ...(kind.value === 'plan' ? { run_ai: t(k('plan.run_ai')) } : {}) }))
 
 const runFields = computed<InspectorRunSettingsFields>(() => {
   const out: Partial<Record<InspectorRunSettingsField, InspectorRunSettingsFields[InspectorRunSettingsField]>> = {}
   const shown = kind.value === 'test' ? CARD_SETTINGS_FIELDS.test : RUN_BLOCK_FIELDS
   for (const name of RUN_BLOCK_FIELDS) {
     if (!shown.includes(name)) continue
+    if (name === 'after_review_exhausted' && !card.node.value?.fields.after_review_exhausted) continue
     if (card.node.value?.aiRoles && (name === 'run_ai' || name === 'review_ai')) continue
     const view = views.value[name]
     out[name] = {
@@ -472,15 +607,20 @@ function onChange(field: CardSettingsField, text: string) {
 function optionsOf(field: CardSettingsField) {
   const view = views.value[field]
   const counted = field === 'review_count' || field === 'instruction_review_count'
-  return view.options
-    .filter(option => !counted || !AI_REVIEW_COUNT_HIDDEN.includes(Number(option.value)) || option.value === view.value)
+  return (counted ? visibleReviewCountOptions(view.options, view.value) : view.options)
     .map(option => ({ value: option.value, label: labelOf(option) }))
 }
 
-/** Why the field is off (its label's tooltip), or the WP card's 검수 횟수 tooltip. */
+/**
+ * Why the field is off (its label's tooltip), or the WP card's 검수 횟수 tooltip. flowgate.v02gui.0029 (0003-CH): what
+ * 검수 횟수 소진 시 does (for the chosen value) and that 지시서 검수 follows it are their labels' tooltips — never a line
+ * drawn in the ⚙ window.
+ */
 function hintOf(field: CardSettingsField): string | null {
   const reason = views.value[field].reason
   if (reason) return t(k(reason))
+  if (field === 'after_review_exhausted') return t(k(`after_review_exhausted.${views.value.after_review_exhausted.value === 'stop' ? 'stop' : 'continue'}_hint`))
+  if (field === 'instruction_review_count') return t(k('after_review_exhausted.instruction_hint'))
   return field === 'review_count' ? planHint('review_count') : null
 }
 
@@ -530,46 +670,123 @@ function reload() {
   font-size: 12px;
 }
 
-/* flowgate.v02.0113 T#4 (0029-TR 시안): the AI tab — selects as tall as the run settings', the [고급 ▾] button on its
-   own line at the right, and the fold's two titled sections (실행 설정 in two columns, then 지시서 검수). */
+/* flowgate.v02.0113 T#4 (0029-TR 시안): the AI tab — selects as tall as the run settings'. */
 .inspector-settings :deep(.ui-select) {
   height: 32px;
   font-size: 12px;
 }
 
-.inspector-ai-advanced-line {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
+/* flowgate.v02gui.0029 (0003-CH C안): each AI row's ⚙ on its right, and that AI's advanced settings in a small window
+   under the row. The block of an open ⚙ is lifted over the blocks below it (each block is its own stacking context);
+   the ⚙ and its window still take a click on a locked card (its values are seen, its selects stay off). */
+.inspector-ai-role.is-gear-open {
+  position: relative;
+  z-index: 5;
 }
 
-.inspector-ai-advanced-line + .inspector-block {
-  margin-top: 8px;
+.inspector-ai-role-line {
+  position: relative;
 }
 
-.inspector-ai-advanced-title {
+.inspector-ai-role-line > :deep(.inspector-control-row) {
+  margin: 0;
+}
+
+.inspector-ai-gear {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #2c4b64;
+  border-radius: 6px;
+  background: #0d1924;
+  color: #94a8bd;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.inspector-ai-gear :deep(svg) {
+  width: 15px;
+  height: 15px;
+}
+
+.inspector-ai-gear:hover,
+.inspector-ai-gear:focus-visible {
+  border-color: #4aa3ff;
+  color: #dce7f2;
+  outline: none;
+}
+
+.inspector-ai-gear.is-open {
+  border-color: #4aa3ff;
+  background: #1c3247;
+  color: #fff;
+}
+
+.inspector-ai-gear.is-modified::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c9a14a;
+}
+
+.inspector-ai-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  box-sizing: border-box;
+  width: min(360px, 100%);
+  padding: 10px 12px;
+  border: 1px solid #4aa3ff;
+  border-radius: 8px;
+  background: #16293c;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 56%);
+  pointer-events: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The scroll mark kept just past an open window under its row (see placeGear): seen by the body's scroll area only. */
+.inspector-ai-pop-room {
+  position: absolute;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+/* Not enough room under the row in the Inspector body: the window opens above it (see placeGear). */
+.inspector-ai-pop.is-above {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+/* A long label (English 'Instruction review AI') goes on to a second line instead of being cut; the window is 360px
+   wide so a long English value ('Card review role value') fits its select. */
+.inspector-ai-pop :deep(.inspector-control-label) {
+  overflow: visible;
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.inspector-ai-pop-title {
   margin: 0 0 8px;
   color: #dce7f2;
   font-size: 12px;
   font-weight: 750;
 }
 
-.inspector-ai-advanced-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 10px;
-}
-
-.inspector-ai-advanced-split {
-  height: 1px;
-  margin: 12px 0;
-  border: 0;
-  background: #2c4b64;
-}
-
-@container (max-width: 480px) {
-  .inspector-ai-advanced-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.inspector-ai-pop :deep(.ui-select.is-modified) {
+  border-color: #c9a14a;
 }
 </style>

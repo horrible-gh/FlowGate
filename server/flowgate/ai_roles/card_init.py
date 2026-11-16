@@ -2,6 +2,13 @@
 
 All writes share the caller's Flow guard. Account read failures are isolated by a
 savepoint so a failed PostgreSQL SELECT cannot poison the draft transaction.
+
+flowgate.v02test.0027 (0007-T, A-server): a new card of a kind with a 검수 횟수 (``review_count``) also copies the AI
+role group's default review count once, in the same creation transaction: the card's document-type row, else the
+common row, else 0 — stored explicitly, 0 included, set by the card's creator (a log line tells the level it came
+from; no extra stored field, so a card's stored settings keep their shape). A value already stored before the copy
+(a WP plan step's explicit count, also 0, or a row that does not parse) is kept. Pending initialization never reads
+the group, and a group change never touches existing cards.
 """
 import logging
 from flowgate.ai_roles import availability, role_store
@@ -10,9 +17,12 @@ from flowgate.ai_roles.resolve import applicable_roles
 from flowgate.card_settings import fields, repository
 from flowgate.ai_roles.legacy_adapter import (
     get_store, in_transaction, held_guard, isolated_read, creation_group_profiles,
+    effective_review_count, stored_review_count, card_review_count_choices,
 )
 
 log = logging.getLogger(__name__)
+
+REVIEW_COUNT = "review_count"
 
 
 def _require_guard(flow_id):
@@ -67,6 +77,41 @@ def _read_group(flow_id, node_key):
         return {}
 
 
+def _read_group_review_count(flow_id, node_key):
+    """``(typed row, common row)`` of the card's document type; None when the group cannot be read."""
+    def read():
+        rows = {row["type_key"]: row for row in creation_group_profiles()}
+        node = repository.card_node(flow_id, node_key) or {}
+        return rows.get(node.get("doc_type")), rows.get("common")
+
+    try:
+        return isolated_read(read, "fg_role_group_count_read")
+    except Exception:
+        log.warning("GROUP_REVIEW_COUNT_READ_FAILED flow_id=%s node_key=%s", flow_id, node_key, exc_info=True)
+        return None
+
+
+def copy_review_count(flow_id, node_key, kind, actor):
+    """Store the group's default review count on a just-created card, inside its Flow guard. True when written."""
+    if fields.field_of(kind, REVIEW_COUNT) is None or not repository.available():
+        return False
+    if repository.stored(flow_id, node_key, REVIEW_COUNT) is not repository.ABSENT:
+        return False                     # the WP plan's value (0 included) or an unreadable row stays as it is
+    found = _read_group_review_count(flow_id, node_key)
+    if found is None:
+        return False                     # no row = the card default 0, the same as before this copy existed
+    typed, common = found
+    # The same judgment as the API's effective_review_count (ai_group_role_profile_service.profiles): a stored value
+    # outside today's card choices copies 0 ("default").
+    count, level = effective_review_count(typed, common, card_review_count_choices())
+    stored, _ = stored_review_count(typed, common)
+    if stored is not None and stored != count:
+        log.warning("GROUP_REVIEW_COUNT_OUT_OF_CHOICES flow_id=%s node_key=%s value=%s", flow_id, node_key, stored)
+    repository.put(flow_id, node_key, REVIEW_COUNT, count, actor)
+    log.info("GROUP_REVIEW_COUNT_COPIED flow_id=%s node_key=%s value=%s level=%s", flow_id, node_key, count, level)
+    return True
+
+
 def slot_from_account(value, source="creation_copy", actor=None, role=None):
     if not valid_value(value):
         return None
@@ -93,6 +138,7 @@ def _initialize(flow_id, node_key, kind, creator_id, plan_roles, wp):
         return "NO_CHANGE"
     _require_guard(flow_id)
     roles = applicable_roles(kind)
+    copy_review_count(flow_id, node_key, kind, creator_id)
     group = _read_group(flow_id, node_key) if any(r not in plan_roles for r in roles) else {}
     acc = _read_account(creator_id, flow_id, node_key, wp) if any(
         r not in plan_roles and r not in group for r in roles) else None

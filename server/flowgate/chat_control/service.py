@@ -15,9 +15,26 @@ caller allows their instruction AI: the chat is meant to write the instruction i
   ``chat_cards_root_ambiguous``), none leaves it unplaceable (409 ``chat_cards_flow_empty``);
 - a start answers why a card already waits instead of running (``waiting``: each node run's ``wait_reason`` /
   ``intervention``, e.g. ``manual_write_wait`` for a card with no AI), so the chat can tell the user the cause.
+
+flowgate.v02gui.0028: after the draft save a placement records the placing chat of each new work card (``owner``:
+its CH conversation document, token, AI run, user; ``card_role_store``), the only chat the card role API
+(``card_roles``) lets read or change that card's AI roles.
+
+flowgate.v02gui.0032 (decision 8): the chat chooses each card's AI roles itself. A placed card may carry ``roles``
+(``{instruction|execution|review: {kind, provider_id?}}``, the card role PATCH grammar); they are checked before the
+save (``placement_roles.precheck``: 422 ``ai_not_selectable``) and written in the draft save's own Flow guard after
+the defaults were copied (``placement_roles.write``), so a refusal places nothing. The answer gives each card's roles
+and where they came from (``chat`` / ``default`` / ``person`` / ``unset``); roles left on a default are listed in
+``defaults_used`` for the chat to choose.
+
+flowgate.v02gui.0032 (0002-CH seq 15-17): a placed card may also carry ``settings`` — its review count, restarts and
+time limit (``run_settings``: a test card has only the review count), the values the person's AI tab offers. They are
+checked before the save (422 with the field's ``choices``) and written in the same guard as the roles (one
+``chat_card_setting_audit`` row per setting when the placing chat is known); the answer gives each card's values now.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from flowgate.card_documents import lines as card_lines
@@ -34,16 +51,19 @@ from modules.flow_gate.graph_workflow.services.node_title_names import PALETTE_K
 from modules.flow_gate.graph_workflow.services.root_conversion_cards import ROOT_NAMES, ROOT_PALETTE_IDS
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
 
-from . import placement
+from . import card_role_store, placement, placement_roles, run_settings
 
+_log = logging.getLogger(__name__)
 WORK_TYPES = ("T", "TS")
 MAX_CARDS = 5
 PROTECTED = frozenset({"done", "open", "review"})
 GATE_LABELS = {"ko": "확인", "ja": "確認", "en": "Confirm"}
 RUN_FIELDS = ("run_id", "status", "revision_no", "mode", "idle_reason", "open_node_keys", "pending_node_keys")
-NEXT_AFTER_PLACE = ("Write each card's instruction into its instruction line (card document edit, slot=instruction): "
-                    "the user's own words, facts you checked (file:line), what was decided and rejected, the done "
+NEXT_AFTER_PLACE = ("Tell the user each card's AI and review count with a short reason. Write each card's instruction "
+                    "into its instruction line (card document edit, slot=instruction): the user's own words, facts you checked (file:line), what was decided and rejected, the done "
                     "criteria and what not to do. Then start the run (start_flow_run).")
+NEXT_DEFAULTS_USED = ("Roles in `defaults_used` came from the AI role group / account defaults, not from you: choose "
+                      "them yourself (set_card_roles) unless the user asked for those defaults or no AI fits.")
 NEXT_AFTER_START = ("The cards now run (work AI, then review). This chat is not woken when the run stops: tell the "
                     "user what you started and ask them to send a message such as \"결과 봐\" when it is done; then "
                     "read runs/current and the canvas and answer from them.")
@@ -76,8 +96,8 @@ def parse_place(body: Any, locale: Optional[str]) -> tuple[list[dict], Optional[
         raise _invalid("cards", f"at_most_{MAX_CARDS}")
     cards = []
     for i, item in enumerate(raw):
-        if not isinstance(item, dict) or set(item) - {"label", "doc_type"}:
-            raise _invalid(f"cards[{i}]", "only_label_and_doc_type")
+        if not isinstance(item, dict) or set(item) - {"label", "doc_type", "roles", "settings"}:
+            raise _invalid(f"cards[{i}]", "only_label_doc_type_roles_and_settings")
         doc_type = item.get("doc_type", "T")
         if doc_type not in WORK_TYPES:
             raise _invalid(f"cards[{i}].doc_type", "not_one_of:" + ",".join(WORK_TYPES))
@@ -87,7 +107,14 @@ def parse_place(body: Any, locale: Optional[str]) -> tuple[list[dict], Optional[
             label = PALETTE_NAMES[palette][_locale(locale)]
         if not isinstance(label, str) or not label.strip() or len(label) > LABEL_MAX_LEN:
             raise _invalid(f"cards[{i}].label", "label_length")
-        cards.append({"doc_type": doc_type, "label": label.strip(), "palette_item_id": palette})
+        card = {"doc_type": doc_type, "label": label.strip(), "palette_item_id": palette}
+        roles = placement_roles.parse_card_roles(item.get("roles"), f"cards[{i}].roles")
+        if roles:
+            card["roles"] = roles
+        chosen_settings = run_settings.parse(item.get("settings"), f"cards[{i}].settings")
+        if chosen_settings:
+            card["settings"] = chosen_settings
+        cards.append(card)
     after = body.get("after")
     if after is not None and (not isinstance(after, str) or not after):
         raise _invalid("after", "not_a_node_key")
@@ -129,10 +156,77 @@ def _instruction_line(flow_id: str, node_key: str) -> dict:
     return {"slot": cs.INSTRUCTION, "doc_id": row["doc_id"] if row else None}
 
 
-def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None) -> dict:
-    """Place the chat's work cards (and a confirm card when needed) on the Flow's draft. Nothing is confirmed or run."""
+def _record_owner(flow_id: str, node_keys: list[str], owner: Optional[dict]) -> bool:
+    """flowgate.v02gui.0028: the placing chat of each new work card (``card_role_store.chat_placed_cards``), recorded
+    after the draft save committed. Only the work cards: the start card and the confirm card have no AI roles, so the
+    chat card role API never needs them. A failed record is logged and the placement stands: the cards then have no
+    owner and the chat role API refuses them (fail closed), the user's card settings screen still sets their AI."""
+    if not owner or not node_keys:
+        return False
+    try:
+        if not card_role_store.available():
+            return False
+        card_role_store.record_placed(flow_id, node_keys, owner["chat_doc_id"], owner.get("token_id"),
+                                      owner.get("ai_run_id"), owner.get("user_id"))
+        return True
+    except Exception:  # noqa: BLE001 - never a credential in the log: ids only
+        _log.warning("chat card placement record failed flow=%s nodes=%s", flow_id, node_keys, exc_info=True)
+        return False
+
+
+def _kind(doc_type: str) -> Optional[str]:
+    from flowgate.card_settings import fields
+    return fields.card_kind("document", doc_type)
+
+
+def _precheck_settings(cards: list[dict]) -> None:
+    """flowgate.v02gui.0032: every chosen run setting fits its card's kind and choices, before anything is saved."""
+    if not any(card.get("settings") for card in cards):
+        return
+    run_settings.require_available()
+    errors = []
+    for i, card in enumerate(cards):
+        if card.get("settings"):
+            try:
+                run_settings.check(_kind(card["doc_type"]), card["settings"], f"cards[{i}].settings")
+            except GraphApiError as exc:
+                errors += (exc.params or {}).get("errors") or []
+    if errors:
+        raise GraphApiError(422, "invalid_request", {"errors": errors}, message="The request does not fit this API.")
+
+
+def _write_settings(flow_id: str, node_key: str, chosen: dict, user_id: str, owner: Optional[dict],
+                    field: str) -> None:
+    """In the draft save's guard: a new card's chosen run settings, the version moved once, audited per setting when
+    the placing chat is known. A refusal rolls the whole placement back."""
+    from flowgate.card_settings import fields, repository, settings
+
+    node = settings._card(flow_id, node_key)
+    kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
+    changed, before, after = run_settings.write(flow_id, node_key, kind, chosen, user_id, field)
+    if changed:
+        repository.bump_version(flow_id, node_key)
+    if owner and owner.get("chat_doc_id"):
+        run_settings.audit(flow_id, node_key, chosen, before, after, changed,
+                           repository.settings_version(flow_id, node_key), owner, user_id)
+
+
+def _settings_summary(flow_id: str, node_key: str, doc_type: str) -> dict:
+    """``{field: value now}`` of a placed card's chat run settings; empty when it cannot be read (never fails the
+    committed placement)."""
+    try:
+        return run_settings.values(flow_id, node_key, _kind(doc_type))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, owner: Optional[dict] = None) -> dict:
+    """Place the chat's work cards (and a confirm card when needed) on the Flow's draft. Nothing is confirmed or run.
+    ``owner`` (``authz.owner``): the placing chat, recorded for each new work card (flowgate.v02gui.0028)."""
     flow_id = group["group_id"]
     cards, after, want_gate = parse_place(body, locale)
+    placement_roles.precheck(cards, user_id)
+    _precheck_settings(cards)
     # flowgate.v02gui.0019: the Flow's start card first, whatever the draft already holds (the one rule of
     # ``root_start``, also run when the root is registered); no edge is made to or from it here.
     started = with_flow_guard(flow_id, lambda: root_start.ensure_start_card(group, user_id, _locale(locale)))
@@ -157,13 +251,31 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None) ->
     if request.errors or request.draft_version is None:
         raise GraphApiError(422, "chat_cards_draft_invalid", {"flow_id": flow_id,
                                                               "errors": dr.sort_errors(request.errors)})
-    saved = graph_service.save_draft(group, user_id, request, None, _locale(locale))
+    def write_roles(saved: dict) -> None:
+        # flowgate.v02gui.0032: the chat's chosen roles, in the draft save's guard after the defaults were copied
+        keys = saved.get("key_map") or {}
+        chosen = [(keys[f"{placement.CLIENT_NODE}{i}"], card["roles"]) for i, card in enumerate(cards)
+                  if card.get("roles")]
+        if chosen:
+            placement_roles.write(flow_id, group.get("project_id"), user_id, chosen, owner)
+        for i, card in enumerate(cards):
+            if card.get("settings"):
+                _write_settings(flow_id, keys[f"{placement.CLIENT_NODE}{i}"], card["settings"], user_id, owner,
+                                f"cards[{i}].settings")
+
+    chooses = any(c.get("roles") or c.get("settings") for c in cards)
+    saved = graph_service.save_draft(group, user_id, request, None, _locale(locale),
+                                     after_save=write_roles if chooses else None)
     key_map = saved.get("key_map") or {}
     placed = []
     for i, card in enumerate(cards):
         key = key_map[f"{placement.CLIENT_NODE}{i}"]
         placed.append({"node_key": key, "label": card["label"], "doc_type": card["doc_type"],
-                       "instruction": _instruction_line(flow_id, key)})
+                       "instruction": _instruction_line(flow_id, key),
+                       "roles": placement_roles.summary(flow_id, key, card.get("roles")),
+                       "settings": _settings_summary(flow_id, key, card["doc_type"])})
+    _record_owner(flow_id, [card["node_key"] for card in placed], owner)
+    defaults = placement_roles.defaults_used({c["node_key"]: c["roles"] for c in placed})
     gate = None
     if chosen.before is not None:
         gate = {"node_key": chosen.before, "created": False}
@@ -179,7 +291,8 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None) ->
                       "doc_id": made["doc_id"] if made else None, "created": True}
     return {"flow_id": flow_id, "draft_version": saved.get("draft_version"),
             "after": key_map.get(chosen.anchor, chosen.anchor), "root": start_card,
-            "cards": placed, "gate": gate, "next": NEXT_AFTER_PLACE}
+            "cards": placed, "gate": gate, "defaults_used": defaults,
+            "next": NEXT_AFTER_PLACE + (" " + NEXT_DEFAULTS_USED if defaults else "")}
 
 
 def parse_start(body: Any) -> bool:

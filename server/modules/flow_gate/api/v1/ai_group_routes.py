@@ -177,6 +177,13 @@ class AIGroupProfileValue(BaseModel):
     provider_id: str | None = None
 
 
+class AIGroupProfileReviewCount(BaseModel):
+    """flowgate.v02test.0027: a profile row's default review count, written apart from its AI cells.
+    Required and nullable: null clears it (type row inherits common, common falls back to 0)."""
+    model_config = ConfigDict(extra='forbid', strict=True)
+    review_count: int | None
+
+
 @router.get('/ai-groups/{ai_group_id}/role-profiles')
 def get_role_profiles(ai_group_id: str, user=Depends(get_current_user)):
     return _call(user, profiles.profiles, ai_group_id)
@@ -197,6 +204,12 @@ def add_role_profile(ai_group_id: str, type_key: str, user=Depends(_manage)):
 def set_role_profile_cell(ai_group_id: str, type_key: str, role: str,
                           body: AIGroupProfileValue, user=Depends(_manage)):
     return _call(user, profiles.set_cell, ai_group_id, type_key, role, body.model_dump())
+
+
+@router.put('/ai-groups/{ai_group_id}/role-profiles/{type_key}/review-count')
+def set_role_profile_review_count(ai_group_id: str, type_key: str, body: AIGroupProfileReviewCount,
+                                  user=Depends(_manage)):
+    return _call(user, profiles.set_review_count, ai_group_id, type_key, body.model_dump())
 
 
 @router.delete('/ai-groups/{ai_group_id}/role-profiles/{type_key}')

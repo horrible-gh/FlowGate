@@ -274,7 +274,7 @@ def test_c_a_wp_review_that_passes_approves_it_and_opens_the_next_card(env, deci
     from modules.flow_gate.services import ai_run_end_hooks
 
     (wp, t2), result = _ai_wp_in_review(env, monkeypatch, [("WP", None), ("T", AI)],
-                                        {0: (("run_ai", OPUS), ("review_count", 1), ("review_ai", "aip_review"))})
+                                        {0: (("run_ai", OPUS), ("review_count", 1), ("review_ai", "aip_review"), ("after_review_exhausted", "stop"))})
     calls = _recorded_start_run(monkeypatch)
     _run_ended(WP_RUN, provider_id=OPUS)                                # the WP's AI run ended on its own
     [call] = calls                                                       # the card's review loop, once
@@ -311,7 +311,7 @@ def test_c_a_wp_review_that_does_not_pass_leaves_the_card_to_a_person(env, decid
     from modules.flow_gate.services import ai_run_end_hooks
 
     (wp, t2), result = _ai_wp_in_review(env, monkeypatch, [("WP", None), ("T", AI)],
-                                        {0: (("run_ai", OPUS), ("review_count", 1), ("review_ai", "aip_review"))})
+                                        {0: (("run_ai", OPUS), ("review_count", 1), ("review_ai", "aip_review"), ("after_review_exhausted", "stop"))})
     _recorded_start_run(monkeypatch)
     _run_ended(WP_RUN, provider_id=OPUS)
     _executions_ended()
