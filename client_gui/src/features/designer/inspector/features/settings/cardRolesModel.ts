@@ -27,6 +27,11 @@ export const AI_FIELDS = { run: ['review_count', 'review_basis', 'after_review_e
 /** flowgate.v02.0113 T#4: the AI tab's [고급 ▾] — 실행 설정 (재시작 · 실행 제한 시간 · 검수 기준), then 지시서 검수. */
 export const AI_ADVANCED_FIELDS = { run: ['restart', 'time_limit', 'review_basis', 'after_review_exhausted'], instructionReview: ['instruction_review_ai', 'instruction_review_count'] } as const
 /**
+ * flowgate.v02gui.0029 (0003-CH C안): the AI tab's ⚙ of each AI row opens that AI's own advanced settings —
+ * 지시 AI: 지시서 검수 AI · 지시서 검수 횟수, 실행 AI: 재시작 · 실행 제한 시간, 검수 AI: 검수 기준 · 검수 횟수 소진 시.
+ */
+export const AI_GEAR_FIELDS = { instruction: ['instruction_review_ai', 'instruction_review_count'], execution: ['restart', 'time_limit'], review: ['review_basis', 'after_review_exhausted'] } as const
+/**
  * flowgate.v02.0113 T#4 (0002-D §3.7, 0029-TR 시안) offered 안 함 · 1회 · 2회 · 3회 only. flowgate.v02gui.0007 B: the AI
  * tab's review counts are the server's (0 · 1 … the effective maximum, ai_repeat_count_max), so a maximum of 5 offers
  * 4회 and 5회; only "until it passes" (-1) stays off the tab, as in the 시안.

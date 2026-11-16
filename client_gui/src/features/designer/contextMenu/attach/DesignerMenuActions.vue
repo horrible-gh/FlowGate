@@ -4,21 +4,26 @@
        the Flow 삭제 (dispose, DC) confirmation with its required reason and danger look, the delete confirmation that
        names the target and its scope, the upload with its overwrite check and result, the folder download notice, and
        the 수정 확인 diff against the project Base. A window only names what the menu saw; right before it runs it asks
-       the menu to build the item again from now, and a refusal of the server stays in the window (nothing changes). -->
+       the menu to build the item again from now, and a refusal of the server stays in the window (nothing changes).
+       v02gui.0029 (0003-CH, 시안 tfi2zm20): every window but 수정 확인 takes the Group archive's look. The confirms (그룹
+       아카이브 / 삭제, 플로우 삭제, 파일 삭제, 폴더 삭제) lead with the large badge above the title; the input windows (이름
+       변경, 새 폴더, 새 파일, 업로드, 폴더 다운로드) carry a small badge beside the title. Both name their target in one box
+       and end in two wide buttons; what is sent, the required reason and a refusal kept in the window are unchanged. -->
   <ModalShell
     :open="!!shown"
     :size="shown?.kind === 'file.git.changes' ? 'lg' : 'md'"
     :role="danger ? 'alertdialog' : 'dialog'"
     :aria-describedby="refusal ? refusalId : undefined"
-    :surface-class="hero ? 'dma-hero-surface' : undefined"
+    :surface-class="look !== 'plain' ? 'dma-hero-surface' : undefined"
     @close="close"
   >
     <template #header="{ titleId }">
-      <!-- 0016-CH (시안 basodrr4 B안): the Group archive / delete confirm leads with a large icon badge above the title;
-           every other window keeps the plain title row. The close button is the shared line icon either way. -->
-      <div class="dma-head" :class="{ 'is-hero': hero, 'is-danger': hero && danger }">
-        <span v-if="hero" class="dma-badge" aria-hidden="true" data-test="dma-badge"><LineIcon :name="danger ? 'trash' : 'archive'" /></span>
-        <h2 :id="titleId" class="dma-title" :class="{ 'is-danger': danger && !hero }">{{ title }}</h2>
+      <!-- 0016-CH (시안 basodrr4 B안): a confirm leads with a large icon badge above the title; v02gui.0029: an input
+           window has a small badge beside its title; 수정 확인 keeps the plain title row. The close button is the shared
+           line icon either way. -->
+      <div class="dma-head" :class="{ 'is-hero': look !== 'plain', 'is-compact': look === 'compact', 'is-danger': look !== 'plain' && danger }" :data-look="look">
+        <span v-if="badgeIcon" class="dma-badge" aria-hidden="true" data-test="dma-badge" :data-icon="badgeIcon"><LineIcon :name="badgeIcon" /></span>
+        <h2 :id="titleId" class="dma-title" :class="{ 'is-danger': danger && look === 'plain' }">{{ title }}</h2>
         <IconButton :label="t('close')" :title="t('close')" variant="ghost" size="sm" class="dma-close" data-test="dma-close" @click="close"><LineIcon name="x" /></IconButton>
       </div>
     </template>
@@ -31,7 +36,16 @@
           :data-status="refusal.status ?? undefined" :data-code="refusal.code ?? undefined"
           ><span data-test="dma-refusal-text" :title="refusalTip">{{ refusalText }}</span></Alert>
 
-        <dl v-if="facts.length && !hero" class="dma-facts">
+        <!-- v02gui.0029: the window's one sentence, then its target in a box (name large, its identifier / folder faint). -->
+        <p v-if="lead" class="dma-lead" :data-test="lead.test">{{ lead.text }}</p>
+        <div v-if="box" class="dma-target" :class="{ 'is-danger': box.danger }" :data-test="`dma-fact-${box.key}`" :data-label="box.label"
+          :data-path="box.path ?? undefined">
+          <LineIcon :name="box.icon" class="dma-target-icon" :class="`is-${box.tone}`" />
+          <span class="dma-target-name" :title="box.path ?? box.name">{{ box.name }}</span>
+          <span v-if="box.meta" class="dma-target-meta" :title="box.meta" :data-test="box.metaTest ?? 'dma-target-meta'">{{ box.meta }}</span>
+        </div>
+
+        <dl v-if="facts.length && look === 'plain'" class="dma-facts">
           <div v-for="fact in facts" :key="fact.key" class="dma-fact" :data-test="`dma-fact-${fact.key}`">
             <dt>{{ fact.label }}</dt>
             <dd :title="fact.value">{{ fact.value }}</dd>
@@ -42,18 +56,22 @@
         <template v-if="shown.kind === 'group.rename' || shown.kind === 'flow.rename'">
           <!-- v02gui.0012 (0004-CH seq 19/20): the Group window is the two inputs only — no facts, note or hint, and
                nothing is flagged before the user types; the button stays off until something changed. -->
-          <p v-if="shown.kind === 'flow.rename'" class="dma-note">{{ t('rename.note') }}</p>
-          <label class="dma-label" for="dma-name">{{ shown.kind === 'group.rename' ? t('rename.groupName') : t('rename.name') }}</label>
-          <Input id="dma-name" :model-value="text" :invalid="!!nameError" data-modal-autofocus data-test="dma-input"
-            @update:model-value="text = $event" @keydown.enter.prevent="submit" />
-          <p v-if="nameError" class="dma-error" data-test="dma-input-error">{{ nameError }}</p>
+          <div class="dma-field">
+            <label class="dma-label" for="dma-name">{{ shown.kind === 'group.rename' ? t('rename.groupName') : t('rename.name') }}</label>
+            <Input id="dma-name" :model-value="text" :invalid="!!nameError" data-modal-autofocus data-test="dma-input"
+              @update:model-value="text = $event" @keydown.enter.prevent="submit" />
+            <p v-if="nameError" class="dma-error" data-test="dma-input-error">{{ nameError }}</p>
+          </div>
           <!-- v02gui.0012: the Group identifier changes on its own; the name may stay as it is. -->
-          <template v-if="shown.kind === 'group.rename'">
+          <div v-if="shown.kind === 'group.rename'" class="dma-field">
             <label class="dma-label" for="dma-ident">{{ t('rename.ident') }}</label>
             <Input id="dma-ident" :model-value="identText" :invalid="!!identError" data-test="dma-ident"
               @update:model-value="identText = $event" @keydown.enter.prevent="submit" />
             <p v-if="identError" class="dma-error" data-test="dma-ident-error">{{ identError }}</p>
-          </template>
+          </div>
+          <ul v-if="shown.kind === 'flow.rename'" class="dma-points" data-test="dma-rename-note">
+            <li class="is-info"><LineIcon name="info" /><span>{{ t('rename.note') }}</span></li>
+          </ul>
         </template>
 
         <!-- 그룹 아카이브 (v02gui.0027): display-only; the Group's Flows, documents, runs and Git stay as they are. -->
@@ -89,22 +107,32 @@
           </ul>
         </template>
 
-        <!-- Flow 삭제 = the existing dispose (DC) -->
+        <!-- Flow 삭제 = the existing dispose (DC). v02gui.0029: the Group delete's look — one sentence, the Flow in its box,
+             two points, then the required reason; a reason chip only fills the input (it can still be edited). -->
         <template v-else-if="shown.kind === 'flow.delete'">
-          <p class="dma-note" data-test="dma-dispose-note">{{ t('dispose.note') }}</p>
-          <label class="dma-label" for="dma-reason">{{ t('dispose.reason') }}</label>
-          <Textarea id="dma-reason" :model-value="text" :rows="3" :invalid="(tried || reasonTouched) && !text.trim()" data-modal-autofocus
-            data-test="dma-reason" @update:model-value="text = $event; reasonTouched = true" />
-          <p v-if="(tried || reasonTouched) && !text.trim()" class="dma-error" data-test="dma-reason-required">{{ t('dispose.reasonRequired') }}</p>
+          <ul class="dma-points" data-test="dma-dispose-points">
+            <li><LineIcon name="check-circle" /><span>{{ t('dispose.points.kept') }}</span></li>
+            <li><LineIcon name="eye-off" /><span>{{ t('dispose.points.hidden') }}</span></li>
+          </ul>
+          <div class="dma-field">
+            <label class="dma-label" for="dma-reason">{{ t('dispose.reason') }} <span class="dma-required" aria-hidden="true">*</span></label>
+            <div class="dma-chips" data-test="dma-reason-chips">
+              <button v-for="chip in REASON_CHIPS" :key="chip" type="button" class="dma-chip" :disabled="busy" :data-chip="chip"
+                @click="pickReason(chip)">{{ t(`dispose.chips.${chip}`) }}</button>
+            </div>
+            <Textarea id="dma-reason" ref="reasonInput" :model-value="text" :rows="3" :invalid="(tried || reasonTouched) && !text.trim()" data-modal-autofocus
+              :placeholder="t('dispose.placeholder')" data-test="dma-reason" @update:model-value="text = $event; reasonTouched = true" />
+            <p v-if="(tried || reasonTouched) && !text.trim()" class="dma-error" data-test="dma-reason-required">{{ t('dispose.reasonRequired') }}</p>
+          </div>
         </template>
 
         <!-- 새 폴더 / 새 파일 -->
-        <template v-else-if="shown.kind === 'folder.newFolder' || shown.kind === 'folder.newFile'">
+        <div v-else-if="shown.kind === 'folder.newFolder' || shown.kind === 'folder.newFile'" class="dma-field">
           <label class="dma-label" for="dma-name">{{ t('create.name') }}</label>
           <Input id="dma-name" :model-value="text" :invalid="!!nameError" data-modal-autofocus data-test="dma-input"
             @update:model-value="text = $event" @keydown.enter.prevent="submit" />
           <p v-if="nameError" class="dma-error" data-test="dma-input-error">{{ nameError }}</p>
-        </template>
+        </div>
 
         <!-- 업로드 -->
         <template v-else-if="shown.kind === 'folder.upload'">
@@ -150,14 +178,19 @@
 
         <!-- 폴더 다운로드 -->
         <template v-else-if="shown.kind === 'folder.download'">
-          <p class="dma-note">{{ t('download.zip') }}</p>
-          <p class="dma-note" data-test="dma-empty-folders">{{ t('download.empty') }}</p>
+          <ul class="dma-points">
+            <li class="is-info"><LineIcon name="info" /><span>{{ t('download.zip') }}</span></li>
+            <li class="is-info" data-test="dma-empty-folders"><LineIcon name="info" /><span>{{ t('download.empty') }}</span></li>
+          </ul>
         </template>
 
-        <!-- 삭제 (파일 / 폴더) -->
+        <!-- 삭제 (파일 / 폴더). v02gui.0029: titled 파일 삭제 / 폴더 삭제; the name large in a red-edged box, its folder faint;
+             what goes with it and that it cannot be undone as red points. -->
         <template v-else-if="shown.kind === 'folder.delete' || shown.kind === 'file.delete'">
-          <p class="dma-lead" data-test="dma-scope">{{ shown.kind === 'folder.delete' ? t('remove.folder') : t('remove.file') }}</p>
-          <p class="dma-error">{{ t('remove.irreversible') }}</p>
+          <ul class="dma-points is-warn" data-test="dma-remove-points">
+            <li v-if="shown.kind === 'folder.delete'"><LineIcon name="alert" /><span>{{ t('remove.contents') }}</span></li>
+            <li><LineIcon name="alert" /><span>{{ t('remove.irreversible') }}</span></li>
+          </ul>
         </template>
 
         <!-- 수정 확인 -->
@@ -191,7 +224,7 @@
     </template>
 
     <template #footer>
-      <div v-if="shown" class="dma-actions" :class="{ 'is-wide': hero }">
+      <div v-if="shown" class="dma-actions" :class="{ 'is-wide': look !== 'plain' }">
         <template v-if="shown.kind === 'file.git.changes'">
           <Button v-if="refusal" variant="secondary" data-test="dma-retry" @click="readDiff">{{ t('diff.retry') }}</Button>
           <Button variant="secondary" data-test="dma-cancel" @click="close">{{ t('close') }}</Button>
@@ -206,7 +239,7 @@
         <template v-else>
           <Button variant="secondary" data-test="dma-cancel" @click="close">{{ t('cancel') }}</Button>
           <Button :variant="danger ? 'danger' : 'primary'" :disabled="!canSubmit" :loading="busy" data-test="dma-submit" @click="submit">
-            <LineIcon v-if="hero" :name="danger ? 'trash' : 'archive'" />{{ submitLabel }}
+            <LineIcon v-if="hero && badgeIcon" :name="badgeIcon" />{{ submitLabel }}
           </Button>
         </template>
       </div>
@@ -220,7 +253,7 @@ import { useI18n } from 'vue-i18n'
 import Alert from '../../../../components/ui/Alert.vue'
 import Button from '../../../../components/ui/Button.vue'
 import IconButton from '../../../../components/ui/IconButton.vue'
-import LineIcon from '../../../../components/ui/LineIcon.vue'
+import LineIcon, { type LineIconName } from '../../../../components/ui/LineIcon.vue'
 import Input from '../../../../components/ui/Input.vue'
 import ModalShell from '../../../../components/ui/ModalShell.vue'
 import Textarea from '../../../../components/ui/Textarea.vue'
@@ -300,8 +333,87 @@ const flowNow = computed(() => {
   return target && (target.kind === 'flow.rename' || target.kind === 'flow.delete') ? props.actions.server.flow(target.projectId, target.flowId) : null
 })
 const currentName = computed(() => groupNow.value?.name ?? flowNow.value ?? '')
-/** 0016-CH B안: the Group archive / delete confirm (badge header, target box, point list, wide buttons). */
-const hero = computed(() => shown.value?.kind === 'group.archive' || shown.value?.kind === 'group.delete')
+/**
+ * 0016-CH B안 / v02gui.0029 (0003-CH): how a window looks — `hero` = a confirm (the large badge above the title, the target
+ * box, the point list, wide buttons), `compact` = an input window (a small badge beside the title, the same box and wide
+ * buttons), `plain` = 수정 확인 (the title row and its facts).
+ */
+const look = computed<'hero' | 'compact' | 'plain'>(() => {
+  switch (shown.value?.kind) {
+    case 'group.archive': case 'group.delete': case 'flow.delete': case 'folder.delete': case 'file.delete': return 'hero'
+    case 'group.rename': case 'flow.rename': case 'folder.newFolder': case 'folder.newFile': case 'folder.upload': case 'folder.download': return 'compact'
+    default: return 'plain'
+  }
+})
+const hero = computed(() => look.value === 'hero')
+/** The badge of the window's header (and of a confirm's submit button), or null for a plain window. */
+const badgeIcon = computed<LineIconName | null>(() => {
+  switch (shown.value?.kind) {
+    case 'group.archive': return 'archive'
+    case 'group.delete': case 'flow.delete': case 'folder.delete': case 'file.delete': return 'trash'
+    case 'group.rename': case 'flow.rename': return 'pencil'
+    case 'folder.newFolder': return 'folder-plus'
+    case 'folder.newFile': return 'file-plus'
+    case 'folder.upload': return 'upload'
+    case 'folder.download': return 'download'
+    default: return null
+  }
+})
+/** v02gui.0029: a confirm's one sentence above its target box (the Group windows keep their own). */
+const lead = computed(() => {
+  switch (shown.value?.kind) {
+    case 'flow.delete': return { text: t('dispose.lead'), test: 'dma-dispose-note' }
+    case 'folder.delete': return { text: t('remove.folderLead'), test: 'dma-scope' }
+    case 'file.delete': return { text: t('remove.file'), test: 'dma-scope' }
+    default: return null
+  }
+})
+interface TargetBox {
+  readonly key: 'target' | 'location'
+  readonly label: string
+  readonly icon: LineIconName
+  readonly tone: 'flow' | 'folder' | 'file'
+  readonly name: string
+  readonly meta: string
+  readonly metaTest?: string
+  readonly path?: string
+  readonly danger: boolean
+}
+/** The folder a path sits in, as the box's faint side note ('' at the root). */
+function parentOf(path: string): string {
+  const parts = path.split('/').filter(Boolean)
+  return parts.length > 1 ? `${parts.slice(0, -1).join('/')}/` : ''
+}
+/**
+ * v02gui.0029: the target box of the windows other than the Group ones (they draw their own) and 수정 확인 (its facts):
+ * the Flow with its identifier, the file / folder by its name with its folder, or the folder a new entry / upload goes
+ * to. The 그룹 이름 변경 window stays the two inputs only (0004-CH seq 19/20); an upload's result has no box.
+ */
+const box = computed<TargetBox | null>(() => {
+  const target = shown.value
+  if (!target || uploadResult.value) return null
+  switch (target.kind) {
+    case 'flow.rename': case 'flow.delete':
+      return { key: 'target', label: t('flow'), icon: 'workflow', tone: 'flow', name: currentName.value || target.flowId, meta: target.flowId, metaTest: 'dma-fact-id', danger: false }
+    case 'file.delete':
+      return { key: 'target', label: t('target'), icon: 'file', tone: 'file', name: baseName(target.path) || target.path, meta: parentOf(target.path), path: target.path, danger: true }
+    case 'folder.delete': case 'folder.download':
+      return { key: 'target', label: t('target'), icon: 'folder', tone: 'folder', name: baseName(target.path) || t('root'), meta: parentOf(target.path), path: target.path || undefined, danger: target.kind === 'folder.delete' }
+    case 'folder.newFolder': case 'folder.newFile': case 'folder.upload':
+      return { key: 'location', label: t('location'), icon: 'folder', tone: 'folder', name: target.path || t('root'), meta: t(target.kind === 'folder.upload' ? 'upload.where' : 'create.where'), danger: false }
+    default: return null
+  }
+})
+/** v02gui.0029: the reasons a Flow is often deleted for; a chip fills the reason input, which can still be edited. */
+const REASON_CHIPS = ['duplicate', 'test', 'unused', 'mistake'] as const
+const reasonInput = ref<{ $el?: Element } | null>(null)
+function pickReason(chip: typeof REASON_CHIPS[number]) {
+  text.value = t(`dispose.chips.${chip}`)
+  reasonTouched.value = true
+  const el = reasonInput.value?.$el
+  const area = el instanceof HTMLTextAreaElement ? el : el?.querySelector?.('textarea')
+  area?.focus()
+}
 /** The Group the confirm names in its target box (its display name, else its id). */
 const heroName = computed(() => {
   const target = shown.value
@@ -326,7 +438,8 @@ const title = computed(() => {
     case 'folder.newFile': return t('create.fileTitle')
     case 'folder.upload': return t('upload.title')
     case 'folder.download': return t('download.title')
-    case 'folder.delete': case 'file.delete': return t('remove.title')
+    case 'folder.delete': return t('remove.folderTitle')
+    case 'file.delete': return t('remove.fileTitle')
     case 'file.git.changes': return t('diff.title')
     default: return ''
   }
@@ -339,7 +452,8 @@ const submitLabel = computed(() => {
     case 'group.delete': return t('groupDelete.submit')
     case 'folder.upload': return t('upload.submit')
     case 'folder.download': return t('download.submit')
-    case 'folder.delete': case 'file.delete': return t('remove.submit')
+    case 'folder.delete': return t('remove.folderSubmit')
+    case 'file.delete': return t('remove.submit')
     default: return t('create.submit')
   }
 })
@@ -767,6 +881,25 @@ async function archiveInstead() {
   background: rgba(255, 100, 120, 0.14);
   color: #ff8c9c;
 }
+/* v02gui.0029: an input window — the smaller badge beside its title, the close button kept at the corner. */
+.dma-head.is-compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding-right: 52px;
+}
+.dma-head.is-compact .dma-title {
+  font-size: 16px;
+}
+.dma-head.is-compact .dma-badge {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+.dma-head.is-compact .dma-badge :deep(svg) {
+  width: 18px;
+  height: 18px;
+}
 .dma-target {
   display: flex;
   align-items: center;
@@ -778,8 +911,15 @@ async function archiveInstead() {
   background: var(--fg2-inset-bg);
   font-size: var(--fg2-fs-body);
 }
+.dma-target.is-danger {
+  border-color: rgba(255, 120, 140, 0.28);
+  background: rgba(255, 90, 110, 0.06);
+}
 .dma-target-icon {
   color: #a98bff;
+}
+.dma-target-icon.is-file {
+  color: #8fc8ff;
 }
 .dma-target-name {
   min-width: 0;
@@ -818,6 +958,50 @@ async function archiveInstead() {
 .dma-points li + li :deep(svg) {
   color: var(--fg2-text-3);
 }
+/* v02gui.0029: an info point is quiet; a delete's points are red (what goes with it, that it cannot be undone). */
+.dma-points li.is-info :deep(svg) {
+  color: var(--fg2-text-3);
+}
+.dma-points.is-warn li {
+  color: #ffc2cc;
+}
+.dma-points.is-warn li :deep(svg) {
+  color: #ff8c9c;
+}
+.dma-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dma-required {
+  color: var(--fg2-status-danger-fg);
+}
+.dma-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dma-chip {
+  padding: 3px 10px;
+  border: 1px dashed rgba(154, 181, 210, 0.3);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg2-text-2);
+  font: inherit;
+  font-size: var(--fg2-fs-xs);
+  cursor: pointer;
+}
+.dma-chip:hover:not(:disabled),
+.dma-chip:focus-visible {
+  border-style: solid;
+  border-color: #4ba3ff;
+  color: var(--fg2-text);
+  outline: none;
+}
+.dma-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .dma-title.is-danger {
   color: var(--fg2-status-danger-fg);
@@ -829,13 +1013,12 @@ async function archiveInstead() {
   gap: 10px;
   padding: 16px 0 4px;
 }
-.dma-body[data-kind^='group.archive'],
-.dma-body[data-kind^='group.delete'] {
+/* v02gui.0029: every window in the Group archive's look (all but 수정 확인) spaces its body the same way. */
+.dma-body:not([data-kind='file.git.changes']) {
   gap: 14px;
   padding: 10px 0 18px;
 }
-.dma-body[data-kind^='group.archive'] .dma-lead,
-.dma-body[data-kind^='group.delete'] .dma-lead {
+.dma-body:not([data-kind='file.git.changes']) .dma-lead {
   color: var(--fg2-text-2);
   font-size: 14px;
   line-height: 1.55;
