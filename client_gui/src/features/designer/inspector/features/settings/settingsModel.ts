@@ -20,6 +20,7 @@
 // flowgate.v02.0053 T#7 — these are the rules of a v0.1 Flow's Node only (a sequence step without a Graph
 // card). A change is saved at once (no save button, v7); a Graph card's settings follow cardSettingsModel.
 // What a running hop took from the row is no longer drawn (v7 has no such block).
+import { reviewCountKind } from '@shared/utils/reviewCountChoices'
 import type { InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of a sequence row the rules read (the `@/features/document` SettingsRow). */
@@ -152,9 +153,7 @@ export function settingsProviderOptions(
 
 /** Label key of a review count: -1 until it passes, 0 none, n rounds. */
 export function settingsReviewCountKey(count: number): string {
-  if (count === -1) return 'count.until_pass'
-  if (count === 0) return 'count.none'
-  return 'count.times'
+  return `count.${reviewCountKind(count)}`
 }
 
 /**

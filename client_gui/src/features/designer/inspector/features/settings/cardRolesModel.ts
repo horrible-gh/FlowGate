@@ -1,4 +1,5 @@
 import type { CardAiRoles, AiRole, AiRoleValue } from '@/features/document'
+import { REVIEW_COUNT_HIDDEN } from '@shared/utils/reviewCountChoices'
 const AI_ROLES = ['instruction', 'execution', 'review'] as const
 /**
  * The AI tab's role rows, in 지시 · 실행 · 검수 order, for the roles the server gives the card (a WP card has no 지시 AI).
@@ -21,4 +22,4 @@ export const AI_ADVANCED_FIELDS = { run: ['restart', 'time_limit', 'review_basis
  * tab's review counts are the server's (0 · 1 … the effective maximum, ai_repeat_count_max), so a maximum of 5 offers
  * 4회 and 5회; only "until it passes" (-1) stays off the tab, as in the 시안.
  */
-export const AI_REVIEW_COUNT_HIDDEN: readonly number[] = [-1]
+export const AI_REVIEW_COUNT_HIDDEN: readonly number[] = REVIEW_COUNT_HIDDEN
