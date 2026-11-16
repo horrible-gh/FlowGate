@@ -32,8 +32,8 @@
        실행 제한 시간, 검수 AI: 검수 기준 · 검수 횟수 소진 시); a click outside or Esc closes it, one at a time, closed when a
        card opens; a value picked in it keeps it open. It opens above its row when the Inspector has no room under it
        (else the body scrolls to show it, capped to the body). A ⚙ whose settings differ from their defaults carries a yellow dot. A WP card has no 지시 AI; a card that omits its instruction keeps its 지시 AI and 지시서 검수 off with
-       their values kept; 검수 횟수 and 검수 기준 are off while the review AI is 사용하지 않음. No notice, warning or status
-       line is drawn. Values are saved through the same card settings change as before. -->
+       their values kept; 검수 횟수 and 검수 기준 are off while the review AI is 사용하지 않음. No notice, warning, status or
+       explanation line is drawn, in the ⚙ window either (0003-CH: what 검수 횟수 소진 시 does is its label's tooltip). Values are saved through the same card settings change as before. -->
   <div class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
     <InspectorReadFailure v-if="errorKey" :reason="t(k(errorKey))" @retry="reload" />
     <template v-else>
@@ -139,8 +139,6 @@
                 />
                 <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
               </InspectorControlRow>
-              <p v-if="gearFields(item.role).includes('after_review_exhausted')" class="inspector-exhaustion-hint" data-test="exhaustion-hint">{{ t(k(`after_review_exhausted.${views.after_review_exhausted.value === 'stop' ? 'stop' : 'continue'}_hint`)) }}</p>
-              <p v-if="gearFields(item.role).some(isInstructionReview)" class="inspector-exhaustion-hint">{{ t(k('after_review_exhausted.instruction_hint')) }}</p>
             </div>
             <div v-if="gearOpen === item.role && gearRoom !== null" class="inspector-ai-pop-room" aria-hidden="true" :style="{ top: `${gearRoom}px` }" />
           </div>
@@ -611,10 +609,16 @@ function optionsOf(field: CardSettingsField) {
     .map(option => ({ value: option.value, label: labelOf(option) }))
 }
 
-/** Why the field is off (its label's tooltip), or the WP card's 검수 횟수 tooltip. */
+/**
+ * Why the field is off (its label's tooltip), or the WP card's 검수 횟수 tooltip. flowgate.v02gui.0029 (0003-CH): what
+ * 검수 횟수 소진 시 does (for the chosen value) and that 지시서 검수 follows it are their labels' tooltips — never a line
+ * drawn in the ⚙ window.
+ */
 function hintOf(field: CardSettingsField): string | null {
   const reason = views.value[field].reason
   if (reason) return t(k(reason))
+  if (field === 'after_review_exhausted') return t(k(`after_review_exhausted.${views.value.after_review_exhausted.value === 'stop' ? 'stop' : 'continue'}_hint`))
+  if (field === 'instruction_review_count') return t(k('after_review_exhausted.instruction_hint'))
   return field === 'review_count' ? planHint('review_count') : null
 }
 
@@ -629,7 +633,6 @@ function reload() {
 </script>
 
 <style scoped>
-.inspector-exhaustion-hint { color: #94a8bd; font-size: 11px; line-height: 1.5; margin: 8px 0 0; }
 .inspector-settings {
   display: flex;
   flex-direction: column;

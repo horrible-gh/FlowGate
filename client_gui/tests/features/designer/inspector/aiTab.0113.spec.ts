@@ -275,7 +275,10 @@ describe('0029 exhaustion setting', () => {
     expect(select.findAll('option').map(o => o.text())).toEqual(['승인 후 진행', '미통과로 중단'])
     await select.setValue('stop'); await flushPromises()
     expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({field: 'after_review_exhausted', value: 'stop'})
-    expect(w.get('[data-test="exhaustion-hint"]').text()).toContain('멈춥니다')
+    // 0003-CH: no explanation line in the window — what the choice does is the label's tooltip.
+    expect(w.find('[data-test="exhaustion-hint"]').exists()).toBe(false)
+    expect(w.get('[data-test="inspector-ai-advanced"]').findAll('p')).toHaveLength(0)
+    expect(w.get('[data-test="inspector-ai-advanced"] [data-label="검수 횟수 소진 시"] .inspector-control-label').attributes('title')).toContain('멈춥니다')
   })
   it('disables the policy when both reviews are off', async () => {
     raw = settingsRaw(); raw.fields.instruction_review_count.value = 0
