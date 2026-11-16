@@ -1,6 +1,8 @@
 <template>
   <!-- D0007 §6: live gate result and decisions; other card document lines are unchanged. -->
   <section v-if="lines.length" class="inspector-gate-card" data-test="inspector-gate-card" :data-shape="shape">
+    <!-- v02gui.0029: the cards before this 확인 card that came through without passing their review. -->
+    <GateExhaustedNotice v-if="shape === 'gate'" :cards="target.exhaustedUpstream ?? []" />
     <div v-if="shape === 'gate'" class="inspector-gate-result" data-test="gate-result" :aria-busy="decision.busy.value !== null">
       <strong>{{ t(k('slot.result')) }}</strong>
       <span v-if="!['before', 'confirmed'].includes(decision.result.value.key)" class="inspector-gate-result-value" :data-tone="decision.result.value.tone" :title="decision.result.value.description" :aria-label="[t(k(`result.${decision.result.value.key}`)), decision.result.value.description].filter(Boolean).join(' · ')" data-test="gate-result-value">
@@ -28,6 +30,7 @@ import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import { gateCardShape, gateCardSlots, type GateSlot } from './gateCardModel'
 import GateSettingsSummary from './GateSettingsSummary.vue'
+import GateExhaustedNotice from './GateExhaustedNotice.vue'
 import { useGateDecision, type GateDecisionState } from './useGateDecision'
 import { useGateCard } from './useGateCard'
 

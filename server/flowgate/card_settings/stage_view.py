@@ -72,6 +72,17 @@ def node_wait_reason(row: dict, a) -> Optional[dict]:
 
 
 def wire(flow_id: str, row: dict, attempt_id: Optional[str], approval_wait_reason: Optional[str] = None) -> dict:
+    from flowgate.card_settings import review_exhaustion
+    shown = _wire(flow_id, row, attempt_id, approval_wait_reason)
+    try:
+        shown.update(review_exhaustion.wire(row, attempt_id))
+    except Exception:
+        _log.warning("exhaustion approval evidence unreadable flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+        shown["review_exhaustion_approval"] = None
+    return shown
+
+
+def _wire(flow_id: str, row: dict, attempt_id: Optional[str], approval_wait_reason: Optional[str] = None) -> dict:
     """The three keys of P-1 §6.1 for the node run ``row`` of ``attempt_id`` (``run_store.current_attempts``)."""
     try:
         if not sa.enabled() or not attempt_id:

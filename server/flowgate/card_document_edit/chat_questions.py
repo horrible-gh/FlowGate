@@ -244,11 +244,11 @@ def _item_view(item, include_answer):
     answered = int(item.get("answer_count") or 0) > 0
     view = {"item_id": item["id"], "seq": item.get("seq"), "title": item.get("title"), "body": body,
             "options": _options(item), "asker_kind": item.get("asker_kind"), "answered": answered,
-            "answer_count": int(item.get("answer_count") or 0), "responder_state": item.get("responder_state")}
-    # flowgate.v02gui.0028: why the automatic answer failed (no_enabled_provider, provider_unavailable, ...), so the
-    # chat can tell the user the cause. Only the code: the stored message is internal text.
-    if item.get("responder_error_code"):
-        view["responder_error_code"] = item.get("responder_error_code")
+            "answer_count": int(item.get("answer_count") or 0), "responder_state": item.get("responder_state"),
+            # flowgate.v02gui.0028: why the automatic answer failed (no_enabled_provider, provider_unavailable, ...), so
+            # the chat can tell the user the cause (None when it did not fail). Only the code: the stored message is
+            # internal text.
+            "responder_error_code": item.get("responder_error_code")}
     if cut:
         view["body_truncated"] = True
     if include_answer and answered:

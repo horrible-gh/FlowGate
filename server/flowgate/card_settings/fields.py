@@ -60,10 +60,9 @@ How a run applies them (``run_plan``, ``instruction_stage``, ``result_doc_type``
 - review count not 0: when the node's AI run has ended, the card's review AI reviews the result with
   the v0.1 document review loop (review count, review basis, rework by the run AI); every review hop
   is told the review basis (``review_basis_note``);
-- what follows the review is fixed (flowgate.v02.0056 T#1, 0002-CH turn 5~10: the after review setting
-  is gone): the result is approved when the review passed, or at once with no review; a review that
-  ends any other way (count spent, failure, stop) and a result a person wrote wait for a person's
-  approval of the card. A stored ``after_review`` value is not a field any more, so nothing reads it
+- a passed review or no review approves the result. Review count exhaustion alone follows
+  ``after_review_exhausted`` (continue by default, stop optionally). Failures, holds and human
+  revision waits never qualify for exhaustion approval. A stored ``after_review`` value is not a field any more, so nothing reads it
   (migration 147 deletes the rows).
 
 Value checks that need the server (the repeat count range, an AI or AI Team that exists) are passed in.
@@ -138,12 +137,13 @@ _REVIEW_COUNT = Field("review_count", REPEAT, 0)
 _RESTART = Field("restart", REPEAT, DEFAULT_RESTART_COUNT)
 _TIME_LIMIT = Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES)
 _REVIEW_BASIS = Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA))
+_AFTER_EXHAUSTED = Field("after_review_exhausted", CHOICE, "continue", ("continue", "stop"))
 # flowgate.v02.0072 T#3: the work plan card's AI pre-instruction writing switch. Off by default: nothing writes a
 # pre-instruction by itself today, so storing nothing and storing off mean the same.
 PRE_INSTRUCTION_AUTO = Field("pre_instruction_auto", FLAG, False)
 _FIELDS = {
     RUN: (
-        _INSTRUCTION, _INSTRUCTION_AI, _RUN_AI, _RESTART, _REVIEW_AI, _REVIEW_COUNT, _TIME_LIMIT, _REVIEW_BASIS,
+        _INSTRUCTION, _INSTRUCTION_AI, _RUN_AI, _RESTART, _REVIEW_AI, _REVIEW_COUNT, _TIME_LIMIT, _REVIEW_BASIS, _AFTER_EXHAUSTED,
         Field("instruction_review_ai", AI), Field("instruction_review_count", REPEAT, 0),
         Field("instruction_note", "stage_text", ""), Field("run_note", "stage_text", ""),
         Field("run_pre_instruction", "stage_text", ""),
@@ -170,7 +170,7 @@ _FIELDS = {
         Field("push", FLAG, False),
         Field("keep_branch", FLAG, False),
     ),
-    PLAN: (PRE_INSTRUCTION_AUTO, _RUN_AI, _RESTART, _REVIEW_AI, _REVIEW_COUNT, _TIME_LIMIT, _REVIEW_BASIS),
+    PLAN: (PRE_INSTRUCTION_AUTO, _RUN_AI, _RESTART, _REVIEW_AI, _REVIEW_COUNT, _TIME_LIMIT, _REVIEW_BASIS, _AFTER_EXHAUSTED),
 }
 
 

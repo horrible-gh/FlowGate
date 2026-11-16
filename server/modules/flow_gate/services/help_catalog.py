@@ -1000,12 +1000,16 @@ def _content_doc_type(ctx: dict) -> dict:
     }
 
 
-def build_question_content(locale: str) -> dict:
+def build_question_content(locale: str, ctx: Optional[dict] = None) -> dict:
     """The body of ``GET /help/question`` and of the ``question`` help item."""
     copy = QUESTION_HELP_COPY[normalize_locale(locale)]
     titles = copy["titles"]
     bodies = copy["bodies"]
+    # flowgate.v02gui.0029: with a token context (GET /help/question, the `question` help item) the user's
+    # question policy rides along.
+    policy = _question_policy_block(ctx) if ctx else ""
     return {
+        **({"question_policy": policy} if policy else {}),
         "note": copy["note"],
         "options_requires": copy["requires_note"],          # flowgate.v02gui.0015 T3
         "before_asking": copy["before_asking"],             # flowgate.v02gui.0028
@@ -1041,10 +1045,11 @@ def build_question_content(locale: str) -> dict:
 
 
 def _content_question(ctx: dict) -> dict:
-    content = {**build_question_content(ctx["locale"]), "answers": _answers_lookup(ctx)}
+    content = {**build_question_content(ctx["locale"], ctx), "answers": _answers_lookup(ctx)}
     # flowgate.v02gui.0028: the user's question policy next to the registration guide, not only in `notices`
-    # (same owner rule: the run starter for a card, the token's user for a chat).
-    policy = _question_policy_block(ctx)
+    # (same owner rule: the run starter for a card, the token's user for a chat). build_question_content looked it
+    # up once (flowgate.v02gui.0029); the help item carries it as `policy`.
+    policy = content.pop("question_policy", None)
     if policy:
         content["policy"] = policy
     return content

@@ -230,7 +230,7 @@ def no_v01_path(monkeypatch):
 
 def test_an_ai_result_is_in_intervention_only_when_no_ai_works_on_it(env, decided, monkeypatch):
     """0119 T-2 (was ``..._awaits_approval_only_when_...``): the same judgement now tells the card's intervention."""
-    key, result, _token = _in_review(env, monkeypatch, (("review_count", 2), ("review_ai", "aip_review")))
+    key, result, _token = _in_review(env, monkeypatch, (("review_count", 2), ("review_ai", "aip_review"), ("after_review_exhausted", "stop")))
     _lease(monkeypatch, WORK_RUN)                                       # the node's own AI run has not ended
     assert (_node_run(env, key)["awaiting_approval"], _node_run(env, key)["intervention"]) == (False, None)
     _lease(monkeypatch, None)                                            # the run ended (lease released)
@@ -545,7 +545,7 @@ def test_a_review_that_spent_its_count_leaves_the_card_in_intervention(env, deci
     from modules.flow_gate.db import documents as db_documents
     from modules.flow_gate.services import ai_run_end_hooks
 
-    key, result, _token = _in_review(env, monkeypatch, (("review_count", 1), ("review_ai", "aip_review")))
+    key, result, _token = _in_review(env, monkeypatch, (("review_count", 1), ("review_ai", "aip_review"), ("after_review_exhausted", "stop")))
     _loop_row(result, "review")
     db_documents.update(result, {"doc_review_status": "rejected"})       # the last review hop rejected it
     _sql(env["db"], "UPDATE ai_invoke_document_review_loops SET current_stage = 'stopped', "

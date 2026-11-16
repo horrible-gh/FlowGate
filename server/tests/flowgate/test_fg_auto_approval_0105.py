@@ -46,7 +46,7 @@ def card_outputs_port():
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-REVIEWED = (("review_count", 1), ("review_ai", "aip_review"), ("instruction", "omit"))
+REVIEWED = (("after_review_exhausted", "stop"), ("review_count", 1), ("review_ai", "aip_review"), ("instruction", "omit"))
 NO_REVIEW = (("instruction", "omit"),)
 
 

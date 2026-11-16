@@ -791,7 +791,7 @@ def test_rc1_a_lost_end_of_a_review_that_did_not_pass_records_its_b1_once(env, d
     """The AI result's review loop stopped without passing and its run-end contact was lost: the next reads consume the
     verdict once — B-1 ``review_not_passed:<stop>`` with the submission's mark, verdict ``not_passed:<stop>``, nothing
     approved (an AI author: no takeover)."""
-    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1)))
+    key = flow(env, extra_settings=(("instruction", "omit"), ("review_count", 1), ("after_review_exhausted", "stop")))
     roles(key, execution=X, review=B)
     start(env)
     [job] = env["jobs"]

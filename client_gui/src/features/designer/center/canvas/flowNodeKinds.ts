@@ -160,6 +160,8 @@ export const NO_ICON_KEYS: readonly string[] = ['draft', 'pending']
 export const HEADER_GLYPHS = {
   clock: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 7v5l3 2',
   check: 'M5 12l4 4L19 6',
+  /** v02gui.0029: approved after the review count ran out - the check with an exclamation mark beside it. */
+  checkAlert: 'M3 12.5l4 4L15 8 M20 5v8 M20 17.5h.01',
   error: 'M4 4l16 16 M20 4L4 20 M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20',
   warning: 'M8 3h8l5 5v8l-5 5H8l-5-5V8z M12 7v6 M12 17h.01',
   intervention: 'M12 3L2 21h20L12 3z M12 9v5 M12 17h.01',
@@ -180,7 +182,8 @@ export const HEADER_ICON_KEYS: Readonly<Record<string, keyof typeof HEADER_GLYPH
 export function flowNodeHeaderIcon(state: { key: string; tone: FlowNodeStateTone } | null | undefined) {
   if (!state) return null
   if (NO_ICON_KEYS.includes(state.key) && !['warning', 'danger'].includes(state.tone)) return null
-  const glyph = HEADER_ICON_KEYS[state.key] ?? (state.tone === 'danger' ? 'error' : state.tone === 'warning' ? 'warning' : state.tone === 'success' ? 'check' : 'clock')
+  const glyph = state.key === 'approved' && state.tone === 'warning' ? 'checkAlert'
+    : HEADER_ICON_KEYS[state.key] ?? (state.tone === 'danger' ? 'error' : state.tone === 'warning' ? 'warning' : state.tone === 'success' ? 'check' : 'clock')
   const tone: FlowNodeStateTone = glyph === 'error' ? 'danger' : state.key === 'revised' ? 'info'
     : ['working', 'writing_instruction', 'writing_result', 'in_progress', 'publishing', 'rejected'].includes(state.key) ? 'warning' : state.tone
   return { path: HEADER_GLYPHS[glyph], tone }

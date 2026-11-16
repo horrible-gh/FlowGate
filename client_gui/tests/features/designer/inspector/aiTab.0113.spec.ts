@@ -29,8 +29,8 @@ const i18n = prepareInspectorI18n()
 let wrapper: VueWrapper<any> | null = null
 function settingsRaw(kind = 'run'): any {
   const fields: Record<string,any> = {}
-  const values: Record<string,any> = { instruction: 'use', instruction_ai: 'old', run_ai: 'old', review_ai: 'old-review', review_count: 0, review_basis: 'last', instruction_review_ai: 'gone', instruction_review_count: 2, restart: 2, time_limit: 60, result_cause: 'human', follow_scope: 'full', pre_instruction_auto: true, hold: true }
-  for (const [name,value] of Object.entries(values)) fields[name] = { value, stored: value, default: null, choices: name.includes('count') || name === 'restart' ? [-1,0,1,2,3] : name === 'review_basis' ? ['type','last'] : name === 'instruction' ? ['use','omit'] : name === 'time_limit' ? [60,120] : null }
+  const values: Record<string,any> = { instruction: 'use', instruction_ai: 'old', run_ai: 'old', review_ai: 'old-review', review_count: 0, review_basis: 'last', after_review_exhausted: 'continue', instruction_review_ai: 'gone', instruction_review_count: 2, restart: 2, time_limit: 60, result_cause: 'human', follow_scope: 'full', pre_instruction_auto: true, hold: true }
+  for (const [name,value] of Object.entries(values)) fields[name] = { value, stored: value, default: null, choices: name.includes('count') || name === 'restart' ? [-1,0,1,2,3] : name === 'review_basis' ? ['type','last'] : name === 'after_review_exhausted' ? ['continue','stop'] : name === 'instruction' ? ['use','omit'] : name === 'time_limit' ? [60,120] : null }
   return { card_kind: kind, settings_version: 7, locked: false, fields, ai_roles: { options_state: 'ok', options: [{ id: 'a', name: 'None' }], card_init_state: 'legacy', has_legacy_roles: true,
     preserved: { run_ai: 'old', review_ai: 'old-review', review_count: 0, review_basis: 'last' }, roles: {
       ...(kind !== 'plan' ? { instruction: { selected: null, state: 'assigned_ok', outcome: 'ai', display_name: 'Old AI', provider_id: 'old', legacy_flag: true, source: 'legacy_fields' } } : {}),
@@ -108,7 +108,7 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
   it('AI shows four rows (지시 · 실행 · 검수 AI, 검수 횟수), no notice or warning, and saved disabled review values', async () => {
     const w = await tab('ai')
     expect(w.findAll('[data-role]').map(row => row.attributes('data-role'))).toEqual(['instruction','execution','review'])
-    expect(w.findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))).toEqual(['지시 AI','실행 AI','검수 AI','검수 횟수'])
+    expect(w.findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))).toEqual(['지시 AI','실행 AI','검수 AI','검수 횟수','재시작','실행 제한 시간','검수 기준','검수 횟수 소진 시','지시서 검수 AI','지시서 검수 횟수'])
     const unset = w.get('[data-role="instruction"] select')
     expect((unset.element as HTMLSelectElement).value).toBe(''); expect(unset.get('option[value=""]').text()).toBe('미설정')
     expect(w.get('[data-role="execution"] select').findAll('option').map(option => option.text())).toContain('사용하지 않음')
@@ -119,10 +119,9 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     const count = w.get('[data-test="inspector-run-settings-review_count"]')
     expect(count.attributes('disabled')).toBeDefined(); expect((count.element as HTMLSelectElement).value).toBe('0')
     expect(count.findAll('option').map(option => option.text())).toEqual(['안 함','1회','2회','3회'])
-    expect(w.find('[data-test="inspector-ai-advanced"]').exists()).toBe(false)
-    await w.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
+    expect(w.find('[data-test="inspector-ai-advanced"]').exists()).toBe(true)
     const fold = w.get('[data-test="inspector-ai-advanced"]')
-    expect(fold.findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))).toEqual(['재시작','실행 제한 시간','검수 기준','지시서 검수 AI','지시서 검수 횟수'])
+    expect(fold.findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))).toEqual(['재시작','실행 제한 시간','검수 기준','검수 횟수 소진 시','지시서 검수 AI','지시서 검수 횟수'])
     expect(fold.text()).toContain('실행 설정'); expect(fold.text()).toContain('지시서 검수')
     expect(w.find('[data-test="ai-review-count"] [data-test="inspector-run-settings-review_count"]').exists()).toBe(true)
     const basis = w.get('[data-test="inspector-run-settings-review_basis"]')
@@ -141,14 +140,12 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     const count = wrapper.get('[data-test="inspector-run-settings-review_count"]')
     expect(count.findAll('option').map(option => option.text())).toEqual(['안 함','1회','2회','3회','4회','5회'])
     expect((count.element as HTMLSelectElement).value).toBe('5')
-    await wrapper.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
     expect(wrapper.get('[data-field="instruction_review_count"]').findAll('option').map(option => option.text())).toEqual(['안 함','1회','2회','3회','4회','5회'])
     expect(http.patch).not.toHaveBeenCalled()
   })
   it('flowgate.v02gui.0007 B: a stored "until it passes" (-1) stays shown so opening the card changes nothing', async () => {
     raw = settingsRaw(); raw.fields.instruction_review_count.value = -1
     wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
-    await wrapper.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
     const select = wrapper.get('[data-field="instruction_review_count"]')
     expect(select.findAll('option')).toHaveLength(5)
     expect((select.element as HTMLSelectElement).value).toBe('-1')
@@ -159,11 +156,11 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     raw = settingsRaw(); raw.locked = true
     wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
     expect(wrapper.findAll('[data-role] select').every(select => select.attributes('disabled') !== undefined)).toBe(true)
-    expect(wrapper.get('[data-test="inspector-run-settings-advanced"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-test="inspector-run-settings-after_review_exhausted"]').attributes('disabled')).toBeDefined()
     wrapper.unmount(); wrapper = null
     const w = await tab('ai')
     expect(w.get('[data-role="execution"] select').attributes('disabled')).toBeUndefined()
-    expect(w.get('[data-test="inspector-run-settings-advanced"]').attributes('disabled')).toBeUndefined()
+    expect(w.get('[data-test="inspector-run-settings-after_review_exhausted"]').attributes('disabled')).toBeUndefined()
   })
   it('a 테스트 card has the four rows and no [고급] (no advanced item)', async () => {
     const w = await tab('ai','test')
@@ -177,21 +174,18 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect(http.patch).toHaveBeenCalledTimes(1)
     expect(http.patch).toHaveBeenCalledWith('/api/v1/flows/f/nodes/gn_1/settings', { field: 'instruction_role', value: { kind: 'assigned', provider_id: 'a' }, expected_settings_version: 7, expected_context: { run_id: null, graph_revision_no: null, draft_version: null } })
     expect(raw.fields).toEqual(fields); expect(raw.ai_roles.roles.execution).toEqual(otherRoles.execution); expect(raw.ai_roles.roles.review).toEqual(otherRoles.review)
-    await w.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
     await w.get('[data-test="inspector-run-settings-restart"]').setValue('1'); await flushPromises()
     expect(http.patch.mock.calls[1][1]).toEqual({ field: 'restart', value: 1, expected_settings_version: 8, expected_context: { run_id: null, graph_revision_no: null, draft_version: null } })
   })
   it('PLAN has no 지시 AI; an omitted instruction keeps its 지시 AI and 지시서 검수 off with their values, without saving', async () => {
     const w = await tab('ai','plan'); expect(w.findAll('[data-role]').map(row => row.attributes('data-role'))).toEqual(['execution','review'])
-    await w.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
-    expect(w.get('[data-test="inspector-ai-advanced"]').findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))).toEqual(['재시작','실행 제한 시간','검수 기준'])
+    expect(w.get('[data-test="inspector-ai-advanced"]').findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))).toEqual(['재시작','실행 제한 시간','검수 기준','검수 횟수 소진 시'])
     w.unmount(); wrapper = null
     raw = settingsRaw(); raw.fields.instruction.value = 'omit'; raw.ai_roles.roles.instruction.selected = { kind: 'assigned', provider_id: 'a' }
     wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
     const held = wrapper.get('[data-role="instruction"]')
     expect(held.attributes('data-held')).toBe('true'); expect(held.get('select').attributes('disabled')).toBeDefined()
     expect((held.get('select').element as HTMLSelectElement).value).toBe('assigned:a')
-    await wrapper.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
     for (const field of ['instruction_review_ai','instruction_review_count']) expect(wrapper.get(`[data-field="${field}"]`).attributes('disabled')).toBeDefined()
     expect((wrapper.get('[data-field="instruction_review_count"]').element as HTMLSelectElement).value).toBe('2')
     expect(http.patch).not.toHaveBeenCalled()
@@ -249,5 +243,27 @@ describe('three run keys, shared chip/pill and ko/en/ja', () => {
       expect(Object.keys(messages.ko).sort()).toEqual(Object.keys(messages.ja).sort())
     }
     expect(ko.designer.center.card_states).toMatchObject({ manual_write_wait: '수동 작성 대기', ai_setup_required: 'AI 설정 필요', ai_unavailable: 'AI 사용 불가' })
+  })
+})
+
+describe('0029 exhaustion setting', () => {
+  it('is immediately visible and writes only the chosen policy; instruction-only review keeps it enabled', async () => {
+    const w = await tab('ai')
+    expect(w.find('[data-test="inspector-run-settings-advanced"]').exists()).toBe(false)
+    const select = w.get('[data-test="inspector-run-settings-after_review_exhausted"]')
+    expect(select.attributes('disabled')).toBeUndefined()
+    expect(select.findAll('option').map(o => o.text())).toEqual(['승인 후 진행', '미통과로 중단'])
+    await select.setValue('stop'); await flushPromises()
+    expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({field: 'after_review_exhausted', value: 'stop'})
+    expect(w.get('[data-test="exhaustion-hint"]').text()).toContain('멈춥니다')
+  })
+  it('disables the policy when both reviews are off', async () => {
+    raw = settingsRaw(); raw.fields.instruction_review_count.value = 0
+    wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
+    expect(wrapper.get('[data-test="inspector-run-settings-after_review_exhausted"]').attributes('disabled')).toBeDefined()
+  })
+  it('preserves exhaustion evidence through run and canvas conversion', () => {
+    const state = cardStateView({ status: 'done', reviewExhaustionApproval: {review_count: 3} } as any)
+    expect(state?.reason).toBe('approved_after_review_exhausted:3')
   })
 })

@@ -75,6 +75,8 @@ def register() -> None:
     ports.register(ports.COMMAND_REVIEW, assigned_review.command_review)   # flowgate.v02.0125 T#1 (Q #544)
     from flowgate.card_settings import action_guard  # flowgate.v02gui.0015 T3
     ports.register(ports.ACTION_REQUIRED, action_guard.node_reason)
+    from flowgate.card_settings import review_exhaustion  # v02gui.0029
+    ports.register(ports.UPSTREAM_NOTICE, review_exhaustion.upstream_notice)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDED, review_stage.on_run_ended)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_RUN_ENDING, review_stage.on_run_ending)
     ai_run_end_hooks.register(ai_run_end_hooks.ON_QUESTION_ANSWERED, question_wait.on_question_answered)

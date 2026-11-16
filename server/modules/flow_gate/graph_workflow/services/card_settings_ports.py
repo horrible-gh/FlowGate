@@ -76,6 +76,8 @@ flowgate.v02.0113 T#3 (L-2): the stage assignments of a role card's attempt, kep
     action_required  the node judgement and a run read (flowgate.v02gui.0015 T3): ``action_required:<requirement>`` of a
                      card whose AI's answers require an action that was not taken (a new attempt), or None — an open
                      card so held is ``needs_intervention`` (``node_approval.intervention``); no handler: None
+    upstream_notice  a card's AI start (v02gui.0029): the prompt section naming the earlier cards approved after their
+                     review count ran out, or None; no handler: None (the prompt is unchanged)
 
 * With no handler registered ``run_settings`` answers ``{}``, ``result_type`` None,
   ``ai_working`` False, ``instruction_document`` ``{}``, ``approve_instruction`` False and ``node_running``
@@ -116,11 +118,12 @@ RESULT_REVIEW_PENDING = "result_review_pending"                  # 0038-T T#3 A-
 INTERVENTION = "intervention"                                    # flowgate.v02.0119 T#3 (T-2)
 COMMAND_REVIEW = "command_review"                                # flowgate.v02.0125 T#1 (Q #544)
 ACTION_REQUIRED = "action_required"                              # flowgate.v02gui.0015 T3
+UPSTREAM_NOTICE = "upstream_notice"                              # v02gui.0029
 INTERVENTION_NEEDED = "needs_intervention"                       # the default kind (no handler, an unknown answer)
 PORT_NAMES = (USES_AI, RUN_SETTINGS, RESULT_TYPE, AI_WORKING, INSTRUCTION_DOCUMENT, APPROVE_INSTRUCTION, REVIEW_INSTRUCTION, NODE_RUNNING, NODE_RUNNING_CAUSE,
               PERSON_RESULT, APPROVAL_WAIT_REASON, RECONCILE_STAGE, CARDS_CREATED, STAGE_DISPATCH, STAGE_RESULT_START,
               STAGE_NEEDS_DISPATCH, STAGE_RETRY, STAGE_VIEW, STAGE_WAITS, INSTRUCTION_SAVED, STAGE_FAILED,
-              RESULT_REVIEW_PENDING, INTERVENTION, COMMAND_REVIEW, ACTION_REQUIRED)
+              RESULT_REVIEW_PENDING, INTERVENTION, COMMAND_REVIEW, ACTION_REQUIRED, UPSTREAM_NOTICE)
 
 _handlers: dict[str, Callable[..., Any]] = {}
 _lock = threading.Lock()
@@ -281,6 +284,16 @@ def action_required(flow_id: str, row: dict) -> Optional[str]:
         return None
     reason = handler(flow_id, row)
     return reason if isinstance(reason, str) and reason else None
+
+
+def upstream_notice(job: dict) -> Optional[str]:
+    """v02gui.0029: the prompt section of a card's AI start naming the earlier cards approved after their review count
+    ran out, or None (no handler, none of them: the prompt is unchanged)."""
+    handler = _handler(UPSTREAM_NOTICE)
+    if handler is None:
+        return None
+    notice = handler(job)
+    return notice if isinstance(notice, str) and notice.strip() else None
 
 
 # ── stage assignments (flowgate.v02.0113 T#3) ────────────────────────────────

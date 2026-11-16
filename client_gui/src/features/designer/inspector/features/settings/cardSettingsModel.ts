@@ -49,15 +49,16 @@ export type CardSettingsField =
   | 'review_count'
   | 'time_limit'
   | 'review_basis'
+  | 'after_review_exhausted'
   | 'pre_instruction_auto'
   | 'result_cause'
   | 'follow_scope'
 
 /** The fields of each kind, in v7 order. */
 export const CARD_SETTINGS_FIELDS: Readonly<Record<'run' | 'test' | 'plan', readonly CardSettingsField[]>> = {
-  run: ['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis'],
+  run: ['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis', 'after_review_exhausted'],
   test: ['instruction', 'run_ai', 'review_ai', 'review_count', 'result_cause', 'follow_scope'],
-  plan: ['pre_instruction_auto', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis'],
+  plan: ['pre_instruction_auto', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis', 'after_review_exhausted'],
 }
 
 /** flowgate.v02.0072 T#3 — a switch's value as shown: on only for a stored (or sent) true. */
