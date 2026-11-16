@@ -186,12 +186,19 @@
         <span>{{ t('gui.designer.archive.action') }}</span>
       </button>
     </div>
+    <div class="designer-tool-group">
+      <button type="button" class="designer-tool" :disabled="disabled" data-test="flow-attachments-open" @click="emit('command', 'view.attachments')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12l7-7a4 4 0 0 1 6 6L10 22a6 6 0 0 1-8-8L13 3M6 15l9-9" /></svg>
+        <span>{{ attachmentWords.title }}</span>
+      </button>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { words } from '../flowAttachments/words'
 import {
   ALL_MENU_TARGETS,
   DESIGNER_LAYOUT_GROUPS,
@@ -256,7 +263,8 @@ function chooseZoom(event: Event) {
   })
 }
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const attachmentWords = computed(() => words[locale.value as keyof typeof words] ?? words.en)
 
 // flowgate.v02.0061 T#14 (R §실행 제어): the two run buttons of each run phase, in place; 중지 중 is one, off.
 type RunIcon = 'next' | 'all' | 'pause' | 'stop'

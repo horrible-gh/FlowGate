@@ -135,13 +135,12 @@ def test_card_worker_cannot_choose_another_target(env):
         make_request(requester=card_requester(), target={"node_key": "n_other"})
     assert refused.value.code == "attachment_request_target_fixed"
     row = make_request(requester=card_requester())
-    assert row["origin"] == "card" and row["target_node_key"] == NODE and row["graph_run_id"] == "grun_1"
+    assert row["origin"] == "card" and row["target_node_key"] == "__flow__" and row["graph_run_id"] == "grun_1"
 
 
 def test_chat_needs_a_card_of_its_own_flow_with_a_document(env):
-    with pytest.raises(svc.RequestError) as missing:
-        svc.create_from_stream(chat_requester(), {}, "a.txt", io.BytesIO(b"x").read)
-    assert missing.value.code == "attachment_request_target_required"
+    default = svc.create_from_stream(chat_requester(), {}, "a.txt", io.BytesIO(b"x").read)
+    assert default["target_node_key"] == "__flow__"
     with pytest.raises(svc.RequestError) as other_flow:
         make_request(target={"flow_id": "fgp.v02.9999", "node_key": NODE})
     assert other_flow.value.code == "attachment_target_outside_flow"
@@ -225,14 +224,20 @@ def test_overwrite_with_a_stale_hash_changes_nothing(env):
     assert svc.get_row(row["request_id"])["status"] == "pending"
 
 
-def test_overwrite_is_refused_while_an_ai_works_but_keep_both_is_not(env):
+def test_overwrite_while_an_ai_works_preserves_backup_and_hash_guard(env):
     approve(make_request(b"version one"))
-    row = make_request(b"version two")
     env["state"]["ai_active"] = True
-    with pytest.raises(svc.RequestError) as busy:
-        approve(row, conflict="overwrite", expected_existing_sha256=hashlib.sha256(b"version one").hexdigest())
-    assert busy.value.code == "attachment_overwrite_blocked_ai_running"
-    assert approve(row)["status"] == "approved"          # keep both still works during the run
+    row = make_request(b"version two")
+    done = approve(row, conflict="overwrite", expected_existing_sha256=hashlib.sha256(b"version one").hexdigest())
+    assert done["status"] == "approved"
+    assert room_file("report.md").read_bytes() == b"version two"
+    assert (svc.staging_dir(PROJECT, done["request_id"]) / svc.BACKUP_NAME).read_bytes() == b"version one"
+    stale = make_request(b"stale writer")
+    with pytest.raises(svc.RequestError) as refused:
+        approve(stale, conflict="overwrite", expected_existing_sha256=hashlib.sha256(b"version one").hexdigest())
+    assert refused.value.code == "attachment_existing_changed"
+    assert room_file("report.md").read_bytes() == b"version two"
+    assert approve(stale)["status"] == "approved"
 
 
 def test_overwrite_failure_after_replace_restores_the_previous_bytes(env, monkeypatch):
@@ -612,7 +617,7 @@ def test_chat_descriptor_is_offered_with_a_cli_mention():
 
     tools = {tool["name"]: tool for tool in integration.provide_chat_tools(None)}
     tool = tools["request_attachment_upload"]
-    assert tool["schema"]["required"] == ["source_path", "target"]
+    assert tool["schema"]["required"] == ["source_path"]
     mention = tool["cli_mention"]("http://x/flowgate/api/v1", "TOKEN")
     assert "POST http://x/flowgate/api/v1/attachment-requests" in mention and "do not wait" in mention
 
