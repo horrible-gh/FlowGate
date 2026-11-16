@@ -2,21 +2,27 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
+import { defineComponent, h } from 'vue'
 import NotificationAiTab from '@/features/designer/top/notifications/NotificationAiTab.vue'
+import NotificationAiDetailHost from '@/features/designer/top/notifications/NotificationAiDetailHost.vue'
+import { aiNotificationDetail } from '@/features/designer/top/notifications/aiNotificationDetailWindow'
 import { aiNotificationState, aiNotificationTitle, relativeNotificationTime } from '@/features/designer/top/notifications/notificationAiModel'
-const mocks = vi.hoisted(() => ({ get: vi.fn() }))
+const mocks = vi.hoisted(() => ({ get: vi.fn(), open: vi.fn() }))
 vi.mock('@shared/api', () => ({ getRequest: mocks.get, postRequest: vi.fn() }))
+vi.mock('@/features/documentWindow/documentWindows', () => ({ openDocumentWindow: mocks.open }))
 registerAppMessages(i18n)
 let wrapper: VueWrapper<any> | null = null
 const item = { run_id: 'run/1', doc_ref: 'p.m.1.0002-TR', doc_title: 'Report', succeeded: true, last_message_excerpt: 'Saved', finished_at: '2026-11-15T12:34:00Z' }
 beforeEach(() => {
-  mocks.get.mockReset()
+  mocks.get.mockReset(); mocks.open.mockReset()
   mocks.get.mockResolvedValue({ data: { ...item, provider_name: 'AI One', stop_reason: 'Complete', last_message: 'Full result' } })
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-15T12:35:00Z'))
   i18n.global.locale.value = 'ko'
 })
 afterEach(() => { wrapper?.unmount(); wrapper = null; vi.useRealTimers(); document.body.innerHTML = ''; i18n.global.locale.value = 'ko' })
-function show() { wrapper = mount(NotificationAiTab, { props: { items: [item] }, global: { plugins: [i18n] } }); return wrapper }
+// 0002-CH: the tab opens the detail; the header's host draws it (apart from the popover).
+const Screen = defineComponent({ props: ['items', 'projectId'], setup: (props) => () => [h(NotificationAiTab, { items: props.items }), h(NotificationAiDetailHost, { projectId: props.projectId ?? 'p' })] })
+function show() { wrapper = mount(Screen, { props: { items: [item] }, global: { plugins: [i18n] } }); return wrapper }
 describe('AI notification rows and details', () => {
   it('keeps success, failure, confirmed cancellation and unknown distinct', () => {
     expect(aiNotificationState(item)).toBe('success')
@@ -47,7 +53,18 @@ describe('AI notification rows and details', () => {
     expect(panel.textContent).toContain('Complete')
     ;(panel.querySelector('button') as HTMLButtonElement).click()
     await flushPromises()
-    expect(w.emitted('open-document')).toEqual([[item.doc_ref]])
+    expect(mocks.open).toHaveBeenCalledWith(item.doc_ref)
+  })
+  it('keeps the detail when the tab goes away and closes it on a project switch or its close button', async () => {
+    const w = show(); await w.get('.ai-detail').trigger('click'); await flushPromises()
+    await w.setProps({ items: [] })
+    expect(document.querySelector('[data-test="notification-ai-detail"]')).not.toBeNull()
+    await w.setProps({ projectId: 'other' }); await flushPromises()
+    expect(document.querySelector('[data-test="notification-ai-detail"]')).toBeNull()
+    expect(aiNotificationDetail.value).toBeNull()
+    await w.setProps({ items: [item] }); await w.get('.ai-detail').trigger('click'); await flushPromises()
+    ;(document.querySelector('[data-modeless-action="close"]') as HTMLButtonElement).click(); await flushPromises()
+    expect(document.querySelector('[data-test="notification-ai-detail"]')).toBeNull()
   })
   it('shows failure and retries instead of reusing a previous detail', async () => {
     mocks.get.mockRejectedValueOnce(new Error('403'))
@@ -59,7 +76,7 @@ describe('AI notification rows and details', () => {
     expect(document.querySelector('[data-test="notification-ai-detail"]')!.textContent).toContain('Full result')
   })
   it('keeps unknown codes out of the summary text but available in its tooltip', async () => {
-    const w = show(); await w.setProps({ items: [{ run_id: 'r', outcome: 'future_code' }] })
+    const w = show(); await w.setProps({ items: [{ run_id: 'r', outcome: 'future_code' }] }); await flushPromises()
     expect(w.get('.ai-summary').text()).not.toContain('future_code')
     expect(w.get('.ai-summary').attributes('title')).toBe('future_code')
   })

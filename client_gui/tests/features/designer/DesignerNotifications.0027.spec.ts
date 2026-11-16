@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import DesignerNotifications from '@/features/designer/top/notifications/DesignerNotifications.vue'
+import NotificationAiDetailHost from '@/features/designer/top/notifications/NotificationAiDetailHost.vue'
 import { qaOpenItems } from '@/features/document/api/qa'
 import { normalizeActiveRuns } from '@/features/designer/top/notifications/notificationApi'
 import type { ExplorerProject } from '@/features/designer/projectExplorer/projectExplorerTree'
@@ -232,6 +233,7 @@ describe('Designer notifications', () => {
     expect(w.findAll('[data-test="notification-run"]')).toHaveLength(2)
   })
   it('opens AI detail and preserves the basic question document link', async () => {
+    const host = mount(NotificationAiDetailHost, { props: { projectId: 'p' }, global: { plugins: [i18n] } })
     const w = await open(); await w.get('#notification-tab-ai').trigger('click')
     expect(w.get('[data-test="notification-ai"]').text()).toContain('Saved')
     await w.get('[data-test="notification-ai"] button').trigger('click')
@@ -242,6 +244,28 @@ describe('Designer notifications', () => {
     expect(mocks.open).toHaveBeenLastCalledWith('p.m.1.0002-TR')
     await w.get('#notification-tab-questions').trigger('click')
     expect(w.get('[data-test="notification-question"]').text()).toContain('Instruction')
+    host.unmount()
+  })
+  it('0002-CH: pressing the AI detail window keeps the popover and the window; an outside press closes only the popover', async () => {
+    const host = mount(NotificationAiDetailHost, { props: { projectId: 'p' }, global: { plugins: [i18n] } })
+    const w = await open(); await w.get('#notification-tab-ai').trigger('click')
+    await w.get('[data-test="notification-ai"] .ai-detail').trigger('click'); await flushPromises()
+    const shell = () => document.querySelector('.ui-modeless-panel')
+    for (const part of ['.ui-modeless-titlebar', '.ui-modeless-resize-handle', '[data-test="notification-ai-detail"]']) {
+      shell()!.querySelector(part)!.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+      expect(w.emitted('close')).toBeUndefined()
+    }
+    // Escape in the window closes that window only (ModelessShell's own Escape), never the popover.
+    shell()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await flushPromises()
+    expect(w.emitted('close')).toBeUndefined()
+    expect(shell()).toBeNull()
+    await w.get('[data-test="notification-ai"] .ai-detail').trigger('click'); await flushPromises()
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount(); wrapper = null; await flushPromises()
+    expect(document.querySelector('[data-test="notification-ai-detail"]')).not.toBeNull()
+    host.unmount()
+    expect(document.querySelector('[data-test="notification-ai-detail"]')).toBeNull()
   })
   it('keeps the successful feed usable when the run endpoint fails', async () => {
     mocks.get.mockImplementation(async (url: string) => { if (url.endsWith('active-all')) throw new Error('403'); return { data: feed } })
