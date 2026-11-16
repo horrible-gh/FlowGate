@@ -73,6 +73,9 @@ export function chatEventRefresh(frame: ChatEventFrame, target: ChatEventTarget)
  * flowgate.v02gui.0017 B3: who wants to hear that the connection is back — the stream reopened after a drop, or the
  * browser went online again. Given, the subscription follows `projectId` (the panel's scope) instead of the open chat,
  * so it exists while no chat is open: the chat list fails exactly when none could be opened.
+ * flowgate.v02gui.0031 T0005 ②: online also asks the open chat to read everything again, as a reconnect of the stream
+ * does — a browser back online without a stream reconnect used to recover the chat list only, and the open chat's
+ * turns, run and history stayed as the failure left them.
  */
 export interface ChatConnectionRestored {
   projectId: () => string | null
@@ -140,7 +143,12 @@ export function useChatEvents(
   watch(() => targetKey(target()), cancel)
   onScopeDispose(cancel)
   if (connection && typeof window !== 'undefined') {
-    const online = () => connection.restored()
+    // T0005 ②: like a reconnect — the list (when it failed) and the open chat. The session holds the request while the
+    // chat is opening or a message is being sent, and drops it for another chat (its generation).
+    const online = () => {
+      connection.restored()
+      if (target() !== null) signal(FULL_CHAT_REFRESH)
+    }
     window.addEventListener('online', online)
     onScopeDispose(() => window.removeEventListener('online', online))
   }

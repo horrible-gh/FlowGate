@@ -230,7 +230,8 @@ const adoptRotatedToken = (token: string) => {
   if (token === window.__accessToken__) return
   window.__accessToken__ = token
   sessionStorage.setItem('fg_access_token', token)
-  // Reuse the 0021 rotation signal so the SSE EventSource reconnects with the new token.
+  // Reuse the 0021 rotation signal: the project event hub (projectEvents.ts) replaces a stream that is not open with
+  // one carrying the new token.
   window.dispatchEvent(new CustomEvent('fg:access_token_refreshed', { detail: { token } }))
 }
 
@@ -396,6 +397,7 @@ const ensureFreshToken = (): Promise<string> => {
   if (!refreshPromise) {
     refreshPromise = runRefresh()
       .then((token) => {
+        proactiveFailures = 0
         scheduleProactiveRefresh()
         return token
       })
@@ -412,12 +414,27 @@ const ensureFreshToken = (): Promise<string> => {
 // then means (a) every expiry surfaces at least one 401 in the browser console, and (b) the
 // SSE stream can sit pinned to a dead token until the next user action ("[Workflow Decision] not
 // refreshing"). We instead rotate the token slightly BEFORE it expires, so live requests
-// never carry an expired token and the SSE reconnect (via fg:access_token_refreshed) always
-// has a fresh token. The reactive interceptor below stays as a safety net.
+// never carry an expired token. The reactive interceptor below stays as a safety net.
+// flowgate.v02gui.0031 T0005 ①: the token reaches the SSE stream through fg:access_token_refreshed, which the project
+// event hub (features/project/projectEvents.ts) listens to — it replaces a stream that is not open (one the browser
+// retries on its old URL, or a closed one waiting to reopen) with one carrying the new token. An open stream is kept:
+// the server checks the token only when the stream connects.
 const REFRESH_SKEW_MS = 15000
 const MIN_REFRESH_DELAY_MS = 2000
 let proactiveTimer: ReturnType<typeof setTimeout> | null = null
 let autoRefreshStarted = false
+
+// flowgate.v02gui.0031 T0005 ④: a proactive rotation that failed without a verdict (network error, timeout, 5xx — the
+// server restarting) used to stop the timer, and only a focus / visibility return, or the next request's 401, tried
+// again. A screen watched without leaving it went on to an expired token. It is now tried again on its own, the wait
+// doubling from PROACTIVE_RETRY_BASE_MS up to PROACTIVE_RETRY_MAX_DELAY_MS, at most PROACTIVE_RETRY_MAX times; the
+// browser going online again tries at once (and starts a new series). A refresh the server rejected (401/403, no
+// refresh token) is not retried: the existing login path stays. Every try goes through ensureFreshToken — the one
+// in-flight rotation and the cross-tab rotation lock.
+export const PROACTIVE_RETRY_BASE_MS = 5_000
+export const PROACTIVE_RETRY_MAX_DELAY_MS = 60_000
+export const PROACTIVE_RETRY_MAX = 6
+let proactiveFailures = 0
 
 const currentAccessToken = (): string | null =>
   window.__accessToken__ || sessionStorage.getItem('fg_access_token') || null
@@ -438,6 +455,32 @@ function clearProactiveRefresh() {
   }
 }
 
+/** The wait before proactive retry number `failures` (1-based): doubling, capped. */
+// @internal — exported for the retry tests.
+export const proactiveRetryDelayMs = (failures: number): number =>
+  Math.min(PROACTIVE_RETRY_BASE_MS * 2 ** Math.max(failures - 1, 0), PROACTIVE_RETRY_MAX_DELAY_MS)
+
+/** T0005 ④: a rotation started by the timer, a visibility return or `online`; a failure without a verdict retries. */
+function refreshInBackground(): void {
+  ensureFreshToken().catch((error) => retryProactiveRefresh(error))
+}
+
+function retryProactiveRefresh(error: unknown) {
+  clearProactiveRefresh()
+  // A rejected refresh is a verdict: leave it to the login path (the next request's 401). Logged out: nothing.
+  if (!autoRefreshStarted || isAuthRejection(error) || !getStoredRefreshToken()) {
+    proactiveFailures = 0
+    return
+  }
+  // Exhausted: focus / visibility, `online` and the reactive 401 refresh are left.
+  if (proactiveFailures >= PROACTIVE_RETRY_MAX) return
+  proactiveFailures += 1
+  proactiveTimer = setTimeout(() => {
+    proactiveTimer = null
+    refreshInBackground()
+  }, proactiveRetryDelayMs(proactiveFailures))
+}
+
 function scheduleProactiveRefresh() {
   if (typeof window === 'undefined') return
   clearProactiveRefresh()
@@ -449,8 +492,8 @@ function scheduleProactiveRefresh() {
   const delay = Math.max(expMs - Date.now() - REFRESH_SKEW_MS, MIN_REFRESH_DELAY_MS)
   proactiveTimer = setTimeout(() => {
     proactiveTimer = null
-    // On failure stop the chain; the reactive interceptor / a visibility-regain recovers.
-    ensureFreshToken().catch(() => clearProactiveRefresh())
+    // T0005 ④: a failure without a verdict is tried again (bounded backoff); a rejection stops the chain.
+    refreshInBackground()
   }, delay)
 }
 
@@ -479,13 +522,30 @@ const onVisibilityRefresh = (recordRecovery: boolean) => {
     recordVisibilityRecovery('token', generation, { action: nearExpiry ? 'refreshed' : 'rescheduled' })
   }
   if (nearExpiry) {
-    ensureFreshToken().catch(() => clearProactiveRefresh())
-  } else {
+    refreshInBackground()
+  } else if (proactiveFailures === 0 || proactiveTimer === null) {
     scheduleProactiveRefresh()
   }
+  // else: a retry of a failed rotation is waiting; rescheduling off the old token would drop it.
 }
 const onVisibilityChangeRefresh = () => onVisibilityRefresh(true)
 const onFocusRefresh = () => onVisibilityRefresh(false)
+
+// T0005 ④: back online — a rotation that failed while offline (or a token that expired meanwhile) is done now, as a
+// new bounded series; a healthy schedule is kept.
+const onOnlineRefresh = () => {
+  if (!getStoredRefreshToken()) return
+  const token = currentAccessToken()
+  const expMs = token ? decodeExpMs(token) : null
+  const failedBefore = proactiveFailures > 0
+  proactiveFailures = 0
+  if (failedBefore || expMs === null || expMs - Date.now() <= REFRESH_SKEW_MS) {
+    clearProactiveRefresh()
+    refreshInBackground()
+  } else if (proactiveTimer === null) {
+    scheduleProactiveRefresh()
+  }
+}
 
 /**
  * Start the proactive refresh loop. Called by the app shell (main.ts) once a valid session
@@ -499,6 +559,7 @@ export const startTokenAutoRefresh = () => {
       document.addEventListener('visibilitychange', onVisibilityChangeRefresh)
     }
     window.addEventListener('focus', onFocusRefresh)
+    window.addEventListener('online', onOnlineRefresh)
   }
   scheduleProactiveRefresh()
 }
@@ -506,12 +567,14 @@ export const startTokenAutoRefresh = () => {
 /** Stop the proactive refresh loop and detach its listeners (logout). */
 export const stopTokenAutoRefresh = () => {
   autoRefreshStarted = false
+  proactiveFailures = 0
   clearProactiveRefresh()
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', onVisibilityChangeRefresh)
   }
   if (typeof window !== 'undefined') {
     window.removeEventListener('focus', onFocusRefresh)
+    window.removeEventListener('online', onOnlineRefresh)
   }
 }
 
