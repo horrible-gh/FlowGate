@@ -355,7 +355,7 @@ describe('2-B in the Shell — 그룹 / 플로우 이름 변경 (display name on
     })
     rightClick(explorerRow(w, 'Canvas').element)
     await settle()
-    expect(states()).toEqual([['flow.rename', 'false', ''], ['flow.delete', 'false', '']])
+    expect(states()).toEqual([['flow.rename', 'false', ''], ['flow.baseBranch', 'false', ''], ['flow.archive', 'true', ''], ['flow.delete', 'false', '']])
     await choose('flow.rename')
     expect(q('dma-fact-target')!.textContent).toContain('Canvas')
     expect(q('dma-fact-id')!.textContent).toContain('p.ui.0002')
@@ -1240,7 +1240,7 @@ describe('v02gui.0027 in the Shell — 그룹 삭제 (empty Groups only) and 대
     explorerRow(w, label).find('[data-test="project-explorer-group-menu"]').element as HTMLButtonElement
   const hintOf = (key: string) => item(key).querySelector('[data-test="designer-context-hint"]')?.textContent ?? null
 
-  it('an empty Group: the menu says it can be deleted; the window confirms, DELETE runs once and the Group leaves the tree', async () => {
+  it('an empty Group: the menu shows 그룹 삭제 on one line; the window confirms, DELETE runs once and the Group leaves the tree', async () => {
     serveDelete()
     const w = await mountShell()
     menuButton(w, '서버').click()
@@ -1248,7 +1248,7 @@ describe('v02gui.0027 in the Shell — 그룹 삭제 (empty Groups only) and 대
     expect(item('group.delete').classList.contains('danger')).toBe(true)
     expect(item('group.delete').getAttribute('aria-disabled')).toBe('false')
     expect(item('group.delete').querySelector('.designer-context-label')!.textContent).toBe('그룹 삭제')
-    expect(hintOf('group.delete')).toBe('빈 그룹이라 삭제할 수 있음')
+    expect(hintOf('group.delete')).toBeNull()  // one line: the item name only (v02test.0027 0005-T)
     await choose('group.delete')
     expect(dialog()?.dataset.kind).toBe('group.delete')
     expect(q('dma-group-delete-note')).not.toBeNull()
@@ -1264,13 +1264,13 @@ describe('v02gui.0027 in the Shell — 그룹 삭제 (empty Groups only) and 대
     expect(labels(w)).toContain('UI 개선')
   })
 
-  it('a Group with Flows (archived ones count): the menu says why, the window refuses without a DELETE and 대신 아카이브 archives it', async () => {
+  it('a Group with Flows (archived ones count): the menu has no hint line, the window refuses without a DELETE and 대신 아카이브 archives it', async () => {
     serveDelete()
     const w = await mountShell()
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    // 3 from the server although the tree lists only 2 Flows of it.
-    expect(hintOf('group.delete')).toBe('Flow 3개가 있어 지금은 삭제할 수 없음')
+    // The window's 3 comes from the server although the tree lists only 2 Flows of it.
+    expect(hintOf('group.delete')).toBeNull()
     await choose('group.delete')
     expect(dialog()?.dataset.kind).toBe('group.delete')
     expect(q('dma-group-delete-blocked')!.textContent!.trim()).toBe('Flow 3개가 남아 있어 삭제할 수 없습니다. 먼저 아카이브하세요.')
@@ -1309,7 +1309,7 @@ describe('v02gui.0027 in the Shell — 그룹 삭제 (empty Groups only) and 대
     await settle()
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    expect(hintOf('group.delete')).toBe('Flow 2개가 있어 지금은 삭제할 수 없음')
+    expect(hintOf('group.delete')).toBeNull()
     await choose('group.delete')
     expect(q('dma-group-delete-blocked')!.textContent!.trim()).toBe('Flow 2개가 남아 있어 삭제할 수 없습니다.')
     expect(q('dma-archive-instead')).toBeNull()
