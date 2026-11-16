@@ -103,9 +103,12 @@ function apply(data: AiRoleProfiles, id: string, stamp: number): void {
 function storedCount(key: string): number | null { return counts.value[key]?.review_count ?? null }
 function effectiveCount(key: string): number { return counts.value[key]?.effective_review_count ?? options.value.review_count_default }
 function countLabel(count: number): string { return t(`gui.role_profiles.count_${reviewCountKind(count)}`, { n: count }) }
-// The server's choices without "until it passes"; a stored value outside them stays listed (same rule as the Inspector).
-function countValues(key: string): number[] { return reviewCountValues(options.value.review_count_choices ?? [], storedCount(key)) }
-function countKey(row: AiRoleProfile): string { return reviewCountKey(storedCount(row.type_key), row.type_key === 'common' ? 'unset' : 'inherit') }
+// What the select shows for an own value: the server's effective value, so a stored value that is no longer a choice
+// (e.g. 3 after the maximum dropped to 2) shows as what a new card really gets (0), not as the stale stored number.
+function shownCount(key: string): number | null { return storedCount(key) === null ? null : effectiveCount(key) }
+// The server's choices without "until it passes"; the shown value stays listed (-1 only while it is the shown one).
+function countValues(key: string): number[] { return reviewCountValues(options.value.review_count_choices ?? [], shownCount(key)) }
+function countKey(row: AiRoleProfile): string { return reviewCountKey(shownCount(row.type_key), row.type_key === 'common' ? 'unset' : 'inherit') }
 async function load(): Promise<void> {
   const id = props.groupId, stamp = epoch, language = locale.value
   busy.value = true

@@ -107,17 +107,24 @@ describe('0027 role table review-count column', () => {
     expect(api.setAiRoleProfileReviewCount).not.toHaveBeenCalled()
   })
 
-  it('keeps a stored value above the current maximum shown and allows picking it again', async () => {
+  it('shows the effective value, not the stale stored one, when the maximum drops below it', async () => {
     maxChoice = 3
-    stored = { common: 5, T: null }
+    stored = { common: 3, T: null }
     const wrapper = matrix(); await flushPromises()
-    expect(value(wrapper, 'common')).toBe('count:5')
-    expect(labels(wrapper, 'common')).toContain('5회')
-    // A new card gets 0 now (server's effective value), so the inherited label says so.
-    expect(labels(wrapper, 'T')[0]).toBe('공용 · 안 함')
-    expect(select(wrapper, 'T').find('option[value="count:5"]').exists()).toBe(false)
-    await select(wrapper, 'common').setValue('count:5'); await flushPromises()
-    expect(api.setAiRoleProfileReviewCount).toHaveBeenLastCalledWith('roles', 'common', 5)
+    expect(value(wrapper, 'common')).toBe('count:3')
+    maxChoice = 2
+    const lowered = matrix(); await flushPromises()
+    // Common row and the inheriting type row agree: a new card gets 0.
+    expect(value(lowered, 'common')).toBe('count:0')
+    expect(labels(lowered, 'common')).not.toContain('3회')
+    expect(labels(lowered, 'T')[0]).toBe('공용 · 안 함')
+    expect(select(lowered, 'T').find('option[value="count:3"]').exists()).toBe(false)
+    // A type row with its own out-of-range value shows 0 as well.
+    stored = { common: null, T: 5 }
+    const own = matrix(); await flushPromises()
+    expect(value(own, 'T')).toBe('count:0')
+    expect(labels(own, 'T')).not.toContain('5회')
+    expect(stored.T).toBe(5)
   })
 
   it('offers more counts when the server maximum is higher', async () => {
