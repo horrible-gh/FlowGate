@@ -1558,7 +1558,9 @@ def sweep_all() -> dict:
                                    project.get("project_id"), exc_info=True)
         except Exception:
             logger.warning("attachment request orphan sweep failed", exc_info=True)
-        return {"expired": expired, "orphans": orphans}
+        from modules.flow_gate.services.message_image_service import sweep_expired
+        images_expired = sweep_expired()
+        return {"expired": expired, "orphans": orphans, "message_images_expired": images_expired}
 
 
 _sweeper: Optional[threading.Thread] = None

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
+from modules.flow_gate.services import message_image_service
 from modules.flow_gate import conversation as legacy_conversation
 from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.documents import document_service
@@ -263,6 +264,8 @@ def list_turns(
             reason="delivered",
         )
 
+    page_images = (message_image_service.for_range(doc_id, int(picked[0]["seq"]), int(picked[-1]["seq"]))
+                   if picked else {})
     response: dict[str, Any] = {
         "ok": True,
         "doc_id": doc_id,
@@ -275,7 +278,7 @@ def list_turns(
         "has_more": more,
         "truncated_by": truncated_by,
         "head": build_head(doc) if include_head else None,
-        "turns": [turn_wire(row) for row in picked],
+        "turns": [turn_wire(row, images=page_images.get(int(row["seq"]), [])) for row in picked],
         # The participant row and the read boundary must be complete after the single
         # entry call (D0002 §6); scroll-up pages leave them alone.
         "participants": (

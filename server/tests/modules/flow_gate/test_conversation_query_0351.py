@@ -76,6 +76,7 @@ def store():
     sql_dir = Path(__file__).resolve().parents[3] / "sql/migrations/sqlite"
     conn.executescript((sql_dir / "074_conversation_turns.sql").read_text(encoding="utf-8"))
     conn.executescript((sql_dir / "085_conversation_backward_page_audit.sql").read_text(encoding="utf-8"))
+    conn.executescript((sql_dir / "193_message_images.sql").read_text(encoding="utf-8"))
     conn.execute("INSERT INTO documents(doc_id) VALUES (?)", [DOC_ID])
     conn.commit()
 
