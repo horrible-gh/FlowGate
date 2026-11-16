@@ -6,7 +6,8 @@
 
 export const contextMenuMessages = {
   ko: {
-    baseBranch: '베이스 브랜치', archive: '아카이브', restore: '복원',
+    baseBranch: '베이스 브랜치', archive: '아카이브', restore: '복원', groupArchive: '그룹 아카이브', groupRestore: '그룹 복원', groupDelete: '그룹 삭제',
+    groupDeleteHint: { busy: 'Flow {n}개가 있어 지금은 삭제할 수 없음', empty: '빈 그룹이라 삭제할 수 있음' },
     menu: '메뉴', newGroup: '새 그룹', projectInfo: '프로젝트 정보', newFlow: '새 플로우',
     rename: '이름 변경', info: '정보', delete: '삭제', open: '열기', newFolder: '새 폴더',
     newFile: '새 파일', download: '다운로드', upload: '업로드', git: 'Git', changes: '수정 확인',
@@ -16,7 +17,8 @@ export const contextMenuMessages = {
     reasons: { unlinked: 'Git 미연동', unavailable: 'Git 상태를 읽을 수 없음', 'no-worktree': '워크트리 없음', denied: 'Git 읽기 권한 없음', planned: '연결 예정', unimplemented: '미구현' },
   },
   en: {
-    baseBranch: 'Base branch', archive: 'Archive', restore: 'Restore',
+    baseBranch: 'Base branch', archive: 'Archive', restore: 'Restore', groupArchive: 'Archive group', groupRestore: 'Restore group', groupDelete: 'Delete group',
+    groupDeleteHint: { busy: '{n} flow(s) inside, cannot be deleted now', empty: 'Empty group, can be deleted' },
     menu: 'Menu', newGroup: 'New group', projectInfo: 'Project information', newFlow: 'New flow',
     rename: 'Rename', info: 'Information', delete: 'Delete', open: 'Open', newFolder: 'New folder',
     newFile: 'New file', download: 'Download', upload: 'Upload', git: 'Git', changes: 'View changes',
@@ -26,7 +28,8 @@ export const contextMenuMessages = {
     reasons: { unlinked: 'Git not connected', unavailable: 'Git status unavailable', 'no-worktree': 'Worktree missing', denied: 'Git read permission denied', planned: 'Coming soon', unimplemented: 'Not implemented' },
   },
   ja: {
-    baseBranch: 'ベースブランチ', archive: 'アーカイブ', restore: '復元',
+    baseBranch: 'ベースブランチ', archive: 'アーカイブ', restore: '復元', groupArchive: 'グループをアーカイブ', groupRestore: 'グループを復元', groupDelete: 'グループを削除',
+    groupDeleteHint: { busy: 'フローが{n}件あるため今は削除できません', empty: '空のグループなので削除できます' },
     menu: 'メニュー', newGroup: '新規グループ', projectInfo: 'プロジェクト情報', newFlow: '新規フロー',
     rename: '名前を変更', info: '情報', delete: '削除', open: '開く', newFolder: '新規フォルダー',
     newFile: '新規ファイル', download: 'ダウンロード', upload: 'アップロード', git: 'Git', changes: '変更を確認',

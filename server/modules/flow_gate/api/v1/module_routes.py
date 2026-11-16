@@ -6,6 +6,9 @@ Endpoints:
   GET  /flowgate/api/v1/modules/{module}/groups                      Group list
   GET  /flowgate/api/v1/modules/{module}/groups/{group_id}/documents Document list
   POST /flowgate/api/v1/projects/{project_id}/modules                Module creation (T505)
+  POST /flowgate/api/v1/projects/{project_id}/modules/{name}/archive Group archive (v02gui.0027)
+  POST /flowgate/api/v1/projects/{project_id}/modules/{name}/restore Group restore (v02gui.0027)
+  DELETE /flowgate/api/v1/projects/{project_id}/modules/{name}       Empty Group delete (v02gui.0027)
 
 Document identifier format: {module}/{group_code}/{seq}/{doc_code}
   e.g.) server/0001/1/R0001
@@ -558,3 +561,187 @@ def _actor_id(auth) -> Optional[str]:
     if isinstance(auth, dict):
         return auth.get("issued_to") or auth.get("user_id") or auth.get("sub")
     return getattr(auth, "user_id", None)
+
+
+# ── POST /projects/{project_id}/modules/{module_name}/archive | /restore (v02gui.0027) ─────────
+
+def _module_archive_view(row: dict, project_id: str, module_name: str) -> dict:
+    return {
+        "ok": True,
+        "module_id": row.get("module_id") or f"{project_id}:{module_name}",
+        "project_id": project_id,
+        "name": module_name,
+        "title": (row.get("title") or "").strip() or module_name,
+        "archived": row.get("archived_at") is not None,
+        "archived_at": row.get("archived_at"),
+        "archived_by": row.get("archived_by"),
+    }
+
+
+def _write_module_archive(store, project_id: str, module_name: str, archived: bool, actor: Optional[str]):
+    """One conditional write. Returns the row after it, or an error response (nothing written)."""
+    existing = store._fetch_one(
+        "SELECT * FROM project_modules WHERE project_id = ? AND name = ?", [project_id, module_name],
+    )
+    now = now_iso()
+    if existing is None:
+        # A Group known only through groups.module (no project_modules row yet) gets its row here,
+        # as the title edit does, so the flag has somewhere to live.
+        in_groups = store._fetch_one(
+            "SELECT 1 AS hit FROM groups WHERE project_id = ? AND module = ? LIMIT 1", [project_id, module_name],
+        )
+        if in_groups is None:
+            return _fail_code(404, "module_not_found", f"Module '{module_name}' not found")
+        if not archived:
+            return _fail_code(409, "not_archived", f"Module '{module_name}' is not archived")
+        store._execute(
+            "INSERT INTO project_modules (module_id, project_id, name, title, created_at, updated_at, "
+            "archived_at, archived_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [f"{project_id}:{module_name}", project_id, module_name, module_name, now, now, now, actor],
+        )
+    elif archived:
+        if store._execute_affected(
+            "UPDATE project_modules SET archived_at = ?, archived_by = ? "
+            "WHERE project_id = ? AND name = ? AND archived_at IS NULL",
+            [now, actor, project_id, module_name],
+        ) == 0:
+            return _fail_code(409, "already_archived", f"Module '{module_name}' is already archived")
+    elif store._execute_affected(
+        "UPDATE project_modules SET archived_at = NULL, archived_by = NULL "
+        "WHERE project_id = ? AND name = ? AND archived_at IS NOT NULL",
+        [project_id, module_name],
+    ) == 0:
+        return _fail_code(409, "not_archived", f"Module '{module_name}' is not archived")
+    return store._fetch_one(
+        "SELECT * FROM project_modules WHERE project_id = ? AND name = ?", [project_id, module_name],
+    )
+
+
+def _change_module_archive(request: Request, project_id: str, module_name: str, archived: bool):
+    """Display-only Group archive (flowgate.v02gui.0027 0006-T §4).
+
+    Only ``project_modules.archived_at / archived_by`` change: the Group's Flows, documents, runs,
+    worktrees and branches stay exactly as they are, and running work is not a reason to refuse
+    (the Group is only hidden from the default tree). Same authentication as the Group create /
+    title edit. Already archived / not archived answer 409 ``already_archived`` / ``not_archived``.
+    """
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    try:
+        validate_module_name(module_name)
+    except ValueError as exc:
+        return _fail(422, str(exc))
+    if module_name == "none":
+        # The "All" bucket of Flows without a Group is not a Group of its own (as in patch_module).
+        return _fail_code(404, "module_not_found", f"Module '{module_name}' not found")
+
+    store = get_store()
+    actor = _actor_id(auth)
+    try:
+        with store.transaction():
+            result = _write_module_archive(store, project_id, module_name, archived, actor)
+    except Exception:
+        # Two first archives of a groups.module-only Group raced on the row insert: the other won.
+        row = store._fetch_one(
+            "SELECT archived_at FROM project_modules WHERE project_id = ? AND name = ?", [project_id, module_name],
+        )
+        if row is None or (row.get("archived_at") is not None) != archived:
+            raise
+        return _fail_code(409, "already_archived" if archived else "not_archived",
+                          f"Module '{module_name}' archive state already changed")
+    if isinstance(result, JSONResponse):
+        return result
+
+    try:
+        from modules.flow_gate.graph_workflow.services import canvas_events
+        canvas_events.publish_module_archive_changed(
+            project_id=project_id, module=module_name, archived=archived, actor_user_id=actor,
+        )
+    except Exception:
+        pass  # Best-effort refresh signal; the stored state is the source of truth.
+    return JSONResponse(content=_module_archive_view(result or {}, project_id, module_name))
+
+
+@router.post("/projects/{project_id}/modules/{module_name}/archive")
+def archive_module(request: Request, project_id: str, module_name: str):
+    """Hide a Group from the default project tree (``include_archived=true`` still shows it)."""
+    return _change_module_archive(request, project_id, module_name, True)
+
+
+@router.post("/projects/{project_id}/modules/{module_name}/restore")
+def restore_module(request: Request, project_id: str, module_name: str):
+    """Show an archived Group in the default project tree again. Its Flows' own archive state is kept."""
+    return _change_module_archive(request, project_id, module_name, False)
+
+
+# ── DELETE /projects/{project_id}/modules/{module_name} (v02gui.0027 0008-T) ──────────────────
+
+_COUNT_MODULE_FLOWS = (
+    "SELECT COUNT(*) AS n FROM groups g WHERE g.project_id = ? AND g.module = ? AND g.deleted_at IS NULL"
+)
+
+
+@router.delete("/projects/{project_id}/modules/{module_name}")
+def delete_module(request: Request, project_id: str, module_name: str):
+    """Delete an empty Group (flowgate.v02gui.0027 0008-T §4).
+
+    "Empty" = no Flow of the Group (``groups`` row with ``deleted_at IS NULL``) at all, whatever its
+    Flow archive or discard (DC) state: a discarded Flow is history too. Only the Group's
+    ``project_modules`` row is removed; ``groups``, documents, runs and Git tables are never touched
+    (deleting a ``groups`` row would cascade into the run history). The emptiness check and the
+    delete are one conditional statement, so a Flow created in between keeps the Group.
+    A Group with Flows answers 409 ``module_not_empty`` with ``flow_count``; an unknown Group (or
+    the ``none`` "All" bucket) 404 ``module_not_found``. Same authentication as create / archive.
+    """
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    try:
+        validate_module_name(module_name)
+    except ValueError as exc:
+        return _fail(422, str(exc))
+    if module_name == "none":
+        return _fail_code(404, "module_not_found", f"Module '{module_name}' not found")
+
+    store = get_store()
+    with store.transaction():
+        row = store._fetch_one(
+            "SELECT * FROM project_modules WHERE project_id = ? AND name = ?", [project_id, module_name],
+        )
+        deleted = 0
+        if row is not None:
+            deleted = store._execute_affected(
+                "DELETE FROM project_modules WHERE project_id = ? AND name = ? AND NOT EXISTS ("
+                + _COUNT_MODULE_FLOWS.replace("COUNT(*) AS n", "1") + ")",
+                [project_id, module_name, project_id, module_name],
+            )
+        flow_count = 0
+        if not deleted:
+            counted = store._fetch_one(_COUNT_MODULE_FLOWS, [project_id, module_name]) or {}
+            flow_count = int(counted.get("n") or 0)
+
+    if not deleted:
+        if flow_count > 0:
+            return JSONResponse(status_code=409, content={
+                "ok": False, "http_status": 409, "code": "module_not_empty", "flow_count": flow_count,
+                "error_message": f"Module '{module_name}' still has {flow_count} Flow(s)",
+                "help_url": help_url(),
+            })
+        return _fail_code(404, "module_not_found", f"Module '{module_name}' not found")
+
+    actor = _actor_id(auth)
+    try:
+        from modules.flow_gate.graph_workflow.services import canvas_events
+        canvas_events.publish_module_deleted(project_id=project_id, module=module_name, actor_user_id=actor)
+    except Exception:
+        pass  # Best-effort refresh signal; the stored state is the source of truth.
+    return JSONResponse(content={
+        "ok": True,
+        "deleted": True,
+        "module_id": row.get("module_id") or f"{project_id}:{module_name}",
+        "project_id": project_id,
+        "name": module_name,
+    })

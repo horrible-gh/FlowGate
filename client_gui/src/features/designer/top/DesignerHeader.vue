@@ -1,10 +1,9 @@
 <template>
-  <!-- flowgate.v02.0038 — Designer Header (0001-R §2): brand, notification and AI entry on the
+  <!-- flowgate.v02.0038 — Designer Header (0001-R §2): brand, notification entry on the
        left, the search assist in the middle, language / settings / user on the right.
        The side groups never shrink below their content; the search takes what is left
        (up to 680px), and narrow windows switch the side groups to a compact form.
-       Notification, AI, settings and the user button are entry points only: they emit a
-       command and a later Feature connects them. The language switch is the existing shared
+       Notifications are connected through the Shell; settings and the user button emit commands. The language switch is the existing shared
        contract (vue-i18n locale + `preferred_locale`, as v0.1's switches do). -->
   <div class="designer-header" data-test="designer-header">
     <div class="designer-header-left">
@@ -18,6 +17,10 @@
           class="designer-header-btn is-icon"
           :aria-label="t('gui.designer.top.header.notifications')"
           :title="t('gui.designer.top.header.notifications')"
+          ref="notificationAnchor"
+          :aria-expanded="notificationsOpen"
+          aria-haspopup="dialog"
+          :aria-controls="notificationsOpen ? 'designer-notifications' : undefined"
           data-test="designer-header-notifications"
           @click="emit('command', 'header.notifications')"
         >
@@ -25,15 +28,9 @@
             <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
             <path d="M10 21h4" />
           </svg>
+          <span v-if="badge" data-test="notification-bell-count">{{ badge }}</span>
         </button>
-        <button
-          type="button"
-          class="designer-header-btn is-ai"
-          data-test="designer-header-ai"
-          @click="emit('command', 'header.ai')"
-        >
-          <span aria-hidden="true">🤖</span><b>{{ t('gui.designer.top.header.ai') }}</b>
-        </button>
+        <DesignerNotifications v-if="notificationsOpen" :project-id="notificationProjectId" :project="notificationProject" :anchor="notificationAnchor" @close="emit('close-notifications')" />
       </div>
     </div>
 
@@ -59,40 +56,145 @@
         type="button"
         class="designer-header-btn"
         data-test="designer-header-settings"
-        @click="emit('command', 'header.settings')"
+        :title="t('gui.accountMenu.settings')"
+        @click="openSettings()"
       >
-        <span aria-hidden="true">⚙</span><span class="designer-header-label">{{ t('gui.designer.top.header.settings') }}</span>
+        <LineIcon name="sliders" class="designer-header-icon" /><span class="designer-header-label">{{ t('gui.designer.top.header.settings') }}</span>
       </button>
+      <div v-if="user" ref="accountRoot" class="designer-account">
       <button
-        v-if="user"
+        ref="accountTrigger"
         type="button"
         class="designer-header-user"
         :aria-label="t('gui.designer.top.header.user', { name: user.username })"
         data-test="designer-header-user"
-        @click="emit('command', 'header.user')"
+        aria-haspopup="menu"
+        :aria-expanded="accountOpen"
+        :aria-controls="accountOpen ? 'designer-account-menu' : undefined"
+        @keydown.down.prevent="showAccount()"
+        @click="toggleAccount()"
       >
         <span class="designer-header-avatar" aria-hidden="true">{{ initial }}</span>
         <b class="designer-header-label">{{ user.username }}</b>
-        <span aria-hidden="true">⌄</span>
+        <LineIcon name="chevron-down" class="designer-header-chevron" />
       </button>
+      <!-- 0016-CH (시안 basodrr4 B안): who is signed in on a card at the top, then the three items with tinted line
+           icons; 로그아웃 sits apart below a separator in red. Items and destinations are unchanged. -->
+      <div v-if="accountOpen" id="designer-account-menu" ref="accountMenu" role="menu" class="designer-account-menu" @keydown="menuKey">
+        <div class="designer-account-heading">
+          <span class="designer-account-avatar" aria-hidden="true">{{ initial }}</span>
+          <span class="designer-account-who"><b>{{ user.username }}</b><small v-if="user.email">{{ user.email }}</small></span>
+        </div>
+        <template v-for="item in accountItems" :key="item.key">
+          <div v-if="item.key === 'logout'" class="designer-account-sep" role="separator" />
+          <button role="menuitem" type="button" :class="{ 'is-out': item.key === 'logout' }" :data-test="'account-' + item.key" :title="t('gui.accountMenu.' + item.key)" @click="accountAction(item.key)">
+            <LineIcon :name="item.icon" />{{ t('gui.accountMenu.' + item.key) }}
+          </button>
+        </template>
+      </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, inject, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
+import { routerKey } from 'vue-router'
+import { logout } from '@/core/auth/logout'
+import { useNotificationBadge } from './notifications/useNotificationBadge'
+import DesignerNotifications from './notifications/DesignerNotifications.vue'
+import type { ExplorerProject } from '../projectExplorer/projectExplorerTree'
 import { useI18n } from 'vue-i18n'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import GlobalSearch from './GlobalSearch.vue'
+import LineIcon, { type LineIconName } from '@/components/ui/LineIcon.vue'
 import { DESIGNER_LOCALES, type DesignerLocale, type DesignerSearchRequest, type DesignerTopCommand } from './designerTop'
 
+const props = withDefaults(defineProps<{ notificationsOpen?: boolean; notificationProjectId?: string | null; notificationProject?: ExplorerProject | null }>(), { notificationsOpen: false, notificationProjectId: null, notificationProject: null })
+const badge = useNotificationBadge(() => props.notificationProjectId, () => props.notificationProject)
+const notificationAnchor = ref<HTMLElement | null>(null)
+
 const emit = defineEmits<{
+  'close-notifications': []
   command: [command: DesignerTopCommand]
   search: [request: DesignerSearchRequest]
 }>()
 
 const { t, locale } = useI18n()
 const { user } = useCurrentUser()
+
+// Keep routing at the header boundary; the Designer Shell remains router independent.
+const router = inject(routerKey, null)
+const accountOpen = ref(false)
+const accountRoot = ref<HTMLElement | null>(null)
+const accountTrigger = ref<HTMLButtonElement | null>(null)
+const accountMenu = ref<HTMLElement | null>(null)
+const accountItems = [
+  { key: 'profile', icon: 'user' },
+  { key: 'password', icon: 'lock' },
+  { key: 'logout', icon: 'logout' },
+] as const satisfies readonly { key: string; icon: LineIconName }[]
+function closeAccount(restoreFocus = false) {
+  accountOpen.value = false
+  if (restoreFocus) accountTrigger.value?.focus()
+}
+async function showAccount() {
+  accountOpen.value = true
+  await nextTick()
+  accountMenu.value?.querySelector<HTMLButtonElement>('button')?.focus()
+}
+function toggleAccount() {
+  emit('command', 'header.user')
+  if (accountOpen.value) closeAccount(true)
+  else void showAccount()
+}
+function openSettings() {
+  closeAccount()
+  emit('command', 'header.settings')
+  void router?.push({ name: 'settings-me-account' })
+}
+async function accountAction(key: typeof accountItems[number]['key']) {
+  closeAccount(true)
+  if (key === 'logout') {
+    if (window.confirm(t('gui.accountMenu.confirmLogout'))) await logout()
+  } else {
+    await router?.push({ name: key === 'profile' ? 'settings-me-account' : 'settings-me-security' })
+  }
+}
+function menuKey(event: KeyboardEvent) {
+  if (event.key === 'Tab') { closeAccount(); return }
+  const buttons = Array.from(accountMenu.value?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+  const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+  let target: number
+  if (event.key === 'ArrowDown') target = (index + 1) % buttons.length
+  else if (event.key === 'ArrowUp') target = (index - 1 + buttons.length) % buttons.length
+  else if (event.key === 'Home') target = 0
+  else if (event.key === 'End') target = buttons.length - 1
+  else return
+  event.preventDefault()
+  buttons[target]?.focus()
+}
+function outside(event: PointerEvent) {
+  if (event.target instanceof Node && !accountRoot.value?.contains(event.target)) closeAccount()
+}
+function escape(event: KeyboardEvent) {
+  if (accountOpen.value && event.key === 'Escape') { event.preventDefault(); closeAccount(true) }
+}
+function focusOutside(event: FocusEvent) {
+  if (event.target instanceof Node && !accountRoot.value?.contains(event.target)) closeAccount()
+}
+onMounted(() => {
+  document.addEventListener('pointerdown', outside)
+  document.addEventListener('keydown', escape)
+  document.addEventListener('focusin', focusOutside)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', outside)
+  document.removeEventListener('keydown', escape)
+  document.removeEventListener('focusin', focusOutside)
+})
+watch(() => user.value?.username, () => closeAccount())
+watch(() => props.notificationsOpen, (open) => { if (open) closeAccount() })
 
 const initial = computed(() => user.value?.username.charAt(0).toUpperCase() ?? '')
 
@@ -103,9 +205,27 @@ function setLocale(code: DesignerLocale) {
 </script>
 
 <style scoped>
+.designer-account { position: relative; }
+/* 0016-CH (시안 basodrr4 B안): the raised card menu, on theme.css's type scale. */
+.designer-account-menu { position: absolute; right: 0; top: calc(100% + 10px); z-index: 100; width: 280px; max-width: calc(100vw - 24px); padding: 8px; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-pop-radius); background: var(--fg2-pop-surface); color: var(--fg2-text); box-shadow: var(--fg2-pop-shadow); font-size: var(--fg2-fs-body); }
+.designer-account-heading { display: flex; align-items: center; gap: 12px; min-width: 0; margin-bottom: 8px; padding: 12px; border: 1px solid var(--fg2-line); border-radius: 12px; background: var(--fg2-inset-bg); }
+.designer-account-avatar { display: grid; flex: none; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: #2563eb; color: #fff; font-size: 14px; font-weight: 700; }
+.designer-account-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.designer-account-who b { font-size: 14px; font-weight: 700; }
+.designer-account-who small { color: var(--fg2-text-3); font-size: var(--fg2-fs-sub); }
+.designer-account-menu button { display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--fg2-text-2); font: inherit; font-size: var(--fg2-fs-body); font-weight: 550; text-align: left; cursor: pointer; }
+.designer-account-menu button:hover, .designer-account-menu button:focus-visible { background: rgba(124, 192, 255, 0.08); color: var(--fg2-text); }
+.designer-account-menu button:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: -2px; }
+.designer-account-menu button :deep(svg) { width: 28px; height: 28px; padding: 6px; border-radius: 8px; background: rgba(124, 192, 255, 0.08); color: #9cc8f5; }
+.designer-account-menu button.is-out { color: #ff9aa8; }
+.designer-account-menu button.is-out :deep(svg) { background: rgba(255, 100, 120, 0.1); color: #ff9aa8; }
+.designer-account-sep { height: 1px; margin: 6px 4px; background: var(--fg2-line); }
+.designer-header-btn .designer-header-icon { width: 15px; height: 15px; }
+.designer-header-user .designer-header-chevron { width: 14px; height: 14px; color: var(--fg2-text-3); }
+
 .designer-header {
   display: grid;
-  /* Side columns are at least as wide as their content, so the brand / notification / AI
+  /* Side columns are at least as wide as their content, so the brand / notification
      group and the language / settings / user group never run under the search. The search
      keeps its 680px cap on wide screens and gives way first on medium ones. */
   grid-template-columns: minmax(max-content, 1fr) minmax(220px, 680px) minmax(max-content, 1fr);
@@ -214,11 +334,6 @@ function setLocale(code: DesignerLocale) {
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.designer-header-btn.is-ai {
-  border-color: #356eff;
-  background: #10265a;
 }
 
 .designer-header-locale {

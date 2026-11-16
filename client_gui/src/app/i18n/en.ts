@@ -1,4 +1,6 @@
 export default {
+  accountMenu: {"settings": "My settings", "profile": "My profile", "password": "Change password", "logout": "Log out", "confirmLogout": "Log out?"},
+  notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
   // flowgate.chat.0017 CH0002 — AI attachment upload requests (chat message, card attachments tab, run result, settings).
   attachment_request: {
     title: 'AI attachment requests',
@@ -608,6 +610,7 @@ export default {
       already_archived: 'This flow is already archived.',
       unavailable: 'Archive status is unavailable.',
       failed: 'Could not change archive status.',
+      group_restore_failed: 'Could not restore the group.',
     },
     project_explorer: {
       title: 'Project',
@@ -620,6 +623,7 @@ export default {
       retry: 'Retry',
       no_groups: 'No groups.',
       no_flows: 'No flows.',
+      group_menu: 'Group menu',
       no_results: 'No matching project, group or flow.',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
@@ -808,10 +812,54 @@ export default {
       toolbar_label: 'Toolbar',
       header: {
         notifications: 'Notifications',
-        ai: 'AI',
         locale: 'Language',
         settings: 'Settings',
         user: 'User {name}',
+      },
+      notifications: {
+        project_unknown: 'The current project’s Flow list is unavailable. Load the project explorer and try again.',
+        tabs: {
+          runs: 'Runs',
+          ai: 'AI',
+          questions: 'Q&A',
+        },
+        project_only: 'Only runs in the current project {name} are shown.',
+        empty_runs: 'No running or waiting runs.',
+        empty_ai: 'No AI notifications.',
+          question_all: "View all",
+          question_reply: "Answer now",
+          question_robot: "Robot",
+          question_waiting: "Awaiting answer",
+          question_running: "AI answering",
+          question_done: "Answered",
+        empty_questions: 'No questions awaiting answers.',
+        open_document: 'Open document',
+        stop: 'Stop',
+        refresh: 'Refresh',
+        close: 'Close',
+        no_project: 'Open a project to view notifications.',
+        loading: 'Loading…',
+        load_error: 'Could not load this list. Please refresh.',
+        cancel_error: 'Could not request a stop. Check the run and try again.',
+        success: 'Succeeded',
+        failure: 'Failed',
+        unknown: 'Unknown status',
+        phases: {
+          running: 'Running',
+          queued: 'Waiting',
+          starting: 'Starting',
+          cancelling: 'Stopping',
+          pause_requested: 'Stop requested',
+          paused: 'Paused',
+          unknown: 'Unknown status',
+        },
+        modes: {
+          single: 'Single',
+          continuous: 'Continuous',
+          unknown: 'Unknown mode',
+        },
+        truncated: 'Showing {shown} of {total} items. Additional items are not displayed.',
+        unknown_time: 'Unknown time',
       },
       search: {
         label: 'Search',

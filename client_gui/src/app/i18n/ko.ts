@@ -2,6 +2,8 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
+  accountMenu: {"settings": "내 설정", "profile": "내 프로필", "password": "비밀번호 변경", "logout": "로그아웃", "confirmLogout": "로그아웃하시겠습니까?"},
+  notification_ai: {"detail": "상세보기", "provider": "제공자", "finished": "종료 시간", "reason": "종료 사유", "success": "성공", "failure": "실패", "stopped": "중단", "unknown": "상태 확인 필요"},
   // flowgate.chat.0017 CH0002 — AI 첨부 승인 요청 (채팅 메시지 하단 · 카드 첨부 탭 · 실행 결과 · 설정).
   attachment_request: {
     title: 'AI 첨부 승인 요청',
@@ -612,6 +614,7 @@ export default {
       already_archived: '이미 아카이브된 플로우입니다.',
       unavailable: '아카이브 상태를 확인할 수 없습니다.',
       failed: '아카이브 상태를 변경하지 못했습니다.',
+      group_restore_failed: '그룹을 복원하지 못했습니다.',
     },
     project_explorer: {
       title: '프로젝트',
@@ -624,6 +627,7 @@ export default {
       retry: '다시 시도',
       no_groups: '그룹이 없습니다.',
       no_flows: '플로우가 없습니다.',
+      group_menu: '그룹 메뉴',
       no_results: '일치하는 프로젝트, 그룹, 플로우가 없습니다.',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
@@ -819,10 +823,54 @@ export default {
       toolbar_label: '도구 모음',
       header: {
         notifications: '알림',
-        ai: 'AI',
         locale: '언어',
         settings: '설정',
         user: '사용자 {name}',
+      },
+      notifications: {
+        project_unknown: '현재 프로젝트의 Flow 목록을 확인할 수 없습니다. 프로젝트 탐색기를 불러온 뒤 다시 확인하세요.',
+        tabs: {
+          runs: '실행',
+          ai: 'AI',
+          questions: '질의응답',
+        },
+        project_only: '현재 프로젝트 {name}의 실행만 표시합니다.',
+        empty_runs: '진행 중이거나 대기 중인 실행이 없습니다.',
+        empty_ai: 'AI 알림이 없습니다.',
+          question_all: "전체보기",
+          question_reply: "바로답변",
+          question_robot: "로보",
+          question_waiting: "답변 대기",
+          question_running: "AI 답변 중",
+          question_done: "답변 완료",
+        empty_questions: '답변 대기 질문이 없습니다.',
+        open_document: '문서 열기',
+        stop: '중지',
+        refresh: '새로고침',
+        close: '닫기',
+        no_project: '프로젝트를 열어 알림을 확인하세요.',
+        loading: '불러오는 중…',
+        load_error: '목록을 불러오지 못했습니다. 새로고침해 주세요.',
+        cancel_error: '중지 요청에 실패했습니다. 실행 상태를 확인하고 다시 시도하세요.',
+        success: '성공',
+        failure: '실패',
+        unknown: '상태 미확인',
+        phases: {
+          running: '실행 중',
+          queued: '대기 중',
+          starting: '시작 중',
+          cancelling: '중지 중',
+          pause_requested: '중지 예약',
+          paused: '일시정지',
+          unknown: '상태 미확인',
+        },
+        modes: {
+          single: '단일',
+          continuous: '연속',
+          unknown: '모드 미확인',
+        },
+        truncated: '전체 {total}개 중 {shown}개만 표시합니다. 표시되지 않은 항목이 있습니다.',
+        unknown_time: '시각 미확인',
       },
       search: {
         label: '전체 검색',

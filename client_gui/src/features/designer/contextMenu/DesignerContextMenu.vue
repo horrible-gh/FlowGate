@@ -8,7 +8,9 @@
      flowgate.v02.0060 T#1 (WP 0012, Q item 459): the mockup's look — .fg-ctx / .fg-ctx-item / .danger / :disabled /
      .fg-ctx-icon / .fg-ctx-label / .fg-ctx-next / .fg-ctx-line sizes as the mockup renders them, colours derived from
      the theme tokens (no colour literal). A disabled item's reason (Git state, 연결 예정, 미구현) is its tooltip and
-     its accessible description. -->
+     its accessible description.
+     flowgate.v02gui.0027 (0008-T): an item may carry a small line under its label (`hint`, e.g. 그룹 삭제's
+     "Flow N개가 있어 지금은 삭제할 수 없음"); items without one are drawn as before. -->
 <template>
   <Teleport to="body">
     <div v-if="session" ref="root" data-designer-context-menu
@@ -31,7 +33,11 @@
               @mouseenter="onHover(item, panel.level, $event, panel.generation)"
               @click="choose(item, $event.currentTarget as HTMLElement, panel.generation)">
               <span class="designer-context-icon" aria-hidden="true">{{ item.icon }}</span>
-              <span class="designer-context-label">{{ label(item) }}</span>
+              <span v-if="item.hint" class="designer-context-text">
+                <span class="designer-context-label">{{ label(item) }}</span>
+                <span class="designer-context-hint" data-test="designer-context-hint">{{ hint(item) }}</span>
+              </span>
+              <span v-else class="designer-context-label">{{ label(item) }}</span>
               <span v-if="item.kind === 'submenu'" class="designer-context-arrow" aria-hidden="true">›</span>
             </button>
             <span v-if="item.disabledReason" :id="reasonId(panel.level, index)" hidden>{{ reason(item) }}</span>
@@ -72,6 +78,7 @@ const panels = computed(() => [
   ...(activeSubmenu.value ? [{ level: 1, generation: session.value?.generation, items: activeSubmenu.value.children, style: styleAt(subPosition.value) }] : []),
 ])
 const label = (item: MenuAction | MenuSubmenu) => item.label ?? t(item.labelKey ?? '')
+const hint = (item: MenuAction | MenuSubmenu) => (item.hint ? t(item.hint.key, { ...(item.hint.params ?? {}) }) : '')
 const reason = (item: MenuAction | MenuSubmenu) => (item.disabledReason ? t('reasons.' + item.disabledReason) : undefined)
 const reasonId = (level: number, index: number) => `designer-context-reason-${session.value?.generation}-${level}-${index}`
 const viewport = () => ({ width: window.innerWidth, height: window.innerHeight })
@@ -256,6 +263,15 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 .designer-context-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.designer-context-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.designer-context-hint {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--fg2-muted);
+}
 .designer-context-arrow { color: color-mix(in srgb, var(--fg2-muted) 84%, var(--fg2-focus)); }
 .designer-context-separator {
   height: 1px;

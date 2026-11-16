@@ -85,6 +85,24 @@
   --fg2-splitter-size: 6px;
   --fg2-splitter-hover-bg: rgba(124, 192, 255, 0.16);
   --fg2-splitter-active-bg: rgba(124, 192, 255, 0.28);
+
+  /* v02gui.0027 0016-CH (UI 통일, 시안 basodrr4 B안): one type scale and one text-colour ladder for the Designer's
+     popups and dialogs (group archive / delete confirm, the bell popover, the Q&A rows and answer window, the
+     account menu), so no surface picks its own 10.5 / 11.5 / 12.5px or its own grey again. Four sizes only. */
+  --fg2-fs-title: 16px;
+  --fg2-fs-body: 13px;
+  --fg2-fs-sub: 12px;
+  --fg2-fs-xs: 11px;
+  /* Three text levels: primary = --fg2-text, secondary, tertiary. */
+  --fg2-text-2: #b4c3d6;
+  --fg2-text-3: #7d8fa5;
+  /* The raised card surface of those popups (B안): a soft gradient panel, larger radius, deeper shadow, with inset
+     blocks (target box, list rows, question body) one step darker. */
+  --fg2-pop-surface: linear-gradient(180deg, #112236, #0c1927);
+  --fg2-pop-radius: 16px;
+  --fg2-pop-shadow: 0 30px 80px rgba(2, 6, 12, 0.65);
+  --fg2-inset-bg: rgba(5, 12, 20, 0.5);
+  --fg2-inset-radius: 10px;
 }
 
 @media (min-width: 1800px) {
@@ -165,8 +183,12 @@ html {
   background: transparent;
 }
 
+/* textarea and select too: without this the browser's own font (monospace for textarea) shows through, as the Q&A
+   answer field's placeholder did (0016-CH). */
 button,
-input {
+input,
+textarea,
+select {
   font: inherit;
 }
 

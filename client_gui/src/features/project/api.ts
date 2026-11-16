@@ -59,6 +59,7 @@ import type {
   SourceDownload,
   SourceMutationRefusal,
   SourceUploadResult,
+  GroupArchiveResult,
   GroupRenameResult,
 } from './types'
 
@@ -161,6 +162,7 @@ export async function suggestProjectSlug(text: string): Promise<string | null> {
 // ── Group tree (flowgate.v02.0023) ───────────────────────────────────────────────────
 interface RawGroupTreeNode {
   archived_at?: string | null
+  flow_total?: number | null
   id: string
   parent_id: string | null
   node_type: string
@@ -191,6 +193,7 @@ function toGroupTreeNode(raw: RawGroupTreeNode): GroupTreeNode | null {
     parentId: raw.parent_id ?? null,
     kind,
     ...('archived_at' in raw ? { archivedAt: raw.archived_at ?? null } : {}),
+    ...(typeof raw.flow_total === 'number' ? { flowTotal: raw.flow_total } : {}),
     label: raw.label || raw.id,
     title: raw.title || null,
     number: raw.number ?? null,
@@ -888,6 +891,43 @@ export async function renameGroup(projectId: string, moduleName: string, title: 
     }
   } catch (error) {
     throw refused(error, 'Failed to rename the group.')
+  }
+}
+
+/**
+ * POST /api/v1/projects/{pid}/modules/{name}/archive | /restore (v02gui.0027) — a Group's display-only archive: the
+ * Group (with its Flows) leaves the default project tree, or comes back. Its Flows, documents, runs and Git are not
+ * touched. Already archived / not archived is refused with 409 `already_archived` / `not_archived`.
+ */
+export async function setGroupArchived(projectId: string, moduleName: string, archived: boolean): Promise<GroupArchiveResult> {
+  try {
+    const response = await postRequest<{ archived?: boolean; archived_at?: string | null }>(
+      `${projectPath(projectId)}/modules/${encodeURIComponent(moduleName)}/${archived ? 'archive' : 'restore'}`, {})
+    const data: unknown = response?.data
+    const answer = (data && typeof data === 'object' ? data : {}) as { archived?: boolean; archived_at?: string | null }
+    return {
+      archived: typeof answer.archived === 'boolean' ? answer.archived : archived,
+      archivedAt: answer.archived_at ?? null,
+    }
+  } catch (error) {
+    throw refused(error, archived ? 'Failed to archive the group.' : 'Failed to restore the group.')
+  }
+}
+
+/**
+ * DELETE /api/v1/projects/{pid}/modules/{name} (v02gui.0027 0008-T) — deletes an empty Group: only its module record
+ * goes. A Group with any Flow (archived or discarded included) is refused with 409 `module_not_empty` and the
+ * `flow_count`, carried as the refusal's `count`. No Flow, document, run or branch is deleted.
+ */
+export async function deleteGroup(projectId: string, moduleName: string): Promise<void> {
+  try {
+    await api.delete(`${projectPath(projectId)}/modules/${encodeURIComponent(moduleName)}`)
+  } catch (error) {
+    const wrapped = refused(error, 'Failed to delete the group.') as Error & { refusal?: SourceMutationRefusal }
+    const data = (transportError(error) as { response?: { data?: unknown } } | null)?.response?.data
+    const count = data && typeof data === 'object' ? (data as { flow_count?: unknown }).flow_count : undefined
+    if (wrapped.refusal && typeof count === 'number') wrapped.refusal = { ...wrapped.refusal, count }
+    throw wrapped
   }
 }
 

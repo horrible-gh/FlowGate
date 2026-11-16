@@ -13,7 +13,7 @@
     :initial-x="win.x"
     :initial-y="win.y"
     :initial-width="520"
-    :initial-height="380"
+    :initial-height="520"
     :min-width="320"
     :min-height="200"
     :close-on-escape="false"
@@ -40,9 +40,9 @@
           <span v-if="windowItem(win.itemId)!.createdAt" class="inspector-qna-sub" data-test="qna-window-asked-at">{{ t(k('detail.asked_at'), { at: formatAt(windowItem(win.itemId)!.createdAt!) }) }}</span>
           <InspectorStatusChip v-if="awaiting.has(win.itemId)" :label="t(k('ai_waiting'))" tone="running" dot data-test="qna-window-ai-waiting" />
         </div>
-        <span v-if="windowItem(win.itemId)!.docId" class="inspector-qna-sub inspector-qna-window-doc" data-test="qna-window-doc">{{ t(k('detail.doc'), { docId: windowItem(win.itemId)!.docId }) }}</span>
+        <span v-if="windowItem(win.itemId)!.docId" class="inspector-qna-sub inspector-qna-window-doc" data-test="qna-window-doc"><LineIcon name="file" class="inspector-qna-doc-icon" />{{ t(k('detail.doc'), { docId: windowItem(win.itemId)!.docId }) }}</span>
         <p v-if="windowItem(win.itemId)!.title" class="inspector-qna-window-q">{{ windowItem(win.itemId)!.title }}</p>
-        <p class="inspector-qna-text" data-test="qna-window-body">{{ windowItem(win.itemId)!.body }}</p>
+        <p class="inspector-qna-text inspector-qna-qbody" data-test="qna-window-body">{{ windowItem(win.itemId)!.body }}</p>
         <!-- flowgate.v02.0070 T#5: the stored options stay readable where they cannot be picked. -->
         <span
           v-if="windowItem(win.itemId)!.options.length && !(windowItem(win.itemId)!.answerable && availability.answer.visible)"
@@ -61,20 +61,23 @@
         </ul>
 
         <div v-if="windowItem(win.itemId)!.answerable && availability.answer.visible" class="inspector-qna-answer" data-test="qna-window-form">
+          <!-- 0016-CH: the options are a stacked radio list (시안 A안); the rest of the window follows B안. -->
           <div v-if="windowItem(win.itemId)!.options.length" class="inspector-qna-options" role="group" :aria-label="t(k('options'))">
-            <Button
+            <button
               v-for="option in windowItem(win.itemId)!.options"
               :key="option.id"
-              size="sm"
-              :variant="pickedId(win.itemId) === option.id ? 'primary' : 'secondary'"
+              type="button"
+              class="inspector-qna-option"
+              :class="{ 'is-on': pickedId(win.itemId) === option.id }"
               :aria-pressed="pickedId(win.itemId) === option.id"
               :disabled="!availability.answer.enabled"
               data-test="qna-window-option"
               :data-option="option.id"
               @click="pick(win.itemId, option.id)"
-            >{{ option.label }}</Button>
+            ><span class="inspector-qna-radio" aria-hidden="true"></span>{{ option.label }}</button>
           </div>
           <Textarea
+            class="inspector-qna-input"
             :model-value="bodyOf(win.itemId)"
             :rows="4"
             :placeholder="t(k('answer_placeholder'))"
@@ -82,18 +85,10 @@
             data-test="qna-window-body-input"
             @update:model-value="(value: string) => setBody(win.itemId, value)"
           />
-          <div class="inspector-qna-line">
-            <Button
-              size="sm"
-              variant="primary"
-              :disabled="!availability.answer.enabled || !canSend(win.itemId)"
-              :loading="busy === win.itemId"
-              :title="answerTitle"
-              data-test="qna-window-submit"
-              @click="submit(win.itemId)"
-            >{{ t(k('answer')) }}</Button>
-          </div>
+          <!-- The form's last row: the ask-an-AI controls on the left, 답변 on the right. -->
+          <div class="inspector-qna-foot">
           <div v-if="availability.ai_request.visible" class="inspector-qna-ai" data-test="qna-window-ai">
+            <LineIcon name="bot" class="inspector-qna-ai-icon" />
             <Select
               class="inspector-qna-ai-pick"
               :model-value="aiPickOf(win.itemId)"
@@ -105,7 +100,6 @@
               @update:model-value="(value: string) => setAiPick(win.itemId, value)"
             />
             <Button
-              size="sm"
               variant="secondary"
               :disabled="!availability.ai_request.enabled || !aiPickOf(win.itemId)"
               :loading="requesting === win.itemId"
@@ -114,6 +108,17 @@
               @click="requestAiFor(win.itemId)"
             >{{ t(k('ai_request')) }}</Button>
             <InspectorFailureIcon v-if="aiFailure && aiFailure.itemId === win.itemId" :name="t(k('ai_failed'))" :reason="t(k(aiFailure.key))" data-test="qna-window-ai-failure" />
+          </div>
+          <div class="inspector-qna-line">
+            <Button
+              variant="primary"
+              :disabled="!availability.answer.enabled || !canSend(win.itemId)"
+              :loading="busy === win.itemId"
+              :title="answerTitle"
+              data-test="qna-window-submit"
+              @click="submit(win.itemId)"
+            ><LineIcon name="send" />{{ t(k('answer')) }}</Button>
+          </div>
           </div>
           <div v-if="failure && failure.itemId === win.itemId" data-test="qna-window-failure">
             <InspectorReason tone="danger" :text="t(k(failure.key))" />
@@ -133,6 +138,7 @@
 import { computed, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../../../components/ui/Button.vue'
+import LineIcon from '../../../../../components/ui/LineIcon.vue'
 import ModelessShell from '../../../../../components/ui/ModelessShell.vue'
 import Select, { type SelectOption } from '../../../../../components/ui/Select.vue'
 import Textarea from '../../../../../components/ui/Textarea.vue'
@@ -320,13 +326,16 @@ function toneOf(state: QnaItemState): InspectorChipTone {
 </script>
 
 <style scoped>
+/* 0016-CH (시안 basodrr4 B안, 선택지만 A안): one type scale (theme.css --fg2-fs-*: 16 / 13 / 12 / 11) and three text
+   colours; the question body sits in an inset block, the options are a stacked radio list, and the form ends with the
+   ask-an-AI controls on the left and 답변 on the right. */
 .inspector-qna-answers {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
-  padding: 0 0 0 10px;
-  border-left: 2px solid var(--fg2-line);
+  padding: 0 0 0 12px;
+  border-left: 2px solid var(--fg2-line-strong);
   list-style: none;
 }
 
@@ -337,42 +346,118 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   min-width: 0;
 }
 
-/* The window's answer form: the options, the field, send, the AI line. */
+/* The window's answer form: the options, the field, then [AI line · 답변]. */
 .inspector-qna-answer {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   min-width: 0;
+  margin-top: 4px;
+}
+
+.inspector-qna-options {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.inspector-qna-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: var(--fg2-control-radius);
+  background: transparent;
+  color: var(--fg2-text);
+  font-size: var(--fg2-fs-body);
+  text-align: left;
+  cursor: pointer;
+  transition: 0.16s ease;
+}
+
+.inspector-qna-option:hover:not(:disabled) {
+  border-color: var(--fg2-control-hover-border);
+}
+
+.inspector-qna-option.is-on {
+  border-color: var(--fg2-blue);
+  background: rgba(75, 163, 255, 0.08);
+}
+
+.inspector-qna-option:disabled {
+  cursor: not-allowed;
+  opacity: var(--fg2-control-disabled-opacity-strong);
+}
+
+.inspector-qna-radio {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--fg2-text-3);
+  border-radius: 50%;
+}
+
+.inspector-qna-option.is-on .inspector-qna-radio {
+  border: 4.5px solid var(--fg2-blue);
+}
+
+.inspector-qna-answer .inspector-qna-input {
+  min-height: 90px;
+  border-radius: var(--fg2-inset-radius);
+  background: rgba(5, 12, 20, 0.6);
+  font-size: var(--fg2-fs-body);
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.inspector-qna-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 2px;
 }
 
 /* The AI line (0056 F1): the picker, [AI 답변 요청], then the waiting chip or the refusal icon. */
 .inspector-qna-ai {
   display: flex;
+  flex: 1 1 260px;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+}
+
+.inspector-qna-ai-icon {
+  color: var(--fg2-text-3);
 }
 
 .inspector-qna-ai-pick {
-  flex: 0 1 160px;
+  flex: 0 1 170px;
   min-width: 96px;
-  height: 28px;
-  font-size: 11.5px;
+  font-size: var(--fg2-fs-sub);
 }
 
-.inspector-qna-line,
-.inspector-qna-options {
+.inspector-qna-line {
   display: flex;
-  flex-wrap: wrap;
+  flex: none;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.inspector-qna-foot :deep(.ui-btn svg) {
+  width: 15px;
+  height: 15px;
 }
 
 .inspector-qna-sub {
-  color: var(--fg2-muted);
-  font-size: 11.5px;
+  color: var(--fg2-text-3);
+  font-size: var(--fg2-fs-sub);
 }
 
 .inspector-qna-text {
@@ -381,17 +466,37 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   white-space: pre-wrap;
 }
 
-/* The ↗ window (v7 `.mw-tb`): title line [Q&A · Q# title (ellipsis) · 읽기 전용], the question, the
-   answers, the form. Only the title shrinks; the badge and the shell's buttons keep their width. */
+.inspector-qna-answers .inspector-qna-text {
+  color: var(--fg2-text-2);
+}
+
+/* The question body: an inset block, one step larger than the rest (B안 .qbody). */
+.inspector-qna-qbody {
+  padding: 12px 14px;
+  border: 1px solid var(--fg2-line);
+  border-radius: var(--fg2-inset-radius);
+  background: var(--fg2-inset-bg);
+  color: var(--fg2-text-2);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+/* The ↗ window's title line: [Q&A badge · Q# title (ellipsis) · 읽기 전용]. Only the title shrinks; the badges and
+   the shell's buttons keep their width. */
 .inspector-qna-window-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
 .inspector-qna-window-title {
   flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(255, 174, 87, 0.14);
+  color: var(--fg2-orange);
+  font-size: var(--fg2-fs-xs);
   font-weight: 700;
 }
 
@@ -399,9 +504,9 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: #8fa7c0;
-  font-size: 11px;
-  font-weight: 500;
+  color: var(--fg2-text);
+  font-size: var(--fg2-fs-body);
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -413,7 +518,7 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   border-radius: var(--fg2-control-radius-pill);
   background: #1a1d3e;
   color: #cfcbff;
-  font-size: 10.5px;
+  font-size: var(--fg2-fs-xs);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -421,10 +526,11 @@ function toneOf(state: QnaItemState): InspectorChipTone {
 .inspector-qna-window {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  font-size: 12.5px;
-  line-height: 1.6;
+  color: var(--fg2-text);
+  font-size: var(--fg2-fs-body);
+  line-height: 1.55;
 }
 
 .inspector-qna-window-head {
@@ -434,14 +540,24 @@ function toneOf(state: QnaItemState): InspectorChipTone {
   gap: 8px;
 }
 
-/* The full document id, wrapped rather than cut. */
+/* The full document id, wrapped rather than cut, after a file icon. */
 .inspector-qna-window-doc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   overflow-wrap: anywhere;
+}
+
+.inspector-qna-window-doc .inspector-qna-doc-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .inspector-qna-window-q {
   margin: 0;
   color: var(--fg2-text);
+  font-size: var(--fg2-fs-title);
   font-weight: 700;
+  line-height: 1.4;
 }
 </style>

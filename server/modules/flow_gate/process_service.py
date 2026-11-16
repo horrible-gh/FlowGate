@@ -5398,13 +5398,33 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
     _tree_started = time.perf_counter()
     # Query the group list (based on the main DB)
     groups = db.get_groups_by_projects([project_id])
+    # flowgate.v02gui.0027 (0008-T): every Flow of a Group (live `groups` row), archived or discarded
+    # alike, counted before any visibility filter. The Group menu shows it ahead of a delete, which
+    # only an empty Group allows (the DELETE route makes the final call).
+    flow_totals: dict[str, int] = {}
+    for _row in groups:
+        _label = (dict(_row).get("module") or "").strip() or "none"
+        flow_totals[_label] = flow_totals.get(_label, 0) + 1
+    # flowgate.v02gui.0027 (0006-T): a v0.2 Group (module) can be display-archived through its
+    # project_modules row. Hidden by default together with its Flows and their documents; with
+    # include_archived the module node is kept and marked `archived`. Nothing is written here.
+    try:
+        pm_rows = [dict(row) for row in db.get_project_modules(project_id)]
+    except Exception:
+        pm_rows = []  # Defensive handling for missing tables, etc.
+    archived_modules = {
+        ((row.get("name") or "").strip() or "none"): row
+        for row in pm_rows if row.get("archived_at") is not None
+    }
     # Keep all ids known before filtering, so hidden documents never become orphans.
     archive_hidden = set()
     if not include_archived:
         children = {}
         for row in groups:
             children.setdefault(dict(row).get("parent_id"), []).append(dict(row)["group_id"])
-        stack = [dict(row)["group_id"] for row in groups if dict(row).get("archived_at") is not None]
+        stack = [dict(row)["group_id"] for row in groups
+                 if dict(row).get("archived_at") is not None
+                 or ((dict(row).get("module") or "").strip() or "none") in archived_modules]
         while stack:
             gid = stack.pop()
             if gid in archive_hidden:
@@ -5470,6 +5490,9 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
             orphan_docs.append(doc)
     for _gid, _docs in docs_by_group.items():
         docs_by_group[_gid] = _by_doc_id_desc(_docs)
+    if archived_modules and not include_archived:
+        orphan_docs = [d for d in orphan_docs
+                       if ((d.get("module") or "").strip() or "none") not in archived_modules]
     orphan_docs = sorted(
         _by_doc_id_desc(orphan_docs),
         key=lambda d: (d.get("module") is not None, d.get("module") or ""),
@@ -5570,7 +5593,16 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
                 "title": resolved_title,
                 "has_md": False,
                 "md_path": None,
+                "flow_total": flow_totals.get(label, 0),
             }
+            archived_row = archived_modules.get(label)
+            if archived_row is not None:
+                # Only reached with include_archived (an archived module makes no node otherwise).
+                module_nodes[node_id].update({
+                    "archived": True,
+                    "archived_at": archived_row.get("archived_at"),
+                    "archived_by": archived_row.get("archived_by"),
+                })
             nodes.append(module_nodes[node_id])
         return module_nodes[node_id]
 
@@ -5617,8 +5649,9 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
     # Also include modules registered in the project_modules table in the tree
     # (display even when there is no group)
     try:
-        pm_rows = db.get_project_modules(project_id)
         for pm_row in pm_rows:
+            if not include_archived and _module_label(pm_row.get("name")) in archived_modules:
+                continue
             _module_node(pm_row.get("name"), title=pm_row.get("title"))
     except Exception:
         pass  # Defensive handling for missing tables, etc.

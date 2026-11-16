@@ -46,6 +46,11 @@ export interface GroupTreeNode {
   parentId: string | null
   kind: GroupTreeNodeKind
   archivedAt?: string | null
+  /**
+   * v02gui.0027 (0008-T): a module node's Flow count on the server — every Flow of the Group, archived or discarded
+   * alike, whatever the tree's own filters. Only what a Group delete may be offered on; the delete itself decides.
+   */
+  flowTotal?: number
   /** Server key/label (for a module, its key; for a group, its display name). */
   label: string
   /** Server display title, when the node has one separate from `label`. */
@@ -381,6 +386,8 @@ export interface SourceMutationRefusal {
   code: string | null
   /** A name the refusal carries (the group holding an identifier, busy Flows, existing branches); optional. */
   subject?: string
+  /** v02gui.0027: how many Flows keep a Group from being deleted (409 `module_not_empty` `flow_count`); optional. */
+  count?: number
 }
 
 /**
@@ -391,6 +398,12 @@ export interface GroupRenameResult {
   name: string
   previousName: string
   renamedGroups: Record<string, string>
+}
+
+/** The answer of a Group archive / restore (v02gui.0027): display-only, the Group's Flows are not touched. */
+export interface GroupArchiveResult {
+  archived: boolean
+  archivedAt: string | null
 }
 
 /** A downloaded worktree file or folder ZIP: the bytes and the name the server gave them. */

@@ -3,7 +3,8 @@
        Expansion/selection/active state comes in as props; every row event goes straight
        back up — no Project/Group/Flow business logic lives here.
        flowgate.v02.0060 T#2: a right click on a row goes up as `context` with the row it hit (the innermost row's
-       handler runs first; the Explorer decides). Nothing is selected, activated or toggled by it. -->
+       handler runs first; the Explorer decides). Nothing is selected, activated or toggled by it.
+       flowgate.v02gui.0027: a Group's ⋯ button goes up the same way (same menu, anchored at the button). -->
   <ul
     ref="rootEl"
     class="explorer-tree"
@@ -35,6 +36,7 @@
         @select="emit('select-group', $event)"
         @toggle="emit('toggle', $event)"
         @contextmenu="emit('context', $event, { kind: 'group', group })"
+        @menu="emit('context', $event, { kind: 'group', group })"
       >
         <li
           v-if="group.flows.length === 0"

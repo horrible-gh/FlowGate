@@ -187,7 +187,7 @@ describe('Designer context menu in the Shell — ① project tree', () => {
     expect(selectedRows(w)).toEqual(['서버'])
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    expect(itemTexts()).toEqual(['＋ 새 플로우', '✎ 이름 변경', 'ⓘ 정보'])
+    expect(itemTexts()).toEqual(['＋ 새 플로우', '✎ 이름 변경', 'ⓘ 정보', '▣ 그룹 아카이브', '× 그룹 삭제'])
     item('group.newFlow').click()
     await settle()
     const select = document.querySelector<HTMLSelectElement>('[data-test="designer-flow-create-group"]')!
@@ -230,7 +230,7 @@ describe('Designer context menu in the Shell — ① project tree', () => {
     await openFlow(w, 'Canvas')
     rightClick(explorerRow(w, '서버').element)
     await settle()
-    expect(itemTexts()).toEqual(['＋ 새 플로우', '✎ 이름 변경', 'ⓘ 정보'])
+    expect(itemTexts()).toEqual(['＋ 새 플로우', '✎ 이름 변경', 'ⓘ 정보', '▣ 그룹 아카이브', '× 그룹 삭제'])
     const stale = item('group.newFlow')
     // The Project's tree is read again without that Group (removed elsewhere).
     const answer = getRequest.getMockImplementation()!
@@ -251,7 +251,7 @@ describe('Designer context menu in the Shell — ① project tree', () => {
     // A Group still in the tree keeps its menu.
     rightClick(explorerRow(w, 'UI 개선').element)
     await settle()
-    expect(itemTexts()).toEqual(['＋ 새 플로우', '✎ 이름 변경', 'ⓘ 정보'])
+    expect(itemTexts()).toEqual(['＋ 새 플로우', '✎ 이름 변경', 'ⓘ 정보', '▣ 그룹 아카이브', '× 그룹 삭제'])
   })
 })
 

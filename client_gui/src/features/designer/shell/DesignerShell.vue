@@ -19,6 +19,10 @@
        flowgate.v02.0060 T#2 (2-B): the windows of its 11 existing server commands are mounted here too (the connector's). -->
   <div class="designer-shell" data-test="designer-shell" @keydown.esc="selectedPalette = null">
     <DesignerTop
+      :notifications-open="notificationsOpen"
+      :notification-project-id="projectId"
+      :notification-project="notificationProject"
+      @close-notifications="notificationsOpen = false"
       :run-phase="runPhase"
       :density="top.density"
       :zoom="zoom"
@@ -329,6 +333,9 @@ const layout = reactive(createDesignerLayout())
 const top = reactive(createDesignerTopState())
 
 const projectId = computed<string | null>(() => projectStore.currentProjectId)
+const notificationsOpen = ref(false)
+const notificationProject = computed(() => projectId.value ? explorerProject(projectId.value) : null)
+watch([projectId, () => projectStore.designerSessionOwner], () => { notificationsOpen.value = false }, { flush: 'sync' })
 
 // flowgate.v02.0045 S1: real Flow Graphs through the project store's Canvas loaders (the sample
 // source stays the session default for tests and previews only).
@@ -865,6 +872,10 @@ function onDensity(level: DesignerDensity) {
 const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
 
 function onTopCommand(command: DesignerTopCommand) {
+  if (command === 'header.notifications') {
+    notificationsOpen.value = !notificationsOpen.value
+    return
+  }
   // The parts disable what has no target; this is the same rule for a command that still arrives.
   if (!isMenuCommandEnabled(command, runPhase.value, menuTargets.value)) return
   // flowgate.v02.0059 T#2: 정렬 / 균등 분배 of the open Flow's selected cards (the command names the kind).
@@ -1480,7 +1491,11 @@ async function attempt<T>(work: () => Promise<T>): Promise<MenuActionResult<T>> 
 }
 
 function explorerGroup(pid: string, groupId: string) {
-  return explorerProject(pid)?.groups.find((group) => group.id === groupId) ?? null
+  const shown = explorerProject(pid)?.groups.find((group) => group.id === groupId)
+  if (shown) return shown
+  // v02gui.0027: an archived Group is only in the "아카이브 포함" tree the Explorer may be showing.
+  const withArchived = projectStore.getCachedGroupTree(pid, false, true)
+  return (withArchived ? buildExplorerProject(withArchived, projectNodeId(pid))?.groups.find((group) => group.id === groupId) : null) ?? null
 }
 
 /**
@@ -1514,10 +1529,35 @@ function menuToast(message: string | (() => string), tone: 'success' | 'warning'
   toasts.value = [...toasts.value.slice(-2), { id: `menu-${toastSeq}`, text, tone, duration: 4000 }]
 }
 
+/** v02gui.0027: the Group's module key — the Explorer's, else from its tree node id (`module:{project}:{key}`). */
+function groupModuleName(pid: string, groupId: string): string | null {
+  const known = explorerGroup(pid, groupId)?.moduleName
+  if (known) return known
+  const prefix = `module:${pid}:`
+  return groupId.startsWith(prefix) && groupId.length > prefix.length ? groupId.slice(prefix.length) : null
+}
+
+/**
+ * v02gui.0027: a Group's display-only archive / restore through the store (which drops the Project's cached trees); the
+ * Explorer re-reads at once, other screens follow the server's group_view_refresh.
+ */
+async function changeGroupArchive(pid: string, groupId: string, archived: boolean): Promise<MenuActionResult> {
+  const moduleName = groupModuleName(pid, groupId)
+  if (!moduleName) return { ok: false, refusal: { reason: 'not_found', status: null, code: null } }
+  const result = await attempt(() => projectStore.setGroupArchived(pid, moduleName, archived))
+  if (!result.ok) return result
+  explorerRefreshToken.value += 1
+  return { ok: true, value: undefined }
+}
+
 const menuServer: DesignerMenuServerDeps = {
   group: (pid, groupId) => {
     const group = explorerGroup(pid, groupId)
-    return group ? { name: group.name, moduleName: group.moduleName } : null
+    // v02gui.0027: its archive state and the server's count of all its Flows (the 그룹 삭제 window reads both).
+    return group ? {
+      name: group.name, moduleName: group.moduleName, archived: !!group.archived,
+      ...(typeof group.flowTotal === 'number' ? { flowTotal: group.flowTotal } : {}),
+    } : null
   },
   flow: (pid, flowId) => explorerProject(pid)?.groups.flatMap((group) => group.flows).find((flow) => flow.id === flowId)?.name ?? null,
   renameGroup: async (pid, groupId, title, identifier) => {
@@ -1539,6 +1579,24 @@ const menuServer: DesignerMenuServerDeps = {
       explorerRefreshToken.value += 1
     }
     return result.ok ? { ok: true, value: undefined } : result
+  },
+  archiveGroup: (pid, groupId) => changeGroupArchive(pid, groupId, true),
+  // 그룹 복원 has no window: a refusal is said in a note.
+  restoreGroup: async (pid, groupId) => {
+    const result = await changeGroupArchive(pid, groupId, false)
+    if (!result.ok) menuToast(() => t('gui.designer.archive.group_restore_failed'), 'warning')
+    return result
+  },
+  // v02gui.0027 (0008-T): an empty Group's delete. The Explorer re-reads at once and the Group leaves the recent list;
+  // other screens follow the server's group_view_refresh (module_deleted). A refusal stays in the window.
+  deleteGroup: async (pid, groupId) => {
+    const moduleName = groupModuleName(pid, groupId)
+    if (!moduleName) return { ok: false, refusal: { reason: 'not_found', status: null, code: null } }
+    const result = await attempt(() => projectStore.deleteGroup(pid, moduleName))
+    if (!result.ok) return result
+    projectStore.forgetRecentGroup(groupId)
+    explorerRefreshToken.value += 1
+    return { ok: true, value: undefined }
   },
   renameFlow: async (pid, _groupId, flowId, title) => {
     const result = await attempt(() => projectStore.renameFlow(pid, flowId, title))

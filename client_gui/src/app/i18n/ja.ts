@@ -1,4 +1,6 @@
 export default {
+  accountMenu: {"settings": "自分の設定", "profile": "プロフィール", "password": "パスワード変更", "logout": "ログアウト", "confirmLogout": "ログアウトしますか？"},
+  notification_ai: {"detail": "詳細を見る", "provider": "プロバイダー", "finished": "終了時刻", "reason": "終了理由", "success": "成功", "failure": "失敗", "stopped": "中断", "unknown": "状態を確認"},
   // flowgate.chat.0017 CH0002 — AI添付の承認依頼(チャットのメッセージ下・カードの添付タブ・実行結果・設定)。
   attachment_request: {
     title: 'AI添付の承認依頼',
@@ -608,6 +610,7 @@ export default {
       already_archived: 'アーカイブ済みです。',
       unavailable: 'アーカイブ状態を確認できません。',
       failed: 'アーカイブ状態を変更できませんでした。',
+      group_restore_failed: 'グループを復元できませんでした。',
     },
     project_explorer: {
       title: 'プロジェクト',
@@ -620,6 +623,7 @@ export default {
       retry: '再試行',
       no_groups: 'グループがありません。',
       no_flows: 'フローがありません。',
+      group_menu: 'グループメニュー',
       no_results: '一致するプロジェクト・グループ・フローがありません。',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
@@ -808,10 +812,54 @@ export default {
       toolbar_label: 'ツールバー',
       header: {
         notifications: '通知',
-        ai: 'AI',
         locale: '言語',
         settings: '設定',
         user: 'ユーザー {name}',
+      },
+      notifications: {
+        project_unknown: '現在のプロジェクトの Flow 一覧を確認できません。プロジェクトエクスプローラーを読み込んでから再度確認してください。',
+        tabs: {
+          runs: '実行',
+          ai: 'AI',
+          questions: '質疑応答',
+        },
+        project_only: '現在のプロジェクト {name} の実行のみ表示します。',
+        empty_runs: '実行中・待機中の実行はありません。',
+        empty_ai: 'AI通知はありません。',
+          question_all: "全体表示",
+          question_reply: "すぐに回答",
+          question_robot: "ロボ",
+          question_waiting: "回答待ち",
+          question_running: "AI回答中",
+          question_done: "回答済み",
+        empty_questions: '回答待ちの質問はありません。',
+        open_document: '文書を開く',
+        stop: '停止',
+        refresh: '更新',
+        close: '閉じる',
+        no_project: 'プロジェクトを開いて通知を確認してください。',
+        loading: '読み込み中…',
+        load_error: '一覧を読み込めませんでした。更新してください。',
+        cancel_error: '停止要求に失敗しました。実行状態を確認して再試行してください。',
+        success: '成功',
+        failure: '失敗',
+        unknown: '状態不明',
+        phases: {
+          running: '実行中',
+          queued: '待機中',
+          starting: '開始中',
+          cancelling: '停止中',
+          pause_requested: '停止予約',
+          paused: '一時停止',
+          unknown: '状態不明',
+        },
+        modes: {
+          single: '単発',
+          continuous: '連続',
+          unknown: 'モード不明',
+        },
+        truncated: '全{total}件のうち{shown}件を表示しています。表示されていない項目があります。',
+        unknown_time: '時刻不明',
       },
       search: {
         label: '全体検索',

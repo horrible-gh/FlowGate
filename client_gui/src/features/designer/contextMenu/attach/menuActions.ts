@@ -6,12 +6,12 @@
 
 /** The 2-B commands and the dialog each opens (파일 다운로드 runs at once: no dialog). */
 export type MenuActionKind =
-  | 'group.rename' | 'flow.rename' | 'flow.delete'
+  | 'group.rename' | 'group.archive' | 'group.delete' | 'flow.rename' | 'flow.delete'
   | 'folder.newFolder' | 'folder.newFile' | 'folder.download' | 'folder.upload' | 'folder.delete'
   | 'file.download' | 'file.git.changes' | 'file.delete'
 
 export type MenuActionTarget =
-  | { readonly kind: 'group.rename'; readonly projectId: string; readonly groupId: string }
+  | { readonly kind: 'group.rename' | 'group.archive' | 'group.delete'; readonly projectId: string; readonly groupId: string }
   | { readonly kind: 'flow.rename' | 'flow.delete'; readonly projectId: string; readonly groupId: string; readonly flowId: string }
   | {
     readonly kind: 'folder.newFolder' | 'folder.newFile' | 'folder.download' | 'folder.upload' | 'folder.delete'
@@ -33,6 +33,8 @@ export interface MenuActionRefusal {
   readonly code: string | null
   /** A name the server's refusal carries (e.g. the group that holds an identifier); optional. */
   readonly subject?: string
+  /** v02gui.0027: the Flows that keep a Group from being deleted (409 `module_not_empty` `flow_count`); optional. */
+  readonly count?: number
 }
 export type MenuActionResult<T = void> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly refusal: MenuActionRefusal }
 
@@ -61,12 +63,28 @@ export interface MenuActionDiff {
  * lists, tab names, the File Explorer tree, a disposed Flow's tab).
  */
 export interface DesignerMenuServerDeps {
-  /** The Group as the Project Explorer shows it now (display name, module key); null once gone. */
-  readonly group: (projectId: string, groupId: string) => { readonly name: string; readonly moduleName: string } | null
+  /**
+   * The Group as the Project Explorer shows it now (display name, module key); null once gone. v02gui.0027: also whether
+   * it is archived and the server's count of all its Flows (`flowTotal`, archived and discarded included) when known.
+   */
+  readonly group: (projectId: string, groupId: string) => {
+    readonly name: string; readonly moduleName: string; readonly archived?: boolean; readonly flowTotal?: number
+  } | null
   /** The Flow's display name as the Project Explorer shows it now; null once gone. */
   readonly flow: (projectId: string, flowId: string) => string | null
   /** `identifier` (v02gui.0012) is sent only when it changed; it renames the module key, so the Group's Flow ids change. */
   readonly renameGroup: (projectId: string, groupId: string, title: string, identifier?: string) => Promise<MenuActionResult>
+  /**
+   * v02gui.0027: a Group's display-only archive (the 그룹 아카이브 window) and restore (그룹 복원 runs at once). Its
+   * Flows, documents, runs and Git stay as they are. Absent: the Group menu shows neither item.
+   */
+  readonly archiveGroup?: (projectId: string, groupId: string) => Promise<MenuActionResult>
+  readonly restoreGroup?: (projectId: string, groupId: string) => Promise<MenuActionResult>
+  /**
+   * v02gui.0027 (0008-T): deletes an empty Group (only its module record). A Group with Flows is refused with 409
+   * `module_not_empty` and the count in the refusal. Absent: the Group menu has no 그룹 삭제.
+   */
+  readonly deleteGroup?: (projectId: string, groupId: string) => Promise<MenuActionResult>
   readonly renameFlow: (projectId: string, groupId: string, flowId: string, title: string) => Promise<MenuActionResult>
   /** The existing dispose (DC) with its required reason. */
   readonly disposeFlow: (projectId: string, groupId: string, flowId: string, reason: string) => Promise<MenuActionResult>
