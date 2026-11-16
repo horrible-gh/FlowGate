@@ -16,7 +16,7 @@
            [맞음] under it, the new question scrolled into view and the answer box focused. -->
       <section class="policy-dialog" role="dialog" aria-modal="false" :aria-label="t('assist')">
         <div class="qp-top">
-          <select v-model="provider" :aria-label="t('choose')" :disabled="busy">
+          <select v-model="provider" class="ai-base-select" :aria-label="t('choose')" :disabled="busy">
             <option value="" disabled>{{ t('choose') }}</option>
             <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
@@ -69,6 +69,7 @@ import { createMarkdownRenderer } from '@/core/markdown/markdownRenderer'
 import TimelineMessage from '@/features/conversation/TimelineMessage.vue'
 import type { ConversationTurn } from '@/features/conversation/types'
 import { installPolicyMessages } from './messages'
+import '../aiBaseSelect.css'
 import { loadPolicy, savePolicy, loadProviders, startAssistant, assistantResult, type Reply } from './api'
 const composer = useI18n({ useScope: 'global' }); installPolicyMessages(composer)
 const t = (key: string) => composer.t('gui.questionPolicy.' + key)

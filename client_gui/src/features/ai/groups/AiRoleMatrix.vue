@@ -27,7 +27,7 @@
               :aria-label="t('gui.role_profiles.remove', { name: typeLabel(row.type_key) })"
               :disabled="busy" @click="mutate((id) => deleteAiRoleProfile(id, row.type_key))">×</button>
           </div>
-          <select v-for="role in PROFILE_ROLES" :key="role" class="role-select"
+          <select v-for="role in PROFILE_ROLES" :key="role" class="role-select ai-base-select"
             :class="{ 'role-inherited': row.roles[role].kind === 'inherit' }"
             :data-role="role" :value="profileValueKey(row.roles[role])" :disabled="!canEdit || busy"
             :aria-label="`${typeLabel(row.type_key)} · ${t(`gui.role_profiles.${role}`)}`"
@@ -51,6 +51,7 @@ import { DEFAULT_PALETTE_ITEMS } from '@/features/designer/palette/paletteCatalo
 import { addAiRoleProfile, deleteAiRoleProfile, getAiRoleProfileOptions, getAiRoleProfiles, setAiRoleProfileCell } from '../api'
 import type { AiRoleProfile, AiRoleProfileOptions, AiRoleProfiles, RoleProfileRole, RoleProfileValue } from '../types'
 import { inProfileQueue, PROFILE_ROLES, profileValue, profileValueKey } from './roleProfileValues'
+import '../aiBaseSelect.css'
 
 const props = defineProps<{ groupId: string; canEdit: boolean }>()
 const { t, locale } = useI18n()
