@@ -195,7 +195,10 @@ FILE_LINE_CAPS: dict[str, int] = {
     # locale-dictionary lines with complete en/ja siblings: three error rows (invalid_share,
     # host_capacity_exhausted, cpu_limit_violation), the parallel_share field description and six
     # _SELF_CHECK_PARALLEL_COPY["ko"] entries. No comment or docstring Korean is added.
-    "modules/flow_gate/services/help_catalog.py": 142,
+    # 142 -> 149: flowgate.v02gui.0028, measured with _korean_lines. HEAD measured 144 (drift from other merged
+    # groups); QUESTION_HELP_COPY["ko"] adds exactly five locale-dictionary lines (the question item's
+    # before_asking steps and search_note) with complete en/ja siblings. No comment or docstring Korean is added.
+    "modules/flow_gate/services/help_catalog.py": 149,
     "modules/flow_gate/services/invoke_mention_service.py": 4,
     # 157 -> 176: this file was already at 175 (pre-existing drift from other merged
     # groups untouched by 0523, same as the tr_commit_ledger.py entry this census still
@@ -206,7 +209,10 @@ FILE_LINE_CAPS: dict[str, int] = {
     # 176 -> 209: flowgate.v02.0064 T#2 (T-B1e). Measured: 201 before the change (drift, as above), and T-B1e adds
     # exactly 8 -- ``BODY_UNREADABLE_RULES``, the five unread-body rules P0006 §2.9 fixes word for word for the AI
     # mentions (eight source lines; three rules are split over two string literals).
-    "modules/flow_gate/services/mention_service.py": 209,
+    # 209 -> 220: flowgate.v02gui.0028, measured with _korean_lines. HEAD measured 213 (drift, as above);
+    # _QUESTION_PRECHECK_TEXT["ko"] adds exactly seven mention-copy lines (the check-before-asking steps every
+    # Q-registration guide carries) with complete en/ja siblings. No comment or docstring Korean is added.
+    "modules/flow_gate/services/mention_service.py": 220,
     # 24 -> 39: flowgate.v02.0064 T#2 (T-B1e). Measured: 38 before the change (drift), and T-B1e adds exactly 1 --
     # the answer mention's sentence pointing at the unread-body rules 3 and 4 (P0006 §2.9 ②, its exact wording).
     "modules/flow_gate/services/q_answer_invoke_service.py": 39,

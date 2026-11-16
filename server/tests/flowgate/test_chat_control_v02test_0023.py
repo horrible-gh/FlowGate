@@ -317,7 +317,8 @@ def test_api_tool_passes_the_flow_and_body_to_the_service(monkeypatch):
 
     seen = {}
     monkeypatch.setattr(authz, "from_run", lambda run, flow_id: seen.setdefault("flow", flow_id) and (_Scope(), {"group_id": flow_id}))
-    monkeypatch.setattr(service, "place", lambda group, user, body, locale: {"placed": body, "group": group["group_id"]})
+    # flowgate.v02gui.0028: the placing chat (the run's doc_ref; none here) is handed on as ``owner``.
+    monkeypatch.setattr(service, "place", lambda group, user, body, locale, owner=None: {"placed": body, "group": group["group_id"]})
     monkeypatch.setattr(service, "start", lambda group, user, body: {"started": body})
     status, body = tools.place_call({"group_id": FA}, {"cards": [{"label": "x"}]})
     assert status == 200 and body["placed"] == {"cards": [{"label": "x"}]} and seen["flow"] == FA

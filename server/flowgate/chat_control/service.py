@@ -15,9 +15,14 @@ caller allows their instruction AI: the chat is meant to write the instruction i
   ``chat_cards_root_ambiguous``), none leaves it unplaceable (409 ``chat_cards_flow_empty``);
 - a start answers why a card already waits instead of running (``waiting``: each node run's ``wait_reason`` /
   ``intervention``, e.g. ``manual_write_wait`` for a card with no AI), so the chat can tell the user the cause.
+
+flowgate.v02gui.0028: after the draft save a placement records the placing chat of each new work card (``owner``:
+its CH conversation document, token, AI run, user; ``card_role_store``), the only chat the card role API
+(``card_roles``) lets read or change that card's AI roles.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from flowgate.card_documents import lines as card_lines
@@ -34,8 +39,9 @@ from modules.flow_gate.graph_workflow.services.node_title_names import PALETTE_K
 from modules.flow_gate.graph_workflow.services.root_conversion_cards import ROOT_NAMES, ROOT_PALETTE_IDS
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
 
-from . import placement
+from . import card_role_store, placement
 
+_log = logging.getLogger(__name__)
 WORK_TYPES = ("T", "TS")
 MAX_CARDS = 5
 PROTECTED = frozenset({"done", "open", "review"})
@@ -129,8 +135,27 @@ def _instruction_line(flow_id: str, node_key: str) -> dict:
     return {"slot": cs.INSTRUCTION, "doc_id": row["doc_id"] if row else None}
 
 
-def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None) -> dict:
-    """Place the chat's work cards (and a confirm card when needed) on the Flow's draft. Nothing is confirmed or run."""
+def _record_owner(flow_id: str, node_keys: list[str], owner: Optional[dict]) -> bool:
+    """flowgate.v02gui.0028: the placing chat of each new work card (``card_role_store.chat_placed_cards``), recorded
+    after the draft save committed. Only the work cards: the start card and the confirm card have no AI roles, so the
+    chat card role API never needs them. A failed record is logged and the placement stands: the cards then have no
+    owner and the chat role API refuses them (fail closed), the user's card settings screen still sets their AI."""
+    if not owner or not node_keys:
+        return False
+    try:
+        if not card_role_store.available():
+            return False
+        card_role_store.record_placed(flow_id, node_keys, owner["chat_doc_id"], owner.get("token_id"),
+                                      owner.get("ai_run_id"), owner.get("user_id"))
+        return True
+    except Exception:  # noqa: BLE001 - never a credential in the log: ids only
+        _log.warning("chat card placement record failed flow=%s nodes=%s", flow_id, node_keys, exc_info=True)
+        return False
+
+
+def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, owner: Optional[dict] = None) -> dict:
+    """Place the chat's work cards (and a confirm card when needed) on the Flow's draft. Nothing is confirmed or run.
+    ``owner`` (``authz.owner``): the placing chat, recorded for each new work card (flowgate.v02gui.0028)."""
     flow_id = group["group_id"]
     cards, after, want_gate = parse_place(body, locale)
     # flowgate.v02gui.0019: the Flow's start card first, whatever the draft already holds (the one rule of
@@ -164,6 +189,7 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None) ->
         key = key_map[f"{placement.CLIENT_NODE}{i}"]
         placed.append({"node_key": key, "label": card["label"], "doc_type": card["doc_type"],
                        "instruction": _instruction_line(flow_id, key)})
+    _record_owner(flow_id, [card["node_key"] for card in placed], owner)
     gate = None
     if chosen.before is not None:
         gate = {"node_key": chosen.before, "created": False}

@@ -11,9 +11,16 @@
 // message beat it, so a list still loading does not lose it either. A title the user typed (on the draft or afterwards) wins: the draft's typed title
 // is used as is and owes nothing, and the server pays the debt once and drops it on any manual
 // rename.
+//
+// flowgate.v02gui.0028: the first message shows at once, as a bubble marked 전송 중, from the press of send — through the
+// chat's create, its opening and the POST (session.holdFirstSend): there is no silent gap before the chat exists. It is
+// the same message all the way (the session hands it over to the chat made, with the key it was given at the press):
+// accepted, it is the chat's turn; a failed create or opening leaves it failed with its retry, which asks for the same
+// chat (same create intent) and sends the same key. Kept over F5: a first message whose chat was never confirmed made
+// comes back failed in its draft (the Flow reopens on that draft once) and is sent only when the user tries again.
 import { beginChatActivity } from './flowChatActivity'
 import { computed, readonly, ref, watch, getCurrentScope, onScopeDispose, type ComputedRef, type Ref } from 'vue'
-import { draftIntent, draftCreateIntent, draftUserId, type DraftSendSnapshot } from './drafts'
+import { draftIntent, draftCreateIntent, draftUserId, loadDraft, saveDraft, type DraftOwner, type DraftSendSnapshot } from './drafts'
 import { ConversationRequestError } from './api'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import type { ConversationSession, StartStopState } from './conversationSession'
@@ -78,9 +85,12 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
   watch(() => [state.scope?.projectId, state.scope?.groupId, draftUserId(), draftIntentId.value, state.activeChatId, state.turnsStatus] as const,
     clearSettledFailures, { flush: 'sync' })
   watch(() => [state.scope?.projectId, state.scope?.groupId, draftUserId()] as const, () => {
-    draftIntentId.value = state.scope ? draftIntent({ ...state.scope, userId: draftUserId() }) : null
+    // flowgate.v02gui.0028: a draft whose first message an earlier page (F5) left unconfirmed reopens.
+    draftIntentId.value = state.scope ? session.heldDraftIntent() ?? draftIntent({ ...state.scope, userId: draftUserId() }) : null
     draftTitle.value = null
   }, { immediate: true, flush: 'sync' })
+  // flowgate.v02gui.0028: the session shows the first messages held for the draft the composer writes in.
+  watch(draftIntentId, (intentId) => session.showDraft(intentId), { immediate: true, flush: 'sync' })
   // Chats made on their first send whose AI title is still owed, with their provisional title
   // and the project whose AI picks it. Kept per chat: a first send that failed in one chat stays
   // owed while another chat is started.
@@ -140,7 +150,14 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     if (starting.value || !text.trim() || !state.scope || !draftIntentId.value) return false
     const origin: DraftSendSnapshot = snapshot ?? { owner: { ...state.scope, userId: draftUserId(), intentId: draftIntentId.value, chatId: null }, body: text, revision: 0 }
     if (!ownsScreen(origin)) return false
-    origin.createIntentId = draftCreateIntent(origin.owner)
+    // flowgate.v02.0142 T#1: the AI chosen now is the one of this first message, whatever the picker shows once the
+    // chat has been created.
+    const providerId = state.selectedProviderId
+    // flowgate.v02gui.0028: the bubble shows now (전송 중), before the create; a held try of this text keeps its intent.
+    const held = session.holdFirstSend({ intentId: origin.owner.intentId, createIntentId: draftCreateIntent(origin.owner),
+      body: text, providerId, sendAction: state.settings.sendAction })
+    origin.createIntentId = held?.createIntentId ?? draftCreateIntent(origin.owner)
+    const heldSendId = held?.localId
     const typed = draftTitle.value
     const title = typed ?? defaultTitle()
     operations.value = operations.value.filter((op) => !ownsScreen(op.origin))
@@ -149,9 +166,6 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     operations.value.push(operation)
     const currentOperation = () => operations.value.find((op) => op.origin.createIntentId === origin.createIntentId)
     const update = (status: SubmissionPhase) => { const op = currentOperation(); if (op) op.status = status }
-    // flowgate.v02.0142 T#1: the AI chosen now is the one of this first message, whatever the picker shows once the
-    // chat has been created.
-    const providerId = state.selectedProviderId
     // flowgate.v02gui.0009: so is the send-time action of this Flow — the screen may show another Flow (with its own
     // setting) by the time the create answers.
     const sendAction = operation.sendAction
@@ -165,6 +179,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
         onCreated: (created) => { origin.createdChatId = created.chatId },
         onLoading: () => update({ phase: 'loading', stage: 'load', attempt: 1 }),
         trace,
+        heldSendId,
       })
       // flowgate.v02gui.0009: once the create made the chat, its first message is sent to it even when the screen
       // moved on (another Flow, chat or draft) during the create or while the chat opened: the send goes on off screen,
@@ -176,7 +191,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
         operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
         if (origin.owner.userId !== draftUserId()) return false
         return await session.send(text, { status: 'created', chatId: result.chatId!, scope: result.scope!, draftIntentId: result.draftIntentId,
-          createIntentId: result.createIntentId ?? origin.createIntentId!, providerId, sendAction, stopAi: stopped }, trace, origin)
+          createIntentId: result.createIntentId ?? origin.createIntentId!, providerId, sendAction, stopAi: stopped, heldSendId }, trace, origin)
       }
       if (result.status !== 'created' || !ownsScreen(origin)) {
         if (result.status === 'failed') {
@@ -190,7 +205,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
       // No await between this ownership check and the explicitly addressed first send.
       if (!ownsScreen(origin)) return false
       update({ phase: 'sending', stage: 'send', attempt: 1 })
-      const ok = await session.send(text, { ...result, providerId, sendAction, stopAi: stopAi() }, trace, origin)
+      const ok = await session.send(text, { ...result, providerId, sendAction, stopAi: stopAi(), heldSendId }, trace, origin)
       // Session owns send progress (and its retained failure bubble).
       operations.value = operations.value.filter((op) => op.origin.createIntentId !== origin.createIntentId)
       return settle(result.chatId, ok)
@@ -203,6 +218,17 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
   }
 
   async function retry(localId: string): Promise<boolean> {
+    // flowgate.v02gui.0028: a failed first message of the draft (its chat not made or not opened, or left by an earlier
+    // page) is tried again as itself: the same chat is asked for (same create intent) and the same key is sent.
+    if (isDraft.value) {
+      const item = state.pending.find((p) => p.localId === localId && p.failed)
+      if (!item || !state.scope || !draftIntentId.value) return false
+      const owner: DraftOwner = { ...state.scope, userId: draftUserId(), intentId: draftIntentId.value, chatId: null }
+      const ok = await send(item.body)
+      // The composer still holds the text of a failed first send; once accepted it is not left to be sent again.
+      if (ok && loadDraft(owner).trim() === item.body) saveDraft(owner, '')
+      return ok
+    }
     const chatId = state.activeChatId
     return settle(chatId, await session.retry(localId))
   }

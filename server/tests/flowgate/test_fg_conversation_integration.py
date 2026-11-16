@@ -106,7 +106,9 @@ def test_graph_and_control_tower_tools_come_before_run_command(clean_hooks):
     integration.register()
     names = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat", "chat_command_capability": True})]
     at = names.index("run_command")
-    assert names[at - 4:at] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run"]
+    # flowgate.v02gui.0028: the card role read / change follow the control tower tools.
+    assert names[at - 6:at] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
+                                "get_card_roles", "set_card_roles"]
     assert names[at + 1] == "request_attachment_upload"
     without = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})]
     assert {"read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
