@@ -59,7 +59,7 @@
         :title="t('gui.accountMenu.settings')"
         @click="openSettings()"
       >
-        <span aria-hidden="true">⚙</span><span class="designer-header-label">{{ t('gui.designer.top.header.settings') }}</span>
+        <LineIcon name="sliders" class="designer-header-icon" /><span class="designer-header-label">{{ t('gui.designer.top.header.settings') }}</span>
       </button>
       <div v-if="user" ref="accountRoot" class="designer-account">
       <button
@@ -76,14 +76,21 @@
       >
         <span class="designer-header-avatar" aria-hidden="true">{{ initial }}</span>
         <b class="designer-header-label">{{ user.username }}</b>
-        <span aria-hidden="true">⌄</span>
+        <LineIcon name="chevron-down" class="designer-header-chevron" />
       </button>
+      <!-- 0016-CH (시안 basodrr4 B안): who is signed in on a card at the top, then the three items with tinted line
+           icons; 로그아웃 sits apart below a separator in red. Items and destinations are unchanged. -->
       <div v-if="accountOpen" id="designer-account-menu" ref="accountMenu" role="menu" class="designer-account-menu" @keydown="menuKey">
-        <div class="designer-account-heading">{{ user.username }}<small v-if="user.email">{{ user.email }}</small></div>
-        <button v-for="item in accountItems" :key="item.key" role="menuitem" type="button" :data-test="'account-' + item.key" :title="t('gui.accountMenu.' + item.key)" @click="accountAction(item.key)">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.path" /></svg>
-          {{ t('gui.accountMenu.' + item.key) }}
-        </button>
+        <div class="designer-account-heading">
+          <span class="designer-account-avatar" aria-hidden="true">{{ initial }}</span>
+          <span class="designer-account-who"><b>{{ user.username }}</b><small v-if="user.email">{{ user.email }}</small></span>
+        </div>
+        <template v-for="item in accountItems" :key="item.key">
+          <div v-if="item.key === 'logout'" class="designer-account-sep" role="separator" />
+          <button role="menuitem" type="button" :class="{ 'is-out': item.key === 'logout' }" :data-test="'account-' + item.key" :title="t('gui.accountMenu.' + item.key)" @click="accountAction(item.key)">
+            <LineIcon :name="item.icon" />{{ t('gui.accountMenu.' + item.key) }}
+          </button>
+        </template>
       </div>
       </div>
     </div>
@@ -100,6 +107,7 @@ import type { ExplorerProject } from '../projectExplorer/projectExplorerTree'
 import { useI18n } from 'vue-i18n'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import GlobalSearch from './GlobalSearch.vue'
+import LineIcon, { type LineIconName } from '@/components/ui/LineIcon.vue'
 import { DESIGNER_LOCALES, type DesignerLocale, type DesignerSearchRequest, type DesignerTopCommand } from './designerTop'
 
 const props = withDefaults(defineProps<{ notificationsOpen?: boolean; notificationProjectId?: string | null; notificationProject?: ExplorerProject | null }>(), { notificationsOpen: false, notificationProjectId: null, notificationProject: null })
@@ -122,10 +130,10 @@ const accountRoot = ref<HTMLElement | null>(null)
 const accountTrigger = ref<HTMLButtonElement | null>(null)
 const accountMenu = ref<HTMLElement | null>(null)
 const accountItems = [
-  { key: 'profile', path: 'M20 21v-2a7 7 0 0 0-14 0v2 M12 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8' },
-  { key: 'password', path: 'M6 11h12v10H6z M8 11V7a4 4 0 0 1 8 0v4' },
-  { key: 'logout', path: 'M10 3H4v18h6 M10 12h11 M17 8l4 4-4 4' },
-] as const
+  { key: 'profile', icon: 'user' },
+  { key: 'password', icon: 'lock' },
+  { key: 'logout', icon: 'logout' },
+] as const satisfies readonly { key: string; icon: LineIconName }[]
 function closeAccount(restoreFocus = false) {
   accountOpen.value = false
   if (restoreFocus) accountTrigger.value?.focus()
@@ -198,12 +206,22 @@ function setLocale(code: DesignerLocale) {
 
 <style scoped>
 .designer-account { position: relative; }
-.designer-account-menu { position: absolute; right: 0; top: calc(100% + 10px); z-index: 100; width: 230px; max-width: calc(100vw - 24px); padding: 6px; border: 1px solid var(--fg2-line-strong); border-radius: 8px; background: #10213a; color: var(--fg2-text); box-shadow: 0 8px 24px #0008; }
-.designer-account-heading { padding: 8px; overflow-wrap: anywhere; border-bottom: 1px solid var(--fg2-line); }
-.designer-account-heading small { display: block; color: #899db5; }
-.designer-account-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.designer-account-menu button:hover, .designer-account-menu button:focus-visible { background: #203c60; outline: 2px solid var(--fg2-focus); }
-.designer-account-menu svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+/* 0016-CH (시안 basodrr4 B안): the raised card menu, on theme.css's type scale. */
+.designer-account-menu { position: absolute; right: 0; top: calc(100% + 10px); z-index: 100; width: 280px; max-width: calc(100vw - 24px); padding: 8px; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-pop-radius); background: var(--fg2-pop-surface); color: var(--fg2-text); box-shadow: var(--fg2-pop-shadow); font-size: var(--fg2-fs-body); }
+.designer-account-heading { display: flex; align-items: center; gap: 12px; min-width: 0; margin-bottom: 8px; padding: 12px; border: 1px solid var(--fg2-line); border-radius: 12px; background: var(--fg2-inset-bg); }
+.designer-account-avatar { display: grid; flex: none; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: #2563eb; color: #fff; font-size: 14px; font-weight: 700; }
+.designer-account-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.designer-account-who b { font-size: 14px; font-weight: 700; }
+.designer-account-who small { color: var(--fg2-text-3); font-size: var(--fg2-fs-sub); }
+.designer-account-menu button { display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--fg2-text-2); font: inherit; font-size: var(--fg2-fs-body); font-weight: 550; text-align: left; cursor: pointer; }
+.designer-account-menu button:hover, .designer-account-menu button:focus-visible { background: rgba(124, 192, 255, 0.08); color: var(--fg2-text); }
+.designer-account-menu button:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: -2px; }
+.designer-account-menu button :deep(svg) { width: 28px; height: 28px; padding: 6px; border-radius: 8px; background: rgba(124, 192, 255, 0.08); color: #9cc8f5; }
+.designer-account-menu button.is-out { color: #ff9aa8; }
+.designer-account-menu button.is-out :deep(svg) { background: rgba(255, 100, 120, 0.1); color: #ff9aa8; }
+.designer-account-sep { height: 1px; margin: 6px 4px; background: var(--fg2-line); }
+.designer-header-btn .designer-header-icon { width: 15px; height: 15px; }
+.designer-header-user .designer-header-chevron { width: 14px; height: 14px; color: var(--fg2-text-3); }
 
 .designer-header {
   display: grid;

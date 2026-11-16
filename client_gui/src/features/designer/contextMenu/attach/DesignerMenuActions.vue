@@ -10,12 +10,16 @@
     :size="shown?.kind === 'file.git.changes' ? 'lg' : 'md'"
     :role="danger ? 'alertdialog' : 'dialog'"
     :aria-describedby="refusal ? refusalId : undefined"
+    :surface-class="hero ? 'dma-hero-surface' : undefined"
     @close="close"
   >
     <template #header="{ titleId }">
-      <div class="dma-head">
-        <h2 :id="titleId" class="dma-title" :class="{ 'is-danger': danger }">{{ title }}</h2>
-        <IconButton :label="t('close')" variant="ghost" data-test="dma-close" @click="close">✕</IconButton>
+      <!-- 0016-CH (시안 basodrr4 B안): the Group archive / delete confirm leads with a large icon badge above the title;
+           every other window keeps the plain title row. The close button is the shared line icon either way. -->
+      <div class="dma-head" :class="{ 'is-hero': hero, 'is-danger': hero && danger }">
+        <span v-if="hero" class="dma-badge" aria-hidden="true" data-test="dma-badge"><LineIcon :name="danger ? 'trash' : 'archive'" /></span>
+        <h2 :id="titleId" class="dma-title" :class="{ 'is-danger': danger && !hero }">{{ title }}</h2>
+        <IconButton :label="t('close')" :title="t('close')" variant="ghost" size="sm" class="dma-close" data-test="dma-close" @click="close"><LineIcon name="x" /></IconButton>
       </div>
     </template>
 
@@ -27,7 +31,7 @@
           :data-status="refusal.status ?? undefined" :data-code="refusal.code ?? undefined"
           ><span data-test="dma-refusal-text" :title="refusalTip">{{ refusalText }}</span></Alert>
 
-        <dl v-if="facts.length" class="dma-facts">
+        <dl v-if="facts.length && !hero" class="dma-facts">
           <div v-for="fact in facts" :key="fact.key" class="dma-fact" :data-test="`dma-fact-${fact.key}`">
             <dt>{{ fact.label }}</dt>
             <dd :title="fact.value">{{ fact.value }}</dd>
@@ -53,9 +57,19 @@
         </template>
 
         <!-- 그룹 아카이브 (v02gui.0027): display-only; the Group's Flows, documents, runs and Git stay as they are. -->
+        <!-- 0016-CH B안: title → the one key sentence → the Group in its own box → the supporting points → buttons. -->
         <template v-else-if="shown.kind === 'group.archive'">
           <p class="dma-lead" data-test="dma-group-archive-note">{{ t('archive.note') }}</p>
-          <p class="dma-note" data-test="dma-group-archive-hint">{{ t('archive.hint') }}</p>
+          <div class="dma-target" data-test="dma-fact-target" :data-label="t('group')">
+            <LineIcon name="folder" class="dma-target-icon" />
+            <span class="dma-target-name" :title="heroName">{{ heroName }}</span>
+            <span v-if="heroMeta" class="dma-target-meta" data-test="dma-target-meta">{{ heroMeta }}</span>
+          </div>
+          <ul class="dma-points" data-test="dma-group-archive-hint">
+            <li><LineIcon name="check-circle" /><span>{{ t('archive.points.kept') }}</span></li>
+            <li><LineIcon name="eye" /><span>{{ t('archive.points.visible') }}</span></li>
+            <li><LineIcon name="restore" /><span>{{ t('archive.points.restore') }}</span></li>
+          </ul>
         </template>
 
         <!-- 그룹 삭제 (v02gui.0027 0008-T): an empty Group only. With Flows (archived and discarded count) nothing is deleted:
@@ -63,10 +77,16 @@
         <template v-else-if="shown.kind === 'group.delete'">
           <Alert v-if="deleteBlockedShown" tone="danger" class="dma-alert" data-test="dma-group-delete-blocked"
             :data-count="deleteBlockedCount ?? undefined">{{ deleteBlockedText }}</Alert>
-          <template v-else>
-            <p class="dma-lead" data-test="dma-group-delete-note">{{ t('groupDelete.note') }}</p>
-            <p class="dma-note" data-test="dma-group-delete-hint">{{ t('groupDelete.hint') }}</p>
-          </template>
+          <p v-else class="dma-lead" data-test="dma-group-delete-note">{{ t('groupDelete.note') }}</p>
+          <div class="dma-target" data-test="dma-fact-target" :data-label="t('group')">
+            <LineIcon name="folder" class="dma-target-icon" />
+            <span class="dma-target-name" :title="heroName">{{ heroName }}</span>
+            <span v-if="heroMeta" class="dma-target-meta" data-test="dma-target-meta">{{ heroMeta }}</span>
+          </div>
+          <ul v-if="!deleteBlockedShown" class="dma-points" data-test="dma-group-delete-hint">
+            <li><LineIcon name="check-circle" /><span>{{ t('groupDelete.hint') }}</span></li>
+            <li><LineIcon name="alert" /><span>{{ t('groupDelete.points.archiveAlt') }}</span></li>
+          </ul>
         </template>
 
         <!-- Flow 삭제 = the existing dispose (DC) -->
@@ -171,7 +191,7 @@
     </template>
 
     <template #footer>
-      <div v-if="shown" class="dma-actions">
+      <div v-if="shown" class="dma-actions" :class="{ 'is-wide': hero }">
         <template v-if="shown.kind === 'file.git.changes'">
           <Button v-if="refusal" variant="secondary" data-test="dma-retry" @click="readDiff">{{ t('diff.retry') }}</Button>
           <Button variant="secondary" data-test="dma-cancel" @click="close">{{ t('close') }}</Button>
@@ -181,12 +201,12 @@
         <template v-else-if="deleteBlockedShown">
           <Button variant="secondary" data-test="dma-cancel" @click="close">{{ t('close') }}</Button>
           <Button v-if="canArchiveInstead" variant="primary" :disabled="busy || stale" :loading="busy" data-test="dma-archive-instead"
-            @click="archiveInstead">{{ t('groupDelete.archiveInstead') }}</Button>
+            @click="archiveInstead"><LineIcon name="archive" />{{ t('groupDelete.archiveInstead') }}</Button>
         </template>
         <template v-else>
           <Button variant="secondary" data-test="dma-cancel" @click="close">{{ t('cancel') }}</Button>
           <Button :variant="danger ? 'danger' : 'primary'" :disabled="!canSubmit" :loading="busy" data-test="dma-submit" @click="submit">
-            {{ submitLabel }}
+            <LineIcon v-if="hero" :name="danger ? 'trash' : 'archive'" />{{ submitLabel }}
           </Button>
         </template>
       </div>
@@ -200,6 +220,7 @@ import { useI18n } from 'vue-i18n'
 import Alert from '../../../../components/ui/Alert.vue'
 import Button from '../../../../components/ui/Button.vue'
 import IconButton from '../../../../components/ui/IconButton.vue'
+import LineIcon from '../../../../components/ui/LineIcon.vue'
 import Input from '../../../../components/ui/Input.vue'
 import ModalShell from '../../../../components/ui/ModalShell.vue'
 import Textarea from '../../../../components/ui/Textarea.vue'
@@ -279,6 +300,18 @@ const flowNow = computed(() => {
   return target && (target.kind === 'flow.rename' || target.kind === 'flow.delete') ? props.actions.server.flow(target.projectId, target.flowId) : null
 })
 const currentName = computed(() => groupNow.value?.name ?? flowNow.value ?? '')
+/** 0016-CH B안: the Group archive / delete confirm (badge header, target box, point list, wide buttons). */
+const hero = computed(() => shown.value?.kind === 'group.archive' || shown.value?.kind === 'group.delete')
+/** The Group the confirm names in its target box (its display name, else its id). */
+const heroName = computed(() => {
+  const target = shown.value
+  return target?.kind === 'group.archive' || target?.kind === 'group.delete' ? currentName.value || target.groupId : ''
+})
+/** The target box's side note: the Group's Flow count when the tree read gave one (e.g. "플로우 0"). */
+const heroMeta = computed(() => {
+  const total = serverFlowCount.value ?? groupNow.value?.flowTotal
+  return typeof total === 'number' ? `${t('flow')} ${total}` : ''
+})
 /** The Group's identifier now (the Explorer's moduleName: the module key itself). */
 const currentIdent = computed(() => groupNow.value?.moduleName ?? '')
 
@@ -688,9 +721,102 @@ async function archiveInstead() {
 
 .dma-title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--fg2-fs-title);
   font-weight: 700;
   color: var(--fg2-text);
+}
+.dma-close {
+  color: var(--fg2-text-3);
+}
+/* ── 0016-CH (시안 basodrr4 B안): the Group archive / delete confirm ──────────────────────────────────────────── */
+:global(.ui-modal-surface.ui-modal-surface--md.dma-hero-surface) {
+  max-width: 460px;
+  background: var(--fg2-pop-surface);
+  border-radius: var(--fg2-pop-radius);
+  box-shadow: var(--fg2-pop-shadow);
+}
+.dma-head.is-hero {
+  position: relative;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 24px 24px 0;
+}
+.dma-head.is-hero .dma-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+}
+.dma-head.is-hero .dma-title {
+  font-size: 18px;
+}
+.dma-badge {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(75, 163, 255, 0.14);
+  color: #8fc8ff;
+}
+.dma-badge :deep(svg) {
+  width: 22px;
+  height: 22px;
+}
+.dma-head.is-danger .dma-badge {
+  background: rgba(255, 100, 120, 0.14);
+  color: #ff8c9c;
+}
+.dma-target {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--fg2-line);
+  border-radius: var(--fg2-inset-radius);
+  background: var(--fg2-inset-bg);
+  font-size: var(--fg2-fs-body);
+}
+.dma-target-icon {
+  color: #a98bff;
+}
+.dma-target-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg2-text);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dma-target-meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg2-text-3);
+  font-size: var(--fg2-fs-xs);
+}
+.dma-points {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dma-points li {
+  display: flex;
+  gap: 10px;
+  color: var(--fg2-text-2);
+  font-size: var(--fg2-fs-sub);
+  line-height: 1.5;
+}
+.dma-points li :deep(svg) {
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  color: var(--fg2-cyan);
+}
+.dma-points li + li :deep(svg) {
+  color: var(--fg2-text-3);
 }
 
 .dma-title.is-danger {
@@ -702,6 +828,17 @@ async function archiveInstead() {
   flex-direction: column;
   gap: 10px;
   padding: 16px 0 4px;
+}
+.dma-body[data-kind^='group.archive'],
+.dma-body[data-kind^='group.delete'] {
+  gap: 14px;
+  padding: 10px 0 18px;
+}
+.dma-body[data-kind^='group.archive'] .dma-lead,
+.dma-body[data-kind^='group.delete'] .dma-lead {
+  color: var(--fg2-text-2);
+  font-size: 14px;
+  line-height: 1.55;
 }
 
 .dma-alert {
@@ -864,5 +1001,18 @@ async function archiveInstead() {
   justify-content: flex-end;
   gap: 10px;
   padding: 16px 24px 20px;
+}
+/* B안: two equal, taller buttons across the confirm's width. */
+.dma-actions.is-wide {
+  padding: 4px 24px 24px;
+}
+.dma-actions.is-wide > :deep(.ui-btn) {
+  flex: 1;
+  height: 40px;
+  border-radius: var(--fg2-inset-radius);
+}
+.dma-actions :deep(.ui-btn svg) {
+  width: 15px;
+  height: 15px;
 }
 </style>

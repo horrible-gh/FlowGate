@@ -32,6 +32,12 @@ const ko = {
     title: '그룹 아카이브', submit: '아카이브', note: '기록은 보존하고 기본 목록에서 숨깁니다.',
     hint: '안의 플로우·문서·실행 기록·Git은 그대로 남습니다. "아카이브 포함"을 켜면 다시 보이고, 그룹 메뉴의 그룹 복원으로 되돌릴 수 있습니다.',
     server: { already: '이미 아카이브된 그룹입니다.' },
+    // 0016-CH B안: the confirm's point list (the hint above, one line each).
+    points: {
+      kept: '안의 플로우·문서·실행 기록·Git은 그대로 남습니다.',
+      visible: '"아카이브 포함"을 켜면 다시 보입니다.',
+      restore: '그룹 메뉴의 그룹 복원으로 언제든 되돌릴 수 있습니다.',
+    },
   },
   groupDelete: {
     title: '그룹 삭제', submit: '삭제', archiveInstead: '대신 아카이브',
@@ -39,6 +45,7 @@ const ko = {
     hint: '그룹만 지워지고, 이력이 지워지는 일은 없습니다.',
     blocked: 'Flow {n}개가 남아 있어 삭제할 수 없습니다. 먼저 아카이브하세요.',
     blockedArchived: 'Flow {n}개가 남아 있어 삭제할 수 없습니다.',
+    points: { archiveAlt: '기록을 남기고 숨기기만 하려면 아카이브를 쓰세요.' },
   },
   create: {
     folderTitle: '새 폴더', fileTitle: '새 파일', name: '이름', submit: '만들기',
@@ -108,6 +115,11 @@ const en: Messages = {
     title: 'Archive group', submit: 'Archive', note: 'Records are kept; the group is hidden from the default list.',
     hint: 'Its flows, documents, run history and Git stay as they are. Turn on "Include archived" to see it again, and use Restore group in its menu to bring it back.',
     server: { already: 'This group is already archived.' },
+    points: {
+      kept: 'Its flows, documents, run history and Git stay as they are.',
+      visible: 'Turn on "Include archived" to see it again.',
+      restore: 'Use Restore group in its menu to bring it back at any time.',
+    },
   },
   groupDelete: {
     title: 'Delete group', submit: 'Delete', archiveInstead: 'Archive instead',
@@ -115,6 +127,7 @@ const en: Messages = {
     hint: 'Only the group goes; no history is erased.',
     blocked: '{n} flow(s) remain, so this group cannot be deleted. Archive it first.',
     blockedArchived: '{n} flow(s) remain, so this group cannot be deleted.',
+    points: { archiveAlt: 'To keep the records and only hide it, use Archive instead.' },
   },
   create: {
     folderTitle: 'New folder', fileTitle: 'New file', name: 'Name', submit: 'Create',
@@ -182,6 +195,11 @@ const ja: Messages = {
     title: 'グループをアーカイブ', submit: 'アーカイブ', note: '記録は保持したまま、既定の一覧から非表示にします。',
     hint: '中のフロー・文書・実行履歴・Git はそのまま残ります。「アーカイブを含める」をオンにすると再び表示され、グループメニューの「グループを復元」で元に戻せます。',
     server: { already: 'すでにアーカイブ済みのグループです。' },
+    points: {
+      kept: '中のフロー・文書・実行履歴・Git はそのまま残ります。',
+      visible: '「アーカイブを含める」をオンにすると再び表示されます。',
+      restore: 'グループメニューの「グループを復元」でいつでも元に戻せます。',
+    },
   },
   groupDelete: {
     title: 'グループを削除', submit: '削除', archiveInstead: '代わりにアーカイブ',
@@ -189,6 +207,7 @@ const ja: Messages = {
     hint: 'グループだけが削除され、履歴が消えることはありません。',
     blocked: 'フローが{n}件残っているため削除できません。先にアーカイブしてください。',
     blockedArchived: 'フローが{n}件残っているため削除できません。',
+    points: { archiveAlt: '記録を残して非表示にするだけなら、アーカイブを使ってください。' },
   },
   create: {
     folderTitle: '新規フォルダー', fileTitle: '新規ファイル', name: '名前', submit: '作成',

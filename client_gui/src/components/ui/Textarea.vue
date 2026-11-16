@@ -42,6 +42,8 @@ function onInput(event: Event) {
   border-radius: var(--fg2-control-radius);
   background: var(--fg2-control-surface);
   color: var(--fg2-text);
+  /* The app font, not the browser's monospace default for <textarea> (0016-CH). */
+  font-family: inherit;
   font-size: var(--fg2-control-font-size);
   line-height: 1.6;
   resize: vertical;
