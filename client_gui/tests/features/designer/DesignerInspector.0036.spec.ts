@@ -6,7 +6,7 @@
  *
  * flowgate.v02.0048 T#1 (D#1 §3.3, F4): the Frame takes the selection context and lays out a
  * feature registry; the tab / placeholder / `has-settings` / slot cases now run on a fixture
- * registry with the same intent — fixed tab order, only the trailing 설정 may be missing, the
+ * registry with the same intent — fixed tab order, 설정 (right after 문서) may be missing, the
  * selected tab is kept, a missing 설정 sends the selection back to 문서, the 360px width.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -108,10 +108,11 @@ async function clickTab(w: VueWrapper<any>, label: string) {
 }
 
 describe('Inspector tab rules', () => {
-  // flowgate.v02.0113 T#4: the AI tab sits right after 문서.
-  it('lists 문서 · AI · Q&A · 첨부 · 설정 in a fixed order whatever order the contributions come in', () => {
-    expect(INSPECTOR_TABS).toEqual(['documents', 'ai', 'qna', 'attachments', 'settings'])
-    expect(inspectorTabsWith(['settings', 'attachments', 'documents', 'qna'])).toEqual(['documents', 'qna', 'attachments', 'settings'])
+  // flowgate.v02.0113 T#4: the AI tab sits right after 문서; flowgate.v02gui.0031 C: 설정 sits right after 문서, before AI.
+  it('lists 문서 · 설정 · AI · Q&A · 첨부 in a fixed order whatever order the contributions come in', () => {
+    expect(INSPECTOR_TABS).toEqual(['documents', 'settings', 'ai', 'qna', 'attachments'])
+    expect(inspectorTabsWith(['settings', 'attachments', 'documents', 'qna'])).toEqual(['documents', 'settings', 'qna', 'attachments'])
+    expect(inspectorTabsWith(['ai', 'settings', 'attachments', 'qna', 'documents'])).toEqual(['documents', 'settings', 'ai', 'qna', 'attachments'])
     expect(inspectorTabsWith(['qna', 'documents', 'attachments'])).toEqual(['documents', 'qna', 'attachments'])
     expect(inspectorTabsWith(['documents', 'documents', 'unknown'])).toEqual(['documents'])
     expect(inspectorTabsWith([])).toEqual([])
@@ -167,7 +168,7 @@ describe('DesignerInspector — Node selected', () => {
 
   it('shows the four v7 tabs with 문서 selected and its registered Content — no placeholder', () => {
     const w = mountInspector({ selection: sel(TASK) })
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(tabLabels(w)).toEqual(['문서', '설정', 'Q&A', '첨부'])
     expect(activeTabLabel(w)).toBe('문서')
     const body = get(w, 'designer-inspector-body')
     expect(body.attributes('role')).toBe('tabpanel')
@@ -185,6 +186,25 @@ describe('DesignerInspector — Node selected', () => {
     expect(w.find('[data-test="injected-documents"]').exists()).toBe(false)
   })
 
+  it('moves the selection along the tab order with ArrowRight/ArrowLeft (문서 → 설정 → Q&A → 첨부, wrapping)', async () => {
+    const w = mountInspector({ selection: sel(TASK) })
+    const press = (label: string, key: string) => {
+      const tab = tabs(w).find((t) => t.text() === label)
+      if (!tab) throw new Error(`tab not rendered: ${label}`)
+      return tab.trigger('keydown', { key })
+    }
+    await press('문서', 'ArrowRight')
+    expect(activeTabLabel(w)).toBe('설정')
+    await press('설정', 'ArrowRight')
+    expect(activeTabLabel(w)).toBe('Q&A')
+    await press('Q&A', 'ArrowRight')
+    expect(activeTabLabel(w)).toBe('첨부')
+    await press('첨부', 'ArrowRight')
+    expect(activeTabLabel(w)).toBe('문서')
+    await press('문서', 'ArrowLeft')
+    expect(activeTabLabel(w)).toBe('첨부')
+  })
+
   it('keeps the selected tab when another Node is selected and after a moment with no selection', async () => {
     const w = mountInspector({ selection: sel(TASK) })
     await clickTab(w, 'Q&A')
@@ -200,7 +220,7 @@ describe('DesignerInspector — Node selected', () => {
     const w = mountInspector({ selection: sel(TASK) })
     await clickTab(w, '설정')
     await w.setProps({ selection: sel(REQ) })
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(tabLabels(w)).toEqual(['문서', '설정', 'Q&A', '첨부'])
     expect(activeTabLabel(w)).toBe('설정')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('disabled')
     await w.setProps({ selection: sel(TASK) })
@@ -220,7 +240,7 @@ describe('DesignerInspector — Node selected', () => {
   it('keeps four tabs on a Node without a document; Q&A is an empty area without a sentence (0053 T#6)', async () => {
     const w = mountInspector({ selection: sel(ODD) })
     expect(get(w, 'designer-inspector-title').text()).toBe('새 종류')
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(tabLabels(w)).toEqual(['문서', '설정', 'Q&A', '첨부'])
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
     await clickTab(w, 'Q&A')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')

@@ -153,7 +153,7 @@ describe('the real registry on Nodes without a document', () => {
   it('a Graph gate: the document result box owns the decisions; the header has none', async () => {
     const w = mountFrame(SELECTIONS.graphGate)
     await flushPromises()
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(tabLabels(w)).toEqual(['문서', '설정', 'Q&A', '첨부'])
     // flowgate.v02.0056 F2-1: the card approval bar is a part of a Graph Flow's documents tab; a gate draws none.
     // flowgate.v02.0056 F2-2: the card's memos sit between the card lines and the approval bar.
     expect(sections(w)).toEqual(['gateCard', 'cardMemo'])
@@ -168,7 +168,7 @@ describe('the real registry on Nodes without a document', () => {
     const node = { ...UNASSIGNED_REQ_NODE, id: 'gn_r', document: null }
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
     await flushPromises()
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(tabLabels(w)).toEqual(['문서', '설정', 'Q&A', '첨부'])
     // flowgate.v02.0056 F2-1: the card approval bar draws nothing on a card without a run.
     // flowgate.v02.0056 F2-2: the card's memos sit between the card lines and the approval bar.
     expect(sections(w)).toEqual(['requirementCard', 'cardMemo'])
@@ -186,7 +186,7 @@ describe('the real registry on Nodes without a document', () => {
     const node = { ...UNASSIGNED_REQ_NODE, id: 'gn_n', kind: 'research', docType: 'N', document: null }
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, ownership: 'graph', nodes: [node] }, node.id))
     await flushPromises()
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(tabLabels(w)).toEqual(['문서', '설정', 'Q&A', '첨부'])
     // flowgate.v02.0056 F2-2: the card's memos sit between the card lines and the approval bar.
     expect(sections(w)).toEqual(['researchCard', 'cardMemo'])
     expect(w.find('[data-test="inspector-card-approval"]').exists()).toBe(false)
@@ -200,7 +200,7 @@ describe('Inspector layout assembly (flowgate.v02.0051 stage 3)', () => {
   it('keeps v7 tabs and a card result line on a documentless Graph gate', async () => {
     const w = mountFrame(SELECTIONS.graphGate)
     await flushPromises()
-    expect(tabLabels(w)).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(tabLabels(w)).toEqual(['문서', '설정', 'Q&A', '첨부'])
     expect(get(w, 'inspector-gate-card').find('[data-test="gate-result"] strong').text()).toBe('확인 결과')
     await clickTab(w, 'Q&A')
     expect(get(w, 'designer-inspector-tab-state').attributes('data-state')).toBe('empty')
