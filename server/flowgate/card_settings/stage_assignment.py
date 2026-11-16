@@ -324,6 +324,17 @@ def _review_count(value) -> Optional[int]:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _rounds(count: Optional[int]) -> Optional[int]:
+    """The review rounds of a stored count the card takes today, else None (no rounds of its own).
+
+    A non-zero value of the card's own choices (``legacy.repeat_choices``: -1, 1..the configured max) — the same set
+    the card PATCH and the creation copy of the group's default count accept (flowgate.v02test.0027 0007-T), never a
+    frozen (1, 2, 3, -1): a count the policy allows is run as stored. 0 and a value outside today's choices are None."""
+    if count is None or count == 0:
+        return None
+    return count if count in legacy.repeat_choices() else None
+
+
 def with_result_review_plan(a: dict, attempt_id: str, author: str, r, stored: dict) -> dict:
     """L-2 §2.8.1: rounds and rework AI of a result review assignment."""
     count = stored.get("review_count")
@@ -340,7 +351,7 @@ def with_result_review_plan(a: dict, attempt_id: str, author: str, r, stored: di
     if getattr(r, "source", None) == "legacy_fields" and count is not None and (count >= 1 or count == -1):
         rounds = count
     else:
-        rounds = count if count in (1, 2, 3, -1) else 1
+        rounds = _rounds(count) or 1
     ra = store.read(attempt_id, RESULT, 0)
     return {**a, "review_rounds": rounds,
             "rework_provider_id": ra["provider_id"] if ra is not None and ra["actor"] == AI else None}
@@ -356,7 +367,7 @@ def instruction_review_setting(kind: Optional[str], flow_id: str, node_key: str)
     count = _review_count(value)
     if count == 0:
         return NO_REVIEW_SETTING
-    return "needs_review" if count in (1, 2, 3, -1) else _UNKNOWN
+    return "needs_review" if _rounds(count) is not None else _UNKNOWN
 
 
 def review_role_for_instruction(flow_id: str, node: dict, inputs, project_id: Optional[str]):
@@ -395,7 +406,7 @@ def instruction_reviewer_assignment(flow_id: str, node: dict, attempt_id: str, a
         ia = store.read(attempt_id, INSTRUCTION, 0)
         count = _review_count(stored.get("instruction_review_count"))
         if author == AI and ia is not None and ia["actor"] == AI:
-            a = {**a, "review_rounds": count if count in (1, 2, 3, -1) else 1, "rework_provider_id": ia["provider_id"]}
+            a = {**a, "review_rounds": _rounds(count) or 1, "rework_provider_id": ia["provider_id"]}
         else:
             a = {**a, "review_rounds": 1, "rework_provider_id": None}
     return a
@@ -463,7 +474,7 @@ def start_stage(flow_id: str, run: dict, node: dict, attempt_id: str, stage: str
         a["rework_provider_id"] = worker.provider_id if worker.outcome == "ai" else None
         if stage == INSTRUCTION_REVIEW:
             count = _review_count((inputs.stored or {}).get("instruction_review_count"))
-            a["review_rounds"] = count if count in (1, 2, 3, -1) else 1
+            a["review_rounds"] = _rounds(count) or 1
     review = stage in REVIEW_STAGES
     value_kind, value_pid = _slot_value(flow_id, key, ROLE_OF[stage])
     now = _now()
