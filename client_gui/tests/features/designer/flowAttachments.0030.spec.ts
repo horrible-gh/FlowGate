@@ -2,36 +2,40 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createUndoQueue } from '@/features/designer/flowAttachments/undo'
 
 afterEach(() => vi.useRealTimers())
-describe('Flow attachment undo', () => {
-  it('sends nothing before five seconds and a row undo preserves the file', async () => {
+describe('Flow attachment undo (delete at once, ↶ for five seconds)', () => {
+  it('sends nothing before five seconds and a row undo keeps that file only', async () => {
     vi.useFakeTimers()
     const commit = vi.fn(async () => {})
     const queue = createUndoQueue(commit, () => {})
     queue.stage([{ key: 'a' }, { key: 'b' }])
     await vi.advanceTimersByTimeAsync(4999)
     expect(commit).not.toHaveBeenCalled()
-    queue.undo('a')
+    queue.undoItem('a')
     await vi.advanceTimersByTimeAsync(1)
-    expect(commit.mock.calls).toEqual([[{ key: 'b' }]])
+    expect(commit.mock.calls).toEqual([[[{ key: 'b' }]]])
   })
-  it('Ctrl+Z undoes the latest batch, and close cancels remaining delayed work', async () => {
+  it('Ctrl+Z undoes the latest group; the numbered ↶ is the latest group of more than one', async () => {
     vi.useFakeTimers()
     const commit = vi.fn(async () => {})
     const queue = createUndoQueue(commit, () => {})
-    queue.stage([{ key: 'a' }]); queue.stage([{ key: 'b' }, { key: 'c' }])
-    queue.undo()
-    expect([...queue.pending.keys()]).toEqual(['a'])
-    queue.clear()
+    queue.stage([{ key: 'a' }, { key: 'b' }]); queue.stage([{ key: 'c' }])
+    expect(queue.bulk()?.items.map(i => i.key)).toEqual(['a', 'b'])
+    expect(queue.undoLast()).toBe(true)
+    expect(queue.pending('c')).toBeUndefined()
+    expect(queue.undoGroup(queue.bulk())).toBe(true)
+    expect(queue.groups).toHaveLength(0)
+    expect(queue.undoLast()).toBe(false)
     await vi.advanceTimersByTimeAsync(5000)
     expect(commit).not.toHaveBeenCalled()
   })
-  it('separates Flow windows and prevents duplicate requests for staged rows', async () => {
+  it('close cancels the countdown and a staged file is never staged twice', async () => {
     vi.useFakeTimers()
-    const first = vi.fn(async () => {}), second = vi.fn(async () => {})
-    const a = createUndoQueue(first, () => {}), b = createUndoQueue(second, () => {})
-    a.stage([{ key: 'same' }]); b.stage([{ key: 'same' }]); b.stage([{ key: 'same' }])
-    a.undo('same')
+    const commit = vi.fn(async () => {})
+    const queue = createUndoQueue(commit, () => {})
+    queue.stage([{ key: 'same' }]); queue.stage([{ key: 'same' }])
+    expect(queue.groups).toHaveLength(1)
+    queue.clear()
     await vi.advanceTimersByTimeAsync(5000)
-    expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledTimes(1)
+    expect(commit).not.toHaveBeenCalled()
   })
 })

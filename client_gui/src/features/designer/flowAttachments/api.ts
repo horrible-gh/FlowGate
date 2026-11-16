@@ -1,7 +1,9 @@
-import { getRequest, postFormRequest, deleteRequest, downloadBlobRequest, postRequest } from '@shared/api'
+import { postFormRequest, deleteRequest, downloadBlobRequest, postRequest, getRequest } from '@shared/api'
+import type { Origin } from './words'
 export interface FlowFile {
   key: string; filename: string; display_name: string; doc_id: string; size: number
-  content_sha256: string; source_type: string; source_title: string
+  content_sha256: string; content_type?: string; uploaded_at?: string | null
+  source_type: string; source_title: string; origin?: Origin
 }
 const base = (flow: string) => `/api/v1/flows/${encodeURIComponent(flow)}/attachments`
 export async function readFiles(flow: string): Promise<FlowFile[]> {
@@ -26,5 +28,5 @@ export async function downloadFile(flow: string, file: FlowFile) {
   saveBlob((await downloadBlobRequest(`${base(flow)}/${encodeURIComponent(file.key)}`)).data, file.display_name)
 }
 export async function downloadZip(flow: string, keys: string[]) {
-  saveBlob((await postRequest<Blob>(`/api/v1/flows/${encodeURIComponent(flow)}/attachments-zip`, { keys }, { responseType: 'blob' })).data, 'attachments.zip')
+  saveBlob((await postRequest<Blob>(`/api/v1/flows/${encodeURIComponent(flow)}/attachments-zip`, { keys }, { responseType: 'blob' })).data, `${flow}_attachments.zip`)
 }

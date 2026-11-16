@@ -95,6 +95,16 @@ def test_upload_collision_overwrite_keep_both_and_stale_delete(env):
     flow.remove(GROUP, item["key"], ADMIN_USER, item["content_sha256"])
     assert len(flow.listing(GROUP, ADMIN_USER)["attachments"]) == 1
 
+def test_listing_tags_each_file_with_its_source(env):
+    """The window's source tag: an AI request a person approved, or a file uploaded in the window."""
+    approve(make_request(b"ai", name="from-ai.txt"))
+    flow.upload(GROUP, part(b"mine", "mine.txt"), ADMIN_USER)
+    tags = {i["display_name"]: i["origin"] for i in flow.listing(GROUP, ADMIN_USER)["attachments"]}
+    assert tags == {"from-ai.txt": "ai", "mine.txt": "upload"}
+    assert flow.origin({"doc_id": "other", "filename": "x", "source_type": "CH"}, DOC, set()) == "chat"
+    assert flow.origin({"doc_id": "other", "filename": "x", "source_type": "B"}, DOC, set()) == "bug"
+    assert flow.origin({"doc_id": "other", "filename": "x", "source_type": "T"}, DOC, set()) == "card"
+
 def test_permissions_and_cross_flow_key_are_enforced(env):
     flow.upload(GROUP, part(), ADMIN_USER)
     assert len(flow.listing(GROUP, VIEWER_USER)["attachments"]) == 1

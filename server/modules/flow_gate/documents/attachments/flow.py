@@ -91,11 +91,35 @@ def pending_requests(flow_id, user):
     return {"requests": [requests.public(r) for r in data]}
 
 
+_ORIGIN_BY_TYPE = {"B": "bug", "R": "requirement", "CH": "chat"}
+
+
+def approved_names(flow_id):
+    """(doc_id, filename) of every file an AI request put into this Flow after a person approved it."""
+    data = get_store()._fetch_all(
+        "SELECT final_doc_id, final_filename FROM attachment_upload_requests "
+        "WHERE (target_flow_id = ? OR group_id = ?) AND status = 'approved' AND final_filename IS NOT NULL",
+        [flow_id, flow_id])
+    return {(r["final_doc_id"], r["final_filename"]) for r in data}
+
+
+def origin(row, owner_doc_id, approved):
+    """The source tag of the window: AI approval, a direct upload of this window (it stores in the
+    Flow's own document), or the kind of document a legacy card/chat attachment lives on."""
+    if (row["doc_id"], row["filename"]) in approved:
+        return "ai"
+    if row["doc_id"] == owner_doc_id:
+        return "upload"
+    return _ORIGIN_BY_TYPE.get(row.get("source_type") or "", "card")
+
+
 def listing(flow_id, user):
     owner = context(flow_id, user)
+    approved = approved_names(flow_id)
     return {"flow_id": flow_id, "project_id": owner["project_id"], "attachments": [
         {**service._attachment_object(r), "key": r["key"], "display_name": r["display_name"],
-         "source_type": r["source_type"], "source_title": r["source_title"]} for r in rows(flow_id)]}
+         "source_type": r["source_type"], "source_title": r["source_title"],
+         "origin": origin(r, owner["doc_id"], approved)} for r in rows(flow_id)]}
 
 
 def download(flow_id, attachment_key, user):

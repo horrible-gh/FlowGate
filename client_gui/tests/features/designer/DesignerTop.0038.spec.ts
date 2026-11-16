@@ -415,7 +415,8 @@ describe('Designer top band — Toolbar', () => {
     const w = await mountShell()
     // flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons. flowgate.v02.0059 T#1:
     // [선택] (multi-selection toggle) is back next to 정렬 / 배치 ▾.
-    expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대', '아카이브'])
+    // flowgate.v02gui.0030: 첨부파일 (the Flow attachment window) closes the band.
+    expect(toolTexts(w)).toEqual(['실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대', '아카이브', '첨부파일'])
     expect(get(w, 'designer-toolbar').text()).not.toMatch(/노드 추가|연결/)
     // flowgate.v02.0059 0017-T: the zoom is one control showing the current zoom.
     expect((get(w, 'designer-tool-zoom').element as HTMLSelectElement).selectedOptions[0]?.text).toBe('100%')
@@ -799,7 +800,7 @@ describe('T-c archive toolbar', () => {
     const density = wrapper.get('[data-test="designer-tool-density"]').element
     expect(density.parentElement!.nextElementSibling).toBe(button.element.parentElement)
     expect(wrapper.findAll('button.designer-tool').map((b) => b.text())).toEqual([
-      '실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대', '아카이브',
+      '실행 취소', '다시 실행', '선택', '정렬 / 배치 ▾', '검증', '다음 단계', '전체 실행', '화면 맞춤', '축소', '확대', '아카이브', '첨부파일',
     ])
     expect(wrapper.findAll('[data-test="designer-tool-run"]')).toHaveLength(2)
     await button.trigger('click')

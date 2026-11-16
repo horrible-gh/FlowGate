@@ -1,177 +1,435 @@
 <template>
-  <ModelessShell ref="shell" v-model:minimized="minimized" :open="true" :initial-x="60 + position * 36" :initial-y="160 + position * 28"
-    :initial-width="680" :initial-height="430" :min-width="400" :min-height="260" :close-on-escape="false" @close="close">
-    <template #header><span>{{ w.title }} <small class="flow-title">· {{ title }}</small></span></template>
-    <template #actions><button :title="w.align" :aria-label="w.align" @mousedown.stop @click="emit('arrange')">▥</button></template>
-    <section class="flow-files" tabindex="0" :class="{ dragging }" @keydown="keyDown"
-      @dragover.prevent.stop="dragging = true" @dragleave.prevent="dragging = false" @drop.prevent.stop="drop">
-      <div class="file-tools">
-        <input v-model="search" type="search" :placeholder="w.search" :aria-label="w.search" />
-        <button :disabled="readOnly || uploading" @click="input?.click()">＋ {{ w.add }}</button>
-        <button :title="w.refresh" :aria-label="w.refresh" @click="reload">↻</button>
+  <Teleport to="body">
+    <section ref="root" class="fa-window" :class="{ focused, 'not-current': !current }" :style="placeStyle"
+      tabindex="-1" role="dialog" :aria-label="`${w.title} · ${title}`" data-test="flow-attachment-window" :data-flow-id="flowId"
+      @pointerdown="emit('focus')" @keydown="keyDown">
+      <header class="fa-head" @pointerdown="startDrag">
+        <span class="fa-head-square"><FaIcon name="clip" /></span>
+        <span class="fa-title">{{ w.title }}</span>
+        <span class="fa-flow" :title="title">{{ title }}</span>
+        <span class="fa-spacer" />
+        <button type="button" class="fa-close" :title="w.close" :aria-label="w.close" data-test="flow-attachment-close"
+          @pointerdown.stop @click="close"><FaIcon name="close" :size="13" /></button>
+      </header>
+
+      <div class="fa-tools">
+        <label class="fa-search"><FaIcon name="search" :size="13" />
+          <input v-model="search" :placeholder="w.search" :aria-label="w.search" autocomplete="off" data-test="flow-attachment-search" />
+        </label>
+        <button type="button" class="fa-add" :disabled="readOnly" data-test="flow-attachment-add" @click="input?.click()">
+          <FaIcon name="plus" :size="13" />{{ w.add }}
+        </button>
         <input ref="input" type="file" multiple hidden @change="pick" />
       </div>
-      <div class="selection-tools">
-        <label><input type="checkbox" :checked="allSelected" :disabled="!selectable.length" @change="selectAll" /> {{ w.all }}</label>
-        <span>{{ selected.size }} / {{ files.length }}</span>
-        <button :disabled="!selected.size" @click="zip">ZIP ↓</button>
-        <button v-if="pending.size" class="icon undo" :title="w.undo" :aria-label="w.undo" @click="queue.clear()">↶<sup>{{ pending.size }}</sup></button>
-        <button v-else class="icon" :title="w.remove" :aria-label="w.remove" :disabled="readOnly || !selected.size" @click="stageSelected"><TrashIcon /></button>
-      </div>
-      <p v-if="error" class="error" role="alert">{{ error }}</p>
-      <div v-if="collision" class="collision">
-        <span>{{ collision.file.name }} · {{ w.conflict }}</span>
-        <button @click="resolveCollision('cancel')">{{ w.cancel }}</button>
-        <button @click="resolveCollision('keep_both')">{{ w.keep }}</button>
-        <button @click="resolveCollision('overwrite')">{{ w.overwrite }}</button>
-      </div>
-      <div class="file-list">
-        <AttachmentRequestItem v-for="request in requests" :key="request.id" :request="request" :disabled="readOnly" @decided="reload" />
-        <div v-for="file in visible" :key="file.key" class="file-row" :class="{ pending: pending.has(file.key) }">
-          <input type="checkbox" :aria-label="file.display_name" :checked="selected.has(file.key)" :disabled="pending.has(file.key) || deleting.has(file.key)" @change="toggle(file.key)" />
-          <span class="filename" :title="file.display_name">{{ file.display_name }}</span>
-          <span class="source" :title="file.source_title">{{ file.source_type }}</span>
-          <span class="size">{{ size(file.size) }}</span>
-          <button class="icon" :title="w.download" :aria-label="w.download" @click="download(file)">↓</button>
-          <button v-if="pending.has(file.key)" class="icon undo" :title="w.undo" :aria-label="w.undo" @click="queue.undo(file.key)">
-            ↶<svg class="countdown" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" /></svg>
+      <div class="fa-count"><b data-test="flow-attachment-count">{{ w.count(live.length) }}</b></div>
+
+      <div class="fa-selection">
+        <label class="fa-select-all">
+          <input type="checkbox" class="fa-box" :checked="allSelected" :indeterminate="someSelected" :disabled="!live.length"
+            :aria-label="w.allLabel" data-test="flow-attachment-select-all" @change="selectAll" />{{ w.all }}
+        </label>
+        <span class="fa-selected">{{ w.selected(selected.size) }}</span>
+        <div class="fa-selection-actions">
+          <button type="button" :disabled="!selected.size || zipping" :title="w.zipTitle" data-test="flow-attachment-zip" @click="zip">
+            {{ zipping ? w.preparing : w.zip }}
           </button>
-          <button v-else class="icon" :title="w.remove" :aria-label="w.remove" :disabled="readOnly || deleting.has(file.key)" @click="stage([file])"><TrashIcon /></button>
+          <button v-if="bulk && !selected.size" type="button" class="fa-icon-btn undo" :title="w.undoMany(bulk.items.length)"
+            :aria-label="w.undoMany(bulk.items.length)" data-test="flow-attachment-bulk-undo" @click="undoBulk">
+            <svg class="fa-ring" viewBox="0 0 30 28" preserveAspectRatio="none" aria-hidden="true">
+              <rect x="1" y="1" width="28" height="26" rx="6" pathLength="110" :style="ringDelay(bulk.start)" />
+            </svg>
+            <FaIcon name="undo" :size="13" /><span class="fa-undo-badge">{{ bulk.items.length }}</span>
+          </button>
+          <button v-else type="button" class="fa-icon-btn delete" :disabled="readOnly || !selected.size" :title="w.removeSelected"
+            :aria-label="w.removeSelected" data-test="flow-attachment-bulk-delete" @click="removeSelected">
+            <FaIcon name="trash" :size="13" />
+          </button>
         </div>
-        <p v-if="!visible.length" class="empty">{{ loading ? w.loading : w.empty }}</p>
       </div>
-      <div v-if="dragging" class="drop-hint">{{ w.drop }}</div>
+
+      <p v-if="error" class="fa-error" role="alert">{{ error }}</p>
+
+      <div class="fa-list" data-test="flow-attachment-list">
+        <AttachmentRequestItem v-for="request in requests" :key="request.id" :request="request" :disabled="readOnly" @decided="reload" />
+        <div v-for="file in visible" :key="file.key" class="fa-row" data-test="flow-attachment-row" :data-key="file.key"
+          :class="{ selected: selected.has(file.key), gone: isGone(file) }">
+          <label class="fa-row-select">
+            <input type="checkbox" class="fa-box" :checked="selected.has(file.key)" :disabled="isGone(file)"
+              :aria-label="w.pick(file.display_name)" @change="toggle(file)" />
+          </label>
+          <span class="fa-glyph" :class="isImage(file) ? 'image' : 'text'"><FaIcon :name="isImage(file) ? 'image' : 'file'" /></span>
+          <div class="fa-meta" @click="toggle(file)">
+            <div class="fa-name" :title="file.display_name">{{ file.display_name }}</div>
+            <div class="fa-source"><span class="fa-tag" :title="file.source_title">{{ originLabel(file) }}</span><span>{{ when(file.uploaded_at) }}</span></div>
+          </div>
+          <span class="fa-size">{{ humanSize(file.size) }}</span>
+          <div class="fa-actions">
+            <button type="button" class="fa-action" :title="w.download" :aria-label="w.download" data-test="flow-attachment-download"
+              :disabled="isGone(file)" @click="download(file)"><FaIcon name="download" :size="13" /></button>
+            <button v-if="isGone(file)" type="button" class="fa-action undo" :title="w.undo" :aria-label="w.undo" data-test="flow-attachment-undo"
+              @click="undoItem(file.key)">
+              <svg class="fa-ring" viewBox="0 0 30 28" preserveAspectRatio="none" aria-hidden="true">
+                <rect x="1" y="1" width="28" height="26" rx="6" pathLength="110" :style="ringDelay(queue.pending(file.key)?.start)" />
+              </svg>
+              <FaIcon name="undo" :size="13" />
+            </button>
+            <button v-else type="button" class="fa-action del" :title="w.remove" :aria-label="w.remove" data-test="flow-attachment-delete"
+              :disabled="readOnly" @click="remove([file])"><FaIcon name="trash" :size="13" /></button>
+          </div>
+        </div>
+        <div v-if="!visible.length && !requests.length" class="fa-empty">
+          <FaIcon name="folder" :size="28" /><strong>{{ loading && !loaded ? w.loading : search ? w.noResult : w.empty }}</strong>
+        </div>
+      </div>
+
+      <div v-if="collision" class="fa-conflict" data-test="flow-attachment-conflict">
+        <div class="fa-conflict-card">
+          <h3>{{ w.conflictTitle }}</h3>
+          <p :title="title">{{ collision.file.name }}</p>
+          <div class="fa-conflict-actions">
+            <button type="button" data-conflict="cancel" @click="resolveCollision('cancel')">{{ w.cancel }}</button>
+            <button type="button" data-conflict="keep_both" @click="resolveCollision('keep_both')">{{ w.keep }}</button>
+            <button type="button" data-conflict="overwrite" class="replace" @click="resolveCollision('overwrite')">{{ w.overwrite }}</button>
+          </div>
+        </div>
+      </div>
     </section>
-  </ModelessShell>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onBeforeUnmount, ref, watch } from 'vue'
+// flowgate.v02gui.0030 — one floating attachment window per Flow, drawn after the final mockup
+// (mirageglass rph76zwu): header with the Flow chip, search + 파일 추가, count, selection bar
+// (ZIP / 🗑 or the numbered ↶), rows with a type tile, source tag and time, and an in-window name conflict card.
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import ModelessShell from '@/components/ui/ModelessShell.vue'
 import { useInspectorEvents } from '../inspector/useInspectorResource'
 import { readFiles, uploadFile, deleteFile, downloadFile, downloadZip, type FlowFile } from './api'
-import { createUndoQueue } from './undo'
-import { words } from './words'
+import { createUndoQueue, UNDO_MS } from './undo'
+import { wordsFor } from './words'
+import { FaIcon } from './icons'
 import AttachmentRequestItem from '@/features/attachmentRequests/AttachmentRequestItem.vue'
 import { toAttachmentRequest, type AttachmentRequest } from '@/features/document/api/attachmentRequests'
 import { getRequest } from '@shared/api'
-const props = defineProps<{ flowId: string; projectId: string; title: string; position: number; readOnly: boolean }>()
-const emit = defineEmits<{ close: []; arrange: [] }>()
-const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
-const minimized = ref(false)
-function reveal() { minimized.value = false; shell.value?.bringToFront() }
-function arrange(rect: { x: number; y: number; width: number; height: number }) { reveal(); shell.value?.setGeometry(rect) }
+
+const props = defineProps<{
+  flowId: string; projectId: string; title: string; position: number; readOnly: boolean
+  current: boolean; focused: boolean; zIndex: number
+}>()
+const emit = defineEmits<{ close: []; focus: [] }>()
 const { locale } = useI18n()
-const w = computed(() => words[locale.value as keyof typeof words] ?? words.en)
-const TrashIcon = defineComponent({ setup: () => () => h('svg', { viewBox: '0 0 24 24', width: 16, height: 16, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6, 'aria-hidden': true }, [h('path', { d: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7' })]) })
-const files = ref<FlowFile[]>([]), selected = ref(new Set<string>()), deleting = ref(new Set<string>())
-const search = ref(''), error = ref(''), loading = ref(false), uploading = ref(false), dragging = ref(false)
-const input = ref<HTMLInputElement | null>(null)
+const w = computed(() => wordsFor(locale.value))
+
+/* ── place: dragged by the header, resized by the corner (CSS resize) ── */
+const root = ref<HTMLElement | null>(null)
+const WIDTH = 560, HEIGHT = 455
+const place = reactive({ x: 0, y: 0 })
+const placeStyle = computed(() => ({ left: `${place.x}px`, top: `${place.y}px`, zIndex: props.zIndex }))
+function initialPlace() {
+  const x = Math.max(245, Math.round(innerWidth * 0.28)) + props.position * 185
+  const y = Math.max(140, Math.round(innerHeight * 0.21)) + props.position * 60
+  place.x = Math.min(x, Math.max(10, innerWidth - WIDTH - 15))
+  place.y = Math.min(y, Math.max(8, innerHeight - HEIGHT - 15))
+}
+initialPlace()
+onMounted(() => {
+  const el = root.value
+  if (!el) return
+  el.style.width = `${Math.min(WIDTH, innerWidth - 25)}px`
+  el.style.height = `${Math.min(HEIGHT, innerHeight - 25)}px`
+})
+let drag: { sx: number; sy: number; x: number; y: number } | null = null
+function startDrag(event: PointerEvent) {
+  if ((event.target as Element).closest('button')) return
+  drag = { sx: event.clientX, sy: event.clientY, x: place.x, y: place.y }
+  document.addEventListener('pointermove', moveDrag)
+  document.addEventListener('pointerup', endDrag)
+}
+function moveDrag(event: PointerEvent) {
+  if (!drag || !root.value) return
+  place.x = Math.max(0, Math.min(innerWidth - root.value.offsetWidth, drag.x + event.clientX - drag.sx))
+  place.y = Math.max(0, Math.min(innerHeight - 60, drag.y + event.clientY - drag.sy))
+}
+function endDrag() {
+  drag = null
+  document.removeEventListener('pointermove', moveDrag)
+  document.removeEventListener('pointerup', endDrag)
+}
+function keepInView() {
+  if (!root.value) return
+  place.x = Math.min(place.x, Math.max(0, innerWidth - root.value.offsetWidth))
+  place.y = Math.min(place.y, Math.max(0, innerHeight - 65))
+}
+function reveal() { root.value?.focus({ preventScroll: true }) }
+function setGeometry(rect: { x: number; y: number; width: number; height: number }) {
+  place.x = rect.x; place.y = rect.y
+  if (root.value) { root.value.style.width = `${rect.width}px`; root.value.style.height = `${rect.height}px` }
+}
+
+/* ── files ── */
+const files = ref<FlowFile[]>([])
 const requests = ref<AttachmentRequest[]>([])
+const selected = ref(new Set<string>())
+const deleting = ref(new Set<string>())
+const search = ref(''), error = ref(''), loading = ref(false), loaded = ref(false), zipping = ref(false)
+const input = ref<HTMLInputElement | null>(null)
 const tick = ref(0)
-const pending = computed(() => { void tick.value; return new Map(queue.pending) })
 let alive = true, readSequence = 0
-const message = (e: unknown) => {
-  const raw = e as { response?: { data?: { error?: { message?: string } } }; message?: string }
+const failure = (e: unknown) => {
+  const raw = e as { response?: { data?: { error?: { message?: string } } } }
   return raw.response?.data?.error?.message || w.value.failed
 }
 async function reload() {
   const seq = ++readSequence; loading.value = true
   try {
-    const [data, approvals] = await Promise.all([readFiles(props.flowId), getRequest<{ requests: unknown[] }>(`/api/v1/flows/${encodeURIComponent(props.flowId)}/attachment-requests`)])
-    if (alive && seq === readSequence) {
-      files.value = data
-      requests.value = approvals.data.requests.flatMap(r => toAttachmentRequest(r) ?? [])
-      selected.value = new Set([...selected.value].filter(key => data.some(f => f.key === key)))
+    const [data, approvals] = await Promise.all([
+      readFiles(props.flowId),
+      getRequest<{ requests: unknown[] }>(`/api/v1/flows/${encodeURIComponent(props.flowId)}/attachment-requests`),
+    ])
+    if (!alive || seq !== readSequence) return
+    files.value = data
+    requests.value = (approvals.data.requests ?? []).flatMap(r => toAttachmentRequest(r) ?? [])
+    selected.value = new Set([...selected.value].filter(key => data.some(f => f.key === key)))
+    loaded.value = true
+  } catch (e) {
+    if (alive && seq === readSequence) error.value = failure(e)
+  } finally {
+    if (alive && seq === readSequence) loading.value = false
+  }
+}
+
+const queue = createUndoQueue<FlowFile>(async items => {
+  for (const file of items) deleting.value.add(file.key)
+  tick.value++
+  for (const file of items) {
+    try {
+      await deleteFile(props.flowId, file)
+      files.value = files.value.filter(f => f.key !== file.key)
+    } catch (e) {
+      error.value = failure(e)
+    } finally {
+      deleting.value.delete(file.key); tick.value++
     }
   }
-  catch (e) { if (alive && seq === readSequence) error.value = message(e) }
-  finally { if (alive && seq === readSequence) loading.value = false }
-}
-const queue = createUndoQueue<FlowFile>(async file => {
-  if (props.readOnly) return
-  deleting.value.add(file.key)
-  try { await deleteFile(props.flowId, file); files.value = files.value.filter(f => f.key !== file.key); selected.value.delete(file.key) }
-  catch (e) { error.value = message(e); await reload() }
-  finally { deleting.value.delete(file.key) }
+  if (error.value) await reload()
 }, () => tick.value++)
-const visible = computed(() => files.value.filter(f => f.display_name.toLocaleLowerCase().includes(search.value.toLocaleLowerCase())))
-const selectable = computed(() => visible.value.filter(f => !pending.value.has(f.key) && !deleting.value.has(f.key)))
-const allSelected = computed(() => selectable.value.length > 0 && selectable.value.every(f => selected.value.has(f.key)))
-function selectAll() { selected.value = allSelected.value ? new Set() : new Set(selectable.value.map(f => f.key)) }
-function toggle(key: string) { if (selected.value.has(key)) selected.value.delete(key); else selected.value.add(key) }
-function stage(items: FlowFile[]) { if (!props.readOnly) queue.stage(items.filter(f => !deleting.value.has(f.key))) }
-function stageSelected() { stage(files.value.filter(f => selected.value.has(f.key))); selected.value.clear() }
-function keyDown(event: KeyboardEvent) {
-  const target = event.target as HTMLElement
-  if (target.matches('input, textarea, [contenteditable="true"]')) return
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && pending.value.size) { event.preventDefault(); event.stopPropagation(); queue.undo() }
+const isGone = (file: FlowFile) => { void tick.value; return !!queue.pending(file.key) }
+// A file whose five seconds ran out leaves the list while its delete is on the way; a failure brings it back.
+const shown = computed(() => { void tick.value; return files.value.filter(f => !deleting.value.has(f.key)) })
+const live = computed(() => shown.value.filter(f => !isGone(f)))
+const visible = computed(() => {
+  const q = search.value.trim().toLocaleLowerCase()
+  if (!q) return shown.value
+  return shown.value.filter(f => f.display_name.toLocaleLowerCase().includes(q) || originLabel(f).toLocaleLowerCase().includes(q))
+})
+const bulk = computed(() => { void tick.value; return queue.bulk() })
+const allSelected = computed(() => live.value.length > 0 && live.value.every(f => selected.value.has(f.key)))
+const someSelected = computed(() => selected.value.size > 0 && !allSelected.value)
+function selectAll() { selected.value = allSelected.value ? new Set() : new Set(live.value.map(f => f.key)) }
+function toggle(file: FlowFile) {
+  if (isGone(file)) return
+  const next = new Set(selected.value)
+  if (next.has(file.key)) next.delete(file.key); else next.add(file.key)
+  selected.value = next
 }
-async function download(file: FlowFile) { try { await downloadFile(props.flowId, file) } catch (e) { error.value = message(e) } }
-async function zip() { try { await downloadZip(props.flowId, [...selected.value]) } catch (e) { error.value = message(e) } }
+function remove(items: FlowFile[]) {
+  if (props.readOnly) return
+  const next = new Set(selected.value)
+  for (const f of items) next.delete(f.key)
+  selected.value = next
+  queue.stage(items)
+  keepFocus()
+}
+// The pressed 🗑 / ↶ is replaced by the other icon; focus stays in the window so Ctrl+Z still reaches it.
+function keepFocus() { root.value?.focus({ preventScroll: true }) }
+function undoItem(key: string) { queue.undoItem(key); keepFocus() }
+function removeSelected() { remove(live.value.filter(f => selected.value.has(f.key))) }
+function undoBulk() { queue.undoGroup(queue.bulk()); keepFocus() }
+function ringDelay(start: number | undefined) {
+  return { animationDelay: `-${Math.min(UNDO_MS, Math.max(0, Date.now() - (start ?? Date.now())))}ms` }
+}
+function keyDown(event: KeyboardEvent) {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z' || event.shiftKey) return
+  if ((event.target as HTMLElement).closest('input:not([type=checkbox]), textarea, [contenteditable="true"]')) return
+  if (queue.undoLast()) { event.preventDefault(); event.stopPropagation() }
+}
+/** Ctrl+Z from the host while this window is the focused one. */
+function undoLast() { return queue.undoLast() }
+
+async function download(file: FlowFile) { try { await downloadFile(props.flowId, file) } catch (e) { error.value = failure(e) } }
+async function zip() {
+  const keys = live.value.filter(f => selected.value.has(f.key)).map(f => f.key)
+  if (!keys.length) return
+  zipping.value = true
+  try { await downloadZip(props.flowId, keys) } catch (e) { error.value = failure(e) } finally { zipping.value = false }
+}
+
+/* ── upload: one by one, a name conflict asks in the window ── */
 const collision = ref<{ file: File; key: string; content_sha256: string } | null>(null)
 let answer: ((choice: string) => void) | null = null
 function resolveCollision(choice: string) { answer?.(choice); answer = null; collision.value = null }
 const uploads: File[] = []
+let uploading = false
 async function add(incoming: File[]) {
   if (props.readOnly) return
   uploads.push(...incoming)
-  if (uploading.value) return
-  uploading.value = true; error.value = ''
+  if (uploading) return
+  uploading = true; error.value = ''
   try {
     while (uploads.length && alive && !props.readOnly) {
       const file = uploads.shift()!
-      try { await uploadFile(props.flowId, file) }
-      catch (e) {
+      try {
+        await uploadFile(props.flowId, file)
+      } catch (e) {
         const raw = e as { response?: { data?: { error?: { code?: string; details?: { key: string; content_sha256: string } } } } }
         const conflict = raw.response?.data?.error
-        if (conflict?.code !== 'ATTACHMENT_NAME_CONFLICT' || !conflict.details) { error.value = message(e); continue }
-        const existing = conflict.details
+        if (conflict?.code !== 'ATTACHMENT_NAME_CONFLICT' || !conflict.details) { error.value = failure(e); continue }
+        const existing = { key: conflict.details.key, content_sha256: conflict.details.content_sha256 }
         collision.value = { file, ...existing }
+        emit('focus')
         const choice = await new Promise<string>(resolve => { answer = resolve })
         if (choice !== 'cancel' && alive && !props.readOnly) {
-          try { await uploadFile(props.flowId, file, choice, existing) } catch (failure) { error.value = message(failure) }
+          try { await uploadFile(props.flowId, file, choice, choice === 'overwrite' ? existing : undefined) } catch (failed) { error.value = failure(failed) }
         }
       }
       await reload()
     }
-  } finally { uploading.value = false }
+  } finally { uploading = false }
 }
 function pick(event: Event) { const el = event.target as HTMLInputElement; void add(Array.from(el.files ?? [])); el.value = '' }
-function drop(event: DragEvent) { dragging.value = false; void add(Array.from(event.dataTransfer?.files ?? [])) }
 function close() { queue.clear(); resolveCollision('cancel'); emit('close') }
-function size(bytes: number) { return bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB` }
+
+/* ── row text ── */
+const isImage = (file: FlowFile) => (file.content_type ?? '').startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.display_name)
+function originLabel(file: FlowFile) {
+  const known = w.value.origin
+  return known[file.origin ?? 'card'] ?? known.card
+}
+function humanSize(size: number) {
+  return size >= 1048576 ? `${(size / 1048576).toFixed(1)} MB` : size >= 1024 ? `${Math.round(size / 1024)} KB` : `${size} B`
+}
+function when(value: string | null | undefined) {
+  if (!value) return ''
+  const at = new Date(value)
+  if (Number.isNaN(at.getTime())) return ''
+  const now = new Date()
+  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const diff = Math.round((day(now) - day(at)) / 86400000)
+  if (diff === 0) return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  if (diff === 1) return w.value.yesterday
+  return `${at.getMonth() + 1}/${at.getDate()}`
+}
+
 watch(() => props.readOnly, locked => { if (locked) { queue.clear(); resolveCollision('cancel'); uploads.length = 0 } })
 useInspectorEvents(() => ({ projectId: props.projectId, flowId: props.flowId, docId: null }), {
   events: ['attachment_request_updated', 'flow_attachments_updated'], matches: (frame, scope) => frame.groupId === scope.flowId, changed: () => { void reload() },
 })
 void reload()
-onBeforeUnmount(() => { alive = false; queue.clear(); resolveCollision('cancel'); uploads.length = 0 })
-defineExpose({ add, reload, reveal, arrange })
+addEventListener('resize', keepInView)
+onBeforeUnmount(() => {
+  alive = false; queue.clear(); resolveCollision('cancel'); uploads.length = 0; endDrag()
+  removeEventListener('resize', keepInView)
+})
+defineExpose({ add, reload, reveal, setGeometry, undoLast })
 </script>
 
 <style scoped>
-.flow-title { color: var(--fg2-muted); font-weight: 400; }
-.flow-files { position: relative; display: flex; flex-direction: column; height: 100%; gap: 10px; color: var(--fg2-text); font-size: 12px; outline: none; }
-.file-tools, .selection-tools { display: flex; align-items: center; gap: 8px; }
-.file-tools input[type=search] { flex: 1; min-width: 80px; }
-button, input[type=search] { color: var(--fg2-text); background: var(--fg2-panel); border: 1px solid var(--fg2-line-strong); border-radius: 5px; padding: 6px 9px; }
-button { cursor: pointer; } button:disabled { opacity: .4; cursor: default; }
-button:hover:not(:disabled) { background: #173551; } button:focus-visible { outline: 2px solid var(--fg2-focus); }
-.selection-tools label { display: flex; gap: 5px; align-items: center; } .selection-tools > span { flex: 1; color: var(--fg2-muted); }
-.file-list { overflow: auto; flex: 1; min-height: 0; border-top: 1px solid var(--fg2-line); }
-.file-row { display: flex; align-items: center; gap: 8px; min-height: 43px; border-bottom: 1px solid var(--fg2-line); }
-.filename { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.source { font-size: 10px; border: 1px solid var(--fg2-line-strong); border-radius: 4px; padding: 2px 5px; color: var(--fg2-muted); }
-.size { color: var(--fg2-muted); width: 60px; text-align: right; font-variant-numeric: tabular-nums; }
-.icon { position: relative; width: 32px; height: 32px; padding: 0; display: grid; place-items: center; flex-shrink: 0; font-size: 20px; }
-.pending .filename { text-decoration: line-through; opacity: .45; } .pending .source, .pending .size { opacity: .45; }
-.undo { color: #4bd9c7; } .undo sup { position: absolute; right: -3px; top: -5px; font-size: 10px; background: #174c54; border-radius: 8px; padding: 1px 4px; }
-.countdown { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
-.countdown circle { fill: none; stroke: currentColor; stroke-width: 2; stroke-dasharray: 88; animation: countdown 5s linear forwards; }
-@keyframes countdown { to { stroke-dashoffset: 88; } }
-.empty { text-align: center; padding: 40px; color: var(--fg2-muted); }
-.error { margin: 0; color: #ff9ca8; } .collision { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px; border: 1px solid #886d38; border-radius: 6px; } .collision span { width: 100%; }
-.drop-hint { position: absolute; inset: 0; display: grid; place-items: center; background: #103654e8; border: 2px dashed #61b9ff; pointer-events: none; }
+.fa-window { position: fixed; min-width: 430px; min-height: 310px; max-width: calc(100vw - 18px); max-height: calc(100vh - 12px);
+  display: flex; flex-direction: column; overflow: hidden; resize: both; box-sizing: border-box; outline: none;
+  border: 1px solid #4a88bf; border-radius: 9px; background: #0d2033; color: #d8e8f5; font-size: 12px;
+  box-shadow: 0 18px 58px rgba(0, 0, 0, .62), 0 0 0 1px rgba(12, 33, 49, .6); transition: box-shadow .18s; }
+.fa-window.focused { border-color: #66b6fc; box-shadow: 0 21px 65px rgba(0, 0, 0, .75), 0 0 0 1px #265a85; }
+.fa-window :deep(.fa-icon) { flex-shrink: 0; }
+.fa-window button { font: inherit; cursor: pointer; }
+.fa-window button:disabled { cursor: default; opacity: .45; }
+.fa-window button:focus-visible, .fa-window input:focus-visible { outline: 2px solid #66b6fc; outline-offset: 1px; }
+
+.fa-head { height: 45px; flex-shrink: 0; display: flex; align-items: center; gap: 9px; padding: 0 11px; user-select: none; cursor: grab;
+  background: linear-gradient(180deg, #18334e, #10273e); border-bottom: 1px solid #355876; }
+.fa-head:active { cursor: grabbing; }
+.fa-head-square { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 6px; background: #20639e; color: #dcf1ff; }
+.fa-title { font-size: 13px; font-weight: 750; color: #f0f7ff; white-space: nowrap; }
+.fa-flow { max-width: 195px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; padding: 3px 8px;
+  border: 1px solid #3980b9; border-radius: 13px; background: #163f63; color: #c5e9ff; }
+.not-current .fa-flow { border-color: #37566f; background: #1b3246; color: #b9d1e4; }
+.fa-spacer { flex: 1; }
+.fa-close { width: 27px; height: 25px; display: grid; place-items: center; padding: 0; border: 1px solid #345977; border-radius: 5px; background: #142e47; color: #bad7ed; }
+.fa-close:hover { background: #60313e; border-color: #aa5862; color: #fff; }
+
+.fa-tools { display: flex; align-items: center; gap: 7px; padding: 10px 12px 8px; flex-shrink: 0; }
+.fa-search { flex: 1; min-width: 80px; height: 31px; box-sizing: border-box; display: flex; align-items: center; gap: 7px; padding: 0 9px;
+  border: 1px solid #355471; border-radius: 5px; background: #0b1b2c; color: #6e91ad; }
+.fa-search input { width: 100%; min-width: 0; border: 0; outline: none; background: none; color: #deeffc; font: inherit; font-size: 11px; }
+.fa-search input::placeholder { color: #6686a2; }
+.fa-add { height: 31px; display: flex; align-items: center; gap: 6px; padding: 0 11px; white-space: nowrap; font-weight: 650;
+  border: 1px solid #3189e1; border-radius: 5px; background: linear-gradient(#287ad0, #1765bc); color: #fff; }
+.fa-add:hover:not(:disabled) { background: #328be4; }
+.fa-count { padding: 0 12px 8px; color: #7596b3; font-size: 10px; flex-shrink: 0; }
+.fa-count b { color: #bcdef3; }
+
+.fa-selection { height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; color: #c3def0;
+  background: #10263c; border-top: 1px solid #2b455f; border-bottom: 1px solid #304f69; }
+.fa-select-all { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; font-size: 11px; font-weight: 650; }
+.fa-box { width: 15px; height: 15px; margin: 0; flex: none; accent-color: #379cf5; cursor: pointer; }
+.fa-selected { font-size: 10px; color: #86a9c3; white-space: nowrap; }
+.fa-selection-actions { margin-left: auto; display: flex; align-items: center; gap: 5px; }
+.fa-selection-actions button { padding: 5px 8px; font-size: 10px; white-space: nowrap; border: 1px solid #386282; border-radius: 5px; background: #17354d; color: #c3dff3; }
+.fa-selection-actions button:not(:disabled):hover { border-color: #559cd3; background: #234a70; }
+.fa-selection-actions .fa-icon-btn { position: relative; width: 28px; height: 26px; padding: 0; display: grid; place-items: center; }
+.fa-selection-actions .delete:not(:disabled) { background: #3b2535; color: #ffbdc2; border-color: #754657; }
+.fa-selection-actions .delete:not(:disabled):hover { background: #5a3041; border-color: #ba6379; }
+
+.fa-error { margin: 0; padding: 6px 12px; font-size: 11px; color: #ffb3bc; background: #3a1f2b; border-bottom: 1px solid #6d3445; flex-shrink: 0; }
+
+.fa-list { position: relative; flex: 1; min-height: 0; overflow-y: auto; background: #0c1d30; }
+.fa-list::-webkit-scrollbar { width: 9px; }
+.fa-list::-webkit-scrollbar-track { background: #14283e; }
+.fa-list::-webkit-scrollbar-thumb { background: #3b6789; border: 2px solid #14283e; border-radius: 8px; }
+.fa-row { min-height: 61px; box-sizing: border-box; display: flex; align-items: center; gap: 11px; padding: 8px 12px; border-bottom: 1px solid #203a54; }
+.fa-row:hover { background: #153049; }
+.fa-row.selected { background: #143855; }
+.fa-row-select { display: flex; align-items: center; }
+.fa-glyph { flex: 0 0 33px; width: 33px; height: 33px; box-sizing: border-box; display: grid; place-items: center;
+  border: 1px solid #2b5273; border-radius: 7px; background: #18344f; color: #75b5e5; }
+.fa-glyph.image { color: #74d6d5; background: #123f4b; border-color: #286a72; }
+.fa-glyph.text { color: #b8a5ff; background: #292d55; border-color: #56548f; }
+.fa-meta { flex: 1; min-width: 0; cursor: pointer; }
+.fa-name { margin-bottom: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 650; color: #dbeaff; }
+.fa-source { display: flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 10px; color: #7698b3; }
+.fa-tag { padding: 2px 6px; border-radius: 3px; background: #1a3e58; color: #9dcae9; }
+.fa-size { min-width: 53px; text-align: right; font-size: 10px; color: #87a5be; }
+.fa-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 3px; }
+.fa-action { position: relative; width: 26px; height: 26px; padding: 0; display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: 5px; background: transparent; color: #a5c4d9; }
+.fa-action:hover:not(:disabled) { border-color: #477394; background: #203d57; color: #dff3ff; }
+.fa-action.del:hover:not(:disabled) { color: #ffbac0; background: #472837; border-color: #94505a; }
+
+.fa-row.gone, .fa-row.gone:hover { background: #0e1a27; }
+.fa-row.gone .fa-name { color: #5f7489; text-decoration: line-through; }
+.fa-row.gone .fa-glyph, .fa-row.gone .fa-source, .fa-row.gone .fa-size, .fa-row.gone .fa-row-select,
+.fa-row.gone [data-test="flow-attachment-download"] { opacity: .3; pointer-events: none; }
+.fa-window .undo, .fa-selection-actions .undo { position: relative; color: #5abaff; background: #0f2f4c; border-color: #1f3d58; opacity: 1; }
+.fa-window .undo:hover { background: #174a78; color: #fff; border-color: #1f3d58; }
+.fa-ring { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); pointer-events: none; overflow: visible; }
+.fa-ring rect { fill: none; stroke: #5abaff; stroke-width: 2; stroke-dasharray: 110; stroke-dashoffset: 0; animation: fa-ringdown 5000ms linear forwards; }
+@keyframes fa-ringdown { to { stroke-dashoffset: 110; } }
+.fa-undo-badge { position: absolute; top: -6px; right: -6px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box;
+  border-radius: 8px; background: #5abaff; color: #04121f; font-size: 9px; font-weight: 800; line-height: 14px; text-align: center; }
+
+.fa-empty { height: 100%; min-height: 120px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 9px; padding: 30px; text-align: center; color: #7596b4; }
+
+.fa-conflict { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(3, 15, 28, .8); }
+.fa-conflict-card { width: min(385px, 100%); box-sizing: border-box; padding: 17px; border: 1px solid #426c90; border-radius: 8px; background: #142c45; box-shadow: 0 16px 44px #0009; }
+.fa-conflict-card h3 { margin: 0 0 8px; font-size: 13px; color: #eaf6ff; }
+.fa-conflict-card p { margin: 0 0 16px; font-size: 11px; line-height: 1.55; color: #9db9d1; overflow-wrap: anywhere; }
+.fa-conflict-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.fa-conflict-actions button { padding: 7px 11px; border: 1px solid #426787; border-radius: 5px; background: #1a3c59; color: #dbeeff; }
+.fa-conflict-actions .replace { background: #206dbd; border-color: #3898ea; color: #fff; }
+
+@media (max-width: 650px) {
+  .fa-selection { gap: 5px; padding: 0 8px; }
+  .fa-row { padding: 7px 8px; gap: 7px; }
+  .fa-size { display: none; }
+}
 </style>

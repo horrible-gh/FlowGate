@@ -187,9 +187,11 @@
       </button>
     </div>
     <div class="designer-tool-group">
-      <button type="button" class="designer-tool" :disabled="disabled" data-test="flow-attachments-open" @click="emit('command', 'view.attachments')">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12l7-7a4 4 0 0 1 6 6L10 22a6 6 0 0 1-8-8L13 3M6 15l9-9" /></svg>
+      <button type="button" class="designer-tool designer-tool-attachment" :class="{ 'has-window': flowAttachmentUi.currentOpen }"
+        :disabled="disabled" :title="attachmentWords.title" data-test="flow-attachments-open" @click="emit('command', 'view.attachments')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.4 12.4 20a5.2 5.2 0 0 1-7.3-7.3l9-9A3.5 3.5 0 1 1 19 8.6l-9.2 9.2a1.8 1.8 0 0 1-2.5-2.5l8.3-8.3" /></svg>
         <span>{{ attachmentWords.title }}</span>
+        <i v-if="flowAttachmentUi.currentOpen" class="designer-tool-attachment-dot" aria-hidden="true" />
       </button>
     </div>
   </div>
@@ -199,6 +201,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { words } from '../flowAttachments/words'
+import { flowAttachmentUi } from '../flowAttachments/state'
 import {
   ALL_MENU_TARGETS,
   DESIGNER_LAYOUT_GROUPS,
@@ -498,6 +501,35 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
   height: 1px;
   margin: 5px 3px;
   background: #20364e;
+}
+
+/* flowgate.v02gui.0030: 첨부파일 (final mockup .tool-attachment) — blue clip; lit while the open Flow's window is open. */
+.designer-tool-attachment {
+  position: relative;
+  min-width: 70px;
+  margin-left: 5px;
+  color: #d8ebfa;
+}
+
+.designer-tool-attachment svg {
+  stroke: #58bcff;
+}
+
+.designer-tool-attachment.has-window,
+.designer-tool-attachment.has-window:hover:not(:disabled) {
+  border-color: #3979b2;
+  background: #153551;
+}
+
+.designer-tool-attachment-dot {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #39cfbd;
+  box-shadow: 0 0 0 2px #102239;
 }
 
 /* flowgate.v02.0059 T#1: [선택] ON stays lit until it is turned off. */
