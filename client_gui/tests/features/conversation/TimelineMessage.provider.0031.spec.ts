@@ -8,8 +8,8 @@ import menuSource from '@/features/conversation/TimelineMessageMenu.vue?raw'
 import type { ConversationTurn } from '@/features/conversation/types'
 
 // flowgate.v02gui.0031 B — the AI speaker's name is no longer cut by a fixed 110px cap: it shows in full while the
-// line has room and gives way (ellipsis) only when it does not. The title keeps the full name. The name also never
-// widens the bubble (0007-T §3): its slot has no width of its own and only takes the room the line has left.
+// line has room and gives way (ellipsis) only when it does not. The title keeps the full name. The bubble widens to
+// fit the name (up to its 92% max-width), so a short reply such as "ok" still shows the whole name.
 registerAppMessages(i18n)
 
 const LONG_NAMES = ['Claude Sonnet 5.5(AG,A2)', 'Codex GPT 6.1 Sol(AG)']
@@ -80,20 +80,20 @@ describe('AI speaker name badge (flowgate.v02gui.0031 B)', () => {
     expect(menu.find('[data-test="tl-more"]').exists()).toBe(true)
   })
 
-  it('puts the name badge in a slot that adds nothing to the bubble width (0007-T §3)', () => {
+  it('lets the name widen the bubble up to its max-width, so a short reply still shows the whole name', () => {
     const wrapper = mountMessage(aiTurn(LONG_NAMES[0]))
     const slot = wrapper.get('.tl-meta > .tl-provider-slot')
     expect(slot.find('[data-test="tl-provider"]').exists()).toBe(true)
-    // The slot has no size of its own (flex-basis 0, width 0), so the bubble's width does not depend on the name; it
-    // only grows into the room the line has left. Its negative margin cancels the one extra .tl-meta gap.
+    // The slot sizes to the name (flex-basis auto, no zero width), so the bubble's max-content includes the whole name;
+    // it shrinks (min-width 0) only once the bubble reaches its max-width.
     const rule = ruleOf(source, '.tl-provider-slot')
-    expect(rule).toMatch(/flex\s*:\s*1\s+1\s+0\s*;/)
-    expect(rule).toMatch(/(^|[\s;])width\s*:\s*0\s*;/)
+    expect(rule).toMatch(/flex\s*:\s*0\s+1\s+auto\s*;/)
+    expect(rule).not.toMatch(/(^|[\s;])width\s*:\s*0\s*;/)
+    expect(rule).not.toMatch(/margin-right\s*:\s*-/)
     expect(rule).toMatch(/min-width\s*:\s*0\s*;/)
     expect(rule).toMatch(/overflow\s*:\s*hidden/)
-    expect(rule).toMatch(/margin-right\s*:\s*-5px/)
-    expect(ruleOf(source, '.tl-meta')).toMatch(/gap\s*:\s*5px/)
-    expect(providerRule()).toMatch(/margin-right\s*:\s*5px/)
+    expect(ruleOf(source, '.tl-bubble')).toMatch(/max-width\s*:\s*92%/)
+    expect(ruleOf(source, '.tl-meta')).toMatch(/min-width\s*:\s*0/)
   })
 
   it('still shows no badge for the user and FlowGate turns', () => {
