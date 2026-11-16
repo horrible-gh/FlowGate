@@ -195,7 +195,7 @@ describe('a Custom card placed from the Palette [+] (flowgate.v02.0053 T#8)', ()
   it.each(PALETTE_CATEGORIES)('added to %s: documents · settings · Q&A · attachments as the 조사 card shows them', async (category) => {
     const research = await inspect(RESEARCH)
     const custom = await inspect(customCard(category))
-    expect(research.tabs).toEqual(['문서', 'Q&A', '첨부', '설정'])
+    expect(research.tabs).toEqual(['문서', '설정', 'Q&A', '첨부'])
     expect(research.lines).toEqual([
       ['지시서', '열기', '편집'],
       ['레포트', '열기', '편집'],

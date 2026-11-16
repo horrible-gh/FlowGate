@@ -73,7 +73,7 @@ flowgate.v02.0036에서 `designer/inspector/`에 Designer 중앙 하단 Inspecto
 헤더 줄 `InspectorHeader`, 탭 규칙 순수 모델 `inspectorTabs.ts`)을 추가하고 Bottom Dock Placeholder를
 `Inspector 7 : Minimap 3` 배치로 바꿨습니다(Minimap은 Placeholder 유지, 기본 높이 200 → 300px). 화면
 기준은 flowgate.v02.0035 v7 시안입니다. Node 미선택이면 한 줄 안내만, 선택하면 헤더(40px: 종류 아이콘 ·
-종류 · 제목 · 상태) + 탭(32px: `문서 · Q&A · 첨부 · 설정`) + Content 영역을 보입니다. 선택 Node는 Center
+종류 · 제목 · 상태) + 탭(32px: `문서 · 설정 · AI · Q&A · 첨부`) + Content 영역을 보입니다. 선택 Node는 Center
 세션의 파생값 `activeSelectedNode`로 받고, 선택 탭은 Node를 바꿔도 유지하며 `설정`이 없는 Node(`has-settings`
 false)에서는 `문서`로 돌아갑니다. 후속 기능은 헤더 `header-meta`/`header-actions` slot과 탭별 Content
 slot(`tab-documents`/`tab-qna`/`tab-attachments`/`tab-settings`, 선택 Node 전달)으로 주입하며, 채워지지 않은
