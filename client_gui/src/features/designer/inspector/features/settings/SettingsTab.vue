@@ -220,7 +220,8 @@ import { settingsRowPhase, type SettingsField, type SettingsOption } from './set
 import { useSharedCardSettings } from './useCardSettings'
 import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
 import type { AiRoleValue } from '@/features/document'
-import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, AI_REVIEW_COUNT_HIDDEN, cardRoleRows, instructionWritten } from './cardRolesModel'
+import { visibleReviewCountOptions } from '@shared/utils/reviewCountChoices'
+import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, cardRoleRows, instructionWritten } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
 const props = withDefaults(defineProps<{ target: InspectorTarget; panel?: 'settings' | 'ai' }>(), { panel: 'settings' })
@@ -606,8 +607,7 @@ function onChange(field: CardSettingsField, text: string) {
 function optionsOf(field: CardSettingsField) {
   const view = views.value[field]
   const counted = field === 'review_count' || field === 'instruction_review_count'
-  return view.options
-    .filter(option => !counted || !AI_REVIEW_COUNT_HIDDEN.includes(Number(option.value)) || option.value === view.value)
+  return (counted ? visibleReviewCountOptions(view.options, view.value) : view.options)
     .map(option => ({ value: option.value, label: labelOf(option) }))
 }
 

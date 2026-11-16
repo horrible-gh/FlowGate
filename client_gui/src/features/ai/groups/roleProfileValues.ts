@@ -11,6 +11,16 @@ export function profileValue(key: string): RoleProfileValue {
   if (key === 'inherit' || key === 'unset' || key === 'not_used') return { kind: key }
   throw new Error('Invalid role profile value')
 }
+// Review-count select keys: 'inherit' (type row) / 'unset' (common row) stand for a null value, `count:n` for a number.
+export function reviewCountKey(value: number | null, nullKey: 'inherit' | 'unset'): string {
+  return value === null ? nullKey : `count:${value}`
+}
+export function reviewCountValue(key: string): number | null {
+  if (key === 'inherit' || key === 'unset') return null
+  const count = key.startsWith('count:') ? Number(key.slice(6)) : NaN
+  if (!Number.isInteger(count)) throw new Error('Invalid review count')
+  return count
+}
 // Shared across component instances: leaving and returning cannot overlap writes to a group.
 const requests = new Map<string, Promise<unknown>>()
 export function inProfileQueue<T>(groupId: string, action: () => Promise<T>): Promise<T> {

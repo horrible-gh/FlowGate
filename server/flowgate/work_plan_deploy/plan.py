@@ -88,7 +88,8 @@ def initial_settings(target: Target) -> list[tuple[str, Any]]:
     """``(field, value)`` the new card's settings start with (D0006 §3.4); unset WP values are left out.
 
     instruction AI: a pair's instruction step AI (N / T); run AI: a pair's result step AI, the design / test step's
-    AI; review AI and review count: of that same run step. An explicit instruction_mode maps to the
+    AI; review AI and review count: of that same run step (an integer review count is kept, 0 included; a step with
+    none leaves the card to the AI role group's creation default). An explicit instruction_mode maps to the
     existing card execution setting; legacy plans retain their defaults."""
     out: list[tuple[str, Any]] = []
     mode = instruction_mode(target)
@@ -104,7 +105,9 @@ def initial_settings(target: Target) -> list[tuple[str, Any]]:
     if run.get("reviewer_provider_id"):
         out.append(("review_ai", run["reviewer_provider_id"]))
     count = run.get("review_count")
-    if isinstance(count, int) and not isinstance(count, bool) and count != 0:
+    # flowgate.v02test.0027: an explicit 0 ("no review") is stored too, so the AI role group's default review count
+    # (copied at card creation only when the card has no stored count) cannot replace the plan's choice.
+    if isinstance(count, int) and not isinstance(count, bool):
         out.append(("review_count", count))
     instruction = target.instruction_step or {}
     if instruction.get("pair_role") == "instruction":
