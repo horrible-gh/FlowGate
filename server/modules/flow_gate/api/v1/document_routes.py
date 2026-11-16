@@ -297,6 +297,28 @@ def _attachment_briefs(doc_id: str) -> list:
     ]
 
 
+@router.get("/flow/{flow_id}/attachments")
+def get_flow_attachments(request: Request, flow_id: str):
+    """Metadata only. Workers reuse existing document read/copy URLs for selected files."""
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if not auth.get("group_id") or auth.get("group_id") != flow_id:
+        return _fail(403, "This token is not scoped to this Flow.")
+    _kind, err = _attachment_read_kind(auth)
+    if err is not None:
+        return err
+    from modules.flow_gate.documents.attachments.flow import rows
+    from urllib.parse import quote
+    data = rows(flow_id)
+    return {"ok": True, "flow_id": flow_id, "attachments": [
+        {"doc_id": row["doc_id"], "filename": row["filename"], "display_name": row["display_name"],
+         "size": row["size"], "content_type": row["content_type"], "content_sha256": row["content_sha256"],
+         "read_url": f"/api/v1/document/{quote(row['doc_id'], safe='')}/attachments/{quote(row['filename'], safe='')}/read",
+         "copy_url": f"/api/v1/document/{quote(row['doc_id'], safe='')}/attachments/{quote(row['filename'], safe='')}/copy"}
+        for row in data], "count": len(data)}
+
+
 @router.get("/document/{doc_id}/attachments")
 def get_document_attachments(request: Request, doc_id: str):
     """Worker-token attachment list (T0004 s.4-1) -- bridges the existing attachment
@@ -344,6 +366,7 @@ def get_document_attachments(request: Request, doc_id: str):
             for row in data.get("attachments") or []
         ],
         "count": data.get("count", 0),
+        "flow_attachments_url": f"/api/v1/flow/{document['group_id']}/attachments" if auth.get("group_id") == document.get("group_id") and document.get("group_id") else None,
     })
 
 

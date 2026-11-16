@@ -342,11 +342,22 @@ _ATTACHMENT_REQUEST_BULK_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/att
 _CHAT_ERROR_RECORD_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-activity/[^/]+/errors/?$")
 
 
+_FLOW_ATTACHMENT_PATH = re.compile(r"^(?:/flowgate)?/api/v1/flows/[^/]+/attachments(?:/[^/]+)?/?$")
+_FLOW_ATTACHMENT_ZIP_PATH = re.compile(r"^(?:/flowgate)?/api/v1/flows/[^/]+/attachments-zip/?$")
+
+
 def is_group_lease_exempt_path(path: str, method: str = "POST") -> bool:
     """Explicit lease exemptions (D0006 §3.10.3), next to -- not inside --
     ``is_policy_control_path``, whose ai-invoke meaning stays unchanged. The handlers
     still check permission and group state themselves."""
-    if str(method or "").upper() != "POST":
+    verb = str(method or "").upper()
+    # Files are outside the source worktree. Their handlers enforce project RBAC,
+    # open Flow state, expected hashes and the same Flow guard used by AI approval.
+    if _FLOW_ATTACHMENT_PATH.search(path) and verb in {"POST", "DELETE"}:
+        return True
+    if _FLOW_ATTACHMENT_ZIP_PATH.search(path) and verb == "POST":
+        return True
+    if verb != "POST":
         return False
     return bool(_CONVERSATION_CREATE_PATH.search(path) or _CONVERSATION_AUTO_TITLE_PATH.search(path)
                 or _CHAT_COMMAND_DECISION_PATH.search(path)
@@ -376,6 +387,8 @@ def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResou
         return "group", "attachment_request_bulk_decision_lease_exempt"
     if _ATTACHMENT_REQUEST_WORKER_PATH.search(path):
         return "system", "attachment_request_worker"
+    if _FLOW_ATTACHMENT_PATH.search(path) or _FLOW_ATTACHMENT_ZIP_PATH.search(path):
+        return "group", "flow_attachments_lease_exempt"
     if any(p.search(path) for p in _PERSONAL_PATHS):
         return "personal", "per_user_state"
     if any(p.search(path) for p in _SYSTEM_PATHS):

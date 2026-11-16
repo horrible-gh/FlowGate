@@ -56,6 +56,7 @@ export type DesignerTopCommand =
   | 'run.stop'
   | 'run.rerun'
   | 'run.validate'
+  | 'view.attachments'
   | 'view.fit'
   | 'view.zoom-in'
   | 'view.zoom-out'

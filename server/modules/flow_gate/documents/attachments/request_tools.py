@@ -21,16 +21,13 @@ from . import requests as svc
 TOOL_NAME = "request_attachment_upload"
 
 _COMMON = (
-    "Hand a file you produced to a person for approval as a card attachment. Returns at once with "
+    "Hand a file you produced to a person for approval as a Flow attachment. Returns at once with "
     "status=pending: do NOT wait for the decision and do not resend the same file — keep working. Nothing "
     "is attached until a person approves it (they can preview or download it first); the decision may come "
     "after your run ends. source_path is a worktree-relative path of an existing file."
 )
-CHAT_DESCRIPTION = _COMMON + (
-    " target.node_key names the card of this chat's Flow whose document gets the file (read the Flow canvas "
-    "to find it). Only cards that already have a document can be targeted."
-)
-CARD_DESCRIPTION = _COMMON + " The file always goes to your own card's document; there is no target to choose."
+CHAT_DESCRIPTION = _COMMON + " The file belongs to this chat's Flow. Omit target; legacy card targets remain accepted."
+CARD_DESCRIPTION = _COMMON + " The file belongs to your bound Flow; there is no target to choose."
 
 _FILE_PROPS = {
     "source_path": {"type": "string", "minLength": 1,
@@ -50,7 +47,7 @@ CHAT_SCHEMA = {
             "additionalProperties": False,
         },
     },
-    "required": ["source_path", "target"],
+    "required": ["source_path"],
     "additionalProperties": False,
 }
 
@@ -62,8 +59,10 @@ CARD_SCHEMA = {
 }
 
 PROMPT_HINT = (
-    "To give the user a file you made (a report, an export, an image ...) as a card attachment, call "
-    "`request_attachment_upload`; it returns immediately and a person approves it later — never wait for it."
+    "To give the user a file you made (a report, an export, an image ...) as a Flow attachment, call "
+    "`request_attachment_upload`; it returns immediately and a person approves it later — never wait for it. "
+    "List your bound Flow's shared files with GET /api/v1/flow/{flow_id}/attachments; "
+    "use each item's document read/copy URL only when its contents are needed."
 )
 
 
@@ -93,7 +92,7 @@ def cli_mention(api_base: str, raw_token: str) -> str:
     return "\n".join([
         "## Attachment upload request",
         "---",
-        "To hand the user a file you produced (report, export, image ...) as an attachment of a card of",
+        "To hand the user a file you produced (report, export, image ...) as an attachment of",
         "this chat's Flow, upload it for a person's approval. The answer comes at once with status",
         "\"pending\": do not wait for the decision and do not resend the file — continue your work and",
         "mention the request in your reply. Nothing is attached until a person approves it (they preview",
@@ -104,12 +103,14 @@ def cli_mention(api_base: str, raw_token: str) -> str:
         "Content-Type: multipart/form-data",
         "",
         "file=@<path of the file in your environment>",
-        'meta={"target": {"node_key": "<card node_key>"}, "filename": "report.md", "note": "what it is"}',
+        'meta={"filename": "report.md", "note": "what it is"}',
         "",
-        "Find node_key in the Flow canvas read (nodes[].node_key); the card must already have a document.",
+        "The attachment belongs to this chat's Flow. No card target is needed.",
         "One file per request. Errors: 409 attachment_target_document_missing (the card has no document),",
         "413 attachment_request_too_large, 422 attachment_request_extension_blocked, 429 limits reached.",
         "Requesting does not consume this token.",
+        f"List shared files: GET {base}/flow/<this flow_id>/attachments (same Bearer).",
+        "The response gives document read/copy URLs. Read selected files only; no automatic content injection.",
     ])
 
 

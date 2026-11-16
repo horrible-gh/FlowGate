@@ -41,6 +41,8 @@ from modules.flow_gate.documents.attachments import request_settings
 from modules.flow_gate.documents.attachments import requests as svc
 
 router = APIRouter(tags=["AttachmentRequests"])
+from modules.flow_gate.documents.attachments.flow_routes import router as flow_attachments_router
+router.include_router(flow_attachments_router)
 
 
 def _error(exc: svc.RequestError) -> JSONResponse:
