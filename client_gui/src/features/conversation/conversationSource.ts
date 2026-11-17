@@ -39,6 +39,7 @@ export interface ConversationSource {
   /** The one AI title of a chat created with `autoTitle` (flowgate.v02.0047); optional. */
   autoTitleChat?(chatId: string, providerId: string): Promise<ChatSummary>
 
+  mutateTurn?(chatId: string, seq: number, version: number, body: string | null): Promise<ConversationTurn>
   fetchTurns(chatId: string, query: api.TurnsQuery): Promise<TurnsPage>
   postTurn(chatId: string, input: api.PostTurnInput): Promise<{ turn: ConversationTurn | null; headSeq: number }>
   markRead(chatId: string, lastReadSeq: number): Promise<number | null>
@@ -86,6 +87,7 @@ export function createHttpConversationSource(): ConversationSource {
     renameChat: api.renameChat,
     createChat: api.createChat,
     autoTitleChat: api.autoTitleChat,
+    mutateTurn: api.mutateTurn,
     fetchTurns: api.fetchTurns,
     postTurn: api.postTurn,
     markRead: api.markRead,

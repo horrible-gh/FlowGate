@@ -67,7 +67,7 @@ def test_paste_to_claude_cli_prompt(env, tmp_path, monkeypatch, lease, provider)
     assert original.headers["content-disposition"].startswith("inline;")
     # The in-app invoke path hands the already-resolved window to the run.
     mention = _mention(monkeypatch)
-    assert mention.image_context == {"conversation_id": CHAT_DOC, "after_seq": 0, "locale": "ko"}
+    assert mention.image_context == {"conversation_id": CHAT_DOC, "after_seq": 0, "through_seq": None, "locale": "ko"}
     scratch = tmp_path / "token"
     scratch.mkdir()
     run = dict(message_image_context=mention.image_context, token_scratch_dir=str(scratch), action_scope="chat")

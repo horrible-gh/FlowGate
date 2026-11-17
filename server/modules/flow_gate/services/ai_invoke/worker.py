@@ -1396,6 +1396,8 @@ def _remaining_sec(run: dict) -> float:
     than the latest, and it lands only if the run shows nothing new for the whole
     budget. The two helpers below are the ones the watchdog and the retry gate ask.
     """
+    if run.get("chat_timeout_policy"):
+        return _absolute_remaining_sec(run)
     return run["timeout_sec"] - (time.monotonic() - run["started_mono"])
 
 
@@ -1408,6 +1410,8 @@ def _stall_remaining_sec(run: dict) -> float:
     With no anchor recorded this is precisely `_remaining_sec`, which is why a run that
     never had a watchdog keeps its previous behaviour to the second.
     """
+    if run.get("chat_timeout_policy"):
+        return float("inf")
     anchor = run.get("stall_anchor_mono")
     if anchor is None:
         anchor = run["started_mono"]
@@ -1724,18 +1728,18 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             if attempt_remaining <= 0:
                 run["timed_out"] = True
                 break
-            call_timeout = min(attempt_remaining, API_CALL_MAX_TIMEOUT_SEC)
+            call_timeout = (None if run.get("chat_timeout_sec") is None else attempt_remaining) if run.get("chat_timeout_policy") else min(attempt_remaining, API_CALL_MAX_TIMEOUT_SEC)
             startup_attempt += 1
             run["model_http_calls"] = run.get("model_http_calls", 0) + 1
             try:
                 if kind == "claude":
-                    model_response = _svc()._call_anthropic(
+                    model_response = _chat_model_call(run, _svc()._call_anthropic,
                         base_url, model, key, conversation, call_timeout,
                         tool_name, tool_desc, tool_schema, True,
                         **({"max_tokens": API_CONFLICT_MAX_TOKENS} if conflict_pending else {}),
                     )
                 else:
-                    model_response = _svc()._call_openai(
+                    model_response = _chat_model_call(run, _svc()._call_openai,
                         base_url, model, key, conversation, call_timeout,
                         tool_name, tool_desc, tool_schema, True,
                     )
@@ -1764,6 +1768,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 logger.warning("ai-invoke %s: api error after first turn: %s", run["run_id"], exc)
                 break
             except Exception as exc:
+                if run["cancel_event"].is_set() or run.get("timed_out"):
+                    return "api_error", str(exc)
                 role_invocations.api_response(run, exc=exc)
                 model_call_failed = True
                 run["model_last_http_status"] = 0
@@ -2535,6 +2541,7 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
                 after_seq=cursor, before_seq=None,
                 limit=remaining if remaining is not None else None,
                 include_head=include_head,
+                **({"through_seq": window["through_seq"]} if window.get("through_seq") is not None else {}),
             )
             status = response.status_code
             body = json.loads(response.body)
@@ -3078,3 +3085,34 @@ def _oracle_new_docs(run: dict) -> list[dict]:
         ),
         key=lambda d: d.get("seq") or 0,
     )
+
+
+def _chat_model_call(run, function, *args, **kwargs):
+    if not run.get("chat_timeout_policy"):
+        return function(*args, **kwargs)
+    import threading
+    done = threading.Event()
+    result = []
+    errors = []
+    def invoke():
+        try:
+            result.append(function(*args, **kwargs))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+    threading.Thread(target=invoke, daemon=True, name="chat-model-http").start()
+    while not done.wait(0.1):
+        if run["cancel_event"].is_set():
+            raise InterruptedError("Chat cancelled")
+        if _absolute_remaining_sec(run) <= 0:
+            run["timed_out"] = True
+            raise InterruptedError("Chat timeout")
+    if run["cancel_event"].is_set():
+        raise InterruptedError("Chat cancelled")
+    if _absolute_remaining_sec(run) <= 0:
+        run["timed_out"] = True
+        raise InterruptedError("Chat timeout")
+    if errors:
+        raise errors[0]
+    return result[0]

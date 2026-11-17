@@ -37,9 +37,10 @@
           <option value="all">{{ t('gui.conversation.settings.context_all') }}</option>
           <!-- flowgate.v02test.0025: each chat's checkpoint (message ⋯ menu) decides; the last 5 turns without one. -->
           <option value="checkpoint">{{ t('gui.conversation.settings.context_checkpoint') }}</option>
+          <option value="checkpoint_recent">{{ t('gui.conversation.settings.context_checkpoint_recent') }}</option>
         </select>
       </label>
-      <div v-if="draftRange === 'custom'" class="csx-row csx-turns">
+      <div v-if="(draftRange === 'custom' || draftRange === 'checkpoint_recent')" class="csx-row csx-turns">
         <span></span>
         <div>
           <input
@@ -59,9 +60,19 @@
           </div>
         </div>
       </div>
+      <label class="csx-row">
+        <span>{{ t('gui.conversation.settings.timeout') }}</span>
+        <select v-model="draftTimeout" :disabled="timeoutEnabled === false" class="csx-select" data-test="conv-setting-timeout">
+          <option value="none">{{ t('gui.conversation.settings.timeout_none') }}</option>
+          <option v-for="n in [30, 60, 120, 240]" :key="n" :value="String(n)">{{ t('gui.conversation.settings.timeout_minutes', { n }) }}</option>
+          <option value="custom">{{ t('gui.conversation.settings.context_custom') }}</option>
+        </select>
+      </label>
+      <input v-if="draftTimeout === 'custom'" v-model="draftTimeoutText" class="csx-select" inputmode="numeric" data-test="conv-setting-timeout-minutes" :aria-label="t('gui.conversation.settings.timeout')" />
+      <div v-if="!timeoutValid" class="csx-err" role="alert">{{ t('gui.conversation.settings.timeout_invalid') }}</div>
       <div class="csx-foot">
         <button type="button" class="csx-link" @click="close">{{ t('gui.conversation.cancel') }}</button>
-        <button type="button" class="csx-save" data-test="conv-settings-save" :disabled="saving || !turnsValid" @click="saveSettings">
+        <button type="button" class="csx-save" data-test="conv-settings-save" :disabled="saving || !turnsValid || !timeoutValid" @click="saveSettings">
           {{ t('gui.conversation.save') }}
         </button>
       </div>
@@ -80,6 +91,7 @@ const props = defineProps<{
   saving: boolean
   hasProviders: boolean
   disabled?: boolean
+  timeoutEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -90,6 +102,9 @@ const { t } = useI18n()
 
 const rootEl = ref<HTMLElement | null>(null)
 const { open, close } = usePopover(rootEl)
+const draftTimeout = ref('none')
+const draftTimeoutText = ref('120')
+const timeoutValid = computed(() => draftTimeout.value !== 'custom' || (/^\d+$/.test(draftTimeoutText.value) && Number(draftTimeoutText.value) >= 1 && Number(draftTimeoutText.value) <= 10080))
 const draftSendAction = ref<SendAction>('none')
 // A preset's number as text, 'custom' (사용자 입력), 'all' or 'checkpoint' (체크포인트 사용).
 const draftRange = ref('20')
@@ -102,7 +117,7 @@ let shownRange = draftRange.value
 
 const turnsValid = computed(() => {
   // A preset and 'all' carry no typed text, so only 'custom' can be invalid.
-  if (draftRange.value !== 'custom') return true
+  if (draftRange.value !== 'custom' && draftRange.value !== 'checkpoint_recent') return true
   const text = draftTurnsText.value.trim()
   if (!/^\d+$/.test(text)) return false
   const n = Number(text)
@@ -114,15 +129,18 @@ function toggleSettings(): void {
     close()
     return
   }
+  const minutes = props.settings.timeoutMinutes ?? null
+  draftTimeout.value = minutes == null ? 'none' : [30, 60, 120, 240].includes(minutes) ? String(minutes) : 'custom'
+  draftTimeoutText.value = String(minutes ?? 120)
   draftSendAction.value = props.settings.sendAction
   // A saved number that is not a preset reopens as 사용자 입력 with that number filled in.
   draftRange.value =
-    props.settings.contextMode === 'all' || props.settings.contextMode === 'checkpoint'
+    props.settings.contextMode === 'all' || props.settings.contextMode === 'checkpoint' || props.settings.contextMode === 'checkpoint_recent'
       ? props.settings.contextMode
       : props.settings.contextTurnsPresets.includes(props.settings.contextTurns)
         ? String(props.settings.contextTurns)
         : 'custom'
-  draftTurnsText.value = String(props.settings.contextTurns)
+  draftTurnsText.value = String(draftRange.value === 'checkpoint_recent' ? (props.settings.checkpointMaxTurns ?? 10) : props.settings.contextTurns)
   shownRange = draftRange.value
   open.value = true
 }
@@ -132,19 +150,26 @@ function toggleSettings(): void {
 function onRangeChange(event: Event): void {
   const value = (event.target as HTMLSelectElement).value
   if (value === 'custom' && /^\d+$/.test(shownRange)) draftTurnsText.value = shownRange
+  if (value === 'checkpoint_recent') draftTurnsText.value = String(props.settings.checkpointMaxTurns ?? 10)
   shownRange = value
 }
 
 function saveSettings(): void {
   const patch: ChatSettingsPatch = { send_action: draftSendAction.value }
-  if (draftRange.value === 'all' || draftRange.value === 'checkpoint') {
+  if (!turnsValid.value || !timeoutValid.value) return
+  if (draftRange.value === 'checkpoint_recent') {
+    patch.context_mode = 'checkpoint_recent'
+    patch.checkpoint_max_turns = Number(draftTurnsText.value.trim())
+  } else if (draftRange.value === 'all' || draftRange.value === 'checkpoint') {
     // L0010 §2-7-4: never send context_turns with 'all' (nor 'checkpoint') — the number must survive.
     patch.context_mode = draftRange.value === 'all' ? 'all' : 'checkpoint'
   } else {
-    if (!turnsValid.value) return
+    if (!turnsValid.value || !timeoutValid.value) return
     patch.context_mode = 'recent'
     patch.context_turns = Number(draftRange.value === 'custom' ? draftTurnsText.value.trim() : draftRange.value)
   }
+  const timeout = draftTimeout.value === 'none' ? null : Number(draftTimeout.value === 'custom' ? draftTimeoutText.value : draftTimeout.value)
+  if (timeout !== (props.settings.timeoutMinutes ?? null)) patch.timeout_minutes = timeout
   emit('save', patch, (ok) => {
     if (ok) close()
   })

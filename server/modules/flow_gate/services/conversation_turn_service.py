@@ -424,8 +424,11 @@ def _turn_wire(row: dict, *, images=None) -> dict:
         "participant_key": row["participant_key"],
         "display_name": row.get("display_name"),
         "locale": row.get("locale"),
-        "body": row["body"],
-        "images": (message_image_service.for_turn(row.get("doc_id"), int(row["seq"]))
+        "body": "" if row.get("deleted_at") else row["body"],
+        "message_version": int(row.get("message_version") or 1),
+        "edited_at": row.get("edited_at"),
+        "deleted_at": row.get("deleted_at"),
+        "images": [] if row.get("deleted_at") else (message_image_service.for_turn(row.get("doc_id"), int(row["seq"]))
                    if images is None else images),
         "based_on_seq": int(row.get("based_on_seq") or 0),
         "stale_since_seq": (
@@ -919,3 +922,42 @@ def dry_run_append(
         "dry_run_remaining": limit - (cnt + 1),
         "message": message,
     }
+
+
+def mutate_user_turn(*, doc_id: str, seq: int, actor: dict, expected_version: int,
+                     body_raw: Optional[str] = None, delete: bool = False) -> dict:
+    """Session-only, author-bound CAS; keep seq and all subsequent history intact."""
+    if actor.get("kind") != "session":
+        raise ConversationTurnError(403, "Only the author may change a user message.")
+    resolved = resolve_actor(actor)
+    if type(expected_version) is not int or expected_version < 1:
+        raise ConversationTurnError(422, "expected_version must be a positive integer.")
+    doc = _validate_document_for_append(doc_id)
+    body = "" if delete else _validate_input(body_raw, "message-edit")[0]
+    with get_store().transaction():
+        row = turn_store.get_turn(doc_id, seq)
+        if row is None:
+            raise ConversationTurnError(404, "Message not found.")
+        if row["speaker"] != "user" or row["participant_key"] != resolved["participant_key"]:
+            raise ConversationTurnError(403, "Only the author may change a user message.")
+        if row.get("deleted_at"):
+            if not delete:
+                raise ConversationTurnError(409, "The message has been deleted.")
+        else:
+            now = now_iso()
+            affected = get_store()._execute_affected(
+                "UPDATE conversation_turns SET body = ?, body_hash = ?, edited_at = ?, deleted_at = ?, "
+                "message_version = message_version + 1 WHERE doc_id = ? AND seq = ? "
+                "AND participant_key = ? AND speaker = 'user' AND message_version = ? AND deleted_at IS NULL",
+                [body, _sha256(body), now, now if delete else None, doc_id, seq,
+                 resolved["participant_key"], expected_version],
+            )
+            if affected != 1:
+                raise ConversationTurnError(409, "The message changed. Reload it before retrying.")
+            if delete:
+                get_store()._execute("DELETE FROM message_image_links WHERE conversation_id = ? AND seq = ?", [doc_id, seq])
+            row = turn_store.get_turn(doc_id, seq)
+    result = {"ok": True, "doc_id": doc_id, "head_seq": turn_store.current_head_seq(doc_id), "turn": turn_wire(row)}
+    from modules.flow_gate.services.conversation_events import broadcast_turn_appended
+    broadcast_turn_appended(doc, dict(result, changed=True))
+    return result

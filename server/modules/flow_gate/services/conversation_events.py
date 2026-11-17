@@ -19,6 +19,7 @@ def build_payload(doc: dict, result: dict) -> dict:
         "doc_id": result["doc_id"],
         "head_seq": result["head_seq"],
         "turn": result["turn"],
+        "changed": bool(result.get("changed")),
         "participant": result.get("me"),
         "title": doc.get("title"),
     }

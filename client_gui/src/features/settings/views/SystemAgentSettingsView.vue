@@ -26,6 +26,8 @@
                 <div class="agent-info">
                   <div class="agent-title"><strong>{{ row.name }}</strong><span class="fgs-state" :class="STATE_TONE[agentState(row)]" :data-runtime="agentState(row)">{{ stateLabel(row) }}</span></div>
                   <p :title="row.last_seen_at ?? undefined">{{ t('gui.agent_screen.last_seen') }} {{ row.last_seen_at ? ago(row.last_seen_at) : t('gui.agent_screen.before_connection') }}</p>
+                  <p data-testid="agent-capacity" :class="{ 'fgs-error': (row.running_jobs ?? 0) >= (row.max_concurrent_jobs ?? 4) }">{{ t('gui.agent_capacity.summary', { running: row.running_jobs ?? 0, max: row.max_concurrent_jobs ?? 4 }) }}<span v-if="row.queued_jobs"> · {{ t('gui.agent_capacity.queued', { count: row.queued_jobs }) }}</span></p>
+                  <p v-if="row.reported_capabilities.ai_cli === false" class="fgs-error">{{ t('gui.agent_capacity.cli_missing') }}</p>
                 </div>
                 <div class="agent-actions">
                   <Button variant="ghost" class="agent-icon" :disabled="busy" :title="t('gui.agent_screen.edit')" :aria-label="t('gui.agent_screen.edit_name', { name: row.name })" :data-edit-agent="row.agent_id" @click="select(row)"><SettingsIcon name="edit" size="sm" /></Button>
@@ -41,75 +43,21 @@
       </section>
     </section>
 
-    <ModalShell :open="mode === 'create'" surface-class="agent-registration-drawer fgs-drawer narrow" :aria-label="t('gui.settings.agents.create')" @close="closeEditor">
-      <template #header="{ titleId }">
-          <div class="fgs-d-head">
-            <div>
-              <h2 :id="titleId">{{ t('gui.settings.agents.create') }}</h2>
-              <p>{{ t('gui.settings.agents.create_sub') }}</p>
-            </div>
-            <button type="button" class="fgs-iconbtn" :title="t('gui.common.close')" :aria-label="t('gui.common.close')" :disabled="busy" data-testid="agent-editor-close" @click="closeEditor">
-              <SettingsIcon name="x" />
-            </button>
-          </div>
-      </template>
-          <form class="fgs-d-main" data-testid="agent-create-form" @submit.prevent="submitCreate">
-            <div class="fgs-d-body">
-              <div class="fgs-formfield">
-                <label for="agent-new-name">{{ t('gui.settings.agents.fields.name') }}</label>
-                <input id="agent-new-name" v-model="form.name" class="fgs-input" maxlength="100" autocomplete="off" data-modal-autofocus :disabled="busy" placeholder="debian-dev-02" data-testid="agent-name" />
-                <span v-if="form.name && createNameProblem" class="fgs-error" data-testid="agent-name-invalid">{{ createNameProblem }}</span>
-                <span v-else class="fgs-hintline">{{ t('gui.settings.agents.name_hint', { max: NAME_MAX }) }}</span>
-              </div>
-              <div class="fgs-formfield">
-                <span class="label">{{ t('gui.settings.agents.create_location') }}</span>
-                <div class="fgs-segment" role="group" :aria-label="t('gui.settings.agents.create_location')" data-testid="agent-location">
-                  <button v-for="loc in LOCATIONS" :key="loc" type="button" :class="{ on: form.location === loc }" :aria-pressed="form.location === loc ? 'true' : 'false'" :disabled="busy" :data-location="loc" @click="form.location = loc">
-                    {{ t(`gui.settings.agents.location_option.${loc}`) }}
-                  </button>
-                </div>
-                <span v-if="form.location === 'remote'" class="fgs-hintline" data-testid="agent-remote-fields">{{ t('gui.settings.agents.fields.connection') }} {{ t('gui.settings.agents.connection.agent_pull') }} · {{ t('gui.settings.agents.connection_hint') }}</span>
-                <span v-else class="fgs-hintline">{{ t('gui.settings.agents.local_hint') }}</span>
-                <span class="fgs-hintline">{{ t('gui.settings.agents.location_fixed') }}</span>
-              </div>
-              <div v-if="form.location === 'local'" class="fgs-formfield" data-testid="agent-local-fields">
-                <label for="agent-new-path">{{ t('gui.settings.agents.fields.path') }}</label>
-                <input id="agent-new-path" v-model="form.path" class="fgs-input mono" autocomplete="off" :disabled="busy" placeholder="/opt/flowgate-agent" data-testid="agent-path" />
-              </div>
-              <div class="fgs-formfield">
-                <span class="label">{{ t('gui.settings.agents.create_caps') }}</span>
-                <div class="fgs-checks">
-                  <label v-for="cap in createCaps" :key="cap" class="fgs-check-row">
-                    <input v-model="form.caps[cap]" type="checkbox" :disabled="busy" :data-cap="cap" />
-                    <span>
-                      <strong>{{ t(`gui.settings.agents.caps.${cap}`) }}</strong>
-                      <small>{{ t(`gui.settings.agents.caps_desc.${cap}`) }}</small>
-                    </span>
-                  </label>
-                </div>
-                <span class="fgs-hintline">{{ t('gui.settings.agents.caps_hint') }} {{ t('gui.settings.agents.storage_hint') }}</span>
-              </div>
-              <div class="fgs-formfield">
-                <div class="fgs-checks">
-                  <label class="fgs-check-row">
-                    <input v-model="form.enabled" type="checkbox" :disabled="busy" data-testid="agent-enabled" />
-                    <span><strong>{{ t('gui.settings.agents.create_enabled') }}</strong></span>
-                  </label>
-                </div>
-              </div>
-              <p v-if="formError" class="fgs-error" role="alert" data-testid="agent-form-error">{{ formError }}</p>
-            </div>
-            <div class="fgs-d-foot">
-              <div class="l" />
-              <div class="r">
-                <button type="button" class="fgs-btn ghost" :disabled="busy" data-testid="agent-create-cancel" @click="closeEditor">{{ t('gui.common.cancel') }}</button>
-                <button type="button" class="fgs-btn pri" :disabled="!createCanSave" data-testid="agent-create-submit" @click="submitCreate">{{ busy ? t('gui.settings.saving') : t('gui.settings.agents.create_submit') }}</button>
-              </div>
-            </div>
-          </form>
-    </ModalShell>
-    <AgentEditDialog v-if="selected" :creating="false" :agent="selected" :name="mode === 'create' ? form.name : edit.name" :workdir="edit.workdir" :caps="mode === 'create' ? form.caps : edit.caps" :busy="busy" :can-save="mode === 'create' ? createCanSave : editCanSave" :name-problem="mode === 'create' ? createNameProblem : editNameProblem" :error="mode === 'create' ? formError : actionError" :saved="editSaved" :state-label="selected ? stateLabel(selected) : ''" :cleanup-enabled="edit.cleanup" :cleanup-hours="edit.hours" :cleanup-hours-problem="editHoursProblem" @update:name="setName" @update:workdir="setWorkdir" @update:cap="setCap" @update:cleanup-enabled="edit.cleanup = $event" @update:cleanup-hours="edit.hours = $event" @submit="mode === 'create' ? submitCreate() : saveEdit()" @close="closeEditor" />
-    <AgentEnrollmentDialog v-if="enrollmentAgent" :agent="enrollmentAgent" :enrollment="enrollment" :busy="busy" :error="enrollmentError" :refresh-error="listError" :state-label="stateLabel(enrollmentAgent)" :expired="enrollmentExpired" @retry="retryEnrollment" @refresh="load" @close="closeEnrollment" @copied="onCopied" />
+    <AgentEditDialog v-if="mode === 'create' || selected" :creating="mode === 'create'" :agent="selected"
+      :name="mode === 'create' ? form.name : edit.name" :workdir="mode === 'create' ? form.workdir : edit.workdir"
+      :busy="busy" :close-busy="saving" :can-save="mode === 'create' ? createCanSave : editCanSave"
+      :name-problem="mode === 'create' ? createNameProblem : editNameProblem" :error="mode === 'create' ? formError : actionError"
+      :saved="editSaved" :state-label="selected ? stateLabel(selected) : ''"
+      :cleanup-enabled="mode === 'create' ? form.cleanup : edit.cleanup" :cleanup-hours="mode === 'create' ? form.hours : edit.hours"
+      :cleanup-hours-problem="mode === 'create' ? createHoursProblem : editHoursProblem"
+      :max-jobs="mode === 'create' ? form.maxJobs : edit.maxJobs" :max-jobs-problem="maxJobsProblem" :enabled="edit.enabled"
+      :enrollment="enrollment" :enrollment-error="enrollmentError" :expired="enrollmentExpired" :refresh-error="listError"
+      @update:name="setName" @update:workdir="setWorkdir"
+      @update:cleanup-enabled="mode === 'create' ? form.cleanup = $event : edit.cleanup = $event"
+      @update:cleanup-hours="mode === 'create' ? form.hours = $event : edit.hours = $event"
+      @update:max-jobs="mode === 'create' ? form.maxJobs = $event : edit.maxJobs = $event" @update:enabled="edit.enabled = $event"
+      @retry="retryEnrollment" @refresh="load" @copied="onCopied"
+      @submit="mode === 'create' ? submitCreate() : saveEdit()" @close="closeEditor" />
     <ModalShell :open="!!pending" size="sm" :aria-label="pending?.title" @close="closePending">
       <div v-if="pending" class="confirm" data-testid="agent-confirm" :data-action="pending.kind">
         <div class="conf-ico" :class="pending.tone"><SettingsIcon :name="pending.icon" size="xl" /></div>
@@ -164,7 +112,6 @@ import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import AgentEditDialog from '../components/AgentEditDialog.vue'
-import AgentEnrollmentDialog from '../components/AgentEnrollmentDialog.vue'
 import { useSettingsToasts } from '../components/useSettingsToasts'
 import { useMeNav } from '../components/meNav'
 import { useSystemNav } from '../components/systemNav'
@@ -181,8 +128,6 @@ const deleteAgent = props.personal ? deletePersonalAgent : deleteSystemAgent
 const issueEnrollmentToken = props.personal ? issuePersonalAgentEnrollment : issueAgentEnrollment
 const CAPS = AGENT_CAPS
 const NAME_MAX = 100
-const LOCATIONS = computed(() => props.personal ? ['remote'] as const : ['remote', 'local'] as const)
-const createCaps = computed(() => props.personal ? CAPS.filter(cap => cap !== 'storage') : CAPS)
 const STATE_TONE = AGENT_STATE_TONE
 const { t, locale } = useI18n()
 const meNav = useMeNav()
@@ -316,7 +261,7 @@ async function performRead(at: number): Promise<boolean> {
       if (!fresh) closeEnrollment()
       else {
         enrollmentAgent.value = fresh
-        if (fresh.enrollment_status !== 'pending' || fresh.credential_status === 'active') clearEnrollment()
+        if (!fresh.enabled || fresh.enrollment_status !== 'pending' || fresh.credential_status === 'active') clearEnrollment()
         if (fresh.credential_status === 'active') {
           enrollmentError.value = ''
           enrollmentExpired.value = false
@@ -360,24 +305,25 @@ async function select(row: SystemAgent) {
   actionError.value = ''
   editSaved.value = false
   closeEnrollment()
+  enrollmentAgent.value = row
+  schedulePoll()
   syncEdit()
 }
 
 // Restore the original registration form; personal Agents retain their own API scope.
-const blankForm = () => ({ name: '', location: 'remote' as 'remote' | 'local', path: '', enabled: true, caps: { ai_cli: false, ai_api: false, storage: false } })
+const blankForm = () => ({ name: '', workdir: '', cleanup: true, hours: '24', maxJobs: '4' })
 const form = reactive(blankForm())
 const formError = ref('')
-const createDirty = computed(() => mode.value === 'create' && (form.name.trim() !== '' || form.location !== 'remote'
-  || form.path.trim() !== '' || !form.enabled || CAPS.some(cap => form.caps[cap])))
+const createDirty = computed(() => mode.value === 'create' && (form.name.trim() !== '' || form.workdir !== '' || !form.cleanup || form.hours !== '24' || form.maxJobs !== '4'))
 const createNameProblem = computed(() => nameProblem(form.name))
-const createCanSave = computed(() => mode.value === 'create' && !createNameProblem.value && !busy.value)
-
-function setName(value: string) { if (mode.value === 'create') form.name = value; else edit.name = value }
-function setWorkdir(value: string) { if (mode.value !== 'create') edit.workdir = value }
-function setCap(cap: 'ai_cli' | 'ai_api', value: boolean) {
-  if (mode.value === 'create') form.caps[cap] = value
-  else edit.caps[cap] = value
+const createHoursProblem = computed(() => typedHours(form.hours) === null ? t('gui.settings.agents.errors.retention_hours_range', { min: 1, max: 720 }) : '')
+function typedMax(value: string): number | null {
+  return /^\d+$/.test(value.trim()) && Number(value) >= 1 && Number(value) <= 32 ? Number(value) : null
 }
+const maxJobsProblem = computed(() => typedMax(mode.value === 'create' ? form.maxJobs : edit.maxJobs) === null ? t('gui.agent_capacity.invalid') : '')
+const createCanSave = computed(() => mode.value === 'create' && !createNameProblem.value && !createHoursProblem.value && !maxJobsProblem.value && !busy.value)
+function setName(value: string) { if (mode.value === 'create') form.name = value; else edit.name = value }
+function setWorkdir(value: string) { if (mode.value === 'create') form.workdir = value; else edit.workdir = value }
 
 async function startCreate() {
   if (busy.value || mode.value === 'create') return
@@ -395,11 +341,12 @@ async function startCreate() {
 }
 
 async function closeEditor() {
-  if (busy.value) return
+  if (saving.value) return
   const at = epoch
   if (formDirty.value && !(await ask())) return
   if (!sameSession(at)) return
   mode.value = 'view'
+  closeEnrollment()
   Object.assign(form, blankForm())
   selectedId.value = null
   formError.value = ''
@@ -417,10 +364,9 @@ async function submitCreate() {
   try {
     await waitForRead(at)
     const created = await live(at, createAgent({
-      name: form.name.trim(), enabled: form.enabled, location: form.location,
-      connection_mode: form.location === 'remote' ? 'agent_pull' : null,
-      local_executable_path: form.location === 'local' ? form.path.trim() || null : null,
-      configured_capabilities: { ...form.caps },
+      name: form.name.trim(), remote_workdir: form.workdir.trim() || null,
+      workspace_cleanup_enabled: form.cleanup, workspace_cleanup_retention_hours: typedHours(form.hours)!,
+      max_concurrent_jobs: typedMax(form.maxJobs)!,
     }))
     // A successful POST must never leave a submit-able create form, even if confirmation fails.
     mode.value = 'view'
@@ -430,15 +376,9 @@ async function submitCreate() {
       actionError.value = t('gui.settings.agents.errors.unconfirmed')
       return
     }
-    if (created.location === 'local' || !created.enabled) {
-      if (!(await reloadAfterChange(at))) return
-      if (!agents.value?.some(agent => agent.agent_id === created.agent_id)) {
-        actionError.value = t('gui.settings.agents.errors.reread_mismatch')
-        return
-      }
-      pushToast(t('gui.settings.agents.created', { name: created.name }))
-      return
-    }
+    agents.value = [...(agents.value ?? []).filter(a => a.agent_id !== created.agent_id), created]
+    selectedId.value = created.agent_id
+    syncEdit()
     enrollmentAgent.value = created
     enrollmentError.value = ''
     enrollmentExpired.value = false
@@ -457,17 +397,17 @@ async function submitCreate() {
 // flowgate.v02test.0019: workspace cleanup (the Agent deletes finished Job folders after these hours).
 const CLEANUP_HOURS_MIN = 1
 const CLEANUP_HOURS_MAX = 720
-const blankEdit = () => ({ name: '', path: '', workdir: '', cleanup: true, hours: '24', caps: { ai_cli: false, ai_api: false, storage: false } })
-const edit = reactive<{ name: string; path: string; workdir: string; cleanup: boolean; hours: string; caps: AgentCapabilities }>(blankEdit())
+const blankEdit = () => ({ name: '', path: '', workdir: '', cleanup: true, hours: '24', maxJobs: '4', enabled: true, caps: { ai_cli: false, ai_api: false, storage: false } })
+const edit = reactive<{ name: string; path: string; workdir: string; cleanup: boolean; hours: string; maxJobs: string; enabled: boolean; caps: AgentCapabilities }>(blankEdit())
 const editSaved = ref(false)
 
 /** The confirmed values the form stands on: the server's last answer for the Agent in the form. */
-interface EditValues { name: string; path: string | null; workdir: string | null; cleanup: boolean; hours: number; caps: AgentCapabilities }
+interface EditValues { name: string; path: string | null; workdir: string | null; cleanup: boolean; hours: number; maxJobs: number; enabled: boolean; caps: AgentCapabilities }
 const editBase = ref<{ agentId: string; values: EditValues } | null>(null)
 
 function confirmedValues(a: SystemAgent): EditValues {
   return { name: a.name, path: a.local_executable_path, workdir: a.remote_workdir ?? null,
-    cleanup: a.workspace_cleanup_enabled ?? true, hours: a.workspace_cleanup_retention_hours ?? 24, caps: { ...a.configured_capabilities } }
+    maxJobs: a.max_concurrent_jobs ?? 4, enabled: a.enabled, cleanup: a.workspace_cleanup_enabled ?? true, hours: a.workspace_cleanup_retention_hours ?? 24, caps: { ...a.configured_capabilities } }
 }
 
 /** The typed hours as a whole number 1..720, or null when it is not one. */
@@ -507,6 +447,8 @@ function syncEdit() {
   edit.workdir = values.workdir ?? ''
   edit.cleanup = values.cleanup
   edit.hours = String(values.hours)
+  edit.maxJobs = String(values.maxJobs)
+  edit.enabled = values.enabled
   edit.caps = { ...values.caps }
 }
 
@@ -528,6 +470,8 @@ function rebaseEdit(a: SystemAgent) {
     return
   }
   const fresh = confirmedValues(a)
+  if (edit.maxJobs.trim() === String(base.values.maxJobs)) edit.maxJobs = String(fresh.maxJobs)
+  if (edit.enabled === base.values.enabled) edit.enabled = fresh.enabled
   if (!nameTouched(base.values)) edit.name = fresh.name
   if (!pathTouched(base.values)) edit.path = fresh.path ?? ''
   if (!workdirTouched(base.values)) edit.workdir = fresh.workdir ?? ''
@@ -545,12 +489,13 @@ const editChanges = computed<SystemAgentChanges>(() => {
   const base = editBase.value
   const changes: SystemAgentChanges = {}
   if (!a || !base || base.agentId !== a.agent_id) return changes
+  if (typedMax(edit.maxJobs) !== null && Number(edit.maxJobs) !== base.values.maxJobs) changes.max_concurrent_jobs = Number(edit.maxJobs)
+  if (edit.enabled !== base.values.enabled) changes.enabled = edit.enabled
   if (nameTouched(base.values)) changes.name = edit.name.trim()
   if (workdirTouched(base.values)) changes.remote_workdir = edit.workdir.trim() || null
   if (cleanupTouched(base.values)) changes.workspace_cleanup_enabled = edit.cleanup
   const hours = typedHours(edit.hours)
   if (hoursTouched(base.values) && hours !== null && hours !== base.values.hours) changes.workspace_cleanup_retention_hours = hours
-  if (CAPS.some((cap) => capTouched(base.values, cap))) changes.configured_capabilities = { ...edit.caps }
   return changes
 })
 
@@ -561,11 +506,12 @@ const editHoursProblem = computed(() => {
   if (!base || !hoursTouched(base) || typedHours(edit.hours) !== null) return ''
   return t('gui.settings.agents.errors.retention_hours_range', { min: CLEANUP_HOURS_MIN, max: CLEANUP_HOURS_MAX })
 })
-const editCanSave = computed(() => editDirty.value && !editNameProblem.value && !editHoursProblem.value && !busy.value)
+const editCanSave = computed(() => editDirty.value && !editNameProblem.value && !editHoursProblem.value && !maxJobsProblem.value && !busy.value)
 
 /** The Agent shows every change that was asked for. */
 function applied(a: SystemAgent, changes: SystemAgentChanges): boolean {
   return (changes.name === undefined || a.name === changes.name)
+    && (changes.max_concurrent_jobs === undefined || a.max_concurrent_jobs === changes.max_concurrent_jobs)
     && (changes.enabled === undefined || a.enabled === changes.enabled)
     && (changes.local_executable_path === undefined || a.local_executable_path === changes.local_executable_path)
     && (changes.remote_workdir === undefined || (a.remote_workdir ?? null) === changes.remote_workdir)
@@ -577,7 +523,7 @@ function applied(a: SystemAgent, changes: SystemAgentChanges): boolean {
 
 /** One PATCH with `changes`; done only when its answer and the re-read both show them. */
 async function patchAgent(at: number, a: SystemAgent, changes: SystemAgentChanges): Promise<boolean> {
-  clearEnrollment() // the Agent is being changed: a token shown for it goes
+  if (changes.enabled === false) clearEnrollment()
   const answered = await live(at, updateAgent(a.agent_id, changes))
   if (!isAgent(answered) || answered.agent_id !== a.agent_id || !applied(answered, changes)) {
     actionError.value = t('gui.settings.agents.errors.unconfirmed')
@@ -608,8 +554,6 @@ async function saveEdit() {
     if (await patchAgent(at, a, changes)) {
       syncEdit()
       editSaved.value = true
-      selectedId.value = null
-      discardEdit()
     }
   } catch (err) {
     if (err === STALE) return
@@ -781,7 +725,7 @@ function onVisibility() { if (document.visibilityState !== 'hidden') onFocus() }
 
 // ── 미저장 이탈 보호 ──
 // flowgate.v02test.0019: hours typed but not valid is still unsaved input.
-const formDirty = computed(() => (mode.value === 'create' ? createDirty.value : editDirty.value || !!editHoursProblem.value))
+const formDirty = computed(() => (mode.value === 'create' ? createDirty.value : editDirty.value || !!editHoursProblem.value || !!maxJobsProblem.value))
 const { open: leaveOpen, answer: answerLeave, ask } = useUnsavedLeaveGuard(() => formDirty.value || saving.value)
 
 /** 개요 › 확인 필요 opens one Agent here with ?agent=<id>; the query is dropped once it is read. */
@@ -793,6 +737,8 @@ function openFromQuery() {
   mode.value = 'view'
   selectedId.value = id
   syncEdit()
+  enrollmentAgent.value = selected.value
+  schedulePoll()
 }
 
 onMounted(() => {
@@ -808,12 +754,7 @@ onBeforeUnmount(() => {
 })
 </script>
 
-<style>
-.ui-modal-overlay:has(> .agent-registration-drawer) { padding: 0; align-items: stretch; justify-content: flex-end; }
-.ui-modal-surface.agent-registration-drawer { width: min(470px, 100%); max-width: 470px; height: 100%; max-height: 100%; border-radius: 0; padding: 0; }
-.agent-registration-drawer .ui-modal-body { padding: 0; flex: 1; min-height: 0; display: flex; }
-.agent-registration-drawer .fgs-d-main { width: 100%; }
-</style>
+
 
 <style scoped>
 .agent-page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }

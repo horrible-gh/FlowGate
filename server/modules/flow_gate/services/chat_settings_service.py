@@ -59,7 +59,7 @@ CONTEXT_TURNS_MIN = 1
 CONTEXT_TURNS_MAX = 999
 CONTEXT_TURNS_DEFAULT = 20
 # Drawn in the list; never used to decide anything (L0010 §1-1).
-CONTEXT_TURNS_PRESETS = (5, 10, 15, 20, 30)
+CONTEXT_TURNS_PRESETS = (5, 10, 15)
 
 # -- L0010 §1-2 enumerated parameters ----------------------------------------
 # Byte-for-byte the strings the browser already keeps in localStorage.  Renaming them
@@ -68,7 +68,7 @@ SEND_ACTION_DOMAIN = ("copy_mention", "invoke_ai", "none")
 SEND_ACTION_DEFAULT = "none"
 # flowgate.v02test.0025: "checkpoint" = the chat's context checkpoint decides the window (message menu: from this
 # message / from the next one). Without a checkpoint in that chat the last CONTEXT_CHECKPOINT_FALLBACK_TURNS go.
-CONTEXT_MODE_DOMAIN = ("recent", "all", "checkpoint")
+CONTEXT_MODE_DOMAIN = ("recent", "all", "checkpoint", "checkpoint_recent")
 CONTEXT_MODE_DEFAULT = "recent"
 CONTEXT_CHECKPOINT_FALLBACK_TURNS = 5
 
@@ -88,7 +88,7 @@ ONE_SHOT_CLAIM_STALE_SEC = 600
 # The three columns user_chat_settings.upsert() owns (T0009 §3.1 -- restated, not
 # imported, from db.user_chat_settings.SETTING_COLUMNS: save_chat_settings must keep
 # working against a test double for that store that implements .get()/.upsert() only).
-_LEGACY_SETTING_FIELDS = ("send_action", "context_mode", "context_turns")
+_LEGACY_SETTING_FIELDS = ("send_action", "context_mode", "context_turns", "checkpoint_max_turns")
 
 # Validation order is fixed so that a request with several bad fields always reports
 # the same one (L0010 §2-2). source_access_mode is appended last (T0009 §3.3) -- the
@@ -118,6 +118,7 @@ def defaults() -> dict:
         "send_action": SEND_ACTION_DEFAULT,
         "context_mode": CONTEXT_MODE_DEFAULT,
         "context_turns": CONTEXT_TURNS_DEFAULT,
+        "checkpoint_max_turns": 10,
         "updated_at": None,
     }
 
@@ -218,6 +219,7 @@ def resolve_chat_settings(user_id: Optional[str], scope: Optional[tuple[str, str
             row.get("context_mode"), CONTEXT_MODE_DOMAIN, CONTEXT_MODE_DEFAULT
         ),
         "context_turns": _normalize_turns(row.get("context_turns")),
+        "checkpoint_max_turns": _normalize_turns(row.get("checkpoint_max_turns", 10)),
         "updated_at": row.get("updated_at"),
         "source_access_mode": source_access_mode,
         "command_policy": command_policy,
@@ -269,7 +271,7 @@ def validate_patch(patch: dict) -> None:
                 field,
                 "context_mode must be one of " + ", ".join(CONTEXT_MODE_DOMAIN) + ".",
             )
-        if field == "context_turns":
+        if field in ("context_turns", "checkpoint_max_turns"):
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ChatSettingsError(field, "context_turns must be an integer.")
             if value < CONTEXT_TURNS_MIN or value > CONTEXT_TURNS_MAX:
@@ -505,6 +507,8 @@ def context_turn_limit(mode: str, turns: int, checkpoint_seq: Optional[int] = No
         return None
     if mode == "checkpoint":
         return None if _valid_checkpoint(checkpoint_seq) else CONTEXT_CHECKPOINT_FALLBACK_TURNS
+    if mode == "checkpoint_recent" and not _valid_checkpoint(checkpoint_seq):
+        return CONTEXT_CHECKPOINT_FALLBACK_TURNS
     return turns
 
 
@@ -533,9 +537,11 @@ def resolve_context_window(
     """
     if mode == "all":
         start = 0
-    elif mode == "checkpoint":
+    elif mode in ("checkpoint", "checkpoint_recent"):
         if _valid_checkpoint(checkpoint_seq):
             start = checkpoint_seq - 1 if checkpoint_include else checkpoint_seq
+            if mode == "checkpoint_recent":
+                start = max(start, head_seq - turns, 0)
         else:
             start = max(0, head_seq - CONTEXT_CHECKPOINT_FALLBACK_TURNS)
     else:

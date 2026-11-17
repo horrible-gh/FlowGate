@@ -1611,7 +1611,8 @@ def _absolute_remaining_sec(run: dict) -> float:
     Measured from `started_mono` — the HOP's start, not the attempt's — so a no-output
     retry inherits what is left of the four hours instead of being handed a fresh four.
     """
-    return _absolute_cap_sec() - (_svc()._now_mono() - run["started_mono"])
+    cap = run.get("chat_timeout_sec") if run.get("chat_timeout_policy") else _absolute_cap_sec()
+    return float("inf") if cap is None else cap - (_svc()._now_mono() - run["started_mono"])
 
 
 def group_resume_lock(group_id: str) -> threading.Lock:

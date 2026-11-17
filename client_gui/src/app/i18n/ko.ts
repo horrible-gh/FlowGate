@@ -2,6 +2,7 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
+  agent_capacity: {"label": "최대 동시 실행 수", "running": "지금 실행 중", "summary": "실행 중 {running} / 최대 {max}", "queued": "대기 {count}", "invalid": "1~32 사이의 정수를 입력하세요.", "hint": "채팅과 카드 작업을 합친 수이며, 넘는 작업은 순서대로 대기합니다.", "lowered": "실행 중인 작업은 끝까지 진행하고, 새 값 아래로 내려간 뒤부터 다음 작업을 받습니다.", "cli_missing": "AI CLI 없음 · 이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다.", "connect": "연결", "token_hint": "등록 토큰은 10분 동안 사용할 수 있습니다. 다시 발급하면 이전 토큰은 사용할 수 없습니다.", "waiting": "에이전트 접속을 기다리는 중 · 5초마다 확인", "enable_first": "사용을 켜고 저장하면 등록 토큰을 발급할 수 있습니다.", "enabled": "사용", "workdir_hint": "작업을 받으려면 원격 작업 디렉터리를 지정해야 합니다."},
   accountMenu: {"settings": "내 설정", "profile": "내 프로필", "password": "비밀번호 변경", "logout": "로그아웃", "confirmLogout": "로그아웃하시겠습니까?"},
   notification_ai: {"detail": "상세보기", "provider": "제공자", "finished": "종료 시간", "reason": "종료 사유", "success": "성공", "failure": "실패", "stopped": "중단", "unknown": "상태 확인 필요"},
   // flowgate.chat.0017 CH0002 — AI 첨부 승인 요청 (채팅 메시지 하단 · 카드 첨부 탭 · 실행 결과 · 설정).
@@ -1175,6 +1176,11 @@ export default {
       clear: '해제',
     },
     message: {
+      edit: '편집',
+      remove: '삭제',
+      deleted: '삭제된 메세지',
+      delete_confirm: '이 메시지를 삭제할까요?',
+      change_failed: '변경하지 못했습니다. 다시 확인해 주세요.',
       user: '나',
       ai: 'AI',
       // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
@@ -1278,6 +1284,7 @@ export default {
     },
     status: {
       run_running: 'AI가 답하는 중…',
+      run_timeout: '설정한 시간이 지나 AI 호출이 종료되었습니다.',
       run_cancelled: 'AI 호출을 중지했습니다',
       run_no_reply: 'AI 호출이 답변 없이 끝났습니다',
       run_query_unconfirmed: 'AI 실행은 종료되었지만 저장 답변 조회를 확인하지 못했습니다',
@@ -1389,6 +1396,11 @@ export default {
       context_turns: '최근 {n}턴',
       context_all: '전체',
       context_custom: '사용자 입력',
+      context_checkpoint_recent: '체크포인트 + 최대 X턴',
+      timeout: '타임아웃',
+      timeout_none: '제한 없음',
+      timeout_minutes: '{n}분',
+      timeout_invalid: '1~10080 사이의 정수(분)를 입력하세요.',
       context_checkpoint: '체크포인트 사용',
       context_invalid: '{min}~{max} 사이의 정수를 입력하세요',
     },

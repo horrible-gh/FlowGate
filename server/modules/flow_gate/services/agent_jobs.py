@@ -127,7 +127,7 @@ class AgentJobService:
         if (row["location"] != "remote" or row["connection_mode"] != "agent_pull"
                 or row["protocol_compatibility"] != "compatible" or row["protocol_version"] != 1):
             raise AgentError(403, "agent_incompatible", "Agent is not a compatible Remote Agent")
-        if claim and not (row["configured_ai_cli"] and row["reported_ai_cli"]):
+        if claim and not row["reported_ai_cli"]:
             raise AgentError(403, "capability_required", "Effective ai_cli capability is required")
         return identity["agent_id"]
 
@@ -274,10 +274,21 @@ class AgentJobService:
         # status='NEW' condition still lets exactly one of this, cancel and claim win.
         facts = {}
         for row in self.s._fetch_all(
-            """SELECT job_id,attempt_id,target_agent_id,created_at FROM agent_jobs
-                   WHERE ai_run_id IS NOT NULL AND status='NEW' AND created_at<=?""",
-            [claim_cut],
+            """SELECT job_id,attempt_id,target_agent_id,created_at,capacity_wait_at FROM agent_jobs
+                   WHERE ai_run_id IS NOT NULL AND status='NEW'""",
+            [],
         ):
+            aid = row.get("target_agent_id")
+            agent = _agent_row(self.s, aid) if aid else None
+            if agent:
+                info = _agent_detail(agent, at=now)
+                if info["online_status"] == "online" and info["running_jobs"] >= info["max_concurrent_jobs"]:
+                    # Capacity is ordinary queueing, not a broken claim connection. Keep
+                    # the creation order and grant a fresh claim window when slots free.
+                    self.s._execute_affected("UPDATE agent_jobs SET capacity_wait_at=? WHERE job_id=? AND attempt_id=? AND status='NEW'", [ts,row["job_id"],row["attempt_id"]])
+                    continue
+            if str(row.get("capacity_wait_at") or row["created_at"]) > claim_cut:
+                continue
             cause, note = self._claim_wait_cause(row, now, facts)
             self.s._execute_affected(
                 """UPDATE agent_jobs SET status='CANCELLED',end_reason='not_claimed',terminal_cause=?,
@@ -648,6 +659,14 @@ class AgentJobService:
             # stopped polling" from "it polled and did not take the Job".
             self.s._execute_affected("UPDATE agents SET last_claim_poll_at=? WHERE agent_id=?", [ts, agent_id])
             self._reclaim(ts)
+            # The preceding UPDATE locks this Agent until commit. Current/locking reads
+            # also avoid a stale MySQL REPEATABLE READ snapshot from authentication.
+            from modules.flow_gate.db import dialect
+            lock = " FOR UPDATE" if getattr(self.s, "dialect", dialect.SQLITE) != dialect.SQLITE else ""
+            capacity = self.s._fetch_one("SELECT max_concurrent_jobs FROM agents WHERE agent_id=?" + lock, [agent_id])
+            held = self.s._fetch_all("SELECT job_id,attempt_id FROM agent_jobs WHERE lease_owner_agent_id=? AND status IN ('CLAIMED','STARTED')" + lock, [agent_id])
+            if len(held) >= capacity["max_concurrent_jobs"]:
+                return None
             candidates = self.s._fetch_all(
                 """SELECT j.* FROM agent_jobs j JOIN agents a ON a.agent_id=?
                    WHERE j.status='NEW' AND (j.target_agent_id IS NULL OR j.target_agent_id=?)

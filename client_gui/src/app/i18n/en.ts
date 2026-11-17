@@ -1,4 +1,5 @@
 export default {
+  agent_capacity: {"label": "Maximum concurrent jobs", "running": "Running now", "summary": "Running {running} / maximum {max}", "queued": "Queued {count}", "invalid": "Enter an integer from 1 to 32.", "hint": "Includes chats and card jobs. Additional jobs wait in order.", "lowered": "Running jobs finish normally. New jobs start once the count falls below the new limit.", "cli_missing": "AI CLI not found on this PC. It cannot receive CLI jobs.", "connect": "Connection", "token_hint": "Registration tokens last 10 minutes. Issuing a new token invalidates the previous token.", "waiting": "Waiting for the Agent · checking every 5 seconds", "enable_first": "Enable and save the Agent to issue a registration token.", "enabled": "Enabled", "workdir_hint": "Set a remote working directory to receive jobs."},
   accountMenu: {"settings": "My settings", "profile": "My profile", "password": "Change password", "logout": "Log out", "confirmLogout": "Log out?"},
   notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
   // flowgate.chat.0017 CH0002 — AI attachment upload requests (chat message, card attachments tab, run result, settings).
@@ -1164,6 +1165,11 @@ export default {
       clear: 'Clear',
     },
     message: {
+      edit: 'Edit',
+      remove: 'Delete',
+      deleted: 'Deleted message',
+      delete_confirm: 'Delete this message?',
+      change_failed: 'Could not save. Please reload and retry.',
       user: 'Me',
       ai: 'AI',
       // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
@@ -1267,6 +1273,7 @@ export default {
     },
     status: {
       run_running: 'AI is replying…',
+      run_timeout: 'The AI call reached its time limit.',
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',
       run_query_unconfirmed: 'The AI call ended, but the saved reply could not be verified',
@@ -1378,6 +1385,11 @@ export default {
       context_turns: 'Last {n} turns',
       context_all: 'All',
       context_custom: 'Custom',
+      context_checkpoint_recent: 'Checkpoint + at most X turns',
+      timeout: 'Timeout',
+      timeout_none: 'Unlimited',
+      timeout_minutes: '{n} minutes',
+      timeout_invalid: 'Enter an integer from 1 to 10080 minutes.',
       context_checkpoint: 'Use checkpoint',
       context_invalid: 'Enter a whole number from {min} to {max}',
     },

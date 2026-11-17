@@ -206,6 +206,7 @@ def list_turns(
     before_seq: Optional[int] = None,
     limit: Optional[int] = None,
     include_head: bool = False,
+    through_seq: Optional[int] = None,
 ) -> dict:
     """Return one page of turns around a cursor (P0003 scenarios 1, 2, 7, 9 and 13)."""
     if after_seq is not None and before_seq is not None:
@@ -214,6 +215,9 @@ def list_turns(
         raise ConversationTurnError(422, "after_seq must be >= 0.")
     if before_seq is not None and before_seq < 1:
         raise ConversationTurnError(422, "before_seq must be >= 1.")
+
+    if through_seq is not None and (type(through_seq) is not int or through_seq < 0):
+        raise ConversationTurnError(422, "through_seq must be a nonnegative integer.")
 
     effective_limit = TURN_LIMIT_DEFAULT if limit is None else int(limit)
     if effective_limit < 1:
@@ -237,6 +241,8 @@ def list_turns(
     else:
         rows = turn_store.fetch_turns_after(doc_id, requested_after, effective_limit + 1)
 
+    if through_seq is not None:
+        rows = [row for row in rows if int(row["seq"]) <= through_seq]
     picked, truncated_by, more = apply_budget(rows, effective_limit)
     if backward:
         picked = list(reversed(picked))  # the wire is always seq-ascending
@@ -278,7 +284,7 @@ def list_turns(
         "has_more": more,
         "truncated_by": truncated_by,
         "head": build_head(doc) if include_head else None,
-        "turns": [turn_wire(row, images=page_images.get(int(row["seq"]), [])) for row in picked],
+        "turns": [turn_wire(row, images=page_images.get(int(row["seq"]), [])) for row in picked if actor.get("kind") != "worker" or not row.get("deleted_at")],
         # The participant row and the read boundary must be complete after the single
         # entry call (D0002 §6); scroll-up pages leave them alone.
         "participants": (

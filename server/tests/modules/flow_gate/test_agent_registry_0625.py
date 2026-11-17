@@ -126,7 +126,7 @@ def test_heartbeat_api_success_contract_and_runtime_state(heartbeat_api):
  assert response.status_code==200
  payload=response.json()
  assert set(payload)=={"accepted","agent_id","server_time","protocol_version",
-  "heartbeat_interval_seconds","online_ttl_seconds","workspace_cleanup"}
+  "heartbeat_interval_seconds","online_ttl_seconds","workspace_cleanup","max_concurrent_jobs"}
  # flowgate.v02test.0019: the stored policy of this Agent; an existing row is ON / 24 h.
  assert payload["workspace_cleanup"]=={"enabled":True,"retention_hours":24}
  assert type(payload["workspace_cleanup"]["enabled"]) is bool and type(payload["workspace_cleanup"]["retention_hours"]) is int

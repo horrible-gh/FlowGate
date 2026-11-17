@@ -37,6 +37,10 @@ def _cleanup_fields(b):
  """The cleanup fields present in b, validated. A real bool, and a whole hour count 1..720 (bool,
  float and string refused). The hours are checked even when cleanup is OFF."""
  out={}
+ if "max_concurrent_jobs" in b:
+  v=b["max_concurrent_jobs"]
+  if type(v) is not int or not 1<=v<=32: raise AgentError(422,"validation_failed","Maximum concurrent jobs must be an integer from 1 to 32")
+  out["max_concurrent_jobs"]=v
  if "workspace_cleanup_enabled" in b:
   v=b["workspace_cleanup_enabled"]
   if type(v) is not bool: raise AgentError(422,"validation_failed","Invalid Agent field",{"field":"workspace_cleanup_enabled","reason":"invalid_type"})
@@ -52,6 +56,8 @@ def _cleanup(r):
  return {"enabled":_bool(r.get("workspace_cleanup_enabled",CLEANUP_DEFAULT_ENABLED)),"retention_hours":int(r.get("workspace_cleanup_retention_hours",CLEANUP_DEFAULT_HOURS))}
 def _row(s,agent_id):
  return s._fetch_one("""SELECT a.*,
+ (SELECT COUNT(*) FROM agent_jobs j WHERE j.lease_owner_agent_id=a.agent_id AND j.status IN ('CLAIMED','STARTED')) running_jobs,
+ (SELECT COUNT(*) FROM agent_jobs j WHERE j.target_agent_id=a.agent_id AND j.status='NEW' AND j.cancel_requested=FALSE) queued_jobs,
  (SELECT COUNT(*) FROM agent_credentials c WHERE c.agent_id=a.agent_id) credential_count,
  (SELECT COUNT(*) FROM agent_credentials c WHERE c.agent_id=a.agent_id AND c.revoked_at IS NULL) active_count,
  (SELECT MAX(e.expires_at) FROM agent_enrollments e WHERE e.agent_id=a.agent_id AND e.consumed_at IS NULL AND e.revoked_at IS NULL) enrollment_expires_at,
@@ -75,7 +81,8 @@ def detail(r,at=None):
  "remote_workdir":r.get("remote_workdir"),
  "workspace_cleanup_enabled":_cleanup(r)["enabled"],"workspace_cleanup_retention_hours":_cleanup(r)["retention_hours"],
  "configured_capabilities":cfg,"reported_capabilities":rep,
- "effective_capabilities":{k:cfg[k] and rep[k] is True for k in CAPS},
+ "effective_capabilities":{k:rep[k] is True for k in CAPS},
+ "max_concurrent_jobs":int(r.get("max_concurrent_jobs",4)),"running_jobs":int(r.get("running_jobs",0)),"queued_jobs":int(r.get("queued_jobs",0)),
  "registration_status":("registered" if active else "revoked" if history else "unregistered"),
  "credential_status":("active" if active else "revoked" if history else "none"),"has_registration_history":history,
  "enrollment_status":"pending" if r.get("enrollment_expires_at") else "none","enrollment_expires_at":r.get("enrollment_expires_at"),
@@ -101,6 +108,7 @@ class AgentService:
   if b.get("location","remote")!="remote" or b.get("local_executable_path") is not None or b.get("configured_capabilities",{}).get("storage"):
    raise AgentError(422,"validation_failed","Personal Agents support remote AI CLI and AI API only")
  def create(self,b):
+  b={**b,"enabled":True,"location":"remote","connection_mode":"agent_pull","local_executable_path":None,"configured_capabilities":{"ai_cli":True,"ai_api":True,"storage":False}}
   self._personal_fields(b)
   policy=_cleanup_fields(b)
   aid="agt_"+secrets.token_urlsafe(20); ts=stamp(); c=b["configured_capabilities"]
@@ -178,9 +186,11 @@ class AgentService:
      [c["ai_cli"],c["ai_api"],c["storage"],ts,b["agent_version"],b["protocol_version"],b["os"],b["architecture"],ts,auth["agent_id"]])
     self.s._execute("UPDATE agent_credentials SET last_heartbeat_at=? WHERE credential_id=?",[ts,auth["credential_id"]])
     # flowgate.v02test.0019: the authenticated Agent's latest stored policy, success response only.
-    policy=_cleanup(self.s._fetch_one("SELECT workspace_cleanup_enabled,workspace_cleanup_retention_hours FROM agents WHERE agent_id=?",[auth["agent_id"]]))
+    policy_row=self.s._fetch_one("SELECT workspace_cleanup_enabled,workspace_cleanup_retention_hours,max_concurrent_jobs FROM agents WHERE agent_id=?",[auth["agent_id"]])
+    policy=_cleanup(policy_row)
+    capacity=int(policy_row["max_concurrent_jobs"])
   if incompatible: raise AgentError(409,"protocol_incompatible","Unsupported Agent protocol version",{"received_version":b["protocol_version"],"supported_versions":SUPPORTED})
-  return {"accepted":True,"agent_id":auth["agent_id"],"server_time":ts,"protocol_version":SUPPORTED[0],"heartbeat_interval_seconds":HEARTBEAT_INTERVAL,"online_ttl_seconds":ONLINE_TTL,"workspace_cleanup":policy}
+  return {"accepted":True,"agent_id":auth["agent_id"],"server_time":ts,"protocol_version":SUPPORTED[0],"heartbeat_interval_seconds":HEARTBEAT_INTERVAL,"online_ttl_seconds":ONLINE_TTL,"workspace_cleanup":policy,"max_concurrent_jobs":capacity}
  def revoke(self,aid):
   self.get(aid); ts=stamp()
   with self.s.transaction():

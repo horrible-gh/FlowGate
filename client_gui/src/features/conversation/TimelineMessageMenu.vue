@@ -16,10 +16,13 @@
       @click="toggleMenu"
     >⋯</button>
     <div v-if="open" ref="popEl" class="tlm-pop" role="menu" data-test="tl-more-menu" :aria-label="t('gui.conversation.checkpoint.menu')">
+      <button v-if="canMutate" type="button" class="tlm-item" role="menuitem" data-test="tl-edit" @click="close(); emit('edit')">{{ t('gui.conversation.message.edit') }}</button>
+      <button v-if="canMutate" type="button" class="tlm-item" role="menuitem" data-test="tl-delete" @click="close(); emit('remove')">{{ t('gui.conversation.message.remove') }}</button>
       <!-- The icon says where the line goes: ⤒ above this message (it is sent), ⤓ below it (it is not). ✓ marks the
            way in use, at the right. -->
       <button
         type="button"
+        v-if="canCheckpoint !== false"
         role="menuitemradio"
         class="tlm-item"
         data-test="tl-checkpoint-include"
@@ -32,6 +35,7 @@
       </button>
       <button
         type="button"
+        v-if="canCheckpoint !== false"
         role="menuitemradio"
         class="tlm-item"
         data-test="tl-checkpoint-exclude"
@@ -43,7 +47,7 @@
         <span class="tlm-check" aria-hidden="true">{{ kind === 'exclude' ? '✓' : '' }}</span>
       </button>
       <button
-        v-if="kind"
+        v-if="kind && canCheckpoint !== false"
         type="button"
         role="menuitem"
         class="tlm-item"
@@ -70,9 +74,11 @@ const props = defineProps<{
   /** This message's checkpoint kind when it is the chat's checkpoint, else null. */
   kind: CheckpointKind | null
   busy?: boolean
+  canCheckpoint?: boolean
+  canMutate?: boolean
 }>()
 
-const emit = defineEmits<{ checkpoint: [seq: number | null, kind?: CheckpointKind] }>()
+const emit = defineEmits<{ edit: []; remove: []; checkpoint: [seq: number | null, kind?: CheckpointKind] }>()
 
 const { t } = useI18n()
 

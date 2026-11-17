@@ -109,7 +109,7 @@ def _authenticate(doc_id: str, raw_token: str) -> tuple[Optional[dict], Optional
 
 def _list_authenticated(
     doc_id: str, raw_token: str, after_seq: Optional[int], before_seq: Optional[int],
-    limit: Optional[int], include_head: bool,
+    limit: Optional[int], include_head: bool, through_seq: Optional[int] = None,
 ) -> JSONResponse:
     token, failure = _authenticate(doc_id, raw_token)
     if failure is not None:
@@ -122,6 +122,7 @@ def _list_authenticated(
             before_seq=before_seq,
             limit=limit,
             include_head=include_head,
+            **({"through_seq": through_seq} if through_seq is not None else {}),
         )
     except conversation_turn_service.ConversationTurnError as exc:
         return _fail(exc.status_code, exc.message)
@@ -250,6 +251,7 @@ async def list_worker_conversation_turns(
     before_seq: Optional[int] = Query(default=None),
     limit: Optional[int] = Query(default=None),
     include_head: Optional[int] = Query(default=None),
+    through_seq: Optional[int] = Query(default=None),
 ):
     """Hand a worker the range it has not read yet (P0003 scenarios 9 and 13).
 
@@ -263,7 +265,7 @@ async def list_worker_conversation_turns(
     # Every DB touch below is synchronous, so it runs off the event loop.
     return await anyio.to_thread.run_sync(
         _list_authenticated, doc_id, raw_token, after_seq, before_seq, limit,
-        bool(include_head),
+        bool(include_head), through_seq,
     )
 
 

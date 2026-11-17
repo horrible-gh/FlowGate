@@ -16,16 +16,18 @@ class ConversationMention(str):
         return value
 
 
-def image_count(conversation_id, after_seq):
+def image_count(conversation_id, after_seq, through_seq=None):
     row = get_store()._fetch_one(
         "SELECT COUNT(*) AS n FROM message_image_links l "
         "JOIN message_images i ON i.image_id = l.image_id "
-        "WHERE l.conversation_id = ? AND l.seq > ?", [conversation_id, after_seq])
+        "WHERE l.conversation_id = ? AND l.seq > ?"
+        + (" AND l.seq <= ?" if through_seq is not None else ""),
+        [conversation_id, after_seq, *([through_seq] if through_seq is not None else [])])
     return int(row["n"]) if row else 0
 
 
 def copy_notice(context):
-    count = image_count(context["conversation_id"], context["after_seq"])
+    count = image_count(context["conversation_id"], context["after_seq"], **({"through_seq": context["through_seq"]} if context.get("through_seq") is not None else {}))
     if not count:
         return ""
     if context["locale"] == "ko":
@@ -78,7 +80,7 @@ def _remote_prompt(prompt, provider, run, context, total):
     from urllib.parse import quote
     ko = context["locale"] == "ko"
     base = (run.get("api_base_url") or "").rstrip("/")
-    rows = images.images_for_window(context["conversation_id"], context["after_seq"])
+    rows = images.images_for_window(context["conversation_id"], context["after_seq"], through_seq=context.get("through_seq"))
     lines = ["## 메시지 이미지" if ko else "## Message images"]
     if base:
         for row in rows:
@@ -116,7 +118,7 @@ def provider_prompt(prompt, provider, run):
     context = run.get("message_image_context")
     if not context:
         return prompt
-    total = image_count(context["conversation_id"], context["after_seq"])
+    total = image_count(context["conversation_id"], context["after_seq"], **({"through_seq": context["through_seq"]} if context.get("through_seq") is not None else {}))
     if not total:
         return prompt
     if provider.get("exec_location") == "remote" and images.provider_accepts_images(provider):
@@ -129,7 +131,7 @@ def provider_prompt(prompt, provider, run):
     cli_args = []
     codex = provider.get("kind") == "codex"
     if images.provider_accepts_images(provider):
-        rows = images.images_for_window(context["conversation_id"], context["after_seq"], limit=10)
+        rows = images.images_for_window(context["conversation_id"], context["after_seq"], limit=10, through_seq=context.get("through_seq"))
         omitted = max(0, total - len(rows))
         for row in rows:
             try:

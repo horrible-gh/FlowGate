@@ -294,6 +294,7 @@ const statusText = computed(() => {
   const key = a.code ? `gui.conversation.status.${a.code}` : ''
   const noticeKey = a.code ? `gui.conversation.notice.${a.code}` : ''
   const known = key && te(key) ? t(key) : a.chatError && noticeKey && te(noticeKey) ? t(noticeKey) : ''
+  if (a.text?.startsWith('timeout') && (a.code === 'run_failed' || a.code === 'run_no_reply')) return `${known} · ${t('gui.conversation.status.run_timeout')} (${a.text})`
   if (known && a.text) return `${known} (${a.text})`
   return known || a.text || a.code || ''
 })

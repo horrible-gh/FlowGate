@@ -39,7 +39,7 @@ def _row_to_legacy_turn(row: dict) -> legacy_conversation.Turn:
     turn: legacy_conversation.Turn = {
         "speaker": row["speaker"],
         "ts": row["created_at"],
-        "body": row.get("body") or "",
+        "body": "삭제된 메세지" if row.get("deleted_at") else (row.get("body") or ""),
     }
     if row["speaker"] == "ai":
         if row.get("display_name"):
