@@ -21,7 +21,7 @@
     <FlowAttachmentHost ref="attachmentHost" :key="projectStore.designerSessionOwner ?? ''"
       :flow-id="center.state.activeFlowId" :project-id="projectId"
       :title="center.state.tabs.find(tab => tab.flowId === center.state.activeFlowId)?.name ?? ''"
-      :is-read-only="id => center.isFlowReadOnly(id)" />
+      :is-read-only="id => center.isFlowReadOnly(id)" :is-archived="id => center.isFlowArchived?.(id) ?? null" />
     <DesignerTop
       :notifications-open="notificationsOpen"
       :notification-project-id="projectId"

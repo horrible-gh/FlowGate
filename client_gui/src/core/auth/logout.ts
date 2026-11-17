@@ -1,4 +1,5 @@
 import { serverLogout } from '@shared/api'
+import { announceAuthSessionEnded } from '@shared/authSessionSignal'
 import { setCurrentUser, useCurrentUser } from './currentUser'
 
 // Sign out of this browser (flowgate.v02.0076 T#2, D §2.2): the existing POST /auth/logout
@@ -30,6 +31,9 @@ export function clearStoredAuth(username: string | null): void {
 
 export async function logout(): Promise<void> {
   const username = useCurrentUser().user.value?.username ?? null
+  // flowgate.v02test.0036 T#1: stop the session's work BEFORE the server call, so nothing new (a Flow attachment
+  // delete whose five seconds run out) is sent while the sign-out is on the way.
+  announceAuthSessionEnded()
   try {
     await serverLogout()
   } finally {

@@ -23,10 +23,16 @@ import { useI18n } from 'vue-i18n'
 import { allocateOverlayZIndex } from '@/core/overlay/zIndex'
 import FlowAttachmentWindow from './FlowAttachmentWindow.vue'
 import { FaIcon } from './icons'
+import { connectReadOnly } from './operations'
 import { flowAttachmentUi } from './state'
 import { wordsFor } from './words'
 
-const props = defineProps<{ flowId: string | null; projectId: string | null; title: string; isReadOnly: (id: string) => boolean }>()
+// isArchived (flowgate.v02test.0036 T#1): the Designer's definite archive state of a Flow (null = not known yet). While
+// this Host is mounted the Flow work manager also follows it (a fast path: the Designer already reads this state), so a
+// Flow archived while its window is closed drops its unsent deletes at once. The manager does not depend on it: it
+// watches the archive state of every Project with pending work itself, for its own lifetime (after this Host unmounts
+// or the Designer moves to another Project too). isReadOnly also locks an unknown state, so it is not used for dropping work.
+const props = defineProps<{ flowId: string | null; projectId: string | null; title: string; isReadOnly: (id: string) => boolean; isArchived?: (id: string) => boolean | null }>()
 const { locale } = useI18n()
 const w = computed(() => wordsFor(locale.value))
 const windows = ref<{ id: string; projectId: string; title: string; z: number }[]>([])
@@ -93,6 +99,7 @@ function onDrop(event: DragEvent) {
   if (files.length) void open(files)
 }
 function hide() { dropping.value = false }
+const disconnectReadOnly = connectReadOnly((projectId, flowId) => projectId === props.projectId ? props.isArchived?.(flowId) ?? null : null)
 onMounted(() => {
   document.addEventListener('dragenter', onDragOver, true)
   document.addEventListener('dragover', onDragOver, true)
@@ -108,6 +115,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('drop', onDrop, true)
   document.removeEventListener('dragend', hide, true)
   window.removeEventListener('blur', hide)
+  disconnectReadOnly()
   flowAttachmentUi.currentOpen = false
 })
 defineExpose({ open })
