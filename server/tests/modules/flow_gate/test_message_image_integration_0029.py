@@ -91,7 +91,7 @@ def test_unsupported_ai_leaves_a_durable_record_and_no_file(env, tmp_path, monke
     scratch.mkdir()
     run = dict(message_image_context=mention.image_context, token_scratch_dir=str(scratch), action_scope="chat",
                run_id="r", group_id=GROUP, project_id=PROJECT, doc_ref=CHAT_DOC, mode="single")
-    prompt = worker._provider_prompt(run, dict(CODEX, exec_location="remote"), str(mention))
+    prompt = worker._provider_prompt(run, dict(CODEX, exec_type="api"), str(mention))
     assert "1장이 있으나 이 연결로는 전달되지 않음" in prompt
     assert not (scratch / "images").exists() and str(scratch) not in prompt
     saved = []
@@ -108,3 +108,53 @@ def test_flow_attachment_listing_does_not_show_message_images(env, monkeypatch):
     _, client = env
     _send_with_image(client, monkeypatch, lease=False)
     assert flow.listing(GROUP, USER_ROW)["attachments"] == []
+
+
+@pytest.mark.parametrize("provider", [CLAUDE, CODEX], ids=["remote_claude", "remote_codex"])
+def test_remote_upload_to_authenticated_download(env, tmp_path, monkeypatch, provider):
+    from modules.flow_gate.api.v1 import conversation_routes as routes
+    from fastapi import HTTPException
+    _, client = env
+    client.app.include_router(routes.router)
+    image, _ = _send_with_image(client, monkeypatch, lease=False)
+    token = dict(action_scope="chat", doc_ref=CHAT_DOC, project=PROJECT, group_id=GROUP)
+    seen = []
+    def inspect(raw):
+        seen.append(raw)
+        if raw != "worker-test-token":
+            raise HTTPException(401, "Token is invalid")
+        return token
+    monkeypatch.setattr(routes.token_service, "inspect_for_replay", inspect)
+    monkeypatch.setattr(routes.db_documents, "get_by_id", lambda doc_id: dict(
+        doc_id=doc_id, project_id=PROJECT, group_id=GROUP))
+    run = dict(message_image_context=_mention(monkeypatch).image_context, action_scope="chat",
+               api_base_url="http://testserver/api/v1", token_scratch_dir=str(tmp_path))
+    prompt = worker._provider_prompt(run, dict(provider, exec_location="remote"), "BASE")
+    url = next(line.split("GET ", 1)[1] for line in prompt.splitlines() if ": GET " in line)
+    assert image["image_id"] in url and str(tmp_path) not in prompt
+    headers = {"Authorization": "Bearer worker-test-token"}
+    for _ in range(2):
+        response = client.get(url, headers=headers)
+        assert response.status_code == 200 and response.content == PNG
+        assert response.headers["content-type"] == "image/png"
+        assert response.headers["cache-control"] == "private, no-store"
+    assert seen == ["worker-test-token", "worker-test-token"]
+    assert client.get(url).status_code == 401
+    assert client.get(url, headers={"Authorization": "Bearer invalid"}).status_code == 401
+    assert client.get(url.replace(CHAT_DOC, "other-conversation"), headers=headers).status_code == 403
+    # Even a valid bound token cannot fetch a temporary/unlinked upload.
+    temp = client.post(f"/api/v1/flows/{GROUP}/message-images",
+                       files={"file": ("temp.png", PNG, "image/png")}).json()["image"]
+    assert client.get(url.replace(image["image_id"], temp["image_id"]), headers=headers).status_code == 404
+    # A linked image remains private to its conversation (including same-Flow chats).
+    token["doc_ref"] = "other-conversation"
+    assert client.get(url.replace(CHAT_DOC, "other-conversation"), headers=headers).status_code == 404
+    token["doc_ref"] = CHAT_DOC
+    for field, value in (("group_id", "other-flow"), ("project", "other-project"), ("action_scope", "execute")):
+        original = token[field]
+        token[field] = value
+        assert client.get(url, headers=headers).status_code == 403
+        token[field] = original
+    # Missing files produce a controlled response, not a FileResponse crash.
+    Path(delivery.images.images_for_window(CHAT_DOC, 0)[0]["abs_path"]).unlink()
+    assert client.get(url, headers=headers).status_code == 404

@@ -210,6 +210,38 @@ def _append_authenticated(
         return _fail(exc.status_code, exc.message)
 
 
+@router.get("/{doc_id}/images/{image_id}/content")
+def worker_conversation_image(doc_id: str, image_id: str, request: Request):
+    """Read linked images using this conversation's worker token, without consuming it."""
+    from fastapi.responses import FileResponse
+    from modules.flow_gate.services import message_image_service as images
+    raw_token = _bearer(request)
+    if raw_token is None:
+        return _fail(401, "Authorization header is required")
+    token, failure = _authenticate(doc_id, raw_token)
+    if failure is not None:
+        return failure
+    # Do not expose temporary uploads, images from another conversation or Flow,
+    # or images belonging to another project even if an id is guessed.
+    row = images.get_store()._fetch_one(
+        "SELECT i.* FROM message_images i JOIN message_image_links l ON l.image_id = i.image_id "
+        "WHERE l.conversation_id = ? AND i.image_id = ? AND i.flow_id = ? "
+        "AND i.project_id = ? AND i.state = 'linked'",
+        [doc_id, image_id, token["group_id"], token["project"]])
+    if not row:
+        return _fail(404, "Message image not found")
+    try:
+        path = images.file_path(row)
+        if not path.is_file():
+            return _fail(404, "Message image not found")
+        return FileResponse(path, media_type=row["media_type"], headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        })
+    except images.MessageImageError as exc:
+        return JSONResponse(status_code=exc.status, content=exc.body())
+
+
 @router.get("/{doc_id}/turns")
 async def list_worker_conversation_turns(
     doc_id: str,

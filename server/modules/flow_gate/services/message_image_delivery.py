@@ -73,6 +73,43 @@ def codex_image_argument(path):
     return shlex.quote(path)
 
 
+def _remote_prompt(prompt, provider, run, context, total):
+    """Offer authenticated downloads; never send a server-local scratch path."""
+    from urllib.parse import quote
+    ko = context["locale"] == "ko"
+    base = (run.get("api_base_url") or "").rstrip("/")
+    rows = images.images_for_window(context["conversation_id"], context["after_seq"])
+    lines = ["## 메시지 이미지" if ko else "## Message images"]
+    if base:
+        for row in rows:
+            url = (f"{base}/conversation/{quote(context['conversation_id'], safe='')}/images/"
+                   f"{quote(row['image_id'], safe='')}/content")
+            lines.append(f"- Message #{row['seq']}, image {row['position'] + 1} ({row['media_type']}): GET {url}")
+        lines.append(
+            "위 URL을 이 대화의 Authorization: Bearer 작업 토큰으로 GET하여 현재 작업 디렉터리에 이미지 파일로 저장한 뒤 "
+            "Read 또는 view_image 이미지 도구로 반드시 열어 확인하십시오. 토큰은 위 대화 안내에 있습니다. "
+            "URL 문자열만 읽고 이미지를 봤다고 하지 마십시오. 다운로드는 토큰을 소모하지 않습니다. 답변 제출 전에 확인하십시오."
+            if ko else
+            "GET these URLs with the conversation's Authorization: Bearer worker token shown above. "
+            "Save the binary responses as image files in your current working directory, then open them with "
+            "the Read or view_image image tool before answering. Reading a URL is not viewing its image. "
+            "Downloads do not consume the token; download before submitting your reply.")
+    else:
+        lines.append("Image download unavailable: API base URL is missing.")
+    offered = len(rows) if base else 0
+    omitted = max(0, total - len(rows))
+    if omitted:
+        lines.append(f"오래된 이미지 {omitted}장은 최근 10장 한도로 제외했습니다." if ko else
+                     f"{omitted} older image(s) omitted by the latest-10 limit.")
+    # URLs were offered, not a confirmed model download or visual inspection.
+    diagnostic = dict(images_total=total, images_delivered=0, images_undelivered=total,
+                      images_download_available=offered, images_omitted=omitted,
+                      images_copy_failed=0, provider_id=provider.get("id"))
+    run.update(diagnostic)
+    run.setdefault("message_image_diagnostics", []).append(diagnostic)
+    return prompt + "\n\n" + "\n".join(lines)
+
+
 def provider_prompt(prompt, provider, run):
     # Attempts share a run: clear attachments even on no-context/no-image returns.
     run.pop("message_image_cli_args", None)
@@ -82,6 +119,8 @@ def provider_prompt(prompt, provider, run):
     total = image_count(context["conversation_id"], context["after_seq"])
     if not total:
         return prompt
+    if provider.get("exec_location") == "remote" and images.provider_accepts_images(provider):
+        return _remote_prompt(prompt, provider, run, context, total)
     ko = context["locale"] == "ko"
     lines = ["## 메시지 이미지" if ko else "## Message images"]
     delivered = 0

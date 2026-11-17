@@ -192,8 +192,8 @@ def test_upload_and_turn_while_ai_holds_lease(env):
 
 
 @pytest.mark.parametrize("kind,exec_type,location,expected", [
-    ("claude", "cli", "local", True), ("claude", "cli", "remote", False),
-    ("claude", "api", "local", False), ("codex", "cli", "local", True), ("codex", "cli", "remote", False),
+    ("claude", "cli", "local", True), ("claude", "cli", "remote", True),
+    ("claude", "api", "local", False), ("codex", "cli", "local", True), ("codex", "cli", "remote", True),
     ("codex", "api", "local", False),
     ("copilot", "cli", "local", False),
 ])
@@ -237,7 +237,7 @@ def test_provider_endpoint_emits_capability_without_secrets(env, monkeypatch):
     response = TestClient(app).get("/api/v1/ai-invoke/providers", params={"project": PROJECT})
     assert response.status_code == 200
     assert response.json()["providers"] == [
-        {"id": "local", "accepts_images": True}, {"id": "remote", "accepts_images": False},
+        {"id": "local", "accepts_images": True}, {"id": "remote", "accepts_images": True},
         {"id": "api", "accepts_images": False}]
 
 

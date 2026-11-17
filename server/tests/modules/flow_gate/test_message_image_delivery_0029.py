@@ -18,7 +18,7 @@ def run_for(tmp_path, after=0, locale="en"):
     scratch = tmp_path / "token"
     scratch.mkdir(exist_ok=True)
     return dict(message_image_context=dict(conversation_id=CHAT_DOC, after_seq=after, locale=locale),
-                token_scratch_dir=str(scratch), action_scope="chat")
+                token_scratch_dir=str(scratch), action_scope="chat", api_base_url="http://test/api/v1")
 
 
 def add_images(n):
@@ -48,8 +48,8 @@ def test_local_recent_window_and_independent_copies(env, tmp_path, kind):
 
 
 @pytest.mark.parametrize("provider", [
-    dict(CLAUDE, kind="codex", exec_location="remote"), dict(CLAUDE, kind="copilot"), dict(CLAUDE, kind="custom"),
-    dict(CLAUDE, exec_type="api"), dict(CLAUDE, exec_location="remote"),
+    dict(CLAUDE, kind="copilot"), dict(CLAUDE, kind="custom"),
+    dict(CLAUDE, exec_type="api"),
 ])
 def test_unsupported_is_visible_and_durable(env, tmp_path, monkeypatch, provider):
     add_images(1)
@@ -127,7 +127,7 @@ def test_provider_boundary_fallback_has_no_path_leak(env, tmp_path, monkeypatch)
     remote=worker._provider_prompt(run, dict(CLAUDE, exec_location="remote"), "BASE")
     assert str(Path(run["token_scratch_dir"])/"images") in local
     assert str(Path(run["token_scratch_dir"])/"images") not in remote
-    assert "not delivered" in remote and run["images_undelivered"] == 1
+    assert "Authorization: Bearer" in remote and run["images_download_available"] == 1
 
 
 @pytest.mark.parametrize("cap", ["items", "bytes"])
@@ -208,3 +208,28 @@ def test_codex_path_quoting_and_visible_failure(env, tmp_path, monkeypatch):
     prompt = delivery.provider_prompt("BASE", dict(CLAUDE, kind="codex"), run)
     assert "not delivered" in prompt and run["images_delivered"] == 0
     assert "message_image_cli_args" not in run
+
+
+@pytest.mark.parametrize("kind", ["claude", "codex"])
+def test_remote_download_window_and_no_local_paths(env, tmp_path, kind):
+    add_images(13)
+    run = run_for(tmp_path, after=1)
+    delivery.provider_prompt("BASE", dict(CLAUDE, kind="codex"), run)
+    prompt = delivery.provider_prompt("BASE", dict(CLAUDE, kind=kind, exec_location="remote"), run)
+    assert str(tmp_path) not in prompt
+    assert "message_image_cli_args" not in run
+    assert "2 older image(s)" in prompt
+    assert "view_image" in prompt and "Authorization: Bearer" in prompt
+    assert "Message #3," not in prompt and "Message #4," in prompt
+    assert "Message #13," in prompt
+    assert run["images_download_available"] == 10
+    assert prompt.count("/content") == 10
+
+
+def test_remote_missing_api_base_is_visible(env, tmp_path):
+    add_images(1)
+    run = run_for(tmp_path)
+    run.pop("api_base_url")
+    prompt = delivery.provider_prompt("BASE", dict(CLAUDE, exec_location="remote"), run)
+    assert "API base URL is missing" in prompt
+    assert run["images_download_available"] == 0
