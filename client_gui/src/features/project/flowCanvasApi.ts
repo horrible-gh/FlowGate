@@ -116,6 +116,7 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...('integration_reason' in raw ? { integrationReason: str(raw.integration_reason) } : {}),
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
+    ...('question_wait' in raw ? { questionWait: toQuestionWait(raw.question_wait) } : {}),
     ...(typeof raw.node_running === 'boolean' ? { nodeRunning: raw.node_running } : {}),
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
@@ -502,4 +503,10 @@ export function toRoleRunFields(raw: Raw): RoleRunFields {
       stageState: str(item.stage_state), failCause: str(item.fail_cause), verdict: str(item.verdict), intent: item.intent ? { kind: str(item.intent.kind), execId: str(item.intent.exec_id) } : null,
     })) : null } : {}),
   }
+}
+
+export function toQuestionWait(value: unknown) {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is Raw => !!item && typeof item === 'object' && typeof item.seq === 'number')
+    .map(item => ({ seq: item.seq as number, state: str(item.state) ?? 'pending', code: str(item.code), message: str(item.message) }))
 }

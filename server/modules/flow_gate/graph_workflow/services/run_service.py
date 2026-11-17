@@ -620,6 +620,33 @@ def question_nodes(run_id: str, flow_id: str) -> frozenset:
         return frozenset()
 
 
+def question_wait_details(flow_id: str, row: dict) -> list[dict]:
+    """Read the actual unanswered items behind this card's Q badge."""
+    from modules.flow_gate.db import question_items
+    from modules.flow_gate.graph_workflow.store import assignment_store
+    from modules.flow_gate.services.ai_invoke.finalize import open_questions_raised_by_run
+    try:
+        docs = {row.get("result_doc_id"), row.get("instruction_doc_id")}
+        binding = assignment_store.root_binding(flow_id) or {}
+        if binding.get("node_key") == row["node_key"]:
+            docs.add(binding.get("doc_id"))
+        items = {}
+        for doc_id in filter(None, docs):
+            for item in question_items.list_by_doc(doc_id):
+                if not item.get("answer_count"):
+                    items[item["id"]] = item
+        for ai_run_id in run_store.ai_runs_of_node(row["run_id"], row["node_key"]):
+            for item in open_questions_raised_by_run(flow_id, ai_run_id):
+                items[item["id"]] = item
+        return [{"seq": item["seq"], "state": item.get("responder_state") or "pending",
+                 "code": item.get("responder_error_code"),
+                 "message": (item.get("responder_error_message") or "")[:1000]}
+                for item in items.values()]
+    except Exception:
+        _log.warning("question wait detail read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+        return []
+
+
 def node_asks(flow_id: str, row: dict) -> bool:
     """flowgate.v02.0113 T#3 rework: the open node run ``row``'s own AI — a run of its live attempt
     (``run_store.ai_runs_of_node``) — asked a question nobody has answered yet (``finalize.open_questions_raised_by_run``,
@@ -703,6 +730,7 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
             "intervention": state,                                                                  # 0119 T-2
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
             "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked,
+            "question_wait": question_wait_details(flow_id, row) if row["node_key"] in asked else [],
             "node_running": running, "node_running_cause": running_cause(flow_id, row, running), **stage_view(flow_id, row, attempt_id, reason),
             **uncarried_changes(row, attempt_id)}
 

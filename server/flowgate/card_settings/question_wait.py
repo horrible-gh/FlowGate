@@ -371,6 +371,22 @@ def _dispatch_waiting(flow_id: str) -> None:
             return
 
 
+def reconcile(flow_id: str) -> None:
+    """Recover unstarted responders on normal stage reconciliation / Resume.
+
+    Do not reset human hand-offs, real failures or claimed responders. A stopped
+    or paused command never starts work merely because its state was read.
+    """
+    try:
+        state = legacy.graph_run_state(flow_id)
+        if state is None or state[0] not in ("running", "idle") or state[1] == "stopped":
+            return
+        with _lock:
+            _dispatch_waiting(flow_id)
+    except Exception:
+        _log.warning("question recovery failed flow=%s", flow_id, exc_info=True)
+
+
 def open_questions_in_flow(flow_id: str) -> list[dict]:
     """Every unanswered AI-asked question of the Flow, oldest first; none on a failed read."""
     try:

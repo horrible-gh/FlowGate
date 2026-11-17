@@ -69,6 +69,11 @@ describe('run reads (P0008 S5-4)', () => {
       // flowgate.v02.0056 F2-1: none pending when the server sends none (flowRunApproval.0056).
       pendingPropagationCount: 0,
       pendingNodeKeys: [],
+      mode: null,
+      idleReason: null,
+      runningExecutionCount: 0,
+      requestedExecutionCount: 0,
+      executionLimit: null,
     })
   })
 
@@ -87,7 +92,7 @@ describe('run control (P0008 S5-1 / S5-5)', () => {
     postRequest.mockResolvedValueOnce({ data: { ok: true, run: { ...RUN, node_runs: undefined } } })
 
     expect((await startFlowRun(F)).status).toBe('running')
-    expect(postRequest).toHaveBeenNthCalledWith(1, `/api/v1/flows/${F}/runs`, { revision_no: null }, HEADERS)
+    expect(postRequest).toHaveBeenNthCalledWith(1, `/api/v1/flows/${F}/runs`, { revision_no: null, mode: 'full' }, HEADERS)
 
     const stopped = await stopFlowRun('run_a1')
     expect(stopped).toMatchObject({ runId: 'run_a1', status: 'stopped', nodeRuns: null })
@@ -129,4 +134,14 @@ describe('store loaders and events', () => {
   it('a run status or node state change reads the Canvas again (the cards’ colour dots)', () => {
     expect(CANVAS_REFRESH_EVENTS).toEqual(['graph_canvas_changed', 'flow_ownership_changed', 'graph_run_status_changed', 'graph_node_state_changed'])
   })
+})
+
+
+it('preserves the Q wait reason from the run response and clears it after answering', () => {
+  const raw = { ...RUN, node_runs: [{ node_key: 'gn_b', status: 'open', question: true,
+    question_wait: [{ seq: 629, state: 'user_decision', code: 'user_decision_required', message: 'Choose access' }] }] }
+  expect(toFlowRun(raw)!.nodeRuns![0].questionWait).toEqual([
+    { seq: 629, state: 'user_decision', code: 'user_decision_required', message: 'Choose access' },
+  ])
+  expect(toFlowRun({ ...raw, node_runs: [{ ...raw.node_runs[0], question: false, question_wait: [] }] })!.nodeRuns![0].questionWait).toEqual([])
 })

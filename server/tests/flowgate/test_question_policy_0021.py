@@ -4,10 +4,28 @@ import pytest
 from fastapi import HTTPException
 from flowgate.ai_roles import qa_adapter as qa, role_store
 from tests.flowgate.test_fg_ai_roles_l3_qa import routing, NODE  # noqa: F401
-from tests.modules.flow_gate.test_q_responder_startup_0111 import env, question, dispatch, finish, script  # noqa: F401
+from tests.modules.flow_gate.test_q_responder_startup_0111 import env as responder_env, question, dispatch, finish, script  # noqa: F401
 from tests.modules.flow_gate.test_qa_container import store as original_store, DOC
 from modules.flow_gate.services import question_policy, question_search, question_policy_assistant as assistant
 from modules.flow_gate.db import user_question_policies as policies
+
+
+@pytest.fixture
+def env(monkeypatch, tmp_path, migrated_sqlite_db):
+    # Use the durable allocator paired with the fixture's identity DB. The old
+    # synthetic IDs were never reserved and are now rejected before invocation.
+    from modules.flow_gate.db import ai_run_identity
+    from tests.modules.flow_gate import test_ai_invoke_no_output_retry_0359 as base
+    generator = responder_env.__wrapped__(monkeypatch, tmp_path, migrated_sqlite_db)
+    value = next(generator)
+    monkeypatch.setattr(base.svc, "_next_run_id", ai_run_identity.allocate)
+    try:
+        yield value
+    finally:
+        try:
+            next(generator)
+        except StopIteration:
+            pass
 
 
 @pytest.fixture
@@ -90,6 +108,9 @@ def test_answer_prompt_policy_replaces_default_and_includes_search(store, monkey
     assert "DB 구조는 나에게 질문" in prompt
     assert "절대 이관하지" not in prompt
     assert f"/q/{DOC}/search" in prompt
+    assert "작업 레포트(TR)" in prompt
+    assert "현재 권한 안에서" in prompt
+    assert "완료 기준을 임의로 완화하지" in prompt
     policies.save("u1", "")
     prompt = answer.build_answer_mention(doc={"doc_id": DOC}, item={"id": 1}, raw_token="fake",
         scratch_dir=".", api_base_url="http://test/api/v1", issued_to="u1")
@@ -108,6 +129,25 @@ def test_search_only_answered_project_scoped_literal_and_paged(store):
     assert len(question_search.search("p", "%_", 1, page["next_before_id"])["items"]) == 1
     assert question_search.search("other", "%_")["items"] == []
     assert question_search.search("p", "unanswered")["items"] == []
+
+
+def test_search_keywords_across_fields_codes_and_pagination(store):
+    from modules.flow_gate.services import q_service
+    ids = q_service.add_questions(DOC, [
+        {"title": "빈 폴더", "body": "삭제 도구 not_tool_artifact"},
+        {"title": "빈 디렉터리", "body": "not_tool_artifact 거절"},
+        {"body": "notXtoolYartifact"},
+    ], asker_kind="human", created_by="u1")["added_item_ids"]
+    for item in ids:
+        q_service.register_answer(DOC, item, "Git 추적 대상 아님", author_kind="human", author_id="u1")
+    page = question_search.search("p", "Git   not_tool_artifact", 1)
+    assert [r["item_id"] for r in page["items"]] == [ids[1]]
+    page2 = question_search.search("p", "not_tool_artifact Git", 1, page["next_before_id"])
+    assert [r["item_id"] for r in page2["items"]] == [ids[0]]
+    assert page2["next_before_id"] is None
+    assert question_search.search("p", "Git absent")["items"] == []
+    assert question_search.search("other", "Git not_tool_artifact")["items"] == []
+    assert question_search.search("p", "' OR 1=1 --")["items"] == []
 
 
 def test_assistant_validates_draft_and_keeps_existing_policy_in_context():

@@ -27,7 +27,7 @@ import { toRunGateState } from '@/features/document/api/run'
 // The run events (P0008 §8.2 `graph_run_status_changed` / `graph_node_state_changed`) are refresh
 // signals of the Canvas (flowCanvasEvents.ts), never state.
 import { getRequest, postRequest } from '@shared/api'
-import { canvasHeaders, num, str, toRoleRunFields, toUncarriedChanges, type Raw } from './flowCanvasApi'
+import { canvasHeaders, num, str, toQuestionWait, toRoleRunFields, toUncarriedChanges, type Raw } from './flowCanvasApi'
 import { FlowGraphApiError, toGraphError, serverRequestIdOf } from './flowGraphApi'
 import type { FlowRun, FlowRunNode, FlowRunTimeMachine, FlowRunTimeMachineRefusal } from './types'
 
@@ -47,6 +47,7 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...('integration_reason' in raw ? { integrationReason: str(raw.integration_reason) } : {}),
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
+    ...('question_wait' in raw ? { questionWait: toQuestionWait(raw.question_wait) } : {}),
     ...(typeof raw.node_running === 'boolean' ? { nodeRunning: raw.node_running } : {}),
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),

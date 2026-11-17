@@ -934,6 +934,10 @@ def reconcile(flow_id: str) -> None:
     except Exception:  # noqa: BLE001 — a run read is never failed by its reconciliation
         _log.warning("card stage reconciliation failed flow=%s", flow_id, exc_info=True)
         return
+    # The run-end event may have been missed while every card was waiting.
+    # Reconcile outside the Flow guard, like the other deferred stage work.
+    from flowgate.card_settings import question_wait
+    question_wait.reconcile(flow_id)
     for row in rows:
         try:
             if action_guard.node_reason(flow_id, row) is not None:

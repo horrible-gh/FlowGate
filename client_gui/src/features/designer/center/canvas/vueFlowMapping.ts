@@ -89,6 +89,7 @@ export interface FlowGateNodeData {
   hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered (the [Q] mark). */
   question?: boolean
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
   bodyUnreadable?: boolean
   /**
    * v02gui.0015 T2 (NR0006 §6-6): the earlier attempts of the card whose uncommitted changes its attempt did not take
@@ -184,7 +185,10 @@ export function toVueFlowNodes(
       : runNode && typeof runNode.hold === 'boolean' ? runNode.hold : node.nodeRun?.hold
     if (hold === true) data.hold = true
     const question = runNode && typeof runNode.question === 'boolean' ? runNode.question : node.nodeRun?.question
-    if (question === true) data.question = true
+    if (question === true) {
+      data.question = true
+      data.questionWait = runNode && 'questionWait' in runNode ? runNode.questionWait : node.nodeRun?.questionWait
+    }
     // v02gui.0015 T2: from the run read's node run first, as the integration chip.
     const uncarried = runNode && 'uncarriedChanges' in runNode ? runNode.uncarriedChanges : node.nodeRun?.uncarriedChanges
     if (uncarried && uncarried.attempts > 0) data.uncarried = { files: uncarried.files, attempts: uncarried.attempts, unknown: uncarried.unknown }

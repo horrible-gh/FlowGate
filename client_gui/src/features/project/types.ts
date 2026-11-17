@@ -565,6 +565,7 @@ export interface FlowCanvasNodeRun extends RoleRunFields {
   hold?: boolean
   /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
   question?: boolean
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
   /**
    * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
    * (`node_running`; flowgate.v02.0113 T#1: actually running — an AI execution of it requested / running, or its AI
@@ -826,6 +827,7 @@ export interface FlowRunNode extends RoleRunFields {
   hold?: boolean
   /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
   question?: boolean
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
   /**
    * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
    * (`node_running`; flowgate.v02.0113 T#1: actually running — an AI execution of it requested / running, or its AI

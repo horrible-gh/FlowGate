@@ -51,7 +51,7 @@ SUMMARY = {
         "merge_preview": "authorized group worktree HEAD를 target_ref에 얹었을 때의 3-way merge를 실제 변경 없이 시뮬레이션해 conflict 파일 목록·clean 여부와 병합 결과 tree oid(merge_tree)를 조회한다.",
         "write": "파일을 새로 만들거나 내용을 통째로 바꾼다.",
         "patch": "파일에서 글자 그대로 일치하는 텍스트를 찾아 일부를 바꾼다.",
-        "remove": "파일 하나를 삭제한다.",
+        "remove": "파일 또는 빈 디렉터리 하나를 삭제한다.",
     },
     "ja": {
         "read": "リモートプロジェクトソースのファイルを1つ読み取る。",
@@ -64,7 +64,7 @@ SUMMARY = {
         "merge_preview": "authorized group worktreeのHEADをtarget_refに載せた場合の3-way mergeを実際の変更なしにシミュレーションし、conflictファイル一覧・clean可否と統合結果tree oid（merge_tree）を取得する。",
         "write": "ファイルを新規作成、または内容を丸ごと置き換える。",
         "patch": "ファイル内で完全一致する文字列を検索し、該当部分を置き換える。",
-        "remove": "ファイルを1つ削除する。",
+        "remove": "ファイルまたは空ディレクトリを1つ削除する。",
     },
     "en": {
         "read": "Read a single file from the remote project source tree.",
@@ -77,7 +77,7 @@ SUMMARY = {
         "merge_preview": "Simulate a 3-way merge of the authorized group worktree's HEAD onto target_ref without making any change, and report conflicted files, whether the merge is clean, and the resulting tree oid (merge_tree).",
         "write": "Create a file or replace its entire content.",
         "patch": "Replace exact matching text within a file.",
-        "remove": "Delete a single file.",
+        "remove": "Delete a single file or empty directory.",
     },
 }
 
@@ -181,9 +181,9 @@ FIELDS = {
         "en": [("path", "string", True, None, "Path relative to the source root."), ("old_string", "string", True, None, "Exact text to replace. An empty string is forbidden."), ("new_string", "string", True, None, "Replacement text."), ("replace_all", "boolean", False, False, "Whether to replace every match at once."), ("encoding", "string", False, "utf-8", "Encoding used to read and write the file."), ('base_sha256', 'string', False, None, "Optional. sha256 of the content your edit is based on (read's source_sha256, or the sha256 of the previous write/patch response). If the disk differs, 409 (reason=base_changed) and nothing is written."), ('allow_mask_substitution', 'boolean', False, False, "true only when replacing original text with '***' is intended. Requires reason; recorded in the server audit log."), ('allow_replacement_char', 'boolean', False, False, 'true only when adding U+FFFD that is not on disk is intended. Requires reason.'), ('reason', 'string', False, None, 'Why an allow_* flag is used. Required when a flag is true.')],
     },
     "remove": {
-        "ko": [("path", "string", True, None, "삭제할 파일 또는 흔적 디렉터리의 소스 루트 기준 상대 경로."), ("recursive", "boolean", False, False, "디렉터리를 통째로 지운다. 도구가 남긴 흔적(.test-tmp-*, 점 디렉터리, node_modules 등)으로 판정되는 경로에만 허용되고, 그 밖에는 422다.")],
-        "ja": [("path", "string", True, None, "削除するファイルまたは痕跡ディレクトリのソースルートからの相対パス。"), ("recursive", "boolean", False, False, "ディレクトリを丸ごと削除する。ツールが残した痕跡(.test-tmp-*、ドットディレクトリ、node_modules など)と判定されるパスにのみ許可され、それ以外は422になる。")],
-        "en": [("path", "string", True, None, "Path of the file or artifact directory to delete, relative to the source root."), ("recursive", "boolean", False, False, "Delete a whole directory. Allowed only for paths judged tool artifacts (.test-tmp-*, dot directories, node_modules, …); anything else returns 422.")],
+        "ko": [("path", "string", True, None, "삭제할 파일, 빈 디렉터리 또는 흔적 디렉터리의 소스 루트 기준 상대 경로."), ("recursive", "boolean", False, False, "빈 디렉터리는 이 옵션 없이도 삭제한다. 내용이 있는 디렉터리를 통째로 지운다. 도구가 남긴 흔적(.test-tmp-*, 점 디렉터리, node_modules 등)으로 판정되는 경로에만 허용되고, 그 밖에는 422다.")],
+        "ja": [("path", "string", True, None, "削除するファイル、空ディレクトリまたは痕跡ディレクトリのソースルートからの相対パス。"), ("recursive", "boolean", False, False, "空ディレクトリはこの指定なしでも削除できる。内容のあるディレクトリを丸ごと削除する。ツールが残した痕跡(.test-tmp-*、ドットディレクトリ、node_modules など)と判定されるパスにのみ許可され、それ以外は422になる。")],
+        "en": [("path", "string", True, None, "Path of the file, empty directory or artifact directory to delete, relative to the source root."), ("recursive", "boolean", False, False, "Empty directories need no recursive flag. Delete a nonempty directory. Allowed only for paths judged tool artifacts (.test-tmp-*, dot directories, node_modules, …); anything else returns 422.")],
     },
 }
 
@@ -239,9 +239,9 @@ ERRORS = {
         "en": [(404, "not_found", "The file is missing, is a directory, or contains no exact old_string match."), (409, "conflict", "Two or more matches exist without replace_all."), (413, "too_large", "The resulting file exceeds the server limit."), (422, "invalid_request", "The file is not text, old_string equals new_string, encoding fails, or the path escapes the source root."), (403, "forbidden", "This token does not have the write scope."), (409, 'conflict', 'base_sha256 was sent and the disk content differs (reason=base_changed, details.current_sha256).'), (422, 'invalid_request', "A line replaces original text with '***' (reason=masked_substitution_suspect, details.lines), or adds U+FFFD that is not on disk (reason=replacement_char_introduced). Line text is never echoed.")],
     },
     "remove": {
-        "ko": [(404, "not_found", "경로가 없거나, 디렉터리인데 recursive 를 주지 않았다."), (409, "conflict", "그룹 작업 공간을 쓸 수 없다."), (409, "conflict", "읽기 전용/잠금이라 지울 수 없다. 재시도해도 같은 결과다(503 아님)."), (422, "invalid_request", "경로가 소스 루트를 벗어나거나, recursive 를 줬는데 흔적이 아닌 경로다."), (403, "forbidden", "이 토큰에 remove 스코프가 없다.")],
-        "ja": [(404, "not_found", "パスが存在しないか、ディレクトリなのにrecursiveを指定していない。"), (409, "conflict", "グループ作業領域を使用できない。"), (409, "conflict", "読み取り専用/ロックで削除できない。再試行しても同じ結果(503ではない)。"), (422, "invalid_request", "パスがソースルート外か、recursiveを指定したが痕跡ではないパスである。"), (403, "forbidden", "このトークンにremoveスコープがない。")],
-        "en": [(404, "not_found", "The path does not exist, or is a directory and recursive was not set."), (409, "conflict", "The group workspace is unavailable."), (409, "conflict", "The path is read-only or locked and cannot be deleted. Retrying will not help (this is not a 503)."), (422, "invalid_request", "The path escapes the source root, or recursive was set on a path that is not a tool artifact."), (403, "forbidden", "This token does not have the remove scope.")],
+        "ko": [(404, "not_found", "경로가 없거나, 비어 있지 않은 디렉터리에 recursive 를 주지 않았다."), (409, "conflict", "그룹 작업 공간을 쓸 수 없다."), (409, "conflict", "읽기 전용/잠금이라 지울 수 없다. 재시도해도 같은 결과다(503 아님)."), (422, "invalid_request", "루트·.git·디렉터리 별칭이거나, 루트 밖 또는 내용이 있는 일반 소스 폴더의 재귀 삭제다."), (403, "forbidden", "이 토큰에 remove 스코프가 없다.")],
+        "ja": [(404, "not_found", "パスが存在しないか、空でないディレクトリにrecursiveを指定していない。"), (409, "conflict", "グループ作業領域を使用できない。"), (409, "conflict", "読み取り専用/ロックで削除できない。再試行しても同じ結果(503ではない)。"), (422, "invalid_request", "ルート・.git・ディレクトリ別名、ルート外、または内容のある通常ソースの再帰削除である。"), (403, "forbidden", "このトークンにremoveスコープがない。")],
+        "en": [(404, "not_found", "The path does not exist, or is a nonempty directory and recursive was not set."), (409, "conflict", "The group workspace is unavailable."), (409, "conflict", "The path is read-only or locked and cannot be deleted. Retrying will not help (this is not a 503)."), (422, "invalid_request", "The path is root, .git, a directory alias, outside root, or a nonempty source directory requested recursively."), (403, "forbidden", "This token does not have the remove scope.")],
     },
 }
 
@@ -297,9 +297,9 @@ CAUTIONS = {
         "en": ["Matching uses exact text, not line numbers.", "No match returns 404; multiple matches without replace_all return 409. Neither case writes anything to the file.", "Untouched bytes are preserved, so files with different line endings do not become whole-file changes. Use this tool instead of write for partial edits.", "sha256 in a success response is the hash of the stored file (use it as the next base_sha256). For .py/.json, post_write_check carries a syntax check. The masking/U+FFFD checks judge the whole changed lines, not just new_string."],
     },
     "remove": {
-        "ko": ["기본은 파일 하나다. 디렉터리를 통째로 지우려면 recursive=true 를 주는데, 도구가 남긴 흔적으로 판정되는 경로에만 열린다.", "읽기 전용 파일은 권한을 풀고 다시 시도한다. 그래도 막히면 409 이고, 그건 재시도해도 안 되는 상태라는 뜻이다.", "성공하면 지운 파일을 작업 레포트에 남긴다."],
-        "ja": ["既定はファイル1つ。ディレクトリを丸ごと削除するにはrecursive=trueを指定するが、ツールが残した痕跡と判定されるパスにのみ開かれる。", "読み取り専用ファイルは権限を解除して再試行する。それでも失敗すると409で、再試行しても解決しない状態を意味する。", "成功したら削除したファイルを作業レポートに残す。"],
-        "en": ["A single file by default. Set recursive=true to delete a whole directory — allowed only for paths judged tool artifacts.", "Read-only files are retried after clearing the flag. A remaining failure returns 409, meaning retrying will not help.", "On success, include the removed file in the task report."],
+        "ko": ["기본은 파일 또는 빈 디렉터리 하나다. 루트·.git·디렉터리 별칭은 삭제하지 않는다. 내용이 있는 디렉터리를 통째로 지우려면 recursive=true 를 주는데, 도구가 남긴 흔적으로 판정되는 경로에만 열린다.", "읽기 전용 파일은 권한을 풀고 다시 시도한다. 그래도 막히면 409 이고, 그건 재시도해도 안 되는 상태라는 뜻이다.", "성공하면 지운 파일을 작업 레포트에 남긴다."],
+        "ja": ["既定はファイルまたは空ディレクトリ1つ。ルート・.git・ディレクトリ別名は削除しない。内容のあるディレクトリを丸ごと削除するにはrecursive=trueを指定するが、ツールが残した痕跡と判定されるパスにのみ開かれる。", "読み取り専用ファイルは権限を解除して再試行する。それでも失敗すると409で、再試行しても解決しない状態を意味する。", "成功したら削除したファイルを作業レポートに残す。"],
+        "en": ["A single file or empty directory by default. Root, .git and directory aliases are protected. Set recursive=true to delete a nonempty directory — allowed only for paths judged tool artifacts.", "Read-only files are retried after clearing the flag. A remaining failure returns 409, meaning retrying will not help.", "On success, include the removed file in the task report."],
     },
 }
 

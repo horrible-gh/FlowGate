@@ -20,6 +20,11 @@
 // not offered while the body cannot be checked (reason.body_*: the window's one line; reason.history: its 읽기 전용 tooltip).
 export default {
   ko: {
+    wait_pending: '답변 대기',
+    wait_dispatched: 'AI 답변 중',
+    wait_failed: '자동 답변 실패',
+    wait_user_decision: '사용자 판단 대기',
+
     question: 'Q{seq}',
     ask: '질문 등록',
     ask_placeholder: '질문 입력',
@@ -128,6 +133,11 @@ export default {
     },
   },
   en: {
+    wait_pending: 'Awaiting an answer',
+    wait_dispatched: 'AI answering',
+    wait_failed: 'Automatic answer failed',
+    wait_user_decision: 'Awaiting your decision',
+
     question: 'Q{seq}',
     ask: 'Ask',
     ask_placeholder: 'Ask a question',
@@ -236,6 +246,11 @@ export default {
     },
   },
   ja: {
+    wait_pending: '回答待ち',
+    wait_dispatched: 'AI回答中',
+    wait_failed: '自動回答に失敗',
+    wait_user_decision: 'ユーザーの判断待ち',
+
     question: 'Q{seq}',
     ask: '質問を登録',
     ask_placeholder: '質問を入力',

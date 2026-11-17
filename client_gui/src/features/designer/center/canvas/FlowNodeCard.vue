@@ -63,7 +63,8 @@
         v-if="data.question"
         class="flow-node-question"
         role="img"
-        aria-label="Q"
+        :aria-label="questionTitle"
+        :title="questionTitle"
         data-test="designer-canvas-node-question-icon"
       >Q</span>
       <span
@@ -162,6 +163,11 @@ const LINK_SIDES = [
 ] as const
 
 const { t } = useI18n()
+const questionTitle = computed(() => (props.data.questionWait ?? []).map(item => {
+  const state = ['pending', 'dispatched', 'failed', 'user_decision'].includes(item.state) ? item.state : 'pending'
+  return [`Q${item.seq}`, t(`gui.inspector.qna.wait_${state}`), item.code, item.message].filter(Boolean).join(' · ')
+}).join('\n') || t('gui.inspector.qna.wait_pending'))
+
 
 // flowgate.v02.0070 T#4 (B4): the same kind display as the Inspector header (a B root is a 버그).
 const kind = computed(() => flowNodeKindView(props.data.kind, props.data.docType))
