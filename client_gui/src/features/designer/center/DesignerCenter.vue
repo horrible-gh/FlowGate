@@ -20,13 +20,19 @@
        flowgate.v02.0061 T#15: a card's context menu is the session's (cardMenu / chooseCardMenu: Hold 설정 / 해제,
        되돌리기), and the Graph Time Machine's confirmation and outcome are the session's dialog (timeMachine).
        flowgate.v02.0070 T#1 (B1): a card title is no longer edited on the Canvas — the Inspector header saves it through the
-       session (saveNodeTitle, wired by the Center column). -->
+       session (saveNodeTitle, wired by the Center column).
+       flowgate.v02test.0035: the tabs also show their Flow's archive state (the last answered one, so a re-read does not
+       flicker) and the run / chat ends seen while another tab was active (useFlowTabMarks: per Project in the browser,
+       cleared when the tab is activated or closed). -->
   <div class="designer-center" data-test="designer-center">
     <FlowTabStrip
       :tabs="center.state.tabs"
       :active-flow-id="center.state.activeFlowId"
       :run-states="tabRunStates"
-        :chat-states="tabChatStates"
+      :chat-states="tabChatStates"
+      :archived="tabArchived"
+      :run-ends="tabRunEnds"
+      :chat-ends="tabChatEnds"
       @activate="center.activateFlow"
       @close="center.closeFlow"
       @reorder="center.moveFlow"
@@ -104,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, reactive, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../components/ui/Button.vue'
 import ErrorState from '../../../components/ui/ErrorState.vue'
@@ -114,6 +120,7 @@ import type { DesignerCenterSession, FlowCardMenuKey } from './designerCenterSes
 import { useFlowChatActivity } from '@/features/conversation/flowChatActivity'
 import FlowTabStrip, { type FlowTabRunState } from './FlowTabStrip.vue'
 import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
+import { useFlowTabMarks, type FlowTabChatEnd, type FlowTabRunEnd, type FlowTabRunFacts } from './flowTabMarks'
 import RevisionNotice from './RevisionNotice.vue'
 import DraftActionNotice from './edit/DraftActionNotice.vue'
 import GraphTimeMachineDialog from './run/GraphTimeMachineDialog.vue'
@@ -155,7 +162,10 @@ const holds = computed(() => (activeTab.value ? props.center.cardHolds(activeTab
  * paused / stopping) and confirmed by a read; a status not confirmed yet shows no mark. Every opened tab reads its run
  * with its Graph, so inactive tabs are known too.
  */
-const tabChatStates = useFlowChatActivity(() => props.center.state.projectId, () => props.center.state.tabs.map(tab => tab.flowId))
+/** flowgate.v02test.0035: how each Flow's last chat answer ended, as the finish event said (taken once by the marks). */
+const chatFinishes: Record<string, FlowTabChatEnd> = {}
+const tabChatStates = useFlowChatActivity(() => props.center.state.projectId, () => props.center.state.tabs.map(tab => tab.flowId),
+  (flowId, failed) => { chatFinishes[flowId] = failed ? 'failed' : 'done' })
 const tabRunStates = computed(() => {
   const states: Record<string, FlowTabRunState> = {}
   for (const tab of props.center.state.tabs) {
@@ -163,6 +173,50 @@ const tabRunStates = computed(() => {
     if (known && run && RUN_LOCKED_STATUSES.includes(run.status)) states[tab.flowId] = run.status as FlowTabRunState
   }
   return states
+})
+/**
+ * flowgate.v02test.0035: each open tab's archive state — the last one answered or set, kept while it is read again (an
+ * archive event locks every tab to null for a moment), so a tab never flickers. A Group archive does not touch it.
+ */
+const archiveShown = reactive<Record<string, boolean>>({})
+watchEffect(() => {
+  const open = new Set(props.center.state.tabs.map((tab) => tab.flowId))
+  for (const flowId of Object.keys(archiveShown)) if (!open.has(flowId)) delete archiveShown[flowId]
+  for (const flowId of open) {
+    const archived = props.center.isFlowArchived?.(flowId) ?? null
+    if (archived !== null) archiveShown[flowId] = archived
+  }
+})
+const tabArchived = computed(() => ({ ...archiveShown }))
+
+const tabMarks = useFlowTabMarks({
+  projectId: () => props.center.state.projectId,
+  tabs: () => props.center.state.tabs.map((tab) => tab.flowId),
+  activeFlowId: () => props.center.state.activeFlowId,
+  runs: () => {
+    const runs: Record<string, FlowTabRunFacts> = {}
+    for (const tab of props.center.state.tabs) {
+      const { run, known } = props.center.runStatus(tab.flowId)
+      runs[tab.flowId] = { known, status: run?.status ?? null, idleReason: run?.idleReason ?? null }
+    }
+    return runs
+  },
+  chats: () => tabChatStates.value,
+  chatEnd: (flowId) => {
+    const end = chatFinishes[flowId] ?? null
+    delete chatFinishes[flowId]
+    return end
+  },
+})
+const tabRunEnds = computed(() => {
+  const ends: Record<string, FlowTabRunEnd> = {}
+  for (const [flowId, mark] of Object.entries(tabMarks.marks)) if (mark.run) ends[flowId] = mark.run
+  return ends
+})
+const tabChatEnds = computed(() => {
+  const ends: Record<string, FlowTabChatEnd> = {}
+  for (const [flowId, mark] of Object.entries(tabMarks.marks)) if (mark.chat) ends[flowId] = mark.chat
+  return ends
 })
 const timeMachine = props.center.timeMachine
 /** flowgate.v02.0061 T#15: the dialog's Flow's card titles by node key (its shown Graph). */

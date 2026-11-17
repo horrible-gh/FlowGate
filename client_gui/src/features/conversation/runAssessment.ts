@@ -26,6 +26,14 @@ export function runBodyState(turns: readonly ConversationTurn[], runId: string, 
 }
 
 const FAILURE_REASONS = new Set(['timeout', 'all_providers_failed', 'worker_error', 'spawn_failed', 'provider_start_failed', 'orphaned_by_restart'])
+/**
+ * flowgate.v02test.0035: whether a finished run (its `end_reason` / `exit_code`, as the `ai_invoke_finished` event sends
+ * them) failed — the same rule runStatusLines uses for a finished run. A stop (`cancelled`) is not a failure.
+ */
+export function finishedRunFailed(endReason: string | null | undefined, exitCode: unknown): boolean {
+  if (endReason === 'cancelled') return false
+  return FAILURE_REASONS.has(endReason ?? '') || (typeof exitCode === 'number' && exitCode !== 0)
+}
 const REMOTE_CAUSES = new Set(['workdir_unset', 'permission_denied', 'workdir_create_failed', 'workdir_missing', 'path_invalid', 'agent_rejected', 'agent_failed'])
 
 export function runStatusLines(run: ChatRunState, body: RunBodyState, read: TurnReadState): RunStatusLine[] {

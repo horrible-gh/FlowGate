@@ -346,10 +346,15 @@ export default {
       close_tab: 'Close {name}',
       // flowgate.v02gui.0023: the tab strip's list button (only while the tabs overflow) and its list header.
       open_tabs_list: 'Show all open flows',
+      open_tabs_list_marked: 'Show all open flows — a hidden tab has something to check',
       open_tabs_count: 'Open flows ({count})',
       // flowgate.v02gui.0001: a tab's run mark (its accessible name).
       tab_run: { running: 'Running', paused: 'Paused', stopping: 'Stopping' },
       tab_chat: 'Chat AI responding',
+      // flowgate.v02test.0035: an archived Flow's tab, and the ends seen while another tab was active.
+      tab_archived: 'Archived',
+      tab_run_end: { completed: 'Run completed', ended: 'Run ended' },
+      tab_chat_end: { done: 'Chat answer finished', failed: 'Chat answer did not finish' },
       graph_loading: 'Loading graph',
       graph_load_failed: 'Could not load the graph',
       draft_action_failed: "The action could not be completed. Check the latest flow and try again. ({code})",

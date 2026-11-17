@@ -12,7 +12,12 @@
        moved away. A tab whose Flow's run is running / paused / stopping shows that state's mark before its name.
        flowgate.v02gui.0023: the strip never shows a scrollbar (it used to take its height out of the 36px and squash the
        tabs). The wheel scrolls it sideways, and only while the tabs overflow a list button (VS Code style) sits at the
-       right end, outside the tablist: it opens every open Flow in tab order (ui/Dropdown); picking one activates it. -->
+       right end, outside the tablist: it opens every open Flow in tab order (ui/Dropdown); picking one activates it.
+       flowgate.v02test.0035: an archived Flow's tab is dimmed like its Explorer row (0.5; 0.75 while active) with the
+       archive icon before its name. A run that ended while its tab was not active leaves its result mark where the run
+       mark was (the run band's tone: success ✓ / warning ! / danger ! / neutral ✓); a chat answer that ended so keeps the
+       bubble with a blue dot (orange: failed). The parent clears those marks when the tab is activated; a tab hidden by
+       the overflow that holds one puts a dot on the list button. -->
   <div ref="barRef" class="flow-tab-bar" data-test="designer-flow-tab-bar">
   <div
     ref="stripRef"
@@ -32,6 +37,7 @@
       class="flow-tab"
       :class="{
         'is-active': tab.flowId === activeFlowId,
+        'is-archived': isArchived(tab.flowId),
         'is-dragging': drag.active && drag.flowId === tab.flowId,
         'is-drop-before': dropMark?.flowId === tab.flowId && dropMark.side === 'before',
         'is-drop-after': dropMark?.flowId === tab.flowId && dropMark.side === 'after',
@@ -55,6 +61,14 @@
         @keydown="onKeydown($event, tab.flowId)"
       >
         <span
+          v-if="isArchived(tab.flowId)"
+          class="flow-tab-archive"
+          role="img"
+          :aria-label="t('gui.designer.center.tab_archived')"
+          :title="t('gui.designer.center.tab_archived')"
+          data-test="designer-flow-tab-archived"
+        ><LineIcon name="archive" /></span>
+        <span
           v-if="runStateOf(tab.flowId)"
           class="flow-tab-run"
           :class="`is-${runStateOf(tab.flowId)}`"
@@ -64,9 +78,22 @@
           data-test="designer-flow-tab-run"
           :data-run-status="runStateOf(tab.flowId)"
         />
+        <span
+          v-else-if="runEndOf(tab.flowId)"
+          class="flow-tab-end"
+          :class="`is-${runEndOf(tab.flowId)!.tone}`"
+          role="img"
+          :aria-label="runEndLabel(tab.flowId)"
+          :title="runEndLabel(tab.flowId)"
+          data-test="designer-flow-tab-run-end"
+          :data-tone="runEndOf(tab.flowId)!.tone"
+        ><svg v-if="isCheckTone(runEndOf(tab.flowId)!.tone)" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="1.3" /><path d="M3.6 6.2l1.6 1.6 3.2-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg><svg v-else viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.6" fill="currentColor" /><path d="M6 3.2v3.4" stroke="var(--fg2-panel, #0d1a28)" stroke-width="1.5" stroke-linecap="round" /><circle cx="6" cy="8.7" r="0.85" fill="var(--fg2-panel, #0d1a28)" /></svg></span>
         <!-- flowgate.v02gui.0020: the right dock's '대화' icon itself, at its 14px size, never rotating. -->
         <span v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" role="img" :aria-label="t('gui.designer.center.tab_chat')"
-          :title="t('gui.designer.center.tab_chat')" data-test="designer-flow-tab-chat"><ChatBubbleIcon :size="14" /></span>{{ tab.name }}
+          :title="t('gui.designer.center.tab_chat')" data-test="designer-flow-tab-chat"><ChatBubbleIcon :size="14" /></span>
+        <span v-else-if="chatEndOf(tab.flowId)" class="flow-tab-chat" :class="`is-${chatEndOf(tab.flowId)}`" role="img"
+          :aria-label="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)" :title="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)"
+          data-test="designer-flow-tab-chat-end" :data-chat-end="chatEndOf(tab.flowId)"><ChatBubbleIcon :size="14" /></span>{{ tab.name }}
       </button>
       <IconButton
         class="flow-tab-close"
@@ -87,11 +114,13 @@
       <template #trigger="{ toggle, triggerAttrs }">
         <IconButton
           class="flow-tab-list-button"
+          :class="{ 'has-mark': hiddenMark }"
           size="sm"
-          :label="t('gui.designer.center.open_tabs_list')"
-          :title="t('gui.designer.center.open_tabs_list')"
+          :label="t(hiddenMark ? 'gui.designer.center.open_tabs_list_marked' : 'gui.designer.center.open_tabs_list')"
+          :title="t(hiddenMark ? 'gui.designer.center.open_tabs_list_marked' : 'gui.designer.center.open_tabs_list')"
           v-bind="triggerAttrs"
           data-test="designer-flow-tab-list-button"
+          :data-has-mark="hiddenMark ? 'true' : undefined"
           @click="toggle"
         >
           <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -109,7 +138,7 @@
               type="button"
               role="menuitemradio"
               class="flow-tab-list-item"
-              :class="{ 'is-active': tab.flowId === activeFlowId }"
+              :class="{ 'is-active': tab.flowId === activeFlowId, 'is-archived': isArchived(tab.flowId) }"
               :aria-checked="tab.flowId === activeFlowId ? 'true' : 'false'"
               :title="tab.name"
               data-test="designer-flow-tab-list-item"
@@ -119,6 +148,8 @@
               <span class="flow-tab-list-check" aria-hidden="true">
                 <svg v-if="tab.flowId === activeFlowId" viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
               </span>
+              <span v-if="isArchived(tab.flowId)" class="flow-tab-archive" role="img" :aria-label="t('gui.designer.center.tab_archived')"
+                data-test="designer-flow-tab-list-archived"><LineIcon name="archive" /></span>
               <span
                 v-if="runStateOf(tab.flowId)"
                 class="flow-tab-run"
@@ -126,7 +157,19 @@
                 role="img"
                 :aria-label="t(`gui.designer.center.tab_run.${runStateOf(tab.flowId)}`)"
               />
+              <span
+                v-else-if="runEndOf(tab.flowId)"
+                class="flow-tab-end"
+                :class="`is-${runEndOf(tab.flowId)!.tone}`"
+                role="img"
+                :aria-label="runEndLabel(tab.flowId)"
+                data-test="designer-flow-tab-list-run-end"
+                :data-tone="runEndOf(tab.flowId)!.tone"
+              ><svg v-if="isCheckTone(runEndOf(tab.flowId)!.tone)" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="1.3" /><path d="M3.6 6.2l1.6 1.6 3.2-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg><svg v-else viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.6" fill="currentColor" /><path d="M6 3.2v3.4" stroke="var(--fg2-panel, #0d1a28)" stroke-width="1.5" stroke-linecap="round" /><circle cx="6" cy="8.7" r="0.85" fill="var(--fg2-panel, #0d1a28)" /></svg></span>
               <span v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" role="img" :aria-label="t('gui.designer.center.tab_chat')"><ChatBubbleIcon :size="14" /></span>
+              <span v-else-if="chatEndOf(tab.flowId)" class="flow-tab-chat" :class="`is-${chatEndOf(tab.flowId)}`" role="img"
+                :aria-label="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)" data-test="designer-flow-tab-list-chat-end"
+                :data-chat-end="chatEndOf(tab.flowId)"><ChatBubbleIcon :size="14" /></span>
               <span class="flow-tab-list-name">{{ tab.name }}</span>
             </button>
           </div>
@@ -143,6 +186,8 @@ import { useI18n } from 'vue-i18n'
 import IconButton from '../../../components/ui/IconButton.vue'
 import ChatBubbleIcon from '../../../components/ui/ChatBubbleIcon.vue'
 import Dropdown from '../../../components/ui/Dropdown.vue'
+import LineIcon from '../../../components/ui/LineIcon.vue'
+import type { FlowTabChatEnd, FlowTabRunEnd, FlowTabRunEndTone } from './flowTabMarks'
 
 export interface FlowTabStripItem {
   readonly flowId: string
@@ -159,8 +204,14 @@ const props = withDefaults(
     /** flowgate.v02gui.0001: a tab's run state by flow id; a tab not in it (or unknown) shows no mark. */
     chatStates?: Readonly<Record<string, boolean>>
     runStates?: Readonly<Record<string, FlowTabRunState | undefined>>
+    /** flowgate.v02test.0035: Flows shown as archived (dimmed, archive icon); absent / false = not archived. */
+    archived?: Readonly<Record<string, boolean | undefined>>
+    /** flowgate.v02test.0035: a run that ended while its tab was not active (shown while no run mark is). */
+    runEnds?: Readonly<Record<string, FlowTabRunEnd | undefined>>
+    /** flowgate.v02test.0035: a chat answer that ended while its tab was not active (shown while it is not answering). */
+    chatEnds?: Readonly<Record<string, FlowTabChatEnd | undefined>>
   }>(),
-  { runStates: () => ({}) },
+  { runStates: () => ({}), archived: () => ({}), runEnds: () => ({}), chatEnds: () => ({}) },
 )
 
 const emit = defineEmits<{
@@ -170,7 +221,7 @@ const emit = defineEmits<{
   reorder: [flowId: string, toIndex: number]
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 /** flowgate.v02.0060 T#2: the Designer context menu's tab side, provided by the Designer Shell; null elsewhere. */
 interface TabContextMenu {
@@ -194,6 +245,38 @@ function setTabRef(flowId: string, el: unknown) {
 
 function runStateOf(flowId: string): FlowTabRunState | null {
   return props.runStates[flowId] ?? null
+}
+
+/* ───────────── flowgate.v02test.0035: archived tabs, ended run / chat marks ───────────── */
+
+function isArchived(flowId: string): boolean {
+  return props.archived[flowId] === true
+}
+
+function runEndOf(flowId: string): FlowTabRunEnd | null {
+  return props.runEnds[flowId] ?? null
+}
+
+function chatEndOf(flowId: string): FlowTabChatEnd | null {
+  return props.chatStates?.[flowId] ? null : props.chatEnds[flowId] ?? null
+}
+
+/** ✓ for a completed / neutral end, ! for one that needs a look (warning / danger). */
+function isCheckTone(tone: FlowTabRunEndTone): boolean {
+  return tone === 'success' || tone === 'neutral'
+}
+
+/** The result's name: 실행 완료, else the run band's idle reason words (개입 필요, 오류로 멈춤 …), else 실행 끝남. */
+function runEndLabel(flowId: string): string {
+  const reason = runEndOf(flowId)?.reason ?? ''
+  if (reason === 'completed') return t('gui.designer.center.tab_run_end.completed')
+  const key = `gui.designer.top.run_idle_reasons.${reason}`
+  return reason && te(key) ? t(key) : t('gui.designer.center.tab_run_end.ended')
+}
+
+/** A tab with an ended run / chat mark to look at (the active tab never keeps one). */
+function hasEndMark(flowId: string): boolean {
+  return flowId !== props.activeFlowId && (runEndOf(flowId) !== null || chatEndOf(flowId) !== null)
 }
 
 function focusTab(flowId: string) {
@@ -409,6 +492,8 @@ const listItemsRef = ref<HTMLElement | null>(null)
 /** The tabs do not fit: the list button shows. Measured against the whole bar (not the strip, which the button itself
  *  narrows), so the button never keeps itself shown once the tabs would fit without it. */
 const overflowing = ref(false)
+/** flowgate.v02test.0035: a tab scrolled out of the strip's view holds an ended run / chat mark. */
+const hiddenMark = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
 function updateOverflow() {
@@ -416,6 +501,21 @@ function updateOverflow() {
   const bar = barRef.value
   if (!strip || !bar) return
   overflowing.value = strip.scrollWidth - bar.clientWidth > 1
+  updateHiddenMark()
+}
+
+function updateHiddenMark() {
+  const strip = stripRef.value
+  if (!strip || !overflowing.value) {
+    hiddenMark.value = false
+    return
+  }
+  const view = strip.getBoundingClientRect()
+  hiddenMark.value = props.tabs.some((tab) => {
+    if (!hasEndMark(tab.flowId)) return false
+    const rect = tabRefs.get(tab.flowId)?.getBoundingClientRect()
+    return !!rect && (rect.left < view.left - 1 || rect.right > view.right + 1)
+  })
 }
 
 onMounted(() => {
@@ -429,7 +529,8 @@ onMounted(() => {
 // Tabs opened / closed / renamed, or a run / chat mark that widens a tab, change the content width.
 watch(
   () => [props.tabs.map((tab) => `${tab.flowId}\t${tab.name}`).join('\n'), JSON.stringify(props.runStates ?? {}),
-    JSON.stringify(props.chatStates ?? {})],
+    JSON.stringify(props.chatStates ?? {}), JSON.stringify(props.archived ?? {}), JSON.stringify(props.runEnds ?? {}),
+    JSON.stringify(props.chatEnds ?? {}), props.activeFlowId],
   () => nextTick(updateOverflow),
 )
 
@@ -529,6 +630,24 @@ function pickFromList(flowId: string, close: () => void) {
 .flow-tab-list-button {
   width: 24px;
   height: 24px;
+}
+
+.flow-tab-list-button {
+  position: relative;
+}
+
+/* flowgate.v02test.0035: a hidden tab holds an ended run / chat mark. */
+.flow-tab-list-button.has-mark::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg2-blue);
+  box-shadow: 0 0 0 1.5px var(--fg2-panel);
+  pointer-events: none;
 }
 
 .flow-tab-list-button[aria-expanded='true'] {
@@ -632,6 +751,10 @@ function pickFromList(flowId: string, close: () => void) {
   color: var(--fg2-text);
 }
 
+.flow-tab-list-item.is-archived {
+  opacity: 0.5;
+}
+
 .flow-tab-list-check {
   display: inline-flex;
   flex: none;
@@ -685,6 +808,15 @@ function pickFromList(flowId: string, close: () => void) {
   color: var(--fg2-text);
 }
 
+/* flowgate.v02test.0035: an archived Flow's tab is dimmed like its Explorer row; the active one stays readable. */
+.flow-tab.is-archived {
+  opacity: 0.5;
+}
+
+.flow-tab.is-archived.is-active {
+  opacity: 0.75;
+}
+
 /* flowgate.v02gui.0001: the dragged tab is dimmed; a line marks where it lands. */
 .flow-tab.is-dragging {
   opacity: 0.55;
@@ -732,8 +864,63 @@ function pickFromList(flowId: string, close: () => void) {
 }
 
 /* flowgate.v02gui.0001: the run mark — running spins, stopping spins dimmed, paused shows two bars. */
-.flow-tab-chat { display: inline-flex; width: 14px; height: 14px; margin-right: 6px; vertical-align: -3px; }
+.flow-tab-chat { position: relative; display: inline-flex; width: 14px; height: 14px; margin-right: 6px; vertical-align: -3px; }
 .flow-tab-chat :deep(svg) { display: block; }
+
+/* flowgate.v02test.0035: an answer that ended while the tab was not active — blue dot (done), orange dot (failed). */
+.flow-tab-chat.is-done::after,
+.flow-tab-chat.is-failed::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg2-blue);
+  box-shadow: 0 0 0 1.5px var(--fg2-panel);
+}
+
+.flow-tab-chat.is-failed::after {
+  background: var(--fg2-orange);
+}
+
+.flow-tab-archive {
+  display: inline-flex;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  color: var(--fg2-muted);
+  vertical-align: -2px;
+}
+
+.flow-tab-archive :deep(svg) {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+
+/* flowgate.v02test.0035: the ended run's result in the run mark's place and size, coloured like the run band. */
+.flow-tab-end {
+  display: inline-flex;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+
+.flow-tab-end svg {
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+
+.flow-tab-end.is-success { color: var(--fg2-status-success-fg, #4fe0d3); }
+.flow-tab-end.is-warning { color: var(--fg2-status-warning-fg, #ffc072); }
+.flow-tab-end.is-danger { color: var(--fg2-status-danger-fg, #ff96a6); }
+.flow-tab-end.is-neutral { color: var(--fg2-muted); }
 
 .flow-tab-run {
   display: inline-block;

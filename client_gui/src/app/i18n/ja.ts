@@ -346,10 +346,15 @@ export default {
       close_tab: '{name} を閉じる',
       // flowgate.v02gui.0023: the tab strip's list button (only while the tabs overflow) and its list header.
       open_tabs_list: '開いているフローの一覧',
+      open_tabs_list_marked: '開いているフローの一覧 — 隠れたタブに確認する表示があります',
       open_tabs_count: '開いているフロー {count}件',
       // flowgate.v02gui.0001: a tab's run mark (its accessible name).
       tab_run: { running: '実行中', paused: '一時停止', stopping: '停止中' },
       tab_chat: 'チャットAI応答中',
+      // flowgate.v02test.0035: an archived Flow's tab, and the ends seen while another tab was active.
+      tab_archived: 'アーカイブ済み',
+      tab_run_end: { completed: '実行完了', ended: '実行終了' },
+      tab_chat_end: { done: 'チャットの回答が終わりました', failed: 'チャットの回答が完了しませんでした' },
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
       draft_action_failed: "操作を完了できませんでした。最新のフローを確認してから、もう一度お試しください。({code})",

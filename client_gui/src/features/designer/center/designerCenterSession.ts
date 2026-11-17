@@ -476,6 +476,8 @@ export interface DesignerCenterSession {
   // flowgate.v02.0064 T#4 — a card's own title (graph/nodeTitle.ts).
   /** The source saves card titles (the Canvas opens a card's title for editing). */
   isFlowReadOnly(flowId: string): boolean
+  /** flowgate.v02test.0035: the Flow's archive state as last answered or set (null: not known / being read again). */
+  isFlowArchived(flowId: string): boolean | null
   setFlowArchived(flowId: string, archived: boolean | null): void
   readonly canEditNodeTitles: boolean
   /**
@@ -527,6 +529,11 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
 
   function isFlowReadOnly(flowId: string): boolean {
     return options.readArchive !== undefined && archiveStates[flowId] !== false
+  }
+
+  function isFlowArchived(flowId: string): boolean | null {
+    const archived = archiveStates[flowId]
+    return typeof archived === 'boolean' ? archived : null
   }
 
   function setFlowArchived(flowId: string, archived: boolean | null) {
@@ -1637,6 +1644,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     confirmTimeMachine,
     closeTimeMachine,
     isFlowReadOnly,
+    isFlowArchived,
     setFlowArchived,
     canEditNodeTitles,
     saveNodeTitle,

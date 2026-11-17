@@ -349,10 +349,15 @@ export default {
       close_tab: '{name} 닫기',
       // flowgate.v02gui.0023: the tab strip's list button (only while the tabs overflow) and its list header.
       open_tabs_list: '열린 플로우 목록',
+      open_tabs_list_marked: '열린 플로우 목록 — 가려진 탭에 확인할 표시가 있습니다',
       open_tabs_count: '열린 플로우 {count}개',
       // flowgate.v02gui.0001: a tab's run mark (its accessible name).
       tab_run: { running: '실행 중', paused: '일시정지', stopping: '중지 중' },
       tab_chat: '채팅 AI 응답 중',
+      // flowgate.v02test.0035: an archived Flow's tab, and the ends seen while another tab was active.
+      tab_archived: '아카이브됨',
+      tab_run_end: { completed: '실행 완료', ended: '실행 끝남' },
+      tab_chat_end: { done: '채팅 답변이 끝났습니다', failed: '채팅 답변이 끝나지 못했습니다' },
       graph_loading: '그래프를 불러오는 중',
       graph_load_failed: '그래프를 불러오지 못했습니다',
       draft_action_failed: "작업을 완료하지 못했습니다. 최신 플로우를 확인한 뒤 다시 시도하세요. ({code})",

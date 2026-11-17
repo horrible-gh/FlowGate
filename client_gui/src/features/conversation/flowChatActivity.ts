@@ -1,6 +1,7 @@
 import { computed, getCurrentInstance, onScopeDispose, reactive, watch } from 'vue'
 import { getRequest } from '@shared/api'
 import { useProjectStore } from '@/features/project'
+import { finishedRunFailed } from './runAssessment'
 
 // Local admission and server execution are separate: cancelling is still active until confirmed.
 const pending = reactive<Record<string, number>>({})
@@ -9,7 +10,12 @@ export function beginChatActivity(groupId: string): () => void {
   return () => { pending[groupId] = Math.max(0, (pending[groupId] ?? 1) - 1) }
 }
 
-export function useFlowChatActivity(project: () => string | null, flows: () => readonly string[]) {
+/**
+ * flowgate.v02test.0035: `onFinish` hears every chat (CH) run of an open Flow that the server reports finished, and
+ * whether it failed (finishedRunFailed), before the activity it ends is read again.
+ */
+export function useFlowChatActivity(project: () => string | null, flows: () => readonly string[],
+  onFinish?: (groupId: string, failed: boolean) => void) {
   const active = reactive<Record<string, boolean>>({})
   const tickets = new Map<string, number>()
   const pinia = getCurrentInstance()?.appContext.config.globalProperties.$pinia
@@ -43,6 +49,12 @@ export function useFlowChatActivity(project: () => string | null, flows: () => r
       event: frame => {
         const id = frame.groupId ?? String(frame.payload.group_id ?? '')
         if (!flows().includes(id)) return
+        if (frame.type === 'ai_invoke_finished' && onFinish) {
+          const p = frame.payload as { doc_ref?: unknown; action_scope?: unknown; end_reason?: unknown; exit_code?: unknown }
+          if ((typeof p.doc_ref === 'string' && p.doc_ref.endsWith('-CH')) || p.action_scope === 'chat') {
+            onFinish(id, finishedRunFailed(typeof p.end_reason === 'string' ? p.end_reason : null, p.exit_code))
+          }
+        }
         // Re-read all live CH runs: an old finish must never clear a newer run.
         void refresh(id)
       },
