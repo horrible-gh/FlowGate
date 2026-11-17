@@ -506,8 +506,6 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 /* flowgate.v02gui.0030: 첨부파일 (final mockup .tool-attachment) — blue clip; lit while the open Flow's window is open. */
 .designer-tool-attachment {
   position: relative;
-  min-width: 70px;
-  margin-left: 5px;
   color: #d8ebfa;
 }
 
