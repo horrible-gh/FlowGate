@@ -29,6 +29,9 @@ _log = logging.getLogger(__name__)
 _EXECUTION_FIELDS = {"mode", "wp_revision_no", "plan_digest", "draft_version", "base_revision_no", "remove_node_keys"}
 
 MESSAGES = {
+    "work_plan_retired": {"ko": "작업계획 생성·전개는 종료되었습니다. 채팅에서 카드를 배치하세요.",
+                          "en": "Work plan creation and deployment have been retired. Place cards through chat.",
+                          "ja": "作業計画の作成・展開は終了しました。チャットでカードを配置してください。"},
     "wp_not_found": {"ko": "작업계획을 찾을 수 없습니다.", "en": "Work plan not found.", "ja": "作業計画が見つかりません。"},
     "not_a_work_plan": {"ko": "작업계획 문서가 아닙니다.", "en": "Not a work plan.", "ja": "作業計画ではありません。"},
     "wp_not_on_card": {"ko": "Designer 작업계획 카드의 계획이 아닙니다.", "en": "This plan is not on a Designer card.",

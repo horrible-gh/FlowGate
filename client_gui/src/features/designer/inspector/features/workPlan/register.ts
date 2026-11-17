@@ -8,7 +8,6 @@
 // buttons deploy the plan (WorkPlanActions, useWorkPlanDeploy; the T#4 deploy API).
 import type { InspectorRegistration } from '../../inspectorRegistry'
 import messages from './messages'
-import WorkPlanActions from './WorkPlanActions.vue'
 import WorkPlanTab from './WorkPlanTab.vue'
 
 const registration: InspectorRegistration = {
@@ -17,7 +16,6 @@ const registration: InspectorRegistration = {
   cardKinds: ['plan'],
   requiresDocument: false,
   tab: { key: 'documents', component: WorkPlanTab },
-  headerAction: WorkPlanActions,
   messages,
 }
 

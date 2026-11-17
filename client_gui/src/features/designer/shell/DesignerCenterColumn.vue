@@ -13,7 +13,7 @@
        flowgate.v02.0070 T#1 (B1): the Inspector header's card title save goes to the session's saveNodeTitle for the
        Flow and card the edit was opened on (never the active Flow at answer time). -->
   <div ref="columnRef" class="designer-center-column" data-test="designer-center-column">
-    <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" />
+    <DesignerWorkspace :center="center" :unselected="unselected" :placing="placing" :move-step="moveStep" @canvas-place="(flowId, x, y) => emit('canvas-place', flowId, x, y)" @cancel-placement="emit('cancel-placement')" @show-tool="emit('show-tool', $event)" @open-document="openCardDocument" />
     <DesignerResizeHandle
       class="designer-center-resize"
       axis="y"
@@ -34,6 +34,8 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { openDocument } from '../inspector/openDocument'
+import { cardDocumentButtons, type CardDocumentOpen } from '../center/canvas/cardDocumentButtons'
 import type { CanvasViewport } from '../center/canvasView'
 import type { DesignerCenterSession } from '../center/designerCenterSession'
 import type { FlowGraph } from '../center/graph/flowGraph'
@@ -99,6 +101,20 @@ provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
     } else if (intent.kind === 'show-tool' && intent.tool === 'git') emit('show-tool', intent.tool)
   },
 })
+
+function openCardDocument(flowId: string, requested: CardDocumentOpen) {
+  const load = props.center.state.graphs[flowId]
+  if (load?.status !== 'ready') return
+  const node = load.graph.nodes.find(item => item.id === requested.nodeId)
+  if (!node) return
+  const doc = cardDocumentButtons(node).find(item => item.docId === requested.docId)
+  if (!doc) return
+  const card = node.definition && doc.ownerSlot ? {
+    projectId: props.center.state.projectId!, flowId, nodeKey: node.id,
+    ownerSlot: doc.ownerSlot, openedDocId: doc.docId,
+  } : null
+  openDocument(doc.docId, 'view', { card })
+}
 
 const columnRef = ref<HTMLElement | null>(null)
 

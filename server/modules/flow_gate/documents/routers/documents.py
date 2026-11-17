@@ -880,6 +880,8 @@ def create_document(
     """Create a document."""
     import logging as _logging
     data = body.model_dump()
+    if str(data.get("type_code") or "").upper() == WORK_PLAN_TYPE:
+        raise HTTPException(status_code=410, detail={"code": "work_plan_retired"})
     _reject_if_group_ai_running(data)
     if str(data.get("type_code") or "").upper() == "TR2":
         raise HTTPException(
@@ -1180,6 +1182,8 @@ def create_next_empty_document(
 
     title = (body.title or "").strip()
     type_code = (body.type_code or "").strip().upper()
+    if type_code == WORK_PLAN_TYPE:
+        raise HTTPException(status_code=410, detail={"code": "work_plan_retired"})
     # v02gui.0012: the group's permanent module key wins over the request's module.
     module = _canonical_doc_module(body.project_id, body.group_id, body.module)
     if type_code != WORK_PLAN_TYPE and not title:

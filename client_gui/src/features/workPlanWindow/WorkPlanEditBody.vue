@@ -253,17 +253,7 @@
                     </small>
                   </span>
                   <span class="wpe-pencil">
-                    <IconButton
-                      v-if="omitOf(row).visible"
-                      size="sm"
-                      :label="omitTitle(row)"
-                      :title="omitTitle(row)"
-                      :disabled="!omitOf(row).enabled"
-                      :aria-busy="omitting === row.rowId ? 'true' : undefined"
-                      data-test="wp-edit-step-omit"
-                      :data-action="omitOf(row).action"
-                      @click="editor.omitStep(row.rowId)"
-                    ><svg class="wpe-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="omitOf(row).action === 'retry' ? REFRESH_PATH : OMIT_PATH" /></svg></IconButton>
+
                     <span v-if="stepHasInstruction(row.step)" class="wpe-mark" :title="t('instruction')" data-test="wp-edit-step-instruction" />
                     <IconButton
                       size="sm"
@@ -382,13 +372,12 @@ const emit = defineEmits<{
 const { t } = useI18n({ useScope: 'local', messages: workPlanWindowMessages, inheritLocale: true })
 const { t: gt } = useI18n({ useScope: 'global' })
 
-const { phase, loadError, unreadableRaw, view, draft, saving, reloading, lockReason, inputsLocked, failure, rowErrors, topErrors, capability, externalRevision, omitting } =
+const { phase, loadError, unreadableRaw, view, draft, saving, reloading, lockReason, inputsLocked, failure, rowErrors, topErrors, capability, externalRevision } =
   props.editor
 
 /** Lucide `rotate-ccw` (ISC) — the defaults row's mark, as in the confirmed mockup; also 「전개 재시도」. */
 const REFRESH_PATH = 'M3 12a9 9 0 1 0 3-6.7L3 8 M3 3v5h5'
 /** Lucide `check-check` (ISC) — 「지시 생략」. */
-const OMIT_PATH = 'M18 6 7 17l-5-5 M22 10l-7.5 7.5L13 16'
 
 const boxes = computed(() => (draft.value ? quantityBoxes(draft.value.body) : []))
 const totals = computed(() => (draft.value ? totalsOf(draft.value) : { designSheets: 0, workSets: 0, steps: 0 }))
@@ -492,14 +481,6 @@ watch(
     if (minimized) reviewPopover.value?.close()
   },
 )
-
-const omitOf = (row: WorkPlanRowRef) => props.editor.omitState(row.rowId)
-
-function omitTitle(row: WorkPlanRowRef): string {
-  const state = omitOf(row)
-  const name = state.action === 'retry' ? t('omit.retry') : t(designInstructionStep(row.step) || row.step.pair_role === 'single' ? 'omit.design' : 'omit.instruction')
-  return state.reason ? `${name} — ${t(state.reason)}` : name
-}
 
 function pencilTitle(row: WorkPlanRowRef): string {
   if (row.step.locked) return t('pencil.locked')

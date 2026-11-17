@@ -33,8 +33,4 @@ function choose(value: string) {
 <style scoped>
 .ai-role-select { display: flex; align-items: center; gap: 6px; min-width: 0; width: 100%; }
 .ai-role-select > select { flex: 1; }
-/* Select.vue paints its own arrow with background gradients and right padding; base-select draws ::picker-icon instead. */
-@supports (appearance: base-select) {
-  .ai-role-select > select.ai-base-select { padding-right: var(--fg2-control-pad-x); background: var(--fg2-control-surface); }
-}
 </style>

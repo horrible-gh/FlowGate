@@ -90,6 +90,7 @@
           @undo="center.undoEdit(activeTab.flowId)"
           :can-approve="center.canApproveFlow(activeTab.flowId)"
           :approving-node-id="center.activeRun.value?.approving ?? null"
+          @open-document="emit('open-document', activeTab.flowId, $event)"
           @node-approve="center.approveNode(activeTab.flowId, $event)"
           @node-conflict="emit('show-tool', 'git')"
           :card-menu="cardMenuOf"
@@ -137,6 +138,7 @@ const emit = defineEmits<{
   'cancel-placement': []
   /** flowgate.v02.0061 T#14: a card's merge conflict — the Git tool panel resolves it. */
   'show-tool': [tool: 'git']
+  'open-document': [flowId: string, document: import('./canvas/cardDocumentButtons').CardDocumentOpen]
 }>()
 
 const { t } = useI18n()

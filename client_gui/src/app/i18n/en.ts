@@ -340,6 +340,8 @@ export default {
   designer: {
     // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
     center: {
+      document: 'Document',
+      open_card_document: 'Open {kind}: {title}',
       latest_definition_notice: 'Showing latest definition {latest}. The run keeps revision {revision}. Protected cards and inputs cannot be changed.',
       pinned_revision_notice: 'Showing run-pinned revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',
       past_revision_notice: 'Showing revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',

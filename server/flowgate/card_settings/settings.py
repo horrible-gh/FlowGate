@@ -80,7 +80,6 @@ _log = logging.getLogger(__name__)
 # document has, so the binder binds nothing (never a type guessed from the card) and its reconciliation waits.
 UNREADABLE_RESULT_TYPE = "?unreadable"
 
-DELEGATION_FIELD = "delegation"
 MERGE_TARGET_FIELD = "merge_target"
 PUSH_FIELD = "push"
 LEGACY_MERGE_TARGET = "legacy_merge_target"
@@ -254,9 +253,6 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
                                                  reason="settings", actor_user_id=user_id,
                                                  origin_client_id=None, node_keys=[node_key])
         stored = repository.values(flow_id, node_key)
-        if name == DELEGATION_FIELD:
-            card_lines.set_delegation(group, node, stored.get(DELEGATION_FIELD) == "on", user_id, registered,
-                                      locale)
         if changed and name == fields.MERGE_TARGET_BRANCH.name:
             legacy.invalidate_merge_targets(group)
         return _payload(flow_id, node, stored, user_id, group.get("project_id"))

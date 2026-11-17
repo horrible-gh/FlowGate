@@ -455,233 +455,9 @@ def create_work_plan(
     body: WorkPlanCreate,
     current_user: dict = Depends(get_current_user),
 ):
-    locale = _locale(request)
-    parent = db_docs.get_by_id(body.parent_doc_id)
-    if parent is None:
-        raise HTTPException(status_code=422, detail=f"Parent document not found: {body.parent_doc_id}")
-    if str(parent.get("type_code") or "").upper() not in _PARENT_TYPES:
-        raise HTTPException(
-            status_code=422,
-            detail="A work plan attaches to the group's root document "
-                   f"({'/'.join(sorted(_PARENT_TYPES))}), not to {parent.get('type_code')}.",
-        )
-
-    from modules.flow_gate.documents.routers.documents import (
-        _reject_if_group_ai_running,
-        _reject_if_group_disposed,
-    )
-    _reject_if_group_disposed(parent)
-    _reject_if_group_ai_running(parent)
-
-    # The screen already blocks an empty selection (D0007 §6.3); this is the same
-    # verdict for a request that never went through the screen (P0009 §4.3).
-    errors = []
-    if not body.counted_types:
-        errors.append(wp.empty_selection_error("counted_types"))
-    # 0405 T0011 rev2 (rejected: "if there is no AI provider to pick, hide [2 candidate providers]
-    # and let the user pick only 1 and create, no?"): in a project with no registered provider
-    # there is no way to choose at all, so an empty candidate set is accepted — only there.
-    # 0411 T0004 then widened this rejection to registered projects too, worried that an
-    # empty candidate set would leave the AI scope dialog's [all] selecting nobody.
-    # flowgate.default.0591 T0005 found that concern already moot: WorkPlanAiScopeDialog's
-    # [all] and this route's own suggest_work_plan() below both resolve their selectable set
-    # from the project's LIVE registered providers (client: WorkPlanEditor.liveProviderRows /
-    # scopeProviderOptions; server: selectable_ids = candidate_ids | registered_provider_ids),
-    # never from this saved snapshot alone — an empty provider_candidates here never narrows
-    # either one. R0001 additionally requires [+문서생성] to build a canonical all-zero WP with
-    # nothing picked in either dialog section, so this create-time rejection is removed for
-    # the human path; the client's own AI-delegation gate ([멘트복사]/[AI호출] still require at
-    # least one candidate provider whenever the project has any registered) is what protects
-    # "chose nothing to delegate to" now.
-    registered_providers = _providers(parent.get("project_id"))
-    # 0405 NR0006 §3.2: this pre-check used to demand >= 1 for EVERY entry, which
-    # contradicted the canonical rule (work_plan_service.COUNT_MIN = 0, and a count of 0
-    # simply produces no step). The screen always sends the full countable key set with 0
-    # for the types nobody picked, so a perfectly normal partial selection — the very
-    # {DS:1, D:0, T:1} shape WorkPlanCreateDialog.spec.ts pins — was rejected with 422.
-    # The canonical validator below still enforces the real 0..20 range.
-    invalid_quantities = {
-        code: count for code, count in body.quantities.items()
-        if isinstance(count, bool) or count < wp.COUNT_MIN
-    }
-    if invalid_quantities:
-        raise HTTPException(
-            status_code=422,
-            detail=f"quantities values must be integers greater than or equal to {wp.COUNT_MIN}.",
-        )
-    if errors:
-        return _validation_response(
-            wp.WorkPlanValidationError(errors, action="create"), locale
-        )
-
-    project_id = parent.get("project_id")
-    group_id = parent.get("group_id")
-    module = parent.get("module") or "none"
-
-    candidates = wp.snapshot_candidates(list(body.provider_candidates), registered_providers)
-    # flowgate.default.0423 T0005 items 6-7: an explicit request value still wins, but a
-    # type the request left out of `quantities` gets the group's workflow_type_counts
-    # derivation instead of initial_body's own 0 fallback, when one exists. This is the
-    # same derivation the WP editor's AI-scope suggestion already reuses (work_plan.py
-    # suggest_work_plan, work_plan_service.auto_plan_body) — not a new inference.
-    derived_quantities = wp.workflow_type_counts(_workflow_items(parent))
-    merged_quantities = {**derived_quantities, **dict(body.quantities)}
-    plan = wp.initial_body(
-        list(body.counted_types),
-        candidates,
-        project_id,
-        quantities=merged_quantities,
-        defaults=dict(body.defaults),
-        type_providers=dict(body.type_providers),
-    )
-    try:
-        plan = wp.validate(plan, project_id=project_id, action="create")
-    except wp.WorkPlanValidationError as exc:
-        return _validation_response(exc, locale)
-
-    # 0403 NR0004 F8 — the title-length check runs BEFORE a document number is reserved.
-    # A reservation cannot be undone. Throwing a 422 afterwards leaves that number owning no
-    # document and punches a hole in the group's numbering. Every check decidable from the request alone goes before the reservation.
-    title_locale = wp.resolve_title_locale(creation_locale=locale)
-    title = wp.derived_title(plan, title_locale)
-
-    # WorkPlanCreate.title remains accepted only for backward compatibility and is ignored.
-
-    try:
-        doc_code = numbering_service.reserve_document(
-            group_id=group_id, doc_type=WORK_PLAN_TYPE, module=module,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=f"Numbering lock timeout: {exc}")
-
-    doc_id = f"{group_id}.{doc_code}"
-    numeric = doc_code_seq_text(doc_code)
-    seq = int(numeric) if numeric is not None else 0
-    branch = _project_branch(project_id)
-    path = storage_paths.document_path(
-        project_id=project_id,
-        group_code=group_id,
-        doc_code=doc_code,
-        filename=wp.DOCUMENT_FILENAME,
-        module=module,
-        branch=branch,
-    )
-    # title is derived above from the validated canonical body.
-
-    try:
-        wp.write_body_atomically(path, plan)
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
-
-    from modules.flow_gate.storage.files import file_identity, remove_owned_file
-    written_identity = file_identity(path)
-    now = now_iso()
-    try:
-        doc = document_service.create_document({
-            "doc_id": doc_id,
-            "project_id": project_id,
-            "module": module,
-            "group_id": group_id,
-            "type_code": WORK_PLAN_TYPE,
-            "seq": seq,
-            "title": title,
-            "status": "open",
-            "owner_id": current_user["user_id"],
-            "target_id": body.parent_doc_id,
-            "triggered_by": body.parent_doc_id,
-            "file_path": storage_paths.to_storage_relative(path, project_id),
-            "revision_no": 0,
-            "created_at": now,
-            "updated_at": now,
-            "meta": _json.dumps({"work_plan": {"origin": "human", "title_locale": title_locale}}, ensure_ascii=False),
-        }, actor_user_id=current_user["user_id"])
-        # 0599 T#2: creation succeeds only after the exact canonical bytes have a
-        # durable r0 recovery source. This never regenerates a body from settings.
-        wp.ensure_revision_snapshot(
-            doc,
-            path,
-            created_by=current_user["user_id"],
-            revision_no=0,
-        )
-    except Exception as exc:  # noqa: BLE001 — roll the file and row back, never leave an orphan
-        try:
-            remove_owned_file(path, written_identity)
-        except OSError:
-            pass
-        try:
-            db_docs.delete(doc_id)
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail=f"DB registration error: {exc}")
-
-    # 0395 T0021 — the counterpart created when a work plan became placeable as a sequence slot.
-    # D0007 §7 pinned the work plan down as "a type that occupies a workflow slot" (which is
-    # why WP is absent from NON_SLOT_WORKFLOW_TYPES), and the AI path already fills the head
-    # slot at inbox step 7.5. If only the human path skipped this registration, a group with a
-    # WP slot would leave that slot pending forever and the created document would be flagged
-    # an orphaned workflow member — on screen, "I created it but the workflow will not advance".
-    #
-    # Filled only when the head is WP. A work plan is advisory and can be written at any point
-    # (the same reason it is exempt from the inbox head-type guard); occupying a slot while the
-    # head is another type would let the plan hijack that step's result document.
-    # Best effort: the document already exists, so a failure here does not roll the creation
-    # back. Same stance as inbox step 7.5.
-    try:
-        head_item = db_wfseq.get_pending_head_by_group(group_id, project_id)
-        if head_item is not None and str(head_item.get("type") or "").upper() == WORK_PLAN_TYPE:
-            from modules.flow_gate.workflow.pipeline_service import register_workflow_result
-
-            register_workflow_result(
-                item_id=head_item["id"],
-                registered_path=storage_paths.to_storage_relative(path, project_id),
-                registered_doc_id=doc_id,
-                registered_at=now,
-                actor_user_id=current_user["user_id"],
-            )
-    except Exception as exc:  # noqa: BLE001 — the document exists; slot filling is best-effort
-        import LogAssist.log as logger
-        logger.warning(f"[work-plan] workflow slot registration skipped ({doc_id}): {exc}")
-
-    # D0007 §3.1 decision 4: a work plan is NOT auto-complete — it opens pending_review and
-    # goes through the ordinary review pipeline. §4.2 also forbids touching the parent's
-    # status, so _try_close_parent_on_child_created is deliberately not called here.
-    from modules.flow_gate.workflow.pipeline_service import transition_document_review
-    try:
-        transition_document_review(
-            doc_id=doc_id,
-            action="submit",
-            actor_user_id=current_user["user_id"],
-            user_permissions={"document.update"},
-        )
-    except Exception as exc:  # noqa: BLE001 — the document exists; review state is best-effort
-        import LogAssist.log as logger
-        logger.warning(f"[work-plan] review transition skipped ({doc_id}): {exc}")
-
-    refreshed = db_docs.get_by_id(doc_id) or doc
-    _emit(refreshed, "created",
-          {"doc_id": doc_id, "type": WORK_PLAN_TYPE, "title": refreshed.get("title"),
-           "status": refreshed.get("status"), "revision_no": 0},
-          current_user["user_id"])
-
-    return JSONResponse(status_code=201, content={
-        "ok": True,
-        "doc_id": doc_id,
-        "doc_type": WORK_PLAN_TYPE,
-        "title": refreshed.get("title"),
-        "group_id": group_id,
-        "parent_doc_id": body.parent_doc_id,
-        "status": refreshed.get("status"),
-        "doc_review_status": refreshed.get("doc_review_status"),
-        "revision_no": refreshed.get("revision_no", 0),
-        "stored_path": refreshed.get("file_path"),
-        "created_by": current_user["user_id"],
-        "created_at": now,
-        "origin": "human",
-        # The screen draws the table straight from this response; re-reading would
-        # leave a created-but-empty screen if the next request never lands (§4.2).
-        "body": plan,
+    return JSONResponse(status_code=410, content={
+        "ok": False, "code": "work_plan_retired",
+        "message": "Work plan creation and deployment have been retired. Place cards through chat.",
     })
 
 
@@ -972,9 +748,10 @@ async def preview_work_plan_apply(
     current_user: dict = Depends(get_current_user),
 ):
     # All DB/file work, including helpers reached from the service, runs off the event loop.
-    return await anyio.to_thread.run_sync(
-        partial(_preview_sync, doc_id, body, _locale(request))
-    )
+    return JSONResponse(status_code=410, content={
+        "ok": False, "code": "work_plan_retired",
+        "message": "Work plan creation and deployment have been retired. Place cards through chat.",
+    })
 
 
 def _apply_sync(
@@ -1050,27 +827,10 @@ async def apply_work_plan(
     body: WorkPlanApply,
     current_user: dict = Depends(get_current_user),
 ):
-    doc = _load_doc(doc_id)
-    from modules.flow_gate.documents.routers.documents import (
-        _reject_if_group_ai_running,
-        _reject_if_group_disposed,
-    )
-    _reject_if_group_disposed(doc)
-    _reject_if_group_ai_running(doc)
-    # flowgate.v02.0074 T#4 (D0006 §3.8): a Flow the Graph owns (or both engines claim) gets no v0.1
-    # sequence from a plan; its cards come from the v0.2 deploy. Same flat refusal as an advance.
-    from modules.flow_gate.graph_workflow.api import v01_contact as _graph_contact
-    refused = _graph_contact.progress_refusal(doc)
-    if refused is not None:
-        return JSONResponse(status_code=_graph_contact.REFUSAL_STATUS, content=refused[1])
-
-    return await anyio.to_thread.run_sync(partial(
-        _apply_sync,
-        doc_id,
-        body,
-        _locale(request),
-        current_user["user_id"],
-    ))
+    return JSONResponse(status_code=410, content={
+        "ok": False, "code": "work_plan_retired",
+        "message": "Work plan creation and deployment have been retired. Place cards through chat.",
+    })
 
 
 def _sequence_candidates_sync(doc_id: str, body: WorkPlanSequenceCandidates, locale: str):

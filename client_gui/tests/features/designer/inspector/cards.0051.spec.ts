@@ -401,52 +401,10 @@ describe('card header parts', () => {
 })
 
 describe('card settings parts', () => {
-  it('RequirementSettings (no card): the OFF line, the switch disabled, the 미연결 tag; ON (fixture) draws 범위 · AI Team · 안전 한도', () => {
+  it('RequirementSettings has no delegation controls', () => {
     const w = mount(RequirementSettings, { props: { target: REQ }, global })
-    expect(w.get('[data-test="inspector-requirement-settings"]').attributes('data-delegation')).toBe('off')
-    // flowgate.v02.0052 T#2: one short OFF line; the v7 explanation stays as its tooltip (flowgate.v02.0053 T#7: no code).
-    const off = w.get('[data-test="requirement-delegation-off"]')
-    expect(off.text()).toBe('꺼짐 — 직접 구성하거나 작업계획으로 전개')
-    expect(off.attributes('title')).toBe('전체 실행은 AI 위임과 무관 · 각 Node 설정으로 실행')
-    for (const option of w.findAll('[data-test="inspector-segment-option"]')) {
-      expect(option.attributes('disabled')).toBeDefined()
-      expect(option.attributes('title')).toBe('이 플로우에는 카드 설정이 없습니다')
-    }
-    // "Not connected" is a tag beside the switch (reason in its tooltip), not a sentence in the body.
-    const unconnected = w.get('[data-test="requirement-settings-unconnected"] [data-test="inspector-tbd"]')
-    expect(unconnected.text()).toBe('미연결')
-    expect(unconnected.attributes('title')).toBe('이 플로우에는 카드 설정이 없습니다')
-    expect(w.get('[data-test="requirement-delegation"] .inspector-block-head').find('[data-test="requirement-settings-unconnected"]').exists()).toBe(true)
-    expect(w.text()).not.toContain('0051-R')
-    expect(w.find('[data-test="requirement-limits"]').exists()).toBe(false)
-
-    const on: RequirementSettingsView = {
-      delegation: 'on',
-      scope: 'confirm',
-      team: 'auth',
-      teamOptions: [{ value: 'auth', label: '인증팀' }],
-      limits: [
-        { key: 'max_nodes', value: 12, isDefault: false, hot: false },
-        { key: 'total_reviews', value: 30, isDefault: false, hot: true },
-        { key: 'retries_per_card', value: 2, isDefault: true, hot: false },
-        { key: 'replans', value: 3, isDefault: true, hot: false },
-      ],
-      locked: true,
-      connected: true,
-      reason: 'reason.locked',
-      failures: {},
-    }
-    const fixture = mount(RequirementSettings, { props: { target: REQ, view: on }, global })
-    expect(fixture.get('[data-test="inspector-requirement-settings"]').attributes('data-delegation')).toBe('on')
-    expect(fixture.get('[data-test="inspector-lock-note"]').text()).toContain('위임 진행 중')
-    expect(fixture.findAll('input[data-test^="requirement-limit-"]')).toHaveLength(4)
-    expect(fixture.get('[data-test="requirement-limits"] [data-test="inspector-status-chip"]').text()).toBe('총 검수 · 재작업 30/30')
-    expect(fixture.find('[data-test="requirement-settings-unconnected"]').exists()).toBe(false)
-    // v7 `기본`: only on a limit with no value of its own; the Supervisor note is the AI Team label's tooltip.
-    expect(fixture.findAll('[data-test$="-default"]').map((mark) => mark.attributes('data-test'))).toEqual(['requirement-limit-retries_per_card-default', 'requirement-limit-replans-default'])
-    expect(fixture.text()).not.toContain('Supervisor 없는 팀을')
-    const teamRow = fixture.get('[data-test="requirement-delegation-team"]').element.closest('[data-test="inspector-control-row"]')!
-    expect(teamRow.querySelector('.inspector-control-label')!.getAttribute('title')).toBe('계획 · 질문 판단 · 진행 판단은 팀의 Supervisor')
+    expect(w.findAll('button, input, select')).toHaveLength(0)
+    expect(w.text()).toBe('')
   })
 
   // flowgate.v02.0053 T#7: the 실행 block only (지시서 · 시나리오 작성 are the settings feature's, in
