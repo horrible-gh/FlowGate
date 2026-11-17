@@ -28,16 +28,25 @@
         </button>
       </p>
     </template>
-    <p v-else-if="lines.length === 0" class="rc-diff-note" data-test="rc-diff-empty">{{ t('gui.conversation.diff.empty') }}</p>
+    <p v-else-if="rows.length === 0" class="rc-diff-note" data-test="rc-diff-empty">{{ t('gui.conversation.diff.empty') }}</p>
     <template v-else>
-      <pre class="rc-diff-lines" data-test="rc-diff-lines"><span
-        v-for="(line, i) in shown"
-        :key="i"
+      <p v-if="detailed && !detailed.aligned" class="rc-diff-note" data-test="rc-diff-alignment-limit">{{ t('gui.conversation.diff.alignment_limit') }}</p>
+      <pre class="rc-diff-lines" data-test="rc-diff-lines"><template v-for="(row, i) in shown" :key="i"><span
+        v-if="row.type === 'gap'"
+        class="rc-diff-gap"
+        data-kind="gap"
+      >{{ t('gui.conversation.diff.omitted_lines', { n: row.count }) }}</span><span
+        v-else
         class="rc-diff-line"
-        :class="`rc-diff-line--${line.kind}`"
-        :data-kind="line.kind"
-      >{{ line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ' }}{{ line.text }}</span></pre>
-      <p v-if="hidden > 0" class="rc-diff-note" data-test="rc-diff-more">{{ t('gui.conversation.diff.more_lines', { n: hidden }) }}</p>
+        :class="`rc-diff-line--${row.line.kind}`"
+        :data-kind="row.line.kind"
+      ><span class="rc-diff-no" data-side="old" aria-hidden="true">{{ row.line.oldNo }}</span><span class="rc-diff-no" data-side="new" aria-hidden="true">{{ row.line.newNo }}</span>{{ row.line.kind === 'add' ? '+' : row.line.kind === 'del' ? '-' : ' ' }}{{ row.line.text }}</span></template></pre>
+      <p v-if="hidden > 0" class="rc-diff-note rc-diff-more-row" data-test="rc-diff-more">
+        {{ t('gui.conversation.diff.remaining_changes', { n: remainingChanges }) }}
+        <button type="button" class="rc-diff-show-more" data-test="rc-diff-show-more" @click="changesLimit += MAX_SHOWN_LINES">
+          {{ t('gui.conversation.diff.show_more') }}
+        </button>
+      </p>
     </template>
   </div>
 </template>
@@ -45,7 +54,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { diffLines, diffUnavailableReason, type OpenFileDiff } from './changeDiff'
+import { diffLinesDetailed, diffUnavailableReason, type OpenFileDiff } from './changeDiff'
+import { projectDiffContext } from './diffContext'
 
 /** Bound the rendered DOM even when a stored file contains many lines. */
 const MAX_SHOWN_LINES = 2000
@@ -59,15 +69,18 @@ const { t } = useI18n()
 
 const unavailable = computed(() => (props.fileDiff.diff ? diffUnavailableReason(props.fileDiff.diff) : null))
 
-// mode 'changes' — unchanged diffLines output (C card replaces it with the context projection).
-const lines = computed(() => {
+// Project first so late changes are visible before applying the DOM page limit.
+const detailed = computed(() => {
   const diff = props.fileDiff.diff
-  if (props.mode !== 'changes' || !diff || unavailable.value) return []
-  const result = diffLines(diff.old.content, diff.new.content)
-  return result.every((line) => line.kind === 'context') ? [] : result
+  if (props.mode !== 'changes' || props.fileDiff.status !== 'ready' || !diff || unavailable.value) return null
+  return diffLinesDetailed(diff.old.content, diff.new.content)
 })
-const shown = computed(() => lines.value.slice(0, MAX_SHOWN_LINES))
-const hidden = computed(() => Math.max(0, lines.value.length - MAX_SHOWN_LINES))
+const rows = computed(() => detailed.value ? projectDiffContext(detailed.value.lines, 3) : [])
+const changesLimit = ref(MAX_SHOWN_LINES)
+const shown = computed(() => rows.value.slice(0, changesLimit.value))
+const hidden = computed(() => Math.max(0, rows.value.length - changesLimit.value))
+const remainingChanges = computed(() => rows.value.slice(changesLimit.value)
+  .filter((row) => row.type === 'line' && row.line.kind !== 'context').length)
 
 /** Same line split as the diff: CRLF is one break and a final newline does not start a line. */
 function splitText(text: string): string[] {
@@ -97,6 +110,7 @@ const fullShown = computed(() => (full.value ? full.value.lines.slice(0, fullLim
 const fullHidden = computed(() => (full.value ? Math.max(0, full.value.lines.length - fullLimit.value) : 0))
 watch(() => [props.fileDiff.runId, props.fileDiff.path, props.fileDiff.diff, props.mode], () => {
   fullLimit.value = MAX_SHOWN_LINES
+  changesLimit.value = MAX_SHOWN_LINES
 })
 </script>
 
@@ -176,11 +190,16 @@ watch(() => [props.fileDiff.runId, props.fileDiff.path, props.fileDiff.diff, pro
   color: var(--fg2-text);
 }
 
+.rc-diff-gap,
 .rc-diff-line,
 .rc-diff-full-line {
   display: block;
   padding: 0 6px;
   white-space: pre;
+}
+
+.rc-diff-gap {
+  color: var(--fg2-muted);
 }
 
 .rc-diff-no {
