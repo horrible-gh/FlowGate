@@ -124,8 +124,8 @@
           @pointerdown.stop @mousedown.stop @dblclick.stop @keydown.stop @keyup.stop
           @click.stop="emit('open-document', { nodeId: id, docId: doc.docId })">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path
-            :d="doc.report ? 'M9 4h6v3H9z M7 5H5v16h14V5h-2 M8 14l3 3 5-6' : 'M14 2H6v20h12V6z M14 2v5h4 M9 12h6 M9 16h6'"
-            fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            :d="doc.report ? CARD_DOCUMENT_ICONS.report : CARD_DOCUMENT_ICONS.instruction"
+            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
       </div>
       <button v-if="data.gateState?.key === 'waiting_confirm' && data.approvable" type="button"
@@ -175,6 +175,12 @@ const LINK_SIDES = [
   { id: 'bottom', position: Position.Bottom },
   { id: 'left', position: Position.Left },
 ] as const
+
+/** Card document buttons: same rounded, stroke-2 glyph family as the head row's kind icons. */
+const CARD_DOCUMENT_ICONS = {
+  instruction: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5 M9 13h6 M9 17h4',
+  report: 'M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2 M9 3h6v3H9z M9 14l2 2l4-4',
+} as const
 
 const { t } = useI18n()
 function documentLabel(doc: CardDocumentButton): string {
@@ -386,12 +392,21 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   padding: 0 11px 8px;
 }
 .flow-node-documents { display: flex; flex: 1; flex-wrap: wrap; gap: 4px; min-width: 0; }
+/* Tinted with the card's kind color, the same rounded box as the head row's kind icon (quieter). */
 .flow-node-document {
   position: relative; z-index: 4; display: grid; place-items: center;
-  width: 24px; height: 24px; padding: 3px; border: 1px solid var(--fg2-line-strong);
-  border-radius: 4px; background: var(--fg2-control-surface); color: var(--fg2-text); cursor: pointer;
+  width: 22px; height: 22px; padding: 0;
+  border: 1px solid color-mix(in srgb, var(--flow-node-accent) 38%, transparent);
+  border-radius: 6px; background: color-mix(in srgb, var(--flow-node-accent) 14%, transparent);
+  color: color-mix(in srgb, var(--flow-node-accent) 45%, #fff); cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
 }
-.flow-node-document svg { width: 16px; height: 16px; }
+.flow-node-document svg { display: block; width: 14px; height: 14px; }
+.flow-node-document:hover {
+  border-color: color-mix(in srgb, var(--flow-node-accent) 75%, transparent);
+  background: color-mix(in srgb, var(--flow-node-accent) 30%, transparent);
+  color: #fff;
+}
 .flow-node-document:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: 1px; }
 .flow-node-footer .flow-node-approve { flex: none; margin-left: auto; }
 
