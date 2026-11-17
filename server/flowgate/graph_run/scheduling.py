@@ -97,13 +97,46 @@ def ordered(revision, keys):
     return result
 
 
+def confirmed_inputs_ready(ctx, keys, state):
+    """Veto stale candidates using the latest confirmed incoming relationships.
+
+    Called under the Flow guard, both before dispatch and while planning refill.
+    A wake does not adopt a revision: that would reset step targets and invalidate
+    decisions already computed by its caller. Keep the run's candidates and scope,
+    but never open one while a newly confirmed predecessor is unfinished (including
+    a predecessor absent from this run). Deleted targets cannot open either.
+    Drafts are not execution definitions. An explicit command still adopts them
+    through the existing validation path. No revision or command state is written.
+    """
+    if not keys:
+        return []
+    from modules.flow_gate.graph_workflow.store import definition_store
+    latest = definition_store.latest_revision_no(ctx.flow_id)
+    if latest is None or latest <= int(ctx.run["revision_no"]):
+        return list(keys)
+    record = definition_store.revision(ctx.flow_id, latest)
+    if record is None:
+        return []  # Cannot prove the inputs; preserve the result, defer openings.
+    live = {n["node_key"] for n in record["nodes"]}
+    waiting = {p.node_key for p in state.pending}
+    blocked = set()
+    for edge in record["edges"]:
+        source, target = edge["source"], edge["target"]
+        predecessor = state.node(source)
+        if predecessor is None or predecessor.status != "done" or source in waiting:
+            blocked.add(target)
+    return [key for key in keys if key in live and key not in blocked]
+
+
 def opening(ctx, keys):
     if ctx.run["status"] != "running":
         return []
     from modules.flow_gate.graph_workflow.domain.frontier import command_candidates
     from modules.flow_gate.graph_workflow.services.run_apply import read_run_state
-    candidates = set(command_candidates(ctx.revision, read_run_state(ctx)))
-    return ordered(ctx.revision, set(keys) & candidates)
+    state = read_run_state(ctx)
+    candidates = set(command_candidates(ctx.revision, state))
+    ready = confirmed_inputs_ready(ctx, set(keys) & candidates, state)
+    return ordered(ctx.revision, ready)
 
 
 def can_open(ctx):
