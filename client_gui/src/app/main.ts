@@ -9,6 +9,7 @@ import App from './App.vue'
 import StartupLoadingView from './views/StartupLoadingView.vue'
 import { ensureValidAccessToken, isAuthRejection, startTokenAutoRefresh } from '@shared/api'
 import { loadCurrentUser, setCurrentUser } from '@/core/auth/currentUser'
+import { startFlowAttachmentOperations } from '@/features/designer/flowAttachments/operations'
 
 // Mirrors client/src/main/main.ts's bootstrap exactly (T0005 §5: auth reuse, not a
 // second policy): recover the access token for an F5 refresh, rotate it up-front if
@@ -35,6 +36,8 @@ function retryCurrentUser(attempt: number): void {
 
 async function initializeApp() {
   registerAppMessages(i18n)
+  // flowgate.v02test.0036 T#1: the Flow attachment work manager listens for the end of the session from here, once.
+  startFlowAttachmentOperations()
 
   // flowgate.v02.0076 T#1 (D §1.2, §5.2 V03): until /auth/me answers, the start screen shows
   // only a neutral loading state. The router is not installed yet, so no route — and no

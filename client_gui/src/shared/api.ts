@@ -8,6 +8,7 @@ import axios, {
 import i18n from './i18n'
 import { resolveApiErrorWithFallbackText } from './apiErrors'
 import { resolveSafeReturnPath } from './auth'
+import { announceAuthSessionEnded } from './authSessionSignal'
 import {
   beginVisibilityRecoveryTick,
   recordVisibilityRecovery,
@@ -53,6 +54,8 @@ export const REFRESH_LOCK_NAME = 'fg_token_refresh'
 export const SHARED_REFRESH_KEY = 'fg_refresh_result'
 
 const clearStoredAuth = () => {
+  // flowgate.v02test.0036 T#1: the session's unsent work (Flow attachment deletes) goes with the tokens.
+  announceAuthSessionEnded()
   clearProactiveRefresh()
   delete window.__accessToken__
   sessionStorage.removeItem('fg_access_token')

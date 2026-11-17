@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Window from '@/features/designer/flowAttachments/FlowAttachmentWindow.vue'
 import Host from '@/features/designer/flowAttachments/FlowAttachmentHost.vue'
 import { flowAttachmentUi } from '@/features/designer/flowAttachments/state'
+import { disposeFlowAttachmentOperations, pendingGroup, startFlowAttachmentOperations } from '@/features/designer/flowAttachments/operations'
 
 const api = vi.hoisted(() => ({ readFiles: vi.fn(), deleteFile: vi.fn(), uploadFile: vi.fn(), downloadFile: vi.fn(), downloadZip: vi.fn() }))
 vi.mock('@/features/designer/flowAttachments/api', () => api)
@@ -19,7 +20,7 @@ const global = { plugins: [createI18n({ legacy: false, locale: 'ko', messages: {
 const props = { flowId: 'A', projectId: 'p', title: '파일 첨부', position: 0, readOnly: false, current: true, focused: true, zIndex: 1 }
 let wrapper: ReturnType<typeof mount> | undefined
 beforeEach(() => { vi.clearAllMocks(); api.readFiles.mockResolvedValue(files.map(f => ({ ...f }))); api.deleteFile.mockResolvedValue({}); api.uploadFile.mockResolvedValue({}) })
-afterEach(() => { wrapper?.unmount(); wrapper = undefined; vi.useRealTimers() })
+afterEach(() => { wrapper?.unmount(); wrapper = undefined; disposeFlowAttachmentOperations(); vi.useRealTimers() })
 
 describe('Flow attachment window (final mockup)', () => {
   it('draws the mockup header, count, type tiles, source tags and time', async () => {
@@ -148,5 +149,166 @@ describe('Flow attachment host', () => {
     document.body.dispatchEvent(drop); await flushPromises()
     expect(wrapper.find('[data-test="flow-attachment-drop-overlay"]').exists()).toBe(false)
     expect(api.uploadFile).toHaveBeenCalledWith('A', file)
+  })
+})
+
+// flowgate.v02test.0036 T#1 (R1): the staged delete belongs to the Flow work manager, not to the window.
+describe('Flow attachment window close / reopen (flowgate.v02test.0036)', () => {
+  const hostProps = { flowId: 'A', projectId: 'p', title: 'Flow A', isReadOnly: () => false }
+  const rowsOf = (w: ReturnType<typeof mount>) => w.findAll('[data-test="flow-attachment-row"]')
+
+  it('🗑 → close at once: the delete still goes out after five seconds, and a reopened window no longer lists it', async () => {
+    wrapper = mount(Host, { props: hostProps, global })
+    const host = wrapper.vm as unknown as { open: (files?: File[]) => Promise<void> }
+    await host.open(); await flushPromises()
+    vi.useFakeTimers()
+    await wrapper.find('[data-test="flow-attachment-delete"]').trigger('click')
+    await wrapper.find('[data-test="flow-attachment-close"]').trigger('click')
+    expect(wrapper.findAllComponents(Window)).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(api.deleteFile).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(api.deleteFile).toHaveBeenCalledTimes(1)
+    expect(api.deleteFile).toHaveBeenCalledWith('A', expect.objectContaining({ key: 'a', content_sha256: 'sha-a' }))
+    vi.useRealTimers()
+    api.readFiles.mockResolvedValue([{ ...files[1] }])
+    await host.open(); await flushPromises()
+    expect(rowsOf(wrapper).map(r => r.attributes('data-key'))).toEqual(['b'])
+    expect(api.deleteFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('🗑 → close → reopen within five seconds: struck through with ↶, the ring goes on from the time left, ↶ keeps the file', async () => {
+    wrapper = mount(Host, { props: hostProps, global })
+    const host = wrapper.vm as unknown as { open: (files?: File[]) => Promise<void> }
+    await host.open(); await flushPromises()
+    vi.useFakeTimers()
+    await wrapper.find('[data-test="flow-attachment-delete"]').trigger('click')
+    const start = pendingGroup({ projectId: 'p', flowId: 'A' }, 'a')?.start
+    expect(start).toBeTypeOf('number')
+    await wrapper.find('[data-test="flow-attachment-close"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(2000)
+    await host.open(); await flushPromises()
+    const row = rowsOf(wrapper).find(r => r.attributes('data-key') === 'a')!
+    expect(row.classes()).toContain('gone')
+    const rect = row.find('[data-test="flow-attachment-undo"] .fa-ring rect')
+    expect(rect.attributes('style')).toContain('animation-delay: -2000ms')
+    // Reopening neither restarts the countdown nor moves its start.
+    expect(pendingGroup({ projectId: 'p', flowId: 'A' }, 'a')?.start).toBe(start)
+    await row.find('[data-test="flow-attachment-undo"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.deleteFile).not.toHaveBeenCalled()
+    expect(rowsOf(wrapper).find(r => r.attributes('data-key') === 'a')!.classes()).not.toContain('gone')
+  })
+
+  it('a staged row the latest list no longer has keeps its ↶ (snapshot) until its time runs out', async () => {
+    wrapper = mount(Host, { props: hostProps, global })
+    const host = wrapper.vm as unknown as { open: (files?: File[]) => Promise<void> }
+    await host.open(); await flushPromises()
+    vi.useFakeTimers()
+    await wrapper.find('[data-test="flow-attachment-delete"]').trigger('click')
+    await wrapper.find('[data-test="flow-attachment-close"]').trigger('click')
+    api.readFiles.mockResolvedValue([{ ...files[1] }])
+    await host.open(); await flushPromises()
+    const row = rowsOf(wrapper).find(r => r.attributes('data-key') === 'a')
+    expect(row?.classes()).toContain('gone')
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.deleteFile).toHaveBeenCalledWith('A', expect.objectContaining({ key: 'a', content_sha256: 'sha-a' }))
+  })
+
+  it('the window turning read-only drops the unsent delete; writable again does not bring it back', async () => {
+    let locked = false
+    wrapper = mount(Window, { props, global })
+    await flushPromises()
+    vi.useFakeTimers()
+    await wrapper.find('[data-test="flow-attachment-delete"]').trigger('click')
+    locked = true
+    await wrapper.setProps({ readOnly: locked })
+    await wrapper.setProps({ readOnly: false })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.deleteFile).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.fa-row.gone')).toHaveLength(0)
+  })
+
+  it('a window that opens read-only (archive state not known yet) does not drop a staged delete by itself', async () => {
+    wrapper = mount(Window, { props, global })
+    await flushPromises()
+    vi.useFakeTimers()
+    await wrapper.find('[data-test="flow-attachment-delete"]').trigger('click')
+    wrapper.unmount()
+    wrapper = mount(Window, { props: { ...props, readOnly: true }, global })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.deleteFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('the Host follows the definite archive state while the window is closed', async () => {
+    const archived: Record<string, boolean | null> = { A: false }
+    wrapper = mount(Host, { props: { ...hostProps, isArchived: (id: string) => archived[id] ?? null }, global })
+    const host = wrapper.vm as unknown as { open: (files?: File[]) => Promise<void> }
+    await host.open(); await flushPromises()
+    vi.useFakeTimers()
+    await wrapper.find('[data-test="flow-attachment-delete"]').trigger('click')
+    await wrapper.find('[data-test="flow-attachment-close"]').trigger('click')
+    await wrapper.setProps({ isArchived: (id: string) => (id === 'A' ? true : null) })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.deleteFile).not.toHaveBeenCalled()
+  })
+
+  it('🗑 → close → another Project → Designer left: the manager still follows the first Project\'s archive and sends nothing', async () => {
+    const events = new Map<string, () => void>()
+    startFlowAttachmentOperations({
+      subscribe: (projectId, sub) => { events.set(projectId, () => sub.event()); return () => { events.delete(projectId) } },
+      readArchived: async flowId => flowId === 'A',
+    })
+    wrapper = mount(Host, { props: { ...hostProps, isArchived: () => false }, global })
+    const host = wrapper.vm as unknown as { open: (files?: File[]) => Promise<void> }
+    await host.open(); await flushPromises()
+    vi.useFakeTimers()
+    await wrapper.find('[data-test="flow-attachment-delete"]').trigger('click')
+    await wrapper.find('[data-test="flow-attachment-close"]').trigger('click')
+    await wrapper.setProps({ projectId: 'q', flowId: 'Z', title: 'Flow Z' }) // another Project in the Designer
+    wrapper.unmount(); wrapper = undefined // then the route leaves the Designer (Host gone, its archive path disconnected)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(events.has('p')).toBe(true)
+    events.get('p')!() // another session archives Flow A
+    await flushPromises()
+    expect(pendingGroup({ projectId: 'p', flowId: 'A' }, 'a')).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.deleteFile).not.toHaveBeenCalled()
+    expect(events.has('p')).toBe(false) // no work left: the watch is gone
+  })
+
+  it('a Host remount (same session) keeps the countdown', async () => {
+    wrapper = mount(Host, { props: hostProps, global })
+    const host = wrapper.vm as unknown as { open: (files?: File[]) => Promise<void> }
+    await host.open(); await flushPromises()
+    vi.useFakeTimers()
+    await wrapper.find('[data-test="flow-attachment-delete"]').trigger('click')
+    wrapper.unmount()
+    wrapper = mount(Host, { props: hostProps, global })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.deleteFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('Ctrl+Z in a window takes back only its own Flow; row ↶ and the numbered ↶ keep working', async () => {
+    wrapper = mount(Host, { props: hostProps, global })
+    const host = wrapper.vm as unknown as { open: (files?: File[]) => Promise<void> }
+    await host.open(); await flushPromises()
+    await wrapper.setProps({ flowId: 'B', title: 'Flow B' }); await flushPromises()
+    vi.useFakeTimers()
+    const [winA, winB] = wrapper.findAllComponents(Window)
+    await winA.find('[data-test="flow-attachment-delete"]').trigger('click')
+    await winB.find('[data-test="flow-attachment-select-all"]').setValue(true)
+    await winB.find('[data-test="flow-attachment-bulk-delete"]').trigger('click')
+    // Ctrl+Z in A's window: A's latest group only; B's group stays.
+    await winA.find('[data-test="flow-attachment-window"]').trigger('keydown', { key: 'z', ctrlKey: true })
+    expect(winA.findAll('.fa-row.gone')).toHaveLength(0)
+    expect(winB.findAll('.fa-row.gone')).toHaveLength(2)
+    // Ctrl+Z inside the search box is the text's own undo.
+    await winB.find('[data-test="flow-attachment-search"]').trigger('keydown', { key: 'z', ctrlKey: true })
+    expect(winB.findAll('.fa-row.gone')).toHaveLength(2)
+    await winB.find('[data-test="flow-attachment-bulk-undo"]').trigger('click')
+    expect(winB.findAll('.fa-row.gone')).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.deleteFile).not.toHaveBeenCalled()
   })
 })

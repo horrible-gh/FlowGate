@@ -47,7 +47,7 @@
         </div>
       </div>
 
-      <p v-if="error" class="fa-error" role="alert">{{ error }}</p>
+      <p v-if="errorText" class="fa-error" role="alert">{{ errorText }}</p>
 
       <div class="fa-list" data-test="flow-attachment-list">
         <AttachmentRequestItem v-for="request in requests" :key="request.id" :request="request" :disabled="readOnly" @decided="reload" />
@@ -69,7 +69,7 @@
             <button v-if="isGone(file)" type="button" class="fa-action undo" :title="w.undo" :aria-label="w.undo" data-test="flow-attachment-undo"
               @click="undoItem(file.key)">
               <svg class="fa-ring" viewBox="0 0 30 28" preserveAspectRatio="none" aria-hidden="true">
-                <rect x="1" y="1" width="28" height="26" rx="6" pathLength="110" :style="ringDelay(queue.pending(file.key)?.start)" />
+                <rect x="1" y="1" width="28" height="26" rx="6" pathLength="110" :style="ringDelay(pendingStart(file.key))" />
               </svg>
               <FaIcon name="undo" :size="13" />
             </button>
@@ -78,7 +78,7 @@
           </div>
         </div>
         <div v-if="!visible.length && !requests.length" class="fa-empty">
-          <FaIcon name="folder" :size="28" /><strong>{{ loading && !loaded ? w.loading : search ? w.noResult : w.empty }}</strong>
+          <FaIcon name="folder" :size="28" /><strong>{{ flow.loading && !flow.loaded ? w.loading : search ? w.noResult : w.empty }}</strong>
         </div>
       </div>
 
@@ -101,11 +101,16 @@
 // flowgate.v02gui.0030 — one floating attachment window per Flow, drawn after the final mockup
 // (mirageglass rph76zwu): header with the Flow chip, search + 파일 추가, count, selection bar
 // (ZIP / 🗑 or the numbered ↶), rows with a type tile, source tag and time, and an in-window name conflict card.
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+// flowgate.v02test.0036 T#1 (R1): the delete queue, the file list and its error live in the Flow work manager
+// (operations.ts), not here. This window draws them and forwards the presses; closing or unmounting it only detaches
+// the view — a staged delete still goes out when its five seconds run out, and a window opened again within them shows
+// the row struck through with ↶ and the ring continuing from the time left.
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInspectorEvents } from '../inspector/useInspectorResource'
-import { readFiles, uploadFile, deleteFile, downloadFile, downloadZip, type FlowFile } from './api'
-import { createUndoQueue, UNDO_MS } from './undo'
+import { uploadFile, downloadFile, downloadZip, type FlowFile } from './api'
+import * as ops from './operations'
+import { UNDO_MS } from './undo'
 import { wordsFor } from './words'
 import { FaIcon } from './icons'
 import AttachmentRequestItem from '@/features/attachmentRequests/AttachmentRequestItem.vue'
@@ -166,63 +171,55 @@ function setGeometry(rect: { x: number; y: number; width: number; height: number
   if (root.value) { root.value.style.width = `${rect.width}px`; root.value.style.height = `${rect.height}px` }
 }
 
-/* ── files ── */
-const files = ref<FlowFile[]>([])
+/* ── files: the Flow's state in the work manager ── */
+const scope: ops.FlowScope = Object.freeze({ projectId: props.projectId, flowId: props.flowId })
+const viewId = `window-${Math.random().toString(36).slice(2)}`
+const flow = shallowRef(ops.attachView(scope, viewId))
+// A new session (sign-out, another user) is a new state; the window follows it.
+watch(ops.sessionGeneration, () => { flow.value = ops.attachView(scope, viewId) })
 const requests = ref<AttachmentRequest[]>([])
 const selected = ref(new Set<string>())
-const deleting = ref(new Set<string>())
-const search = ref(''), error = ref(''), loading = ref(false), loaded = ref(false), zipping = ref(false)
+const search = ref(''), zipping = ref(false)
 const input = ref<HTMLInputElement | null>(null)
-const tick = ref(0)
-let alive = true, readSequence = 0
+let alive = true, requestSequence = 0
 const failure = (e: unknown) => {
   const raw = e as { response?: { data?: { error?: { message?: string } } } }
   return raw.response?.data?.error?.message || w.value.failed
 }
-async function reload() {
-  const seq = ++readSequence; loading.value = true
+const setError = (e: unknown) => { flow.value.error = { text: failure(e) } }
+const errorText = computed(() => { const error = flow.value.error; return error ? error.text || w.value.failed : '' })
+async function readRequests() {
+  const seq = ++requestSequence
   try {
-    const [data, approvals] = await Promise.all([
-      readFiles(props.flowId),
-      getRequest<{ requests: unknown[] }>(`/api/v1/flows/${encodeURIComponent(props.flowId)}/attachment-requests`),
-    ])
-    if (!alive || seq !== readSequence) return
-    files.value = data
+    const approvals = await getRequest<{ requests: unknown[] }>(`/api/v1/flows/${encodeURIComponent(props.flowId)}/attachment-requests`)
+    if (!alive || seq !== requestSequence) return
     requests.value = (approvals.data.requests ?? []).flatMap(r => toAttachmentRequest(r) ?? [])
-    selected.value = new Set([...selected.value].filter(key => data.some(f => f.key === key)))
-    loaded.value = true
   } catch (e) {
-    if (alive && seq === readSequence) error.value = failure(e)
-  } finally {
-    if (alive && seq === readSequence) loading.value = false
+    if (alive && seq === requestSequence) setError(e)
   }
 }
+async function reload() { await Promise.all([ops.refresh(scope), readRequests()]) }
+// A selection keeps only files the list still has.
+watch(() => flow.value.files, data => { selected.value = new Set([...selected.value].filter(key => data.some(f => f.key === key))) })
 
-const queue = createUndoQueue<FlowFile>(async items => {
-  for (const file of items) deleting.value.add(file.key)
-  tick.value++
-  for (const file of items) {
-    try {
-      await deleteFile(props.flowId, file)
-      files.value = files.value.filter(f => f.key !== file.key)
-    } catch (e) {
-      error.value = failure(e)
-    } finally {
-      deleting.value.delete(file.key); tick.value++
-    }
-  }
-  if (error.value) await reload()
-}, () => tick.value++)
-const isGone = (file: FlowFile) => { void tick.value; return !!queue.pending(file.key) }
+const pendingStart = (key: string) => { void flow.value.revision; return ops.pendingGroup(scope, key)?.start }
+const isGone = (file: FlowFile) => { void flow.value.revision; return !!ops.pendingGroup(scope, file.key) }
 // A file whose five seconds ran out leaves the list while its delete is on the way; a failure brings it back.
-const shown = computed(() => { void tick.value; return files.value.filter(f => !deleting.value.has(f.key)) })
+// A staged file the latest read no longer has keeps its row (its snapshot) until it is sent or taken back.
+const shown = computed(() => {
+  const state = flow.value
+  void state.revision
+  const listed = state.files.filter(f => !state.deleting.has(f.key))
+  const missing = ops.pendingFiles(scope).filter(p => !state.files.some(f => f.key === p.key) && !state.deleting.has(p.key))
+  return [...listed, ...missing]
+})
 const live = computed(() => shown.value.filter(f => !isGone(f)))
 const visible = computed(() => {
   const q = search.value.trim().toLocaleLowerCase()
   if (!q) return shown.value
   return shown.value.filter(f => f.display_name.toLocaleLowerCase().includes(q) || originLabel(f).toLocaleLowerCase().includes(q))
 })
-const bulk = computed(() => { void tick.value; return queue.bulk() })
+const bulk = computed(() => { void flow.value.revision; return ops.bulkGroup(scope) })
 const allSelected = computed(() => live.value.length > 0 && live.value.every(f => selected.value.has(f.key)))
 const someSelected = computed(() => selected.value.size > 0 && !allSelected.value)
 function selectAll() { selected.value = allSelected.value ? new Set() : new Set(live.value.map(f => f.key)) }
@@ -237,31 +234,32 @@ function remove(items: FlowFile[]) {
   const next = new Set(selected.value)
   for (const f of items) next.delete(f.key)
   selected.value = next
-  queue.stage(items)
+  ops.stageDelete(scope, items)
   keepFocus()
 }
 // The pressed 🗑 / ↶ is replaced by the other icon; focus stays in the window so Ctrl+Z still reaches it.
 function keepFocus() { root.value?.focus({ preventScroll: true }) }
-function undoItem(key: string) { queue.undoItem(key); keepFocus() }
+function undoItem(key: string) { ops.undoItem(scope, key); keepFocus() }
 function removeSelected() { remove(live.value.filter(f => selected.value.has(f.key))) }
-function undoBulk() { queue.undoGroup(queue.bulk()); keepFocus() }
+function undoBulk() { ops.undoGroup(scope); keepFocus() }
 function ringDelay(start: number | undefined) {
   return { animationDelay: `-${Math.min(UNDO_MS, Math.max(0, Date.now() - (start ?? Date.now())))}ms` }
 }
+// Ctrl+Z reaches only this (focused) window, and only this window's Flow queue; a search box keeps its own undo.
 function keyDown(event: KeyboardEvent) {
   if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z' || event.shiftKey) return
   if ((event.target as HTMLElement).closest('input:not([type=checkbox]), textarea, [contenteditable="true"]')) return
-  if (queue.undoLast()) { event.preventDefault(); event.stopPropagation() }
+  if (ops.undoLast(scope)) { event.preventDefault(); event.stopPropagation() }
 }
 /** Ctrl+Z from the host while this window is the focused one. */
-function undoLast() { return queue.undoLast() }
+function undoLast() { return ops.undoLast(scope) }
 
-async function download(file: FlowFile) { try { await downloadFile(props.flowId, file) } catch (e) { error.value = failure(e) } }
+async function download(file: FlowFile) { try { await downloadFile(props.flowId, file) } catch (e) { setError(e) } }
 async function zip() {
   const keys = live.value.filter(f => selected.value.has(f.key)).map(f => f.key)
   if (!keys.length) return
   zipping.value = true
-  try { await downloadZip(props.flowId, keys) } catch (e) { error.value = failure(e) } finally { zipping.value = false }
+  try { await downloadZip(props.flowId, keys) } catch (e) { setError(e) } finally { zipping.value = false }
 }
 
 /* ── upload: one by one, a name conflict asks in the window ── */
@@ -274,7 +272,7 @@ async function add(incoming: File[]) {
   if (props.readOnly) return
   uploads.push(...incoming)
   if (uploading) return
-  uploading = true; error.value = ''
+  uploading = true; flow.value.error = null
   try {
     while (uploads.length && alive && !props.readOnly) {
       const file = uploads.shift()!
@@ -283,13 +281,13 @@ async function add(incoming: File[]) {
       } catch (e) {
         const raw = e as { response?: { data?: { error?: { code?: string; details?: { key: string; content_sha256: string } } } } }
         const conflict = raw.response?.data?.error
-        if (conflict?.code !== 'ATTACHMENT_NAME_CONFLICT' || !conflict.details) { error.value = failure(e); continue }
+        if (conflict?.code !== 'ATTACHMENT_NAME_CONFLICT' || !conflict.details) { setError(e); continue }
         const existing = { key: conflict.details.key, content_sha256: conflict.details.content_sha256 }
         collision.value = { file, ...existing }
         emit('focus')
         const choice = await new Promise<string>(resolve => { answer = resolve })
         if (choice !== 'cancel' && alive && !props.readOnly) {
-          try { await uploadFile(props.flowId, file, choice, choice === 'overwrite' ? existing : undefined) } catch (failed) { error.value = failure(failed) }
+          try { await uploadFile(props.flowId, file, choice, choice === 'overwrite' ? existing : undefined) } catch (failed) { setError(failed) }
         }
       }
       await reload()
@@ -297,7 +295,8 @@ async function add(incoming: File[]) {
   } finally { uploading = false }
 }
 function pick(event: Event) { const el = event.target as HTMLInputElement; void add(Array.from(el.files ?? [])); el.value = '' }
-function close() { queue.clear(); resolveCollision('cancel'); emit('close') }
+// Closing is not "undo all": the staged deletes keep counting in the work manager.
+function close() { resolveCollision('cancel'); emit('close') }
 
 /* ── row text ── */
 const isImage = (file: FlowFile) => (file.content_type ?? '').startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.display_name)
@@ -320,14 +319,21 @@ function when(value: string | null | undefined) {
   return `${at.getMonth() + 1}/${at.getDate()}`
 }
 
-watch(() => props.readOnly, locked => { if (locked) { queue.clear(); resolveCollision('cancel'); uploads.length = 0 } })
+// Read-only drops this Flow's unsent deletes in the manager (the manager also hears the archive state itself, so a
+// closed window is not needed for that); writable again brings nothing back. A window that opens read-only does not
+// drop anything by itself: an unknown archive state also shows as read-only until it is read.
+watch(() => props.readOnly, (locked, before) => {
+  if (before === undefined) { if (!locked) ops.setReadOnly(scope, false); return }
+  ops.setReadOnly(scope, locked)
+  if (locked) { resolveCollision('cancel'); uploads.length = 0 }
+}, { immediate: true })
 useInspectorEvents(() => ({ projectId: props.projectId, flowId: props.flowId, docId: null }), {
   events: ['attachment_request_updated', 'flow_attachments_updated'], matches: (frame, scope) => frame.groupId === scope.flowId, changed: () => { void reload() },
 })
 void reload()
 addEventListener('resize', keepInView)
 onBeforeUnmount(() => {
-  alive = false; queue.clear(); resolveCollision('cancel'); uploads.length = 0; endDrag()
+  alive = false; ops.detachView(scope, viewId); resolveCollision('cancel'); uploads.length = 0; endDrag()
   removeEventListener('resize', keepInView)
 })
 defineExpose({ add, reload, reveal, setGeometry, undoLast })
