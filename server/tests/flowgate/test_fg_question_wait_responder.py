@@ -18,7 +18,8 @@ from modules.flow_gate.services.ai_invoke import review
 
 @pytest.fixture
 def routing(monkeypatch):
-    from flowgate.ai_roles import role_store
+    from flowgate.ai_roles import role_store, record_store
+    monkeypatch.setattr(record_store, "available", lambda: False)
     monkeypatch.setattr(role_store, "available", lambda: False)  # explicit legacy/no-role-store fixture
     stored = {"instruction": True, "run_ai": "worker", "instruction_ai": "worker", "review_ai": "reviewer"}
     chain = [{"id": "worker"}, {"id": "reviewer"}, {"id": "third"}]
@@ -109,3 +110,59 @@ def test_question_help_explains_independence_and_human_wait(locale, words):
     from modules.flow_gate.services.help_catalog import QUESTION_HELP_COPY
     note = QUESTION_HELP_COPY[locale]["continue_note"]
     assert all(word in note for word in words)
+
+
+@pytest.mark.parametrize("state,code,run_id,attempts,retry", [
+    (None, None, None, 0, True),
+    ("failed", "run_in_progress", None, 0, True),
+    ("failed", "run_in_progress", "claimed", 1, False),
+    ("failed", "run_in_progress", None, 1, False),
+    ("failed", "provider_failed", None, 0, False),
+    ("failed", "no_independent_responder", None, 0, False),
+    ("user_decision", "run_in_progress", None, 0, False),
+    ("dispatched", None, "working", 1, False),
+])
+def test_admission_contention_retries_only_an_unstarted_response(
+        routing, state, code, run_id, attempts, retry):
+    _, _, item, calls, failed = routing
+    item.update(responder_state=state, responder_error_code=code,
+                responder_run_id=run_id, responder_attempts=attempts)
+    assert wait._dispatch("flow", NODE, RUN, [item], False) is retry
+    assert len(calls) == int(retry)
+
+
+def test_busy_admission_is_retried_after_other_run_ends(routing, monkeypatch):
+    """Real answer service records the race; Graph follow must not strand its item."""
+    from fastapi import HTTPException
+    from modules.flow_gate.services import q_answer_invoke_service as answer
+    _, _, item, calls, failed = routing
+    item["asker_ai_run_id"] = RUN["run_id"]
+    busy = [True]
+    admitted = []
+    monkeypatch.setattr(answer, "_live_responder_run_id", lambda _: None)
+    monkeypatch.setattr(answer, "_ai_answer_count", lambda _: 0)
+
+    def start(**kw):
+        if busy[0]:
+            raise HTTPException(409, detail={"code": "run_in_progress"})
+        admitted.append(kw)
+        item.update(responder_state="dispatched", responder_run_id="answer-run", responder_attempts=1)
+        return {"run_id": "answer-run"}
+
+    monkeypatch.setattr(answer.ai_invoke_service, "start_run", start)
+    monkeypatch.setattr(wait.legacy, "ask_responder", lambda *a, **kw: answer.dispatch_answer_run(
+        doc={"doc_id": item["anchor_doc_id"], "group_id": "flow", "project_id": "flowgate"},
+        item=item, issued_to="owner", api_base_url="http://localhost", provider_id="reviewer"))
+    monkeypatch.setattr(wait.legacy, "active_run_id", lambda _: "graph-run")
+    monkeypatch.setattr(wait.legacy, "open_ai_questions", lambda _: [item])
+    monkeypatch.setattr(wait.legacy, "askers_answered_by", lambda _: set())
+    monkeypatch.setattr(wait.legacy, "ai_run_record", lambda _: {**RUN, "group_id": "flow"})
+    monkeypatch.setattr(wait, "_waiting", lambda *a: ("work", NODE, None))
+    assert not wait._dispatch("flow", NODE, RUN, [item], False)
+    assert failed == [(518, "run_in_progress")]
+    assert admitted == [] and not item.get("responder_run_id")
+    busy[0] = False
+    wait.follow({"run_id": "other-run", "group_id": "flow"})
+    assert len(admitted) == 1
+    wait.follow({"run_id": "other-run", "group_id": "flow"})
+    assert len(admitted) == 1  # duplicate end events cannot start a second responder

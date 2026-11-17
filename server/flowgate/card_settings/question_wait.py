@@ -12,7 +12,8 @@ follow it until every question it asked has an answer (``finalize.open_questions
   person's answer; no unchecked default dispatch occurs. A responder answers from documents and source and
   hands human decisions to a person through its escalate signal. A question
   has one claimed responder run; startup failures walk its independent enabled candidates once each (0111 T-A3),
-  bounded by the active chain length. An exhausted, otherwise failed or handed-on question waits for a person's
+  bounded by the active chain length. Unclaimed run_in_progress refusals retry after capacity frees.
+  An exhausted, otherwise failed or handed-on question waits for a person's
   answer in the Q&A panel. The card of the document a question is on shows the [Q] mark (``run_service.question_nodes``).
 - resume: once that run's questions are all answered — a person's answer (``on_question_answered``) or the responder
   run's end (``follow``) — the step it left goes on as it would have at the run's end. An idle Graph run is woken
@@ -160,6 +161,24 @@ def _responder(flow_id: str, node: dict, asked_by_instruction: bool,
     ])
 
 
+def _responder_pending(item: dict) -> bool:
+    """An unstarted question, including admission losing a race to another run.
+
+    A run_in_progress refusal happens before the responder claims the item. It is
+    capacity contention, not an attempted answer or a human decision. Preserve its
+    diagnostic state until the next dispatch claims it; never reset a claimed run,
+    retry provider exhaustion, or override an explicit hand-off to a person.
+    """
+    if int(item.get("answer_count") or 0):
+        return False
+    if not item.get("responder_state"):
+        return True
+    return (item.get("responder_state") == "failed"
+            and item.get("responder_error_code") == "run_in_progress"
+            and not item.get("responder_run_id")
+            and not int(item.get("responder_attempts") or 0))
+
+
 def _dispatch(flow_id: str, node: dict, run: dict, items: list[dict], asked_by_instruction: bool) -> bool:
     """Start the earliest unclaimed question's bounded independent responder chain.
 
@@ -167,7 +186,7 @@ def _dispatch(flow_id: str, node: dict, run: dict, items: list[dict], asked_by_i
     Exhaustion is marked failed on the question, never a Graph dispatch failure;
     this card stays in the T-A1 question wait and repeated follow-ups dispatch nothing.
     """
-    target = next((item for item in items if not item.get("responder_state")), None)
+    target = next((item for item in items if _responder_pending(item)), None)
     if target is None or not target.get("anchor_doc_id") or legacy.flow_ai_busy(flow_id):
         return False
     from flowgate.ai_roles import qa_adapter
@@ -289,9 +308,9 @@ def _answered(flow_id: str, asker_run_id: str) -> None:
     if items is None:
         return
     if items:
-        # One at a time, each put to an AI once: a question with a responder still working, failed or handed to a
+        # One claimed run at a time: an attempted response that failed, is working, or was handed to a
         # person stops the sequence until it is answered (v0.1 responder boundaries 4 / 5).
-        if not any(item.get("responder_state") for item in items):
+        if all(_responder_pending(item) for item in items):
             _dispatch(flow_id, node, run, items, phase == "instruction")
         return
     if action_guard.blocks(flow_id, run, node["node_key"], phase):
@@ -344,7 +363,7 @@ def _dispatch_waiting(flow_id: str) -> None:
     for item in open_questions_in_flow(flow_id):
         askers.setdefault(item["asker_ai_run_id"], []).append(item)
     for asker_run_id, items in askers.items():
-        if any(item.get("responder_state") for item in items):
+        if not all(_responder_pending(item) for item in items):
             continue                                    # under way, or a person's now (as in ``_answered``)
         run = legacy.ai_run_record(asker_run_id)
         waiting = _waiting(flow_id, run) if run is not None and run.get("group_id") == flow_id else None
