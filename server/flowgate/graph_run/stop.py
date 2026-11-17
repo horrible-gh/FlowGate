@@ -79,7 +79,8 @@ def _context(run: dict, actor: Optional[str]):
     return run_apply.load_context(run, (db_groups.get_by_id(run["group_id"]) or {}).get("project_id"), actor)
 
 
-def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> dict:
+def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str, *,
+             allow_idle: bool = False, recheck=None) -> dict:
     """``run_state_ports.stop``. A running, paused or idle run with gate reservations (or blocked_recovery) stops; a stopping one goes on with its stop (a repeated Stop);
     idle(blocked_recovery) with an unfinished Time Machine is 409 ``graph_time_machine_in_progress``;
     any other entry state is 409 ``run_not_running``. Stop never clears ``recovery_reset_required``. Answers the run as it is: idle (stopped), or still stopping with the
@@ -92,6 +93,8 @@ def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> d
     def begin() -> None:
         from modules.flow_gate.graph_workflow.services.graph_service import require_writable
         require_writable(flow_id)
+        if recheck is not None:
+            recheck()
         run = run_store.run_by_id(run_id)
         if run is None or run["group_id"] != flow_id:
             raise GraphApiError(404, "run_not_found", {"run_id": run_id})
@@ -100,7 +103,7 @@ def stop_run(group: dict, run_id: str, reason: Optional[str], user_id: str) -> d
         from flowgate.gate_decisions import repository as gate_decisions
         # Park can display another card's wait. Stop admission follows reservations, never that display reason.
         recovery_idle = run["status"] == IDLE and (
-            run.get("idle_reason") == "blocked_recovery" or bool(gate_decisions.reservations_of_run(run_id)))
+            allow_idle or run.get("idle_reason") == "blocked_recovery" or bool(gate_decisions.reservations_of_run(run_id)))
         if recovery_idle:
             from flowgate.graph_time_machine.operation import require_no_operation
             require_no_operation(flow_id)
@@ -214,6 +217,9 @@ def reset_node(ctx, row: dict, cause: str, note: Optional[dict] = None) -> bool:
         _revoke((r["token_id"] for r in run_store._all(
             "SELECT token_id FROM graph_run_token_map WHERE run_id = ? AND node_key = ? AND attempt_id IS NULL",
             [run_id, row["node_key"]])), cause)
+        history = {"previous_result_doc_id": row.get("result_doc_id"),
+                   "previous_instruction_doc_id": row.get("instruction_doc_id")}
+        note = {**(note or {}), "payload": {**history, **((note or {}).get("payload") or {})}}
         run_apply.emit_node_state(ctx, row["node_key"], row["status"], "pending", cause, None, note=note)
     return bool(moved)
 

@@ -312,7 +312,9 @@ def parse_start(body: Any) -> bool:
         return False
     if not isinstance(body, dict):
         raise _invalid("body", "not_an_object")
-    unknown = set(body) - {"allow_instruction_ai"}
+    unknown = set(body) - {"allow_instruction_ai", "expected_context"}
+    if "expected_context" in body and not isinstance(body["expected_context"], dict):
+        raise _invalid("expected_context", "not_an_object")
     if unknown:
         raise _invalid(sorted(unknown)[0], "unknown_field")
     allow = body.get("allow_instruction_ai", False)
@@ -387,11 +389,20 @@ def start(group: dict, user_id: str, body: Any = None) -> dict:
         missing = missing_instructions(flow_id, record)
         if missing:
             raise GraphApiError(409, "chat_run_instruction_missing", {"flow_id": flow_id, "node_keys": missing})
+    expected = (body or {}).get("expected_context")
+    if expected is not None:
+        from flowgate.graph_run import recovery_basis
+        recovery_basis.require_context(group, expected, expected.get("node_key"))
     confirmed = None
     if draft is not None:
         confirmed = confirm_service.confirm_revision(group, user_id, int(draft["draft_version"]), latest,
                                                      None)["revision_no"]
-    result = run_service.start_run(group, user_id, None, "full", None)
+    if expected is not None:
+        from flowgate.graph_run.recovery_start import CheckedStart
+        result = run_service.start_run(group, user_id, None, "full", None,
+                                       recovery=CheckedStart(group, expected, confirmed))
+    else:
+        result = run_service.start_run(group, user_id, None, "full", None)
     view = _run_view(result.get("run"))
     waits = waiting(view)
     return {"flow_id": flow_id, "confirmed_revision_no": confirmed, "run": view, "waiting": waits,
