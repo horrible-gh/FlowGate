@@ -29,7 +29,6 @@
     <ComposerImageStrip
       :images="attach.images.value"
       :notice="attach.notice.value"
-      :unsupported-ai="unsupportedAi"
       :hint="imageHint"
       @remove="attach.remove"
       @retry="attach.retry"
@@ -286,17 +285,13 @@ function onInput(): void {
 const canAttach = computed(() => !props.disabled && !props.readOnly && !props.sending)
 const dragging = ref(false)
 
-/** The AI picked is known not to accept images (`accepts_images=false`): the send is not blocked, the user is told. */
-const unsupportedAi = computed(() =>
-  attach.images.value.length > 0 && props.providers.find((p) => p.id === props.selectedProviderId)?.acceptsImages === false)
-
 /** Why the send is held now, for the note under the thumbnails. */
-const imageHint = computed<'uploading' | 'checking' | 'unusable' | 'text' | null>(() => {
+const imageHint = computed<'uploading' | 'checking' | 'unusable' | null>(() => {
   if (attach.images.value.length === 0) return null
   if (attach.uploading.value) return 'uploading'
   if (attach.checking.value) return 'checking'
   if (attach.blocked.value) return 'unusable'
-  return draft.value.trim() === '' ? 'text' : null
+  return null
 })
 
 function clipboardImages(data: DataTransfer | null): File[] {

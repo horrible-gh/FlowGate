@@ -1340,7 +1340,6 @@ export default {
       checking: '確認中',
       missing: '画像は消えています（24時間経過で削除されました）。外してください',
       load_failed: '読み込めませんでした',
-      unsupported_ai: 'この AI は画像を受け取れません。画像は保存されますが AI には渡されません',
       error: {
         too_large: '画像が 5MB を超えています',
         unsupported: 'PNG・JPEG・GIF・WebP のみアップロードできます',
@@ -1366,7 +1365,6 @@ export default {
         uploading: '画像のアップロードが終わると送信できます',
         checking: '画像を確認しています。確認が終わると送信できます',
         unusable: '失敗または消えた画像は、再試行するか外すと送信できます',
-        text: '画像と一緒に送るメッセージを入力してください',
       },
     },
     settings: {
