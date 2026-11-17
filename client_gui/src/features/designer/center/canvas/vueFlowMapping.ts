@@ -45,6 +45,7 @@
 // flowgate.v02.0070 T#1 (B1): a card no longer edits its title (the Inspector header does), so the card data carries
 // no title edit state.
 import type { Edge, Node } from '@vue-flow/core'
+import { cardDocumentButtons, type CardDocumentButton } from './cardDocumentButtons'
 import { gateApprovalView } from '../../inspector/features/gateCard/gateApproval'
 import { gateHeaderState, type GateHeaderState } from './gateHeaderState'
 import { cardNodeRun, cardStateView, type CardStateView } from '../graph/cardStateView'
@@ -57,6 +58,7 @@ export const FLOWGATE_NODE_TYPE = 'flowgate'
 export const FLOWGATE_EDGE_TYPE = 'flowgate'
 
 export interface FlowGateNodeData {
+  documents?: readonly CardDocumentButton[]
   kind: string
   /** flowgate.v02.0045 T0019: the document type, so a 설계 card is named like its Palette card. */
   docType?: string | null
@@ -153,6 +155,7 @@ export function toVueFlowNodes(
     const connectable = node.structureEditable === true && !!node.definition && !locked
     const selected = selectedIds.has(node.id)
     const data: FlowGateNodeData = { kind: node.kind, title: node.title, state: node.state ?? null, selected }
+    data.documents = cardDocumentButtons(node)
     if (node.cardDocuments?.some(lineWarns)) data.bodyUnreadable = true
     if (node.docType) data.docType = node.docType
     if (connectable) data.connectable = true

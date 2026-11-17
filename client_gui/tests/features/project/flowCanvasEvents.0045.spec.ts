@@ -84,6 +84,18 @@ describe('Canvas change subscription', () => {
     expect(es.closed).toBe(true)
   })
 
+  it('coalesces document changes from this tab so card buttons refresh without selection', () => {
+    const changed = vi.fn()
+    const stop = subscribeFlowCanvasChanges('flowgate', { changed, resync: () => {} })
+    const es = FakeEventSource.all[0]
+    es.emit('document_explorer_refresh', frame('f.0051', CANVAS_CLIENT_ID, 'document_explorer_refresh'))
+    es.emit('document_explorer_refresh', frame('f.0051', CANVAS_CLIENT_ID, 'document_explorer_refresh'))
+    vi.advanceTimersByTime(1000)
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect(changed).toHaveBeenCalledWith('f.0051')
+    stop()
+  })
+
   it('resyncs after a reconnect and opens a fresh stream (new token) after a closed one', () => {
     const resync = vi.fn()
     const stop = subscribeFlowCanvasChanges('flowgate', { changed: () => {}, resync })

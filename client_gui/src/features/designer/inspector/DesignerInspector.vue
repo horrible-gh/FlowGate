@@ -283,7 +283,16 @@ const headerMenus = computed(() => contributions.value.filter((entry) => entry.h
 const headerState = computed(() => contributions.value.find((entry) => entry.headerState) ?? null)
 const headerMemo = computed(() => contributions.value.find((entry) => entry.headerMemo) ?? null)
 
-const tabs = computed(() => target.value && !props.unselected ? INSPECTOR_TABS.filter(key => key !== 'ai' || contributions.value.some(entry => entry.tab?.key === 'ai')) : [])
+const tabs = computed(() => {
+  if (!target.value || props.unselected) return []
+  const requirement = ['R', 'B'].includes(target.value.cardDocType ?? '')
+  return INSPECTOR_TABS.filter(key => {
+    if (key === 'ai' || (key === 'settings' && requirement)) {
+      return contributions.value.some(entry => entry.tab?.key === key)
+    }
+    return true
+  })
+})
 
 // One tab number supplier per registration, set up once; each sees the target only while its
 // registration applies to it (D#1 §5.2: at most one supplier per tab).

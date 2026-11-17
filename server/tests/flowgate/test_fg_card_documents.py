@@ -236,7 +236,7 @@ def doc_events(env, kind):
     return _sql(env["db"], "SELECT * FROM workflow_events WHERE event_type = ?", (kind,))
 
 
-ALL_CARDS = [node("tmp_r", "R", "요구"), node("tmp_wp", "WP", "계획"), node("tmp_d", "D", "기본설계"),
+ALL_CARDS = [node("tmp_r", "R", "요구"), node("tmp_d", "D", "기본설계"),
              node("tmp_p", "P", "프로토콜"), node("tmp_n", "N", "조사"), node("tmp_t", "T", "구현"),
              node("tmp_ts", "TS", "시험"), node("tmp_c", None, "사용자 카드", node_type="custom", palette="custom_x"),
              node("tmp_g", None, "확인", node_type="gate")]
@@ -276,7 +276,6 @@ def test_placing_cards_creates_their_document_lines(env):
     body = put_draft(env, FB, 0, ALL_CARDS)
     km = body["key_map"]
     assert lines(body, km["tmp_r"]) == [("requirement", "R")]
-    assert lines(body, km["tmp_wp"]) == [("plan", "WP"), ("deploy", "M")]
     assert lines(body, km["tmp_d"]) == [("instruction", "DS"), ("report", "D")]
     assert lines(body, km["tmp_p"]) == [("instruction", "DS"), ("report", "P")]
     assert lines(body, km["tmp_n"]) == [("instruction", "N"), ("report", "NR")]
@@ -287,7 +286,7 @@ def test_placing_cards_creates_their_document_lines(env):
     ts = body["card_documents"][km["tmp_ts"]]
     assert ts[0]["doc_id"] == ts[1]["doc_id"] and ts[0]["author"] == "human" and ts[1]["author"] == "run"
     made = {line["doc_id"] for key in km.values() for line in body["card_documents"].get(key, [])}
-    assert len(made) == 15                                       # the shared scenario line adds no document
+    assert len(made) == 13                                       # the shared scenario line adds no document
     for key, card in zip(("tmp_r", "tmp_t"), ("요구", "구현")):
         first = body["card_documents"][km[key]][0]
         assert first["title"].startswith(card) and first["status"] == "draft"
@@ -296,13 +295,10 @@ def test_placing_cards_creates_their_document_lines(env):
         assert d["group_id"] == FB and d["status"] == "draft" and d["doc_review_status"] is None
         assert d["owner_id"] == "u_kim" and json.loads(d["meta"])["graph_card"]["node_key"] in km.values()
         assert (env["storage"] / d["file_path"]).is_file(), d["file_path"]
-    wp = doc(body["card_documents"][km["tmp_wp"]][0]["doc_id"])
-    plan = json.loads((env["storage"] / wp["file_path"]).read_text(encoding="utf-8"))
-    assert plan["binding"] == "advisory" and wp["title"]
     t_doc = doc(body["card_documents"][km["tmp_t"]][0]["doc_id"])
     head = (env["storage"] / t_doc["file_path"]).read_text(encoding="utf-8")
     assert head.startswith("---\n") and f"group_id: {FB}" in head and "type: T" in head
-    assert len(doc_events(env, "doc_created")) == 15
+    assert len(doc_events(env, "doc_created")) == 13
     assert {r["owned"] for r in line_rows(env, FB)} == {0, 1}    # scenario lines share, all others own
 
 
@@ -839,13 +835,12 @@ def test_a_save_in_another_language_keeps_every_stored_title(env):
 
 @pytest.mark.parametrize("locale, prefix", [("ko", "작업계획 — "), ("ja", "作業計画 — "), ("en", "Work plan — ")])
 def test_a_new_work_plan_card_derives_its_title_in_the_save_s_language(env, locale, prefix):
-    body = put_draft_in(env, FB, 0, [node("tmp_wp", "WP", "계획")], locale)
-    plan_line, deploy_line = body["card_documents"][body["key_map"]["tmp_wp"]]
-    wp = doc(plan_line["doc_id"])
-    assert plan_line["title"] == wp["title"] and wp["title"].startswith(prefix)
-    plan = json.loads((env["storage"] / wp["file_path"]).read_text(encoding="utf-8"))
-    assert plan["binding"] == "advisory"                                            # the plan contract is the same
-    assert deploy_line["title"] == "계획 · " + {"ko": "전개", "ja": "展開", "en": "Deploy"}[locale]
+    res = env["client"].put(f"/api/v1/flows/{FB}/graph/draft",
+        json={"draft_version": 0, "nodes": [node("tmp_wp", "WP")], "edges": []}, headers=_in(locale))
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "work_plan_retired"
+    assert line_rows(env, FB) == []
+
 
 
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])

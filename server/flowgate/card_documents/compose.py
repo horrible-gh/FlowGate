@@ -164,6 +164,9 @@ def write_line(group: dict, node_key: str, slot_key: str, content: Optional[str]
         if doc is not None:
             raise _refused(409, "slot_has_document", {"flow_id": flow_id, "node_key": node_key, "slot": slot.slot,
                                                       "doc_id": doc["doc_id"]}, "This line already has a document.")
+        if slot.slot == cs.DELEGATION or node.get("doc_type") == "WP":
+            raise _refused(410, "work_plan_retired", {"flow_id": flow_id, "node_key": node_key, "slot": slot.slot},
+                           "New delegation and work plan lines are no longer supported.")
         doc_id = legacy.create_document(group, node, slot, user_id, content, locale=locale)
         _link(flow_id, node_key, slot, ordinal, row, doc_id, user_id)
         return None, _answer(flow_id, node, slot, doc_id, False)

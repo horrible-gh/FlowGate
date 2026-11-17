@@ -86,11 +86,6 @@
         :title="data.title"
         data-test="designer-canvas-node-title"
       >{{ data.title }}</p>
-      <button v-if="data.gateState?.key === 'waiting_confirm' && data.approvable" type="button"
-        class="flow-node-approve nodrag nopan" :disabled="data.approving || data.approvalBlocked" :title="data.approvalReason ? t(data.approvalReason) : undefined"
-        data-test="designer-canvas-node-approve" @pointerdown.stop @mousedown.stop @click.stop="emit('approve', id)">
-        {{ t('gui.inspector.gateCard.confirm') }}
-      </button>
       <div v-if="data.integration || data.uncarried" class="flow-node-flags" data-test="designer-canvas-node-flags">
         <button
           v-if="data.integration === 'conflict'"
@@ -121,6 +116,24 @@
         >{{ uncarriedLabel }}</span>
       </div>
     </div>
+    <div v-if="data.documents?.length || data.approvable" class="flow-node-footer">
+      <div class="flow-node-documents">
+        <button v-for="doc in data.documents" :key="doc.docId" type="button"
+          class="flow-node-document nodrag nopan" :title="documentLabel(doc)" :aria-label="documentLabel(doc)"
+          data-test="designer-canvas-node-document" :data-doc-id="doc.docId" :data-report="doc.report"
+          @pointerdown.stop @mousedown.stop @dblclick.stop @keydown.stop @keyup.stop
+          @click.stop="emit('open-document', { nodeId: id, docId: doc.docId })">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path
+            :d="doc.report ? 'M9 4h6v3H9z M7 5H5v16h14V5h-2 M8 14l3 3 5-6' : 'M14 2H6v20h12V6z M14 2v5h4 M9 12h6 M9 16h6'"
+            fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </button>
+      </div>
+      <button v-if="data.gateState?.key === 'waiting_confirm' && data.approvable" type="button"
+        class="flow-node-approve nodrag nopan" :disabled="data.approving || data.approvalBlocked" :title="data.approvalReason ? t(data.approvalReason) : undefined"
+        data-test="designer-canvas-node-approve" @pointerdown.stop @mousedown.stop @click.stop="emit('approve', id)">
+        {{ t('gui.inspector.gateCard.confirm') }}
+      </button>
+    </div>
     <Handle
       v-for="side in LINK_SIDES"
       :id="side.id"
@@ -140,6 +153,7 @@ import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
 import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay, flowNodeHeaderIcon } from './flowNodeKinds'
 import type { FlowGateNodeData } from './vueFlowMapping'
+import type { CardDocumentButton, CardDocumentOpen } from './cardDocumentButtons'
 import { cardStateReasonText } from '../graph/cardStateView'
 
 const props = defineProps<{
@@ -151,6 +165,7 @@ const emit = defineEmits<{
   /** flowgate.v02.0061 T#14: the card's 병합 충돌 was pressed (the Git tool panel resolves it). */
   conflict: [nodeId: string]
   approve: [nodeId: string]
+  'open-document': [document: CardDocumentOpen]
 }>()
 
 /** The four start strips of a connectable card, one source handle per side. */
@@ -162,6 +177,9 @@ const LINK_SIDES = [
 ] as const
 
 const { t } = useI18n()
+function documentLabel(doc: CardDocumentButton): string {
+  return t('gui.designer.center.open_card_document', { kind: doc.docType ?? t('gui.designer.center.document'), title: doc.title })
+}
 
 // flowgate.v02.0070 T#4 (B4): the same kind display as the Inspector header (a B root is a 버그).
 const kind = computed(() => flowNodeKindView(props.data.kind, props.data.docType))
@@ -205,13 +223,14 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
 <style scoped>
 .flow-node-body-warning { color: var(--fg2-status-warning-fg); margin-left: 4px; }
 
-/* Card size is defined here only: fixed 176x92 (03-designer-shell `.node`). Long text never
-   grows the card — every text line stays one line and ends with an ellipsis. */
+/* Measured height grows with document rows; geometry/layout use Vue Flow dimensions. */
 .flow-node-card {
   position: relative;
   box-sizing: border-box;
   width: 176px;
-  height: 92px;
+  min-height: 92px;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1.5px solid var(--flow-node-accent);
   border-radius: 10px;
@@ -358,6 +377,23 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
 .flow-node-question + .flow-node-hold {
   margin-left: 4px;
 }
+
+.flow-node-footer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin-top: auto;
+  padding: 0 11px 8px;
+}
+.flow-node-documents { display: flex; flex: 1; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.flow-node-document {
+  position: relative; z-index: 4; display: grid; place-items: center;
+  width: 24px; height: 24px; padding: 3px; border: 1px solid var(--fg2-line-strong);
+  border-radius: 4px; background: var(--fg2-control-surface); color: var(--fg2-text); cursor: pointer;
+}
+.flow-node-document svg { width: 16px; height: 16px; }
+.flow-node-document:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: 1px; }
+.flow-node-footer .flow-node-approve { flex: none; margin-left: auto; }
 
 .flow-node-body {
   display: flex;

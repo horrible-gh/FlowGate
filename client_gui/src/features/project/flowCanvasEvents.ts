@@ -26,7 +26,7 @@ export const CANVAS_REFRESH_EVENTS = ['graph_canvas_changed', 'flow_ownership_ch
  * frames of these read its Canvas again too, once per burst (CANVAS_CARD_STEP_COALESCE_MS), so every card's chip
  * follows — not only the one the Inspector shows.
  */
-export const CANVAS_CARD_STEP_EVENTS = ['doc_review_status_changed', 'ai_invoke_started', 'ai_invoke_finished'] as const
+export const CANVAS_CARD_STEP_EVENTS = ['document_explorer_refresh', 'doc_review_status_changed', 'ai_invoke_started', 'ai_invoke_finished'] as const
 /**
  * flowgate.v02.0132 T#4 (review): a confirm gate's Git work moves (a retry accepted, the automatic sync going on, parked
  * again) with a job event of its own — no run or node event follows when the run stays idle (e.g. after a Stop). The
@@ -90,7 +90,9 @@ export function subscribeFlowCanvasChanges(projectId: string, handlers: FlowCanv
   const stop = subscribeProjectEvents(projectId, {
     events: [...CANVAS_REFRESH_EVENTS, ...CANVAS_CARD_STEP_EVENTS, ...CANVAS_GATE_JOB_EVENTS],
     event: (frame: ProjectEventFrame) => {
-      const flowId = changedFlowOfFrame(frame.payload, frame.groupId)
+      // Document writes do not return a Canvas, even when they originated in this tab.
+      const flowId = changedFlowOfFrame(frame.type === 'document_explorer_refresh'
+        ? { ...frame.payload, origin_client_id: undefined } : frame.payload, frame.groupId)
       if (flowId === null) return
       if ((CANVAS_CARD_STEP_EVENTS as readonly string[]).includes(frame.type) || (CANVAS_GATE_JOB_EVENTS as readonly string[]).includes(frame.type)) stepChanged(flowId)
       else {

@@ -25,10 +25,8 @@ removed only through the existing v0.1 services (``legacy_adapter``).
   while still a draft — deleting it.
 - A run result bound to a node takes the line of its type: the empty draft it replaces is
   superseded by the result, so the line, the Canvas and the supersede chain agree.
-- flowgate.v02.0053 T#2: a requirement card has its AI delegation line while the card's setting
-  ``delegation`` is on (``flowgate.card_settings``): turning it on makes the line's empty draft,
-  turning it off releases the line like a removed one (``set_delegation``), and a draft save keeps
-  or makes the line by the same setting.
+- Historical AI delegation lines and settings remain readable. New delegation lines are never
+  created, and draft saves do not remove historical lines when the setting is retired.
 - flowgate.v02.0056 T#2: whether a card document is written is decided by its body, not by the document
   existing (``has_body``: a non-blank body after the front matter, the v0.1 approval's own rule). It is the
   one judgement of the v0.2 cards: the instruction stage of a card run (``card_settings``), the card
@@ -48,9 +46,7 @@ from typing import Iterable, Optional
 from flowgate.card_documents import legacy_adapter as legacy
 from flowgate.card_documents import repository
 from flowgate.card_documents import slots as cs
-from flowgate.card_settings import repository as card_settings
 
-DELEGATION_SETTING = "delegation"
 
 
 # ── draft save ───────────────────────────────────────────────────────────────
@@ -96,10 +92,8 @@ def sync_draft(group: dict, user_id: Optional[str], nodes: list[dict], removed_k
 
 
 def _slots(flow_id: str, node: dict) -> tuple:
-    """The node's lines; a requirement card has its AI delegation line while that setting is on."""
-    delegation = (str(node.get("doc_type") or "").strip().upper() in cs.ROOT_TYPES
-                  and card_settings.values(flow_id, node["node_key"]).get(DELEGATION_SETTING) == "on")
-    return cs.card_slots(node["node_type"], node.get("doc_type"), ai_delegation=delegation)
+    """Slots eligible for creation; historical delegation lines are read separately."""
+    return cs.card_slots(node["node_type"], node.get("doc_type"), ai_delegation=False)
 
 
 def _signature(row: dict) -> tuple:
@@ -119,7 +113,7 @@ def _rows_by_node(flow_id: str) -> dict[str, list[dict]]:
 
 def _released(flow_id: str, node_key: str, rows: list[dict], wanted: set) -> list[dict]:
     """The node's lines the draft no longer uses and no confirmed revision of the node shows."""
-    stale = [r for r in rows if _signature(r) not in wanted]
+    stale = [r for r in rows if _signature(r) not in wanted and r["slot"] != cs.DELEGATION]
     if not stale:
         return []
     kept = {cs.slot_signature(s) for node_type, doc_type in repository.revision_kinds(flow_id, node_key)
@@ -131,6 +125,9 @@ def _line_document(group: dict, node: dict, slot: cs.CardSlot, made: dict, regis
                    user_id: Optional[str], locale: Optional[str] = None) -> tuple[Optional[str], bool]:
     """(document of a new line, whether the card owns it); (None, _) = the line stays empty. Only a document made
     here is titled (in ``locale``); a shown root or shared document keeps its own title."""
+    # Existing WP lines stay readable, but saving an old card cannot regenerate missing plan/deploy drafts.
+    if node.get("doc_type") == "WP":
+        return None, False
     if slot.shares:
         return made.get(slot.shares), False
     if slot.doc_type not in registered:
@@ -197,28 +194,8 @@ def _dispose(flow_id: str, rows: list[dict], user_id: Optional[str]) -> None:
 
 def set_delegation(group: dict, node: dict, on: bool, user_id: Optional[str], registered: set[str],
                    locale: Optional[str] = None) -> None:
-    """The requirement card's AI delegation line follows its setting, inside the caller's Flow guard.
-
-    On: the line gets its empty draft (once), titled in ``locale`` (the setting request's, flowgate.v02.0088).
-    Off: the line is released like a removed card's — unlinked, and its document deleted while it is still the
-    card's own untouched draft.
-    """
-    flow_id = group["group_id"]
-    if not repository.available():
-        return
-    spec = cs.card_slots(node.get("node_type"), node.get("doc_type"), ai_delegation=True)
-    slot = next((s for s in spec if s.slot == cs.DELEGATION), None)
-    if slot is None:
-        return
-    rows = [r for r in repository.rows(flow_id, [node["node_key"]]) if r["slot"] == cs.DELEGATION]
-    if not on:
-        _dispose(flow_id, rows, user_id)
-        return
-    if any(_signature(r) == cs.slot_signature(slot) for r in rows):
-        return
-    doc_id, owned = _line_document(group, node, slot, {}, registered, user_id, locale)
-    if doc_id is not None:
-        repository.insert(flow_id, node["node_key"], slot.slot, slot.doc_type, doc_id, owned, spec.index(slot), user_id)
+    """Compatibility entry point: retirement never creates or disposes historical lines."""
+    return
 
 
 # ── R↔B root conversion ──────────────────────────────────────────────────────
