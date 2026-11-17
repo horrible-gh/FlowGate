@@ -26,7 +26,7 @@ interface RetryableRequestConfig extends InternalAxiosRequestConfig {
   _getRetryCount?: number
 }
 
-const getBaseUrl = (): string =>
+export const getBaseUrl = (): string =>
   import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8088/flowgate'
 
 const getRefreshTokenStorage = (): Storage | null => {

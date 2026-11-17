@@ -19,14 +19,15 @@
 // Nothing here runs on import: startFlowAttachmentOperations() installs the session listeners once from the app start
 // (app/main.ts) and disposeFlowAttachmentOperations() removes them (tests reset with it).
 //
-// Later cards hang off this manager (types only here, see FlowOperationsLater): 3 — page leave (flushPagehide),
-// 4 — the upload queue (enqueueUpload / answerCollision), 5 — structured errors (errors / clearError).
+// Card 3 adds page leave (flushPagehide). Later cards add the upload queue
+// (enqueueUpload / answerCollision) and structured errors (errors / clearError).
 import { effectScope, reactive, ref, shallowReactive, watch, type EffectScope } from 'vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import { AUTH_SESSION_ENDED_EVENT } from '@shared/authSessionSignal'
 import { subscribeProjectEvents } from '@/features/project/projectEvents'
 import { deleteFile, readFiles, type FlowFile } from './api'
 import { createUndoQueue, type UndoGroup } from './undo'
+import { deleteOnPagehide, installPagehide } from './pagehide'
 
 export interface FlowScope { readonly projectId: string; readonly flowId: string }
 
@@ -55,7 +56,7 @@ export interface FlowOperationsState {
   errors: FlowOperationErrorEntry[]
 }
 
-/** Extension points of cards 3–5, declared so they attach to the same manager. Not implemented by this card. */
+/** APIs shared by cards 3–5. Card 3 implements flushPagehide; other members remain extension points. */
 export interface FlowOperationsLater {
   /** Card 3: on pagehide send the pending deletes of writable, signed-in Flows at once (keepalive). */
   flushPagehide(): number
@@ -117,6 +118,10 @@ let started: { scope: EffectScope; onEnded: () => void; deps: FlowArchiveWatchDe
 /** Archive watches of the current session, by Project: kept while the Project has pending or in-flight work. */
 const archiveWatches = new Map<string, () => void>()
 let syncScheduled = false
+let sessionEnded = false
+let deleteOperationId = 0
+const deleteResults = new Map<number, Set<string>>()
+let disposePagehide: (() => void) | null = null
 
 const ownerNow = () => useCurrentUser().user.value?.username ?? ''
 const keyOf = (gen: number, owner: string, scope: FlowScope) => [gen, owner, scope.projectId, scope.flowId].join('\u0001')
@@ -158,7 +163,7 @@ function entryFor(scope: FlowScope): Entry {
  * checks that the Flow was not locked since the group started (cancel epoch). A file not yet sent when the Flow turned
  * read-only is never sent, even if the Flow is writable again before the earlier answer arrives (its row comes back).
  */
-async function commit(entry: Entry, items: FlowFile[]) {
+async function commit(entry: Entry, items: FlowFile[], leaving = false) {
   const { state } = entry
   if (stale(entry)) return
   const epoch = entry.cancelEpoch
@@ -167,6 +172,38 @@ async function commit(entry: Entry, items: FlowFile[]) {
   try {
     for (const file of items) state.deleting.add(file.key)
     state.revision++
+    if (leaving) {
+      const operationId = ++deleteOperationId
+      deleteResults.set(operationId, new Set(items.map(file => file.key)))
+      const settle = (file: FlowFile, failed: boolean, error?: unknown) => {
+        // One result per operation/file, including a response delivered after bfcache restore.
+        if (!deleteResults.get(operationId)?.delete(file.key) || stale(entry)) return
+        if (failed) {
+          state.error = failureOf(error)
+          if (!state.files.some(f => f.key === file.key)) state.files.push(file)
+        } else {
+          // A list read started before this DELETE completed must not resurrect the deleted row.
+          entry.readSequence++
+          state.loading = false
+          state.files = state.files.filter(f => f.key !== file.key)
+        }
+      }
+      // All calls begin synchronously, while the pagehide handler is still on the stack.
+      await Promise.all(items.map(async file => {
+        try {
+          const token = pagehideToken(entry)
+          if (!token || cancelled()) return
+          await deleteOnPagehide(entry.flowId, file, token)
+          settle(file, false)
+        } catch (e) {
+          settle(file, true, e)
+        } finally {
+          if (!stale(entry)) { state.deleting.delete(file.key); state.revision++ }
+        }
+      }))
+      deleteResults.delete(operationId)
+      return
+    }
     for (const file of items) {
       if (stale(entry)) return
       // An archive event came in: wait for its read before sending (it may lock the Flow).
@@ -266,6 +303,42 @@ function checkProjectArchive(projectId: string) {
   }
 }
 
+/** Authentication is checked at send time, including synchronous user changes before Vue's next tick. */
+function pagehideToken(entry: Entry): string | null {
+  if (stale(entry) || sessionEnded || !entry.owner || entry.owner !== ownerNow() || entry.state.readOnly) return null
+  if (typeof window === 'undefined') return null
+  try { if (sessionStorage.getItem('fg_logout_in_progress')) return null } catch { return null }
+  return window.__accessToken__ || null
+}
+
+/** Claim pending groups only. Timer-owned groups (including their unsent tail) are never sent twice. */
+export function flushPagehide(): number {
+  let count = 0
+  for (const entry of entries.values()) {
+    if (!pagehideToken(entry)) { entry.queue.clear(); continue }
+    for (const items of entry.queue.drain()) {
+      count += items.length
+      void commit(entry, items, true)
+    }
+  }
+  return count
+}
+
+/** bfcache restores memory, not permission freshness. Never put drained groups back into the queue. */
+function restorePage(): void {
+  const deps = started?.deps
+  if (!deps) return
+  for (const entry of entries.values()) {
+    if (stale(entry) || sessionEnded || !entry.owner || entry.owner !== ownerNow() || !window.__accessToken__) continue
+    const seq = ++entry.archiveSequence
+    const run = deps.readArchived(entry.flowId).then(archived => {
+      if (!stale(entry) && seq === entry.archiveSequence) setEntryReadOnly(entry, archived)
+    }, () => {}).finally(() => { if (entry.archiveCheck === run) entry.archiveCheck = null })
+    entry.archiveCheck = run
+    void refreshEntry(entry)
+  }
+}
+
 /* ── public API ── */
 
 /** The Flow's state for the current session (made on first use). */
@@ -294,7 +367,8 @@ export function hasView(scope: FlowScope): boolean { return (peek(scope)?.views.
 /** One 🗑 press (a row or the selection) = one group with its own five seconds. A file already staged is not staged twice. */
 export function stageDelete(scope: FlowScope, files: readonly FlowFile[]): void {
   const entry = entryFor(scope)
-  entry.queue.stage(files.map(f => ({ ...f })))
+  if (entry.state.readOnly) return
+  entry.queue.stage(files.filter(f => !entry.state.deleting.has(f.key)).map(f => ({ ...f })))
 }
 /** A row's ↶: that file only; the rest of its group keeps counting. */
 export function undoItem(scope: FlowScope, key: string): void { peek(scope)?.queue.undoItem(key) }
@@ -347,6 +421,7 @@ export function connectReadOnly(source: FlowReadOnlySource): () => void {
  * already accepted cannot be taken back.
  */
 export function stopSession(): void {
+  sessionEnded = true
   for (const entry of entries.values()) {
     entry.queue.clear()
     entry.disposed = true
@@ -354,6 +429,7 @@ export function stopSession(): void {
     entry.views.clear()
   }
   entries.clear()
+  deleteResults.clear()
   for (const stop of archiveWatches.values()) stop()
   archiveWatches.clear()
   generation.value++
@@ -368,20 +444,27 @@ export function watchedProjects(): string[] { return [...archiveWatches.keys()] 
  */
 export function startFlowAttachmentOperations(deps: Partial<FlowArchiveWatchDeps> = {}): () => void {
   if (started) return disposeFlowAttachmentOperations
+  sessionEnded = false
   const onEnded = () => stopSession()
   const scope = effectScope(true)
   scope.run(() => {
     // Another user signed in (or the user went away) without a sign-out through logout(): a new session.
-    watch(ownerNow, (now, before) => { if (before && now !== before) stopSession() })
+    watch(ownerNow, (now, before) => {
+      if (before && now !== before) stopSession()
+      if (now && now !== before) sessionEnded = false
+    }, { flush: 'sync' })
   })
   if (typeof window !== 'undefined') window.addEventListener(AUTH_SESSION_ENDED_EVENT, onEnded)
   started = { scope, onEnded, deps: { ...defaultArchiveDeps, ...deps } }
+  if (typeof window !== 'undefined') disposePagehide = installPagehide(flushPagehide, restorePage)
   syncArchiveWatches()
   return disposeFlowAttachmentOperations
 }
 
 /** Removes the listeners and drops all work (tests reset with this between cases). */
 export function disposeFlowAttachmentOperations(): void {
+  disposePagehide?.()
+  disposePagehide = null
   if (started) {
     started.scope.stop()
     if (typeof window !== 'undefined') window.removeEventListener(AUTH_SESSION_ENDED_EVENT, started.onEnded)

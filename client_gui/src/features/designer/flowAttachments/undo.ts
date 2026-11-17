@@ -10,15 +10,20 @@ export function createUndoQueue<T extends { key: string }>(commit: (items: T[]) 
   let serial = 0
   function find(key: string) { return groups.find(g => g.items.some(i => i.key === key)) }
   function drop(group: UndoGroup<T>) { clearTimeout(group.timer); groups.splice(groups.indexOf(group), 1) }
+  /** Atomically claim a pending group for either the timer or pagehide. */
+  function take(group: UndoGroup<T>): T[] {
+    if (!groups.includes(group)) return []
+    drop(group); changed()
+    return group.items
+  }
+  function drain(): T[][] { return [...groups].map(take).filter(items => items.length > 0) }
   function stage(items: readonly T[]) {
     const fresh = items.filter(i => !find(i.key))
     if (!fresh.length) return
     const group: UndoGroup<T> = { id: ++serial, items: [...fresh], start: Date.now(), timer: 0 as unknown as ReturnType<typeof setTimeout> }
     group.timer = setTimeout(() => {
-      const index = groups.indexOf(group)
-      if (index < 0) return
-      groups.splice(index, 1); changed()
-      if (group.items.length) void commit(group.items)
+      const items = take(group)
+      if (items.length) void commit(items)
     }, delay)
     groups.push(group); changed()
   }
@@ -41,5 +46,5 @@ export function createUndoQueue<T extends { key: string }>(commit: (items: T[]) 
   function bulk() { return [...groups].reverse().find(g => g.items.length > 1) }
   function pending(key: string) { return find(key) }
   function clear() { for (const g of groups) clearTimeout(g.timer); groups.length = 0; changed() }
-  return { groups, stage, undoItem, undoGroup, undoLast, bulk, pending, clear }
+  return { groups, stage, undoItem, undoGroup, undoLast, bulk, pending, clear, drain }
 }
