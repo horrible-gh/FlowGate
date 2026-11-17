@@ -21,6 +21,14 @@ def _submission_block(text: str) -> str:
     return text[text.index("Submit: POST"):]
 
 
+@pytest.fixture(autouse=True)
+def _no_message_images(monkeypatch):
+    # These text-only unit fixtures have no database. Image integration uses SQLite
+    # in test_message_image_delivery_0029 instead.
+    from modules.flow_gate.services import message_image_delivery
+    monkeypatch.setattr(message_image_delivery, "image_count", lambda *args: 0)
+
+
 class TestScopeMap:
     def test_all_wire_scopes_allowed(self):
         for scope in ("new", "edit", "workflow_decide", "chat", "rework", "review",

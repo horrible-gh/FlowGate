@@ -348,6 +348,7 @@ def build_conversation_mention(
     # flowgate.v02test.0026: the token's own `command_access` ("execute" for an execute-mode
     # chat: commands allowed while source_access stays "read"; None otherwise).
     command_access: Optional[str] = None,
+    locale: Optional[str] = None,
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
 
@@ -478,7 +479,13 @@ def build_conversation_mention(
     policy = question_policy.block(question_policy.text(user_id))
     if policy:
         lines += ["", policy]
-    return "\n".join(lines)
+    from modules.flow_gate.services import message_image_delivery
+    context = {"conversation_id": doc_id, "after_seq": after_seq, "locale": _locale(locale)}
+    text = "\n".join(lines)
+    if command_execution:
+        return message_image_delivery.ConversationMention(text, context)
+    notice = message_image_delivery.copy_notice(context)
+    return text + ("\n\n" + notice if notice else "")
 
 def _single_line(value: Optional[str]) -> str:
     """Collapse stored text to one safe line for a bullet (0446 T0016 §4-3).
