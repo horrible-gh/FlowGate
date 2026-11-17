@@ -746,7 +746,10 @@ def project(project_id, call):
             _project_rows.reset(token)
 
 
-def module_rename(group_ids, docs, call):
+_clock = time.monotonic  # module_rename's lock deadline (a test replaces it to count waited seconds)
+
+
+def module_rename(group_ids, docs, call, lock_wait_sec=None):
     """Hold every Flow of a module (and its non-card documents) for a module key rename (v02gui.0012).
 
     The rename moves every document of the module — card documents included, which no other gate lets a
@@ -754,9 +757,24 @@ def module_rename(group_ids, docs, call):
     row of every group (no run, card work or card document save starts meanwhile), the document lock of each
     non-card document, the row locks, then the path namespace. ``call`` runs inside that one transaction.
     Locks are taken in sorted order like ``guard_scope``; in-process locks first, never inside a transaction.
+
+    flowgate.v02test.0040 T0005: ``lock_wait_sec`` (the caller's; default ``FLOW_LOCK_WAIT_SEC``) bounds the waiting
+    for all the in-process locks together, not each one: one deadline is set before the first lock and every acquire
+    waits only for what is left of it (0 once it has passed: a free lock is still taken, a held one is not waited
+    for). Waiting with the locks already taken therefore never adds up beyond ``lock_wait_sec`` — per-lock waits of
+    4.9 s on nine locks would have held the first ones about 44 s, past the 30 s every other writer waits for them.
+    The first lock not free by the deadline writes a warning (flow_guard.lock_timeout, default.log) and raises
+    ``FlowLockTimeout`` carrying its key, kind and the budget; the locks already taken are released below and
+    nothing was written (no transaction is open yet).
     """
     if transaction() is not None:
         refuse()
+    wait = flow_guard.FLOW_LOCK_WAIT_SEC if lock_wait_sec is None else lock_wait_sec
+    deadline = _clock() + wait
+
+    def left():
+        return max(0.0, deadline - _clock())
+
     flows = sorted(set(group_ids) | {d['group_id'] for d in docs
                                      if flow_guard.document_guard_key(d, d['doc_id'])[0] == 'flow'})
     loose = sorted(d['doc_id'] for d in docs if flow_guard.document_guard_key(d, d['doc_id'])[0] != 'flow')
@@ -764,14 +782,14 @@ def module_rename(group_ids, docs, call):
     try:
         for flow_id in flows:
             lock = flow_guard._flow_lock(flow_id)
-            if not lock.acquire(timeout=flow_guard.FLOW_LOCK_WAIT_SEC):
-                raise flow_guard.FlowLockTimeout(flow_id)
+            if not lock.acquire(timeout=left()):
+                raise flow_guard.lock_timeout(flow_id, wait, 'flow', 'module_rename')
             locks.append(lock)
             flow_guard.layout_store.ensure_guard_row(flow_id)
         for doc_id in loose:
             lock = flow_guard._named_lock(flow_guard._doc_locks, doc_id)
-            if not lock.acquire(timeout=flow_guard.FLOW_LOCK_WAIT_SEC):
-                raise flow_guard.FlowLockTimeout(doc_id)
+            if not lock.acquire(timeout=left()):
+                raise flow_guard.lock_timeout(doc_id, wait, 'document', 'module_rename')
             locks.append(lock)
         with connection.get_store().transaction():
             for flow_id in flows:

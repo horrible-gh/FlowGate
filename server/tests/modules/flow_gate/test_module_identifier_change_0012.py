@@ -8,19 +8,26 @@ Contract under test:
   - An identifier another group uses is refused (409 module_identifier_taken) and the refusal names it.
   - Running work in the module refuses the rename (409 module_rename_busy); nothing changes.
   - Format / reserved identifiers are refused with a stable code.
+  - flowgate.v02test.0040 T0005: every refusal is a warning, an unexpected failure an exception record and a
+    success an info line with its duration and document count, all of them reaching logs/default.log; a Flow /
+    document lock not free in time (one wait budget for all the locks together, not one per lock) is 409
+    module_rename_busy (reason flow_lock_timeout / document_lock_timeout) with nothing changed; a module above the
+    document limit is refused (409 module_rename_too_large) before any lock is taken.
 
 Lightweight: a small SQLite schema, a temp storage root, no app startup, no Git, no migrations run.
 """
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
+import re
 import sqlite3
 import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -166,15 +173,17 @@ def storage(tmp_path):
 
 
 @contextmanager
-def _service(conn, storage, busy=()):
+def _service(conn, storage, busy=(), gate=None):
     """rename_module with the store, storage root, running-work probe and Git replaced; the gate runs the
-    body in one transaction like write_gate.module_rename."""
+    body in one transaction like write_gate.module_rename (or ``gate`` when given)."""
     store = _Store(conn)
 
-    def gate(op, group_ids, docs, call):
+    def one_transaction(op, group_ids, docs, call, **kw):
         assert op == "module_rename"
         with store.transaction():
             return call()
+
+    gate = gate or one_transaction
 
     with patch("modules.flow_gate.services.module_rename.get_store", return_value=store), \
          patch("modules.flow_gate.services.module_rename.busy_reasons", return_value=list(busy)), \
@@ -187,9 +196,9 @@ def _service(conn, storage, busy=()):
         yield store
 
 
-def _rename(conn, storage, new="v02chat", busy=()):
+def _rename(conn, storage, new="v02chat", busy=(), gate=None):
     from modules.flow_gate.services import module_rename
-    with _service(conn, storage, busy):
+    with _service(conn, storage, busy, gate):
         return module_rename.rename_module(P, "v02gui", new, actor="t")
 
 
@@ -514,3 +523,345 @@ def test_git_check_lists_refs_once(tmp_path):
     assert calls == ["for-each-ref"]
     assert exc.value.details["branches"] == [
         {"branch": f"{P}_v02chat_0002", "where": "origin"}, {"branch": f"{P}_v02chat_0003", "where": "local"}]
+
+
+# ── v02test.0040 T0005: logs, lock timeout -> 409, too large refused before any lock ─────────────────
+
+_MR_LOGGER = "modules.flow_gate.services.module_rename"
+_FG_LOGGER = "modules.flow_gate.graph_workflow.services.flow_guard"
+
+
+def _records(caplog, name, level):
+    return [r for r in caplog.records if r.name == name and r.levelno == level]
+
+
+def _unchanged(conn, storage):
+    assert conn.execute("SELECT module FROM groups WHERE group_id = ?", [G]).fetchone()[0] == "v02gui"
+    assert conn.execute("SELECT COUNT(*) FROM groups WHERE module = 'v02chat'").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM documents WHERE module = 'v02chat'").fetchone()[0] == 0
+    assert (storage / REL / "0001-R_requirement.md").is_file()
+    assert not (storage / f"documents/{P}/main/v02chat").exists()
+
+
+def test_refusal_is_logged_as_a_warning(conn, storage, caplog):
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    caplog.set_level(logging.INFO)
+    with pytest.raises(ModuleRenameRefused):
+        _rename(conn, storage, busy=[{"group_id": G, "reason": "flow_run_active"}])
+    [record] = _records(caplog, _MR_LOGGER, logging.WARNING)
+    text = record.getMessage()
+    assert text.startswith(f"module rename refused {P}: v02gui -> v02chat by t: module_rename_busy "), text
+    assert G in text and "flow_run_active" in text
+    assert not [r for r in _records(caplog, _MR_LOGGER, logging.INFO) if r.getMessage().startswith("module rename ")]
+
+
+def test_taken_refusal_is_logged_with_its_holder(conn, storage, caplog):
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    caplog.set_level(logging.INFO)
+    with pytest.raises(ModuleRenameRefused):
+        _rename(conn, storage, new="v02test")
+    [record] = _records(caplog, _MR_LOGGER, logging.WARNING)
+    assert "module_identifier_taken" in record.getMessage() and "v0.2.test" in record.getMessage()
+
+
+def test_refusal_details_are_summarised():
+    from modules.flow_gate.services.module_rename import _details_summary
+    many = _details_summary({"busy": [{"group_id": f"g{i}", "reason": "ai_lease_active"} for i in range(40)]})
+    assert '"busy_total": 40' in many and '"g4"' in many and '"g5"' not in many
+    assert len(_details_summary({"paths": ["x" * 2000]})) < 530
+    assert _details_summary({}) == "{}" and _details_summary(None) == "{}"
+
+
+def test_unexpected_failure_is_logged_with_its_traceback_and_reraised(conn, storage, caplog):
+    from modules.flow_gate.services import module_rename
+    caplog.set_level(logging.INFO)
+    with _service(conn, storage), \
+         patch("modules.flow_gate.services.module_rename.rewrite_database", side_effect=RuntimeError("boom")):
+        with pytest.raises(RuntimeError, match="boom"):
+            module_rename.rename_module(P, "v02gui", "v02chat", actor="t")
+    [record] = [r for r in _records(caplog, _MR_LOGGER, logging.ERROR) if "module rename failed" in r.getMessage()]
+    assert record.exc_info and record.exc_info[0] is RuntimeError
+    assert f"{P}: v02gui -> v02chat by t after " in record.getMessage() and "(rolled back)" in record.getMessage()
+    _unchanged(conn, storage)  # the rollback is unchanged
+
+
+def test_success_log_carries_duration_and_document_count(conn, storage, caplog):
+    caplog.set_level(logging.INFO)
+    _rename(conn, storage)
+    [record] = [r for r in _records(caplog, _MR_LOGGER, logging.INFO) if r.getMessage().startswith("module rename ")]
+    text = record.getMessage()
+    assert text.startswith(f"module rename {P}: v02gui -> v02chat by t (1 groups, 2 documents, "), text
+    assert re.search(r", \d+ ms\)$", text), text
+
+
+def test_rename_and_lock_timeout_lines_reach_the_app_file_log(conn, storage, tmp_path):
+    """A plain module logger propagates to a handler-less root and never reached logs/default.log; both the rename's
+    lines and the lock timeout are handed to LogAssist's file handlers (looked up per record)."""
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    from modules.flow_gate.graph_workflow.services import flow_guard
+    app = logging.getLogger("LogAssist.log")
+    handler = logging.FileHandler(tmp_path / "default.log", encoding="utf-8")
+    app.addHandler(handler)
+    try:
+        with pytest.raises(ModuleRenameRefused):
+            _rename(conn, storage, busy=[{"group_id": G, "reason": "flow_run_active"}])
+        _rename(conn, storage)
+        flow_guard.lock_timeout("t0005-flow", 0.01, "flow", "t0005")
+    finally:
+        app.removeHandler(handler)
+        handler.close()
+    text = (tmp_path / "default.log").read_text(encoding="utf-8")
+    assert text.count(f"module rename refused {P}: v02gui -> v02chat by t: module_rename_busy") == 1, text
+    assert text.count(f"module rename {P}: v02gui -> v02chat by t (1 groups, 2 documents,") == 1, text
+    assert "flow lock timeout: flow lock t0005-flow not acquired in 0.01s (t0005, thread " in text, text
+
+
+def test_flow_guard_timeouts_say_which_key_and_how_long(monkeypatch, caplog):
+    from modules.flow_gate.graph_workflow.services import flow_guard
+    monkeypatch.setattr(flow_guard, "FLOW_LOCK_WAIT_SEC", 0.05)
+    monkeypatch.setattr(flow_guard, "in_transaction", lambda: False)
+    caplog.set_level(logging.WARNING)
+    cases = (
+        ("flow", "t0005-guard-flow", flow_guard._flow_lock("t0005-guard-flow"), flow_guard.with_flow_guard),
+        ("document", "t0005-guard-doc", flow_guard._named_lock(flow_guard._doc_locks, "t0005-guard-doc"),
+         flow_guard.with_document_lock),
+    )
+    for kind, key, held, guarded in cases:
+        assert held.acquire(timeout=1)
+        try:
+            with pytest.raises(flow_guard.FlowLockTimeout) as exc:
+                guarded(key, lambda: pytest.fail("ran without the lock"))
+        finally:
+            held.release()
+        assert (str(exc.value), exc.value.key, exc.value.kind, exc.value.wait_sec) == (key, key, kind, 0.05)
+    messages = [r.getMessage() for r in _records(caplog, _FG_LOGGER, logging.WARNING)]
+    assert any("flow lock timeout: flow lock t0005-guard-flow not acquired in 0.05s (with_flow_guard" in m
+               for m in messages), messages
+    assert any("flow lock timeout: document lock t0005-guard-doc not acquired in 0.05s (with_document_lock" in m
+               for m in messages), messages
+
+
+def _real_gate(op, group_ids, docs, call, **kw):
+    """The real write_gate.module_rename (in-process locks, then one transaction)."""
+    from flowgate.card_document_edit import write_gate
+    assert op == "module_rename"
+    return write_gate.module_rename(group_ids, docs, call, **kw)
+
+
+def test_flow_lock_timeout_is_409_busy_and_changes_nothing(conn, storage, monkeypatch, caplog):
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    from modules.flow_gate.graph_workflow.services import flow_guard
+    second = f"{P}.v02gui.0002"  # sorts after G: G's lock is taken first, then this one times out
+    conn.execute("INSERT INTO groups VALUES (?, ?, 'v02gui', NULL, 'Flow 2')", [second, P])
+    monkeypatch.setenv("FLOWGATE_MODULE_RENAME_LOCK_WAIT_SEC", "0.05")
+    caplog.set_level(logging.INFO)
+    held = flow_guard._flow_lock(second)
+    assert held.acquire(timeout=1)
+    try:
+        with patch.object(flow_guard, "document_guard_key", side_effect=lambda d, i: ("flow", d["group_id"])), \
+             patch.object(flow_guard.layout_store, "ensure_guard_row") as ensure:
+            with pytest.raises(ModuleRenameRefused) as exc:
+                _rename(conn, storage, gate=_real_gate)
+    finally:
+        held.release()
+    assert (exc.value.status, exc.value.code) == (409, "module_rename_busy")
+    assert exc.value.details == {"busy": [{"group_id": second, "reason": "flow_lock_timeout", "wait_sec": 0.05}]}
+    assert isinstance(exc.value.__cause__, flow_guard.FlowLockTimeout)
+    ensure.assert_called_once_with(G)
+    # The lock taken before the timeout was released.
+    released = flow_guard._flow_lock(G)
+    assert released.acquire(blocking=False)
+    released.release()
+    _unchanged(conn, storage)
+    assert any(f"flow lock timeout: flow lock {second} not acquired in 0.05s (module_rename" in r.getMessage()
+               for r in _records(caplog, _FG_LOGGER, logging.WARNING))
+    [refused] = _records(caplog, _MR_LOGGER, logging.WARNING)
+    assert "module_rename_busy" in refused.getMessage() and "flow_lock_timeout" in refused.getMessage()
+    assert not _records(caplog, _MR_LOGGER, logging.ERROR)  # a refusal, not a failure
+
+
+def test_document_lock_timeout_names_the_document(conn, storage, monkeypatch):
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    from modules.flow_gate.graph_workflow.services import flow_guard
+    monkeypatch.setenv("FLOWGATE_MODULE_RENAME_LOCK_WAIT_SEC", "0.05")
+    held = flow_guard._named_lock(flow_guard._doc_locks, CH)
+    assert held.acquire(timeout=1)
+    try:
+        with patch.object(flow_guard, "document_guard_key",
+                          side_effect=lambda d, i: ("document", i) if i == CH else ("flow", d["group_id"])), \
+             patch.object(flow_guard.layout_store, "ensure_guard_row"):
+            with pytest.raises(ModuleRenameRefused) as exc:
+                _rename(conn, storage, gate=_real_gate)
+    finally:
+        held.release()
+    assert (exc.value.status, exc.value.code) == (409, "module_rename_busy")
+    assert exc.value.details == {
+        "busy": [{"group_id": G, "doc_id": CH, "reason": "document_lock_timeout", "wait_sec": 0.05}]}
+    released = flow_guard._flow_lock(G)
+    assert released.acquire(blocking=False)
+    released.release()
+    _unchanged(conn, storage)
+
+
+class _Clock:
+    """write_gate._clock for the tests below: seconds pass only when a fake lock is waited for."""
+
+    def __init__(self):
+        self.now, self.waits, self.released = 100.0, [], []
+
+    def __call__(self):
+        return self.now
+
+
+class _SlowLock:
+    """A lock another writer frees ``frees_after`` seconds into the wait (on the fake clock)."""
+
+    def __init__(self, clock, key, frees_after):
+        self.clock, self.key, self.frees_after, self.held = clock, key, frees_after, False
+
+    def acquire(self, blocking=True, timeout=-1):
+        assert 0 <= timeout, (self.key, timeout)  # never unbounded (-1), never negative
+        self.clock.waits.append((self.key, timeout))
+        if self.frees_after <= timeout:
+            self.clock.now += self.frees_after
+            self.held = True
+            return True
+        self.clock.now += timeout
+        return False
+
+    def release(self):
+        assert self.held, self.key
+        self.held = False
+        self.clock.released.append(self.key)
+
+
+_G = [G] + [f"{P}.v02gui.{n:04d}" for n in range(2, 10)]
+
+
+@pytest.mark.parametrize("flows, frees, loose, waits, timed_out", [
+    # Nine Flow locks, each freed 4.9 s into its wait. Per-lock 5 s waits took all nine and held the first ones
+    # 44.1 s (the review's 8 x 4.9 s + a timeout = 44.2 s); one 5 s budget gives up at the second lock.
+    (_G, [4.9] * 9, False, [(_G[0], 5.0), (_G[1], 0.1)], _G[1]),
+    # The deadline spent on the first lock: a free lock is still taken (wait 0), a held one is not waited for.
+    (_G[:3], [5.0, 0.0, 4.9], False, [(_G[0], 5.0), (_G[1], 0.0), (_G[2], 0.0)], _G[2]),
+    # A document lock (a document without a Flow) shares the same deadline as the Flow locks before it.
+    (_G[:1], [4.9], True, [(_G[0], 5.0), (CH, 0.1)], CH),
+], ids=["nine_flows_4_9s_each", "free_lock_after_deadline", "document_lock_same_deadline"])
+def test_lock_waits_add_up_to_one_budget_not_one_per_lock(conn, storage, monkeypatch, flows, frees, loose, waits,
+                                                         timed_out):
+    """TR0006 review: lock_wait_sec bounds the waiting for all the rename's locks together, so the locks taken
+    first are released (refusal 409) no later than lock_wait_sec after the first acquire began."""
+    from flowgate.card_document_edit import write_gate
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    from modules.flow_gate.graph_workflow.services import flow_guard
+    for gid in flows[1:]:
+        conn.execute("INSERT INTO groups VALUES (?, ?, 'v02gui', NULL, 'Flow n')", [gid, P])
+    monkeypatch.setenv("FLOWGATE_MODULE_RENAME_LOCK_WAIT_SEC", "5")
+    clock = _Clock()
+    monkeypatch.setattr(write_gate, "_clock", clock)
+    locks = {key: _SlowLock(clock, key, after) for key, after in zip(flows, frees)}
+    locks[CH] = _SlowLock(clock, CH, 4.9)
+    guard_key = (lambda d, i: ("document", i) if i == CH else ("flow", d["group_id"])) if loose else \
+        (lambda d, i: ("flow", d["group_id"]))
+    with patch.object(flow_guard, "_flow_lock", side_effect=lambda key: locks[key]), \
+         patch.object(flow_guard, "_named_lock", side_effect=lambda table, key: locks[key]), \
+         patch.object(flow_guard, "document_guard_key", side_effect=guard_key), \
+         patch.object(flow_guard.layout_store, "ensure_guard_row"):
+        with pytest.raises(ModuleRenameRefused) as exc:
+            _rename(conn, storage, gate=_real_gate)
+    assert [k for k, _ in clock.waits] == [k for k, _ in waits]
+    assert [w for _, w in clock.waits] == pytest.approx([w for _, w in waits])
+    assert clock.now - 100.0 == pytest.approx(5.0)  # waited 5 s in all, then gave up
+    taken = [k for k, _ in waits][:-1]
+    assert clock.released == list(reversed(taken))  # every lock taken released, in reverse order
+    assert not any(lock.held for lock in locks.values())
+    assert (exc.value.status, exc.value.code) == (409, "module_rename_busy")
+    [entry] = exc.value.details["busy"]
+    assert (entry.get("doc_id") or entry["group_id"], entry["wait_sec"]) == (timed_out, 5.0)
+    assert entry["reason"] == ("document_lock_timeout" if loose else "flow_lock_timeout")
+    _unchanged(conn, storage)
+
+
+def test_rename_passes_its_own_short_lock_budget(conn, storage):
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    from modules.flow_gate.graph_workflow.services.errors import FlowLockTimeout
+    seen = {}
+
+    def gate(op, group_ids, docs, call, **kw):
+        seen.update(kw)
+        raise FlowLockTimeout(G)  # the plain shape (no kind / wait) other raise sites still use
+
+    with pytest.raises(ModuleRenameRefused) as exc:
+        _rename(conn, storage, gate=gate)
+    assert seen == {"lock_wait_sec": 5.0}
+    assert exc.value.details == {"busy": [{"group_id": G, "reason": "flow_lock_timeout"}]}
+
+
+@pytest.mark.parametrize("raw, wait", [(None, 5.0), ("2.5", 2.5), ("0", 5.0), ("-1", 5.0), ("abc", 5.0)])
+def test_lock_wait_setting(monkeypatch, raw, wait):
+    from modules.flow_gate.services import module_rename
+    if raw is None:
+        monkeypatch.delenv("FLOWGATE_MODULE_RENAME_LOCK_WAIT_SEC", raising=False)
+    else:
+        monkeypatch.setenv("FLOWGATE_MODULE_RENAME_LOCK_WAIT_SEC", raw)
+    assert module_rename.lock_wait_sec() == wait
+
+
+@pytest.mark.parametrize("raw, limit", [(None, 2000), ("500", 500), (" 3000 ", 3000), ("0", 0), ("abc", 2000)])
+def test_document_limit_setting(monkeypatch, raw, limit):
+    from modules.flow_gate.services import module_rename
+    if raw is None:
+        monkeypatch.delenv("FLOWGATE_MODULE_RENAME_MAX_DOCUMENTS", raising=False)
+    else:
+        monkeypatch.setenv("FLOWGATE_MODULE_RENAME_MAX_DOCUMENTS", raw)
+    assert module_rename.max_documents() == limit
+
+
+def test_too_large_module_is_refused_before_any_lock(conn, storage, monkeypatch, caplog):
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    monkeypatch.setenv("FLOWGATE_MODULE_RENAME_MAX_DOCUMENTS", "1")
+    gate = MagicMock(side_effect=AssertionError("write_gate must not be called"))
+    caplog.set_level(logging.INFO)
+    with pytest.raises(ModuleRenameRefused) as exc:
+        # Busy as well: too large is answered first (waiting for the work to end would not help).
+        _rename(conn, storage, gate=gate, busy=[{"group_id": G, "reason": "flow_run_active"}])
+    assert (exc.value.status, exc.value.code) == (409, "module_rename_too_large")
+    assert exc.value.details == {"documents": 2, "groups": 1, "limit": 1}
+    gate.assert_not_called()  # no Flow lock, no path namespace
+    _unchanged(conn, storage)
+    [record] = _records(caplog, _MR_LOGGER, logging.WARNING)
+    assert "module_rename_too_large" in record.getMessage() and '"limit": 1' in record.getMessage()
+
+
+@pytest.mark.parametrize("limit", ["2", "0"])
+def test_module_at_the_limit_or_without_limit_is_renamed(conn, storage, monkeypatch, limit):
+    monkeypatch.setenv("FLOWGATE_MODULE_RENAME_MAX_DOCUMENTS", limit)
+    assert _rename(conn, storage)["groups"] == {G: f"{P}.v02chat.0001"}
+
+
+def test_route_lock_timeout_is_409_not_500(client, conn, storage):
+    from modules.flow_gate.graph_workflow.services.errors import FlowLockTimeout
+
+    def gate(op, group_ids, docs, call, **kw):
+        raise FlowLockTimeout(G, kind="flow", wait_sec=5.0)
+
+    with _service(conn, storage, gate=gate):
+        r = _patch(client, "v02gui", {"name": "v02chat"})
+    assert r.status_code == 409, r.text
+    d = r.json()
+    assert d["code"] == "module_rename_busy"
+    assert d["details"]["busy"] == [{"group_id": G, "reason": "flow_lock_timeout", "wait_sec": 5.0}]
+    assert d["title_changed"] is False
+
+
+def test_route_too_large_keeps_the_saved_title(client, conn):
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    refusal = ModuleRenameRefused("module_rename_too_large", "too many documents",
+                                  details={"documents": 6049, "groups": 691, "limit": 2000})
+    with patch("modules.flow_gate.services.module_rename.rename_module", side_effect=refusal):
+        r = _patch(client, "v02gui", {"title": "v0.1 big", "name": "v01x"})
+    assert r.status_code == 409, r.text
+    d = r.json()
+    assert d["code"] == "module_rename_too_large" and d["details"] == {"documents": 6049, "groups": 691, "limit": 2000}
+    assert (d["title_changed"], d["title"]) == (True, "v0.1 big")
+    assert conn.execute("SELECT title FROM project_modules WHERE module_id = ?", [f"{P}:v02gui"]).fetchone()[0] == "v0.1 big"

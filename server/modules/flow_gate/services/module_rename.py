@@ -21,6 +21,18 @@ Refused (409, nothing changed) when ``new`` is already a key of the project
 the module's groups (``module_rename_busy``, the details list what and where), or when a branch /
 worktree / directory of the new name is already there.
 
+flowgate.v02test.0040 T0005 (the v01 rename of 11/17 15:15 held 691 Flow locks and the path namespace
+for about 3 minutes, blocked the whole server, rolled back and left no trace):
+
+- a module with more documents than ``max_documents()`` (env ``FLOWGATE_MODULE_RENAME_MAX_DOCUMENTS``,
+  default 2,000; 0 or less = no limit) is refused before any lock is taken (409
+  ``module_rename_too_large``, details ``documents`` / ``groups`` / ``limit``);
+- a Flow / document lock not free within ``lock_wait_sec()`` (env ``FLOWGATE_MODULE_RENAME_LOCK_WAIT_SEC``,
+  default 5 s for all the locks together, one deadline in write_gate.module_rename) is a 409 ``module_rename_busy`` with ``reason: flow_lock_timeout`` (or
+  ``document_lock_timeout``) instead of a 500; nothing is changed and the locks taken are released;
+- every refusal is a warning, an unexpected failure an exception record, a success an info line with its
+  duration and document count — all of them in ``logs/default.log`` (route_logging.forward_to_file_log).
+
 Not rewritten, because it cannot be: Git commit messages, text outside FlowGate (links, copies)
 and branches already pushed to the remote (they keep the old name on origin).
 """
@@ -30,6 +42,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -40,8 +53,12 @@ from modules.flow_gate.db.module_rename import (
     KeyRewriter, ModuleRenameRefused, defer_foreign_keys, module_in_use, restore_foreign_keys,
     rewrite_database,
 )
+from modules.flow_gate.services.route_logging import forward_to_file_log
 
-_log = logging.getLogger(__name__)
+# A plain getLogger(__name__) propagates to a handler-less root: no line of a rename (not even its success) reached
+# logs/default.log. forward_to_file_log hands INFO and above to LogAssist's file handlers (v02test.0040 T0005).
+_log = forward_to_file_log(logging.getLogger(__name__), logging.INFO)
+_log.setLevel(logging.INFO)
 
 __all__ = ["rename_module", "ModuleRenameRefused", "busy_reasons"]
 
@@ -385,12 +402,119 @@ def _revert_git(base: Optional[Path], plans: list[_BranchMove]) -> None:
             _log.error("module rename: git revert failed for %s", plan.group_id, exc_info=True)
 
 
+# ── limits (v02test.0040 T0005) ────────────────────────────────────────────────────────────────
+
+MAX_DOCUMENTS_ENV = "FLOWGATE_MODULE_RENAME_MAX_DOCUMENTS"
+# v01: 6,049 documents took about 3 minutes under the global path lock; 2,000 stays under about a minute even
+# without the foreign key indexes of migration 194. To be adjusted after the test server measurement.
+MAX_DOCUMENTS_DEFAULT = 2000
+LOCK_WAIT_ENV = "FLOWGATE_MODULE_RENAME_LOCK_WAIT_SEC"
+# For all the locks together, not per lock: write_gate.module_rename sets one deadline before the first lock and
+# each acquire waits only for what is left of it. Every other writer waits FLOW_LOCK_WAIT_SEC (30 s) for a Flow lock
+# the rename already holds; a rename still waiting for its next locks (per-lock waits add up: 9 x 4.9 s = 44 s)
+# would make those writers time out (500) while it waits. 5 s covers ordinary guarded writes (milliseconds to a few
+# seconds); locks not all free by then mean work is running there (busy).
+LOCK_WAIT_SEC_DEFAULT = 5.0
+
+
+def max_documents() -> int:
+    """The largest module (in documents) an identifier change accepts; 0 or less means no limit."""
+    try:
+        return int(str(os.environ.get(MAX_DOCUMENTS_ENV, MAX_DOCUMENTS_DEFAULT)).strip())
+    except (TypeError, ValueError):
+        return MAX_DOCUMENTS_DEFAULT
+
+
+def lock_wait_sec() -> float:
+    """Seconds the rename waits for its Flow / document locks, all together, before it gives up (409 busy)."""
+    try:
+        value = float(str(os.environ.get(LOCK_WAIT_ENV, LOCK_WAIT_SEC_DEFAULT)).strip())
+    except (TypeError, ValueError):
+        return LOCK_WAIT_SEC_DEFAULT
+    return value if value > 0 else LOCK_WAIT_SEC_DEFAULT
+
+
+def _refuse_too_large(docs: list[dict], group_ids: list[str]) -> None:
+    limit = max_documents()
+    if limit > 0 and len(docs) > limit:
+        raise ModuleRenameRefused(
+            "module_rename_too_large",
+            f"This group set has {len(docs)} documents in {len(group_ids)} groups. An identifier change is limited "
+            f"to {limit} documents because it holds the server's document writes while it runs.",
+            details={"documents": len(docs), "groups": len(group_ids), "limit": limit})
+
+
+def _lock_busy(exc: Exception, docs: list[dict]) -> ModuleRenameRefused:
+    """A lock not acquired in time (``FlowLockTimeout``) as the refusal the route answers with 409."""
+    key = getattr(exc, "key", None) or (exc.args[0] if exc.args else "")
+    wait = getattr(exc, "wait_sec", None)
+    if getattr(exc, "kind", "flow") == "document":
+        doc = next((d for d in docs if d.get("doc_id") == key), None) or {}
+        entry = {"group_id": doc.get("group_id"), "doc_id": key, "reason": "document_lock_timeout"}
+    else:
+        entry = {"group_id": key, "reason": "flow_lock_timeout"}
+    if wait is not None:
+        entry["wait_sec"] = wait
+    waited = f" within {wait:g}s" if isinstance(wait, (int, float)) else ""
+    return ModuleRenameRefused(
+        "module_rename_busy",
+        f"{key} is being written right now (its lock was not free{waited}). Try again in a moment.",
+        status=409, details={"busy": [entry]})
+
+
+_SUMMARY_ITEMS = 5
+_SUMMARY_CHARS = 500
+
+
+def _details_summary(details: Optional[dict]) -> str:
+    """The refusal details for one log line: long lists cut to their first items, the text capped."""
+    if not details:
+        return "{}"
+    short = {}
+    for key, value in details.items():
+        if isinstance(value, list) and len(value) > _SUMMARY_ITEMS:
+            short[key] = value[:_SUMMARY_ITEMS]
+            short[f"{key}_total"] = len(value)
+        else:
+            short[key] = value
+    try:
+        text = json.dumps(short, ensure_ascii=False, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        text = repr(short)
+    if len(text) > _SUMMARY_CHARS:
+        text = f"{text[:_SUMMARY_CHARS]}...(+{len(text) - _SUMMARY_CHARS} chars)"
+    return text
+
+
+def _elapsed_ms(started: float) -> int:
+    return int(round((time.perf_counter() - started) * 1000))
+
+
 # ── the operation ──────────────────────────────────────────────────────────────────────────────
 
 def rename_module(project_id: str, old: str, new: str, actor: Optional[str] = None) -> dict:
-    """Rename module ``old`` of ``project_id`` to ``new``. Returns ``{"groups": {old_id: new_id}, ...}``."""
+    """Rename module ``old`` of ``project_id`` to ``new``. Returns ``{"groups": {old_id: new_id}, ...}``.
+
+    Every outcome reaches ``logs/default.log``: a refusal (``ModuleRenameRefused``) as a warning with its code
+    and details, any other failure as an exception record (re-raised, the rollback unchanged), a success as an
+    info line with its duration and document count (v02test.0040 T0005)."""
+    started = time.perf_counter()
+    try:
+        return _rename_module(project_id, old, new, actor, started)
+    except ModuleRenameRefused as exc:
+        _log.warning("module rename refused %s: %s -> %s by %s: %s %s", project_id, (old or "").strip(), new, actor,
+                     exc.code, _details_summary(exc.details))
+        raise
+    except Exception:
+        _log.exception("module rename failed %s: %s -> %s by %s after %d ms (rolled back)", project_id,
+                       (old or "").strip(), new, actor, _elapsed_ms(started))
+        raise
+
+
+def _rename_module(project_id: str, old: str, new: str, actor: Optional[str], started: float) -> dict:
     from modules.flow_gate.db.module_identifiers import validate_identifier_format, ModuleIdentifierError
     from modules.flow_gate.graph_workflow.services import card_document_ports
+    from modules.flow_gate.graph_workflow.services.errors import FlowLockTimeout
     from modules.flow_gate.storage import paths as storage_paths
 
     store = get_store()
@@ -408,15 +532,18 @@ def rename_module(project_id: str, old: str, new: str, actor: Optional[str] = No
     groups = store._fetch_all(
         "SELECT * FROM groups WHERE project_id = ? AND module = ? ORDER BY group_id", [project_id, old])
     group_ids = [g["group_id"] for g in groups]
+    docs = store._fetch_all(
+        "SELECT * FROM documents WHERE project_id = ? AND (module = ? OR group_id IN ("
+        + (",".join("?" for _ in group_ids) or "NULL") + "))", [project_id, old, *group_ids])
+    # Before any lock (v02test.0040 T0005): too large is refused first — waiting for running work to end would
+    # not help it — and without touching a Flow lock or the path namespace.
+    _refuse_too_large(docs, group_ids)
     _refuse_busy(busy_reasons(project_id, group_ids))
 
     base, branch_plans = _git_plan(project_id, KeyRewriter(project_id, old, new, ""), groups)
     exact = {p.old_branch: p.new_branch for p in branch_plans}
     rw = KeyRewriter(project_id, old, new, storage_paths.project_dir_name(project_id), exact)
     renamed = {gid: rw.text(gid) for gid in group_ids}
-    docs = store._fetch_all(
-        "SELECT * FROM documents WHERE project_id = ? AND (module = ? OR group_id IN ("
-        + (",".join("?" for _ in group_ids) or "NULL") + "))", [project_id, old, *group_ids])
 
     def body() -> dict:
         # Inside every Flow guard of the module, one transaction, the path namespace held.
@@ -450,9 +577,13 @@ def rename_module(project_id: str, old: str, new: str, actor: Optional[str] = No
         return {"groups": renamed, "tables": result["tables"], "files": len(moves),
                 "branches": [{"from": p.old_branch, "to": p.new_branch} for p in branch_plans]}
 
-    result = card_document_ports.write_gate("module_rename", group_ids, docs, body)
-    _log.info("module rename %s: %s -> %s by %s (%d groups, %d tables)", project_id, old, new, actor,
-              len(group_ids), len(result.get("tables") or {}))
+    try:
+        result = card_document_ports.write_gate("module_rename", group_ids, docs, body, lock_wait_sec=lock_wait_sec())
+    except FlowLockTimeout as exc:
+        # Nothing was written (no transaction was open yet) and the locks taken are released by the gate.
+        raise _lock_busy(exc, docs) from exc
+    _log.info("module rename %s: %s -> %s by %s (%d groups, %d documents, %d tables, %d ms)", project_id, old, new,
+              actor, len(group_ids), len(docs), len(result.get("tables") or {}), _elapsed_ms(started))
     return result
 
 
