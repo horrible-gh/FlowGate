@@ -185,14 +185,15 @@ describe('the run band (designerTop.runBandTone, DesignerToolbar)', () => {
     expect(w.find('[data-test="designer-run-band-status"], [data-test="designer-run-band-detail"]').exists()).toBe(false)
     const commands = facts.status === 'running' ? ['run.pause', 'run.stop']
       : facts.status === 'paused' ? ['run.resume', 'run.stop']
-      : facts.status === 'stopping' ? ['run.stop'] : ['run.next', 'run.all']
+      : facts.status === 'stopping' ? ['run.pause', 'run.stop'] : ['run.next', 'run.all']
     const buttons = w.findAll('[data-test="designer-tool-run"]')
     expect(buttons.map(button => button.attributes('data-command'))).toEqual(commands)
     expect(w.find('[data-command="run.validate"]').exists()).toBe(false)
     for (const button of buttons) await button.trigger('click')
     if (facts.status === 'stopping') {
       expect(buttons[0].attributes('disabled')).toBeDefined()
-      expect(buttons[0].text()).toContain('중지 중')
+      expect(buttons[1].attributes('disabled')).toBeDefined()
+      expect(buttons[1].text()).toContain('중지 중')
       expect(w.emitted('command')).toBeUndefined()
     } else {
       expect(w.emitted('command')).toEqual(commands.map((command) => [command]))
@@ -210,6 +211,10 @@ describe('the run band (designerTop.runBandTone, DesignerToolbar)', () => {
     expect(button.text()).toContain('중지 중')
     expect(button.attributes('disabled')).toBeDefined()
     expect(w.find('[data-command="run.all"]').exists()).toBe(false)
+    const pause = w.get('[data-command="run.pause"]')
+    expect(pause.attributes('disabled')).toBeDefined()
+    await pause.trigger('click')
+    expect(w.emitted('command')).toBeUndefined()
     await w.setProps({ targets: { ...targets, runStopRetry: true } })
     button = w.get('[data-command="run.stop"]')
     expect(button.text()).toContain('중지 재시도')
@@ -218,6 +223,7 @@ describe('the run band (designerTop.runBandTone, DesignerToolbar)', () => {
     expect(w.emitted('command')).toEqual([['run.stop']])
     await w.setProps({ runPhase: 'idle', targets })
     expect(w.find('[data-command="run.stop"]').exists()).toBe(false)
+    expect(w.find('[data-command="run.pause"]').exists()).toBe(false)
     expect(w.get('[data-command="run.all"]').attributes('disabled')).toBeUndefined()
   })
 

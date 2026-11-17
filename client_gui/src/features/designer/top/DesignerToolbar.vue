@@ -255,7 +255,7 @@ function chooseZoom(event: Event) {
 const { t, locale } = useI18n()
 const attachmentWords = computed(() => words[locale.value as keyof typeof words] ?? words.en)
 
-// flowgate.v02.0061 T#14 (R §실행 제어): the two run buttons of each run phase, in place; 중지 중 is one, off.
+// Keep Pause visible but disabled while stopping; hide it once execution returns to idle.
 type RunIcon = 'next' | 'all' | 'pause' | 'stop'
 interface RunButton {
   readonly key: string
@@ -278,7 +278,10 @@ const RUN_BUTTONS: Readonly<Record<DesignerRunPhase, readonly RunButton[]>> = {
     { key: 'stop', command: 'run.stop', label: 'stop', icon: 'stop' },
   ],
   // v02gui.0013: an accepted Stop is progress, not a failed request.
-  stopping: [{ key: 'stopping', command: 'run.stop', label: 'stopping', icon: 'stop' }],
+  stopping: [
+    { key: 'pause', command: 'run.pause', label: 'pause', icon: 'pause' },
+    { key: 'stopping', command: 'run.stop', label: 'stopping', icon: 'stop' },
+  ],
 }
 
 const runButtons = computed(() =>
