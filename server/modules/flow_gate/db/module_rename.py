@@ -337,27 +337,41 @@ def rewrite_database(store, rw: KeyRewriter) -> dict:
     return {"tables": changed, "values": total}
 
 
+def _module_row(store, project_id: str, name: str) -> Optional[dict]:
+    """The ``project_modules`` row of ``name`` (title and, from migration 190 on, its archive state)."""
+    if not store.table_exists("project_modules"):
+        return None
+    picks = "title, archived_at" if store.column_exists("project_modules", "archived_at") else "title"
+    return store._fetch_one(f"SELECT {picks} FROM project_modules WHERE project_id = ? AND name = ?",
+                            [project_id, name])
+
+
+def _archive_state(pm: Optional[dict]) -> dict:
+    archived_at = (pm or {}).get("archived_at")
+    return {"archived": archived_at is not None, "archived_at": archived_at}
+
+
 def module_in_use(store, project_id: str, name: str) -> Optional[dict]:
     """Who uses ``name`` as a module key of ``project_id`` now (None when it is free).
 
     ``{"group_id": ..., "title": ...}`` names the group the client should show; a name only a
     ``project_modules`` row (an empty group) or stray documents/ids hold reports that instead.
+
+    flowgate.v02test.0040 T0007: an archived group still holds its name (archiving is display only: its
+    groups, documents and numbering keep the name, so reusing it would collide with their ids). The
+    ``group`` / ``module`` holders say so (``archived``, ``archived_at`` from ``project_modules``), because
+    the default tree hides archived groups and the user could not otherwise tell what holds the name.
     """
     row = store._fetch_one(
         "SELECT group_id, title FROM groups WHERE project_id = ? AND module = ? ORDER BY group_id LIMIT 1",
         [project_id, name])
     if row:
-        title = None
-        if store.table_exists("project_modules"):
-            pm = store._fetch_one("SELECT title FROM project_modules WHERE project_id = ? AND name = ?",
-                                  [project_id, name])
-            title = (pm or {}).get("title")
-        return {"kind": "group", "module": name, "title": title or name, "group_id": row.get("group_id")}
-    if store.table_exists("project_modules"):
-        pm = store._fetch_one("SELECT title FROM project_modules WHERE project_id = ? AND name = ?",
-                              [project_id, name])
-        if pm:
-            return {"kind": "module", "module": name, "title": pm.get("title") or name}
+        pm = _module_row(store, project_id, name)
+        return {"kind": "group", "module": name, "title": (pm or {}).get("title") or name,
+                "group_id": row.get("group_id"), **_archive_state(pm)}
+    pm = _module_row(store, project_id, name)
+    if pm:
+        return {"kind": "module", "module": name, "title": pm.get("title") or name, **_archive_state(pm)}
     prefix = f"{project_id}.{name}."
     escaped = prefix.replace("!", "!!").replace("%", "!%").replace("_", "!_")
     doc = store._fetch_one(

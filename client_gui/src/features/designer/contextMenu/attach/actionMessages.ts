@@ -16,6 +16,13 @@ const ko = {
     },
     server: {
       taken: '"{group}" 그룹이 쓰는 식별자입니다.',
+      archivedTaken: '보관된 그룹 "{group}"이 쓰는 식별자입니다. 그 그룹의 식별자를 먼저 바꾸면 쓸 수 있습니다. (프로젝트 탐색기의 "보관 포함"에서 볼 수 있음)',
+      busyDetailed: '실행 중인 작업이 있어 식별자를 바꿀 수 없습니다: {items}{more}',
+      busyMore: ' 외 {n}건',
+      titleSaved: '표시명은 저장되었습니다.',
+      tooLarge: '문서가 {documents}건이라 식별자를 바꿀 수 없습니다(한도 {limit}건). 표시명은 바꿀 수 있습니다.',
+      busyReasons: { flow_run_active: '플로우 실행 중', ai_lease_active: 'AI 사용 중', ai_run_active: 'AI 실행 중', ai_chain_paused: 'AI 작업 일시 중지', merge_session_open: '병합 세션 열림', test_run_active: '테스트 실행 중', self_check_active: '셀프체크 실행 중', git_job_active: 'Git 작업 중', chat_command_active: '채팅 명령 실행 중', agent_job_active: '에이전트 작업 중', flow_lock_timeout: '플로우 잠금 시간 초과' },
+
       reserved: '이 그룹의 식별자는 바꿀 수 없습니다.',
       busy: '이 그룹에서 실행 중인 작업이 있습니다({group}). 끝난 뒤 다시 시도하세요.',
       branchExists: '새 식별자와 같은 이름의 Git 브랜치나 작업 폴더가 이미 있습니다({group}).',
@@ -103,6 +110,13 @@ const en: Messages = {
     },
     server: {
       taken: 'The group "{group}" uses this identifier.',
+      archivedTaken: 'Archived group "{group}" uses this identifier. Change that group’s identifier first to use it. (Find it in the Project Explorer with “Include archived”.)',
+      busyDetailed: 'An active task prevents changing the identifier: {items}{more}',
+      busyMore: ' and {n} more',
+      titleSaved: 'The display name was saved.',
+      tooLarge: 'The group has {documents} documents, so its identifier cannot change (limit {limit}). You can change the display name.',
+      busyReasons: { flow_run_active: 'flow running', ai_lease_active: 'AI in use', ai_run_active: 'AI running', ai_chain_paused: 'AI work paused', merge_session_open: 'merge session open', test_run_active: 'test running', self_check_active: 'self-check running', git_job_active: 'Git job running', chat_command_active: 'chat command running', agent_job_active: 'agent job running', flow_lock_timeout: 'flow lock timed out' },
+
       reserved: "This group's identifier cannot change.",
       busy: 'Work is running in this group ({group}). Try again when it ends.',
       branchExists: 'A Git branch or worktree with the new name already exists ({group}).',
@@ -186,6 +200,12 @@ const ja: Messages = {
     },
     server: {
       taken: 'グループ「{group}」が使っている識別子です。',
+      archivedTaken: 'アーカイブ済みグループ「{group}」が使っている識別子です。先にそのグループの識別子を変更してください。(プロジェクトエクスプローラーの「アーカイブを含める」で表示できます)',
+      busyDetailed: '実行中の作業があるため識別子を変更できません: {items}{more}',
+      busyMore: '、ほか{n}件',
+      titleSaved: '表示名は保存されました。',
+      tooLarge: '文書が{documents}件あるため識別子を変更できません(上限{limit}件)。表示名は変更できます。',
+      busyReasons: { flow_run_active: 'フロー実行中', ai_lease_active: 'AI使用中', ai_run_active: 'AI実行中', ai_chain_paused: 'AI作業一時停止中', merge_session_open: 'マージセッションが開いています', test_run_active: 'テスト実行中', self_check_active: 'セルフチェック実行中', git_job_active: 'Git作業中', chat_command_active: 'チャットコマンド実行中', agent_job_active: 'エージェント作業中', flow_lock_timeout: 'フローロックのタイムアウト' },
       reserved: 'このグループの識別子は変更できません。',
       busy: 'このグループで実行中の作業があります({group})。終わってから再度お試しください。',
       branchExists: '新しい識別子と同じ名前のGitブランチまたは作業フォルダーが既にあります({group})。',

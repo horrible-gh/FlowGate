@@ -20,6 +20,7 @@ definition and the card title states it carries are read in one transaction that
 """
 from __future__ import annotations
 
+import logging
 import threading
 from contextlib import contextmanager
 from typing import Callable, Iterator, Optional, TypeVar
@@ -41,6 +42,41 @@ _locks: dict[str, threading.Lock] = {}
 _doc_locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 _held = threading.local()                       # the guard this thread's open transaction is
+_timeout_log: Optional[logging.Logger] = None
+
+
+def _timeout_logger() -> logging.Logger:
+    """This module's logger, its WARNING lines handed to ``logs/default.log`` (flowgate.v02test.0040 T0005).
+
+    A plain ``getLogger(__name__)`` propagates to a handler-less root (route_logging.get_logger), so the
+    FlowLockTimeout of 11/17 15:15 left no line in default.log. Looked up lazily: route_logging lives in the
+    services package, imported only when a timeout is actually written.
+    """
+    global _timeout_log
+    if _timeout_log is None:
+        logger = logging.getLogger(__name__)
+        try:
+            from modules.flow_gate.services.route_logging import forward_to_file_log
+            forward_to_file_log(logger, logging.WARNING)
+        except Exception:  # noqa: BLE001 -- the log line must never replace the timeout itself
+            pass
+        _timeout_log = logger
+    return _timeout_log
+
+
+def lock_timeout(key: str, wait_sec: float, kind: str = "flow", operation: str = "") -> FlowLockTimeout:
+    """Write which lock was not acquired, and after how long, then return the ``FlowLockTimeout`` to raise.
+
+    ``kind`` is "flow" (``key`` a Flow id) or "document" (``key`` a doc id without a Flow); ``operation`` names
+    the waiter (``with_flow_guard``, ``with_document_lock``, ``module_rename``).
+    """
+    try:
+        _timeout_logger().warning(
+            "flow lock timeout: %s lock %s not acquired in %ss (%s, thread %s)",
+            kind, key, wait_sec, operation or "-", threading.current_thread().name)
+    except Exception:  # noqa: BLE001 -- logging must never break the caller
+        pass
+    return FlowLockTimeout(key, kind=kind, wait_sec=wait_sec)
 
 
 class GuardNotHeld(RuntimeError):
@@ -84,7 +120,7 @@ def with_flow_guard(flow_id: str, body: Callable[[], T]) -> T:
     assert not in_transaction(), "with_flow_guard must not run inside an open transaction"
     lock = _flow_lock(flow_id)
     if not lock.acquire(timeout=FLOW_LOCK_WAIT_SEC):
-        raise FlowLockTimeout(flow_id)
+        raise lock_timeout(flow_id, FLOW_LOCK_WAIT_SEC, "flow", "with_flow_guard")
     try:
         try:
             layout_store.ensure_guard_row(flow_id)
@@ -149,7 +185,7 @@ def with_document_lock(doc_id: str, body: Callable[[], T]) -> T:
     assert not in_transaction(), "with_document_lock must not run inside an open transaction"
     lock = _named_lock(_doc_locks, doc_id)
     if not lock.acquire(timeout=FLOW_LOCK_WAIT_SEC):
-        raise FlowLockTimeout(doc_id)
+        raise lock_timeout(doc_id, FLOW_LOCK_WAIT_SEC, "document", "with_document_lock")
     try:
         with get_store().transaction():
             lock_document_row(doc_id)
