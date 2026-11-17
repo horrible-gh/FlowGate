@@ -617,23 +617,18 @@ describe('A new Flow starts with one 요구사항 node (item 2)', () => {
   })
 })
 
-// TR0020 rev2 (rejection item 3): 검증 is a Toolbar tool right before the run buttons.
-describe('Toolbar 검증 (TR0020 rev2)', () => {
-  const mountToolbar = (props: Record<string, unknown>) =>
-    mount(DesignerToolbar, { props: { runMode: null, density: 'normal', zoom: 100, ...props }, global: { plugins: [i18n] } })
-
-  beforeEach(() => {
+describe('Toolbar run controls', () => {
+  it('shows 다음 단계 / 전체 실행 without a validation button', () => {
     i18n.global.locale.value = 'ko'
-  })
-
-  it('sits right before 다음 단계 / 전체 실행 and runs run.validate only when there is something to check', async () => {
-    const w = mountToolbar({ canValidate: true })
-    const group = w.get('[data-command="run.validate"]').element.parentElement!
-    expect([...group.querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['검증', '다음 단계', '전체 실행'])
-    await w.get('[data-command="run.validate"]').trigger('click')
-    expect(w.emitted('command')).toEqual([['run.validate']])
-    for (const props of [{ canValidate: false }, { canValidate: true, disabled: true }, { canValidate: true, runMode: 'all' }]) {
-      expect(mountToolbar(props).get('[data-command="run.validate"]').attributes('disabled'), JSON.stringify(props)).toBeDefined()
+    for (const canValidate of [true, false]) {
+      const w = mount(DesignerToolbar, {
+        props: { runMode: null, density: 'normal', zoom: 100, canValidate },
+        global: { plugins: [i18n] },
+      })
+      expect(w.find('[data-command="run.validate"]').exists()).toBe(false)
+      const group = w.get('[data-command="run.next"]').element.parentElement!
+      expect([...group.querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['다음 단계', '전체 실행'])
+      w.unmount()
     }
   })
 })

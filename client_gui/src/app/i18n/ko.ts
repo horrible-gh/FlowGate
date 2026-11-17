@@ -1314,7 +1314,6 @@ export default {
       provider_loading: '불러오는 중',
       provider_failed: 'AI 목록 오류',
       // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
-      ai_pick_loading: '이 채팅의 AI를 확인하는 중입니다. 확인되면 보낼 수 있습니다',
       ai_pick_failed: '이 채팅의 AI를 확인하지 못해 전송을 멈췄습니다',
       ai_pick_retry: '다시 시도',
       provider_none: 'AI 없음',
@@ -1352,7 +1351,6 @@ export default {
       checking: '확인 중',
       missing: '사라진 이미지입니다 (24시간이 지나 지워졌습니다). 빼 주세요',
       load_failed: '불러오지 못했습니다',
-      unsupported_ai: '이 AI는 이미지를 받지 못합니다. 이미지는 저장되지만 AI에게 전달되지 않습니다',
       error: {
         too_large: '이미지가 5MB를 넘습니다',
         unsupported: 'PNG·JPEG·GIF·WebP만 올릴 수 있습니다',
@@ -1378,7 +1376,6 @@ export default {
         uploading: '이미지 업로드가 끝나면 보낼 수 있습니다',
         checking: '이미지를 확인하는 중입니다. 확인이 끝나면 보낼 수 있습니다',
         unusable: '실패했거나 사라진 이미지는 다시 시도하거나 빼야 보낼 수 있습니다',
-        text: '이미지와 함께 보낼 메시지를 입력하세요',
       },
     },
     settings: {

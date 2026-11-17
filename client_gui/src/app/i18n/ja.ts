@@ -1303,7 +1303,6 @@ export default {
       provider_loading: '読み込み中',
       provider_failed: 'AI 一覧エラー',
       // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
-      ai_pick_loading: 'このチャットの AI を確認しています。確認できると送信できます',
       ai_pick_failed: 'このチャットの AI を確認できないため送信を止めています',
       ai_pick_retry: '再試行',
       provider_none: 'AI なし',
@@ -1341,7 +1340,6 @@ export default {
       checking: '確認中',
       missing: '画像は消えています（24時間経過で削除されました）。外してください',
       load_failed: '読み込めませんでした',
-      unsupported_ai: 'この AI は画像を受け取れません。画像は保存されますが AI には渡されません',
       error: {
         too_large: '画像が 5MB を超えています',
         unsupported: 'PNG・JPEG・GIF・WebP のみアップロードできます',
@@ -1367,7 +1365,6 @@ export default {
         uploading: '画像のアップロードが終わると送信できます',
         checking: '画像を確認しています。確認が終わると送信できます',
         unusable: '失敗または消えた画像は、再試行するか外すと送信できます',
-        text: '画像と一緒に送るメッセージを入力してください',
       },
     },
     settings: {

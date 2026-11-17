@@ -294,7 +294,7 @@ describe('upload state and the send', () => {
     paste(w, [file()])
     await flushPromises()
     expect(send(w).attributes('disabled')).toBeDefined()
-    expect(w.get('[data-test="conv-image-hint"]').attributes('data-hint')).toBe('text')
+    expect(w.find('[data-test="conv-image-hint"]').exists()).toBe(false)
     await w.get('[data-test="conv-composer"]').trigger('submit')
     expect(onSend).not.toHaveBeenCalled()
   })
@@ -369,20 +369,20 @@ describe('the AI that cannot take images', () => {
     { id: 'old', name: 'Old' },
   ]
 
-  it('warns when the selected AI has accepts_images=false and an image is attached, without blocking the send', async () => {
+  it('shows no unsupported-AI notice and allows sending when accepts_images=false', async () => {
     const onSend = vi.fn(async () => true)
     const w = mountComposer({ providers, selectedProviderId: 'codex', onSend })
     await type(w, 'look')
     paste(w, [file()])
     await flushPromises()
-    expect(w.get('[data-test="conv-image-unsupported-ai"]').text()).toBe('이 AI는 이미지를 받지 못합니다. 이미지는 저장되지만 AI에게 전달되지 않습니다')
+    expect(w.find('[data-test="conv-image-unsupported-ai"]').exists()).toBe(false)
     expect(send(w).attributes('disabled')).toBeUndefined()
     await w.get('[data-test="conv-composer"]').trigger('submit')
     await flushPromises()
     expect(onSend).toHaveBeenCalledTimes(1)
   })
 
-  it('says nothing for an AI that accepts images, one the server did not describe, or when no image is attached', async () => {
+  it('keeps the unsupported-AI notice absent across AI changes and image removal', async () => {
     const w = mountComposer({ providers, selectedProviderId: 'claude' })
     paste(w, [file()])
     await flushPromises()
@@ -390,7 +390,7 @@ describe('the AI that cannot take images', () => {
     await w.setProps({ selectedProviderId: 'old' })
     expect(w.find('[data-test="conv-image-unsupported-ai"]').exists()).toBe(false)
     await w.setProps({ selectedProviderId: 'codex' })
-    expect(w.find('[data-test="conv-image-unsupported-ai"]').exists()).toBe(true)
+    expect(w.find('[data-test="conv-image-unsupported-ai"]').exists()).toBe(false)
     await w.get('[data-test="conv-image-remove"]').trigger('click')
     expect(w.find('[data-test="conv-image-unsupported-ai"]').exists()).toBe(false)
     const empty = mountComposer({ providers, selectedProviderId: 'codex' })

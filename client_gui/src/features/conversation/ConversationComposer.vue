@@ -29,7 +29,6 @@
     <ComposerImageStrip
       :images="attach.images.value"
       :notice="attach.notice.value"
-      :unsupported-ai="unsupportedAi"
       :hint="imageHint"
       @remove="attach.remove"
       @retry="attach.retry"
@@ -89,12 +88,10 @@
 
     <!-- flowgate.v02gui.0007 A: a failed send says why on its own bubble (with 다시 시도) and in the timeline's error
          line; the composer no longer repeats it. -->
-    <!-- flowgate.v02test.0030: the chat's AI is still being read (send waits), or could not be read (why, and a retry):
-         nothing is sent on an AI the user did not see chosen. -->
-    <div v-if="aiPickStatus === 'loading'" class="conv-ai-pick" role="status" aria-live="polite" data-test="conv-ai-pick-loading">
-      {{ t('gui.conversation.composer.ai_pick_loading') }}
-    </div>
-    <div v-else-if="aiPickStatus === 'error'" class="conv-ai-pick is-error" role="alert" data-test="conv-ai-pick-error">
+    <!-- flowgate.v02test.0030: while the chat's AI is still being read, send waits without any line under the input
+         (flowgate.v02test.0041: the passing "checking" line was removed); if it could not be read, say why and offer a
+         retry: nothing is sent on an AI the user did not see chosen. -->
+    <div v-if="aiPickStatus === 'error'" class="conv-ai-pick is-error" role="alert" data-test="conv-ai-pick-error">
       <span>{{ aiPickError ? `${t('gui.conversation.composer.ai_pick_failed')} (${aiPickError})` : t('gui.conversation.composer.ai_pick_failed') }}</span>
       <button type="button" class="conv-link" data-test="conv-ai-pick-retry" @click="emit('retry-ai-pick')">
         {{ t('gui.conversation.composer.ai_pick_retry') }}
@@ -288,17 +285,13 @@ function onInput(): void {
 const canAttach = computed(() => !props.disabled && !props.readOnly && !props.sending)
 const dragging = ref(false)
 
-/** The AI picked is known not to accept images (`accepts_images=false`): the send is not blocked, the user is told. */
-const unsupportedAi = computed(() =>
-  attach.images.value.length > 0 && props.providers.find((p) => p.id === props.selectedProviderId)?.acceptsImages === false)
-
 /** Why the send is held now, for the note under the thumbnails. */
-const imageHint = computed<'uploading' | 'checking' | 'unusable' | 'text' | null>(() => {
+const imageHint = computed<'uploading' | 'checking' | 'unusable' | null>(() => {
   if (attach.images.value.length === 0) return null
   if (attach.uploading.value) return 'uploading'
   if (attach.checking.value) return 'checking'
   if (attach.blocked.value) return 'unusable'
-  return draft.value.trim() === '' ? 'text' : null
+  return null
 })
 
 function clipboardImages(data: DataTransfer | null): File[] {

@@ -1,7 +1,7 @@
 <template>
   <!-- flowgate.v02test.0029 T0005 — the composer's attached message images: a thumbnail per image above the input, each
        with its own state (uploading / checking a restored one / failed with 다시 시도 / gone) and a ✕ to take it out, then the notes that apply
-       (what was refused, an AI that cannot be given images, what holds the send). -->
+       (what was refused and images that hold the send). -->
   <div v-if="images.length || notice" class="conv-imgs" data-test="conv-images">
     <ul v-if="images.length" class="conv-imgs-list">
       <li
@@ -41,9 +41,6 @@
       {{ t(`gui.conversation.image.notice.${notice}`) }}
       <button type="button" class="conv-img-retry" :aria-label="t('gui.conversation.close')" @click="emit('dismiss-notice')">✕</button>
     </p>
-    <p v-if="unsupportedAi" class="conv-imgs-note conv-imgs-note--warn" role="status" data-test="conv-image-unsupported-ai">
-      {{ t('gui.conversation.image.unsupported_ai') }}
-    </p>
     <p v-if="hint" class="conv-imgs-note" role="status" data-test="conv-image-hint" :data-hint="hint">
       {{ t(`gui.conversation.image.hint.${hint}`) }}
     </p>
@@ -57,10 +54,8 @@ import type { ComposerImage, ImageNoticeKey } from './composerImages'
 defineProps<{
   images: readonly ComposerImage[]
   notice: ImageNoticeKey | null
-  /** The selected AI is known not to accept images: the images are stored but not handed to it. */
-  unsupportedAi: boolean
-  /** Why the send is held right now (an image still uploading / not usable, or no text yet). */
-  hint: 'uploading' | 'checking' | 'unusable' | 'text' | null
+  /** Why the send is held right now (an image still uploading / not usable). */
+  hint: 'uploading' | 'checking' | 'unusable' | null
 }>()
 
 const emit = defineEmits<{ remove: [localId: string]; retry: [localId: string]; 'dismiss-notice': [] }>()

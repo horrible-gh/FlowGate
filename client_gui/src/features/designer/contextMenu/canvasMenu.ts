@@ -72,18 +72,15 @@ export function canvasMenu({ target, available: v, connected, definitions = [], 
       s('canvas-arrange'), arrangeItem('canvas.arrange', 'arrangeLayout', arrange),
     ]
   } else if (target.kind === 'node') {
-    items = [a('node.detail', 'detail', 'ⓘ'), s('node-copy'), a('node.copy', 'copy', '▣'), a('node.copyId', 'copyId', '#', !v.hasDocument), s('node-delete'),
+    items = [a('node.detail', 'detail', 'ⓘ'), s('node-copy'), a('node.copy', 'copy', '▣'), a('node.copyId', 'copyId', '#', !v.hasDocument), ...(runItems.length ? [s('node-run'), ...runItems.map((item) => ({
+        ...a(item.command, '', RUN_ICONS[item.command], item.disabled, item.danger), label: item.label,
+      }))] : []), s('node-delete'),
       a('node.delete', 'delete', '×', !v.editable || !v.structureEditable || !v.definitionExists, true)]
   } else if (target.kind === 'multi') {
     items = [a('multi.editSettings', 'editSettings', '⚙'), s('multi-copy'), a('multi.copy', 'copy', '▣'),
       arrangeItem('multi.arrange', 'arrange', arrange), s('multi-delete'), a('multi.delete', 'delete', '×', false, true)]
   } else {
     items = [a('edge.disconnect', 'disconnect', '⌁', !v.editable || !!v.progressed, true)]
-  }
-  if (target.kind === 'node' && runItems.length) {
-    items = [...items, s('node-run'), ...runItems.map((item) => ({
-      ...a(item.command, '', RUN_ICONS[item.command], item.disabled, item.danger), label: item.label,
-    }))]
   }
   return makeMenu(target, items, connected)
 }
