@@ -1175,6 +1175,9 @@ export default {
         network: 'Could not reach the server',
       },
       stale: 'Written before message #{seq} was seen.',
+      // flowgate.v02test.0029: a message sent while the AI answered.
+      waiting: 'Queued',
+      waiting_title: 'When the current answer ends, the AI reads this message and answers it.',
       copy: 'Copy original text',
       copied: 'Copied',
       copy_failed: 'Could not copy',

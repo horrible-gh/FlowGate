@@ -1186,6 +1186,9 @@ export default {
         network: '서버에 연결하지 못했습니다',
       },
       stale: '#{seq} 메시지를 보기 전에 작성된 답변입니다.',
+      // flowgate.v02test.0029: a message sent while the AI answered.
+      waiting: '대기',
+      waiting_title: '지금 답변이 끝나면 AI가 이 메시지까지 읽고 이어서 답합니다.',
       copy: '원문 복사',
       copied: '복사했습니다',
       copy_failed: '복사하지 못했습니다',

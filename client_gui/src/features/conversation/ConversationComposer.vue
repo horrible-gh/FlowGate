@@ -36,7 +36,7 @@
       @dismiss-notice="attach.dismissNotice"
     />
 
-    <div class="conv-pill">
+    <div class="conv-pill" :class="{ 'has-side-stop': sendWhileRunning && stopMode !== null }">
       <textarea
         ref="inputEl"
         v-model="draft"
@@ -50,6 +50,21 @@
         @paste="onPaste"
         @keydown.enter.exact.prevent="submit"
       ></textarea>
+      <!-- flowgate.v02test.0029: while the AI answers and something is typed, the message can be sent (its AI call
+           follows the answer); the stop stays next to it. -->
+      <button
+        v-if="sendWhileRunning && stopMode !== null"
+        type="button"
+        class="conv-send is-stop conv-stop-side"
+        :class="{ 'is-stopping': stopMode === 'requested' }"
+        data-test="conv-stop"
+        :title="stopTitle"
+        :aria-label="stopTitle"
+        :disabled="stopMode === 'requested'"
+        @click="emit('stop')"
+      >
+        <span aria-hidden="true">{{ stopMode === 'requested' ? '…' : '■' }}</span>
+      </button>
       <!-- 0264 R0001: while a chat AI run is in flight the send button is a STOP button. flowgate.v02gui.0011 B: with
            `stopState` it is one from the press of send on (chat created, message stored, AI call starting). -->
       <button
@@ -220,10 +235,15 @@ const stopMode = computed<'available' | 'requested' | null>(() => {
   if (!props.running) return null
   return props.cancelling || props.runStarting ? 'requested' : 'available'
 })
-const isStop = computed(() => stopMode.value !== null)
+// flowgate.v02test.0029: an AI answering does not hold a typed message: the button sends it, the stop moves beside it.
+const sendWhileRunning = computed(() => props.running && !props.sending && draft.value.trim() !== '')
+const isStop = computed(() => stopMode.value !== null && !sendWhileRunning.value)
+
+const stopTitle = computed(() =>
+  props.cancelling || stopMode.value === 'requested' ? t('gui.conversation.composer.stopping') : t('gui.conversation.composer.stop'))
 
 const sendTitle = computed(() => {
-  if (props.cancelling || (props.stopState !== undefined && stopMode.value === 'requested')) return t('gui.conversation.composer.stopping')
+  if (isStop.value && (props.cancelling || (props.stopState !== undefined && stopMode.value === 'requested'))) return t('gui.conversation.composer.stopping')
   if (isStop.value) return t('gui.conversation.composer.stop')
   return t('gui.conversation.composer.send')
 })
@@ -309,7 +329,7 @@ async function submit(): Promise<void> {
   trace.mark('submit')
   const text = draft.value.trim()
   const owner = visibleOwner
-  if (!owner || !text || props.disabled || props.readOnly || props.sending || props.running) return
+  if (!owner || !text || props.disabled || props.readOnly || props.sending) return
   // An image still uploading, failed or gone holds the send: it would otherwise be left out without a word.
   if (attach.blocked.value) return
   if ([...pending].some((p) => draftKey(p.snapshot.owner) === draftKey(owner))) return
@@ -434,6 +454,11 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 
 .conv-input::placeholder {
   color: var(--fg2-muted-2);
+}
+
+/* flowgate.v02test.0029: send while the AI answers — the stop sits left of the send button. */
+.conv-pill.has-side-stop {
+  grid-template-columns: minmax(0, 1fr) 37px 39px;
 }
 
 .conv-send {

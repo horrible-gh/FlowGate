@@ -11,7 +11,7 @@
 // from the server — when a chat opens, on every AI-run polling tick, once right after the run
 // ends and once after each decision — and each read replaces them as a whole. A new chat is a
 // standalone CH; nothing is shown before the server has it.
-import { computed, reactive, readonly, watch, type ComputedRef, type DeepReadonly } from 'vue'
+import { computed, reactive, readonly, ref, watch, type ComputedRef, type DeepReadonly } from 'vue'
 import { draftUserId, type DraftSendSnapshot } from './drafts'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, type CreateChatOptions } from './api'
@@ -712,9 +712,48 @@ export function createConversationSession(options: ConversationSessionOptions = 
   const timeline = computed(() => {
     const display = state.runId !== null ? state.runDisplay : null
     const activities = display ? [...state.activities, runLine(display)] : state.activities
-    return buildTimeline(state.turns, activities, state.pending, state.readSeq)
+    const items = buildTimeline(state.turns, activities, state.pending, state.readSeq)
+    // flowgate.v02test.0029: a person's stored message sent while the AI was answering waits (대기) for the answer
+    // that follows the current one.
+    const queued = followUp.value
+    if (!queued || queued.chatId !== state.activeChatId) return items
+    return items.map((item) => item.kind === 'message' && !item.pending && !item.failed && item.turn.speaker === 'user' &&
+      item.turn.seq > queued.afterSeq ? { ...item, waiting: true } : item)
   })
   const running = computed(() => state.runId !== null)
+  /**
+   * flowgate.v02test.0029: messages may be sent while the chat's AI answers. The server stores them at once; the AI
+   * that is answering may not see them. Their AI call is not started next to the running one (one run per chat): it is
+   * kept here — one per chat, whatever the number of messages — and started once the current run has ended, on the AI
+   * of the latest such message. `afterSeq` is the head the first of them was sent on: every person's message after it
+   * waits for this answer. Leaving the chat (another chat, Flow, reload) drops it; the messages stay stored.
+   */
+  interface FollowUp { chatId: string; gen: number; providerId: string; afterSeq: number }
+  const followUp = ref<FollowUp | null>(null)
+
+  function queueFollowUp(chatId: string, gen: number, providerId: string, afterSeq: number): void {
+    const now = followUp.value
+    if (now && now.chatId === chatId && now.gen === gen) followUp.value = { ...now, providerId }
+    else followUp.value = { chatId, gen, providerId, afterSeq }
+  }
+
+  /** Runs once the chat's run has ended: the follow-up call, unless the answer already read every waiting message. */
+  function startFollowUp(): void {
+    const queued = followUp.value
+    if (!queued || disposed || running.value) return
+    followUp.value = null
+    if (!isCurrentChat(queued.chatId, queued.gen) || state.turnsStatus !== 'ready') return
+    const waiting = state.turns.filter((t) => t.speaker === 'user' && t.seq > queued.afterSeq)
+    const lastWaiting = waiting.at(-1)?.seq ?? 0
+    // An AI that read the turns again before writing (a remote agent) may have answered them already.
+    const answered = lastWaiting > 0 && state.turns.some((t) => t.speaker === 'ai' && t.seq > lastWaiting &&
+      (t.basedOnSeq ?? 0) >= lastWaiting)
+    if (answered) return
+    void startAiRun(queued.providerId)
+  }
+  watch(() => state.runId, (runId) => {
+    if (runId === null && followUp.value) void Promise.resolve().then(startFollowUp)
+  })
   // flowgate.v02gui.0011 B: messages (local ids) whose AI call the user stopped while they were being stored. Kept
   // until the send action of that message runs (it starts no AI then) or its store fails.
   const stoppedSends = reactive(new Set<string>())
@@ -883,6 +922,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.turns = []
     state.pending = []
     state.sending = false
+    followUp.value = null
     state.activities = []
     state.participants = []
     state.headSeq = 0
@@ -1797,7 +1837,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
         return
       }
       trace.mark('ai_start', { docId: chatId })
-      if (onScreen) void startAiRun(item.providerId)
+      // flowgate.v02test.0029: sent while the AI answers: its call waits for that answer to end.
+      if (onScreen && running.value) queueFollowUp(chatId, gen, item.providerId, item.basedOnSeq)
+      else if (onScreen) void startAiRun(item.providerId)
       else void startAiRunOffScreen(chatId, gen, item.providerId)
     }
   }
@@ -1813,7 +1855,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const chatId = created?.chatId ?? state.activeChatId
     const body = text.trim()
     if (!chatId || !body) return false
-    if (!offScreen && (state.sending || running.value || state.turnsStatus !== 'ready')) return false
+    // flowgate.v02test.0029: an AI answering does not hold the send (its call follows the answer: runSendAction).
+    if (!offScreen && (state.sending || state.turnsStatus !== 'ready')) return false
     const owner = created && offScreen ? scopedOwnerKey(created.scope, chatId) : ownerKey(chatId)
     if (progress.get(owner)?.phase === 'sending') return false
     const ownerScope = created?.scope ?? state.scope
@@ -1906,7 +1949,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   async function retry(localId: string, fromComposer = false): Promise<boolean> {
     const chatId = state.activeChatId
     const item = state.pending.find((p) => p.localId === localId)
-    if (!chatId || !item || state.sending || running.value || state.turnsStatus !== 'ready') return false
+    if (!chatId || !item || state.sending || state.turnsStatus !== 'ready') return false
     const owner = ownerKey(chatId)
     if (progress.get(owner)?.phase === 'sending') return false
     publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === localId ? { ...p, failed: false, failure: null } : p))

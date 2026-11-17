@@ -395,12 +395,14 @@ describe('AI run', () => {
     expect(session.state.cancelling).toBe(true)
   })
 
-  it('blocks sending while a run is in flight and warns without providers', async () => {
+  it('stores a message sent while a run is in flight and warns without providers', async () => {
+    // flowgate.v02test.0029: an AI answering no longer holds the send (sendWhileRunning.v02test0029.spec.ts).
     const { session, source } = setup({ activeRun: 'run-live', runs: { 'run-live': ['running'] } }, hold)
     await session.setScope(SCOPE)
     await flushPromises()
-    expect(await session.send('x')).toBe(false)
-    expect(source.postTurn).not.toHaveBeenCalled()
+    expect(await session.send('x')).toBe(true)
+    expect(source.postTurn).toHaveBeenCalledTimes(1)
+    expect(source.startChatRun).not.toHaveBeenCalled()
 
     const none = setup()
     none.source.listProviders.mockResolvedValue({ providers: [], defaultProviderId: null })

@@ -68,7 +68,11 @@ export interface PendingTurn {
 }
 
 export type TimelineItem =
-  | { kind: 'message'; key: string; turn: ConversationTurn; pending: boolean; failed: boolean; localId: string | null; failure?: SendFailure | null }
+  | {
+      kind: 'message'; key: string; turn: ConversationTurn; pending: boolean; failed: boolean; localId: string | null; failure?: SendFailure | null
+      /** flowgate.v02test.0029: sent while the AI answered; the AI answers it once the current answer ends (대기). */
+      waiting?: boolean
+    }
   | { kind: 'boundary'; key: string }
   | { kind: 'command'; key: string; activity: CommandRequestActivity }
   | { kind: 'change'; key: string; activity: WorkChangeActivity }
