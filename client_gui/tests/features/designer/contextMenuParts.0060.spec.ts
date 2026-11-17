@@ -268,12 +268,12 @@ describe('card run items in the card menu (T#2)', () => {
     expect(COMMANDS).toHaveLength(40)
     expect(CARD_RUN_COMMANDS.filter((command) => (COMMANDS as readonly string[]).includes(command))).toEqual([])
   })
-  it('appends them after a separator on a single card, worded by the caller', () => {
+  it('places run items before the final delete action on a single card, worded by the caller', () => {
     const single = canvasMenu({ target: targets[7] as never, available, connected, runItems })
     expect(single.items.map((item) => item.kind === 'separator' ? '|' : item.key))
-      .toEqual(['node.detail', '|', 'node.copy', '|', 'node.delete', '|', 'node.run.holdSet', 'node.run.timeMachine'])
+      .toEqual(['node.detail', '|', 'node.copy', '|', 'node.run.holdSet', 'node.run.timeMachine', '|', 'node.delete'])
     expect(actions(single.items).map((item) => [item.label ?? null, item.disabled, item.danger])).toEqual([
-      [null, true, false], [null, true, false], [null, false, true], ['Hold 설정', false, false], ['되돌리기 — 완료', true, true],
+      [null, true, false], [null, true, false], ['Hold 설정', false, false], ['되돌리기 — 완료', true, true], [null, false, true],
     ])
     expect(single.request('node.run.holdSet')).toEqual({ command: 'node.run.holdSet', target: targets[7] })
     expect(single.request('node.run.timeMachine')).toBeNull()
