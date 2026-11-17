@@ -46,6 +46,8 @@
            the shared renderer in safe mode: raw HTML is shown as text, unsafe links and every image as text only. -->
       <div v-if="isUser" class="tl-text">{{ turn.body }}</div>
       <div v-else class="tl-text tl-md" data-test="tl-md" @click.capture="onBodyClick" v-html="html" />
+      <!-- flowgate.v02test.0029: the message's images (thumbnails; one opens the original). -->
+      <TimelineImages v-if="turn.images?.length" :images="turn.images" />
       <p v-if="failed" class="tl-note tl-note--failed">
         {{ t('gui.conversation.message.failed') }}
         <!-- flowgate.v02gui.0007 A: the failure's short reason (class of the HTTP status, and the status). -->
@@ -61,6 +63,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyToClipboard } from '../../core/interaction/clipboard'
 import { createMarkdownRenderer } from '../../core/markdown/markdownRenderer'
+import TimelineImages from './TimelineImages.vue'
 import TimelineMessageMenu from './TimelineMessageMenu.vue'
 import { formatTimelineTime } from './timeline'
 import type { SendFailure } from './timeline'

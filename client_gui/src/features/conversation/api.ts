@@ -21,7 +21,7 @@
 //   per-chat       GET/PATCH /api/v1/documents/{doc_id}/conversation/settings  { provider_id, context_checkpoint_seq, context_checkpoint_kind }
 //   mention copy   POST  /api/v1/token/issue                        (action_scope chat)
 
-import { extractApiErrorMessage, getRequest, patchRequest, postRequest } from '@shared/api'
+import { deleteRequest, downloadBlobRequest, extractApiErrorMessage, getRequest, patchRequest, postFormRequest, postRequest } from '@shared/api'
 import { randomUuid } from '@shared/utils/uuid'
 import { chatErrorActivity, isChatErrorCode, type ChatErrorRecord } from './chatErrors'
 import type {
@@ -50,6 +50,7 @@ import type {
   ConversationScope,
   ConversationTurn,
   ProviderList,
+  TurnImage,
   RunFileDiff,
   RunFileDiffSide,
   SendAction,
@@ -507,6 +508,16 @@ interface RawTurn {
   based_on_seq?: number | null
   stale_since_seq?: number | null
   created_at?: string | null
+  images?: RawTurnImage[] | null
+}
+
+export interface RawTurnImage {
+  image_id?: string
+  media_type?: string
+  size?: number
+  width?: number
+  height?: number
+  url?: string
 }
 
 interface RawParticipant {
@@ -525,13 +536,24 @@ interface RawTurnsPage {
   prev_before_seq?: number | null
 }
 
+/** flowgate.v02test.0029: an image entry without an id or a content address cannot be shown, so it is left out. */
+export function toTurnImages(raw: readonly RawTurnImage[] | null | undefined): TurnImage[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((image) => image && typeof image.image_id === 'string' && typeof image.url === 'string'
+    ? [{ imageId: image.image_id, mediaType: image.media_type ?? '', size: Number(image.size) || 0,
+      width: Number(image.width) || 0, height: Number(image.height) || 0, url: image.url }]
+    : [])
+}
+
 export function toTurn(raw: RawTurn): ConversationTurn {
+  const images = toTurnImages(raw.images)
   return {
     seq: Number(raw.seq) || 0,
     speaker: raw.speaker,
     participantKey: raw.participant_key ?? null,
     displayName: raw.display_name ?? null,
     body: raw.body ?? '',
+    ...(images.length ? { images } : {}),
     sourceRunId: textOrNull(raw.source_run_id),
     basedOnSeq: raw.based_on_seq ?? null,
     staleSinceSeq: raw.stale_since_seq ?? null,
@@ -581,16 +603,59 @@ export interface PostTurnInput {
   idempotencyKey: string
   basedOnSeq: number
   traceId?: string
+  /** flowgate.v02test.0029: ids of uploaded message images (at most 5) the turn carries; never image bytes. */
+  images?: string[]
 }
 
 export async function postTurn(chatId: string, input: PostTurnInput): Promise<{ turn: ConversationTurn | null; headSeq: number }> {
-  const payload = { body: input.body, idempotency_key: input.idempotencyKey, based_on_seq: input.basedOnSeq }
+  const payload = { body: input.body, idempotency_key: input.idempotencyKey, based_on_seq: input.basedOnSeq,
+    ...(input.images?.length ? { images: input.images } : {}) }
   type Response = { turn?: RawTurn | null; head_seq?: number }
   const path = `${doc(chatId)}/conversation/turn`
   const data = await call(() => input.traceId
     ? postRequest<Response>(path, payload, { headers: { 'X-Conversation-Trace': input.traceId } })
     : postRequest<Response>(path, payload))
   return { turn: data?.turn ? toTurn(data.turn) : null, headSeq: Number(data?.head_seq) || 0 }
+}
+
+// ── Message images (flowgate.v02test.0029) ───────────────────────────────────────────
+//   upload   POST   /api/v1/flows/{flow_id}/message-images                 multipart `file` → { image } (state temp)
+//   content  GET    /api/v1/flows/{flow_id}/message-images/{id}/content     the bytes (authenticated; never a bare <img src>)
+//   remove   DELETE /api/v1/flows/{flow_id}/message-images/{id}            the uploader's own temp image
+// The flow id is the group id (`project.module.group`), so the first message of a chat — before any chat exists — can
+// carry images. The limits live in messageImages.ts (they mirror the server constants).
+const messageImagesPath = (flowId: string) => `${API}/flows/${encodeURIComponent(flowId)}/message-images`
+
+/** The content address of an image of this Flow (an image restored from a draft has only its id). */
+export function messageImageUrl(flowId: string, imageId: string): string {
+  return `${messageImagesPath(flowId)}/${encodeURIComponent(imageId)}/content`
+}
+
+/**
+ * The server lists `url` with its deployment prefix (`/flowgate/api/v1/...`) while the request client already carries
+ * that prefix, so only the part from `/api/v1/` on is requested.
+ */
+export function messageImageRequestPath(url: string): string {
+  const at = url.indexOf(`${API}/`)
+  return at >= 0 ? url.slice(at) : url
+}
+
+export async function uploadMessageImage(flowId: string, file: Blob, filename: string): Promise<TurnImage> {
+  const form = new FormData()
+  form.append('file', file, filename)
+  const data = await call(() => postFormRequest<{ image?: RawTurnImage | null }>(messageImagesPath(flowId), form))
+  const [image] = toTurnImages(data?.image ? [data.image] : [])
+  if (!image) throw clientCheckFailure()
+  return image
+}
+
+export async function deleteMessageImage(flowId: string, imageId: string): Promise<void> {
+  await call(() => deleteRequest<unknown>(`${messageImagesPath(flowId)}/${encodeURIComponent(imageId)}`))
+}
+
+/** The image bytes through the signed-in session (the content endpoint takes no token in its address). */
+export async function fetchMessageImageBlob(url: string): Promise<Blob> {
+  return call(() => downloadBlobRequest(messageImageRequestPath(url)))
 }
 
 export async function markRead(chatId: string, lastReadSeq: number): Promise<number | null> {
@@ -603,14 +668,14 @@ export async function markRead(chatId: string, lastReadSeq: number): Promise<num
 // ── Providers ────────────────────────────────────────────────────────────────────────
 export async function fetchProviders(projectId: string): Promise<ProviderList> {
   const data = await call(
-    () => getRequest<{ providers?: Array<{ id: string; name?: string | null }>; default_provider_id?: string | null }>(
+    () => getRequest<{ providers?: Array<{ id: string; name?: string | null; accepts_images?: boolean | null }>; default_provider_id?: string | null }>(
       `${API}/ai-invoke/providers`,
       { project: projectId },
     ),
   )
   const providers: ChatProvider[] = (data?.providers ?? [])
     .filter((p) => p && typeof p.id === 'string')
-    .map((p) => ({ id: p.id, name: p.name || p.id }))
+    .map((p) => ({ id: p.id, name: p.name || p.id, ...(typeof p.accepts_images === 'boolean' ? { acceptsImages: p.accepts_images } : {}) }))
   return { providers, defaultProviderId: data?.default_provider_id ?? null }
 }
 

@@ -60,6 +60,11 @@ export interface PendingTurn {
    * the create intent its chat is made with, kept so a try after a failure or an F5 asks for the same chat.
    */
   createIntentId?: string
+  /**
+   * flowgate.v02test.0029: ids of the uploaded message images this message carries (kept with the message, so a retry
+   * and an F5 send the same images under the same idempotency key).
+   */
+  images?: string[]
 }
 
 export type TimelineItem =
