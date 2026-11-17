@@ -1303,7 +1303,6 @@ export default {
       provider_loading: 'Loading',
       provider_failed: 'AI list error',
       // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
-      ai_pick_loading: 'Checking this chat\'s AI. You can send once it is known',
       ai_pick_failed: 'Sending is paused: this chat\'s AI could not be checked',
       ai_pick_retry: 'Try again',
       provider_none: 'No AI',

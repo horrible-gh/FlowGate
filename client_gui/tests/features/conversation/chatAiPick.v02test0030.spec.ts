@@ -181,7 +181,7 @@ describe('v02test.0030 a reopened chat waits for its stored AI', () => {
     expect(session.state.selectedProviderId).toBe('opus')
   })
 
-  it('the composer says the AI is being checked / could not be checked, and its retry reads it again', async () => {
+  it('the composer shows no line while the AI is checked, says when it could not be checked, and its retry reads it again', async () => {
     i18n.global.locale.value = 'ko'
     const { source } = await setup()
     const read = deferred<ChatDocSettings>()
@@ -193,7 +193,8 @@ describe('v02test.0030 a reopened chat waits for its stored AI', () => {
     })
     await flushPromises()
     await wrapper.find('[data-test="conv-input"]').setValue('hello')
-    expect(wrapper.find('[data-test="conv-ai-pick-loading"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="conv-ai-pick-loading"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('이 채팅의 AI를 확인하는 중입니다')
     expect(wrapper.find('[data-test="conv-send"]').attributes('disabled')).toBeDefined()
 
     read.reject(new Error('offline'))
