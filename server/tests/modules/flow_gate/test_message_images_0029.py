@@ -193,7 +193,8 @@ def test_upload_and_turn_while_ai_holds_lease(env):
 
 @pytest.mark.parametrize("kind,exec_type,location,expected", [
     ("claude", "cli", "local", True), ("claude", "cli", "remote", False),
-    ("claude", "api", "local", False), ("codex", "cli", "local", False),
+    ("claude", "api", "local", False), ("codex", "cli", "local", True), ("codex", "cli", "remote", False),
+    ("codex", "api", "local", False),
     ("copilot", "cli", "local", False),
 ])
 def test_provider_capability(kind, exec_type, location, expected):

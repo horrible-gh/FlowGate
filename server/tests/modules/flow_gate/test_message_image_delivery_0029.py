@@ -29,16 +29,18 @@ def add_images(n):
     return seqs
 
 
-def test_local_recent_window_and_independent_copies(env, tmp_path):
+@pytest.mark.parametrize("kind", ["claude", "codex"])
+def test_local_recent_window_and_independent_copies(env, tmp_path, kind):
     add_images(13)
     run = run_for(tmp_path, after=1)
-    prompt = delivery.provider_prompt("BASE", CLAUDE, run)
+    prompt = delivery.provider_prompt("BASE", dict(CLAUDE, kind=kind), run)
     files = list((Path(run["token_scratch_dir"])/"images").glob("*"))
     assert len(files) == 10
     assert {p.name for p in files} == {f"{i}-0.png" for i in range(4,14)}
     assert all(p.read_bytes() == PNG and not p.is_symlink() for p in files)
     assert all(str(p) in prompt for p in files)
-    assert "2 older image(s)" in prompt and "Read tool" in prompt
+    assert "2 older image(s)" in prompt
+    assert ("Read tool" if kind == "claude" else "Codex --image") in prompt
     assert run["images_total"] == 12 and run["images_delivered"] == 10
     for row in delivery.images.images_for_window(CHAT_DOC, 1):
         copied = Path(run["token_scratch_dir"])/"images"/f"{row['seq']}-0.png"
@@ -46,7 +48,7 @@ def test_local_recent_window_and_independent_copies(env, tmp_path):
 
 
 @pytest.mark.parametrize("provider", [
-    dict(CLAUDE, kind="codex"), dict(CLAUDE, kind="copilot"), dict(CLAUDE, kind="custom"),
+    dict(CLAUDE, kind="codex", exec_location="remote"), dict(CLAUDE, kind="copilot"), dict(CLAUDE, kind="custom"),
     dict(CLAUDE, exec_type="api"), dict(CLAUDE, exec_location="remote"),
 ])
 def test_unsupported_is_visible_and_durable(env, tmp_path, monkeypatch, provider):
@@ -95,7 +97,8 @@ def test_no_images_unchanged_and_window_exclusion(env, tmp_path):
 
 
 @pytest.mark.parametrize("link_kind", ["directory", "file"])
-def test_scratch_symlink_rejected(env, tmp_path, link_kind):
+@pytest.mark.parametrize("kind", ["claude", "codex"])
+def test_scratch_symlink_rejected(env, tmp_path, link_kind, kind):
     add_images(1)
     run=run_for(tmp_path)
     folder=Path(run["token_scratch_dir"])/"images"
@@ -108,7 +111,8 @@ def test_scratch_symlink_rejected(env, tmp_path, link_kind):
         target=outside/"untouched"
         target.write_bytes(b"original")
         (folder/"1-0.png").symlink_to(target)
-    text=delivery.provider_prompt("BASE", CLAUDE, run)
+    text=delivery.provider_prompt("BASE", dict(CLAUDE, kind=kind), run)
+    assert "message_image_cli_args" not in run
     assert "copying failed" in text and run["images_copy_failed"] == 1
     assert not (outside/"1-0.png").exists()
     if link_kind == "file":
@@ -151,3 +155,56 @@ def test_image_failure_history_keeps_last_connection_under_caps(env, tmp_path, m
     assert stored[-1] == failure
     assert stored[0] == {"reason": "truncated", "dropped": 1}
     assert run["fallback_history"] == [failure] and run["attempt_no"] == 1
+
+
+def test_codex_images_reach_launch_and_are_cleared(env, tmp_path, monkeypatch):
+    import shlex
+    from modules.flow_gate.services.ai_invoke import provider_cli
+    add_images(2)
+    run = run_for(tmp_path)
+    run.update(scratch_dir=str(tmp_path), raw_token="test", run_id="r")
+    provider = dict(CLAUDE, kind="codex", id="codex", cli_command="codex exec -")
+    prompt = delivery.provider_prompt("BASE", provider, run)
+    assert "Read tool" not in prompt
+    seen = []
+    def resolve(provider, run, command):
+        seen.append(command)
+        return None, "test_boundary"
+    monkeypatch.setattr(provider_cli, "_resolve_cli_launch", resolve)
+    monkeypatch.setattr(provider_cli, "_audit_cli_launch", lambda *a: None)
+    assert provider_cli._cli_execute(provider, prompt, run)[0] == "spawn_failed"
+    args = shlex.split(seen[-1])
+    paths = [args[i+1] for i, arg in enumerate(args) if arg == "--image"]
+    assert [Path(p).name for p in paths] == ["1-0.png", "2-0.png"]
+    assert all(Path(p).read_bytes() == PNG for p in paths)
+    assert args.count("--image") == 2 and "--skip-git-repo-check" in args
+    assert "--output-last-message" in args and "-" in args
+    # A different connection cannot inherit attachments from the earlier one.
+    provider_cli._cli_execute(dict(provider, id="other"), "BASE", run)
+    assert "--image" not in seen[-1]
+    delivery.provider_prompt("BASE", dict(CLAUDE, exec_location="remote"), run)
+    assert "message_image_cli_args" not in run
+    provider_cli._cli_execute(provider, "BASE", run)
+    assert "--image" not in seen[-1]
+    delivery.provider_prompt("BASE", provider, run)
+    run["message_image_context"]["after_seq"] = 2
+    assert delivery.provider_prompt("EXACT", provider, run) == "EXACT"
+    assert "message_image_cli_args" not in run
+
+
+def test_codex_path_quoting_and_visible_failure(env, tmp_path, monkeypatch):
+    import shlex
+    monkeypatch.setattr(delivery, "os", SimpleNamespace(name="posix"))
+    path = "/tmp/space ' dollar$(no)/image.png"
+    assert shlex.split(delivery.codex_image_argument(path)) == [path]
+    monkeypatch.setattr(delivery, "os", SimpleNamespace(name="nt"))
+    assert delivery.codex_image_argument("C:/space dir/image.png") == '"C:/space dir/image.png"'
+    for path in ("C:/%TEMP%/image.png", "C:/wow!/image.png", "C:/a,b/image.png"):
+        with pytest.raises(ValueError):
+            delivery.codex_image_argument(path)
+    add_images(1)
+    run = run_for(tmp_path)
+    monkeypatch.setattr(delivery, "_copy", lambda *a: "C:/a,b/image.png")
+    prompt = delivery.provider_prompt("BASE", dict(CLAUDE, kind="codex"), run)
+    assert "not delivered" in prompt and run["images_delivered"] == 0
+    assert "message_image_cli_args" not in run

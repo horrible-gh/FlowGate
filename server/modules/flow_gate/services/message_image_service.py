@@ -31,7 +31,7 @@ class MessageImageError(attachments.RequestError):
 
 def provider_accepts_images(provider_row) -> bool:
     return (provider_row.get("exec_type") == "cli"
-            and provider_row.get("kind") == "claude"
+            and provider_row.get("kind") in {"claude", "codex"}
             and (provider_row.get("exec_location") or "local") == "local")
 
 

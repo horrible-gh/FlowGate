@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import shutil
+import shlex
 
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.services import message_image_service as images
@@ -56,7 +57,25 @@ def _copy(row, scratch):
     return str(target)
 
 
+def codex_image_argument(path):
+    """Quote a generated filename for the local shell, never user message text.
+
+    Codex splits comma-separated image arguments even inside quotes. Reject that
+    case and cmd.exe expansion characters rather than silently attaching another
+    file. Normal scratch paths do not contain these characters.
+    """
+    if any(c in path for c in (",", "\r", "\n", "\x00")):
+        raise ValueError("image_path_not_representable")
+    if os.name == "nt":
+        if any(c in path for c in ('"', "%", "!")):
+            raise ValueError("image_path_not_representable")
+        return '"' + path + '"'
+    return shlex.quote(path)
+
+
 def provider_prompt(prompt, provider, run):
+    # Attempts share a run: clear attachments even on no-context/no-image returns.
+    run.pop("message_image_cli_args", None)
     context = run.get("message_image_context")
     if not context:
         return prompt
@@ -68,19 +87,28 @@ def provider_prompt(prompt, provider, run):
     delivered = 0
     omitted = 0
     failures = 0
+    cli_args = []
+    codex = provider.get("kind") == "codex"
     if images.provider_accepts_images(provider):
         rows = images.images_for_window(context["conversation_id"], context["after_seq"], limit=10)
         omitted = max(0, total - len(rows))
         for row in rows:
             try:
                 path = _copy(row, run["token_scratch_dir"])
+                if codex:
+                    cli_args.extend(["--image", codex_image_argument(path)])
             except (OSError, ValueError, KeyError):
                 failures += 1
                 continue
             delivered += 1
             lines.append(f"- 메시지 #{row['seq']}: {path}" if ko else f"- Message #{row['seq']}: {path}")
         if delivered:
-            lines.append("이미지 파일을 Read 도구로 열어 확인하십시오." if ko else "Open these image files with the Read tool.")
+            if codex:
+                run["message_image_cli_args"] = {"provider_id": provider.get("id"), "args": cli_args}
+                lines.append("위 순서의 이미지를 Codex --image 입력으로 첨부합니다." if ko else
+                             "These images are attached as Codex --image inputs in the order above.")
+            else:
+                lines.append("이미지 파일을 Read 도구로 열어 확인하십시오." if ko else "Open these image files with the Read tool.")
         if omitted:
             lines.append(f"오래된 이미지 {omitted}장은 최근 10장 한도로 제외했습니다." if ko else f"{omitted} older image(s) omitted by the latest-10 limit.")
         if failures:

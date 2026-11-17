@@ -55,7 +55,8 @@ def _mention(monkeypatch):
 
 
 @pytest.mark.parametrize("lease", [False, True], ids=["idle", "ai_holds_lease"])
-def test_paste_to_claude_cli_prompt(env, tmp_path, monkeypatch, lease):
+@pytest.mark.parametrize("provider", [CLAUDE, CODEX], ids=["claude", "codex"])
+def test_paste_to_claude_cli_prompt(env, tmp_path, monkeypatch, lease, provider):
     store, client = env
     image, listed = _send_with_image(client, monkeypatch, lease=lease)
     # The address the timeline gets is the address the original is served from.
@@ -70,12 +71,13 @@ def test_paste_to_claude_cli_prompt(env, tmp_path, monkeypatch, lease):
     scratch = tmp_path / "token"
     scratch.mkdir()
     run = dict(message_image_context=mention.image_context, token_scratch_dir=str(scratch), action_scope="chat")
-    prompt = worker._provider_prompt(run, CLAUDE, str(mention))
+    prompt = worker._provider_prompt(run, provider, str(mention))
     copied = scratch / "images" / "1-0.png"
     assert copied.read_bytes() == PNG and not copied.is_symlink()
     assert not copied.samefile(delivery.images.images_for_window(CHAT_DOC, 0)[0]["abs_path"])
     assert prompt.startswith(str(mention))
-    assert f"- 메시지 #1: {copied}" in prompt and "Read 도구" in prompt
+    assert f"- 메시지 #1: {copied}" in prompt
+    assert ("Read 도구" if provider == CLAUDE else "Codex --image") in prompt
     assert (run["images_total"], run["images_delivered"], run["images_undelivered"]) == (1, 1, 0)
     # Flow-owned: the Flow attachment registry never sees a message image.
     assert store._fetch_all("SELECT * FROM attachments") == []
@@ -89,7 +91,7 @@ def test_unsupported_ai_leaves_a_durable_record_and_no_file(env, tmp_path, monke
     scratch.mkdir()
     run = dict(message_image_context=mention.image_context, token_scratch_dir=str(scratch), action_scope="chat",
                run_id="r", group_id=GROUP, project_id=PROJECT, doc_ref=CHAT_DOC, mode="single")
-    prompt = worker._provider_prompt(run, CODEX, str(mention))
+    prompt = worker._provider_prompt(run, dict(CODEX, exec_location="remote"), str(mention))
     assert "1장이 있으나 이 연결로는 전달되지 않음" in prompt
     assert not (scratch / "images").exists() and str(scratch) not in prompt
     saved = []
