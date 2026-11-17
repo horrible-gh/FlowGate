@@ -33,8 +33,9 @@
         <Alert v-if="stale || staleTried" tone="warning" class="dma-alert" data-test="dma-stale">{{ t('stale') }}</Alert>
         <!-- Only the sentence shows; the server's status and code are the sentence's tooltip (Alert's title is a heading). -->
         <Alert v-if="refusal" :id="refusalId" tone="danger" class="dma-alert" data-test="dma-refusal" :data-reason="refusal.reason"
-          :data-status="refusal.status ?? undefined" :data-code="refusal.code ?? undefined"
+           :data-status="refusal.status ?? undefined" :data-code="refusal.code ?? undefined"
           ><span data-test="dma-refusal-text" :title="refusalTip">{{ refusalText }}</span></Alert>
+        <p v-if="refusal?.titleChanged" class="dma-hint" data-test="dma-title-saved">{{ t('rename.server.titleSaved') }}</p>
 
         <!-- v02gui.0029: the window's one sentence, then its target in a box (name large, its identifier / folder faint). -->
         <p v-if="lead" class="dma-lead" :data-test="lead.test">{{ lead.text }}</p>
@@ -585,6 +586,17 @@ const refusalText = computed(() => {
       : kind === 'group.archive' ? GROUP_ARCHIVE_REFUSAL_TEXT[r.code]
         : kind === 'group.delete' ? GROUP_DELETE_REFUSAL_TEXT[r.code] : undefined)
     : undefined
+  if (kind === 'group.rename' && r.code === 'module_identifier_taken' && r.holderArchived) {
+    return t('rename.server.archivedTaken', { group: r.subject ?? '' })
+  }
+  if (kind === 'group.rename' && r.code === 'module_rename_too_large') {
+    return t('rename.server.tooLarge', { documents: r.documents ?? 0, limit: r.limit ?? 0 })
+  }
+  if (kind === 'group.rename' && r.code === 'module_rename_busy' && r.busy?.length) {
+    const rows = r.busy.slice(0, 5).map((item) => `${item.group_id} — ${t(`rename.server.busyReasons.${item.reason}`, item.reason)}`)
+    const more = r.busy.length > 5 ? t('rename.server.busyMore', { n: r.busy.length - 5 }) : ''
+    return t('rename.server.busyDetailed', { items: rows.join(', '), more })
+  }
   // `subject` is what the server named: the group holding the identifier, the busy Flows, the existing branches.
   return own ? t(own, { group: r.subject ?? '' }) : t(`refusal.${r.reason}`)
 })
