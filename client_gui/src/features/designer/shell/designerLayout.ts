@@ -23,7 +23,7 @@ export const DESIGNER_LEFT_MODES: readonly DesignerLeftMode[] = ['project', 'fil
 /** flowgate.v02.0037 — the right Tool Panel tabs, in display order (팔레트 / 대화 / Git). */
 export type DesignerRightTool = 'palette' | 'conversation' | 'git'
 
-export const DESIGNER_RIGHT_TOOLS: readonly DesignerRightTool[] = ['palette', 'conversation', 'git']
+export const DESIGNER_RIGHT_TOOLS: readonly DesignerRightTool[] = ['conversation', 'palette', 'git']
 
 export interface DesignerLayoutState {
   activeLeftMode: DesignerLeftMode
