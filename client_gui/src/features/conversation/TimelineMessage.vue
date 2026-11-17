@@ -21,6 +21,13 @@
         </span>
         <span v-if="pending" class="tl-time">{{ t('gui.conversation.message.sending') }}</span>
         <span v-else-if="turn.createdAt" class="tl-time" :title="turn.createdAt">{{ formatTimelineTime(turn.createdAt) }}</span>
+        <!-- flowgate.v02test.0029: sent while the AI answered; answered right after the current answer. -->
+        <span
+          v-if="waiting && !pending"
+          class="tl-waiting"
+          data-test="tl-waiting"
+          :title="t('gui.conversation.message.waiting_title')"
+        >{{ t('gui.conversation.message.waiting') }}</span>
         <!-- flowgate.v02.0157: the message as written (Markdown source, not the rendered page), on both sides. -->
         <button
           v-if="turn.body"
@@ -49,6 +56,8 @@
            the shared renderer in safe mode: raw HTML is shown as text, unsafe links and every image as text only. -->
       <div v-if="isUser" class="tl-text">{{ turn.body }}</div>
       <div v-else class="tl-text tl-md" data-test="tl-md" @click.capture="onBodyClick" v-html="html" />
+      <!-- flowgate.v02test.0029: the message's images (thumbnails; one opens the original). -->
+      <TimelineImages v-if="turn.images?.length" :images="turn.images" />
       <p v-if="failed" class="tl-note tl-note--failed">
         {{ t('gui.conversation.message.failed') }}
         <!-- flowgate.v02gui.0007 A: the failure's short reason (class of the HTTP status, and the status). -->
@@ -64,6 +73,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyToClipboard } from '../../core/interaction/clipboard'
 import { createMarkdownRenderer } from '../../core/markdown/markdownRenderer'
+import TimelineImages from './TimelineImages.vue'
 import TimelineMessageMenu from './TimelineMessageMenu.vue'
 import { formatTimelineTime } from './timeline'
 import type { SendFailure } from './timeline'
@@ -75,6 +85,8 @@ const props = defineProps<{
   failed: boolean
   /** flowgate.v02gui.0007 A: why the send failed (a failed message only). */
   failure?: SendFailure | null
+  /** flowgate.v02test.0029: sent while the AI answered; the AI answers it once the current answer ends. */
+  waiting?: boolean
   readOnly?: boolean
   /** flowgate.v02test.0025: the ⋯ checkpoint menu is offered (context setting 체크포인트 사용). */
   canCheckpoint?: boolean
@@ -193,6 +205,17 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
 </script>
 
 <style scoped>
+.tl-waiting {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+}
+
 .tl-msg {
   display: flex;
   width: 100%;

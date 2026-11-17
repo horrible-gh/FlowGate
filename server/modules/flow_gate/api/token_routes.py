@@ -456,6 +456,7 @@ def _issue_token(
             # 0515 T0009 §8: the capability token_service.issue() just fixed on this
             # token, so the mention's CRUD section matches the real grant.
             source_access=result.get("source_access"),
+            locale=req_locale,
         )
         # 0515 T0009 §9: mention-build failure/empty always revokes the just-minted CH
         # token; a one-shot claim that won additionally has to commit before the token

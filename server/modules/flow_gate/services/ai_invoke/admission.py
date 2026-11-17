@@ -1982,6 +1982,7 @@ def start_run(
     # A resolution failure must not stall the hop (same contract as the provider override).
     # 0406 T0022 work item 5: where this hop's user message came from, and what the final
     # prompt became, ride on the run. The text is not kept — only kind, length and hash.
+    message_image_context = getattr(mention, "image_context", None)
     prompt_audit: dict = {
         "prompt_message_source": "none",
         "prompt_common_default_applied": False,
@@ -2230,6 +2231,7 @@ def start_run(
         # run-internal scratch: TMP/TEMP/TMPDIR, provider output, retained diagnostics),
         # which keeps its existing meaning untouched.
         "token_scratch_dir": issue["scratch_dir"],
+        "message_image_context": message_image_context,
         "scratch_retained": None,
         "duration_ms": None,
         "finished_at": None,

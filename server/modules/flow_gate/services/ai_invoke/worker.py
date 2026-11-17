@@ -601,6 +601,8 @@ def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
     """Add transport rules that apply only at a concrete provider boundary."""
     # flowgate.v02.0064 T-B4d: a claiming Graph AI start's card title request, worded for THIS provider (P0006
     # §4.2.6); any other token's prompt is returned as it is.
+    from modules.flow_gate.services import message_image_delivery
+    prompt = message_image_delivery.provider_prompt(prompt, provider, run)
     prompt = node_title_hooks.provider_prompt(prompt, run.get("raw_token"), provider.get("exec_type"))
     if provider_remote.is_remote_cli(provider):
         # flowgate.v02.0129 T#2 (D0005 §3-5): a remote Agent has no FLOWGATE_* variables and

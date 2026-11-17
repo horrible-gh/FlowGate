@@ -5,7 +5,15 @@
        the first line; AI picker, source mode icons, settings (⚙) and the ⋯ menu (mention copy,
        AI call) on the second. flowgate.v02.0061 T#14: `sourceLocked` turns the source mode icons off with the
        reason (the Flow's Graph run); nothing else changes. -->
-  <form class="conv-compose" data-test="conv-composer" @submit.prevent="submit">
+  <form
+    class="conv-compose"
+    :class="{ 'is-dragging': dragging }"
+    data-test="conv-composer"
+    @submit.prevent="submit"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
+  >
     <div v-if="manualCopyText" class="conv-manual" data-test="conv-manual-copy">
       <div class="conv-manual-head">
         <span>{{ t('gui.conversation.composer.manual_copy_title') }}</span>
@@ -17,7 +25,18 @@
       <textarea class="conv-manual-text" readonly spellcheck="false" :value="manualCopyText" @focus="($event.target as HTMLTextAreaElement).select()"></textarea>
     </div>
 
-    <div class="conv-pill">
+    <!-- flowgate.v02test.0029: pasted / dropped images wait here (thumbnail, upload state, ✕) until the message is sent. -->
+    <ComposerImageStrip
+      :images="attach.images.value"
+      :notice="attach.notice.value"
+      :unsupported-ai="unsupportedAi"
+      :hint="imageHint"
+      @remove="attach.remove"
+      @retry="attach.retry"
+      @dismiss-notice="attach.dismissNotice"
+    />
+
+    <div class="conv-pill" :class="{ 'has-side-stop': sendWhileRunning && stopMode !== null }">
       <textarea
         ref="inputEl"
         v-model="draft"
@@ -28,8 +47,24 @@
         :aria-label="t('gui.conversation.composer.placeholder')"
         :disabled="disabled || readOnly || sending"
         @input="onInput"
+        @paste="onPaste"
         @keydown.enter.exact.prevent="submit"
       ></textarea>
+      <!-- flowgate.v02test.0029: while the AI answers and something is typed, the message can be sent (its AI call
+           follows the answer); the stop stays next to it. -->
+      <button
+        v-if="sendWhileRunning && stopMode !== null"
+        type="button"
+        class="conv-send is-stop conv-stop-side"
+        :class="{ 'is-stopping': stopMode === 'requested' }"
+        data-test="conv-stop"
+        :title="stopTitle"
+        :aria-label="stopTitle"
+        :disabled="stopMode === 'requested'"
+        @click="emit('stop')"
+      >
+        <span aria-hidden="true">{{ stopMode === 'requested' ? '…' : '■' }}</span>
+      </button>
       <!-- 0264 R0001: while a chat AI run is in flight the send button is a STOP button. flowgate.v02gui.0011 B: with
            `stopState` it is one from the press of send on (chat created, message stored, AI call starting). -->
       <button
@@ -39,7 +74,7 @@
         data-test="conv-send"
         :title="sendTitle"
         :aria-label="sendTitle"
-        :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || aiPending || draft.trim() === ''"
+        :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || aiPending || draft.trim() === '' || attach.blocked.value"
         @click="isStop && emit('stop')"
       >
         <!-- flowgate.v02gui.0011 T: a stop under way is a muted spinning ring instead of ■ (… with reduced motion), so a
@@ -106,12 +141,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch, type DeepReadonly } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch, type DeepReadonly } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ComposerImageStrip from './ComposerImageStrip.vue'
 import ComposerModelPicker from './ComposerModelPicker.vue'
 import ComposerSettings from './ComposerSettings.vue'
 import ComposerSourceModes from './ComposerSourceModes.vue'
 import ComposerToolsMenu from './ComposerToolsMenu.vue'
+import { createComposerImages, isImageFile } from './composerImages'
 import { draftKey, draftUserId, loadDraft, saveDraft, type DraftOwner, type DraftSendSnapshot } from './drafts'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import type { ChatProvider, ChatSettings, ChatSettingsPatch, SourceAccessMode } from './types'
@@ -178,6 +215,10 @@ function currentOwner(): DraftOwner | null {
 }
 
 let visibleOwner = currentOwner()
+// flowgate.v02test.0029: the attached images follow the same owner as the text (chat or new-chat draft).
+const ownerRef = shallowRef<DraftOwner | null>(visibleOwner)
+const attach = createComposerImages(() => ownerRef.value)
+attach.restore(visibleOwner)
 const draft = ref(loadDraft(visibleOwner))
 const revisions = new Map<string, number>()
 const pending = new Set<{ snapshot: DraftSendSnapshot; owners: DraftOwner[] }>()
@@ -194,11 +235,14 @@ watch(
     if (transfer && owner && visibleOwner && !loadDraft(owner)) {
       revisions.set(draftKey(owner), revisions.get(draftKey(visibleOwner)) ?? 0)
       saveDraft(owner, draft.value)
+      attach.transfer(visibleOwner, owner)
       transfer.owners.push(owner)
     } else {
       draft.value = loadDraft(owner)
     }
     visibleOwner = owner
+    ownerRef.value = owner
+    attach.restore(owner)
     void nextTick(autoGrow)
   },
 )
@@ -209,11 +253,16 @@ const stopMode = computed<'available' | 'requested' | null>(() => {
   if (!props.running) return null
   return props.cancelling || props.runStarting ? 'requested' : 'available'
 })
-const isStop = computed(() => stopMode.value !== null)
 const aiPending = computed(() => props.aiPickStatus !== undefined && props.aiPickStatus !== 'ready')
+// flowgate.v02test.0029: an AI answering does not hold a typed message: the button sends it, the stop moves beside it.
+const sendWhileRunning = computed(() => props.running && !props.sending && draft.value.trim() !== '')
+const isStop = computed(() => stopMode.value !== null && !sendWhileRunning.value)
+
+const stopTitle = computed(() =>
+  props.cancelling || stopMode.value === 'requested' ? t('gui.conversation.composer.stopping') : t('gui.conversation.composer.stop'))
 
 const sendTitle = computed(() => {
-  if (props.cancelling || (props.stopState !== undefined && stopMode.value === 'requested')) return t('gui.conversation.composer.stopping')
+  if (isStop.value && (props.cancelling || (props.stopState !== undefined && stopMode.value === 'requested'))) return t('gui.conversation.composer.stopping')
   if (isStop.value) return t('gui.conversation.composer.stop')
   return t('gui.conversation.composer.send')
 })
@@ -235,14 +284,77 @@ function onInput(): void {
   autoGrow()
 }
 
+// ── flowgate.v02test.0029: message images — paste, drop, state of the attached ones ──────────────────────
+const canAttach = computed(() => !props.disabled && !props.readOnly && !props.sending)
+const dragging = ref(false)
+
+/** The AI picked is known not to accept images (`accepts_images=false`): the send is not blocked, the user is told. */
+const unsupportedAi = computed(() =>
+  attach.images.value.length > 0 && props.providers.find((p) => p.id === props.selectedProviderId)?.acceptsImages === false)
+
+/** Why the send is held now, for the note under the thumbnails. */
+const imageHint = computed<'uploading' | 'checking' | 'unusable' | 'text' | null>(() => {
+  if (attach.images.value.length === 0) return null
+  if (attach.uploading.value) return 'uploading'
+  if (attach.checking.value) return 'checking'
+  if (attach.blocked.value) return 'unusable'
+  return draft.value.trim() === '' ? 'text' : null
+})
+
+function clipboardImages(data: DataTransfer | null): File[] {
+  if (!data) return []
+  const files = Array.from(data.files ?? []).filter(isImageFile)
+  if (files.length) return files
+  return Array.from(data.items ?? []).flatMap((item) => {
+    const file = item.kind === 'file' && item.type.startsWith('image/') ? item.getAsFile() : null
+    return file ? [file] : []
+  })
+}
+
+function onPaste(event: ClipboardEvent): void {
+  if (!canAttach.value) return
+  const files = clipboardImages(event.clipboardData)
+  // Text that comes with an image (a copied spreadsheet range, a web selection) is pasted as text, as before.
+  if (!files.length || event.clipboardData?.getData('text/plain')) return
+  event.preventDefault()
+  attach.add(files)
+}
+
+const carriesFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes('Files')
+
+function onDragOver(event: DragEvent): void {
+  if (!canAttach.value || !carriesFiles(event)) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  dragging.value = true
+}
+
+function onDragLeave(event: DragEvent): void {
+  const next = event.relatedTarget as Node | null
+  if (!next || !(event.currentTarget as HTMLElement | null)?.contains(next)) dragging.value = false
+}
+
+function onDrop(event: DragEvent): void {
+  dragging.value = false
+  if (!canAttach.value || !carriesFiles(event)) return
+  event.preventDefault()
+  attach.add(Array.from(event.dataTransfer?.files ?? []))
+}
+
+onBeforeUnmount(() => attach.dispose())
+
 async function submit(): Promise<void> {
   const trace = createSubmissionTrace()
   trace.mark('submit')
   const text = draft.value.trim()
   const owner = visibleOwner
-  if (!owner || !text || props.disabled || props.readOnly || props.sending || props.running || aiPending.value) return
+  if (!owner || !text || props.disabled || props.readOnly || props.sending || aiPending.value) return
+  // An image still uploading, failed or gone holds the send: it would otherwise be left out without a word.
+  if (attach.blocked.value) return
   if ([...pending].some((p) => draftKey(p.snapshot.owner) === draftKey(owner))) return
-  const snapshot: DraftSendSnapshot = { owner: { ...owner }, body: draft.value, revision: revisions.get(draftKey(owner)) ?? 0 }
+  const imageIds = [...attach.readyIds.value]
+  const snapshot: DraftSendSnapshot = { owner: { ...owner }, body: draft.value, revision: revisions.get(draftKey(owner)) ?? 0,
+    ...(imageIds.length ? { images: imageIds } : {}) }
   const send = { snapshot, owners: [snapshot.owner] }
   // Persist before the first await, even if this owner is hidden by the time it fails.
   saveDraft(owner, snapshot.body)
@@ -254,6 +366,8 @@ async function submit(): Promise<void> {
     pending.delete(send)
   }
   if (!ok) return
+  // The server linked the images to the message: they leave the composer (they are not deleted).
+  if (imageIds.length) attach.sent(send.owners, imageIds)
   for (const target of send.owners) {
     const key = draftKey(target)
     if ((revisions.get(key) ?? 0) !== snapshot.revision || loadDraft(target) !== snapshot.body) continue
@@ -293,6 +407,11 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 
 .conv-ai-pick.is-error {
   color: var(--fg2-status-danger-fg);
+}
+
+.conv-compose.is-dragging {
+  outline: 2px dashed var(--fg2-blue);
+  outline-offset: -3px;
 }
 
 .conv-manual {
@@ -367,6 +486,11 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 
 .conv-input::placeholder {
   color: var(--fg2-muted-2);
+}
+
+/* flowgate.v02test.0029: send while the AI answers — the stop sits left of the send button. */
+.conv-pill.has-side-stop {
+  grid-template-columns: minmax(0, 1fr) 37px 39px;
 }
 
 .conv-send {

@@ -63,10 +63,19 @@ export interface PendingTurn {
    * the create intent its chat is made with, kept so a try after a failure or an F5 asks for the same chat.
    */
   createIntentId?: string
+  /**
+   * flowgate.v02test.0029: ids of the uploaded message images this message carries (kept with the message, so a retry
+   * and an F5 send the same images under the same idempotency key).
+   */
+  images?: string[]
 }
 
 export type TimelineItem =
-  | { kind: 'message'; key: string; turn: ConversationTurn; pending: boolean; failed: boolean; localId: string | null; failure?: SendFailure | null }
+  | {
+      kind: 'message'; key: string; turn: ConversationTurn; pending: boolean; failed: boolean; localId: string | null; failure?: SendFailure | null
+      /** flowgate.v02test.0029: sent while the AI answered; the AI answers it once the current answer ends (대기). */
+      waiting?: boolean
+    }
   | { kind: 'boundary'; key: string }
   | { kind: 'command'; key: string; activity: CommandRequestActivity }
   | { kind: 'change'; key: string; activity: WorkChangeActivity }

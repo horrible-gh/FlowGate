@@ -39,11 +39,24 @@ export interface ConversationTurn {
   /** The AI / model badge (0293 R0001: a badge only, identity is participantKey). */
   displayName?: string | null
   body: string
+  /** flowgate.v02test.0029: the message images the turn points at (metadata only; bytes come from `url`). */
+  images?: TurnImage[]
   /** Server attribution only; null / missing is unknown. */
   sourceRunId?: string | null
   basedOnSeq?: number | null
   staleSinceSeq?: number | null
   createdAt: string | null
+}
+
+/** flowgate.v02test.0029: one message image as the server lists it on a turn (never the bytes). */
+export interface TurnImage {
+  imageId: string
+  mediaType: string
+  size: number
+  width: number
+  height: number
+  /** The authenticated content endpoint; fetch it with the session's request, never as a bare `<img src>`. */
+  url: string
 }
 
 /** P0003 §0-4. */
@@ -314,6 +327,8 @@ export type CommandDecision = 'approve' | 'reject'
 export interface ChatProvider {
   id: string
   name: string
+  /** flowgate.v02test.0029: false = this AI is never given message images; absent = the server did not say. */
+  acceptsImages?: boolean
 }
 
 export interface ProviderList {

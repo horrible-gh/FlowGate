@@ -46,7 +46,7 @@ LEASE = {"group_id": GROUP, "run_id": RUN_ID, "token_id": f"tok_{RUN_ID}", "acti
     ("/api/v1/conversations/fgp.v02.0001.0012-CH/auto-title", "POST", True),
     ("/flowgate/api/v1/conversations/fgp.v02.0001.0012-CH/auto-title", "PATCH", False),
     ("/flowgate/api/v1/conversations/a/b/auto-title", "POST", False),
-    ("/flowgate/api/v1/documents/x/conversation/turn", "POST", False),
+    ("/flowgate/api/v1/documents/x/conversation/turn", "POST", True),
 ])
 def test_exempt_paths(path, method, exempt):
     assert policy.is_group_lease_exempt_path(path, method) is exempt

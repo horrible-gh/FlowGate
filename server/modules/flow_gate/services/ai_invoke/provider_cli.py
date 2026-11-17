@@ -554,6 +554,13 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     scratch = Path(run["scratch_dir"])
     last_message_file = scratch / "last_message.txt"
     cmd = _prepare_cli_command(kind, cmd, last_message_file)
+    # Only attachments prepared for this concrete local Codex attempt may cross
+    # the process boundary. The prompt itself continues to travel over stdin.
+    image_input = run.get("message_image_cli_args") or {}
+    if kind == "codex" and image_input.get("provider_id") == provider.get("id"):
+        image_args = image_input.get("args") or []
+        if image_args:
+            cmd += " " + " ".join(image_args)
 
     # T0011: cwd is selected once below by _resolve_cli_launch. No caller cwd, HOME,
     # installation directory, base checkout, or OS temp fallback is permitted.

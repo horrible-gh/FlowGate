@@ -58,6 +58,7 @@
           :pending="item.pending"
           :failed="item.failed"
           :failure="item.failure ?? null"
+          :waiting="item.waiting === true"
           :read-only="readOnly"
           :can-checkpoint="canCheckpoint"
           :checkpoint-kind="isCheckpointItem(item) ? checkpointKindOf : null"
