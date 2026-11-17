@@ -647,7 +647,9 @@ def _materialize(row, project_id):
             if directory.exists() or git._ref_exists(group_root, "refs/heads/" + branch) \
                     or git._ref_exists(group_root, ATTEMPT_REF_PREFIX + merge_target.workspace_key(row["attempt_id"])):
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="workspace_occupied")
-            marker = {**owner, **_start(current, group_root, project_id),
+            from .recovery_store import workspace_input
+            selected = workspace_input(current, group_root, _start(current, group_root, project_id))
+            marker = {**owner, **selected,
                       "repository": str(group_root), "common_dir": str(_common_dir(group_root))}
             if not marker.get("join_inputs"):
                 marker.pop("join_inputs", None)
@@ -663,6 +665,12 @@ def _materialize(row, project_id):
             _marker(row, project_id)
             if _common_dir(group_root) != Path(marker["common_dir"]).resolve():
                 raise port.GraphSourceError("graph_worktree_unavailable", reason="repository_mismatch")
+        # Interrupted preparation may already have a marker. Never reuse an old
+        # marker at another input merely because its DB journal was not written.
+        from .recovery_store import workspace_input
+        inspected = workspace_input(current, group_root, marker)
+        if inspected["input_commit"] != marker["input_commit"]:
+            raise port.GraphSourceError("graph_worktree_unavailable", reason="recovery_context_changed")
         sha = marker["input_commit"]
         if not root.exists():
             # Recovery can reuse an owned branch / ref left by an interrupted worktree add (or an interrupted join).

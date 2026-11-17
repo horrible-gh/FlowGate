@@ -185,6 +185,7 @@ START_SCHEMA = {
     "type": "object",
     "properties": {
         "flow_id": {"type": "string", "minLength": 1, "description": "This chat's Flow (its group id); defaults to it."},
+        "expected_context": {"type": "object", "description": "Context from read_flow_recovery_basis; changed inputs refuse the start."},
         "allow_instruction_ai": {"type": "boolean",
                                  "description": "Let the instruction AI write empty instructions (default false)."},
     },
@@ -350,6 +351,7 @@ def cli_mention(api_base, raw_token):
 
 
 def descriptors():
+    from . import recovery_tools
     return [
         {"name": PLACE_TOOL, "description": PLACE_DESCRIPTION, "schema": PLACE_SCHEMA, "handler": place_call,
          "cli_mention": cli_mention, "prompt_hint": PROMPT_HINT},
@@ -359,4 +361,4 @@ def descriptors():
         {"name": SET_ROLES_TOOL, "description": SET_ROLES_DESCRIPTION, "schema": SET_ROLES_SCHEMA,
          "handler": set_roles_call},
         {"name": OPTIONS_TOOL, "description": OPTIONS_DESCRIPTION, "schema": OPTIONS_SCHEMA, "handler": options_call},
-    ]
+    ] + recovery_tools.descriptors()
