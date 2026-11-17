@@ -410,9 +410,11 @@ _CHAT_TOOL_SCHEMA = {
         "commit_message": {
             "type": "string",
             "description": (
-                "Only when you changed source files in this chat: the commit message, in "
-                "English, as type(scope): summary. FlowGate commits the flow's worktree with "
-                "it when this chat ends."
+                "The commit message, in English, as type(scope): summary. Required whenever "
+                "the flow's worktree holds uncommitted changes (for example after you changed "
+                "source files): without it the reply is refused with 422 "
+                "commit_message_required. FlowGate commits the worktree with it when this "
+                "chat ends. Leave it out only when there is nothing to commit."
             ),
         },
     },

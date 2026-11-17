@@ -11,19 +11,26 @@ anything -- the chat stays a chat:
 1. The AI names the commit message. A chat AI that changed source sends
    ``commit_message`` with its reply turn (the worker turn route, or the API worker's
    ``send_chat_reply`` tool); :func:`record_message` keeps it on the live run.
+   flowgate.v02test.0033: this is enforced, not asked. An edit-mode chat reply that
+   arrives without a message while the worktree holds changes the run end would commit
+   is refused (422 ``commit_message_required``, :func:`message_required_paths`), dry runs
+   included. The AI resends with a message; nothing is registered meanwhile.
 2. When an edit-mode chat run ends (its token held ``source_access=read_write``),
    FlowGate commits the group worktree (:func:`commit_on_finalize`) with that message.
-   Without one, FlowGate writes a plain subject from the group type and the file count.
-   Changes left uncommitted from before (an earlier failed commit, an edit outside the
-   chat) go into the same commit -- a commit is of the worktree, as a card's is.
+   Without one (a change made after the reply, say), FlowGate writes a plain subject from
+   the group type and the file count. Changes left uncommitted from before (an earlier
+   failed commit, an edit outside the chat) go into the same commit -- a commit is of the
+   worktree, as a card's is.
 3. The outcome is written into the conversation as a FlowGate turn (speaker ``system``):
    the SHA, subject and files of a commit, or why the commit failed and which files are
    still uncommitted. A failed commit never blocks the next chat; the next edit-mode
-   chat's end commits the leftover changes.
+   chat's end commits the leftover changes. New files the tool-debris rule keeps out of
+   the commit are named in the same turn with their reason -- also when they were the
+   only change, so a file is never left behind without a word (flowgate.v02test.0033).
 
 A read-mode chat cannot change source, so its end commits nothing and says nothing. A
-run that left nothing to commit says nothing either. A group without Git (project Git
-off, no managed worktree) is outside the rule. Nothing here ever raises into the run.
+run that left nothing at all says nothing either. A group without Git (project Git off,
+no managed worktree) is outside the rule. Nothing here ever raises into the run.
 """
 from __future__ import annotations
 
@@ -36,8 +43,12 @@ logger = logging.getLogger(__name__)
 # Paths named on the run and in the turn; the count is always exact.
 PENDING_LIST_MAX = 20
 TURN_FILES_MAX = 10
-# Skips that mean "there was nothing to commit" -- no turn for them.
+# Skips that mean "there was nothing to commit" -- no turn for them unless debris was kept out.
 _NOTHING_TO_COMMIT = ("no_changes", "artifacts_only")
+# The run left only files the tool-debris rule keeps out of a commit.
+EXCLUDED_ONLY = "excluded_only"
+# The reply refusal (rule 1).
+MESSAGE_REQUIRED_CODE = "commit_message_required"
 
 SYSTEM_DISPLAY_NAME = "FlowGate"
 
@@ -49,6 +60,9 @@ _STRINGS = {
         "failed_plain": "자동 커밋에 실패했습니다 (`{reason}`).",
         "retry": "다음 편집 모드 채팅이 끝날 때 다시 커밋합니다.",
         "more": "외 {n}개",
+        "excluded_only": "커밋할 작업 파일이 없어 커밋하지 않았습니다. 새 파일 {n}개가 도구 찌꺼기 규칙에 걸려 커밋에서 빠졌습니다.",
+        "excluded": "새 파일 {n}개는 도구 찌꺼기 규칙에 걸려 커밋에서 빠졌습니다.",
+        "excluded_hint": "작업 결과인 파일이면 FlowGate의 제외 규칙을 고쳐야 커밋됩니다. 찌꺼기라면 `.gitignore`에 넣으면 더 나오지 않습니다.",
     },
     "en": {
         "committed": "Committed the chat's changes: `{commit}` {subject} ({n} file(s))",
@@ -57,6 +71,9 @@ _STRINGS = {
         "failed_plain": "The automatic commit failed (`{reason}`).",
         "retry": "The end of the next edit-mode chat commits them again.",
         "more": "{n} more",
+        "excluded_only": "Nothing was committed: no work files changed. {n} new file(s) matched the tool-debris rule and were kept out of the commit.",
+        "excluded": "{n} new file(s) matched the tool-debris rule and were kept out of the commit.",
+        "excluded_hint": "If one is work, FlowGate's exclusion rule needs fixing before it can be committed. If it is debris, add it to `.gitignore` and it stops showing.",
     },
     "ja": {
         "committed": "チャットの変更をコミットしました: `{commit}` {subject}（{n} ファイル）",
@@ -65,6 +82,9 @@ _STRINGS = {
         "failed_plain": "自動コミットに失敗しました（`{reason}`）。",
         "retry": "次の編集モードのチャットが終わるときに再度コミットします。",
         "more": "ほか {n} 件",
+        "excluded_only": "作業ファイルの変更がないためコミットしませんでした。新しいファイル {n} 件がツール残骸ルールに該当し、コミットから除外されました。",
+        "excluded": "新しいファイル {n} 件はツール残骸ルールに該当し、コミットから除外されました。",
+        "excluded_hint": "作業結果のファイルなら FlowGate の除外ルールを直さないとコミットされません。残骸なら `.gitignore` に入れると表示されなくなります。",
     },
 }
 
@@ -167,6 +187,35 @@ def pending_paths(root: Path) -> list[str]:
     return sorted(set(tracked) | set(kept))
 
 
+def excluded_paths(root: Path) -> list[str]:
+    """New files in ``root`` the tool-debris rule keeps out of a commit (sorted)."""
+    from modules.flow_gate.services import path_exclusion_rules
+    _kept, artifacts = path_exclusion_rules.partition_paths(_gs()._worktree_untracked_paths(root))
+    return sorted(artifacts)
+
+
+def message_required_paths(token: Optional[dict], raw: Optional[str]) -> list[str]:
+    """Rule 1 enforced: the paths that make this reply's missing commit message a refusal.
+
+    Empty -- the reply goes through -- when a message was sent, when the token is not an
+    edit-mode chat token, when the group has no Git, or when the run end would commit
+    nothing. Git trouble never refuses a reply (empty, logged): the run end still
+    commits with a plain subject and says so."""
+    if normalize_message(raw) is not None or not token:
+        return []
+    if token.get("action_scope") != "chat" or token.get("source_access") != "read_write":
+        return []
+    group_id = token.get("group_id")
+    if not group_id:
+        return []
+    try:
+        root = group_worktree(str(group_id))
+        return pending_paths(root) if root is not None else []
+    except Exception:
+        logger.warning("chat commit: pending check failed for %s", group_id, exc_info=True)
+        return []
+
+
 def run_may_write(run: dict) -> bool:
     """Was this chat run an edit-mode one? Read from its token row, not a stashed value."""
     token_id = run.get("token_id")
@@ -183,7 +232,7 @@ def commit_on_finalize(run: dict) -> Optional[dict]:
     """Rules 2 and 3: commit the worktree when an edit-mode chat run ends, then say so.
 
     Records ``run["chat_commit"]`` and returns it; None when the rule does not apply or
-    there was nothing to commit. Never raises."""
+    the run left nothing at all (no change, no file kept out). Never raises."""
     if run.get("action_scope") != "chat" or not run.get("group_id"):
         return None
     group_id = run["group_id"]
@@ -195,13 +244,17 @@ def commit_on_finalize(run: dict) -> Optional[dict]:
             return None
         pending = pending_paths(root)
         if not pending:
-            return None
+            # flowgate.v02test.0033: a run whose only new files are ones the debris rule
+            # keeps out used to end here without a word -- `.github/workflows/ci.yml` sat
+            # uncommitted and nobody was told. Name them instead.
+            return _finish(run, group_id, _excluded_only(excluded_paths(root)))
         message = run.get("chat_commit_message")
         source = "ai" if message else "fallback"
         subject = commit_subject(group_id, message) if message else fallback_subject(group_id, len(pending))
         outcome = _gs().create_tr_commit(group_id, subject)
+        excluded = sorted(outcome.get("excluded_artifacts") or [])
         if not outcome.get("committed") and outcome.get("skipped_reason") in _NOTHING_TO_COMMIT:
-            return None
+            return _finish(run, group_id, _excluded_only(excluded))
         committed = list(outcome.get("committed_paths") or [])
         result = {
             "committed": bool(outcome.get("committed")),
@@ -218,11 +271,37 @@ def commit_on_finalize(run: dict) -> Optional[dict]:
                 files = pending
         result["file_count"] = len(files)
         result["files"] = files[:PENDING_LIST_MAX]
+        _add_excluded(result, excluded)
     except Exception:
         logger.warning("chat commit failed for run %s", run.get("run_id"), exc_info=True)
         result = {"committed": False, "commit": None, "commit_sha": None, "subject": None,
                   "message_source": None, "skipped_reason": "commit_failed",
                   "file_count": 0, "files": []}
+    return _finish(run, group_id, result)
+
+
+def _excluded_only(excluded: list[str]) -> Optional[dict]:
+    """The result of a run that left only debris-rule files; None when it left nothing."""
+    if not excluded:
+        return None
+    result = {"committed": False, "commit": None, "commit_sha": None, "subject": None,
+              "message_source": None, "skipped_reason": EXCLUDED_ONLY,
+              "file_count": 0, "files": []}
+    _add_excluded(result, excluded)
+    return result
+
+
+def _add_excluded(result: dict, excluded: list[str]) -> None:
+    from modules.flow_gate.services import path_exclusion_rules
+    result["excluded_count"] = len(excluded)
+    result["excluded"] = [{"path": path, "reason": path_exclusion_rules.exclusion_reason(path)}
+                          for path in excluded[:PENDING_LIST_MAX]]
+
+
+def _finish(run: dict, group_id: str, result: Optional[dict]) -> Optional[dict]:
+    """Record the outcome on the run and say it; nothing at all when there is none."""
+    if result is None:
+        return None
     run["chat_commit"] = result
     if result["committed"]:
         logger.info("chat run %s committed %s in %s", run.get("run_id"), result["commit"], group_id)
@@ -261,6 +340,8 @@ def turn_body(result: dict, locale: Optional[str]) -> str:
                                            subject=result.get("subject") or "", n=count))
         if result.get("message_source") == "fallback":
             lines.append(s["fallback"])
+    elif result.get("skipped_reason") == EXCLUDED_ONLY:
+        lines.append(s["excluded_only"].format(n=int(result.get("excluded_count") or 0)))
     else:
         reason = result.get("skipped_reason") or "commit_failed"
         lines.append(s["failed"].format(reason=reason, n=count) if count else s["failed_plain"].format(reason=reason))
@@ -269,9 +350,26 @@ def turn_body(result: dict, locale: Optional[str]) -> str:
         lines += [f"- `{_inline(path)}`" for path in files[:TURN_FILES_MAX]]
         if count > TURN_FILES_MAX:
             lines.append(f"- {s['more'].format(n=count - TURN_FILES_MAX)}")
-    if not result.get("committed"):
+    lines += _excluded_lines(result, s)
+    if not result.get("committed") and result.get("skipped_reason") != EXCLUDED_ONLY:
         lines += ["", s["retry"]]
     return "\n".join(lines)
+
+
+def _excluded_lines(result: dict, s: dict) -> list[str]:
+    """The files the debris rule kept out, each with its reason, then what to do."""
+    excluded = list(result.get("excluded") or [])
+    total = int(result.get("excluded_count") or len(excluded))
+    if not total:
+        return []
+    lines = [""]
+    if result.get("skipped_reason") != EXCLUDED_ONLY:
+        lines += [s["excluded"].format(n=total), ""]
+    for item in excluded[:TURN_FILES_MAX]:
+        lines.append(f"- `{_inline(item.get('path') or '')}` ({item.get('reason') or '?'})")
+    if total > TURN_FILES_MAX:
+        lines.append(f"- {s['more'].format(n=total - TURN_FILES_MAX)}")
+    return lines + ["", s["excluded_hint"]]
 
 
 def _inline(path: str) -> str:

@@ -17,6 +17,10 @@ There are four categories (inherited from 0299 D0004 §3.3, with one added in 03
    ``REPO_CONFIG_FILENAMES``) are the exception (0608 TR0006): they are work, not debris,
    and ``git add -u`` commits an edit to them anyway, so hiding them from the manifest
    would let a repository policy change ride the commit unseen.
+   The repository's own configuration directories (``.github/`` …, see
+   ``REPO_CONFIG_DIRECTORIES``) are the same kind of exception (flowgate.v02test.0033): a
+   new ``.github/workflows/ci.yml`` was dropped from the chat commit as debris without a
+   word. Inside such a directory the other rules still apply to the rest of the path.
 2) **Dot directories mid-path** (added in 0382) — this is what catches ``server/.test-tmp-0313/...``.
    The final segment (the filename) is deliberately exempt, so a genuinely edited config file
    like ``client/src/.eslintrc.json`` cannot vanish silently (0299's original judgement stands).
@@ -64,8 +68,13 @@ _EXCLUDED_DIR_PREFIXES = ("pytest-cache-files-", TEST_SCRATCH_PREFIX)
 # committed whatever the rule says — the rule must therefore show it, or the reviewed
 # manifest and the commit disagree. Secrets (``.env``…) are deliberately not listed.
 REPO_CONFIG_FILENAMES = frozenset({
-    ".gitattributes", ".gitignore", ".dockerignore", ".editorconfig",
+    ".gitattributes", ".gitignore", ".dockerignore", ".editorconfig", ".gitlab-ci.yml",
 })
+
+# flowgate.v02test.0033: top-level dot directories that hold the repository's own
+# configuration (CI workflows and the like). They are work: a file under them is kept by
+# every screen, check and commit. Secret or tool directories (``.env``, ``.venv``…) are not listed.
+REPO_CONFIG_DIRECTORIES = frozenset({".github", ".gitlab", ".circleci"})
 
 
 def normalize_repo_path(path: str) -> str:
@@ -89,12 +98,15 @@ def exclusion_reason(path: str) -> Optional[str]:
     if not normalized:
         return REASON_EMPTY
     segments = normalized.split("/")
-    if segments[0].startswith(".") and not (
+    in_config_dir = len(segments) > 1 and segments[0] in REPO_CONFIG_DIRECTORIES
+    if segments[0].startswith(".") and not in_config_dir and not (
         len(segments) == 1 and segments[0] in REPO_CONFIG_FILENAMES
     ):
         return REASON_DOT_TOPLEVEL
     # Drop the last segment since it may be a filename — only directory segments are examined.
-    if any(seg.startswith(".") for seg in segments[:-1]):
+    # A repository configuration directory is itself exempt, not what lies under it.
+    directories = segments[1:-1] if in_config_dir else segments[:-1]
+    if any(seg.startswith(".") for seg in directories):
         return REASON_DOT_DIRECTORY
     if any(seg in _EXCLUDED_DIR_SEGMENTS for seg in segments):
         return REASON_TOOL_DIRECTORY

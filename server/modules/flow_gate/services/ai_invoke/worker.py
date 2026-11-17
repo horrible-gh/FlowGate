@@ -2600,6 +2600,9 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
         "display_name": (run.get("provider") or {}).get("name") or "AI",
     }
     # flowgate.v02test.0023: the chat commit point's message, when the model named one.
+    # flowgate.v02test.0033: the turn route itself refuses an edit-mode reply without one
+    # while the worktree holds changes; the refusal comes back as this tool's result, so
+    # the model resends with commit_message (the plain-text fallback below is refused too).
     if isinstance(tool_input.get("commit_message"), str) and tool_input["commit_message"].strip():
         body["commit_message"] = tool_input["commit_message"]
     req = urllib.request.Request(

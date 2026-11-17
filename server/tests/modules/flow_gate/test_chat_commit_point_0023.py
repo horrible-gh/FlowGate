@@ -6,7 +6,12 @@ The person is never asked for anything:
 2. when an edit-mode chat run ends, FlowGate commits the flow's worktree with it (the TR
    commit point, ``create_tr_commit``), or with a plain subject when the AI named none;
 3. the outcome -- a commit, or why it failed and what is left -- is written into the
-   conversation as a FlowGate turn (speaker ``system``). Nothing refuses a chat.
+   conversation as a FlowGate turn (speaker ``system``).
+
+flowgate.v02test.0033: rule 1 is enforced -- an edit-mode reply without a message while
+the worktree holds changes is refused (422 ``commit_message_required``); repository
+configuration directories (``.github/``) are work, not debris; and files the debris rule
+keeps out of the commit are named in the FlowGate turn instead of vanishing.
 """
 from __future__ import annotations
 
@@ -296,7 +301,8 @@ def _mention(monkeypatch, source_access):
 def test_an_edit_chat_mention_asks_for_the_commit_message(monkeypatch):
     text = _mention(monkeypatch, "read_write")
     submit = text[text.index("Submit: POST"):]
-    assert '"commit_message": "<only if you changed source files: see below>"' in submit
+    assert '"commit_message": "<required when the flow worktree has uncommitted changes: see below>"' in submit
+    assert "commit_message is REQUIRED" in text and "422 commit_message_required" in text
     assert '"force_encoding_reason": "<optional: only if a genuinely-flagged body must go through anyway>",' in submit
     assert "Do not commit yourself" in text
 
@@ -307,6 +313,163 @@ def test_a_read_chat_mention_does_not(monkeypatch, access):
     assert "commit_message" not in text
 
 
-def test_the_api_reply_tool_takes_an_optional_commit_message():
+def test_the_api_reply_tool_takes_a_commit_message_the_route_enforces():
     schema = runtime._CHAT_TOOL_SCHEMA
+    # Not schema-required: only a dirty worktree makes it required, and the route decides.
     assert "commit_message" in schema["properties"] and schema["required"] == ["body"]
+    assert "commit_message_required" in schema["properties"]["commit_message"]["description"]
+
+
+# -- 0033: the refusal (rule 1 enforced) ---------------------------------------
+
+def _route(monkeypatch, token, appended):
+    monkeypatch.setattr(conversation_routes, "_authenticate", lambda doc_id, raw: (token, None))
+    monkeypatch.setattr(conversation_turn_service, "append_turn",
+                        lambda **kw: appended.append(kw) or {"ok": True, "replayed": False, "turn": {"seq": 9}})
+    monkeypatch.setattr(conversation_turn_service, "dry_run_append",
+                        lambda **kw: appended.append(kw) or {"ok": True, "dry_run": True})
+    monkeypatch.setattr(svc, "record_message", lambda tok, raw: raw)
+
+
+def _edit_token(**over):
+    return {"token_id": "tok_x", "action_scope": "chat", "doc_ref": CHAT, "consumed_at": None,
+            "source_access": "read_write", "group_id": GROUP, **over}
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_an_edit_reply_without_a_message_on_a_dirty_worktree_is_refused(edit_chat, monkeypatch, dry_run):
+    import json
+    appended: list = []
+    _route(monkeypatch, _edit_token(), appended)
+    (edit_chat / "a.py").write_text("a = 2\n", encoding="utf-8")
+    (edit_chat / ".github" / "workflows").mkdir(parents=True)
+    (edit_chat / ".github" / "workflows" / "ci.yml").write_text("on: push\n", encoding="utf-8")
+    for message in (None, "", "   "):
+        body = conversation_routes.WorkerConversationTurnAppend(
+            body="done", idempotency_key="tok_x", dry_run=dry_run, commit_message=message)
+        response = conversation_routes._append_authenticated(CHAT, body, "raw")
+        assert response.status_code == 422
+        payload = json.loads(response.body)
+        assert payload["error_code"] == "commit_message_required"
+        assert payload["pending_paths"] == [".github/workflows/ci.yml", "a.py"] and payload["pending_count"] == 2
+    assert appended == []   # nothing registered, nothing validated past the refusal
+    body = conversation_routes.WorkerConversationTurnAppend(
+        body="done", idempotency_key="tok_x", dry_run=dry_run, commit_message="ci(github): add workflow")
+    assert conversation_routes._append_authenticated(CHAT, body, "raw").status_code in (200, 201)
+    assert len(appended) == 1
+
+
+@pytest.mark.parametrize("over", [{"source_access": "read"}, {"source_access": None}, {"action_scope": "edit"},
+                                  {"group_id": None}])
+def test_no_refusal_outside_an_edit_chat(edit_chat, monkeypatch, over):
+    appended: list = []
+    _route(monkeypatch, _edit_token(**over), appended)
+    (edit_chat / "a.py").write_text("a = 2\n", encoding="utf-8")
+    plain = conversation_routes.WorkerConversationTurnAppend(body="done", idempotency_key="tok_x")
+    assert conversation_routes._append_authenticated(CHAT, plain, "raw").status_code == 201
+
+
+def test_no_refusal_when_nothing_would_be_committed(edit_chat, monkeypatch):
+    appended: list = []
+    _route(monkeypatch, _edit_token(), appended)
+    (edit_chat / "ignored.log").write_text("x\n", encoding="utf-8")       # gitignored
+    (edit_chat / "server.db").write_text("x\n", encoding="utf-8")         # debris rule
+    plain = conversation_routes.WorkerConversationTurnAppend(body="done", idempotency_key="tok_x")
+    assert conversation_routes._append_authenticated(CHAT, plain, "raw").status_code == 201
+    monkeypatch.setattr(svc, "group_worktree", lambda group_id: None)    # no Git
+    (edit_chat / "a.py").write_text("a = 2\n", encoding="utf-8")
+    assert conversation_routes._append_authenticated(CHAT, plain, "raw").status_code == 201
+
+
+def test_git_trouble_never_refuses_a_reply(edit_chat, monkeypatch):
+    appended: list = []
+    _route(monkeypatch, _edit_token(), appended)
+    monkeypatch.setattr(svc, "pending_paths", lambda root: (_ for _ in ()).throw(RuntimeError("git")))
+    plain = conversation_routes.WorkerConversationTurnAppend(body="done", idempotency_key="tok_x")
+    assert conversation_routes._append_authenticated(CHAT, plain, "raw").status_code == 201
+
+
+def test_a_replay_of_a_consumed_token_is_not_refused(edit_chat, monkeypatch):
+    appended: list = []
+    _route(monkeypatch, _edit_token(consumed_at="2026-11-17T00:00:00"), appended)
+    monkeypatch.setattr(conversation_turn_service, "replay_turn",
+                        lambda **kw: {"ok": True, "replayed": True, "turn": {"seq": 9}})
+    (edit_chat / "a.py").write_text("a = 2\n", encoding="utf-8")
+    plain = conversation_routes.WorkerConversationTurnAppend(body="done", idempotency_key="tok_x")
+    assert conversation_routes._append_authenticated(CHAT, plain, "raw").status_code == 200
+
+
+# -- 0033: repository configuration directories are work -----------------------
+
+def test_repo_config_directories_are_kept_and_the_rest_of_the_rule_still_applies():
+    from modules.flow_gate.services import path_exclusion_rules as rules
+
+    for path in (".github/workflows/ci.yml", ".github/dependabot.yml", ".gitlab/ci/build.yml",
+                 ".circleci/config.yml", ".gitlab-ci.yml"):
+        assert rules.exclusion_reason(path) is None, path
+        assert git_service._is_hidden_source_path(path) is False, path
+    assert rules.exclusion_reason(".github") == rules.REASON_DOT_TOPLEVEL
+    assert rules.exclusion_reason(".githubx/a.yml") == rules.REASON_DOT_TOPLEVEL
+    assert rules.exclusion_reason(".github/.cache/a.yml") == rules.REASON_DOT_DIRECTORY
+    assert rules.exclusion_reason(".github/node_modules/a.js") == rules.REASON_TOOL_DIRECTORY
+    assert rules.exclusion_reason(".github/run.log") == rules.REASON_GENERATED_FILE
+    assert rules.exclusion_reason(".env") == rules.REASON_DOT_TOPLEVEL
+    assert rules.exclusion_reason(".venv/lib/x.py") == rules.REASON_DOT_TOPLEVEL
+    assert rules.exclusion_reason("server/.test-tmp-1/x") == rules.REASON_DOT_DIRECTORY
+
+
+def test_a_new_workflow_file_rides_the_real_chat_commit(edit_chat, announced, monkeypatch):
+    from modules.flow_gate.services.git import commit as git_commit
+
+    monkeypatch.setattr(git_service, "create_tr_commit",
+                        lambda group_id, subject: git_commit._commit_worktree(edit_chat, subject, {}, group_id))
+    (edit_chat / ".github" / "workflows").mkdir(parents=True)
+    (edit_chat / ".github" / "workflows" / "ci.yml").write_text("on: push\n", encoding="utf-8")
+    assert svc.pending_paths(edit_chat) == [".github/workflows/ci.yml"]
+    result = svc.commit_on_finalize(_run("ci(github): add workflow"))
+    assert result["committed"], result
+    assert _git(edit_chat, "show", "--name-only", "--format=", "HEAD").split() == [".github/workflows/ci.yml"]
+    assert svc.pending_paths(edit_chat) == []
+
+
+# -- 0033: files kept out are named, never silent ------------------------------
+
+def test_a_run_that_left_only_debris_rule_files_says_so(edit_chat, announced, monkeypatch):
+    monkeypatch.setattr(git_service, "create_tr_commit", lambda g, s: pytest.fail("must not commit"))
+    (edit_chat / "server.db").write_text("x\n", encoding="utf-8")
+    (edit_chat / ".env").write_text("SECRET=1\n", encoding="utf-8")
+    run = _run("fix: x")
+    result = svc.commit_on_finalize(run)
+    assert result["committed"] is False and result["skipped_reason"] == "excluded_only"
+    assert result["excluded_count"] == 2
+    assert result["excluded"] == [{"path": ".env", "reason": "dot_toplevel"},
+                                  {"path": "server.db", "reason": "generated_file"}]
+    assert run["chat_commit"] is result
+    body = announced[0]["body_raw"]
+    assert "커밋할 작업 파일이 없어 커밋하지 않았습니다" in body and "2개" in body
+    assert "- `.env` (dot_toplevel)" in body and "- `server.db` (generated_file)" in body
+    assert "다음 편집 모드 채팅이 끝날 때" not in body   # retrying would not change anything
+
+
+def test_a_commit_names_the_files_it_kept_out(edit_chat, announced, monkeypatch):
+    from modules.flow_gate.services.git import commit as git_commit
+
+    monkeypatch.setattr(git_service, "create_tr_commit",
+                        lambda group_id, subject: git_commit._commit_worktree(edit_chat, subject, {}, group_id))
+    (edit_chat / "a.py").write_text("a = 3\n", encoding="utf-8")
+    (edit_chat / "server.db").write_text("x\n", encoding="utf-8")
+    result = svc.commit_on_finalize(_run("fix(chat): x"))
+    assert result["committed"] and result["files"] == ["a.py"]
+    assert result["excluded"] == [{"path": "server.db", "reason": "generated_file"}]
+    body = announced[0]["body_raw"]
+    assert "`a.py`" in body and "새 파일 1개는 도구 찌꺼기 규칙에 걸려 커밋에서 빠졌습니다" in body
+    assert "- `server.db` (generated_file)" in body
+
+
+def test_turn_body_excluded_lists_in_english():
+    excluded = [{"path": f".x{i}/f", "reason": "dot_toplevel"} for i in range(12)]
+    body = svc.turn_body({"committed": False, "skipped_reason": "excluded_only", "file_count": 0,
+                          "files": [], "excluded_count": 12, "excluded": excluded}, "en")
+    assert body.startswith("Nothing was committed: no work files changed. 12 new file(s)")
+    assert "- `.x9/f` (dot_toplevel)" in body and ".x10/f" not in body and "- 2 more" in body
+    assert "commits them again" not in body

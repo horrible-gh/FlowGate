@@ -387,7 +387,7 @@ def build_conversation_mention(
     can_write = source_access == "read_write"
     if can_write:
         payload_lines[-2] += ","
-        payload_lines.insert(-1, '  "commit_message": "<only if you changed source files: see below>"')
+        payload_lines.insert(-1, '  "commit_message": "<required when the flow worktree has uncommitted changes: see below>"')
     lines = [
         "## Conversation",
         "---",
@@ -438,8 +438,11 @@ def build_conversation_mention(
             "If you changed source files in this chat, put the commit message in commit_message:",
             "English, `type(scope): summary`, one line. Do not commit yourself: when this chat",
             "ends FlowGate commits the flow's worktree with that message and writes the result",
-            "(or why the commit failed) into the conversation. Without commit_message FlowGate",
-            "writes a plain message. Leave it out when you changed no files.",
+            "(or why the commit failed) into the conversation. commit_message is REQUIRED",
+            "whenever the flow worktree holds uncommitted changes (yours or left from before):",
+            "without it the turn is refused with 422 commit_message_required, dry_run included,",
+            "and nothing is registered; resend the same turn with commit_message. Leave it out",
+            "only when there is nothing to commit.",
         ]
     if provider:
         lines += [

@@ -32,6 +32,8 @@ class WorkerConversationTurnAppend(BaseModel):
     force_encoding_reason: Optional[str] = None
     # flowgate.v02test.0023: the commit message of an edit-mode chat that changed source.
     # FlowGate commits the flow's worktree with it when the chat run ends.
+    # flowgate.v02test.0033: required (422 commit_message_required) when the token is an
+    # edit-mode chat token and the worktree holds changes that run end would commit.
     commit_message: Optional[str] = None
 
 
@@ -42,6 +44,35 @@ def _fail(status: int, message: str) -> JSONResponse:
             "ok": False,
             "http_status": status,
             "error_message": message,
+            "help_url": help_url(),
+        },
+    )
+
+
+_REQUIRED_PATHS_SHOWN = 20
+
+
+def _commit_message_refusal(token: dict, body: WorkerConversationTurnAppend) -> Optional[JSONResponse]:
+    """flowgate.v02test.0033: an edit-mode chat reply without a commit message is refused
+    while the worktree holds changes the run end would commit. Nothing is registered and
+    the token is not consumed, so the AI resends the same turn with commit_message."""
+    from modules.flow_gate.services import chat_commit_service
+    paths = chat_commit_service.message_required_paths(token, body.commit_message)
+    if not paths:
+        return None
+    return JSONResponse(
+        status_code=422,
+        content={
+            "ok": False,
+            "http_status": 422,
+            "error_code": chat_commit_service.MESSAGE_REQUIRED_CODE,
+            "error_message": (
+                f"commit_message is required: the flow worktree holds {len(paths)} uncommitted "
+                "change(s) that FlowGate commits when this chat ends. Resend this turn with "
+                "commit_message (English, one line, type(scope): summary). Nothing was registered."
+            ),
+            "pending_count": len(paths),
+            "pending_paths": paths[:_REQUIRED_PATHS_SHOWN],
             "help_url": help_url(),
         },
     )
@@ -117,6 +148,10 @@ def _append_authenticated(
     if body.dry_run:
         # T0004: validate-only path, checked before the single-use/replay branch so a
         # dry-run never depends on (or inspects) whether the token was already consumed.
+        # flowgate.v02test.0033: a dry run gives the same commit_message verdict.
+        refusal = _commit_message_refusal(token, body)
+        if refusal is not None:
+            return refusal
         try:
             result = conversation_turn_service.dry_run_append(
                 doc_id=doc_id,
@@ -147,6 +182,9 @@ def _append_authenticated(
             replay["message"] = f"Turn {replay['turn']['seq']} already recorded. You may end the session."
             return JSONResponse(status_code=200, content=replay)
 
+        refusal = _commit_message_refusal(token, body)
+        if refusal is not None:
+            return refusal
         result = conversation_turn_service.append_turn(
             doc_id=doc_id,
             actor=actor,
