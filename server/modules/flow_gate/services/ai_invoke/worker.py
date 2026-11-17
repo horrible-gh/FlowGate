@@ -597,6 +597,33 @@ _REMOTE_CLI_TRANSPORT: dict[str, str] = {
 }
 
 
+_REMOTE_CLI_CHAT_TRANSPORT: dict[str, str] = {
+    "ko": (
+        "## 원격 CLI 실행 규약\n---\n"
+        "이 작업은 원격 Agent에서 실행됩니다. FLOWGATE_TOKEN·FLOWGATE_SCRATCH·FLOWGATE_API_BASE "
+        "환경 변수는 없으므로 이 프롬프트에 적힌 토큰과 주소를 쓰십시오. `{SCRATCH}`와 scratch "
+        "디렉터리는 현재 작업 디렉터리를 뜻합니다. 제출할 본문은 현재 작업 디렉터리에 UTF-8 "
+        "파일로 작성하고, 위의 대화 턴 제출 안내에 따라 보내십시오(명령줄 문자열에 직접 넣지 않음)."
+    ),
+    "ja": (
+        "## リモートCLI実行規約\n---\n"
+        "この作業はリモートAgentで実行されます。FLOWGATE_TOKEN・FLOWGATE_SCRATCH・FLOWGATE_API_BASE "
+        "環境変数はないため、このプロンプトに記載されたトークンとアドレスを使ってください。"
+        "`{SCRATCH}`とscratchディレクトリは現在の作業ディレクトリを指します。提出する本文は"
+        "現在の作業ディレクトリにUTF-8ファイルとして作成し、上記の会話ターン提出案内に従って"
+        "送ってください(コマンドライン文字列に直接入れない)。"
+    ),
+    "en": (
+        "## Remote CLI execution contract\n---\n"
+        "This work runs on a remote Agent. There are no FLOWGATE_TOKEN, FLOWGATE_SCRATCH or "
+        "FLOWGATE_API_BASE variables; use the token and address written in this prompt. "
+        "`{SCRATCH}` and the scratch directory mean the current working directory. Write the "
+        "body you submit as a UTF-8 file in the current working directory and submit it "
+        "following the conversation turn instructions above (never inline on a command line)."
+    ),
+}
+
+
 def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
     """Add transport rules that apply only at a concrete provider boundary."""
     # flowgate.v02.0064 T-B4d: a claiming Graph AI start's card title request, worded for THIS provider (P0006
@@ -611,7 +638,10 @@ def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
         locale = str(run.get("continuation_locale") or run.get("locale") or "ko").lower()
         if locale not in _REMOTE_CLI_TRANSPORT:
             locale = "ko"
-        return prompt.rstrip() + "\n\n" + _REMOTE_CLI_TRANSPORT[locale]
+        # Chat replies use the conversation turn endpoint, never the inbox envelope.
+        transport = (_REMOTE_CLI_CHAT_TRANSPORT if run.get("action_scope") == "chat"
+                     else _REMOTE_CLI_TRANSPORT)
+        return prompt.rstrip() + "\n\n" + transport[locale]
     # Review loops keep their admission scope while hop_kind tracks the live stage.
     if provider.get("exec_type") == "api" or effective_action_scope(run) != "review":
         return prompt
