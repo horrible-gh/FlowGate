@@ -53,6 +53,12 @@ requires a new attempt while the node's active attempt is still the asker's: the
 and nothing is approved — the card is ``needs_intervention`` (``action_required:new_attempt``) until a new attempt is opened
 (an explicit command reopens an open card; a card in review is moved by a Stop). The chat AI's outlook tells it
 (``action_required``).
+
+flowgate.v02test.0032: a review loop's rework AI may ask inside the loop; the loop does not wait and may end without
+passing (``review_count_exhausted``), and ``assigned_review.consume_loop_verdict`` then holds the verdict for the answers.
+Such a loop is a waiting ``review`` step too (``_verdict_held_for_answers``: its assignment still current, an AI's, no
+verdict), so its questions go to a responder and the answers let the verdict be consumed. The asking role of a loop's
+question is the role of the invocation whose actual AI asked (``_asking_role``), not the loop's last hop.
 """
 from __future__ import annotations
 
@@ -167,7 +173,7 @@ def _dispatch(flow_id: str, node: dict, run: dict, items: list[dict], asked_by_i
     from flowgate.ai_roles import qa_adapter
     picks, reason, default_tail, card_class = qa_adapter.candidates(
         flow_id, node, target.get("asker_actual_provider_id") or run.get("provider_id"),
-        qa_adapter.asking_role(run, asked_by_instruction))
+        _asking_role(run, target, asked_by_instruction))
     provider, source = picks[0] if picks else (None, None)
     try:
         if provider is None:
@@ -189,6 +195,49 @@ def _dispatch(flow_id: str, node: dict, run: dict, items: list[dict], asked_by_i
     return True
 
 
+def _asking_role(run: dict, target: dict, asked_by_instruction: bool) -> Optional[str]:
+    """The card role that asked ``target``. flowgate.v02test.0032: a review loop runs its review and rework hops as one
+    AI run, so the run's latest invocation (usually the last review) does not tell who asked — a rework AI's question
+    would exclude the review AI, the card's natural responder. The invocation whose actual AI is the question's asker
+    tells it when that names exactly one role; otherwise ``qa_adapter.asking_role`` as before."""
+    from flowgate.ai_roles import qa_adapter, record_store  # noqa: PLC0415
+
+    role = qa_adapter.asking_role(run, asked_by_instruction)
+    asker = target.get("asker_actual_provider_id")
+    if not run.get("document_review_loop") or not asker or not run.get("run_id"):
+        return role
+    try:
+        records = run.get("invocations") or (record_store.by_run(run["run_id"]) if record_store.available() else [])
+    except Exception:  # noqa: BLE001 — unreadable provenance: the run's own role as before
+        _log.warning("card question asker role read failed run=%s", run.get("run_id"), exc_info=True)
+        return role
+    roles = {r.get("inv_role") for r in records
+             if r.get("actual_ai_id") == asker and r.get("inv_role") in ("execution", "review")}
+    return roles.pop() if len(roles) == 1 else role
+
+
+def _verdict_held_for_answers(run: dict) -> bool:
+    """flowgate.v02test.0032: an assigned review loop that stopped WITHOUT passing (``review_count_exhausted``, stalled,
+    hold, …) still waits on its questions when ``assigned_review.consume_loop_verdict`` held its verdict for them: the
+    loop's assignment is still the attempt's current review assignment, an AI's, with no verdict. Only a passed loop
+    was a waiting step before, so a rework AI's question asked inside a loop that then ran out of reviews was never put
+    to a responder (``_dispatch_waiting``) and a person's answer moved nothing (``_answered``): the card stopped with an
+    active review assignment and no verdict (0029 Q #628)."""
+    from flowgate.card_settings import stage_assignment as sa  # noqa: PLC0415 — stage_assignment imports widely
+
+    ref = legacy.assignment_of_exec(run.get("graph_exec_id"))
+    if ref is None or ref[1] not in (sa.RESULT_REVIEW, sa.INSTRUCTION_REVIEW) or sa.is_legacy_attempt(ref[0]):
+        return False                            # a pre-feature loop's end never waits on questions unless it passed
+    attempt_id, stage, seq = ref
+    try:
+        a = sa.store.read(attempt_id, stage, seq)
+        latest = sa.current_review_assignment(attempt_id, stage)
+    except sa.AssignmentUnreadable:
+        return False
+    return a is not None and latest is not None and int(latest["seq"]) == int(seq) and a["actor"] == sa.AI \
+        and not a.get("verdict")
+
+
 def _waiting(flow_id: str, run: dict) -> Optional[tuple[str, dict, Optional[dict]]]:
     """(phase, node, node run) of the card step ``run`` left at its end and that has not gone on since; else None."""
     run_id = run["run_id"]
@@ -196,7 +245,9 @@ def _waiting(flow_id: str, run: dict) -> Optional[tuple[str, dict, Optional[dict
     if loop:
         instruction = legacy.instruction_node_of_document(flow_id, run.get("doc_ref"))
         node = instruction[0] if instruction else legacy.node_of_result(flow_id, run.get("doc_ref"))
-        if loop.get("stop_reason") != PASSED or node is None or legacy.review_loop_active(run.get("doc_ref")):
+        if node is None or legacy.review_loop_active(run.get("doc_ref")):
+            return None
+        if loop.get("stop_reason") != PASSED and not _verdict_held_for_answers(run):
             return None
         return "review", node, None
     stage = legacy.instruction_node_of_ai_run(flow_id, run_id)
