@@ -119,6 +119,7 @@
       />
       <span class="conv-assist-spacer"></span>
       <ComposerSettings
+        :timeout-enabled="chatId !== null"
         :settings="settings"
         :saving="savingSettings"
         :has-providers="hasProviders"

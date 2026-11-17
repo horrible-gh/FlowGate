@@ -29,7 +29,7 @@ def _text_only_message_images(monkeypatch):
     # This suite's chat fixtures predate message images and contain no images.
     # Actual linked images are covered by test_message_image_delivery_0029.
     from modules.flow_gate.services import message_image_delivery
-    monkeypatch.setattr(message_image_delivery, "image_count", lambda *args: 0)
+    monkeypatch.setattr(message_image_delivery, "image_count", lambda *args, **kwargs: 0)
     from modules.flow_gate.services import question_policy
     monkeypatch.setattr(question_policy, "text", lambda *args, **kwargs: "")
 
@@ -206,9 +206,9 @@ class _WindowRoute:
         self.head_seq = head_seq
         self.calls = []
 
-    def __call__(self, _doc, _raw, after_seq, before_seq, limit, include_head):
+    def __call__(self, _doc, _raw, after_seq, before_seq, limit, include_head, through_seq=None):
         self.calls.append((after_seq, limit))
-        rows = list(range(after_seq + 1, self.head_seq + 1))
+        rows = list(range(after_seq + 1, min(self.head_seq, through_seq if through_seq is not None else self.head_seq) + 1))
         picked = rows[: (limit or 200)]
         more = len(rows) > len(picked)
         body = {"ok": True, "head_seq": self.head_seq, "next_after_seq": picked[-1] if more and picked else None,

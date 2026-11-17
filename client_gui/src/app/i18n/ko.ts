@@ -1175,6 +1175,11 @@ export default {
       clear: '해제',
     },
     message: {
+      edit: '편집',
+      remove: '삭제',
+      deleted: '삭제된 메세지',
+      delete_confirm: '이 메시지를 삭제할까요?',
+      change_failed: '변경하지 못했습니다. 다시 확인해 주세요.',
       user: '나',
       ai: 'AI',
       // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
@@ -1278,6 +1283,7 @@ export default {
     },
     status: {
       run_running: 'AI가 답하는 중…',
+      run_timeout: '설정한 시간이 지나 AI 호출이 종료되었습니다.',
       run_cancelled: 'AI 호출을 중지했습니다',
       run_no_reply: 'AI 호출이 답변 없이 끝났습니다',
       run_query_unconfirmed: 'AI 실행은 종료되었지만 저장 답변 조회를 확인하지 못했습니다',
@@ -1389,6 +1395,11 @@ export default {
       context_turns: '최근 {n}턴',
       context_all: '전체',
       context_custom: '사용자 입력',
+      context_checkpoint_recent: '체크포인트 + 최대 X턴',
+      timeout: '타임아웃',
+      timeout_none: '제한 없음',
+      timeout_minutes: '{n}분',
+      timeout_invalid: '1~10080 사이의 정수(분)를 입력하세요.',
       context_checkpoint: '체크포인트 사용',
       context_invalid: '{min}~{max} 사이의 정수를 입력하세요',
     },

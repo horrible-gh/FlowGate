@@ -252,7 +252,7 @@ describe('v02test.0013 held signals', () => {
   })
 
   it('mergeChatRefresh is the union of two requests', () => {
-    expect(mergeChatRefresh(null, { turns: true })).toEqual({ run: false, turns: true, activities: false, history: false })
-    expect(mergeChatRefresh({ run: true }, { activities: true })).toEqual({ run: true, turns: false, activities: true, history: false })
+    expect(mergeChatRefresh(null, { turns: true })).toEqual({ revised: false, run: false, turns: true, activities: false, history: false })
+    expect(mergeChatRefresh({ run: true }, { activities: true })).toEqual({ revised: false, run: true, turns: false, activities: true, history: false })
   })
 })

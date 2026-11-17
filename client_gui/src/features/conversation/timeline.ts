@@ -92,7 +92,7 @@ function timeOf(iso: string | null | undefined): number | null {
 export function mergeTurns(current: readonly ConversationTurn[], incoming: readonly ConversationTurn[]): ConversationTurn[] {
   const bySeq = new Map<number, ConversationTurn>()
   for (const turn of current) if (turn.seq > 0) bySeq.set(turn.seq, turn)
-  for (const turn of incoming) if (turn.seq > 0 && !bySeq.has(turn.seq)) bySeq.set(turn.seq, turn)
+  for (const turn of incoming) if (turn.seq > 0 && (!bySeq.has(turn.seq) || (turn.messageVersion ?? 1) > (bySeq.get(turn.seq)?.messageVersion ?? 1))) bySeq.set(turn.seq, turn)
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq)
 }
 

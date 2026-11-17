@@ -33,6 +33,8 @@ export interface ConversationScope {
 
 /** One stored turn (P0003 §0-2 — same fields the server returns). */
 export interface ConversationTurn {
+  messageVersion?: number
+  deletedAt?: string | null
   seq: number
   speaker: 'user' | 'ai' | string
   participantKey?: string | null
@@ -69,6 +71,7 @@ export interface ConversationParticipant {
 
 /** One page of GET /documents/{id}/conversation/turns. */
 export interface TurnsPage {
+  myParticipantKey?: string | null
   turns: ConversationTurn[]
   participants: ConversationParticipant[]
   myReadSeq: number | null
@@ -342,6 +345,7 @@ export interface ProviderList {
  * checkpoint (null = none). The checkpoint applies only while the context setting is 체크포인트 사용.
  */
 export interface ChatDocSettings {
+  timeoutMinutes?: number | null
   providerId: string | null
   checkpointSeq: number | null
   /** 'include' = send from the checkpoint message, 'exclude' = from the next message; null without a checkpoint. */
@@ -351,6 +355,7 @@ export interface ChatDocSettings {
 export type CheckpointKind = 'include' | 'exclude'
 
 export interface ChatDocSettingsPatch {
+  timeout_minutes?: number | null
   provider_id?: string | null
   context_checkpoint_seq?: number | null
   context_checkpoint_kind?: CheckpointKind
@@ -358,14 +363,16 @@ export interface ChatDocSettingsPatch {
 
 export type SendAction = 'copy_mention' | 'invoke_ai' | 'none'
 /** flowgate.v02test.0025: 'checkpoint' = the chat's checkpoint decides what is sent (the last 5 turns without one). */
-export type ContextMode = 'recent' | 'all' | 'checkpoint'
+export type ContextMode = 'recent' | 'all' | 'checkpoint' | 'checkpoint_recent'
 /** AI source access mode (group 0515/0568, flowgate.v02test.0026): read / execute (commands only) / edit / edit once. */
 export type SourceAccessMode = 'read_only' | 'execute' | 'edit' | 'edit_once'
 
 /** GET/PATCH /me/chat-settings (D0008 / P0009). */
 export interface ChatSettings {
+  timeoutMinutes?: number | null
   sendAction: SendAction
   contextMode: ContextMode
+  checkpointMaxTurns?: number
   contextTurns: number
   sourceAccessMode: SourceAccessMode
   sourceAccessScope: ConversationScope | null
@@ -376,8 +383,10 @@ export interface ChatSettings {
 }
 
 export interface ChatSettingsPatch {
+  timeout_minutes?: number | null
   send_action?: SendAction
   context_mode?: ContextMode
+  checkpoint_max_turns?: number
   context_turns?: number
   source_access_mode?: SourceAccessMode
 }

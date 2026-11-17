@@ -261,8 +261,8 @@ describe('v02test.0025 context setting 체크포인트 사용', () => {
     await wrapper.find('[data-test="conv-settings-btn"]').trigger('click')
     const select = wrapper.find('[data-test="conv-setting-context"]')
     const options = select.findAll('option')
-    expect(options.map((o) => o.attributes('value'))).toEqual(['5', '10', '15', '20', '30', 'custom', 'all', 'checkpoint'])
-    expect(options[options.length - 1].text()).toBe('체크포인트 사용')
+    expect(options.map((o) => o.attributes('value'))).toEqual(['5', '10', '15', 'custom', 'all', 'checkpoint', 'checkpoint_recent'])
+    expect(options[options.length - 2].text()).toBe('체크포인트 사용')
     await select.setValue('checkpoint')
     await wrapper.find('[data-test="conv-settings-save"]').trigger('click')
     await flushPromises()
@@ -315,7 +315,7 @@ describe('v02test.0025 the checkpoint message is always loaded under 체크포�
   it('opening a chat whose checkpoint is older than the first page reads older pages until it is on screen', async () => {
     const { session, olderReads } = await setupLong('checkpoint', { providerId: null, checkpointSeq: 12, checkpointKind: 'include' })
     expect(session.state.turns[0].seq).toBe(11) // 41~70, then 11~40: #12 is loaded, no further page
-    expect(olderReads()).toEqual([71, 41])
+    expect(olderReads()).toEqual([71, 61, 51, 41, 31, 21])
     expect(session.state.hasMoreBefore).toBe(true) // #1~#10 stay behind [이전 대화]
   })
 
@@ -337,7 +337,7 @@ describe('v02test.0025 the checkpoint message is always loaded under 체크포�
     expect(await session.saveSettings({ context_mode: 'checkpoint' })).toBe(true)
     await flushPromises()
     expect(session.state.turns[0].seq).toBe(11)
-    expect(olderReads()).toEqual([71, 41])
+    expect(olderReads()).toEqual([71, 61, 51, 41, 31, 21])
   })
 
   it('a failed older read stops there (the [이전 대화] button stays)', async () => {

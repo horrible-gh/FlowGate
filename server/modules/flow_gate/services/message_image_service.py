@@ -242,12 +242,14 @@ def for_range(conversation_id, first_seq, last_seq):
     return grouped
 
 
-def images_for_window(conversation_id, after_seq, limit=MAX_WINDOW_IMAGES):
+def images_for_window(conversation_id, after_seq, limit=MAX_WINDOW_IMAGES, through_seq=None):
     limit = max(0, min(int(limit), MAX_WINDOW_IMAGES))
     rows = get_store()._fetch_all(
         "SELECT i.*, l.seq, l.position FROM message_image_links l JOIN message_images i ON i.image_id = l.image_id "
-        "WHERE l.conversation_id = ? AND l.seq > ? ORDER BY l.seq DESC, l.position DESC LIMIT ?",
-        [conversation_id, after_seq, limit])
+        "WHERE l.conversation_id = ? AND l.seq > ? "
+        + ("AND l.seq <= ? " if through_seq is not None else "")
+        + "ORDER BY l.seq DESC, l.position DESC LIMIT ?",
+        [conversation_id, after_seq, *([through_seq] if through_seq is not None else []), limit])
     return [{**{key: row[key] for key in ("seq", "position", "image_id", "media_type")},
              "abs_path": str(file_path(row).resolve())} for row in reversed(rows)]
 

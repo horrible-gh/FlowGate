@@ -264,7 +264,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
   it('saves a typed last-N-turns value from 1 to 999 and keeps the select and input in step', async () => {
     const { source } = await mountPanel()
     await find('conv-settings-btn').trigger('click')
-    expect(find('conv-setting-turns').exists()).toBe(false) // a preset is selected: no number box
+    expect(find('conv-setting-turns').exists()).toBe(true) // legacy default 20 opens as custom
     await find('conv-setting-context').setValue('custom')
     const input = find('conv-setting-turns')
     await input.setValue('999')
@@ -298,8 +298,8 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(values).toContain('custom')
     expect(options.find((o) => o.attributes('value') === 'custom')!.text()).toBe('사용자 입력')
     // flowgate.v02test.0025: 체크포인트 사용 comes after 전체; it carries no number box either.
-    expect(values.slice(-2)).toEqual(['all', 'checkpoint'])
-    for (const preset of values.filter((v) => v !== 'custom' && v !== 'all') as string[]) {
+    expect(values.slice(-3)).toEqual(['all', 'checkpoint', 'checkpoint_recent'])
+    for (const preset of values.filter((v) => v !== 'custom' && v !== 'all' && v !== 'checkpoint_recent') as string[]) {
       await select.setValue(preset)
       expect(find('conv-setting-turns').exists()).toBe(false)
       expect(find('conv-setting-turns-error').exists()).toBe(false)

@@ -1164,6 +1164,11 @@ export default {
       clear: '解除',
     },
     message: {
+      edit: '編集',
+      remove: '削除',
+      deleted: '削除されたメッセージ',
+      delete_confirm: 'このメッセージを削除しますか？',
+      change_failed: '変更できませんでした。再確認してください。',
       user: '自分',
       ai: 'AI',
       // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
@@ -1267,6 +1272,7 @@ export default {
     },
     status: {
       run_running: 'AIが回答中…',
+      run_timeout: '設定した制限時間に達したためAI呼び出しを終了しました。',
       run_cancelled: 'AI 呼び出しを停止しました',
       run_no_reply: 'AI 呼び出しが返信なしで終了しました',
       run_query_unconfirmed: 'AI 呼び出しは終了しましたが、保存された返信の照会を確認できませんでした',
@@ -1378,6 +1384,11 @@ export default {
       context_turns: '直近 {n} ターン',
       context_all: 'すべて',
       context_custom: 'ユーザー入力',
+      context_checkpoint_recent: 'チェックポイント + 最大Xターン',
+      timeout: 'タイムアウト',
+      timeout_none: '無制限',
+      timeout_minutes: '{n}分',
+      timeout_invalid: '1〜10080の整数（分）を入力してください。',
       context_checkpoint: 'チェックポイントを使用',
       context_invalid: '{min}〜{max} の整数を入力してください',
     },

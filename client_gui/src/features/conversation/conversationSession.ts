@@ -44,7 +44,7 @@ import type {
 
 // L0004 §1-5 screen parameters (same values as the v0.1 ConversationView).
 export const TURN_PAGE_SIZE = 50
-export const PREPEND_PAGE_SIZE = 30
+export const PREPEND_PAGE_SIZE = 10
 export const CATCHUP_MAX_ROUNDS = 20
 export const SEND_RETRY_MAX = 2
 export const RUN_POLL_MS = 2500
@@ -76,6 +76,7 @@ export const ACTIVE_RUN_ADOPT_ATTEMPTS = FINAL_TURN_READ_ATTEMPTS
  * `activities` its command requests and run changes, `history` the terminal state of runs that ended unseen.
  */
 export interface ChatRefresh {
+  revised?: boolean
   run?: boolean
   turns?: boolean
   activities?: boolean
@@ -83,11 +84,12 @@ export interface ChatRefresh {
 }
 
 /** Everything: a reconnect or a return to the panel, after which any of it may be missing. */
-export const FULL_CHAT_REFRESH: Readonly<Required<ChatRefresh>> = Object.freeze({ run: true, turns: true, activities: true, history: true })
+export const FULL_CHAT_REFRESH: Readonly<Required<ChatRefresh>> = Object.freeze({ revised: true, run: true, turns: true, activities: true, history: true })
 
 /** The union of two refresh requests (null: none yet). */
 export function mergeChatRefresh(a: ChatRefresh | null, b: ChatRefresh): ChatRefresh {
   return {
+    revised: !!(a?.revised || b.revised),
     run: !!(a?.run || b.run),
     turns: !!(a?.turns || b.turns),
     activities: !!(a?.activities || b.activities),
@@ -116,6 +118,7 @@ export interface ConversationNotice {
 }
 
 export interface ConversationState {
+  myParticipantKey: string | null
   scope: ConversationScope | null
   chats: ChatSummary[]
   chatsStatus: LoadStatus
@@ -318,6 +321,7 @@ export interface ConversationSession {
   /** Resolves the chat mention; the screen writes it to the clipboard (it owns the click). */
   issueMention(): Promise<string | null>
   setManualCopyText(text: string | null): void
+  mutateTurn(seq: number, body: string | null, done: (ok: boolean, error?: string) => void, version?: number): Promise<void>
   saveSettings(patch: ChatSettingsPatch): Promise<boolean>
   setSourceMode(mode: SourceAccessMode): Promise<void>
   /** Adds an activity pushed by the container or the source (upsert by id). */
@@ -582,6 +586,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     providerOrigin: 'default_fallback',
     chatProviderStatus: 'ready',
     chatProviderError: null,
+    myParticipantKey: null,
     checkpointSeq: null,
     checkpointKind: null,
     savingCheckpoint: false,
@@ -979,6 +984,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.runId = null
     state.cancelling = false
     state.deciding = []
+    state.settings.timeoutMinutes = null
+    state.myParticipantKey = null
     state.checkpointSeq = null
     state.checkpointKind = null
     state.savingCheckpoint = false
@@ -986,6 +993,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   function applyPage(page: Awaited<ReturnType<ConversationSource['fetchTurns']>>, participantsComplete = false): void {
+    if (page.myParticipantKey != null) state.myParticipantKey = page.myParticipantKey
     state.turns = mergeTurns(state.turns, page.turns)
     state.headSeq = Math.max(state.headSeq, page.headSeq)
     // Empty scroll pages omit metadata; an includeHead response is authoritative, even empty.
@@ -1081,6 +1089,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       const [stored] = await Promise.all([read, providersLoad])
       if (!isCurrentChat(chatId, gen)) return
       const settings = stored ?? { providerId: null, checkpointSeq: state.checkpointSeq, checkpointKind: state.checkpointKind }
+      state.settings.timeoutMinutes = settings.timeoutMinutes ?? null
       state.checkpointSeq = settings.checkpointSeq
       state.checkpointKind = settings.checkpointKind
       // A pick made on this screen while the read was out wins: it is the newer one (and is being saved).
@@ -1158,7 +1167,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   function applySettings(settings: ChatSettings, scope: ConversationScope | null): boolean {
     if (!sameScope(settings.sourceAccessScope, scope)) return false
-    state.settings = { ...settings, sourceAccessMode: scope ? settings.sourceAccessMode : 'read_only' }
+    state.settings = { ...settings, timeoutMinutes: settings.timeoutMinutes === undefined ? state.settings.timeoutMinutes : settings.timeoutMinutes, sourceAccessMode: scope ? settings.sourceAccessMode : 'read_only' }
     return true
   }
 
@@ -1351,7 +1360,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
         cursor = page.nextAfterSeq
       }
       state.hasMoreBefore = oldestSeq() > 1
-      if (state.hasMoreBefore && state.turns.length < PREPEND_PAGE_SIZE) await loadOlder(trace)
+      while (state.hasMoreBefore && state.turns.length < PREPEND_PAGE_SIZE) {
+        const before = oldestSeq()
+        await loadOlder(trace)
+        if (disposed || gen !== chatGen || oldestSeq() >= before) break
+      }
       if (disposed || gen !== chatGen) return
       state.turnsStatus = 'ready'
     } catch (error) {
@@ -1457,7 +1470,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   function checkpointOffScreen(): boolean {
     const seq = state.checkpointSeq
-    return state.settings.contextMode === 'checkpoint' && seq != null && state.turnsStatus === 'ready' && state.hasMoreBefore && oldestSeq() > seq
+    return (state.settings.contextMode === 'checkpoint' || state.settings.contextMode === 'checkpoint_recent') && seq != null && state.turnsStatus === 'ready' && state.hasMoreBefore && oldestSeq() > seq
   }
 
   async function revealCheckpoint(): Promise<void> {
@@ -1531,7 +1544,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!chatId || disposed) return
     const gen = chatGen
     const current = () => isCurrentChat(chatId, gen)
-    const result = await readTurnPages(chatId, state.turns.at(-1)?.seq ?? 0, current)
+    const result = await readTurnPages(chatId, Math.max(0, oldestSeq() - 1), current)
     if (!current() || result.status === 'discarded') return
     await loadActivities(chatId, gen)
     if (!current()) return
@@ -1601,6 +1614,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
     // A run started elsewhere (another window, a resend that was answered late) or missed when the chat opened.
     if (wanted.run && !running.value) await adoptActiveRun(chatId, gen, 1)
     if (!current()) return
+    if (wanted.revised) {
+      await readTurnPages(chatId, Math.max(0, oldestSeq() - 1), current)
+      if (!current()) return
+    }
     // The poll reads the turns and activities on every tick and ends the run with its own final reads.
     const poll = currentPoll(chatId, gen)
     if (poll) {
@@ -2678,6 +2695,21 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.manualCopyText = text || null
   }
 
+  async function mutateTurn(seq: number, body: string | null, done: (ok: boolean, error?: string) => void, version?: number): Promise<void> {
+    const chatId = state.activeChatId
+    const gen = chatGen
+    const turn = state.turns.find((t) => t.seq === seq)
+    if (!chatId || !source.mutateTurn || !turn) { done(false); return }
+    try {
+      const saved = await source.mutateTurn(chatId, seq, version ?? turn.messageVersion ?? 1, body)
+      if (isCurrentChat(chatId, gen)) state.turns = mergeTurns(state.turns, [saved])
+      done(true)
+    } catch (error) {
+      if (isCurrentChat(chatId, gen)) await readTurnPages(chatId, Math.max(0, oldestSeq() - 1), () => isCurrentChat(chatId, gen))
+      done(false, messageOf(error))
+    }
+  }
+
   async function saveSettings(patch: ChatSettingsPatch): Promise<boolean> {
     if (state.savingSettings || state.pendingSourceMode) return false
     const gen = scopeGen
@@ -2686,7 +2718,18 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const request = ++settingsRequest
     state.savingSettings = true
     try {
-      const settings = await source.saveChatSettings(patch, scope ?? undefined)
+      const { timeout_minutes, ...userPatch } = patch
+      const chatId = state.activeChatId
+      const chatGeneration = chatGen
+      let timeoutMinutes = state.settings.timeoutMinutes ?? null
+      if ('timeout_minutes' in patch) {
+        if (!chatId || !source.saveChatDocSettings) return false
+        const saved = await source.saveChatDocSettings(chatId, { timeout_minutes })
+        timeoutMinutes = saved.timeoutMinutes ?? null
+      }
+      const settings = await source.saveChatSettings(userPatch, scope ?? undefined)
+      if (chatId && !isCurrentChat(chatId, chatGeneration)) return false
+      settings.timeoutMinutes = timeoutMinutes
       return settingsCurrent(gen, scope) && request === settingsRequest && applySettings(settings, scope)
     } catch (error) {
       if (settingsCurrent(gen, scope)) notify('danger', 'settings_failed', messageOf(error))
@@ -2777,6 +2820,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     stopRun,
     issueMention,
     setManualCopyText,
+    mutateTurn,
     saveSettings,
     setSourceMode,
     pushActivity,

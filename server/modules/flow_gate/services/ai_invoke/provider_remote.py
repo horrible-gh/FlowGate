@@ -338,6 +338,8 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
     owner = agent_jobs.retrieval_owner_for(run.get("run_id"))
     workdir = job_workdir(template, job_id)
     info.update(job_id=job_id, attempt_id=attempt_id, workdir=workdir)
+    if run.get("chat_timeout_policy") and run.get("chat_timeout_sec") is None:
+        return _final(run, provider, JOB_REFUSED, "agent_unlimited_timeout_unsupported")
     timeout_seconds = max(1, int(_absolute_remaining_sec(run)))
     try:
         svc.enqueue_remote_cli(
@@ -441,6 +443,8 @@ class _RemoteProgress:
         from modules.flow_gate.db.connection import now_iso
         run = self.run
         now = _svc()._now_mono()
+        if run.get("chat_timeout_policy"):
+            return False
         if status != "STARTED":
             return False
         if not self.started:
@@ -490,7 +494,7 @@ def _mark_watchdog(run: dict, kind: str) -> None:
         "stalled_sec": int(max(0.0, now - anchor)),
         "elapsed_sec": int(max(0.0, now - (run.get("started_mono") or now))),
         "threshold_sec": int(run.get("timeout_sec") or 0),
-        "absolute_cap_sec": _absolute_cap_sec(),
+        "absolute_cap_sec": run.get("chat_timeout_sec") if run.get("chat_timeout_policy") else _absolute_cap_sec(),
         "last_progress_at": run.get("last_progress_at"),
         "progress_observations": int(run.get("progress_observations") or 0),
         "attempt_no": int(run.get("attempt_no") or 0),

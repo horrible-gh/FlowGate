@@ -104,7 +104,7 @@ def _claim_watchdog_kill(run: dict, proc, stop_event: threading.Event,
             "stalled_sec": int(max(0.0, now - anchor)),
             "elapsed_sec": int(max(0.0, now - run["started_mono"])),
             "threshold_sec": int(run.get("timeout_sec") or 0),
-            "absolute_cap_sec": _absolute_cap_sec(),
+            "absolute_cap_sec": run.get("chat_timeout_sec") if run.get("chat_timeout_policy") else _absolute_cap_sec(),
             "last_progress_at": run.get("last_progress_at"),
             "progress_observations": int(run.get("progress_observations") or 0),
             "attempt_no": int(run.get("attempt_no") or 0),
@@ -168,10 +168,12 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
             return None
         # The ceiling is unconditional (§3-6): it does not care how much progress there
         # has been, and it does not need a readable sample to be true.
-        if now - run["started_mono"] >= _absolute_cap_sec():
+        if _absolute_remaining_sec(run) <= 0:
             return "absolute_cap" if _claim_watchdog_kill(
                 run, proc, stop_event, "absolute_cap", now) else None
 
+        if run.get("chat_timeout_policy"):
+            continue
         moved: list[str] = []
         # Independent optional observer: an error cannot disable document/Git guards.
         try:
@@ -528,7 +530,7 @@ def _execute_local(exec_id, cwd, prompt, env, *, command, run, decision, started
         if run["cancel_event"].is_set():
             cli.terminate()
         started(cli.proc)
-        return cli, cli.communicate(prompt.encode("utf-8"), max(1.0, _absolute_remaining_sec(run)))
+        return cli, cli.communicate(prompt.encode("utf-8"), None if run.get("chat_timeout_policy") and run.get("chat_timeout_sec") is None else max(1.0, _absolute_remaining_sec(run)))
     finally:
         try:
             stopped()

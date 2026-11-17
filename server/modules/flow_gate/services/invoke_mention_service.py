@@ -371,6 +371,11 @@ def build_conversation_mention(
     )
     after_seq, folded = window["after_seq"], window["folded"]
     checkpoint_seq = window["checkpoint_seq"]
+    window_query = ""
+    if window.get("through_seq") is not None:
+        window_query += f"&through_seq={window['through_seq']}"
+    if window.get("limit") is not None:
+        window_query += f"&limit={window['limit']}"
     api_base = api_base_url.rstrip("/")
     display_name = provider or "<your model name>"
     payload_lines = [
@@ -395,10 +400,11 @@ def build_conversation_mention(
         f"Conversation document: {doc_id}",
         "",
         "Read the conversation context selected for this invocation:",
-        f"GET {api_base}/conversation/{doc_id}/turns?after_seq={after_seq}&include_head=1",
+        f"GET {api_base}/conversation/{doc_id}/turns?after_seq={after_seq}&include_head=1{window_query}",
         f"Authorization: Bearer {raw_token}",
         "",
         *_start_paragraph(folded),
+        "When paging this selected context, keep through_seq and limit from the initial URL unchanged.",
     ]
     if checkpoint_seq is not None:
         lines += [""] + _checkpoint_notice(checkpoint_seq, window["checkpoint_kind"])
@@ -483,7 +489,7 @@ def build_conversation_mention(
     if policy:
         lines += ["", policy]
     from modules.flow_gate.services import message_image_delivery
-    context = {"conversation_id": doc_id, "after_seq": after_seq, "locale": _locale(locale)}
+    context = {"conversation_id": doc_id, "after_seq": after_seq, "through_seq": window.get("through_seq"), "locale": _locale(locale)}
     text = "\n".join(lines)
     if command_execution:
         return message_image_delivery.ConversationMention(text, context)

@@ -500,6 +500,8 @@ export async function fetchRunFileDiff(chatId: string, runId: string, path: stri
 
 // ── Turns ────────────────────────────────────────────────────────────────────────────
 interface RawTurn {
+  message_version?: number
+  deleted_at?: string | null
   source_run_id?: string | null
   seq: number
   speaker: string
@@ -550,6 +552,8 @@ export function toTurn(raw: RawTurn): ConversationTurn {
   const images = toTurnImages(raw.images)
   return {
     seq: Number(raw.seq) || 0,
+    messageVersion: raw.message_version ?? 1,
+    deletedAt: raw.deleted_at ?? null,
     speaker: raw.speaker,
     participantKey: raw.participant_key ?? null,
     displayName: raw.display_name ?? null,
@@ -587,6 +591,7 @@ export async function fetchTurns(chatId: string, query: TurnsQuery): Promise<Tur
   return {
     turns: (data?.turns ?? []).map(toTurn),
     participants: (data?.participants ?? []).filter((p) => p?.participant_key).map(toParticipant),
+    myParticipantKey: data?.me?.participant_key ?? null,
     myReadSeq: data?.me ? Number(data.me.last_read_seq) || 0 : null,
     headSeq: Number(data?.head_seq) || 0,
     nextAfterSeq: data?.next_after_seq ?? null,
@@ -832,6 +837,7 @@ interface RawChatSettings {
   settings?: {
     send_action?: string
     context_mode?: string
+    checkpoint_max_turns?: number
     context_turns?: number
     source_access_mode?: string
   } | null
@@ -853,7 +859,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   contextTurns: 20,
   sourceAccessMode: 'read_only',
   sourceAccessScope: null,
-  contextTurnsPresets: [5, 10, 15, 20, 30],
+  contextTurnsPresets: [5, 10, 15],
   contextTurnsMin: 1,
   contextTurnsMax: 999,
   sourceAccessModes: [...SOURCE_MODES],
@@ -863,11 +869,12 @@ export function toChatSettings(raw: RawChatSettings | null | undefined): ChatSet
   const s = raw?.settings ?? {}
   const d = raw?.domain ?? {}
   const sendAction = SEND_ACTIONS.find((v) => v === s.send_action) ?? DEFAULT_CHAT_SETTINGS.sendAction
-  const contextMode: ContextMode = s.context_mode === 'all' || s.context_mode === 'checkpoint' ? s.context_mode : 'recent'
+  const contextMode: ContextMode = s.context_mode === 'all' || s.context_mode === 'checkpoint' || s.context_mode === 'checkpoint_recent' ? s.context_mode : 'recent'
   const sourceAccessMode = SOURCE_MODES.find((v) => v === s.source_access_mode) ?? DEFAULT_CHAT_SETTINGS.sourceAccessMode
   return {
     sendAction,
     contextMode,
+    checkpointMaxTurns: s.checkpoint_max_turns ?? 10,
     contextTurns: Number.isInteger(s.context_turns) ? Number(s.context_turns) : DEFAULT_CHAT_SETTINGS.contextTurns,
     sourceAccessMode,
     sourceAccessScope: typeof raw?.source_access_scope?.project_id === 'string' && typeof raw?.source_access_scope?.group_id === 'string'
@@ -897,7 +904,7 @@ export async function saveChatSettings(patch: ChatSettingsPatch, scope?: Convers
 
 // ── Per-chat settings (flowgate.v02test.0025) ───────────────────────────────────────────
 interface RawChatDocSettings {
-  settings?: { provider_id?: string | null; context_checkpoint_seq?: number | null; context_checkpoint_kind?: string | null } | null
+  settings?: { timeout_minutes?: number | null; provider_id?: string | null; context_checkpoint_seq?: number | null; context_checkpoint_kind?: string | null } | null
 }
 
 function toChatDocSettings(raw: RawChatDocSettings | null | undefined): ChatDocSettings {
@@ -905,6 +912,7 @@ function toChatDocSettings(raw: RawChatDocSettings | null | undefined): ChatDocS
   const seq = s.context_checkpoint_seq
   const checkpointSeq = Number.isInteger(seq) && Number(seq) >= 1 ? Number(seq) : null
   return {
+    timeoutMinutes: s.timeout_minutes ?? null,
     providerId: typeof s.provider_id === 'string' && s.provider_id ? s.provider_id : null,
     checkpointSeq,
     checkpointKind: checkpointSeq == null ? null : s.context_checkpoint_kind === 'exclude' ? 'exclude' : 'include',
@@ -937,4 +945,11 @@ export async function issueChatMention(chatId: string): Promise<string> {
   )
   if (!data?.mention) throw clientCheckFailure()
   return data.mention
+}
+
+
+export async function mutateTurn(chatId: string, seq: number, version: number, body: string | null): Promise<ConversationTurn> {
+  const result = await call(() => patchRequest<{ turn: RawTurn }>(`${doc(chatId)}/conversation/turns/${seq}`,
+    { expected_version: version, ...(body === null ? { delete: true } : { body }) }))
+  return toTurn(result.turn)
 }

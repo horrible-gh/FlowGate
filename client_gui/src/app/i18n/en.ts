@@ -1164,6 +1164,11 @@ export default {
       clear: 'Clear',
     },
     message: {
+      edit: 'Edit',
+      remove: 'Delete',
+      deleted: 'Deleted message',
+      delete_confirm: 'Delete this message?',
+      change_failed: 'Could not save. Please reload and retry.',
       user: 'Me',
       ai: 'AI',
       // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
@@ -1267,6 +1272,7 @@ export default {
     },
     status: {
       run_running: 'AI is replying…',
+      run_timeout: 'The AI call reached its time limit.',
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',
       run_query_unconfirmed: 'The AI call ended, but the saved reply could not be verified',
@@ -1378,6 +1384,11 @@ export default {
       context_turns: 'Last {n} turns',
       context_all: 'All',
       context_custom: 'Custom',
+      context_checkpoint_recent: 'Checkpoint + at most X turns',
+      timeout: 'Timeout',
+      timeout_none: 'Unlimited',
+      timeout_minutes: '{n} minutes',
+      timeout_invalid: 'Enter an integer from 1 to 10080 minutes.',
       context_checkpoint: 'Use checkpoint',
       context_invalid: 'Enter a whole number from {min} to {max}',
     },

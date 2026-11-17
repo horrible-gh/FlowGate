@@ -232,6 +232,8 @@ def _reference_doc_lines(doc_dot_dash_path: str, base: str, locale: str = "ko") 
         lines.append(_CH_NO_TURNS_TEXT.get(loc, _CH_NO_TURNS_TEXT["ko"]))
         return lines
     for row in turns:
+        if row.get("deleted_at"):
+            continue
         wire = turn_wire(row)
         speaker = wire.get("display_name") or wire.get("speaker") or "?"
         lines.append(f"--- turn {wire['seq']} [{speaker}] {wire.get('created_at') or ''} ---")
