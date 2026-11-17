@@ -27,6 +27,8 @@ export interface DraftSendSnapshot {
   owner: DraftOwner
   body: string
   revision: number
+  /** flowgate.v02test.0029: ids of the uploaded message images sent with the text (the composer's ready thumbnails). */
+  images?: string[]
   createIntentId?: string
   createdChatId?: string
 }
@@ -80,6 +82,31 @@ export function saveDraft(target: DraftTarget | null, value: string): void {
   try {
     if (value === '') localStorage.removeItem(draftKey(target))
     else localStorage.setItem(draftKey(target), value)
+  } catch {
+    /* best effort */
+  }
+}
+
+// flowgate.v02test.0029: the draft's attached message images are kept as their image ids only (the bytes live on the
+// server for 24 hours; one the server already cleaned up is shown as gone when the draft is read again). A separate key
+// beside the text, so the v0.1 text key keeps its format.
+const imagesKey = (target: DraftTarget) => `${draftKey(target)}.images`
+
+export function loadDraftImages(target: DraftTarget | null): string[] {
+  if (!target) return []
+  try {
+    const raw = JSON.parse(localStorage.getItem(imagesKey(target)) ?? '[]')
+    return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string' && id !== '') : []
+  } catch {
+    return []
+  }
+}
+
+export function saveDraftImages(target: DraftTarget | null, ids: readonly string[]): void {
+  if (!target) return
+  try {
+    if (ids.length === 0) localStorage.removeItem(imagesKey(target))
+    else localStorage.setItem(imagesKey(target), JSON.stringify(ids))
   } catch {
     /* best effort */
   }
