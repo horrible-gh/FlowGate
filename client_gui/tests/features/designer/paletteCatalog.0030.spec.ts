@@ -43,7 +43,7 @@ describe('Palette default items (03-designer-shell)', () => {
   it('lists the deck items per category in order', () => {
     expect(groupPaletteItems(DEFAULT_PALETTE_ITEMS).map((s) => [s.category, s.items.map((i) => i.id)])).toEqual([
       ['design', ['basic_design', 'protocol', 'logic', 'db_design']],
-      ['workflow', ['research', 'plan', 'task', 'test']],
+      ['workflow', ['research', 'task', 'test']],
       ['control', ['confirm']],
     ])
   })
@@ -59,7 +59,6 @@ describe('Palette default items (03-designer-shell)', () => {
       ['logic', 'design', 'L'],
       ['db_design', 'design', 'DB'],
       ['research', 'research', 'N'],
-      ['plan', 'plan', 'WP'],
       ['task', 'task', 'T'],
       ['test', 'test', 'TS'],
       ['confirm', 'approval', null],
