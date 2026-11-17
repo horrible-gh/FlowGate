@@ -155,7 +155,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     const providerId = state.selectedProviderId
     // flowgate.v02gui.0028: the bubble shows now (전송 중), before the create; a held try of this text keeps its intent.
     const held = session.holdFirstSend({ intentId: origin.owner.intentId, createIntentId: draftCreateIntent(origin.owner),
-      body: text, providerId, sendAction: state.settings.sendAction })
+      body: text, providerId, sendAction: state.settings.sendAction, ...(origin.images?.length ? { images: origin.images } : {}) })
     origin.createIntentId = held?.createIntentId ?? draftCreateIntent(origin.owner)
     const heldSendId = held?.localId
     const typed = draftTitle.value
@@ -224,7 +224,9 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
       const item = state.pending.find((p) => p.localId === localId && p.failed)
       if (!item || !state.scope || !draftIntentId.value) return false
       const owner: DraftOwner = { ...state.scope, userId: draftUserId(), intentId: draftIntentId.value, chatId: null }
-      const ok = await send(item.body)
+      // flowgate.v02test.0029: the failed message is tried again with the images it was written with.
+      const retrySnapshot: DraftSendSnapshot | undefined = item.images?.length ? { owner, body: item.body, revision: 0, images: [...item.images] } : undefined
+      const ok = await send(item.body, retrySnapshot)
       // The composer still holds the text of a failed first send; once accepted it is not left to be sent again.
       if (ok && loadDraft(owner).trim() === item.body) saveDraft(owner, '')
       return ok
