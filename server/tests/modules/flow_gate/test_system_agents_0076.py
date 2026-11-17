@@ -37,8 +37,7 @@ API = "/flowgate/api/v1"
 AGENT_TABLES = ["agents", "agent_credentials", "agent_enrollments"]
 LOCAL_BODY = {"name": "local-probe", "enabled": True, "location": "local", "connection_mode": None,
               "local_executable_path": "/opt/flowgate-agent", "configured_capabilities": {"ai_cli": True, "ai_api": False, "storage": False}}
-REMOTE_BODY = {"name": "remote-probe", "enabled": True, "location": "remote", "connection_mode": "agent_pull",
-               "local_executable_path": None, "configured_capabilities": {"ai_cli": True, "ai_api": True, "storage": True}}
+REMOTE_BODY = {"name": "remote-probe"}
 
 
 # ── fixture ──────────────────────────────────────────────────────────────────
@@ -184,7 +183,7 @@ def _agent_calls(remote, unregistered, registered):
     return [
         ("GET", f"{API}/system/agents", None),
         ("GET", f"{API}/system/agents/{remote}", None),
-        ("POST", f"{API}/system/agents", LOCAL_BODY),
+        ("POST", f"{API}/system/agents", REMOTE_BODY),
         ("PATCH", f"{API}/system/agents/{remote}", {"name": "v06-renamed"}),
         ("POST", f"{API}/system/agents/{remote}/enrollments", {}),
         ("PATCH", f"{API}/system/agents/{remote}", {"enabled": False}),
@@ -262,22 +261,14 @@ def test_v06_d_delegated_observation_every_agent_route(env):
 
 # ── V16: register, status, enable toggle ─────────────────────────────────────
 
-def test_v16_register_local_and_remote_with_the_existing_contract(env):
-    a = env.h("A")
-    r = env.client.post(f"{API}/system/agents", json=LOCAL_BODY, headers=a)
-    assert r.status_code == 201, r.text
-    local = r.json()
-    assert r.headers["Location"] == f"/flowgate/api/v1/system/agents/{local['agent_id']}"
-    assert r.headers["Cache-Control"] == "no-store"
-    assert (local["location"], local["connection_mode"], local["local_executable_path"]) == ("local", None, "/opt/flowgate-agent")
-    assert (local["online_status"], local["registration_status"], local["credential_status"]) == ("not_applicable", "unregistered", "none")
-    assert local["reported_capabilities"] == {"ai_cli": None, "ai_api": None, "storage": None}
-    remote = _create(env, REMOTE_BODY)
-    assert (remote["connection_mode"], remote["local_executable_path"], remote["online_status"]) == ("agent_pull", None, "offline")
-    listed = {x["agent_id"]: x for x in env.client.get(f"{API}/system/agents", headers=a).json()["agents"]}
-    assert listed[local["agent_id"]] == local and listed[remote["agent_id"]] == remote  # list = detail
-    assert env.agent(remote["agent_id"]).json() == remote
-    print(f"V16 created local={local['agent_id']} remote={remote['agent_id']}: list entries equal the POST/GET detail")
+def test_v16_registration_is_remote_enabled_with_capacity_and_workdir(env):
+    a=env.h("A")
+    assert env.client.post(f"{API}/system/agents",json=LOCAL_BODY,headers=a).status_code==422
+    remote=_create(env,{**REMOTE_BODY,"max_concurrent_jobs":8,"remote_workdir":"/jobs","workspace_cleanup_retention_hours":48})
+    assert remote["enabled"] and remote["location"]=="remote" and remote["connection_mode"]=="agent_pull"
+    assert remote["max_concurrent_jobs"]==8 and remote["remote_workdir"]=="/jobs"
+    assert remote["workspace_cleanup_retention_hours"]==48
+    assert env.agent(remote["agent_id"]).json()==remote
 
 
 @pytest.mark.parametrize("body,why", [
@@ -302,11 +293,11 @@ def test_v16_patch_changed_fields_only_location_immutable_and_enabled_toggle(env
     aid = _create(env, REMOTE_BODY)["agent_id"]
     r = env.client.patch(f"{API}/system/agents/{aid}", json={"name": "renamed"}, headers=a)
     assert r.status_code == 200 and r.json()["name"] == "renamed"
-    assert r.json()["configured_capabilities"] == REMOTE_BODY["configured_capabilities"]  # untouched
+    assert r.json()["configured_capabilities"] == {"ai_cli":True,"ai_api":True,"storage":False}  # untouched
     r = env.client.patch(f"{API}/system/agents/{aid}", json={"configured_capabilities": {"ai_cli": False, "ai_api": True, "storage": False}}, headers=a)
-    assert r.status_code == 200 and r.json()["name"] == "renamed"
+    assert r.status_code == 422
     loc = env.client.patch(f"{API}/system/agents/{aid}", json={"location": "local"}, headers=a)
-    assert loc.status_code == 422 and loc.json()["error"]["details"] == {"field": "location", "reason": "immutable"}
+    assert loc.status_code == 422
     assert env.client.patch(f"{API}/system/agents/{aid}", json={}, headers=a).status_code == 422
     off = env.client.patch(f"{API}/system/agents/{aid}", json={"enabled": False}, headers=a)
     assert off.status_code == 200 and off.json()["enabled"] is False
@@ -415,9 +406,12 @@ def test_v17_reissue_replaces_the_pending_token(env):
 def test_v17_enrollment_only_for_an_enabled_remote_agent(env, setup):
     a = env.h("A")
     if setup == "local":
-        aid = _create(env, LOCAL_BODY)["agent_id"]
+        # Existing local records remain readable; simulate one without changing its immutable location.
+        aid = "legacy-local"
+        env.store._execute("INSERT INTO agents(agent_id,name,enabled,location,created_at,updated_at) VALUES(?,?,TRUE,'local',?,?)",[aid,"Legacy local","2026-01-01T00:00:00Z","2026-01-01T00:00:00Z"])
     else:
-        aid = _create(env, {**REMOTE_BODY, "enabled": False})["agent_id"]
+        aid = _create(env, REMOTE_BODY)["agent_id"]
+        assert env.client.patch(f"{API}/system/agents/{aid}",json={"enabled":False},headers=a).status_code==200
     r = env.client.post(f"{API}/system/agents/{aid}/enrollments", json={}, headers=a)
     assert r.status_code == 409 and r.json()["error"]["code"] == "enrollment_not_allowed"
     assert _rows(env.db_path, "SELECT COUNT(*) FROM agent_enrollments")[0][0] == 0

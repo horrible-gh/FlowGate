@@ -4,7 +4,7 @@ from test_system_agents_0076 import env, _create, REMOTE_BODY, API  # noqa: F401
 from modules.flow_gate.services.agent_registry import AgentError
 from modules.flow_gate.services.agent_jobs import AgentJobService
 
-PERSONAL = {**REMOTE_BODY, "configured_capabilities": {"ai_cli": True, "ai_api": True, "storage": False}}
+PERSONAL = {**REMOTE_BODY}
 ME = API + "/me/agents"
 
 
@@ -34,9 +34,9 @@ def test_personal_crud_isolated_from_other_people_and_system_registry(env):
     for method, suffix, body in actions:
         r = env.client.request(method, API+"/system/agents/"+aid+suffix, json=body, headers=env.h("A"))
         assert r.status_code == 404, r.text
-    assert env.client.patch(ME+"/"+aid, json={"name": "My renamed runner", "configured_capabilities": {"ai_cli": False, "ai_api": True, "storage": False}}, headers=env.h("M")).status_code == 200
+    assert env.client.patch(ME+"/"+aid, json={"name": "My renamed runner", "max_concurrent_jobs": 8}, headers=env.h("M")).status_code == 200
     reread = env.client.get(ME+"/"+aid, headers=env.h("M")).json()
-    assert reread["name"] == "My renamed runner" and reread["configured_capabilities"]["ai_cli"] is False
+    assert reread["name"] == "My renamed runner" and reread["max_concurrent_jobs"] == 8
     assert env.client.delete(ME+"/"+aid, headers=env.h("M")).status_code == 204
     assert env.client.get(ME+"/"+aid, headers=env.h("M")).status_code == 404
     assert env.agent(system["agent_id"]).json() == system

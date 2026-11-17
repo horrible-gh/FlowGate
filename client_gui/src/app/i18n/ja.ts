@@ -1,4 +1,5 @@
 export default {
+  agent_capacity: {"label": "最大同時実行数", "running": "実行中", "summary": "実行中 {running} / 最大 {max}", "queued": "待機 {count}", "invalid": "1〜32の整数を入力してください。", "hint": "チャットとカードの合計です。超過したジョブは順番に待機します。", "lowered": "実行中のジョブは継続します。新しい上限を下回ると次のジョブを開始します。", "cli_missing": "このPCにAI CLIが見つからないため、CLIジョブを受信できません。", "connect": "接続", "token_hint": "登録トークンは10分間有効です。再発行すると以前のトークンは無効になります。", "waiting": "エージェントの接続待ち · 5秒ごとに確認", "enable_first": "使用をオンにして保存すると登録トークンを発行できます。", "enabled": "使用", "workdir_hint": "ジョブを受信するにはリモート作業ディレクトリを指定してください。"},
   accountMenu: {"settings": "自分の設定", "profile": "プロフィール", "password": "パスワード変更", "logout": "ログアウト", "confirmLogout": "ログアウトしますか？"},
   notification_ai: {"detail": "詳細を見る", "provider": "プロバイダー", "finished": "終了時刻", "reason": "終了理由", "success": "成功", "failure": "失敗", "stopped": "中断", "unknown": "状態を確認"},
   // flowgate.chat.0017 CH0002 — AI添付の承認依頼(チャットのメッセージ下・カードの添付タブ・実行結果・設定)。

@@ -194,24 +194,22 @@ export const createSystemAgent = (input: SystemAgentCreate) =>
   call(
     () => postRequest<SystemAgent>(`${API}/system/agents`, {
       name: input.name,
-      enabled: input.enabled,
-      location: input.location,
-      connection_mode: input.connection_mode,
-      local_executable_path: input.local_executable_path,
-      configured_capabilities: { ...input.configured_capabilities },
+      remote_workdir: input.remote_workdir,
+      workspace_cleanup_enabled: input.workspace_cleanup_enabled,
+      workspace_cleanup_retention_hours: input.workspace_cleanup_retention_hours,
+      max_concurrent_jobs: input.max_concurrent_jobs,
     }),
     'save_failed',
   )
 
 export const updateSystemAgent = (id: string, changes: SystemAgentChanges) => {
   const body: SystemAgentChanges = {}
+  if (changes.max_concurrent_jobs !== undefined) body.max_concurrent_jobs = changes.max_concurrent_jobs
   if (changes.name !== undefined) body.name = changes.name
   if (changes.enabled !== undefined) body.enabled = changes.enabled
-  if (changes.local_executable_path !== undefined) body.local_executable_path = changes.local_executable_path
   if (changes.remote_workdir !== undefined) body.remote_workdir = changes.remote_workdir
   if (changes.workspace_cleanup_enabled !== undefined) body.workspace_cleanup_enabled = changes.workspace_cleanup_enabled
   if (changes.workspace_cleanup_retention_hours !== undefined) body.workspace_cleanup_retention_hours = changes.workspace_cleanup_retention_hours
-  if (changes.configured_capabilities !== undefined) body.configured_capabilities = { ...changes.configured_capabilities }
   return call(() => patchRequest<SystemAgent>(agent(id), body), 'save_failed')
 }
 
@@ -230,18 +228,19 @@ export const listPersonalAgents = async () =>
   (await call(() => getRequest<{ agents?: SystemAgent[] }>(`${API}/me/agents`), 'load_failed')).agents
 export const createPersonalAgent = (input: SystemAgentCreate) =>
   call(() => postRequest<SystemAgent>(`${API}/me/agents`, {
-    name: input.name, enabled: input.enabled, location: 'remote', connection_mode: 'agent_pull',
-    local_executable_path: null,
-    configured_capabilities: { ai_cli: input.configured_capabilities.ai_cli, ai_api: input.configured_capabilities.ai_api, storage: false },
+    name: input.name, remote_workdir: input.remote_workdir,
+    workspace_cleanup_enabled: input.workspace_cleanup_enabled,
+    workspace_cleanup_retention_hours: input.workspace_cleanup_retention_hours,
+    max_concurrent_jobs: input.max_concurrent_jobs,
   }), 'save_failed')
 export const updatePersonalAgent = (id: string, changes: SystemAgentChanges) => {
   const body: SystemAgentChanges = {}
+  if (changes.max_concurrent_jobs !== undefined) body.max_concurrent_jobs = changes.max_concurrent_jobs
   if (changes.name !== undefined) body.name = changes.name
   if (changes.enabled !== undefined) body.enabled = changes.enabled
   if (changes.remote_workdir !== undefined) body.remote_workdir = changes.remote_workdir
   if (changes.workspace_cleanup_enabled !== undefined) body.workspace_cleanup_enabled = changes.workspace_cleanup_enabled
   if (changes.workspace_cleanup_retention_hours !== undefined) body.workspace_cleanup_retention_hours = changes.workspace_cleanup_retention_hours
-  if (changes.configured_capabilities !== undefined) body.configured_capabilities = { ...changes.configured_capabilities, storage: false }
   return call(() => patchRequest<SystemAgent>(personalAgent(id), body), 'save_failed')
 }
 export const issuePersonalAgentEnrollment = (id: string) =>
