@@ -15,7 +15,7 @@
       :disabled="stateOf(image.imageId) === 'loading'"
       @click="onThumb(image, index)"
     >
-      <img v-if="urls[image.imageId]" class="tl-img-pic" :src="urls[image.imageId]" :alt="t('gui.conversation.image.alt', { n: index + 1 })" />
+      <img v-if="urls[image.imageId]" class="tl-img-pic" @contextmenu.stop :src="urls[image.imageId]" :alt="t('gui.conversation.image.alt', { n: index + 1 })" />
       <span v-else-if="stateOf(image.imageId) === 'failed'" class="tl-img-note" data-test="tl-image-failed">{{ t('gui.conversation.image.load_failed') }}</span>
       <span v-else class="tl-img-note" aria-hidden="true">…</span>
     </button>
@@ -30,9 +30,22 @@
         :aria-label="t('gui.conversation.image.viewer')"
         @click.self="close"
       >
+        <a
+          v-if="urls[openImage.imageId]"
+          class="tl-imgview-download"
+          data-test="tl-image-download"
+          :href="urls[openImage.imageId]"
+          :download="downloadName"
+          :aria-label="t('gui.conversation.image.download')"
+          :title="t('gui.conversation.image.download')"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 4v11m-5-5 5 5 5-5M5 16v4h14v-4" />
+          </svg>
+        </a>
         <button ref="closeEl" type="button" class="tl-imgview-close" data-test="tl-image-close" :aria-label="t('gui.conversation.close')" @click="close">✕</button>
         <button v-if="images.length > 1" type="button" class="tl-imgview-nav tl-imgview-prev" data-test="tl-image-prev" :aria-label="t('gui.conversation.image.prev')" @click="step(-1)">‹</button>
-        <img v-if="urls[openImage.imageId]" class="tl-imgview-pic" data-test="tl-image-full" :src="urls[openImage.imageId]" :alt="t('gui.conversation.image.alt', { n: openIndex + 1 })" />
+        <img v-if="urls[openImage.imageId]" class="tl-imgview-pic" data-test="tl-image-full" @contextmenu.stop :src="urls[openImage.imageId]" :alt="t('gui.conversation.image.alt', { n: openIndex + 1 })" />
         <span v-else class="tl-imgview-note">{{ t('gui.conversation.image.load_failed') }}</span>
         <button v-if="images.length > 1" type="button" class="tl-imgview-nav tl-imgview-next" data-test="tl-image-next" :aria-label="t('gui.conversation.image.next')" @click="step(1)">›</button>
       </div>
@@ -57,6 +70,12 @@ const stateOf = (id: string): LoadState => states.value[id] ?? 'loading'
 
 const openIndex = ref<number | null>(null)
 const openImage = computed(() => (openIndex.value === null ? null : props.images[openIndex.value] ?? null))
+const downloadName = computed(() => {
+  const image = openImage.value
+  if (!image) return 'image'
+  const extension = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' } as Record<string, string>)[image.mediaType]
+  return extension ? `${image.imageId}.${extension}` : image.imageId
+})
 const closeEl = ref<HTMLButtonElement | null>(null)
 let opener: HTMLElement | null = null
 let alive = true
@@ -176,7 +195,8 @@ onBeforeUnmount(() => {
 }
 
 .tl-img:focus-visible,
-.tl-imgview button:focus-visible {
+.tl-imgview button:focus-visible,
+.tl-imgview-download:focus-visible {
   outline: 2px solid var(--fg2-focus);
   outline-offset: 1px;
 }
@@ -215,6 +235,7 @@ onBeforeUnmount(() => {
 }
 
 .tl-imgview-close,
+.tl-imgview-download,
 .tl-imgview-nav {
   position: absolute;
   border: 1px solid rgba(255, 255, 255, 0.4);
@@ -226,6 +247,24 @@ onBeforeUnmount(() => {
   height: 34px;
   font-size: 16px;
   line-height: 1;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.tl-imgview-close:hover,
+.tl-imgview-download:hover,
+.tl-imgview-nav:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.75);
+}
+
+.tl-imgview-download {
+  top: 14px;
+  right: 56px;
+  text-decoration: none;
 }
 
 .tl-imgview-close {

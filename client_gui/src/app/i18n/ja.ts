@@ -1330,6 +1330,7 @@ export default {
     },
     // flowgate.v02test.0029 — message images: pasted / dropped into the composer, shown on the message.
     image: {
+      download: '画像をダウンロード',
       alt: '画像 {n}',
       open: '画像 {n}/{total} を拡大表示',
       viewer: '画像の原本',

@@ -4,6 +4,7 @@ import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import TimelineMessage from '@/features/conversation/TimelineMessage.vue'
 import { ConversationRequestError } from '@/features/conversation/api'
+import { attachNativeMenuBlock } from '@/features/designer/contextMenu/entry'
 import type { ConversationTurn, TurnImage } from '@/features/conversation/types'
 
 const net = vi.hoisted(() => ({ blob: vi.fn() }))
@@ -91,6 +92,45 @@ describe('message thumbnails', () => {
 })
 
 describe('original view', () => {
+  it('offers the displayed original for download and follows image navigation', async () => {
+    const second = { ...image(2), mediaType: 'image/jpeg' }
+    const w = mountMessage(turn('user', [image(1), second]))
+    await flushPromises()
+    await thumbs(w)[0].trigger('click')
+    await flushPromises()
+    const download = () => document.body.querySelector('[data-test="tl-image-download"]') as HTMLAnchorElement
+    expect(download().getAttribute('href')).toBe('blob:img-1')
+    expect(download().download).toBe(`${image(1).imageId}.png`)
+    expect(download().getAttribute('aria-label')).toBe('이미지 다운로드')
+    ;(document.body.querySelector('[data-test="tl-image-next"]') as HTMLElement).click()
+    await flushPromises()
+    expect(download().getAttribute('href')).toBe('blob:img-2')
+    expect(download().download).toBe(`${second.imageId}.jpg`)
+    expect(net.blob).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps native image saving available with the Designer context menu block installed', async () => {
+    const detach = attachNativeMenuBlock(document)
+    try {
+      const w = mountMessage(turn('user', [image(1)]))
+      await flushPromises()
+      const thumbEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+      w.get('img.tl-img-pic').element.dispatchEvent(thumbEvent)
+      expect(thumbEvent.defaultPrevented).toBe(false)
+      await thumbs(w)[0].trigger('click')
+      await flushPromises()
+      const fullEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+      document.body.querySelector('[data-test="tl-image-full"]')!.dispatchEvent(fullEvent)
+      expect(fullEvent.defaultPrevented).toBe(false)
+      expect(viewer()).not.toBeNull()
+      const backdropEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+      viewer()!.dispatchEvent(backdropEvent)
+      expect(backdropEvent.defaultPrevented).toBe(true)
+    } finally {
+      detach()
+    }
+  })
+
   it('opens the original large on press and closes with Esc', async () => {
     const w = mountMessage(turn('user', [image(1)]))
     await flushPromises()
