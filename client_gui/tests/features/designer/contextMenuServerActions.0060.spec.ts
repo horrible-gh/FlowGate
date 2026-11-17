@@ -314,6 +314,53 @@ describe('2-B in the Shell — 그룹 / 플로우 이름 변경 (display name on
     expect(dialog()).not.toBeNull()
   })
 
+  it.each([
+    ['busy tasks include their reasons and cap the list at five', 'module_rename_busy', {
+      busy: [
+        { group_id: 'flowgate.v02test.0036', reason: 'flow_run_active' },
+        { group_id: 'flowgate.v02test.0029', reason: 'ai_lease_active' },
+        { group_id: 'g3', reason: 'ai_run_active' }, { group_id: 'g4', reason: 'merge_session_open' },
+        { group_id: 'g5', reason: 'test_run_active' }, { group_id: 'g6', reason: 'git_job_active' },
+      ],
+    }, 'flowgate.v02test.0036', '플로우 실행 중', '외 1건'],
+    ['an archived holder explains how to find it', 'module_identifier_taken', {
+      holder: { kind: 'group', module: 'ui2', title: 'v0.2.chat', group_id: 'g1', archived: true },
+    }, '아카이브된 그룹', 'v0.2.chat', '보관 포함'],
+    ['a large group explains the document count and limit', 'module_rename_too_large', {
+      documents: 6049, groups: 1, limit: 1000,
+    }, '문서가 6049건', '한도 1000건'],
+  ] as const)('v02gui.0040: %s', async (_label, code, details, ...expected) => {
+    const w = await mountShell()
+    patchRequest.mockRejectedValue(axiosError(409, { ok: false, code, error_message: 'refused', details }))
+    rightClick(explorerRow(w, 'UI 개선').element)
+    await settle()
+    await choose('group.rename')
+    type('dma-ident', 'ui2')
+    await settle()
+    submitButton().click()
+    await settle()
+    const shown = q('dma-refusal-text')!.textContent ?? ''
+    for (const word of expected) expect(shown).toContain(word)
+    expect(dialog()).not.toBeNull()
+  })
+
+  it('v02gui.0040: when identifier change is refused after saving the title, says the display name was saved', async () => {
+    const w = await mountShell()
+    patchRequest.mockRejectedValue(axiosError(409, {
+      ok: false, code: 'module_identifier_taken', error_message: 'refused', title_changed: true,
+      details: { holder: { kind: 'group', module: 'ui2', title: 'v0.2.test' } },
+    }))
+    rightClick(explorerRow(w, 'UI 개선').element)
+    await settle()
+    await choose('group.rename')
+    type('dma-ident', 'ui2')
+    await settle()
+    submitButton().click()
+    await settle()
+    expect(q('dma-title-saved')!.textContent).toContain('표시명은 저장되었습니다')
+    expect(q('dma-refusal-text')!.textContent).toContain('v0.2.test')
+  })
+
   it('v02gui.0012: a Group name over 100 characters is flagged in the window and does not run', async () => {
     const w = await mountShell()
     rightClick(explorerRow(w, 'UI 개선').element)

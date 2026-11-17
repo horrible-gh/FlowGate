@@ -791,7 +791,7 @@ export async function createFlow(input: CreateFlowInput): Promise<CreatedFlow> {
 const projectPath = (projectId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}`
 
 /** The server code and message of a refused call, from the shapes these routes answer with. */
-function refusalParts(error: unknown): { status: number | null; code: string | null; text: string; subject?: string } {
+function refusalParts(error: unknown): { status: number | null; code: string | null; text: string; subject?: string; busy?: { group_id: string; reason: string; status?: string }[]; holderArchived?: boolean; documents?: number; limit?: number; titleChanged?: boolean } {
   const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response
   const data = response?.data && typeof response.data === 'object' ? (response.data as Record<string, any>) : null
   const nested = data?.error && typeof data.error === 'object' ? data.error : data?.detail && typeof data.detail === 'object' ? data.detail : null
@@ -800,7 +800,7 @@ function refusalParts(error: unknown): { status: number | null; code: string | n
     .filter((part): part is string => typeof part === 'string')
     .join(' ')
   return { status: typeof response?.status === 'number' ? response.status : null, code: typeof code === 'string' ? code : null, text,
-    subject: refusalSubject(data?.details) }
+    subject: refusalSubject(data?.details), ...(Array.isArray(data?.details?.busy) ? { busy: data.details.busy } : {}), ...(typeof data?.details?.holder?.archived === "boolean" ? { holderArchived: data.details.holder.archived } : {}), ...(typeof data?.details?.documents === "number" ? { documents: data.details.documents } : {}), ...(typeof data?.details?.limit === "number" ? { limit: data.details.limit } : {}), ...(typeof data?.title_changed === "boolean" ? { titleChanged: data.title_changed } : {}) }
 }
 
 /** The name a Group rename refusal carries (module_routes.patch_module `details`), for the window's sentence. */
@@ -837,7 +837,7 @@ export function sourceMutationRefusal(error: unknown): SourceMutationRefusal {
   if (own) return own
   const transport = transportError(error)
   const hasResponse = !!(transport as { response?: unknown } | null)?.response
-  const { status, code, text, subject } = refusalParts(transport)
+  const { status, code, text, subject, busy, holderArchived, documents, limit, titleChanged } = refusalParts(transport)
   const lower = text.toLowerCase()
   const reason: SourceMutationRefusal['reason'] = !hasResponse
     ? 'network'
@@ -860,7 +860,7 @@ export function sourceMutationRefusal(error: unknown): SourceMutationRefusal {
                     : status === 400 || status === 409 || status === 422
                       ? 'invalid'
                       : 'failed'
-  return subject ? { reason, status, code, subject } : { reason, status, code }
+  return { reason, status, code, ...(subject ? { subject } : {}), ...(busy ? { busy } : {}), ...(holderArchived !== undefined ? { holderArchived } : {}), ...(documents !== undefined ? { documents } : {}), ...(limit !== undefined ? { limit } : {}), ...(titleChanged !== undefined ? { titleChanged } : {}) }
 }
 
 function refused(error: unknown, fallback: string): Error {

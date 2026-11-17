@@ -386,6 +386,12 @@ export interface SourceMutationRefusal {
   code: string | null
   /** A name the refusal carries (the group holding an identifier, busy Flows, existing branches); optional. */
   subject?: string
+  /** Structured Group identifier refusal details. */
+  busy?: { group_id: string; reason: string; status?: string }[]
+  holderArchived?: boolean
+  documents?: number
+  limit?: number
+  titleChanged?: boolean
   /** v02gui.0027: how many Flows keep a Group from being deleted (409 `module_not_empty` `flow_count`); optional. */
   count?: number
 }
