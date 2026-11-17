@@ -188,7 +188,7 @@ describe('the run band (designerTop.runBandTone, DesignerToolbar)', () => {
       : facts.status === 'stopping' ? ['run.stop'] : ['run.next', 'run.all']
     const buttons = w.findAll('[data-test="designer-tool-run"]')
     expect(buttons.map(button => button.attributes('data-command'))).toEqual(commands)
-    expect(w.find('[data-command="run.validate"]').exists()).toBe(true)
+    expect(w.find('[data-command="run.validate"]').exists()).toBe(false)
     for (const button of buttons) await button.trigger('click')
     if (facts.status === 'stopping') {
       expect(buttons[0].attributes('disabled')).toBeDefined()

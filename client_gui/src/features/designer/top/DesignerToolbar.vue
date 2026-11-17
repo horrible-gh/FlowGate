@@ -6,9 +6,6 @@
        (0001-R §4.1.1). 정렬 / 배치 ▾ is the same entry as the Edit menu's 정렬 / 배치… and emits
        the same command. flowgate.v02.0039 T#3: `disabled` (no work target yet) keeps every tool
        on screen but dimmed and unavailable, as the confirmed initial-state design draws it.
-       flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons (it checks what 실행
-       would take); it is available while the open Flow's edited structure can be checked
-       (`canValidate`).
        flowgate.v02.0059 T#1 (0011-CH contract A): [선택] is back for multi-selection only (no add
        node / connect mode): a toggle whose ON / OFF (`selectMode`, the Center session's) shows on the
        button; it emits `edit.select-mode` and the Shell switches the mode.
@@ -103,17 +100,6 @@
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
-      <button
-        type="button"
-        class="designer-tool"
-        data-test="designer-tool"
-        data-command="run.validate"
-        :disabled="disabled || !canValidate || !isMenuCommandEnabled('run.validate', runPhase, targets)"
-        @click="emit('command', 'run.validate')"
-      >
-        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><path d="M6.5 10.2l2.4 2.4 4.6-5" /></svg>
-        <span>{{ t('gui.designer.top.tools.validate') }}</span>
-      </button>
       <button
         v-for="run in runButtons"
         :key="run.key"
