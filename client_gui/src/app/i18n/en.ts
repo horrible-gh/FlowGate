@@ -1246,6 +1246,16 @@ export default {
       too_large: 'File too large: contents are not compared.',
       empty: 'No content difference.',
       more_lines: '{n} more lines',
+      // flowgate.v02test.0031 B/C: change window view mode, full text basis and context projection wording.
+      mode_label: 'View',
+      mode_changes: 'Changes',
+      mode_full: 'Full',
+      full_basis_after: 'After run',
+      full_basis_before_delete: 'Before delete',
+      show_more: 'Show more',
+      omitted_lines: '… {n} lines omitted',
+      alignment_limit: 'The file is too large for a precise comparison, so the middle part is shown as all removed, then all added. Use \'Full\' to see the original text.',
+      remaining_changes: '{n} more changed lines below.',
     },
     status: {
       run_running: 'AI is replying…',

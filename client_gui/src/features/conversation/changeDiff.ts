@@ -30,12 +30,23 @@ function splitLines(text: string | null): string[] {
   return lines
 }
 
+export interface DetailedDiff {
+  lines: DiffLine[]
+  /** False only when the changed middle used the cell-limit replacement fallback. */
+  aligned: boolean
+}
+
+/** Compatibility API: preserves the full, unprojected diff and its line ordering. */
+export function diffLines(oldText: string | null, newText: string | null, maxCells = DIFF_MAX_CELLS): DiffLine[] {
+  return diffLinesDetailed(oldText, newText, maxCells).lines
+}
+
 /**
  * Old → new lines: the common head and tail are kept as context and the middle is aligned by
  * longest common subsequence. A middle too large to align (DIFF_MAX_CELLS) is all removed then
  * all added — still correct, only less compact.
  */
-export function diffLines(oldText: string | null, newText: string | null, maxCells = DIFF_MAX_CELLS): DiffLine[] {
+export function diffLinesDetailed(oldText: string | null, newText: string | null, maxCells = DIFF_MAX_CELLS): DetailedDiff {
   const a = splitLines(oldText)
   const b = splitLines(newText)
   let head = 0
@@ -52,7 +63,8 @@ export function diffLines(oldText: string | null, newText: string | null, maxCel
   const del = (text: string) => out.push({ kind: 'del', text, oldNo: ++oldNo, newNo: null })
   const add = (text: string) => out.push({ kind: 'add', text, oldNo: null, newNo: ++newNo })
 
-  if (midA.length * midB.length > maxCells) {
+  const fallback = midA.length * midB.length > maxCells
+  if (fallback) {
     midA.forEach(del)
     midB.forEach(add)
   } else {
@@ -83,7 +95,7 @@ export function diffLines(oldText: string | null, newText: string | null, maxCel
   for (let k = 0; k < tail; k++) {
     out.push({ kind: 'context', text: a[a.length - tail + k], oldNo: ++oldNo, newNo: ++newNo })
   }
-  return out
+  return { lines: out, aligned: !fallback }
 }
 
 /** Why a file diff has no lines to show, or null when it has. */
