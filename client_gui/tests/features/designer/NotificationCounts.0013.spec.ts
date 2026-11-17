@@ -28,20 +28,38 @@ describe('complete project question snapshot and actionable counts', () => {
 })
 
 import { mount, flushPromises } from '@vue/test-utils'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, ref } from 'vue'
 import { useNotificationBadge } from '@/features/designer/top/notifications/useNotificationBadge'
 vi.mock('@/features/project/projectEvents', () => ({ subscribeProjectEvents: () => () => {} }))
-it('renders the bell from complete snapshot + project runs, hides zero and excludes AI history', async () => {
+it('keeps a quiet bell until content changes and acknowledges changes while open', async () => {
+  vi.useFakeTimers()
   const project = { groups: [{ flows: [{ id: 'p.m.1' }] }] } as any
-  let count = 120, fail = false
+  const open = ref(false)
+  let id = 1, fail = false
   vi.mocked(getRequest).mockImplementation(async (url: any) => {
-    if (url.endsWith('active-all')) return { data: { runs: [], paused: [] } } as any
     if (fail) throw new Error('offline')
-    return { data: { items: Array.from({ length: count }, (_, seq) => ({ doc_id: `p.m.${seq}.0001-T`, seq, title: 'Question', type_code: 'T' })), badge_count: 999, total: 5 } } as any
+    if (url.endsWith('active-all')) return { data: { runs: [], paused: [] } } as any
+    if (url.endsWith('notifications')) return { data: { ai_invoke_runs: { items: [] } } } as any
+    return { data: { items: [{ doc_id: `p.m.${id}.0001-T`, seq: 1, title: 'Question', type_code: 'T' }] } } as any
   })
-  const Harness = defineComponent({ setup() { const badge = useNotificationBadge(() => 'p', () => project); return () => h('button', badge.value ? [h('span', badge.value)] : []) } })
-  let w = mount(Harness); await flushPromises(); expect(w.get('span').text()).toBe('99+'); w.unmount()
-  count = 51; w = mount(Harness); await flushPromises(); expect(w.get('span').text()).toBe('51'); w.unmount()
-  count = 0; w = mount(Harness); await flushPromises(); expect(w.find('span').exists()).toBe(false); w.unmount()
-  fail = true; w = mount(Harness); await flushPromises(); expect(w.find('span').exists()).toBe(false); w.unmount()
+  const Harness = defineComponent({ setup() {
+    const badge = useNotificationBadge(() => 'p', () => project, () => open.value)
+    return () => h('button', { class: { unseen: badge.value } })
+  } })
+  const w = mount(Harness)
+  const poll = async () => { await vi.advanceTimersByTimeAsync(5000); await flushPromises() }
+  try {
+    await flushPromises()
+    expect(w.classes()).not.toContain('unseen')
+    await poll(); expect(w.classes()).not.toContain('unseen')
+    id = 2 // Same count, different question must still notify.
+    await poll(); expect(w.classes()).toContain('unseen')
+    await poll(); expect(w.classes()).toContain('unseen')
+    open.value = true; await flushPromises(); expect(w.classes()).not.toContain('unseen')
+    id = 3; await poll(); expect(w.classes()).not.toContain('unseen')
+    open.value = false; await poll(); expect(w.classes()).not.toContain('unseen')
+    fail = true; await poll(); expect(w.classes()).not.toContain('unseen')
+    fail = false; await poll(); expect(w.classes()).not.toContain('unseen')
+    id = 4; await poll(); expect(w.classes()).toContain('unseen')
+  } finally { w.unmount(); vi.useRealTimers() }
 })
