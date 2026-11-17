@@ -13,6 +13,9 @@ Contract under test:
     document lock not free in time (one wait budget for all the locks together, not one per lock) is 409
     module_rename_busy (reason flow_lock_timeout / document_lock_timeout) with nothing changed; a module above the
     document limit is refused (409 module_rename_too_large) before any lock is taken.
+  - flowgate.v02test.0040 T0007: an identifier an archived group holds is still refused (409 module_identifier_taken),
+    with details.holder.archived / archived_at and a message saying the holder is archived; the archived group's own
+    identifier change succeeds, keeps project_modules.archived_at / archived_by, and frees the identifier.
 
 Lightweight: a small SQLite schema, a temp storage root, no app startup, no Git, no migrations run.
 """
@@ -865,3 +868,141 @@ def test_route_too_large_keeps_the_saved_title(client, conn):
     assert d["code"] == "module_rename_too_large" and d["details"] == {"documents": 6049, "groups": 691, "limit": 2000}
     assert (d["title_changed"], d["title"]) == (True, "v0.1 big")
     assert conn.execute("SELECT title FROM project_modules WHERE module_id = ?", [f"{P}:v02gui"]).fetchone()[0] == "v0.1 big"
+
+
+# ── v02test.0040 T0007: an archived group holds its identifier, says so, and can give it up ──────────────
+
+ARCHIVED_AT = "2026-11-17T11:35:00+09:00"
+
+
+@pytest.fixture()
+def archived(conn):
+    """v02gui (v0.2.chat) archived as on the operating server (11/17 11:35): migration 190's columns on
+    project_modules and 170's on groups (its Flow archived too), filled the way module_routes /
+    flow_archive write them."""
+    for table in ("project_modules", "groups"):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN archived_at TEXT")
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN archived_by TEXT")
+    conn.execute("UPDATE project_modules SET archived_at = ?, archived_by = 'admin' WHERE project_id = ? AND name = 'v02gui'",
+                 [ARCHIVED_AT, P])
+    conn.execute("UPDATE groups SET archived_at = ?, archived_by = 'admin' WHERE group_id = ?", [ARCHIVED_AT, G])
+    return conn
+
+
+def _rename_from(conn, storage, old, new):
+    from modules.flow_gate.services import module_rename
+    with _service(conn, storage):
+        return module_rename.rename_module(P, old, new, actor="t")
+
+
+def test_identifier_held_by_an_archived_group_is_refused_and_says_archived(archived, storage):
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    with pytest.raises(ModuleRenameRefused) as exc:
+        _rename_from(archived, storage, "v02test", "v02gui")  # the user's v0.2.test -> v02gui
+    assert (exc.value.status, exc.value.code) == (409, "module_identifier_taken")  # the client's mapping is kept
+    holder = exc.value.details["holder"]
+    assert (holder["kind"], holder["title"], holder["group_id"]) == ("group", "v0.2.chat", G)
+    assert holder["archived"] is True and holder["archived_at"] == ARCHIVED_AT
+    assert exc.value.message == ("Identifier 'v02gui' is used by the archived group 'v0.2.chat'. "
+                                 "Change that group's identifier first to free it.")
+    # Nothing moved: the archived group keeps its identifier (never overwritten nor renamed for the user).
+    assert archived.execute("SELECT module FROM groups WHERE title = 'Child'").fetchone()[0] == "v02test"
+    assert archived.execute("SELECT module FROM groups WHERE group_id = ?", [G]).fetchone()[0] == "v02gui"
+
+
+def test_identifier_held_by_an_active_group_is_not_called_archived(archived, storage):
+    from modules.flow_gate.db.module_rename import ModuleRenameRefused
+    with pytest.raises(ModuleRenameRefused) as exc:
+        _rename_from(archived, storage, "v02gui", "v02test")
+    holder = exc.value.details["holder"]
+    assert holder["archived"] is False and holder["archived_at"] is None
+    assert exc.value.message == "Identifier 'v02test' is used by the group 'v0.2.test'."
+
+
+def test_empty_archived_group_holder_says_archived(archived):
+    from modules.flow_gate.db.module_rename import module_in_use
+    archived.execute("INSERT INTO project_modules VALUES (?, ?, 'aigroup', 'AI group', ?, ?, ?, 'admin')",
+                     [f"{P}:aigroup", P, NOW, NOW, ARCHIVED_AT])
+    assert module_in_use(_Store(archived), P, "aigroup") == {
+        "kind": "module", "module": "aigroup", "title": "AI group", "archived": True, "archived_at": ARCHIVED_AT}
+    assert module_in_use(_Store(archived), P, "server")["archived"] is False
+    assert module_in_use(_Store(archived), P, "free") is None
+
+
+def test_holder_without_the_archive_column_reads_as_not_archived(conn):
+    """A database before migration 190 (no project_modules.archived_at) still answers, as not archived."""
+    from modules.flow_gate.db.module_rename import module_in_use
+    holder = module_in_use(_Store(conn), P, "v02test")
+    assert (holder["kind"], holder["title"], holder["archived"], holder["archived_at"]) == (
+        "group", "v0.2.test", False, None)
+
+
+def test_archived_group_is_renamed_and_stays_archived(archived, storage):
+    result = _rename_from(archived, storage, "v02gui", "v02chat")
+    new_g = f"{P}.v02chat.0001"
+    assert result["groups"] == {G: new_g}
+    q = lambda sql, *a: [tuple(r) for r in archived.execute(sql, a).fetchall()]  # noqa: E731
+    # The archive state moves with the row (project_modules is updated in place, not re-inserted).
+    assert q("SELECT module_id, name, title, archived_at, archived_by FROM project_modules"
+             " WHERE project_id = ? AND name IN ('v02gui', 'v02chat')", P) == [
+        (f"{P}:v02chat", "v02chat", "v0.2.chat", ARCHIVED_AT, "admin")]
+    assert q("SELECT group_id, module, archived_at, archived_by FROM groups WHERE title = 'Flow 1'") == [
+        (new_g, "v02chat", ARCHIVED_AT, "admin")]
+    assert (storage / f"documents/{P}/main/v02chat/0001/0001-R_requirement.md").is_file()
+    # Another project's v02gui and the other groups are untouched (and not archived).
+    assert q("SELECT archived_at FROM project_modules WHERE project_id = 'other'") == [(None,)]
+    assert q("SELECT name FROM project_modules WHERE project_id = ? AND archived_at IS NOT NULL", P) == [("v02chat",)]
+    assert q("PRAGMA foreign_key_check") == []
+
+
+def test_freeing_the_archived_identifier_lets_another_group_take_it(archived, storage):
+    """The 11/17 case end to end: v02gui (archived v0.2.chat) -> v02chat, then v02test -> v02gui."""
+    _rename_from(archived, storage, "v02gui", "v02chat")
+    result = _rename_from(archived, storage, "v02test", "v02gui")
+    assert result["groups"] == {f"{P}.v02test.0001": f"{P}.v02gui.0001"}
+    q = lambda sql, *a: [tuple(r) for r in archived.execute(sql, a).fetchall()]  # noqa: E731
+    assert q("SELECT name, title, archived_at FROM project_modules WHERE project_id = ? AND name IN"
+             " ('v02gui', 'v02chat', 'v02test') ORDER BY name", P) == [
+        ("v02chat", "v0.2.chat", ARCHIVED_AT), ("v02gui", "v0.2.test", None)]
+
+
+def test_route_archived_holder_and_rename_of_the_archived_group(client, archived, storage):
+    """Through PATCH: the refusal carries details.holder.archived; the archived group's identifier change is
+    accepted (no archive check on the route) and frees the identifier for the next PATCH."""
+    with _service(archived, storage):
+        refused = _patch(client, "v02test", {"name": "v02gui"})
+        assert refused.status_code == 409, refused.text
+        d = refused.json()
+        assert d["code"] == "module_identifier_taken"
+        assert d["details"]["holder"]["archived"] is True and d["details"]["holder"]["archived_at"] == ARCHIVED_AT
+        assert "archived group 'v0.2.chat'" in d["error_message"]
+        freed = _patch(client, "v02gui", {"name": "v02chat"})
+        assert freed.status_code == 200, freed.text
+        assert (freed.json()["name"], freed.json()["renamed_groups"]) == ("v02chat", {G: f"{P}.v02chat.0001"})
+        taken = _patch(client, "v02test", {"name": "v02gui"})
+        assert taken.status_code == 200, taken.text
+    assert archived.execute("SELECT archived_at FROM project_modules WHERE name = 'v02chat' AND project_id = ?",
+                            [P]).fetchone()[0] == ARCHIVED_AT
+
+
+def test_archive_state_alone_does_not_make_a_group_busy(archived, monkeypatch):
+    """busy_reasons has no archive rule: an archived Flow's completed run (idle) is not work, a paused run still is
+    (module archive is display only and does not stop runs)."""
+    from modules.flow_gate.db import (
+        ai_invoke_paused_chains, git_integration, group_ai_leases, test_runs, tr_self_check_runs,
+    )
+    from modules.flow_gate.graph_workflow.store import run_store
+    from modules.flow_gate.services import module_rename
+    from modules.flow_gate.services.ai_invoke import chain
+    archived.execute("CREATE TABLE operation_job (group_id TEXT, status TEXT)")
+    archived.execute("CREATE TABLE chat_command_requests (group_id TEXT, status TEXT)")
+    for target, name in ((group_ai_leases, "get_active"), (chain, "has_active_run"), (ai_invoke_paused_chains, "exists"),
+                         (git_integration, "get_open_session_by_group"), (test_runs, "get_active_by_group"),
+                         (tr_self_check_runs, "get_active")):
+        monkeypatch.setattr(target, name, lambda *a, **k: None)
+    monkeypatch.setattr(module_rename, "get_store", lambda: _Store(archived))
+    runs = {"status": "idle", "idle_reason": "completed"}
+    monkeypatch.setattr(run_store, "active_run", lambda gid: dict(runs))
+    assert module_rename.busy_reasons(P, [G]) == []
+    runs["status"] = "paused"
+    assert module_rename.busy_reasons(P, [G]) == [{"group_id": G, "reason": "flow_run_active", "status": "paused"}]

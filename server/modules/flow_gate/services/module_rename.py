@@ -17,7 +17,8 @@ next to the old ones first; the old ones go only after the commit, and a failure
 the new trees and moves Git back, so nothing is half renamed.
 
 Refused (409, nothing changed) when ``new`` is already a key of the project
-(``module_identifier_taken``, the details name that group), while anything is running in one of
+(``module_identifier_taken``, the details name that group and whether it is archived — an archived
+group keeps its key, and is renamed like any other to free it, v02test.0040 T0007), while anything is running in one of
 the module's groups (``module_rename_busy``, the details list what and where), or when a branch /
 worktree / directory of the new name is already there.
 
@@ -588,13 +589,20 @@ def _rename_module(project_id: str, old: str, new: str, actor: Optional[str], st
 
 
 def _refuse_taken(store, project_id: str, new: str) -> None:
+    """409 ``module_identifier_taken`` naming the holder (v02test.0040 T0007: and whether it is archived).
+
+    An archived group keeps holding its identifier (its documents' ids carry it); the message says the
+    holder is archived — the default tree hides it — and how to free the identifier: change that group's
+    identifier first. The code stays the same for clients; ``details.holder.archived`` carries the state."""
     holder = module_in_use(store, project_id, new)
     if holder:
         title = holder.get("title") or new
-        raise ModuleRenameRefused(
-            "module_identifier_taken",
-            f"Identifier '{new}' is used by the group '{title}'.",
-            details={"holder": holder})
+        if holder.get("archived"):
+            message = (f"Identifier '{new}' is used by the archived group '{title}'. "
+                       "Change that group's identifier first to free it.")
+        else:
+            message = f"Identifier '{new}' is used by the group '{title}'."
+        raise ModuleRenameRefused("module_identifier_taken", message, details={"holder": holder})
 
 
 def _forget_caches(project_id: str, group_ids: list[str]) -> None:
