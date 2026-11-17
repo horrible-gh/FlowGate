@@ -23,7 +23,7 @@ import { useI18n } from 'vue-i18n'
 import { allocateOverlayZIndex } from '@/core/overlay/zIndex'
 import FlowAttachmentWindow from './FlowAttachmentWindow.vue'
 import { FaIcon } from './icons'
-import { connectReadOnly } from './operations'
+import { connectReadOnly, enqueueUpload } from './operations'
 import { flowAttachmentUi } from './state'
 import { wordsFor } from './words'
 
@@ -49,6 +49,7 @@ function focus(id: string) {
 async function open(files: File[] = []) {
   const id = props.flowId, projectId = props.projectId
   if (!id || !projectId) return
+  if (files.length && !props.isReadOnly(id)) enqueueUpload({ projectId, flowId: id }, files)
   const existing = windows.value.find(x => x.id === id)
   if (existing) existing.title = props.title || id
   else windows.value.push({ id, projectId, title: props.title || id, z: allocateOverlayZIndex() })
@@ -56,8 +57,7 @@ async function open(files: File[] = []) {
   await nextTick()
   const view = refs.get(id)
   view?.reveal()
-  if (files.length) void view?.add(files)
-  else if (existing) void view?.reload()
+  if (!files.length && existing) void view?.reload()
 }
 function close(id: string) {
   windows.value = windows.value.filter(x => x.id !== id)

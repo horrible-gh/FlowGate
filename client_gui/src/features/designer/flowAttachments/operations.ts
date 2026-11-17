@@ -27,6 +27,7 @@ import { AUTH_SESSION_ENDED_EVENT } from '@shared/authSessionSignal'
 import { subscribeProjectEvents } from '@/features/project/projectEvents'
 import { deleteFile, readFiles, type FlowFile } from './api'
 import { createUndoQueue, type UndoGroup } from './undo'
+import { createUploadWorker, type UploadState, type CollisionChoice } from './uploads'
 
 export interface FlowScope { readonly projectId: string; readonly flowId: string }
 
@@ -37,7 +38,7 @@ export interface FlowOperationError { text: string | null }
 export interface FlowOperationErrorEntry { id: number; kind: 'delete' | 'upload' | 'read' | 'download'; text: string | null; at: number }
 
 /** What a window draws for one Flow. Reactive; written only by this manager (and the window's own list reads). */
-export interface FlowOperationsState {
+export interface FlowOperationsState extends UploadState {
   readonly key: string
   readonly projectId: string
   readonly flowId: string
@@ -100,6 +101,7 @@ interface Entry {
   readonly state: FlowOperationsState
   readonly queue: ReturnType<typeof createUndoQueue<FlowFile>>
   readonly views: Set<string>
+  uploads: ReturnType<typeof createUploadWorker>
   disposed: boolean
   readSequence: number
   /** Moves on every read-only lock: a group already being sent stops sending its files not sent yet, for good. */
@@ -138,12 +140,30 @@ function entryFor(scope: FlowScope): Entry {
   const state = reactive<FlowOperationsState>({
     key, projectId: scope.projectId, flowId: scope.flowId,
     files: [], deleting: new Set(), error: null, loading: false, loaded: false, readOnly: false, revision: 0, errors: [],
+    currentFile: null, pendingCount: 0, collision: null, cancelledUploads: [], dirty: false, uploadRevision: 0,
   }) as FlowOperationsState
   // The queue holds timers and file snapshots; it stays out of Vue's proxies (`revision` tells the views).
   const holder: { entry?: Entry } = {}
   const queue = createUndoQueue<FlowFile>(items => commit(holder.entry!, items), () => { state.revision++; scheduleArchiveSync() })
   const entry: Entry = {
     key, generation: generation.value, owner, projectId: scope.projectId, flowId: scope.flowId, state, queue, views: new Set(),
+    uploads: createUploadWorker({
+      flowId: scope.flowId, state,
+      stale: () => stale(holder.entry!),
+      readOnly: () => state.readOnly,
+      hasView: () => holder.entry!.views.size > 0,
+      ready: async () => {
+        const entry = holder.entry!
+        while (entry.archiveCheck && !stale(entry) && !state.readOnly) await entry.archiveCheck
+      },
+      changed: scheduleArchiveSync,
+      completed: () => {
+        state.dirty = true
+        state.uploadRevision++
+        if (holder.entry!.views.size) void refreshEntry(holder.entry!)
+      },
+      failed: error => { state.error = failureOf(error) },
+    }),
     disposed: false, readSequence: 0, cancelEpoch: 0, sending: 0, archiveCheck: null, archiveSequence: 0,
   }
   holder.entry = entry
@@ -197,12 +217,14 @@ async function commit(entry: Entry, items: FlowFile[]) {
 async function refreshEntry(entry: Entry) {
   const { state } = entry
   const seq = ++entry.readSequence
+  const uploadRevision = state.uploadRevision
   state.loading = true
   try {
     const data = await readFiles(entry.flowId)
     if (stale(entry) || seq !== entry.readSequence) return
     state.files = data
     state.loaded = true
+    if (uploadRevision === state.uploadRevision) state.dirty = false
   } catch (e) {
     if (!stale(entry) && seq === entry.readSequence) state.error = failureOf(e)
   } finally {
@@ -216,6 +238,7 @@ function setEntryReadOnly(entry: Entry, locked: boolean) {
   // the groups still counting (clear) and the rest of a group already being sent (cancel epoch).
   if (locked) {
     entry.cancelEpoch++
+    entry.uploads.cancel()
     entry.queue.clear()
   }
 }
@@ -223,7 +246,7 @@ function setEntryReadOnly(entry: Entry, locked: boolean) {
 /* ── manager-lifetime archive watch ── */
 
 /** Whether the Flow has work the archive state still matters for. */
-const busy = (entry: Entry) => !stale(entry) && (entry.queue.groups.length > 0 || entry.sending > 0)
+const busy = (entry: Entry) => !stale(entry) && (entry.queue.groups.length > 0 || entry.sending > 0 || entry.uploads.busy())
 
 /** Coalesced: a group that runs out leaves the queue just before it starts sending, which must not drop the watch. */
 function scheduleArchiveSync() {
@@ -284,7 +307,18 @@ export function attachView(scope: FlowScope, viewId: string): FlowOperationsStat
 /** The window is gone. Its pending work goes on. */
 export function detachView(scope: FlowScope, viewId: string): void {
   for (const entry of entries.values()) {
-    if (entry.projectId === scope.projectId && entry.flowId === scope.flowId) entry.views.delete(viewId)
+    if (entry.projectId === scope.projectId && entry.flowId === scope.flowId) {
+      entry.views.delete(viewId)
+      if (!entry.views.size) entry.uploads.detach()
+    }
+  }
+}
+
+/** Enqueues against the captured session/project/Flow, independent of any window. */
+export function enqueueUpload(scope: FlowScope, files: readonly File[]): void { entryFor(scope).uploads.enqueue(files) }
+export function answerCollision(requestId: string, choice: CollisionChoice): void {
+  for (const entry of entries.values()) {
+    if (!stale(entry) && entry.state.collision?.id === requestId) { entry.uploads.respond(requestId, choice); return }
   }
 }
 
@@ -350,6 +384,7 @@ export function stopSession(): void {
   for (const entry of entries.values()) {
     entry.queue.clear()
     entry.disposed = true
+    entry.uploads.dispose()
     entry.archiveCheck = null
     entry.views.clear()
   }
