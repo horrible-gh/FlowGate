@@ -279,7 +279,7 @@ describe('chat settings / mention', () => {
     })
     const settings = await fetchChatSettings()
     expect(settings.sourceAccessMode).toBe('execute')
-    expect(settings.sourceAccessModes).toEqual(['read_only', 'execute', 'edit', 'edit_once'])
+    expect(settings.sourceAccessModes).toEqual(['read_only', 'execute', 'edit_once', 'edit'])
   })
 
   it('defaults the context-turns cap to 999 when the server sends no domain', async () => {
