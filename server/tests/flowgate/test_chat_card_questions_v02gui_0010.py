@@ -105,7 +105,7 @@ def test_tools_are_offered_in_reading_mode_and_reach_the_cli_mention(clean_chat_
     names = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})]
     assert {"list_card_questions", "answer_card_question"} <= set(names)
     sections = chat_run_hooks.chat_mention_sections("http://h/flowgate/api/v1", "raw", omit=("run_command",))
-    assert any(s.startswith("[Card questions (Q)") for s in sections)
+    assert any(s.startswith("## Card questions (Q)") for s in sections)
 
 
 @pytest.fixture

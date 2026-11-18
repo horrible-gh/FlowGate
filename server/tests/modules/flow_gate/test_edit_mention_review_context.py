@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 # token_routes imports `config.settings`, which is a pydantic Settings with four required
 # fields. Every module in this suite that reaches the same import declares them first; this
 # one relied on an earlier-collected module having done it, so running the T0007 §4-4
@@ -19,6 +21,17 @@ from modules.flow_gate.services.mention_service import (  # noqa: E402
     build_mention,
     build_mention_from_token_rec,
 )
+
+
+@pytest.fixture(autouse=True)
+def legacy_document_context(monkeypatch):
+    # These unit fixtures are legacy documents without graph card bindings.
+    # Keep the real read bridge, but do not consult an uninitialised/closed DB.
+    from flowgate.card_document_edit import target
+    original = target.classify_card_slot
+    monkeypatch.setattr(target, "classify_card_slot", lambda doc:
+                        target.NON_CARD if doc.get("doc_id") == "test.none.0002.0004-D"
+                        else original(doc))
 
 
 def _build_edit_mention(current_review: dict | None = None) -> str:
@@ -71,17 +84,14 @@ def test_edit_mention_includes_target_review_and_valid_payload():
         "group_name": "test.none.0002",
         "doc_id": "test.none.0002.0004-D",
         "edit_reason": "user_comment",
-        "content": "<Complete revised document content>",
-        # 0391 T0005 §7-2: optional body fingerprint (proposal 4) + bypass door.
-        "body_sha256": "<optional: sha256 hex of content, UTF-8 bytes>",
-        "body_chars": "<optional: character count of content>",
-        "force_encoding_reason": "<optional: only if a genuinely-flagged content must go through anyway>",
+
     }
 
 
 def test_edit_mention_without_review_still_references_target():
     mention = _build_edit_mention()
     assert "## Automated review feedback" not in mention
+    assert "review feedback below" not in mention
     assert "test.none.0002.0004-D: GET " in mention
 
 
@@ -649,6 +659,9 @@ def test_human_rejection_alone_still_renders_without_automated_review():
     assert mention is not None
     assert "## Human rejection (latest)" in mention
     assert "Human-only rejection reason." in mention
+    assert "Read the target document and the review feedback below before editing." in mention
+    assert "rejection_response" in mention
+    assert '"rejection_id": "rej_manual"' in mention
     assert "## Automated review feedback" not in mention
 
 

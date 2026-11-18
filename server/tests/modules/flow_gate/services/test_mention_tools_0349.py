@@ -80,7 +80,7 @@ def test_section_is_five_lines_and_carries_the_fallback_facts():
     # 0482 T0011 x 0492 D0004 D-2: default head_type="TR" is a MUTATING_STEP_TYPES
     # read_write kind, but `resolve_base_dirty` is bound to its own action_scope — a TR
     # worker's token would 403 on it, so the mention must not name it here.
-    assert body[2] == "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove"
+    assert body[2] == "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"
     assert body[3] == "Authorization: Bearer RAW"
     assert body[4] == "도구별 상세: GET http://h/flowgate/api/v1/help/tools/{name}"
 
@@ -88,16 +88,16 @@ def test_section_is_five_lines_and_carries_the_fallback_facts():
 def test_no_disk_edit_line_sits_next_to_the_tool_names_not_inside_help():
     """D-4: the accident this line prevents is a worker that never opened help."""
     body = _section(_build()).splitlines()
-    assert body.index("도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove") - 1 == next(
+    assert body.index("도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove") - 1 == next(
         i for i, line in enumerate(body) if line.startswith("디스크의")
     )
 
 
 @pytest.mark.parametrize("locale,tools_line", [
-    ("ko", "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove"),
-    ("ja", "ツール: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove"),
-    ("en", "Tools: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove"),
-    ("zh", "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove"),  # unsupported → ko, never a 400
+    ("ko", "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"),
+    ("ja", "ツール: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"),
+    ("en", "Tools: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"),
+    ("zh", "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"),  # unsupported → ko, never a 400
 ])
 def test_section_follows_the_worker_locale(locale, tools_line):
     assert tools_line in _section(_build(locale=locale))
@@ -108,14 +108,14 @@ def test_section_follows_the_worker_locale(locale, tools_line):
 @pytest.mark.parametrize("head_type,expected", [
     # T (0427 T0004): write/patch/remove recalled -- investigation-only now.
     ("T", "read, grep, glob, stat, diff, log, show, merge_preview"),
-    ("TR", "read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove"),
+    ("TR", "read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"),
     # TSR: the test-report step really does edit test code, and TR-1 already gave its
     # token write scope. TS (group 0390 R0001): the test-scenario step now writes too, so
     # the bug a scenario surfaces gets fixed instead of just the test being rewritten.
-    ("TSR", "read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove"),
+    ("TSR", "read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"),
     ("NR", "read, grep, glob, stat, diff, log, show, merge_preview"),
     ("D", "read, grep, glob, stat, diff, log, show, merge_preview"),
-    ("TS", "read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove"),
+    ("TS", "read, grep, glob, stat, diff, log, show, merge_preview, write, patch, move, remove"),
 ])
 def test_tool_list_matches_the_step_type(head_type, expected):
     assert f"도구: {expected}" in _section(_build(head_type=head_type))
@@ -163,7 +163,7 @@ def test_sequence_edit_mention_still_advertises_nothing():
 
 
 def test_answer_mention_follows_the_registry_instead_of_a_fixed_kind(monkeypatch):
-    """D-3: the answer token is edit-scoped, so its tools depend on the step it lands on."""
+    """The answer task advertises reads, while its issued token keeps its original grant."""
     monkeypatch.setattr(
         tool_registry, "kind_for_token", lambda token_rec: ("read_write", None)
     )
@@ -173,7 +173,9 @@ def test_answer_mention_follows_the_registry_instead_of_a_fixed_kind(monkeypatch
         raw_token="RAW", scratch_dir="S", api_base_url="http://h/flowgate/api/v1",
     )
     assert "[소스 도구]" in text
-    assert "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove" in text
+    assert "도구: read, grep, glob, stat, diff, log, show, merge_preview" in text
+    assert "write, patch" not in text
+    assert tool_registry.kind_for_token({"action_scope": "edit"})[0] == "read_write"
     assert text.index("[소스 도구]") < text.index("[질의]")
 
 

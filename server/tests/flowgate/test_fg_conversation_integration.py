@@ -108,8 +108,9 @@ def test_graph_and_control_tower_tools_come_before_run_command(clean_hooks):
     at = names.index("run_command")
     # flowgate.v02gui.0028: the card role read / change follow the control tower tools.
     # flowgate.v02gui.0032: then the AI list read before a placement.
-    assert names[at - 7:at] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
-                                "get_card_roles", "set_card_roles", "get_ai_options"]
+    assert names[:at] == ["read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
+                          "get_card_roles", "set_card_roles", "get_ai_options", "read_flow_recovery_basis",
+                          "retry_flow_card", "restart_flow_run"]
     assert names[at + 1] == "request_attachment_upload"
     without = [t["name"] for t in chat_run_hooks.chat_tools({"action_scope": "chat"})]
     assert {"read_flow_canvas", "read_flow_current_run", "place_flow_cards", "start_flow_run",
@@ -258,6 +259,8 @@ def test_api_worker_exposes_run_command_and_returns_the_result_to_the_same_run(e
     noisy = ('"quoted"\n' * 9000)
     use_executor(monkeypatch, FakeExecutor(exit_code=1, stdout=noisy, stderr=noisy))
     run = make_run(source_root=env["root"])
+    chat_run_hooks.chat_run_start(run)
+    assert run["chat_command_access"] == "edit"
     run.update({"raw_token": "raw-token", "docs_target": 0, "timed_out": False,
                 "api_base_url": "http://127.0.0.1:8089/flowgate/api/v1"})
     monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
@@ -351,7 +354,16 @@ def test_api_read_only_run_is_not_offered_run_command_and_a_call_is_refused(env,
     outcome = svc._api_execute({"id": "p", "kind": "openai", "api_base_url": "https://api.example",
                                 "api_model": "m"}, "prompt", run)
     assert outcome == ("started_ok", None)
+    print("READ_API_TOOLS=" + ",".join(calls[0]["tools"]))
+    guidance = calls[0]["conversation"][2]["content"]
+    for forbidden in ["place_flow_cards", "start_flow_run", "update_card_roles",
+                      "revise_card_document", "revise_document_by_id", "create_new_document",
+                      "retry_flow_card", "restart_flow_run"]:
+        assert forbidden not in guidance
     assert "run_command" not in calls[0]["tools"]
+    assert not {"place_flow_cards", "start_flow_run", "revise_card_document", "revise_document_by_id",
+                "create_new_document", "retry_flow_card", "restart_flow_run"} & set(calls[0]["tools"])
+    assert {"read_card_document", "read_document_by_id", "request_attachment_upload"} <= set(calls[0]["tools"])
     assert "`run_command`" not in calls[0]["conversation"][2]["content"]
     tool_msg = next(m for m in calls[1]["conversation"] if m.get("role") == "tool")
     result = json.loads(tool_msg["content"])
@@ -432,9 +444,11 @@ def test_read_only_mention_keeps_the_other_chat_tool_sections(env):
     integration.register()
     reader = _mention(True, source_access="read")
     writer = _mention(True)
-    for section in chat_run_hooks.chat_mention_sections("http://127.0.0.1:8089/flowgate/api/v1", "raw-run-token",
-                                                        omit=("run_command",)):
-        assert section in reader and section in writer
+    for marker in ["/canvas", "/runs/current", "/attachment-requests", "/documents/{doc_id}", "/ai-options"]:
+        assert marker in reader and marker in writer
+    assert "/help/items/chat_documents" not in reader
+    assert "/help/items/chat_documents" in writer
+    assert "/revisions" not in reader and "place_flow_cards" not in reader
     assert "## Command execution" in writer and "## Command execution" not in reader
 
 
