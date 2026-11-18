@@ -223,6 +223,8 @@ def finalize_messages(messages, *, locale=None, fallback_kind='generic'):
     Initial context and hint messages stay separate and keep their original text.
     Only the server's first instruction carries a task record/block to extract.
     The actual conversation JSON must not be scanned as generated instructions.
+    Returns the settled spec so a server-written follow-up user message (see
+    :func:`finalize_nudge`) can end with the very same block.
     """
     first = next(m for m in messages if m['role'] == 'user')
     body, spec = split(first['content'])
@@ -232,6 +234,16 @@ def finalize_messages(messages, *, locale=None, fallback_kind='generic'):
         spec['locale'] = normalize_locale(locale)
     last = next(m for m in reversed(messages) if m['role'] == 'user')
     last['content'] = last['content'].rstrip() + '\n\n' + render(spec)
+    return spec
+
+
+def finalize_nudge(text, spec):
+    """End a server-written follow-up user message (API re-request) with the block.
+
+    ``spec`` is the value :func:`finalize_messages` returned for this run. The block
+    wording stays owned by :func:`render`; callers never assemble it themselves.
+    """
+    return str(text).rstrip() + '\n\n' + render(spec)
 
 
 def q_transport(locale):

@@ -1669,10 +1669,14 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 + ("\n\n" + "\n".join(chat_hints) if chat_hints else "")
             ),
         })
-    terminal_prompt.finalize_messages(
+    terminal_spec = terminal_prompt.finalize_messages(
         conversation, locale=run.get("continuation_locale") or run.get("locale"),
         fallback_kind=effective_action_scope(run),
     )
+    # A chat that can neither write source (no `commit` in its block) nor run commands is
+    # read-only: its re-request must not invite it to "change" anything.
+    read_only_chat = bool(is_chat and not run_command_offered
+                          and "commit" not in terminal_spec["form"])
     turn = 0
     # Only a natural loop-boundary exit represents exhausted API turns. A model HTTP
     # or transport failure can happen on the final numbered turn but has priority over
@@ -1837,15 +1841,20 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             trace["disposition"] = "nudge" if run["tool_call_misses"] < _svc().API_MAX_TOOL_NUDGES else "no_tool"
             run["tool_call_misses"] += 1
             if run["tool_call_misses"] <= _svc().API_MAX_TOOL_NUDGES:
+                # The nudge is a server-written last user message: it ends with the same
+                # "what to do now" block as the first request (never a tool reply).
+                nudge = (
+                    (f"The required action is not complete. Call the `{tool_name}` tool now with the actual full payload. "
+                     if tool_specs is None else
+                     "Use the available tools to "
+                     + ("inspect" if read_only_chat else "inspect or change")
+                     + " the bound work, then call "
+                     f"`{_completion_tool_name(tool_specs)}` when complete. ")
+                    + "Do not merely say that you registered or attached it."
+                )
                 conversation.append({
                     "role": "user",
-                    "content": (
-                        (f"The required action is not complete. Call the `{tool_name}` tool now with the actual full payload. "
-                         if tool_specs is None else
-                         "Use the available tools to inspect or change the bound work, then call "
-                         f"`{_completion_tool_name(tool_specs)}` when complete. ")
-                        + "Do not merely say that you registered or attached it."
-                    ),
+                    "content": terminal_prompt.finalize_nudge(nudge, terminal_spec),
                 })
                 continue
             break
