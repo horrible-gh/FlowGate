@@ -3,6 +3,7 @@
 type Origin = 'ai' | 'upload' | 'bug' | 'requirement' | 'chat' | 'card'
 
 const ko = {
+  uploadProgress: (name: string, pending: number) => `업로드 중: ${name} · 대기 ${pending}개`,
   title: '첨부파일', search: '파일 검색', add: '파일 추가', all: '전체 선택', allLabel: '플로우 첨부파일 전체 선택',
   count: (n: number) => `${n}개`, selected: (n: number) => `${n}개 선택`, pick: (name: string) => `${name} 선택`,
   zip: 'ZIP 다운로드', zipTitle: '선택 파일 ZIP 다운로드', preparing: '준비 중…',
@@ -16,6 +17,7 @@ const ko = {
 type Words = typeof ko
 
 const en: Words = {
+  uploadProgress: (name, pending) => `Uploading: ${name} · ${pending} waiting`,
   title: 'Attachments', search: 'Search files', add: 'Add files', all: 'Select all', allLabel: 'Select all Flow attachments',
   count: n => `${n} ${n === 1 ? 'file' : 'files'}`, selected: n => `${n} selected`, pick: name => `Select ${name}`,
   zip: 'ZIP download', zipTitle: 'Download the selected files as ZIP', preparing: 'Preparing…',
@@ -28,6 +30,7 @@ const en: Words = {
 }
 
 const ja: Words = {
+  uploadProgress: (name, pending) => `アップロード中: ${name} · 待機 ${pending}件`,
   title: '添付ファイル', search: 'ファイル検索', add: 'ファイル追加', all: 'すべて選択', allLabel: 'フローの添付ファイルをすべて選択',
   count: n => `${n}件`, selected: n => `${n}件選択`, pick: name => `${name} を選択`,
   zip: 'ZIP ダウンロード', zipTitle: '選択ファイルを ZIP でダウンロード', preparing: '準備中…',

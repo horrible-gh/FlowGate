@@ -49,6 +49,10 @@
 
       <p v-if="errorText" class="fa-error" role="alert">{{ errorText }}</p>
 
+      <p v-if="flow.currentFile" class="fa-count" role="status" data-test="flow-attachment-progress">
+        {{ w.uploadProgress(flow.currentFile.name, flow.pendingCount) }}
+      </p>
+
       <div class="fa-list" data-test="flow-attachment-list">
         <AttachmentRequestItem v-for="request in requests" :key="request.id" :request="request" :disabled="readOnly" @decided="reload" />
         <div v-for="file in visible" :key="file.key" class="fa-row" data-test="flow-attachment-row" :data-key="file.key"
@@ -108,7 +112,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInspectorEvents } from '../inspector/useInspectorResource'
-import { uploadFile, downloadFile, downloadZip, type FlowFile } from './api'
+import { downloadFile, downloadZip, type FlowFile } from './api'
 import * as ops from './operations'
 import { UNDO_MS } from './undo'
 import { wordsFor } from './words'
@@ -262,41 +266,18 @@ async function zip() {
   try { await downloadZip(props.flowId, keys) } catch (e) { setError(e) } finally { zipping.value = false }
 }
 
-/* ── upload: one by one, a name conflict asks in the window ── */
-const collision = ref<{ file: File; key: string; content_sha256: string } | null>(null)
-let answer: ((choice: string) => void) | null = null
-function resolveCollision(choice: string) { answer?.(choice); answer = null; collision.value = null }
-const uploads: File[] = []
-let uploading = false
-async function add(incoming: File[]) {
-  if (props.readOnly) return
-  uploads.push(...incoming)
-  if (uploading) return
-  uploading = true; flow.value.error = null
-  try {
-    while (uploads.length && alive && !props.readOnly) {
-      const file = uploads.shift()!
-      try {
-        await uploadFile(props.flowId, file)
-      } catch (e) {
-        const raw = e as { response?: { data?: { error?: { code?: string; details?: { key: string; content_sha256: string } } } } }
-        const conflict = raw.response?.data?.error
-        if (conflict?.code !== 'ATTACHMENT_NAME_CONFLICT' || !conflict.details) { setError(e); continue }
-        const existing = { key: conflict.details.key, content_sha256: conflict.details.content_sha256 }
-        collision.value = { file, ...existing }
-        emit('focus')
-        const choice = await new Promise<string>(resolve => { answer = resolve })
-        if (choice !== 'cancel' && alive && !props.readOnly) {
-          try { await uploadFile(props.flowId, file, choice, choice === 'overwrite' ? existing : undefined) } catch (failed) { setError(failed) }
-        }
-      }
-      await reload()
-    }
-  } finally { uploading = false }
+/* Upload state and collision resolvers belong to the manager. */
+const collision = computed(() => flow.value.collision)
+function resolveCollision(choice: 'cancel' | 'keep_both' | 'overwrite') {
+  if (collision.value) ops.answerCollision(collision.value.id, choice)
+}
+watch(() => collision.value?.id, id => { if (id) emit('focus') })
+function add(incoming: File[]) {
+  if (!props.readOnly) ops.enqueueUpload(scope, incoming)
 }
 function pick(event: Event) { const el = event.target as HTMLInputElement; void add(Array.from(el.files ?? [])); el.value = '' }
 // Closing is not "undo all": the staged deletes keep counting in the work manager.
-function close() { resolveCollision('cancel'); emit('close') }
+function close() { ops.detachView(scope, viewId); emit('close') }
 
 /* ── row text ── */
 const isImage = (file: FlowFile) => (file.content_type ?? '').startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.display_name)
@@ -325,7 +306,6 @@ function when(value: string | null | undefined) {
 watch(() => props.readOnly, (locked, before) => {
   if (before === undefined) { if (!locked) ops.setReadOnly(scope, false); return }
   ops.setReadOnly(scope, locked)
-  if (locked) { resolveCollision('cancel'); uploads.length = 0 }
 }, { immediate: true })
 useInspectorEvents(() => ({ projectId: props.projectId, flowId: props.flowId, docId: null }), {
   events: ['attachment_request_updated', 'flow_attachments_updated'], matches: (frame, scope) => frame.groupId === scope.flowId, changed: () => { void reload() },
@@ -333,7 +313,7 @@ useInspectorEvents(() => ({ projectId: props.projectId, flowId: props.flowId, do
 void reload()
 addEventListener('resize', keepInView)
 onBeforeUnmount(() => {
-  alive = false; ops.detachView(scope, viewId); resolveCollision('cancel'); uploads.length = 0; endDrag()
+  alive = false; ops.detachView(scope, viewId); endDrag()
   removeEventListener('resize', keepInView)
 })
 defineExpose({ add, reload, reveal, setGeometry, undoLast })

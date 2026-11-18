@@ -103,7 +103,7 @@ describe('Flow attachment window (final mockup)', () => {
     expect(card.find('h3').text()).toBe('이름 중복')
     expect(card.findAll('button').map(b => b.text())).toEqual(['취소', '양쪽 보존', '덮어쓰기'])
     await card.find('[data-conflict="overwrite"]').trigger('click')
-    await work
+    await work; await flushPromises()
     expect(api.uploadFile).toHaveBeenLastCalledWith('A', file, 'overwrite', { key: 'existing', content_sha256: 'old' })
   })
 
@@ -114,7 +114,7 @@ describe('Flow attachment window (final mockup)', () => {
     const file = new File(['other'], 'notes.md')
     const work = (wrapper.vm as unknown as { add: (f: File[]) => Promise<void> }).add([file]); await flushPromises()
     await wrapper.find('[data-conflict="keep_both"]').trigger('click')
-    await work
+    await work; await flushPromises()
     expect(api.uploadFile).toHaveBeenLastCalledWith('A', file, 'keep_both', undefined)
   })
 })
@@ -310,5 +310,49 @@ describe('Flow attachment window close / reopen (flowgate.v02test.0036)', () => 
     expect(winB.findAll('.fa-row.gone')).toHaveLength(0)
     await vi.advanceTimersByTimeAsync(5000)
     expect(api.deleteFile).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('upload lifetime through the window and Host (R2)', () => {
+  it('reopened window immediately shows the current file and remaining count', async () => {
+    let finish!: () => void
+    api.uploadFile.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve }))
+    wrapper = mount(Host, { props: { flowId: 'A', projectId: 'p', title: 'A', isReadOnly: () => false }, global })
+    const host = wrapper.vm as unknown as { open(files?: File[]): Promise<void> }
+    await host.open([new File(['a'], 'first.txt'), new File(['b'], 'second.txt')]); await flushPromises()
+    await wrapper.find('[data-test="flow-attachment-close"]').trigger('click')
+    await host.open(); await flushPromises()
+    expect(wrapper.find('[data-test="flow-attachment-progress"]').text()).toContain('first.txt')
+    expect(wrapper.find('[data-test="flow-attachment-progress"]').text()).toContain('1')
+    finish(); await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-test="flow-attachment-progress"]').exists()).toBe(false)
+  })
+
+  it('a drop captures its Flow before nextTick and survives Host unmount', async () => {
+    wrapper = mount(Host, { props: { flowId: 'A', projectId: 'p', title: 'A', isReadOnly: () => false }, global })
+    const file = new File(['a'], 'drop.txt')
+    const event = new Event('drop', { bubbles: true, cancelable: true })
+    Object.assign(event, { dataTransfer: { types: ['Files'], files: [file] } })
+    document.dispatchEvent(event)
+    const switching = wrapper.setProps({ flowId: 'B', projectId: 'q' })
+    wrapper.unmount(); wrapper = undefined
+    await switching; await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledWith('A', file)
+    expect(api.uploadFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('Host unmount cancels only the active conflict and the remaining uploads continue', async () => {
+    api.uploadFile.mockRejectedValueOnce({ response: { data: { error: { code: 'ATTACHMENT_NAME_CONFLICT', details: { key: 'old', content_sha256: 'sha' } } } } })
+    wrapper = mount(Host, { props: { flowId: 'A', projectId: 'p', title: 'A', isReadOnly: () => false }, global })
+    const host = wrapper.vm as unknown as { open(files?: File[]): Promise<void> }
+    await host.open()
+    await host.open([new File(['a'], 'a.txt'), new File(['b'], 'b.txt')]); await flushPromises()
+    expect(wrapper.find('[data-test="flow-attachment-conflict"]').exists()).toBe(true)
+    wrapper.unmount(); wrapper = undefined
+    await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(2)
+    expect(api.uploadFile.mock.calls[1][1].name).toBe('b.txt')
   })
 })

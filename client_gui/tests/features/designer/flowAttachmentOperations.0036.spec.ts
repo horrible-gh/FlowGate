@@ -458,3 +458,159 @@ describe('flow attachment work manager — archive watch for the manager lifetim
     expect(ops.getFlowState(A).readOnly).toBe(false)
   })
 })
+
+
+// R2: delayed responses keep the worker alive across view and permission changes.
+describe('Flow upload manager (R2)', () => {
+  const incoming = () => Array.from({ length: 5 }, (_, i) => new File([`${i}`], `${i}.txt`))
+  const conflict = { response: { data: { error: { code: 'ATTACHMENT_NAME_CONFLICT', details: { key: 'original', content_sha256: 'original-hash' } } } } }
+  beforeEach(() => { api.uploadFile.mockReset(); api.uploadFile.mockResolvedValue({}) })
+
+  it('sends all five after immediate close; closed completions mark dirty without list reads', async () => {
+    const first = deferred(), files = incoming()
+    api.uploadFile.mockReturnValueOnce(first.promise)
+    const state = ops.attachView(A, 'w')
+    ops.enqueueUpload(A, files)
+    ops.detachView(A, 'w')
+    await flushPromises()
+    expect(state.currentFile).toBe(files[0]); expect(state.pendingCount).toBe(4)
+    first.resolve(); await flushPromises()
+    expect(api.uploadFile.mock.calls.map(args => args[1])).toEqual(files)
+    expect(api.readFiles).not.toHaveBeenCalled()
+    expect(state.dirty).toBe(true); expect(state.currentFile).toBeNull(); expect(state.pendingCount).toBe(0)
+    ops.attachView(A, 'again'); await ops.refresh(A)
+    expect(api.readFiles).toHaveBeenCalledTimes(1); expect(state.dirty).toBe(false)
+  })
+
+  it('close cancels only the question file, releases its resolver and ignores its stale answer', async () => {
+    api.uploadFile.mockRejectedValueOnce(conflict)
+    const state = ops.attachView(A, 'w'), files = incoming()
+    ops.enqueueUpload(A, files); await flushPromises()
+    const id = state.collision!.id
+    ops.detachView(A, 'w'); await flushPromises()
+    ops.attachView(A, 'again'); ops.answerCollision(id, 'overwrite'); await flushPromises()
+    expect(api.uploadFile.mock.calls.map(args => args[1])).toEqual(files)
+    expect(state.cancelledUploads).toEqual(['0.txt']); expect(state.collision).toBeNull()
+  })
+
+  it('new conflicts while closed cancel without waiting and later files still upload', async () => {
+    api.uploadFile.mockRejectedValueOnce(conflict)
+    ops.enqueueUpload(A, incoming()); await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(5)
+    expect(ops.getFlowState(A).cancelledUploads).toEqual(['0.txt'])
+    expect(ops.getFlowState(A).collision).toBeNull()
+  })
+
+  it('overwrite retains the first conflict key/hash and a stale id cannot answer a later question', async () => {
+    api.uploadFile.mockRejectedValueOnce(conflict).mockRejectedValueOnce(conflict)
+    const state = ops.attachView(A, 'w'), files = incoming().slice(0, 2)
+    ops.enqueueUpload(A, files); await flushPromises()
+    const firstId = state.collision!.id
+    ops.answerCollision(firstId, 'cancel'); await flushPromises()
+    const secondId = state.collision!.id
+    ops.answerCollision(firstId, 'overwrite'); await flushPromises()
+    expect(state.collision!.id).toBe(secondId)
+    ops.answerCollision(secondId, 'overwrite'); await flushPromises()
+    expect(api.uploadFile).toHaveBeenLastCalledWith('A', files[1], 'overwrite', { key: 'original', content_sha256: 'original-hash' })
+  })
+
+  it('read-only then writable drops old pending files but reflects an accepted request', async () => {
+    const first = deferred(), files = incoming()
+    api.uploadFile.mockReturnValueOnce(first.promise)
+    ops.enqueueUpload(A, files); await flushPromises()
+    ops.setReadOnly(A, true); ops.setReadOnly(A, false)
+    first.resolve(); await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(1)
+    expect(ops.getFlowState(A).dirty).toBe(true)
+    ops.enqueueUpload(A, [files[4]]); await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(2)
+  })
+
+  it('read-only after a collision answer prevents the retry, even if unlocked immediately', async () => {
+    api.uploadFile.mockRejectedValueOnce(conflict)
+    const state = ops.attachView(A, 'w')
+    ops.enqueueUpload(A, incoming()); await flushPromises()
+    ops.answerCollision(state.collision!.id, 'overwrite')
+    ops.setReadOnly(A, true); ops.setReadOnly(A, false)
+    await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(1); expect(state.collision).toBeNull()
+  })
+
+  it.each([false, true])('a late conflict after read-only is discarded without a cancellation notice (unlock=%s)', async (unlock) => {
+    const first = deferred()
+    api.uploadFile.mockReturnValueOnce(first.promise)
+    const state = ops.attachView(A, 'w')
+    ops.enqueueUpload(A, incoming()); await flushPromises()
+    ops.setReadOnly(A, true)
+    if (unlock) ops.setReadOnly(A, false)
+    first.reject(conflict); await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(1)
+    expect(state.collision).toBeNull()
+    expect(state.pendingCount).toBe(0)
+    expect(state.cancelledUploads).toEqual([])
+  })
+
+  it('read-only releases an open conflict without recording a user or view cancellation', async () => {
+    api.uploadFile.mockRejectedValueOnce(conflict)
+    const state = ops.attachView(A, 'w')
+    ops.enqueueUpload(A, incoming()); await flushPromises()
+    const id = state.collision!.id
+    ops.setReadOnly(A, true); ops.setReadOnly(A, false)
+    ops.answerCollision(id, 'overwrite'); await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(1)
+    expect(state.collision).toBeNull()
+    expect(state.pendingCount).toBe(0)
+    expect(state.cancelledUploads).toEqual([])
+  })
+
+  it('archive watch survives close and gates the next request on its archive response', async () => {
+    const archive = archiveFake(), check = deferred(), first = deferred()
+    archive.readArchived.mockReturnValue(check.promise as Promise<boolean>)
+    ops.startFlowAttachmentOperations(archive)
+    api.uploadFile.mockReturnValueOnce(first.promise)
+    ops.enqueueUpload(A, incoming()); await flushPromises()
+    expect(archive.listening('p')).toBe(1)
+    archive.fire('p'); first.resolve(); await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(1)
+    check.resolve(true); await flushPromises()
+    expect(ops.getFlowState(A).pendingCount).toBe(0)
+    expect(api.uploadFile).toHaveBeenCalledTimes(1)
+    expect(archive.listening('p')).toBe(0)
+  })
+
+  it('session disposal releases a collision and ignores a late accepted response', async () => {
+    const late = deferred()
+    api.uploadFile.mockReturnValueOnce(late.promise)
+    const old = ops.getFlowState(A)
+    ops.enqueueUpload(A, incoming()); await flushPromises()
+    ops.stopSession(); late.resolve(); await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(1)
+    expect(old.currentFile).toBeNull(); expect(old.dirty).toBe(false)
+    api.uploadFile.mockRejectedValueOnce(conflict)
+    const state = ops.attachView(A, 'w')
+    ops.enqueueUpload(A, incoming()); await flushPromises()
+    expect(state.collision).not.toBeNull()
+    ops.stopSession(); await flushPromises()
+    expect(state.collision).toBeNull(); expect(state.pendingCount).toBe(0)
+  })
+
+  it('list refresh never blocks the next upload and enqueue does not erase previous failures', async () => {
+    const slowRead = deferred()
+    api.readFiles.mockReturnValue(slowRead.promise)
+    const state = ops.attachView(A, 'w')
+    state.error = { text: 'previous failure' }
+    ops.enqueueUpload(A, incoming()); await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(5)
+    expect(api.readFiles).toHaveBeenCalledTimes(5)
+    expect(state.error).toEqual({ text: 'previous failure' })
+    slowRead.resolve([]); await flushPromises()
+  })
+
+  it('closed upload failures are stored in their Flow and do not stop the remaining files', async () => {
+    api.uploadFile.mockRejectedValueOnce({ response: { data: { error: { message: 'upload failed' } } } })
+    ops.enqueueUpload(A, incoming()); await flushPromises()
+    expect(api.uploadFile).toHaveBeenCalledTimes(5)
+    expect(ops.getFlowState(A).error).toEqual({ text: 'upload failed' })
+    expect(ops.getFlowState(B).error).toBeNull()
+  })
+})
