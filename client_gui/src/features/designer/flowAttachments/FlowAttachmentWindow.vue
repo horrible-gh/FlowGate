@@ -47,7 +47,13 @@
         </div>
       </div>
 
-      <p v-if="errorText" class="fa-error" role="alert">{{ errorText }}</p>
+      <div v-if="errorLines.length" class="fa-errors" data-test="flow-attachment-errors">
+        <p v-for="line in errorLines" :key="line.key" class="fa-error" role="alert" data-test="flow-attachment-error">
+          <span class="fa-error-text">{{ line.text }}</span>
+          <button type="button" class="fa-error-close" :title="w.closeError" :aria-label="w.closeError" data-test="flow-attachment-error-close"
+            @click="dismiss(line)"><FaIcon name="close" :size="11" /></button>
+        </p>
+      </div>
 
       <p v-if="flow.currentFile" class="fa-count" role="status" data-test="flow-attachment-progress">
         {{ w.uploadProgress(flow.currentFile.name, flow.pendingCount) }}
@@ -133,7 +139,8 @@ const w = computed(() => wordsFor(locale.value))
 const root = ref<HTMLElement | null>(null)
 const WIDTH = 560, HEIGHT = 455
 const place = reactive({ x: 0, y: 0 })
-const placeStyle = computed(() => ({ left: `${place.x}px`, top: `${place.y}px`, zIndex: props.zIndex }))
+// R5: the ring's duration is UNDO_MS itself (one number for the timer and the border).
+const placeStyle = computed(() => ({ left: `${place.x}px`, top: `${place.y}px`, zIndex: props.zIndex, '--fa-undo-ms': `${UNDO_MS}ms` }))
 function initialPlace() {
   const x = Math.max(245, Math.round(innerWidth * 0.28)) + props.position * 185
   const y = Math.max(140, Math.round(innerHeight * 0.21)) + props.position * 60
@@ -186,12 +193,21 @@ const selected = ref(new Set<string>())
 const search = ref(''), zipping = ref(false)
 const input = ref<HTMLInputElement | null>(null)
 let alive = true, requestSequence = 0
-const failure = (e: unknown) => {
-  const raw = e as { response?: { data?: { error?: { message?: string } } } }
-  return raw.response?.data?.error?.message || w.value.failed
+// The failures kept with the Flow (R3), newest first. Text is built here so a reopened window uses its current language:
+// what failed, then the server's message or the generic one. The "cancelled files" note is one more line.
+interface ErrorLine { key: string; text: string; id: number | null }
+const named = (names: string[]) => names.length > 3 ? `${names.slice(0, 3).join(', ')} ${w.value.more(names.length - 3)}` : names.join(', ')
+const errorLines = computed<ErrorLine[]>(() => {
+  const state = flow.value
+  const lines: (ErrorLine & { order: number })[] = [...state.errors, ...(state.readError ? [state.readError] : [])].map(e => ({
+    key: `e${e.id}`, id: e.id, order: e.order, text: `${w.value.errorLead[e.kind](named(e.targets))} — ${e.text || w.value.failed}`,
+  }))
+  if (state.cancelledUploads.length) lines.push({ key: 'cancelled', id: null, order: state.cancelledOrder, text: w.value.cancelledNames(named(state.cancelledUploads)) })
+  return lines.sort((a, b) => b.order - a.order)
+})
+function dismiss(line: ErrorLine) {
+  if (line.id === null) ops.clearCancelled(scope); else ops.clearError(scope, line.id)
 }
-const setError = (e: unknown) => { flow.value.error = { text: failure(e) } }
-const errorText = computed(() => { const error = flow.value.error; return error ? error.text || w.value.failed : '' })
 async function readRequests() {
   const seq = ++requestSequence
   try {
@@ -199,7 +215,7 @@ async function readRequests() {
     if (!alive || seq !== requestSequence) return
     requests.value = (approvals.data.requests ?? []).flatMap(r => toAttachmentRequest(r) ?? [])
   } catch (e) {
-    if (alive && seq === requestSequence) setError(e)
+    if (alive && seq === requestSequence) ops.readFailed(scope, e)
   }
 }
 async function reload() { await Promise.all([ops.refresh(scope), readRequests()]) }
@@ -258,12 +274,16 @@ function keyDown(event: KeyboardEvent) {
 /** Ctrl+Z from the host while this window is the focused one. */
 function undoLast() { return ops.undoLast(scope) }
 
-async function download(file: FlowFile) { try { await downloadFile(props.flowId, file) } catch (e) { setError(e) } }
+async function download(file: FlowFile) {
+  const started = ops.beginAction()
+  try { await downloadFile(props.flowId, file); ops.actionSucceeded(scope, started) } catch (e) { ops.actionFailed(scope, 'download', e, [file.display_name]) }
+}
 async function zip() {
-  const keys = live.value.filter(f => selected.value.has(f.key)).map(f => f.key)
-  if (!keys.length) return
+  const chosen = live.value.filter(f => selected.value.has(f.key))
+  if (!chosen.length) return
   zipping.value = true
-  try { await downloadZip(props.flowId, keys) } catch (e) { setError(e) } finally { zipping.value = false }
+  const started = ops.beginAction()
+  try { await downloadZip(props.flowId, chosen.map(f => f.key)); ops.actionSucceeded(scope, started) } catch (e) { ops.actionFailed(scope, 'download', e, chosen.map(f => f.display_name)) } finally { zipping.value = false }
 }
 
 /* Upload state and collision resolvers belong to the manager. */
@@ -330,7 +350,8 @@ defineExpose({ add, reload, reveal, setGeometry, undoLast })
 .fa-window button:disabled { cursor: default; opacity: .45; }
 .fa-window button:focus-visible, .fa-window input:focus-visible { outline: 2px solid #66b6fc; outline-offset: 1px; }
 
-.fa-head { height: 45px; flex-shrink: 0; display: flex; align-items: center; gap: 9px; padding: 0 11px; user-select: none; cursor: grab;
+/* The header stays above the in-window conflict card (z-index 5): × must work while a question is open. */
+.fa-head { position: relative; z-index: 6; height: 45px; flex-shrink: 0; display: flex; align-items: center; gap: 9px; padding: 0 11px; user-select: none; cursor: grab;
   background: linear-gradient(180deg, #18334e, #10273e); border-bottom: 1px solid #355876; }
 .fa-head:active { cursor: grabbing; }
 .fa-head-square { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 6px; background: #20639e; color: #dcf1ff; }
@@ -365,7 +386,11 @@ defineExpose({ add, reload, reveal, setGeometry, undoLast })
 .fa-selection-actions .delete:not(:disabled) { background: #3b2535; color: #ffbdc2; border-color: #754657; }
 .fa-selection-actions .delete:not(:disabled):hover { background: #5a3041; border-color: #ba6379; }
 
-.fa-error { margin: 0; padding: 6px 12px; font-size: 11px; color: #ffb3bc; background: #3a1f2b; border-bottom: 1px solid #6d3445; flex-shrink: 0; }
+.fa-errors { flex-shrink: 0; max-height: 96px; overflow-y: auto; }
+.fa-error { margin: 0; padding: 6px 8px 6px 12px; display: flex; align-items: flex-start; gap: 8px; font-size: 11px; color: #ffb3bc; background: #3a1f2b; border-bottom: 1px solid #6d3445; }
+.fa-error-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.fa-error-close { flex: none; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 1px solid #7a4553; border-radius: 4px; background: transparent; color: #ffcdd3; }
+.fa-error-close:hover { background: #5b2e3d; border-color: #b8646f; color: #fff; }
 
 .fa-list { position: relative; flex: 1; min-height: 0; overflow-y: auto; background: #0c1d30; }
 .fa-list::-webkit-scrollbar { width: 9px; }
@@ -397,7 +422,7 @@ defineExpose({ add, reload, reveal, setGeometry, undoLast })
 .fa-window .undo, .fa-selection-actions .undo { position: relative; color: #5abaff; background: #0f2f4c; border-color: #1f3d58; opacity: 1; }
 .fa-window .undo:hover { background: #174a78; color: #fff; border-color: #1f3d58; }
 .fa-ring { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); pointer-events: none; overflow: visible; }
-.fa-ring rect { fill: none; stroke: #5abaff; stroke-width: 2; stroke-dasharray: 110; stroke-dashoffset: 0; animation: fa-ringdown 5000ms linear forwards; }
+.fa-ring rect { fill: none; stroke: #5abaff; stroke-width: 2; stroke-dasharray: 110; stroke-dashoffset: 0; animation: fa-ringdown var(--fa-undo-ms) linear forwards; }
 @keyframes fa-ringdown { to { stroke-dashoffset: 110; } }
 .fa-undo-badge { position: absolute; top: -6px; right: -6px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box;
   border-radius: 8px; background: #5abaff; color: #04121f; font-size: 9px; font-weight: 800; line-height: 14px; text-align: center; }

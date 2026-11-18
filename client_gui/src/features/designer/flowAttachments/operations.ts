@@ -19,8 +19,17 @@
 // Nothing here runs on import: startFlowAttachmentOperations() installs the session listeners once from the app start
 // (app/main.ts) and disposeFlowAttachmentOperations() removes them (tests reset with it).
 //
-// Card 3 adds page leave (flushPagehide). Later cards add the upload queue
-// (enqueueUpload / answerCollision) and structured errors (errors / clearError).
+// Card 3 adds page leave (flushPagehide), card 4 the upload queue (enqueueUpload / answerCollision), card 5 the
+// failures kept with the Flow (errors / readError / clearError, below).
+//
+// Failures (R3/R4): a failed delete or upload is kept in the Flow's state as a structured entry — kind, target names,
+// operation id, order and the server's message (null = the generic message in the language shown when the window opens
+// again). The window draws them as red lines with a close button. A line goes away only when the user closes it or
+// when a LATER user action succeeds: every action takes an order number when it starts (🗑 pressed, files dropped,
+// download pressed) and a success clears only the failures recorded before that number, so an action that finished late
+// never erases a newer failure, and a group that had a failure never clears itself. Closing, reopening the window
+// or a plain list read that succeeds clears nothing. A failed list read is kept apart (`readError`) so it never
+// replaces the failure of a delete or an upload.
 import { effectScope, reactive, ref, shallowReactive, watch, type EffectScope } from 'vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import { AUTH_SESSION_ENDED_EVENT } from '@shared/authSessionSignal'
@@ -32,11 +41,22 @@ import { createUploadWorker, type UploadState, type CollisionChoice } from './up
 
 export interface FlowScope { readonly projectId: string; readonly flowId: string }
 
-/** A failure kept with the Flow. `text` is the server's message; null means "show the generic failure in the current language". */
-export interface FlowOperationError { text: string | null }
+export type FlowOperationErrorKind = 'delete' | 'upload' | 'download' | 'read'
 
-/** Card 5 replaces the single `error` with a list of these (kind, target, operation id, order). Declared only. */
-export interface FlowOperationErrorEntry { id: number; kind: 'delete' | 'upload' | 'read' | 'download'; text: string | null; at: number }
+/**
+ * One failure kept with the Flow. `text` is the server's message; null means "show the generic failure in the language
+ * the window is in when it is drawn". `operation` is the id of the group / batch / press that failed, `order` the
+ * position of the failure among all actions and failures of the session (a success clears only smaller orders).
+ */
+export interface FlowOperationErrorEntry {
+  id: number
+  kind: FlowOperationErrorKind
+  /** Names of the files the failure is about (empty for a list read). */
+  targets: string[]
+  operation: number
+  order: number
+  text: string | null
+}
 
 /** What a window draws for one Flow. Reactive; written only by this manager (and the window's own list reads). */
 export interface FlowOperationsState extends UploadState {
@@ -47,17 +67,20 @@ export interface FlowOperationsState extends UploadState {
   files: FlowFile[]
   /** Keys whose delete request is on the way: hidden from the list until it answers; a failure brings the row back. */
   deleting: Set<string>
-  error: FlowOperationError | null
+  /** Failures of deletes, uploads and downloads (newest last), kept until closed or cleared by a later success. */
+  errors: FlowOperationErrorEntry[]
+  /** The last failed list read. Separate, so it never covers a failed work; cleared by the next successful read. */
+  readError: FlowOperationErrorEntry | null
+  /** Order of the latest "cancelled because the window closed / name in use" note in `cancelledUploads`. */
+  cancelledOrder: number
   loading: boolean
   loaded: boolean
   readOnly: boolean
   /** Bumped on every queue change so computed rows re-read the (non-reactive) undo queue. */
   revision: number
-  /** Card 5: structured errors. Always empty until then. */
-  errors: FlowOperationErrorEntry[]
 }
 
-/** APIs shared by cards 3–5. Card 3 implements flushPagehide; other members remain extension points. */
+/** APIs shared by cards 3–5 (all implemented below). */
 export interface FlowOperationsLater {
   /** Card 3: on pagehide send the pending deletes of writable, signed-in Flows at once (keepalive). */
   flushPagehide(): number
@@ -69,6 +92,8 @@ export interface FlowOperationsLater {
   clearError(scope: FlowScope, errorId: number): boolean
 }
 
+/** An upload batch (one drop / file pick): its failures stay with it, and only a batch without failures clears older ones. */
+interface Batch { start: number; total: number; done: number; failed: number; ok: number }
 /** Whether a Flow is archived for sure: true locks, false unlocks, null = not known (changes nothing). */
 export type FlowReadOnlySource = (projectId: string, flowId: string) => boolean | null
 
@@ -103,6 +128,9 @@ interface Entry {
   readonly queue: ReturnType<typeof createUndoQueue<FlowFile>>
   readonly views: Set<string>
   uploads: ReturnType<typeof createUploadWorker>
+  /** Order number taken when each file's 🗑 was pressed (the start of the group it belongs to). */
+  readonly stageOrders: Map<string, number>
+  readonly batches: Map<number, Batch>
   disposed: boolean
   readSequence: number
   /** Moves on every read-only lock: a group already being sent stops sending its files not sent yet, for good. */
@@ -122,14 +150,66 @@ const archiveWatches = new Map<string, () => void>()
 let syncScheduled = false
 let sessionEnded = false
 let deleteOperationId = 0
+/** One counter for the start of every action and the record of every failure: later = larger. */
+let orderSerial = 0
+let operationSerial = 0
+let errorSerial = 0
+const nextOrder = () => ++orderSerial
 const deleteResults = new Map<number, Set<string>>()
 let disposePagehide: (() => void) | null = null
 
 const ownerNow = () => useCurrentUser().user.value?.username ?? ''
 const keyOf = (gen: number, owner: string, scope: FlowScope) => [gen, owner, scope.projectId, scope.flowId].join('\u0001')
-const failureOf = (e: unknown): FlowOperationError => {
+/** The server's message of a failed request; null when there is none (the window then shows its generic one). */
+const failureText = (e: unknown): string | null => {
   const raw = e as { response?: { data?: { error?: { message?: string } } } }
-  return { text: raw?.response?.data?.error?.message || null }
+  return raw?.response?.data?.error?.message || null
+}
+
+/** Keeps one failure (a work failure, or the list read failure). Returns the entry. */
+function recordFailure(entry: Entry, kind: FlowOperationErrorKind, targets: string[], error: unknown, operation: number): FlowOperationErrorEntry {
+  const { state } = entry
+  const item: FlowOperationErrorEntry = { id: ++errorSerial, kind, targets, operation, order: nextOrder(), text: failureText(error) }
+  if (kind === 'read') { state.readError = item; return item }
+  const same = (e: FlowOperationErrorEntry) => e.kind === kind && e.text === item.text && e.targets.join('\u0001') === targets.join('\u0001')
+  // No cap: a failure goes away only by its close button or a later successful action (R3), never by being pushed out.
+  state.errors = [...state.errors.filter(e => !same(e)), item]
+  return item
+}
+
+/** One entry per distinct server message, so a group that failed for two reasons shows both. */
+function recordFailures(entry: Entry, kind: FlowOperationErrorKind, failures: { name: string; error: unknown }[], operation: number) {
+  const byText = new Map<string | null, { names: string[]; error: unknown }>()
+  for (const f of failures) {
+    const text = failureText(f.error)
+    const found = byText.get(text)
+    if (found) found.names.push(f.name); else byText.set(text, { names: [f.name], error: f.error })
+  }
+  for (const { names, error } of byText.values()) recordFailure(entry, kind, names, error, operation)
+}
+
+/** A user action that started at `started` succeeded: the failures recorded before it are gone, newer ones stay. */
+function clearBefore(entry: Entry, started: number) {
+  const { state } = entry
+  if (state.errors.some(e => e.order < started)) state.errors = state.errors.filter(e => e.order >= started)
+  if (state.cancelledUploads.length && state.cancelledOrder < started) state.cancelledUploads = []
+}
+
+function noteCancelled(entry: Entry, name: string) {
+  entry.state.cancelledUploads.push(name)
+  entry.state.cancelledOrder = nextOrder()
+}
+
+/** A unit (one file) of an upload batch ended. The batch clears older failures only if nothing in it failed. */
+function finishUnit(entry: Entry, batch: number, result: 'ok' | 'failed' | 'neutral') {
+  const b = entry.batches.get(batch)
+  if (!b) return
+  b.done++
+  if (result === 'ok') b.ok++
+  if (result === 'failed') b.failed++
+  if (b.done < b.total) return
+  entry.batches.delete(batch)
+  if (!b.failed && b.ok) clearBefore(entry, b.start)
 }
 /** True once the entry's session ended (or the manager was reset): its late answers must not touch any state. */
 const stale = (entry: Entry) => entry.disposed || entry.generation !== generation.value
@@ -144,7 +224,7 @@ function entryFor(scope: FlowScope): Entry {
   if (found) return found
   const state = reactive<FlowOperationsState>({
     key, projectId: scope.projectId, flowId: scope.flowId,
-    files: [], deleting: new Set(), error: null, loading: false, loaded: false, readOnly: false, revision: 0, errors: [],
+    files: [], deleting: new Set(), errors: [], readError: null, cancelledOrder: 0, loading: false, loaded: false, readOnly: false, revision: 0,
     currentFile: null, pendingCount: 0, collision: null, cancelledUploads: [], dirty: false, uploadRevision: 0,
   }) as FlowOperationsState
   // The queue holds timers and file snapshots; it stays out of Vue's proxies (`revision` tells the views).
@@ -162,14 +242,25 @@ function entryFor(scope: FlowScope): Entry {
         while (entry.archiveCheck && !stale(entry) && !state.readOnly) await entry.archiveCheck
       },
       changed: scheduleArchiveSync,
-      completed: () => {
+      begin: count => {
+        const id = ++operationSerial
+        holder.entry!.batches.set(id, { start: nextOrder(), total: count, done: 0, failed: 0, ok: 0 })
+        return id
+      },
+      completed: batch => {
         state.dirty = true
         state.uploadRevision++
         if (holder.entry!.views.size) void refreshEntry(holder.entry!)
+        finishUnit(holder.entry!, batch, 'ok')
       },
-      failed: error => { state.error = failureOf(error) },
+      skipped: batch => finishUnit(holder.entry!, batch, 'neutral'),
+      cancelledNote: name => noteCancelled(holder.entry!, name),
+      failed: (error, file, batch) => {
+        recordFailure(holder.entry!, 'upload', [file.name], error, batch)
+        finishUnit(holder.entry!, batch, 'failed')
+      },
     }),
-    disposed: false, readSequence: 0, cancelEpoch: 0, sending: 0, archiveCheck: null, archiveSequence: 0,
+    stageOrders: new Map(), batches: new Map(), disposed: false, readSequence: 0, cancelEpoch: 0, sending: 0, archiveCheck: null, archiveSequence: 0,
   }
   holder.entry = entry
   entries.set(key, entry)
@@ -188,6 +279,10 @@ async function commit(entry: Entry, items: FlowFile[], leaving = false) {
   if (stale(entry)) return
   const epoch = entry.cancelEpoch
   const cancelled = () => entry.cancelEpoch !== epoch || state.readOnly
+  const operation = ++operationSerial
+  // The group started when its first 🗑 was pressed (the five seconds are waiting, not working).
+  const started = Math.min(nextOrder(), ...items.map(file => entry.stageOrders.get(file.key) ?? Infinity))
+  for (const file of items) entry.stageOrders.delete(file.key)
   entry.sending++
   try {
     for (const file of items) state.deleting.add(file.key)
@@ -199,7 +294,7 @@ async function commit(entry: Entry, items: FlowFile[], leaving = false) {
         // One result per operation/file, including a response delivered after bfcache restore.
         if (!deleteResults.get(operationId)?.delete(file.key) || stale(entry)) return
         if (failed) {
-          state.error = failureOf(error)
+          recordFailure(entry, 'delete', [file.display_name], error, operation)
           if (!state.files.some(f => f.key === file.key)) state.files.push(file)
         } else {
           // A list read started before this DELETE completed must not resurrect the deleted row.
@@ -224,6 +319,9 @@ async function commit(entry: Entry, items: FlowFile[], leaving = false) {
       deleteResults.delete(operationId)
       return
     }
+    // R4: only this group's own result decides. A group that failed in part keeps its failure; it clears nothing.
+    const failedItems: { file: FlowFile; error: unknown }[] = []
+    let deleted = 0
     for (const file of items) {
       if (stale(entry)) return
       // An archive event came in: wait for its read before sending (it may lock the Flow).
@@ -236,15 +334,25 @@ async function commit(entry: Entry, items: FlowFile[], leaving = false) {
         await deleteFile(entry.flowId, file)
         if (stale(entry)) return
         state.files = state.files.filter(f => f.key !== file.key)
+        deleted++
       } catch (e) {
         if (stale(entry)) return
-        state.error = failureOf(e)
+        failedItems.push({ file, error: e })
       } finally {
         if (!stale(entry)) { state.deleting.delete(file.key); state.revision++ }
       }
     }
-    // Same rule as the window had (R4 — reading again only after this run's failure — is card 5's).
-    if (!stale(entry) && state.error) await refreshEntry(entry)
+    if (stale(entry)) return
+    if (failedItems.length) {
+      recordFailures(entry, 'delete', failedItems.map(f => ({ name: f.file.display_name, error: f.error })), operation)
+      // The files are still on the server: they are in the list again (the snapshot if a read dropped them) ...
+      for (const { file } of failedItems) if (!state.files.some(f => f.key === file.key)) state.files.push(file)
+      state.revision++
+      // ... and the list is read again — at once while a window shows it, otherwise when one opens.
+      if (entry.views.size) await refreshEntry(entry); else state.dirty = true
+    } else if (deleted) {
+      clearBefore(entry, started)
+    }
   } finally {
     entry.sending--
     scheduleArchiveSync()
@@ -261,9 +369,11 @@ async function refreshEntry(entry: Entry) {
     if (stale(entry) || seq !== entry.readSequence) return
     state.files = data
     state.loaded = true
+    state.readError = null
     if (uploadRevision === state.uploadRevision) state.dirty = false
   } catch (e) {
-    if (!stale(entry) && seq === entry.readSequence) state.error = failureOf(e)
+    // Only the read's own error: a failed work (state.errors) is not touched.
+    if (!stale(entry) && seq === entry.readSequence) recordFailure(entry, 'read', [], e, ++operationSerial)
   } finally {
     if (!stale(entry) && seq === entry.readSequence) state.loading = false
   }
@@ -276,6 +386,8 @@ function setEntryReadOnly(entry: Entry, locked: boolean) {
   if (locked) {
     entry.cancelEpoch++
     entry.uploads.cancel()
+    entry.batches.clear()
+    entry.stageOrders.clear()
     entry.queue.clear()
   }
 }
@@ -402,7 +514,11 @@ export function hasView(scope: FlowScope): boolean { return (peek(scope)?.views.
 export function stageDelete(scope: FlowScope, files: readonly FlowFile[]): void {
   const entry = entryFor(scope)
   if (entry.state.readOnly) return
-  entry.queue.stage(files.filter(f => !entry.state.deleting.has(f.key)).map(f => ({ ...f })))
+  const fresh = files.filter(f => !entry.state.deleting.has(f.key) && !entry.queue.pending(f.key)).map(f => ({ ...f }))
+  if (!fresh.length) return
+  const order = nextOrder()
+  for (const f of fresh) entry.stageOrders.set(f.key, order)
+  entry.queue.stage(fresh)
 }
 /** A row's ↶: that file only; the rest of its group keeps counting. */
 export function undoItem(scope: FlowScope, key: string): void { peek(scope)?.queue.undoItem(key) }
@@ -419,6 +535,39 @@ export function bulkGroup(scope: FlowScope): UndoGroup<FlowFile> | undefined { r
 export function pendingGroup(scope: FlowScope, key: string): UndoGroup<FlowFile> | undefined { return peek(scope)?.queue.pending(key) }
 /** Snapshots of every file waiting for its five seconds, so a row that left the server list keeps its ↶. */
 export function pendingFiles(scope: FlowScope): FlowFile[] { return peek(scope)?.queue.groups.flatMap(g => g.items) ?? [] }
+
+/** A user action starts (a download pressed ...): its order. Pass it to actionSucceeded when it succeeds. */
+export function beginAction(): number { return nextOrder() }
+/** The action that started at `started` succeeded: failures recorded before it are cleared, newer ones stay. */
+export function actionSucceeded(scope: FlowScope, started: number): void {
+  const entry = peek(scope)
+  if (entry) clearBefore(entry, started)
+}
+/** An action of the window itself (download, ZIP) failed. */
+export function actionFailed(scope: FlowScope, kind: 'download', error: unknown, targets: string[]): void {
+  recordFailure(entryFor(scope), kind, targets, error, ++operationSerial)
+}
+/** A read the window made (the approval requests) failed: kept as the list read error, apart from the work failures. */
+export function readFailed(scope: FlowScope, error: unknown): void {
+  recordFailure(entryFor(scope), 'read', [], error, ++operationSerial)
+}
+/** The close button of a failure line. False when it is not there any more. */
+export function clearError(scope: FlowScope, errorId: number): boolean {
+  const entry = peek(scope)
+  if (!entry) return false
+  const { state } = entry
+  if (state.readError?.id === errorId) { state.readError = null; return true }
+  if (!state.errors.some(e => e.id === errorId)) return false
+  state.errors = state.errors.filter(e => e.id !== errorId)
+  return true
+}
+/** The close button of the "cancelled files" line. */
+export function clearCancelled(scope: FlowScope): boolean {
+  const state = peek(scope)?.state
+  if (!state?.cancelledUploads.length) return false
+  state.cancelledUploads = []
+  return true
+}
 
 /** Reads the Flow's files again into its state. */
 export function refresh(scope: FlowScope): Promise<void> { return refreshEntry(entryFor(scope)) }
@@ -459,6 +608,8 @@ export function stopSession(): void {
   for (const entry of entries.values()) {
     entry.queue.clear()
     entry.disposed = true
+    entry.batches.clear()
+    entry.stageOrders.clear()
     entry.uploads.dispose()
     entry.archiveCheck = null
     entry.views.clear()

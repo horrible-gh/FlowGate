@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Window from '@/features/designer/flowAttachments/FlowAttachmentWindow.vue'
 import Host from '@/features/designer/flowAttachments/FlowAttachmentHost.vue'
 import { flowAttachmentUi } from '@/features/designer/flowAttachments/state'
-import { disposeFlowAttachmentOperations, pendingGroup, startFlowAttachmentOperations } from '@/features/designer/flowAttachments/operations'
+import { disposeFlowAttachmentOperations, getFlowState, pendingGroup, startFlowAttachmentOperations } from '@/features/designer/flowAttachments/operations'
 
 const api = vi.hoisted(() => ({ readFiles: vi.fn(), deleteFile: vi.fn(), uploadFile: vi.fn(), downloadFile: vi.fn(), downloadZip: vi.fn() }))
 vi.mock('@/features/designer/flowAttachments/api', () => api)
@@ -116,6 +116,92 @@ describe('Flow attachment window (final mockup)', () => {
     await wrapper.find('[data-conflict="keep_both"]').trigger('click')
     await work; await flushPromises()
     expect(api.uploadFile).toHaveBeenLastCalledWith('A', file, 'keep_both', undefined)
+  })
+})
+
+describe('Flow attachment window — failures kept while closed, close button, ring time (R3, R5)', () => {
+  const inLocale = (locale: string) => ({ ...global, plugins: [createI18n({ legacy: false, locale, messages: { [locale]: {} } })] })
+  const failDeleteWhileClosed = async (message?: string) => {
+    api.deleteFile.mockRejectedValueOnce(message ? { response: { data: { error: { message } } } } : new Error('offline'))
+    wrapper = mount(Window, { props, global })
+    await flushPromises()
+    vi.useFakeTimers()
+    await wrapper.find('[data-test="flow-attachment-delete"]').trigger('click')
+    wrapper.unmount(); wrapper = undefined // the window is closed before the five seconds are over
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    vi.useRealTimers()
+  }
+
+  it('a failure while the window is closed is the red line on top when it opens again, with the file back in the list', async () => {
+    await failDeleteWhileClosed('The file changed.')
+    wrapper = mount(Window, { props, global })
+    await flushPromises()
+    const line = wrapper.find('[data-test="flow-attachment-error"]')
+    expect(line.attributes('role')).toBe('alert')
+    expect(line.text()).toContain('삭제하지 못한 파일: shot.png')
+    expect(line.text()).toContain('The file changed.')
+    expect(wrapper.findAll('[data-test="flow-attachment-row"]')).toHaveLength(2)
+    // the red line is above the list
+    const html = wrapper.html()
+    expect(html.indexOf('flow-attachment-errors')).toBeLessThan(html.indexOf('flow-attachment-list'))
+  })
+
+  it('has an accessible close button; it removes the line, and closing + reopening the window had not', async () => {
+    await failDeleteWhileClosed('The file changed.')
+    wrapper = mount(Window, { props, global })
+    await flushPromises()
+    wrapper.unmount()
+    wrapper = mount(Window, { props, global })
+    await flushPromises()
+    const close = wrapper.find('[data-test="flow-attachment-error-close"]')
+    expect(close.element.tagName).toBe('BUTTON')
+    expect(close.attributes('type')).toBe('button')
+    expect(close.attributes('aria-label')).toBe('오류 닫기')
+    await close.trigger('click')
+    expect(wrapper.find('[data-test="flow-attachment-error"]').exists()).toBe(false)
+  })
+
+  it.each([['en', 'Could not delete: shot.png', 'Could not complete the operation'], ['ja', '削除できなかったファイル: shot.png', '操作を完了できませんでした']])(
+    'a failure without a server message is written in the language of the window that shows it (%s)', async (locale, lead, generic) => {
+      await failDeleteWhileClosed()
+      wrapper = mount(Window, { props, global: inLocale(locale) })
+      await flushPromises()
+      const text = wrapper.find('[data-test="flow-attachment-error"]').text()
+      expect(text).toContain(lead); expect(text).toContain(generic)
+    })
+
+  it('the name-cancelled files are told in the same red area, and its close button clears them', async () => {
+    api.uploadFile.mockRejectedValueOnce({ response: { data: { error: { code: 'ATTACHMENT_NAME_CONFLICT', details: { key: 'k', content_sha256: 'h' } } } } })
+    wrapper = mount(Window, { props, global })
+    await flushPromises()
+    const view = wrapper.vm as unknown as { add: (files: File[]) => void }
+    view.add([new File(['x'], 'notes.md')])
+    wrapper.unmount(); wrapper = undefined // closed while the name question is open: that file is cancelled
+    await flushPromises()
+    wrapper = mount(Window, { props, global })
+    await flushPromises()
+    expect(wrapper.find('[data-test="flow-attachment-errors"]').text()).toContain('이름이 같아 취소된 파일: notes.md')
+    await wrapper.find('[data-test="flow-attachment-error-close"]').trigger('click')
+    expect(wrapper.find('[data-test="flow-attachment-errors"]').exists()).toBe(false)
+  })
+
+  it('a successful delete afterwards removes the old line by itself', async () => {
+    await failDeleteWhileClosed('The file changed.')
+    wrapper = mount(Window, { props, global })
+    await flushPromises()
+    expect(wrapper.find('[data-test="flow-attachment-error"]').exists()).toBe(true)
+    vi.useFakeTimers()
+    await wrapper.find('[data-test="flow-attachment-delete"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(wrapper.find('[data-test="flow-attachment-error"]').exists()).toBe(false)
+  })
+
+  it('the ring time is a CSS variable on the window, set from the undo time (5 s)', async () => {
+    wrapper = mount(Window, { props, global })
+    await flushPromises()
+    expect(wrapper.find('[data-test="flow-attachment-window"]').attributes('style')).toContain('--fa-undo-ms: 5000ms')
   })
 })
 
@@ -354,5 +440,38 @@ describe('upload lifetime through the window and Host (R2)', () => {
     await flushPromises()
     expect(api.uploadFile).toHaveBeenCalledTimes(2)
     expect(api.uploadFile.mock.calls[1][1].name).toBe('b.txt')
+  })
+})
+
+describe('Flow attachment window — closing with the header × while a name question is open', () => {
+  const conflict = { response: { data: { error: { code: 'ATTACHMENT_NAME_CONFLICT', details: { key: 'old', content_sha256: 'sha' } } } } }
+
+  it('the real × button closes the window; only the asked file is cancelled and the rest upload', async () => {
+    api.uploadFile.mockRejectedValueOnce(conflict)
+    wrapper = mount(Host, { props: { flowId: 'A', projectId: 'p', title: 'A', isReadOnly: () => false }, global })
+    const host = wrapper.vm as unknown as { open(files?: File[]): Promise<void> }
+    await host.open()
+    await host.open([new File(['a'], 'a.txt'), new File(['b'], 'b.txt'), new File(['c'], 'c.txt')]); await flushPromises()
+    expect(wrapper.find('[data-test="flow-attachment-conflict"]').exists()).toBe(true)
+    // The header's own close button (not the conflict card's buttons, not a DOM shortcut).
+    const close = wrapper.find('[data-test="flow-attachment-close"]')
+    expect(close.exists()).toBe(true)
+    expect(close.element.closest('.fa-conflict')).toBeNull()
+    await close.trigger('click'); await flushPromises()
+    expect(wrapper.find('[data-test="flow-attachment-window"]').exists()).toBe(false)
+    expect(api.uploadFile.mock.calls.map(call => call[1].name)).toEqual(['a.txt', 'b.txt', 'c.txt'])
+    expect(api.uploadFile.mock.calls.filter(call => call[1].name === 'a.txt')).toHaveLength(1)
+    expect(getFlowState({ projectId: 'p', flowId: 'A' }).cancelledUploads).toEqual(['a.txt'])
+    expect(getFlowState({ projectId: 'p', flowId: 'A' }).collision).toBeNull()
+  })
+
+  it('the header is stacked above the conflict card, so the pointer reaches × while the card is up', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const source = readFileSync(resolve(__dirname, '../../../src/features/designer/flowAttachments/FlowAttachmentWindow.vue'), 'utf8')
+    const z = (selector: string) => Number(new RegExp(`${selector.replace('.', '\\.')}\\s*\\{[^}]*?z-index:\\s*(\\d+)`).exec(source)?.[1])
+    const head = /\.fa-head \{([^}]*)\}/.exec(source)?.[1] ?? ''
+    expect(head).toMatch(/position:\s*relative/)
+    expect(z('.fa-head')).toBeGreaterThan(z('.fa-conflict'))
   })
 })

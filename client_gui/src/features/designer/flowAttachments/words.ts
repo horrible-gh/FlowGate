@@ -1,6 +1,7 @@
 // Words of the Flow attachment window (flowgate.v02gui.0030 final mockup). The window shows no text buttons
 // for delete / undo: those words are only tooltips and accessible names.
 type Origin = 'ai' | 'upload' | 'bug' | 'requirement' | 'chat' | 'card'
+type ErrorKind = 'delete' | 'upload' | 'download' | 'read'
 
 const ko = {
   uploadProgress: (name: string, pending: number) => `업로드 중: ${name} · 대기 ${pending}개`,
@@ -12,6 +13,9 @@ const ko = {
   close: '창 닫기', empty: '파일 없음', noResult: '검색 결과 없음', loading: '불러오는 중',
   conflictTitle: '이름 중복', cancel: '취소', keep: '양쪽 보존', overwrite: '덮어쓰기',
   dropTitle: '파일 놓기', failed: '작업을 완료하지 못했습니다. 다시 시도해 주세요.', yesterday: '어제',
+  // Red lines kept for a Flow (R3): what failed, then the server's reason or the generic `failed`.
+  errorLead: { delete: n => `삭제하지 못한 파일: ${n}`, upload: n => `업로드하지 못한 파일: ${n}`, download: n => `다운로드하지 못한 파일: ${n}`, read: () => '목록을 불러오지 못했습니다' } as Record<ErrorKind, (names: string) => string>,
+  cancelledNames: (names: string) => `이름이 같아 취소된 파일: ${names}`, closeError: '오류 닫기', more: (n: number) => `외 ${n}개`,
   origin: { ai: 'AI 첨부 승인', upload: '직접 업로드', bug: '버그 카드', requirement: '요구사항 카드', chat: '대화', card: '카드' } as Record<Origin, string>,
 }
 type Words = typeof ko
@@ -26,6 +30,8 @@ const en: Words = {
   close: 'Close window', empty: 'No files', noResult: 'No results', loading: 'Loading',
   conflictTitle: 'Name in use', cancel: 'Cancel', keep: 'Keep both', overwrite: 'Overwrite',
   dropTitle: 'Drop files', failed: 'Could not complete the operation. Please try again.', yesterday: 'Yesterday',
+  errorLead: { delete: n => `Could not delete: ${n}`, upload: n => `Could not upload: ${n}`, download: n => `Could not download: ${n}`, read: () => 'Could not load the list' },
+  cancelledNames: names => `Cancelled because the name is in use: ${names}`, closeError: 'Close error', more: n => `and ${n} more`,
   origin: { ai: 'AI approval', upload: 'Uploaded', bug: 'Bug card', requirement: 'Requirement card', chat: 'Chat', card: 'Card' },
 }
 
@@ -39,6 +45,8 @@ const ja: Words = {
   close: 'ウィンドウを閉じる', empty: 'ファイルなし', noResult: '検索結果なし', loading: '読み込み中',
   conflictTitle: '名前の重複', cancel: 'キャンセル', keep: '両方を保持', overwrite: '上書き',
   dropTitle: 'ファイルをドロップ', failed: '操作を完了できませんでした。再試行してください。', yesterday: '昨日',
+  errorLead: { delete: n => `削除できなかったファイル: ${n}`, upload: n => `アップロードできなかったファイル: ${n}`, download: n => `ダウンロードできなかったファイル: ${n}`, read: () => '一覧を読み込めませんでした' },
+  cancelledNames: names => `名前が重複したためキャンセルされたファイル: ${names}`, closeError: 'エラーを閉じる', more: n => `ほか${n}件`,
   origin: { ai: 'AI 添付承認', upload: '直接アップロード', bug: 'バグカード', requirement: '要件カード', chat: '会話', card: 'カード' },
 }
 
