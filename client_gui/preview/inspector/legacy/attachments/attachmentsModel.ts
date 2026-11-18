@@ -13,7 +13,7 @@
 // AI running, a refusal of the server's mutability guard (409 DOCUMENT_NOT_MUTABLE) that no fact read
 // explains, then the per-document maximum (adding only), then a change in flight.
 // Not offered (D#1 §8.4): the per-file AI hand-off mark.
-import type { InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'
+import type { InspectorCardKind, InspectorReadOnly } from '@/features/designer/inspector/inspectorTarget'
 
 /** The parts of the target the document rule reads. */
 export interface AttachmentsTargetFacts {

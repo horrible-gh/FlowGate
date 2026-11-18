@@ -37,7 +37,7 @@ describe('the settings tab on a narrow Inspector (flowgate.v02.0053 T#7)', () =>
   })
 
   it('the retired requirement settings have no form or subscription', () => {
-    const src = source('features/requirementSettings/RequirementSettings.vue')
+    const src = readFileSync(resolve(INSPECTOR, '../../../../preview/inspector/legacy/requirementSettings/RequirementSettings.vue'), 'utf8')
     expect(src).not.toContain('<InspectorBlock')
     expect(src).not.toContain('useRequirementSettings')
   })

@@ -8,7 +8,7 @@ import GitPushErrorWindow from '@/features/git/GitPushErrorWindow.vue'
 import GitPushFailureCard from '@/features/git/GitPushFailureCard.vue'
 import { retryOutcomeText, useGateOperations, GATE_OPERATIONS_CONTEXT, type GateOperations } from '@/features/git/gateOperations'
 import { GIT_PANEL_CONTEXT } from '@/features/git/gitSession'
-import { checkOperationErrorKey } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
+import { checkOperationErrorKey } from '@/features/document'
 import { prepareInspectorI18n } from '../designer/inspector/support/inspectorSupport'
 let current: any
 let jobs: GateOperations

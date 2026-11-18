@@ -14,7 +14,7 @@
       <button type="button" class="inspector-gate-conflict-go" data-test="gate-conflict-open-git" @click="openGit">{{ t(k('conflict.open')) }}</button>
     </div>
     <GateSettingsSummary v-if="shape === 'gate'" :node="decision.settings.value" :decision="decision.receipt.value" :error-code="decision.errorCode.value" hide-target />
-    <InspectorSlotList :target="target" v-if="shape !== 'gate'" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
+    <InspectorSlotList :decisions="documentDecisions" v-if="shape !== 'gate'" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, docId)" /></template>
     </InspectorSlotList>
@@ -22,6 +22,7 @@
 </template>
 
 <script setup lang="ts">
+import { useCardDocumentDecisions } from '../../openDocument'
 import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { INSPECTOR_HOST } from '../../inspectorHost'
@@ -108,6 +109,8 @@ function openGit() {
 function action(line: InspectorSlotView, key: SlotActionKey) {
   openCardLineAction(props.target, line, key, host)
 }
+
+const documentDecisions = useCardDocumentDecisions(() => props.target)
 </script>
 
 <style scoped>

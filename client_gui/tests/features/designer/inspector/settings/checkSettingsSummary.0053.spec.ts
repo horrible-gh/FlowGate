@@ -1,6 +1,7 @@
 /** 0098 D0004 §6: local branch choices, inheritance and receipt-only summaries. */
 import { describe, expect, it } from 'vitest'
-import { checkSettingsErrorKey, checkSettingsView, checkControlFailure, checkOperationErrorKey, checkSettingsSummary } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
+import { checkSettingsErrorKey, checkSettingsView } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
+import { checkControlFailure, checkOperationErrorKey, checkSettingsSummary } from '@/features/document'
 import { toSettingsNode, type RunGateResult } from '@/features/document'
 import messages from '@/features/designer/inspector/features/checkSettings/messages'
 const field = (value: unknown, stored = false) => ({ value, stored, default: null, choices: null })

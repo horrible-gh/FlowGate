@@ -35,8 +35,8 @@ import {
   type EditSession,
   type PendingRequest,
   type SaveFailure,
-} from '@/features/document/cardEditSession'
-import { documentIoMarkUnresolved, documentIoTsBegin, documentIoTsEnd } from '@/features/documentWindow'
+} from '@/features/document'
+import { documentIoMarkUnresolved, documentIoTsBegin, documentIoTsEnd } from './documentEditRegistry'
 
 /** The base a draft pinned at its start. `revisionNo` only moves with this draft's own confirmed ACK. */
 export interface TsBase {
@@ -107,7 +107,9 @@ function sessionOf(ctx: CardDocumentContext, base: { docId: string; revisionNo: 
 /** After a 403 token_kind_not_allowed the call setting was corrected: the kept request may be sent again (explicit). */
 export function tsConfigCorrected(docId: string, owner: string): void {
   const entry = held.get(docId)
-  if (entry && entry.owner === owner && entry.block === 'config') held.set(docId, { ...entry, block: null })
+  if (entry && entry.owner === owner && entry.block === 'config') {
+    held.set(docId, { ...entry, block: null, pending: { ...entry.pending, resendable: true } })
+  }
 }
 
 /** An explicit new intent (after idempotency_key_reused, or a discarded request): the old pending is dropped, the next send uses a new key. */

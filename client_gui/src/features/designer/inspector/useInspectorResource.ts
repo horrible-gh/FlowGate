@@ -308,3 +308,7 @@ export function useInspectorFieldWrite<T>(options: InspectorFieldWriteOptions<T>
 
   return { pending, busy, failure, write }
 }
+
+// One gate resource shared by settings, approval and the header.
+export * from '../resources/useGateContext'
+export * from '../resources/useCardDocumentDecisions'

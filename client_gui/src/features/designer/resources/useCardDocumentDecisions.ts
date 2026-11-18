@@ -1,9 +1,9 @@
 // One card resource for both document rows. SSE is a refresh signal; GET is the state.
 import { computed, inject, onScopeDispose, reactive, ref, watch } from 'vue'
 import { cardDocumentDecisionsRead, cardDocumentDecisionWrite, type CardDocumentDecisions } from '@/features/document'
-import { INSPECTOR_HOST } from './inspectorHost'
-import { inspectorCardNodeKey, type InspectorTarget } from './inspectorTarget'
-import { useInspectorResource } from './useInspectorResource'
+import { INSPECTOR_HOST } from '../inspector/inspectorHost'
+import { inspectorCardNodeKey, type InspectorTarget } from '../inspector/inspectorTarget'
+import { useInspectorResource } from '../inspector/useInspectorResource'
 
 // A re-selection or second mounted view cannot submit another decision while this card is pending.
 const pending = reactive(new Set<string>())

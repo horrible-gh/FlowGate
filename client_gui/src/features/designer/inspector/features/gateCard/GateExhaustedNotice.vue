@@ -16,7 +16,7 @@
 <script setup lang="ts">
 import { inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { flowNodeKindView } from '../../../center/canvas/flowNodeKinds'
+import { flowNodeKindView } from '../../inspectorTarget'
 import { INSPECTOR_HOST } from '../../inspectorHost'
 import type { InspectorExhaustedCard } from '../../inspectorTarget'
 

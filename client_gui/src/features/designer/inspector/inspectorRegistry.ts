@@ -78,6 +78,8 @@ export interface InspectorRegistration {
   readonly headerKind?: Component
   /** Replaces the default state pill for the first matching feature. */
   readonly headerState?: Component
+  /** A header state may apply more narrowly than this feature's document tab. */
+  readonly headerStateApplies?: (target: InspectorTarget) => boolean
   /**
    * flowgate.v02.0051 — ⋯ menu part: the card's own items after the common ID 복사 (실행 이력 · ■ 중단 ·
    * ↻ 재실행 …). Its inputs are `target` and `close` (closes the menu).

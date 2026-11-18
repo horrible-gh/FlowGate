@@ -2,7 +2,7 @@
 import { randomUuid } from '@shared/utils/uuid'
 import { computed, inject, ref, shallowRef, watch, type InjectionKey } from 'vue'
 import { documentErrorOf, runCurrentRead, runGateReceiptsRead, runGateRecover, type RunCurrent, type RunGateState, type RunGateRecoveryRequest } from '@/features/document'
-import { checkOperationErrorKey } from '../designer/inspector/features/checkSettings/checkSettingsModel'
+import { checkOperationErrorKey } from '@/features/document'
 import { useInspectorEvents } from '../designer/inspector/useInspectorResource'
 export interface GateOperation { runId: string; nodeKey: string; gate: RunGateState }
 /**

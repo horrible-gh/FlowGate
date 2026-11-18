@@ -36,7 +36,7 @@ import NotificationRunsTab from './NotificationRunsTab.vue'
 import NotificationAiTab from './NotificationAiTab.vue'
 import NotificationQuestionsTab from './NotificationQuestionsTab.vue'
 import LineIcon, { type LineIconName } from '@/components/ui/LineIcon.vue'
-import { qaOpenItems, qaRead, type QaOpenItem } from '@/features/document/api/qa'
+import { qaOpenItems, qaRead, type QaOpenItem } from '@/features/document'
 import { countLabel, notificationCounts } from './notificationCounts'
 const displayQuestions = ref<QaOpenItem[]>([])
 const questions = ref<QaOpenItem[] | null>(null), questionsError = ref(false), refreshKey = ref(0)

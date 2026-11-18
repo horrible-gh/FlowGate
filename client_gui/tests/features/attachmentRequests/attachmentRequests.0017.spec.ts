@@ -26,7 +26,7 @@ import { ATTACHMENT_REQUEST_BULK, ATTACHMENT_REQUEST_REFRESH, ATTACHMENT_REQUEST
 import { chatEventRefresh } from '@/features/conversation/conversationEvents'
 import { buildTimeline } from '@/features/conversation/timeline'
 import type { ConversationTurn, WorkChangeActivity } from '@/features/conversation/types'
-import { attachmentsTabBadge } from '@/features/designer/inspector/features/attachments/attachmentsModel'
+import { attachmentsTabBadge } from '../../../preview/inspector/legacy/attachments/attachmentsModel'
 import {
   ATTACHMENT_REQUEST_BULK_MAX,
   attachmentRequestDecideMany,

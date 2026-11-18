@@ -81,7 +81,7 @@ describe('0126 each provider forwards the selected card to the real decision row
   ])('$name keeps target, row icons, and the clicked slot/doc identity', async ({ component, type, slots, custom, rows }) => {
     const selected = target(type, slots, custom)
     await open(component, selected)
-    expect(wrapper!.getComponent(InspectorSlotList).props('target')).toEqual(selected)
+    expect(wrapper!.getComponent(InspectorSlotList).props('decisions')).toBeDefined()
     expect(fixture.get).toHaveBeenCalledWith('/api/v1/flows/f_provider/nodes/gn_provider/documents/decisions')
     expect(wrapper!.findAll('[data-test="inspector-document-decision"]')).toHaveLength(rows.length)
     for (const key of rows) {

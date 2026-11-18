@@ -336,3 +336,6 @@ export function openDocumentAi(docId: string, target: InspectorTarget, finished:
     name: target.title, title: target.cardDocuments.find((line) => line.docId === docId)?.title ?? target.title,
     finished, ...lifecycle })
 }
+
+export { reviseTs, tsOwnerOf, tsStartNewIntent, type TsBase, type TsReviseResult, type TsSubmitted } from '@/features/documentWindow'
+export { useCardDocumentDecisions } from './useInspectorResource'

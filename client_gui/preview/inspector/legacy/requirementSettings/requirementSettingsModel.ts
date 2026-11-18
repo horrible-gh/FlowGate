@@ -6,7 +6,7 @@
 // saved at once and the answer shown. A limit with no value is the system default (`기본`). A v0.1 Flow's
 // requirement Node has no card to keep them: it stays drawn OFF and off, its reason a tooltip. A failed first
 // read is an error icon with a retry, not an OFF form the server may not hold.
-import type { InspectorReadOnly } from '../../inspectorTarget'
+import type { InspectorReadOnly } from '@/features/designer/inspector/inspectorTarget'
 
 export type RequirementDelegation = 'off' | 'on'
 export type RequirementScope = 'end' | 'confirm'

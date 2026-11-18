@@ -1,6 +1,6 @@
 // D0007 §6: gate result and document-tab actions; custom/document card lines retain their existing behavior.
-import { gateHeaderState } from '../../../center/canvas/gateHeaderState'
-import type { RunGateState } from '@/features/document'
+import { gateHeaderState } from './gateHeaderModel'
+import type { RunGateState } from '../../inspectorTarget'
 import type { InspectorTarget } from '../../inspectorTarget'
 
 export type GateSlotTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'running' | 'hold'

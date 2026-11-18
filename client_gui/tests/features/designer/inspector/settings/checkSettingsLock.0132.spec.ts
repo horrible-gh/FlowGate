@@ -2,11 +2,12 @@
 import { ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 const ctx = vi.hoisted(() => ({ value: null as any }))
-vi.mock('@/features/designer/inspector/features/gateCard/useGateContext', async original => ({
-  ...await original<typeof import('@/features/designer/inspector/features/gateCard/useGateContext')>(),
+vi.mock('@/features/designer/inspector/useInspectorResource', async original => ({
+  ...await original<typeof import('@/features/designer/inspector/useInspectorResource')>(),
   useGateContext: () => ({ get value() { return ctx.value } }),
 }))
-import { checkLockedReason, checkOperationErrorKey, checkSettingsView } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
+import { checkLockedReason, checkSettingsView } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
+import { checkOperationErrorKey } from '@/features/document'
 import { useCheckSettings } from '@/features/designer/inspector/features/checkSettings/useCheckSettings'
 import messages from '@/features/designer/inspector/features/checkSettings/messages'
 import { toSettingsNode } from '@/features/document'

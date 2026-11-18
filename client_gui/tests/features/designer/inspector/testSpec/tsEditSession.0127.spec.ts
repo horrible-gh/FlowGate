@@ -23,7 +23,7 @@ import {
 } from '@/features/documentWindow/documentEditRegistry'
 import {
   resetTsEditSessions, reviseTs, tsConfigCorrected, tsHasUnresolved, tsOwnerOf, tsStartNewIntent, type TsBase,
-} from '@/features/designer/inspector/features/testSpec/tsEditSession'
+} from '@/features/documentWindow/tsEditSession'
 
 const DOC = 'flowgate.v02.0127.0030-TS'
 const CTX: CardDocumentContext = { projectId: 'flowgate', flowId: 'flowgate.v02.0127', nodeKey: 'ts', ownerSlot: 'instruction', openedDocId: DOC }

@@ -14,7 +14,7 @@ import {
   type TestSpecFormatError,
 } from '@/features/document'
 import { cardDocumentContext, openDocumentAi } from '../../openDocument'
-import { reviseTs, tsOwnerOf, tsStartNewIntent, type TsBase, type TsReviseResult, type TsSubmitted } from './tsEditSession'
+import { reviseTs, tsOwnerOf, tsStartNewIntent, type TsBase, type TsReviseResult, type TsSubmitted } from '../../openDocument'
 import { captureInspectorResourceContext, useInspectorResource } from '../../useInspectorResource'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { cardSettingsDisabledReason, type CardSettingsField } from '../settings/cardSettingsModel'
@@ -267,11 +267,11 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   // Review fix: every draft pins ONE v2 response — docId, revision, coordinates and the content/projection it shows
   // are taken from that same response and stay with that draft. A reopen, another draft's ACK or a late GET never
   // replaces them; only this draft's own confirmed ACK moves its base (to N+1, with the submitted cases).
-  const tsContext = () => { const id = view.value?.tsDocId; return id ? cardDocumentContext(target(), id) : null }
+  const testDocumentContext = () => { const id = view.value?.tsDocId; return id ? cardDocumentContext(target(), id) : null }
   const caseDetails = (rows: unknown): TsCaseList => (Array.isArray(rows) ? rows : []).flatMap((row) => toTestSpecCaseDetail(row) ?? [])
   /** Reads one structured snapshot; null when it is not readable or not this card's TS. */
   async function pinCases(): Promise<CasesPin | null> {
-    const ctx = tsContext()
+    const ctx = testDocumentContext()
     const expected = view.value?.tsDocId
     if (!ctx || !expected) return null
     try {
@@ -287,7 +287,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   }
   /** The brief's text and base from one structured read (null when it is not readable or not this TS). */
   async function pinBrief(): Promise<{ text: string; base: TsBase } | null> {
-    const ctx = tsContext()
+    const ctx = testDocumentContext()
     if (!ctx) return null
     const snapshot = await cardDocumentStructuredRead(ctx, 'ts_brief')
     const projection = snapshot.projection as { text?: unknown } | null | undefined
@@ -296,7 +296,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   }
   /** The whole stored text, its frontmatter and base of one plain v2 read, for the raw editor. */
   async function pinRaw(): Promise<{ content: string; base: TsBase } | null> {
-    const ctx = tsContext()
+    const ctx = testDocumentContext()
     if (!ctx) return null
     const snapshot = await cardDocumentRead(ctx)
     if (snapshot.bodyState !== 'readable' || snapshot.content === null || snapshot.docId !== view.value?.tsDocId) return null
