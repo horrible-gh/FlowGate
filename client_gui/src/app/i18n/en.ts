@@ -343,6 +343,7 @@ export default {
       document: 'Document',
       open_card_document: 'Open {kind}: {title}',
       card_document_empty: '{label} (empty)',
+      card_document_scenario: 'Scenario',
       latest_definition_notice: 'Showing latest definition {latest}. The run keeps revision {revision}. Protected cards and inputs cannot be changed.',
       pinned_revision_notice: 'Showing run-pinned revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',
       past_revision_notice: 'Showing revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',

@@ -6,6 +6,8 @@ export interface CardDocumentButton {
   title: string
   ownerSlot: string | null
   report: boolean
+  /** The test card's 시나리오 button: it opens the same TS document as the 지시서 button (the scenario lives inside it). */
+  scenario?: boolean
   /** flowgate.v02test.0044: the server says the document has no body yet (`has_body` false; never M / WP). The button
    * looks disabled but still opens the document, so a person can start writing it from the card. */
   empty?: boolean
@@ -16,13 +18,24 @@ const ALWAYS_FILLED_TYPES = ['M', 'WP']
 function emptyLine(line: { docType: string | null; hasBody?: boolean }): boolean {
   return line.hasBody === false && !ALWAYS_FILLED_TYPES.includes(line.docType?.trim().toUpperCase() ?? '')
 }
-export interface CardDocumentOpen { nodeId: string; docId: string }
+/** `scenario` tells the 시나리오 button from the 지시서 button of the same shared TS document. */
+export interface CardDocumentOpen { nodeId: string; docId: string; scenario?: boolean }
+/** Stable key of a button: a shared TS document has two (지시서 and 시나리오) with one doc id. */
+export const cardDocumentButtonKey = (doc: Pick<CardDocumentButton, 'docId' | 'scenario'>): string => doc.scenario ? `${doc.docId}#scenario` : doc.docId
 
-/** Live graph metadata only: shared TS lines yield one button, blank slots yield none. */
+/** Live graph metadata only: a shared TS document yields its 지시서 button plus a 시나리오 button right after it (flowgate.v02test.0041),
+ * blank slots yield none. */
 export function cardDocumentButtons(node: Pick<FlowGraphNode, 'cardDocuments' | 'document'>): CardDocumentButton[] {
   const docs = new Map<string, CardDocumentButton>()
+  const scenarios = new Map<string, CardDocumentButton>()
   for (const line of node.cardDocuments ?? []) {
     if (!line.docId) continue
+    if (line.slot === 'scenario') {
+      scenarios.set(line.docId, {
+        docId: line.docId, docType: line.docType, title: line.title ?? line.docId,
+        ownerSlot: line.slot, report: false, scenario: true, empty: emptyLine(line),
+      })
+    }
     const previous = docs.get(line.docId)
     if (previous && line.slot !== 'instruction') continue
     docs.set(line.docId, {
@@ -36,5 +49,11 @@ export function cardDocumentButtons(node: Pick<FlowGraphNode, 'cardDocuments' | 
     docs.set(doc.docId, { docId: doc.docId, docType: doc.typeCode, title: doc.title ?? doc.docId,
       ownerSlot: null, report: ['NR', 'TR', 'TR2', 'TSR'].includes(doc.typeCode ?? ''), empty: false })
   }
-  return [...docs.values()]
+  const buttons: CardDocumentButton[] = []
+  for (const doc of docs.values()) {
+    buttons.push(doc)
+    const scenario = doc.ownerSlot === 'instruction' ? scenarios.get(doc.docId) : undefined
+    if (scenario) buttons.push(scenario)
+  }
+  return buttons
 }

@@ -127,15 +127,15 @@
     </div>
     <div v-if="data.documents?.length || showConflict || showApprove" class="flow-node-footer">
       <div class="flow-node-documents">
-        <button v-for="doc in data.documents" :key="doc.docId" type="button"
+        <button v-for="doc in data.documents" :key="cardDocumentButtonKey(doc)" type="button"
           class="flow-node-document nodrag nopan" :class="{ 'is-empty': doc.empty }"
           :title="documentLabel(doc)" :aria-label="documentLabel(doc)"
-          data-test="designer-canvas-node-document" :data-doc-id="doc.docId" :data-report="doc.report"
+          data-test="designer-canvas-node-document" :data-doc-id="doc.docId" :data-report="doc.report" :data-scenario="doc.scenario ? 'true' : 'false'"
           :data-empty="doc.empty ? 'true' : 'false'"
           @pointerdown.stop @mousedown.stop @dblclick.stop @keydown.stop @keyup.stop
-          @click.stop="emit('open-document', { nodeId: id, docId: doc.docId })">
+          @click.stop="emit('open-document', doc.scenario ? { nodeId: id, docId: doc.docId, scenario: true } : { nodeId: id, docId: doc.docId })">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path
-            :d="doc.report ? CARD_DOCUMENT_ICONS.report : CARD_DOCUMENT_ICONS.instruction"
+            :d="documentIcon(doc)"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
       </div>
@@ -175,7 +175,7 @@ import { useI18n } from 'vue-i18n'
 import { Handle, Position } from '@vue-flow/core'
 import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay, flowNodeHeaderIcon } from './flowNodeKinds'
 import type { FlowGateNodeData } from './vueFlowMapping'
-import type { CardDocumentButton, CardDocumentOpen } from './cardDocumentButtons'
+import { cardDocumentButtonKey, type CardDocumentButton, type CardDocumentOpen } from './cardDocumentButtons'
 import { cardStateReasonText } from '../graph/cardStateView'
 
 const props = defineProps<{
@@ -202,7 +202,12 @@ const LINK_SIDES = [
 const CARD_DOCUMENT_ICONS = {
   instruction: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5 M9 13h6 M9 17h4',
   report: 'M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2 M9 3h6v3H9z M9 14l2 2l4-4',
+  // flowgate.v02test.0041: the test card's 시나리오 — a checkbox list, apart from the report's clipboard with a check.
+  scenario: 'M3.5 6.5l1.5 1.5l3-3 M3.5 14.5l1.5 1.5l3-3 M12 7h8 M12 15h8 M12 19h5',
 } as const
+function documentIcon(doc: CardDocumentButton): string {
+  return doc.scenario ? CARD_DOCUMENT_ICONS.scenario : doc.report ? CARD_DOCUMENT_ICONS.report : CARD_DOCUMENT_ICONS.instruction
+}
 
 /** flowgate.v02test.0044: the integration / 미인계 marks and the footer's action glyphs (mockup v4). 병합 실패 is a merge
  * with a cross — never the card state 오류's circled cross, so the two stay apart. */
@@ -223,7 +228,8 @@ const questionTitle = computed(() => (props.data.questionWait ?? []).map(item =>
 }).join('\\n') || t('gui.inspector.qna.wait_pending'))
 
 function documentLabel(doc: CardDocumentButton): string {
-  const label = t('gui.designer.center.open_card_document', { kind: doc.docType ?? t('gui.designer.center.document'), title: doc.title })
+  const kind = doc.scenario ? t('gui.designer.center.card_document_scenario') : doc.docType ?? t('gui.designer.center.document')
+  const label = t('gui.designer.center.open_card_document', { kind, title: doc.title })
   return doc.empty ? t('gui.designer.center.card_document_empty', { label }) : label
 }
 
