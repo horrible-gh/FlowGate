@@ -127,8 +127,10 @@
     <div v-if="data.documents?.length || showConflict || showApprove" class="flow-node-footer">
       <div class="flow-node-documents">
         <button v-for="doc in data.documents" :key="doc.docId" type="button"
-          class="flow-node-document nodrag nopan" :title="documentLabel(doc)" :aria-label="documentLabel(doc)"
+          class="flow-node-document nodrag nopan" :class="{ 'is-empty': doc.empty }"
+          :title="documentLabel(doc)" :aria-label="documentLabel(doc)"
           data-test="designer-canvas-node-document" :data-doc-id="doc.docId" :data-report="doc.report"
+          :data-empty="doc.empty ? 'true' : 'false'"
           @pointerdown.stop @mousedown.stop @dblclick.stop @keydown.stop @keyup.stop
           @click.stop="emit('open-document', { nodeId: id, docId: doc.docId })">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path
@@ -218,7 +220,8 @@ const questionTitle = computed(() => (props.data.questionWait ?? []).map(item =>
 }).join('\\n') || t('gui.inspector.qna.wait_pending'))
 
 function documentLabel(doc: CardDocumentButton): string {
-  return t('gui.designer.center.open_card_document', { kind: doc.docType ?? t('gui.designer.center.document'), title: doc.title })
+  const label = t('gui.designer.center.open_card_document', { kind: doc.docType ?? t('gui.designer.center.document'), title: doc.title })
+  return doc.empty ? t('gui.designer.center.card_document_empty', { label }) : label
 }
 
 // flowgate.v02.0070 T#4 (B4): the same kind display as the Inspector header (a B root is a 버그).
@@ -491,6 +494,20 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   color: #fff;
 }
 .flow-node-document:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: 1px; }
+/* flowgate.v02test.0044: a document without a body yet looks disabled (dashed, faded) but still opens on a press. */
+.flow-node-document.is-empty {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--flow-node-accent) 30%, transparent);
+  background: transparent;
+  color: color-mix(in srgb, var(--flow-node-accent) 30%, #8a8f98);
+  opacity: 0.55;
+}
+.flow-node-document.is-empty:hover {
+  opacity: 0.85;
+  border-color: color-mix(in srgb, var(--flow-node-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--flow-node-accent) 10%, transparent);
+  color: color-mix(in srgb, var(--flow-node-accent) 45%, #fff);
+}
 
 .flow-node-body {
   display: flex;
