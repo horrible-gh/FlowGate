@@ -11,6 +11,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CANVAS_CLIENT_ID } from '@shared/canvasClient'
 const http = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn(), post: vi.fn() }))
 vi.mock('@shared/api', async original => ({ ...await original<typeof import('@shared/api')>(),
   getRequest: (...a: unknown[]) => http.get(...a), patchRequest: (...a: unknown[]) => http.patch(...a), postRequest: (...a: unknown[]) => http.post(...a) }))
@@ -216,7 +217,7 @@ describe('0006-T T-b in the real Inspector: the kept list follows the selection 
     })
     await control(w).setValue('release/local'); await flushPromises()
     expect(http.patch).toHaveBeenCalledTimes(1)
-    expect(http.patch).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { field: 'merge_target_branch', value: 'release/local', expected_settings_version: 6 })
+    expect(http.patch).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { field: 'merge_target_branch', value: 'release/local', expected_settings_version: 6 }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     expect(kept().settings.value?.settingsVersion).toBe(7)
     expect(kept().cachedTargets()).toEqual(LIST)
     expect(optionNames(w)).toEqual(LIST)

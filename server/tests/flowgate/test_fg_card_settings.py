@@ -354,6 +354,49 @@ def placed(env, flow, doc_type="T", assignee=None):
     return first["key_map"]["tmp_c"]
 
 
+@pytest.mark.parametrize("client_id", ["tab_1", "tab_2", None])
+def test_settings_event_carries_request_origin_and_only_follows_changes(env, client_id):
+    key = placed(env, FA)
+    headers = {"Authorization": "Bearer user:u_kim"}
+    if client_id is not None:
+        headers["x-canvas-client-id"] = client_id
+    env["events"].clear()
+    url = f"/api/v1/flows/{FA}/nodes/{key}/settings"
+    body = {"field": "restart", "value": 0}
+    response = env["client"].patch(url, json=body, headers=headers)
+    assert response.status_code == 200, response.text
+    events = [ev for ev in env["events"] if ev.event_type == "graph_canvas_changed"]
+    assert len(events) == 1
+    assert events[0].payload["origin_client_id"] == client_id
+    assert events[0].payload["reason"] == "settings"
+    assert events[0].payload["node_keys"] == [key]
+    version = response.json()["settings_version"]
+    env["events"].clear()
+    assert env["client"].patch(url, json=body, headers=headers).status_code == 200
+    refused = env["client"].patch(url, json={"field": "restart", "value": "invalid"}, headers=headers)
+    assert refused.status_code == 422
+    assert not env["events"]
+    assert get_settings(env, FA, key)["settings_version"] == version
+
+
+@pytest.mark.parametrize("client_id", ["", "bad id!", "x" * 65])
+def test_invalid_settings_origin_is_refused_before_mutation(env, client_id):
+    key = placed(env, FA)
+    before = get_settings(env, FA, key)
+    env["events"].clear()
+    response = env["client"].patch(
+        f"/api/v1/flows/{FA}/nodes/{key}/settings",
+        json={"field": "restart", "value": 0},
+        headers={**_h(), "x-canvas-client-id": client_id})
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["params"]["errors"] == [
+        {"field": "header.x-canvas-client-id", "reason": "invalid_format"}]
+    assert not env["events"]
+    after = get_settings(env, FA, key)
+    assert after["fields"] == before["fields"]
+    assert after["settings_version"] == before["settings_version"]
+
+
 # ── the settings of each card kind (pure) ────────────────────────────────────
 
 def test_card_kinds_and_their_settings_follow_the_v7_blocks():

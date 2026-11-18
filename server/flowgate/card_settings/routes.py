@@ -102,6 +102,7 @@ def patch_card_settings(flow_id: str, node_key: str, request: Request, body: Any
         legacy.authorize(user_id, group, "write")
         return settings.write(group, node_key, name, value, user_id, legacy.locale_of(request),
                               expected_version=expected_version, expected_context=expected_context,
-                              keep_merge_targets=keep_targets_requested(request))
+                              keep_merge_targets=keep_targets_requested(request),
+                              origin_client_id=legacy.client_id_of(request))
 
     return legacy.run(request, handle)

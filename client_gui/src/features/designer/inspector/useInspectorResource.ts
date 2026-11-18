@@ -18,6 +18,7 @@
 import { getCurrentInstance, onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
 import { useProjectStore, type ProjectEventFrame, type ProjectEventSubscription } from '@/features/project'
 import type { InspectorTarget } from './inspectorTarget'
+import { CANVAS_CLIENT_ID } from '@shared/canvasClient'
 
 /** Window after a first matching event within which further events join the same read again. */
 export const INSPECTOR_REFRESH_COALESCE_MS = 200
@@ -100,6 +101,9 @@ export function useInspectorEvents(scope: () => InspectorEventScope | null, opti
         subscribe(projectId, {
           events: options.events,
           event: (frame) => {
+            // The settings PATCH supplies the updated state. Other events still invalidate it.
+            if (frame.type === 'graph_canvas_changed' && frame.payload.reason === 'settings'
+              && frame.payload.origin_client_id === CANVAS_CLIENT_ID) return
             const current = scope()
             if (current !== null && matches(frame, current)) signal()
           },

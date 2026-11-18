@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, shallowRef, type ShallowRef } from 'vue'
 import { subscribeFlowCanvasChanges } from '@/features/project/flowCanvasEvents'
 import type { ProjectEventFrame } from '@/features/project'
+import { CANVAS_CLIENT_ID } from '@/features/project/flowCanvasApi'
 import {
   INSPECTOR_REFRESH_COALESCE_MS,
   inspectorEventMatches,
@@ -187,6 +188,47 @@ describe('useInspectorResource — target change', () => {
     calls[0].resolve('A1')
     await flushPromises()
     expect(state(r)).toEqual({ status: 'idle', data: null, stale: false, error: null })
+  })
+})
+
+describe('useInspectorResource — settings origin', () => {
+  it.each([false, true])('keeps local settings stable before/after the PATCH answer (answered=%s)', async (answered) => {
+    const read = vi.fn().mockResolvedValue('initial')
+    const resource = mountResource(shallowRef(scopeOf(DOC_A)), {
+      read, events: ['graph_canvas_changed'], matches: () => true,
+    })
+    stream.open()
+    await flushPromises()
+    if (answered) resource.replace('saved')
+    stream.emit('graph_canvas_changed', {
+      groupId: FLOW, payload: { reason: 'settings', origin_client_id: CANVAS_CLIENT_ID },
+    })
+    await passWindow()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(resource.status.value).toBe('ready')
+    if (!answered) resource.replace('saved')
+    expect(resource.data.value).toBe('saved')
+    stream.reconnect()
+    await passWindow()
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    ['graph_canvas_changed', 'settings', 'another_tab'],
+    ['graph_canvas_changed', 'settings', null],
+    ['graph_canvas_changed', 'settings', undefined],
+    ['graph_canvas_changed', 'documents', CANVAS_CLIENT_ID],
+    ['graph_canvas_changed', 'hold', CANVAS_CLIENT_ID],
+    ['graph_node_state_changed', 'settings', CANVAS_CLIENT_ID],
+    ['doc_review_status_changed', 'settings', CANVAS_CLIENT_ID],
+  ])('still refreshes %s / %s / %s', async (type, reason, origin) => {
+    const read = vi.fn().mockResolvedValue('current')
+    mountResource(shallowRef(scopeOf(DOC_A)), { read, events: [type] })
+    stream.open()
+    await flushPromises()
+    stream.emit(type, { groupId: FLOW, payload: { reason, origin_client_id: origin } })
+    await passWindow()
+    expect(read).toHaveBeenCalledTimes(2)
   })
 })
 

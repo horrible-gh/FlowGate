@@ -5,6 +5,7 @@
  * (GET /api/v1/ai-groups).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { CANVAS_CLIENT_ID } from '@/features/project/flowCanvasApi'
 
 const getRequest = vi.fn()
 const patchRequest = vi.fn()
@@ -26,7 +27,7 @@ describe('card settings change (flowgate.v02.0053 T#7)', () => {
   it('sends one field and its value to the card’s route (path parts encoded) and answers the card’s settings', async () => {
     patchRequest.mockResolvedValue({ data: { ok: true, flow_id: 'f/1', node_key: 'gn a', card_kind: 'run', locked: false, fields: { restart: { value: 2, stored: true, default: 0, choices: [-1, 0, 1, 2] } } } })
     const node = await settingsNodeWrite('f/1', 'gn a', 'restart', 2)
-    expect(patchRequest).toHaveBeenCalledWith('/api/v1/flows/f%2F1/nodes/gn%20a/settings', { field: 'restart', value: 2 })
+    expect(patchRequest).toHaveBeenCalledWith('/api/v1/flows/f%2F1/nodes/gn%20a/settings', { field: 'restart', value: 2 }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     expect(node).toEqual({ cardKind: 'run', locked: false, fields: { restart: { value: 2, stored: true, default: 0, choices: [-1, 0, 1, 2] } } })
   })
 
@@ -45,7 +46,7 @@ describe('card settings change (flowgate.v02.0053 T#7)', () => {
     const node = await settingsNodeWrite('f', 'gn_gate', 'archive', true, 3)
     expect(patchRequest).toHaveBeenCalledWith('/api/v1/flows/f/nodes/gn_gate/settings', {
       field: 'archive', value: true, expected_settings_version: 3,
-    })
+    }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     expect(node.settingsVersion).toBe(4)
   })
 
