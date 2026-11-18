@@ -15,6 +15,9 @@
 // flowgate.v02.0053 T#7 — a resource whose server answers a change with the whole resource (the card
 // settings, one value per request, no save button) takes that answer as its data (`replace`), and
 // useInspectorFieldWrite sends the changes: one at a time, the value sent shown until it is answered.
+// flowgate.v02test.0048 — a resource whose key carries a context next to what it reads (the card settings: card +
+// run / revision / draft version) names that part with `identity`: a key change that keeps the identity (another tab
+// placed a card, so the draft version moved) reads again quietly, the shown data kept, like a read again on an event.
 import { getCurrentInstance, onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
 import { useProjectStore, type ProjectEventFrame, type ProjectEventSubscription } from '@/features/project'
 import type { InspectorTarget } from './inspectorTarget'
@@ -130,6 +133,11 @@ export interface InspectorResourceOptions<T> {
   /** Server events after which the resource is read again. */
   events: readonly string[]
   matches?: InspectorEventMatch
+  /**
+   * What the key reads, without its context. A new key of the same identity keeps the shown data (stale) while
+   * it is read again; a new identity drops it. Without it every new key drops the data.
+   */
+  identity?: (docId: string) => string
 }
 
 export interface InspectorResource<T> {
@@ -183,8 +191,15 @@ export function useInspectorResource<T>(options: InspectorResourceOptions<T>): I
 
   watch(
     docId,
-    (id) => {
+    (id, before) => {
       latest++
+      if (id !== null && before != null && data.value !== null && options.identity
+        && options.identity(id) === options.identity(before)) {
+        // The same thing under a moved context: read it again without dropping what is shown.
+        stale.value = true
+        void load(id)
+        return
+      }
       data.value = null
       error.value = null
       stale.value = false

@@ -191,6 +191,80 @@ describe('useInspectorResource — target change', () => {
   })
 })
 
+describe('useInspectorResource — identity (flowgate.v02test.0048: a context moved by another tab)', () => {
+  const identity = (key: string) => key.split('#')[0]
+
+  it('a new key of the same identity keeps the shown data while it is read again', async () => {
+    const target = shallowRef<InspectorEventScope | null>(scopeOf(`${DOC_A}#v7`))
+    const { read, calls } = deferredReads<string>()
+    const r = mountResource(target, { read, events: [], identity })
+    calls[0].resolve('A@7')
+    await flushPromises()
+
+    target.value = scopeOf(`${DOC_A}#v8`)
+    await flushPromises()
+    expect(calls.map((c) => c.docId)).toEqual([`${DOC_A}#v7`, `${DOC_A}#v8`])
+    expect(state(r)).toEqual({ status: 'loading', data: 'A@7', stale: true, error: null })
+    calls[1].resolve('A@8')
+    await flushPromises()
+    expect(state(r)).toEqual({ status: 'ready', data: 'A@8', stale: false, error: null })
+  })
+
+  it('a slower answer under the previous context never overwrites the newer one', async () => {
+    const target = shallowRef<InspectorEventScope | null>(scopeOf(`${DOC_A}#v7`))
+    const { read, calls } = deferredReads<string>()
+    const r = mountResource(target, { read, events: [], identity })
+    calls[0].resolve('A@7')
+    await flushPromises()
+    void r.reload()
+    target.value = scopeOf(`${DOC_A}#v8`)
+    await flushPromises()
+    calls[2].resolve('A@8')
+    await flushPromises()
+    calls[1].resolve('A@7 (late)')
+    await flushPromises()
+    expect(state(r)).toEqual({ status: 'ready', data: 'A@8', stale: false, error: null })
+  })
+
+  it('a failed read under the new context keeps the data, stale, with the error', async () => {
+    const target = shallowRef<InspectorEventScope | null>(scopeOf(`${DOC_A}#v7`))
+    const { read, calls } = deferredReads<string>()
+    const r = mountResource(target, { read, events: [], identity })
+    calls[0].resolve('A@7')
+    await flushPromises()
+    target.value = scopeOf(`${DOC_A}#v8`)
+    await flushPromises()
+    const failure = new Error('boom')
+    calls[1].reject(failure)
+    await flushPromises()
+    expect(state(r)).toEqual({ status: 'error', data: 'A@7', stale: true, error: failure })
+  })
+
+  it('another identity, no data yet, or no identity option still drop the data', async () => {
+    const target = shallowRef<InspectorEventScope | null>(scopeOf(`${DOC_A}#v7`))
+    const { read, calls } = deferredReads<string>()
+    const r = mountResource(target, { read, events: [], identity })
+    target.value = scopeOf(`${DOC_A}#v8`)                // nothing shown yet: a plain new read
+    await flushPromises()
+    expect(state(r)).toEqual({ status: 'loading', data: null, stale: false, error: null })
+    calls[1].resolve('A@8')
+    await flushPromises()
+    target.value = scopeOf(`${DOC_B}#v8`)
+    await flushPromises()
+    expect(state(r)).toEqual({ status: 'loading', data: null, stale: false, error: null })
+    wrapper!.unmount()
+
+    const plain = deferredReads<string>()
+    const other = shallowRef<InspectorEventScope | null>(scopeOf(`${DOC_A}#v7`))
+    const q = mountResource(other, { read: plain.read, events: [] })
+    plain.calls[0].resolve('A@7')
+    await flushPromises()
+    other.value = scopeOf(`${DOC_A}#v8`)
+    await flushPromises()
+    expect(state(q)).toEqual({ status: 'loading', data: null, stale: false, error: null })
+  })
+})
+
 describe('useInspectorResource — settings origin', () => {
   it.each([false, true])('keeps local settings stable before/after the PATCH answer (answered=%s)', async (answered) => {
     const read = vi.fn().mockResolvedValue('initial')
