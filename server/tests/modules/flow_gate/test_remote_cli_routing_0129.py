@@ -26,6 +26,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
+from terminal_prompt_assertions import assert_terminal
 
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("FLOWGATE_AGENT_PEPPER", "test-only-pepper")
@@ -312,12 +313,12 @@ def test_local_prompt_unchanged_remote_prompt_gets_the_remote_contract(monkeypat
     from modules.flow_gate.services import node_title_hooks
     monkeypatch.setattr(node_title_hooks, "provider_prompt", lambda prompt, *a: prompt)
     run = {"locale": "en", "action_scope": "new"}
-    assert worker._provider_prompt(run, local_provider(), "P") == "P"
+    assert assert_terminal(worker._provider_prompt(run, local_provider(), "P")) == "P"
     text = worker._provider_prompt(run, remote(), "P")
     assert text.startswith("P\n\n## Remote CLI execution contract")
     assert "current working directory" in text and "do not use doc_path" in text
     for locale in ("ko", "ja"):
-        assert worker._provider_prompt({"locale": locale}, remote(), "P") == "P\n\n" + worker._REMOTE_CLI_TRANSPORT[locale]
+        assert assert_terminal(worker._provider_prompt({"locale": locale}, remote(), "P")) == "P\n\n" + worker._REMOTE_CLI_TRANSPORT[locale]
 
 
 @pytest.mark.parametrize("locale,expected_locale", [
@@ -329,11 +330,11 @@ def test_remote_chat_contract_preserves_turn_submission(monkeypatch, locale, exp
     prompt = "POST /conversation/example/turn\nbased_on_seq: 57\nprobe: preserved"
     run = {"action_scope": "chat", "locale": locale}
     text = worker._provider_prompt(run, remote(), prompt)
-    assert text == prompt + "\n\n" + worker._REMOTE_CLI_CHAT_TRANSPORT[expected_locale]
+    assert assert_terminal(text) == prompt + "\n\n" + worker._REMOTE_CLI_CHAT_TRANSPORT[expected_locale]
     assert "/inbox" not in text and "doc_path" not in text
     for required in ("FLOWGATE_TOKEN", "FLOWGATE_SCRATCH", "FLOWGATE_API_BASE", "{SCRATCH}", "UTF-8"):
         assert required in text
-    assert worker._provider_prompt(run, local_provider(), prompt) == prompt
+    assert assert_terminal(worker._provider_prompt(run, local_provider(), prompt)) == prompt
     assert worker._provider_prompt(run, {"exec_type": "api"}, prompt) == prompt
 
 
@@ -343,7 +344,7 @@ def test_remote_nonchat_contract_still_uses_inbox(monkeypatch, scope, locale):
     from modules.flow_gate.services import node_title_hooks
     monkeypatch.setattr(node_title_hooks, "provider_prompt", lambda prompt, *a: prompt)
     text = worker._provider_prompt({"action_scope": scope, "locale": locale}, remote(), "P")
-    assert text == "P\n\n" + worker._REMOTE_CLI_TRANSPORT[locale]
+    assert assert_terminal(text) == "P\n\n" + worker._REMOTE_CLI_TRANSPORT[locale]
     assert "POST /inbox" in text and "doc_path" in text
 
 
@@ -351,7 +352,7 @@ def test_remote_chat_contract_uses_continuation_locale(monkeypatch):
     from modules.flow_gate.services import node_title_hooks
     monkeypatch.setattr(node_title_hooks, "provider_prompt", lambda prompt, *a: prompt)
     run = {"action_scope": "chat", "locale": "ko", "continuation_locale": "ja"}
-    assert worker._provider_prompt(run, remote(), "P") == "P\n\n" + worker._REMOTE_CLI_CHAT_TRANSPORT["ja"]
+    assert assert_terminal(worker._provider_prompt(run, remote(), "P")) == "P\n\n" + worker._REMOTE_CLI_CHAT_TRANSPORT["ja"]
 
 
 # ── remote runs only on the target Agent and its result becomes the AI result ──

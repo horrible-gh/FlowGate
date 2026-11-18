@@ -34,6 +34,7 @@ handle). On the copy path the token IS the deliverable — it has to reach the b
 pasted, exactly as /token/issue hands one to every other copy-mention site.
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import logging
 from typing import Optional
@@ -321,7 +322,7 @@ def build_answer_mention(
         "답변 등록 POST 가 200 으로 성공하면 작업 완료입니다. "
         "예외 경로인 이관 POST 가 200 이면 그것으로 작업을 끝냅니다. 그 외 문서 등록은 하지 마십시오."
     )
-    return "\n".join(lines)
+    return terminal_prompt.prepare("\n".join(lines), kind='q_answer', locale='ko')
 
 
 def issue_answer_token(
@@ -358,7 +359,7 @@ def issue_answer_token(
         issued_to=issued_to,
         ai_run_id=ai_run_id,
     )
-    return {
+    return terminal_prompt.finalize_payload({
         "raw_token": issued["raw_token"],
         "token_id": issued["token_id"],
         "scratch_dir": issued["scratch_dir"],
@@ -382,7 +383,7 @@ def issue_answer_token(
             doc.get("group_id"),
             doc_id=doc.get("doc_id"),
         ),
-    }
+    })
 
 
 def _live_responder_run_id(item_id: int) -> Optional[str]:

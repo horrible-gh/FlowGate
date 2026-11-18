@@ -15,6 +15,7 @@ it needs back are reached through the `ai_invoke_service` seam.
 """
 
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import json
 from datetime import datetime, timezone
@@ -1158,7 +1159,10 @@ def _append_answered_questions(mention: str, bundle: dict, slot: dict, stage: st
             f"answered questions for {slot.get('doc_id')} unreadable: {exc}") from exc
     if items:
         _record_answer_delivery(group_id, bundle, slot, stage, run_id, items)
-    return mention + _answered_questions_clause(items, stage)
+    mention = mention + _answered_questions_clause(items, stage)
+    if items:
+        mention = terminal_prompt.with_answered_questions(mention, review=stage == REVIEW_HOP_KIND)
+    return mention
 
 
 # The automatic rejection text. English on purpose: T0010 작업 4 forbids new Korean literals

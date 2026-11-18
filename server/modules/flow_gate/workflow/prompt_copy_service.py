@@ -9,6 +9,7 @@ Returns a server-assembled string.
 Clipboard copy is handled on the frontend.
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import json
 from typing import Any
@@ -214,7 +215,7 @@ def build_prompt(
 
     return {
         "doc_id": doc_id,
-        "prompt_text": prompt_text,
+        "prompt_text": terminal_prompt.finalize(terminal_prompt.prepare(prompt_text, kind="next_step", locale=locale)),
         "expected_output_types": expected_output_types,
         "context": {
             "project_id": project_id,

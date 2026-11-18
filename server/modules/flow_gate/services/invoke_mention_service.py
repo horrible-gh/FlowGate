@@ -18,6 +18,7 @@ credentials to act. For those, the invoke prompt is the copy text followed by
 the standard tokened mention for the underlying action scope.
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import json
 from typing import Optional
@@ -466,14 +467,15 @@ def build_conversation_mention(
     # read_write (edit / edit_once) or execute (flowgate.v02test.0026). The other chat tool
     # sections (graph read, attachment request, card document) stay in reading mode too.
     may_run = can_write or (source_access == "read" and command_access == "execute")
+    from modules.flow_gate.services.prompt_selection import chat_situation
+    situation = chat_situation(group_name, can_write=can_write)
     if command_execution:
         from modules.flow_gate.services import chat_run_hooks
 
         omit = () if may_run else ("run_command",)
-        from modules.flow_gate.services.prompt_selection import chat_situation
         sections = chat_run_hooks.chat_mention_sections(
             api_base, raw_token, omit=omit,
-            situation=chat_situation(group_name, can_write=can_write),
+            situation=situation,
         )
         if not chat_run_hooks.registered(chat_run_hooks.PROVIDE_CHAT_TOOLS):
             sections = [_command_section(base=api_base, raw_token=raw_token)] if may_run else []
@@ -489,11 +491,12 @@ def build_conversation_mention(
         lines += ["", policy]
     from modules.flow_gate.services import message_image_delivery
     context = {"conversation_id": doc_id, "after_seq": after_seq, "through_seq": window.get("through_seq"), "locale": _locale(locale)}
-    text = "\n".join(lines)
+    text = terminal_prompt.prepare("\n".join(lines), kind="chat", locale=_locale(locale),
+                                   unanswered=situation.unanswered, can_write=can_write)
     if command_execution:
         return message_image_delivery.ConversationMention(text, context)
     notice = message_image_delivery.copy_notice(context)
-    return text + ("\n\n" + notice if notice else "")
+    return terminal_prompt.finalize(text + ("\n\n" + notice if notice else ""))
 
 def _single_line(value: Optional[str]) -> str:
     """Collapse stored text to one safe line for a bullet (0446 T0016 §4-3).

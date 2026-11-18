@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from terminal_prompt_assertions import assert_terminal
 
 from modules.flow_gate.services.ai_invoke import worker
 
@@ -46,9 +47,9 @@ def test_api_review_keeps_structured_registration_prompt_unchanged():
 @pytest.mark.parametrize("scope", ["new", "edit"])
 def test_general_cli_prompt_does_not_receive_review_only_contract(scope):
     base = "GENERAL"
-    assert worker._provider_prompt(
+    assert assert_terminal(worker._provider_prompt(
         {"action_scope": scope}, {"exec_type": "cli", "kind": "claude"}, base
-    ) == base
+    )) == base
 
 
 def test_en_and_ja_contract_copy_has_no_hangul():
@@ -81,7 +82,7 @@ def test_current_hop_selects_review_contract(scope, hop, review, exec_type, loca
     prompt = worker._provider_prompt(run, {"exec_type": exec_type}, base)
     clause = worker._CLI_REVIEW_FILE_FIRST[locale]
     expected = base.rstrip() + "\n\n" + clause if review and exec_type == "cli" else base
-    assert prompt == expected
+    assert (assert_terminal(prompt) if exec_type == "cli" else prompt.rstrip()) == expected.rstrip()
     assert prompt.count(clause) == int(review and exec_type == "cli")
     assert run == before
 
@@ -137,7 +138,7 @@ def test_provider_dispatch_uses_current_hop_on_fallback_and_retry(monkeypatch, s
                 assert actual_hop == hop
                 needs_clause = hop == "review" and transport == "cli"
                 expected = base.rstrip() + "\n\n" + clause if needs_clause else base
-                assert actual_prompt == expected
+                assert (assert_terminal(actual_prompt) if transport == "cli" else actual_prompt.rstrip()) == expected.rstrip()
                 assert actual_prompt.count(clause) == int(needs_clause)
             assert run["action_scope"] == scope
     assert len(switches) == len(hops) * 2

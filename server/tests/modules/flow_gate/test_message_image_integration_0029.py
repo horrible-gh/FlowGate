@@ -17,6 +17,8 @@ from modules.flow_gate.services import conversation_query_service as query
 from modules.flow_gate.services import invoke_mention_service as mentions
 from modules.flow_gate.services import message_image_delivery as delivery
 from modules.flow_gate.services.ai_invoke import finalize, worker
+from modules.flow_gate.services import terminal_prompt
+from terminal_prompt_assertions import assert_terminal
 
 CLAUDE = dict(id="claude", exec_type="cli", kind="claude", exec_location="local")
 CODEX = dict(CLAUDE, id="codex", kind="codex")
@@ -75,9 +77,10 @@ def test_paste_to_claude_cli_prompt(env, tmp_path, monkeypatch, lease, provider)
     copied = scratch / "images" / "1-0.png"
     assert copied.read_bytes() == PNG and not copied.is_symlink()
     assert not copied.samefile(delivery.images.images_for_window(CHAT_DOC, 0)[0]["abs_path"])
-    assert prompt.startswith(str(mention))
-    assert f"- 메시지 #1: {copied}" in prompt
-    assert ("Read 도구" if provider == CLAUDE else "Codex --image") in prompt
+    prefix = assert_terminal(prompt)
+    assert prefix.startswith(terminal_prompt.split(str(mention))[0])
+    assert f"- 메시지 #1: {copied}" in prefix
+    assert ("Read 도구" if provider == CLAUDE else "Codex --image") in prefix
     assert (run["images_total"], run["images_delivered"], run["images_undelivered"]) == (1, 1, 0)
     # Flow-owned: the Flow attachment registry never sees a message image.
     assert store._fetch_all("SELECT * FROM attachments") == []
