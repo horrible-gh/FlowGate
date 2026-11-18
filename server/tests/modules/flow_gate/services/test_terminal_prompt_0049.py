@@ -258,3 +258,22 @@ def test_complete_block_quoted_in_question_is_not_consumed_as_metadata():
     retry = terminal.finalize(delivered + '\nCARRYOVER')
     assert retry.startswith(body + '\n\n')
     assert terminal.task_kind(retry) == 'q_answer'
+
+
+def test_finalize_messages_returns_settled_spec_and_nudge_uses_it():
+    messages = [{'role': 'system', 'content': 'system'},
+                {'role': 'user', 'content': terminal.prepare('server', kind='review', locale='ko')},
+                {'role': 'user', 'content': 'CONTEXT\nHINT'}]
+    spec = terminal.finalize_messages(messages, locale='en')
+    assert spec['kind'] == 'review' and spec['locale'] == 'en'
+    assert messages[-1]['content'].endswith(terminal.render(spec))
+    nudged = terminal.finalize_nudge('Try again.  \n', spec)
+    assert nudged == 'Try again.\n\n' + terminal.render(spec)
+    assert assert_terminal(nudged) == 'Try again.'
+
+
+def test_finalize_messages_returns_fallback_spec_without_record():
+    messages = [{'role': 'user', 'content': 'plain'}]
+    spec = terminal.finalize_messages(messages, locale='ja', fallback_kind='chat')
+    assert spec == terminal.specification('chat', 'ja')
+    assert_terminal(messages[-1]['content'])
