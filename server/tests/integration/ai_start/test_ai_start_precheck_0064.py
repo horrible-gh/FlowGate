@@ -26,7 +26,7 @@ import config  # noqa: E402,F401 — its import-time env export (agent pepper id
 
 import _flowgate_test_imports  # noqa: F401
 from test_fg_card_settings import (  # noqa: E402,F401 — fixtures used by name
-    AI, FA, FB, _doc, _h, _sql, _start, db_path, decided, edge, env, node, put_draft,
+    AI, FA, FB, _doc, _h, _sql, _start, db_path, decided, edge, env, legacy_cards, node, put_draft,
 )
 from test_fg_card_settings_review import INSTRUCTION_RUN, _admin_and_reviewer, _write_written  # noqa: E402
 
@@ -36,17 +36,10 @@ SEP = "\n\n"
 NODE_MENTION, ANSWER_MENTION = "NODE MENTION", "ANSWER MENTION"
 QNA_RUN = "air_qna_answer"
 BASE, TOKEN = "http://host/flowgate/api/v1", "worker-token"
-# P0006 §2.9 — the rule sentences, pinned here as the protocol fixes them.
-RULES = (
-    "본문 미열람 규칙 1: content가 null이거나 content_state가 readable이 아닌 문서만 '읽지 못한 문서'입니다. "
-    "front matter뿐인 빈 문서(content_state=readable)는 읽은 문서이며, 이 판정은 내부에서만 하고 답변에 나열하지 마십시오.",
-    "본문 미열람 규칙 2: 읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오.",
-    "본문 미열람 규칙 3: 읽지 못한 문서가 있고 현재 요청 처리에 필요한 경우에만 문서 번호·사유(content_state 값)·"
-    "답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히십시오. 읽지 못한 문서가 없거나 현재 답변과 무관하면 '없음'·'해당 없음' "
-    "같은 열람 상태 보고를 쓰지 말고, 사용자가 근거나 열람 상황을 물으면 그 범위에서 설명하십시오.",
-    "본문 미열람 규칙 4: 질문이 그 문서의 내용을 전제로 하면, 다른 자료에서 끌어낸 내용에 "
-    "'원문 미확인 상태의 추정'이라고 표시하십시오.",
-    "본문 미열람 규칙 5: 이관 조건은 그대로입니다. 사유가 권한 오류(403)이면 기존 '권한' 조건을 적용하십시오.",
+# Consume the production policy; semantic assertions below guard its obligations.
+from modules.flow_gate.services.mention_service import (
+    BODY_UNREADABLE_RULES as RULES,
+    BODY_UNREADABLE_ANSWER_REFERENCE as REFERENCE_SENTENCE,
 )
 # P0006 §1.3 — the server mention wording of each reason.
 REASONS = {
@@ -55,11 +48,10 @@ REASONS = {
     "path_unresolved": "본문 파일 위치를 해석할 수 없음",
     "read_error": "본문을 읽는 중 오류",
 }
-REFERENCE_SENTENCE = "본문을 읽지 못한 문서가 있으면 [문서 조회 도구]의 본문 미열람 규칙 3·4항을 지키십시오."
 
 
 @pytest.fixture(autouse=True)
-def card_memos(env, monkeypatch):
+def card_memos(env, monkeypatch, legacy_cards):
     """The card memo port and its routes, as ``startup`` / ``main`` wire them."""
     from flowgate.card_memos import integration
     from flowgate.card_memos import legacy_adapter as memos
@@ -161,10 +153,11 @@ def _readable_docs(flow, first_seq, count):
 
 
 def _missing_file_doc(flow, seq):
-    from modules.flow_gate.db import documents as db_documents
-
     doc_id = _doc(flow, seq, "M")
-    db_documents.update(doc_id, {"file_path": f"docs/{doc_id}.missing.md"})
+    # Seed through the shared harness's canonical path, then remove the file.
+    # A custom .missing.md path is correctly refused by the current write gate.
+    _write_written(doc_id)
+    _break(doc_id)
     return doc_id
 
 
@@ -414,7 +407,7 @@ def _answer_mention(monkeypatch, doc_id):
     ).split("\n")
 
 
-def test_the_answer_mention_carries_the_rules_keeps_the_escalation_and_points_at_rules_3_and_4(env, monkeypatch):
+def test_the_answer_mention_carries_the_rules_and_keeps_the_escalation(env, monkeypatch):
     doc_id = f"{FB}.0001-T"
     lines = _answer_mention(monkeypatch, doc_id)
     lookup = [
@@ -489,14 +482,67 @@ def test_the_rules_do_not_force_an_unconditional_read_status_report(monkeypatch)
     from modules.flow_gate.services import mention_service
 
     rules = mention_service.BODY_UNREADABLE_RULES
-    assert len(rules) == 5 and [r.split(":")[0] for r in rules] == [f"본문 미열람 규칙 {n}" for n in range(1, 6)]
+    text = "\n".join(rules)
+    obligations = (
+        ("content가 null", "읽지 못한 문서"),
+        ("content_state가 readable이 아니면", "읽지 못한 문서"),
+        ("readable이고 front matter뿐이면", "읽은 빈 문서"),
+        ("판단한 결과", "내부에서만", "답변에 나열하지"),
+        ("읽은 것처럼 인용하거나 요약하지",),
+        ("필요한 경우에만", "문서 번호", "사유(content_state 값)", "답변에 미치는 영향", "대체 근거(있으면)"),
+        ("대체 근거가 없으면", "지어내지"),
+        ("읽지 못한 문서가 없으면", "열람 상태 보고를 쓰지"),
+        ("현재 답변과 무관하면", "열람 상태 보고를 쓰지"),
+        ("사용자가 근거나 열람 상황을 물으면", "그 범위에서 설명"),
+        ("본문을 전제로 하면", "다른 자료", "원문 미확인 상태의 추정", "보고와 별개"),
+        ("이관 안내가 제공된 경우에만", "그 안내의 조건", "새 이관 조건으로 삼지"),
+        ("권한 오류(403)", "이 이유만으로 이관하지", "이관 안내가 있으면", "사람이 승인하거나 부여해야 하는 접근·실행 권한", "그 안내에 따라 판단"),
+    )
+    for markers in obligations:
+        assert any(all(marker in rule for marker in markers) for rule in rules), markers
+    assert "하지 않되" not in text
     for marker in ("(가)", "(나)", "(다)", "답변 첫머리", "구분해 적으십시오"):
-        assert not any(marker in rule for rule in rules)
-    assert "경우에만" in rules[2] and "열람 상태 보고를 쓰지 말고" in rules[2]       # conditional, brief report
-    assert "읽은 것처럼 인용하거나 요약하지 마십시오" in rules[1]                           # rule 2 kept
-    assert "원문 미확인 상태의 추정" in rules[3] and "권한 오류(403)" in rules[4]            # rules 4 and 5 kept
-    assert not any(marker in line for line in _help_document_access(monkeypatch)["rules"]
-                   for marker in ("(가)", "(나)", "(다)"))
+        assert marker not in text
+    for marker in ("문서 번호", "사유(content_state 값)", "답변에 미치는 영향", "대체 근거(있으면)",
+                   "무관하면", "열람 상황을 물으면", "원문 미확인 상태의 추정"):
+        assert marker in REFERENCE_SENTENCE
+    assert "3·4" not in REFERENCE_SENTENCE
+
+
+@pytest.mark.parametrize("policy", ["", "Use the user decision policy."])
+def test_shared_rules_work_with_and_without_an_escalation_section(monkeypatch, policy):
+    from modules.flow_gate.services import ai_start_precheck, invoke_mention_service, mention_service, question_policy
+
+    monkeypatch.setattr(question_policy, "text", lambda *_a, **_k: policy)
+    monkeypatch.setattr(mention_service, "_include_remote_source_crud", lambda _project: False)
+    outputs = {
+        "lookup": "\n".join(mention_service._document_lookup_lines(BASE, TOKEN, project="flowgate", doc_id="d")),
+        "chat": "\n".join(invoke_mention_service._chat_lookup_sections(
+            base=BASE, raw_token=TOKEN, project="flowgate", group_name=FB)),
+        "help": "\n".join(_help_document_access(monkeypatch)["rules"]),
+        "precheck": ai_start_precheck.unreadable_section(
+            {"checked": 1, "unreadable": [{"doc_id": "d", "title": "t", "reason": "file_not_found"}]}),
+        "answer": "\n".join(_answer_mention(monkeypatch, f"{FB}.0001-T")),
+    }
+    for name, output in outputs.items():
+        assert "\n".join(RULES) in output, name
+        # Shared rules must not point to a section absent from lookup/help/precheck,
+        # nor assume the default three escalation conditions override a user policy.
+        shared = "\n".join(RULES)
+        assert "[사용자 판단 이관" not in shared
+        assert "인프라·권한·지시의 모호성" not in shared
+        assert "이관 안내가 제공된 경우에만" in output
+        permission = next(rule for rule in RULES if "403" in rule)
+        assert "이 이유만으로 이관하지" in permission
+        assert "이관 안내가 있으면" in permission
+        assert "그 안내에 따라 판단" in permission
+        if name in {"lookup", "help", "precheck"}:
+            assert "[사용자 판단 이관" not in output
+    assert "[사용자 판단 이관 — 예외 경로]" in outputs["answer"]
+    if policy:
+        assert policy in outputs["answer"]
+    else:
+        assert "- 권한: 사람이 승인하거나 부여해야 하는 접근·실행 권한" in outputs["answer"]
 
 
 def test_one_constant_feeds_the_lookup_lines_the_help_item_and_the_section(monkeypatch):
@@ -510,6 +556,16 @@ def test_one_constant_feeds_the_lookup_lines_the_help_item_and_the_section(monke
     assert section == "[읽을 수 없는 문서]\n- d (t): 본문 파일이 없음\nRULE X"
     assert ai_start_precheck.unreadable_section({"checked": 9, "unreadable": []}) == ""
     assert ai_start_precheck.REASON_TEXT == REASONS
+    from modules.flow_gate.services import invoke_mention_service
+
+    monkeypatch.setattr(mention_service, "_include_remote_source_crud", lambda _project: False)
+    chat = "\n".join(invoke_mention_service._chat_lookup_sections(
+        base=BASE, raw_token=TOKEN, project="flowgate", group_name=FB))
+    assert "RULE X" in chat
+    monkeypatch.setattr(mention_service, "BODY_UNREADABLE_ANSWER_REFERENCE", "SEMANTIC REFERENCE")
+    answer = _answer_mention(monkeypatch, f"{FB}.0001-T")
+    assert "RULE X" in answer
+    assert answer.count("SEMANTIC REFERENCE") == 1
 
 
 # ── the card line port and the wiring ────────────────────────────────────────

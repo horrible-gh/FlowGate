@@ -309,9 +309,10 @@ def build_answer_mention(
             "단순한 확신 부족, 조사 시간 부족, 도구 호출 실패, 빈 출력도 이관 사유가 아닙니다 — "
             "그런 경우에는 근거를 밝힌 최선의 답변을 등록하십시오."
         )
-    # 0064 T-B1e (D0004 §3.6, P0006 §2.9 ②): "an answer stating its grounds" includes the unread-body rules 3 and 4
-    # of the lookup block; one sentence points there, the three hand-off conditions above stay as they are.
-    lines.append("본문을 읽지 못한 문서가 있으면 [문서 조회 도구]의 본문 미열람 규칙 3·4항을 지키십시오.")
+    # Refer to the shared policy by meaning; numbering changes must not alter this guidance.
+    from modules.flow_gate.services.mention_service import BODY_UNREADABLE_ANSWER_REFERENCE
+
+    lines.append(BODY_UNREADABLE_ANSWER_REFERENCE)
     lines.append(f"POST {escalate_url}")
     lines.append(f"Authorization: Bearer {raw_token}")
     lines.append("Content-Type: application/json")

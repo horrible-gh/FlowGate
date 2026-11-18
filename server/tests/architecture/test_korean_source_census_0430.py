@@ -207,12 +207,14 @@ FILE_LINE_CAPS: dict[str, int] = {
     # exactly one new ko line — the mention's document_attachments help-item pointer —
     # bringing the measured count to 176.
     # 176 -> 209: flowgate.v02.0064 T#2 (T-B1e). Measured: 201 before the change (drift, as above), and T-B1e adds
-    # exactly 8 -- ``BODY_UNREADABLE_RULES``, the five unread-body rules P0006 §2.9 fixes word for word for the AI
-    # mentions (eight source lines; three rules are split over two string literals).
+    # exactly 8 at that revision -- the shared unread-body policy for AI mentions.
+    # 0049 T0007 splits conditions into lines and adds a shared semantic Q reference here.
+    # Keep the intentional Korean policy exception for en/ja.
     # 209 -> 220: flowgate.v02gui.0028, measured with _korean_lines. HEAD measured 213 (drift, as above);
     # _QUESTION_PRECHECK_TEXT["ko"] adds exactly seven mention-copy lines (the check-before-asking steps every
     # Q-registration guide carries) with complete en/ja siblings. No comment or docstring Korean is added.
-    "modules/flow_gate/services/mention_service.py": 220,
+    # 0049 T0007: measured 230 after splitting the shared policy and adding its semantic reference.
+    "modules/flow_gate/services/mention_service.py": 230,
     # 24 -> 39: flowgate.v02.0064 T#2 (T-B1e). Measured: 38 before the change (drift), and T-B1e adds exactly 1 --
     # the answer mention's sentence pointing at the unread-body rules 3 and 4 (P0006 §2.9 ②, its exact wording).
     "modules/flow_gate/services/q_answer_invoke_service.py": 39,
@@ -317,6 +319,14 @@ def test_korean_source_census_stays_within_measured_caps():
         "New Korean source line(s) beyond the T0009 census baseline "
         "(server/modules/** + server/templates/**):\n" + "\n".join(offenders[:50])
     )
+
+
+@pytest.mark.parametrize("rel", [
+    "modules/flow_gate/services/mention_service.py",
+])
+def test_shared_unread_policy_keeps_its_intentional_korean_budget(rel):
+    count = len(_korean_lines(_SERVER_DIR / rel))
+    assert count <= FILE_LINE_CAPS[rel], (rel, count, FILE_LINE_CAPS[rel])
 
 
 def test_census_cap_table_has_no_stale_entries():
