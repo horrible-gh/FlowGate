@@ -44,6 +44,9 @@ def _fail(status: int, message: str, error: Optional[dict] = None) -> JSONRespon
         "error_message": message,
         "help_url": help_url(),
     }
+    if isinstance(message, dict):
+        content.update(message)
+        content["error_message"] = message.get("code", "question_precheck")
     if error is not None:
         content["error"] = error
     return JSONResponse(status_code=status, content=content)
@@ -200,7 +203,8 @@ def _resolve_writer(
 @router.get("/q/{doc_id}/search")
 def search_answers(request: Request, doc_id: str, q: str = Query(min_length=1, max_length=200),
                    limit: int = Query(default=10, ge=1, le=50),
-                   before_id: Optional[int] = Query(default=None, ge=1)):
+                   before_id: Optional[int] = Query(default=None, ge=1),
+                   cursor: Optional[str] = Query(default=None, max_length=512)):
     # The worker is bound to this document; the searched project comes from it,
     # never from a caller-supplied project id. Read permission is checked even for workers.
     identity = _resolve_writer(request, doc_id)
@@ -211,7 +215,7 @@ def search_answers(request: Request, doc_id: str, q: str = Query(min_length=1, m
         return project
     from modules.flow_gate.services import question_search
     try:
-        return question_search.search(project, q, limit, before_id)
+        return question_search.search(project, q, limit, before_id, cursor)
     except ValueError as exc:
         return _fail(422, str(exc))
 
@@ -228,6 +232,8 @@ class QuestionOptionIn(BaseModel):
 
 
 class QuestionItemIn(BaseModel):
+    reuse_rejection_reason: Optional[str] = None
+    rejected_answer_id: Optional[int] = None
     title: Optional[str] = None
     body: str
     # Plain label strings — ids are always server-assigned (L0008 §2.1/§2.3), so the

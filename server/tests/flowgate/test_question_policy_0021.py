@@ -144,8 +144,11 @@ def test_search_keywords_across_fields_codes_and_pagination(store):
     assert [r["item_id"] for r in page["items"]] == [ids[1]]
     page2 = question_search.search("p", "not_tool_artifact Git", 1, page["next_before_id"])
     assert [r["item_id"] for r in page2["items"]] == [ids[0]]
-    assert page2["next_before_id"] is None
-    assert question_search.search("p", "Git absent")["items"] == []
+    assert page2["next_before_id"] is not None
+    page3 = question_search.search("p", "Git not_tool_artifact", 1, page2["next_before_id"])
+    assert [r["item_id"] for r in page3["items"]] == [ids[2]]
+    assert page3["next_before_id"] is None
+    assert len(question_search.search("p", "Git absent")["items"]) == 3
     assert question_search.search("other", "Git not_tool_artifact")["items"] == []
     assert question_search.search("p", "' OR 1=1 --")["items"] == []
 
