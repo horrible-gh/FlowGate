@@ -149,7 +149,9 @@ describe('V03 실제 초기 진입 — main.ts shows a neutral loading state unt
     expect($('[data-testid="settings-access-notice"]')).not.toBeNull()
     expectNoManagementDom()
     expect(managementRequests()).toEqual([])
-  }, 15000)
+  // The first dynamic import compiles the full app on the Self-check host. Give that
+  // setup time to finish so an abandoned bootstrap cannot leak into the next case.
+  }, 60000)
 
   it('/settings/system/users, answer A → the view mounts and starts its GET only after the answer', async () => {
     const router = await startApp('/settings/system/users')

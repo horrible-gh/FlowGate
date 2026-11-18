@@ -7,7 +7,7 @@ import { registerAppMessages } from './i18n'
 import './styles/theme.css'
 import App from './App.vue'
 import StartupLoadingView from './views/StartupLoadingView.vue'
-import { ensureValidAccessToken, isAuthRejection, startTokenAutoRefresh } from '@shared/api'
+import { ensureValidAccessToken, isAuthRejection, startTokenAutoRefresh, flushPendingTreeReports } from '@shared/api'
 import { loadCurrentUser, setCurrentUser } from '@/core/auth/currentUser'
 
 // Mirrors client/src/main/main.ts's bootstrap exactly (T0005 §5: auth reuse, not a
@@ -53,6 +53,7 @@ async function initializeApp() {
     try {
       // The /auth/me validation request also tells the Topbar who is signed in.
       await loadCurrentUser()
+      void flushPendingTreeReports()
       startTokenAutoRefresh()
     } catch (error) {
       if (isAuthRejection(error)) {
