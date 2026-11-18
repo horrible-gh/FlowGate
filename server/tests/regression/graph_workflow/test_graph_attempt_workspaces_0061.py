@@ -27,7 +27,13 @@ PROJECT, GROUP = "p", "p.default.1"
 
 
 @pytest.fixture
-def harness(tmp_path, monkeypatch):
+def harness(tmp_path_factory, monkeypatch):
+    # Attempt worktrees also need short paths for Git for Windows.
+    tmp_path = tmp_path_factory.mktemp("gw")
+    # Import consumers before patching run_apply: a first import during prepare()
+    # otherwise caches our temporary load_context/emit_* functions in run_service
+    # after monkeypatch restores run_apply, breaking later chat-control tests.
+    from modules.flow_gate.graph_workflow.services import run_service  # noqa: F401
     # Owner markers use the startup document-write port; this isolated Git/ledger fixture has no documents.
     from contextlib import nullcontext
     from modules.flow_gate.graph_workflow.services import card_document_ports as ports
@@ -125,11 +131,12 @@ def harness(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def repo(harness, tmp_path, monkeypatch):
+def repo(harness, tmp_path_factory, monkeypatch):
     if not workspace.git.git_available():
         pytest.skip("Git executable is required for linked-worktree fixtures")
-    root = tmp_path / "group"
-    root.mkdir()
+    # Keep Git's common directory short on Windows ($GIT_DIR too big), while
+    # retaining pytest's configured scratch root and temporary-directory cleanup.
+    root = tmp_path_factory.mktemp("gw")
     def git(*args):
         proc = workspace.git._run_git(list(args), cwd=root)
         assert proc.returncode == 0, proc.stderr

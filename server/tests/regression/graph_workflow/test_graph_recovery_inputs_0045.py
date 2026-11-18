@@ -7,6 +7,14 @@ from flowgate.graph_run import recovery_store, workspace
 from modules.flow_gate.graph_workflow.store import run_store
 
 
+def test_workspace_harness_does_not_cache_stubs_in_run_service(harness):
+    # First import under the harness used to retain stubs even after teardown.
+    from modules.flow_gate.graph_workflow.services import run_apply, run_service
+
+    for name in ("load_context", "emit_node_state", "emit_run_status"):
+        assert getattr(run_service, name) is not getattr(run_apply, name), name
+
+
 def test_retry_materializes_inspected_commit_without_reset_or_merge(repo, monkeypatch):
     repo.db._execute("INSERT INTO groups(group_id) VALUES (?)", [GROUP])
     repo.db.db.executescript((MIGRATIONS / "sqlite" / "195_graph_recovery.sql").read_text(encoding="utf-8"))
