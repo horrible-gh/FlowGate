@@ -240,48 +240,36 @@ def _start_paragraph(folded: int) -> list[str]:
     ]
 
 
-def _checkpoint_notice(checkpoint_seq: int, kind: str = "include") -> list[str]:
-    """flowgate.v02test.0025: the user started this chat's AI context at a message of their choice."""
-    if kind == "exclude":
-        return [
-            f"The user set a context checkpoint after seq {checkpoint_seq}: this invocation's context starts",
-            f"at the next turn (seq {checkpoint_seq} itself is excluded). Treat seq {checkpoint_seq} and earlier",
-            "turns as background and read them only when the request depends on them.",
-        ]
-    return [
-        f"The user set a context checkpoint at seq {checkpoint_seq}: this invocation's context starts",
-        "there. Treat earlier turns as background and read them only when the request depends on them.",
-    ]
-
-
 def _fold_notice(
-    *, api_base: str, doc_id: str, raw_token: str, folded: int, before_seq: int
+    *, api_base: str, doc_id: str, raw_token: str, after_seq: int, through_seq: Optional[int]
 ) -> list[str]:
-    """Say what was skipped and how to go and get it (L0010 §2-4-2).
+    """Say which turns this invocation received and how to read the earlier ones.
 
-    ``before_seq`` is ``start + 1`` because the backward page is ``seq < before_seq``
-    (conversation_turns.fetch_turns_before). Passing ``start`` itself would drop the
-    turn sitting on the boundary without a word about it.
+    flowgate.v02test.0041: only the range actually delivered is stated. Whatever decided it
+    (the latest-N limit or the user's checkpoint) is a user-side way of keeping the context
+    small and is not the AI's business; naming it made the notice carry two different
+    starting points whenever the limit was narrower than the checkpoint.
 
-    The singular split is not decoration: "The 1 turns … Read them" makes the notice
-    itself the broken-looking part of the mention. build_rejection_section already
-    splits item/items for the same reason.
+    The backward link uses ``before_seq = after_seq + 1`` because the backward page is
+    ``seq < before_seq`` (conversation_turns.fetch_turns_before). Passing ``after_seq``
+    itself would drop the turn sitting on the boundary without a word about it.
 
-    The line breaks are fixed exactly as written and do not reflow with the size of
-    ``folded`` — that is what lets a check compare this text as a plain string.
+    The line breaks are fixed exactly as written so a check can compare this text as a
+    plain string.
     """
-    if folded == 1:
-        head = [
-            "The 1 turn before that point is folded, not deleted. Read it when you need the",
-            "earlier context:",
-        ]
+    first = after_seq + 1
+    if through_seq is not None and through_seq >= first:
+        count = through_seq - first + 1
+        if count == 1:
+            head = f"This invocation's context is the latest turn (seq {first})."
+        else:
+            head = f"This invocation's context is the latest {count} turns (seq {first} to {through_seq})."
     else:
-        head = [
-            f"The {folded} turns before that point are folded, not deleted. Read them when you need the",
-            "earlier context:",
-        ]
-    return head + [
-        f"GET {api_base}/conversation/{doc_id}/turns?before_seq={before_seq}",
+        head = f"This invocation's context starts at seq {first}."
+    return [
+        head,
+        f"Turns before seq {first} are not included. Read them only when the request depends on them:",
+        f"GET {api_base}/conversation/{doc_id}/turns?before_seq={first}",
         f"Authorization: Bearer {raw_token}",
         "If `prev_before_seq` is not null, call again with that value to keep going further back.",
         # Said again here on purpose. The paragraph above carries the same rule, but the
@@ -370,7 +358,6 @@ def build_conversation_mention(
         user_id, doc_id, settings, head_seq_of=conversation_turns.current_head_seq,
     )
     after_seq, folded = window["after_seq"], window["folded"]
-    checkpoint_seq = window["checkpoint_seq"]
     window_query = ""
     if window.get("through_seq") is not None:
         window_query += f"&through_seq={window['through_seq']}"
@@ -406,8 +393,6 @@ def build_conversation_mention(
         *_start_paragraph(folded),
         "When paging this selected context, keep through_seq and limit from the initial URL unchanged.",
     ]
-    if checkpoint_seq is not None:
-        lines += [""] + _checkpoint_notice(checkpoint_seq, window["checkpoint_kind"])
     # Right behind the paragraph that named the starting point, and ahead of the reply
     # instructions: said in that order the worker reads the two as one thought. Appended
     # at the end of the document it reads the first half and moves on (P0009 scenario 11).
@@ -416,8 +401,8 @@ def build_conversation_mention(
             api_base=api_base,
             doc_id=doc_id,
             raw_token=raw_token,
-            folded=folded,
-            before_seq=after_seq + 1,
+            after_seq=after_seq,
+            through_seq=window.get("through_seq"),
         )
     lines += [
         "",
