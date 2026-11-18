@@ -34,6 +34,8 @@ from modules.flow_gate.services import (
     work_plan_service,
 )
 
+from modules.flow_gate.services import chat_help_content
+
 _logger = logging.getLogger(__name__)
 
 VERSION = "v1"
@@ -60,6 +62,7 @@ CATALOG_ORDER: tuple[str, ...] = (
     "test_commands",
     "tr_self_check",
     "changed_files_format",
+    *chat_help_content.ITEMS,
 )
 
 ITEM_FORM: dict[str, str] = {
@@ -77,6 +80,8 @@ ITEM_FORM: dict[str, str] = {
     "tr_self_check": "content",
     "changed_files_format": "content",
 }
+
+ITEM_FORM.update({name: "content" for name in chat_help_content.ITEMS})
 
 _CATALOG = frozenset(CATALOG_ORDER)
 
@@ -553,6 +558,12 @@ def _is_design_type(type_code: Optional[str]) -> bool:
 
 
 
+for _locale_name in SUPPORTED_LOCALES:
+    for _name, _title in zip(chat_help_content.ITEMS, chat_help_content.TITLES[_locale_name]):
+        TITLES[_locale_name][_name] = _title
+        SUMMARIES[_locale_name][_name] = _title + ": " + chat_help_content.INTRO[_locale_name]
+
+
 def decide_visibility(name: str, ctx: dict) -> Decision:
     """Visible for this caller? The index and every direct call share this answer."""
     if name not in _CATALOG:
@@ -562,6 +573,11 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
         if name in USER_SESSION_VISIBLE:
             return VISIBLE
         return Decision(False, "user_session")
+
+    if name in chat_help_content.ITEMS:
+        if ctx.get("action_scope") == "chat":
+            return VISIBLE
+        return Decision(False, "not_chat")
 
     if name in ALWAYS_VISIBLE:
         return VISIBLE
@@ -945,7 +961,7 @@ def _content_document_attachments(ctx: dict) -> dict:
     kind = ctx.get("tool_kind") or "none"
     table = _attachment_permission_table()
     view = tool_registry.attachment_view(kind, ctx["locale"], base)
-    return {
+    content = {
         "list": {"method": "GET", "url": f"{base}/document/{{doc_id}}/attachments",
                  "example": f"{base}/document/{doc_id}/attachments"},
         "read": {"method": "GET", "url": f"{base}/document/{{doc_id}}/attachments/{{name}}/read"},
@@ -979,6 +995,11 @@ def _content_document_attachments(ctx: dict) -> dict:
         "absent": view["absent"],
         "note": _copy(_ITEM_NOTES, ctx["locale"], "document_attachments"),
     }
+
+    if ctx.get("action_scope") == "chat":
+        from modules.flow_gate.documents.attachments.request_tools import cli_mention
+        content["chat"] = {"sections": [cli_mention(base, "<YOUR_CHAT_TOKEN>")]}
+    return content
 
 
 def _content_doc_type(ctx: dict) -> dict:
@@ -1785,6 +1806,13 @@ _CONTENT_SUPPLIERS = {
     "tr_self_check": _content_tr_self_check,
     "changed_files_format": _content_changed_files_format,
 }
+
+
+# Bind each name now, rather than closing over the final loop value.
+_CONTENT_SUPPLIERS.update({
+    name: (lambda ctx, name=name: chat_help_content.content(name, ctx))
+    for name in chat_help_content.ITEMS
+})
 
 
 def _item_notes(name: str, ctx: dict) -> list[str]:

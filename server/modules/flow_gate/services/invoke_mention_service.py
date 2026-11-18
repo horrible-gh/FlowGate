@@ -310,6 +310,54 @@ def _encoding_probe_paragraph(token_id: str) -> list[str]:
     ]
 
 
+def conversation_turn_submission_lines(*, api_base, doc_id, raw_token, token_id,
+                                       payload_lines, can_write, provider):
+    """Shared CLI/help turn contract; callers supply examples, never another token."""
+    lines = [
+        "",
+        "To reply, append ONE turn. Do NOT resubmit the conversation body — the body is no",
+        "longer where the conversation lives.",
+        "",
+        f"Submit: POST {api_base}/conversation/{doc_id}/turn",
+        f"Authorization: Bearer {raw_token}",
+        "",
+        *payload_lines,
+        "",
+        "based_on_seq records what you had actually read when you wrote this. Send the head_seq",
+        "from your last read — not a guess. If someone speaks while you are writing, your turn is",
+        "still kept in order and marked as written without having seen theirs.",
+        "",
+        *_encoding_probe_paragraph(token_id),
+        "",
+        f'To preview without registering, POST the same body to {api_base}/conversation/{doc_id}/turn',
+        'with "dry_run": true added. Nothing is registered and the token is not consumed — only',
+        "the corruption/fingerprint verdict (and encoding_probe: matched/broken/absent) comes back.",
+    ]
+    if can_write:
+        lines += [
+            "",
+            "If you changed source files in this chat, put the commit message in commit_message:",
+            "English, `type(scope): summary`, one line. Do not commit yourself: when this chat",
+            "ends FlowGate commits the flow's worktree with that message and writes the result",
+            "(or why the commit failed) into the conversation. commit_message is REQUIRED",
+            "whenever the flow worktree holds uncommitted changes (yours or left from before):",
+            "without it the turn is refused with 422 commit_message_required, dry_run included,",
+            "and nothing is registered; resend the same turn with commit_message. Leave it out",
+            "only when there is nothing to commit.",
+        ]
+    if provider:
+        lines += [
+            "display_name is a badge only and is not used to determine identity. The server",
+            "fixed it to the pinned provider name; keep the value shown above.",
+        ]
+    else:
+        lines += [
+            "display_name is a badge only and is not used to determine identity. If you do not",
+            "know your own model name, omit the field.",
+        ]
+    return lines
+
+
 def build_conversation_mention(
     *,
     doc_id: str,
@@ -404,48 +452,10 @@ def build_conversation_mention(
             after_seq=after_seq,
             through_seq=window.get("through_seq"),
         )
-    lines += [
-        "",
-        "To reply, append ONE turn. Do NOT resubmit the conversation body — the body is no",
-        "longer where the conversation lives.",
-        "",
-        f"Submit: POST {api_base}/conversation/{doc_id}/turn",
-        f"Authorization: Bearer {raw_token}",
-        "",
-        *payload_lines,
-        "",
-        "based_on_seq records what you had actually read when you wrote this. Send the head_seq",
-        "from your last read — not a guess. If someone speaks while you are writing, your turn is",
-        "still kept in order and marked as written without having seen theirs.",
-        "",
-        *_encoding_probe_paragraph(token_id),
-        "",
-        f'To preview without registering, POST the same body to {api_base}/conversation/{doc_id}/turn',
-        'with "dry_run": true added. Nothing is registered and the token is not consumed — only',
-        "the corruption/fingerprint verdict (and encoding_probe: matched/broken/absent) comes back.",
-    ]
-    if can_write:
-        lines += [
-            "",
-            "If you changed source files in this chat, put the commit message in commit_message:",
-            "English, `type(scope): summary`, one line. Do not commit yourself: when this chat",
-            "ends FlowGate commits the flow's worktree with that message and writes the result",
-            "(or why the commit failed) into the conversation. commit_message is REQUIRED",
-            "whenever the flow worktree holds uncommitted changes (yours or left from before):",
-            "without it the turn is refused with 422 commit_message_required, dry_run included,",
-            "and nothing is registered; resend the same turn with commit_message. Leave it out",
-            "only when there is nothing to commit.",
-        ]
-    if provider:
-        lines += [
-            "display_name is a badge only and is not used to determine identity. The server",
-            "fixed it to the pinned provider name; keep the value shown above.",
-        ]
-    else:
-        lines += [
-            "display_name is a badge only and is not used to determine identity. If you do not",
-            "know your own model name, omit the field.",
-        ]
+    lines += conversation_turn_submission_lines(
+        api_base=api_base, doc_id=doc_id, raw_token=raw_token, token_id=token_id,
+        payload_lines=payload_lines, can_write=can_write, provider=provider,
+    )
     for section in _chat_lookup_sections(
         base=api_base, raw_token=raw_token, project=project, group_name=group_name,
         source_access=source_access,
