@@ -53,6 +53,7 @@ describe('reads', () => {
       baseBranch: 'main',
       targetBranch: 'v0.2',
       trConflict: false,
+      graphMerge: false,
       files: [
         { path: 'a/b.ts', conflictCount: 1, content: '<<<<<<< x', resolved: false },
         { path: 'c.ts', conflictCount: 0, content: '', resolved: true },
@@ -77,6 +78,14 @@ describe('reads', () => {
     await expect(fetchConflicts('p.m.0001', 9)).resolves.toMatchObject({ trConflict: true })
     getRequest.mockResolvedValue({ data: { ok: true, merge_id: 9, kind: 'merge', tr_conflict: null, files: [] } })
     await expect(fetchConflicts('p.m.0001', 9)).resolves.toMatchObject({ trConflict: false })
+  })
+
+  // flowgate.v02test.0042: a Graph card result's merge session is marked — its card handles it, not this panel.
+  it('conflicts: a graph_attempt_merge session is marked graphMerge', async () => {
+    getRequest.mockResolvedValue({ data: { ok: true, merge_id: 12, kind: 'graph_attempt_merge', tr_conflict: { review_state: 'open' }, files: [] } })
+    await expect(fetchConflicts('p.m.0001', 12)).resolves.toMatchObject({ mergeId: 12, graphMerge: true, trConflict: true })
+    getRequest.mockResolvedValue({ data: { ok: true, merge_id: 9, kind: 'tr_revert', tr_conflict: { review_state: 'open' }, files: [] } })
+    await expect(fetchConflicts('p.m.0001', 9)).resolves.toMatchObject({ graphMerge: false })
   })
 
   it('review: only what the card uses', async () => {

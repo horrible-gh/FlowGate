@@ -155,6 +155,8 @@ export async function fetchConflicts(groupId: string, mergeId: number): Promise<
     baseBranch: str(data.base_branch),
     targetBranch: str(data.target_branch),
     trConflict: (!!data.tr_conflict && typeof data.tr_conflict === 'object') || TR_SESSION_KINDS.includes(str(data.kind) ?? ''),
+    // flowgate.v02test.0042: a Graph card result's merge (kind graph_attempt_merge) is handled in the card, not here.
+    graphMerge: str(data.kind) === 'graph_attempt_merge',
     // flowgate.v02gui.0004: the file content is kept — the direct resolver shows its chunks.
     files: (data.files ?? [])
       .filter((f) => f && typeof f.path === 'string' && f.path)

@@ -48,6 +48,16 @@ from test_fg_card_approval_0056 import LEE, card_outputs_port  # noqa: F401 — 
 
 pytestmark = pytest.mark.usefixtures("legacy_cards", "passive_person_results", "pre_feature_attempts")
 
+
+@pytest.fixture(autouse=True)
+def conflict_kept_as_session_0042(monkeypatch):
+    """flowgate.v02test.0042: these scenarios cover a conflict kept as the group's session. Since 0042 a merge keeps it
+    only for a person's resolution request (``resolve_requested``; otherwise it is deferred with no session), so the
+    scenarios' merges run as that request's merge. A clean merge is the same either way."""
+    from flowgate.graph_run import result_merge
+    real = result_merge._merge
+    monkeypatch.setattr(result_merge, "_merge", lambda row, keep_session=False: real(row, True))
+
 PROJECT = "flowgate"
 INTEGRATING, PENDING, CONFLICT, FAILED, INTEGRATED = "integrating", "pending", "conflict", "failed", "integrated"
 CAUSES = ("attempt_integration", "integration_hold", "integration_hold_end", "integration_hold_failed",

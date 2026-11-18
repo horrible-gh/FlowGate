@@ -115,6 +115,8 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...('instruction_doc_id' in raw ? { instructionDocId: str(raw.instruction_doc_id) } : {}),
     ...('integration_status' in raw ? { integrationStatus: str(raw.integration_status) } : {}),
     ...('integration_reason' in raw ? { integrationReason: str(raw.integration_reason) } : {}),
+    // flowgate.v02test.0042: the card whose merge this one waits for (its node key), kept only when sent.
+    ...('integration_blocked_by' in raw ? { integrationBlockedBy: str(raw.integration_blocked_by) } : {}),
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
     ...('question_wait' in raw ? { questionWait: toQuestionWait(raw.question_wait) } : {}),

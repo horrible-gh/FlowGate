@@ -32,7 +32,7 @@
        itself on hover and to assistive technology. -->
   <div
     class="flow-node-card"
-    :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown', 'has-issue': data.issue === true }"
+    :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown', 'has-issue': data.issue === true, 'has-conflict': data.integration === 'conflict' }"
     :style="{ '--flow-node-accent': kind.accent }"
     data-test="designer-canvas-node"
     :data-node-id="id"
@@ -72,9 +72,10 @@
         :title="questionTitle"
         data-test="designer-canvas-node-question-icon"
       >Q</span>
-      <!-- 병합 대기 / 병합 중 / 병합 실패: shown only, never pressed (병합 충돌 is the footer's button). -->
+      <!-- 병합 대기 / 병합 중 / 병합 충돌 / 병합 실패: shown only, never pressed (병합 충돌 is also the footer's button).
+           flowgate.v02test.0042 (시안 v7): the conflicting card carries the conflict mark in its head too. -->
       <span
-        v-if="data.integration && data.integration !== 'conflict'"
+        v-if="data.integration"
         class="flow-node-mark"
         :class="[`flow-node-mark--${integrationTone}`, { 'is-spinning': data.integration === 'integrating' }]"
         role="img"
@@ -138,7 +139,8 @@
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
       </div>
-      <!-- flowgate.v02.0061 T#14: 병합 충돌 opens the Git tool panel (a `conflict` event, never the selection or a drag). -->
+      <!-- flowgate.v02.0061 T#14: 병합 충돌 (a `conflict` event, never the selection or a drag). flowgate.v02test.0042: it opens
+           the card's '병합 · 충돌' Inspector tab (DesignerCenter), no longer the Git tool panel; same place and size. -->
       <button v-if="showConflict" type="button"
         class="flow-node-action flow-node-conflict nodrag nopan" :title="conflictTitle" :aria-label="conflictTitle"
         data-test="designer-canvas-node-conflict"
@@ -205,7 +207,8 @@ const CARD_DOCUMENT_ICONS = {
 /** flowgate.v02test.0044: the integration / 미인계 marks and the footer's action glyphs (mockup v4). 병합 실패 is a merge
  * with a cross — never the card state 오류's circled cross, so the two stay apart. */
 const CARD_MARK_ICONS = {
-  pending: 'M6 3a3 3 0 1 0 0 6a3 3 0 0 0 0-6z M18 15a3 3 0 1 0 0 6a3 3 0 0 0 0-6z M6 9a9 9 0 0 0 9 9',
+  // flowgate.v02test.0042 (시안 v7): a waiting merge is an hourglass; its tooltip names the card it waits for.
+  pending: 'M6 3h12 M6 21h12 M7 3c0 5 10 6 10 9s-10 4-10 9 M17 3c0 5-10 6-10 9s10 4 10 9',
   integrating: 'M21 12a9 9 0 1 1-3-6.7 M21 4v5h-5',
   failed: 'M5 3v4l6 6v8 M17 3v4l-6 6 M15 16l5 5 M20 16l-5 5',
   conflict: 'M6 3v5l12 8v5 M18 3v5L6 16v5 M3 3h6 M15 3h6',
@@ -262,12 +265,21 @@ const uncarriedTitle = computed(() => {
 
 /** The head row's integration mark (병합 충돌 is the footer's button instead). */
 const integrationLabel = computed(() => props.data.integration ? t(`gui.designer.center.integration.${props.data.integration}`) : '')
-const integrationTitle = computed(() => props.data.verificationFailed
-  ? `${integrationLabel.value} · ${t('gui.designer.center.integration.verification_failed')}`
-  : integrationLabel.value)
-const integrationTone = computed(() => props.data.integration === 'failed' ? 'danger' : 'info')
+const integrationTitle = computed(() => {
+  if (props.data.verificationFailed) return `${integrationLabel.value} · ${t('gui.designer.center.integration.verification_failed')}`
+  // flowgate.v02test.0042: a waiting merge says what it waits for — the named card's conflict, else its turn.
+  if (props.data.integration === 'pending') {
+    return props.data.integrationBlockedTitle
+      ? t(props.data.integrationBlockedConflict ? 'gui.designer.center.integration.waiting_for' : 'gui.designer.center.integration.waiting_behind', { title: props.data.integrationBlockedTitle })
+      : t('gui.designer.center.integration.waiting_turn')
+  }
+  if (props.data.integration === 'conflict') return conflictTitle.value
+  return integrationLabel.value
+})
+const integrationTone = computed(() => props.data.integration === 'failed' || props.data.integration === 'conflict' ? 'danger' : 'info')
 const integrationIcon = computed(() => props.data.integration === 'failed' ? CARD_MARK_ICONS.failed
-  : props.data.integration === 'integrating' ? CARD_MARK_ICONS.integrating : CARD_MARK_ICONS.pending)
+  : props.data.integration === 'conflict' ? CARD_MARK_ICONS.conflict
+    : props.data.integration === 'integrating' ? CARD_MARK_ICONS.integrating : CARD_MARK_ICONS.pending)
 
 const showConflict = computed(() => props.data.integration === 'conflict')
 const conflictTitle = computed(() => `${t('gui.designer.center.integration.conflict')} · ${t('gui.designer.center.integration.open_conflict')}`)
@@ -309,7 +321,14 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
     0 8px 22px rgba(0, 0, 0, 0.53);
 }
 
-.flow-node-card.is-selected {
+/* flowgate.v02test.0042 (시안 v7): a card whose merge conflicts waits for a person — a red ring, also when selected. */
+.flow-node-card.has-conflict {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--fg2-status-danger-fg) 35%, transparent),
+    0 8px 22px rgba(0, 0, 0, 0.47);
+}
+
+.flow-node-card.is-selected:not(.has-conflict) {
   box-shadow:
     0 0 0 2px color-mix(in srgb, var(--flow-node-accent) 70%, transparent),
     0 0 0 5px color-mix(in srgb, var(--flow-node-accent) 18%, transparent),

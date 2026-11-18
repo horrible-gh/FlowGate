@@ -382,7 +382,11 @@ export default {
         integrating: '병합 중',
         conflict: '병합 충돌',
         failed: '병합 실패',
-        open_conflict: 'Git 패널에서 충돌을 해결합니다',
+        open_conflict: '카드의 ‘병합 · 충돌’ 탭에서 처리합니다',
+        // flowgate.v02test.0042 — a waiting merge's hourglass tooltip.
+        waiting_for: '‘{title}’ 카드 충돌 해결을 기다리는 중',
+        waiting_behind: '‘{title}’ 카드의 병합이 끝나기를 기다리는 중',
+        waiting_turn: '병합 차례를 기다리는 중',
         // v02gui.0015 T4 — the result failed the integration's syntax check.
         verification_failed: '결과에 구문 오류가 있는 파일이 있어 병합하지 않았습니다. 다시 작업하려면 중지한 뒤 실행하세요(새 시도로 열립니다).',
       },
@@ -710,6 +714,7 @@ export default {
         ai: 'AI',
         qna: 'Q&A',
         attachments: '첨부',
+        merge: '병합 · 충돌',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: '문서 상태',
@@ -850,6 +855,15 @@ export default {
         },
         project_only: '현재 프로젝트 {name}의 실행만 표시합니다.',
         empty_runs: '진행 중이거나 대기 중인 실행이 없습니다.',
+        // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
+        merge: {
+          needs_choice: '‘{title}’ 카드 병합 충돌 — 선택 필요',
+          failed: '‘{title}’ 카드 병합 실패 — 선택 필요',
+          waiting: '‘{title}’ 카드 병합 대기',
+          waiting_for: '‘{title}’ 카드 병합 대기 (‘{blocked}’ 뒤)',
+          catching_up: '‘{title}’ 카드 병합 진행 중',
+          open: '열기',
+        },
         empty_ai: 'AI 알림이 없습니다.',
           question_all: "전체보기",
           question_reply: "바로답변",
@@ -1478,6 +1492,10 @@ export default {
       abort_message: '병합을 중단합니다. 작업 브랜치는 그대로 남습니다.',
       abort_bound: '진행 중인 최종 승인 시도가 함께 종료됩니다.',
       unsupported: '이 화면에서 처리하지 않는 충돌 유형입니다.',
+      // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
+      card_handled: '카드 결과 병합 충돌 — 카드에서 처리합니다',
+      card_handled_desc: '이 충돌은 Git 탭이 아니라 그 카드의 ‘병합 · 충돌’ 탭에서 고릅니다.',
+      open_card: '카드로 이동',
       loading: '충돌 파일을 불러오는 중…',
     },
     resolver: {

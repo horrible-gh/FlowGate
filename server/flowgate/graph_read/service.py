@@ -12,7 +12,7 @@ from . import authz
 
 NODE_RUN_FIELDS = ("node_key", "status", "opened_at", "finished_at", "root_bound", "stage",
                    "attempt_id", "hold", "question", "node_running", "node_running_cause", "wait_reason",
-                   "integration_status", "integration_reason")
+                   "integration_status", "integration_reason", "integration_blocked_by")
 RUN_FIELDS = ("run_id", "flow_id", "status", "revision_no", "started_at", "stopped_at",
               "finished_at", "last_event_seq", "mode", "idle_reason")
 NODE_FIELDS = ("node_key", "identity_source", "origin", "kind", "doc_type", "title", "state")

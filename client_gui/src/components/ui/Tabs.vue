@@ -8,6 +8,7 @@
       role="tab"
       class="ui-tab"
       :class="{ 'is-active': tab.key === modelValue }"
+      :data-tone="tab.tone || undefined"
       :aria-selected="tab.key === modelValue"
       :disabled="tab.disabled"
       :tabindex="tab.key === modelValue ? 0 : -1"
@@ -29,6 +30,8 @@ export interface TabItem {
   key: string
   label: string
   disabled?: boolean
+  /** A colour the screen gives the tab (e.g. `info`, `danger`); the screen styles `[data-tone]`. */
+  tone?: string | null
 }
 
 const props = defineProps<{

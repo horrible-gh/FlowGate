@@ -87,6 +87,13 @@ export interface FlowGateNodeData {
   integration?: string
   /** v02gui.0015 T4: the result failed the integration's syntax check (`failed` / `verification_failed`). */
   verificationFailed?: boolean
+  /**
+   * flowgate.v02test.0042: a waiting (`pending`) merge names the card it waits for (`integration_blocked_by`): that card's
+   * title, for the hourglass tooltip; absent when it waits for no named card.
+   */
+  integrationBlockedTitle?: string
+  /** flowgate.v02test.0042: that card holds the group with its merge conflict (else it is merging). */
+  integrationBlockedConflict?: boolean
   /** flowgate.v02.0061 T#14: the card is held (T#11 Hold). */
   hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered (the [Q] mark). */
@@ -183,6 +190,14 @@ export function toVueFlowNodes(
     if (integration && SHOWN_INTEGRATIONS.includes(integration)) data.integration = integration
     const integrationReason = (runNode && 'integrationReason' in runNode ? runNode.integrationReason : node.nodeRun?.integrationReason) ?? null
     if (integration === 'failed' && integrationReason === 'verification_failed') data.verificationFailed = true
+    const blockedBy = (runNode && 'integrationBlockedBy' in runNode ? runNode.integrationBlockedBy : node.nodeRun?.integrationBlockedBy) ?? null
+    if (integration === 'pending' && blockedBy) {
+      const blocked = graph.nodes.find((item) => item.id === blockedBy)
+      data.integrationBlockedTitle = blocked?.title || blockedBy
+      const blockedRun = marks.nodeRuns.get(blockedBy)
+      const blockedIntegration = (blockedRun && 'integrationStatus' in blockedRun ? blockedRun.integrationStatus : blocked?.nodeRun?.integrationStatus) ?? null
+      data.integrationBlockedConflict = blockedIntegration === 'conflict'
+    }
     const hold = options.holds
       ? options.holds.get(node.id)
       : runNode && typeof runNode.hold === 'boolean' ? runNode.hold : node.nodeRun?.hold

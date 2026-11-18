@@ -18,7 +18,7 @@
         <p v-if="(tab === 'runs' ? runsError : tab === 'questions' ? questionsError : feedError) || degraded" class="notification-note is-alert" role="alert">{{ t('gui.designer.top.notifications.load_error') }}</p>
         <p v-if="cancelError" class="notification-note is-alert" role="alert">{{ t('gui.designer.top.notifications.cancel_error') }}</p>
         <p v-if="tab === 'runs' && !project" class="notification-note" role="status">{{ t('gui.designer.top.notifications.project_unknown') }}</p>
-        <NotificationRunsTab v-if="tab === 'runs' && project && !runsError && (!initialLoading || rows.length > 0)" :rows="rows" :project-name="project?.name || projectId" :busy="busy" @stop="stop" @open-document="openDocumentWindow" />
+        <NotificationRunsTab v-if="tab === 'runs' && project && !runsError && (!initialLoading || rows.length > 0)" :rows="rows" :merge-items="mergeRows" :project-name="project?.name || projectId" :busy="busy" @stop="stop" @open-document="openDocumentWindow" @open-merge="openMerge" />
         <NotificationAiTab v-if="tab === 'ai' && !initialLoading && !feedError && !degraded" :items="feed?.ai_invoke_runs?.items || []" :total="feed?.ai_invoke_runs?.total" :has-more="feed?.ai_invoke_runs?.has_more" />
         <NotificationQuestionsTab v-show="tab === 'questions'" v-if="!initialLoading && !questionsError" :items="displayQuestions" :project-id="projectId" :project="project" :refresh-key="refreshKey" />
       </template>
@@ -36,7 +36,7 @@ import NotificationRunsTab from './NotificationRunsTab.vue'
 import NotificationAiTab from './NotificationAiTab.vue'
 import NotificationQuestionsTab from './NotificationQuestionsTab.vue'
 import LineIcon, { type LineIconName } from '@/components/ui/LineIcon.vue'
-import { qaOpenItems, qaRead, type QaOpenItem } from '@/features/document'
+import { cardMergeItems, qaOpenItems, qaRead, type CardMergeItem, type QaOpenItem } from '@/features/document'
 import { countLabel, notificationCounts } from './notificationCounts'
 const displayQuestions = ref<QaOpenItem[]>([])
 const questions = ref<QaOpenItem[] | null>(null), questionsError = ref(false), refreshKey = ref(0)
@@ -59,7 +59,22 @@ const rows = computed(() => {
   const flows = new Map(props.project?.groups.flatMap((group) => group.flows.map((flow) => [flow.id, flow.name] as const)) ?? [])
   return runs.value.filter((run) => flows.has(run.groupId)).map((run) => ({ ...run, flowName: flows.get(run.groupId)! }))
 })
-const counts = computed(() => notificationCounts(rows.value, questions.value))
+// flowgate.v02test.0042: card result merges waiting in this project's Flows (the runs tab lists them; a merge that only
+// waits keeps the Flow "running" with no AI run, so the list was empty before).
+const mergeItems = ref<CardMergeItem[]>([])
+const mergeRows = computed(() => {
+  const flows = new Map(props.project?.groups.flatMap((group) => group.flows.map((flow) => [flow.id, flow.name] as const)) ?? [])
+  return mergeItems.value.filter((item) => flows.has(item.flowId)).map((item) => ({ ...item, flowName: flows.get(item.flowId)! }))
+})
+const counts = computed(() => {
+  const base = notificationCounts(rows.value, questions.value)
+  return { ...base, runs: base.runs + mergeRows.value.length, bell: base.bell + mergeRows.value.length }
+})
+/** [열기] of a merge row: the card's '병합 · 충돌' tab (the Designer's one "open this card's merge" event). */
+function openMerge(item: CardMergeItem & { flowName: string }) {
+  window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId: item.flowId, nodeKey: item.nodeKey, flowName: item.flowName } }))
+  close()
+}
 const degraded = computed(() => feed.value?.degraded_sections?.includes(tab.value === 'ai' ? 'ai_runs' : '') ?? false)
 async function refresh() {
   const pid = props.projectId
@@ -68,8 +83,10 @@ async function refresh() {
   refreshQueued = false
   const ticket = generation
   loading.value = true
-  const [active, notifications, open] = await Promise.allSettled([fetchActiveRuns(), fetchNotificationFeed(pid), qaOpenItems(pid)])
+  const [active, notifications, open, merges] = await Promise.allSettled([fetchActiveRuns(), fetchNotificationFeed(pid), qaOpenItems(pid), cardMergeItems()])
   if (disposed || ticket !== generation) return
+  // A merge list that could not be read shows none; the runs above are unaffected.
+  mergeItems.value = merges.status === 'fulfilled' ? merges.value : []
   if (open.status === 'fulfilled') {
     const current = new Set(open.value.map(row => `${row.doc_id}:${row.seq}`))
     const missing = (questions.value ?? []).filter(row => !current.has(`${row.doc_id}:${row.seq}`))
@@ -139,7 +156,7 @@ watch(() => props.projectId, () => {
   refreshQueued = false
   unsubscribe?.()
   clearInterval(timer)
-  displayQuestions.value = []; questions.value = null; questionsError.value = false; runs.value = []; feed.value = null; busy.value = []
+  displayQuestions.value = []; questions.value = null; questionsError.value = false; runs.value = []; feed.value = null; busy.value = []; mergeItems.value = []
   initialLoading.value = !!props.projectId
   loading.value = false; runsError.value = false; feedError.value = false; cancelError.value = false
   if (!props.projectId) return
