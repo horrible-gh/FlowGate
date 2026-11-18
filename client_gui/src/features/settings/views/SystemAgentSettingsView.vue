@@ -51,6 +51,7 @@
       :cleanup-enabled="mode === 'create' ? form.cleanup : edit.cleanup" :cleanup-hours="mode === 'create' ? form.hours : edit.hours"
       :cleanup-hours-problem="mode === 'create' ? createHoursProblem : editHoursProblem"
       :max-jobs="mode === 'create' ? form.maxJobs : edit.maxJobs" :max-jobs-problem="maxJobsProblem" :enabled="edit.enabled"
+      :change-count="mode === 'create' ? 0 : editChangeCount" :workdir-value="workdirValue"
       :enrollment="enrollment" :enrollment-error="enrollmentError" :expired="enrollmentExpired" :refresh-error="listError"
       @update:name="setName" @update:workdir="setWorkdir"
       @update:cleanup-enabled="mode === 'create' ? form.cleanup = $event : edit.cleanup = $event"
@@ -108,6 +109,7 @@ import { useCurrentUser } from '@/core/auth/currentUser'
 import { currentSettingsAccess } from '../access'
 import { relativeTime } from '../format'
 import { AGENT_CAPS, AGENT_STATE_TONE, agentState } from '../agentState'
+import { composeWorkdir, workdirParent } from '../agentWorkdir'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
@@ -316,14 +318,17 @@ const form = reactive(blankForm())
 const formError = ref('')
 const createDirty = computed(() => mode.value === 'create' && (form.name.trim() !== '' || form.workdir !== '' || !form.cleanup || form.hours !== '24' || form.maxJobs !== '4'))
 const createNameProblem = computed(() => nameProblem(form.name))
-const createHoursProblem = computed(() => typedHours(form.hours) === null ? t('gui.settings.agents.errors.retention_hours_range', { min: 1, max: 720 }) : '')
+const createHoursProblem = computed(() => form.cleanup && typedHours(form.hours) === null ? t('gui.settings.agents.errors.retention_hours_range', { min: 1, max: 720 }) : '')
 function typedMax(value: string): number | null {
   return /^\d+$/.test(value.trim()) && Number(value) >= 1 && Number(value) <= 32 ? Number(value) : null
 }
 const maxJobsProblem = computed(() => typedMax(mode.value === 'create' ? form.maxJobs : edit.maxJobs) === null ? t('gui.agent_capacity.invalid') : '')
 const createCanSave = computed(() => mode.value === 'create' && !createNameProblem.value && !createHoursProblem.value && !maxJobsProblem.value && !busy.value)
 function setName(value: string) { if (mode.value === 'create') form.name = value; else edit.name = value }
-function setWorkdir(value: string) { if (mode.value === 'create') form.workdir = value; else edit.workdir = value }
+function setWorkdir(value: string) {
+  if (mode.value === 'create') form.workdir = value
+  else { edit.workdir = value; workdirEdited.value = true }
+}
 
 async function startCreate() {
   if (busy.value || mode.value === 'create') return
@@ -364,8 +369,10 @@ async function submitCreate() {
   try {
     await waitForRead(at)
     const created = await live(at, createAgent({
-      name: form.name.trim(), remote_workdir: form.workdir.trim() || null,
-      workspace_cleanup_enabled: form.cleanup, workspace_cleanup_retention_hours: typedHours(form.hours)!,
+      // flowgate.v02test.0043 CH0004: the typed parent folder gets /${AGENT_JOB_ID} (one folder per Job).
+      name: form.name.trim(), remote_workdir: composeWorkdir(form.workdir),
+      // Hours hidden while cleanup is off are not checked; an unusable value falls back to the default.
+      workspace_cleanup_enabled: form.cleanup, workspace_cleanup_retention_hours: typedHours(form.hours) ?? 24,
       max_concurrent_jobs: typedMax(form.maxJobs)!,
     }))
     // A successful POST must never leave a submit-able create form, even if confirmation fails.
@@ -400,6 +407,8 @@ const CLEANUP_HOURS_MAX = 720
 const blankEdit = () => ({ name: '', path: '', workdir: '', cleanup: true, hours: '24', maxJobs: '4', enabled: true, caps: { ai_cli: false, ai_api: false, storage: false } })
 const edit = reactive<{ name: string; path: string; workdir: string; cleanup: boolean; hours: string; maxJobs: string; enabled: boolean; caps: AgentCapabilities }>(blankEdit())
 const editSaved = ref(false)
+/** The person typed in 작업 폴더 위치 (a saved value without ${AGENT_JOB_ID} reads the same as typed). */
+const workdirEdited = ref(false)
 
 /** The confirmed values the form stands on: the server's last answer for the Agent in the form. */
 interface EditValues { name: string; path: string | null; workdir: string | null; cleanup: boolean; hours: number; maxJobs: number; enabled: boolean; caps: AgentCapabilities }
@@ -420,7 +429,9 @@ function typedHours(value: string): number | null {
 
 const nameTouched = (base: EditValues) => edit.name.trim() !== base.name
 const pathTouched = (base: EditValues) => (edit.path.trim() || null) !== base.path
-const workdirTouched = (base: EditValues) => (edit.workdir.trim() || null) !== base.workdir
+/** The input shows the parent folder: touched when it reads differently and would store another value. */
+const workdirTouched = (base: EditValues) => composeWorkdir(edit.workdir) !== base.workdir
+  && (workdirEdited.value || edit.workdir.trim() !== workdirParent(base.workdir).trim())
 const cleanupTouched = (base: EditValues) => edit.cleanup !== base.cleanup
 const hoursTouched = (base: EditValues) => edit.hours.trim() !== String(base.hours)
 const capTouched = (base: EditValues, cap: AgentCapability) => edit.caps[cap] !== base.caps[cap]
@@ -444,7 +455,8 @@ function syncEdit() {
   editBase.value = { agentId: a.agent_id, values }
   edit.name = values.name
   edit.path = values.path ?? ''
-  edit.workdir = values.workdir ?? ''
+  edit.workdir = workdirParent(values.workdir)
+  workdirEdited.value = false
   edit.cleanup = values.cleanup
   edit.hours = String(values.hours)
   edit.maxJobs = String(values.maxJobs)
@@ -456,6 +468,7 @@ function syncEdit() {
 function discardEdit() {
   editBase.value = null
   Object.assign(edit, blankEdit())
+  workdirEdited.value = false
 }
 
 /**
@@ -474,7 +487,7 @@ function rebaseEdit(a: SystemAgent) {
   if (edit.enabled === base.values.enabled) edit.enabled = fresh.enabled
   if (!nameTouched(base.values)) edit.name = fresh.name
   if (!pathTouched(base.values)) edit.path = fresh.path ?? ''
-  if (!workdirTouched(base.values)) edit.workdir = fresh.workdir ?? ''
+  if (!workdirTouched(base.values)) edit.workdir = workdirParent(fresh.workdir)
   if (!cleanupTouched(base.values)) edit.cleanup = fresh.cleanup
   if (!hoursTouched(base.values)) edit.hours = String(fresh.hours)
   for (const cap of CAPS) {
@@ -492,7 +505,7 @@ const editChanges = computed<SystemAgentChanges>(() => {
   if (typedMax(edit.maxJobs) !== null && Number(edit.maxJobs) !== base.values.maxJobs) changes.max_concurrent_jobs = Number(edit.maxJobs)
   if (edit.enabled !== base.values.enabled) changes.enabled = edit.enabled
   if (nameTouched(base.values)) changes.name = edit.name.trim()
-  if (workdirTouched(base.values)) changes.remote_workdir = edit.workdir.trim() || null
+  if (workdirTouched(base.values)) changes.remote_workdir = composeWorkdir(edit.workdir)
   if (cleanupTouched(base.values)) changes.workspace_cleanup_enabled = edit.cleanup
   const hours = typedHours(edit.hours)
   if (hoursTouched(base.values) && hours !== null && hours !== base.values.hours) changes.workspace_cleanup_retention_hours = hours
@@ -503,8 +516,21 @@ const editDirty = computed(() => Object.keys(editChanges.value).length > 0)
 const editNameProblem = computed(() => (touched.value.name ? nameProblem(edit.name) : ''))
 const editHoursProblem = computed(() => {
   const base = editBase.value?.values
-  if (!base || !hoursTouched(base) || typedHours(edit.hours) !== null) return ''
+  if (!base || !edit.cleanup || !hoursTouched(base) || typedHours(edit.hours) !== null) return ''
   return t('gui.settings.agents.errors.retention_hours_range', { min: CLEANUP_HOURS_MIN, max: CLEANUP_HOURS_MAX })
+})
+/** The setting that applies: the saved one while untouched, otherwise what saving would store. */
+const workdirValue = computed(() => {
+  if (mode.value === 'create') return composeWorkdir(form.workdir)
+  const base = editBase.value?.values
+  return base && !workdirTouched(base) ? base.workdir : composeWorkdir(edit.workdir)
+})
+/** Shown next to the buttons: every input that differs, a not-yet-valid number included. */
+const editChangeCount = computed(() => {
+  const base = editBase.value?.values
+  if (!base) return 0
+  const badMax = edit.maxJobs.trim() !== String(base.maxJobs) && typedMax(edit.maxJobs) === null
+  return Object.keys(editChanges.value).length + (badMax ? 1 : 0) + (editHoursProblem.value ? 1 : 0)
 })
 const editCanSave = computed(() => editDirty.value && !editNameProblem.value && !editHoursProblem.value && !maxJobsProblem.value && !busy.value)
 
