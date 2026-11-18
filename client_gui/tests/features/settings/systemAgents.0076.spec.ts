@@ -541,6 +541,13 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     expect(server('agt_f_local')).toMatchObject({ enabled: false, location: 'local', connection_mode: null, local_executable_path: '/opt/flowgate-agent', configured: { storage: true } })
   })
 
+  it('flowgate.v02test.0043 CH0004: English strings have a real token button label and a singular change count', () => {
+    const en = (key: string, named: Record<string, unknown> = {}) => i18n.global.t(key, named, { locale: 'en' })
+    expect(en('gui.agent_screen.retry_issue')).toBe('Reissue enrollment token')
+    expect(en('gui.agent_capacity.changes_one')).toBe('1 unsaved change')
+    expect(en('gui.agent_capacity.changes', { count: 2 })).toBe('2 unsaved changes')
+  })
+
   it('flowgate.v02test.0043 CH0004: 작업 폴더 위치 takes the parent folder and saves it with /${AGENT_JOB_ID}', async () => {
     const w = await open('/settings/system/agents')
     await pick(w, 'agt_a_online')

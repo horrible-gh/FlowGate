@@ -115,7 +115,7 @@
       <span class="agent-dialog-state" :class="{ dirty: changeCount > 0 }" data-testid="edit-state">
         <template v-if="!creating">
           <span v-if="saved && !changeCount" role="status" data-testid="edit-saved">{{ t('gui.agent_screen.saved') }}</span>
-          <template v-else>{{ changeCount ? t('gui.agent_capacity.changes', { count: changeCount }) : t('gui.agent_capacity.no_changes') }}</template>
+          <template v-else>{{ changeCount === 1 ? t('gui.agent_capacity.changes_one') : changeCount ? t('gui.agent_capacity.changes', { count: changeCount }) : t('gui.agent_capacity.no_changes') }}</template>
         </template>
       </span>
       <Button variant="secondary" :disabled="closeBusy" :data-testid="creating ? 'agent-create-cancel' : 'edit-cancel'" @click="emit('close')">{{ t(creating ? 'gui.common.cancel' : 'gui.common.close') }}</Button>
