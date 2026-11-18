@@ -439,6 +439,9 @@ class RelatedDocCreate(BaseModel):
 
 class NextEmptyQuestionIn(BaseModel):
     """An AI-attached query for the next-empty document (group 0022 §5)."""
+    reuse_rejection_reason: Optional[str] = None
+    rejected_answer_id: Optional[int] = None
+    options: list = []
     title: Optional[str] = None
     body: str
 
@@ -1392,11 +1395,12 @@ def create_next_empty_document(
             # so a failure rolls them back with the document (+ .md unlink below).
             if body.questions:
                 from modules.flow_gate.services import q_service
-                q_service.add_questions(
+                doc["question_precheck"] = q_service.add_questions(
                     doc_id=doc["doc_id"],
-                    questions=[{"title": q.title, "body": q.body} for q in body.questions],
+                    questions=[q.model_dump() for q in body.questions],
                     asker_kind="ai",
                     project_id=body.project_id,
+                    document_accompanied=True,
                 )
             if is_work_plan:
                 # 0599 T#2: next-empty has no later body synthesis. Snapshot the

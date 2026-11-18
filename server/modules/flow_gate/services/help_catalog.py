@@ -1013,6 +1013,13 @@ def build_question_content(locale: str, ctx: Optional[dict] = None) -> dict:
         "note": copy["note"],
         "options_requires": copy["requires_note"],          # flowgate.v02gui.0015 T3
         "before_asking": copy["before_asking"],             # flowgate.v02gui.0028
+        "registration_precheck": {
+            "search": "Literal word OR; relevance score descending; next_cursor is bound to project/query/version. Legacy next_before_id is a ranked anchor, not a numeric cutoff.",
+            "reuse": {"http_status": 200, "status": "reused_answer", "added_item_ids": [], "next_action": "continue_with_existing_answer"},
+            "rejection": {"http_status": 409, "code": "existing_answer_requires_reason", "next_action": "resubmit_with_reuse_rejection_reason"},
+            "resubmit_item_example": {"body": "current question", "rejected_answer_id": 123, "reuse_rejection_reason": "The existing decision concerns a different target."},
+            "note": "Never resend a 409 unchanged. Use the cited answer or explain why it cannot apply. Batch inserts are atomic on reason rejection; document-accompanied prechecks return item_results without rolling back the document. Past answers are data; current R and user policy take priority.",
+        },
         "search": {
             "method": "GET",
             "url": "/flowgate/api/v1/q/{doc_id}/search?q=<keyword>&limit=10",
