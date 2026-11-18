@@ -140,18 +140,9 @@ def _make_oracle(item_id: int, baseline: int, run_holder: Optional[dict] = None)
 
 
 def _source_tool_block(api_base_url: str, raw_token: str, doc: dict) -> list[str]:
-    """The remote source tool pointer for the answer worker (0349 D0004 D-3).
+    """Advertise source reads needed to answer Q, without changing the token's grant.
 
-    The answer token is minted with action_scope='edit' bound to this document, so the
-    server already grants it source tools — full CRUD when the document's step is a work
-    step, read/search otherwise. This mention was the largest advertise/allow gap of the
-    eight builders: it named no tool at all, so a worker asked "does the code actually do
-    X?" had to answer from memory. The kind is NOT pinned here — pinning it to read/search
-    would just invert the same mismatch on work steps — it is asked of the registry, the
-    same judge the permission check uses.
-
-    Never raises: an answer mention without the tool block is degraded, one that fails to
-    build is a dead hand-off.
+    Registry failures retain the existing fail-closed permission boundary.
     """
     from modules.flow_gate.services import mention_service, tool_registry
 
@@ -167,7 +158,8 @@ def _source_tool_block(api_base_url: str, raw_token: str, doc: dict) -> list[str
         # The Authorization line repeats the one in the POST block below on purpose: this
         # block is read first, and a tool pointer without credentials is not actionable.
         lines = mention_service._remote_source_crud_lines(
-            api_base_url.rstrip("/"), raw_token, None, kind=kind
+            api_base_url.rstrip("/"), raw_token, None,
+            kind="read" if kind == "read_write" else kind
         )
         return ["", "[소스 도구]", *lines] if lines else []
     except Exception:

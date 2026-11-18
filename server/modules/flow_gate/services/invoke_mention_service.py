@@ -470,7 +470,11 @@ def build_conversation_mention(
         from modules.flow_gate.services import chat_run_hooks
 
         omit = () if may_run else ("run_command",)
-        sections = chat_run_hooks.chat_mention_sections(api_base, raw_token, omit=omit)
+        from modules.flow_gate.services.prompt_selection import chat_situation
+        sections = chat_run_hooks.chat_mention_sections(
+            api_base, raw_token, omit=omit,
+            situation=chat_situation(group_name, can_write=can_write),
+        )
         if not chat_run_hooks.registered(chat_run_hooks.PROVIDE_CHAT_TOOLS):
             sections = [_command_section(base=api_base, raw_token=raw_token)] if may_run else []
         if may_run and not can_write:

@@ -1590,7 +1590,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             and spec["name"] not in chat_tool_handlers
         ] + [
             {"name": tool["name"], "description": tool["description"], "schema": tool["schema"]}
-            for tool in chat_tools
+            for tool in chat_tools if tool.get("prompt_visible", True)
         ] + [{
             "name": _CHAT_TOOL_NAME, "description": _CHAT_TOOL_DESC,
             "schema": _CHAT_TOOL_SCHEMA, "completion": True,
@@ -1650,7 +1650,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         run["_chat_based_on_seq"] = int(
             chat_context.get("delivered_head_seq") or chat_context.get("head_seq") or 0
         )
-        chat_hints = [str(tool["prompt_hint"]) for tool in chat_tools if tool.get("prompt_hint")]
+        chat_hints = [str(tool["prompt_hint"]) for tool in chat_tools
+                      if tool.get("prompt_visible", True) and tool.get("prompt_hint")]
         conversation.append({
             "role": "user",
             "content": (

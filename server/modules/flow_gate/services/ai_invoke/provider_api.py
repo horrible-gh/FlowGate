@@ -252,8 +252,19 @@ def _api_system_prompt() -> str:
 
 def _api_help_prompt(prompt: str) -> str:
     """Match API-provider guidance to mediated tools; CLI mentions remain unchanged."""
-    lines = [line for line in prompt.splitlines()
-             if not ("GET " in line and "/help" in line)]
+    # Preserve item-specific pointers when converting CLI help addresses to tools.
+    import re
+    lines = []
+    for line in prompt.splitlines():
+        if "GET " in line and "/help" in line:
+            match = re.search(r"/help/items/([a-zA-Z_]+)(?:/([a-zA-Z_]+))?", line)
+            if match:
+                pointer = f"read_help with item={match.group(1)}"
+                if match.group(2):
+                    pointer += f" and child={match.group(2)}"
+                lines.append(re.sub(r"GET \S*/help/items/[a-zA-Z_]+(?:/[a-zA-Z_]+)?", pointer, line))
+        else:
+            lines.append(line)
     guidance = (
         "Use the `read_help` tool for personalized FlowGate help: empty input returns "
         "the index, item returns one item, and item plus child returns one child."

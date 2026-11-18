@@ -65,7 +65,8 @@ def test_a_normal_edit_is_unchanged():
     text = _build(action_scope="edit", parent_revision_no=1)
     assert _build(action_scope="edit", parent_revision_no=1, first_write=False) == text
     section = _section(text, "## Revision instructions")
-    assert "Read the target document and the review feedback below before editing." in section
+    assert "Read the target document before editing." in section
+    assert "review feedback below" not in section
     assert "## Writing instructions" not in text
 
 
@@ -109,7 +110,7 @@ def _start(monkeypatch, job):
                         lambda **kw: seen.append(kw) or "work")
     monkeypatch.setattr(ai_node_starter.ai_start_precheck, "node_mention", lambda mention, *_a, **_k: mention)
     monkeypatch.setattr(ai_node_starter.card_memo_hooks, "prepend_memo_section", lambda mention, *_a, **_k: mention)
-    monkeypatch.setattr(ai_node_starter, "api_base_url", lambda: "http://h/flowgate/api/v1")
+    monkeypatch.setattr(ai_node_starter, "api_base_url", lambda user_id=None: "http://h/flowgate/api/v1")
     monkeypatch.setattr(ai_node_starter.ai_invoke_service, "start_run",
                         lambda **kw: kw["issue_builder"](ai_run_id="air") and {"run_id": "air"})
     ai_node_starter.start_ai_invoke(job)
