@@ -10,7 +10,8 @@
   [all] ignore it (the stored checkpoint is kept, so going back to [checkpoint] applies it again).
   Both context paths (the API model window in ``ai_invoke.worker`` and the CLI/Agent mention in
   ``invoke_mention_service``) get their window from :func:`context_window`, so the two can never
-  disagree. Earlier turns are folded, not deleted: the fold notice still lets the AI page back.
+  disagree. Earlier turns stay readable through the backward link. The AI is told only the range it
+  received, never the checkpoint itself (flowgate.v02test.0041).
 
 Like the user-level chat settings, a broken row must never stop a chat: the context readers never
 raise, and a bad value arriving in a PATCH is a 422 naming its field.

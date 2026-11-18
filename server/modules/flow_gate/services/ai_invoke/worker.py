@@ -2529,7 +2529,6 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
             run.get("issued_to"), run["doc_ref"], settings, head_seq_of=conversation_turns.current_head_seq,
         )
         after_seq, folded = window["after_seq"], window["folded"]
-        checkpoint_seq = window["checkpoint_seq"]
         cursor = after_seq
         remaining = window["limit"]
         include_head = True
@@ -2584,9 +2583,8 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
             "after_seq": after_seq,
             "folded": folded,
         }
-        if checkpoint_seq is not None:
-            merged["context_window"]["checkpoint_seq"] = checkpoint_seq
-            merged["context_window"]["checkpoint_kind"] = window["checkpoint_kind"]
+        # flowgate.v02test.0041: the delivered range is all the model needs; whether the user's
+        # checkpoint or the latest-N limit chose it is not sent (same rule as the mention).
         if folded > 0:
             merged["older_history"] = {
                 "before_seq": after_seq + 1,

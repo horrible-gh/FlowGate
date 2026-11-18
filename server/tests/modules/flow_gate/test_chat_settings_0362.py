@@ -26,7 +26,7 @@ def _text_only_message_images(monkeypatch):
     # This suite's chat fixtures predate message images and contain no images.
     # Actual linked images are covered by test_message_image_delivery_0029.
     from modules.flow_gate.services import message_image_delivery
-    monkeypatch.setattr(message_image_delivery, "image_count", lambda *args: 0)
+    monkeypatch.setattr(message_image_delivery, "image_count", lambda *args, **kwargs: 0)
     from modules.flow_gate.services import question_policy
     monkeypatch.setattr(question_policy, "text", lambda *args, **kwargs: "")
 
@@ -205,8 +205,8 @@ class TestFoldedMention:
     def test_fold_notice_reproduces_the_agreed_wording(self, monkeypatch):
         text = self._build(monkeypatch, head_seq=30)
         assert (
-            "The 10 turns before that point are folded, not deleted. Read them when you need the\n"
-            "earlier context:\n"
+            "This invocation's context is the latest 20 turns (seq 11 to 30).\n"
+            "Turns before seq 11 are not included. Read them only when the request depends on them:\n"
             f"GET http://h:1/api/v1/conversation/{self.DOC}/turns?before_seq=11\n"
             "Authorization: Bearer RAW\n"
             "If `prev_before_seq` is not null, call again with that value to keep going further back.\n"
@@ -231,7 +231,7 @@ class TestFoldedMention:
         text = self._build(monkeypatch, head_seq=30)
         assert (
             text.index("start of this invocation's conversation context window")
-            < text.index("folded, not deleted")
+            < text.index("This invocation's context is the latest")
             < text.index("To reply, append ONE turn")
         )
 
@@ -245,18 +245,18 @@ class TestFoldedMention:
         )
         assert "?after_seq=13&include_head=1" in text
         assert "turns?before_seq=14" in text
-        assert "The 13 turns before that point are folded" in text
+        assert "This invocation's context is the latest 10 turns (seq 14 to 23)." in text
 
     def test_a_single_folded_turn_reads_as_one_turn(self, monkeypatch):
         text = self._build(monkeypatch, head_seq=21)
-        assert "The 1 turn before that point is folded, not deleted. Read it when you need the" in text
-        assert "turns are folded" not in text
+        assert "This invocation's context is the latest 20 turns (seq 2 to 21)." in text
+        assert "Turns before seq 2 are not included." in text
 
     def test_short_conversation_uses_the_same_invocation_wording_and_adds_no_fold_notice(self, monkeypatch):
         text = self._build(monkeypatch, head_seq=8)
         assert "The after_seq above is the start of this invocation's conversation context window" in text
         assert "last read position" not in text
-        assert "folded" not in text
+        assert "Turns before seq" not in text
         assert "?after_seq=0&include_head=1" in text
 
     def test_all_starts_at_zero_without_asking_for_the_head_or_provider_cursor(self, monkeypatch):
