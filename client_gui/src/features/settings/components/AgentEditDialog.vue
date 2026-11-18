@@ -8,10 +8,9 @@
             <h2 :id="titleId">{{ title }}</h2>
             <span v-if="agent && !creating" class="agent-chip" :class="tone" data-field="connection">{{ stateLabel }}</span>
           </div>
-          <p class="agent-dialog-sub" data-testid="agent-status">
+          <p v-if="creating || agent?.location === 'local' || (agent && !connecting)" class="agent-dialog-sub" data-testid="agent-status">
             <template v-if="creating">{{ t('gui.agent_capacity.create_sub') }}</template>
             <template v-else-if="agent?.location === 'local'">{{ t('gui.settings.agents.local_note') }}</template>
-            <template v-else-if="connecting">{{ t('gui.agent_capacity.not_connected') }}</template>
             <template v-else-if="agent"><span data-field="platform">{{ platform }}</span> · {{ t('gui.agent_screen.last_seen') }} {{ seen }}</template>
           </p>
         </div>
@@ -40,12 +39,10 @@
               <div class="agent-row-l">
                 <div v-if="expired" class="agent-row-t" role="status" data-testid="enrollment-expired">{{ t('gui.agent_screen.expired') }}</div>
                 <div v-else class="agent-row-t">{{ t('gui.agent_capacity.no_token') }}</div>
-                <p class="agent-help">{{ t('gui.agent_capacity.no_token_hint') }}</p>
               </div>
               <Button variant="primary" :disabled="busy" data-testid="enrollment-retry" @click="emit('retry')">{{ t('gui.agent_screen.retry_issue') }}</Button>
             </div>
           </div>
-          <p class="agent-help">{{ t('gui.agent_capacity.token_hint') }}</p>
         </template>
         <p v-else class="agent-note info">{{ t('gui.agent_capacity.enable_first') }}</p>
       </section>
@@ -55,7 +52,6 @@
       </div>
 
       <section class="agent-sec">
-        <h3 class="agent-sec-h">{{ t('gui.agent_capacity.sec_basic') }}</h3>
         <div class="agent-field">
           <label for="agent-dialog-name">{{ t('gui.settings.agents.fields.name') }}<span class="agent-req" aria-hidden="true">*</span></label>
           <Input id="agent-dialog-name" :model-value="name" :maxlength="100" :disabled="busy" :invalid="showNameProblem" autocomplete="off" data-modal-autofocus :data-testid="creating ? 'agent-name' : 'edit-name'" @update:model-value="emit('update:name', $event)" />
@@ -64,18 +60,16 @@
         <div v-if="agent && !creating" class="agent-row">
           <div class="agent-row-l">
             <div id="agent-dialog-enabled" class="agent-row-t">{{ t('gui.agent_capacity.enabled') }}</div>
-            <p class="agent-help">{{ t(enabled ? 'gui.agent_capacity.enabled_on' : 'gui.agent_capacity.enabled_off') }}</p>
+            <p v-if="!enabled" class="agent-help" data-testid="edit-enabled-off">{{ t('gui.agent_capacity.enabled_off') }}</p>
           </div>
           <Toggle :model-value="enabled" :disabled="busy" aria-labelledby="agent-dialog-enabled" data-testid="edit-enabled" @update:model-value="emit('update:enabled', $event)" />
         </div>
       </section>
 
       <section v-if="remote" class="agent-sec">
-        <h3 class="agent-sec-h">{{ t('gui.agent_capacity.sec_run') }}</h3>
         <div class="agent-row">
           <div class="agent-row-l">
-            <label class="agent-row-t" for="agent-max-jobs">{{ t('gui.agent_capacity.label') }}</label>
-            <p class="agent-help">{{ t('gui.agent_capacity.hint') }}</p>
+            <span class="agent-row-t"><label for="agent-max-jobs">{{ t('gui.agent_capacity.label') }}</label><span class="agent-tip" tabindex="0" role="img" :title="t('gui.agent_capacity.hint')" :aria-label="t('gui.agent_capacity.hint')" data-testid="agent-max-jobs-tip">?</span></span>
           </div>
           <span class="agent-num">
             <Input id="agent-max-jobs" class="agent-num-input" inputmode="numeric" autocomplete="off" :model-value="maxJobs" :disabled="busy" :invalid="!!maxJobsProblem" data-testid="agent-max-jobs" @update:model-value="emit('update:maxJobs', $event)" />
@@ -91,7 +85,6 @@
       </section>
 
       <section v-if="remote" class="agent-sec">
-        <h3 class="agent-sec-h">{{ t('gui.agent_capacity.sec_workdir') }}</h3>
         <div class="agent-field">
           <label for="agent-dialog-workdir">{{ t('gui.agent_capacity.workdir_label') }}</label>
           <Input id="agent-dialog-workdir" class="agent-mono" :model-value="workdir" :placeholder="WORKDIR_EXAMPLE" :disabled="busy" autocomplete="off" spellcheck="false" data-testid="edit-remote-workdir" @update:model-value="emit('update:workdir', $event)" />
@@ -103,7 +96,6 @@
           <div class="agent-row-l">
             <div id="agent-dialog-cleanup" class="agent-row-t">{{ t('gui.settings.agents.fields.workspace_cleanup') }}</div>
             <p v-if="cleanupEnabled" class="agent-help">{{ cleanupParts[0] }}<Input id="agent-dialog-retention" class="agent-inline-num" inputmode="numeric" autocomplete="off" :aria-label="t('gui.settings.agents.fields.workspace_cleanup_hours')" :model-value="cleanupHours" :disabled="busy" :invalid="!!cleanupHoursProblem" data-testid="edit-cleanup-hours" @update:model-value="emit('update:cleanupHours', $event)" />{{ cleanupParts[1] }}</p>
-            <p v-else class="agent-help">{{ t('gui.agent_capacity.cleanup_off') }}</p>
             <p v-if="cleanupEnabled && cleanupHoursProblem" class="agent-help is-error" data-testid="edit-cleanup-hours-invalid">{{ cleanupHoursProblem }}</p>
           </div>
           <Toggle :model-value="!!cleanupEnabled" :disabled="busy" aria-labelledby="agent-dialog-cleanup" data-testid="edit-cleanup-enabled" @update:model-value="emit('update:cleanupEnabled', $event)" />
@@ -205,7 +197,8 @@ async function copy() {
 </script>
 
 <style>
-/* flowgate.v02test.0043 CH0004: draft 4 (one status chip, section headings with hairlines, switches,
+/* flowgate.v02test.0043 CH0004: draft 5 trims repeated help text and the section headings (hairlines only).
+   draft 4 (one status chip, section headings with hairlines, switches,
    narrow number inputs with units, cleanup hours inside its sentence, change count in the footer). */
 .ui-modal-surface.agent-settings-dialog { max-width: 520px; border-radius: 14px; }
 .agent-settings-dialog .agent-dialog-head { display: flex; gap: 14px; align-items: flex-start; padding: 20px 20px 18px 24px; border-bottom: 1px solid var(--fg2-line); }
@@ -231,6 +224,8 @@ async function copy() {
 .agent-settings-dialog .agent-sec-h { margin: 0; font-size: 11px; font-weight: 700; color: var(--fg2-muted-2); letter-spacing: 0.04em; }
 .agent-settings-dialog .agent-field { display: grid; gap: 7px; min-width: 0; }
 .agent-settings-dialog .agent-field > label, .agent-settings-dialog .agent-row-t { display: block; font-size: 12.5px; font-weight: 650; color: #dbe7f5; }
+.agent-settings-dialog .agent-tip { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-left: 6px; border: 1px solid var(--fg2-line-strong); border-radius: 50%; font-size: 10px; font-weight: 700; color: var(--fg2-muted); vertical-align: 1px; cursor: help; }
+.agent-settings-dialog .agent-tip:focus-visible { outline: 2px solid var(--fg2-accent); outline-offset: 1px; }
 .agent-settings-dialog .agent-req { margin-left: 2px; color: var(--fg2-status-danger-fg); }
 .agent-settings-dialog .agent-help { margin: 0; font-size: 11.5px; line-height: 1.55; color: var(--fg2-muted); }
 .agent-settings-dialog .agent-help.is-error { color: var(--fg2-status-danger-fg); }
