@@ -39,6 +39,7 @@ from modules.flow_gate.api.v1.workflow_decision_routes import router as _workflo
 from modules.flow_gate.api.v1.module_routes import router as _module_router
 from modules.flow_gate.api.v1.legacy_misc_routes import router as _legacy_misc_router
 from modules.flow_gate.api.v1.tree_routes import router as _tree_router
+from modules.flow_gate.api.v1.client_report_routes import router as _client_report_router
 from modules.flow_gate.api.v1.file_transfer_routes import router as _file_transfer_router
 from modules.flow_gate.api.v1.slug_routes import router as _slug_router
 from modules.flow_gate.api.v1.dashboard_routes import router as _dashboard_router
@@ -253,6 +254,7 @@ app.include_router(_workflow_decision_router, prefix=f"{CONTEXT}", tags=["Workfl
 app.include_router(_module_router, prefix=f"{CONTEXT}", tags=["Modules"])
 app.include_router(_legacy_misc_router, prefix=f"{CONTEXT}", tags=["LegacyMisc"])
 app.include_router(_tree_router, prefix=f"{CONTEXT}", tags=["Tree"])
+app.include_router(_client_report_router, prefix=f"{CONTEXT}", tags=["Tree"])
 app.include_router(_file_transfer_router, prefix=f"{CONTEXT}", tags=["FileTransfer"])
 app.include_router(_slug_router, prefix=f"{CONTEXT}", tags=["Slug"])
 app.include_router(_dashboard_router, prefix=f"{CONTEXT}", tags=["Dashboard"])

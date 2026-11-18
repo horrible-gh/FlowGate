@@ -493,6 +493,11 @@ def write_groups(groups: dict[str, list[dict]], recent: dict[str, tuple[int, flo
     store = _store()
     with store.transaction():
         for fingerprint, entries in groups.items():
+            browser_report = entries[0]["source"] == "browser" and entries[0]["logger_name"] == "browser.tree_read"
+            if browser_report:
+                if store._fetch_one(f"SELECT id FROM {TABLE} WHERE fingerprint = ? LIMIT 1", [fingerprint]):
+                    continue
+                entries = entries[:1]
             entries.sort(key=lambda e: e["time"])
             pending = entries
             while pending:
