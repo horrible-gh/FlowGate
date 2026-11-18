@@ -88,6 +88,9 @@ export interface GitConflictSession {
   // A TR revert / reapply session (server `kind` tr_revert / tr_reapply, `tr_conflict` set):
   // git/status sends no review_state for it, so this is what keeps it off the merge actions.
   trConflict: boolean
+  // flowgate.v02test.0042: a Graph card result's merge (server kind graph_attempt_merge): the card's '병합 · 충돌' tab
+  // handles it; this panel only points there. Absent = not one.
+  graphMerge?: boolean
   files: GitConflictFile[]
 }
 

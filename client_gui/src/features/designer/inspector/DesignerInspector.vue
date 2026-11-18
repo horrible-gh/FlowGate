@@ -113,6 +113,7 @@ import {
 } from './inspectorRegistry'
 import {
   DEFAULT_INSPECTOR_TAB,
+  INSPECTOR_CONDITIONAL_TABS,
   INSPECTOR_TABS,
   INSPECTOR_TAB_GAP,
   INSPECTOR_TAB_MIN_WIDTH,
@@ -156,8 +157,13 @@ const props = withDefaults(
      * tells it (its own card).
      */
     cardRun?: WorkPlanCardRun | null
+    /**
+     * flowgate.v02test.0042: a request to show one tab of one card (the Canvas card's 병합 충돌, a notification's [열기],
+     * the Git panel's [카드로 이동]); a new `seq` is a new request. Taken once the card is the target and the tab is shown.
+     */
+    tabRequest?: { readonly flowId: string; readonly nodeId: string; readonly tab: string; readonly seq: number } | null
   }>(),
-  { unselected: false, registry: () => inspectorRegistry, saveTitle: null, flowRunLock: null, cardRun: null },
+  { unselected: false, registry: () => inspectorRegistry, saveTitle: null, flowRunLock: null, cardRun: null, tabRequest: null },
 )
 
 const emit = defineEmits<{ host: [intent: InspectorHostIntent] }>()
@@ -290,9 +296,30 @@ const tabs = computed(() => {
     if (key === 'ai' || (key === 'settings' && requirement)) {
       return contributions.value.some(entry => entry.tab?.key === key)
     }
+    // flowgate.v02test.0042: a conditional tab (병합 · 충돌) only while a contribution to it is visible.
+    if (INSPECTOR_CONDITIONAL_TABS.includes(key)) {
+      return contributions.value.some(entry => entry.tab?.key === key && tabVisible(entry))
+    }
     return true
   })
 })
+
+// flowgate.v02test.0042: one visibility / tone supplier per registration, set up once like the tab numbers; each sees the
+// target only while its registration applies.
+const scopedTarget = (entry: (typeof registry.entries)[number]) =>
+  computed(() => (target.value && registrationApplies(entry, target.value) ? target.value : null))
+const tabVisibles = registry.entries.flatMap((entry) => (entry.tab?.visible ? [{ entry, visible: entry.tab.visible(scopedTarget(entry)) }] : []))
+const tabTones = registry.entries.flatMap((entry) => (entry.tab?.tone ? [{ entry, tab: entry.tab.key, tone: entry.tab.tone(scopedTarget(entry)) }] : []))
+
+function tabVisible(entry: (typeof registry.entries)[number]): boolean {
+  const supplier = tabVisibles.find((item) => item.entry === entry)
+  return supplier ? supplier.visible.value : true
+}
+
+function tabTone(key: InspectorTabKey): string | null {
+  const supplier = tabTones.find((item) => item.tab === key && contributions.value.includes(item.entry))
+  return supplier?.tone.value ?? null
+}
 
 // One tab number supplier per registration, set up once; each sees the target only while its
 // registration applies to it (D#1 §5.2: at most one supplier per tab).
@@ -311,7 +338,7 @@ const tabItems = computed<TabItem[]>(() =>
   tabs.value.map((key) => {
     const label = t(`gui.designer.inspector.tabs.${key}`)
     const count = tabCount(key)
-    return { key, label: count === null ? label : `${label} (${count})` }
+    return { key, label: count === null ? label : `${label} (${count})`, tone: tabTone(key) }
   }),
 )
 
@@ -350,6 +377,37 @@ const tabStripStyle = {
 function selectTab(key: string) {
   selectedTab.value = resolveInspectorTab(key as InspectorTabKey, tabs.value)
 }
+
+// flowgate.v02test.0042: a tab request waits until its card is the target and the tab is shown, then selects it once.
+// Another card selected meanwhile drops it.
+const pendingTab = ref<{ readonly flowId: string; readonly nodeId: string; readonly tab: InspectorTabKey } | null>(null)
+watch(
+  () => props.tabRequest?.seq ?? null,
+  () => {
+    const request = props.tabRequest
+    pendingTab.value = request && (INSPECTOR_TABS as readonly string[]).includes(request.tab)
+      ? { flowId: request.flowId, nodeId: request.nodeId, tab: request.tab as InspectorTabKey }
+      : null
+  },
+  { immediate: true },
+)
+watch(
+  [pendingTab, target, tabs],
+  () => {
+    const pending = pendingTab.value
+    const current = target.value
+    if (!pending || !current) return
+    if (current.flowId !== pending.flowId || current.nodeId !== pending.nodeId) {
+      pendingTab.value = null
+      return
+    }
+    if (tabs.value.includes(pending.tab)) {
+      selectedTab.value = pending.tab
+      pendingTab.value = null
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <style scoped>
@@ -406,6 +464,15 @@ function selectTab(key: string) {
 
 .designer-inspector-tabs :deep(.ui-tab.is-active) {
   background: #10243e;
+}
+
+/* flowgate.v02test.0042: a coloured tab label — blue: progress only; red: a person must choose. */
+.designer-inspector-tabs :deep(.ui-tab[data-tone="info"]) {
+  color: var(--fg2-blue);
+}
+
+.designer-inspector-tabs :deep(.ui-tab[data-tone="danger"]) {
+  color: var(--fg2-status-danger-fg);
 }
 
 .designer-inspector-body {

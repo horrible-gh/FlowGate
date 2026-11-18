@@ -105,6 +105,15 @@ RUNNING, IDLE, STOPPING = "running", "idle", "stopping"
 HOLD_CAUSE, HOLD_END_CAUSE = "integration_hold", "integration_hold_end"
 HOLD_FAILED_CAUSE = "integration_hold_failed"            # a hold released by ``_release_hold``
 HOLD_IDLE, HOLD_RESUME, HOLD_COMMAND = "idle", "resume", "command:"
+# flowgate.v02test.0042: a conflict the merge finds is not kept as the group's session any more (one open session per
+# group, so a kept session held every other card's merge, silently ``session_busy``, until a person came). The merge
+# is undone at once and the attempt waits in ``conflict`` with ``CONFLICT_DEFERRED`` (no session, the group free; its
+# overlapping files on the run event's ``files``). A person's choice on the card (``request_resolution``) asks the
+# merge again with ``RESOLVE_REQUESTED``: that merge keeps its conflict as the group's session (the earlier path:
+# resolve, commit or abort, then ``session_closed``).
+CONFLICT_DEFERRED = "conflict_deferred"
+RESOLVE_REQUESTED = "resolve_requested"
+DEFERRED = "deferred"                                       # a ``_merge`` outcome only, never recorded
 
 
 def _status(row: Optional[dict]) -> str:
@@ -150,10 +159,35 @@ def waiting(run_id: str) -> bool:
 
 
 def integration_wire(attempt_id: Optional[str]) -> dict:
-    row = run_store._one("SELECT integration_status, integration_reason FROM graph_node_attempts "
+    row = run_store._one("SELECT run_id, node_key, integration_status, integration_reason FROM graph_node_attempts "
                          "WHERE attempt_id = ?", [attempt_id]) if attempt_id else None
     return {"integration_status": (row or {}).get("integration_status"),
-            "integration_reason": (row or {}).get("integration_reason")}
+            "integration_reason": (row or {}).get("integration_reason"),
+            "integration_blocked_by": blocked_by(row)}
+
+
+def blocked_by(row: Optional[dict]) -> Optional[str]:
+    """flowgate.v02test.0042: the card a ``pending`` integration waits behind (its node key), or None — the node of
+    the group's open ``graph_attempt_merge`` session, else another card of the run whose merge is in progress. Never
+    guessed: anything else (a busy G of another kind, a gate reservation, an unreadable session) is None. Never
+    raises (a run read goes on)."""
+    if not row or _status(row) != PENDING:
+        return None
+    try:
+        run = run_store.run_by_id(row["run_id"])
+        session = db_git.get_open_session_by_group(run["group_id"]) if run else None
+        if session is not None and db_git.session_kind(session) == SESSION_KIND:
+            key = db_git.session_context(session).get("node_key")
+            if key and key != row["node_key"]:
+                return str(key)
+        other = run_store._one(
+            "SELECT node_key FROM graph_node_attempts WHERE run_id = ? AND status = 'active' "
+            "AND integration_status = 'integrating' AND node_key <> ? ORDER BY created_at, attempt_id LIMIT 1",
+            [row["run_id"], row["node_key"]])
+        return str(other["node_key"]) if other else None
+    except Exception:  # noqa: BLE001
+        log.warning("Graph integration could not tell what %s waits for", row.get("node_key"), exc_info=True)
+        return None
 
 
 def hold_of(run_id: str) -> Optional[str]:
@@ -400,9 +434,11 @@ _opened_lock = threading.Lock()
 _left_open: dict[str, tuple[str, int]] = {}
 
 
-def _merge(row: dict) -> tuple[str, object]:
-    """(d) under G: ``(INTEGRATED, merge commit)``, ``(CONFLICT, merge_id)``, ``(PENDING, reason)`` or ``(FAILED,
-    reason)``. The lock is held for this one merge only."""
+def _merge(row: dict, keep_session: bool = False) -> tuple[str, object]:
+    """(d) under G: ``(INTEGRATED, merge commit)``, ``(DEFERRED, files)``, ``(CONFLICT, merge_id)``, ``(PENDING,
+    reason)`` or ``(FAILED, reason)``. The lock is held for this one merge only. flowgate.v02test.0042: a conflict is
+    undone and deferred (no session, ``CONFLICT_DEFERRED``) unless ``keep_session`` (a person asked for its
+    resolution, ``RESOLVE_REQUESTED``): only then is it kept as the group's session."""
     project_id, root, group_branch = _group_root(row)
     if root is None:
         return FAILED, "no_group_worktree"
@@ -443,6 +479,12 @@ def _merge(row: dict) -> tuple[str, object]:
             if not head or not git._is_ancestor(root, result, head):
                 return FAILED, "merge_verification_failed"
             return INTEGRATED, head
+        if not keep_session:
+            # flowgate.v02test.0042: undone at once — the group stays free for the other cards' merges
+            proc = git._run_git(["merge", "--abort"], cwd=root)
+            if proc.returncode != 0 or git._rev_parse(root, "MERGE_HEAD") is not None:
+                return FAILED, "merge_abort_failed"          # the merge state stays: a person must clear it
+            return DEFERRED, sorted(files)
         doc = documents.get_by_id((_node(row) or {}).get("result_doc_id")) or {}
         ledger = tr_commit_ledger.by_attempt(row["attempt_id"]) or {}
         session = conflict.open_tr_conflict_session(
@@ -616,11 +658,12 @@ def integrate(attempt_id: str) -> str:
         elif not _begin(attempt_id, row["group_id"]):
             return SKIPPED
         else:
+            keep_session = row.get("integration_reason") == RESOLVE_REQUESTED   # read before ``_begin`` cleared it
             with _opened_lock:
                 _left_open.pop(attempt_id, None)                # a new integration: no earlier session is its
             recorded = False
             try:
-                status, value = _merge(workspace.attempt(attempt_id))                       # (d)
+                status, value = _merge(workspace.attempt(attempt_id), keep_session)         # (d)
             except Exception as exc:  # noqa: BLE001 — the merge ends as failed, never stays integrating
                 log.exception("Graph attempt merge failed attempt=%s", attempt_id)
                 status, value = FAILED, type(exc).__name__
@@ -636,6 +679,9 @@ def integrate(attempt_id: str) -> str:
                     if _status(current) == CONFLICT and _merge_id(current) == int(value) and \
                             not _session_open(int(value)):
                         _settle_closed(current, (CONFLICT,))
+                elif status == DEFERRED:
+                    status = CONFLICT if _set(attempt_id, CONFLICT, CONFLICT_DEFERRED, (INTEGRATING,),
+                                              {"files": list(value)}) else SKIPPED
                 else:
                     _set(attempt_id, status, str(value), (INTEGRATING,))
             finally:
@@ -669,6 +715,38 @@ def _verification_refused(row: dict) -> Optional[str]:
                 [f["path"] for f in verdict["failures"]])
     recorded = _set(row["attempt_id"], FAILED, result_verify.REASON, (PENDING,), {"verification": verdict})
     return FAILED if recorded else SKIPPED
+
+
+def deferred_files(attempt_id: str) -> list[str]:
+    """flowgate.v02test.0042: the overlapping files of the attempt's latest deferred conflict (its run event), or []."""
+    row = workspace.attempt(attempt_id) if attempt_id else None
+    if not row:
+        return []
+    import json
+    for event in run_store._all(
+            "SELECT payload_json FROM graph_run_events WHERE run_id = ? AND cause = ? AND reason = ? "
+            "ORDER BY event_seq DESC LIMIT 50", [row["run_id"], CAUSE, CONFLICT]):
+        try:
+            payload = json.loads(event.get("payload_json") or "{}")
+        except (TypeError, ValueError):
+            continue
+        if payload.get("attempt_id") == attempt_id and payload.get("integration_reason") == CONFLICT_DEFERRED:
+            return [str(p) for p in payload.get("files") or []]
+    return []
+
+
+def request_resolution(attempt_id: str) -> str:
+    """flowgate.v02test.0042: a person's choice on a card whose conflict waits with no session (``conflict_deferred``):
+    the attempt goes ``pending`` (``RESOLVE_REQUESTED``) and the Flow's drain merges it again, now keeping a conflict
+    as the group's session (the resolution then goes as before). Returns the attempt's integration status after the
+    drain: ``conflict`` (its session open), ``integrated`` (it merged cleanly meanwhile), ``pending`` (the group busy,
+    or a drain of another thread takes it), anything else as it is."""
+    row = workspace.attempt(attempt_id)
+    if not row or row.get("integration_reason") != CONFLICT_DEFERRED:
+        return _status(row)
+    if _set(attempt_id, PENDING, RESOLVE_REQUESTED, (CONFLICT,)):
+        request(row["group_id"])
+    return _status(workspace.attempt(attempt_id))
 
 
 def request(flow_id: str, failed: bool = False) -> None:
@@ -708,7 +786,7 @@ def _closed_conflicts(flow_id: str) -> set[str]:
     for r in run_store._all("SELECT attempt_id FROM graph_node_attempts WHERE run_id = ? AND status = 'active' "
                             "AND integration_status = 'conflict' ORDER BY created_at, attempt_id", [run["run_id"]]):
         row = workspace.attempt(r["attempt_id"])
-        if row and not _session_open(_merge_id(row)):
+        if row and row.get("integration_reason") != CONFLICT_DEFERRED and not _session_open(_merge_id(row)):
             outcome = _settle_closed(row, (CONFLICT,))
             if outcome == FAILED:
                 aborted.add(row["attempt_id"])
@@ -902,7 +980,7 @@ def _retry_released(project_id: str, group_id: Optional[str], seen: set[str]) ->
                     "WHERE r.status IN ('running', 'paused', 'idle') AND a.status = 'active' "
                     "AND a.integration_status = 'conflict'")
     for run in run_store._all(conflict_sql + (" AND r.group_id = ?" if group_id else ""), args):
-        if not _session_open(_merge_id(run)):
+        if run.get("integration_reason") != CONFLICT_DEFERRED and not _session_open(_merge_id(run)):
             runs.append(run)
     # 0156 T#2 (D3 ⓓ): a running run left holding (its hold's end and release both failed) with no pending /
     # integrating attempt — the server start's choice (``recover``): its drain ends the hold (a command's hold asks the

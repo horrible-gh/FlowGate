@@ -178,6 +178,8 @@ export interface FlowGraphNodeRun extends RoleRunFields {
    */
   readonly integrationStatus?: string | null
   readonly integrationReason?: string | null
+  /** flowgate.v02test.0042: the card (node key) whose merge this card's merge waits for, or null. Absent = not sent. */
+  readonly integrationBlockedBy?: string | null
   /** flowgate.v02.0061 T#14: the card is held (T#11 Hold). Absent = false. */
   readonly hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered. Absent = false. */

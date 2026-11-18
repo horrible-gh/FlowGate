@@ -3,7 +3,15 @@
     <div class="gx-title">
       {{ t('gui.git.conflict.title_target', { target }) }}
     </div>
-    <p v-if="unsupported" class="gx-desc" data-test="git-conflict-unsupported">{{ t('gui.git.conflict.unsupported') }}</p>
+    <!-- flowgate.v02test.0042 (시안 v7 item 3): a card result's merge conflict is no dead end here — it is handled in the
+         card; [카드로 이동] opens that card's '병합 · 충돌' tab. No resolve action is offered in this panel. -->
+    <template v-if="unsupported && graphMerge">
+      <p class="gx-desc" data-test="git-conflict-card-handled">{{ t('gui.git.conflict.card_handled') }}</p>
+      <div class="gx-actions">
+        <button type="button" class="gx-btn primary" data-test="git-conflict-open-card" @click="openCard">{{ t('gui.git.conflict.open_card') }}</button>
+      </div>
+    </template>
+    <p v-else-if="unsupported" class="gx-desc" data-test="git-conflict-unsupported">{{ t('gui.git.conflict.unsupported') }}</p>
     <template v-else>
       <p v-if="files && files.length" class="gx-desc" data-test="git-conflict-count">
         {{ t('gui.git.conflict.count', { open: openCount, done: files.length - openCount }) }}
@@ -103,6 +111,18 @@ const ctx = useGitPanel()
 const session = ctx.session
 
 const files = computed(() => session.state.conflict?.files ?? null)
+// flowgate.v02test.0042: the conflicts answer of this row's merge says it is a Graph card result's merge.
+const graphMerge = computed(() => {
+  const conflict = session.state.conflict
+  return !!conflict?.graphMerge && conflict.mergeId === session.pendingRow.value?.mergeId
+})
+/** Opens the card whose result this merge carries (the Designer finds it by the merge session id). */
+function openCard(): void {
+  const flowId = session.state.flow?.groupId
+  const mergeId = session.state.conflict?.mergeId
+  if (!flowId || typeof mergeId !== 'number') return
+  window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId, mergeId } }))
+}
 // Open files first, so the ones left are the ones shown.
 const preview = computed(() => [...(files.value ?? [])].sort((a, b) => Number(b.conflictCount > 0) - Number(a.conflictCount > 0)).slice(0, FILE_PREVIEW))
 const openCount = computed(() => (files.value ?? []).filter((f) => f.conflictCount > 0).length)

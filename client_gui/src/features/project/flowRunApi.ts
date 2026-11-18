@@ -45,6 +45,8 @@ function toRunNode(raw: Raw): FlowRunNode {
     ...('integration_status' in raw ? { integrationStatus: str(raw.integration_status) } : {}),
     // v02gui.0015 T4: why a failed integration failed (`verification_failed`: the result's syntax check).
     ...('integration_reason' in raw ? { integrationReason: str(raw.integration_reason) } : {}),
+    // flowgate.v02test.0042: the card whose merge this one waits for (its node key), kept only when sent.
+    ...('integration_blocked_by' in raw ? { integrationBlockedBy: str(raw.integration_blocked_by) } : {}),
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
     ...('question_wait' in raw ? { questionWait: toQuestionWait(raw.question_wait) } : {}),

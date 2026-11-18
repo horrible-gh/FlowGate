@@ -33,11 +33,25 @@ export type InspectorMessages = Readonly<Record<(typeof INSPECTOR_LOCALES)[numbe
 /** The tab number (or, flowgate.chat.0017 CH0002, a short text such as `3 · 대기 2`); null: none. */
 export type InspectorTabCount = (target: Readonly<Ref<InspectorTarget | null>>) => Readonly<Ref<number | string | null>>
 
+/**
+ * flowgate.v02test.0042 — whether a conditional tab (inspectorTabs INSPECTOR_CONDITIONAL_TABS) is shown: given the target
+ * (null whenever the registration does not apply to the selected Node), it answers true while the tab has something to
+ * show. Absent = shown whenever the registration applies.
+ */
+export type InspectorTabVisible = (target: Readonly<Ref<InspectorTarget | null>>) => Readonly<Ref<boolean>>
+
+/** flowgate.v02test.0042 — the tab label's colour: `info` (blue, progress only) or `danger` (red, a person must choose). */
+export type InspectorTabTone = (target: Readonly<Ref<InspectorTarget | null>>) => Readonly<Ref<'info' | 'danger' | null>>
+
 export interface InspectorTabContribution {
   readonly key: InspectorTabKey
   /** Tab Content part; its one input is `target`. */
   readonly component: Component
   readonly count?: InspectorTabCount
+  /** flowgate.v02test.0042: a conditional tab's visibility supplier. */
+  readonly visible?: InspectorTabVisible
+  /** flowgate.v02test.0042: the tab label's colour supplier. */
+  readonly tone?: InspectorTabTone
   /**
    * flowgate.v02.0053 T#6 — the Content part takes the tab body's free height (its box reaches the bottom
    * of the tab even with little content), e.g. the attachments drop area highlighted as a whole.
@@ -170,6 +184,8 @@ export function registrationViolations(modules: Readonly<Record<string, unknown>
         if (!tab.component) out.push(`${label}: tab has no component`)
         if (tab.count !== undefined && typeof tab.count !== 'function') out.push(`${label}: tab count is not a function`)
         if (tab.fill !== undefined && typeof tab.fill !== 'boolean') out.push(`${label}: tab fill is not a boolean`)
+        if (tab.visible !== undefined && typeof tab.visible !== 'function') out.push(`${label}: tab visible is not a function`)
+        if (tab.tone !== undefined && typeof tab.tone !== 'function') out.push(`${label}: tab tone is not a function`)
       }
     }
     if (!tab && !entry.headerAction && !entry.headerMeta && !entry.headerKind && !entry.headerState && !entry.headerMenu && !entry.headerMemo) {

@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { openDocument } from '../inspector/openDocument'
 import { cardDocumentButtons, type CardDocumentOpen } from '../center/canvas/cardDocumentButtons'
 import type { CanvasViewport } from '../center/canvasView'
@@ -68,8 +68,47 @@ const emit = defineEmits<{
 // intents (inspector/inspectorHost.ts) are carried out here, about the active Flow — or, for a
 // refresh-flow naming its Flow (T#10), that open Flow even when another tab is active. Provided
 // (the Dock injects the same key) so the Dock's props and events stay as they are.
+// flowgate.v02test.0042 (시안 v7): "open this card's '병합 · 충돌' tab" — the Canvas card's 병합 충돌, a notification's [열기],
+// the Git panel's [카드로 이동] and the tab's own [‘…’ 카드로 이동] send one window event; here the card's Flow is shown
+// (opened when it is not), the card selected and the Inspector asked for the tab. A Git session names its merge id
+// instead of a card: the card is the one whose node run's integration reason is that session (`merge_session:<id>`).
+const tabRequest = ref<{ readonly flowId: string; readonly nodeId: string; readonly tab: string; readonly seq: number } | null>(null)
+let tabRequestSeq = 0
+
+function cardOfMergeSession(flowId: string, mergeId: number): string | null {
+  const load = props.center.state.graphs?.[flowId]
+  if (load?.status !== 'ready') return null
+  const reason = `merge_session:${mergeId}`
+  const nodes = (load.graph as FlowGraph).nodes
+  const marks = props.center.runMarks(flowId).nodeRuns
+  const node = nodes.find((item) => {
+    const run = marks.get(item.id) as { integrationReason?: string | null } | undefined
+    return (run && 'integrationReason' in run ? run.integrationReason : item.nodeRun?.integrationReason) === reason
+  })
+  return node?.id ?? null
+}
+
+function onOpenCardMerge(event: Event): void {
+  const detail = (event as CustomEvent<{ flowId?: unknown; nodeKey?: unknown; mergeId?: unknown; flowName?: unknown }>).detail ?? {}
+  const flowId = typeof detail.flowId === 'string' && detail.flowId ? detail.flowId : null
+  const projectId = props.center.state.projectId
+  if (!flowId || projectId === null) return
+  if (props.center.state.tabs.some((tab) => tab.flowId === flowId)) props.center.activateFlow(flowId)
+  else props.center.openFlow({ projectId, flowId, flowName: typeof detail.flowName === 'string' ? detail.flowName : flowId })
+  const nodeId = typeof detail.nodeKey === 'string' && detail.nodeKey ? detail.nodeKey
+    : typeof detail.mergeId === 'number' ? cardOfMergeSession(flowId, detail.mergeId) : null
+  if (!nodeId) return
+  props.center.selectNode(flowId, nodeId)
+  tabRequest.value = { flowId, nodeId, tab: 'merge', seq: ++tabRequestSeq }
+}
+
+onMounted(() => window.addEventListener('fg:open_card_merge', onOpenCardMerge))
+onBeforeUnmount(() => window.removeEventListener('fg:open_card_merge', onOpenCardMerge))
+
 provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
   selection: () => props.center.activeSelection.value,
+  // flowgate.v02test.0042: the last "open this card's tab" request (see onOpenCardMerge).
+  tabRequest: () => tabRequest.value,
   saveTitle: props.center.canEditNodeTitles
     ? (flowId: string, nodeId: string, title: string) => props.center.saveNodeTitle(flowId, nodeId, title)
     : null,

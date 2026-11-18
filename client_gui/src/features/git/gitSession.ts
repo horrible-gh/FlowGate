@@ -288,6 +288,8 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     if (!row || state.statusLoad === 'error') return null
     if (row.status === 'waiting') return 'hold'
     if (row.status !== 'conflict' || row.mergeId === null) return null
+    // flowgate.v02test.0042: a Graph card result's merge is handled in its card — the conflict card only points there.
+    if (state.conflict?.mergeId === row.mergeId && state.conflict.graphMerge) return 'unsupported'
     // A running resolver wins over any review state (§3.3).
     if (isResolving(state.ai)) return 'ai'
     if (row.reviewState && REVIEW_STATES.includes(row.reviewState)) return 'review'

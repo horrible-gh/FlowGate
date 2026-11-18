@@ -1,7 +1,23 @@
 <template>
   <p class="notification-context">{{ t('gui.designer.top.notifications.project_only', { name: projectName }) }}</p>
-  <p v-if="!rows.length" class="notification-note">{{ t('gui.designer.top.notifications.empty_runs') }}</p>
-  <ul v-else class="notification-list">
+  <p v-if="!rows.length && !mergeItems.length" class="notification-note">{{ t('gui.designer.top.notifications.empty_runs') }}</p>
+  <!-- flowgate.v02test.0042 (시안 v7 item 3): card result merges — red when a person must choose, blue while it only waits;
+       [열기] opens the card's '병합 · 충돌' tab. -->
+  <ul v-if="mergeItems.length" class="notification-list" data-test="notification-merges">
+    <li v-for="item in mergeItems" :key="`${item.flowId}:${item.nodeKey}`" class="notification-card" data-test="notification-merge" :data-state="item.state">
+      <span class="notification-status" :class="item.state === 'needs_choice' || item.state === 'failed' ? 'is-fail' : 'is-run'" aria-hidden="true"><LineIcon :name="item.state === 'needs_choice' || item.state === 'failed' ? 'stop-circle' : 'loader'" /></span>
+      <div class="notification-main">
+        <strong class="notification-title" :title="item.flowName">{{ item.flowName }}</strong>
+        <span class="notification-meta" data-test="notification-merge-text">{{ mergeText(item) }}</span>
+      </div>
+      <div class="notification-side">
+        <div class="notification-row-actions">
+          <button type="button" class="notification-icon-btn" data-test="notification-merge-open" :aria-label="t('gui.designer.top.notifications.merge.open')" :title="t('gui.designer.top.notifications.merge.open')" @click="emit('open-merge', item)"><LineIcon name="external" /></button>
+        </div>
+      </div>
+    </li>
+  </ul>
+  <ul v-if="rows.length" class="notification-list">
     <!-- 0016-CH B안 card row: [phase icon] [Flow / phase · progress · mode · AI (reason)] [open · stop]. -->
     <li v-for="run in rows" :key="run.key" class="notification-card" data-test="notification-run" :data-phase="run.phase">
       <span class="notification-status" :class="phaseTone(run.phase)" :title="label('phases', run.phase)" aria-hidden="true"><LineIcon :name="phaseIcon(run.phase)" /></span>
@@ -22,10 +38,18 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import LineIcon, { type LineIconName } from '@/components/ui/LineIcon.vue'
+import type { CardMergeItem } from '@/features/document'
 import type { InvokeRun } from './notificationApi'
-defineProps<{ rows: (InvokeRun & { flowName: string })[]; projectName: string; busy: string[] }>()
-const emit = defineEmits<{ 'open-document': [id: string]; stop: [run: InvokeRun] }>()
+type MergeRow = CardMergeItem & { flowName: string }
+withDefaults(defineProps<{ rows: (InvokeRun & { flowName: string })[]; projectName: string; busy: string[]; mergeItems?: MergeRow[] }>(), { mergeItems: () => [] })
+const emit = defineEmits<{ 'open-document': [id: string]; stop: [run: InvokeRun]; 'open-merge': [item: MergeRow] }>()
 const { t, te } = useI18n()
+/** A merge row's sentence: the card (its title) and what it needs. */
+function mergeText(item: MergeRow): string {
+  const base = 'gui.designer.top.notifications.merge'
+  if (item.state === 'waiting' && item.blockedBy) return t(`${base}.waiting_for`, { title: item.title, blocked: item.blockedBy.title })
+  return t(`${base}.${item.state}`, { title: item.title })
+}
 function label(group: string, value: string) {
   const key = `gui.designer.top.notifications.${group}.${value}`
   return te(key) ? t(key) : t(`gui.designer.top.notifications.${group}.unknown`)

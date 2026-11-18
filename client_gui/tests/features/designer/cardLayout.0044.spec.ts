@@ -35,7 +35,8 @@ describe('0044 card layout: head-row integration and 미인계 icons', () => {
   it.each(['pending', 'integrating', 'failed'])('%s is a named head-row icon, not a text chip', integration => {
     const w = render({ integration })
     const mark = w.get('.flow-node-head [data-test="designer-canvas-node-integration"]')
-    const label = t(`gui.designer.center.integration.${integration}`)
+    // flowgate.v02test.0042: a waiting merge (hourglass) names what it waits for — its turn when no card is named.
+    const label = integration === 'pending' ? t('gui.designer.center.integration.waiting_turn') : t(`gui.designer.center.integration.${integration}`)
     expect(mark.attributes('role')).toBe('img')
     expect(mark.attributes('aria-label')).toBe(label)
     expect(mark.attributes('title')).toBe(label)

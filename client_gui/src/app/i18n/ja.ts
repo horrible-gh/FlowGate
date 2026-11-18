@@ -379,7 +379,10 @@ export default {
         integrating: 'マージ中',
         conflict: 'マージ競合',
         failed: 'マージ失敗',
-        open_conflict: 'Git パネルで競合を解決します',
+        open_conflict: 'カードの「マージ · 競合」タブで処理します',
+        // flowgate.v02test.0042 — a waiting merge's hourglass tooltip.
+        waiting_for: '「{title}」カードの競合解決を待っています',
+        waiting_turn: 'マージの順番を待っています',
         // v02gui.0015 T4 — the result failed the integration's syntax check.
         verification_failed: '結果に構文エラーのあるファイルがあるため、マージしませんでした。やり直すには停止してから実行してください（新しい試行で開きます）。',
       },
@@ -706,6 +709,7 @@ export default {
         ai: 'AI',
         qna: 'Q&A',
         attachments: '添付',
+        merge: 'マージ · 競合',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: 'ドキュメント状態',
@@ -839,6 +843,15 @@ export default {
         },
         project_only: '現在のプロジェクト {name} の実行のみ表示します。',
         empty_runs: '実行中・待機中の実行はありません。',
+        // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
+        merge: {
+          needs_choice: '「{title}」マージ競合、選択が必要',
+          failed: '「{title}」マージ失敗',
+          waiting: '「{title}」マージ待ち',
+          waiting_for: '「{title}」マージ待ち · 「{blocked}」の競合解決待ち',
+          catching_up: '「{title}」最新コードに合わせています',
+          open: 'カードで開く',
+        },
         empty_ai: 'AI通知はありません。',
           question_all: "全体表示",
           question_reply: "すぐに回答",
@@ -1467,6 +1480,9 @@ export default {
       abort_message: 'マージを中止します。作業ブランチはそのまま残ります。',
       abort_bound: '進行中の最終承認の試行も終了します。',
       unsupported: 'この画面では扱わない種類の競合です。',
+      // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
+      card_handled: 'カード結果のマージ競合です。カードで処理します。',
+      open_card: 'カードへ移動',
       loading: '競合ファイルを読み込み中…',
     },
     resolver: {
