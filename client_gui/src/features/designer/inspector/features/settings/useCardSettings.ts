@@ -28,6 +28,9 @@ export const cardSettingsEventMatches: InspectorEventMatch = (frame, scope) => f
 /** The resource key of a card: Flow and node_key. */
 const cardKeyOf = (flowId: string, nodeKey: string) => `${flowId}\n${nodeKey}`
 
+/** The card of a settings key (Flow, node_key and the settings context): the key without its context. */
+const cardOfSettingsKey = (key: string) => key.slice(0, key.lastIndexOf('\n'))
+
 function splitKey(key: string): [string, string] {
   const at = key.indexOf('\n')
   return [key.slice(0, at), key.slice(at + 1)]
@@ -65,15 +68,28 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
     const nodeKey = inspectorCardNodeKey(current)
     return current && nodeKey ? { projectId: current.projectId, flowId: current.flowId, docId: cardKeyOf(current.flowId, nodeKey) + '\n' + JSON.stringify(current.settingsContext ?? null) } : null
   }
+  // flowgate.v02test.0048: the card alone, without its context — writes belong to the card, so a context moved by
+  // another tab (a card placed, the draft version up) neither drops a value sent nor refuses the next one.
+  const cardScope = (): InspectorEventScope | null => {
+    const current = scope()
+    return current ? { ...current, docId: cardOfSettingsKey(current.docId!) } : null
+  }
+  // The latest read; a write waits for it so it sends the context and version that read answers.
+  let reading: Promise<unknown> = Promise.resolve()
   const resource = useInspectorResource<SettingsNode>({
     target: scope,
     read: (key) => {
       const [flowId, tail] = splitKey(key)
       const [nodeKey, context] = tail.split('\n')
-      return settingsNodeRead(flowId, nodeKey, false, JSON.parse(context) ?? undefined)
+      const answer = settingsNodeRead(flowId, nodeKey, false, JSON.parse(context) ?? undefined)
+      reading = answer.catch(() => undefined)
+      return answer
     },
     events: CARD_SETTINGS_EVENTS,
     matches: cardSettingsEventMatches,
+    // flowgate.v02test.0048: the same card under a moved context is read again with its AI rows kept (a card placed
+    // in another tab moved the draft version; dropping the answer emptied the AI tab until the read came back).
+    identity: cardOfSettingsKey,
   })
   const choices = useInspectorResource<SettingsChoices>({
     target: () => {
@@ -84,10 +100,16 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
     events: [],
   })
   const writes = useInspectorFieldWrite<SettingsNode>({
-    target: scope,
+    target: cardScope,
     resource,
-    write: (key, field, value) => {
-      if (scope()?.docId !== key) return Promise.reject(new Error('gate_context_changed'))
+    write: async (card, field, value) => {
+      // A read running now (the context moved, or an event) answers the context and version to send back.
+      for (let last = reading; ; last = reading) {
+        await last
+        if (last === reading) break
+      }
+      const key = scope()?.docId ?? null
+      if (key === null || cardOfSettingsKey(key) !== card) throw new Error('gate_context_changed')
       const [flowId, tail] = splitKey(key)
       const [nodeKey, context] = tail.split('\n')
       // flowgate.v02.0130: the context sent back is the one the server answered for this card (its own run / revision /

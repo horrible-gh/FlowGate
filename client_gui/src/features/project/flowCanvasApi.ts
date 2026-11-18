@@ -11,6 +11,7 @@ import { toRunGateState } from '@/features/document/api/run'
 // flowgate.v02.0064 T#4 (0064 P0006 §4.2 / §6.5): a node's card title state (`title_state`) and its title save.
 
 import { extractApiErrorMessage, getRequest, putRequest } from '@shared/api'
+import { canvasHeaders } from '@shared/canvasClient'
 import { toAiRoleValue } from '@/features/ai/roles/roleValues'
 import type { RoleRunFields, RoleSubmission, UncarriedChanges } from './types'
 import { normalizeApiError } from '@shared/apiErrors'
@@ -340,16 +341,7 @@ export function wrapError(error: unknown, fallback: string): Error {
 
 const canvasPath = (flowId: string) => `/api/v1/flows/${encodeURIComponent(flowId)}/canvas`
 
-function newCanvasClientId(): string {
-  const bytes = new Uint8Array(9)
-  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes)
-  else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256)
-  return `tab_${[...bytes].map((b) => b.toString(36).padStart(2, '0')).join('')}`
-}
-
-/** This tab's `x-canvas-client-id` (P0008 §1.1: 1~64 of [A-Za-z0-9_-], kept while the tab lives). */
-export const CANVAS_CLIENT_ID = newCanvasClientId()
-export const canvasHeaders = () => ({ headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
+export { CANVAS_CLIENT_ID, canvasHeaders } from '@shared/canvasClient'
 
 // flowgate.v02.0135 T#4: a Canvas write of this tab that got no answer (timeout, dropped connection) may still be
 // stored by the server later. Its change event then carries this tab's id and would be dropped as already applied

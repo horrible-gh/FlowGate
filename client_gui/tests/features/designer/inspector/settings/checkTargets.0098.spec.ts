@@ -1,6 +1,7 @@
 import { defineComponent, h, shallowRef } from 'vue'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CANVAS_CLIENT_ID } from '@shared/canvasClient'
 const http = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn(), post: vi.fn() }))
 vi.mock('@shared/api', async original => ({ ...await original<typeof import('@shared/api')>(),
   getRequest: (...a: unknown[]) => http.get(...a), patchRequest: (...a: unknown[]) => http.patch(...a), postRequest: (...a: unknown[]) => http.post(...a) }))
@@ -80,18 +81,18 @@ describe('check card target and push controls — 0098', () => {
     expect(w.find('[data-test="check-settings-default"]').exists()).toBe(false)
     expect(w.text()).not.toContain('기본값 사용')
     await w.get('[data-test="check-settings-target"]').setValue('release/local'); await flushPromises()
-    expect(http.patch).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { field: 'merge_target_branch', value: 'release/local', expected_settings_version: 6 })
+    expect(http.patch).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { field: 'merge_target_branch', value: 'release/local', expected_settings_version: 6 }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     raw.default_target_branch = 'main'; targets('release/local'); await context.value!.reload(); await flushPromises()
     expect(selected(w)).toBe('release/local')
     await w.get('[data-test="check-settings-target"]').setValue('main'); await flushPromises()
-    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'merge_target_branch', value: 'main', expected_settings_version: 7 })
+    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'merge_target_branch', value: 'main', expected_settings_version: 7 }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     expect(selected(w)).toBe('main')
     expect(http.patch).toHaveBeenCalledTimes(2)
   })
   it('choosing the work base explicitly stores its name and keeps it after the default changes', async () => {
     const w = await show()
     await w.get('[data-test="check-settings-target"]').setValue('feature/v0.2.0'); await flushPromises()
-    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'merge_target_branch', value: 'feature/v0.2.0', expected_settings_version: 6 })
+    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'merge_target_branch', value: 'feature/v0.2.0', expected_settings_version: 6 }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     raw.default_target_branch = 'main'; targets('feature/v0.2.0'); await context.value!.reload(); await flushPromises()
     expect(selected(w)).toBe('feature/v0.2.0')
   })
@@ -200,7 +201,7 @@ describe('check card target and push controls — 0098', () => {
     let resolve!: (v: any) => void
     http.patch.mockImplementationOnce(() => new Promise(r => { resolve = r }))
     await w.get('[data-test="check-settings-push-recheck"]').trigger('click')
-    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'push', value: true, expected_settings_version: 6 })
+    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'push', value: true, expected_settings_version: 6 }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     expect(w.find('[data-test="check-settings-push-check"]').exists()).toBe(true)
     raw.fields.merge_target = field('origin', true); raw.fields.keep_branch = field(true, true); raw.push_remote_check_required = false; raw.settings_version = 7
     resolve({ data: structuredClone(raw) }); await flushPromises()
@@ -236,7 +237,7 @@ describe('check card target and push controls — 0098', () => {
     expect(await context.value!.decide('confirm')).toBe(false); await flushPromises()
     expect(w.get('[data-test="check-settings-push-check"]').text()).toBe('원격 반영 설정 확인 필요')
     await w.get('[data-test="check-settings-push-recheck"]').trigger('click'); await flushPromises()
-    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'push', value: true, expected_settings_version: 6 })
+    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'push', value: true, expected_settings_version: 6 }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     expect(http.post).toHaveBeenCalledTimes(1)
     expect(w.find('[data-test="check-settings-push-check"]').exists()).toBe(false)
   })
@@ -390,7 +391,7 @@ describe('0119 refresh icon and field help', () => {
     expect(toggles.map(t => t.attributes('aria-checked'))).toEqual(['true', 'false'])
     // Saving is unchanged: one PATCH per switch with the current version.
     await toggles[1].trigger('click'); await flushPromises()
-    expect(http.patch).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { field: 'keep_branch', value: true, expected_settings_version: 6 })
+    expect(http.patch).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { field: 'keep_branch', value: true, expected_settings_version: 6 }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     expect(w.get('[data-test="check-settings-keep-branch"]').attributes('aria-checked')).toBe('true')
   })
 })
@@ -435,7 +436,7 @@ describe('0006-T T-b: kept confirmed merge targets before the confirmation', () 
     expect(refresh(w).attributes('disabled')).toBeUndefined()
     await control(w).setValue('release/local'); await flushPromises()
     expect(http.patch).toHaveBeenCalledTimes(1)
-    expect(http.patch).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { field: 'merge_target_branch', value: 'release/local', expected_settings_version: 6 })
+    expect(http.patch).toHaveBeenLastCalledWith(expect.stringContaining('/settings'), { field: 'merge_target_branch', value: 'release/local', expected_settings_version: 6 }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     expect(raw.settings_version).toBe(7)
     expect(context.value!.settings.value?.settingsVersion).toBe(7)
     expect(selected(w)).toBe('release/local')
@@ -772,7 +773,7 @@ describe('0006-T T-b: kept confirmed merge targets before the confirmation', () 
     current.status = s.run; current.idle_reason = s.idleReason; current.node_runs[0].status = s.node
     const w = await show()
     await control(w).setValue('main'); await flushPromises()
-    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'merge_target_branch', value: 'main', expected_settings_version: 6 })
+    expect(http.patch).toHaveBeenLastCalledWith(expect.any(String), { field: 'merge_target_branch', value: 'main', expected_settings_version: 6 }, { headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
     expect(raw.settings_version).toBe(7)
     await reread()
     expect(selected(w)).toBe('main')

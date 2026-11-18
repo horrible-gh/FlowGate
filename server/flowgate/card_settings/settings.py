@@ -182,7 +182,7 @@ def read(group: dict, node_key: str, refresh_merge_targets: bool = False, *, vie
 
 def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[str],
           locale: Optional[str] = None, expected_version: Optional[int] = None, expected_context=None, *,
-          keep_merge_targets: bool = False) -> dict:
+          keep_merge_targets: bool = False, origin_client_id: Optional[str] = None) -> dict:
     """``PATCH /flows/{flow_id}/nodes/{node_key}/settings`` — one field, saved at once. ``locale`` (the request's)
     titles an AI delegation line document the change makes (flowgate.v02.0088). ``expected_version`` is the
     settings version the screen was drawn from (None: not checked). ``keep_merge_targets`` opts in to omitting
@@ -251,7 +251,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             from modules.flow_gate.graph_workflow.services import canvas_events
             canvas_events.publish_canvas_changed(project_id=group.get("project_id"), flow_id=flow_id,
                                                  reason="settings", actor_user_id=user_id,
-                                                 origin_client_id=None, node_keys=[node_key])
+                                                 origin_client_id=origin_client_id, node_keys=[node_key])
         stored = repository.values(flow_id, node_key)
         if changed and name == fields.MERGE_TARGET_BRANCH.name:
             legacy.invalidate_merge_targets(group)

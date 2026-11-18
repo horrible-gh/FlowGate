@@ -81,7 +81,7 @@ from modules.flow_gate.settings import ai_execution_policy_service
 
 __all__ = ["GraphApiError", "GitServiceError", "judge_merge_target", "merge_target_view", "invalidate_merge_targets",
            "MERGE_TARGET_UNFIT", "MERGE_TARGET_GIT_UNAVAILABLE", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid",
-           "locale_of", "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
+           "locale_of", "client_id_of", "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
            "node_running", "node_running_cause", "running_review_loop", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
            "run_doc_type",
            "node_ai_run_active", "instruction_node_of_ai_run", "registered_instructions", "start_result_stage",
@@ -134,6 +134,11 @@ def authorize(user_id: str, group: dict, required: str) -> None:
 
 def invalid(request, errors: list[dict]) -> GraphApiError:
     return envelope.invalid(request, errors)
+
+
+def client_id_of(request) -> Optional[str]:
+    """Use the Graph header contract, including validation before a write."""
+    return envelope.client_id_of(request)
 
 
 def locale_of(request) -> str:
