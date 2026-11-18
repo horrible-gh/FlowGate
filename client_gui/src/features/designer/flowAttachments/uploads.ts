@@ -19,12 +19,19 @@ interface UploadContext {
   hasView(): boolean
   ready(): Promise<void>
   changed(): void
-  completed(): void
-  failed(error: unknown): void
+  /** A drop / pick of `count` files starts: the batch id its files report under (the manager keeps the batch's result). */
+  begin(count: number): number
+  /** A file of the batch was uploaded. */
+  completed(batch: number): void
+  /** A file of the batch ended without an upload and without a failure (name conflict cancelled). */
+  skipped(batch: number): void
+  /** A file was cancelled because no window could answer the name conflict question, or the user closed it. */
+  cancelledNote(name: string): void
+  failed(error: unknown, file: File, batch: number): void
 }
 let requestSequence = 0
 export function createUploadWorker(ctx: UploadContext) {
-  const queue: { file: File; epoch: number }[] = []
+  const queue: { file: File; epoch: number; batch: number }[] = []
   let running = false, epoch = 0
   let answer: ((choice: CollisionChoice) => void) | null = null
   const state = ctx.state
@@ -32,7 +39,7 @@ export function createUploadWorker(ctx: UploadContext) {
   function respond(id: string, choice: CollisionChoice) {
     if (state.collision?.id !== id || !answer) return
     const resolve = answer
-    if (choice === 'cancel' && !blocked(epoch)) state.cancelledUploads.push(state.collision.file.name)
+    if (choice === 'cancel' && !blocked(epoch)) ctx.cancelledNote(state.collision.file.name)
     answer = null
     state.collision = null
     resolve(choice)
@@ -52,29 +59,30 @@ export function createUploadWorker(ctx: UploadContext) {
     }
     ctx.changed()
   }
-  async function send(file: File, at: number) {
+  async function send(file: File, at: number, batch: number) {
     try {
       await uploadFile(ctx.flowId, file)
     } catch (error) {
       if (ctx.stale()) return
       const conflict = (error as { response?: { data?: { error?: { code?: string; details?: { key: string; content_sha256: string } } } } }).response?.data?.error
-      if (conflict?.code !== 'ATTACHMENT_NAME_CONFLICT' || !conflict.details) { ctx.failed(error); return }
+      if (conflict?.code !== 'ATTACHMENT_NAME_CONFLICT' || !conflict.details) { ctx.failed(error, file, batch); return }
       await ctx.ready()
       if (ctx.stale()) return
       if (blocked(at)) return
-      if (!ctx.hasView()) { state.cancelledUploads.push(file.name); return }
+      if (!ctx.hasView()) { ctx.cancelledNote(file.name); ctx.skipped(batch); return }
       const existing = { key: conflict.details.key, content_sha256: conflict.details.content_sha256 }
       const choice = await new Promise<CollisionChoice>(resolve => {
         answer = resolve
         state.collision = { id: `upload-${++requestSequence}`, file, ...existing }
       })
       await ctx.ready()
-      if (blocked(at) || choice === 'cancel') return
+      if (blocked(at)) return
+      if (choice === 'cancel') { ctx.skipped(batch); return }
       try { await uploadFile(ctx.flowId, file, choice, choice === 'overwrite' ? existing : undefined) }
-      catch (failed) { if (!ctx.stale()) ctx.failed(failed); return }
+      catch (failed) { if (!ctx.stale()) ctx.failed(failed, file, batch); return }
     }
     // An accepted request still counts after a read-only transition, but never after session disposal.
-    if (!ctx.stale()) ctx.completed()
+    if (!ctx.stale()) ctx.completed(batch)
   }
   async function run() {
     if (running) return
@@ -86,7 +94,7 @@ export function createUploadWorker(ctx: UploadContext) {
         state.pendingCount = queue.length
         state.currentFile = item.file
         await ctx.ready()
-        if (!blocked(item.epoch)) await send(item.file, item.epoch)
+        if (!blocked(item.epoch)) await send(item.file, item.epoch, item.batch)
         state.currentFile = null
       }
     } finally {
@@ -97,8 +105,9 @@ export function createUploadWorker(ctx: UploadContext) {
   }
   return {
     enqueue(files: readonly File[]) {
-      if (ctx.stale() || ctx.readOnly()) return
-      queue.push(...files.map(file => ({ file, epoch })))
+      if (ctx.stale() || ctx.readOnly() || !files.length) return
+      const batch = ctx.begin(files.length)
+      queue.push(...files.map(file => ({ file, epoch, batch })))
       state.pendingCount = queue.length
       void run()
     },

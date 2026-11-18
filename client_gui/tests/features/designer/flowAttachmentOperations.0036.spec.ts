@@ -103,14 +103,15 @@ describe('flow attachment work manager — timing (R1 완료 기준 1·2)', () =
     expect(api.deleteFile).toHaveBeenCalledWith('A', expect.objectContaining({ key: 'a', content_sha256: 'old-hash' }))
   })
 
-  it('a failed delete keeps the file, records the server reason and reads the list again', async () => {
+  it('a failed delete keeps the file, records the server reason and reads the list again while a window shows it', async () => {
+    ops.attachView(A, 'w')
     await ops.refresh(A)
     api.deleteFile.mockRejectedValueOnce({ response: { data: { error: { message: 'The file changed.' } } } })
     ops.stageDelete(A, [file('a')])
     api.readFiles.mockClear()
     await vi.advanceTimersByTimeAsync(5000); await flushPromises()
     const state = ops.getFlowState(A)
-    expect(state.error).toEqual({ text: 'The file changed.' })
+    expect(state.errors).toMatchObject([{ kind: 'delete', targets: ['a.txt'], text: 'The file changed.' }])
     expect(state.deleting.size).toBe(0)
     expect(state.files.map(f => f.key)).toEqual(['a', 'b'])
     expect(api.readFiles).toHaveBeenCalledTimes(1)
@@ -598,11 +599,16 @@ describe('Flow upload manager (R2)', () => {
     const slowRead = deferred()
     api.readFiles.mockReturnValue(slowRead.promise)
     const state = ops.attachView(A, 'w')
-    state.error = { text: 'previous failure' }
+    ops.actionFailed(A, 'download', new Error('previous'), ['old.txt'])
+    const wait = deferred()
+    api.uploadFile.mockReturnValueOnce(wait.promise)
     ops.enqueueUpload(A, incoming()); await flushPromises()
+    // Starting an upload erases nothing; only a finished, successful one does (R3).
+    expect(state.errors).toHaveLength(1)
+    wait.resolve(); await flushPromises()
     expect(api.uploadFile).toHaveBeenCalledTimes(5)
     expect(api.readFiles).toHaveBeenCalledTimes(5)
-    expect(state.error).toEqual({ text: 'previous failure' })
+    expect(state.errors).toEqual([])
     slowRead.resolve([]); await flushPromises()
   })
 
@@ -610,7 +616,7 @@ describe('Flow upload manager (R2)', () => {
     api.uploadFile.mockRejectedValueOnce({ response: { data: { error: { message: 'upload failed' } } } })
     ops.enqueueUpload(A, incoming()); await flushPromises()
     expect(api.uploadFile).toHaveBeenCalledTimes(5)
-    expect(ops.getFlowState(A).error).toEqual({ text: 'upload failed' })
-    expect(ops.getFlowState(B).error).toBeNull()
+    expect(ops.getFlowState(A).errors).toMatchObject([{ kind: 'upload', targets: ['0.txt'], text: 'upload failed' }])
+    expect(ops.getFlowState(B).errors).toEqual([])
   })
 })

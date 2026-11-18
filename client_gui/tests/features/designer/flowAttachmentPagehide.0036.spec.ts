@@ -155,12 +155,12 @@ describe('pagehide deletes (R1 F5)', () => {
     fetcher.mockResolvedValue({ ok: false, status, json: async () => ({ error: { message: `error-${status}` } }) })
     ops.stageDelete(A, [file('a')]); hide()
     await flushPromises()
-    expect(state.error).toEqual({ text: `error-${status}` })
+    expect(state.errors).toMatchObject([{ kind: 'delete', text: `error-${status}` }])
     expect(state.files).toHaveLength(1)
     expect(state.deleting.size).toBe(0)
     show(); await flushPromises()
     expect(fetcher).toHaveBeenCalledTimes(1)
-    expect(state.error).toEqual({ text: `error-${status}` })
+    expect(state.errors).toMatchObject([{ kind: 'delete', text: `error-${status}` }])
   })
 
   it.each(['reject', 'throw'])('records transport %s without preventing other immediate requests', async mode => {
@@ -169,7 +169,7 @@ describe('pagehide deletes (R1 F5)', () => {
     ops.stageDelete(A, [file('a'), file('b')]); hide()
     expect(fetcher).toHaveBeenCalledTimes(2)
     await flushPromises()
-    expect(ops.getFlowState(A).error).toEqual({ text: null })
+    expect(ops.getFlowState(A).errors).toMatchObject([{ kind: 'delete', text: null, targets: ['a'] }])
     expect(ops.getFlowState(A).deleting.size).toBe(0)
   })
 
