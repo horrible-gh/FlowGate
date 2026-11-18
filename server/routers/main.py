@@ -115,6 +115,7 @@ limiter = Limiter(
 async def lifespan(app: FastAPI):
     """Lifespan handler executed on server startup/shutdown."""
     _bootstrap()          # console encoding + pre-build PercentileTable
+    install_server_logs()  # idempotent; see its definition below
     # Cooperative-shutdown signal for long-lived SSE streams. Without this, an
     # open EventSource keeps its response generator running forever, and uvicorn
     # waits on that in-flight connection — so the server only exits once the
@@ -304,6 +305,25 @@ app.add_middleware(
 app.add_middleware(RequestIdMiddleware)
 # The SSE stream passes the access token as ?token=; keep its value out of the uvicorn access log.
 install_access_log_redaction()
+
+
+def install_server_logs() -> None:
+    """flowgate.v02test.0050 T0005: every WARNING+ record (root logger and uvicorn.error) also goes to the
+    server_logs table. logs/default.log and the console are unchanged. Idempotent. Not under TESTING=1, whose store
+    has no DB: the server_logs tests install it themselves."""
+    import os as _server_logs_os
+    if _server_logs_os.environ.get("TESTING") == "1":
+        return
+    try:
+        from modules.flow_gate.services import server_logs as _server_logs
+        _server_logs.install()
+    except Exception:  # noqa: BLE001 -- recording logs must never stop the server from starting
+        import logging as _server_logs_logging
+        _server_logs_logging.getLogger(__name__).warning("server_logs handler install failed", exc_info=True)
+
+
+# At import (uvicorn has already configured its loggers) and again at startup, in case anything reconfigured them.
+install_server_logs()
 
 # ── Built client (staging/prod) ──────────────────────────────────
 # Serve client_gui/dist when present (produced by client_gui/build.sh). flowgate.v02gui.0024:

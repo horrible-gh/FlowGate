@@ -8,7 +8,8 @@ the SSE stream (``/api/v1/events/stream?token=<access JWT>``) means the access t
   is kept (so a proxy id can be followed end to end), anything else is replaced by a fresh one.
   The id is answered in the ``X-Request-ID`` response header and is readable from application
   code through ``current_request_id()`` (a contextvar; pure ASGI so it stays in the same task,
-  see request_scope_middleware.py for why).
+  see request_scope_middleware.py for why). An exception that escapes the request is tagged with the id
+  (``request_id_of_exception``) so the server's later "Exception in ASGI application" record can be tied to it.
 * ``install_access_log_redaction()`` attaches a filter to the ``uvicorn.access`` logger that
   replaces the VALUE of ``token`` / ``access_token`` / ``refresh_token`` query parameters with
   ``[redacted]`` before the line is formatted. It is installed at app import, after uvicorn has
@@ -29,6 +30,39 @@ _request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("flowga
 def current_request_id() -> str | None:
     """The id of the HTTP request being handled, or None outside a request."""
     return _request_id.get()
+
+
+# The id of the request an exception escaped from. The contextvar is reset when the request ends, but the server
+# (uvicorn's "Exception in ASGI application") logs the escaped exception only after that; the tag lets the
+# server_logs row of that very record point at its request (flowgate.v02test.0050 T0005 criterion (c)).
+_EXC_REQUEST_ID_ATTR = "__flowgate_request_id__"
+
+
+def _tag_exception(exc: BaseException, rid: str) -> None:
+    if getattr(exc, _EXC_REQUEST_ID_ATTR, None):  # the innermost request keeps its id
+        return
+    try:
+        setattr(exc, _EXC_REQUEST_ID_ATTR, rid)
+    except Exception:  # noqa: BLE001 -- an exception type that refuses attributes just stays untagged
+        pass
+
+
+def request_id_of_exception(exc: BaseException | None) -> str | None:
+    """The request id tagged on ``exc`` (or on an exception it wraps, chained or grouped), else None."""
+    pending = [exc]
+    seen: set[int] = set()
+    while pending and len(seen) < 32:
+        current = pending.pop(0)
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        rid = getattr(current, _EXC_REQUEST_ID_ATTR, None)
+        if isinstance(rid, str) and rid:
+            return rid
+        pending.append(current.__cause__)
+        pending.append(current.__context__)
+        pending.extend(getattr(current, "exceptions", None) or ())
+    return None
 
 
 def _pick_request_id(scope) -> str:
@@ -67,6 +101,9 @@ class RequestIdMiddleware:
 
         try:
             await self.app(scope, receive, send_with_id)
+        except BaseException as exc:
+            _tag_exception(exc, rid)
+            raise
         finally:
             _request_id.reset(token)
 
