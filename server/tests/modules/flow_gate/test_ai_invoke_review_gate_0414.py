@@ -2947,6 +2947,19 @@ class TestBaselineLockGoodBadSentinel0501:
       TR for the full forensics.
     """
 
+    @pytest.fixture(autouse=True)
+    def no_merge_claim(self, monkeypatch):
+        # Isolated provider-selection world has no concurrent merge sessions.
+        monkeypatch.setattr(svc.git_service, "get_branch_merge_group_claim", lambda group_id: None)
+        from modules.flow_gate.db import operation_job
+        monkeypatch.setattr(operation_job, "get_group_freeze_claim", lambda group_id: None)
+        from modules.flow_gate.db import ai_run_identity
+        monkeypatch.setattr(svc, "_next_run_id", lambda: "run_0501_provider_selection")
+        monkeypatch.setattr(ai_run_identity, "claim", lambda record: None)
+        from modules.flow_gate.db import ai_providers
+        rows = {row["id"]: row for row in self._providers()}
+        monkeypatch.setattr(ai_providers, "get_runnable_row", lambda pid, user: rows.get(pid))
+
     GOOD, BAD, REVIEWER = "aip_good", "aip_bad", "aip_rev"
 
     def _providers(self):
@@ -2981,7 +2994,7 @@ class TestBaselineLockGoodBadSentinel0501:
         src_root.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(svc.storage_paths, "resolve_project_src_root",
                             lambda pid, branch, *, group_id: src_root)
-        monkeypatch.setattr(svc, "_create_scratch", lambda pid, run_id: src_root)
+        monkeypatch.setattr(svc, "_create_scratch", lambda pid, run_id, execution_nonce: src_root)
         monkeypatch.setattr(svc, "_cleanup_retained_scratches", lambda pid: None)
         from modules.flow_gate.services import invoke_mention_service
         monkeypatch.setattr(invoke_mention_service, "issue_rework_request", lambda **kw: {
@@ -3035,7 +3048,7 @@ class TestBaselineLockGoodBadSentinel0501:
         src_root.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(svc.storage_paths, "resolve_project_src_root",
                             lambda pid, branch, *, group_id: src_root)
-        monkeypatch.setattr(svc, "_create_scratch", lambda pid, run_id: src_root)
+        monkeypatch.setattr(svc, "_create_scratch", lambda pid, run_id, execution_nonce: src_root)
         monkeypatch.setattr(svc, "_cleanup_retained_scratches", lambda pid: None)
         from modules.flow_gate.services import invoke_mention_service
         monkeypatch.setattr(invoke_mention_service, "issue_rework_request", lambda **kw: {
@@ -3757,6 +3770,9 @@ def lifecycle(monkeypatch, world, paused, tmp_path):
     """
     from modules.flow_gate.db import ai_invoke_runs as db_runs
     from modules.flow_gate.workflow import event_logger
+    from modules.flow_gate.db import ai_run_identity
+    # Owned synthetic run; real nonce refusals have separate integration coverage.
+    monkeypatch.setattr(ai_run_identity, "assert_owner", lambda *a, **kw: None)
 
     seen = {"records": [], "notified": [], "events": [], "leases": []}
     stored: dict[str, dict] = {}
@@ -3871,7 +3887,7 @@ class TestGateStopReachesEverySurfaceAfterFinalize:
         assert "unknown error" not in (stored["stop_reason"] or "")
         assert set(lifecycle["stored"]) == {run["run_id"]}
         assert [r["stop_code"] for r in lifecycle["records"]] == [
-            "hop_handoff", "approve_failed",
+            "hop_handoff", "hop_handoff", "approve_failed",
         ]
 
     def test_the_card_is_told_again_with_the_real_stop(
@@ -3965,7 +3981,9 @@ class TestGateStopReachesEverySurfaceAfterFinalize:
         run, _after = _drive_the_tail(monkeypatch, lifecycle, {"outcome": "continue"})
 
         assert run["stop_code"] == "hop_handoff"
-        assert len(lifecycle["records"]) == 1
+        # Terminal row is saved before and after scratch cleanup; verdict is unchanged.
+        assert len(lifecycle["records"]) == 2
+        assert [row["stop_code"] for row in lifecycle["records"]] == ["hop_handoff", "hop_handoff"]
         assert len([k for k, _p in lifecycle["events"] if k == "ai_invoke_finished"]) == 1
         assert lifecycle["notified"] == []
 
@@ -4006,6 +4024,10 @@ class TestGateStopReachesEverySurfaceAfterFinalize:
 def test_edit_and_rework_include_no_sequence_trigger_chain_qa_0110(monkeypatch, rework):
     from modules.flow_gate.api import token_routes
     from modules.flow_gate.services import mention_service, q_service
+
+    from flowgate.card_document_edit import target as card_target
+    # These in-memory legacy documents have no Graph card bindings.
+    monkeypatch.setattr(card_target, "classify_card_slot", lambda doc: card_target.NON_CARD)
 
     target = "flowgate.v02.0110.9004-TR"
     origin = "flowgate.v02.0110.9001-B"

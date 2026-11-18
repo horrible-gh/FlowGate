@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 
 import pytest
+from terminal_prompt_assertions import assert_terminal
 
 # The AI start reads the server settings when it builds its base URL (config).
 os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
@@ -359,7 +360,7 @@ def test_a_qa_answer_lists_the_unreadable_line_of_the_card_showing_its_document(
         return qa.issue_answer_token(doc=report, item={"id": 17}, issued_to="u_kim", api_base_url=BASE,
                                      ai_run_id=ai_run_id)["mention"]
 
-    assert [issue(QNA_RUN), issue(QNA_RUN)] == [expected, expected]          # the run (and its reissue)
+    assert [assert_terminal(issue(QNA_RUN)), assert_terminal(issue(QNA_RUN))] == [expected, expected]          # the run (and its reissue)
     [(doc_id, note)] = _recorded(env)
     assert doc_id == report["doc_id"]
     assert note == {"ai_run_id": QNA_RUN, "kind": "qna", "item_id": 17, "checked": 2,
@@ -367,7 +368,7 @@ def test_a_qa_answer_lists_the_unreadable_line_of_the_card_showing_its_document(
     assert _documents_notices(env, FB) and env["events"][before:]
     assert _canvas_line(env, FB, key, "instruction")["body_state"] == "file_not_found"
 
-    assert [issue(), issue()] == [expected, expected]                        # [copy mention]: the same section
+    assert [assert_terminal(issue()), assert_terminal(issue())] == [expected, expected]                        # [copy mention]: the same section
     assert [note["ai_run_id"] for _d, note in _recorded(env)] == [QNA_RUN, None, None]   # no run: every time
 
 
@@ -384,11 +385,11 @@ def test_a_qa_document_without_a_card_checks_itself_and_its_target_in_the_same_g
         return qa.issue_answer_token(doc=_row(free), item={"id": 3}, issued_to="u_kim",
                                      api_base_url=BASE)["mention"]
 
-    assert mention() == ANSWER_MENTION                                       # readable, no target: as before
+    assert assert_terminal(mention()) == ANSWER_MENTION                                       # readable, no target: as before
     db_documents.update(free, {"target_id": other})
-    assert mention() == ANSWER_MENTION                                       # a target of another group: not checked
+    assert assert_terminal(mention()) == ANSWER_MENTION                                       # a target of another group: not checked
     db_documents.update(free, {"target_id": same})
-    assert mention() == _section((same, "file_path_missing")) + SEP + ANSWER_MENTION
+    assert assert_terminal(mention()) == _section((same, "file_path_missing")) + SEP + ANSWER_MENTION
     assert _recorded(env)[-1][1]["checked"] == 2
 
 

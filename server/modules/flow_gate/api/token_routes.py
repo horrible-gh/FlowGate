@@ -4,6 +4,7 @@ POST /api/v1/token/issue
 Auth: login session cookie (get_current_user dependency)
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import json
 import logging
@@ -487,7 +488,7 @@ def _issue_token(
         action_scope=resolved_action_scope,
         doc_ref=body.doc_ref,
         group_id=result.get("group_id"),
-        mention=mention,
+        mention=terminal_prompt.finalize(mention, locale=req_locale) if mention else mention,
     )
 
 
@@ -1149,7 +1150,7 @@ def _build_review_conversation_mention(
     )
 
     return (
-        "## Document information\n"
+        terminal_prompt.prepare("## Document information\n"
         "---\n"
         f"project: {project_id}\n"
         + (f"group: {group_id}\n" if group_id else "owner: branch_merge (project-scoped, no group)\n")
@@ -1193,7 +1194,7 @@ def _build_review_conversation_mention(
         "earlier turn of this same conversation, possibly by another provider. A [tag] is "
         "that turn's outcome. The reviewer's newest message is NOT repeated here - it is the "
         "one at the top of this prompt.\n"
-        f"{history}\n"
+        f"{history}\n", kind='merge_review', locale=locale)
     )
 
 
@@ -1302,7 +1303,7 @@ def _build_conflict_mention(
         "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
     )
     return (
-        "## Document information\n"
+        terminal_prompt.prepare("## Document information\n"
         "---\n"
         f"project: {project_id}\n"
         + (
@@ -1341,7 +1342,7 @@ def _build_conflict_mention(
         "---\n"
         "```json\n"
         f"{_conflict_session_json(payload)}\n"
-        "```\n"
+        "```\n", kind='conflict', locale=locale)
     )
 
 

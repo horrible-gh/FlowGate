@@ -18,6 +18,7 @@ Deliberately NOT here: apply/preview/fill (P0009 §7) and the applications journ
 (P0009 §8). Those need the workflow sequence and belong to the next task set.
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import json
@@ -2830,7 +2831,7 @@ def request_work_plan_fill(
         "token_id": issued["token_id"],
         "expires_at": issued["expires_at"],
         "scratch_dir": issued["scratch_dir"],
-        "mention": mention,
+        "mention": terminal_prompt.finalize(mention),
     }
 
 

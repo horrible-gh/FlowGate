@@ -116,7 +116,7 @@ def title_request(exec_type: Optional[str], locale: Optional[str] = None) -> str
 
 
 def append_title_request(prompt: str, exec_type: Optional[str], locale: Optional[str] = None) -> str:
-    """``prompt`` with the title request at its very end (one empty line before it). A failing wording leaves
+    """Append the title request; provider finalization places the task block after it. A failing wording leaves
     the prompt as it is: the AI starts all the same (0062 L0006 5)."""
     try:
         request = title_request(exec_type, locale)

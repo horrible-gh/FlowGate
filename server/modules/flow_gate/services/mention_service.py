@@ -34,6 +34,7 @@ Insert a placeholder into next_type based on the head state:
   - head pending       → {head_type} (normal)
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import json
 import logging
@@ -2513,7 +2514,12 @@ def build_mention(
         sections.append(_section("Reminder", "Register necessary questions through Q; do not ask interactive questions. "
                                  f"Read GET {base}/help/items/question before registering."))
 
-    return "\n\n".join(sections)
+    task_kind = (
+        "first_write" if is_edit and first_write else
+        "rework" if is_edit and edit_reason == "rejected" else
+        "edit" if is_edit else "preflight" if review_continuous else "new"
+    )
+    return terminal_prompt.prepare("\n\n".join(sections), kind=task_kind, locale=locale)
 
 
 def build_mention_from_token_rec(
@@ -2792,7 +2798,7 @@ def build_workflow_decision_mention(
         # Group 0110 B0001/NR0003: recency repeat of the no-choices / Q-registration guard
         # at the bottom of this (long) prompt, matching build_mention/build_review_mention.
         sections.append(_section("Reminder", _no_choices_reminder(base, doc_id, locale)))
-    return "\n\n".join(sections)
+    return terminal_prompt.prepare("\n\n".join(sections), kind='workflow', locale=locale)
 
 
 # ── Sequence-edit mention builder (R0001 group 0208) ──────────────────────────
@@ -2952,7 +2958,7 @@ def build_sequence_edit_mention(
         _section("Sequence edit submission", s5_body),
         _section("Reminder", _no_choices_reminder(base, doc_id, locale)),
     ]
-    return "\n\n".join(sections)
+    return terminal_prompt.prepare("\n\n".join(sections), kind='sequence', locale=locale)
 
 
 # ── Review-request mention builder ────────────────────────────────────────────
@@ -3217,7 +3223,7 @@ def build_review_mention(
     # NR0003 recency: repeat the no-choices guard at the very bottom (see build_mention).
     sections.append(_section("Reminder", _no_choices_reminder(base, canonical_id, locale)))
 
-    return "\n\n".join(sections)
+    return terminal_prompt.prepare("\n\n".join(sections), kind='review', locale=locale)
 def build_work_plan_fill_mention(
     *,
     token_rec: dict,
@@ -3322,7 +3328,7 @@ def build_work_plan_fill_mention(
 
     doc_id = target_doc.get("doc_id") or ""
     return (
-        f"## {copy['title']}\n\n"
+        terminal_prompt.prepare(f"## {copy['title']}\n\n"
         f"- target_doc_id: {doc_id}\n"
         f"- design template: GET {api_base_url}/flowgate/api/v1/help/items/design_template/WP\n"
         f"- Authorization: Bearer {raw_token}\n\n"
@@ -3333,5 +3339,5 @@ def build_work_plan_fill_mention(
         f"### {copy['steps']}\n\n{bullets(step_lines)}\n\n"
         f"### {copy['providers']}\n\n{bullets(provider_lines)}\n\n"
         f"{copy['outside']}\n\n{copy['notes']}\n\n{copy['submit']}\n"
-        f"POST {api_base_url}/flowgate/api/v1/inbox (action=edit, doc_id={doc_id})\n"
+        f"POST {api_base_url}/flowgate/api/v1/inbox (action=edit, doc_id={doc_id})\n", kind='work_plan', locale=locale)
     )

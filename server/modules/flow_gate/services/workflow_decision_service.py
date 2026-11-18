@@ -5,6 +5,7 @@ No auto-mode. No auto_advance flag (R016 correction).
 doc_class (R/Q/B) input + response.
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import json as _json
 import logging
@@ -1398,7 +1399,7 @@ def advance_workflow(
         "token_id": issue_result["token_id"],
         "expires_at": issue_result["expires_at"],
         "scratch_dir": scratch_dir,
-        "mention": mention or "",
+        "mention": terminal_prompt.finalize(mention) if mention else "",
         "continuous": continuous,
         "continuation_target_seq": continuation_target_seq if continuous else None,
         "continuation_review_mode": bool(continuous and continuation_review_mode),
@@ -1532,7 +1533,7 @@ def request_review(
         "token_id": issue_result["token_id"],
         "expires_at": issue_result["expires_at"],
         "scratch_dir": scratch_dir,
-        "mention": mention or "",
+        "mention": terminal_prompt.finalize(mention) if mention else "",
     }
 
 
@@ -1611,7 +1612,7 @@ def request_workflow_decision(
         "token_id": issue_result["token_id"],
         "expires_at": issue_result["expires_at"],
         "scratch_dir": issue_result["scratch_dir"],
-        "mention": mention,
+        "mention": terminal_prompt.finalize(mention),
         "continuous": continuous,
         "continuation_review_mode": bool(continuous and continuation_review_mode),
         "continuation_instruction_mode": instruction_mode if continuous else None,
@@ -1718,7 +1719,7 @@ def request_sequence_edit(
         "token_id": issue_result["token_id"],
         "expires_at": issue_result["expires_at"],
         "scratch_dir": issue_result["scratch_dir"],
-        "mention": mention,
+        "mention": terminal_prompt.finalize(mention),
     }
 
 

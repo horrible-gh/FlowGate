@@ -1,5 +1,6 @@
 """Dedicated failure-origin review issuance and evidence prompt (0503 T0009)."""
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 from typing import Optional
 
@@ -93,7 +94,7 @@ def build_failure_origin_mention(*, doc: dict, run: dict, items: list[dict],
     evidence = _build_evidence(doc=doc, run=run, items=items)
     lines = "\n".join(f"- {key}: {value}" for key, value in evidence.items())
     return (
-        "## Failure-origin review\n---\n"
+        terminal_prompt.prepare("## Failure-origin review\n---\n"
         "Classify which side violates the original requirement; do not merely choose the "
         "fastest way to make tests green. Use exactly one canonical classification: "
         "product_defect, test_defect, or hold.\n\n"
@@ -103,7 +104,7 @@ def build_failure_origin_mention(*, doc: dict, run: dict, items: list[dict],
         '{"action":"failure_origin_review","project":"'
         + str(doc.get("project_id") or "") + '","doc_id":"' + str(doc.get("doc_id") or "")
         + '","run_id":"' + str(run.get("run_id") or "")
-        + '","classification":"product_defect","findings":[],"comment":""}\n'
+        + '","classification":"product_defect","findings":[],"comment":""}\n', kind='failure_origin', locale='ko')
     )
 
 
@@ -135,7 +136,7 @@ def issue_failure_origin_review(*, doc: dict, run: dict, issued_to: str,
         failure_origin_target_run_id=run["run_id"],
         failure_origin_before_marker=run.get("failure_origin_reviewed_at"),
     )
-    return {
+    return terminal_prompt.finalize_payload({
         "raw_token": issue["raw_token"], "token_id": issue["token_id"],
         "scratch_dir": issue["scratch_dir"], "target_run_id": run["run_id"],
         "before_marker": run.get("failure_origin_reviewed_at"),
@@ -143,7 +144,7 @@ def issue_failure_origin_review(*, doc: dict, run: dict, issued_to: str,
             doc=doc, run=run, items=db_test_runs.list_cases(run["run_id"]),
             api_base_url=api_base_url, raw_token=issue["raw_token"],
         ),
-    }
+    })
 
 
 def dispatch_failure_origin_review(*, doc: dict, run: dict, issued_to: str,

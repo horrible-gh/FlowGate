@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from terminal_prompt_assertions import assert_terminal
 
 from modules.flow_gate.api.v1.ai_invoke_routes import _ALLOWED_SCOPES, _TOKEN_SCOPE
 from modules.flow_gate.services import invoke_mention_service as ims
@@ -26,7 +27,7 @@ def _no_message_images(monkeypatch):
     # These text-only unit fixtures have no database. Image integration uses SQLite
     # in test_message_image_delivery_0029 instead.
     from modules.flow_gate.services import message_image_delivery
-    monkeypatch.setattr(message_image_delivery, "image_count", lambda *args: 0)
+    monkeypatch.setattr(message_image_delivery, "image_count", lambda *args, **kwargs: 0)
 
 
 class TestScopeMap:
@@ -82,7 +83,7 @@ class TestConversationMention:
         assert "Conversation document: p.default.0001.0008-CH" in lines
         assert (
             "GET http://h:1/api/v1/conversation/p.default.0001.0008-CH/turns"
-            "?after_seq=0&include_head=1"
+            "?after_seq=0&include_head=1&through_seq=0&limit=20"
         ) in lines
         assert "Submit: POST http://h:1/api/v1/conversation/p.default.0001.0008-CH/turn" in lines
         submit = _submission_block(text)
@@ -259,7 +260,7 @@ class TestConversationMentionLookupBlock:
         text = self._mention(monkeypatch, remote_mode=remote_mode)
         assert text.index("Submit: POST") < text.index("search/documents")
         assert '"idempotency_key": "tok_20260729_000071"' in _submission_block(text)
-        assert text.rstrip().endswith(
+        assert assert_terminal(text).endswith(
             "Submitting your turn consumes this token, so finish all reading and searching first."
         )
 
@@ -384,11 +385,9 @@ class TestEditTurnEndAddendum:
         assert clarify["lead"] in text
         assert clarify["warn"] in text
         assert clarify["positive"] in text
-        # _REMINDER_TEXT carries a single {post} placeholder -- check the fixed
-        # prefix/suffix around it instead of formatting a second copy here.
-        reminder_prefix, reminder_suffix = mention_service._REMINDER_TEXT[locale].split("{post}")
-        assert reminder_prefix in text
-        assert reminder_suffix in text
+        assert '/help/items/question' in text
+        assert 'do not ask interactive questions' in text
+
 
     @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
     def test_continuous_mention_control_group_excludes_the_addendum(self, monkeypatch, locale):

@@ -3,7 +3,7 @@
 On the real SQLite DB, routes and fixtures of ``test_fg_card_settings`` (a confirmed R -> AI card Flow whose AI start is
 recorded as a job; ``ai_invoke_service.start_run`` replaced so the start's issue builder runs as the engine runs it):
 the first AI start of a card showing its default name claims the title opportunity in the mapping guard and the prompt
-the worker hands a provider with its token ends with the title request, worded for that provider's kind (whatever the
+the worker hands a provider with its token puts the title request before the final task block, worded for that provider's kind (whatever the
 job named: the project default chain, a fallback); every later start (retry, reissue, the result stage, a new run) asks
 nothing and its prompt is its mention byte for byte. The registration of the claiming token (the inbox order: the Graph contact, the consume, then the
 title hook) applies a valid candidate once, rechecked in the guard; any other candidate or registration closes the
@@ -23,6 +23,8 @@ import unicodedata
 from pathlib import Path
 
 import pytest
+from terminal_prompt_assertions import assert_terminal
+from modules.flow_gate.services import terminal_prompt
 
 os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
 os.environ.setdefault("CONTEXT", "/flowgate")
@@ -32,7 +34,7 @@ import config  # noqa: E402,F401 — its import-time env export happens at colle
 
 import _flowgate_test_imports  # noqa: F401
 from test_fg_card_settings import (  # noqa: E402,F401 — fixtures used by name
-    AI, FA, FB, _doc, _h, _sql, _start, db_path, decided, edge, env, node, put_draft,
+    AI, FA, FB, _doc, _h, _sql, _start, db_path, decided, edge, env, legacy_cards, pre_feature_attempts, node, put_draft,
 )
 from test_fg_card_settings_review import _admin_and_reviewer  # noqa: E402
 from tests.regression.graph_attempt.test_graph_attempt_results_0061 import result_db  # noqa: E402,F401 — the execution ledger (M-3 / M-4)
@@ -64,6 +66,19 @@ TOOL_DESCRIPTION = (
     "(for example \"Research\" or \"Requirement\"). Only offered when your prompt asks for it. It never affects "
     "whether the document registers.")
 GOOD = "OAuth 제공자 비교 조사"
+
+
+@pytest.fixture(autouse=True)
+def legacy_title_cards(legacy_cards, pre_feature_attempts):
+    """This suite exercises the legacy-card dispatch adapter, like its shared fixture."""
+
+
+def _delivered_body(prompt, exec_type):
+    if exec_type == "api":
+        messages = [{"role": "user", "content": prompt}]
+        terminal_prompt.finalize_messages(messages, fallback_kind="new")
+        prompt = messages[-1]["content"]
+    return assert_terminal(prompt)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -121,8 +136,9 @@ def _prompt(issued, exec_type="cli"):
     """What the worker hands a provider of ``exec_type`` with this issue's token (its ``_provider_prompt``)."""
     from modules.flow_gate.services.ai_invoke import worker
 
-    return worker._provider_prompt({"action_scope": "new", "raw_token": issued["raw_token"]},
-                                   {"exec_type": exec_type}, issued["mention"])
+    return _delivered_body(worker._provider_prompt(
+        {"action_scope": "new", "raw_token": issued["raw_token"]},
+        {"exec_type": exec_type}, issued["mention"]), exec_type)
 
 
 def _asks_nothing(issued):
@@ -169,7 +185,7 @@ def test_the_first_ai_start_of_a_default_card_claims_asks_and_takes_the_ai_title
             st["title_source"], st["human_edited"], st["close_reason"]) == (
         "claimed", token, "air_1", 1, None, "none", 0, None)
     assert issued["mention"] == _base_mention(job, "air_1", key)                                 # the mention as ever
-    assert _prompt(issued) == issued["mention"] + SEP + CLI_REQUEST["ko"]                        # at the very end
+    assert _prompt(issued) == issued["mention"] + SEP + CLI_REQUEST["ko"]                        # immediately before the terminal task block
     assert _prompt(issued, "api") == issued["mention"] + SEP + API_REQUEST["ko"]
     assert title_events(env) == []                                                               # a claim tells nothing
     assert _kinds(env) == {dispatch: "dispatch", token: "ai_start"}                               # M-1, M-2, M-7
@@ -264,7 +280,7 @@ def _walk(monkeypatch, issued, chain):
     handed = []
 
     def run_provider(provider, prompt, run):
-        handed.append((provider["exec_type"], prompt))
+        handed.append((provider["exec_type"], _delivered_body(prompt, provider["exec_type"])))
         if not provider["fails"]:
             return "started_ok", None
         return ("api_error" if provider["exec_type"] == "api" else "spawn_failed"), None
@@ -277,7 +293,7 @@ def _walk(monkeypatch, issued, chain):
                         lambda name, *a, **k: None if name == "launch" else real_call(name, *a, **k))
     providers = [{"id": f"aip_{i}", "name": f"p{i}", "exec_type": kind.rstrip("!"), "kind": "claude",
                   "fails": kind.endswith("!")} for i, kind in enumerate(chain)]
-    run = {"run_id": "air_1", "group_id": FA, "action_scope": "new", "raw_token": issued["raw_token"],
+    run = {"project_id": "flowgate", "run_id": "air_1", "group_id": FA, "action_scope": "new", "raw_token": issued["raw_token"],
            "token_id": issued["token_id"], "cancel_event": threading.Event(), "fallback_history": [],
            "provider": None, "provider_id": None}
     assert svc._execute_provider_chain(run, providers, issued["mention"]) is True
@@ -623,6 +639,7 @@ def test_one_insert_and_three_callers_write_the_token_map():
         "modules/flow_gate/graph_workflow/services/node_dispatch.py": ["MAP_DISPATCH"],
         "modules/flow_gate/graph_workflow/services/ai_node_starter.py": ["MAP_AI_START"],
         "flowgate/graph_run/execution.py": ["MAP_ATTEMPT"],
+        "flowgate/card_settings/legacy_adapter.py": ["MAP_DISPATCH"],
     }
     src = (_SERVER_DIR / "modules" / "flow_gate" / "graph_workflow" / "store" / "run_store.py").read_text(
         encoding="utf-8")
