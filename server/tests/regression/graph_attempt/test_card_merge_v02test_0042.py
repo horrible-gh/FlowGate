@@ -58,7 +58,8 @@ def test_conflict_is_undone_and_deferred_with_no_group_session(repo, real_merge)
     assert result_merge._merge(row_of(first))[0] == result_merge.INTEGRATED
     head = git(repo.root, "rev-parse", "HEAD")
 
-    assert result_merge._merge(row_of(other)) == (result_merge.DEFERRED, ["a.txt"])
+    assert result_merge._merge(row_of(other)) == (result_merge.DEFERRED, {"files": ["a.txt"],
+                                                                         "file_kinds": {"a.txt": "both"}})
     real_merge.assert_not_called()                                      # no session: the group stays free
     assert git(repo.root, "rev-parse", "HEAD") == head
     assert git(repo.root, "status", "--porcelain", "--untracked-files=no") == ""
@@ -93,19 +94,23 @@ def test_clean_merge_is_unchanged(repo, real_merge):
 def test_integrate_records_the_deferred_conflict_and_its_files(merge_db, monkeypatch):
     pending_with_result(merge_db)
     monkeypatch.setattr(result_merge.result_commit, "commit_result", Mock(return_value={"result_commit": RESULT}))
-    merge = Mock(return_value=(result_merge.DEFERRED, ["a.txt", "b.txt"]))
+    merge = Mock(return_value=(result_merge.DEFERRED, {"files": ["a.txt", "b.txt"],
+                                                       "file_kinds": {"a.txt": "both", "b.txt": "deleted_latest"}}))
     monkeypatch.setattr(result_merge, "_merge", merge)
     assert result_merge.integrate(merge_db.attempt) == result_merge.CONFLICT
     assert status(merge_db) == ("conflict", result_merge.CONFLICT_DEFERRED)
     assert merge.call_args.args[1] is False                             # no session kept
     note = result_merge._note.call_args_list[-1]
     assert note.args[1:] == ("conflict", result_merge.CONFLICT_DEFERRED) and note.kwargs["files"] == ["a.txt", "b.txt"]
+    assert note.kwargs["file_kinds"] == {"a.txt": "both", "b.txt": "deleted_latest"}
 
 
-def deferred(db, files=("a.txt",)):
+def deferred(db, files=("a.txt",), kinds=None):
     db._execute("UPDATE graph_node_attempts SET integration_status='conflict', integration_reason=?, "
                 "result_commit=? WHERE attempt_id=?", [result_merge.CONFLICT_DEFERRED, RESULT, db.attempt])
     payload = {"attempt_id": db.attempt, "integration_reason": result_merge.CONFLICT_DEFERRED, "files": list(files)}
+    if kinds is not None:
+        payload["file_kinds"] = kinds
     db._execute("CREATE TABLE IF NOT EXISTS graph_run_events(run_id TEXT, event_seq INTEGER, event_type TEXT, "
                 "node_key TEXT, from_status TEXT, to_status TEXT, cause TEXT, result_doc_id TEXT, canvas_state TEXT, "
                 "actor_user_id TEXT, reason TEXT, payload_json TEXT, created_at TEXT)")
@@ -192,25 +197,50 @@ def test_view_states(card, monkeypatch):
 
     set_status(card, "pending", "session_busy")
     monkeypatch.setattr(service.rm, "blocked_by", lambda row: "four")
+    monkeypatch.setattr(service.db_git, "get_open_session_by_group", lambda flow: {"merge_id": 7})
+    monkeypatch.setattr(service.db_git, "session_context", lambda s: {"node_key": "four"})
     got = service.view("flow", "node")
     assert got["state"] == service.WAITING and got["actions"] == []
-    assert got["blocked_by"] == {"node_key": "four", "title": "업로드 대기열 이전"}
+    assert got["blocked_by"] == {"node_key": "four", "title": "업로드 대기열 이전", "why": "conflict"}
+    monkeypatch.setattr(service.db_git, "get_open_session_by_group", lambda flow: None)
+    assert service.view("flow", "node")["blocked_by"]["why"] == "merging"
 
     set_status(card, "integrating")
     assert service.view("flow", "node")["state"] == service.CATCHING_UP
 
     set_status(card, "failed", "conflict_aborted")
     got = service.view("flow", "node")
-    assert (got["state"], got["actions"], got["reason"]) == (service.FAILED, ["discard_rerun"], "conflict_aborted")
+    assert (got["state"], got["actions"], got["reason"]) == (service.FAILED, ["retry", "discard_rerun"],
+                                                             "conflict_aborted")
 
 
 def test_view_of_a_deferred_conflict_lists_its_files(card):
-    deferred(card, ("a.txt", "b.txt"))
+    deferred(card, ("a.txt", "b.txt"), {"b.txt": "deleted_latest"})
     got = service.view("flow", "node")
     assert got["state"] == service.NEEDS_CHOICE and got["session"] is None
     assert got["actions"] == ["ai_resolve", "pick", "discard_rerun"]
-    assert got["files"] == [{"path": "a.txt", "resolved": False}, {"path": "b.txt", "resolved": False}]
+    assert got["files"] == [{"path": "a.txt", "resolved": False, "kind": "both"},
+                            {"path": "b.txt", "resolved": False, "kind": "deleted_latest"}]
     assert got["default_provider"] == {"id": "aip_x", "name": "Claude"}
+    assert got["waiting_cards"] == []
+
+
+def test_a_conflict_lists_the_cards_waiting_behind_it(card, monkeypatch):
+    deferred(card)
+    second = run_store.open_attempt("run", "second", 1)
+    card._execute("UPDATE graph_node_attempts SET integration_status='pending', integration_reason='session_busy' "
+                  "WHERE attempt_id=?", [second])
+    monkeypatch.setattr(service.rm, "blocked_by", lambda row: "node" if row["node_key"] == "second" else None)
+    assert service.view("flow", "node")["waiting_cards"] == [{"node_key": "second", "title": "second"}]
+
+
+def test_retry_asks_a_failed_merge_again(card, monkeypatch):
+    set_status(card, "failed", "conflict_aborted")
+    drained = Mock()
+    monkeypatch.setattr(service.rm, "request", drained)
+    got = service.act("flow", "node", "u", body("retry", card))
+    drained.assert_called_once_with("flow")
+    assert status(card) == ("pending", "retry") and got["state"] == service.WAITING
 
 
 def test_view_of_a_session_conflict(card, monkeypatch):
@@ -310,6 +340,21 @@ def test_pick_applies_the_chosen_sides_and_leaves_the_rest_to_one_ai_run(card, m
     picks.assert_called_once_with("flow", 7, [{"path": "f0.py", "side": "latest"}])
     assert start.call_args.args[4] == "aip_y" and start.call_args.args[6] == ["f1.py"]
     assert got["started_run_id"] == "aiv_2"
+
+
+def test_picking_every_file_by_hand_merges_at_once(card, monkeypatch):
+    set_status(card, "conflict", "merge_session:7")
+    open_session(monkeypatch, resolved=(False,))
+
+    def picked(flow, merge_id, files):
+        open_session(monkeypatch, review_state="resolved", resolved=(True,))
+    monkeypatch.setattr(service, "_apply_picks", Mock(side_effect=picked))
+    monkeypatch.setattr(service, "_start_ai", Mock(side_effect=AssertionError("no AI when every file is picked")))
+    from modules.flow_gate.services import tr_commit_service
+    commit = Mock(return_value={"ok": True})
+    monkeypatch.setattr(tr_commit_service, "commit_conflict_resolution", commit)
+    service.act("flow", "node", "u", body("pick", card, files=[{"path": "f0.py", "side": "card"}]))
+    commit.assert_called_once_with("flow", 7)
 
 
 def test_merge_commits_the_resolved_session(card, monkeypatch):

@@ -73,7 +73,12 @@ describe('0044 card layout: footer buttons', () => {
     expect(conflict.text()).toBe('')
     expect(conflict.attributes('aria-label')).toBe(`${t('gui.designer.center.integration.conflict')} · ${t('gui.designer.center.integration.open_conflict')}`)
     expect(conflict.attributes('title')).toBe(conflict.attributes('aria-label'))
-    expect(w.find('.flow-node-head [data-test="designer-canvas-node-integration"]').exists()).toBe(false)
+    // flowgate.v02test.0042 (시안 v7): the head carries the red conflict mark too (shown only), and the card a red ring
+    const mark = w.get('.flow-node-head [data-test="designer-canvas-node-integration"]')
+    expect(mark.attributes('data-integration')).toBe('conflict')
+    expect(mark.classes()).toContain('flow-node-mark--danger')
+    expect(mark.attributes('title')).toBe(conflict.attributes('aria-label'))
+    expect(w.get('[data-test="designer-canvas-node"]').classes()).toContain('has-conflict')
     await conflict.trigger('click')
     expect(w.emitted('conflict')).toEqual([['n1']])
     const bare = render({ integration: 'conflict' })

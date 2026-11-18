@@ -7,9 +7,11 @@
 //   items    GET  /api/v1/merge-items                                      -> 200 { items: [item…] } (every readable Flow)
 //
 //   state = { flow_id, node_key, attempt_id, state: hidden | waiting | catching_up | needs_choice | failed,
-//             integration_status, reason, blocked_by: { node_key, title } | null, files: [{ path, resolved }],
+//             integration_status, reason, blocked_by: { node_key, title } | null,
+//             files: [{ path, resolved, kind: both | deleted_latest | deleted_card }],
 //             session: { merge_id, kind, review_state } | null, resolving: { run_id } | null,
-//             default_provider: { id, name } | null, actions: [ai_resolve | pick | merge | discard_rerun…] }
+//             default_provider: { id, name } | null, actions: [ai_resolve | pick | merge | discard_rerun | retry…],
+//             waiting_cards: [{ node_key, title }] }
 //
 // Refusals are the Graph envelope `{ ok: false, error: { code, message, params } }` (cardMergeErrorOf): 409
 // merge_state_changed (read the state again) / group_busy / conflict_markers_remain / git_busy, 422 invalid_request /
@@ -26,14 +28,26 @@ const record = (value: unknown): Raw => (value && typeof value === 'object' && !
 
 export const cardMergeStates = ['hidden', 'waiting', 'catching_up', 'needs_choice', 'failed'] as const
 export type CardMergeStateKey = (typeof cardMergeStates)[number]
-export const cardMergeActions = ['ai_resolve', 'pick', 'merge', 'discard_rerun'] as const
+export const cardMergeActions = ['ai_resolve', 'pick', 'merge', 'discard_rerun', 'retry'] as const
 export type CardMergeAction = (typeof cardMergeActions)[number]
 /** One file's choice in a per-file pick: the AI, this card's result, or the latest Flow code. */
 export type CardMergeSide = 'ai' | 'card' | 'latest'
 
+/** How a conflicting file overlaps: both sides changed it, or one side (the latest code / this card) deleted it. */
+export const cardMergeFileKinds = ['both', 'deleted_latest', 'deleted_card'] as const
+export type CardMergeFileKind = (typeof cardMergeFileKinds)[number]
+
+export interface CardMergeFile {
+  readonly path: string
+  readonly resolved: boolean
+  readonly kind: CardMergeFileKind
+}
+
 export interface CardMergeCard {
   readonly nodeKey: string
   readonly title: string
+  /** A card another one waits behind: holding the group with its open conflict, or merging. */
+  readonly why?: 'conflict' | 'merging' | null
 }
 
 export interface CardMergeState {
@@ -44,11 +58,13 @@ export interface CardMergeState {
   readonly integrationStatus: string | null
   readonly reason: string | null
   readonly blockedBy: CardMergeCard | null
-  readonly files: readonly { readonly path: string; readonly resolved: boolean }[]
+  readonly files: readonly CardMergeFile[]
   readonly session: { readonly mergeId: number; readonly kind: string | null; readonly reviewState: string | null } | null
   readonly resolving: { readonly runId: string | null } | null
   readonly defaultProvider: { readonly id: string; readonly name: string } | null
   readonly actions: readonly CardMergeAction[]
+  /** The cards whose merge waits behind this one. */
+  readonly waitingCards: readonly CardMergeCard[]
   /** An action's answer: the AI run it started, or null. */
   readonly startedRunId: string | null
 }
@@ -56,7 +72,8 @@ export interface CardMergeState {
 function card(raw: unknown): CardMergeCard | null {
   const row = record(raw)
   const nodeKey = text(row.node_key)
-  return nodeKey ? { nodeKey, title: text(row.title) ?? nodeKey } : null
+  const why = row.why === 'conflict' || row.why === 'merging' ? row.why : null
+  return nodeKey ? { nodeKey, title: text(row.title) ?? nodeKey, why } : null
 }
 
 /** A state answer -> CardMergeState (an unknown state reads as hidden, unknown actions are dropped). */
@@ -79,7 +96,8 @@ export function toCardMergeState(raw: unknown, flowId = '', nodeKey = ''): CardM
       ? row.files.flatMap((item) => {
           const file = record(item)
           const path = text(file.path)
-          return path ? [{ path, resolved: file.resolved === true }] : []
+          const kind = cardMergeFileKinds.find((key) => key === file.kind) ?? 'both'
+          return path ? [{ path, resolved: file.resolved === true, kind }] : []
         })
       : [],
     session: typeof session.merge_id === 'number' && Number.isFinite(session.merge_id)
@@ -88,6 +106,7 @@ export function toCardMergeState(raw: unknown, flowId = '', nodeKey = ''): CardM
     resolving: resolving ? { runId: text(resolving.run_id) } : null,
     defaultProvider: providerId ? { id: providerId, name: text(provider.name) ?? providerId } : null,
     actions: Array.isArray(row.actions) ? cardMergeActions.filter((action) => (row.actions as unknown[]).includes(action)) : [],
+    waitingCards: Array.isArray(row.waiting_cards) ? row.waiting_cards.flatMap((item) => card(item) ?? []) : [],
     startedRunId: text(row.started_run_id),
   }
 }
@@ -104,7 +123,7 @@ export async function cardMergeRead(flowId: string, nodeKey: string): Promise<Ca
 export type CardMergeRequest =
   | { readonly action: 'ai_resolve'; readonly expectedAttemptId: string; readonly providerId?: string | null }
   | { readonly action: 'pick'; readonly expectedAttemptId: string; readonly files: readonly { readonly path: string; readonly side: CardMergeSide }[]; readonly providerId?: string | null }
-  | { readonly action: 'merge' | 'discard_rerun'; readonly expectedAttemptId: string }
+  | { readonly action: 'merge' | 'discard_rerun' | 'retry'; readonly expectedAttemptId: string }
 
 /** The request body in the server's names. */
 export function cardMergePayload(request: CardMergeRequest): Raw {

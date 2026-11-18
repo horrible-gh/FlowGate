@@ -1,19 +1,19 @@
 <template>
   <p class="notification-context">{{ t('gui.designer.top.notifications.project_only', { name: projectName }) }}</p>
   <p v-if="!rows.length && !mergeItems.length" class="notification-note">{{ t('gui.designer.top.notifications.empty_runs') }}</p>
-  <!-- flowgate.v02test.0042 (시안 v7 item 3): card result merges — red when a person must choose, blue while it only waits;
-       [열기] opens the card's '병합 · 충돌' tab. -->
+  <!-- flowgate.v02test.0042 (시안 v7 item 3): card result merges — a red-framed row with the conflict mark when a person
+       must choose, a blue hourglass while it waits (a spinner while it catches up); [열기] opens the card's '병합 · 충돌' tab. -->
   <ul v-if="mergeItems.length" class="notification-list" data-test="notification-merges">
-    <li v-for="item in mergeItems" :key="`${item.flowId}:${item.nodeKey}`" class="notification-card" data-test="notification-merge" :data-state="item.state">
-      <span class="notification-status" :class="item.state === 'needs_choice' || item.state === 'failed' ? 'is-fail' : 'is-run'" aria-hidden="true"><LineIcon :name="item.state === 'needs_choice' || item.state === 'failed' ? 'stop-circle' : 'loader'" /></span>
+    <li v-for="item in mergeItems" :key="`${item.flowId}:${item.nodeKey}`" class="notification-card notification-merge" :class="{ 'is-choice': choice(item) }" data-test="notification-merge" :data-state="item.state">
+      <span class="notification-status" :class="[choice(item) ? 'is-fail' : 'is-run', { 'is-spinning': item.state === 'catching_up' }]" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path :d="MERGE_ICONS[item.state]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      </span>
       <div class="notification-main">
         <strong class="notification-title" :title="item.flowName">{{ item.flowName }}</strong>
         <span class="notification-meta" data-test="notification-merge-text">{{ mergeText(item) }}</span>
       </div>
       <div class="notification-side">
-        <div class="notification-row-actions">
-          <button type="button" class="notification-icon-btn" data-test="notification-merge-open" :aria-label="t('gui.designer.top.notifications.merge.open')" :title="t('gui.designer.top.notifications.merge.open')" @click="emit('open-merge', item)"><LineIcon name="external" /></button>
-        </div>
+        <button type="button" class="notification-merge-open" data-test="notification-merge-open" @click="emit('open-merge', item)">{{ t('gui.designer.top.notifications.merge.open') }}</button>
       </div>
     </li>
   </ul>
@@ -44,6 +44,15 @@ type MergeRow = CardMergeItem & { flowName: string }
 withDefaults(defineProps<{ rows: (InvokeRun & { flowName: string })[]; projectName: string; busy: string[]; mergeItems?: MergeRow[] }>(), { mergeItems: () => [] })
 const emit = defineEmits<{ 'open-document': [id: string]; stop: [run: InvokeRun]; 'open-merge': [item: MergeRow] }>()
 const { t, te } = useI18n()
+/** The mockup's marks: conflict (red), hourglass (waiting), spinner (catching up), merge-cross (failed). */
+const MERGE_ICONS: Record<MergeRow['state'], string> = {
+  needs_choice: 'M7 4l10 16 M17 4L7 20 M4 9h4 M16 15h4',
+  failed: 'M5 3v4l6 6v8 M17 3v4l-6 6 M15 16l5 5 M20 16l-5 5',
+  waiting: 'M7 3h10 M7 21h10 M8 3c0 5 8 5 8 9s-8 4-8 9 M16 3c0 5-8 5-8 9s8 4 8 9',
+  catching_up: 'M12 3a9 9 0 1 0 9 9',
+}
+/** A person must choose (red row). */
+const choice = (item: MergeRow) => item.state === 'needs_choice' || item.state === 'failed'
 /** A merge row's sentence: the card (its title) and what it needs. */
 function mergeText(item: MergeRow): string {
   const base = 'gui.designer.top.notifications.merge'
@@ -69,3 +78,15 @@ function phaseIcon(phase: string): LineIconName {
   return 'help-circle'
 }
 </script>
+
+<style scoped>
+/* flowgate.v02test.0042 (시안 v7): merge rows — red frame when a person must choose; a text [열기] button. */
+.notification-list .notification-card.notification-merge.is-choice { border-color: rgba(255, 100, 120, 0.55); }
+.notification-status.is-spinning svg { animation: notification-merge-spin 1s linear infinite; }
+@keyframes notification-merge-spin { to { transform: rotate(360deg); } }
+.notification-merge-open {
+  height: 24px; padding: 0 8px; border: 1px solid #2b4566; border-radius: 7px; background: #13263d; color: #dbe8f6;
+  font: inherit; font-size: 11.5px; font-weight: 700; white-space: nowrap; cursor: pointer;
+}
+.notification-merge-open:hover { filter: brightness(1.15); }
+</style>

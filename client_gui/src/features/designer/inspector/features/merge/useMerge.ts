@@ -77,6 +77,7 @@ export interface MergeTabState {
   pick(files: readonly { path: string; side: CardMergeSide }[], providerId: string | null): Promise<void>
   merge(): Promise<void>
   discardRerun(): Promise<void>
+  retry(): Promise<void>
   loadProviders(): Promise<void>
 }
 
@@ -207,6 +208,7 @@ export function useMerge(target: () => InspectorTarget | null): MergeTabState {
     pick: (files, providerId) => act((expectedAttemptId) => ({ action: 'pick', expectedAttemptId, files, providerId })),
     merge: () => act((expectedAttemptId) => ({ action: 'merge', expectedAttemptId })),
     discardRerun: () => act((expectedAttemptId) => ({ action: 'discard_rerun', expectedAttemptId })),
+    retry: () => act((expectedAttemptId) => ({ action: 'retry', expectedAttemptId })),
     loadProviders,
   }
 }

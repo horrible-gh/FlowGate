@@ -92,6 +92,8 @@ export interface FlowGateNodeData {
    * title, for the hourglass tooltip; absent when it waits for no named card.
    */
   integrationBlockedTitle?: string
+  /** flowgate.v02test.0042: that card holds the group with its merge conflict (else it is merging). */
+  integrationBlockedConflict?: boolean
   /** flowgate.v02.0061 T#14: the card is held (T#11 Hold). */
   hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered (the [Q] mark). */
@@ -192,6 +194,9 @@ export function toVueFlowNodes(
     if (integration === 'pending' && blockedBy) {
       const blocked = graph.nodes.find((item) => item.id === blockedBy)
       data.integrationBlockedTitle = blocked?.title || blockedBy
+      const blockedRun = marks.nodeRuns.get(blockedBy)
+      const blockedIntegration = (blockedRun && 'integrationStatus' in blockedRun ? blockedRun.integrationStatus : blocked?.nodeRun?.integrationStatus) ?? null
+      data.integrationBlockedConflict = blockedIntegration === 'conflict'
     }
     const hold = options.holds
       ? options.holds.get(node.id)

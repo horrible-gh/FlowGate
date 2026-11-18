@@ -12,13 +12,16 @@ import { cardMergeAct, cardMergeItems, cardMergePayload, cardMergeRead, toCardMe
 describe('card merge wire', () => {
   it('reads the state of one card', async () => {
     http.get.mockResolvedValue({ data: { flow_id: 'f', node_key: 'n', attempt_id: 'a', state: 'waiting', integration_status: 'pending', reason: 'session_busy',
-      blocked_by: { node_key: 'n4', title: 'Four' }, files: [{ path: 'x.ts', resolved: true }, { bad: 1 }], session: { merge_id: 3, kind: 'graph_attempt_merge', review_state: 'open' },
-      resolving: null, default_provider: { id: 'p1', name: 'P' }, actions: ['ai_resolve', 'unknown', 'merge'] } })
+      blocked_by: { node_key: 'n4', title: 'Four', why: 'conflict' }, files: [{ path: 'x.ts', resolved: true, kind: 'deleted_card' }, { path: 'y.ts', kind: 'weird' }, { bad: 1 }], session: { merge_id: 3, kind: 'graph_attempt_merge', review_state: 'open' },
+      resolving: null, default_provider: { id: 'p1', name: 'P' }, actions: ['ai_resolve', 'unknown', 'merge', 'retry'],
+      waiting_cards: [{ node_key: 'n2', title: 'Two' }, { bad: 1 }] } })
     await expect(cardMergeRead('f', 'n')).resolves.toEqual({
       flowId: 'f', nodeKey: 'n', attemptId: 'a', state: 'waiting', integrationStatus: 'pending', reason: 'session_busy',
-      blockedBy: { nodeKey: 'n4', title: 'Four' }, files: [{ path: 'x.ts', resolved: true }],
+      blockedBy: { nodeKey: 'n4', title: 'Four', why: 'conflict' },
+      files: [{ path: 'x.ts', resolved: true, kind: 'deleted_card' }, { path: 'y.ts', resolved: false, kind: 'both' }],
       session: { mergeId: 3, kind: 'graph_attempt_merge', reviewState: 'open' }, resolving: null,
-      defaultProvider: { id: 'p1', name: 'P' }, actions: ['ai_resolve', 'merge'], startedRunId: null,
+      defaultProvider: { id: 'p1', name: 'P' }, actions: ['ai_resolve', 'merge', 'retry'],
+      waitingCards: [{ nodeKey: 'n2', title: 'Two', why: null }], startedRunId: null,
     })
     expect(http.get).toHaveBeenCalledWith('/api/v1/flows/f/nodes/n/merge')
   })
@@ -45,7 +48,7 @@ describe('card merge wire', () => {
     ] } })
     await expect(cardMergeItems()).resolves.toEqual([
       { flowId: 'f', flowTitle: 'F', nodeKey: 'n4', title: 'Four', state: 'needs_choice', blockedBy: null },
-      { flowId: 'f', flowTitle: null, nodeKey: 'n2', title: 'Two', state: 'waiting', blockedBy: { nodeKey: 'n4', title: 'Four' } },
+      { flowId: 'f', flowTitle: null, nodeKey: 'n2', title: 'Two', state: 'waiting', blockedBy: { nodeKey: 'n4', title: 'Four', why: null } },
     ])
     expect(http.get).toHaveBeenCalledWith('/api/v1/merge-items')
   })

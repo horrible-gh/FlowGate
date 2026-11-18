@@ -382,6 +382,7 @@ export default {
         open_conflict: 'カードの「マージ · 競合」タブで処理します',
         // flowgate.v02test.0042 — a waiting merge's hourglass tooltip.
         waiting_for: '「{title}」カードの競合解決を待っています',
+        waiting_behind: '「{title}」カードのマージが終わるのを待っています',
         waiting_turn: 'マージの順番を待っています',
         // v02gui.0015 T4 — the result failed the integration's syntax check.
         verification_failed: '結果に構文エラーのあるファイルがあるため、マージしませんでした。やり直すには停止してから実行してください（新しい試行で開きます）。',
@@ -845,12 +846,12 @@ export default {
         empty_runs: '実行中・待機中の実行はありません。',
         // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
         merge: {
-          needs_choice: '「{title}」マージ競合、選択が必要',
-          failed: '「{title}」マージ失敗',
-          waiting: '「{title}」マージ待ち',
-          waiting_for: '「{title}」マージ待ち · 「{blocked}」の競合解決待ち',
-          catching_up: '「{title}」最新コードに合わせています',
-          open: 'カードで開く',
+          needs_choice: '「{title}」カードのマージ競合 — 選択が必要',
+          failed: '「{title}」カードのマージ失敗 — 選択が必要',
+          waiting: '「{title}」カードのマージ待ち',
+          waiting_for: '「{title}」カードのマージ待ち (「{blocked}」の後)',
+          catching_up: '「{title}」カードのマージ進行中',
+          open: '開く',
         },
         empty_ai: 'AI通知はありません。',
           question_all: "全体表示",
@@ -1481,7 +1482,8 @@ export default {
       abort_bound: '進行中の最終承認の試行も終了します。',
       unsupported: 'この画面では扱わない種類の競合です。',
       // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
-      card_handled: 'カード結果のマージ競合です。カードで処理します。',
+      card_handled: 'カード結果のマージ競合 — カードで処理します',
+      card_handled_desc: 'この競合は Git タブではなく、そのカードの「マージ · 競合」タブで選びます。',
       open_card: 'カードへ移動',
       loading: '競合ファイルを読み込み中…',
     },

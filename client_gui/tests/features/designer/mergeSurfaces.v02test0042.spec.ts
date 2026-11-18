@@ -39,10 +39,13 @@ describe('Canvas card', () => {
   }
 
   it('a waiting merge is an hourglass that names the card it waits for, in the head row only', () => {
-    const w = render({ integration: 'pending', integrationBlockedTitle: '업로드 대기열 이전' })
+    const w = render({ integration: 'pending', integrationBlockedTitle: '업로드 대기열 이전', integrationBlockedConflict: true })
     const mark = w.get('.flow-node-head [data-test="designer-canvas-node-integration"]')
     expect(mark.attributes('title')).toBe(t('gui.designer.center.integration.waiting_for', { title: '업로드 대기열 이전' }))
     expect(mark.attributes('title')).toBe('‘업로드 대기열 이전’ 카드 충돌 해결을 기다리는 중')
+    // behind a card that is merging (not conflicting) it says so
+    const merging = render({ integration: 'pending', integrationBlockedTitle: '작업C' })
+    expect(merging.get('[data-test="designer-canvas-node-integration"]').attributes('title')).toBe('‘작업C’ 카드의 병합이 끝나기를 기다리는 중')
     expect(w.find('.flow-node-footer').exists()).toBe(false)
     expect(w.findAll('.flow-node-card > *').map((el) => el.classes()[0])).not.toContain('flow-node-below')
   })
@@ -78,6 +81,7 @@ describe('Canvas card', () => {
     const [conflict, waiting] = toVueFlowNodes(graph, null)
     expect(waiting.data!.integration).toBe('pending')
     expect(waiting.data!.integrationBlockedTitle).toBe('업로드 대기열 이전')
+    expect(waiting.data!.integrationBlockedConflict).toBe(true)
     expect(conflict.data!.integrationBlockedTitle).toBeUndefined()
   })
 })
@@ -143,11 +147,17 @@ describe('notification runs tab: merge items', () => {
     expect(w.text()).not.toContain(t('gui.designer.top.notifications.empty_runs'))
     const rows = w.findAll('[data-test="notification-merge"]')
     expect(rows.map((r) => r.get('[data-test="notification-merge-text"]').text())).toEqual([
-      '‘업로드 대기열 이전’ 병합 충돌, 선택 필요',
-      '‘승인 화면’ 병합 대기 · ‘업로드 대기열 이전’ 충돌 해결을 기다리는 중',
+      '‘업로드 대기열 이전’ 카드 병합 충돌 — 선택 필요',
+      '‘승인 화면’ 카드 병합 대기 (‘업로드 대기열 이전’ 뒤)',
     ])
+    // 시안 v7: the conflict row is framed red with the conflict mark; the waiting one carries the hourglass
+    expect(rows[0].classes()).toContain('is-choice')
+    expect(rows[1].classes()).not.toContain('is-choice')
     expect(rows[0].get('.notification-status').classes()).toContain('is-fail')
     expect(rows[1].get('.notification-status').classes()).toContain('is-run')
+    expect(rows[0].get('.notification-status path').attributes('d')).toBe('M7 4l10 16 M17 4L7 20 M4 9h4 M16 15h4')
+    expect(rows[1].get('.notification-status path').attributes('d')).toContain('M7 3h10 M7 21h10')
+    expect(rows[0].get('[data-test="notification-merge-open"]').text()).toBe(t('gui.designer.top.notifications.merge.open'))
     await rows[1].get('[data-test="notification-merge-open"]').trigger('click')
     expect(w.emitted('open-merge')).toEqual([[items[1]]])
   })
@@ -166,7 +176,9 @@ describe('Git panel: a card result merge points to the card', () => {
     wrappers.push(w)
     await flushPromises()
     const q = (sel: string) => document.body.querySelector<HTMLElement>(`[data-test="${sel}"]`)
-    expect(q('git-conflict-card-handled')?.textContent?.trim()).toBe(t('gui.git.conflict.card_handled'))
+    expect(q('git-conflict-card-handled')?.querySelector('b')?.textContent?.trim()).toBe(t('gui.git.conflict.card_handled'))
+    expect(q('git-conflict-card-handled')?.textContent).toContain(t('gui.git.conflict.card_handled_desc'))
+    expect(q('git-conflict-card')?.classList.contains('danger')).toBe(false)
     expect(q('git-conflict-unsupported')).toBeNull()
     expect([...document.body.querySelectorAll('[data-test="git-conflict-card"] button')].map((b) => b.getAttribute('data-test'))).toEqual(['git-conflict-open-card'])
     const detail = await heard(() => q('git-conflict-open-card')!.click())

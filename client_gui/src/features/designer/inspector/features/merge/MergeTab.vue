@@ -1,107 +1,166 @@
 <template>
-  <!-- flowgate.v02test.0042 — '병합 · 충돌' (시안 v7 items 2 · 3): the card result's merge, handled in the card.
-       ① catching up: progress only · ② could not reconcile: overlapping files + [AI로 해결 ▾] / [파일별로 직접 고르기] /
-       [이 결과 버리고 최신 코드로 다시 실행] · ③ per-file pick (AI에게 / 이 카드 쪽 / 최신 코드 쪽, no editor) and [병합]
-       once every file is resolved · ④ merged · waiting: what it waits for + [‘…’ 카드로 이동]. -->
+  <!-- flowgate.v02test.0042 — '병합 · 충돌' (시안 v7 items 2 · 3, http://mirageglass.stg/v/qxzmvtjk/conflict.html): the card
+       result's merge, handled in the card. Every screen is one framed box (red: a person must choose, blue: progress or
+       waiting only, green: merged) with its icon title, a sentence, and what the mockup shows under it:
+       ① catching up: progress bar + step log · ② could not reconcile: the file list (each with how it overlaps),
+       [AI로 해결] beside the AI select, then [파일별로 직접 고르기] / [이 결과 버리고 최신 코드로 다시 실행], the waiting cards
+       · ③ per-file pick: a segmented AI에게 / 이 카드 쪽 / 최신 코드 쪽 per file, [이대로 맞추고 병합] / [취소] · ④ merged
+       · waiting: what it waits for + [→ ‘…’ 카드로 이동] · failed: the reason + [다시 시도] / [버리고 다시 실행]. -->
   <section class="merge-tab" data-test="merge-tab" :data-screen="screen" :aria-busy="busy ? 'true' : 'false'">
-    <p v-if="screen === 'loading' && !readFailed" class="merge-note" role="status">{{ t('gui.inspector.merge.loading') }}</p>
-    <p v-if="readFailed" class="merge-alert" role="alert" data-test="merge-read-failed">
+    <p v-if="screen === 'loading' && !readFailed" class="mz-note" role="status">{{ t('gui.inspector.merge.loading') }}</p>
+    <p v-if="readFailed" class="mz-alert" role="alert" data-test="merge-read-failed">
       {{ t('gui.inspector.merge.read_failed') }}
-      <button type="button" class="merge-link" @click="reload">{{ t('gui.inspector.merge.retry') }}</button>
+      <button type="button" class="mz-link" @click="reload">{{ t('gui.inspector.merge.retry_read') }}</button>
     </p>
 
-    <template v-if="screen === 'waiting' && state">
-      <h3 class="merge-title is-info">{{ t('gui.inspector.merge.waiting.title') }}</h3>
-      <p class="merge-body" data-test="merge-waiting-text">
-        {{ state.blockedBy ? t('gui.inspector.merge.waiting.blocked', { title: state.blockedBy.title }) : t('gui.inspector.merge.waiting.turn') }}
+    <!-- waiting (blue) -->
+    <div v-if="screen === 'waiting' && state" class="mz is-info" data-test="merge-box">
+      <h4 class="mz-title is-info"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.hourglass" /></svg>{{ t('gui.inspector.merge.waiting.title') }}</h4>
+      <p class="mz-text" data-test="merge-waiting-text">
+        <template v-if="state.blockedBy">
+          {{ t('gui.inspector.merge.waiting.before') }}<b>{{ t(state.blockedBy.why === 'conflict' ? 'gui.inspector.merge.waiting.blocked_conflict' : 'gui.inspector.merge.waiting.blocked_merging', { title: state.blockedBy.title }) }}</b>{{ t('gui.inspector.merge.waiting.after') }}
+        </template>
+        <template v-else>{{ t('gui.inspector.merge.waiting.turn') }}</template>
       </p>
-      <p v-if="reasonText" class="merge-reason">{{ reasonText }}</p>
-      <Button v-if="state.blockedBy" size="sm" data-test="merge-go-blocked" @click="goBlocked">
-        {{ t('gui.inspector.merge.waiting.go', { title: state.blockedBy.title }) }}
-      </Button>
-    </template>
+      <p v-if="!state.blockedBy && reasonText" class="mz-meta">{{ reasonText }}</p>
+      <div v-if="state.blockedBy" class="mz-btns">
+        <button type="button" class="mz-b" data-test="merge-go-blocked" @click="goCard(state.blockedBy.nodeKey)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.arrow" /></svg>{{ t('gui.inspector.merge.waiting.go', { title: state.blockedBy.title }) }}
+        </button>
+      </div>
+    </div>
 
-    <template v-else-if="screen === 'catching_up' && state">
-      <h3 class="merge-title is-info"><span class="merge-spinner" aria-hidden="true" />{{ t('gui.inspector.merge.catching_up.title') }}</h3>
-      <p class="merge-body" data-test="merge-catching-up-text">
-        {{ state.resolving ? t('gui.inspector.merge.catching_up.resolving') : t('gui.inspector.merge.catching_up.merging') }}
+    <!-- ① catching up (blue): progress + step log -->
+    <div v-else-if="screen === 'catching_up' && state" class="mz is-info" data-test="merge-box">
+      <h4 class="mz-title is-info"><span class="mz-spin"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.spinner" /></svg></span>{{ t(state.resolving ? 'gui.inspector.merge.catching_up.title_ai' : 'gui.inspector.merge.catching_up.title_merging') }}</h4>
+      <p class="mz-text" data-test="merge-catching-up-text">
+        {{ state.resolving ? t('gui.inspector.merge.catching_up.resolving', { count: state.files.length }) : t('gui.inspector.merge.catching_up.merging') }}
       </p>
-      <ul v-if="state.files.length" class="merge-files" data-test="merge-files">
-        <li v-for="file in state.files" :key="file.path" :data-resolved="file.resolved ? 'true' : 'false'">
-          <code>{{ file.path }}</code><span v-if="file.resolved" class="merge-file-done">{{ t('gui.inspector.merge.file_resolved') }}</span>
-        </li>
-      </ul>
-    </template>
+      <div class="mz-prog" :class="{ 'is-indeterminate': !state.files.length }"><i :style="progressStyle" /></div>
+      <div class="mz-log" data-test="merge-log">
+        <div v-for="step in steps" :key="step.key" :data-step="step.state"><span :class="`mz-log-${step.state}`">{{ STEP_MARKS[step.state] }}</span> {{ step.text }}</div>
+      </div>
+      <p class="mz-meta">{{ state.resolving ? t('gui.inspector.merge.catching_up.meta_ai') : t('gui.inspector.merge.catching_up.meta_merging') }}</p>
+    </div>
 
-    <template v-else-if="screen === 'needs_choice' && state">
-      <h3 class="merge-title is-danger">{{ t('gui.inspector.merge.needs_choice.title') }}</h3>
-      <p class="merge-body">{{ allResolved ? t('gui.inspector.merge.needs_choice.resolved_all') : t('gui.inspector.merge.needs_choice.body') }}</p>
-      <p v-if="state.reason === 'conflict_deferred'" class="merge-reason" data-test="merge-deferred">{{ t('gui.inspector.merge.needs_choice.deferred') }}</p>
-      <template v-if="state.files.length">
-        <h4 class="merge-subtitle">{{ t('gui.inspector.merge.files') }}</h4>
-        <ul class="merge-files" data-test="merge-files">
-          <li v-for="file in state.files" :key="file.path" :data-resolved="file.resolved ? 'true' : 'false'">
-            <code>{{ file.path }}</code><span v-if="file.resolved" class="merge-file-done">{{ t('gui.inspector.merge.file_resolved') }}</span>
-          </li>
-        </ul>
+    <!-- ② could not reconcile (red) -->
+    <div v-else-if="screen === 'needs_choice' && state" class="mz" data-test="merge-box">
+      <h4 class="mz-title is-danger"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.conflict" /></svg>{{ t(allResolved ? 'gui.inspector.merge.needs_choice.title_resolved' : 'gui.inspector.merge.needs_choice.title') }}</h4>
+      <p class="mz-text" data-test="merge-summary">
+        <template v-if="allResolved">{{ t('gui.inspector.merge.needs_choice.resolved_all') }}</template>
+        <template v-else-if="summary.file">{{ summary.before }}<b>{{ summary.file }}</b>{{ summary.after }}</template>
+        <template v-else>{{ summary.before }}</template>
+      </p>
+      <div v-if="state.files.length" class="mz-files" data-test="merge-files">
+        <div v-for="file in state.files" :key="file.path" class="mz-fr" :data-resolved="file.resolved ? 'true' : 'false'" :data-kind="file.kind">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.file" /></svg>
+          <code :title="file.path">{{ file.path }}</code>
+          <span v-if="file.resolved" class="mz-why is-done">{{ t('gui.inspector.merge.file_resolved') }}</span>
+          <span v-else class="mz-why">{{ t(`gui.inspector.merge.kinds.${file.kind}`) }}</span>
+        </div>
+      </div>
+      <template v-if="can('merge')">
+        <div class="mz-btns">
+          <button type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-merge" @click="merge">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.check" /></svg>{{ t('gui.inspector.merge.needs_choice.merge') }}
+          </button>
+          <button v-if="can('discard_rerun')" type="button" class="mz-b is-dng" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.rerun" /></svg>{{ t('gui.inspector.merge.needs_choice.discard') }}
+          </button>
+        </div>
       </template>
-      <div class="merge-actions">
-        <Button v-if="can('merge')" size="sm" variant="primary" :disabled="busy" data-test="merge-merge" @click="merge">
-          {{ t('gui.inspector.merge.needs_choice.merge') }}
-        </Button>
-        <Button v-if="can('ai_resolve')" size="sm" :disabled="busy" :aria-expanded="aiOpen ? 'true' : 'false'" data-test="merge-ai" @click="toggleAi">
-          {{ t('gui.inspector.merge.needs_choice.ai') }} ▾
-        </Button>
-        <Button v-if="can('pick')" size="sm" :disabled="busy" data-test="merge-pick-open" @click="openPick">
-          {{ t('gui.inspector.merge.needs_choice.pick') }}
-        </Button>
-        <Button v-if="can('discard_rerun')" size="sm" variant="danger" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
-          {{ t('gui.inspector.merge.needs_choice.discard') }}
-        </Button>
-      </div>
-      <p v-if="can('merge')" class="merge-reason">{{ t('gui.inspector.merge.needs_choice.merge_note') }}</p>
-      <div v-if="aiOpen" class="merge-ai-pick" data-test="merge-ai-picker">
-        <label class="merge-label" for="merge-ai-provider">{{ t('gui.inspector.merge.needs_choice.ai_pick') }}</label>
-        <select id="merge-ai-provider" v-model="providerId" class="merge-select" data-test="merge-ai-provider">
-          <option :value="''">{{ defaultLabel }}</option>
-          <option v-for="provider in otherProviders" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
-        </select>
-        <Button size="sm" variant="primary" :disabled="busy" data-test="merge-ai-start" @click="startAi">{{ t('gui.inspector.merge.needs_choice.ai_start') }}</Button>
-      </div>
-    </template>
+      <template v-else>
+        <div v-if="can('ai_resolve')" class="mz-btns">
+          <button type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-ai" @click="startAi">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.sparkle" /></svg>{{ t('gui.inspector.merge.needs_choice.ai') }}
+          </button>
+          <label class="mz-aisel">
+            <span class="mz-sr">{{ t('gui.inspector.merge.needs_choice.ai_pick') }}</span>
+            <select v-model="providerId" :disabled="busy" data-test="merge-ai-provider">
+              <option :value="''">{{ defaultLabel }}</option>
+              <option v-for="provider in otherProviders" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
+            </select>
+          </label>
+        </div>
+        <div class="mz-btns mz-btns-gap">
+          <button v-if="can('pick')" type="button" class="mz-b" :disabled="busy" data-test="merge-pick-open" @click="openPick">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.hand" /></svg>{{ t('gui.inspector.merge.needs_choice.pick') }}
+          </button>
+          <button v-if="can('discard_rerun')" type="button" class="mz-b is-dng" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.rerun" /></svg>{{ t('gui.inspector.merge.needs_choice.discard') }}
+          </button>
+        </div>
+      </template>
+      <p class="mz-meta" data-test="merge-meta">
+        <template v-if="state.waitingCards.length">
+          {{ t('gui.inspector.merge.waiting_cards') }}
+          <template v-for="(waiting, index) in state.waitingCards" :key="waiting.nodeKey"><template v-if="index">, </template><button type="button" class="mz-link" data-test="merge-waiting-card" @click="goCard(waiting.nodeKey)">{{ waiting.title }}</button></template>
+          {{ t('gui.inspector.merge.needs_choice.waiting_after') }}
+        </template>
+        <template v-else-if="can('merge')">{{ t('gui.inspector.merge.needs_choice.merge_note') }}</template>
+        <template v-else>{{ t('gui.inspector.merge.needs_choice.free') }}</template>
+      </p>
+    </div>
 
-    <template v-else-if="screen === 'pick' && state">
-      <h3 class="merge-title is-danger">{{ t('gui.inspector.merge.pick.title') }}</h3>
-      <ul class="merge-pick-list" data-test="merge-pick-list">
-        <li v-for="file in openFiles" :key="file.path" class="merge-pick-row" :data-path="file.path">
-          <code>{{ file.path }}</code>
-          <span class="merge-pick-sides" role="radiogroup" :aria-label="file.path">
-            <label v-for="side in SIDES" :key="side"><input v-model="choices[file.path]" type="radio" :name="`merge-pick-${file.path}`" :value="side" :data-test="`merge-pick-${side}`" />{{ t(`gui.inspector.merge.pick.${side}`) }}</label>
+    <!-- ③ per-file pick (red) -->
+    <div v-else-if="screen === 'pick' && state" class="mz" data-test="merge-box">
+      <h4 class="mz-title is-danger"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.hand" /></svg>{{ t('gui.inspector.merge.pick.title') }}</h4>
+      <p class="mz-text">{{ t('gui.inspector.merge.pick.before') }}<b>{{ t('gui.inspector.merge.pick.ai') }}</b>{{ t('gui.inspector.merge.pick.after') }}</p>
+      <div class="mz-files" data-test="merge-pick-list">
+        <div v-for="file in openFiles" :key="file.path" class="mz-fr" :data-path="file.path" :data-kind="file.kind">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.file" /></svg>
+          <code :title="file.path">{{ file.path }}</code>
+          <span class="mz-pick" role="radiogroup" :aria-label="file.path">
+            <button
+              v-for="side in SIDES"
+              :key="side"
+              type="button"
+              role="radio"
+              :class="{ on: choices[file.path] === side }"
+              :aria-checked="choices[file.path] === side ? 'true' : 'false'"
+              :disabled="busy || !sideAvailable(file.kind, side)"
+              :title="sideAvailable(file.kind, side) ? undefined : t('gui.inspector.merge.pick.deleted_side')"
+              :data-test="`merge-pick-${side}`"
+              @click="choices[file.path] = side"
+            >{{ t(`gui.inspector.merge.pick.${side}`) }}</button>
           </span>
-        </li>
-      </ul>
-      <div class="merge-actions">
-        <Button size="sm" variant="primary" :disabled="busy" data-test="merge-pick-submit" @click="submitPick">{{ t('gui.inspector.merge.pick.submit') }}</Button>
-        <Button size="sm" variant="secondary" :disabled="busy" data-test="merge-pick-cancel" @click="picking = false">{{ t('gui.inspector.merge.pick.cancel') }}</Button>
+        </div>
       </div>
-    </template>
-
-    <template v-else-if="screen === 'failed' && state">
-      <h3 class="merge-title is-danger">{{ t('gui.inspector.merge.failed.title') }}</h3>
-      <p class="merge-body" data-test="merge-failed-text">{{ reasonText }}</p>
-      <div class="merge-actions">
-        <Button v-if="can('discard_rerun')" size="sm" variant="danger" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
-          {{ t('gui.inspector.merge.needs_choice.discard') }}
-        </Button>
+      <div class="mz-btns">
+        <button type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-pick-submit" @click="submitPick">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.check" /></svg>{{ t('gui.inspector.merge.pick.submit') }}
+        </button>
+        <button type="button" class="mz-b" :disabled="busy" data-test="merge-pick-cancel" @click="picking = false">{{ t('gui.inspector.merge.pick.cancel') }}</button>
       </div>
-    </template>
+      <p class="mz-meta">{{ t('gui.inspector.merge.pick.meta') }}</p>
+    </div>
 
-    <template v-else-if="screen === 'merged'">
-      <h3 class="merge-title is-ok">{{ t('gui.inspector.merge.merged.title') }}</h3>
-      <p class="merge-body" data-test="merge-merged-text">{{ t('gui.inspector.merge.merged.body') }}</p>
-    </template>
+    <!-- failed (red) -->
+    <div v-else-if="screen === 'failed' && state" class="mz" data-test="merge-box">
+      <h4 class="mz-title is-danger"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.failed" /></svg>{{ t('gui.inspector.merge.failed.title') }}</h4>
+      <p class="mz-text" data-test="merge-failed-text">{{ reasonText || t('gui.inspector.merge.failed.body') }}</p>
+      <div class="mz-btns">
+        <button v-if="can('retry')" type="button" class="mz-b" :disabled="busy" data-test="merge-retry" @click="retry">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.retry" /></svg>{{ t('gui.inspector.merge.failed.retry') }}
+        </button>
+        <button v-if="can('discard_rerun')" type="button" class="mz-b is-dng" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.rerun" /></svg>{{ t('gui.inspector.merge.needs_choice.discard') }}
+        </button>
+      </div>
+      <p v-if="state.waitingCards.length" class="mz-meta">
+        {{ t('gui.inspector.merge.waiting_cards') }}
+        <template v-for="(waiting, index) in state.waitingCards" :key="waiting.nodeKey"><template v-if="index">, </template><button type="button" class="mz-link" @click="goCard(waiting.nodeKey)">{{ waiting.title }}</button></template>
+      </p>
+    </div>
 
-    <p v-if="errorText" class="merge-alert" role="alert" data-test="merge-error">{{ errorText }}</p>
+    <!-- ④ merged (green) -->
+    <div v-else-if="screen === 'merged'" class="mz is-ok" data-test="merge-box">
+      <h4 class="mz-title is-ok"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.check" /></svg>{{ t('gui.inspector.merge.merged.title') }}</h4>
+      <p class="mz-text" data-test="merge-merged-text">{{ t('gui.inspector.merge.merged.body') }}</p>
+      <p class="mz-meta">{{ t('gui.inspector.merge.merged.meta') }}</p>
+    </div>
+
+    <p v-if="errorText" class="mz-alert" role="alert" data-test="merge-error">{{ errorText }}</p>
 
     <ConfirmDialog
       :open="confirmOpen"
@@ -119,7 +178,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Button from '../../../../../components/ui/Button.vue'
 import ConfirmDialog from '../../../../../components/ui/ConfirmDialog.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { mergeReasonKey } from './mergeModel'
@@ -128,21 +186,53 @@ import { openCardMerge, useMerge } from './useMerge'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t, te } = useI18n()
 
+/** The mockup's glyphs (24px box, stroke 2). */
+const ICONS = {
+  conflict: 'M7 4l10 16 M17 4L7 20 M4 9h4 M16 15h4',
+  hourglass: 'M7 3h10 M7 21h10 M8 3c0 5 8 5 8 9s-8 4-8 9 M16 3c0 5-8 5-8 9s8 4 8 9',
+  spinner: 'M12 3a9 9 0 1 0 9 9',
+  file: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5',
+  sparkle: 'M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z',
+  hand: 'M8 13V5a1.5 1.5 0 0 1 3 0v6 M11 11V4a1.5 1.5 0 0 1 3 0v7 M14 11V5a1.5 1.5 0 0 1 3 0v8 M8 13l-1.5-1.5a1.6 1.6 0 0 0-2.3 2.3L8 18c1.2 1.6 2.6 3 5 3h1a5 5 0 0 0 5-5v-3',
+  rerun: 'M4 12a8 8 0 1 0 2.3-5.7 M4 4v5h5',
+  retry: 'M20 12a8 8 0 1 1-2.3-5.7 M20 4v5h-5',
+  check: 'M5 12l4 4L19 6',
+  arrow: 'M5 12h14 M13 6l6 6-6 6',
+  failed: 'M5 3v4l6 6v8 M17 3v4l-6 6 M15 16l5 5 M20 16l-5 5',
+} as const
+
+/** How a file overlaps (the merge state's file kind). */
+type FileKind = 'both' | 'deleted_latest' | 'deleted_card'
 const SIDES = ['ai', 'card', 'latest'] as const
 type Side = (typeof SIDES)[number]
+type StepState = 'ok' | 'run' | 'todo'
+const STEP_MARKS: Record<StepState, string> = { ok: '✓', run: '●', todo: '○' }
 
-const { state, screen, readFailed, error, busy, picking, providers, reload, aiResolve, pick, merge, discardRerun, loadProviders } =
+const { state, screen, readFailed, error, busy, picking, providers, reload, aiResolve, pick, merge, discardRerun, retry, loadProviders } =
   useMerge(() => props.target)
 
 const can = (action: string) => !!state.value?.actions.includes(action as never)
 const allResolved = computed(() => !!state.value?.files.length && state.value.files.every((file) => file.resolved))
 const openFiles = computed(() => (state.value?.files ?? []).filter((file) => !file.resolved))
 
+/** The last two segments of a path (the mockup's "attachments/routes.py"). */
+const shortPath = (path: string) => path.split('/').slice(-2).join('/')
+
+/** ②'s sentence: a file one side deleted is named; otherwise how many files overlap. */
+const summary = computed(() => {
+  const files = state.value?.files ?? []
+  const deleted = files.find((file) => !file.resolved && file.kind !== 'both')
+  if (deleted) {
+    const base = `gui.inspector.merge.needs_choice.${deleted.kind}`
+    return { before: t(`${base}.before`), file: shortPath(deleted.path), after: t(`${base}.after`) }
+  }
+  return { before: t('gui.inspector.merge.needs_choice.both', { count: files.length }), file: '', after: '' }
+})
+
 const reasonText = computed(() => {
   const reason = state.value?.reason ?? null
   if (!reason) return ''
-  const key = mergeReasonKey(reason)
-  return t(`gui.inspector.merge.reasons.${key}`, { reason })
+  return t(`gui.inspector.merge.reasons.${mergeReasonKey(reason)}`, { reason })
 })
 
 const errorText = computed(() => {
@@ -154,30 +244,59 @@ const errorText = computed(() => {
   return t('gui.inspector.merge.error', { code, message })
 })
 
-// ② [AI로 해결 ▾]: the AI defaults to this card's run AI (the server's default_provider).
-const aiOpen = ref(false)
+// ① the step log and the bar: the files the AI has reconciled so far, or the merge itself.
+const resolvedCount = computed(() => (state.value?.files ?? []).filter((file) => file.resolved).length)
+const progressStyle = computed(() => {
+  const total = state.value?.files.length ?? 0
+  return total ? { width: `${Math.max(8, Math.round((resolvedCount.value / total) * 100))}%` } : {}
+})
+const steps = computed<{ key: string; state: StepState; text: string }[]>(() => {
+  const current = state.value
+  if (!current) return []
+  const base = 'gui.inspector.merge.catching_up.steps'
+  if (current.resolving) {
+    const total = current.files.length
+    const done = resolvedCount.value
+    return [
+      { key: 'found', state: 'ok', text: t(`${base}.found`, { count: total }) },
+      { key: 'resolve', state: total && done >= total ? 'ok' : 'run', text: t(`${base}.resolve`, { done, count: total, ai: aiName.value }) },
+      { key: 'merge', state: 'todo', text: t(`${base}.merge_after`) },
+    ]
+  }
+  return [
+    { key: 'approved', state: 'ok', text: t(`${base}.approved`) },
+    { key: 'merging', state: 'run', text: t(`${base}.merging`) },
+    { key: 'done', state: 'todo', text: t(`${base}.done`) },
+  ]
+})
+
+// ② [AI로 해결] beside its AI select: the card's own work AI by default (the server's default_provider).
 const providerId = ref('')
+const aiName = computed(() => {
+  const chosen = providers.value.find((provider) => provider.id === providerId.value)
+  return chosen?.name ?? state.value?.defaultProvider?.name ?? t('gui.inspector.merge.needs_choice.ai_default')
+})
 const defaultLabel = computed(() => {
   const provider = state.value?.defaultProvider
-  return provider ? `${provider.name} (${t('gui.inspector.merge.needs_choice.ai_default')})` : t('gui.inspector.merge.needs_choice.ai_default')
+  return provider ? t('gui.inspector.merge.needs_choice.ai_default_named', { name: provider.name }) : t('gui.inspector.merge.needs_choice.ai_default')
 })
 const otherProviders = computed(() => providers.value.filter((provider) => provider.id !== state.value?.defaultProvider?.id))
 
-function toggleAi(): void {
-  aiOpen.value = !aiOpen.value
-  if (aiOpen.value) void loadProviders()
-}
+watch(() => screen.value === 'needs_choice' || screen.value === 'pick', (choosing) => {
+  if (choosing) void loadProviders()
+}, { immediate: true })
 
 async function startAi(): Promise<void> {
-  aiOpen.value = false
   await aiResolve(providerId.value || null)
 }
 
-// ③ per-file pick: every file starts on the AI.
+// ③ per-file pick: every file starts on the AI; a side that deleted the file cannot be picked.
 const choices = reactive<Record<string, Side>>({})
+function sideAvailable(kind: FileKind, side: Side): boolean {
+  return !((kind === 'deleted_latest' && side === 'latest') || (kind === 'deleted_card' && side === 'card'))
+}
 function openPick(): void {
   for (const file of openFiles.value) if (!choices[file.path]) choices[file.path] = 'ai'
-  aiOpen.value = false
   picking.value = true
 }
 
@@ -191,13 +310,11 @@ async function discard(): Promise<void> {
   await discardRerun()
 }
 
-function goBlocked(): void {
-  const blocked = state.value?.blockedBy
-  if (blocked) openCardMerge(props.target.flowId, blocked.nodeKey)
+function goCard(nodeKey: string): void {
+  openCardMerge(props.target.flowId, nodeKey)
 }
 
 watch(() => props.target.nodeId, () => {
-  aiOpen.value = false
   confirmOpen.value = false
   providerId.value = ''
   for (const key of Object.keys(choices)) delete choices[key]
@@ -205,25 +322,69 @@ watch(() => props.target.nodeId, () => {
 </script>
 
 <style scoped>
-.merge-tab { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 12px; }
-.merge-title { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; font-weight: 650; }
-.merge-title.is-info { color: var(--fg2-blue); }
-.merge-title.is-danger { color: var(--fg2-status-danger-fg); }
-.merge-title.is-ok { color: var(--fg2-cyan); }
-.merge-subtitle { margin: 4px 0 0; color: var(--fg2-muted); font-size: 11.5px; font-weight: 600; }
-.merge-body, .merge-reason, .merge-note { margin: 0; }
-.merge-reason, .merge-note { color: var(--fg2-muted); }
-.merge-alert { margin: 0; color: var(--fg2-status-danger-fg); }
-.merge-link { margin-left: 6px; padding: 0; border: 0; background: none; color: var(--fg2-blue); cursor: pointer; text-decoration: underline; }
-.merge-files, .merge-pick-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
-.merge-files li, .merge-pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
-.merge-files code, .merge-pick-row code { overflow-wrap: anywhere; color: var(--fg2-text); }
-.merge-file-done { color: var(--fg2-cyan); font-size: 11px; }
-.merge-pick-sides { display: inline-flex; flex-wrap: wrap; gap: 10px; }
-.merge-pick-sides label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
-.merge-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.merge-ai-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.merge-select { min-width: 160px; }
-.merge-spinner { width: 10px; height: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: merge-spin 0.9s linear infinite; }
-@keyframes merge-spin { to { transform: rotate(360deg); } }
+/* The mockup's values (conflict.html .mz / .files / .b / .pick / .log / .meta), on the Designer's palette. */
+.merge-tab { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 12.5px; }
+.mz {
+  min-width: 0;
+  padding: 12px 13px;
+  border: 1px solid rgba(255, 100, 120, 0.45);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 100, 120, 0.09), rgba(255, 100, 120, 0.03));
+}
+.mz.is-info { border-color: rgba(75, 163, 255, 0.4); background: linear-gradient(180deg, rgba(75, 163, 255, 0.1), rgba(75, 163, 255, 0.03)); }
+.mz.is-ok { border-color: rgba(34, 201, 140, 0.45); background: linear-gradient(180deg, rgba(34, 201, 140, 0.1), rgba(34, 201, 140, 0.03)); }
+.mz-title { display: flex; align-items: center; gap: 7px; margin: 0 0 4px; font-size: 13.5px; font-weight: 700; }
+.mz-title svg, .mz-b svg, .mz-fr svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mz-title svg { flex: none; width: 16px; height: 16px; }
+.mz-title.is-danger { color: #ff96a6; }
+.mz-title.is-info { color: #7cc0ff; }
+.mz-title.is-ok { color: #4fe0b0; }
+.mz-text { margin: 2px 0 8px; color: #c0d0e2; font-size: 12.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.mz-text b { color: #eef5ff; }
+.mz-meta { margin: 8px 0 0; color: #8ea5bd; font-size: 11.5px; line-height: 1.6; }
+.mz-note { margin: 0; color: #8ea5bd; }
+.mz-alert { margin: 0; color: #ff96a6; }
+.mz-link { padding: 0; border: 0; background: none; color: #7cc0ff; font: inherit; cursor: pointer; }
+.mz-link:hover { text-decoration: underline; }
+.mz-files { overflow: hidden; margin: 8px 0 10px; border: 1px solid #233650; border-radius: 8px; }
+.mz-fr { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 10px; border-bottom: 1px solid #1b2b42; background: #0b1828; font-size: 12px; }
+.mz-fr:last-child { border-bottom: 0; }
+.mz-fr svg { flex: none; width: 14px; height: 14px; color: #8fb0d0; }
+.mz-fr code { flex: 1 1 auto; min-width: 0; overflow: hidden; color: #dbe8f6; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.mz-why { flex: none; color: #8ea5bd; font-size: 11px; white-space: nowrap; }
+.mz-why.is-done { color: #4fe0b0; }
+.mz-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.mz-btns-gap { margin-top: 8px; }
+.mz-b {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
+  border: 1px solid #2b4566; border-radius: 7px; background: #13263d; color: #dbe8f6;
+  font: inherit; font-size: 12.5px; font-weight: 700; white-space: nowrap; cursor: pointer;
+}
+.mz-b svg { flex: none; width: 15px; height: 15px; }
+.mz-b:hover:not(:disabled) { filter: brightness(1.15); }
+.mz-b:disabled { cursor: not-allowed; opacity: 0.55; }
+.mz-b.is-pri { border-color: #3b82f6; background: #2563eb; color: #fff; }
+.mz-b.is-dng { border-color: rgba(255, 100, 120, 0.45); background: transparent; color: #ff96a6; }
+.mz-aisel { display: inline-flex; align-items: center; min-width: 0; }
+.mz-aisel select {
+  height: 30px; max-width: 100%; padding: 0 10px; border: 1px solid #2b4566; border-radius: 7px;
+  background: #0b1828; color: #cfe0f3; font: inherit; font-size: 12px; cursor: pointer;
+}
+.mz-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.mz-pick { display: inline-flex; flex: none; overflow: hidden; border: 1px solid #2b4566; border-radius: 6px; }
+.mz-pick button { padding: 3px 8px; border: 0; border-right: 1px solid #2b4566; background: transparent; color: #9fb3c8; font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.mz-pick button:last-child { border-right: 0; }
+.mz-pick button.on { background: #1d3a5f; color: #fff; font-weight: 700; }
+.mz-pick button:disabled { cursor: not-allowed; opacity: 0.4; }
+.mz-prog { height: 6px; margin: 6px 0 8px; overflow: hidden; border-radius: 3px; background: #1b2b42; }
+.mz-prog i { display: block; width: 8%; height: 100%; background: linear-gradient(90deg, #3b82f6, #7cc0ff); transition: width 0.3s ease; }
+.mz-prog.is-indeterminate i { width: 35%; animation: mz-slide 1.4s ease-in-out infinite; }
+.mz-log { padding: 8px 10px; border: 1px solid #1b2b42; border-radius: 6px; background: #08131f; color: #a9bed4; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; line-height: 1.7; }
+.mz-log-ok { color: #4fe0b0; }
+.mz-log-run { color: #7cc0ff; }
+.mz-log-todo { opacity: 0.5; }
+.mz-spin { display: inline-grid; place-items: center; }
+.mz-spin svg { animation: mz-spin 1s linear infinite; }
+@keyframes mz-spin { to { transform: rotate(360deg); } }
+@keyframes mz-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
 </style>

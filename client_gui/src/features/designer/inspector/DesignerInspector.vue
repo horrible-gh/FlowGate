@@ -468,11 +468,22 @@ watch(
 
 /* flowgate.v02test.0042: a coloured tab label — blue: progress only; red: a person must choose. */
 .designer-inspector-tabs :deep(.ui-tab[data-tone="info"]) {
-  color: var(--fg2-blue);
+  color: #7cc0ff;
+  font-weight: 700;
 }
 
 .designer-inspector-tabs :deep(.ui-tab[data-tone="danger"]) {
-  color: var(--fg2-status-danger-fg);
+  color: #ff96a6;
+  font-weight: 700;
+}
+
+/* 시안 v7: the coloured tab is underlined in its own colour when selected (not the default blue). */
+.designer-inspector-tabs :deep(.ui-tab.is-active[data-tone="info"]) {
+  border-bottom-color: #7cc0ff;
+}
+
+.designer-inspector-tabs :deep(.ui-tab.is-active[data-tone="danger"]) {
+  border-bottom-color: #ff96a6;
 }
 
 .designer-inspector-body {

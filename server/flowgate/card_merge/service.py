@@ -9,6 +9,9 @@ State (``view``), from the card's active attempt (``result_merge``):
                   (``conflict_deferred``: the group is free, a choice asks the merge again with a session)
     failed        ``failed`` (verification_failed, conflict_aborted, ...)
 
+Each file carries how it overlaps (``kind``: both / deleted_latest / deleted_card), and a conflicting or failed card
+the cards whose merge waits behind it (``waiting_cards``).
+
 Choices (``act``), human only (the route takes a user JWT), each judged against ``expected_attempt_id`` and the
 actions the state offers now (else 409 ``merge_state_changed``):
 
@@ -16,9 +19,11 @@ actions the state offers now (else 409 ``merge_state_changed``):
     pick           per file: ``card`` (the card's result) / ``latest`` (the group branch) written as is, ``ai`` left
                    to one AI run. In the group session the group is ``ours`` (HEAD) and the result ``theirs``
                    (MERGE_HEAD); a person's whole-side pick is recorded as a supersede of that side (no AI check:
-                   it is a person's explicit choice). A side that deleted the file cannot be picked (422).
+                   it is a person's explicit choice). A side that deleted the file cannot be picked (422). With no file
+                   left to the AI, the merge goes on at once ([이대로 맞추고 병합]).
     merge          every file resolved: the existing session commit (``tr_commit_service.commit_conflict_resolution``);
                    the card is then done through the session's close notice as before
+    retry          ``failed``: the merge is asked again as is (``pending`` / ``retry``, the Flow's drain)
     discard_rerun  an open session is aborted first (``abort_conflict_resolution``), then the card is retried on the
                    latest code (``graph_run.recovery.retry``, a new attempt; the old result stays in its history)
 """
@@ -36,8 +41,8 @@ from flowgate.graph_run import result_merge as rm, workspace
 log = logging.getLogger(__name__)
 
 HIDDEN, WAITING, CATCHING_UP, NEEDS_CHOICE, FAILED = "hidden", "waiting", "catching_up", "needs_choice", "failed"
-AI_RESOLVE, PICK, MERGE, DISCARD_RERUN = "ai_resolve", "pick", "merge", "discard_rerun"
-ACTIONS = (AI_RESOLVE, PICK, MERGE, DISCARD_RERUN)
+AI_RESOLVE, PICK, MERGE, DISCARD_RERUN, RETRY = "ai_resolve", "pick", "merge", "discard_rerun", "retry"
+ACTIONS = (AI_RESOLVE, PICK, MERGE, DISCARD_RERUN, RETRY)
 SIDE_AI, SIDE_CARD, SIDE_LATEST = "ai", "card", "latest"
 SIDES = (SIDE_AI, SIDE_CARD, SIDE_LATEST)
 # The group session merges the result (MERGE_HEAD) into the group branch (HEAD): the group is ours.
@@ -104,7 +109,43 @@ def _default_provider(flow_id: str, node_key: str) -> Optional[dict]:
 def _empty(flow_id: str, node_key: str, attempt_id: Optional[str]) -> dict:
     return {"flow_id": flow_id, "node_key": node_key, "attempt_id": attempt_id, "state": HIDDEN,
             "integration_status": None, "reason": None, "blocked_by": None, "files": [], "session": None,
-            "resolving": None, "default_provider": None, "actions": []}
+            "resolving": None, "default_provider": None, "actions": [], "waiting_cards": []}
+
+
+def _waiting_cards(flow_id: str, row: dict) -> list[dict]:
+    """The other cards of the run whose merge waits behind this one (``blocked_by`` names it): the tab's
+    "기다리는 카드". Never raises."""
+    try:
+        rows = run_store._all(
+            "SELECT run_id, node_key, integration_status, integration_reason FROM graph_node_attempts "
+            "WHERE run_id = ? AND status = 'active' AND integration_status = 'pending' AND node_key <> ? "
+            "ORDER BY created_at, attempt_id", [row["run_id"], row["node_key"]])
+        keys = [r["node_key"] for r in rows if rm.blocked_by(r) == row["node_key"]]
+    except Exception:  # noqa: BLE001 — a list for the screen only
+        log.warning("card merge could not list the cards waiting on %s", row.get("node_key"), exc_info=True)
+        return []
+    return [{"node_key": key, "title": _title(flow_id, key)} for key in keys]
+
+
+def _blocked_why(flow_id: str, key: str) -> str:
+    """Why the card ``key`` holds the group: ``conflict`` (its open conflict session) or ``merging``."""
+    try:
+        session = db_git.get_open_session_by_group(flow_id)
+        if session is not None and db_git.session_context(session).get("node_key") == key:
+            return "conflict"
+    except Exception:  # noqa: BLE001 — a label only
+        pass
+    return "merging"
+
+
+def _session_kinds(row: dict) -> dict[str, str]:
+    """How each file of the card's open session overlaps (read on the group worktree, where the merge is). {} when
+    unreadable."""
+    try:
+        _project, root, _branch = rm._group_root(row)
+        return rm.conflict_kinds(root) if root is not None else {}
+    except Exception:  # noqa: BLE001 — a label only
+        return {}
 
 
 def view(flow_id: str, node_key: str) -> dict:
@@ -117,18 +158,21 @@ def view(flow_id: str, node_key: str) -> dict:
     out.update(integration_status=status, reason=reason, default_provider=_default_provider(flow_id, node_key))
     if status == rm.PENDING:
         key = rm.blocked_by(row)
-        out.update(state=WAITING, blocked_by={"node_key": key, "title": _title(flow_id, key)} if key else None)
+        out.update(state=WAITING, blocked_by={"node_key": key, "title": _title(flow_id, key),
+                                              "why": _blocked_why(flow_id, key)} if key else None)
     elif status == rm.INTEGRATING:
         out["state"] = CATCHING_UP
     elif status == rm.FAILED:
-        out.update(state=FAILED, actions=[DISCARD_RERUN])
+        out.update(state=FAILED, actions=[RETRY, DISCARD_RERUN])
     else:                                                    # conflict
         session = _open_session(row)
         if session is not None:
             merge_id = int(session["merge_id"])
             context = db_git.session_context(session)
             review_state = context.get("review_state") or "open"
-            files = [{"path": f["path"], "resolved": bool(f.get("resolved"))} for f in db_git.session_files(merge_id)]
+            kinds = _session_kinds(row)
+            files = [{"path": f["path"], "resolved": bool(f.get("resolved")), "kind": kinds.get(f["path"], rm.KIND_BOTH)}
+                     for f in db_git.session_files(merge_id)]
             out.update(files=files, session={"merge_id": merge_id, "kind": db_git.session_kind(session),
                                              "review_state": review_state})
             resolving = _resolving(flow_id)
@@ -139,10 +183,13 @@ def view(flow_id: str, node_key: str) -> dict:
                 out.update(state=NEEDS_CHOICE,
                            actions=[AI_RESOLVE, PICK] + ([MERGE] if ready else []) + [DISCARD_RERUN])
         elif reason == rm.CONFLICT_DEFERRED:
+            paths, kinds = rm.deferred_conflict(row["attempt_id"])
             out.update(state=NEEDS_CHOICE, actions=[AI_RESOLVE, PICK, DISCARD_RERUN],
-                       files=[{"path": p, "resolved": False} for p in rm.deferred_files(row["attempt_id"])])
+                       files=[{"path": p, "resolved": False, "kind": kinds.get(p, rm.KIND_BOTH)} for p in paths])
         else:
             out["state"] = WAITING          # its session closed, the close not settled yet: the next drain settles it
+    if out["state"] in (NEEDS_CHOICE, FAILED, CATCHING_UP):
+        out["waiting_cards"] = _waiting_cards(flow_id, row)
     return out
 
 
@@ -325,13 +372,13 @@ def act(flow_id: str, node_key: str, user_id: str, body: Any, *, request=None,
     action = choice["action"]
     if action == DISCARD_RERUN:
         _discard_rerun(flow_id, node_key, user_id, row, state, recheck)
+    elif action == RETRY:
+        # a failed merge asked again as is (the drain merges it on the latest group code)
+        if not rm._set(row["attempt_id"], rm.PENDING, "retry", (rm.FAILED,)):
+            raise _changed(state=view(flow_id, node_key))
+        rm.request(flow_id)
     elif action == MERGE:
-        from modules.flow_gate.services import tr_commit_service
-        from modules.flow_gate.services.git.credentials import GitServiceError
-        try:
-            tr_commit_service.commit_conflict_resolution(flow_id, int(state["session"]["merge_id"]))
-        except GitServiceError as exc:
-            raise _git_error(exc) from exc
+        _commit(flow_id, int(state["session"]["merge_id"]))
     else:
         state = _with_session(flow_id, node_key, row, state)
         merge_id = int(state["session"]["merge_id"])
@@ -343,9 +390,22 @@ def act(flow_id: str, node_key: str, user_id: str, body: Any, *, request=None,
             if to_ai:
                 started = _start_ai(flow_id, merge_id, request, user_id, choice["provider_id"],
                                     state["default_provider"], to_ai)
+            elif MERGE in view(flow_id, node_key)["actions"]:
+                # [이대로 맞추고 병합]: every file was picked by a person, so the merge goes on at once
+                _commit(flow_id, merge_id)
         else:
             started = _start_ai(flow_id, merge_id, request, user_id, choice["provider_id"], state["default_provider"])
     return {**view(flow_id, node_key), "started_run_id": started}
+
+
+def _commit(flow_id: str, merge_id: int) -> None:
+    """The session's commit (the existing TR conflict commit): the card is then done through its close notice."""
+    from modules.flow_gate.services import tr_commit_service
+    from modules.flow_gate.services.git.credentials import GitServiceError
+    try:
+        tr_commit_service.commit_conflict_resolution(flow_id, merge_id)
+    except GitServiceError as exc:
+        raise _git_error(exc) from exc
 
 
 def _discard_rerun(flow_id: str, node_key: str, user_id: str, row: dict, state: dict,

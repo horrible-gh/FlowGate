@@ -382,6 +382,7 @@ export default {
         open_conflict: 'Handled in the card\'s \'Merge · Conflict\' tab',
         // flowgate.v02test.0042 — a waiting merge's hourglass tooltip.
         waiting_for: 'Waiting for the \'{title}\' card\'s conflict to be resolved',
+        waiting_behind: 'Waiting for the \'{title}\' card\'s merge to end',
         waiting_turn: 'Waiting for its turn to merge',
         // v02gui.0015 T4 — the result failed the integration's syntax check.
         verification_failed: 'Not merged: a file of the result has a syntax error. To redo the work, stop and run again (a new attempt opens).',
@@ -845,12 +846,12 @@ export default {
         empty_runs: 'No running or waiting runs.',
         // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
         merge: {
-          needs_choice: '\'{title}\' merge conflict — a choice is needed',
-          failed: '\'{title}\' merge failed',
-          waiting: '\'{title}\' waiting to merge',
-          waiting_for: '\'{title}\' waiting to merge · for the \'{blocked}\' conflict',
-          catching_up: '\'{title}\' catching up with the latest code',
-          open: 'Open in the card',
+          needs_choice: 'The \'{title}\' card\'s merge conflict — a choice is needed',
+          failed: 'The \'{title}\' card\'s merge failed — a choice is needed',
+          waiting: 'The \'{title}\' card waits to merge',
+          waiting_for: 'The \'{title}\' card waits to merge (behind \'{blocked}\')',
+          catching_up: 'The \'{title}\' card\'s merge is in progress',
+          open: 'Open',
         },
         empty_ai: 'No AI notifications.',
           question_all: "View all",
@@ -1481,7 +1482,8 @@ export default {
       abort_bound: 'The final approval attempt in progress ends with it.',
       unsupported: 'This kind of conflict is not handled on this screen.',
       // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
-      card_handled: 'A card result\'s merge conflict. It is handled in the card.',
+      card_handled: 'A card result\'s merge conflict — handled in the card',
+      card_handled_desc: 'You choose for this conflict in that card\'s \'Merge · Conflict\' tab, not in the Git tab.',
       open_card: 'Go to the card',
       loading: 'Loading conflict files…',
     },

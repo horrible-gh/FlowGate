@@ -1,16 +1,19 @@
 <template>
-  <section class="gx-card danger" data-test="git-conflict-card">
+  <section class="gx-card" :class="{ danger: !(unsupported && graphMerge) }" data-test="git-conflict-card">
     <div class="gx-title">
       {{ t('gui.git.conflict.title_target', { target }) }}
     </div>
     <!-- flowgate.v02test.0042 (시안 v7 item 3): a card result's merge conflict is no dead end here — it is handled in the
          card; [카드로 이동] opens that card's '병합 · 충돌' tab. No resolve action is offered in this panel. -->
-    <template v-if="unsupported && graphMerge">
-      <p class="gx-desc" data-test="git-conflict-card-handled">{{ t('gui.git.conflict.card_handled') }}</p>
-      <div class="gx-actions">
-        <button type="button" class="gx-btn primary" data-test="git-conflict-open-card" @click="openCard">{{ t('gui.git.conflict.open_card') }}</button>
+    <div v-if="unsupported && graphMerge" class="gx-card-handled" data-test="git-conflict-card-handled">
+      <b>{{ t('gui.git.conflict.card_handled') }}</b>
+      <span>{{ t('gui.git.conflict.card_handled_desc') }}</span>
+      <div class="gx-card-handled-btns">
+        <button type="button" class="gx-card-handled-go" data-test="git-conflict-open-card" @click="openCard">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14 M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>{{ t('gui.git.conflict.open_card') }}
+        </button>
       </div>
-    </template>
+    </div>
     <p v-else-if="unsupported" class="gx-desc" data-test="git-conflict-unsupported">{{ t('gui.git.conflict.unsupported') }}</p>
     <template v-else>
       <p v-if="files && files.length" class="gx-desc" data-test="git-conflict-count">
@@ -246,3 +249,14 @@ function askAbort(): void {
   })
 }
 </script>
+
+<style scoped>
+/* flowgate.v02test.0042 (시안 v7 item 3): a card result's conflict is a blue note with [→ 카드로 이동], never a dead end. */
+.gx-card-handled { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding: 10px 12px; border: 1px solid rgba(75, 163, 255, 0.4); border-radius: 8px; background: rgba(75, 163, 255, 0.1); }
+.gx-card-handled b { color: #7cc0ff; font-size: 12.5px; }
+.gx-card-handled span { color: #c0d0e2; font-size: 12px; line-height: 1.5; }
+.gx-card-handled-btns { display: flex; margin-top: 8px; }
+.gx-card-handled-go { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border: 1px solid #2b4566; border-radius: 7px; background: #13263d; color: #dbe8f6; font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.gx-card-handled-go svg { width: 15px; height: 15px; }
+.gx-card-handled-go:hover { filter: brightness(1.15); }
+</style>

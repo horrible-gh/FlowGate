@@ -480,11 +480,14 @@ def _merge(row: dict, keep_session: bool = False) -> tuple[str, object]:
                 return FAILED, "merge_verification_failed"
             return INTEGRATED, head
         if not keep_session:
-            # flowgate.v02test.0042: undone at once — the group stays free for the other cards' merges
+            # flowgate.v02test.0042: undone at once — the group stays free for the other cards' merges. How each file
+            # overlaps (both changed it / one side deleted it) is read first: the card's tab says it per file.
+            kinds = conflict_kinds(root)
             proc = git._run_git(["merge", "--abort"], cwd=root)
             if proc.returncode != 0 or git._rev_parse(root, "MERGE_HEAD") is not None:
                 return FAILED, "merge_abort_failed"          # the merge state stays: a person must clear it
-            return DEFERRED, sorted(files)
+            paths = sorted(files)
+            return DEFERRED, {"files": paths, "file_kinds": {p: kinds.get(p, KIND_BOTH) for p in paths}}
         doc = documents.get_by_id((_node(row) or {}).get("result_doc_id")) or {}
         ledger = tr_commit_ledger.by_attempt(row["attempt_id"]) or {}
         session = conflict.open_tr_conflict_session(
@@ -681,7 +684,7 @@ def integrate(attempt_id: str) -> str:
                         _settle_closed(current, (CONFLICT,))
                 elif status == DEFERRED:
                     status = CONFLICT if _set(attempt_id, CONFLICT, CONFLICT_DEFERRED, (INTEGRATING,),
-                                              {"files": list(value)}) else SKIPPED
+                                              dict(value)) else SKIPPED
                 else:
                     _set(attempt_id, status, str(value), (INTEGRATING,))
             finally:
@@ -717,11 +720,35 @@ def _verification_refused(row: dict) -> Optional[str]:
     return FAILED if recorded else SKIPPED
 
 
-def deferred_files(attempt_id: str) -> list[str]:
-    """flowgate.v02test.0042: the overlapping files of the attempt's latest deferred conflict (its run event), or []."""
+# flowgate.v02test.0042: how a conflicting file overlaps, as the card's tab says it. The group branch is ``ours``
+# (HEAD, the latest code) and the card's result ``theirs`` (MERGE_HEAD).
+KIND_BOTH, KIND_DELETED_LATEST, KIND_DELETED_CARD = "both", "deleted_latest", "deleted_card"
+_KIND_OF_XY = {"DU": KIND_DELETED_LATEST, "UD": KIND_DELETED_CARD}
+
+
+def conflict_kinds(root) -> dict[str, str]:
+    """The unmerged paths of the merge in progress in ``root`` -> their kind (``KIND_*``). {} when unreadable."""
+    try:
+        proc = git._run_git(["status", "--porcelain=v1", "--untracked-files=no"], cwd=root)
+    except Exception:  # noqa: BLE001 — a label only
+        return {}
+    if proc.returncode != 0:
+        return {}
+    out = proc.stdout.decode("utf-8", "replace") if isinstance(proc.stdout, bytes) else (proc.stdout or "")
+    kinds: dict[str, str] = {}
+    for line in out.splitlines():
+        xy, path = line[:2], line[3:].strip().strip('"')
+        if path and xy in ("DD", "AU", "UD", "UA", "DU", "AA", "UU"):
+            kinds[path] = _KIND_OF_XY.get(xy, KIND_BOTH)
+    return kinds
+
+
+def deferred_conflict(attempt_id: str) -> tuple[list[str], dict[str, str]]:
+    """flowgate.v02test.0042: the overlapping files of the attempt's latest deferred conflict (its run event) and
+    their kinds, or ([], {})."""
     row = workspace.attempt(attempt_id) if attempt_id else None
     if not row:
-        return []
+        return [], {}
     import json
     for event in run_store._all(
             "SELECT payload_json FROM graph_run_events WHERE run_id = ? AND cause = ? AND reason = ? "
@@ -731,8 +758,14 @@ def deferred_files(attempt_id: str) -> list[str]:
         except (TypeError, ValueError):
             continue
         if payload.get("attempt_id") == attempt_id and payload.get("integration_reason") == CONFLICT_DEFERRED:
-            return [str(p) for p in payload.get("files") or []]
-    return []
+            kinds = payload.get("file_kinds") if isinstance(payload.get("file_kinds"), dict) else {}
+            return [str(p) for p in payload.get("files") or []], {str(k): str(v) for k, v in kinds.items()}
+    return [], {}
+
+
+def deferred_files(attempt_id: str) -> list[str]:
+    """flowgate.v02test.0042: the overlapping files of the attempt's latest deferred conflict (its run event), or []."""
+    return deferred_conflict(attempt_id)[0]
 
 
 def request_resolution(attempt_id: str) -> str:

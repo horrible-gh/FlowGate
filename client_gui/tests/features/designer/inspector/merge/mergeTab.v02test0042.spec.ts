@@ -1,7 +1,9 @@
 /**
  * flowgate.v02test.0042 — the card's '병합 · 충돌' Inspector tab (시안 v7, 0005-CH turns 38-40): shown only with merge work,
  * always last, blue while it only shows progress and red while a person must choose; ① catching up, ② could not
- * reconcile (three buttons), ③ per-file pick and [병합], ④ merged, and the waiting card's screen; every button's API call
+ * reconcile (the mockup's framed box: files with how each overlaps, [AI로 해결] beside its AI select, the two buttons, the
+ * waiting cards), ③ per-file pick (segmented) and [이대로 맞추고 병합], ④ merged, failed ([다시 시도]) and the waiting
+ * card's screen; every button's API call
  * and its refusal; a tab request (the Canvas card's 병합 충돌 / a notification / the Git panel) opens the tab.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -188,13 +190,17 @@ describe('the Frame shows the merge tab only with merge work', () => {
 // --- The tab's screens and buttons -------------------------------------------------------------------
 
 describe('screens', () => {
-  it('waiting: names the card it waits for and goes there', async () => {
-    api.read.mockResolvedValue(await state({ state: 'waiting', integration_status: 'pending', reason: 'session_busy', blocked_by: { node_key: 'gn_2', title: '승인 화면 정리' }, files: [], actions: [] }))
+  it('waiting: names the card it waits for (its conflict) and goes there', async () => {
+    api.read.mockResolvedValue(await state({ state: 'waiting', integration_status: 'pending', reason: 'session_busy', blocked_by: { node_key: 'gn_2', title: '승인 화면 정리', why: 'conflict' }, files: [], actions: [] }))
     const w = await mountTab({ integrationStatus: 'pending' })
-    expect(q(w, 'merge-waiting-text').text()).toBe(t('gui.inspector.merge.waiting.blocked', { title: '승인 화면 정리' }))
+    expect(q(w, 'merge-box').classes()).toContain('is-info')
+    expect(q(w, 'merge-waiting-text').text()).toBe(t('gui.inspector.merge.waiting.before') + t('gui.inspector.merge.waiting.blocked_conflict', { title: '승인 화면 정리' }) + t('gui.inspector.merge.waiting.after'))
+    expect(q(w, 'merge-waiting-text').find('b').text()).toBe(t('gui.inspector.merge.waiting.blocked_conflict', { title: '승인 화면 정리' }))
     const heard: unknown[] = []
     const listener = (event: Event) => heard.push((event as CustomEvent).detail)
     window.addEventListener('fg:open_card_merge', listener)
+    expect(q(w, 'merge-go-blocked').text()).toBe(t('gui.inspector.merge.waiting.go', { title: '승인 화면 정리' }))
+    expect(q(w, 'merge-go-blocked').find('svg').exists()).toBe(true)
     await q(w, 'merge-go-blocked').trigger('click')
     window.removeEventListener('fg:open_card_merge', listener)
     expect(heard).toEqual([{ flowId: FLOW, nodeKey: 'gn_2' }])
@@ -207,53 +213,110 @@ describe('screens', () => {
     expect(q(w, 'merge-go-blocked').exists()).toBe(false)
   })
 
-  it('① catching up: progress only, no buttons', async () => {
-    api.read.mockResolvedValue(await state({ state: 'catching_up', resolving: { run_id: 'run_1' }, actions: [] }))
+  it('① catching up: progress bar and step log, no buttons', async () => {
+    api.read.mockResolvedValue(await state({ state: 'catching_up', resolving: { run_id: 'run_1' }, files: [{ path: 'a.ts', resolved: true }, { path: 'b.ts', resolved: false }], actions: [] }))
     const w = await mountTab()
-    expect(q(w, 'merge-catching-up-text').text()).toBe(t('gui.inspector.merge.catching_up.resolving'))
+    expect(q(w, 'merge-box').classes()).toContain('is-info')
+    expect(q(w, 'merge-catching-up-text').text()).toBe(t('gui.inspector.merge.catching_up.resolving', { count: 2 }))
+    expect(w.find('.mz-prog i').attributes('style')).toContain('width: 50%')
+    expect(w.findAll('[data-test="merge-log"] > div').map((row) => row.attributes('data-step'))).toEqual(['ok', 'run', 'todo'])
+    expect(w.findAll('[data-test="merge-log"] > div')[1].text()).toContain('1/2')
     expect(w.findAll('button')).toHaveLength(0)
   })
 
-  it('② could not reconcile: files and the three buttons (no 병합 before every file is resolved)', async () => {
-    api.read.mockResolvedValue(await state())
+  it('② could not reconcile: the file box with how each overlaps, [AI로 해결] beside its AI select, then the two buttons', async () => {
+    api.read.mockResolvedValue(await state({ files: [{ path: 'src/a.ts', resolved: false, kind: 'both' }, { path: 'server/attachments/routes.py', resolved: false, kind: 'deleted_latest' }] }))
     const w = await mountTab()
-    expect(w.findAll('[data-test="merge-files"] li').map((li) => li.find('code').text())).toEqual(['a.ts', 'b.ts'])
-    expect(q(w, 'merge-deferred').exists()).toBe(true)
-    expect(q(w, 'merge-ai').exists()).toBe(true)
-    expect(q(w, 'merge-pick-open').exists()).toBe(true)
-    expect(q(w, 'merge-discard').exists()).toBe(true)
+    expect(q(w, 'merge-box').classes()).not.toContain('is-info')
+    const rows = w.findAll('[data-test="merge-files"] .mz-fr')
+    expect(rows.map((row) => row.find('code').text())).toEqual(['src/a.ts', 'server/attachments/routes.py'])
+    expect(rows.map((row) => row.find('.mz-why').text())).toEqual([t('gui.inspector.merge.kinds.both'), t('gui.inspector.merge.kinds.deleted_latest')])
+    // a file one side deleted is named in the sentence (the mockup's "attachments/routes.py")
+    expect(q(w, 'merge-summary').find('b').text()).toBe('attachments/routes.py')
+    const [first, second] = w.findAll('.mz-btns')
+    expect(first.findAll('[data-test]').map((el) => el.attributes('data-test'))).toEqual(['merge-ai', 'merge-ai-provider'])
+    expect(second.findAll('button').map((b) => b.attributes('data-test'))).toEqual(['merge-pick-open', 'merge-discard'])
     expect(q(w, 'merge-merge').exists()).toBe(false)
+    expect(q(w, 'merge-meta').text()).toBe(t('gui.inspector.merge.needs_choice.free'))
   })
 
-  it('[AI로 해결 ▾] starts with the card AI by default, or the AI picked', async () => {
+  it('② with no deleted file says how many files overlap', async () => {
+    api.read.mockResolvedValue(await state())
+    const w = await mountTab()
+    expect(q(w, 'merge-summary').text()).toBe(t('gui.inspector.merge.needs_choice.both', { count: 2 }))
+  })
+
+  it('② lists the cards waiting behind it and goes to one', async () => {
+    api.read.mockResolvedValue(await state({ waiting_cards: [{ node_key: 'gn_2', title: '카드 첨부 탭 제거' }] }))
+    const w = await mountTab()
+    expect(q(w, 'merge-meta').text()).toContain(t('gui.inspector.merge.waiting_cards'))
+    const heard: unknown[] = []
+    const listener = (event: Event) => heard.push((event as CustomEvent).detail)
+    window.addEventListener('fg:open_card_merge', listener)
+    await q(w, 'merge-waiting-card').trigger('click')
+    window.removeEventListener('fg:open_card_merge', listener)
+    expect(heard).toEqual([{ flowId: FLOW, nodeKey: 'gn_2' }])
+  })
+
+  it('[AI로 해결] starts with the card AI by default, or the AI picked in the select beside it', async () => {
     api.read.mockResolvedValue(await state())
     api.act.mockResolvedValue(await state({ state: 'catching_up', resolving: { run_id: 'run_9' }, actions: [], started_run_id: 'run_9' }))
     const w = await mountTab()
+    expect(w.findAll('[data-test="merge-ai-provider"] option').map((o) => o.text())).toEqual([t('gui.inspector.merge.needs_choice.ai_default_named', { name: 'Claude' }), 'Codex'])
     await q(w, 'merge-ai').trigger('click')
-    await flushPromises()
-    expect(w.findAll('[data-test="merge-ai-provider"] option').map((o) => o.text())).toEqual([`Claude (${t('gui.inspector.merge.needs_choice.ai_default')})`, 'Codex'])
-    await q(w, 'merge-ai-start').trigger('click')
     await flushPromises()
     expect(api.act).toHaveBeenLastCalledWith(FLOW, 'gn_4', { action: 'ai_resolve', expectedAttemptId: 'att_4', providerId: null })
     expect(w.get('[data-test="merge-tab"]').attributes('data-screen')).toBe('catching_up')
   })
 
-  it('③ per-file pick: AI / this card / latest, then 병합 once resolved', async () => {
+  it('[AI로 해결] with another AI picked sends it', async () => {
     api.read.mockResolvedValue(await state())
-    api.act.mockResolvedValueOnce(await state({ files: [{ path: 'a.ts', resolved: true }, { path: 'b.ts', resolved: true }], session: { merge_id: 31, kind: 'graph_attempt_merge', review_state: 'resolved' }, actions: ['merge', 'ai_resolve', 'pick', 'discard_rerun'] }))
+    api.act.mockResolvedValue(await state({ state: 'catching_up', resolving: { run_id: 'run_9' }, actions: [] }))
+    const w = await mountTab()
+    await q(w, 'merge-ai-provider').setValue('aip_y')
+    await q(w, 'merge-ai').trigger('click')
+    await flushPromises()
+    expect(api.act).toHaveBeenLastCalledWith(FLOW, 'gn_4', { action: 'ai_resolve', expectedAttemptId: 'att_4', providerId: 'aip_y' })
+  })
+
+  it('③ per-file pick: a segmented AI에게 / 이 카드 쪽 / 최신 코드 쪽 per file, then [이대로 맞추고 병합]', async () => {
+    api.read.mockResolvedValue(await state())
+    api.act.mockResolvedValueOnce(await state({ state: 'hidden', integration_status: 'integrated', actions: [] }))
     const w = await mountTab()
     await q(w, 'merge-pick-open').trigger('click')
-    const rows = w.findAll('.merge-pick-row')
+    const rows = w.findAll('[data-test="merge-pick-list"] .mz-fr')
     expect(rows.map((row) => row.attributes('data-path'))).toEqual(['a.ts', 'b.ts'])
-    expect(rows[0].findAll('label').map((label) => label.text())).toEqual([t('gui.inspector.merge.pick.ai'), t('gui.inspector.merge.pick.card'), t('gui.inspector.merge.pick.latest')])
+    expect(rows[0].findAll('.mz-pick button').map((b) => b.text())).toEqual([t('gui.inspector.merge.pick.ai'), t('gui.inspector.merge.pick.card'), t('gui.inspector.merge.pick.latest')])
+    expect(rows[0].get('[data-test="merge-pick-ai"]').classes()).toContain('on')
     expect(w.find('textarea').exists()).toBe(false)
-    await rows[0].get('[data-test="merge-pick-card"]').setValue(true)
-    await rows[1].get('[data-test="merge-pick-latest"]').setValue(true)
+    await rows[0].get('[data-test="merge-pick-card"]').trigger('click')
+    await rows[1].get('[data-test="merge-pick-latest"]').trigger('click')
+    expect(rows[0].get('[data-test="merge-pick-card"]').attributes('aria-checked')).toBe('true')
+    expect(q(w, 'merge-pick-submit').text()).toBe(t('gui.inspector.merge.pick.submit'))
     await q(w, 'merge-pick-submit').trigger('click')
     await flushPromises()
     expect(api.act).toHaveBeenLastCalledWith(FLOW, 'gn_4', { action: 'pick', expectedAttemptId: 'att_4', files: [{ path: 'a.ts', side: 'card' }, { path: 'b.ts', side: 'latest' }], providerId: null })
-    expect(w.text()).toContain(t('gui.inspector.merge.needs_choice.resolved_all'))
+    expect(w.get('[data-test="merge-tab"]').attributes('data-screen')).toBe('merged')
+    expect(q(w, 'merge-box').classes()).toContain('is-ok')
+  })
+
+  it('③ a side that deleted the file cannot be picked', async () => {
+    api.read.mockResolvedValue(await state({ files: [{ path: 'gone.py', resolved: false, kind: 'deleted_latest' }] }))
+    const w = await mountTab()
+    await q(w, 'merge-pick-open').trigger('click')
+    expect(q(w, 'merge-pick-latest').attributes('disabled')).toBeDefined()
+    expect(q(w, 'merge-pick-card').attributes('disabled')).toBeUndefined()
+    await q(w, 'merge-pick-cancel').trigger('click')
+    expect(w.get('[data-test="merge-tab"]').attributes('data-screen')).toBe('needs_choice')
+  })
+
+  it('② after the AI reconciled every file: [병합] and the discard button', async () => {
+    api.read.mockResolvedValue(await state({ files: [{ path: 'a.ts', resolved: true }], session: { merge_id: 31, kind: 'graph_attempt_merge', review_state: 'resolved' }, actions: ['ai_resolve', 'pick', 'merge', 'discard_rerun'] }))
     api.act.mockResolvedValueOnce(await state({ state: 'hidden', integration_status: 'integrated', actions: [] }))
+    const w = await mountTab()
+    expect(q(w, 'merge-summary').text()).toBe(t('gui.inspector.merge.needs_choice.resolved_all'))
+    expect(w.findAll('.mz-btns button').map((b) => b.attributes('data-test'))).toEqual(['merge-merge', 'merge-discard'])
+    expect(w.find('.mz-why').text()).toBe(t('gui.inspector.merge.file_resolved'))
     await q(w, 'merge-merge').trigger('click')
     await flushPromises()
     expect(api.act).toHaveBeenLastCalledWith(FLOW, 'gn_4', { action: 'merge', expectedAttemptId: 'att_4' })
@@ -274,11 +337,15 @@ describe('screens', () => {
     expect(api.act).toHaveBeenCalledWith(FLOW, 'gn_4', { action: 'discard_rerun', expectedAttemptId: 'att_4' })
   })
 
-  it('failed: the reason and only the discard button', async () => {
-    api.read.mockResolvedValue(await state({ state: 'failed', integration_status: 'failed', reason: 'verification_failed', files: [], actions: ['discard_rerun'] }))
+  it('failed: the reason, [다시 시도] and the discard button', async () => {
+    api.read.mockResolvedValue(await state({ state: 'failed', integration_status: 'failed', reason: 'verification_failed', files: [], actions: ['retry', 'discard_rerun'] }))
+    api.act.mockResolvedValue(await state({ state: 'waiting', integration_status: 'pending', reason: 'retry', files: [], actions: [] }))
     const w = await mountTab({ integrationStatus: 'failed' })
     expect(q(w, 'merge-failed-text').text()).toBe(t('gui.inspector.merge.reasons.verification_failed'))
-    expect(w.findAll('button').map((b) => b.attributes('data-test'))).toEqual(['merge-discard'])
+    expect(w.findAll('button').map((b) => b.attributes('data-test'))).toEqual(['merge-retry', 'merge-discard'])
+    await q(w, 'merge-retry').trigger('click')
+    await flushPromises()
+    expect(api.act).toHaveBeenLastCalledWith(FLOW, 'gn_4', { action: 'retry', expectedAttemptId: 'att_4' })
   })
 
   it('a refusal is shown with its code; a moved state is read again', async () => {
@@ -286,7 +353,6 @@ describe('screens', () => {
     api.act.mockRejectedValueOnce({ response: { status: 409, data: { ok: false, error: { code: 'group_busy', message: 'busy' } } } })
     const w = await mountTab()
     await q(w, 'merge-ai').trigger('click')
-    await q(w, 'merge-ai-start').trigger('click')
     await flushPromises()
     expect(q(w, 'merge-error').text()).toBe(t('gui.inspector.merge.error', { code: 'group_busy', message: t('gui.inspector.merge.error_codes.group_busy') }))
     api.act.mockRejectedValueOnce({ response: { status: 409, data: { ok: false, error: { code: 'merge_state_changed', message: 'moved' } } } })
