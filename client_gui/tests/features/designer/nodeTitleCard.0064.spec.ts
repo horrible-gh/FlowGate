@@ -110,10 +110,14 @@ describe('FlowNodeCard — the title is shown only (0070 T#1)', () => {
     expect(find(w, 'title-edit').exists()).toBe(false)
   })
 
-  it('[승인] and the integration chip are shown as before', () => {
-    const w = mountCard({ ...data, approvable: true, integration: 'pending' })
-    expect(find(w, 'approve').exists()).toBe(true)
-    expect(find(w, 'flags').exists()).toBe(true)
+  // flowgate.v02test.0044: [승인] is the footer's icon button (a confirm card waiting for it); the integration is a head-row icon.
+  it('[승인] and the integration mark are still shown', () => {
+    const gateState = { key: 'waiting_confirm', labelKey: 'gui.designer.center.card_states.waiting_confirm', tone: 'warning', reason: null }
+    const w = mountCard({ ...data, kind: 'approval', gateState, approvable: true } as FlowGateNodeData)
+    expect(w.find('.flow-node-footer [data-test="designer-canvas-node-approve"]').exists()).toBe(true)
+    w.unmount()
+    const pending = mountCard({ ...data, integration: 'pending' })
+    expect(pending.find('.flow-node-head [data-test="designer-canvas-node-integration"]').exists()).toBe(true)
   })
 })
 

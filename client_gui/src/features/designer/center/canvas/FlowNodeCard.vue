@@ -15,16 +15,21 @@
        A card the last validation reported names the problem on hover (`data.issueText`).
        A Graph card with a run shows a state icon and tooltip (working / awaiting approval / approved);
        pending has no mark. Other states keep their labels. A card waiting for
-       its approval offers [승인] under its title (`data.approvable`; an `approve` event, never the selection or a
+       its approval offers [승인] in its footer (`data.approvable`; an `approve` event, never the selection or a
        drag). A done card stays 승인됨 while the run is stopped: the waiting successors are the run band's.
-       flowgate.v02.0061 T#14: under the title, the card attempt's result integration when it needs a look (병합 대기 ·
+       flowgate.v02.0061 T#14: the card attempt's result integration when it needs a look (병합 대기 ·
        병합 중 · 병합 충돌 · 병합 실패) only. 병합 충돌 is a button: it opens the Git tool panel, where the Flow's
        conflict session is resolved (a `conflict` event, never the selection or a drag).
        flowgate.v02.0061 T#15: a held card shows the Hold mark (an open palm in a round frame) at the end of its head row,
        with its tooltip / accessible name. While held, the state text and duplicate Hold chip are hidden.
        flowgate.v02.0063: a card whose document holds a question still unanswered shows the [Q] mark in its head row.
        flowgate.v02.0070 T#1 (B1): the card only shows its title (the session's, one line) — a click on it is the card's
-       selection as anywhere else on the card. The title is edited in the Inspector header (InspectorHeader). -->
+       selection as anywhere else on the card. The title is edited in the Inspector header (InspectorHeader).
+       flowgate.v02test.0044 (mockup v4): every card is exactly 176x92, whatever it shows, so cards line up and the
+       Edges meet them evenly. The head row carries the integration states one only looks at (병합 대기 · 병합 중 ·
+       병합 실패) and 미인계 as 18px icons next to the state / Q / Hold marks. The footer is the card's buttons only, all
+       22x22 icon buttons on one line: its documents on the left; 병합 충돌 and [승인] at the right end. Every icon names
+       itself on hover and to assistive technology. -->
   <div
     class="flow-node-card"
     :class="{ 'is-selected': data.selected, 'is-unknown': kind.key === 'unknown', 'has-issue': data.issue === true }"
@@ -67,6 +72,37 @@
         :title="questionTitle"
         data-test="designer-canvas-node-question-icon"
       >Q</span>
+      <!-- 병합 대기 / 병합 중 / 병합 실패: shown only, never pressed (병합 충돌 is the footer's button). -->
+      <span
+        v-if="data.integration && data.integration !== 'conflict'"
+        class="flow-node-mark"
+        :class="[`flow-node-mark--${integrationTone}`, { 'is-spinning': data.integration === 'integrating' }]"
+        role="img"
+        :aria-label="integrationTitle"
+        :title="integrationTitle"
+        data-test="designer-canvas-node-integration"
+        :data-integration="data.integration"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path :d="integrationIcon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span class="flow-node-sr">{{ integrationLabel }}</span>
+      </span>
+      <!-- v02gui.0015 T2: an earlier attempt's uncommitted changes this attempt did not take (kept, not carried). -->
+      <span
+        v-if="data.uncarried"
+        class="flow-node-mark flow-node-mark--warning"
+        role="img"
+        :aria-label="uncarriedTitle"
+        :title="uncarriedTitle"
+        data-test="designer-canvas-node-uncarried"
+        :data-files="data.uncarried.files"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path :d="CARD_MARK_ICONS.uncarried" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span class="flow-node-sr">{{ uncarriedLabel }}</span>
+      </span>
       <span
         v-if="data.hold"
         class="flow-node-hold"
@@ -87,37 +123,8 @@
         :title="data.title"
         data-test="designer-canvas-node-title"
       >{{ data.title }}</p>
-      <div v-if="data.integration || data.uncarried" class="flow-node-flags" data-test="designer-canvas-node-flags">
-        <button
-          v-if="data.integration === 'conflict'"
-          type="button"
-          class="flow-node-flag is-conflict nodrag nopan"
-          :title="t('gui.designer.center.integration.open_conflict')"
-          data-test="designer-canvas-node-conflict"
-          @pointerdown.stop
-          @mousedown.stop
-          @click.stop="emit('conflict', id)"
-        >{{ t('gui.designer.center.integration.conflict') }}</button>
-        <span
-          v-else-if="data.integration"
-          class="flow-node-flag"
-          :class="`is-${data.integration}`"
-          :title="data.verificationFailed ? t('gui.designer.center.integration.verification_failed') : undefined"
-          data-test="designer-canvas-node-integration"
-          :data-integration="data.integration"
-        >{{ t(`gui.designer.center.integration.${data.integration}`) }}</span>
-        <!-- v02gui.0015 T2: an earlier attempt's uncommitted changes this attempt did not take (kept, not carried). -->
-        <span
-          v-if="data.uncarried"
-          class="flow-node-flag is-uncarried"
-          role="note"
-          :title="uncarriedTitle"
-          data-test="designer-canvas-node-uncarried"
-          :data-files="data.uncarried.files"
-        >{{ uncarriedLabel }}</span>
-      </div>
     </div>
-    <div v-if="data.documents?.length || data.approvable" class="flow-node-footer">
+    <div v-if="data.documents?.length || showConflict || showApprove" class="flow-node-footer">
       <div class="flow-node-documents">
         <button v-for="doc in data.documents" :key="doc.docId" type="button"
           class="flow-node-document nodrag nopan" :title="documentLabel(doc)" :aria-label="documentLabel(doc)"
@@ -129,10 +136,20 @@
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
       </div>
-      <button v-if="data.gateState?.key === 'waiting_confirm' && data.approvable" type="button"
-        class="flow-node-approve nodrag nopan" :disabled="data.approving || data.approvalBlocked" :title="data.approvalReason ? t(data.approvalReason) : undefined"
-        data-test="designer-canvas-node-approve" @pointerdown.stop @mousedown.stop @click.stop="emit('approve', id)">
-        {{ t('gui.inspector.gateCard.confirm') }}
+      <!-- flowgate.v02.0061 T#14: 병합 충돌 opens the Git tool panel (a `conflict` event, never the selection or a drag). -->
+      <button v-if="showConflict" type="button"
+        class="flow-node-action flow-node-conflict nodrag nopan" :title="conflictTitle" :aria-label="conflictTitle"
+        data-test="designer-canvas-node-conflict"
+        @pointerdown.stop @mousedown.stop @dblclick.stop @click.stop="emit('conflict', id)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="CARD_MARK_ICONS.conflict"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      </button>
+      <button v-if="showApprove" type="button"
+        class="flow-node-action flow-node-approve nodrag nopan" :disabled="data.approving || data.approvalBlocked"
+        :title="approveTitle" :aria-label="approveTitle"
+        data-test="designer-canvas-node-approve" @pointerdown.stop @mousedown.stop @dblclick.stop @click.stop="emit('approve', id)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="CARD_MARK_ICONS.approve"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </button>
     </div>
     <Handle
@@ -183,6 +200,17 @@ const CARD_DOCUMENT_ICONS = {
   report: 'M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2 M9 3h6v3H9z M9 14l2 2l4-4',
 } as const
 
+/** flowgate.v02test.0044: the integration / 미인계 marks and the footer's action glyphs (mockup v4). 병합 실패 is a merge
+ * with a cross — never the card state 오류's circled cross, so the two stay apart. */
+const CARD_MARK_ICONS = {
+  pending: 'M6 3a3 3 0 1 0 0 6a3 3 0 0 0 0-6z M18 15a3 3 0 1 0 0 6a3 3 0 0 0 0-6z M6 9a9 9 0 0 0 9 9',
+  integrating: 'M21 12a9 9 0 1 1-3-6.7 M21 4v5h-5',
+  failed: 'M5 3v4l6 6v8 M17 3v4l-6 6 M15 16l5 5 M20 16l-5 5',
+  conflict: 'M6 3v5l12 8v5 M18 3v5L6 16v5 M3 3h6 M15 3h6',
+  uncarried: 'M3 13h5l1.5 3h5L16 13h5 M5 13l2-8h10l2 8v6H5z M4 4l16 16',
+  approve: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M8.5 12l2.5 2.5l4.5-5',
+} as const
+
 const { t } = useI18n()
 const questionTitle = computed(() => (props.data.questionWait ?? []).map(item => {
   const state = ['pending', 'dispatched', 'failed', 'user_decision'].includes(item.state) ? item.state : 'pending'
@@ -213,7 +241,7 @@ const headerTitle = computed(() => {
   return reason ? `${label} (${reason})` : label
 })
 
-/** v02gui.0015 T2: the 미인계 chip's text and its hover sentence (a count that could not be read is said so). */
+/** v02gui.0015 T2: the 미인계 mark's name and its hover sentence (a count that could not be read is said so). */
 const uncarriedLabel = computed(() => {
   const value = props.data.uncarried
   if (!value) return ''
@@ -225,7 +253,25 @@ const uncarriedTitle = computed(() => {
   const value = props.data.uncarried
   if (!value) return undefined
   const base = t('gui.designer.center.uncarried.title', { attempts: value.attempts, files: value.files })
-  return value.unknown ? `${base} ${t('gui.designer.center.uncarried.unknown')}` : base
+  const sentence = value.unknown ? `${base} ${t('gui.designer.center.uncarried.unknown')}` : base
+  return `${uncarriedLabel.value} · ${sentence}`
+})
+
+/** The head row's integration mark (병합 충돌 is the footer's button instead). */
+const integrationLabel = computed(() => props.data.integration ? t(`gui.designer.center.integration.${props.data.integration}`) : '')
+const integrationTitle = computed(() => props.data.verificationFailed
+  ? `${integrationLabel.value} · ${t('gui.designer.center.integration.verification_failed')}`
+  : integrationLabel.value)
+const integrationTone = computed(() => props.data.integration === 'failed' ? 'danger' : 'info')
+const integrationIcon = computed(() => props.data.integration === 'failed' ? CARD_MARK_ICONS.failed
+  : props.data.integration === 'integrating' ? CARD_MARK_ICONS.integrating : CARD_MARK_ICONS.pending)
+
+const showConflict = computed(() => props.data.integration === 'conflict')
+const conflictTitle = computed(() => `${t('gui.designer.center.integration.conflict')} · ${t('gui.designer.center.integration.open_conflict')}`)
+const showApprove = computed(() => props.data.gateState?.key === 'waiting_confirm' && props.data.approvable === true)
+const approveTitle = computed(() => {
+  const label = t('gui.inspector.gateCard.confirm')
+  return props.data.approvalReason ? `${label} · ${t(props.data.approvalReason)}` : label
 })
 
 /** The title is shown unless it only repeats the kind name of the head row. */
@@ -235,12 +281,12 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
 <style scoped>
 .flow-node-body-warning { color: var(--fg2-status-warning-fg); margin-left: 4px; }
 
-/* Measured height grows with document rows; geometry/layout use Vue Flow dimensions. */
+/* flowgate.v02test.0044: a fixed 176x92 whatever the card shows (Edges are drawn from the measured size). */
 .flow-node-card {
   position: relative;
   box-sizing: border-box;
   width: 176px;
-  min-height: 92px;
+  height: 92px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -386,25 +432,56 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
 }
 
 .flow-node-state + .flow-node-question,
-.flow-node-question + .flow-node-hold {
+.flow-node-state + .flow-node-mark,
+.flow-node-question + .flow-node-mark,
+.flow-node-mark + .flow-node-mark,
+.flow-node-question + .flow-node-hold,
+.flow-node-mark + .flow-node-hold {
   margin-left: 4px;
+}
+
+/* flowgate.v02test.0044: 병합 대기 · 병합 중 · 병합 실패 and 미인계 — the head row's 18px box / 16px glyph, shown only. */
+.flow-node-mark {
+  position: relative;
+  display: grid;
+  flex: 0 0 18px;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+}
+.flow-node-mark svg { display: block; width: 16px; height: 16px; }
+.flow-node-mark--info { color: var(--fg2-status-info-fg); }
+.flow-node-mark--warning { color: var(--fg2-status-warning-fg); }
+.flow-node-mark--danger { color: var(--fg2-status-danger-fg); }
+.flow-node-mark.is-spinning svg { animation: flow-node-state-spin 1s linear infinite; }
+
+/* The name an icon carries for assistive technology (its hover text is the title). */
+.flow-node-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .flow-node-footer {
   display: flex;
   align-items: flex-end;
-  gap: 6px;
+  gap: 4px;
   margin-top: auto;
-  padding: 0 11px 8px;
+  padding: 0 11px 7px;
 }
-.flow-node-documents { display: flex; flex: 1; flex-wrap: wrap; gap: 4px; min-width: 0; }
+/* One line only: the card's height is fixed, a second row would be cut off. */
+.flow-node-documents { display: flex; flex: 1; flex-wrap: nowrap; gap: 4px; min-width: 0; overflow: hidden; }
 /* Tinted with the card's kind color, the same rounded box as the head row's kind icon (quieter). */
 .flow-node-document {
   position: relative; z-index: 4; display: grid; place-items: center;
   width: 22px; height: 22px; padding: 0;
   border: 1px solid color-mix(in srgb, var(--flow-node-accent) 38%, transparent);
   border-radius: 6px; background: color-mix(in srgb, var(--flow-node-accent) 14%, transparent);
-  color: color-mix(in srgb, var(--flow-node-accent) 45%, #fff); cursor: pointer;
+  flex: none; color: color-mix(in srgb, var(--flow-node-accent) 45%, #fff); cursor: pointer;
   transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
 }
 .flow-node-document svg { display: block; width: 14px; height: 14px; }
@@ -414,14 +491,13 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   color: #fff;
 }
 .flow-node-document:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: 1px; }
-.flow-node-footer .flow-node-approve { flex: none; margin-left: auto; }
 
 .flow-node-body {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 5px;
-  padding: 8px 11px;
+  padding: 7px 11px 0;
 }
 
 /* flowgate.v02.0056 F2-1: the card state colours are the status tokens (승인 대기 stands out, 승인됨 is quiet). */
@@ -438,46 +514,42 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   color: var(--fg2-status-danger-fg);
 }
 
-/* Above the connection strips (z-index 2) so a press reaches it. */
-.flow-node-approve {
+/* flowgate.v02test.0044: the footer's action buttons (병합 충돌, [승인]) — 22x22 icon buttons like the document buttons,
+   at the right end; above the connection strips (z-index 2) so a press reaches them. */
+.flow-node-action {
   position: relative;
   z-index: 4;
-  height: 20px;
-  padding: 0 9px;
-  border: 1px solid var(--fg2-status-warning-border);
-  border-radius: 5px;
-  background: var(--fg2-status-warning-bg);
-  color: var(--fg2-status-warning-fg);
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid;
+  border-radius: 6px;
   font: inherit;
-  font-size: 10.5px;
-  font-weight: 700;
   cursor: pointer;
+  transition: background 0.14s ease, filter 0.14s ease;
 }
+.flow-node-action svg { display: block; width: 14px; height: 14px; }
+.flow-node-action:focus-visible { outline: 2px solid var(--fg2-focus); outline-offset: 1px; }
+
+.flow-node-conflict {
+  border-color: var(--fg2-status-danger-border);
+  background: var(--fg2-status-danger-bg);
+  color: var(--fg2-status-danger-fg);
+}
+.flow-node-conflict:hover { background: color-mix(in srgb, var(--fg2-status-danger-fg) 26%, transparent); }
 
 .flow-node-approve {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
 }
-
-.flow-node-approve-icon {
-  width: 11px;
-  height: 11px;
-  flex: none;
-}
-
-.flow-node-approve:hover:not(:disabled) {
-  filter: brightness(1.15);
-}
-
+.flow-node-approve:hover:not(:disabled) { filter: brightness(1.25); }
 .flow-node-approve:disabled {
   cursor: progress;
   opacity: var(--fg2-control-disabled-opacity);
-}
-
-.flow-node-approve:focus-visible {
-  outline: 2px solid var(--fg2-focus);
-  outline-offset: 1px;
 }
 
 .flow-node-title {
@@ -488,53 +560,6 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* flowgate.v02.0061 T#14: the integration line under the title (status tokens; above the strips). */
-.flow-node-flags {
-  position: relative;
-  z-index: 4;
-  display: flex;
-  gap: 4px;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.flow-node-flag {
-  flex: none;
-  height: 16px;
-  padding: 0 6px;
-  border: 1px solid var(--fg2-status-info-border);
-  border-radius: 4px;
-  background: var(--fg2-status-info-bg);
-  color: var(--fg2-status-info-fg);
-  font: inherit;
-  font-size: 9.5px;
-  line-height: 14px;
-  white-space: nowrap;
-}
-
-.flow-node-flag.is-conflict,
-.flow-node-flag.is-failed {
-  border-color: var(--fg2-status-danger-border);
-  background: var(--fg2-status-danger-bg);
-  color: var(--fg2-status-danger-fg);
-}
-
-.flow-node-flag.is-uncarried {
-  border-color: var(--fg2-status-warning-border);
-  background: var(--fg2-status-warning-bg);
-  color: var(--fg2-status-warning-fg);
-}
-
-.flow-node-flag.is-conflict {
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.flow-node-flag.is-conflict:focus-visible {
-  outline: 2px solid var(--fg2-focus);
-  outline-offset: 1px;
 }
 
 /* Edge anchors only: invisible and inert. */
