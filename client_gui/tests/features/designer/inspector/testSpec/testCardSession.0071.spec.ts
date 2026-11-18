@@ -495,7 +495,7 @@ it('review activity after a writer ends releases writing and the settings lock',
   expect(card.can('settingChange').enabled).toBe(true)
   expect(card.can('rawSave').reason).toBe('reason.ai_running')
 })
-it('a structured save whose pin is not this card's document is refused before any request, and an unreadable snapshot gives no pin', async () => {
+it("a structured save whose pin is not this card's document is refused before any request, and an unreadable snapshot gives no pin", async () => {
   await render(); const card = contexts.one
   expect(await card.saveCases(NO_PIN, () => [])).toBe(false)
   expect(mocks.save).not.toHaveBeenCalled()
@@ -503,7 +503,7 @@ it('a structured save whose pin is not this card's document is refused before an
   mocks.structured.mockResolvedValue({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content: null, bodyState: 'unreadable', line: {}, projection: null })
   expect(await card.pinCases()).toBeNull()
 })
-it('each case draft keeps its own pinned snapshot: another draft's ACK and a later read never move it', async () => {
+it("each case draft keeps its own pinned snapshot: another draft's ACK and a later read never move it", async () => {
   await render(); const card = contexts.one
   mocks.structured.mockResolvedValueOnce({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content: 'x', bodyState: 'readable', line: {}, projection: { title: 'T', cases: [{ case_id: 'TC-1', title: 'one' }] } })
   const first = (await card.pinCases())!
@@ -518,7 +518,7 @@ it('each case draft keeps its own pinned snapshot: another draft's ACK and a lat
   expect(mocks.save.mock.calls[1][1]).toMatchObject({ expectedRevision: 4 })
   expect(second.base.revisionNo).toBe(4)
 })
-it('a 401 keeps the original request; the held request is resent as it is and only ITS submission becomes the pin's N+1', async () => {
+it("a 401 keeps the original request; the held request is resent as it is and only ITS submission becomes the pin's N+1", async () => {
   await render(); const card = contexts.one
   mocks.structured.mockResolvedValue({ docId: TS_DOC, revisionNo: 4, updatedAt: 't', content: 'x', bodyState: 'readable', line: {}, projection: { title: 'T', cases: [] } })
   const pin = (await card.pinCases())!

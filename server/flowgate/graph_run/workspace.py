@@ -951,6 +951,11 @@ def _kept_elsewhere(row, project_id, *, snapshot_stop=False):
         directory, root, branch, marker = _marker(row, project_id)
         detached = _layout(marker) == REF_LAYOUT
         repo = Path(marker["repository"])
+        # A stale owner marker can name a removed worktree or a path now occupied by a file.
+        # Keep the attempt without starting Git with an invalid working directory.
+        if not repo.is_dir():
+            raise _Preserved("unverifiable", "repository_missing" if not repo.exists()
+                             else "repository_not_directory")
         if _common_dir(repo) != Path(marker["common_dir"]).resolve():
             raise _Preserved("unverifiable", "repository_mismatch")
         registered = branches._registered_worktrees_for_delete(repo)
