@@ -9,15 +9,13 @@
 // it for the selected Node — no empty tab and no placeholder. The order never changes; which tabs
 // exist comes from the registry, never from a per-Node flag.
 
-// flowgate.v02test.0042 (시안 v7, 0005-CH turn 38): '병합 · 충돌' (merge) is always the LAST tab, so it appearing or
-// going never moves the others. It is a conditional tab: shown only while a contribution's `visible` says so (the
-// card has merge work), hidden otherwise — never an empty placeholder.
-export const INSPECTOR_TABS = ['documents', 'settings', 'ai', 'qna', 'attachments', 'merge'] as const
+// Merge work appears as a document row and a modeless window; the tab strip stays fixed.
+export const INSPECTOR_TABS = ['documents', 'settings', 'ai', 'qna', 'attachments'] as const
 
 export type InspectorTabKey = (typeof INSPECTOR_TABS)[number]
 
 /** Tabs shown only while a contribution to them is visible (InspectorTabContribution.visible). */
-export const INSPECTOR_CONDITIONAL_TABS: readonly InspectorTabKey[] = ['merge']
+export const INSPECTOR_CONDITIONAL_TABS: readonly InspectorTabKey[] = []
 
 /** The tab selected first (v7: 문서). */
 export const DEFAULT_INSPECTOR_TAB: InspectorTabKey = 'documents'

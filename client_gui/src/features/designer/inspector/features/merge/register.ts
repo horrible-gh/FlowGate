@@ -1,19 +1,10 @@
-// flowgate.v02test.0042 — the '병합 · 충돌' tab (시안 v7, 0005-CH turns 38-40): a card's result merge is handled inside the
-// card, never in the Git panel. The tab is the last one and shows only while the card has merge work (its node run's
-// integration is pending / integrating / conflict / failed, or the tab is open on work that just ended — ④ 병합 완료);
-// blue while it only shows progress, red while a person must choose. Nothing is added to the Documents tab.
+// Merge follows the card document slots without changing the fixed tab strip.
 import type { InspectorRegistration } from '../../inspectorRegistry'
-import MergeTab from './MergeTab.vue'
+import MergeRow from './MergeRow.vue'
+import { useMergeRowVisible } from './useMerge'
 import messages from './messages'
-import { useMergeTabTone, useMergeTabVisible } from './useMerge'
-
 const registration: InspectorRegistration = {
-  key: 'merge',
-  order: 1500,
-  graphOnly: true,
-  requiresDocument: false,
-  tab: { key: 'merge', component: MergeTab, visible: useMergeTabVisible, tone: useMergeTabTone },
-  messages,
+  key: 'merge', order: 440, graphOnly: true, requiresDocument: false,
+  tab: { key: 'documents', component: MergeRow, visible: useMergeRowVisible }, messages,
 }
-
 export default registration

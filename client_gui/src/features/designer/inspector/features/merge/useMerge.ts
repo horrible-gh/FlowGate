@@ -1,7 +1,5 @@
-// flowgate.v02test.0042 — the '병합 · 충돌' tab's state: the card's merge state (GET …/merge), read again whenever the
-// card's node run changes (the existing run / Canvas refresh path) and after every action, and every few seconds while
-// it only shows progress. The tab's visibility and colour come from the node run, and from the last read state once
-// there is one. Work this tab showed that ends while it is open keeps the tab (④ 병합 완료) until the card is left.
+// Card merge state shared by the document row and its persistent modeless window.
+// Existing API actions and run updates remain the source of truth.
 import { computed, inject, onBeforeUnmount, reactive, ref, watch, type ComputedRef, type Ref } from 'vue'
 import {
   cardMergeAct,
@@ -26,7 +24,7 @@ import {
   type MergeTone,
 } from './mergeModel'
 
-/** The last merge state read per card (the tab colour follows it), and the cards whose open tab showed work. */
+/** The last merge state read per card (the row colour follows it), and the cards whose open window showed work. */
 const lastStates = reactive(new Map<string, CardMergeState>())
 const shownWork = reactive(new Set<string>())
 
@@ -35,26 +33,31 @@ export const MERGE_POLL_MS = 5000
 
 const keyOf = (target: InspectorTarget | null) => (target ? mergeCardKey(target.flowId, target.nodeId) : null)
 
-/** Tab visibility supplier: merge work on the node run, or work this open tab showed (④). */
-export function useMergeTabVisible(target: Readonly<Ref<InspectorTarget | null>>): Readonly<Ref<boolean>> {
+/** Row visibility supplier: merge work on the node run, or work this open tab showed (④). */
+export function useMergeRowVisible(target: Readonly<Ref<InspectorTarget | null>>): Readonly<Ref<boolean>> {
   return computed(() => {
     const key = keyOf(target.value)
-    return !!key && (mergeWorkOf(target.value) || shownWork.has(key))
+    if (!key) return false
+    if (shownWork.has(key)) return true
+    const read = lastStates.get(key)
+    // A completed window may close before the Canvas run refresh arrives.
+    if (read?.state === 'hidden' && read.attemptId && read.attemptId === target.value?.nodeRun?.attemptId) return false
+    return mergeWorkOf(target.value)
   })
 }
 
-/** Tab colour supplier: the last read state when there is one, else the node run's integration status. */
-export function useMergeTabTone(target: Readonly<Ref<InspectorTarget | null>>): Readonly<Ref<MergeTone | null>> {
+/** Row colour supplier: the last read state when there is one, else the node run's integration status. */
+export function useMergeRowTone(target: Readonly<Ref<InspectorTarget | null>>): Readonly<Ref<MergeTone | null>> {
   return computed(() => {
     const key = keyOf(target.value)
     if (!key) return null
     const read = lastStates.get(key)
-    if (read && read.state !== 'hidden') return mergeToneOfState(read.state)
+    if (read && shownWork.has(key)) return mergeToneOfState(read.state)
     return mergeToneOfStatus(target.value?.nodeRun?.integrationStatus)
   })
 }
 
-/** Asks the Designer to select a card and open its '병합 · 충돌' tab. */
+/** Asks the Designer to select a card and open its merge window. */
 export function openCardMerge(flowId: string, nodeKey: string): void {
   window.dispatchEvent(new CustomEvent(OPEN_CARD_MERGE_EVENT, { detail: { flowId, nodeKey } }))
 }
@@ -64,7 +67,7 @@ export interface MergeProvider {
   readonly name: string
 }
 
-export interface MergeTabState {
+export interface MergeWindowState {
   readonly state: Readonly<Ref<CardMergeState | null>>
   readonly screen: ComputedRef<MergeScreen>
   readonly readFailed: Readonly<Ref<boolean>>
@@ -81,7 +84,7 @@ export interface MergeTabState {
   loadProviders(): Promise<void>
 }
 
-export function useMerge(target: () => InspectorTarget | null): MergeTabState {
+export function useMerge(target: () => InspectorTarget | null, refresh?: () => void): MergeWindowState {
   const host = inject(INSPECTOR_HOST, null)
   const state = ref<CardMergeState | null>(null)
   const readFailed = ref(false)
@@ -160,6 +163,7 @@ export function useMerge(target: () => InspectorTarget | null): MergeTabState {
 
   onBeforeUnmount(() => {
     clearInterval(timer)
+    ++ticket
     forget(currentKey)
     currentKey = null
   })
@@ -181,7 +185,8 @@ export function useMerge(target: () => InspectorTarget | null): MergeTabState {
       if (failure.code === 'merge_state_changed') await reload()
     } finally {
       busy.value = false
-      host?.request({ kind: 'refresh-flow', flowId: current.flowId })
+      if (refresh) refresh()
+      else host?.request({ kind: 'refresh-flow', flowId: current.flowId })
     }
   }
 
@@ -211,4 +216,11 @@ export function useMerge(target: () => InspectorTarget | null): MergeTabState {
     retry: () => act((expectedAttemptId) => ({ action: 'retry', expectedAttemptId })),
     loadProviders,
   }
+}
+
+/** Last known state for the document row; reading remains owned by the window. */
+export function mergeRowState(target: InspectorTarget): string {
+  const state = lastStates.get(mergeCardKey(target.flowId, target.nodeId))?.state
+  if (state && shownWork.has(mergeCardKey(target.flowId, target.nodeId))) return state === 'hidden' ? 'merged' : state
+  return ({ pending: 'waiting', integrating: 'catching_up', conflict: 'needs_choice', failed: 'failed' } as Record<string, string>)[target.nodeRun?.integrationStatus ?? ''] ?? 'none'
 }

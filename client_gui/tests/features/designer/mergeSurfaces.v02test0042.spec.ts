@@ -9,6 +9,7 @@ import { resolve } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, inject } from 'vue'
+import { mergeWindows, closeMergeWindow } from '@/features/designer/inspector/features/merge/mergeWindows'
 import FlowNodeCard from '@/features/designer/center/canvas/FlowNodeCard.vue'
 import { toVueFlowNodes } from '@/features/designer/center/canvas/vueFlowMapping'
 import type { FlowGraph } from '@/features/designer/center/graph/flowGraph'
@@ -22,7 +23,7 @@ const i18n = prepareInspectorI18n()
 const t = (key: string, params: Record<string, unknown> = {}) => i18n.global.t(key, params)
 const wrappers: VueWrapper<any>[] = []
 beforeEach(() => { i18n.global.locale.value = 'ko' })
-afterEach(() => { wrappers.splice(0).forEach((w) => w.unmount()); document.body.innerHTML = '' })
+afterEach(() => { wrappers.splice(0).forEach((w) => w.unmount()); mergeWindows.splice(0); document.body.innerHTML = '' })
 
 function heard(run: () => unknown): Promise<unknown[]> {
   const out: unknown[] = []
@@ -115,23 +116,35 @@ describe('Center column: one "open this card merge" event', () => {
   it('a node key selects that card and asks the Inspector for its merge tab', async () => {
     const center = fakeCenter()
     await mountColumn(center)
-    window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId: 'f1', nodeKey: 'gn_2' } }))
+    window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId: 'f1', nodeKey: 'gn_4' } }))
     expect(center.activateFlow).toHaveBeenCalledWith('f1')
-    expect(center.selectNode).toHaveBeenCalledWith('f1', 'gn_2')
-    expect(provided.tabRequest()).toMatchObject({ flowId: 'f1', nodeId: 'gn_2', tab: 'merge' })
-    const first = provided.tabRequest().seq
-    window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId: 'f1', nodeKey: 'gn_2' } }))
-    expect(provided.tabRequest().seq).toBe(first + 1)
+    await flushPromises()
+    await flushPromises()
+    expect(center.selectNode).toHaveBeenCalledWith('f1', 'gn_4')
+    expect(mergeWindows[0].target()).toMatchObject({ flowId: 'f1', nodeId: 'gn_4' })
+    const first = mergeWindows[0].raise
+    window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId: 'f1', nodeKey: 'gn_4' } }))
+    await flushPromises()
+    expect(mergeWindows).toHaveLength(1)
+    expect(mergeWindows[0].raise).toBe(first + 1)
+    // Git's merge id and the row/window event resolve to the same already-open card.
+    window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId: 'f1', mergeId: 31 } }))
+    await flushPromises()
+    window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId: 'f1', nodeKey: 'gn_4' } }))
+    await flushPromises()
+    expect(mergeWindows).toHaveLength(1)
+    expect(mergeWindows[0].raise).toBe(first + 3)
   })
 
   it('a Git merge id finds the card whose integration is that session; another Flow is opened first', async () => {
     const center = fakeCenter()
     await mountColumn(center)
     window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId: 'f1', mergeId: 31 } }))
+    await flushPromises()
     expect(center.selectNode).toHaveBeenCalledWith('f1', 'gn_4')
     window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId: 'f9', nodeKey: 'gn_1', flowName: 'Nine' } }))
     expect(center.openFlow).toHaveBeenCalledWith({ projectId: 'flowgate', flowId: 'f9', flowName: 'Nine' })
-    expect(center.selectNode).toHaveBeenLastCalledWith('f9', 'gn_1')
+    expect(center.selectNode).not.toHaveBeenCalledWith('f9', 'gn_1') // waits for the graph read
   })
 })
 

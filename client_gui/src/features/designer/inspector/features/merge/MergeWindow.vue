@@ -1,12 +1,9 @@
 <template>
-  <!-- flowgate.v02test.0042 — '병합 · 충돌' (시안 v7 items 2 · 3, http://mirageglass.stg/v/qxzmvtjk/conflict.html): the card
-       result's merge, handled in the card. Every screen is one framed box (red: a person must choose, blue: progress or
-       waiting only, green: merged) with its icon title, a sentence, and what the mockup shows under it:
-       ① catching up: progress bar + step log · ② could not reconcile: the file list (each with how it overlaps),
-       [AI로 해결] beside the AI select, then [파일별로 직접 고르기] / [이 결과 버리고 최신 코드로 다시 실행], the waiting cards
-       · ③ per-file pick: a segmented AI에게 / 이 카드 쪽 / 최신 코드 쪽 per file, [이대로 맞추고 병합] / [취소] · ④ merged
-       · waiting: what it waits for + [→ ‘…’ 카드로 이동] · failed: the reason + [다시 시도] / [버리고 다시 실행]. -->
-  <section class="merge-tab" data-test="merge-tab" :data-screen="screen" :aria-busy="busy ? 'true' : 'false'">
+  <ModelessShell ref="shell" :open="true" :title="windowTitle" :initial-width="initialWidth" :initial-height="400"
+    :initial-x="16" :initial-y="80" :min-width="300" :min-height="200" :minimized="win?.minimized ?? false"
+    @update:minimized="value => { if (win) win.minimized = value }" @close="close">
+
+  <section class="merge-window" data-test="merge-window" :data-screen="screen" :aria-busy="busy ? 'true' : 'false'">
     <p v-if="screen === 'loading' && !readFailed" class="mz-note" role="status">{{ t('gui.inspector.merge.loading') }}</p>
     <p v-if="readFailed" class="mz-alert" role="alert" data-test="merge-read-failed">
       {{ t('gui.inspector.merge.read_failed') }}
@@ -22,7 +19,6 @@
         </template>
         <template v-else>{{ t('gui.inspector.merge.waiting.turn') }}</template>
       </p>
-      <p v-if="!state.blockedBy && reasonText" class="mz-meta">{{ reasonText }}</p>
       <div v-if="state.blockedBy" class="mz-btns">
         <button type="button" class="mz-b" data-test="merge-go-blocked" @click="goCard(state.blockedBy.nodeKey)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.arrow" /></svg>{{ t('gui.inspector.merge.waiting.go', { title: state.blockedBy.title }) }}
@@ -40,7 +36,6 @@
       <div class="mz-log" data-test="merge-log">
         <div v-for="step in steps" :key="step.key" :data-step="step.state"><span :class="`mz-log-${step.state}`">{{ STEP_MARKS[step.state] }}</span> {{ step.text }}</div>
       </div>
-      <p class="mz-meta">{{ state.resolving ? t('gui.inspector.merge.catching_up.meta_ai') : t('gui.inspector.merge.catching_up.meta_merging') }}</p>
     </div>
 
     <!-- ② could not reconcile (red) -->
@@ -91,14 +86,11 @@
           </button>
         </div>
       </template>
-      <p class="mz-meta" data-test="merge-meta">
+      <p v-if="state.waitingCards.length" class="mz-meta" data-test="merge-meta">
         <template v-if="state.waitingCards.length">
           {{ t('gui.inspector.merge.waiting_cards') }}
           <template v-for="(waiting, index) in state.waitingCards" :key="waiting.nodeKey"><template v-if="index">, </template><button type="button" class="mz-link" data-test="merge-waiting-card" @click="goCard(waiting.nodeKey)">{{ waiting.title }}</button></template>
-          {{ t('gui.inspector.merge.needs_choice.waiting_after') }}
         </template>
-        <template v-else-if="can('merge')">{{ t('gui.inspector.merge.needs_choice.merge_note') }}</template>
-        <template v-else>{{ t('gui.inspector.merge.needs_choice.free') }}</template>
       </p>
     </div>
 
@@ -132,7 +124,6 @@
         </button>
         <button type="button" class="mz-b" :disabled="busy" data-test="merge-pick-cancel" @click="picking = false">{{ t('gui.inspector.merge.pick.cancel') }}</button>
       </div>
-      <p class="mz-meta">{{ t('gui.inspector.merge.pick.meta') }}</p>
     </div>
 
     <!-- failed (red) -->
@@ -157,7 +148,6 @@
     <div v-else-if="screen === 'merged'" class="mz is-ok" data-test="merge-box">
       <h4 class="mz-title is-ok"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.check" /></svg>{{ t('gui.inspector.merge.merged.title') }}</h4>
       <p class="mz-text" data-test="merge-merged-text">{{ t('gui.inspector.merge.merged.body') }}</p>
-      <p class="mz-meta">{{ t('gui.inspector.merge.merged.meta') }}</p>
     </div>
 
     <p v-if="errorText" class="mz-alert" role="alert" data-test="merge-error">{{ errorText }}</p>
@@ -173,19 +163,23 @@
       @cancel="confirmOpen = false"
     />
   </section>
+  </ModelessShell>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ModelessShell from '../../../../../components/ui/ModelessShell.vue'
+import { closeMergeWindow, type MergeWindowEntry } from './mergeWindows'
 import ConfirmDialog from '../../../../../components/ui/ConfirmDialog.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { mergeReasonKey } from './mergeModel'
 import { openCardMerge, useMerge } from './useMerge'
 
-const props = defineProps<{ target: InspectorTarget }>()
+const props = defineProps<{ target: InspectorTarget; win?: MergeWindowEntry }>()
 const { t, te } = useI18n()
 
+// Verification counts are not part of CardMergeState; never infer them from resolved files.
 /** The mockup's glyphs (24px box, stroke 2). */
 const ICONS = {
   conflict: 'M7 4l10 16 M17 4L7 20 M4 9h4 M16 15h4',
@@ -209,25 +203,19 @@ type StepState = 'ok' | 'run' | 'todo'
 const STEP_MARKS: Record<StepState, string> = { ok: '✓', run: '●', todo: '○' }
 
 const { state, screen, readFailed, error, busy, picking, providers, reload, aiResolve, pick, merge, discardRerun, retry, loadProviders } =
-  useMerge(() => props.target)
+  useMerge(() => props.target, () => props.win?.refresh())
+
+const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
+const initialWidth = Math.min(560, window.innerWidth - 32)
+const windowTitle = computed(() => t(`gui.inspector.merge.window.${screen.value === 'pick' ? 'needs_choice' : screen.value}`) + ' · ' + props.target.title)
+const close = () => { if (props.win) closeMergeWindow(props.win.key) }
+watch(() => props.win?.raise, () => { shell.value?.bringToFront(); void reload() })
 
 const can = (action: string) => !!state.value?.actions.includes(action as never)
 const allResolved = computed(() => !!state.value?.files.length && state.value.files.every((file) => file.resolved))
 const openFiles = computed(() => (state.value?.files ?? []).filter((file) => !file.resolved))
 
-/** The last two segments of a path (the mockup's "attachments/routes.py"). */
-const shortPath = (path: string) => path.split('/').slice(-2).join('/')
-
-/** ②'s sentence: a file one side deleted is named; otherwise how many files overlap. */
-const summary = computed(() => {
-  const files = state.value?.files ?? []
-  const deleted = files.find((file) => !file.resolved && file.kind !== 'both')
-  if (deleted) {
-    const base = `gui.inspector.merge.needs_choice.${deleted.kind}`
-    return { before: t(`${base}.before`), file: shortPath(deleted.path), after: t(`${base}.after`) }
-  }
-  return { before: t('gui.inspector.merge.needs_choice.both', { count: files.length }), file: '', after: '' }
-})
+const summary = computed(() => ({ before: t('gui.inspector.merge.needs_choice.both'), file: '', after: '' }))
 
 const reasonText = computed(() => {
   const reason = state.value?.reason ?? null
@@ -260,6 +248,7 @@ const steps = computed<{ key: string; state: StepState; text: string }[]>(() => 
     return [
       { key: 'found', state: 'ok', text: t(`${base}.found`, { count: total }) },
       { key: 'resolve', state: total && done >= total ? 'ok' : 'run', text: t(`${base}.resolve`, { done, count: total, ai: aiName.value }) },
+      { key: 'verify', state: 'todo', text: t(`${base}.verify`) },
       { key: 'merge', state: 'todo', text: t(`${base}.merge_after`) },
     ]
   }
@@ -323,7 +312,7 @@ watch(() => props.target.nodeId, () => {
 
 <style scoped>
 /* The mockup's values (conflict.html .mz / .files / .b / .pick / .log / .meta), on the Designer's palette. */
-.merge-tab { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 12.5px; }
+.merge-window { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 12.5px; }
 .mz {
   min-width: 0;
   padding: 12px 13px;

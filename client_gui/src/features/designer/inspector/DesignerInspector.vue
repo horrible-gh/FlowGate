@@ -161,9 +161,8 @@ const props = withDefaults(
      * flowgate.v02test.0042: a request to show one tab of one card (the Canvas card's 병합 충돌, a notification's [열기],
      * the Git panel's [카드로 이동]); a new `seq` is a new request. Taken once the card is the target and the tab is shown.
      */
-    tabRequest?: { readonly flowId: string; readonly nodeId: string; readonly tab: string; readonly seq: number } | null
   }>(),
-  { unselected: false, registry: () => inspectorRegistry, saveTitle: null, flowRunLock: null, cardRun: null, tabRequest: null },
+  { unselected: false, registry: () => inspectorRegistry, saveTitle: null, flowRunLock: null, cardRun: null },
 )
 
 const emit = defineEmits<{ host: [intent: InspectorHostIntent] }>()
@@ -349,7 +348,7 @@ const activeTab = computed(() => resolveInspectorTab(selectedTab.value, tabs.val
 watch(tabs, available => { selectedTab.value = resolveInspectorTab(selectedTab.value, available) })
 
 const tabContent = computed(() => {
-  const entries = contributions.value.filter((entry) => entry.tab?.key === activeTab.value)
+  const entries = contributions.value.filter((entry) => entry.tab?.key === activeTab.value && tabVisible(entry))
   // Card slots already open the bound document. Do not repeat its v0.1 metadata beneath them.
   return activeTab.value === 'documents' && entries.some((entry) => entry.key !== 'documents')
     ? entries.filter((entry) => entry.key !== 'documents')
@@ -378,36 +377,6 @@ function selectTab(key: string) {
   selectedTab.value = resolveInspectorTab(key as InspectorTabKey, tabs.value)
 }
 
-// flowgate.v02test.0042: a tab request waits until its card is the target and the tab is shown, then selects it once.
-// Another card selected meanwhile drops it.
-const pendingTab = ref<{ readonly flowId: string; readonly nodeId: string; readonly tab: InspectorTabKey } | null>(null)
-watch(
-  () => props.tabRequest?.seq ?? null,
-  () => {
-    const request = props.tabRequest
-    pendingTab.value = request && (INSPECTOR_TABS as readonly string[]).includes(request.tab)
-      ? { flowId: request.flowId, nodeId: request.nodeId, tab: request.tab as InspectorTabKey }
-      : null
-  },
-  { immediate: true },
-)
-watch(
-  [pendingTab, target, tabs],
-  () => {
-    const pending = pendingTab.value
-    const current = target.value
-    if (!pending || !current) return
-    if (current.flowId !== pending.flowId || current.nodeId !== pending.nodeId) {
-      pendingTab.value = null
-      return
-    }
-    if (tabs.value.includes(pending.tab)) {
-      selectedTab.value = pending.tab
-      pendingTab.value = null
-    }
-  },
-  { immediate: true },
-)
 </script>
 
 <style scoped>

@@ -20,7 +20,6 @@
       :save-title="inspector?.saveTitle ?? null"
       :flow-run-lock="inspector?.flowRunLock ?? null"
       :card-run="inspector?.cardRun ?? null"
-      :tab-request="inspector?.tabRequest?.() ?? null"
       @host="inspector?.host($event)"
     />
     <aside
@@ -82,7 +81,6 @@ import type { FlowGraphSelection } from '../center/graph/flowGraph'
 interface BottomDockInspector {
   readonly selection: () => FlowGraphSelection | null
   /** flowgate.v02test.0042: the last request to show one card's Inspector tab (its '병합 · 충돌'), or null. */
-  readonly tabRequest?: () => { readonly flowId: string; readonly nodeId: string; readonly tab: string; readonly seq: number } | null
   readonly host: (intent: { readonly kind: string; readonly nodeId?: string; readonly tool?: string }) => void
   /** flowgate.v02.0070 T#1: the card title save (the session's, for the Flow and card given); null = none. */
   readonly saveTitle?: DesignerCenterSession['saveNodeTitle'] | null

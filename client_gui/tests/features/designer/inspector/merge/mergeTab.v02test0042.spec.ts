@@ -6,11 +6,16 @@
  * card's screen; every button's API call
  * and its refusal; a tab request (the Canvas card's 병합 충돌 / a notification / the Git panel) opens the tab.
  */
+import { gzipSync } from 'node:zlib'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
-import MergeTab from '@/features/designer/inspector/features/merge/MergeTab.vue'
+import MergeWindow from '@/features/designer/inspector/features/merge/MergeWindow.vue'
+import InspectorSlotRow from '@/features/designer/inspector/parts/InspectorSlotRow.vue'
+import MergeRow from '@/features/designer/inspector/features/merge/MergeRow.vue'
+import MergeWindows from '@/features/designer/inspector/features/merge/MergeWindows.vue'
+import { mergeWindows, openMergeWindow, closeMergeWindow } from '@/features/designer/inspector/features/merge/mergeWindows'
 import mergeRegistration from '@/features/designer/inspector/features/merge/register'
 import {
   mergeReasonKey,
@@ -64,7 +69,7 @@ async function state(over: Record<string, unknown> = {}) {
 }
 
 const wrappers: VueWrapper<any>[] = []
-afterEach(() => { wrappers.splice(0).forEach((w) => w.unmount()); document.body.innerHTML = '' })
+afterEach(() => { wrappers.splice(0).forEach((w) => w.unmount()); mergeWindows.splice(0); document.body.innerHTML = '' })
 beforeEach(() => {
   vi.clearAllMocks()
   i18n.global.locale.value = 'ko'
@@ -73,7 +78,7 @@ beforeEach(() => {
 
 async function mountTab(run: Partial<FlowGraphNodeRun> | null = { integrationStatus: 'conflict', integrationReason: 'conflict_deferred' }) {
   const target = toInspectorTarget(selection(run))!
-  const w = mount(MergeTab, { props: { target }, attachTo: document.body, global: { plugins: [i18n] } })
+  const w = mount(MergeWindow, { props: { target }, attachTo: document.body, global: { plugins: [i18n], stubs: { ModelessShell: { template: '<div><slot /></div>' } } } })
   wrappers.push(w)
   await flushPromises()
   return w
@@ -82,21 +87,22 @@ const q = (w: VueWrapper<any>, test: string) => w.find(`[data-test="${test}"]`)
 
 describe('registry contract and tab rules', () => {
   it('merge is the last tab and the only conditional one', () => {
-    expect(INSPECTOR_TABS.at(-1)).toBe('merge')
-    expect(INSPECTOR_CONDITIONAL_TABS).toEqual(['merge'])
+    expect(INSPECTOR_TABS).toEqual(['documents', 'settings', 'ai', 'qna', 'attachments'])
+    expect(INSPECTOR_CONDITIONAL_TABS).toEqual([])
   })
 
   it('a tab visible / tone that is no function is a contract violation', () => {
     const modules = { './features/a/register.ts': { default: { key: 'a', order: 1, requiresDocument: false, messages: { ko: {}, en: {}, ja: {} },
-      tab: { key: 'merge', component: {}, visible: true, tone: 'red' } } } }
+      tab: { key: 'documents', component: {}, visible: true, tone: 'red' } } } }
     expect(registrationViolations(modules)).toEqual(['features/a: tab visible is not a function', 'features/a: tab tone is not a function'])
   })
 
   it('the real registry holds the merge registration with its suppliers', () => {
     const entry = inspectorRegistry.entries.find((item) => item.key === 'merge')!
-    expect(entry.tab?.key).toBe('merge')
-    expect(typeof entry.tab?.visible).toBe('function')
-    expect(typeof entry.tab?.tone).toBe('function')
+    expect(entry.tab?.key).toBe('documents')
+    expect(entry.order).toBe(440)
+    expect(entry.tab?.component).toBe(MergeRow)
+    expect(entry.tab?.tone).toBeUndefined()
     expect(entry.requiresDocument).toBe(false)
   })
 
@@ -120,7 +126,11 @@ describe('registry contract and tab rules', () => {
 // --- The Frame: show / hide, colour, position, tab request ------------------------------------------
 
 const DocumentsStub = defineComponent({ props: ['target'], setup: () => () => h('p', { 'data-test': 'documents-stub' }, 'docs') })
+const SlotRows = defineComponent({ setup: () => () => h('div', { style: 'display:flex;flex-direction:column;gap:8px' },
+  ['지시서', '레포트'].map(name => h(InspectorSlotRow, { name, state: { label: '승인됨', tone: 'success' } }))) })
 const fixture = createInspectorRegistry({
+  './features/taskCard/register.ts': { default: { key: 'taskCard', order: 403, requiresDocument: false, tab: { key: 'documents', component: SlotRows }, messages: { ko: {}, en: {}, ja: {} } } },
+  './features/ai/register.ts': { default: { key: 'ai', order: 800, requiresDocument: false, tab: { key: 'ai', component: DocumentsStub }, messages: { ko: {}, en: {}, ja: {} } } },
   './features/documents/register.ts': { default: { key: 'documents', order: 100, requiresDocument: false, tab: { key: 'documents', component: DocumentsStub }, messages: { ko: {}, en: {}, ja: {} } } },
   './features/merge/register.ts': { default: mergeRegistration },
 })
@@ -134,56 +144,78 @@ async function mountFrame(run: Partial<FlowGraphNodeRun> | null, extra: Record<s
 const tabButtons = (w: VueWrapper<any>) => w.findAll('[data-test="designer-inspector-tabs"] [role="tab"]')
 const mergeLabel = () => t('gui.designer.inspector.tabs.merge')
 
-describe('the Frame shows the merge tab only with merge work', () => {
-  it.each([null, { integrationStatus: null }, { integrationStatus: 'integrated' }])('no work (%j): no merge tab', async (run) => {
-    api.read.mockResolvedValue(await state({ state: 'hidden' }))
-    const w = await mountFrame(run as Partial<FlowGraphNodeRun> | null)
-    expect(tabButtons(w).map((tab) => tab.text())).not.toContain(mergeLabel())
-  })
-
-  it.each([
-    ['pending', 'info'], ['integrating', 'info'], ['conflict', 'danger'], ['failed', 'danger'],
-  ])('%s: the merge tab is shown last, %s coloured', async (status, tone) => {
-    api.read.mockResolvedValue(await state({ state: 'hidden' }))
-    const w = await mountFrame({ integrationStatus: status })
-    const tabs = tabButtons(w)
-    expect(tabs.at(-1)!.text()).toBe(mergeLabel())
-    expect(tabs.at(-1)!.attributes('data-tone')).toBe(tone)
-    expect(tabs.slice(0, -1).every((tab) => tab.attributes('data-tone') === undefined)).toBe(true)
-  })
-
-  it('the colour follows the read state: an AI resolving a conflict is blue', async () => {
-    api.read.mockResolvedValue(await state({ state: 'catching_up', resolving: { run_id: 'run_1' }, actions: [] }))
-    const w = await mountFrame({ integrationStatus: 'conflict' }, { tabRequest: { flowId: FLOW, nodeId: 'gn_4', tab: 'merge', seq: 1 } })
-    await flushPromises()
-    expect(tabButtons(w).at(-1)!.attributes('data-tone')).toBe('info')
-  })
-
-  it('a tab request for the selected card opens its merge tab', async () => {
+describe('merge row and persistent windows', () => {
+  it('the shell drags, resizes, minimizes, restores and closes on Escape', async () => {
     api.read.mockResolvedValue(await state())
-    const w = await mountFrame({ integrationStatus: 'conflict' })
-    expect(w.get('[data-test="designer-inspector-body"]').attributes('data-tab')).toBe('documents')
-    await w.setProps({ tabRequest: { flowId: FLOW, nodeId: 'gn_4', tab: 'merge', seq: 1 } })
+    const host = mount(MergeWindows, { attachTo: document.body, global: { plugins: [i18n] } })
+    wrappers.push(host)
+    const target = toInspectorTarget(selection({ integrationStatus: 'conflict' }))!
+    openMergeWindow(() => target)
     await flushPromises()
-    expect(w.get('[data-test="designer-inspector-body"]').attributes('data-tab')).toBe('merge')
-    expect(w.find('[data-test="merge-tab"]').exists()).toBe(true)
+    const panel = document.querySelector<HTMLElement>('.ui-modeless-panel')!
+    const before = panel.style.left
+    panel.querySelector('.ui-modeless-titlebar')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 20, clientY: 90 }))
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 60, clientY: 110 }))
+    document.dispatchEvent(new MouseEvent('mouseup'))
+    await flushPromises()
+    expect(panel.style.left).not.toBe(before)
+    panel.querySelector('.ui-modeless-resize-handle')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 560, clientY: 400 }))
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 600, clientY: 440 }))
+    document.dispatchEvent(new MouseEvent('mouseup'))
+    await flushPromises()
+    expect(panel.style.width).toBe('600px')
+    panel.querySelector<HTMLButtonElement>('[data-modeless-action="minimize"]')!.click()
+    await flushPromises()
+    expect(mergeWindows[0].minimized).toBe(true)
+    openMergeWindow(() => target)
+    await flushPromises()
+    expect(panel.classList.contains('is-minimized')).toBe(false)
+    panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(mergeWindows).toHaveLength(0)
   })
-
-  it('work that ends while the tab is open keeps the tab with ④ 병합 완료; leaving the card drops it', async () => {
-    api.read.mockResolvedValueOnce(await state()).mockResolvedValue(await state({ state: 'hidden', integration_status: 'integrated', actions: [] }))
-    const w = await mountFrame({ integrationStatus: 'conflict' }, { tabRequest: { flowId: FLOW, nodeId: 'gn_4', tab: 'merge', seq: 1 } })
+  it.each([null, { integrationStatus: null }, { integrationStatus: 'integrated' }])('no work (%j): no empty row', async run => {
+    const w = await mountFrame(run as Partial<FlowGraphNodeRun> | null)
+    expect(q(w, 'merge-row').exists()).toBe(false)
+    expect(tabButtons(w).map(tab => tab.text())).toEqual(['문서', '설정', 'AI', 'Q&A', '첨부'])
+  })
+  it.each([['pending', 'info'], ['integrating', 'info'], ['conflict', 'danger'], ['failed', 'danger']])('%s shows a %s row without a description', async (status, tone) => {
+    const w = await mountFrame({ integrationStatus: status })
+    expect(q(w, 'merge-row').exists()).toBe(true)
+    expect(q(w, 'merge-row').get('[data-test="inspector-slot-state"]').attributes('data-tone')).toBe(tone)
+    expect(q(w, 'merge-row').find('.inspector-slot-summary').exists()).toBe(false)
+    expect(q(w, 'merge-row').findAll('button')).toHaveLength(2)
+    expect(tabButtons(w).map(tab => tab.text())).toEqual(['문서', '설정', 'AI', 'Q&A', '첨부'])
+  })
+  it('one window per card, restore and raise, completion stays across selection changes until close', async () => {
+    let target = toInspectorTarget(selection({ integrationStatus: 'conflict' }))!
+    api.read.mockResolvedValue(await state())
+    const host = mount(MergeWindows, { attachTo: document.body, global: { plugins: [i18n] } })
+    wrappers.push(host)
+    const frame = await mountFrame({ integrationStatus: 'conflict' })
+    openMergeWindow(() => target)
     await flushPromises()
-    expect(w.find('[data-test="merge-tab"]').attributes('data-screen')).toBe('needs_choice')
-    await w.setProps({ selection: selection({ integrationStatus: 'integrated', status: 'done' }) })
+    expect(document.querySelectorAll('[data-test="merge-window"]')).toHaveLength(1)
+    mergeWindows[0].minimized = true
+    openMergeWindow(() => target)
     await flushPromises()
-    expect(tabButtons(w).at(-1)!.text()).toBe(mergeLabel())
-    expect(w.get('[data-test="merge-tab"]').attributes('data-screen')).toBe('merged')
-    expect(w.get('[data-test="merge-merged-text"]').text()).toBe(t('gui.inspector.merge.merged.body'))
-    await w.setProps({ selection: null })
+    expect(mergeWindows).toHaveLength(1)
+    expect(mergeWindows[0].minimized).toBe(false)
+    expect(mergeWindows[0].raise).toBe(1)
+    await frame.setProps({ selection: selection(null, 'another') })
+    expect(document.querySelectorAll('[data-test="merge-window"]')).toHaveLength(1)
+    api.read.mockResolvedValue(await state({ state: 'hidden', integration_status: 'integrated', actions: [] }))
+    target = toInspectorTarget(selection({ integrationStatus: 'integrated' }))!
+    openMergeWindow(() => target)
+    await frame.setProps({ selection: selection({ integrationStatus: 'integrated' }) })
     await flushPromises()
-    await w.setProps({ selection: selection({ integrationStatus: 'integrated', status: 'done' }) })
+    expect(document.querySelector('[data-test="merge-window"]')?.getAttribute('data-screen')).toBe('merged')
+    expect(q(frame, 'merge-row').exists()).toBe(true)
+    // The old Canvas status must not resurrect a completed row when the window closes.
+    await frame.setProps({ selection: selection({ integrationStatus: 'conflict' }) })
+    closeMergeWindow(mergeWindows[0].key)
     await flushPromises()
-    expect(tabButtons(w).map((tab) => tab.text())).not.toContain(mergeLabel())
+    expect(q(frame, 'merge-row').exists()).toBe(false)
   })
 })
 
@@ -219,8 +251,8 @@ describe('screens', () => {
     expect(q(w, 'merge-box').classes()).toContain('is-info')
     expect(q(w, 'merge-catching-up-text').text()).toBe(t('gui.inspector.merge.catching_up.resolving', { count: 2 }))
     expect(w.find('.mz-prog i').attributes('style')).toContain('width: 50%')
-    expect(w.findAll('[data-test="merge-log"] > div').map((row) => row.attributes('data-step'))).toEqual(['ok', 'run', 'todo'])
-    expect(w.findAll('[data-test="merge-log"] > div')[1].text()).toContain('1/2')
+    expect(w.findAll('[data-test="merge-log"] > div').map((row) => row.attributes('data-step'))).toEqual(['ok', 'run', 'todo', 'todo'])
+    expect(w.findAll('[data-test="merge-log"] > div')[1].text()).toContain('파일 2개 맞추기')
     expect(w.findAll('button')).toHaveLength(0)
   })
 
@@ -232,12 +264,12 @@ describe('screens', () => {
     expect(rows.map((row) => row.find('code').text())).toEqual(['src/a.ts', 'server/attachments/routes.py'])
     expect(rows.map((row) => row.find('.mz-why').text())).toEqual([t('gui.inspector.merge.kinds.both'), t('gui.inspector.merge.kinds.deleted_latest')])
     // a file one side deleted is named in the sentence (the mockup's "attachments/routes.py")
-    expect(q(w, 'merge-summary').find('b').text()).toBe('attachments/routes.py')
+    expect(q(w, 'merge-summary').text()).toBe('자동으로 맞추지 못했습니다 · 남길 쪽을 정해 주세요.')
     const [first, second] = w.findAll('.mz-btns')
     expect(first.findAll('[data-test]').map((el) => el.attributes('data-test'))).toEqual(['merge-ai', 'merge-ai-provider'])
     expect(second.findAll('button').map((b) => b.attributes('data-test'))).toEqual(['merge-pick-open', 'merge-discard'])
     expect(q(w, 'merge-merge').exists()).toBe(false)
-    expect(q(w, 'merge-meta').text()).toBe(t('gui.inspector.merge.needs_choice.free'))
+    expect(q(w, 'merge-meta').exists()).toBe(false)
   })
 
   it('② with no deleted file says how many files overlap', async () => {
@@ -266,7 +298,7 @@ describe('screens', () => {
     await q(w, 'merge-ai').trigger('click')
     await flushPromises()
     expect(api.act).toHaveBeenLastCalledWith(FLOW, 'gn_4', { action: 'ai_resolve', expectedAttemptId: 'att_4', providerId: null })
-    expect(w.get('[data-test="merge-tab"]').attributes('data-screen')).toBe('catching_up')
+    expect(w.get('[data-test="merge-window"]').attributes('data-screen')).toBe('catching_up')
   })
 
   it('[AI로 해결] with another AI picked sends it', async () => {
@@ -296,7 +328,7 @@ describe('screens', () => {
     await q(w, 'merge-pick-submit').trigger('click')
     await flushPromises()
     expect(api.act).toHaveBeenLastCalledWith(FLOW, 'gn_4', { action: 'pick', expectedAttemptId: 'att_4', files: [{ path: 'a.ts', side: 'card' }, { path: 'b.ts', side: 'latest' }], providerId: null })
-    expect(w.get('[data-test="merge-tab"]').attributes('data-screen')).toBe('merged')
+    expect(w.get('[data-test="merge-window"]').attributes('data-screen')).toBe('merged')
     expect(q(w, 'merge-box').classes()).toContain('is-ok')
   })
 
@@ -307,7 +339,7 @@ describe('screens', () => {
     expect(q(w, 'merge-pick-latest').attributes('disabled')).toBeDefined()
     expect(q(w, 'merge-pick-card').attributes('disabled')).toBeUndefined()
     await q(w, 'merge-pick-cancel').trigger('click')
-    expect(w.get('[data-test="merge-tab"]').attributes('data-screen')).toBe('needs_choice')
+    expect(w.get('[data-test="merge-window"]').attributes('data-screen')).toBe('needs_choice')
   })
 
   it('② after the AI reconciled every file: [병합] and the discard button', async () => {
@@ -320,7 +352,7 @@ describe('screens', () => {
     await q(w, 'merge-merge').trigger('click')
     await flushPromises()
     expect(api.act).toHaveBeenLastCalledWith(FLOW, 'gn_4', { action: 'merge', expectedAttemptId: 'att_4' })
-    expect(w.get('[data-test="merge-tab"]').attributes('data-screen')).toBe('merged')
+    expect(w.get('[data-test="merge-window"]').attributes('data-screen')).toBe('merged')
   })
 
   it('[이 결과 버리고 …] asks once, then discards and reruns', async () => {
@@ -371,6 +403,41 @@ describe('screens', () => {
     await w.get('[data-test="merge-read-failed"] button').trigger('click')
     await flushPromises()
     expect(q(w, 'merge-read-failed').exists()).toBe(false)
-    expect(w.get('[data-test="merge-tab"]').attributes('data-screen')).toBe('needs_choice')
+    expect(w.get('[data-test="merge-window"]').attributes('data-screen')).toBe('needs_choice')
+  })
+})
+
+// Reproducible component captures. The compressed HTML goes to the command output, never the source tree.
+describe('capture renders for visual review', () => {
+  it.each(['row', 'progress', 'choice', 'pick', 'done', 'waiting'])('capture %s', async scenario => {
+    const samples = {
+      files: [{ path: 'client_gui/src/features/designer/inspector/inspectorTabs.ts', resolved: false, kind: 'both' },
+        { path: 'server/attachments/routes.py', resolved: false, kind: 'deleted_latest' }],
+      waiting_cards: [{ node_key: 'gn_2', title: '카드 첨부 탭 제거' }],
+    }
+    const over = scenario === 'progress' ? { state: 'catching_up', resolving: { run_id: 'run_1' }, actions: [] }
+      : scenario === 'waiting' ? { state: 'waiting', blocked_by: { node_key: 'gn_2', title: '업로드 대기열 이전', why: 'conflict' }, actions: [] }
+      : {}
+    api.read.mockResolvedValue(await state({ ...samples, ...over }))
+    const frame = await mountFrame({ integrationStatus: scenario === 'waiting' ? 'pending' : 'conflict' })
+    if (scenario !== 'row') {
+      const host = mount(MergeWindows, { attachTo: document.body, global: { plugins: [i18n] } })
+      wrappers.push(host)
+      const target = toInspectorTarget(selection({ integrationStatus: 'conflict' }))!
+      openMergeWindow(() => target)
+      await flushPromises()
+      if (scenario === 'pick') {
+        document.querySelector<HTMLButtonElement>('[data-test="merge-pick-open"]')!.click()
+        await flushPromises()
+      }
+      if (scenario === 'done') {
+        api.read.mockResolvedValue(await state({ state: 'hidden', integration_status: 'integrated', actions: [] }))
+        openMergeWindow(() => target)
+        await flushPromises()
+      }
+      expect(document.querySelector('[data-test="merge-window"]')).not.toBeNull()
+    }
+    const body = scenario === 'row' ? '<section class="designer-inspector">' + q(frame, 'designer-inspector-tabs').element.outerHTML + q(frame, 'designer-inspector-body').element.outerHTML + '</section>' : document.querySelector('.ui-modeless-panel')!.outerHTML
+    console.log('MERGE_CAPTURE:' + scenario + ':' + gzipSync(Buffer.from(body)).toString('base64'))
   })
 })

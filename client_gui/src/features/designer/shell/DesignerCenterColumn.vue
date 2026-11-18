@@ -33,12 +33,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
+import { toInspectorTarget } from '../inspector/inspectorTarget'
+import { openMergeWindow } from '../inspector/features/merge/mergeWindows'
 import { openDocument } from '../inspector/openDocument'
 import { cardDocumentButtons, type CardDocumentOpen } from '../center/canvas/cardDocumentButtons'
 import type { CanvasViewport } from '../center/canvasView'
 import type { DesignerCenterSession } from '../center/designerCenterSession'
-import type { FlowGraph } from '../center/graph/flowGraph'
+import type { FlowGraph, FlowGraphNode, FlowGraphNodeRun } from '../center/graph/flowGraph'
 import DesignerBottomDock from './DesignerBottomDock.vue'
 import DesignerResizeHandle from './DesignerResizeHandle.vue'
 import { provide } from 'vue'
@@ -72,8 +74,7 @@ const emit = defineEmits<{
 // the Git panel's [카드로 이동] and the tab's own [‘…’ 카드로 이동] send one window event; here the card's Flow is shown
 // (opened when it is not), the card selected and the Inspector asked for the tab. A Git session names its merge id
 // instead of a card: the card is the one whose node run's integration reason is that session (`merge_session:<id>`).
-const tabRequest = ref<{ readonly flowId: string; readonly nodeId: string; readonly tab: string; readonly seq: number } | null>(null)
-let tabRequestSeq = 0
+const pendingMerge = ref<{ flowId: string; nodeKey?: string; mergeId?: number } | null>(null)
 
 function cardOfMergeSession(flowId: string, mergeId: number): string | null {
   const load = props.center.state.graphs?.[flowId]
@@ -95,20 +96,37 @@ function onOpenCardMerge(event: Event): void {
   if (!flowId || projectId === null) return
   if (props.center.state.tabs.some((tab) => tab.flowId === flowId)) props.center.activateFlow(flowId)
   else props.center.openFlow({ projectId, flowId, flowName: typeof detail.flowName === 'string' ? detail.flowName : flowId })
-  const nodeId = typeof detail.nodeKey === 'string' && detail.nodeKey ? detail.nodeKey
-    : typeof detail.mergeId === 'number' ? cardOfMergeSession(flowId, detail.mergeId) : null
-  if (!nodeId) return
-  props.center.selectNode(flowId, nodeId)
-  tabRequest.value = { flowId, nodeId, tab: 'merge', seq: ++tabRequestSeq }
+  pendingMerge.value = { flowId, nodeKey: typeof detail.nodeKey === 'string' ? detail.nodeKey : undefined,
+    mergeId: typeof detail.mergeId === 'number' ? detail.mergeId : undefined }
 }
+
+watchEffect(() => {
+  const request = pendingMerge.value
+  const projectId = props.center.state.projectId
+  if (!request || projectId === null) return
+  const { flowId } = request
+  const nodeId = request.nodeKey || (request.mergeId !== undefined ? cardOfMergeSession(flowId, request.mergeId) : null)
+  const load = props.center.state.graphs?.[flowId]
+  if (!nodeId || load?.status !== 'ready') return
+  const node = load.graph.nodes.find(item => item.id === nodeId)
+  if (!node) return
+  const initial = toInspectorTarget({ projectId, graph: load.graph as FlowGraph, node: node as FlowGraphNode })!
+  props.center.selectNode(flowId, nodeId)
+  openMergeWindow(() => {
+    const latest = props.center.state.graphs?.[flowId]
+    const current = latest?.status === 'ready' ? latest.graph.nodes.find(item => item.id === nodeId) : null
+    if (!current || latest?.status !== 'ready') return initial
+    const run = props.center.runMarks(flowId).nodeRuns.get(nodeId)
+    return toInspectorTarget({ projectId, graph: latest.graph as FlowGraph, node: { ...current, nodeRun: (run ? { ...current.nodeRun, ...run } : current.nodeRun) as FlowGraphNodeRun | null } })!
+  }, () => props.center.refreshFlow(flowId))
+  pendingMerge.value = null
+})
 
 onMounted(() => window.addEventListener('fg:open_card_merge', onOpenCardMerge))
 onBeforeUnmount(() => window.removeEventListener('fg:open_card_merge', onOpenCardMerge))
 
 provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
   selection: () => props.center.activeSelection.value,
-  // flowgate.v02test.0042: the last "open this card's tab" request (see onOpenCardMerge).
-  tabRequest: () => tabRequest.value,
   saveTitle: props.center.canEditNodeTitles
     ? (flowId: string, nodeId: string, title: string) => props.center.saveNodeTitle(flowId, nodeId, title)
     : null,
