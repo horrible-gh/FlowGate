@@ -39,7 +39,6 @@ const activityRead = vi.fn()
 const detailRead = vi.fn()
 const relationsRead = vi.fn()
 const qaReadCall = vi.fn()
-const attachmentsCall = vi.fn()
 const nodeRead = vi.fn()
 const specRead = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
@@ -56,14 +55,13 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentDetailRead: (...args: unknown[]) => detailRead(...args),
     documentRelationsRead: (...args: unknown[]) => relationsRead(...args),
     qaRead: (...args: unknown[]) => qaReadCall(...args),
-    attachmentsRead: (...args: unknown[]) => attachmentsCall(...args),
     // flowgate.v02.0053 T#7: Graph cards read their own settings (and a test card its TS) in the Frame cases.
     settingsNodeRead: (...args: unknown[]) => nodeRead(...args),
     testSpecRead: (...args: unknown[]) => specRead(...args),
   }
 })
 
-const { toSettingsSequence, toSettingsChoices, toSettingsRun, toSettingsNode, settingsSavePayload, toReviewDocument, toReviewActivity, toDocumentDetail, toQaThread, toAttachmentsList } =
+const { toSettingsSequence, toSettingsChoices, toSettingsRun, toSettingsNode, settingsSavePayload, toReviewDocument, toReviewActivity, toDocumentDetail, toQaThread } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
 
 const i18n = prepareInspectorI18n()
@@ -220,7 +218,6 @@ function serve() {
   detailRead.mockImplementation(async (docId: string) => toDocumentDetail(docRow(docId)))
   relationsRead.mockImplementation(async () => [])
   qaReadCall.mockImplementation(async (docId: string) => toQaThread({ ok: true, qa: { doc_id: docId, status: null, items: [] } }))
-  attachmentsCall.mockImplementation(async (docId: string) => toAttachmentsList({ data: { doc_id: docId, attachments: [], count: 0 } }))
   nodeRead.mockImplementation(async () => toSettingsNode({ card_kind: 'run', locked: false, fields: {} }))
   specRead.mockRejectedValue(axiosError(404, { error: 'not_found' }))
 }
@@ -299,7 +296,7 @@ beforeEach(() => {
   intents = []
   running = false
   disposed = false
-  for (const mock of [sequenceRead, runRead, choicesRead, saveCall, documentRead, activityRead, detailRead, relationsRead, qaReadCall, attachmentsCall, nodeRead, specRead]) mock.mockReset()
+  for (const mock of [sequenceRead, runRead, choicesRead, saveCall, documentRead, activityRead, detailRead, relationsRead, qaReadCall, nodeRead, specRead]) mock.mockReset()
   seed()
   serve()
 })

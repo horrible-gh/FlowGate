@@ -270,7 +270,7 @@ describe('gate Inspector — D §8-10', () => {
     expect(w.find('[data-test="gate-memo-panel"]').exists()).toBe(false)
     expect(mocks.decide).not.toHaveBeenCalled()
   })
-  it('real Frame keeps header kind/title/memo/status/more and Q&A/attachments; actions are only in documents', async () => {
+  it('real Frame keeps header kind/title/memo/status/more and Q&A; actions are only in documents', async () => {
     const selection = SELECTIONS.graphGate
     const w = await show(DesignerInspector, { selection })
     const header = w.get('[data-test="designer-inspector-header"]')
@@ -280,7 +280,7 @@ describe('gate Inspector — D §8-10', () => {
     expect(header.find('[data-test="designer-inspector-title"]').exists()).toBe(true)
     expect(header.find('[data-test="designer-inspector-more"]').exists()).toBe(true)
     expect(header.text()).not.toContain('시안 상태 초기화')
-    expect(w.text()).toContain('Q&A'); expect(w.text()).toContain('첨부')
+    expect(w.text()).toContain('Q&A'); expect(w.findAll('[role="tab"]').map(tab => tab.text())).not.toContain('첨부')
     expect(w.find('[data-test="gate-result"]').exists()).toBe(true)
   })
 })

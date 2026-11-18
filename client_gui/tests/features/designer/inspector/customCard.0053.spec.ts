@@ -2,7 +2,7 @@
  * flowgate.v02.0053 T#8 — a card added with the Palette [+] (카드 추가) and placed is a Custom card (Graph `custom`
  * node) that works like a 조사 card, whichever Palette category it was added to (설계 · 업무 · 제어): placed, it is
  * never a gate, and the real Frame and registry show it as the 조사 card is shown — the same tabs, the 지시서 ·
- * 레포트 lines with the document icon and ✎, the same settings form, the Q&A input row and the attachments [+] —
+ * 레포트 lines with the document icon and ✎, the same settings form, the Q&A input row —
  * titled with the name a person gave it. (The server side — no `rule_undecided/custom_node`, the run and its
  * result — is server/tests/test_fg_custom_card_0053.py.)
  */
@@ -168,7 +168,9 @@ async function openTab(w: VueWrapper<any>, label: string) {
 /** What the Inspector shows for a card: its tabs and what each of them holds. */
 async function inspect(node: FlowGraphNode) {
   const w = await mountFrame(node)
-  const title = w.get('[data-test="designer-inspector-title"]').text()
+  // A title repeating the card kind is intentionally hidden; a custom name stays visible.
+  const titleElement = w.find('[data-test="designer-inspector-title"]')
+  const title = titleElement.exists() ? titleElement.text() : null
   const tabs = tabsOf(w).map((tab) => tab.text())
   const lines = w.findAll('[data-test="designer-inspector-body"] [data-test="inspector-slot"]').map((row) => [
     row.get('[data-test="inspector-slot-name"]').text(),
@@ -177,14 +179,12 @@ async function inspect(node: FlowGraphNode) {
   ])
   await openTab(w, 'Q&A')
   const ask = w.find('[data-test="qna-ask-input"]').exists()
-  await openTab(w, '첨부')
-  const add = w.find('[data-test="attachments-add"]').exists()
   await openTab(w, '설정')
   const settings = w.findAll('[data-test="inspector-control-row"]').map((row) => row.attributes('data-label'))
   const text = w.text()
   w.unmount()
   wrapper = null
-  return { title, tabs, lines, ask, add, settings, text }
+  return { title, tabs, lines, ask, settings, text }
 }
 
 describe('a Custom card placed from the Palette [+] (flowgate.v02.0053 T#8)', () => {
@@ -192,16 +192,17 @@ describe('a Custom card placed from the Palette [+] (flowgate.v02.0053 T#8)', ()
     expect(customSpec(category)).toEqual({ nodeType: 'custom', docType: null, paletteItemId: 'custom.1', label: NAME, kind: 'custom.1' })
   })
 
-  it.each(PALETTE_CATEGORIES)('added to %s: documents · settings · Q&A · attachments as the 조사 card shows them', async (category) => {
+  it.each(PALETTE_CATEGORIES)('added to %s: documents · settings · Q&A as the 조사 card shows them', async (category) => {
     const research = await inspect(RESEARCH)
     const custom = await inspect(customCard(category))
-    expect(research.tabs).toEqual(['문서', '설정', 'Q&A', '첨부'])
+    expect(research.tabs).toEqual(['문서', '설정', 'AI', 'Q&A'])
     expect(research.lines).toEqual([
       ['지시서', '열기', '편집'],
       ['레포트', '열기', '편집'],
     ])
-    expect(research.ask && research.add).toBe(true)
-    expect(research.settings).toEqual(['지시서', '지시 AI', '실행 AI', '재시작', '검수 AI', '검수 횟수'])
+    expect(research.ask).toBe(true)
+    // AI and execution controls belong to the AI tab; the settings tab keeps instruction mode.
+    expect(research.settings).toEqual(['지시서'])
     expect({ ...custom, title: null, text: null }).toEqual({ ...research, title: null, text: null })
     // both cards read their own card settings (the server keeps a Custom card as a run card)
     expect(nodeRead.mock.calls.map(([, key]) => key)).toEqual(expect.arrayContaining(['gn_n', 'gn_c']))

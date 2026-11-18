@@ -53,7 +53,6 @@ const documentRead = vi.fn()
 const detailRead = vi.fn()
 const relationsRead = vi.fn()
 const qaReadCall = vi.fn()
-const attachmentsReadCall = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -65,15 +64,14 @@ vi.mock('@/features/document', async (importOriginal) => {
     testSpecRunCancel: (...args: unknown[]) => cancelCall(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
     reviewDocumentRead: (...args: unknown[]) => documentRead(...args),
-    // The documents tab, the header actions, the Q&A and attachments tab numbers share the Frame.
+    // The documents tab, the header actions, the Q&A tab numbers share the Frame.
     documentDetailRead: (...args: unknown[]) => detailRead(...args),
     documentRelationsRead: (...args: unknown[]) => relationsRead(...args),
     qaRead: (...args: unknown[]) => qaReadCall(...args),
-    attachmentsRead: (...args: unknown[]) => attachmentsReadCall(...args),
   }
 })
 
-const { toTestSpecView, toTestSpecRunAck, toReviewActivity, toReviewDocument, toDocumentDetail, toQaThread, toAttachmentsList } =
+const { toTestSpecView, toTestSpecRunAck, toReviewActivity, toReviewDocument, toDocumentDetail, toQaThread } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
 
 const i18n = prepareInspectorI18n()
@@ -211,7 +209,6 @@ function serve() {
   detailRead.mockImplementation(async (docId: string) => toDocumentDetail(docRow(docId)))
   relationsRead.mockImplementation(async () => [])
   qaReadCall.mockImplementation(async (docId: string) => toQaThread({ ok: true, qa: { doc_id: docId, status: null, items: [] } }))
-  attachmentsReadCall.mockImplementation(async (docId: string) => toAttachmentsList({ data: { doc_id: docId, attachments: [], count: 0 } }))
 }
 
 const docRow = (docId: string) => ({
@@ -245,7 +242,7 @@ beforeEach(() => {
   running = false
   disposed = false
   nextRun = 1
-  for (const mock of [viewRead, startCall, approveCall, cancelCall, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall]) mock.mockReset()
+  for (const mock of [viewRead, startCall, approveCall, cancelCall, activityRead, documentRead, detailRead, relationsRead, qaReadCall]) mock.mockReset()
   seed()
   serve()
   closeAllDocumentWindows()

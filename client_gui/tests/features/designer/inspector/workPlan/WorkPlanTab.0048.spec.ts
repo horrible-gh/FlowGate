@@ -53,7 +53,6 @@ const documentRead = vi.fn()
 const detailRead = vi.fn()
 const relationsRead = vi.fn()
 const qaReadCall = vi.fn()
-const attachmentsReadCall = vi.fn()
 const contentSave = vi.fn()
 const deployStatusRead = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
@@ -61,13 +60,12 @@ vi.mock('@/features/document', async (importOriginal) => {
   return {
     ...actual,
     workPlanRead: (...args: unknown[]) => planRead(...args),
-    // The documents tab, the header actions, the Q&A and attachments tab numbers share the Frame.
+    // The documents tab, the header actions, the Q&A tab numbers share the Frame.
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
     reviewDocumentRead: (...args: unknown[]) => documentRead(...args),
     documentDetailRead: (...args: unknown[]) => detailRead(...args),
     documentRelationsRead: (...args: unknown[]) => relationsRead(...args),
     qaRead: (...args: unknown[]) => qaReadCall(...args),
-    attachmentsRead: (...args: unknown[]) => attachmentsReadCall(...args),
     // flowgate.v02.0074 T#2: the plan line's [업로드] never saves the content.
     documentContentSave: (...args: unknown[]) => contentSave(...args),
     // flowgate.v02.0074 T#5: the header's deploy buttons.
@@ -75,7 +73,7 @@ vi.mock('@/features/document', async (importOriginal) => {
   }
 })
 
-const { toWorkPlanView, toWorkPlanDeployStatus, toReviewActivity, toReviewDocument, toDocumentDetail, toQaThread, toAttachmentsList } =
+const { toWorkPlanView, toWorkPlanDeployStatus, toReviewActivity, toReviewDocument, toDocumentDetail, toQaThread } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
 
 const i18n = prepareInspectorI18n()
@@ -146,7 +144,6 @@ function serve() {
   detailRead.mockImplementation(async (docId: string) => toDocumentDetail(docRow(docId)))
   relationsRead.mockImplementation(async () => [])
   qaReadCall.mockImplementation(async (docId: string) => toQaThread({ ok: true, qa: { doc_id: docId, status: null, items: [] } }))
-  attachmentsReadCall.mockImplementation(async (docId: string) => toAttachmentsList({ data: { doc_id: docId, attachments: [], count: 0 } }))
 }
 
 const docRow = (docId: string) => ({
@@ -179,7 +176,7 @@ beforeEach(() => {
   server.clear()
   refusals.length = 0
   holds.clear()
-  for (const mock of [planRead, activityRead, documentRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall, contentSave, deployStatusRead]) mock.mockReset()
+  for (const mock of [planRead, activityRead, documentRead, detailRead, relationsRead, qaReadCall, contentSave, deployStatusRead]) mock.mockReset()
   seed()
   serve()
   deployStatusRead.mockImplementation(async (docId: string) => toWorkPlanDeployStatus({

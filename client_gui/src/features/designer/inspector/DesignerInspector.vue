@@ -19,7 +19,7 @@
        receives an empty state and unconnected settings a disabled state. Card slots lead the
        document tab; the card slot opens the existing document screen for full detail.
        flowgate.v02.0053 T#6: the body element is provided to the tab parts (INSPECTOR_BODY) so a part can
-       take input over the whole tab (the attachments file drop); a `fill` tab's section takes the body's
+       take input over the whole tab; a `fill` tab's section takes the body's
        free height.
        flowgate.v02.0053 T#9: one more header place — the ✎ 메모 part (`headerMemo`, the first that applies);
        without one the header keeps its dim, disabled ✎ 메모.
@@ -320,9 +320,9 @@ const tabContent = computed(() => {
     : entries
 })
 const emptyTabMessage = computed(() => {
-  // flowgate.v02.0053 T#6 (0053 CH): Q&A and attachments of a Node without a document are an empty
+  // flowgate.v02.0053 T#6 (0053 CH): Q&A of a Node without a document is an empty
   // area — no "no linked document" sentence.
-  if (!target.value?.docId && (activeTab.value === 'qna' || activeTab.value === 'attachments')) return ''
+  if (!target.value?.docId && activeTab.value === 'qna') return ''
   // flowgate.v02.0053 T#7 (0053 CH §4): every card with settings has its form now (a Graph card, just placed
   // or done); a Node with none (a work plan card, a v0.1 document outside the sequence) keeps an empty
   // settings area — no "why not" sentence (the 0052 T#2 reasons, "v0.1 단계에 속하지 않은 Node" among them).
@@ -410,7 +410,7 @@ function selectTab(key: string) {
   margin-top: 12px;
 }
 
-/* A `fill` tab (the attachments drop area): its part grows to the bottom of the body's content box. */
+/* A `fill` tab: its part grows to the bottom of the body's content box. */
 .designer-inspector-section.is-fill {
   display: flex;
   flex-direction: column;

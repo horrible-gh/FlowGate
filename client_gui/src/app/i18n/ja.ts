@@ -701,7 +701,6 @@ export default {
         settings: '設定',
         ai: 'AI',
         qna: 'Q&A',
-        attachments: '添付',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: 'ドキュメント状態',
@@ -827,7 +826,7 @@ export default {
         user: 'ユーザー {name}',
       },
       notifications: {
-        project_unknown: '現在のプロジェクトの Flow 一覧を確認できません。プロジェクトエクスプローラーを読み込んでから再度確認してください。',
+        project_unknown: '現在のプロジェクトのフロー一覧を確認できません。プロジェクトエクスプローラーを読み込んでから再度確認してください。',
         tabs: {
           runs: '実行',
           ai: 'AI',

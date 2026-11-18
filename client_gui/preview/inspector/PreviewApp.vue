@@ -424,7 +424,7 @@ const CARD_SAMPLES = [
 const useInstruction = ref('1')
 const advancedB = ref(true)
 
-// A fixture registry for the stage 1 frame sample: the four v7 tabs filled with common parts.
+// A fixture registry for the frame sample: documents, settings and Q&A filled with common parts.
 const EMPTY = { ko: {}, en: {}, ja: {} } as const
 const pane = (message: string) => defineComponent({ props: { target: { type: Object, required: true } }, setup: () => () => h(InspectorPaneState, { state: 'empty', message }) })
 const settings = defineComponent({
@@ -437,7 +437,6 @@ const settings = defineComponent({
 const entries: InspectorRegistration[] = [
   { key: 'documents', order: 500, requiresDocument: true, tab: { key: 'documents', component: PreviewDocumentsTab }, messages: EMPTY },
   { key: 'qna', order: 700, requiresDocument: true, tab: { key: 'qna', component: pane('질문 없음'), count: () => computed(() => null) }, messages: EMPTY },
-  { key: 'attachments', order: 800, requiresDocument: true, tab: { key: 'attachments', component: pane('첨부 없음') }, messages: EMPTY },
   { key: 'settings', order: 900, requiresDocument: true, tab: { key: 'settings', component: settings }, messages: EMPTY },
 ]
 const PREVIEW_REGISTRY = createInspectorRegistry(Object.fromEntries(entries.map((entry) => [`./features/${entry.key}/register.ts`, { default: entry }])))

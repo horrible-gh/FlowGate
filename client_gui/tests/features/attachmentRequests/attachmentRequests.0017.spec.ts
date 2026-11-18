@@ -26,7 +26,6 @@ import { ATTACHMENT_REQUEST_BULK, ATTACHMENT_REQUEST_REFRESH, ATTACHMENT_REQUEST
 import { chatEventRefresh } from '@/features/conversation/conversationEvents'
 import { buildTimeline } from '@/features/conversation/timeline'
 import type { ConversationTurn, WorkChangeActivity } from '@/features/conversation/types'
-import { attachmentsTabBadge } from '@/features/designer/inspector/features/attachments/attachmentsModel'
 import {
   ATTACHMENT_REQUEST_BULK_MAX,
   attachmentRequestDecideMany,
@@ -131,15 +130,6 @@ describe('chat timeline', () => {
     const frame = { type: 'attachment_request_updated', payload: { doc_id: target.chatId, group_id: target.groupId }, groupId: target.groupId, docId: null }
     expect(chatEventRefresh(frame, target)).toEqual({ activities: true })
     expect(chatEventRefresh({ ...frame, payload: { doc_id: 'other' } }, target)).toBeNull()
-  })
-})
-
-describe('card tab badge', () => {
-  it('shows waiting requests next to the number', () => {
-    expect(attachmentsTabBadge(3, 2, (n) => `대기 ${n}`)).toBe('3 · 대기 2')
-    expect(attachmentsTabBadge(null, 1, (n) => `대기 ${n}`)).toBe('0 · 대기 1')
-    expect(attachmentsTabBadge(3, 0, (n) => `대기 ${n}`)).toBe(3)
-    expect(attachmentsTabBadge(null, null, (n) => `대기 ${n}`)).toBeNull()
   })
 })
 
