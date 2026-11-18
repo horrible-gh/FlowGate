@@ -1,8 +1,8 @@
 import { computed } from 'vue'
-import { settingsNodeErrorOf } from '@/features/document'
+import { settingsNodeErrorOf, checkControlFailure } from '@/features/document'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { checkControlFailure, type CheckSettingsFailureKind } from './checkSettingsModel'
-import { useGateContext, GATE_RUN_EVENTS } from '../gateCard/useGateContext'
+import type { CheckSettingsFailureKind } from './checkSettingsModel'
+import { useGateContext, GATE_RUN_EVENTS } from '../../useInspectorResource'
 export const CHECK_SETTINGS_EVENTS = GATE_RUN_EVENTS
 
 /** The same confirmed settings/run/gate context used by the document result box. */

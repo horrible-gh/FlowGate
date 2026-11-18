@@ -1,7 +1,7 @@
 import { effectScope, shallowReactive } from 'vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { documentErrorOf } from '@/features/document'
-import { checkControlFailure } from '../checkSettings/checkSettingsModel'
+import { checkControlFailure } from '@/features/document'
 import { gateDecisionReason, gateFailureKey } from './gateCardModel'
 import { useGateContext } from './useGateContext'
 

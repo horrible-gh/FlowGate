@@ -280,7 +280,7 @@ const headerMetas = computed(() => contributions.value.filter((entry) => entry.h
 const headerActions = computed(() => contributions.value.filter((entry) => entry.headerAction))
 const headerKind = computed(() => contributions.value.find((entry) => entry.headerKind) ?? null)
 const headerMenus = computed(() => contributions.value.filter((entry) => entry.headerMenu))
-const headerState = computed(() => contributions.value.find((entry) => entry.headerState) ?? null)
+const headerState = computed(() => contributions.value.find((entry) => entry.headerState && (!entry.headerStateApplies || (target.value && entry.headerStateApplies(target.value)))) ?? null)
 const headerMemo = computed(() => contributions.value.find((entry) => entry.headerMemo) ?? null)
 
 const tabs = computed(() => {

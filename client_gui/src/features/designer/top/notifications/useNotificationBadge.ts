@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { qaOpenItems } from '@/features/document/api/qa'
+import { qaOpenItems } from '@/features/document'
 import type { ExplorerProject } from '../../projectExplorer/projectExplorerTree'
 import { subscribeProjectEvents } from '@/features/project/projectEvents'
 import { fetchActiveRuns, fetchNotificationFeed } from './notificationApi'

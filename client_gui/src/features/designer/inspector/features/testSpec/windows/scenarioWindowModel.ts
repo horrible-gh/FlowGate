@@ -5,7 +5,7 @@ import type ModelessShell from '@/components/ui/ModelessShell.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
 import { useTestCard, type TestCardWindowKind } from '../useTestCard'
 import type { CasesPin } from '../testCardSession'
-import type { TsBase } from '../tsEditSession'
+import type { TsBase } from '@/features/documentWindow'
 
 export const caseTextFields = ['title', 'requirement', 'precondition', 'procedure', 'expected', 'run_command'] as const
 export interface CaseDraft {

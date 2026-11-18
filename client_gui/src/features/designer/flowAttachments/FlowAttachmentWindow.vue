@@ -109,7 +109,7 @@ import { createUndoQueue, UNDO_MS } from './undo'
 import { wordsFor } from './words'
 import { FaIcon } from './icons'
 import AttachmentRequestItem from '@/features/attachmentRequests/AttachmentRequestItem.vue'
-import { toAttachmentRequest, type AttachmentRequest } from '@/features/document/api/attachmentRequests'
+import { toAttachmentRequest, type AttachmentRequest } from '@/features/document'
 import { getRequest } from '@shared/api'
 
 const props = defineProps<{

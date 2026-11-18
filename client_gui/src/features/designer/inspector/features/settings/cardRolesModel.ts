@@ -1,5 +1,5 @@
 import type { CardAiRoles, AiRole, AiRoleValue } from '@/features/document'
-import { REVIEW_COUNT_HIDDEN } from '@shared/utils/reviewCountChoices'
+import { REVIEW_COUNT_HIDDEN } from './reviewCountModel'
 const AI_ROLES = ['instruction', 'execution', 'review'] as const
 /**
  * The AI tab's role rows, in 지시 · 실행 · 검수 order, for the roles the server gives the card (a WP card has no 지시 AI).

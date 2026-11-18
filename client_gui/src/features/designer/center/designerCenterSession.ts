@@ -106,7 +106,7 @@
 // flowgate.v02.0070 T#1 (B1): the title is edited in the Inspector header, not on the card — `activeSelection` says
 // whether the selected card's title opens now (`titleEdit`, the rule the card had: graph/nodeTitle.ts nodeTitleEdit with
 // the run read's node run of the card) and the header saves through `saveNodeTitle` for the card it opened on.
-import { approveGateTarget } from '../inspector/features/gateCard/gateApproval'
+import { approveGateTarget } from '../inspector/features/gateCard/useGateApproval'
 import { toInspectorTarget } from '../inspector/inspectorTarget'
 import { cardNodeRun } from './graph/cardStateView'
 import { computed, markRaw, reactive, readonly, shallowRef, type ComputedRef, type DeepReadonly } from 'vue'

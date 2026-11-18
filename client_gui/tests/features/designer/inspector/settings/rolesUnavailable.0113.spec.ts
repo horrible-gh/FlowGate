@@ -1,9 +1,9 @@
 /** flowgate.v02.0113 T#1 (0021-T): P-1 card_roles_unavailable → the roles_unavailable kind on the check / requirement cards. */
 import { describe, expect, it } from 'vitest'
 import { checkSettingsErrorKey, checkSettingsView, type CheckSettingsFailureKind } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
-import { requirementSettingsErrorKey, requirementSettingsView, type RequirementSettingsFailureKind } from '@/features/designer/inspector/features/requirementSettings/requirementSettingsModel'
+import { requirementSettingsErrorKey, requirementSettingsView, type RequirementSettingsFailureKind } from '../../../../../preview/inspector/legacy/requirementSettings/requirementSettingsModel'
 import checkMessages from '@/features/designer/inspector/features/checkSettings/messages'
-import requirementMessages from '@/features/designer/inspector/features/requirementSettings/messages'
+import requirementMessages from '../../../../../preview/inspector/legacy/requirementSettings/messages'
 import type { SettingsNodeErrorKind } from '@/features/document'
 
 const KINDS: readonly SettingsNodeErrorKind[] = ['roles_unavailable', 'locked', 'disposed', 'unavailable', 'invalid', 'forbidden', 'not_found', 'network', 'other']

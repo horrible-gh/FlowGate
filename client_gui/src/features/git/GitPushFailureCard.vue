@@ -33,7 +33,7 @@
 // stderr, no long text, no cause guessed on the client.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { checkOperationErrorKey } from '../designer/inspector/features/checkSettings/checkSettingsModel'
+import { checkOperationErrorKey } from '@/features/document'
 import GateSettingsSummary from '../designer/inspector/features/gateCard/GateSettingsSummary.vue'
 import { retryOutcomeText, useGitGateOperations, type GateOperation } from './gateOperations'
 import { useGitPanel } from './gitSession'

@@ -20,7 +20,7 @@
 // flowgate.v02.0053 T#7 — these are the rules of a v0.1 Flow's Node only (a sequence step without a Graph
 // card). A change is saved at once (no save button, v7); a Graph card's settings follow cardSettingsModel.
 // What a running hop took from the row is no longer drawn (v7 has no such block).
-import { reviewCountKind } from '@shared/utils/reviewCountChoices'
+import { reviewCountKind } from './reviewCountModel'
 import type { InspectorReadOnly } from '../../inspectorTarget'
 
 /** The parts of a sequence row the rules read (the `@/features/document` SettingsRow). */

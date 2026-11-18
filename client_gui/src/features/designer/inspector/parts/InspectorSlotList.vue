@@ -138,9 +138,8 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useCardDocumentDecisions } from '../useCardDocumentDecisions'
-import type { InspectorTarget } from '../inspectorTarget'
 import InspectorDocumentDecision from './InspectorDocumentDecision.vue'
 import { documentDecisionMessages } from './documentDecisionMessages'
 import InspectorReason from './InspectorReason.vue'
@@ -154,6 +153,12 @@ import InspectorSlotRow, { type InspectorSlotState, type InspectorSlotTestIds } 
 import type { SlotAction, SlotActionKey } from './slotStateView'
 
 export type { SlotAction, SlotActionKey }
+
+export interface SlotDecisions {
+  readonly failure: { readonly value: string | null }
+  row(slot: string, docId: string | null | undefined): { readonly visible: boolean; readonly authoritative: boolean; readonly state: string | null | undefined; readonly action: 'approve' | 'reject'; readonly disabled: boolean; readonly reason: string | null }
+  decide(slot: string, docId: string | null | undefined): unknown
+}
 
 /** A button that exists on the line: usable, or shown disabled (its operation is not connected). */
 export type InspectorSlotButton = 'enabled' | 'disabled' | 'none'
@@ -208,7 +213,7 @@ export interface InspectorSlotView {
 const props = withDefaults(
   defineProps<{
     slots: readonly InspectorSlotView[]
-    target?: InspectorTarget | null
+    decisions?: SlotDecisions | null
     /** ✎ (open straight in the editor) on every line that opens. */
     editable?: boolean
   }>(),
@@ -226,9 +231,13 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
-const decisions = useCardDocumentDecisions(() => props.target ?? null)
+const decisions = computed(() => props.decisions ?? {
+  failure: { value: null },
+  row: () => ({ visible: false, authoritative: false, state: null, action: 'approve' as const, disabled: true, reason: null }),
+  decide: () => {},
+})
 const decisionOf = (line: InspectorSlotView) => {
-  const row = decisions.row(line.cardSlot ?? line.key ?? '', line.id)
+  const row = decisions.value.row(line.cardSlot ?? line.key ?? '', line.id)
   return { ...row, visible: row.visible && (line.kind ?? 'document') === 'document' && !line.nav }
 }
 

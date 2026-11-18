@@ -106,21 +106,32 @@ class _MockDB:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
+        self.cursor = None
+        self._in_transaction = False
 
     def execute(self, sql, params=None):
-        self._conn.execute(sql, params or [])
-        self._conn.commit()
+        self.cursor = self._conn.execute(sql, params or [])
+        if not self._in_transaction:
+            self._conn.commit()
+        return self.cursor
 
-    def fetch_one(self, sql, params=None):
-        row = self._conn.execute(sql, params or []).fetchone()
+    def fetch_one(self, sql=None, params=None):
+        cursor = self._conn.execute(sql, params or []) if sql is not None else self.cursor
+        row = cursor.fetchone()
         return dict(row) if row else None
 
-    def fetch_all(self, sql, params=None):
-        return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
+    def fetch_all(self, sql=None, params=None):
+        cursor = self._conn.execute(sql, params or []) if sql is not None else self.cursor
+        return [dict(r) for r in cursor.fetchall()]
 
     @contextmanager
     def begin_transaction(self):
-        yield self
+        self._in_transaction = True
+        try:
+            with self._conn:
+                yield self
+        finally:
+            self._in_transaction = False
 
     def close(self):
         self._conn.close()
@@ -129,6 +140,12 @@ class _MockDB:
 @pytest.fixture
 def env(attachments_db, tmp_path, monkeypatch):
     from modules.flow_gate.db import connection as conn_mod
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration as edit_integration
+
+    # Match startup composition while keeping registrations isolated to this test.
+    monkeypatch.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+    edit_integration.register()
 
     storage_root = tmp_path / "storage"
     group_dir = storage_root / "documents" / PROJECT_ID / "main" / "default" / "0523"
@@ -156,6 +173,22 @@ def env(attachments_db, tmp_path, monkeypatch):
         yield {"store": store, "storage_root": storage_root, "group_dir": group_dir}
     finally:
         conn_mod.STORE = original_store
+        mock_db.close()
+
+
+def _bind_source_policy(monkeypatch):
+    """Provide the same temporary worktree to the authoritative source policy.
+
+    Keep its group lock, alias checks, recovery check and managed-path checks real.
+    """
+    from modules.flow_gate.services import git_service, tr2_file_policy
+
+    original = tr2_file_policy._group_root
+    monkeypatch.setattr(
+        tr2_file_policy, "_group_root",
+        lambda project_id, group_id: git_service.effective_src_root_ex(project_id, group_id)[0].resolve()
+        if project_id == PROJECT_ID and group_id == GROUP_ID else original(project_id, group_id),
+    )
 
 
 @pytest.fixture
@@ -167,6 +200,7 @@ def src_root(tmp_path, monkeypatch):
     root.mkdir()
     monkeypatch.setattr(git_service, "effective_src_root_ex", lambda *_: (root, "worktree"))
     monkeypatch.setattr(git_service, "base_src_root", lambda *_a, **_k: root)
+    _bind_source_policy(monkeypatch)
     return root
 
 
@@ -580,8 +614,13 @@ def git_src_root(tmp_path, monkeypatch):
     _git(repo, "commit", "-q", "-m", "base")
 
     monkeypatch.setattr(git_service, "effective_src_root_ex", lambda *_: (repo, "worktree"))
-    monkeypatch.setattr(git_service.db_git, "get_state", lambda gid: {"branch": "main"})
-    monkeypatch.setattr(git_service.db_git, "get_config", lambda pid: {"base_branch": "main"})
+    base_sha = _git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(git_service.db_git, "get_state", lambda gid: {
+        "branch": "main", "work_base_state": "verified",
+        "work_base_sha": base_sha, "work_base_sync_sha": base_sha,
+    })
+    monkeypatch.setattr(git_service.db_git, "get_config", lambda pid: {"enabled": True, "base_branch": "main"})
+    _bind_source_policy(monkeypatch)
     return repo
 
 
@@ -602,7 +641,7 @@ def test_copy_appears_git_dirty_and_in_the_trs_scope_changes(env, git_src_root):
     assert status.strip().startswith("??")  # untracked -- git sees it as dirty
 
     scope = git_service.collect_scope_changes(PROJECT_ID, GROUP_ID)
-    assert scope["available"] is True
+    assert scope["available"] is True, f"{scope['reason']}: {scope.get('work_base_error')}"
     assert "assets/schema.json" in scope["paths"]
 
 

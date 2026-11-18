@@ -7,7 +7,7 @@
  * server limits, what a mutability refusal blocks, and the keys with their ko / en / ja wording.
  */
 import { describe, expect, it } from 'vitest'
-import attachmentsMessages from '@/features/designer/inspector/features/attachments/messages'
+import attachmentsMessages from '../../../../../preview/inspector/legacy/attachments/messages'
 import {
   ATTACHMENTS_OPERATION_CLASS,
   attachmentsAvailability,
@@ -22,7 +22,7 @@ import {
   attachmentsView,
   type AttachmentsFailureKind,
   type AttachmentsInput,
-} from '@/features/designer/inspector/features/attachments/attachmentsModel'
+} from '../../../../../preview/inspector/legacy/attachments/attachmentsModel'
 import { inspectorCardKind, inspectorReadOnly, type InspectorReadOnly } from '@/features/designer/inspector/inspectorTarget'
 import { SELECTIONS, targetOf } from '../support/inspectorSupport'
 

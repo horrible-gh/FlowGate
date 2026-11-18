@@ -6,7 +6,7 @@
 // v7 example slot lines for the cards whose real lines need a server read (WP · test · check).
 import type { FlowGraph, FlowGraphNode, FlowGraphSelection } from '@/features/designer/center/graph/flowGraph'
 import type { CheckSettingsView } from '@/features/designer/inspector/features/checkSettings/checkSettingsModel'
-import type { RequirementSettingsView } from '@/features/designer/inspector/features/requirementSettings/requirementSettingsModel'
+import type { RequirementSettingsView } from './legacy/requirementSettings/requirementSettingsModel'
 import type { TestRunSettingsView } from '@/features/designer/inspector/features/testRunSettings/testRunSettingsModel'
 import { toInspectorTarget, type InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import type { InspectorRunSettingsFields } from '@/features/designer/inspector/parts/InspectorRunSettings.vue'

@@ -46,7 +46,7 @@
 // no title edit state.
 import type { Edge, Node } from '@vue-flow/core'
 import { cardDocumentButtons, type CardDocumentButton } from './cardDocumentButtons'
-import { gateApprovalView } from '../../inspector/features/gateCard/gateApproval'
+import { gateApprovalView } from '../../inspector/features/gateCard/useGateApproval'
 import { gateHeaderState, type GateHeaderState } from './gateHeaderState'
 import { cardNodeRun, cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'

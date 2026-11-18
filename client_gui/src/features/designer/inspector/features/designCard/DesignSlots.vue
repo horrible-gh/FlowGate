@@ -5,7 +5,7 @@
        flowgate.v02.0053 T#5 (0053 CH) — shaped like 조사 · 작업: 지시서 · 레포트, without the "설명 대기" note;
        the 지시서 line is hidden when the card's settings omit the instruction (useDesignCard). -->
   <section class="inspector-design-card" data-test="inspector-design-card" :data-doc-type="target.docType ?? ''">
-    <InspectorSlotList :target="target" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
+    <InspectorSlotList :decisions="documentDecisions" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, docId)" /></template>
     </InspectorSlotList>
@@ -13,6 +13,7 @@
 </template>
 
 <script setup lang="ts">
+import { useCardDocumentDecisions } from '../../openDocument'
 import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { INSPECTOR_HOST } from '../../inspectorHost'
@@ -87,6 +88,8 @@ function history(line: InspectorSlotView) {
 function action(line: InspectorSlotView, key: SlotActionKey) {
   openCardLineAction(props.target, line, key, host)
 }
+
+const documentDecisions = useCardDocumentDecisions(() => props.target)
 </script>
 
 <style scoped>

@@ -2,6 +2,7 @@
 import type { InspectorRegistration } from '../../inspectorRegistry'
 import GateSlots from './GateSlots.vue'
 import GateActions from './GateActions.vue'
+import GateHeader from './GateHeader.vue'
 import messages from './messages'
 
 const registration: InspectorRegistration = {
@@ -11,6 +12,8 @@ const registration: InspectorRegistration = {
   requiresDocument: false,
   tab: { key: 'documents', component: GateSlots },
   headerAction: GateActions,
+  headerState: GateHeader,
+  headerStateApplies: (target) => target.nodeType === 'gate',
   messages,
 }
 

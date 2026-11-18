@@ -37,7 +37,7 @@ import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Button from '@/components/ui/Button.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
-import type { TsBase } from '../tsEditSession'
+import type { TsBase } from '@/features/documentWindow'
 import { sessionDraft, useScenarioWindow } from './scenarioWindowModel'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()
