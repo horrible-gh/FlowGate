@@ -127,15 +127,16 @@ describe('Designer Shell x Inspector (T#2)', () => {
     // (data-value, tooltip) and never shown as text.
     expect(get('designer-inspector-run-status').attributes('data-value')).toBe('waiting_review')
     expect(get('designer-inspector-pill').text()).not.toContain('waiting_review')
-    expect(wrapper!.findAll('[data-test="designer-inspector-tabs"] [role="tab"]')).toHaveLength(4)
+    // This revision-view TR has no AI contribution; retain the common three tabs.
+    expect(wrapper!.findAll('[data-test="designer-inspector-tabs"] [role="tab"]').map((tab) => tab.text())).toEqual(['문서', '설정', 'Q&A'])
     for (const area of ['designer-bottom-minimap', 'designer-left-dock', 'designer-right-dock', 'designer-workspace']) {
       expect(get(area).exists()).toBe(true)
     }
     await selectNode('gn_gate')
     expect(get('designer-inspector-title').text()).toBe('확인')
     expect(wrapper!.find('[data-test="designer-inspector-doc-status"]').exists()).toBe(false)
-    await tab('첨부')
-    // flowgate.v02.0053 T#6: a Node without a document shows an empty attachments area, no sentence.
+    await tab('Q&A')
+    // flowgate.v02.0053 T#6: a Node without a document shows an empty Q&A area, no sentence.
     expect(get('designer-inspector-tab-state').attributes('data-state')).toBe('empty')
     expect(get('designer-inspector-body').text()).toBe('')
     await wrapper!.get('.vue-flow__pane').trigger('click')
@@ -151,7 +152,8 @@ describe('Designer Shell x Inspector (T#2)', () => {
     expect(get('designer-inspector-doc-status').text()).toBe('반려됨')
     await tab('설정')
     await selectNode('doc:p.ui.legacy.0001-R')
-    expect(get('designer-inspector-title').text()).toBe('요구사항')
+    expect(wrapper!.find('[data-test="designer-inspector-title"]').exists()).toBe(false)
+    expect(get('designer-inspector-kind').text()).toBe('요구사항')
     expect(get('designer-inspector-body').attributes('data-tab')).toBe('settings')
     await openFlow('Graph')
     await selectNode('gn_gate')

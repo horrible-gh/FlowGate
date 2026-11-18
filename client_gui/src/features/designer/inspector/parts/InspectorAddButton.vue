@@ -1,7 +1,7 @@
 <template>
   <!-- flowgate.v02.0053 T#6 — the [+] of an Inspector tab (0053 CH: buttons are icons, their name is the
-       tooltip): the Q&A tab registers a question with it, the attachments tab adds files. One part so
-       both draw the same plus. Display only: the caller gives the name (accessible name), the tooltip
+       tooltip): the Q&A tab registers a question with it. One part so
+       callers draw the same plus. Display only: the caller gives the name (accessible name), the tooltip
        (the name, a limit or why it is closed) and hears `click`. -->
   <IconButton
     class="inspector-add-button"

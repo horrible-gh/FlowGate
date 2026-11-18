@@ -1,6 +1,6 @@
 <template>
-  <!-- flowgate.chat.0017 CH0002 — one AI attachment upload request, the same row in the chat timeline and in the card
-       attachments tab. A person checks the real content first (preview / download), then approves (keep both by
+  <!-- flowgate.chat.0017 CH0002 — one AI attachment upload request, the same row in the chat timeline and in the flow
+       attachment window. A person checks the real content first (preview / download), then approves (keep both by
        default, overwrite only when chosen) or rejects. Available in reading and editing screens alike; the server
        decides who may (perm_document_update). A changed target is never followed silently: the person confirms it.
        Two lines per request: the name with its state, then size · AI · target with the actions; the AI's note under them.
@@ -115,11 +115,11 @@ import {
 
 const props = defineProps<{
   request: AttachmentRequest
-  /** The document the screen shows as the target (the card tab: the Node's live document). Default: the request's. */
+  /** The document target confirmed by the screen. Default: the request's. */
   expectedDocId?: string | null
-  /** A same-name attachment the screen already knows of on that document (the card tab's list). */
+  /** A same-name attachment the screen already knows of on that document (the flow attachment window list). */
   existing?: AttachmentRequestConflict | null
-  /** Show "target: <card>" (the chat shows it; the card tab is the card itself). */
+  /** Show "target: <card>" in the chat and flow attachment window. */
   showTarget?: boolean
   /** A tick box for the list's bulk approve / reject (shown while the request waits). */
   selectable?: boolean

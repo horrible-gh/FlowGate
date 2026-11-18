@@ -103,8 +103,8 @@ function createContext(flowId: string, nodeKey: string, projectId: string | null
   let targetEpoch = 0
   // Review rej_01M6QXCBVZYSAGRV: the Inspector parts that show this card now (CheckSettings in 설정, GateSlots in 문서).
   let consumers = 0
-  // Review rej_01M6R14HCES8QJJ5: the Inspector's selection of the card outlives its gate parts - the Q&A and attachments
-  // tabs of the same card mount none. While no part is mounted but the Frame still shows this card, `selectedHold`
+  // Review rej_01M6R14HCES8QJJ5: the Inspector's selection of the card outlives its gate parts - the Q&A tab
+  // of the same card mounts none. While no part is mounted but the Frame still shows this card, `selectedHold`
   // watches that selection and leaves the card when it moves (another card or kind, nothing selected, the Frame closed).
   let selectedHold: EffectScope | null = null
   /** The Inspector selects this card now: a part of it is mounted, or the Frame's selection is still this card. */

@@ -1,6 +1,6 @@
 <template>
   <!-- flowgate.chat.0017 CH0002 — approve all / reject all for the AI attachment requests of one list (a chat run's block,
-       a card's attachments tab). Shown from two waiting requests up. With rows ticked the buttons act on those rows only.
+       the flow attachment window). Shown from two waiting requests up. With rows ticked the buttons act on those rows only.
        A bulk approval is always "keep both" and leaves what needs a person's own look on its row: a same-name attachment
        on the target (counted next to the buttons) or a target that changed. Rejecting asks once (it cannot be undone).
        One server call, one result per request; the outcome is one line.

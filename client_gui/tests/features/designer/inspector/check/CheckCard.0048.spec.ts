@@ -51,7 +51,6 @@ const reviewRead = vi.fn()
 const detailRead = vi.fn()
 const relationsRead = vi.fn()
 const qaReadCall = vi.fn()
-const attachmentsReadCall = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -60,16 +59,15 @@ vi.mock('@/features/document', async (importOriginal) => {
     checkGitRead: (...args: unknown[]) => gitRead(...args),
     checkApprove: (...args: unknown[]) => approveCall(...args),
     reviewActivityRead: (...args: unknown[]) => activityRead(...args),
-    // The documents tab, the header actions, the Q&A and attachments tab numbers share the Frame.
+    // The documents tab, the header actions, the Q&A tab numbers share the Frame.
     reviewDocumentRead: (...args: unknown[]) => reviewRead(...args),
     documentDetailRead: (...args: unknown[]) => detailRead(...args),
     documentRelationsRead: (...args: unknown[]) => relationsRead(...args),
     qaRead: (...args: unknown[]) => qaReadCall(...args),
-    attachmentsRead: (...args: unknown[]) => attachmentsReadCall(...args),
   }
 })
 
-const { toReviewDocument, toCheckGitState, toCheckApproveResult, toReviewActivity, toDocumentDetail, toQaThread, toAttachmentsList } =
+const { toReviewDocument, toCheckGitState, toCheckApproveResult, toReviewActivity, toDocumentDetail, toQaThread } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
 
 const i18n = prepareInspectorI18n()
@@ -130,7 +128,6 @@ function serve() {
   detailRead.mockImplementation(async (docId: string) => toDocumentDetail(docRow(docId, acs.get(docId)?.status ?? 'pending_review')))
   relationsRead.mockImplementation(async () => [])
   qaReadCall.mockImplementation(async (docId: string) => toQaThread({ ok: true, qa: { doc_id: docId, status: null, items: [] } }))
-  attachmentsReadCall.mockImplementation(async (docId: string) => toAttachmentsList({ data: { doc_id: docId, attachments: [], count: 0 } }))
 }
 
 // --- Mounting --------------------------------------------------------------------------------------
@@ -156,7 +153,7 @@ beforeEach(() => {
   nextAnswer = null
   gitRefusal = null
   intents = []
-  for (const mock of [documentRead, gitRead, activityRead, approveCall, reviewRead, detailRead, relationsRead, qaReadCall, attachmentsReadCall]) mock.mockReset()
+  for (const mock of [documentRead, gitRead, activityRead, approveCall, reviewRead, detailRead, relationsRead, qaReadCall]) mock.mockReset()
   serve()
 })
 

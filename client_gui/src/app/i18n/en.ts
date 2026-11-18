@@ -1,7 +1,7 @@
 export default {
   accountMenu: {"settings": "My settings", "profile": "My profile", "password": "Change password", "logout": "Log out", "confirmLogout": "Log out?"},
   notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
-  // flowgate.chat.0017 CH0002 — AI attachment upload requests (chat message, card attachments tab, run result, settings).
+  // flowgate.chat.0017 CH0002 — AI attachment upload requests (chat message, flow attachment window, run result, settings).
   attachment_request: {
     title: 'AI attachment requests',
     pending_n: '{n} waiting for approval',
@@ -701,7 +701,6 @@ export default {
         settings: 'Settings',
         ai: 'AI',
         qna: 'Q&A',
-        attachments: 'Attachments',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: 'Document status',

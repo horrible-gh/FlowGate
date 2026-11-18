@@ -8,8 +8,7 @@ import SettingsTab from '@/features/designer/inspector/features/settings/Setting
 import { hasAiTab } from '@/features/designer/inspector/inspectorTarget'
 import { cardRoleRows, SETTINGS_FIELDS, AI_FIELDS } from '@/features/designer/inspector/features/settings/cardRolesModel'
 import aiRegistration from '@/features/designer/inspector/features/ai/register'
-import settingsRegistration from '@/features/designer/inspector/features/settings/register'
-import { createInspectorRegistry, registrationApplies } from '@/features/designer/inspector/inspectorRegistry'
+import { registrationApplies } from '@/features/designer/inspector/inspectorRegistry'
 import { inspectorTabsWith, inspectorTabStripMinWidth, resolveInspectorTab } from '@/features/designer/inspector/inspectorTabs'
 import { inspectorCardState } from '@/features/designer/inspector/inspectorTarget'
 import { toSettingsNode } from '@/features/document/api/settings'
@@ -74,26 +73,25 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect(hasAiTab({ ...target(type,nodeType), nodeType: null })).toBe(false)
     expect(registrationApplies(aiRegistration,{ ...target(type,nodeType), nodeType: null })).toBe(false)
   })
-  it('the real Frame shows AI right after 문서 and commits fallback on a role-free selection', async () => {
-    const registry = createInspectorRegistry({ './features/ai/register.ts': { default: aiRegistration }, './features/settings/register.ts': { default: settingsRegistration } })
+  it('the real Frame shows AI after 설정 and no attachments for either selection and commits fallback on a role-free selection', async () => {
     const node = { id: 'gn_1', kind: 'task', title: 'card', x: 0, y: 0, docType: 'T', definition: { nodeType: 'document', docType: 'T', paletteItemId: null, label: '', assignee: null, rootBound: false } }
     const graph = { flowId: 'f', nodes: [node], edges: [], ownership: 'graph', viewMode: 'draft' }
-    wrapper = mount(DesignerInspector, { props: { selection: { projectId: 'p', graph, node }, registry }, global: { plugins: [i18n] } }); await flushPromises()
-    expect(wrapper.findAll('[role="tab"]').map(item => item.text())).toEqual(['문서','설정','AI','Q&A','첨부'])
+    wrapper = mount(DesignerInspector, { props: { selection: { projectId: 'p', graph, node } }, global: { plugins: [i18n] } }); await flushPromises()
+    expect(wrapper.findAll('[role="tab"]').map(item => item.text())).toEqual(['문서','설정','AI','Q&A'])
     await wrapper.findAll('[role="tab"]').find(item => item.text() === 'AI')!.trigger('click'); await flushPromises()
     expect(wrapper.get('[role="tabpanel"]').attributes('data-tab')).toBe('ai')
     const root = { ...node, definition: { ...node.definition, docType: 'R' } }
     await wrapper.setProps({ selection: { projectId: 'p', graph, node: root } }); await flushPromises()
-    expect(wrapper.findAll('[role="tab"]').map(item => item.text())).toEqual(['문서','설정','Q&A','첨부'])
+    expect(wrapper.findAll('[role="tab"]').map(item => item.text())).toEqual(['문서','설정','Q&A'])
     expect(wrapper.get('[role="tabpanel"]').attributes('data-tab')).toBe('documents')
     expect(http.patch).not.toHaveBeenCalled()
     expect(http.get.mock.calls.some(([url]) => url === '/api/v1/me/ai-roles')).toBe(false)
   })
   it('keeps tab order, 52px geometry and fallback when AI disappears', () => {
-    expect(inspectorTabsWith(['ai','settings','attachments','qna','documents'])).toEqual(['documents','settings','ai','qna','attachments'])
+    expect(inspectorTabsWith(['ai','settings','qna','documents'])).toEqual(['documents','settings','ai','qna'])
     expect(aiRegistration.order).toBeGreaterThan(500); expect(aiRegistration.order).toBeLessThan(700)
-    expect(inspectorTabStripMinWidth(5)).toBe(292)
-    expect(resolveInspectorTab('ai',['documents','qna','attachments','settings'])).toBe('documents')
+    expect(inspectorTabStripMinWidth(4)).toBe(237)
+    expect(resolveInspectorTab('ai',['documents','qna','settings'])).toBe('documents')
   })
   it('uses selected only, never copies outcome/preserved into the control, and holds an omitted instruction', () => {
     const roles = cardRoles(); const before = structuredClone(roles)

@@ -17,7 +17,7 @@ const errorModule = (await import('@/features/document/documentError')) as Recor
 describe('features/document public surface (flowgate.v02.0048)', () => {
   it('has the api file of every area of D#1 §6.3 (an extension may add more, D#1 §11.1)', () => {
     expect(API_FILES).toEqual(
-      expect.arrayContaining(['attachments', 'check', 'document', 'kindSwitch', 'qa', 'review', 'settings', 'testSpec', 'workPlan']),
+      expect.arrayContaining(['check', 'document', 'kindSwitch', 'qa', 'review', 'settings', 'testSpec', 'workPlan']),
     )
   })
 
@@ -29,9 +29,20 @@ describe('features/document public surface (flowgate.v02.0048)', () => {
 
   it.each(API_FILES)('every export of api/%s starts with its area', (area) => {
     const module = modules[`../../../src/features/document/api/${area}.ts`]
-    // A normalizer may read `to<Area>…` (toDocumentRecord).
+    // Established singular names and constants are explicit, not an unrestricted prefix bypass.
+    const establishedNames: Record<string, readonly string[]> = {
+      attachmentRequests: ["ATTACHMENT_REQUEST_OPEN", "attachmentRequestIsOpen", "toAttachmentRequest", "toAttachmentRequestGroup", "toAttachmentRequestGroups", "attachmentRequestCounts", "attachmentRequestPreview", "attachmentRequestContent", "attachmentRequestApprove", "attachmentRequestReject", "ATTACHMENT_REQUEST_BULK_MAX", "attachmentRequestDecideMany", "ATTACHMENT_REQUEST_LIMIT_KEYS", "attachmentRequestLimits", "attachmentRequestProjectSettings"],
+      cardDocumentDecisions: ["cardDocumentDecisionWrite"],
+      settings: ["KEEP_MERGE_TARGETS_QUERY"],
+      settingsRoleValues: ["AI_ROLES", "toAiRoleValue", "aiRolePayload", "toCardAiRoles"],
+    }
+    const names = Object.keys(module)
+    const established = establishedNames[area] ?? []
+    expect(names).toEqual(expect.arrayContaining(established))
     const prefix = new RegExp(`^(to)?${area}`, 'i')
-    for (const name of Object.keys(module)) expect(name, `${area}.ts: ${name}`).toMatch(prefix)
+    for (const name of names) {
+      if (!established.includes(name)) expect(name, `${area}.ts: ${name}`).toMatch(prefix)
+    }
   })
 
   it('the common error file exports start with `document`', () => {

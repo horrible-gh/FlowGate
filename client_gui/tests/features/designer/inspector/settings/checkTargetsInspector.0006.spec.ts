@@ -5,8 +5,8 @@
  * coming back after a failed lookup must offer no list from before the move. A tab change on the same card keeps the
  * card selected, so its list stays. Only `@shared/api` is mocked; the context, the model and the parts stay real. No
  * consumer of the test holds the context (gateContextOf only reads it).
- * Review rej_01M6R14HCES8QJJ5: the Q&A and attachments tabs mount no part of the gate context, yet the card stays
- * selected there - 설정 -> Q&A / 첨부 -> 설정 keeps the list; a move made from those tabs still leaves the card.
+ * Review rej_01M6R14HCES8QJJ5: the Q&A tab mounts no part of the gate context, yet the card stays
+ * selected there - 설정 -> Q&A -> 설정 keeps the list; a move made from those tabs still leaves the card.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
@@ -71,13 +71,13 @@ const kept = () => gateContextOf(targetOf(gateSelection()))!
 const sections = (w: VueWrapper<any>) => w.findAll('[data-test="designer-inspector-section"]').map(section => section.attributes('data-key'))
 const control = (w: VueWrapper<any>) => w.get('[data-test="check-settings-target"]')
 const optionNames = (w: VueWrapper<any>) => w.findAll('[data-test="check-settings-target"] option').map(o => o.text())
-async function openTab(w: VueWrapper<any>, key: 'settings' | 'documents' | 'qna' | 'attachments') {
+async function openTab(w: VueWrapper<any>, key: 'settings' | 'documents' | 'qna') {
   const label = i18n.global.t(`gui.designer.inspector.tabs.${key}`)
   await w.findAll('[data-test="designer-inspector-tabs"] [role="tab"]').find(tab => tab.text().startsWith(label))!.trigger('click')
   await flushPromises()
   expect(w.get('[data-test="designer-inspector-body"]').attributes('data-tab')).toBe(key)
 }
-/** The Q&A / attachments tab of the card is shown and no part of the gate context is mounted. */
+/** The Q&A tab of the card is shown and no part of the gate context is mounted. */
 function expectNoGatePart(w: VueWrapper<any>) {
   expect(w.find('[data-test="check-settings-target"]').exists()).toBe(false)
   expect(w.find('[data-test="inspector-gate-card"]').exists()).toBe(false)
@@ -189,7 +189,7 @@ describe('0006-T T-b in the real Inspector: the kept list follows the selection 
     expect(kept().targetCache.value).toBeNull()
   })
 
-  it.each(['qna', 'attachments'] as const)('설정 -> %s -> 설정 on the same check card keeps the card selected: a failed lookup on the return still offers the kept list (rej_01M6R14HCES8QJJ5)', async tab => {
+  it.each(['qna'] as const)('설정 -> %s -> 설정 on the same check card keeps the card selected: a failed lookup on the return still offers the kept list (rej_01M6R14HCES8QJJ5)', async tab => {
     const w = await mountOnGate()
     await openTab(w, tab)
     // No part of the gate context is mounted on this tab, and the card is still the Inspector's selection.
@@ -223,7 +223,7 @@ describe('0006-T T-b in the real Inspector: the kept list follows the selection 
     expect(control(w).attributes('disabled')).toBeUndefined()
   })
 
-  it.each(['qna', 'attachments'] as const)('%s of the check card -> a card of another kind: the card is left there as well', async tab => {
+  it.each(['qna'] as const)('%s of the check card -> a card of another kind: the card is left there as well', async tab => {
     const w = await mountOnGate()
     await openTab(w, tab)
     expect(kept().active()).toBe(true)
@@ -243,9 +243,9 @@ describe('0006-T T-b in the real Inspector: the kept list follows the selection 
     await expectNoListAfterTimeout(w)
   })
 
-  it('attachments of the check card -> nothing selected, and Q&A of the check card -> the Inspector closed: the card is left', async () => {
+  it('Q&A of the check card -> nothing selected, and Q&A of the check card -> the Inspector closed: the card is left', async () => {
     const w = await mountOnGate()
-    await openTab(w, 'attachments')
+    await openTab(w, 'qna')
     await select(w, null)
     expect(kept().active()).toBe(false)
     expect(kept().targetCache.value).toBeNull()

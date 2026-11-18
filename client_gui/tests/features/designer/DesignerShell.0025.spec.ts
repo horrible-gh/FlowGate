@@ -233,7 +233,7 @@ describe('DesignerShell — container hierarchy', () => {
     const body = get(w, 'designer-body')
     expect(body.attributes('data-left-width')).toBe('280')
     expect(body.attributes('data-right-width')).toBe('300')
-    // 0017-CH: 320px, the empty attachments tab fits without a scrollbar.
+    // 0017-CH: 320px initial height remains available for Inspector content.
     expect(get(w, 'designer-bottom-dock').attributes('style')).toContain('height: 320px')
   })
 })

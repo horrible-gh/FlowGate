@@ -759,3 +759,15 @@ def test_bulk_decision_over_http_is_not_locked_by_the_group_ai_lease(env, held_l
     assert not policy.is_group_lease_exempt_path("/flowgate/api/v1/attachment-requests/decisions", "PUT")
     assert policy.classify_mutation_route("/flowgate/api/v1/attachment-requests/decisions", {"POST"}) == (
         "group", "attachment_request_bulk_decision_lease_exempt")
+
+
+def test_worker_upload_help_points_to_flow_approval_window():
+    from modules.flow_gate.services import tool_registry
+
+    for locale, window in (
+        ("ko", "플로우 첨부파일 창"),
+        ("ja", "フロー添付ファイルウィンドウ"),
+        ("en", "flow attachment window"),
+    ):
+        summary = tool_registry.ATTACHMENT_SUMMARY[locale]["attachment_upload_request"]
+        assert window in summary

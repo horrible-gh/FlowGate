@@ -63,7 +63,7 @@
       <p v-if="held" class="run-result-issue is-held" data-test="run-result-hold">
         <span class="run-result-label">{{ t('gui.runResult.label.hold_reason') }}</span> {{ t('gui.runResult.hold_reason') }}
       </p>
-      <!-- flowgate.chat.0017 CH0002: AI attachment requests waiting for a decision (each card's attachments tab). -->
+      <!-- flowgate.chat.0017 CH0002: AI attachment requests waiting for a decision (the flow attachment window). -->
       <p v-if="attachmentLine" class="run-result-attachments" data-test="run-result-attachments">{{ attachmentLine }}</p>
       <footer class="run-result-footer">
         <Button size="sm" variant="secondary" data-test="run-result-detail" @click="emit('detail')">{{ t('gui.runResult.detail') }}</Button>

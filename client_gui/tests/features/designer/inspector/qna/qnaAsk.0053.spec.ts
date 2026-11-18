@@ -38,7 +38,6 @@ const activityRead = vi.fn()
 const documentRead = vi.fn()
 const detailRead = vi.fn()
 const relationsRead = vi.fn()
-const attachmentsReadCall = vi.fn()
 const settingsNodeRead = vi.fn()
 const choicesRead = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
@@ -55,7 +54,6 @@ vi.mock('@/features/document', async (importOriginal) => {
     // The other parts of the Frame in the placed-card case.
     documentDetailRead: (...args: unknown[]) => detailRead(...args),
     documentRelationsRead: (...args: unknown[]) => relationsRead(...args),
-    attachmentsRead: (...args: unknown[]) => attachmentsReadCall(...args),
     settingsNodeRead: (...args: unknown[]) => settingsNodeRead(...args),
   }
 })
@@ -67,7 +65,7 @@ vi.mock('@shared/api', async (importOriginal) => {
   return { ...actual, getRequest: vi.fn(offline), postRequest: vi.fn(offline), putRequest: vi.fn(offline), patchRequest: vi.fn(offline) }
 })
 
-const { toQaThread, toQaAnswerResult, toQaAskResult, toQaAiRequestResult, toReviewActivity, toReviewDocument, toDocumentDetail, toAttachmentsList, toSettingsChoices } =
+const { toQaThread, toQaAnswerResult, toQaAskResult, toQaAiRequestResult, toReviewActivity, toReviewDocument, toDocumentDetail, toSettingsChoices } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
 
 const i18n = prepareInspectorI18n()
@@ -184,7 +182,6 @@ function serve() {
   documentRead.mockImplementation(async (docId: string) => toReviewDocument(rowOf(docId)))
   detailRead.mockImplementation(async (docId: string) => toDocumentDetail(rowOf(docId)))
   relationsRead.mockImplementation(async () => [])
-  attachmentsReadCall.mockImplementation(async (docId: string) => toAttachmentsList({ data: { doc_id: docId, attachments: [], count: 0 } }))
   settingsNodeRead.mockResolvedValue({ cardKind: 'run', locked: false, fields: { instruction: { value: 'use', stored: null, default: 'use', choices: ['use', 'omit'] } } })
   choicesRead.mockImplementation(async (projectId: string) => {
     calls.push(`choices ${projectId}`)
@@ -227,7 +224,7 @@ beforeEach(() => {
   running = false
   disposed = false
   itemSeq = 30
-  for (const mock of [qaReadCall, qaAnswerCall, qaAskCall, qaAiCall, activityRead, documentRead, detailRead, relationsRead, attachmentsReadCall, settingsNodeRead, choicesRead]) mock.mockReset()
+  for (const mock of [qaReadCall, qaAnswerCall, qaAskCall, qaAiCall, activityRead, documentRead, detailRead, relationsRead, settingsNodeRead, choicesRead]) mock.mockReset()
   seed()
   serve()
 })

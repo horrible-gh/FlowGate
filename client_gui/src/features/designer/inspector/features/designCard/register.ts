@@ -1,6 +1,6 @@
 // flowgate.v02.0051 stage 2 — the 설계 card's own part in the documents tab. Design cards (DS · D · P · L ·
-// DB) in every ownership, with or without a bound document; the common actions, run settings, Q&A and
-// attachments stay their features'.
+// DB) in every ownership, with or without a bound document; common actions, settings, AI and Q&A
+// remain owned by their respective features.
 // flowgate.v02.0053 T#5 (0053 CH) — its lines are 지시서 · 레포트 like 조사 · 작업 (the "설명 대기" note is gone).
 import type { InspectorRegistration } from '../../inspectorRegistry'
 import DesignSlots from './DesignSlots.vue'

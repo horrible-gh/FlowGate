@@ -41,7 +41,6 @@ const activityRead = vi.fn()
 const detailRead = vi.fn()
 const relationsRead = vi.fn()
 const qaRead = vi.fn()
-const attachmentsRead = vi.fn()
 vi.mock('@/features/document', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/document')>()
   return {
@@ -55,11 +54,10 @@ vi.mock('@/features/document', async (importOriginal) => {
     documentDetailRead: (...args: unknown[]) => detailRead(...args),
     documentRelationsRead: (...args: unknown[]) => relationsRead(...args),
     qaRead: (...args: unknown[]) => qaRead(...args),
-    attachmentsRead: (...args: unknown[]) => attachmentsRead(...args),
   }
 })
 
-const { toReviewDocument, toReviewActivity, toKindSwitchResult, toDocumentDetail, toQaThread, toAttachmentsList } =
+const { toReviewDocument, toReviewActivity, toKindSwitchResult, toDocumentDetail, toQaThread } =
   await vi.importActual<typeof import('@/features/document')>('@/features/document')
 
 const i18n = prepareInspectorI18n()
@@ -113,7 +111,6 @@ function serve() {
   detailRead.mockImplementation(async (docId: string) => toDocumentDetail(rowOf(docId)))
   relationsRead.mockImplementation(async () => [])
   qaRead.mockImplementation(async (docId: string) => toQaThread({ qa: { doc_id: docId, status: null, items: [] } }))
-  attachmentsRead.mockImplementation(async (docId: string) => toAttachmentsList({ doc_id: docId, items: [] }))
 }
 
 // --- Mounting --------------------------------------------------------------------------------------
@@ -132,7 +129,7 @@ beforeEach(() => {
   running = false
   refusal = null
   intents = []
-  for (const mock of [convertCall, documentRead, activityRead, detailRead, relationsRead, qaRead, attachmentsRead]) mock.mockReset()
+  for (const mock of [convertCall, documentRead, activityRead, detailRead, relationsRead, qaRead]) mock.mockReset()
   serve()
 })
 
@@ -385,7 +382,9 @@ describe('refusals: a reason, the state read again, the Canvas too when the Flow
     await switchKind()
     expect(line().attributes('data-kind')).toBe('failure')
     await switchKind()
-    expect(line().attributes('data-kind')).toBe('done')
+    expect(line().exists()).toBe(false)
+    expect(openButton().attributes('data-kind')).toBe('B')
+    expect(intents).toEqual([SWITCHED])
     expect(convertCall).toHaveBeenCalledTimes(2)
   })
 

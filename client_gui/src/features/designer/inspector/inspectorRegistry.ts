@@ -40,7 +40,7 @@ export interface InspectorTabContribution {
   readonly count?: InspectorTabCount
   /**
    * flowgate.v02.0053 T#6 — the Content part takes the tab body's free height (its box reaches the bottom
-   * of the tab even with little content), e.g. the attachments drop area highlighted as a whole.
+   * of the tab even with little content), so the whole tab remains available for input.
    */
   readonly fill?: boolean
 }
