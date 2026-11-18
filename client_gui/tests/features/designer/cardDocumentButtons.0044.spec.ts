@@ -4,6 +4,8 @@ import { cardDocumentButtons } from '@/features/designer/center/canvas/cardDocum
 import FlowNodeCard from '@/features/designer/center/canvas/FlowNodeCard.vue'
 import { prepareInspectorI18n } from './inspector/support/inspectorSupport'
 
+// The shared i18n instance's locale may be left by another spec: accept the suffix in any app language.
+const EMPTY_SUFFIX = /(\(비어 있음\)|\(empty\)|（空）)$/
 const line = (slot: string, docId: string | null, docType = 'TS') => ({ slot, docId, docType, title: docId, author: null, status: 'draft', docReviewStatus: null, hasBody: false })
 describe('0044 live document buttons', () => {
   it('deduplicates shared TS documents and prefers the instruction owner regardless of slot order', () => {
@@ -35,5 +37,34 @@ describe('0044 live document buttons', () => {
     await wrapper.setProps({ data: { ...wrapper.props('data'), documents: [] } })
     expect(wrapper.find('[data-test="designer-canvas-node-document"]').exists()).toBe(false)
     document.body.removeEventListener('click', parentClick); wrapper.unmount()
+  })
+  it('marks a document without a body as empty (never M / WP, never when has_body was not sent)', () => {
+    const docs = cardDocumentButtons({ cardDocuments: [
+      { ...line('instruction', 'blank', 'T'), hasBody: false },
+      { ...line('report', 'full', 'TR'), hasBody: true },
+      { ...line('plan', 'wp', 'WP'), hasBody: false },
+      { ...line('memo', 'old', 'M'), hasBody: undefined },
+      { slot: 'report', docId: 'unsent', docType: 'TR', title: 'unsent', author: null, status: 'draft', docReviewStatus: null },
+    ], document: null })
+    expect(docs.map(d => [d.docId, d.empty])).toEqual([['blank', true], ['full', false], ['wp', false], ['old', false], ['unsent', false]])
+    const document = { docId: 'free', typeCode: 'M', title: 'Memo', seq: 1, docReviewStatus: null, status: 'draft', supersedes: [] }
+    expect(cardDocumentButtons({ document, cardDocuments: [] })[0].empty).toBe(false)
+  })
+  it('draws an empty document faded with "(비어 있음)" in its name, and it still opens on a press', async () => {
+    const i18n = prepareInspectorI18n()
+    const documents = cardDocumentButtons({ cardDocuments: [{ ...line('instruction', 'a', 'T'), hasBody: false }, { ...line('report', 'b', 'TR'), hasBody: true }], document: null })
+    const wrapper = mount(FlowNodeCard, { props: { id: 'n', data: { kind: 'test', title: 'Card', selected: false, state: null, documents } }, global: { plugins: [i18n], stubs: { Handle: true } } })
+    const [empty, full] = wrapper.findAll('[data-test="designer-canvas-node-document"]')
+    expect(empty.classes()).toContain('is-empty')
+    expect(empty.attributes('data-empty')).toBe('true')
+    expect(empty.attributes('disabled')).toBeUndefined()
+    expect(empty.attributes('aria-label')).toMatch(EMPTY_SUFFIX)
+    expect(empty.attributes('title')).toBe(empty.attributes('aria-label'))
+    expect(full.classes()).not.toContain('is-empty')
+    expect(full.attributes('data-empty')).toBe('false')
+    expect(full.attributes('aria-label')).not.toMatch(EMPTY_SUFFIX)
+    await empty.trigger('click')
+    expect(wrapper.emitted('open-document')).toEqual([[{ nodeId: 'n', docId: 'a' }]])
+    wrapper.unmount()
   })
 })
