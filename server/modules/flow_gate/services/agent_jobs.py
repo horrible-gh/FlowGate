@@ -142,8 +142,8 @@ class AgentJobService:
             raise AgentError(422, "validation_failed", "command_line must be one nonempty line")
         if not isinstance(stdin_text, str) or not isinstance(cwd, str) or not cwd:
             raise AgentError(422, "validation_failed", "stdin_text and cwd are required")
-        if type(timeout_seconds) is not int or timeout_seconds <= 0:
-            raise AgentError(422, "validation_failed", "timeout_seconds must be positive")
+        if type(timeout_seconds) is not int or timeout_seconds < 0:
+            raise AgentError(422, "validation_failed", "timeout_seconds must be a nonnegative integer")
         job_id = job_id or "job_" + secrets.token_urlsafe(20)
         attempt_id = attempt_id or "att_" + secrets.token_urlsafe(20)
         if (not isinstance(job_id, str) or not job_id or len(job_id) > 96
@@ -173,6 +173,10 @@ class AgentJobService:
         if ai_run_id is not None:
             payload.update(ai_run_id=ai_run_id, graph_exec_id=graph_exec_id)
         fingerprint = _hash(payload)
+        # Zero means no execution deadline on the Agent wire. Hash that logical value
+        # above, then preserve the original database CHECK(timeout_seconds>0).
+        timeout_unlimited = timeout_seconds == 0
+        stored_timeout_seconds = 1 if timeout_unlimited else timeout_seconds
         ts = _stamp(_now())
         with self.s.transaction():
             existing = self.s._fetch_one(
@@ -192,21 +196,23 @@ class AgentJobService:
             if ai_run_id is None:
                 inserted = self.s._execute_affected(
                     """INSERT INTO agent_jobs(job_id,attempt_id,execution_type,command_line,stdin_text,cwd,
-                       timeout_seconds,status,target_agent_id,payload_digest,cancel_requested,
+                       timeout_seconds,timeout_unlimited,status,target_agent_id,payload_digest,cancel_requested,
                        stdout_truncated,stderr_truncated,created_at,updated_at,requested_by_user_id,project_id)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,FALSE,FALSE,FALSE,?,?,?,?) ON CONFLICT DO NOTHING""",
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,FALSE,FALSE,FALSE,?,?,?,?) ON CONFLICT DO NOTHING""",
                     [job_id, attempt_id, "remote_cli", command_line, stdin_text, cwd,
-                     timeout_seconds, "NEW", target_agent_id, fingerprint, ts, ts, requested_by_user_id, project_id],
+                     stored_timeout_seconds, timeout_unlimited, "NEW", target_agent_id, fingerprint,
+                     ts, ts, requested_by_user_id, project_id],
                 )
             else:
                 inserted = self.s._execute_affected(
                     """INSERT INTO agent_jobs(job_id,attempt_id,execution_type,command_line,stdin_text,cwd,
-                       timeout_seconds,status,target_agent_id,payload_digest,cancel_requested,
+                       timeout_seconds,timeout_unlimited,status,target_agent_id,payload_digest,cancel_requested,
                        stdout_truncated,stderr_truncated,created_at,updated_at,requested_by_user_id,project_id,
                        ai_run_id,graph_exec_id,retrieval_state,retrieval_owner,ai_group_id,ai_token_id)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,FALSE,FALSE,FALSE,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,FALSE,FALSE,FALSE,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
                     [job_id, attempt_id, "remote_cli", command_line, stdin_text, cwd,
-                     timeout_seconds, "NEW", target_agent_id, fingerprint, ts, ts, requested_by_user_id, project_id,
+                     stored_timeout_seconds, timeout_unlimited, "NEW", target_agent_id, fingerprint,
+                     ts, ts, requested_by_user_id, project_id,
                      ai_run_id, graph_exec_id, RETRIEVAL_PENDING, retrieval_owner, ai_group_id, ai_token_id],
                 )
             if inserted != 1:
@@ -306,7 +312,8 @@ class AgentJobService:
         )
         for row in self.s._fetch_all(
             """SELECT job_id,attempt_id,started_at,timeout_seconds FROM agent_jobs
-                   WHERE ai_run_id IS NOT NULL AND status='STARTED' AND cancel_requested=FALSE""",
+                   WHERE ai_run_id IS NOT NULL AND status='STARTED' AND cancel_requested=FALSE
+                   AND timeout_unlimited=FALSE""",
         ):
             try:
                 started = datetime.fromisoformat(str(row["started_at"]).replace("Z", "+00:00"))
@@ -693,7 +700,8 @@ class AgentJobService:
                     job = {"protocol_version": 1, "job_id": row["job_id"],
                            "attempt_id": row["attempt_id"], "execution_type": row["execution_type"],
                            "command_line": row["command_line"], "stdin_text": row["stdin_text"],
-                           "cwd": row["cwd"], "timeout_seconds": row["timeout_seconds"],
+                           "cwd": row["cwd"],
+                           "timeout_seconds": 0 if row["timeout_unlimited"] else row["timeout_seconds"],
                            "cancel_requested": bool(row["cancel_requested"]),
                            "lease_token": token, "lease_expires_at": expiry}
                     if row.get("ai_run_id"):

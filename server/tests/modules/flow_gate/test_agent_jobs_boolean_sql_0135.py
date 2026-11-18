@@ -47,7 +47,7 @@ T0 = datetime(2026, 11, 5, 5, 0, 0, tzinfo=timezone.utc)
 def _pg_boolean_columns():
     cols = set()
     for name in ("121_agent_registry.sql", "124_agent_jobs.sql", "170_personal_agents.sql",
-                 "172_agent_job_ai_run_link.sql"):
+                 "172_agent_job_ai_run_link.sql", "199_agent_job_unlimited_timeout.sql"):
         cols |= set(re.findall(r"(\w+)\s+BOOLEAN\b", (PG_MIG / name).read_text(encoding="utf-8")))
     return cols
 

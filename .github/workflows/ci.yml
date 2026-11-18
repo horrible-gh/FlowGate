@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   server:
-    name: Server syntax
+    name: Server checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,6 +28,19 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m compileall -q server
+      - name: Install server test dependencies
+        run: python -m pip install -r server/requirements.txt
+      - name: Check remote job lifecycle
+        working-directory: server
+        env:
+          FLOWGATE_TEST_TIMEOUT: '120'
+        run: >-
+          python -m pytest -q --disable-warnings
+          tests/modules/flow_gate/test_remote_unlimited_timeout.py
+          tests/modules/flow_gate/test_agent_jobs_0636.py
+          tests/modules/flow_gate/test_agent_jobs_boolean_sql_0135.py
+          tests/modules/flow_gate/test_remote_cli_routing_0129.py
+          tests/modules/flow_gate/test_agent_capacity_0043.py
 
   client:
     name: Client build

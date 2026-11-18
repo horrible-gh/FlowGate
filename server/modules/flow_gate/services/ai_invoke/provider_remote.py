@@ -339,8 +339,10 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
     workdir = job_workdir(template, job_id)
     info.update(job_id=job_id, attempt_id=attempt_id, workdir=workdir)
     if run.get("chat_timeout_policy") and run.get("chat_timeout_sec") is None:
-        return _final(run, provider, JOB_REFUSED, "agent_unlimited_timeout_unsupported")
-    timeout_seconds = max(1, int(_absolute_remaining_sec(run)))
+        # Zero disables only the Agent's execution timer; lease and cancel still apply.
+        timeout_seconds = 0
+    else:
+        timeout_seconds = max(1, int(_absolute_remaining_sec(run)))
     try:
         svc.enqueue_remote_cli(
             command_line=command, stdin_text=_sanitize_prompt(prompt, run),
