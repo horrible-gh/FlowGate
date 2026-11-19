@@ -3179,7 +3179,13 @@ def build_review_mention(
         "- issues : defects found; list each one in findings (locus + note)\n"
         "- hold   : cannot decide yet (missing context / blocked)\n"
         "\n"
-        "findings is a list of {locus, note}. The server counts them — do not write counts yourself."
+        "findings is a list of {locus, note}. The server counts them — do not write counts yourself.\n"
+        "\n"
+        "A finding whose only reason is a question (one you asked in this review, or an answered "
+        "question you were given) and no defect of its own may add \"cause\": \"question\" and "
+        "names that question (Q<seq> or item <id>) in its locus. Never put \"cause\" on a finding "
+        "that reports a defect, even when it also names a question: report the defect as a finding "
+        "without \"cause\"."
     )
 
     # ── Clarification guide (embedded query POST + no-choices guard; hoisted to top in assembly) ──
