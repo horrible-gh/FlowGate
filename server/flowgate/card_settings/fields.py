@@ -81,6 +81,10 @@ CARD_KINDS = (RUN, TEST, REQUIREMENT, CHECK, PLAN)
 # Value kinds.
 CHOICE, AI, REPEAT, MINUTES, LIMIT, TEAM, BRANCH, FLAG = (
     "choice", "ai", "repeat", "minutes", "limit", "team", "branch", "flag")
+# flowgate.v02test.0053 0003-T (1-A): the two 검증 (self-check) options of a run card. Both are ``None`` ("the system
+# default") until a person picks a value; the field's ``choices`` are the combo's presets, and any whole number inside
+# the range below is also a value (the combo's 사용자 정의).
+VERIFY_RUNS, VERIFY_MINUTES = "verify_runs", "verify_minutes"
 # flowgate.v02.0098 T#1: an exact local branch name with no repository context (no BRANCH pattern, no choices).
 LOCAL_BRANCH = "local_branch"
 
@@ -91,6 +95,12 @@ TIME_LIMIT_MINUTES = (30, 45, 60, 90, 120, 180, 240)
 DEFAULT_TIME_LIMIT_MINUTES = 240
 DEFAULT_RESTART_COUNT = 3
 LIMIT_MIN, LIMIT_MAX = 1, 999
+# flowgate.v02test.0053 0003-T (1-A): 검증 최대 횟수 (a whole number of 1 or more) and 검증 1회 최대 시간 (minutes, 1..30: the
+# self-check run's own ceiling of 1800 seconds, ``tr_self_check_service``).
+VERIFY_RUN_CHOICES = (3, 5, 10)
+VERIFY_RUNS_MIN = 1                     # no upper bound: 0003-T 'a whole number of 1 or more'
+VERIFY_MINUTE_CHOICES = (3, 5, 10, 20, 30)
+VERIFY_MINUTES_MIN, VERIFY_MINUTES_MAX = 1, 30
 TEXT_MAX_LEN = 191
 # The v0.1 document review loop names of the two review bases.
 REVIEW_CRITERIA = {"type": "document_type_default", "last": "last_rejection_only"}
@@ -138,12 +148,17 @@ _RESTART = Field("restart", REPEAT, DEFAULT_RESTART_COUNT)
 _TIME_LIMIT = Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES)
 _REVIEW_BASIS = Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA))
 _AFTER_EXHAUSTED = Field("after_review_exhausted", CHOICE, "continue", ("continue", "stop"))
+# flowgate.v02test.0053 0003-T (1-A): a run card's 검증 options (the 실행 AI's advanced ⚙). No stored value = the system default
+# (``verify_limits.resolve_verify_limits``), so the default shown here is None, never a number.
+VERIFY_MAX_RUNS = Field("verify_max_runs", VERIFY_RUNS, None, VERIFY_RUN_CHOICES)
+VERIFY_RUN_MINUTES = Field("verify_run_minutes", VERIFY_MINUTES, None, VERIFY_MINUTE_CHOICES)
 # flowgate.v02.0072 T#3: the work plan card's AI pre-instruction writing switch. Off by default: nothing writes a
 # pre-instruction by itself today, so storing nothing and storing off mean the same.
 PRE_INSTRUCTION_AUTO = Field("pre_instruction_auto", FLAG, False)
 _FIELDS = {
     RUN: (
         _INSTRUCTION, _INSTRUCTION_AI, _RUN_AI, _RESTART, _REVIEW_AI, _REVIEW_COUNT, _TIME_LIMIT, _REVIEW_BASIS, _AFTER_EXHAUSTED,
+        VERIFY_MAX_RUNS, VERIFY_RUN_MINUTES,
         Field("instruction_review_ai", AI), Field("instruction_review_count", REPEAT, 0),
         Field("instruction_note", "stage_text", ""), Field("run_note", "stage_text", ""),
         Field("run_pre_instruction", "stage_text", ""),
@@ -230,6 +245,13 @@ def check_value(field: Field, value: Any, *, repeat_choices: Iterable[int],
         if isinstance(value, bool) or not isinstance(value, int) or value not in tuple(repeat_choices):
             raise InvalidValue("not_a_choice")
         return value
+    if field.kind in (VERIFY_RUNS, VERIFY_MINUTES):
+        low, high = ((VERIFY_RUNS_MIN, None) if field.kind == VERIFY_RUNS
+                     else (VERIFY_MINUTES_MIN, VERIFY_MINUTES_MAX))
+        if (isinstance(value, bool) or not isinstance(value, int) or value < low
+                or (high is not None and value > high)):
+            raise InvalidValue("out_of_range")
+        return value
     if field.kind == LIMIT:
         if isinstance(value, bool) or not isinstance(value, int) or not LIMIT_MIN <= value <= LIMIT_MAX:
             raise InvalidValue("out_of_range")
@@ -273,7 +295,7 @@ def _local_branch(value: Any) -> str:
 
 def choices_of(field: Field, repeat_choices: Iterable[int]) -> Optional[list]:
     """The selectable values of a field, or None (free value: an AI, a team, a branch, a number)."""
-    if field.kind in (CHOICE, MINUTES):
+    if field.kind in (CHOICE, MINUTES, VERIFY_RUNS, VERIFY_MINUTES):
         return list(field.choices)
     if field.kind == REPEAT:
         return list(repeat_choices)

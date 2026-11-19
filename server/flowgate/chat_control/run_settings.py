@@ -1,11 +1,14 @@
-"""Run settings of the cards a chat placed: review count, restarts, time limit (flowgate.v02gui.0032, 0002-CH seq 15-17).
+"""Run settings of the cards a chat placed: review count, restarts, time limit (flowgate.v02gui.0032, 0002-CH seq 15-17),
+and the two 검증 options (flowgate.v02test.0053 0003-T: ``verify_max_runs`` / ``verify_run_minutes``, a run card only).
 
 The chat's card role API wrote only the three AI roles, so a chat could neither read nor change a card's review count:
 it had to ask the user to set it in the Inspector AI tab. The same three run values the AI tab shows next to the roles
 are opened here, and nothing else (hold, merge, assignee, instruction use, review basis, ... stay a person's):
 
-- ``FIELDS``: ``review_count``, ``restart``, ``time_limit``. A card has those of its kind (``fields.fields_of``): a work
-  card (T, run kind) all three, a test card (TS) only ``review_count``. Another one is 422 ``setting_not_applicable``.
+- ``FIELDS``: ``review_count``, ``restart``, ``time_limit``, ``verify_max_runs``, ``verify_run_minutes``. A card has those
+  of its kind (``fields.fields_of``): a work card (T, run kind) all five, a test card (TS) only ``review_count``. Another
+  one is 422 ``setting_not_applicable``. The two 검증 options take any whole number inside their range (``fields``), their
+  ``choices`` are the screen combo's presets; ``null`` takes the system default back.
 - The values are the person's screen's (``fields.check_value`` with ``legacy.repeat_choices()`` / the time limit
   minutes): a value the screen cannot pick is 422 with the field's ``choices``. ``null`` takes the default back (no
   stored row), as the person's PATCH does.
@@ -24,7 +27,7 @@ from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 
-FIELDS = ("review_count", "restart", "time_limit")
+FIELDS = ("review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes")
 UNAVAILABLE = "chat_card_settings_unavailable"
 VIEW_KEYS = ("value", "stored", "default", "choices")
 

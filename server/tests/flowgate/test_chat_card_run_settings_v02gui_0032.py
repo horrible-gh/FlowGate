@@ -42,8 +42,11 @@ def test_the_read_answers_the_run_settings_with_their_choices(env, decided, guar
 
     work, test = (c["node_key"] for c in _place([{"label": "w"}, {"label": "t", "doc_type": "TS"}])["cards"])
     answer = card_roles.view(_caller(), work)
-    assert answer["applicable_settings"] == ["review_count", "restart", "time_limit"]
-    assert set(answer["settings"]) == {"review_count", "restart", "time_limit"}
+    assert answer["applicable_settings"] == ["review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes"]
+    assert set(answer["settings"]) == {"review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes"}
+    # flowgate.v02test.0053 0003-T: the two 검증 options show no value of their own (the system default stands) and the presets
+    assert answer["settings"]["verify_max_runs"] == {"value": None, "stored": False, "default": None, "choices": [3, 5, 10]}
+    assert answer["settings"]["verify_run_minutes"]["choices"] == [3, 5, 10, 20, 30]
     assert set(answer["settings"]["review_count"]) == {"value", "stored", "default", "choices"}
     assert answer["settings"]["time_limit"]["choices"] == list(fields.TIME_LIMIT_MINUTES)
     assert answer["settings"]["restart"]["default"] == fields.DEFAULT_RESTART_COUNT
@@ -56,6 +59,39 @@ def test_the_read_answers_the_run_settings_with_their_choices(env, decided, guar
 
 
 # ── change ───────────────────────────────────────────────────────────────────
+
+def test_the_two_verify_options_are_changed_audited_and_cleared_like_the_other_settings(env, decided, guard):
+    """flowgate.v02test.0053 0003-T (1-A): ``verify_max_runs`` / ``verify_run_minutes`` — any whole number in range (not
+    only the presets), one audit row each, null = the system default (no stored row); a TS card has neither."""
+    from flowgate.card_settings import repository
+    from flowgate.card_settings import verify_limits
+    from flowgate.chat_control import card_roles
+
+    mine, test = (c["node_key"] for c in _place([{"label": "w"}, {"label": "t", "doc_type": "TS"}])["cards"])
+    version = _snapshot(mine)[2]
+    answer = card_roles.change(_caller(), mine, {"settings": {"verify_max_runs": 7, "verify_run_minutes": 12},
+                                                 "expected_settings_version": version})
+    assert answer["changed_settings"] == ["verify_max_runs", "verify_run_minutes"]
+    assert answer["settings"]["verify_max_runs"]["value"] == 7 and answer["settings"]["verify_run_minutes"]["stored"] is True
+    assert verify_limits.resolve_verify_limits(FA, mine) == verify_limits.VerifyLimits(max_runs=7, run_timeout_sec=720)
+    rows = {r["field"]: r for r in _setting_audit(mine)}
+    assert set(rows) == {"verify_max_runs", "verify_run_minutes"}                 # migration 201 lets them in
+    assert rows["verify_max_runs"]["after"] == {"value": 7, "stored": True} and rows["verify_max_runs"]["changed"] is True
+    back = card_roles.change(_caller(), mine, {"settings": {"verify_max_runs": None}, "expected_settings_version": version + 1})
+    assert back["changed_settings"] == ["verify_max_runs"] and "verify_max_runs" not in repository.values(FA, mine)
+    assert verify_limits.resolve_verify_limits(FA, mine).max_runs == 3
+    for bad in (0, -1, 31):
+        field = "verify_run_minutes" if bad == 31 else "verify_max_runs"
+        err = _refused(lambda: card_roles.change(_caller(), mine, {"settings": {field: bad},
+                                                                   "expected_settings_version": version + 2}), 422, "invalid_request")
+        assert {"field": f"settings.{field}", "reason": "out_of_range"}.items() <= err.params["errors"][0].items(), err.params
+    big = card_roles.change(_caller(), mine, {"settings": {"verify_max_runs": 1000}, "expected_settings_version": version + 2})
+    assert big["settings"]["verify_max_runs"]["value"] == 1000                    # no upper bound: 'a whole number of 1 or more'
+    assert verify_limits.resolve_verify_limits(FA, mine).max_runs == 1000
+    ts = _refused(lambda: card_roles.change(_caller(), test, {"settings": {"verify_max_runs": 5},
+                                                              "expected_settings_version": _snapshot(test)[2]}), 422, "invalid_request")
+    assert ts.params["errors"][0]["reason"] == "setting_not_applicable" and ts.params["errors"][0]["applicable_settings"] == ["review_count"]
+
 
 def test_a_settings_change_writes_the_values_audits_each_and_touches_nothing_else(env, decided, guard):
     from flowgate.card_settings import repository
@@ -204,8 +240,10 @@ def test_a_placement_writes_each_cards_settings_and_answers_them(env, decided):
     assert (b["settings"]["review_count"], b["settings"]["restart"]) == (1, 0)
     assert b["roles"]["execution"]["source"] == "chat"
     assert t["settings"] == {"review_count": -1}
-    assert "review_count" not in repository.values(FA, d["node_key"]) and set(d["settings"]) == {
-        "review_count", "restart", "time_limit"}
+    # A new card's own 검수 횟수 is copied from its group by the card init (v02test.0027 ``ai_roles.card_init``); nothing
+    # else, and none of the 검증 options, is stored for a card placed without settings.
+    assert set(repository.values(FA, d["node_key"])) <= {"review_count"} and set(d["settings"]) == {
+        "review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes"}
     rows = _setting_audit()
     assert sorted((r["node_key"], r["field"]) for r in rows) == sorted([
         (a["node_key"], "review_count"), (b["node_key"], "review_count"), (b["node_key"], "restart"),
@@ -273,10 +311,10 @@ def test_tools_and_cli_mention_offer_the_run_settings(monkeypatch):
 
     by_name = {t["name"]: t for t in tools.descriptors()}
     item = by_name["place_flow_cards"]["schema"]["properties"]["cards"]["items"]["properties"]
-    assert set(item["settings"]["properties"]) == {"review_count", "restart", "time_limit"}
+    assert set(item["settings"]["properties"]) == {"review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes"}
     assert item["settings"]["additionalProperties"] is False
     assert set(by_name["set_card_roles"]["schema"]["properties"]["settings"]["properties"]) == {
-        "review_count", "restart", "time_limit"}
+        "review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes"}
     assert "review_count" in by_name["set_card_roles"]["description"]
     assert "review count" in by_name["get_card_roles"]["description"]
     monkeypatch.setattr(authz, "caller_from_run", lambda run, flow_id, write: "CALLER")

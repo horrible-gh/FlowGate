@@ -77,11 +77,11 @@ from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
 from modules.flow_gate.graph_workflow.store import definition_store, run_store
 from modules.flow_gate.services.git import merge_target as git_merge_target
 from modules.flow_gate.services.git.credentials import GitServiceError
-from modules.flow_gate.settings import ai_execution_policy_service
+from modules.flow_gate.settings import ai_execution_policy_service, verify_policy
 
 __all__ = ["GraphApiError", "GitServiceError", "judge_merge_target", "merge_target_view", "invalidate_merge_targets",
            "MERGE_TARGET_UNFIT", "MERGE_TARGET_GIT_UNAVAILABLE", "with_flow_guard", "registered_doc_types", "authenticate", "authorize", "invalid",
-           "locale_of", "client_id_of", "run", "load_flow", "require_writable", "repeat_choices", "ai_exists", "team_exists",
+           "locale_of", "client_id_of", "run", "load_flow", "require_writable", "repeat_choices", "verify_defaults", "ai_exists", "team_exists",
            "node_running", "node_running_cause", "running_review_loop", "graph_owned", "project_of", "node_of_ai_run", "node_of_result", "open_node_of_token",
            "run_doc_type",
            "node_ai_run_active", "instruction_node_of_ai_run", "registered_instructions", "start_result_stage",
@@ -161,6 +161,12 @@ def require_writable(flow_id: str) -> None:
 def repeat_choices() -> tuple[int, ...]:
     """-1 (until it passes / restarts until done), 0 (none), 1..the configured max."""
     return ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+
+
+def verify_defaults() -> tuple[int, int]:
+    """flowgate.v02test.0053 0003-T (1-A): the system defaults of a card's 검증 — ``(max runs, longest seconds of one run)``
+    (the system settings ``verify_max_runs`` / ``verify_run_timeout_sec``; the shipped 3 and 180 when unset or corrupt)."""
+    return verify_policy.get_max_runs(), verify_policy.get_run_timeout_sec()
 
 
 def ai_exists(provider_id: str) -> bool:
