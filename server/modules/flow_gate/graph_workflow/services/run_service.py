@@ -653,10 +653,21 @@ def question_wait_details(flow_id: str, row: dict) -> list[dict]:
         for ai_run_id in run_store.ai_runs_of_node(row["run_id"], row["node_key"]):
             for item in open_questions_raised_by_run(flow_id, ai_run_id):
                 items[item["id"]] = item
-        return [{"seq": item["seq"], "state": item.get("responder_state") or "pending",
-                 "code": item.get("responder_error_code"),
-                 "message": (item.get("responder_error_message") or "")[:1000]}
-                for item in items.values()]
+        # flowgate.v02test.0051 T0005 (A1): a question that holds a review loop at its hop boundary carries the wait
+        # phase (``loop_wait``) and the stage the loop goes on with, so the card tells it from a running loop.
+        from flowgate.card_settings import question_loop_wait  # noqa: PLC0415
+        loop_waits = question_loop_wait.item_wait_phases(flow_id) if items else {}
+        details = []
+        for item in items.values():
+            detail = {"seq": item["seq"], "state": item.get("responder_state") or "pending",
+                      "code": item.get("responder_error_code"),
+                      "message": (item.get("responder_error_message") or "")[:1000]}
+            wait = loop_waits.get(int(item["id"]))
+            if wait is not None:
+                detail.update(phase=question_loop_wait.PHASE, wait_status=wait["status"],
+                              resume_stage=wait["resume_stage"], waited_at=wait["waited_at"])
+            details.append(detail)
+        return details
     except Exception:
         _log.warning("question wait detail read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
         return []

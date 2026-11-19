@@ -5,11 +5,15 @@ from flowgate.card_settings import fields, legacy_adapter as legacy, repository
 
 
 def candidates(flow_id, node, asker, asker_role=None):
-    """New cards: review -> instruction, excluding the asking role, never defaults.
+    """Who answers a card question: (picks, failure reason, default_tail, card class).
 
-    Two roles may intentionally use the same provider. If the asking role is unknown,
-    conservatively exclude its provider until provenance can identify the role.
-    Legacy cards retain their independent default chain.
+    flowgate.v02test.0051 T0005 (A1, R 0051.0001 "작업자가 질문하면 검수자가 답한다"): every card — legacy or new role
+    card — asks its review AI first; when the card has no review AI, or it is the asker's own provider (the actual AI
+    that asked, never the requested one), an independent enabled default AI answers. Every pick differs from the
+    asker's provider and is enabled; unknown asker provenance picks nothing (a person answers). ``default_tail`` is
+    True for both, so the answer service walks the same bounded independent startup chain
+    (``review.question_responder_candidates``). The earlier new-card rule (review -> instruction role, the asking ROLE
+    excluded, the same provider allowed for another role, never a default) is gone.
     """
     try:
         kind = fields.card_kind(node.get("node_type"), node.get("doc_type"))
@@ -26,27 +30,17 @@ def candidates(flow_id, node, asker, asker_role=None):
             pid, src = legacy.independent_question_responder(project, asker, [
                 (stored.get("review_ai"), "card_review_ai"), (legacy.default_reviewer(project), "default")])
             return ([(pid, src)] if pid else []), None if pid else "no_independent_responder", True, "qa_legacy"
+        slot = inputs.slots.get("review") if "review" in resolve.applicable_roles(kind) else None
+        if slot is not None and (not valid_value(slot.value) or slot.source not in role_store.SLOT_SOURCES):
+            return [], "card_settings_unreadable", False, "qa_new"
+        reviewer = slot.value.provider_id if slot is not None and slot.value.kind == "assigned" else None
+        if not asker:
+            return [], "asker_unknown", True, "qa_new"
         from modules.flow_gate.services.ai_invoke import review
-        enabled = {p.get("id") for p in review._enabled_provider_chain(project)}
-        picks, reason = [], "responder_not_designated"
-        for role in ("review", "instruction"):
-            if role not in resolve.applicable_roles(kind):
-                continue
-            slot = inputs.slots.get(role)
-            if slot is not None and (not valid_value(slot.value) or slot.source not in role_store.SLOT_SOURCES):
-                return [], "card_settings_unreadable", False, "qa_new"
-            pid = slot.value.provider_id if slot is not None and slot.value.kind == "assigned" else None
-            if not pid:
-                continue
-            if role == asker_role or (not asker_role and pid == asker):
-                reason = "designated_is_asker"
-            elif not asker_role and not asker:
-                reason = "asker_unknown"
-            elif pid not in enabled:
-                reason = "designated_not_enabled"
-            else:
-                picks.append((pid, "card_" + role + "_role"))
-        return picks, None if picks else reason, False, "qa_new"
+        heads = [(reviewer, "card_review_role")] if reviewer else []
+        picks = review.question_responder_candidates(
+            project, asker, [*heads, (legacy.default_reviewer(project), "default")])
+        return picks, None if picks else "no_independent_responder", True, "qa_new"
     except Exception:
         return [], "card_settings_unreadable", False, None
 

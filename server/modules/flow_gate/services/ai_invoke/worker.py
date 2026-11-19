@@ -370,6 +370,17 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                         loop = late
                 if not loop or loop.get("current_stage") == "stopped":
                     break
+                # flowgate.v02test.0051 T0005 (A1): questions this run asked are still open -- the next
+                # hop does not start. The wait is stored with the stage the checkpoint reserved and the
+                # run ends here (finalize, execution end, lease release); the card's responder answers
+                # and the loop goes on from that stage exactly once (question_loop_wait). Judged after
+                # the checkpoint and before every effect of the next hop (transition, token, provider).
+                # Only a successful read that found nothing open lets the next hop start: a failed read
+                # or a wait that could not be stored is a hold (the loop stopped with a
+                # question_wait_unconfirmed detail, the diagnosis on the run) and the run ends here too.
+                from flowgate.card_settings import question_loop_wait
+                if question_loop_wait.park(run, loop) is not None:
+                    break
                 # 0417 T0013: the reissue inside _prepare_retry_token calls this SAME
                 # issue_builder the run started with — without this, a rework hop's reissued
                 # token kept the prior review-scope, and POST /inbox action=edit 403'd

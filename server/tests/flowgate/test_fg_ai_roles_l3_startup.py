@@ -20,7 +20,12 @@ def test_n_new_single_candidate_has_no_startup_tail(env, question, monkeypatch, 
     assert len(r["responder_startup_policy"]["provider_ids"]) == 1
 
 
-@pytest.mark.parametrize("race,code", [("disabled", "designated_not_enabled")])
+# flowgate.v02test.0051 T0005 (A1): a new card's pick is its review AI with the independent default tail (default_tail
+# True, as a legacy card's). The dispatch still judges the candidates again after the adapter: a review AI disabled in
+# between is skipped for the next independent enabled default, and with none left (only the asker's provider) the
+# question is refused and marked failed before any claim or launch. (Before: the designated role only —
+# ``designated_not_enabled`` even while an independent default was enabled.)
+@pytest.mark.parametrize("race,code", [("disabled", "no_independent_responder")])
 def test_n_dispatch_rechecks_designated_responder_after_adapter(env, question, monkeypatch, race, code):
     from types import SimpleNamespace as NS
     from fastapi import HTTPException
@@ -36,9 +41,10 @@ def test_n_dispatch_rechecks_designated_responder_after_adapter(env, question, m
         slots={"review": slot}, init=None, stored={}))
     monkeypatch.setattr(qa.legacy, "project_of", lambda *a: "flowgate")
     chosen = qa.choose(base.GROUP, {"node_key": "n", "node_type": "document", "doc_type": "T"}, "aip_3")
-    assert chosen == ("aip_1", "card_review_role", None, False, "qa_new")
+    assert chosen == ("aip_1", "card_review_role", None, True, "qa_new")
     if race == "disabled":
-        env["chain"]["providers"] = [p for p in env["chain"]["providers"] if p["id"] != chosen[0]]
+        # the review AI disabled after the pick, and the only other independent default gone too: aip_3 is the asker
+        env["chain"]["providers"] = [p for p in env["chain"]["providers"] if p["id"] not in (chosen[0], "aip_2")]
     else:
         row["asker_actual_provider_id"] = chosen[0]
     launches = script(monkeypatch, row, "answer")

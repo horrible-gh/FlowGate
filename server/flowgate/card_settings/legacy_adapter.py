@@ -206,7 +206,8 @@ def node_running(flow_id: str, node_key: str) -> bool:
 
 def node_running_cause(flow_id: str, node_key: str) -> Optional[str]:
     """Read-only running judgement, in priority order: handoff, graph_exec:<id>,
-    group_lease:<id>, review_loop:<id>, or None. Unknown ids use 'unknown'.
+    group_lease:<id>, question_wait:<id> (v02test.0051 T0005: a loop parked for its questions),
+    review_loop:<id>, or None. Unknown ids use 'unknown'.
 
     R4 counts the document's latest loop on the current attempt (unknown attempts
     count too), and any loop with owner evidence. Unreadable evidence fails closed.
@@ -228,6 +229,11 @@ def node_running_cause(flow_id: str, node_key: str) -> Optional[str]:
     for doc in dict.fromkeys(d for d in docs if d):
         loop = running_review_loop(flow_id, node_key, doc)
         if loop is not None:
+            from flowgate.card_settings import question_loop_wait  # noqa: PLC0415
+
+            if loop.get("run_id") and question_loop_wait.owns(loop["run_id"]):
+                # v02test.0051 T0005: parked for its questions — still locked, told apart from a working loop
+                return "question_wait:" + loop["run_id"]
             return "review_loop:" + (loop.get("run_id") or "unknown")
     return None
 

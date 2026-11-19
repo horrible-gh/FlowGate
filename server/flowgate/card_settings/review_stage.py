@@ -281,7 +281,12 @@ def on_run_ended(run: dict) -> None:
         return
     try:
         if run.get("document_review_loop"):
-            _after_review(flow_id, run)
+            from flowgate.card_settings import question_loop_wait  # noqa: PLC0415
+
+            if not question_loop_wait.parked(run):
+                _after_review(flow_id, run)
+            # v02test.0051 T0005: parked at its hop boundary for its questions — the loop has not ended, nothing is
+            # judged; ``question_wait.follow`` below puts the questions to the card's responder
         elif run.get("mode") == "single" and run.get("action_scope") in ("new", "edit"):
             stage = legacy.instruction_node_of_ai_run(flow_id, run["run_id"])
             if stage is not None:
@@ -292,6 +297,9 @@ def on_run_ended(run: dict) -> None:
         if _clear_handoffs(run.get("run_id")):
             legacy.settle_graph_run(flow_id)    # 0061 T#2: running while its review works, else the approval wait
         question_wait.follow(run)               # 0063: a responder's end, a question waiting for its responder
+        if run.get("document_review_loop"):
+            # v02test.0051 T0005: answers given while this parked run was still finishing go on now that it ended
+            question_wait.follow_parked_end(run)
 
 
 def _after_instruction(flow_id: str, run: dict, node: dict, row: dict) -> None:

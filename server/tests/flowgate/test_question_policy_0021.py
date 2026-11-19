@@ -39,13 +39,18 @@ def slot(pid):
     return NS(source="card_explicit", value=role_store.RoleValue(kind="assigned", provider_id=pid, provider_name=None))
 
 
-def test_same_model_different_roles_and_asking_role_excluded(routing):
+def test_review_ai_first_then_independent_default_never_the_askers_provider(routing):
+    # flowgate.v02test.0051 T0005 (A1): the asking ROLE no longer decides — the actual asker's provider does. A review AI
+    # that is the asker's own provider is skipped for an independent enabled default; the instruction role never answers.
     routing["slots"] = {"review": slot("A"), "instruction": slot("A")}
-    assert qa.candidates("f", NODE, "A", "execution")[0] == [("A", "card_review_role"), ("A", "card_instruction_role")]
-    assert qa.candidates("f", NODE, "A", "review")[0] == [("A", "card_instruction_role")]
-    assert qa.candidates("f", NODE, "A", "instruction")[0] == [("A", "card_review_role")]
+    for role in ("execution", "review", "instruction", None):
+        assert qa.candidates("f", NODE, "A", role)[0] == [("B", "default"), ("C", "default")]
+    routing["slots"] = {"review": slot("B"), "instruction": slot("A")}
+    assert qa.candidates("f", NODE, "A", "execution")[0] == [("B", "card_review_role"), ("C", "default")]
     routing["chain"] = [{"id": "C"}]
-    assert qa.candidates("f", NODE, "A", "execution")[0] == []
+    assert qa.candidates("f", NODE, "A", "execution")[0] == [("C", "default")]
+    routing["chain"] = [{"id": "A"}]
+    assert qa.candidates("f", NODE, "A", "execution")[:2] == ([], "no_independent_responder")
 
 
 @pytest.mark.parametrize("failure", ["fast_fail", "content_failure", "zero_output"])
