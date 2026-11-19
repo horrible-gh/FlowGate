@@ -64,7 +64,7 @@ class TimingRecorder:
     def __init__(self, config, root, output):
         self.config, self.root, self.output = config, root.resolve(), Path(output)
         self.records = {}
-        self.expected = set()
+        self.expected = defaultdict(set)
         self.seen = defaultdict(set)
         self.bad = set()
         self.hashes = {}
@@ -83,9 +83,9 @@ class TimingRecorder:
             return None
 
     def pytest_collection_finish(self, session):
-        self.expected = {item.nodeid for item in session.items}
-        for nodeid in self.expected:
-            key = self.key(nodeid)
+        for item in session.items:
+            key = self.key(item.nodeid)
+            self.expected[key].add(item.nodeid)
             if key and key not in self.hashes:
                 self.hashes[key] = hashlib.sha256((self.root / key).read_bytes()).hexdigest()
 
@@ -118,7 +118,7 @@ class TimingRecorder:
         if hasattr(self.config, "workerinput"):
             return
         for key, record in self.records.items():
-            expected = {n for n in self.expected if self.key(n) == key}
+            expected = self.expected.get(key, set())
             complete = bool(expected) and all(self.seen[n] == {"setup", "call", "teardown"} for n in expected)
             record["eligible"] = bool(self.eligible and complete and key not in self.bad
                                       and int(exitstatus) in (0, 1))

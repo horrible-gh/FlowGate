@@ -130,3 +130,17 @@ def test_real_conftest_option_writes_output(pytester, args, eligible):
     result = pytester.runpytest_subprocess("tests/test_sample.py", "-q", f"--fg-timings-out={output}", *args)
     result.assert_outcomes(passed=1)
     assert load_timings(output)["tests/test_sample.py"]["eligible"] is eligible
+
+
+def test_baseline_eligibility_is_independent_per_file(timing_project):
+    directory = timing_project.path / "tests"
+    (directory / "test_failed.py").write_text(
+        "def test_failure(): assert False\n", encoding="utf-8")
+    (directory / "test_skipped.py").write_text(
+        "import pytest\ndef test_skip(): pytest.skip('unavailable')\n", encoding="utf-8")
+    result = timing_project.runpytest_subprocess("-q")
+    result.assert_outcomes(passed=2, failed=1, skipped=1)
+    records = load_timings(timing_project.path / "out.json")
+    assert records["tests/test_sample.py"]["eligible"] is True
+    assert records["tests/test_failed.py"]["eligible"] is False
+    assert records["tests/test_skipped.py"]["eligible"] is False
