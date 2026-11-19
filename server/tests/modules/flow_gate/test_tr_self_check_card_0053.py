@@ -132,7 +132,7 @@ def test_cancel_waiting_delegates_and_feedback_is_transient(setup, monkeypatch):
     def cancel(rid):
         assert rid == 'r1'
         setup[0].update(status='cancelled', error_code=service.queue.CANCELLED_WAITING)
-        return setup[0]
+        return {key: value for key, value in setup[0].items() if key != 'node_key'}
     monkeypatch.setattr(service.queue, 'cancel_waiting', cancel)
     assert service.control('f','a','r1','cancel_waiting')['state'] == 'cancelled'
     assert service.control('f','a','r1','cancel_waiting')['state'] == 'cancelled'
@@ -154,7 +154,7 @@ def test_stop_result_is_honest(setup, monkeypatch, final, expected):
     def stop(rid):
         assert rid == 'r1'
         setup[0].update(status=final, cancel_requested=1)
-        return setup[0]
+        return {key: value for key, value in setup[0].items() if key != 'node_key'}
     monkeypatch.setattr(service.queue, 'force_stop', stop)
     actual = service.control('f','a','r1','force_stop')
     assert actual['state'] == expected
@@ -231,3 +231,26 @@ def test_repository_joins_real_attempt_ownership(monkeypatch):
     assert service._rows('f',"card' OR 1=1 --") == []
     assert service._rows('f','card','ended')[0]['status'] == 'failed'
     db.close()
+
+
+@pytest.mark.parametrize('action,initial,final,expected', [
+    ('force-stop', 'running', 'failed', 'stopped'),
+    ('force-stop', 'running', 'running', 'stop_failed'),
+    ('cancel-waiting', 'queued', 'cancelled', 'cancelled'),
+])
+def test_control_http_with_unjoined_queue_row(client, setup, monkeypatch, action, initial, final, expected):
+    monkeypatch.setattr(routes.envelope, 'has_permission', lambda *a: True)
+    setup.append(row(state=initial))
+    ended = row(state=final, finished_at=NOW.isoformat())
+    del ended['node_key']  # Queue results contain only tr_self_check_runs columns.
+    monkeypatch.setattr(service.queue, action.replace('-', '_'), lambda rid: ended)
+    response = client.post('/api/v1/flows/f/nodes/a/self-check/runs/r1/' + action)
+    assert response.status_code == 200
+    actual = response.json()['verification']
+    assert actual['node_key'] == 'a'
+    assert actual['state'] == expected
+    assert actual['run']['status'] == final
+    assert actual['run']['finished_at'] == NOW.isoformat()
+    assert actual['run']['show_at'] == NOW.isoformat()
+    assert actual['actions'] == (['force_stop'] if expected == 'stop_failed' else [])
+    assert 'node_key' not in ended  # Response enrichment must not mutate the queue result.

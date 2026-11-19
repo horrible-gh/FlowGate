@@ -153,5 +153,5 @@ def control(flow_id, node_key, run_id, action):
             raise GraphApiError(409, exc.code) from exc
         state = 'stopped' if ended and ended['status'] in runs.QUEUE_TERMINAL else 'stop_failed'
     return {'flow_id': flow_id, 'node_key': node_key, 'visible': True, 'state': state,
-            'run': _brief(ended or row, _now()), 'blocker': None,
+            'run': _brief(dict(ended or row, node_key=row['node_key']), _now()), 'blocker': None,
             'actions': ['force_stop'] if state == 'stop_failed' else []}
