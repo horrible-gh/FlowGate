@@ -15,14 +15,17 @@
 import { computed, inject, reactive, readonly, type ComputedRef, type DeepReadonly, type InjectionKey } from 'vue'
 import { randomUuid } from '@shared/utils/uuid'
 import type { FlowAiActivity, FlowRef, ProjectGitPendingRow, ProjectGitStatus } from '@/features/project'
-import { gitErrorOf } from './api'
+import { gitErrorOf, gitReasonOf } from './api'
 import { createHttpGitSource, type GitSource } from './gitSource'
 import type {
+  GitAbortFailureSession,
   GitApplyRequest,
   GitBadge,
   GitCardKey,
   GitChunkResolution,
   GitConflictSession,
+  GitForceCleanupPreview,
+  GitForceCleanupResult,
   GitFileLetter,
   GitFileOrigin,
   GitFinalizeAction,
@@ -63,6 +66,12 @@ const NOTICE_CODES: readonly string[] = [
   'conflict_side_dropped',
   'conflict_supersede_invalid',
   'conflict_source_changed',
+  // flowgate.v02test.0052 — the server refuses a resolve on a session whose workspace is no longer merging, and the
+  // administrator's forced cleanup refuses to guess (HEAD moved / another branch / not a managed workspace).
+  'merge_not_in_progress',
+  'force_cleanup_head_moved',
+  'force_cleanup_branch_mismatch',
+  'force_cleanup_unsupported_target',
 ]
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -134,6 +143,12 @@ export interface GitState {
   aiOutcome: GitAiOutcome | null
 }
 
+/** The merge session a forced cleanup is about (default: the shown group's open conflict). */
+export interface ForceCleanupTarget {
+  groupId: string
+  mergeId: number
+}
+
 /** An AI resolver run that ended with conflicts left: its server status and who ran it. */
 export interface GitAiOutcome {
   status: string | null
@@ -169,6 +184,15 @@ export interface GitSession {
   /** §B: closes the conflict review (merge abort) for a new approval; true when it is closed. */
   abortForReapproval(): Promise<boolean>
   abortMerge(): Promise<void>
+  /**
+   * flowgate.v02test.0052 (0008 할 일 3): the administrator's forced cleanup of an open merge whose abort git refuses.
+   * `preview` reads what it would reset (null when it cannot be read); `run` does it and true means the server closed
+   * the session. `target` names another group's session (the admin list); default is the shown group's conflict.
+   */
+  forceCleanupPreview(target?: ForceCleanupTarget): Promise<GitForceCleanupPreview | null>
+  forceCleanup(target?: ForceCleanupTarget): Promise<GitForceCleanupResult | null>
+  /** The open sessions marked "정리 실패" (administrators only; [] for anyone else or when the read fails). */
+  loadAbortFailures(): Promise<GitAbortFailureSession[]>
   cancelAi(): Promise<void>
   approve(): Promise<void>
   openReject(open: boolean): void
@@ -441,7 +465,14 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     }
     if (err.code && NOTICE_CODES.includes(err.code)) return setNotice(card, { code: err.code })
     if (err.code?.startsWith('merge_target_')) return setNotice(card, { code: 'merge_target' })
-    setNotice(card, { code: 'failed', params: { code: err.code ?? String(err.status ?? '') } })
+    // flowgate.v02test.0052 (0001-B 1절 완료 기준 1): git's own reason line is shown, never `git_error` alone. A failed
+    // abort that the administrator's forced cleanup can get out of (`details.recovery`) says so.
+    const reason = gitReasonOf(err)
+    const code = err.code ?? String(err.status ?? '')
+    if (reason) {
+      return setNotice(card, { code: err.details?.recovery === 'force_cleanup' ? 'abort_failed' : 'failed_reason', params: { code, reason } })
+    }
+    setNotice(card, { code: 'failed', params: { code } })
   }
 
   // ── Context ────────────────────────────────────────────────────────────────────────
@@ -744,7 +775,43 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     // The review card's 취소 needs no conflicts answer; the conflict card's does (§3.7).
     if (groupCard.value !== 'review' && !conflictActionable.value) return Promise.resolve()
     const card: GitCardKey = groupCard.value === 'review' ? 'review' : 'conflict'
-    return act(card, 'abort', () => src().abortMerge(target.groupId, target.mergeId))
+    // The conflicts answer is read again either way: a refused abort leaves "정리 실패" (`abort_failure`) on the session.
+    return act(card, 'abort', () => src().abortMerge(target.groupId, target.mergeId), { forceConflicts: true })
+  }
+
+  async function forceCleanupPreview(target?: ForceCleanupTarget): Promise<GitForceCleanupPreview | null> {
+    const wanted = target ?? activeConflict()
+    const read = src().fetchForceCleanupPreview
+    if (!wanted || !read) return null
+    try {
+      return await read(wanted.groupId, wanted.mergeId)
+    } catch (error) {
+      reportError('conflict', error)
+      return null
+    }
+  }
+
+  async function forceCleanup(target?: ForceCleanupTarget): Promise<GitForceCleanupResult | null> {
+    const wanted = target ?? activeConflict()
+    const run = src().forceCleanup
+    if (!wanted || !run) return null
+    let result: GitForceCleanupResult | null = null
+    await act('conflict', 'force_cleanup', async () => {
+      result = await run(wanted.groupId, wanted.mergeId)
+    }, { forceConflicts: true })
+    return result
+  }
+
+  async function loadAbortFailures(): Promise<GitAbortFailureSession[]> {
+    const pid = state.projectId
+    const read = src().fetchAbortFailures
+    if (!pid || !read) return []
+    try {
+      return await read(pid)
+    } catch {
+      // 403 (not an administrator) or a failed read: nothing to list.
+      return []
+    }
   }
 
   function ensureProviders(): void {
@@ -776,7 +843,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     await act(card, 'reapprove', async () => {
       await src().abortMerge(target.groupId, target.mergeId)
       ok = true
-    })
+    }, { forceConflicts: true })
     return ok
   }
 
@@ -1055,6 +1122,9 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     resolveFile,
     abortForReapproval,
     abortMerge,
+    forceCleanupPreview,
+    forceCleanup,
+    loadAbortFailures,
     cancelAi,
     approve,
     openReject,
@@ -1091,6 +1161,8 @@ export interface GitConfirmRequest {
 
 export interface GitPanelContext {
   session: GitSession
+  /** flowgate.v02test.0052: whether the person is a system administrator (forced cleanup is theirs only). Absent = no. */
+  isAdmin?: () => boolean
   openDiff(origin: GitFileOrigin, path: string, status: GitFileLetter | null): void
   openSettings(): void
   confirm(request: GitConfirmRequest): void

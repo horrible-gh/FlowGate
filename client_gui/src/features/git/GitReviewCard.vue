@@ -77,6 +77,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitFileRow from './GitFileRow.vue'
 import GitReapproveBlock from './GitReapproveBlock.vue'
+import { useAbortMergeConfirm } from './abortMerge'
 import { FILE_PREVIEW, REJECT_REASON_MAX, useGitPanel } from './gitSession'
 import type { GitFileLetter } from './types'
 
@@ -138,14 +139,6 @@ function askApprove(): void {
   })
 }
 
-function askAbort(): void {
-  const bound = session.pendingRow.value?.finalApprovalBound === true
-  ctx.confirm({
-    title: t('gui.git.conflict.abort_title'),
-    message: bound ? `${t('gui.git.conflict.abort_message')} ${t('gui.git.conflict.abort_bound')}` : t('gui.git.conflict.abort_message'),
-    confirmLabel: t('gui.git.conflict.abort'),
-    danger: true,
-    run: () => void session.abortMerge(),
-  })
-}
+// flowgate.v02test.0052 (0008): [병합 중단] here is the same one as on the conflict card (same dialog, same end).
+const { askAbort } = useAbortMergeConfirm()
 </script>

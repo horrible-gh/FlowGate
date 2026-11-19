@@ -31,8 +31,11 @@ import type {
   GitConfigSave,
   GitConfigView,
   GitChunkResolution,
+  GitAbortFailureSession,
   GitConflictSession,
   GitConnectionTest,
+  GitForceCleanupPreview,
+  GitForceCleanupResult,
   GitFinalizeAction,
   GitFinalizeResult,
   GitProviders,
@@ -108,6 +111,11 @@ export interface GitSource {
   resolveConflictFile?(groupId: string, mergeId: number, path: string, chunks: GitChunkResolution[]): Promise<GitResolveResult>
   cancelAiRun(runId: string): Promise<string | null>
   abortMerge(groupId: string, mergeId: number): Promise<void>
+  // flowgate.v02test.0052 (0008): the administrator's way out of a merge whose abort git refuses. Absent = no such
+  // reads / action (the card then offers none).
+  fetchForceCleanupPreview?(groupId: string, mergeId: number): Promise<GitForceCleanupPreview>
+  forceCleanup?(groupId: string, mergeId: number): Promise<GitForceCleanupResult>
+  fetchAbortFailures?(projectId: string): Promise<GitAbortFailureSession[]>
 
   fetchReview(groupId: string, mergeId: number): Promise<GitReview>
   approveReview(groupId: string, mergeId: number, attemptId: string, fingerprint: string): Promise<GitApproveResult>
@@ -158,6 +166,9 @@ export function createHttpGitSource(): GitSource {
     resolveConflictFile: api.resolveConflictFile,
     cancelAiRun: api.cancelAiRun,
     abortMerge: api.abortMerge,
+    fetchForceCleanupPreview: api.fetchForceCleanupPreview,
+    forceCleanup: api.forceCleanup,
+    fetchAbortFailures: api.fetchAbortFailures,
     fetchReview: api.fetchReview,
     approveReview: api.approveReview,
     rejectReview: api.rejectReview,

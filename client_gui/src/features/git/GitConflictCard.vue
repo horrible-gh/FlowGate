@@ -16,15 +16,24 @@
     </div>
     <p v-else-if="unsupported" class="gx-desc" data-test="git-conflict-unsupported">{{ t('gui.git.conflict.unsupported') }}</p>
     <template v-else>
+      <!-- flowgate.v02test.0052 (0008 할 일 7): the numbers are the server's record (`resolved_paths`), not the files that
+           merely show no marker (a file the resolver was refused on lost its markers but is not resolved). -->
       <p v-if="files && files.length" class="gx-desc" data-test="git-conflict-count">
         {{ t('gui.git.conflict.count', { open: openCount, done: files.length - openCount }) }}
       </p>
+      <!-- flowgate.v02test.0052 (card B): files the resolution was submitted with besides the session's own (a file main moved). -->
+      <div v-if="companions.length" class="gx-companions" data-test="git-conflict-companions">
+        <div class="gx-kicker">{{ t('gui.git.conflict.companions') }}</div>
+        <p v-for="item in companions" :key="item.path" class="gx-desc" data-test="git-conflict-companion">
+          {{ item.sourcePath ? t('gui.git.conflict.companion_item', { path: item.path, source: item.sourcePath }) : item.path }}
+        </p>
+      </div>
       <div v-if="files && files.length" class="gx-files">
         <GitFileRow
           v-for="file in preview"
           :key="file.path"
           :path="file.path"
-          :letter="file.conflictCount === 0 ? 'M' : 'C'"
+          :letter="file.resolved ? 'M' : 'C'"
           @select="openResolver(file.path)"
         />
         <button
@@ -87,6 +96,17 @@
         <button type="button" class="gx-btn ghost" :disabled="!actionable" data-test="git-conflict-abort" @click="askAbort">
           {{ t('gui.git.conflict.abort') }}
         </button>
+        <!-- flowgate.v02test.0052 (0008 할 일 3): the way out when git refuses the abort — administrators only, and only then. -->
+        <button v-if="canForce" type="button" class="gx-btn danger" :disabled="!actionable" data-test="git-conflict-force" @click="askForceCleanup()">
+          {{ t('gui.git.conflict.force_cleanup') }}
+        </button>
+      </div>
+      <!-- flowgate.v02test.0052 (0008 할 일 2): git's own reason and what to do next, not `git_error` alone. Shown from the
+           session's record; a refusal just answered is the notice line below (the same text), so it is not said twice. -->
+      <div v-if="failureShown" class="gx-reason gx-abort-failure" data-test="git-conflict-abort-failure">
+        <span>{{ t('gui.git.conflict.abort_failure') }}</span>
+        <code data-test="git-conflict-abort-reason">{{ abortFailure!.reason }}</code>
+        <span data-test="git-conflict-abort-next">{{ t(isAdmin ? 'gui.git.conflict.abort_failure_admin' : 'gui.git.conflict.abort_failure_user') }}</span>
       </div>
       <p v-if="blockedText" class="gx-reason" data-test="git-conflict-blocked">{{ blockedText }}</p>
       <GitReapproveBlock />
@@ -106,6 +126,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitFileRow from './GitFileRow.vue'
 import GitReapproveBlock from './GitReapproveBlock.vue'
+import { useAbortMergeConfirm } from './abortMerge'
 import { FILE_PREVIEW, useGitPanel } from './gitSession'
 
 defineProps<{ unsupported?: boolean }>()
@@ -126,9 +147,15 @@ function openCard(): void {
   if (!flowId || typeof mergeId !== 'number') return
   window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId, mergeId } }))
 }
-// Open files first, so the ones left are the ones shown.
-const preview = computed(() => [...(files.value ?? [])].sort((a, b) => Number(b.conflictCount > 0) - Number(a.conflictCount > 0)).slice(0, FILE_PREVIEW))
-const openCount = computed(() => (files.value ?? []).filter((f) => f.conflictCount > 0).length)
+// Open files first, so the ones left are the ones shown. "Open" = the server has no resolution recorded for it.
+const preview = computed(() => [...(files.value ?? [])].sort((a, b) => Number(!b.resolved) - Number(!a.resolved)).slice(0, FILE_PREVIEW))
+const openCount = computed(() => (files.value ?? []).filter((f) => !f.resolved).length)
+const companions = computed(() => session.state.conflict?.companionFiles ?? [])
+const abortFailure = computed(() => session.state.conflict?.abortFailure ?? null)
+const isAdmin = computed(() => ctx.isAdmin?.() === true)
+const abortNotice = computed(() => session.state.notices.conflict?.code === 'abort_failed')
+const failureShown = computed(() => !!abortFailure.value?.reason && !abortNotice.value)
+const canForce = computed(() => isAdmin.value && (!!abortFailure.value || abortNotice.value))
 const target = computed(() => {
   const conflict = session.state.conflict
   return conflict?.targetBranch ?? conflict?.baseBranch ?? session.state.status?.baseBranch ?? t('gui.git.header.base_unset')
@@ -233,24 +260,18 @@ onBeforeUnmount(() => {
 })
 
 function openResolver(path: string | null): void {
-  const first = path ?? (files.value ?? []).find((f) => f.conflictCount > 0)?.path ?? files.value?.[0]?.path ?? null
+  const first = path ?? (files.value ?? []).find((f) => !f.resolved)?.path ?? files.value?.[0]?.path ?? null
   session.openConflictWindow(t('gui.git.window.conflict_title'), first)
 }
 
-// Abort drops the final approval intent with it; the confirm text says so (§3.2).
-function askAbort(): void {
-  const bound = session.pendingRow.value?.finalApprovalBound === true
-  ctx.confirm({
-    title: t('gui.git.conflict.abort_title'),
-    message: bound ? `${t('gui.git.conflict.abort_message')} ${t('gui.git.conflict.abort_bound')}` : t('gui.git.conflict.abort_message'),
-    confirmLabel: t('gui.git.conflict.abort'),
-    danger: true,
-    run: () => void session.abortMerge(),
-  })
-}
+// [병합 중단] closes the conflict review and cancels the approval parked on it; the confirm text says what stays (§3.2).
+const { askAbort, askForceCleanup } = useAbortMergeConfirm()
 </script>
 
 <style scoped>
+.gx-abort-failure { display: flex; flex-direction: column; gap: 3px; }
+.gx-abort-failure code { display: block; overflow-wrap: anywhere; font-size: 11.5px; }
+.gx-companions { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 /* flowgate.v02test.0042 (시안 v7 item 3): a card result's conflict is a blue note with [→ 카드로 이동], never a dead end. */
 .gx-card-handled { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding: 10px 12px; border: 1px solid rgba(75, 163, 255, 0.4); border-radius: 8px; background: rgba(75, 163, 255, 0.1); }
 .gx-card-handled b { color: #7cc0ff; font-size: 12.5px; }
