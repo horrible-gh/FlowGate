@@ -179,8 +179,9 @@ def _review_pending_ttl_expired(session: dict) -> bool:
 
     Resolve → leave → come back and review is the normal flow now, so a review wait is
     not abandonment by itself. One that holds the base checkout keeps the ordinary
-    activity TTL — opening the review screen counts as activity — under a hard cap from
-    creation, so ``guard_base_free`` never blocks other groups without bound. [보류]
+    activity TTL — real operations only (a resolution submit, a review conversation
+    turn); opening the review screen is not activity (flowgate.v02test.0052 T0003
+    할 일 4(c)) — under a hard cap from creation, so ``guard_base_free`` never blocks other groups without bound. [보류]
     (hold) stays the explicit way to park longer.
 
     0683 T0004 §5: a session on a managed non-base target workspace is not harmless to
@@ -326,14 +327,17 @@ def _auto_abort_session(
             return
         session = fresh
         if _gs._merge_in_progress(base_root):
-            proc = _gs._run_session_git(merge_id, None, "merge", "sweep_abort",
-                                        ["merge", "--abort"], cwd=base_root)
+            # flowgate.v02test.0052 T0003: the common abort (index stat refresh first).
+            proc = _gs._abort_merge(base_root, merge_id=merge_id, reason="sweep_abort")
             if proc.returncode != 0:
                 _log.warning(
                     "sweep merge --abort failed for %s (%s) — left intact",
-                    group_id, _gs._last_line(proc.stderr),
+                    group_id, proc.reason,
                 )
-                return   # never force-reset (L §5)
+                # Still never force-reset (L §5): the session is marked "정리 실패" with
+                # git's reason so an administrator can see it and force-clean it.
+                _gs._record_abort_failure(merge_id, "sweep_abort", proc)
+                return
         # owner-matched workspace release for an attempt; legacy close unchanged
         merge_target.close_session_attempt(
             session, merge_target.ATTEMPT_ABORTED, error={"code": reason},
@@ -605,10 +609,14 @@ def _sweep_group_update_session(session: dict, project_id: str) -> None:
         return
     if not _ttl_expired(session.get("touched_at") or session.get("created_at")):
         return
-    proc = _gs._run_git(["merge", "--abort"], cwd=root)
+    # flowgate.v02test.0052 T0003 할 일 3(b): audited on the session like every
+    # other session abort (``ref_operations[].stderr_tail`` on failure).
+    proc = _gs._abort_merge(root, merge_id=merge_id, reason="group_update_sweep_abort")
     if proc.returncode == 0:
         _gs.db_git.close_session(merge_id, "aborted")
         _emit_auto_aborted(project_id, group_id, merge_id, "ttl_expired")
+    else:
+        _gs._record_abort_failure(merge_id, "sweep_abort", proc)
 
 
 def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:

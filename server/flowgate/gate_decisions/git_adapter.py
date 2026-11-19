@@ -532,7 +532,9 @@ def merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, frozen:
             mt.finish_manual_attempt(attempt, merge_commit=short, merge_commit_sha=full, pushed=False)
             return {"outcome": MERGED, "pre_head": pre_head, "merge_commit": full, "merge_id": attempt.merge_id}
         if not files:
-            gs._run_git(["merge", "--abort"], cwd=root)
+            # flowgate.v02test.0052 T0003 할 일 3(b): audited on the attempt's session.
+            gs._abort_merge(root, merge_id=getattr(attempt, "merge_id", None),
+                            reason="gate_merge_failed_abort")
             _log.warning("gate merge failed for %s: %s", slot.group_id, redact.scrub(proc.stderr, *slot.secrets))
             raise GitServiceError(409, "merge_failed", "the merge could not run")
         _hand_off_conflict(slot, attempt, root, target_branch, files, decision_id)
@@ -741,7 +743,9 @@ def sync_merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, pr
             mt.finish_manual_attempt(attempt, merge_commit=short, merge_commit_sha=full, pushed=False)
             return {"outcome": MERGED, "pre_head": pre_head, "merge_commit": full, "merge_id": attempt.merge_id}
         if not files:
-            gs._run_git(["merge", "--abort"], cwd=root)
+            # flowgate.v02test.0052 T0003 할 일 3(b): audited on the attempt's session.
+            gs._abort_merge(root, merge_id=getattr(attempt, "merge_id", None),
+                            reason="gate_sync_failed_abort")
             _log.warning("gate remote sync failed for %s: %s", slot.group_id, redact.scrub(proc.stderr, *slot.secrets))
             raise GitServiceError(409, "sync_merge_failed", "the remote sync merge could not run")
         _hand_off_conflict(slot, attempt, root, target_branch, files, decision_id, context_key=SYNC_CONTEXT_KEY)

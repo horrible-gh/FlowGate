@@ -980,12 +980,15 @@ def abort(project_id: str, merge_id: int) -> dict:
     lock_ctx, lock_key = branch_merge_publish.attempt_lock(target)
     try:
         if target.root is not None and target.root.exists() and gs._merge_in_progress(target.root):
-            proc = gs._run_session_git(merge_id, None, "merge", "branch_merge_abort",
-                                       ["merge", "--abort"], cwd=target.root)
+            proc = gs._abort_merge(target.root, merge_id=merge_id, reason="branch_merge_abort")
             if proc.returncode != 0:
+                gs._record_abort_failure(merge_id, "user_abort", proc)
                 raise GitServiceError(
                     500, "branch_merge_abort_failed", "Git could not abort the merge",
-                    diagnostic=gs._last_line(proc.stderr),
+                    details={"reason": proc.reason, "returncode": proc.returncode,
+                             "merge_id": merge_id},
+                    params={"reason": proc.reason},
+                    diagnostic=proc.reason,
                 )
         merge_target.close_attempt(merge_id, merge_target.ATTEMPT_ABORTED, error={"code": "user_abort"})
         cleaned = merge_target.release_workspace(target) if target.managed_workspace else False

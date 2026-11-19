@@ -874,7 +874,7 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
         untracked_blockers = _untracked_merge_blockers(proc.stderr)
         tracked_blockers = _tracked_merge_blockers(proc.stderr)
         if untracked_blockers is not None or tracked_blockers is not None:
-            _gs._run_git(["merge", "--abort"], cwd=wt_path)
+            _gs._abort_merge(wt_path)
             blockers = (untracked_blockers or []) + (tracked_blockers or [])
             raise GitServiceError(
                 409, "group_untracked_conflict",
@@ -903,7 +903,7 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
                 "conflict_files": conflicts,
                 "source_ref": source_ref, "source_sha": source_sha,
             }}
-        _gs._run_git(["merge", "--abort"], cwd=wt_path)
+        _gs._abort_merge(wt_path)
         raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
     after = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
     before_sha = (before.stdout or "").strip()
@@ -966,7 +966,7 @@ def group_update_untracked_recover(
         # The probe is classification-only. Whether it stopped on a blocker,
         # entered conflicts, or produced a clean no-commit merge, restore HEAD
         # before applying the explicitly requested recovery.
-        _gs._run_git(["merge", "--abort"], cwd=wt_path)
+        _gs._abort_merge(wt_path)
         unknown = [path for path in cleaned if path not in blockers]
         if unknown:
             raise GitServiceError(
@@ -1910,8 +1910,7 @@ def _finalize_merge_attempt(
         # design), so this is where it must be named. git refuses BEFORE
         # starting the merge here, so `merge --abort` below is a harmless no-op.
         blockers = _untracked_merge_blockers(proc.stderr)
-        _gs._run_session_git(attempt.merge_id, None, "merge", "finalize_merge_abort",
-                             ["merge", "--abort"], cwd=merge_root)
+        _gs._abort_merge(merge_root, merge_id=attempt.merge_id, reason="finalize_merge_abort")
         _gs._set_status(group_id, "waiting")
         if blockers is not None:
             raise GitServiceError(
