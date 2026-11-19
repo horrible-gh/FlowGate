@@ -1,3 +1,4 @@
+import { flushTreeReports, newTreeReportId, reportTreeFailure } from './treeReadReports'
 import axios, {
   AxiosError,
   type AxiosInstance,
@@ -317,7 +318,37 @@ const api: AxiosInstance = axios.create({
   timeout: DEFAULT_TIMEOUT_MS,
 })
 
+type TreeTiming = { start: number; id: string; owner: string; project: string; screen: 'full_tree' | 'designer_tree' }
+const treeTimings = new WeakMap<object, TreeTiming>()
+function reportOwner(): string {
+  try {
+    const token = window.__accessToken__ || sessionStorage.getItem('fg_access_token') || ''
+    const payload = token.split('.')[1] ?? ''
+    return String(JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))).sub || '')
+  } catch { return '' }
+}
+// Bare transport: a diagnostic failure must not refresh auth, redirect, retry or emit diagnostics.
+const sendTreeReportFor = (owner: string) => async (report: import('./treeReadReports').TreeReport) => {
+  if (!owner || owner !== reportOwner()) throw new Error('report owner changed')
+  return axios.post(`${getBaseUrl()}/api/v1/client-reports/tree-read-failed`, report, {
+    headers: { Authorization: `Bearer ${window.__accessToken__ || sessionStorage.getItem('fg_access_token') || ''}` },
+    timeout: 10_000,
+  })
+}
+export const flushPendingTreeReports = () => {
+  const owner = reportOwner()
+  return flushTreeReports(owner, sendTreeReportFor(owner))
+}
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  const match = /^\/api\/v1\/projects\/([^/?]+)\/(groups\/tree|git\/groups\/[^/?]+\/tree)$/.exec((config.url || '').split('?')[0]!)
+  try {
+  if (config.method?.toLowerCase() === 'get' && match) {
+    const id = newTreeReportId()
+    config.headers['X-Request-ID'] = id
+    treeTimings.set(config, { start: Date.now(), id, owner: reportOwner(), project: decodeURIComponent(match[1]!),
+      screen: match[2] === 'groups/tree' ? 'full_tree' : 'designer_tree' })
+  }
+  } catch { /* diagnostics must never reject the tree request */ }
   if (window.__accessToken__) {
     config.headers.Authorization = `Bearer ${window.__accessToken__}`
   }
@@ -699,8 +730,17 @@ export const shouldRetryGet = (error: AxiosError): boolean => {
 }
 
 api.interceptors.response.use(
-  (response: AxiosResponse) => response,
+  (response: AxiosResponse) => {
+    if (treeTimings.has(response.config)) void flushPendingTreeReports()
+    return response
+  },
   async (error: AxiosError) => {
+    const timing = error.config && treeTimings.get(error.config)
+    if (timing) {
+      void reportTreeFailure(timing.owner, { id: newTreeReportId(), project_id: timing.project, screen: timing.screen,
+        status: error.response?.status ?? 'no_response', elapsed_ms: Math.min(86400000, Math.max(0, Date.now() - timing.start)),
+        occurred_at: new Date().toISOString(), request_id: String(error.response?.headers?.['x-request-id'] || timing.id).slice(0, 64) }, sendTreeReportFor(timing.owner))
+    }
     localizeApiError(error)
     const originalRequest = error.config as RetryableRequestConfig | undefined
 

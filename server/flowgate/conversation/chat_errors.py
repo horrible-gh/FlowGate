@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from modules.flow_gate.db.connection import get_store, now_iso
+from util.credential_redaction import MASK, SECRET_PATTERNS, redact_text
 
 from flowgate.conversation import contracts as c
 
@@ -47,20 +48,14 @@ _CLIENT_ID = re.compile(r"^[A-Za-z0-9.:-]{8,200}$")
 # and this stored text after F5, so both must read the same (``***``). It covers what the
 # self-check redaction (tr_self_check_service._redact) masks -- formerly applied here first, which
 # stored ``[REDACTED]`` -- plus the chat's own words. Applying it twice changes nothing.
-_SECRETS = (
-    re.compile(r"(?i)(\bbearer\s+)[^\s\"']+"),
-    re.compile(r"(?i)\b((?:FLOWGATE_TOKEN|[A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN|SECRET_KEY|PASSWORD))\s*[:=]\s*)[^\s\"']+"),
-    re.compile(r"(?i)(\b(?:authorization|token|access_token|api[_-]?key|password|secret)\b\s*[=:]\s*)(?!bearer\b)[^\s,;&\"']+"),
-)
-MASK = "***"
+# flowgate.v02test.0050 T0005: the patterns moved unchanged to util/credential_redaction.py so the
+# server log table (services/server_logs.py) masks exactly the same way; the names below stay for existing callers.
+_SECRETS = SECRET_PATTERNS
 
 
 def redact(text: Optional[str]) -> str:
     """The message without anything that looks like a credential."""
-    value = str(text or "")
-    for pattern in _SECRETS:
-        value = pattern.sub(lambda m: m.group(1) + MASK, value)
-    return value[:MAX_MESSAGE_CHARS]
+    return redact_text(text, MAX_MESSAGE_CHARS)
 
 
 def _occurred_at(value: Any) -> str:

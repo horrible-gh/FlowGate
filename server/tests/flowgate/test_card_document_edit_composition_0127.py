@@ -43,7 +43,7 @@ def composition(env, monkeypatch):
     monkeypatch.setenv("CONTEXT", "/flowgate")
     monkeypatch.setenv("DB_TYPE", "sqlite")
     from config import settings
-    from flowgate.card_document_edit import routes as edit_routes
+    from flowgate.card_document_edit import routes as edit_routes, chat_routes
     from modules.flow_gate.services import mutation_policy
 
     monkeypatch.setattr(settings, "CONTEXT", "/flowgate")
@@ -100,7 +100,10 @@ def test_main_keeps_legacy_routes_dependencies_and_middleware(composition):
         ("/flowgate/api/v2/documents/{doc_id}", ("GET",)),
         ("/flowgate/api/v2/documents/{doc_id}/revisions", ("POST",))}
     before = [r for r in reference.routes if isinstance(r, APIRoute)]
-    after = [r for r in current.routes if isinstance(r, APIRoute) and r not in added]
+    # The router also acquired chat question routes after the original 13 document
+    # endpoints. Exclude the entire omitted router when comparing legacy routes.
+    router_endpoints = {r.endpoint for r in edit_routes.router.routes if isinstance(r, APIRoute)}
+    after = [r for r in current.routes if isinstance(r, APIRoute) and r.endpoint not in router_endpoints]
     assert [_route_signature(r) for r in before] == [_route_signature(r) for r in after]
     assert current.dependency_overrides == reference.dependency_overrides == {}
     assert [(m.cls, m.args, m.kwargs) for m in current.user_middleware] == [
