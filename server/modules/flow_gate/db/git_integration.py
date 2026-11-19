@@ -961,8 +961,9 @@ def list_open_sessions() -> list[dict]:
 def touch_session(merge_id: int) -> None:
     """Bump a session's activity timestamp — the sweep TTL basis (0205 L §1).
 
-    Called on session creation (via create_session's touched_at), conflict-list
-    fetch, and resolve submission. A quiet session (no touch for the TTL window)
+    Called on session creation (via create_session's touched_at), resolve submission
+    and a review conversation turn. Reads (the conflict list, the review screen) never
+    call it (flowgate.v02test.0052 T0003 할 일 4(c)). A quiet session (no touch for the TTL window)
     is what the auto-recovery sweep reclaims."""
     get_store()._execute(
         "UPDATE git_merge_session SET touched_at = ? WHERE merge_id = ?",

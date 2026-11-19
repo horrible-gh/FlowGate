@@ -370,6 +370,14 @@ def test_hold_persists_before_actual_abort_and_abort_does_not_checkpoint(monkeyp
         def active_resolution_checkpoint(self, *_args):
             return None
 
+        # flowgate.v02test.0052 T0003 할 일 3(b): the hold's abort is audited on the
+        # session (``_run_session_git``), which reads and writes the session context.
+        def get_session(self, merge_id):
+            return {**session, "merge_id": merge_id, "status": "open"}
+
+        def set_session_context(self, _merge_id, ctx):
+            context.update(ctx)
+
         def create_resolution_checkpoint(self, data):
             assert git(repo, "rev-parse", "MERGE_HEAD").stdout.strip()
             assert data["resolved_paths"] == ["f0.txt"]
@@ -678,6 +686,14 @@ def test_abort_failure_restores_previous_checkpoint(monkeypatch, tmp_path):
             state["cp-old"] = "active"
             events.append("rollback")
 
+        # flowgate.v02test.0052 T0003 할 일 3(b): the hold's abort is audited on the
+        # session (``_run_session_git``) and marked "정리 실패" (``_record_abort_failure``).
+        def get_session(self, merge_id):
+            return {**session, "merge_id": merge_id, "status": "open"}
+
+        def set_session_context(self, _merge_id, ctx):
+            context.update(ctx)
+
     db = FakeDB()
     monkeypatch.setattr(gs, "db_git", db)
     monkeypatch.setattr(gs, "_session_context", lambda *a, **k: (session, {}, "demo", repo))
@@ -689,11 +705,18 @@ def test_abort_failure_restores_previous_checkpoint(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(args, 1, "", "injected abort failure")
         return original_git(args, **kwargs)
     monkeypatch.setattr(gs, "_run_git", fail_abort)
-    with pytest.raises(GitServiceError, match="Merge abort failed"):
+    with pytest.raises(GitServiceError, match="Merge abort failed") as caught:
         rr.hold("demo.default.1", 2)
     assert events == ["persist", "rollback"]
     assert state == {"cp-old": "active", "cp-new": "invalidated"}
     assert git(repo, "rev-parse", "MERGE_HEAD").stdout.strip()
+    # flowgate.v02test.0052 T0003 할 일 3(b): git's reason is in the API error, the
+    # session audit and the "정리 실패" marker.
+    assert caught.value.details["reason"] == "injected abort failure"
+    assert context["ref_operations"][-1]["reason"] == "hold_abort"
+    assert context["ref_operations"][-1]["stderr_tail"] == "injected abort failure"
+    assert context["abort_failure"]["trigger"] == "hold_abort"
+    assert context["abort_failure"]["reason"] == "injected abort failure"
 
 
 def test_replay_edit_submit_hold_replays_edited_answer(monkeypatch, tmp_path):

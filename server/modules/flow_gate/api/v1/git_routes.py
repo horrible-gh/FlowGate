@@ -30,6 +30,8 @@ POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve-token
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/hold
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/abort
+GET/POST       /api/v1/groups/{group_id}/git/merge/{merge_id}/force-cleanup  (v02test.0052 T0003 — administrator only; GET = preview)
+GET            /api/v1/projects/{project_id}/git/merge-abort-failures        (v02test.0052 T0003 — administrator only)
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/review          (0481 D0006/L0007)
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/review-diff     (0481 D0006/L0007)
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/approve         (0481 D0006/L0007 — human only)
@@ -1040,6 +1042,46 @@ def post_merge_abort(group_id: str, merge_id: int, user=Depends(get_current_user
             # service that owns the ledger so the abandoned attempt gets its log line.
             return tr_commit_service.abort_conflict_resolution(group_id, merge_id)
         return git_service.abort_merge(group_id, merge_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+# ── flowgate.v02test.0052 T0003: abort failure visibility + administrator force cleanup ──
+
+@router.get("/groups/{group_id}/git/merge/{merge_id}/force-cleanup")
+def get_merge_force_cleanup(group_id: str, merge_id: int, user=Depends(get_current_user)):
+    """Preview (read-only) of what the force cleanup would reset — the confirmation
+    dialog's content: workspace path, target branch, HEAD it returns to, the paths whose
+    uncommitted merge state is discarded and the last abort failure (git's reason)."""
+    if not user.get("is_admin"):
+        return _error_response(403, "forbidden", "administrator only")
+    try:
+        return git_service.force_cleanup_preview(group_id, merge_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/groups/{group_id}/git/merge/{merge_id}/force-cleanup")
+def post_merge_force_cleanup(group_id: str, merge_id: int, user=Depends(get_current_user)):
+    """Administrator-only way out of a merge whose abort fails: the session's own managed
+    target workspace is reset to the target branch HEAD and the session is closed
+    ``aborted`` like an ordinary abort. The group branch and its commits are untouched."""
+    if not user.get("is_admin"):
+        return _error_response(403, "forbidden", "administrator only")
+    try:
+        return git_service.force_cleanup_merge(group_id, merge_id, actor=user.get("user_id"))
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/merge-abort-failures")
+def get_merge_abort_failures(project_id: str, user=Depends(get_current_user)):
+    """Open merge sessions of the project marked "정리 실패" (a failed abort or sweep
+    cleanup) with git's one-line reason — administrator only."""
+    if not user.get("is_admin"):
+        return _error_response(403, "forbidden", "administrator only")
+    try:
+        return git_service.list_abort_failures(project_id)
     except GitServiceError as exc:
         return _guard(exc)
 

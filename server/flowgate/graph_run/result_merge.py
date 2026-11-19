@@ -483,7 +483,7 @@ def _merge(row: dict, keep_session: bool = False) -> tuple[str, object]:
             # flowgate.v02test.0042: undone at once — the group stays free for the other cards' merges. How each file
             # overlaps (both changed it / one side deleted it) is read first: the card's tab says it per file.
             kinds = conflict_kinds(root)
-            proc = git._run_git(["merge", "--abort"], cwd=root)
+            proc = git._abort_merge(root)
             if proc.returncode != 0 or git._rev_parse(root, "MERGE_HEAD") is not None:
                 return FAILED, "merge_abort_failed"          # the merge state stays: a person must clear it
             paths = sorted(files)
@@ -497,7 +497,7 @@ def _merge(row: dict, keep_session: bool = False) -> tuple[str, object]:
             extra_context={"attempt_id": row["attempt_id"], "node_key": row["node_key"], "run_id": row["run_id"],
                            "result_commit": result})
         if session is None:
-            proc = git._run_git(["merge", "--abort"], cwd=root)
+            proc = git._abort_merge(root)
             if proc.returncode != 0 or git._rev_parse(root, "MERGE_HEAD") is not None:
                 return FAILED, "merge_abort_failed"          # the merge state stays: a person must clear it
             return PENDING, "session_busy"
@@ -1188,7 +1188,7 @@ def _recover_one(row: dict) -> None:
         if lock is None:
             return                                   # stays integrating: the next start recovers it
         try:
-            proc = git._run_git(["merge", "--abort"], cwd=root)
+            proc = git._abort_merge(root)
             if proc.returncode != 0 or git._rev_parse(root, "MERGE_HEAD") is not None:
                 log.warning("Graph integration recovery could not undo the merge of %s", row["attempt_id"])
                 return                               # stays integrating: the next start recovers it

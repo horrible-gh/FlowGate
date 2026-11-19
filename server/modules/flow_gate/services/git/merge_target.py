@@ -2236,11 +2236,17 @@ def recover_interrupted_attempt(session: dict, reason: str) -> Optional[str]:
     root = ctx.root
     if ownership == OWN_OWNED and root is not None and root.exists():
         if _gs._merge_in_progress(root):
-            proc = _gs._run_git(["merge", "--abort"], cwd=root)
+            # flowgate.v02test.0052 T0003 할 일 3(b): audited on the attempt's session.
+            proc = _gs._abort_merge(
+                root, merge_id=ctx.merge_id, reason="interrupted_recovery_abort",
+            )
             if proc.returncode != 0:
                 _log.warning(
-                    "interrupted attempt %s merge --abort failed — left intact", ctx.merge_id,
+                    "interrupted attempt %s merge --abort failed — left intact: %s",
+                    ctx.merge_id, proc.reason,
                 )
+                if ctx.merge_id is not None:
+                    _gs._record_abort_failure(ctx.merge_id, "interrupted_recovery", proc)
                 return None
         else:
             landed = _settle_landed_merge(session, ctx)
