@@ -38,8 +38,12 @@ import type {
   GitBaseRevertResult,
   GitConfigSave,
   GitConfigView,
+  GitAbortFailure,
+  GitAbortFailureSession,
   GitConflictSession,
   GitConnectionTest,
+  GitForceCleanupPreview,
+  GitForceCleanupResult,
   GitFinalizeAction,
   GitFinalizeResult,
   GitProviders,
@@ -141,6 +145,24 @@ interface RawConflicts extends Envelope {
   tr_conflict?: Record<string, unknown> | null
   files?: Array<{ path?: string; conflict_count?: number; content?: string | null }> | null
   resolved_paths?: string[] | null
+  // flowgate.v02test.0052: the last failed abort / cleanup and the files resolved along with the session's own.
+  abort_failure?: Record<string, unknown> | null
+  companion_files?: Array<{ path?: unknown; source_path?: unknown }> | null
+}
+
+/** `abort_failure` of the server: {trigger, reason (git's line), returncode, at}; null when absent or not an object. */
+export function abortFailureOf(raw: unknown): GitAbortFailure | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const row = raw as Record<string, unknown>
+  return { trigger: str(row.trigger), reason: str(row.reason), returncode: num(row.returncode), at: str(row.at) }
+}
+
+/** git's own reason line of a refused request (`error.details.reason`, also `error.params.reason`), or null. */
+export function gitReasonOf(error: NormalizedGitError): string | null {
+  const fromDetails = error.details?.reason
+  if (typeof fromDetails === 'string' && fromDetails.trim()) return fromDetails.trim()
+  const fromParams = error.params?.reason
+  return typeof fromParams === 'string' && fromParams.trim() ? fromParams.trim() : null
 }
 
 // Session kinds of a TR rewind's revert / a forward restore's reapply (db/git_integration.py).
@@ -166,11 +188,75 @@ export async function fetchConflicts(groupId: string, mergeId: number): Promise<
         content: typeof f.content === 'string' ? f.content : '',
         resolved: resolved.has(toSlashes(f.path as string)),
       })),
+    abortFailure: abortFailureOf(data.abort_failure),
+    companionFiles: (data.companion_files ?? [])
+      .filter((c) => c && typeof c.path === 'string' && c.path)
+      .map((c) => ({ path: toSlashes(c.path as string), sourcePath: typeof c.source_path === 'string' && c.source_path ? toSlashes(c.source_path) : null })),
   }
 }
 
 export async function abortMerge(groupId: string, mergeId: number): Promise<void> {
   await call(() => postRequest<Envelope>(`${mergePath(groupId, mergeId)}/abort`, {}))
+}
+
+// ── Administrator force cleanup (flowgate.v02test.0052 T0003 API, used by 0008) ──────────────────
+
+interface RawForceCleanup extends Envelope {
+  result?: Record<string, unknown> | null
+}
+
+const strOrNull = (value: unknown): string | null => (typeof value === 'string' && value ? value : null)
+
+/** GET …/merge/{id}/force-cleanup — read only: what the cleanup would reset. 403 for anyone but an administrator. */
+export async function fetchForceCleanupPreview(groupId: string, mergeId: number): Promise<GitForceCleanupPreview> {
+  const data = await call(() => getRequest<RawForceCleanup>(`${mergePath(groupId, mergeId)}/force-cleanup`))
+  const r = data.result ?? {}
+  return {
+    mergeId: num(r.merge_id) ?? mergeId,
+    workspace: strOrNull(r.workspace),
+    targetBranch: strOrNull(r.target_branch),
+    head: strOrNull(r.head),
+    baselineHead: strOrNull(r.baseline_head),
+    headMatchesBaseline: typeof r.head_matches_baseline === 'boolean' ? r.head_matches_baseline : null,
+    discardedPaths: strList(r.discarded_paths),
+    abortFailure: abortFailureOf(r.abort_failure),
+    groupBranchUntouched: r.group_branch_untouched !== false,
+  }
+}
+
+/** POST …/merge/{id}/force-cleanup — the administrator's last resort; the server closes the session like an abort. */
+export async function forceCleanup(groupId: string, mergeId: number): Promise<GitForceCleanupResult> {
+  const data = await call(() => postRequest<RawForceCleanup>(`${mergePath(groupId, mergeId)}/force-cleanup`, {}))
+  const r = data.result ?? {}
+  return {
+    status: strOrNull(r.status) ?? '',
+    forced: r.forced === true,
+    workspace: strOrNull(r.workspace),
+    targetBranch: strOrNull(r.target_branch),
+    resetHead: strOrNull(r.reset_head),
+    discardedPaths: strList(r.discarded_paths),
+    branchPreserved: r.branch_preserved !== false,
+  }
+}
+
+/** GET /projects/{pid}/git/merge-abort-failures — administrators only: the open sessions marked "정리 실패". */
+export async function fetchAbortFailures(projectId: string): Promise<GitAbortFailureSession[]> {
+  const data = await call(() => getRequest<RawForceCleanup>(`${projectGit(projectId)}/merge-abort-failures`))
+  const sessions = (data.result as { sessions?: unknown } | null | undefined)?.sessions
+  if (!Array.isArray(sessions)) return []
+  return sessions.flatMap((item): GitAbortFailureSession[] => {
+    const row = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
+    const mergeId = num(row.merge_id)
+    if (mergeId === null) return []
+    return [{
+      mergeId,
+      groupId: strOrNull(row.group_id),
+      kind: strOrNull(row.kind),
+      targetBranch: strOrNull(row.target_branch),
+      abortFailure: abortFailureOf(row.abort_failure),
+      touchedAt: strOrNull(row.touched_at),
+    }]
+  })
 }
 
 /** Splits a group id into the project / module / group triple ai-invoke wants. */

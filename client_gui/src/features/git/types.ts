@@ -92,6 +92,60 @@ export interface GitConflictSession {
   // handles it; this panel only points there. Absent = not one.
   graphMerge?: boolean
   files: GitConflictFile[]
+  // flowgate.v02test.0052 (0001-B §4): the last failed abort / cleanup of this session as the server recorded it
+  // (`abort_failure`), null when there is none. `reason` is git's own line.
+  abortFailure?: GitAbortFailure | null
+  // flowgate.v02test.0052 (card B): files that the resolution carried along with the session's own (`companion_files`),
+  // e.g. the file main moved a conflicted file to. `sourcePath` is the session file they came from.
+  companionFiles?: GitCompanionFile[]
+}
+
+/** `abort_failure` of GET …/conflicts: why `git merge --abort` (or the cleanup) was refused. */
+export interface GitAbortFailure {
+  trigger: string | null
+  reason: string | null
+  returncode: number | null
+  at: string | null
+}
+
+/** One entry of `companion_files` of GET …/conflicts: a moved file resolved together with its original. */
+export interface GitCompanionFile {
+  path: string
+  sourcePath: string | null
+}
+
+/** GET …/merge/{id}/force-cleanup — what the admin's forced cleanup would put back (read only). */
+export interface GitForceCleanupPreview {
+  mergeId: number
+  workspace: string | null
+  targetBranch: string | null
+  head: string | null
+  baselineHead: string | null
+  headMatchesBaseline: boolean | null
+  discardedPaths: string[]
+  abortFailure: GitAbortFailure | null
+  groupBranchUntouched: boolean
+}
+
+/** POST …/merge/{id}/force-cleanup — the end state the server reports. */
+export interface GitForceCleanupResult {
+  status: string
+  forced: boolean
+  workspace: string | null
+  targetBranch: string | null
+  resetHead: string | null
+  discardedPaths: string[]
+  branchPreserved: boolean
+}
+
+/** One session of GET /projects/{pid}/git/merge-abort-failures (admin only): an open session marked "정리 실패". */
+export interface GitAbortFailureSession {
+  mergeId: number
+  groupId: string | null
+  kind: string | null
+  targetBranch: string | null
+  abortFailure: GitAbortFailure | null
+  touchedAt: string | null
 }
 
 export interface GitReviewChange {

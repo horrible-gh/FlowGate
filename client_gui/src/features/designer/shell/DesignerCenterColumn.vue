@@ -122,8 +122,27 @@ watchEffect(() => {
   pendingMerge.value = null
 })
 
-onMounted(() => window.addEventListener('fg:open_card_merge', onOpenCardMerge))
-onBeforeUnmount(() => window.removeEventListener('fg:open_card_merge', onOpenCardMerge))
+// flowgate.v02test.0052 (0008 할 일 1·4·6): the Git tab's [확인 카드로 이동] — show the card's Flow (opened when it is not) and
+// select its check card, whose Inspector holds [승인]. Same event name as `SELECT_GATE_NODE_EVENT` of the Git part (its gateOperations).
+function onSelectGateNode(event: Event): void {
+  const detail = (event as CustomEvent<{ flowId?: unknown; nodeKey?: unknown; flowName?: unknown }>).detail ?? {}
+  const flowId = typeof detail.flowId === 'string' && detail.flowId ? detail.flowId : null
+  const nodeKey = typeof detail.nodeKey === 'string' && detail.nodeKey ? detail.nodeKey : null
+  const projectId = props.center.state.projectId
+  if (!flowId || !nodeKey || projectId === null) return
+  if (props.center.state.tabs.some((tab) => tab.flowId === flowId)) props.center.activateFlow(flowId)
+  else props.center.openFlow({ projectId, flowId, flowName: typeof detail.flowName === 'string' ? detail.flowName : flowId })
+  props.center.selectNode(flowId, nodeKey)
+}
+
+onMounted(() => {
+  window.addEventListener('fg:open_card_merge', onOpenCardMerge)
+  window.addEventListener('fg:select_gate_node', onSelectGateNode)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('fg:open_card_merge', onOpenCardMerge)
+  window.removeEventListener('fg:select_gate_node', onSelectGateNode)
+})
 
 provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
   selection: () => props.center.activeSelection.value,

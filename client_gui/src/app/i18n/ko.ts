@@ -1448,7 +1448,7 @@ export default {
   },
   // flowgate.v02.0033 — Designer Git part (features/git).
   git: {
-    gate_job: {"job": "작업", "decision": "결정","title": "Git 작업 실패", "phase": "처리 단계", "retry": "재시도", "cancel": "취소", "reviewed": "단계별 증거와 남은 효과를 확인했습니다", "reason": "해결 사유", "confirm_effects": "효과 확정", "abandon": "복구 포기", "retry_same": "재시도는 수락됐지만 같은 이유로 다시 실패했습니다", "retry_changed": "재시도는 수락됐지만 다른 이유로 실패했습니다", "retry_blocked": "지금은 재시도할 수 없음 · 서버 처리 대기", "retry_blocked_cancel": "지금은 재시도할 수 없음 · [!] 상세에서 취소 가능"},
+    gate_job: {"job": "작업", "decision": "결정","title": "Git 작업 실패", "phase": "처리 단계", "retry": "재시도", "cancel": "취소", "reviewed": "단계별 증거와 남은 효과를 확인했습니다", "reason": "해결 사유", "confirm_effects": "효과 확정", "abandon": "복구 포기", "retry_same": "재시도는 수락됐지만 같은 이유로 다시 실패했습니다", "retry_changed": "재시도는 수락됐지만 다른 이유로 실패했습니다", "retry_blocked": "지금은 재시도할 수 없음 · 서버 처리 대기", "retry_blocked_cancel": "지금은 재시도할 수 없음 · [!] 상세에서 취소 가능", "cancel_approval": "이 승인 취소", "closed_note": "이 승인은 다시 반영할 수 없습니다. 병합 세션이 이미 닫혔습니다.", "closed_next": "[이 승인 취소] 뒤 확인 카드에서 [승인] → 현재 커밋으로 반영", "retry_blocked_closed": "재시도가 꺼진 이유: 닫힌 병합 세션을 다시 읽기만 해서 항상 같은 결과가 나옵니다.", "goto_gate": "확인 카드로 이동", "retry_same_next": "원인이 그대로라 다시 눌러도 같습니다. [!] 상세에서 원인을 확인하거나, [취소] 뒤 확인 카드에서 다시 승인하세요.", "retry_changed_next": "이번에는 다른 이유로 막혔습니다. [!] 상세에서 새 원인을 확인하세요.", "retry_closed_next": "병합 세션이 닫혀 있어 다시 해도 같습니다. [이 승인 취소] 뒤 확인 카드에서 [승인]을 눌러 현재 커밋으로 다시 반영하세요."},
     header: {
       base: '프로젝트 베이스',
       flow_base: '플로우 베이스',
@@ -1468,7 +1468,7 @@ export default {
     files_count: '{n}개 파일',
     conflict: {
       title_target: '충돌 · {target} 반영 중단',
-      count: '미해결 {open} · 해결됨 {done}',
+      count: '해결 {done} · 남음 {open} (서버 기록 기준)',
       ai_again: '다시 실행',
       ai_other: '다른 AI로',
       ai_pick: '해결할 AI',
@@ -1487,9 +1487,19 @@ export default {
       title: '병합 충돌',
       ai: 'AI 해결',
       manual: '직접 해결',
-      abort: '취소',
-      abort_title: '병합 취소',
-      abort_message: '병합을 중단합니다. 작업 브랜치는 그대로 남습니다.',
+      abort: '병합 중단',
+      abort_title: '병합 중단',
+      abort_message: '작업공간을 병합 전으로 되돌립니다. 그룹 브랜치는 그대로 남습니다.',
+      abort_cancel_approval: '이 승인({sha} 기준)도 취소합니다. 기록은 남습니다.',
+      abort_cancel_approval_unknown: '이 승인도 취소합니다. 기록은 남습니다.',
+      abort_then_approve: '그다음 확인 카드에서 [승인]을 누르면 현재 커밋({head})으로 다시 반영합니다.',
+      abort_then_approve_unknown: '그다음 확인 카드에서 [승인]을 누르면 현재 커밋으로 다시 반영합니다.',
+      abort_failure: '병합 중단이 실패했습니다. git이 거부했습니다:',
+      abort_failure_user: '다시 눌러도 같습니다. 관리자에게 [강제 정리]를 요청하세요.',
+      abort_failure_admin: '다시 눌러도 같습니다. [강제 정리]로 작업공간을 되돌릴 수 있습니다.',
+      force_cleanup: '강제 정리',
+      companions: '함께 반영된 이동 파일',
+      companion_item: '{path} · 원래 {source}',
       abort_bound: '진행 중인 최종 승인 시도가 함께 종료됩니다.',
       unsupported: '이 화면에서 처리하지 않는 충돌 유형입니다.',
       // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
@@ -1528,8 +1538,9 @@ export default {
       confirm_message: '충돌 검토를 닫고 이전 승인을 취소합니다. 원래 승인 기록과 고정 커밋은 그대로 남습니다. 그다음 확인 카드에서 [승인]을 직접 눌러 현재 커밋으로 다시 승인합니다.',
       title: '다시 승인',
       ready: '이전 승인 정리됨 · 확인 카드에서 [승인]을 눌러 현재 커밋으로 다시 승인',
-      cancel_failed: '충돌 검토는 닫았지만 이전 승인을 취소하지 못함 · {reason}',
+      cancel_failed: '충돌 검토는 닫았지만 이전 승인을 취소하지 못함 · {reason} · 아래 \'Git 작업 실패\' 카드의 [이 승인 취소]를 누르세요',
       dismiss: '닫기',
+      goto_gate: '확인 카드로 이동',
       reason: {
         merge_conflict_open: '충돌 검토가 열려 있음',
         gate_conflict: '반영 중 충돌',
@@ -1553,7 +1564,7 @@ export default {
       resolver_manual: '직접 해결',
       approve: '승인',
       reject: '반려',
-      abort: '취소',
+      abort: '병합 중단',
       applying: '적용 중',
       reconciling: '결과 확인 중',
       reason: {
@@ -1651,10 +1662,46 @@ export default {
       untracked_changed: '조회 뒤 새 파일이 바뀌었습니다. 다시 확인하세요.',
       partial_failed: '일부 파일을 처리하지 못함({n}개)',
       failed: '요청이 실패했습니다. ({code})',
+      failed_reason: '요청이 실패했습니다. ({code}) · git: {reason}',
+      abort_failed: '병합 중단이 실패했습니다. git이 거부했습니다: {reason} 다시 눌러도 같습니다. 관리자에게 [강제 정리]를 요청하세요.',
+      merge_not_in_progress: '이 병합은 이미 정리됐습니다. 해결 내용은 저장하지 않았습니다. [병합 중단]을 눌러 세션을 닫으세요.',
+      force_cleanup_head_moved: '반영 대상 HEAD가 병합을 시작한 때와 달라 강제 정리하지 않았습니다.',
+      force_cleanup_branch_mismatch: '반영 전용 작업공간에 다른 브랜치가 체크아웃돼 있어 강제 정리하지 않았습니다.',
+      force_cleanup_unsupported_target: '공용 작업공간이라 강제 정리할 수 없습니다.',
     },
+    // flowgate.v02test.0052 0008 (#25): the dialog's two buttons never read the same — [돌아가기] closes it and the
+    // other button names what it does ([병합 중단] …).
     confirm: {
       ok: '확인',
-      cancel: '취소',
+      cancel: '돌아가기',
+    },
+    // flowgate.v02test.0052 0008 — the administrator's forced cleanup of a merge whose abort git refuses.
+    force: {
+      title: '작업공간을 강제로 정리할까요?',
+      workspace: '반영 전용 작업공간 {workspace}을(를) {target} HEAD({head})로 되돌립니다.',
+      workspace_unknown: '반영 전용 작업공간을 {target} HEAD로 되돌립니다.',
+      discarded: '해결 중이던 내용 {n}개는 사라집니다.',
+      discarded_none: '되돌릴 변경은 없습니다.',
+      branch_kept: '그룹 브랜치와 그 커밋, 원래 승인 기록은 그대로입니다.',
+      closes: '병합 세션 {id}을(를) 닫고 이 승인도 취소합니다.',
+      closes_only: '병합 세션 {id}을(를) 닫습니다. 취소할 승인은 없습니다.',
+      closes_unchecked: '병합 세션 {id}을(를) 닫습니다. 이 그룹의 승인은 여기서 확인하지 못했습니다. 남은 승인이 있으면 해당 Flow의 Git 탭에서 [이 승인 취소]를 누르세요.',
+      action: '강제 정리',
+      preview_failed: '강제 정리 내용을 읽지 못했습니다.',
+    },
+    // flowgate.v02test.0052 0008 — administrators only: the open merges marked "정리 실패".
+    abort_failures: {
+      title: '정리 실패 {n}건',
+      desc: '병합 중단을 git이 거부한 세션입니다. 관리자에게만 보입니다.',
+      item: '{id} · {group} → {target}',
+      item_unknown_target: '{id} · {group}',
+      at: '마지막 시도 {at}',
+      force: '강제 정리',
+      open_card: '확인 카드로 이동',
+      done_cancelled: '병합 세션 {id}({group})을(를) 닫고 이전 승인을 취소했습니다. 확인 카드에서 [승인]을 누르면 현재 커밋으로 다시 반영합니다.',
+      done_none: '병합 세션 {id}({group})을(를) 닫았습니다. 취소할 승인은 없었습니다.',
+      done_unchecked: '병합 세션 {id}({group})을(를) 닫았습니다. 이 그룹의 승인은 여기서 확인하지 못했습니다. 해당 Flow의 Git 탭에서 남은 승인이 있으면 [이 승인 취소]를 누르세요.',
+      done_failed: '병합 세션 {id}({group})은(는) 닫았지만 이전 승인을 취소하지 못했습니다({code}). 해당 Flow의 Git 탭 [Git 작업 실패] 카드에서 [이 승인 취소]를 누르세요.',
     },
     // flowgate.v02.0065 — Git 미연동 / 상태 조회 실패 / Git 연결 모달리스.
     unlinked: {

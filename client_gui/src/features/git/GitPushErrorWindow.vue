@@ -20,10 +20,16 @@
             <dt>{{ effect.phase }}</dt><dd>{{ effect.status }} · {{ effect.sha_after ?? effect.target_ref ?? effect.error_code ?? '—' }}<span v-if="effect.recovery_state"> · {{ effect.recovery_state }}</span></dd>
           </template>
         </dl>
+        <!-- flowgate.v02test.0052 (0008 할 일 4): the merge session of this approval is closed — [재시도] only re-reads it and can
+             never succeed, so it is off (with the reason) and the working button, [이 승인 취소], leads. Same set as the card. -->
+        <p v-if="closed" class="gx-reason" data-test="git-closed-note">{{ t('gui.git.gate_job.closed_note') }}</p>
         <div class="gx-actions">
-          <button class="gx-btn primary" :disabled="locked || !operation.gate.recovery?.retryable" data-test="git-job-retry" @click="recover('retry')">{{ t('gui.git.gate_job.retry') }}</button>
-          <button class="gx-btn ghost" :disabled="locked || !operation.gate.recovery?.cancelable" data-test="git-job-cancel" @click="recover('cancel')">{{ t('gui.git.gate_job.cancel') }}</button>
+          <button v-if="closed" class="gx-btn primary" :disabled="locked || !operation.gate.recovery?.cancelable" data-test="git-job-cancel" @click="recover('cancel')">{{ t('gui.git.gate_job.cancel_approval') }}</button>
+          <button class="gx-btn" :class="closed ? 'ghost' : 'primary'" :disabled="locked || closed || !operation.gate.recovery?.retryable" data-test="git-job-retry" @click="recover('retry')">{{ t('gui.git.gate_job.retry') }}</button>
+          <button v-if="!closed" class="gx-btn ghost" :disabled="locked || !operation.gate.recovery?.cancelable" data-test="git-job-cancel" @click="recover('cancel')">{{ t('gui.git.gate_job.cancel') }}</button>
         </div>
+        <p v-if="closed" class="gx-reason" data-test="git-retry-blocked">{{ t('gui.git.gate_job.retry_blocked_closed') }}</p>
+        <p v-if="closed" class="gx-desc" data-test="git-closed-next">{{ t('gui.git.gate_job.closed_next') }}</p>
         <template v-if="operation.gate.recovery?.resolvable">
           <label><input v-model="reviewed" type="checkbox" :disabled="locked" data-test="git-job-reviewed" />{{ t('gui.git.gate_job.reviewed') }}</label>
           <textarea v-model="reason" :aria-label="t('gui.git.gate_job.reason')" :placeholder="t('gui.git.gate_job.reason')" :disabled="locked" data-test="git-job-reason" />
@@ -33,6 +39,7 @@
           </div>
         </template>
         <p v-if="retryText" class="gx-notice" data-test="git-retry-outcome">{{ retryText }}</p>
+        <p v-if="retryNext" class="gx-reason" data-test="git-retry-next">{{ retryNext }}</p>
         <p v-if="gateJobs?.notice.value" class="gx-notice" role="alert">{{ gateNoticeText }}</p>
       </template>
       <dl v-else-if="failure" class="gx-tech">
@@ -59,7 +66,7 @@ import { useI18n } from 'vue-i18n'
 import ModelessShell from '../../components/ui/ModelessShell.vue'
 import { checkOperationErrorKey } from '@/features/document'
 import GateSettingsSummary from '../designer/inspector/features/gateCard/GateSettingsSummary.vue'
-import { retryOutcomeText, useGitGateOperations, type GateOperation } from './gateOperations'
+import { isClosedSessionOperation, retryNextText, retryOutcomeText, useGitGateOperations, type GateOperation } from './gateOperations'
 import { useGitPanel } from './gitSession'
 import type { GitWindowDescriptor } from './types'
 
@@ -74,6 +81,8 @@ const gateNoticeText = computed(() => {
   return key ? t(`gui.inspector.checkSettings.${key}`) : code ? t('gui.inspector.checkSettings.target.operation_unknown') : null
 })
 const retryText = computed(() => retryOutcomeText(gateJobs?.retryOutcomeOf(props.operation) ?? null, t))
+const retryNext = computed(() => retryNextText(gateJobs?.retryOutcomeOf(props.operation) ?? null, t))
+const closed = computed(() => !!props.operation && isClosedSessionOperation(props.operation.gate))
 const reason = ref('')
 const reviewed = ref(false)
 const locked = computed(() => !!gateJobs?.busy.value || gateJobs?.readOnly() !== false)
