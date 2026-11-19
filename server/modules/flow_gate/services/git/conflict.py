@@ -23,6 +23,7 @@ from modules.flow_gate.db.git_integration import (
     session_project_id as _session_project_id,
 )
 
+from . import conflict_companions
 from . import approval_intent
 from . import merge_target
 from .command import GIT_LOCAL_TIMEOUT_SEC
@@ -48,7 +49,9 @@ _SUPERSEDE_CHANGED_LINE_MIN_RATIO = 0.6
 _SUPERSEDE_HINT = (
     "Use a per-file `supersede` declaration ({\"side\": \"ours|theirs\", \"reason\": \"...\"}) "
     "ONLY when the side you kept already contains the other side's changes; otherwise merge "
-    "both sides' changes into the chunk."
+    "both sides' changes into the chunk. For verified target-side moves, submit per-file "
+    "companion_files: [{path, content}] using companion_candidates from the conflict query; "
+    "preserve the incoming chunk in that file and declare supersede side=ours."
 )
 
 
@@ -1171,13 +1174,14 @@ def _supersede_evidence(kept: list[str], dropped: list[str], base: list[str]) ->
     return {"preserved": preserved, "changed": changed, "removed": removed}
 
 
-def _supersede_findings(path: str, supersede, violations: list[dict]) -> tuple[list[dict], list[dict]]:
+def _supersede_findings(path: str, supersede, violations: list[dict], companions: Optional[list[dict]] = None) -> tuple[list[dict], list[dict]]:
     """Check one file's ``supersede`` declaration against its violating chunks.
 
     Returns ``(problems, records)``: ``problems`` is empty only when the declaration is
     valid for EVERY violating chunk; ``records`` is then the per-chunk evidence to keep.
     A declaration is never a bypass: it can only excuse chunks the checker already
-    rejects, only the side actually kept, and only with in-place evidence.
+    rejects, only the side actually kept, and only with in-place evidence or
+    verbatim relocation into a verified target-side companion.
     """
     if not isinstance(supersede, dict):
         return [{"path": path, "chunk": None, "side": None, "condition": "malformed"}], []
@@ -1203,6 +1207,10 @@ def _supersede_findings(path: str, supersede, violations: list[dict]) -> tuple[l
             continue
         chunk = violation["entry"]["chunk"]
         evidence = _supersede_evidence(chunk[side], chunk[violation["dropped_side"]], chunk["base"])
+        relocated = conflict_companions.relocated_evidence(chunk, side, companions or [])
+        if relocated is not None:
+            relocated["preserved"] = _chunk_added_lines(chunk[violation["dropped_side"]], chunk["base"])
+            evidence = relocated
         counts = {
             "preserved": len(evidence["preserved"]), "changed": len(evidence["changed"]),
             "removed": len(evidence["removed"]),
@@ -1219,6 +1227,7 @@ def _supersede_findings(path: str, supersede, violations: list[dict]) -> tuple[l
                 "kept_side": side, "dropped_side": violation["dropped_side"],
                 "preserved_lines": evidence["preserved"],
                 "changed_lines": evidence["changed"],
+                **({"companion_path": evidence["companion_path"]} if "companion_path" in evidence else {}),
             })
     return problems, records
 
@@ -1349,6 +1358,8 @@ def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Option
         "target_branch": target_branch,
         "files": files,
         "resolved_paths": [row["path"] for row in _gs.db_git.session_files(merge_id) if row["resolved"]],
+        "companion_candidates": conflict_companions.candidates(root, {f["path"] for f in files}),
+        "companion_files": context.get("conflict_companions") or [],
         "checkpoint_recovery": context.get("checkpoint_recovery"),
         # 0608 T0005: session files that differed only in line endings and were already
         # merged on normalised text (apply_eol_separation) — nothing to resolve there.
@@ -1389,6 +1400,7 @@ def _apply_conflict_resolution_locked(
     resolver_run_id: Optional[str],
     *,
     expected_project_id: str,
+    companion_sources: Optional[dict[str, str]] = None,
 ) -> dict:
     """Apply a validated conflict submission inside the session's workspace lock.
 
@@ -1455,9 +1467,11 @@ def _apply_conflict_resolution_locked(
         _raise_if_merge_gone(session, root, merge_id)
 
         session_paths = {row["path"] for row in _gs.db_git.session_files(merge_id)}
+        companion_sources = companion_sources or {}
+        allowed = conflict_companions.candidates(root, session_paths) if companion_sources else {}
         locked_staged: list[tuple[str, Path, str, str]] = []
         for path, _prelock_target, content, original in staged:
-            if path not in session_paths:
+            if path not in session_paths and path not in allowed.get(companion_sources.get(path), []):
                 raise GitServiceError(
                     409, "conflict_session_changed",
                     f"'{path}' is no longer registered in merge session {merge_id}",
@@ -1487,7 +1501,17 @@ def _apply_conflict_resolution_locked(
                     500, "git_error", "Git command failed",
                     diagnostic=_gs._last_line(proc.stderr),
                 )
-            _gs.db_git.mark_file_resolved(merge_id, path)
+            if path in session_paths:
+                _gs.db_git.mark_file_resolved(merge_id, path)
+
+        if companion_sources:
+            context = _gs.db_git.session_context(session)
+            previous_companions = context.get("conflict_companions") or []
+            context["conflict_companions"] = [r for r in previous_companions if r["path"] not in companion_sources] + [
+                {"path": p, "source_path": source} for p, source in companion_sources.items()
+            ]
+            _gs.db_git.set_session_context(merge_id, context)
+            session = _gs.db_git.get_session(merge_id)
 
         if locked_staged:
             context = _gs.db_git.session_context(session)
@@ -1699,6 +1723,35 @@ def resolve_conflicts(
     supersede_invalid: list[dict] = []
     supersedes: list[dict] = []
     evaluated_paths: set[str] = set()
+    companion_sources: dict[str, str] = {}
+    verified_companions: dict[str, list[dict]] = {}
+    if any(not isinstance(f, dict) or not isinstance(f.get("path"), str) for f in files or []):
+        raise GitServiceError(422, "invalid_request", "each file needs a string path")
+    allowed = conflict_companions.candidates(root, session_paths) if any(f.get("companion_files") for f in files or []) else {}
+    submitted_paths = [f.get("path") for f in files or []]
+    if len(set(submitted_paths)) != len(submitted_paths):
+        raise GitServiceError(422, "invalid_request", "duplicate resolution path")
+    for f in files or []:
+        companions = f.get("companion_files") or []
+        if not isinstance(companions, list):
+            raise GitServiceError(422, "invalid_request", "companion_files must be a list")
+        for companion in companions:
+            if not isinstance(companion, dict):
+                raise GitServiceError(422, "invalid_request", "invalid companion file")
+            path, content = companion.get("path"), companion.get("content")
+            if not isinstance(path, str) or not isinstance(content, str) or path not in allowed.get(f.get("path"), []):
+                raise GitServiceError(422, "invalid_request", "companion is not a verified target-side move")
+            if path in companion_sources or path in submitted_paths:
+                raise GitServiceError(422, "invalid_request", "duplicate companion path")
+            target = resolve_in_root(root, path)
+            if target is None:
+                raise GitServiceError(422, "invalid_request", "unsafe companion path")
+            if _gs.has_conflict_markers(content):
+                raise GitServiceError(422, "conflict_markers_remain", f"Conflict markers remain in '{path}'")
+            original = target.read_text(encoding="utf-8", errors="replace")
+            companion_sources[path] = f["path"]
+            verified_companions.setdefault(f["path"], []).append(companion)
+            staged.append((path, target, content, original))
     for f in files or []:
         path = f.get("path")
         content = f.get("content")
@@ -1749,7 +1802,7 @@ def resolve_conflicts(
             # thing that can excuse a violating chunk; it never touches a clean one.
             supersede = f.get("supersede")
             if supersede is not None:
-                problems, records = _supersede_findings(path, supersede, violations)
+                problems, records = _supersede_findings(path, supersede, violations, verified_companions.get(path))
                 if problems:
                     supersede_invalid.extend(problems)
                 else:
@@ -1798,6 +1851,7 @@ def resolve_conflicts(
         evaluated_paths,
         resolver_run_id,
         expected_project_id=project_id,
+        companion_sources=companion_sources,
     )
 
 

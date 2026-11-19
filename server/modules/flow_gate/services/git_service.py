@@ -2978,6 +2978,7 @@ def get_merge_review(group_id: Optional[str], merge_id: int, *, project_id: Opti
             "conflict_origins": context.get("conflict_origins") or [],
             # 0604 D0005 §4/§6 — resolver `supersede` declarations, shown in full.
             "conflict_supersedes": context.get("conflict_supersedes") or [],
+            "companion_files": context.get("conflict_companions") or [],
             "conversation": context.get("conversation") or [],
             "held_test_operations": context.get("held_test_operations") or [],
             # 0481 T0010 rev1 — non-null while a chat turn's run is still working, so
