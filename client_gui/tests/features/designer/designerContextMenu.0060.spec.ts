@@ -376,7 +376,7 @@ describe('Designer common context menu (0060)', () => {
 // T#1 state of each item (run / 연결 예정 / 미구현). paletteBlank, insDoc, insAttach, git and chat are not in scope.
 describe('the 11 kinds against the mockup menuDefs (T#1)', () => {
   const G = ['≋ 수정 확인', '↶ 되돌리기!', '◷ 이력']
-  const C = ['기본 설계', '프로토콜', '로직', 'DB설계', '조사', '작업계획', '작업', '테스트', '확인'].map((label) => '＋ ' + label)
+  const C = ['기본 설계', '프로토콜', '로직', 'DB설계', '조사', '작업', '테스트', '확인'].map((label) => '＋ ' + label)
   const MOCKUP: Array<[string, (string | [string, string[]])[]]> = [
     ['project', ['＋ 새 그룹', '|', 'ⓘ 프로젝트 정보']],
     ['group', ['＋ 새 플로우', '|', '✎ 이름 변경', 'ⓘ 정보']],

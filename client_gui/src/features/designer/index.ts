@@ -28,3 +28,5 @@ export { default as DesignerShell } from './shell/DesignerShell.vue'
 // flowgate.v02.0037 — the right Tool Panel Container is the Shell's Right Dock
 // (shell/DesignerRightDock.vue); it mounts the Palette, Conversation and Git parts and adds no
 // export here either.
+
+export { default as MergeWindows } from './inspector/features/merge/MergeWindows.vue'

@@ -8,7 +8,8 @@ import SettingsTab from '@/features/designer/inspector/features/settings/Setting
 import { hasAiTab } from '@/features/designer/inspector/inspectorTarget'
 import { cardRoleRows, SETTINGS_FIELDS, AI_FIELDS } from '@/features/designer/inspector/features/settings/cardRolesModel'
 import aiRegistration from '@/features/designer/inspector/features/ai/register'
-import { registrationApplies } from '@/features/designer/inspector/inspectorRegistry'
+import settingsRegistration from '@/features/designer/inspector/features/settings/register'
+import { createInspectorRegistry, registrationApplies } from '@/features/designer/inspector/inspectorRegistry'
 import { inspectorTabsWith, inspectorTabStripMinWidth, resolveInspectorTab } from '@/features/designer/inspector/inspectorTabs'
 import { inspectorCardState } from '@/features/designer/inspector/inspectorTarget'
 import { toSettingsNode } from '@/features/document/api/settings'
@@ -74,9 +75,10 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect(registrationApplies(aiRegistration,{ ...target(type,nodeType), nodeType: null })).toBe(false)
   })
   it('the real Frame shows AI after 설정 and no attachments for either selection and commits fallback on a role-free selection', async () => {
+    const registry = createInspectorRegistry({ './features/ai/register.ts': { default: aiRegistration }, './features/settings/register.ts': { default: settingsRegistration } })
     const node = { id: 'gn_1', kind: 'task', title: 'card', x: 0, y: 0, docType: 'T', definition: { nodeType: 'document', docType: 'T', paletteItemId: null, label: '', assignee: null, rootBound: false } }
     const graph = { flowId: 'f', nodes: [node], edges: [], ownership: 'graph', viewMode: 'draft' }
-    wrapper = mount(DesignerInspector, { props: { selection: { projectId: 'p', graph, node } }, global: { plugins: [i18n] } }); await flushPromises()
+    wrapper = mount(DesignerInspector, { props: { selection: { projectId: 'p', graph, node }, registry }, global: { plugins: [i18n] } }); await flushPromises()
     expect(wrapper.findAll('[role="tab"]').map(item => item.text())).toEqual(['문서','설정','AI','Q&A'])
     await wrapper.findAll('[role="tab"]').find(item => item.text() === 'AI')!.trigger('click'); await flushPromises()
     expect(wrapper.get('[role="tabpanel"]').attributes('data-tab')).toBe('ai')

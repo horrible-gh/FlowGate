@@ -33,7 +33,10 @@ _SCRATCH = session_scratch("remote-cleanup-0382")
 
 
 @pytest.fixture
-def root():
+def root(monkeypatch):
+    # Filesystem unit tests use scratch paths, without a document database.
+    from contextlib import nullcontext
+    monkeypatch.setattr(rts.document_write_ports, "write_paths", lambda *a, **kw: nullcontext())
     path = _SCRATCH / f"root-{os.urandom(6).hex()}"
     path.mkdir(parents=True)
     yield path
@@ -55,8 +58,9 @@ def test_remove_clears_the_readonly_bit_and_succeeds(root):
 
 # ── 폴더째 지울 수단 (제안 5-c) ──────────────────────────────────────────────
 
-def test_directory_without_recursive_keeps_the_old_404(root):
+def test_nonempty_directory_without_recursive_keeps_the_old_404(root):
     (root / "server" / ".test-tmp-0313").mkdir(parents=True)
+    (root / "server" / ".test-tmp-0313" / "keep.txt").write_text("keep")
     with pytest.raises(rts._OpError) as caught:
         rts._exec_remove({"path": "server/.test-tmp-0313"}, root)
     assert caught.value.status == 404
@@ -78,6 +82,67 @@ def test_recursive_removes_a_tool_artifact_tree_and_counts_it(root):
     assert extra["recursive"] is True
     assert extra["removed_file_count"] == 3
     assert not (root / "server" / ".test-tmp-0313").exists()
+
+
+@pytest.mark.parametrize("recursive", [False, True])
+def test_empty_source_directory_can_be_removed(root, recursive):
+    target = root / "client_gui" / "src" / "attachments"
+    target.mkdir(parents=True)
+    result, _ = rts._exec_remove({"path": "client_gui/src/attachments", "recursive": recursive}, root)
+    assert result["removed"] and result["removed_file_count"] == 0
+    assert not target.exists()
+    assert target.parent.exists()
+
+
+@pytest.mark.parametrize("path", [".", ".git", ".git/objects"])
+def test_empty_root_and_git_remain_protected(root, path):
+    target = root / path
+    target.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(rts._OpError):
+        rts._exec_remove({"path": path}, root)
+    assert target.exists()
+
+
+def test_empty_directory_race_preserves_new_file(root, monkeypatch):
+    target = root / "src"
+    target.mkdir()
+    real_rmdir = Path.rmdir
+    def raced(path):
+        if path == target:
+            (path / "new.py").write_text("keep")
+        return real_rmdir(path)
+    with monkeypatch.context() as m:
+        m.setattr(Path, "rmdir", raced)
+        with pytest.raises(rts._OpError) as caught:
+            rts._exec_remove({"path": "src", "recursive": True}, root)
+    assert caught.value.status == 409
+    assert (target / "new.py").read_text() == "keep"
+
+
+def test_empty_directory_still_respects_document_write_guard(root, monkeypatch):
+    from fastapi import HTTPException
+    target = root / "src"
+    target.mkdir()
+    def refuse(paths, *, trees=()):
+        assert list(trees) == [target]
+        raise HTTPException(409, "card_document_edit_required")
+    monkeypatch.setattr(rts.document_write_ports, "write_paths", refuse)
+    with pytest.raises(HTTPException):
+        rts._exec_remove({"path": "src"}, root)
+    assert target.exists()
+
+
+def test_directory_alias_cannot_delete_target(root):
+    target = root / "src"
+    target.mkdir()
+    alias = root / "alias"
+    try:
+        alias.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    with pytest.raises(rts._OpError):
+        rts._exec_remove({"path": "alias"}, root)
+    assert target.exists()
 
 
 def test_recursive_refuses_a_real_source_directory(root):
@@ -113,6 +178,7 @@ def test_recursive_normalizes_dot_segments_and_protects_root_source_and_git(root
 
 def test_recursive_must_be_a_boolean_and_string_false_never_recurses(root):
     (root / "server" / ".test-tmp-0313").mkdir(parents=True)
+    (root / "server" / ".test-tmp-0313" / "keep.txt").write_text("keep")
 
     with pytest.raises(rts._OpError) as caught:
         rts._validate_required(

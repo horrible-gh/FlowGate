@@ -5,7 +5,7 @@
  * Every string has its ko / en / ja form.
  */
 import { mount, type VueWrapper } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import en from '@/app/i18n/en'
 import ja from '@/app/i18n/ja'
 import ko from '@/app/i18n/ko'
@@ -57,6 +57,7 @@ describe('the Canvas card carries the chip', () => {
 
 describe('FlowNodeCard shows 미인계', () => {
   let wrapper: VueWrapper<any> | null = null
+  beforeEach(() => { i18n.global.locale.value = 'ko' })
   afterEach(() => {
     wrapper?.unmount()
     wrapper = null
@@ -72,7 +73,7 @@ describe('FlowNodeCard shows 미인계', () => {
     const chip = card({ attempts: 1, files: 2, unknown: false })
     expect(chip.text()).toBe('미인계 2')
     expect(chip.attributes('title')).toBe(
-      '이전 시도 1개의 커밋 안 된 변경 2개 파일을 이번 시도는 이어받지 않았습니다. 변경은 지워지지 않고 이전 작업 폴더(또는 중지 시 보존본)에 남아 있습니다.')
+      '미인계 2 · 이전 시도 1개의 커밋 안 된 변경 2개 파일을 이번 시도는 이어받지 않았습니다. 변경은 지워지지 않고 이전 작업 폴더(또는 중지 시 보존본)에 남아 있습니다.')
   })
 
   it('a count that could not be read is said so', () => {

@@ -16,6 +16,7 @@ import type {
 } from '../center/graph/flowGraph'
 
 export type { CardApprovalFailureView, CardStateView }
+export { cardStateReasonText } from '../center/graph/cardStateView'
 export { NODE_TITLE_MAX_CHARS, checkNodeTitle, type NodeTitleSaveOutcome } from '../center/graph/nodeTitle'
 
 /** Inspector card kinds (D#1 §4.3) — the one value set registrations may name. */
@@ -299,3 +300,7 @@ export function inspectorCardState(target: Pick<InspectorTarget, 'nodeType' | 'n
 export function inspectorApprovalFailure(code: string | null, status: number | null, network: boolean): CardApprovalFailureView {
   return cardApprovalFailureView(code, status, network)
 }
+
+export { gateHeaderState } from '../center/canvas/gateHeaderState'
+export { flowNodeKindView, flowNodeHeaderIcon } from '../center/canvas/flowNodeKinds'
+export type { RunGateState, RunGateResult, SettingsNode, SettingsMergeTargetState } from '@/features/document'

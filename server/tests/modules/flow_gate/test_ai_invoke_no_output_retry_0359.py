@@ -71,6 +71,7 @@ class FakePausedStore:
                # swallowed by **kwargs, for the same reason the DB0009 fields below are:
                # a permissive double would silently pass while dropping the chain identity
                # `_write_handoff_row` always sends (L5382-5440).
+               requested_ai_group_id=None, continuation_reworker_provider_id=None,
                chain_id=None, chain_docs_target=None, chain_docs_reached=0,
                stop_kind="user", stop_code=None, stop_run_id=None,
                stop_last_message_excerpt=None,
@@ -100,6 +101,8 @@ class FakePausedStore:
                continuation_review_count_overrides=None,
                continuation_reviewer_overrides=None):
         self.rows[group_id] = {
+            "requested_ai_group_id": requested_ai_group_id,
+            "continuation_reworker_provider_id": continuation_reworker_provider_id,
             "group_id": group_id, "doc_ref": doc_ref, "paused_by": paused_by,
             "paused_at": paused_at, "continuation_target_seq": continuation_target_seq,
             "docs_target": docs_target, "docs_reached": docs_reached,
@@ -246,6 +249,9 @@ class FakeReviews:
 
 @pytest.fixture
 def env(monkeypatch, tmp_path):
+    from itertools import count
+    run_ids = count(1)
+    monkeypatch.setattr(svc, "_next_run_id", lambda: f"aiv2_test_{next(run_ids):06d}")
     docs = FakeDocs()
     reviews = FakeReviews()
     paused = FakePausedStore()

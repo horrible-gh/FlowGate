@@ -269,6 +269,14 @@ def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, clien
             raise GraphApiError(422, "invalid_request", {"errors": dr.sort_errors(errors)})
         taken = known_nodes | known_edges | layout_store.retired_keys(flow_id) | set(layout_store.positions(flow_id))
         nodes, edges, key_map = _resolve(req, taken)
+        # Only already-stored WP cards are compatible; new keys and retyped cards cannot add WP.
+        old_wp = {n["node_key"] for rec in (current, latest) if rec for n in rec["nodes"]
+                  if n.get("node_type") == "document" and n.get("doc_type") == "WP"}
+        introduced_wp = [n["node_key"] for n in nodes
+                         if n.get("doc_type") == "WP" and n["node_key"] not in old_wp]
+        if introduced_wp:
+            raise GraphApiError(422, "work_plan_retired", {"node_keys": introduced_wp},
+                                message="New work plan cards are no longer supported. Place work cards through chat.")
         run_state_ports.protect_definition(flow_id, nodes, edges, restore_missing=True)
         if req.draft_version == 0:
             base = latest_no if own.state == "graph" else None

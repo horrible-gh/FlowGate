@@ -21,26 +21,26 @@
         </button>
         <input ref="input" type="file" multiple hidden @change="pick" />
       </div>
-      <div class="fa-count"><b data-test="flow-attachment-count">{{ w.count(live.length) }}</b></div>
+      <div class="fa-count"><b data-test="flow-attachment-count">{{ w.count(visibleLive.length) }}</b></div>
 
       <div class="fa-selection">
         <label class="fa-select-all">
-          <input type="checkbox" class="fa-box" :checked="allSelected" :indeterminate="someSelected" :disabled="!live.length"
+          <input type="checkbox" class="fa-box" :checked="allSelected" :indeterminate="someSelected" :disabled="!visibleLive.length"
             :aria-label="w.allLabel" data-test="flow-attachment-select-all" @change="selectAll" />{{ w.all }}
         </label>
-        <span class="fa-selected">{{ w.selected(selected.size) }}</span>
+        <span class="fa-selected">{{ w.selected(visibleSelected.length) }}</span>
         <div class="fa-selection-actions">
-          <button type="button" :disabled="!selected.size || zipping" :title="w.zipTitle" data-test="flow-attachment-zip" @click="zip">
+          <button type="button" :disabled="!visibleSelected.length || zipping" :title="w.zipTitle" data-test="flow-attachment-zip" @click="zip">
             {{ zipping ? w.preparing : w.zip }}
           </button>
-          <button v-if="bulk && !selected.size" type="button" class="fa-icon-btn undo" :title="w.undoMany(bulk.items.length)"
+          <button v-if="bulk && !visibleSelected.length" type="button" class="fa-icon-btn undo" :title="w.undoMany(bulk.items.length)"
             :aria-label="w.undoMany(bulk.items.length)" data-test="flow-attachment-bulk-undo" @click="undoBulk">
             <svg class="fa-ring" viewBox="0 0 30 28" preserveAspectRatio="none" aria-hidden="true">
               <rect x="1" y="1" width="28" height="26" rx="6" pathLength="110" :style="ringDelay(bulk.start)" />
             </svg>
             <FaIcon name="undo" :size="13" /><span class="fa-undo-badge">{{ bulk.items.length }}</span>
           </button>
-          <button v-else type="button" class="fa-icon-btn delete" :disabled="readOnly || !selected.size" :title="w.removeSelected"
+          <button v-else type="button" class="fa-icon-btn delete" :disabled="readOnly || !visibleSelected.length" :title="w.removeSelected"
             :aria-label="w.removeSelected" data-test="flow-attachment-bulk-delete" @click="removeSelected">
             <FaIcon name="trash" :size="13" />
           </button>
@@ -124,7 +124,7 @@ import { UNDO_MS } from './undo'
 import { wordsFor } from './words'
 import { FaIcon } from './icons'
 import AttachmentRequestItem from '@/features/attachmentRequests/AttachmentRequestItem.vue'
-import { toAttachmentRequest, type AttachmentRequest } from '@/features/document/api/attachmentRequests'
+import { toAttachmentRequest, type AttachmentRequest } from '@/features/document'
 import { getRequest } from '@shared/api'
 
 const props = defineProps<{
@@ -233,16 +233,25 @@ const shown = computed(() => {
   const missing = ops.pendingFiles(scope).filter(p => !state.files.some(f => f.key === p.key) && !state.deleting.has(p.key))
   return [...listed, ...missing]
 })
-const live = computed(() => shown.value.filter(f => !isGone(f)))
 const visible = computed(() => {
   const q = search.value.trim().toLocaleLowerCase()
   if (!q) return shown.value
   return shown.value.filter(f => f.display_name.toLocaleLowerCase().includes(q) || originLabel(f).toLocaleLowerCase().includes(q))
 })
+// Keep hidden selections, but scope counts and bulk actions to visible, actionable files.
+const visibleLive = computed(() => visible.value.filter(f => !isGone(f)))
+const visibleSelected = computed(() => visibleLive.value.filter(f => selected.value.has(f.key)))
 const bulk = computed(() => { void flow.value.revision; return ops.bulkGroup(scope) })
-const allSelected = computed(() => live.value.length > 0 && live.value.every(f => selected.value.has(f.key)))
-const someSelected = computed(() => selected.value.size > 0 && !allSelected.value)
-function selectAll() { selected.value = allSelected.value ? new Set() : new Set(live.value.map(f => f.key)) }
+const allSelected = computed(() => visibleLive.value.length > 0 && visibleSelected.value.length === visibleLive.value.length)
+const someSelected = computed(() => visibleSelected.value.length > 0 && !allSelected.value)
+function selectAll() {
+  const next = new Set(selected.value)
+  const deselect = allSelected.value
+  for (const file of visibleLive.value) {
+    if (deselect) next.delete(file.key); else next.add(file.key)
+  }
+  selected.value = next
+}
 function toggle(file: FlowFile) {
   if (isGone(file)) return
   const next = new Set(selected.value)
@@ -260,7 +269,7 @@ function remove(items: FlowFile[]) {
 // The pressed 🗑 / ↶ is replaced by the other icon; focus stays in the window so Ctrl+Z still reaches it.
 function keepFocus() { root.value?.focus({ preventScroll: true }) }
 function undoItem(key: string) { ops.undoItem(scope, key); keepFocus() }
-function removeSelected() { remove(live.value.filter(f => selected.value.has(f.key))) }
+function removeSelected() { remove(visibleSelected.value) }
 function undoBulk() { ops.undoGroup(scope); keepFocus() }
 function ringDelay(start: number | undefined) {
   return { animationDelay: `-${Math.min(UNDO_MS, Math.max(0, Date.now() - (start ?? Date.now())))}ms` }
@@ -279,7 +288,7 @@ async function download(file: FlowFile) {
   try { await downloadFile(props.flowId, file); ops.actionSucceeded(scope, started) } catch (e) { ops.actionFailed(scope, 'download', e, [file.display_name]) }
 }
 async function zip() {
-  const chosen = live.value.filter(f => selected.value.has(f.key))
+  const chosen = visibleSelected.value
   if (!chosen.length) return
   zipping.value = true
   const started = ops.beginAction()

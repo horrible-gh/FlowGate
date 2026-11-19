@@ -1982,6 +1982,7 @@ def start_run(
     # A resolution failure must not stall the hop (same contract as the provider override).
     # 0406 T0022 work item 5: where this hop's user message came from, and what the final
     # prompt became, ride on the run. The text is not kept — only kind, length and hash.
+    message_image_context = getattr(mention, "image_context", None)
     prompt_audit: dict = {
         "prompt_message_source": "none",
         "prompt_common_default_applied": False,
@@ -2138,6 +2139,12 @@ def start_run(
         timeout_sec = _resolve_timeout_sec(
             mode, docs_target, target_to_end, continuation_step_timeout_sec, hop_kind
         )
+    chat_timeout_sec = None
+    if action_scope == "chat":
+        from modules.flow_gate.services import chat_doc_settings_service
+        minutes = chat_doc_settings_service.get_settings(issued_to, doc_ref)["timeout_minutes"]
+        chat_timeout_sec = minutes * 60 if minutes is not None else None
+        timeout_sec = chat_timeout_sec
     # flowgate.v02.0053 T#2: only a Graph node's own single 'new' run opens the no-output retry
     # path with its card's restart pick; every other single run stays one-shot.
     node_restart_open = (
@@ -2167,19 +2174,21 @@ def start_run(
         "chain_docs_accounted": False,
         "baseline_seq": baseline_seq,
         "timeout_sec": timeout_sec,
+        "chat_timeout_policy": action_scope == "chat",
+        "chat_timeout_sec": chat_timeout_sec,
         # 0359 P0006 [hop budget]: the wall-clock the budget actually lands on. Until now the
         # limit appeared in NO response at all, so "did it die on the clock?" could only be
         # answered by re-deriving the formula from logs — which is exactly the work NR0003 had
         # to do (and got wrong on its first pass).
-        "deadline_at": _deadline_iso(started_at, timeout_sec),
+        "deadline_at": _deadline_iso(started_at, timeout_sec) if timeout_sec else None,
         # ── 0446 T0014 §2: two clocks, kept apart by name ───────────────────────
         # `timeout_sec` / `deadline_at` above keep their exact stored meaning and are
         # read from here on as the NO-PROGRESS threshold: the EARLIEST this run may be
         # stopped, and only if it shows nothing new for that long. The ceiling below is
         # the latest it can possibly run, progress or not. Both live in memory on
         # purpose — the column and the migration belong to T#2 (§2-5).
-        "absolute_cap_sec": _absolute_cap_sec(),
-        "absolute_deadline_at": _deadline_iso(started_at, _absolute_cap_sec()),
+        "absolute_cap_sec": chat_timeout_sec if action_scope == "chat" else _absolute_cap_sec(),
+        "absolute_deadline_at": (_deadline_iso(started_at, chat_timeout_sec) if chat_timeout_sec else None) if action_scope == "chat" else _deadline_iso(started_at, _absolute_cap_sec()),
         "stall_anchor_mono": None,     # start of the current no-progress window
         "last_progress_mono": None,    # None = nothing was ever observed to move
         "last_progress_at": None,
@@ -2230,6 +2239,7 @@ def start_run(
         # run-internal scratch: TMP/TEMP/TMPDIR, provider output, retained diagnostics),
         # which keeps its existing meaning untouched.
         "token_scratch_dir": issue["scratch_dir"],
+        "message_image_context": message_image_context,
         "scratch_retained": None,
         "duration_ms": None,
         "finished_at": None,

@@ -28,7 +28,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FlowGraph, FlowGraphCardDocument, FlowGraphNode } from '@/features/designer/center/graph/flowGraph'
 import DesignerInspector from '@/features/designer/inspector/DesignerInspector.vue'
 import CheckSettings from '@/features/designer/inspector/features/checkSettings/CheckSettings.vue'
-import RequirementSettings from '@/features/designer/inspector/features/requirementSettings/RequirementSettings.vue'
+import RequirementSettings from '../../../../../preview/inspector/legacy/requirementSettings/RequirementSettings.vue'
 import SettingsTab from '../support/SettingsPanelsFixture.0113'
 import TestRunSettings from '@/features/designer/inspector/features/testRunSettings/TestRunSettings.vue'
 import { INSPECTOR_HOST, type InspectorHostIntent } from '@/features/designer/inspector/inspectorHost'
@@ -749,98 +749,14 @@ describe('a test card’s settings — v7 testSettings', () => {
 
 // --- Requirement cards ----------------------------------------------------------------------------------
 
-describe('a requirement card’s settings — v7 reqSettings (values only, no delegation engine)', () => {
-  it('OFF: the AI 위임 block and its one short line; turning it on saves at once, shows 범위 · AI Team · 안전 한도, reads the Canvas again', async () => {
+describe('retired requirement settings', () => {
+  it.each(['off', 'on'])('renders no delegation controls or settings reads with stored %s', async delegation => {
+    cards.get('gn_req')!.stored = { delegation }
     const w = await mountPart(RequirementSettings, targetFor(REQ))
-    expect(nodeRead).toHaveBeenCalledWith(FLOW, 'gn_req')
-    expect(w.get('[data-test="inspector-requirement-settings"]').attributes('data-delegation')).toBe('off')
-    expect(w.get('[data-test="inspector-requirement-settings"]').attributes('data-connected')).toBe('true')
-    expect(w.find('[data-test="requirement-settings-unconnected"]').exists()).toBe(false)
-    expect(w.get('[data-test="requirement-delegation-off"]').text()).toBe('꺼짐 — 직접 구성하거나 작업계획으로 전개')
-    expect(w.find('[data-test="requirement-limits"]').exists()).toBe(false)
-    await segmentPick(w, 'requirement-delegation-switch', 'on')
-    expect(writes).toEqual([[FLOW, 'gn_req', 'delegation', 'on']])
-    // The card's AI 위임 document line is the server's: the Canvas is read again.
-    expect(intents.filter((intent) => intent.kind === 'refresh-flow')).toHaveLength(1)
-    expect(w.get('[data-test="inspector-requirement-settings"]').attributes('data-delegation')).toBe('on')
-    expect(rowLabels(w)).toEqual(['범위', 'AI Team', '최대 생성 Node', '총 검수 · 재작업', '카드별 재시도', '재계획'])
-    expect(segmentOn(w, 'requirement-delegation-scope')).toBe('end')
-    expect(w.get('[data-test="requirement-delegation-team"]').findAll('option').map((option) => option.text())).toEqual(['—', '인증팀 · Supervisor Claude Opus 5', '기본팀 · Supervisor 없음'])
-    expect(w.findAll('[data-test$="-default"]')).toHaveLength(4)
-  })
-
-  it('범위, AI Team and each 안전 한도 are saved at once; an empty limit takes the default back; a bad one is refused with the !', async () => {
-    cards.get('gn_req')!.stored = { delegation: 'on' }
-    const w = await mountPart(RequirementSettings, targetFor(REQ))
-    await segmentPick(w, 'requirement-delegation-scope', 'confirm')
-    await w.get('[data-test="requirement-delegation-team"]').setValue('grp_auth')
-    await flushPromises()
-    const limit = w.get('[data-test="requirement-limit-total_reviews"]')
-    ;(limit.element as HTMLInputElement).value = '30'
-    await limit.trigger('change')
-    await flushPromises()
-    expect(w.find('[data-test="requirement-limit-total_reviews-default"]').exists()).toBe(false)
-    ;(limit.element as HTMLInputElement).value = ''
-    await limit.trigger('change')
-    await flushPromises()
-    const replans = w.get('[data-test="requirement-limit-replans"]')
-    ;(replans.element as HTMLInputElement).value = '1000'
-    await replans.trigger('change')
-    await flushPromises()
-    await w.get('[data-test="requirement-delegation-team"]').setValue('')
-    await flushPromises()
-    expect(writes.map(([, , field, value]) => [field, value])).toEqual([
-      ['scope', 'confirm'],
-      ['team', 'grp_auth'],
-      ['limit_total_reviews', 30],
-      ['limit_total_reviews', null],
-      ['limit_replans', 1000],
-      ['team', null],
-    ])
-    expect(cards.get('gn_req')!.stored).toEqual({ delegation: 'on', scope: 'confirm' })
-    expect(failureOf(w, 'limit_replans')).toBe('저장할 수 없는 값입니다 (1~999)')
-    expect(w.find('[data-test="requirement-limit-total_reviews-default"]').exists()).toBe(true)
-    expect(intents).toHaveLength(0)
-  })
-
-  it('a running card: 🔒 위임 진행 중 and every control off', async () => {
-    cards.get('gn_req')!.stored = { delegation: 'on' }
-    cards.get('gn_req')!.locked = true
-    const w = await mountPart(RequirementSettings, targetFor(REQ))
-    expect(w.get('[data-test="inspector-lock-note"]').text()).toBe('🔒 위임 진행 중')
-    for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeDefined()
-    expect(isDisabled(w.find('[data-test="requirement-delegation-team"]'))).toBe(true)
-  })
-
-  it('a failed first read: no OFF form the server may not hold — the read failure icon, and its retry recovers the same card', async () => {
-    cards.get('gn_req')!.stored = { delegation: 'on', scope: 'confirm' }
-    nodeRead.mockRejectedValueOnce(networkError())
-    const w = await mountPart(RequirementSettings, targetFor(REQ))
-    expect(nodeRead).toHaveBeenCalledTimes(1)
-    expect(readFailureOf(w)).toBe('서버에 연결하지 못했습니다')
-    expect(w.find('[data-test="requirement-delegation-switch"]').exists()).toBe(false)
-    expect(w.find('[data-test="requirement-delegation-off"]').exists()).toBe(false)
-    await retryRead(w)
-    expect(nodeRead).toHaveBeenCalledTimes(2)
-    expect(nodeRead).toHaveBeenLastCalledWith(FLOW, 'gn_req')
-    expect(teamsRead).toHaveBeenCalledTimes(2)
-    expect(readFailureOf(w)).toBeNull()
-    expect(w.get('[data-test="inspector-requirement-settings"]').attributes('data-delegation')).toBe('on')
-    expect(segmentOn(w, 'requirement-delegation-scope')).toBe('confirm')
-    expect(w.get('[data-test="requirement-delegation-switch"] [data-value="off"]').attributes('disabled')).toBeUndefined()
-    await segmentPick(w, 'requirement-delegation-scope', 'end')
-    expect(writes).toEqual([[FLOW, 'gn_req', 'scope', 'end']])
-  })
-
-  it.each([
-    ['403', axiosError(403, 'forbidden'), '볼 권한이 없습니다'],
-    ['404', axiosError(404, 'node_not_found'), '카드를 찾을 수 없습니다'],
-    ['unavailable', axiosError(409, 'card_settings_unavailable'), '서버에 카드 설정이 없습니다'],
-    ['500', axiosError(500, 'internal_error'), '설정을 불러오지 못했습니다'],
-  ])('a failed first read (%s) names why in the icon’s tooltip', async (_label, thrown, why) => {
-    nodeRead.mockRejectedValueOnce(thrown)
-    const w = await mountPart(RequirementSettings, targetFor(REQ))
-    expect(readFailureOf(w)).toBe(why)
+    expect(w.findAll('button, input, select')).toHaveLength(0)
+    expect(nodeRead).not.toHaveBeenCalled()
+    expect(teamsRead).not.toHaveBeenCalled()
+    expect(writes).toEqual([])
   })
 })
 
@@ -874,13 +790,18 @@ describe('the settings tab of a card just placed and of a done card, in the real
     await flushPromises()
     return wrapper
   }
+  it('an R card has no retired delegation settings tab or empty section', async () => {
+    wrapper = mount(DesignerInspector, { props: { selection: { projectId: PROJECT, graph: GRAPH, node: REQ } }, global: { plugins: [i18n, pinia] }, attachTo: document.body })
+    await flushPromises()
+    expect(wrapper.findAll('[data-test="designer-inspector-tabs"] [role="tab"]').some(tab => tab.text() === '설정')).toBe(false)
+    expect(wrapper.find('[data-key="requirementSettings"]').exists()).toBe(false)
+  })
   const sections = (w: VueWrapper<any>) => w.findAll('[data-test="designer-inspector-section"]').map((section) => section.attributes('data-key'))
 
   it.each([
     [TASK, ['settings'], ['지시서']],
     [CUSTOM, ['settings'], ['지시서']],
     [TEST, ['settings', 'testRunSettings'], ['지시서', '원인 판정', '후속 전달']],
-    [REQ, ['requirementSettings'], []],
     [GATE, ['checkSettings'], ['아카이브', '반영 방식', '병합 대상']],
   ] as const)('a %s card: its settings form, no "v0.1 단계" line', async (card, parts, labels) => {
     const w = await mountFrame(card)

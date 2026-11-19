@@ -66,7 +66,7 @@ export function chatEventRefresh(frame: ChatEventFrame, target: ChatEventTarget)
   const groupId = frame.groupId ?? text(frame.payload.group_id)
   if (groupId !== null && groupId !== target.groupId) return null
   const docId = frame.docId ?? text(frame.payload.doc_id) ?? text(frame.payload.doc_ref)
-  return docId === target.chatId ? parts : null
+  return docId === target.chatId ? (frame.type === 'conversation_turn_appended' && frame.payload.changed ? { ...parts, revised: true } : parts) : null
 }
 
 /**

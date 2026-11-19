@@ -3,8 +3,8 @@ import { documentErrorOf, type RunGateDecision } from '@/features/document'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { INSPECTOR_HOST } from '../../inspectorHost'
 import { gateActions, gateFailureKey, gateResult } from './gateCardModel'
-import { checkControlFailure } from '../checkSettings/checkSettingsModel'
-import { observeGateApproval } from './gateApproval'
+import { checkControlFailure } from '@/features/document'
+import { observeGateApproval } from './useGateApproval'
 import { useGateContext } from './useGateContext'
 export { GATE_RUN_EVENTS, gateRunEventMatches } from './useGateContext'
 
@@ -53,3 +53,5 @@ export function useGateDecision(target: () => InspectorTarget | null) {
   }
 }
 export type GateDecisionState = ReturnType<typeof useGateDecision>
+
+export { checkOperationErrorKey, checkSettingsSummary, type RunGateResult, type SettingsNode } from '@/features/document'

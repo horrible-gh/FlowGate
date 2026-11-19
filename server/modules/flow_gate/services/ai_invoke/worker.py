@@ -597,10 +597,39 @@ _REMOTE_CLI_TRANSPORT: dict[str, str] = {
 }
 
 
+_REMOTE_CLI_CHAT_TRANSPORT: dict[str, str] = {
+    "ko": (
+        "## 원격 CLI 실행 규약\n---\n"
+        "이 작업은 원격 Agent에서 실행됩니다. FLOWGATE_TOKEN·FLOWGATE_SCRATCH·FLOWGATE_API_BASE "
+        "환경 변수는 없으므로 이 프롬프트에 적힌 토큰과 주소를 쓰십시오. `{SCRATCH}`와 scratch "
+        "디렉터리는 현재 작업 디렉터리를 뜻합니다. 제출할 본문은 현재 작업 디렉터리에 UTF-8 "
+        "파일로 작성하고, 위의 대화 턴 제출 안내에 따라 보내십시오(명령줄 문자열에 직접 넣지 않음)."
+    ),
+    "ja": (
+        "## リモートCLI実行規約\n---\n"
+        "この作業はリモートAgentで実行されます。FLOWGATE_TOKEN・FLOWGATE_SCRATCH・FLOWGATE_API_BASE "
+        "環境変数はないため、このプロンプトに記載されたトークンとアドレスを使ってください。"
+        "`{SCRATCH}`とscratchディレクトリは現在の作業ディレクトリを指します。提出する本文は"
+        "現在の作業ディレクトリにUTF-8ファイルとして作成し、上記の会話ターン提出案内に従って"
+        "送ってください(コマンドライン文字列に直接入れない)。"
+    ),
+    "en": (
+        "## Remote CLI execution contract\n---\n"
+        "This work runs on a remote Agent. There are no FLOWGATE_TOKEN, FLOWGATE_SCRATCH or "
+        "FLOWGATE_API_BASE variables; use the token and address written in this prompt. "
+        "`{SCRATCH}` and the scratch directory mean the current working directory. Write the "
+        "body you submit as a UTF-8 file in the current working directory and submit it "
+        "following the conversation turn instructions above (never inline on a command line)."
+    ),
+}
+
+
 def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
     """Add transport rules that apply only at a concrete provider boundary."""
     # flowgate.v02.0064 T-B4d: a claiming Graph AI start's card title request, worded for THIS provider (P0006
     # §4.2.6); any other token's prompt is returned as it is.
+    from modules.flow_gate.services import message_image_delivery
+    prompt = message_image_delivery.provider_prompt(prompt, provider, run)
     prompt = node_title_hooks.provider_prompt(prompt, run.get("raw_token"), provider.get("exec_type"))
     if provider_remote.is_remote_cli(provider):
         # flowgate.v02.0129 T#2 (D0005 §3-5): a remote Agent has no FLOWGATE_* variables and
@@ -609,7 +638,10 @@ def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
         locale = str(run.get("continuation_locale") or run.get("locale") or "ko").lower()
         if locale not in _REMOTE_CLI_TRANSPORT:
             locale = "ko"
-        return prompt.rstrip() + "\n\n" + _REMOTE_CLI_TRANSPORT[locale]
+        # Chat replies use the conversation turn endpoint, never the inbox envelope.
+        transport = (_REMOTE_CLI_CHAT_TRANSPORT if run.get("action_scope") == "chat"
+                     else _REMOTE_CLI_TRANSPORT)
+        return prompt.rstrip() + "\n\n" + transport[locale]
     # Review loops keep their admission scope while hop_kind tracks the live stage.
     if provider.get("exec_type") == "api" or effective_action_scope(run) != "review":
         return prompt
@@ -1364,6 +1396,8 @@ def _remaining_sec(run: dict) -> float:
     than the latest, and it lands only if the run shows nothing new for the whole
     budget. The two helpers below are the ones the watchdog and the retry gate ask.
     """
+    if run.get("chat_timeout_policy"):
+        return _absolute_remaining_sec(run)
     return run["timeout_sec"] - (time.monotonic() - run["started_mono"])
 
 
@@ -1376,6 +1410,8 @@ def _stall_remaining_sec(run: dict) -> float:
     With no anchor recorded this is precisely `_remaining_sec`, which is why a run that
     never had a watchdog keeps its previous behaviour to the second.
     """
+    if run.get("chat_timeout_policy"):
+        return float("inf")
     anchor = run.get("stall_anchor_mono")
     if anchor is None:
         anchor = run["started_mono"]
@@ -1692,18 +1728,18 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             if attempt_remaining <= 0:
                 run["timed_out"] = True
                 break
-            call_timeout = min(attempt_remaining, API_CALL_MAX_TIMEOUT_SEC)
+            call_timeout = (None if run.get("chat_timeout_sec") is None else attempt_remaining) if run.get("chat_timeout_policy") else min(attempt_remaining, API_CALL_MAX_TIMEOUT_SEC)
             startup_attempt += 1
             run["model_http_calls"] = run.get("model_http_calls", 0) + 1
             try:
                 if kind == "claude":
-                    model_response = _svc()._call_anthropic(
+                    model_response = _chat_model_call(run, _svc()._call_anthropic,
                         base_url, model, key, conversation, call_timeout,
                         tool_name, tool_desc, tool_schema, True,
                         **({"max_tokens": API_CONFLICT_MAX_TOKENS} if conflict_pending else {}),
                     )
                 else:
-                    model_response = _svc()._call_openai(
+                    model_response = _chat_model_call(run, _svc()._call_openai,
                         base_url, model, key, conversation, call_timeout,
                         tool_name, tool_desc, tool_schema, True,
                     )
@@ -1732,6 +1768,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 logger.warning("ai-invoke %s: api error after first turn: %s", run["run_id"], exc)
                 break
             except Exception as exc:
+                if run["cancel_event"].is_set() or run.get("timed_out"):
+                    return "api_error", str(exc)
                 role_invocations.api_response(run, exc=exc)
                 model_call_failed = True
                 run["model_last_http_status"] = 0
@@ -2491,7 +2529,6 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
             run.get("issued_to"), run["doc_ref"], settings, head_seq_of=conversation_turns.current_head_seq,
         )
         after_seq, folded = window["after_seq"], window["folded"]
-        checkpoint_seq = window["checkpoint_seq"]
         cursor = after_seq
         remaining = window["limit"]
         include_head = True
@@ -2503,6 +2540,7 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
                 after_seq=cursor, before_seq=None,
                 limit=remaining if remaining is not None else None,
                 include_head=include_head,
+                **({"through_seq": window["through_seq"]} if window.get("through_seq") is not None else {}),
             )
             status = response.status_code
             body = json.loads(response.body)
@@ -2545,9 +2583,8 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
             "after_seq": after_seq,
             "folded": folded,
         }
-        if checkpoint_seq is not None:
-            merged["context_window"]["checkpoint_seq"] = checkpoint_seq
-            merged["context_window"]["checkpoint_kind"] = window["checkpoint_kind"]
+        # flowgate.v02test.0041: the delivered range is all the model needs; whether the user's
+        # checkpoint or the latest-N limit chose it is not sent (same rule as the mention).
         if folded > 0:
             merged["older_history"] = {
                 "before_seq": after_seq + 1,
@@ -3046,3 +3083,34 @@ def _oracle_new_docs(run: dict) -> list[dict]:
         ),
         key=lambda d: d.get("seq") or 0,
     )
+
+
+def _chat_model_call(run, function, *args, **kwargs):
+    if not run.get("chat_timeout_policy"):
+        return function(*args, **kwargs)
+    import threading
+    done = threading.Event()
+    result = []
+    errors = []
+    def invoke():
+        try:
+            result.append(function(*args, **kwargs))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+    threading.Thread(target=invoke, daemon=True, name="chat-model-http").start()
+    while not done.wait(0.1):
+        if run["cancel_event"].is_set():
+            raise InterruptedError("Chat cancelled")
+        if _absolute_remaining_sec(run) <= 0:
+            run["timed_out"] = True
+            raise InterruptedError("Chat timeout")
+    if run["cancel_event"].is_set():
+        raise InterruptedError("Chat cancelled")
+    if _absolute_remaining_sec(run) <= 0:
+        run["timed_out"] = True
+        raise InterruptedError("Chat timeout")
+    if errors:
+        raise errors[0]
+    return result[0]

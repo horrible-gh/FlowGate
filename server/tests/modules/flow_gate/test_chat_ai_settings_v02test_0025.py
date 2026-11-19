@@ -22,6 +22,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _text_only_message_images(monkeypatch):
+    # This suite's chat fixtures predate message images and contain no images.
+    # Actual linked images are covered by test_message_image_delivery_0029.
+    from modules.flow_gate.services import message_image_delivery
+    monkeypatch.setattr(message_image_delivery, "image_count", lambda *args, **kwargs: 0)
+    from modules.flow_gate.services import question_policy
+    monkeypatch.setattr(question_policy, "text", lambda *args, **kwargs: "")
+
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
@@ -195,9 +206,9 @@ class _WindowRoute:
         self.head_seq = head_seq
         self.calls = []
 
-    def __call__(self, _doc, _raw, after_seq, before_seq, limit, include_head):
+    def __call__(self, _doc, _raw, after_seq, before_seq, limit, include_head, through_seq=None):
         self.calls.append((after_seq, limit))
-        rows = list(range(after_seq + 1, self.head_seq + 1))
+        rows = list(range(after_seq + 1, min(self.head_seq, through_seq if through_seq is not None else self.head_seq) + 1))
         picked = rows[: (limit or 200)]
         more = len(rows) > len(picked)
         body = {"ok": True, "head_seq": self.head_seq, "next_after_seq": picked[-1] if more and picked else None,
@@ -245,10 +256,12 @@ class TestCheckpointReachesBothContextPaths:
         payload, route = self._api(monkeypatch, "u1", 30, CHECKPOINT)
 
         assert after == 24
-        assert "context checkpoint at seq 25" in text
-        assert "before_seq=25" in text  # earlier turns folded, still readable
+        assert "This invocation's context starts at seq 25." in text
+        assert "before_seq=25" in text  # earlier turns still readable
+        assert "checkpoint" not in text  # flowgate.v02test.0041: the AI sees the range, not why
         assert payload["context_window"]["after_seq"] == 24
-        assert (payload["context_window"]["checkpoint_seq"], payload["context_window"]["checkpoint_kind"]) == (25, "include")
+        assert "checkpoint_seq" not in payload["context_window"]
+        assert "checkpoint_kind" not in payload["context_window"]
         assert [t["seq"] for t in payload["turns"]] == list(range(25, 31))
         assert route.calls[0] == (24, None)
 
@@ -259,11 +272,23 @@ class TestCheckpointReachesBothContextPaths:
         payload, route = self._api(monkeypatch, "u1", 30, CHECKPOINT)
 
         assert after == 25
-        assert "context checkpoint after seq 25" in text and "seq 25 itself is excluded" in text
+        assert "This invocation's context starts at seq 26." in text and "checkpoint" not in text
         assert "before_seq=26" in text
-        assert payload["context_window"]["checkpoint_kind"] == "exclude"
+        assert "checkpoint_kind" not in payload["context_window"]
         assert [t["seq"] for t in payload["turns"]] == list(range(26, 31))
         assert route.calls[0] == (25, None)
+
+    def test_a_limit_narrower_than_the_checkpoint_states_only_the_delivered_range(self, store, monkeypatch):
+        """flowgate.v02test.0041: one starting point only, the one actually delivered; no checkpoint wording."""
+        self._set(monkeypatch, {"context_checkpoint_seq": 12, "context_checkpoint_kind": "exclude"})
+        settings = {"context_mode": "checkpoint_recent", "context_turns": 20, "checkpoint_max_turns": 5}
+
+        after, text = self._mention(monkeypatch, "u1", 30, settings)
+
+        assert after == 25
+        assert "This invocation's context is the latest 5 turns (seq 26 to 30)." in text
+        assert "Turns before seq 26 are not included." in text and "before_seq=26" in text
+        assert "checkpoint" not in text and "seq 12" not in text and "folded" not in text
 
     def test_a_long_tail_after_the_checkpoint_is_sent_whole(self, store, monkeypatch):
         """Not capped at N: everything after the checkpoint goes, across pages."""

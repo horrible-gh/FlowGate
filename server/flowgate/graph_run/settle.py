@@ -301,7 +301,9 @@ def idle_reason(ctx, rows: list[dict], state) -> str:
 def _candidates(ctx, state) -> list[str]:
     """The run candidates the command may open now. One behind a propagation that waits keeps waiting with it: only a
     command drains what waits (``frontier.drain_pending``)."""
-    found = engine.command_candidates(ctx.revision, state)
+    # Match the final opening veto, or settlement would keep proposing a blocked
+    # stale candidate and recurse through apply_decision without making progress.
+    found = scheduling.confirmed_inputs_ready(ctx, engine.command_candidates(ctx.revision, state), state)
     waiting = {p.node_key for p in state.pending}
     if not waiting or not found:
         return found

@@ -18,10 +18,10 @@ from .connection import get_store
 
 # The three setting columns, in the order DB0011 §4-2's INSERT lists them.  Kept as a
 # tuple so the SET list below is built from the same source as the VALUES list.
-SETTING_COLUMNS = ("send_action", "context_mode", "context_turns")
+SETTING_COLUMNS = ("send_action", "context_mode", "context_turns", "checkpoint_max_turns")
 
 _SELECT = (
-    "SELECT user_id, send_action, context_mode, context_turns, created_at, updated_at "
+    "SELECT user_id, send_action, context_mode, context_turns, checkpoint_max_turns, created_at, updated_at "
     "FROM user_chat_settings WHERE user_id = ?"
 )
 
@@ -60,8 +60,8 @@ def upsert(
     set_parts.append("updated_at = excluded.updated_at")
     get_store()._execute(
         "INSERT INTO user_chat_settings "
-        "(user_id, send_action, context_mode, context_turns, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?) "
+        "(user_id, send_action, context_mode, context_turns, checkpoint_max_turns, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT (user_id) DO UPDATE SET " + ", ".join(set_parts),
         [user_id, *values, updated_at, updated_at],
     )

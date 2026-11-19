@@ -7,8 +7,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { gateHeaderState } from '../../../center/canvas/gateHeaderState'
-import { flowNodeHeaderIcon } from '../../../center/canvas/flowNodeKinds'
+import { gateHeaderState } from '../../inspectorTarget'
+import { flowNodeHeaderIcon } from '../../inspectorTarget'
 import { useGateContext } from './useGateContext'
 const props = defineProps<{ target: InspectorTarget }>()
 const context = useGateContext(() => props.target.nodeType === 'gate' ? props.target : null)

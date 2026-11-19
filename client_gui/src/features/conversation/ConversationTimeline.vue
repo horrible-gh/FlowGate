@@ -58,10 +58,13 @@
           :pending="item.pending"
           :failed="item.failed"
           :failure="item.failure ?? null"
+          :waiting="item.waiting === true"
           :read-only="readOnly"
           :can-checkpoint="canCheckpoint"
           :checkpoint-kind="isCheckpointItem(item) ? checkpointKindOf : null"
           :checkpoint-busy="checkpointBusy"
+          :my-participant-key="myParticipantKey"
+          @mutate="(seq, body, done, version) => emit('mutate', seq, body, done, version)"
           :class="{ 'is-unsent': isUnsent(item) }"
           @retry="item.localId && emit('retry', item.localId)"
           @checkpoint="(seq, kind) => (seq == null ? emit('checkpoint', null) : emit('checkpoint', seq, kind))"
@@ -119,6 +122,7 @@ const props = defineProps<{
   checkpointKind?: CheckpointKind | null
   canCheckpoint?: boolean
   checkpointBusy?: boolean
+  myParticipantKey?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -129,6 +133,7 @@ const emit = defineEmits<{
   'open-change': [activity: WorkChangeActivity]
   'open-file': [runId: string, path: string]
   read: [seq: number]
+  mutate: [seq: number, body: string | null, done: (ok: boolean, error?: string) => void, version: number]
   checkpoint: [seq: number | null, kind?: CheckpointKind]
 }>()
 

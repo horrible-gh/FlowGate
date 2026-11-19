@@ -1772,6 +1772,24 @@ def _exec_remove(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     # to promote the string "false" to true. A delete must be safe from tests and internal calls too.
     recursive = body.get("recursive", False) is True
     if target.is_dir():
+        # Empty source directories need no recursive-delete privilege. rmdir is
+        # atomic with respect to emptiness: a concurrent new file is never deleted.
+        from modules.flow_gate.storage.safe_path import resolve_mutation_target_no_alias, MutationPathUnsafeError
+        normalized = path_exclusion_rules.normalize_repo_path(body["path"])
+        if not normalized or ".git" in normalized.lower().split("/"):
+            raise _OpError(422, details={"reason": "not_tool_artifact", "path": body["path"]})
+        try:
+            target = resolve_mutation_target_no_alias(root, body["path"], allow_missing_leaf=False)
+        except MutationPathUnsafeError as exc:
+            raise _OpError(422, details={"reason": "not_tool_artifact", "path": body["path"]}) from exc
+        if not any(target.iterdir()):
+            with document_write_ports.write_paths([], trees=[target]):
+                try:
+                    target.rmdir()
+                except OSError as exc:
+                    raise _OpError(409, details={"reason": "path_locked"}) from exc
+            return ({"path": body["path"], "removed": True, "recursive": recursive,
+                     "removed_file_count": 0}, None)
         # 0382 NR0003 proposal 5-c (debris cleanup). With no way to delete a folder wholesale,
         # removing 261 files meant calling remove 261 times. Recursive delete is opened, but
         # **only for paths judged to be tool debris** — the same rule the screens and the

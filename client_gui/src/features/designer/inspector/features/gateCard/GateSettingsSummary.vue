@@ -12,8 +12,8 @@
 import { computed } from 'vue'
 import Button from '../../../../../components/ui/Button.vue'
 import { useI18n } from 'vue-i18n'
-import type { RunGateResult, SettingsNode } from '@/features/document'
-import { checkOperationErrorKey, checkSettingsSummary } from '../checkSettings/checkSettingsModel'
+import type { RunGateResult, SettingsNode } from './useGateDecision'
+import { checkOperationErrorKey, checkSettingsSummary } from './useGateDecision'
 // hideTarget: the card's document tab does not show the target line (T0012 rework).
 const props = defineProps<{ node?: SettingsNode | null; decision?: RunGateResult | null; errorCode?: string | null; hideTarget?: boolean }>()
 const { t } = useI18n()

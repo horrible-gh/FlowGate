@@ -316,7 +316,7 @@ import GateActions from '@/features/designer/inspector/features/gateCard/GateAct
 import GateSlots from '@/features/designer/inspector/features/gateCard/GateSlots.vue'
 import KindSwitchAction from '@/features/designer/inspector/features/kindSwitch/KindSwitchAction.vue'
 import RequirementSlots from '@/features/designer/inspector/features/requirementCard/RequirementSlots.vue'
-import RequirementSettings from '@/features/designer/inspector/features/requirementSettings/RequirementSettings.vue'
+import RequirementSettings from './legacy/requirementSettings/RequirementSettings.vue'
 import ResearchSlots from '@/features/designer/inspector/features/researchCard/ResearchSlots.vue'
 import TaskSlots from '@/features/designer/inspector/features/taskCard/TaskSlots.vue'
 import TestRunSettings from '@/features/designer/inspector/features/testRunSettings/TestRunSettings.vue'

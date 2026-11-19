@@ -16,7 +16,7 @@ from typing import Optional
 
 from .connection import get_store, now_iso
 
-COLUMNS = ("provider_id", "context_checkpoint_seq", "context_checkpoint_kind")
+COLUMNS = ("provider_id", "context_checkpoint_seq", "context_checkpoint_kind", "timeout_minutes")
 CHECKPOINT_KINDS = ("include", "exclude")
 CHECKPOINT_KIND_DEFAULT = "include"
 
@@ -24,7 +24,7 @@ CHECKPOINT_KIND_DEFAULT = "include"
 def get(user_id: str, doc_id: str) -> Optional[dict]:
     """The stored row as {provider_id, context_checkpoint_seq, context_checkpoint_kind, updated_at}, or None."""
     row = get_store()._fetch_one(
-        "SELECT s.provider_id, s.context_checkpoint_seq, s.context_checkpoint_kind, s.updated_at, "
+        "SELECT s.provider_id, s.context_checkpoint_seq, s.context_checkpoint_kind, s.timeout_minutes, s.updated_at, "
         "p.deleted_at AS provider_deleted_at "
         "FROM user_conversation_settings s LEFT JOIN ai_providers p ON p.provider_id = s.provider_id "
         "WHERE s.user_id = ? AND s.doc_id = ?",
@@ -37,9 +37,10 @@ def get(user_id: str, doc_id: str) -> Optional[dict]:
         provider_id = None
     seq = row.get("context_checkpoint_seq")
     seq = int(seq) if seq is not None else None
-    kind = row.get("context_checkpoint_kind")
+    kind = row.get("context_checkpoint_kind", "timeout_minutes")
     return {
         "provider_id": provider_id or None,
+        "timeout_minutes": row.get("timeout_minutes"),
         "context_checkpoint_seq": seq,
         # No checkpoint, no kind; an unknown stored kind reads as the default rather than stopping a chat.
         "context_checkpoint_kind": (kind if kind in CHECKPOINT_KINDS else CHECKPOINT_KIND_DEFAULT) if seq is not None else None,

@@ -32,6 +32,7 @@ router = APIRouter(prefix="/documents", tags=["Documents"])
 class ConversationTurnAppend(BaseModel):
     body: str
     idempotency_key: str
+    images: Optional[list[str]] = None
     based_on_seq: Optional[int] = None
     display_name: Optional[str] = None
     # Accepted only for backward wire compatibility.  The session boundary always
@@ -287,6 +288,7 @@ def append_conversation_turn(
             display_name_hint=body.display_name,
             force_encoding_reason=body.force_encoding_reason,
             timing=timing,
+            images=body.images,
         )
     except conversation_turn_service.ConversationTurnError as exc:
         timing.mark("response", exc.status_code)
@@ -294,3 +296,18 @@ def append_conversation_turn(
     status = 200 if result["replayed"] else 201
     timing.mark("response", status)
     return JSONResponse(status_code=status, content=result)
+
+@router.patch("/{doc_id}/conversation/turns/{seq}")
+@require_permission("perm_document_update")
+def mutate_conversation_turn(doc_id: str, seq: int, request: Request,
+                             body: dict = Body(...), current_user: dict = Depends(get_current_user)):
+    if set(body) - {"body", "delete", "expected_version"} or type(body.get("delete", False)) is not bool:
+        raise HTTPException(status_code=422, detail="Invalid message patch.")
+    if not body.get("delete") and not isinstance(body.get("body"), str):
+        raise HTTPException(status_code=422, detail="body must be a string.")
+    try:
+        return conversation_turn_service.mutate_user_turn(
+            doc_id=doc_id, seq=seq, actor=_session_actor(request, current_user),
+            expected_version=body.get("expected_version"), body_raw=body.get("body"), delete=body.get("delete", False))
+    except conversation_turn_service.ConversationTurnError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

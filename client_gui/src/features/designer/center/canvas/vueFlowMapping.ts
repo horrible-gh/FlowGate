@@ -45,7 +45,8 @@
 // flowgate.v02.0070 T#1 (B1): a card no longer edits its title (the Inspector header does), so the card data carries
 // no title edit state.
 import type { Edge, Node } from '@vue-flow/core'
-import { gateApprovalView } from '../../inspector/features/gateCard/gateApproval'
+import { cardDocumentButtons, type CardDocumentButton } from './cardDocumentButtons'
+import { gateApprovalView } from '../../inspector/features/gateCard/useGateApproval'
 import { gateHeaderState, type GateHeaderState } from './gateHeaderState'
 import { cardNodeRun, cardStateView, type CardStateView } from '../graph/cardStateView'
 import { progressedEdgeIds } from '../graph/edgeProgress'
@@ -57,6 +58,7 @@ export const FLOWGATE_NODE_TYPE = 'flowgate'
 export const FLOWGATE_EDGE_TYPE = 'flowgate'
 
 export interface FlowGateNodeData {
+  documents?: readonly CardDocumentButton[]
   kind: string
   /** flowgate.v02.0045 T0019: the document type, so a 설계 card is named like its Palette card. */
   docType?: string | null
@@ -85,10 +87,18 @@ export interface FlowGateNodeData {
   integration?: string
   /** v02gui.0015 T4: the result failed the integration's syntax check (`failed` / `verification_failed`). */
   verificationFailed?: boolean
+  /**
+   * flowgate.v02test.0042: a waiting (`pending`) merge names the card it waits for (`integration_blocked_by`): that card's
+   * title, for the hourglass tooltip; absent when it waits for no named card.
+   */
+  integrationBlockedTitle?: string
+  /** flowgate.v02test.0042: that card holds the group with its merge conflict (else it is merging). */
+  integrationBlockedConflict?: boolean
   /** flowgate.v02.0061 T#14: the card is held (T#11 Hold). */
   hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered (the [Q] mark). */
   question?: boolean
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
   bodyUnreadable?: boolean
   /**
    * v02gui.0015 T2 (NR0006 §6-6): the earlier attempts of the card whose uncommitted changes its attempt did not take
@@ -153,6 +163,7 @@ export function toVueFlowNodes(
     const connectable = node.structureEditable === true && !!node.definition && !locked
     const selected = selectedIds.has(node.id)
     const data: FlowGateNodeData = { kind: node.kind, title: node.title, state: node.state ?? null, selected }
+    data.documents = cardDocumentButtons(node)
     if (node.cardDocuments?.some(lineWarns)) data.bodyUnreadable = true
     if (node.docType) data.docType = node.docType
     if (connectable) data.connectable = true
@@ -179,12 +190,23 @@ export function toVueFlowNodes(
     if (integration && SHOWN_INTEGRATIONS.includes(integration)) data.integration = integration
     const integrationReason = (runNode && 'integrationReason' in runNode ? runNode.integrationReason : node.nodeRun?.integrationReason) ?? null
     if (integration === 'failed' && integrationReason === 'verification_failed') data.verificationFailed = true
+    const blockedBy = (runNode && 'integrationBlockedBy' in runNode ? runNode.integrationBlockedBy : node.nodeRun?.integrationBlockedBy) ?? null
+    if (integration === 'pending' && blockedBy) {
+      const blocked = graph.nodes.find((item) => item.id === blockedBy)
+      data.integrationBlockedTitle = blocked?.title || blockedBy
+      const blockedRun = marks.nodeRuns.get(blockedBy)
+      const blockedIntegration = (blockedRun && 'integrationStatus' in blockedRun ? blockedRun.integrationStatus : blocked?.nodeRun?.integrationStatus) ?? null
+      data.integrationBlockedConflict = blockedIntegration === 'conflict'
+    }
     const hold = options.holds
       ? options.holds.get(node.id)
       : runNode && typeof runNode.hold === 'boolean' ? runNode.hold : node.nodeRun?.hold
     if (hold === true) data.hold = true
     const question = runNode && typeof runNode.question === 'boolean' ? runNode.question : node.nodeRun?.question
-    if (question === true) data.question = true
+    if (question === true) {
+      data.question = true
+      data.questionWait = runNode && 'questionWait' in runNode ? runNode.questionWait : node.nodeRun?.questionWait
+    }
     // v02gui.0015 T2: from the run read's node run first, as the integration chip.
     const uncarried = runNode && 'uncarriedChanges' in runNode ? runNode.uncarriedChanges : node.nodeRun?.uncarriedChanges
     if (uncarried && uncarried.attempts > 0) data.uncarried = { files: uncarried.files, attempts: uncarried.attempts, unknown: uncarried.unknown }

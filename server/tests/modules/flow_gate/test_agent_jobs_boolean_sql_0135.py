@@ -47,7 +47,7 @@ T0 = datetime(2026, 11, 5, 5, 0, 0, tzinfo=timezone.utc)
 def _pg_boolean_columns():
     cols = set()
     for name in ("121_agent_registry.sql", "124_agent_jobs.sql", "170_personal_agents.sql",
-                 "172_agent_job_ai_run_link.sql"):
+                 "172_agent_job_ai_run_link.sql", "199_agent_job_unlimited_timeout.sql"):
         cols |= set(re.findall(r"(\w+)\s+BOOLEAN\b", (PG_MIG / name).read_text(encoding="utf-8")))
     return cols
 
@@ -64,13 +64,13 @@ def boolean_violations(sql):
         values = [v.strip() for v in match.group(3).split(",")]
         assert len(columns) == len(values), match.group(0)
         found += [f"{c} <- {v}" for c, v in zip(columns, values)
-                  if c in BOOL_COLS and v.upper() not in ("TRUE", "FALSE", "?")]
+                  if c in BOOL_COLS and v.upper() not in ("TRUE", "FALSE", "?", "%S")]
     return found
 
 
 def test_boolean_column_list_comes_from_the_postgres_schema():
     assert {"cancel_requested", "stdout_truncated", "stderr_truncated", "enabled",
-            "configured_ai_cli", "reported_ai_cli"} <= BOOL_COLS
+            "configured_ai_cli", "reported_ai_cli", "timeout_unlimited"} <= BOOL_COLS
 
 
 def test_the_checker_catches_the_shipped_defect_shapes():
@@ -78,6 +78,9 @@ def test_the_checker_catches_the_shipped_defect_shapes():
     assert boolean_violations("INSERT INTO agent_jobs(job_id,stdout_truncated) VALUES(?,0)")
     assert not boolean_violations("UPDATE agent_jobs SET cancel_requested=TRUE WHERE cancel_requested=FALSE")
     assert not boolean_violations("INSERT INTO agent_jobs(job_id,stdout_truncated) VALUES(?,FALSE)")
+    assert not boolean_violations("INSERT INTO agent_jobs(job_id,timeout_unlimited) VALUES(?,?)")
+    assert not boolean_violations("INSERT INTO agent_jobs(job_id,timeout_unlimited) VALUES(%s,%s)")
+    assert boolean_violations("INSERT INTO agent_jobs(job_id,timeout_unlimited) VALUES(%s,0)")
 
 
 @pytest.mark.parametrize("module", ["agent_jobs.py", "agent_registry.py"])
@@ -191,10 +194,25 @@ def test_every_executed_agent_job_statement_is_postgres_boolean_safe(recorded):
     svc.advance_ai_jobs()
     assert svc.get_ai_job("ai_run", "1")["status"] == "FAILED"
 
+    _ai(svc, "ai_unlimited", timeout=0)
     statements = [(sql, params) for sql, params in store.seen if "agent_jobs" in sql]
     assert len(statements) > 20
-    for sql, _ in statements:
+    unlimited_flags = []
+    for sql, params in statements:
         assert boolean_violations(sql) == [], sql
         assert boolean_violations(_dialect.translate(sql, _dialect.POSTGRESQL)) == [], sql
+        # Placeholder spelling is not a type: verify the actual bound values too.
+        for match in _INSERT.finditer(sql):
+            columns = [c.strip() for c in match.group(2).split(",")]
+            values = [v.strip() for v in match.group(3).split(",")]
+            bound = iter(params)
+            for column, value in zip(columns, values):
+                if value in ("?", "%s"):
+                    parameter = next(bound)
+                    if column in BOOL_COLS:
+                        assert type(parameter) is bool, (column, parameter, sql)
+                    if column == "timeout_unlimited":
+                        unlimited_flags.append(parameter)
+    assert set(unlimited_flags) == {False, True}
     report = [p for sql, p in statements if "stdout_truncated=?" in sql]
     assert report and all(isinstance(p[4], bool) and isinstance(p[5], bool) for p in report)

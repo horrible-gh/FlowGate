@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import { h } from 'vue'
+import { defineComponent, h } from 'vue'
+import { useCardDocumentDecisions } from '@/features/designer/inspector/useInspectorResource'
 import InspectorSlotList, { type InspectorSlotView } from '@/features/designer/inspector/parts/InspectorSlotList.vue'
 import { toInspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import { INSPECTOR_HOST } from '@/features/designer/inspector/inspectorHost'
@@ -27,8 +28,15 @@ let raw: any
 const refresh = vi.fn()
 const view = () => structuredClone(raw)
 const buttons = () => wrapper!.findAll('[data-test="inspector-document-decision"]')
+const DecisionRows = defineComponent({
+  props: ['target', 'slots', 'editable'],
+  setup(props, { slots }) {
+    const decisions = useCardDocumentDecisions(() => props.target)
+    return () => h(InspectorSlotList, { slots: props.slots, editable: props.editable, decisions }, slots)
+  },
+})
 async function open(props: Record<string, unknown> = {}) {
-  wrapper = mount(InspectorSlotList, { props: { slots: lines, target: target(), ...props },
+  wrapper = mount(DecisionRows, { props: { slots: lines, target: target(), ...props },
     slots: { io: () => h('span', { 'data-test': 'io' }, [h('button', { 'data-test': 'upload' }), h('button', { 'data-test': 'download' }), h('span', { role: 'separator' })]) },
     global: { plugins: [i18n, createPinia()], provide: { [INSPECTOR_HOST as symbol]: { request: refresh } } } })
   await flushPromises()

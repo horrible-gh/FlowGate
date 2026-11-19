@@ -90,6 +90,11 @@ const PARTS_RULE: ImportRule = {
 
 /** B8 (with B7 for *Model.ts) — feature folder files by kind (D#1 §2.4). */
 const FEATURE_RULES: readonly { kind: string; file: RegExp; rule: ImportRule }[] = [
+  // The merge window list owns only modeless lifetime and card identity, never transport.
+  { kind: 'windows', file: /^mergeWindows\.ts$/, rule: {
+    allowed: [/^vue$/, OWN, { re: /^\.\.\/\.\.\/inspectorTarget$/, typeOnly: true }],
+    forbidden: API_STORE, body: BODY_IO,
+  } },
   // 0071 D0008 §7: the shared test-card session composes the existing settings feature.
   { kind: 'session', file: /^testCardSession\.ts$/, rule: {
     allowed: [/^vue$/, OWN, /^\.\.\/settings\/(cardSettingsModel|useCardSettings)$/,
@@ -150,7 +155,8 @@ const B9_FILE = /^(register|messages)\.ts$|\.vue$/
 const B9_TRANSPORT = /fetch\(|\baxios\b|@shared\/api\b/
 
 /** B11 — what features/document may import besides its own files: the shared transport. */
-const DOCUMENT_SHARED = /^@shared\/(api|apiErrors)$/
+// Shared request identity carries no feature dependency or state beyond this tab.
+const DOCUMENT_SHARED = /^@shared\/(api|apiErrors|canvasClient)$/
 /** B11 — the one line kind of features/document/index.ts (comments and blank lines aside). */
 const DOCUMENT_INDEX_LINE = /^export \* from '\.\/[A-Za-z/]+'$/
 

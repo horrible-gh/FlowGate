@@ -33,6 +33,12 @@ export interface MenuActionRefusal {
   readonly code: string | null
   /** A name the server's refusal carries (e.g. the group that holds an identifier); optional. */
   readonly subject?: string
+  /** Structured details for identifier-change refusals; optional for older server responses. */
+  readonly busy?: readonly { readonly group_id: string; readonly reason: string; readonly status?: string }[]
+  readonly holderArchived?: boolean
+  readonly documents?: number
+  readonly limit?: number
+  readonly titleChanged?: boolean
   /** v02gui.0027: the Flows that keep a Group from being deleted (409 `module_not_empty` `flow_count`); optional. */
   readonly count?: number
 }

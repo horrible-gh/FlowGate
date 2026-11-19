@@ -15,6 +15,12 @@ vi.mock('@/features/document/api/qa', async (original) => ({
   ...await original<typeof import('@/features/document/api/qa')>(),
   qaOpenItems: vi.fn(async () => [{ doc_id: 'p.m.1.0001-T', seq: 1, title: 'Instruction', type_code: 'T' }]),
 }))
+// flowgate.v02test.0042: the merge items read has its own spec (notificationMerges.v02test0042); here it answers none
+// without touching the transport the read counts below are about.
+vi.mock('@/features/document/api/cardMerge', async (original) => ({
+  ...await original<typeof import('@/features/document/api/cardMerge')>(),
+  cardMergeItems: vi.fn(async () => []),
+}))
 vi.mock('@/features/designer/inspector/useInspectorResource', () => ({ useInspectorResource: vi.fn() }))
 vi.mock('@/features/designer/inspector/features/qna/useQna', () => ({ useQna: vi.fn() }))
 registerAppMessages(i18n)

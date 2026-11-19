@@ -118,9 +118,10 @@ describe('turns', () => {
     const page = await fetchTurns('p.m.0001.0002-CH', { includeHead: true, limit: 50 })
     expect(getRequest).toHaveBeenCalledWith('/api/v1/documents/p.m.0001.0002-CH/conversation/turns', { include_head: 1, limit: 50 })
     expect(page).toEqual({
-      turns: [{ seq: 4, speaker: 'ai', participantKey: 'ai:opus', displayName: 'Opus', body: 'hi', sourceRunId: null, basedOnSeq: null, staleSinceSeq: 3, createdAt: 'T' }],
+      turns: [{ seq: 4, messageVersion: 1, deletedAt: null, speaker: 'ai', participantKey: 'ai:opus', displayName: 'Opus', body: 'hi', sourceRunId: null, basedOnSeq: null, staleSinceSeq: 3, createdAt: 'T' }],
       participants: [{ key: 'u:test', kind: 'user', displayName: 'test', lastReadSeq: 4 }],
       myReadSeq: 4,
+      myParticipantKey: 'u:test',
       headSeq: 4,
       nextAfterSeq: null,
       prevBeforeSeq: 1,
@@ -258,6 +259,7 @@ describe('chat settings / mention', () => {
       sendAction: 'invoke_ai',
       contextMode: 'all',
       contextTurns: 15,
+      checkpointMaxTurns: 10,
       sourceAccessMode: 'edit_once',
       sourceAccessScope: null,
       contextTurnsPresets: [10, 20],
@@ -277,7 +279,7 @@ describe('chat settings / mention', () => {
     })
     const settings = await fetchChatSettings()
     expect(settings.sourceAccessMode).toBe('execute')
-    expect(settings.sourceAccessModes).toEqual(['read_only', 'execute', 'edit', 'edit_once'])
+    expect(settings.sourceAccessModes).toEqual(['read_only', 'execute', 'edit_once', 'edit'])
   })
 
   it('defaults the context-turns cap to 999 when the server sends no domain', async () => {

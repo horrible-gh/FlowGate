@@ -220,7 +220,7 @@ import { settingsRowPhase, type SettingsField, type SettingsOption } from './set
 import { useSharedCardSettings } from './useCardSettings'
 import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
 import type { AiRoleValue } from '@/features/document'
-import { visibleReviewCountOptions } from '@shared/utils/reviewCountChoices'
+import { visibleReviewCountOptions } from './reviewCountModel'
 import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, cardRoleRows, instructionWritten } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
@@ -538,7 +538,8 @@ const instructionAiShown = computed(() => {
 /**
  * flowgate.v02.0144 T-B (0003-NR §4.2a(6)(7)): the older AI form (지시 AI row, 실행 설정 block, 지시서 검수 block) is
  * drawn only for a Graph card whose settings answer has come without AI roles (`ai_roles` null or missing). Before
- * the answer (loading, a re-read after the settings context moved, a card just placed) none of it is drawn.
+ * the answer (loading, a card just placed) none of it is drawn. flowgate.v02test.0048: a re-read after the settings
+ * context moved keeps the last answer drawn until the new one comes (useCardSettings `identity`).
  */
 const legacyAiShown = computed(() => source.value === 'card' && card.node.value !== null && !card.node.value.aiRoles)
 

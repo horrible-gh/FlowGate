@@ -6,7 +6,7 @@ import { flowTabMenu } from '@/features/designer/contextMenu/flowTabMenu'
 import { canvasMenu } from '@/features/designer/contextMenu/canvasMenu'
 import { paletteMenu } from '@/features/designer/contextMenu/paletteMenu'
 
-const labels = ['기본 설계', '프로토콜', '로직', 'DB설계', '조사', '작업계획', '작업', '테스트', '확인']
+const labels = ['기본 설계', '프로토콜', '로직', 'DB설계', '조사', '작업', '테스트', '확인']
 export const definitions = DEFAULT_PALETTE_ITEMS.map((item, i) => paletteItemDefinition(item, labels[i]))
 export const targets: MenuTarget[] = [
   { kind: 'project', projectId: 'p' },

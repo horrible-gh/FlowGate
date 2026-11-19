@@ -127,7 +127,7 @@ class AgentJobService:
         if (row["location"] != "remote" or row["connection_mode"] != "agent_pull"
                 or row["protocol_compatibility"] != "compatible" or row["protocol_version"] != 1):
             raise AgentError(403, "agent_incompatible", "Agent is not a compatible Remote Agent")
-        if claim and not (row["configured_ai_cli"] and row["reported_ai_cli"]):
+        if claim and not row["reported_ai_cli"]:
             raise AgentError(403, "capability_required", "Effective ai_cli capability is required")
         return identity["agent_id"]
 
@@ -142,8 +142,8 @@ class AgentJobService:
             raise AgentError(422, "validation_failed", "command_line must be one nonempty line")
         if not isinstance(stdin_text, str) or not isinstance(cwd, str) or not cwd:
             raise AgentError(422, "validation_failed", "stdin_text and cwd are required")
-        if type(timeout_seconds) is not int or timeout_seconds <= 0:
-            raise AgentError(422, "validation_failed", "timeout_seconds must be positive")
+        if type(timeout_seconds) is not int or timeout_seconds < 0:
+            raise AgentError(422, "validation_failed", "timeout_seconds must be a nonnegative integer")
         job_id = job_id or "job_" + secrets.token_urlsafe(20)
         attempt_id = attempt_id or "att_" + secrets.token_urlsafe(20)
         if (not isinstance(job_id, str) or not job_id or len(job_id) > 96
@@ -173,6 +173,10 @@ class AgentJobService:
         if ai_run_id is not None:
             payload.update(ai_run_id=ai_run_id, graph_exec_id=graph_exec_id)
         fingerprint = _hash(payload)
+        # Zero means no execution deadline on the Agent wire. Hash that logical value
+        # above, then preserve the original database CHECK(timeout_seconds>0).
+        timeout_unlimited = timeout_seconds == 0
+        stored_timeout_seconds = 1 if timeout_unlimited else timeout_seconds
         ts = _stamp(_now())
         with self.s.transaction():
             existing = self.s._fetch_one(
@@ -192,21 +196,23 @@ class AgentJobService:
             if ai_run_id is None:
                 inserted = self.s._execute_affected(
                     """INSERT INTO agent_jobs(job_id,attempt_id,execution_type,command_line,stdin_text,cwd,
-                       timeout_seconds,status,target_agent_id,payload_digest,cancel_requested,
+                       timeout_seconds,timeout_unlimited,status,target_agent_id,payload_digest,cancel_requested,
                        stdout_truncated,stderr_truncated,created_at,updated_at,requested_by_user_id,project_id)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,FALSE,FALSE,FALSE,?,?,?,?) ON CONFLICT DO NOTHING""",
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,FALSE,FALSE,FALSE,?,?,?,?) ON CONFLICT DO NOTHING""",
                     [job_id, attempt_id, "remote_cli", command_line, stdin_text, cwd,
-                     timeout_seconds, "NEW", target_agent_id, fingerprint, ts, ts, requested_by_user_id, project_id],
+                     stored_timeout_seconds, timeout_unlimited, "NEW", target_agent_id, fingerprint,
+                     ts, ts, requested_by_user_id, project_id],
                 )
             else:
                 inserted = self.s._execute_affected(
                     """INSERT INTO agent_jobs(job_id,attempt_id,execution_type,command_line,stdin_text,cwd,
-                       timeout_seconds,status,target_agent_id,payload_digest,cancel_requested,
+                       timeout_seconds,timeout_unlimited,status,target_agent_id,payload_digest,cancel_requested,
                        stdout_truncated,stderr_truncated,created_at,updated_at,requested_by_user_id,project_id,
                        ai_run_id,graph_exec_id,retrieval_state,retrieval_owner,ai_group_id,ai_token_id)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,FALSE,FALSE,FALSE,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,FALSE,FALSE,FALSE,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""",
                     [job_id, attempt_id, "remote_cli", command_line, stdin_text, cwd,
-                     timeout_seconds, "NEW", target_agent_id, fingerprint, ts, ts, requested_by_user_id, project_id,
+                     stored_timeout_seconds, timeout_unlimited, "NEW", target_agent_id, fingerprint,
+                     ts, ts, requested_by_user_id, project_id,
                      ai_run_id, graph_exec_id, RETRIEVAL_PENDING, retrieval_owner, ai_group_id, ai_token_id],
                 )
             if inserted != 1:
@@ -274,10 +280,21 @@ class AgentJobService:
         # status='NEW' condition still lets exactly one of this, cancel and claim win.
         facts = {}
         for row in self.s._fetch_all(
-            """SELECT job_id,attempt_id,target_agent_id,created_at FROM agent_jobs
-                   WHERE ai_run_id IS NOT NULL AND status='NEW' AND created_at<=?""",
-            [claim_cut],
+            """SELECT job_id,attempt_id,target_agent_id,created_at,capacity_wait_at FROM agent_jobs
+                   WHERE ai_run_id IS NOT NULL AND status='NEW'""",
+            [],
         ):
+            aid = row.get("target_agent_id")
+            agent = _agent_row(self.s, aid) if aid else None
+            if agent:
+                info = _agent_detail(agent, at=now)
+                if info["online_status"] == "online" and info["running_jobs"] >= info["max_concurrent_jobs"]:
+                    # Capacity is ordinary queueing, not a broken claim connection. Keep
+                    # the creation order and grant a fresh claim window when slots free.
+                    self.s._execute_affected("UPDATE agent_jobs SET capacity_wait_at=? WHERE job_id=? AND attempt_id=? AND status='NEW'", [ts,row["job_id"],row["attempt_id"]])
+                    continue
+            if str(row.get("capacity_wait_at") or row["created_at"]) > claim_cut:
+                continue
             cause, note = self._claim_wait_cause(row, now, facts)
             self.s._execute_affected(
                 """UPDATE agent_jobs SET status='CANCELLED',end_reason='not_claimed',terminal_cause=?,
@@ -295,7 +312,8 @@ class AgentJobService:
         )
         for row in self.s._fetch_all(
             """SELECT job_id,attempt_id,started_at,timeout_seconds FROM agent_jobs
-                   WHERE ai_run_id IS NOT NULL AND status='STARTED' AND cancel_requested=FALSE""",
+                   WHERE ai_run_id IS NOT NULL AND status='STARTED' AND cancel_requested=FALSE
+                   AND timeout_unlimited=FALSE""",
         ):
             try:
                 started = datetime.fromisoformat(str(row["started_at"]).replace("Z", "+00:00"))
@@ -648,6 +666,14 @@ class AgentJobService:
             # stopped polling" from "it polled and did not take the Job".
             self.s._execute_affected("UPDATE agents SET last_claim_poll_at=? WHERE agent_id=?", [ts, agent_id])
             self._reclaim(ts)
+            # The preceding UPDATE locks this Agent until commit. Current/locking reads
+            # also avoid a stale MySQL REPEATABLE READ snapshot from authentication.
+            from modules.flow_gate.db import dialect
+            lock = " FOR UPDATE" if getattr(self.s, "dialect", dialect.SQLITE) != dialect.SQLITE else ""
+            capacity = self.s._fetch_one("SELECT max_concurrent_jobs FROM agents WHERE agent_id=?" + lock, [agent_id])
+            held = self.s._fetch_all("SELECT job_id,attempt_id FROM agent_jobs WHERE lease_owner_agent_id=? AND status IN ('CLAIMED','STARTED')" + lock, [agent_id])
+            if len(held) >= capacity["max_concurrent_jobs"]:
+                return None
             candidates = self.s._fetch_all(
                 """SELECT j.* FROM agent_jobs j JOIN agents a ON a.agent_id=?
                    WHERE j.status='NEW' AND (j.target_agent_id IS NULL OR j.target_agent_id=?)
@@ -674,7 +700,8 @@ class AgentJobService:
                     job = {"protocol_version": 1, "job_id": row["job_id"],
                            "attempt_id": row["attempt_id"], "execution_type": row["execution_type"],
                            "command_line": row["command_line"], "stdin_text": row["stdin_text"],
-                           "cwd": row["cwd"], "timeout_seconds": row["timeout_seconds"],
+                           "cwd": row["cwd"],
+                           "timeout_seconds": 0 if row["timeout_unlimited"] else row["timeout_seconds"],
                            "cancel_requested": bool(row["cancel_requested"]),
                            "lease_token": token, "lease_expires_at": expiry}
                     if row.get("ai_run_id"):

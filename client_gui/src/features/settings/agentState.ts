@@ -34,17 +34,17 @@ export function agentState(a: SystemAgent): AgentState {
   return a.online_status === 'online' ? 'online' : 'offline'
 }
 
-/** Allowed here, reported by the Agent as unsupported: allowed but unusable. */
+/** Availability comes from the Agent report, not the retired configured flags. */
 export function capMissing(a: SystemAgent, cap: AgentCapability): boolean {
   return a.location === 'remote' && a.enabled && a.credential_status === 'active'
-    && a.configured_capabilities[cap] && a.reported_capabilities[cap] === false
+    && a.reported_capabilities[cap] === false
 }
 
 /** Worth a look: an enabled remote Agent that is waiting, refused, offline or short of a capability. */
 export function needsAttention(a: SystemAgent): boolean {
   if (!a.enabled || a.location === 'local') return false
   const tone = AGENT_STATE_TONE[agentState(a)]
-  return tone === 'warn' || tone === 'bad' || AGENT_CAPS.some((cap) => capMissing(a, cap))
+  return tone === 'warn' || tone === 'bad' || capMissing(a, 'ai_cli')
 }
 
 type Translate = (key: string, values?: Record<string, unknown>) => string

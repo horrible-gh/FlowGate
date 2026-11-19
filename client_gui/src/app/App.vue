@@ -12,6 +12,7 @@
   </div>
   <ProjectDialog @opened="openDesigner" />
   <DocumentWindows />
+    <MergeWindows />
 </template>
 
 <script setup lang="ts">
@@ -39,6 +40,7 @@
 // teleported modeless panels over whatever screen is shown; openers reach them through the feature's
 // public surface only.
 import { RouterView, useRoute, useRouter } from 'vue-router'
+import { MergeWindows } from '@/features/designer'
 import { DocumentWindows } from '@/features/documentWindow'
 import { ProjectDialog, useProjectStore } from '@/features/project'
 import Sidebar from './components/Sidebar.vue'

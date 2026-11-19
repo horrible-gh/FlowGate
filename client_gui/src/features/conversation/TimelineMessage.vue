@@ -21,9 +21,16 @@
         </span>
         <span v-if="pending" class="tl-time">{{ t('gui.conversation.message.sending') }}</span>
         <span v-else-if="turn.createdAt" class="tl-time" :title="turn.createdAt">{{ formatTimelineTime(turn.createdAt) }}</span>
+        <!-- flowgate.v02test.0029: sent while the AI answered; answered right after the current answer. -->
+        <span
+          v-if="waiting && !pending"
+          class="tl-waiting"
+          data-test="tl-waiting"
+          :title="t('gui.conversation.message.waiting_title')"
+        >{{ t('gui.conversation.message.waiting') }}</span>
         <!-- flowgate.v02.0157: the message as written (Markdown source, not the rendered page), on both sides. -->
         <button
-          v-if="turn.body"
+          v-if="turn.body && !turn.deletedAt"
           type="button"
           class="tl-copy"
           :class="copyState === 'idle' ? null : `is-${copyState}`"
@@ -37,18 +44,32 @@
         <!-- flowgate.v02test.0025: the ⋯ menu (체크포인트 사용 only, a stored message only): send from this message /
              from the next message / clear. -->
         <TimelineMessageMenu
-          v-if="canCheckpoint && turn.seq > 0 && !pending"
+          v-if="(canCheckpoint || canMutate) && turn.seq > 0 && !pending"
           class="tl-more"
           :seq="turn.seq"
           :kind="checkpointKind ?? null"
-          :busy="checkpointBusy"
+          :busy="checkpointBusy || mutating"
+          :can-checkpoint="canCheckpoint"
+          :can-mutate="canMutate"
+          @edit="editingVersion = turn.messageVersion ?? 1; editText = turn.body; editing = true; deleting = false"
+          @remove="editingVersion = turn.messageVersion ?? 1; deleting = true; editing = false"
           @checkpoint="(seq, kind) => (seq == null ? emit('checkpoint', null) : emit('checkpoint', seq, kind))"
         />
       </div>
       <!-- A person's own input stays plain text; an AI's message is Markdown (tables, code blocks with copy) rendered by
            the shared renderer in safe mode: raw HTML is shown as text, unsafe links and every image as text only. -->
-      <div v-if="isUser" class="tl-text">{{ turn.body }}</div>
+      <div v-if="turn.deletedAt" class="tl-text" data-test="tl-deleted">{{ t('gui.conversation.message.deleted') }}</div>
+      <div v-else-if="editing || deleting" class="tl-text">
+        <textarea v-if="editing" v-model="editText" class="tl-edit-input" data-test="tl-edit-input" :disabled="mutating" />
+        <span v-else>{{ t('gui.conversation.message.delete_confirm') }}</span>
+        <button type="button" :disabled="mutating || (editing && !editText.trim())" data-test="tl-mutate-save" @click="saveMutation">{{ t('gui.conversation.save') }}</button>
+        <button type="button" :disabled="mutating" @click="editing = false; deleting = false">{{ t('gui.conversation.cancel') }}</button>
+      </div>
+      <div v-else-if="isUser" class="tl-text">{{ turn.body }}</div>
       <div v-else class="tl-text tl-md" data-test="tl-md" @click.capture="onBodyClick" v-html="html" />
+      <!-- flowgate.v02test.0029: the message's images (thumbnails; one opens the original). -->
+      <p v-if="mutationError" role="alert">{{ mutationError }}</p>
+      <TimelineImages v-if="!turn.deletedAt && turn.images?.length" :images="turn.images" />
       <p v-if="failed" class="tl-note tl-note--failed">
         {{ t('gui.conversation.message.failed') }}
         <!-- flowgate.v02gui.0007 A: the failure's short reason (class of the HTTP status, and the status). -->
@@ -64,6 +85,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyToClipboard } from '../../core/interaction/clipboard'
 import { createMarkdownRenderer } from '../../core/markdown/markdownRenderer'
+import TimelineImages from './TimelineImages.vue'
 import TimelineMessageMenu from './TimelineMessageMenu.vue'
 import { formatTimelineTime } from './timeline'
 import type { SendFailure } from './timeline'
@@ -75,18 +97,39 @@ const props = defineProps<{
   failed: boolean
   /** flowgate.v02gui.0007 A: why the send failed (a failed message only). */
   failure?: SendFailure | null
+  /** flowgate.v02test.0029: sent while the AI answered; the AI answers it once the current answer ends. */
+  waiting?: boolean
   readOnly?: boolean
   /** flowgate.v02test.0025: the ⋯ checkpoint menu is offered (context setting 체크포인트 사용). */
   canCheckpoint?: boolean
   /** This message's checkpoint kind when it is the chat's checkpoint, else null. */
   checkpointKind?: CheckpointKind | null
   checkpointBusy?: boolean
+  myParticipantKey?: string | null
 }>()
 
-const emit = defineEmits<{ retry: []; checkpoint: [seq: number | null, kind?: CheckpointKind] }>()
+const emit = defineEmits<{ mutate: [seq: number, body: string | null, done: (ok: boolean, error?: string) => void, version: number]; retry: []; checkpoint: [seq: number | null, kind?: CheckpointKind] }>()
 
 const { t, locale } = useI18n()
 
+const editingVersion = ref(1)
+const editing = ref(false)
+const deleting = ref(false)
+const editText = ref('')
+const mutating = ref(false)
+const mutationError = ref('')
+const canMutate = computed(() => !props.readOnly && !props.pending && !props.turn.deletedAt && props.turn.seq > 0 && props.turn.speaker === 'user' && !!props.myParticipantKey && props.turn.participantKey === props.myParticipantKey)
+function saveMutation(): void {
+  if (!canMutate.value || mutating.value) return
+  mutating.value = true
+  mutationError.value = ''
+  emit('mutate', props.turn.seq, deleting.value ? null : editText.value, (ok, error) => {
+    mutating.value = false
+    if (ok) { editing.value = false; deleting.value = false }
+    else mutationError.value = error || t('gui.conversation.message.change_failed')
+  }, editingVersion.value)
+}
+watch(() => props.turn.deletedAt, () => { editing.value = false; deleting.value = false; editText.value = '' })
 const isUser = computed(() => props.turn.speaker === 'user')
 const failureText = computed(() => {
   const failure = props.failed ? props.failure : null
@@ -193,6 +236,18 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
 </script>
 
 <style scoped>
+.tl-edit-input { width: 100%; min-height: 5em; box-sizing: border-box; font: inherit; }
+.tl-waiting {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+}
+
 .tl-msg {
   display: flex;
   width: 100%;

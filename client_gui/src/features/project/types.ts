@@ -386,6 +386,12 @@ export interface SourceMutationRefusal {
   code: string | null
   /** A name the refusal carries (the group holding an identifier, busy Flows, existing branches); optional. */
   subject?: string
+  /** Structured Group identifier refusal details. */
+  busy?: { group_id: string; reason: string; status?: string }[]
+  holderArchived?: boolean
+  documents?: number
+  limit?: number
+  titleChanged?: boolean
   /** v02gui.0027: how many Flows keep a Group from being deleted (409 `module_not_empty` `flow_count`); optional. */
   count?: number
 }
@@ -555,10 +561,13 @@ export interface FlowCanvasNodeRun extends RoleRunFields {
    */
   integrationStatus?: string | null
   integrationReason?: string | null
+  /** flowgate.v02test.0042: the card (node key) whose merge this card's merge waits for, or null; absent when not sent. */
+  integrationBlockedBy?: string | null
   /** flowgate.v02.0061 T#14: the card is held (T#11 Hold); absent when not sent. */
   hold?: boolean
   /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
   question?: boolean
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
   /**
    * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
    * (`node_running`; flowgate.v02.0113 T#1: actually running — an AI execution of it requested / running, or its AI
@@ -816,10 +825,13 @@ export interface FlowRunNode extends RoleRunFields {
   integrationStatus?: string | null
   /** v02gui.0015 T4: the integration's reason (open key, e.g. `verification_failed`) or null; absent when not sent. */
   integrationReason?: string | null
+  /** flowgate.v02test.0042: the card (node key) whose merge this card's merge waits for, or null; absent when not sent. */
+  integrationBlockedBy?: string | null
   /** flowgate.v02.0061 T#14: the card is held (T#11); absent when not sent. */
   hold?: boolean
   /** flowgate.v02.0063: the card's AI asked a question still unanswered; absent when not sent. */
   question?: boolean
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
   /**
    * flowgate.v02.0064 T#4: the card is running now — the card settings' running lock a title save is refused by
    * (`node_running`; flowgate.v02.0113 T#1: actually running — an AI execution of it requested / running, or its AI

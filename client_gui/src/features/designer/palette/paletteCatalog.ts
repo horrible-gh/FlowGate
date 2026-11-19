@@ -91,7 +91,6 @@ export const DEFAULT_PALETTE_ITEMS: readonly BuiltinPaletteItem[] = [
   builtin('logic', 'design', 'design', 'L', 'logic', DESIGN_ACCENT),
   builtin('db_design', 'design', 'design', 'DB', 'database', DESIGN_ACCENT),
   builtin('research', 'workflow', 'research', 'N', 'search', '#22c98c'),
-  builtin('plan', 'workflow', 'plan', 'WP', 'clipboard', '#15c9d4'),
   builtin('task', 'workflow', 'task', 'T', 'pencil', '#f59e0b'),
   builtin('test', 'workflow', 'test', 'TS', 'test', '#ec4899'),
   builtin('confirm', 'control', 'approval', null, 'user', '#22c98c'),

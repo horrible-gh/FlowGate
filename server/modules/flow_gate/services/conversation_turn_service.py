@@ -20,7 +20,7 @@ from modules.flow_gate.db import ai_providers
 from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.documents import document_service
-from modules.flow_gate.services import encoding_probe
+from modules.flow_gate.services import encoding_probe, message_image_service
 from modules.flow_gate.storage import paths as storage_paths
 
 TURN_BODY_BYTE_MAX = 65_536
@@ -417,14 +417,19 @@ def resolve_actor(actor: dict[str, Any], display_name_hint: Optional[str] = None
     raise ConversationTurnError(401, "Invalid conversation actor.")
 
 
-def _turn_wire(row: dict) -> dict:
+def _turn_wire(row: dict, *, images=None) -> dict:
     return {
         "seq": int(row["seq"]),
         "speaker": row["speaker"],
         "participant_key": row["participant_key"],
         "display_name": row.get("display_name"),
         "locale": row.get("locale"),
-        "body": row["body"],
+        "body": "" if row.get("deleted_at") else row["body"],
+        "message_version": int(row.get("message_version") or 1),
+        "edited_at": row.get("edited_at"),
+        "deleted_at": row.get("deleted_at"),
+        "images": [] if row.get("deleted_at") else (message_image_service.for_turn(row.get("doc_id"), int(row["seq"]))
+                   if images is None else images),
         "based_on_seq": int(row.get("based_on_seq") or 0),
         "stale_since_seq": (
             int(row["stale_since_seq"]) if row.get("stale_since_seq") is not None else None
@@ -434,14 +439,14 @@ def _turn_wire(row: dict) -> dict:
     }
 
 
-def turn_wire(row: dict) -> dict:
+def turn_wire(row: dict, *, images=None) -> dict:
     """Public alias — the turn object of P0003 §0-2, built in exactly one place.
 
     Both HTTP families and the SSE payload must serialize a turn identically (P0003
     §0-1); the query adapter and the event publisher call this rather than each
     growing their own copy.
     """
-    return _turn_wire(row)
+    return _turn_wire(row, images=images)
 
 
 def participant_wire(row: dict) -> dict:
@@ -487,8 +492,12 @@ def _result(doc_id: str, row: dict, resolved: dict, replayed: bool) -> dict:
 
 
 def _replay_or_conflict(
-    doc_id: str, existing: dict, body_hash: str, resolved: dict
+    doc_id: str, existing: dict, body_hash: str, resolved: dict, images=None
 ) -> dict:
+    expected_images = [] if images is None else images
+    actual_images = [i["image_id"] for i in message_image_service.for_turn(doc_id, existing["seq"])]
+    if actual_images != expected_images:
+        raise ConversationTurnError(409, "idempotency_key already used with different images.")
     if existing.get("body_hash") != body_hash:
         raise ConversationTurnError(409, "idempotency_key already used with a different body.")
     if existing.get("participant_key") != resolved["participant_key"]:
@@ -685,6 +694,7 @@ def append_turn(
     force_encoding_reason: Optional[str] = None,
     locale: str = "ko",
     timing: Optional[TurnTiming] = None,
+    images: Optional[list[str]] = None,
 ) -> dict:
     """Append one turn for either a session user or a token-bound AI worker."""
     # flowgate.v02gui.0009: a worker's body ends with its token's encoding probe; it is
@@ -717,13 +727,18 @@ def append_turn(
     doc = _validate_document_for_append(doc_id)
     resolved = resolve_actor(actor, display_name_hint)
 
+    try:
+        images = message_image_service.validate_ids(images)
+    except message_image_service.MessageImageError as exc:
+        raise ConversationTurnError(exc.status, exc.code) from exc
+
     # Cheap replay path.  The unique constraints remain the authority for the race
     # where two requests both observe absence below.
     existing = turn_store.get_turn_by_idempotency_hash(doc_id, idempotency_hash)
     if existing is not None:
         if timing is not None:
             timing.mark("replay")
-        return _replay_or_conflict(doc_id, existing, body_hash, resolved)
+        return _replay_or_conflict(doc_id, existing, body_hash, resolved, images)
 
     last_exc: Optional[BaseException] = None
     for attempt in range(SEQ_RETRY_MAX + 1):
@@ -751,6 +766,10 @@ def append_turn(
                     created_at=now_iso(),
                 )
                 assigned = int(row["seq"])
+                try:
+                    message_image_service.link(doc, assigned, actor.get("user_id"), images)
+                except message_image_service.MessageImageError as exc:
+                    raise ConversationTurnError(exc.status, exc.code) from exc
                 previous_head = assigned - 1
                 if based > previous_head:
                     raise ConversationTurnError(
@@ -824,7 +843,7 @@ def append_turn(
             if existing is not None:
                 if timing is not None:
                     timing.mark("replay")
-                return _replay_or_conflict(doc_id, existing, body_hash, resolved)
+                return _replay_or_conflict(doc_id, existing, body_hash, resolved, images)
             if attempt >= SEQ_RETRY_MAX:
                 break
             time.sleep(SEQ_RETRY_BACKOFF_MS[attempt] / 1000.0)
@@ -903,3 +922,42 @@ def dry_run_append(
         "dry_run_remaining": limit - (cnt + 1),
         "message": message,
     }
+
+
+def mutate_user_turn(*, doc_id: str, seq: int, actor: dict, expected_version: int,
+                     body_raw: Optional[str] = None, delete: bool = False) -> dict:
+    """Session-only, author-bound CAS; keep seq and all subsequent history intact."""
+    if actor.get("kind") != "session":
+        raise ConversationTurnError(403, "Only the author may change a user message.")
+    resolved = resolve_actor(actor)
+    if type(expected_version) is not int or expected_version < 1:
+        raise ConversationTurnError(422, "expected_version must be a positive integer.")
+    doc = _validate_document_for_append(doc_id)
+    body = "" if delete else _validate_input(body_raw, "message-edit")[0]
+    with get_store().transaction():
+        row = turn_store.get_turn(doc_id, seq)
+        if row is None:
+            raise ConversationTurnError(404, "Message not found.")
+        if row["speaker"] != "user" or row["participant_key"] != resolved["participant_key"]:
+            raise ConversationTurnError(403, "Only the author may change a user message.")
+        if row.get("deleted_at"):
+            if not delete:
+                raise ConversationTurnError(409, "The message has been deleted.")
+        else:
+            now = now_iso()
+            affected = get_store()._execute_affected(
+                "UPDATE conversation_turns SET body = ?, body_hash = ?, edited_at = ?, deleted_at = ?, "
+                "message_version = message_version + 1 WHERE doc_id = ? AND seq = ? "
+                "AND participant_key = ? AND speaker = 'user' AND message_version = ? AND deleted_at IS NULL",
+                [body, _sha256(body), now, now if delete else None, doc_id, seq,
+                 resolved["participant_key"], expected_version],
+            )
+            if affected != 1:
+                raise ConversationTurnError(409, "The message changed. Reload it before retrying.")
+            if delete:
+                get_store()._execute("DELETE FROM message_image_links WHERE conversation_id = ? AND seq = ?", [doc_id, seq])
+            row = turn_store.get_turn(doc_id, seq)
+    result = {"ok": True, "doc_id": doc_id, "head_seq": turn_store.current_head_seq(doc_id), "turn": turn_wire(row)}
+    from modules.flow_gate.services.conversation_events import broadcast_turn_appended
+    broadcast_turn_appended(doc, dict(result, changed=True))
+    return result

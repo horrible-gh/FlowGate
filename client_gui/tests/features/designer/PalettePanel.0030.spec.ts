@@ -79,7 +79,7 @@ describe('PalettePanel (flowgate.v02.0030)', () => {
     const w = mountPalette()
     expect(sectionLabels(w)).toEqual([
       ['design', ['기본 설계', '프로토콜', '로직', 'DB설계']],
-      ['workflow', ['조사', '작업계획', '작업', '테스트']],
+      ['workflow', ['조사', '작업', '테스트']],
       ['control', ['확인']],
     ])
     expect(w.findAll('[data-test="designer-palette-section-title"]').map((t) => t.text())).toEqual([
@@ -222,7 +222,7 @@ describe('PalettePanel (flowgate.v02.0030)', () => {
       { id: 'custom.7', category: 'workflow', nodeKind: 'custom.7', docType: null, icon: 'bug', accent: '#9b72ff', custom: true, label: '버그 분석' },
     ]
     const w = mountPalette({ customItems: bound })
-    expect(sectionLabels(w)[1][1]).toEqual(['조사', '작업계획', '작업', '테스트', '버그 분석'])
+    expect(sectionLabels(w)[1][1]).toEqual(['조사', '작업', '테스트', '버그 분석'])
 
     await openAdd(w)
     await setName('새 항목')

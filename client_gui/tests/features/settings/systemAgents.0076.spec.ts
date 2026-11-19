@@ -8,6 +8,7 @@ import router from '@/app/router/index'
 import { setCurrentUser } from '@/core/auth/currentUser'
 import { issueAgentEnrollment, revokeAgentCredential, updateSystemAgent } from '@/features/settings/api'
 import SystemAgentSettingsView from '@/features/settings/views/SystemAgentSettingsView.vue'
+import AgentEditDialog from '@/features/settings/components/AgentEditDialog.vue'
 
 // flowgate.v02.0076 T#4 (D §2.6, §5.2 V16·V17): 시스템 › 시스템 Agent on the real /app router
 // (installAuthGuard + installSettingsAccessGuard + SettingsLayout) with the real view. Only the
@@ -30,6 +31,7 @@ interface Rec {
   local_executable_path: string | null
   remote_workdir?: string | null
   /** flowgate.v02test.0019: workspace cleanup policy (server default ON / 24 h). */
+  maxJobs?: number
   cleanup?: boolean
   hours?: number
   /** flowgate.v02test.0019: a CLAIMED/STARTED Job leased by it, or a NEW Job only it can take. */
@@ -84,6 +86,7 @@ vi.mock('@shared/api', async (importOriginal) => {
     connection_mode: r.connection_mode,
     local_executable_path: r.local_executable_path,
     remote_workdir: r.remote_workdir ?? null,
+    max_concurrent_jobs: r.maxJobs ?? 4, running_jobs: 0, queued_jobs: 0,
     workspace_cleanup_enabled: r.cleanup ?? true,
     workspace_cleanup_retention_hours: r.hours ?? 24,
     configured_capabilities: { ...r.configured },
@@ -131,21 +134,18 @@ vi.mock('@shared/api', async (importOriginal) => {
   }
 
   function create(body: Record<string, unknown>) {
-    const fields = ['name', 'enabled', 'location', 'connection_mode', 'local_executable_path', 'configured_capabilities']
-    const extra = Object.keys(body).filter((k) => !fields.includes(k))
+    const fields = ['name', 'remote_workdir', 'workspace_cleanup_enabled', 'workspace_cleanup_retention_hours', 'max_concurrent_jobs']
+    const extra = Object.keys(body).filter(k => !fields.includes(k))
     if (extra.length) throw invalid(extra[0], 'extra_forbidden')
-    const missing = fields.filter((k) => !(k in body))
-    if (missing.length) throw invalid(missing[0], 'missing')
     const name = String(body.name)
     if (!name.trim() || name.length > 100) throw invalid('name', 'invalid')
-    const location = body.location as Rec['location']
-    if ((location === 'remote' && (body.connection_mode !== 'agent_pull' || body.local_executable_path !== null))
-      || (location === 'local' && body.connection_mode !== null)) throw invalid('body', 'invalid Agent field combination')
+    const location = 'remote'
     net.seq += 1
     const r: Rec = {
-      agent_id: `agt_new${net.seq}`, name: name.trim(), enabled: Boolean(body.enabled), location,
-      connection_mode: body.connection_mode as Rec['connection_mode'], local_executable_path: body.local_executable_path as string | null,
-      configured: caps(body.configured_capabilities), reported: null, credentialActive: false, credentialHistory: false,
+      agent_id: `agt_new${net.seq}`, name: name.trim(), enabled: true, location,
+      connection_mode: 'agent_pull', local_executable_path: null, remote_workdir: body.remote_workdir as string | null,
+      cleanup: body.workspace_cleanup_enabled as boolean, hours: body.workspace_cleanup_retention_hours as number, maxJobs: body.max_concurrent_jobs as number,
+      configured: { ai_cli: true, ai_api: true, storage: false }, reported: null, credentialActive: false, credentialHistory: false,
       pending: null, fresh: false, last_seen_at: null, agent_version: null, protocol_version: null, protocol_compatibility: 'unknown',
       last_rejected_protocol_version: null, last_protocol_rejection_at: null, os: null, architecture: null,
     }
@@ -156,7 +156,7 @@ vi.mock('@shared/api', async (importOriginal) => {
 
   function patch(id: string, body: Record<string, unknown>) {
     const fields = ['name', 'enabled', 'location', 'connection_mode', 'local_executable_path', 'remote_workdir',
-      'workspace_cleanup_enabled', 'workspace_cleanup_retention_hours', 'configured_capabilities']
+      'workspace_cleanup_enabled', 'workspace_cleanup_retention_hours', 'max_concurrent_jobs']
     const extra = Object.keys(body).filter((k) => !fields.includes(k))
     if (extra.length) throw invalid(extra[0], 'extra_forbidden')
     if (!Object.keys(body).length) throw invalid('body', 'required')
@@ -167,6 +167,7 @@ vi.mock('@shared/api', async (importOriginal) => {
     if ((r.location === 'remote' && (mode !== 'agent_pull' || path !== null)) || (r.location === 'local' && mode !== null)) {
       throw invalid('connection_mode', 'invalid_combination')
     }
+    if ('max_concurrent_jobs' in body) r.maxJobs = Number(body.max_concurrent_jobs)
     if ('name' in body) r.name = String(body.name).trim()
     if ('enabled' in body) r.enabled = Boolean(body.enabled)
     r.connection_mode = mode as Rec['connection_mode']
@@ -466,7 +467,7 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     expect(w.get('[data-field="platform"]').text()).toBe('linux / amd64')
     expect(w.find('[data-testid="agent-status"] input').exists()).toBe(false)
     expect(w.find('[data-edit-cap="storage"], [data-testid="edit-path"], [data-testid="agent-enable"], [data-testid="agent-revoke"]').exists()).toBe(false)
-    expect(w.findAll('[data-edit-cap]').map((c) => c.attributes('data-edit-cap'))).toEqual(['ai_cli', 'ai_api'])
+    expect(w.findAll('[data-edit-cap]').map((c) => c.attributes('data-edit-cap'))).toEqual([])
   })
 
   it('new remote: POST with all required fields, then same-ID POST {} enrollment, then GET', async () => {
@@ -474,46 +475,60 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     await create(w)
     expect(writes()).toEqual(['POST /api/v1/system/agents', 'POST /api/v1/system/agents/agt_new1/enrollments'])
     expect(bodiesOf(/^POST \/api\/v1\/system\/agents$/)).toEqual([{
-      name: 'new-machine', enabled: true, location: 'remote', connection_mode: 'agent_pull', local_executable_path: null,
-      configured_capabilities: { ai_cli: false, ai_api: false, storage: false },
+      name: 'new-machine', remote_workdir: null, workspace_cleanup_enabled: true, workspace_cleanup_retention_hours: 24, max_concurrent_jobs: 4,
     }])
     expect(net.requests.at(-1)).toBe('GET /api/v1/system/agents')
     expect(w.find('[data-testid="agent-create-form"]').exists()).toBe(false)
     expectTokenOnlyInBox(w, server('agt_new1')!.pending!.token, true)
-    expect(w.get('[data-testid="enrollment-expiry"]').text()).toContain(server('agt_new1')!.pending!.expires_at)
+    expect(w.get('[data-testid="enrollment-expiry"]').attributes('datetime')).toBe(server('agt_new1')!.pending!.expires_at)
+    expect(w.get('[data-testid="enrollment-expiry"]').text()).toMatch(/까지$/)
   })
 
-  it.each(['local', 'remote'] as const)('restores %s registration fields and skips enrollment when disabled', async location => {
+  it('0043 registration saves capacity, workdir and cleanup in the same dialog', async () => {
     const w = await open('/settings/system/agents')
     await click(w, '[data-testid="agent-new"]')
-    await type(w, '[data-testid="agent-name"]', 'restored-agent')
-    await click(w, `[data-location="${location}"]`)
-    if (location === 'local') await type(w, '[data-testid="agent-path"]', '/opt/restored-agent')
-    await w.get('[data-cap="storage"]').setValue(true)
-    await w.get('[data-testid="agent-enabled"]').setValue(false)
+    expect(w.find('[data-location], [data-cap], [data-testid="agent-enabled"]').exists()).toBe(false)
+    const dialog = w.findComponent(AgentEditDialog).vm.$.uid
+    await type(w, '[data-testid="agent-name"]', 'new-machine')
+    await type(w, '[data-testid="agent-max-jobs"]', '8')
+    await type(w, '[data-testid="edit-remote-workdir"]', '/jobs')
+    await type(w, '[data-testid="edit-cleanup-hours"]', '48')
     await click(w, '[data-testid="agent-create-submit"]')
-    expect(writes()).toEqual(['POST /api/v1/system/agents'])
-    expect(server('agt_new1')).toMatchObject({
-      name: 'restored-agent', enabled: false, location,
-      connection_mode: location === 'remote' ? 'agent_pull' : null,
-      local_executable_path: location === 'local' ? '/opt/restored-agent' : null,
-      configured: { ai_cli: false, ai_api: false, storage: true },
-    })
-    expect(w.find('[data-testid="agent-create-form"]').exists()).toBe(false)
-    expect(w.find('[data-testid="agent-enrollment"]').exists()).toBe(false)
-    expect(net.requests.at(-1)).toBe('GET /api/v1/system/agents')
+    expect(w.findComponent(AgentEditDialog).vm.$.uid).toBe(dialog)
+    expect(w.findAll('.agent-settings-dialog')).toHaveLength(1)
+    expect(server('agt_new1')).toMatchObject({ enabled: true, location: 'remote', maxJobs: 8, hours: 48, remote_workdir: '/jobs/${AGENT_JOB_ID}' })
+    await click(w, '[data-testid="edit-cancel"]')
+    await pick(w, 'agt_new1')
+    expect(w.find('[data-testid="enrollment-token"]').exists()).toBe(false)
+    await click(w, '[data-testid="enrollment-retry"]')
+    expect(net.tokens).toBe(2)
+    expectTokenOnlyInBox(w, server('agt_new1')!.pending!.token, true)
   })
 
-  it('enabled local registration never attempts remote enrollment', async () => {
+  it.each(['0','33','1.5',''])('0043 rejects capacity %s and preserves dirty input on close', async value => {
     const w = await open('/settings/system/agents')
-    await click(w, '[data-testid="agent-new"]')
-    await type(w, '[data-testid="agent-name"]', 'a'.repeat(100))
-    await click(w, '[data-location="local"]')
-    await w.get('[data-cap="ai_cli"]').setValue(true)
-    await click(w, '[data-testid="agent-create-submit"]')
-    expect(writes()).toEqual(['POST /api/v1/system/agents'])
-    expect(server('agt_new1')).toMatchObject({ enabled: true, location: 'local', configured: { ai_cli: true } })
-    expect(toastText(w)).toContain('등록')
+    await pick(w, 'agt_a_online')
+    await type(w, '[data-testid="agent-max-jobs"]', value)
+    expect(w.get('[data-testid="edit-save"]').attributes('disabled')).toBeDefined()
+    await click(w, '[data-testid="edit-cancel"]')
+    expect(w.find('[data-testid="leave-confirm"]').exists()).toBe(true)
+    expect(writes()).toEqual([])
+  })
+
+  it('0043 saves capacity and enabled independently and requires saved enable before reissue', async () => {
+    const w = await open('/settings/system/agents')
+    await pick(w, 'agt_e_new')
+    await type(w, '[data-testid="agent-max-jobs"]', '32')
+    await click(w, '[data-testid="edit-save"]')
+    expect(bodiesOf(/^PATCH /)).toEqual([{ max_concurrent_jobs: 32 }])
+    await click(w, '[data-testid="edit-enabled"]')
+    expect(w.get('[data-testid="edit-enabled"]').attributes('aria-checked')).toBe('false')
+    await click(w, '[data-testid="edit-save"]')
+    expect(w.find('[data-testid="enrollment-retry"]').exists()).toBe(false)
+    await click(w, '[data-testid="edit-enabled"]')
+    expect(w.find('[data-testid="enrollment-retry"]').exists()).toBe(false)
+    await click(w, '[data-testid="edit-save"]')
+    expect(w.find('[data-testid="enrollment-retry"]').exists()).toBe(true)
   })
 
   it('local and disabled agents remain editable, preserving hidden storage, enabled, location and executable path', async () => {
@@ -521,29 +536,58 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     const w = await open('/settings/system/agents')
     await pick(w, 'agt_f_local')
     await type(w, '[data-testid="edit-name"]', 'local-renamed')
-    await w.get('[data-edit-cap="ai_api"]').setValue(true)
     await click(w, '[data-testid="edit-save"]')
-    expect(bodiesOf(/^PATCH /)).toEqual([{ name: 'local-renamed', configured_capabilities: { ai_cli: true, ai_api: true, storage: true } }])
+    expect(bodiesOf(/^PATCH /)).toEqual([{ name: 'local-renamed' }])
     expect(server('agt_f_local')).toMatchObject({ enabled: false, location: 'local', connection_mode: null, local_executable_path: '/opt/flowgate-agent', configured: { storage: true } })
   })
 
-  it('flowgate.v02.0135 CH0006: the edit dialog shows 원격 작업 디렉터리 (label and input only), saves and reads it back', async () => {
+  it('flowgate.v02test.0043 CH0004: English strings have a real token button label and a singular change count', () => {
+    const en = (key: string, named: Record<string, unknown> = {}) => i18n.global.t(key, named, { locale: 'en' })
+    expect(en('gui.agent_screen.retry_issue')).toBe('Reissue enrollment token')
+    expect(en('gui.agent_capacity.changes_one')).toBe('1 unsaved change')
+    expect(en('gui.agent_capacity.changes', { count: 2 })).toBe('2 unsaved changes')
+  })
+
+  it('flowgate.v02test.0043 CH0004: 작업 폴더 위치 takes the parent folder and saves it with /${AGENT_JOB_ID}', async () => {
     const w = await open('/settings/system/agents')
     await pick(w, 'agt_a_online')
     const dialog = w.get('[data-testid="agent-detail"]')
-    expect(w.text()).toContain('에이전트 수정')
+    expect(w.get('.agent-dialog-title h2').text()).toBe('build-online')
+    expect(w.get('[data-field="connection"]').text()).toBe('온라인')
     expect(dialog.text()).not.toContain('나중에 바꿀 수 있습니다')
     expect(dialog.text()).not.toContain('heartbeat로 보고한')
     const field = dialog.get('[data-testid="edit-remote-workdir"]')
-    expect(dialog.get('label[for="agent-dialog-workdir"]').text()).toBe('원격 작업 디렉터리')
-    expect(field.element.closest('.agent-form-group')!.textContent!.trim()).toBe('원격 작업 디렉터리')
-    expect(field.attributes('placeholder')).toBeUndefined()
-    await type(w, '[data-testid="edit-remote-workdir"]', '/tmp/flowgate/${AGENT_JOB_ID}')
+    expect(dialog.get('label[for="agent-dialog-workdir"]').text()).toBe('작업 폴더 위치')
+    expect(field.attributes('placeholder')).toBe('/data/flowgate')
+    expect(w.get('[data-testid="edit-workdir-empty"]').text()).toContain('비어 있으면 작업을 받을 수 없습니다')
+    expect(w.get('[data-testid="edit-state"]').text()).toBe('변경 사항 없음')
+    await type(w, '[data-testid="edit-remote-workdir"]', '/tmp/flowgate/')
+    expect(w.get('[data-testid="edit-workdir-preview"]').text()).toBe('작업마다 /tmp/flowgate/job_… 폴더를 새로 만듭니다.')
+    expect(w.get('[data-testid="edit-state"]').text()).toBe('저장하지 않은 변경 1개')
     await click(w, '[data-testid="edit-save"]')
     expect(bodiesOf(/^PATCH /)).toEqual([{ remote_workdir: '/tmp/flowgate/${AGENT_JOB_ID}' }])
     expect(server('agt_a_online')!.remote_workdir).toBe('/tmp/flowgate/${AGENT_JOB_ID}')
+    expect(w.get('[data-testid="edit-saved"]').text()).toBe('변경을 저장했습니다.')
+
+    // Opening a saved value shows the parent only, and opening alone changes nothing.
+    await click(w, '[data-testid="edit-cancel"]')
     await pick(w, 'agt_a_online')
-    expect((w.get('[data-testid="edit-remote-workdir"]').element as HTMLInputElement).value).toBe('/tmp/flowgate/${AGENT_JOB_ID}')
+    expect((w.get('[data-testid="edit-remote-workdir"]').element as HTMLInputElement).value).toBe('/tmp/flowgate')
+    expect(w.get('[data-testid="edit-state"]').text()).toBe('변경 사항 없음')
+    expect(w.get('[data-testid="edit-save"]').attributes('disabled')).toBeDefined()
+    await click(w, '[data-testid="edit-cancel"]')
+    expect(w.find('[data-testid="leave-confirm"]').exists()).toBe(false)
+
+    // A Windows path gets a backslash.
+    await pick(w, 'agt_a_online')
+    await type(w, '[data-testid="edit-remote-workdir"]', 'C:\\flowgate')
+    expect(w.get('[data-testid="edit-workdir-preview"]').text()).toBe('작업마다 C:\\flowgate\\job_… 폴더를 새로 만듭니다.')
+    await click(w, '[data-testid="edit-save"]')
+    expect(bodiesOf(/^PATCH /).at(-1)).toEqual({ remote_workdir: 'C:\\flowgate\\${AGENT_JOB_ID}' })
+    await pick(w, 'agt_a_online')
+    expect((w.get('[data-testid="edit-remote-workdir"]').element as HTMLInputElement).value).toBe('C:\\flowgate')
+
+    // Empty clears the setting.
     await type(w, '[data-testid="edit-remote-workdir"]', '  ')
     await click(w, '[data-testid="edit-save"]')
     expect(bodiesOf(/^PATCH /).at(-1)).toEqual({ remote_workdir: null })
@@ -551,13 +595,46 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     expect(w.find('[data-testid="edit-remote-workdir"]').exists()).toBe(false)
   })
 
+  it('flowgate.v02test.0043 CH0004: a variable in the middle stays as written; a typed variable is never doubled', async () => {
+    server('agt_a_online')!.remote_workdir = 'C:\\fg\\${AGENT_JOB_ID}\\w'
+    const w = await open('/settings/system/agents')
+    await pick(w, 'agt_a_online')
+    expect((w.get('[data-testid="edit-remote-workdir"]').element as HTMLInputElement).value).toBe('C:\\fg\\${AGENT_JOB_ID}\\w')
+    expect(w.get('[data-testid="edit-workdir-preview"]').text()).toBe('작업마다 C:\\fg\\job_…\\w 폴더를 새로 만듭니다.')
+    expect(w.get('[data-testid="edit-save"]').attributes('disabled')).toBeDefined()
+    await type(w, '[data-testid="edit-remote-workdir"]', '/srv/fg/${AGENT_JOB_ID}')
+    await click(w, '[data-testid="edit-save"]')
+    expect(bodiesOf(/^PATCH /)).toEqual([{ remote_workdir: '/srv/fg/${AGENT_JOB_ID}' }])
+    await pick(w, 'agt_a_online')
+    expect((w.get('[data-testid="edit-remote-workdir"]').element as HTMLInputElement).value).toBe('/srv/fg')
+    expect(w.get('[data-testid="edit-save"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('flowgate.v02test.0043 CH0004: an older fixed folder is shown as shared and gets per-Job folders once edited', async () => {
+    server('agt_a_online')!.remote_workdir = '/legacy/fixed'
+    const w = await open('/settings/system/agents')
+    await pick(w, 'agt_a_online')
+    expect((w.get('[data-testid="edit-remote-workdir"]').element as HTMLInputElement).value).toBe('/legacy/fixed')
+    expect(w.get('[data-testid="edit-workdir-shared"]').text()).toContain('모든 작업이 /legacy/fixed 폴더 하나를 같이 씁니다')
+    expect(w.find('[data-testid="edit-workdir-preview"]').exists()).toBe(false)
+    expect(w.get('[data-testid="edit-state"]').text()).toBe('변경 사항 없음')
+    await type(w, '[data-testid="edit-remote-workdir"]', '/legacy/fixed')
+    expect(w.get('[data-testid="edit-workdir-preview"]').text()).toBe('작업마다 /legacy/fixed/job_… 폴더를 새로 만듭니다.')
+    await click(w, '[data-testid="edit-save"]')
+    expect(bodiesOf(/^PATCH /)).toEqual([{ remote_workdir: '/legacy/fixed/${AGENT_JOB_ID}' }])
+    expect((w.get('[data-testid="edit-remote-workdir"]').element as HTMLInputElement).value).toBe('/legacy/fixed')
+    expect(w.get('[data-testid="edit-save"]').attributes('disabled')).toBeDefined()
+  })
+
   it('flowgate.v02test.0019: 작업 폴더 자동 정리 ON/OFF and 보관 시간 are shown, sent as changed fields only and read back', async () => {
     const w = await open('/settings/system/agents')
     await pick(w, 'agt_a_online')
     const group = w.get('[data-testid="edit-workspace-cleanup"]')
     expect(group.text()).toContain('작업 폴더 자동 정리')
-    expect(group.text()).toContain('완료 후 보관 시간(시간)')
-    expect((w.get('[data-testid="edit-cleanup-enabled"]').element as HTMLInputElement).checked).toBe(true)
+    expect(group.text()).toContain('작업이 끝나고')
+    expect(group.text()).toContain('시간 뒤 폴더를 지웁니다 (1~720).')
+    expect(w.get('[data-testid="edit-cleanup-hours"]').attributes('aria-label')).toBe('완료 후 보관 시간(시간)')
+    expect(w.get('[data-testid="edit-cleanup-enabled"]').attributes('aria-checked')).toBe('true')
     expect((w.get('[data-testid="edit-cleanup-hours"]').element as HTMLInputElement).value).toBe('24')
     await type(w, '[data-testid="edit-cleanup-hours"]', '48')
     await click(w, '[data-testid="edit-save"]')
@@ -565,15 +642,62 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     expect(server('agt_a_online')!.hours).toBe(48)
     expect(server('agt_a_online')!.cleanup).toBeUndefined()   // only the changed field was sent
     await pick(w, 'agt_a_online')
-    await w.get('[data-testid="edit-cleanup-enabled"]').setValue(false)
+    await click(w, '[data-testid="edit-cleanup-enabled"]')
+    expect(w.find('[data-testid="edit-cleanup-hours"]').exists()).toBe(false)
+    expect(w.get('[data-testid="edit-workspace-cleanup"]').text()).not.toContain('시간 뒤 폴더를 지웁니다')
     await click(w, '[data-testid="edit-save"]')
     expect(bodiesOf(/^PATCH /).at(-1)).toEqual({ workspace_cleanup_enabled: false })
     expect(server('agt_a_online')).toMatchObject({ cleanup: false, hours: 48 })
     await pick(w, 'agt_a_online')
-    expect((w.get('[data-testid="edit-cleanup-enabled"]').element as HTMLInputElement).checked).toBe(false)
+    expect(w.get('[data-testid="edit-cleanup-enabled"]').attributes('aria-checked')).toBe('false')
+    expect(w.find('[data-testid="edit-cleanup-hours"]').exists()).toBe(false)
+    await click(w, '[data-testid="edit-cleanup-enabled"]')
     expect((w.get('[data-testid="edit-cleanup-hours"]').element as HTMLInputElement).value).toBe('48')
+    await click(w, '[data-testid="edit-cleanup-enabled"]')
     await pick(w, 'agt_f_local')
     expect(w.find('[data-testid="edit-workspace-cleanup"]').exists()).toBe(false)
+  })
+
+  it('flowgate.v02test.0043 CH0004: draft 4 layout: sections, one status chip, change count, hidden hours not checked', async () => {
+    Object.assign(net.agents[0], { reported: { ai_cli: false, ai_api: true, storage: false } })
+    const w = await open('/settings/system/agents')
+    await pick(w, 'agt_a_online')
+    expect(w.findAll('.agent-sec-h')).toHaveLength(0)   // draft 5: hairlines only, no section headings
+    expect(w.find('[data-testid="edit-enabled-off"]').exists()).toBe(false)
+    expect(w.get('[data-testid="agent-max-jobs-tip"]').attributes('title')).toBe('채팅과 카드 작업을 합친 수이며, 넘는 작업은 순서대로 대기합니다.')
+    expect(w.findAll('[data-field="connection"]')).toHaveLength(1)
+    expect(w.get('[data-testid="agent-status"]').text()).toContain('linux / amd64 · 최근 접속')
+    expect(w.get('[data-testid="agent-cli-missing"]').text()).toContain('설치하면 다음 접속부터')
+    expect(w.get('[data-testid="agent-running"]').text()).toBe('지금 0개 실행 중')
+    expect(w.find('input[type="checkbox"]').exists()).toBe(false)
+    await type(w, '[data-testid="agent-max-jobs"]', '40')
+    await type(w, '[data-testid="edit-name"]', 'renamed')
+    expect(w.get('[data-testid="edit-state"]').text()).toBe('저장하지 않은 변경 2개')
+    expect(w.get('[data-testid="edit-save"]').attributes('disabled')).toBeDefined()
+    await type(w, '[data-testid="agent-max-jobs"]', '4')
+    await type(w, '[data-testid="edit-cleanup-hours"]', '0')
+    expect(w.get('[data-testid="edit-cleanup-hours-invalid"]').exists()).toBe(true)
+    await click(w, '[data-testid="edit-cleanup-enabled"]')
+    expect(w.find('[data-testid="edit-cleanup-hours-invalid"]').exists()).toBe(false)
+    await click(w, '[data-testid="edit-save"]')
+    expect(bodiesOf(/^PATCH /)).toEqual([{ name: 'renamed', workspace_cleanup_enabled: false }])
+  })
+
+  it('flowgate.v02test.0043 CH0004: registration header and a parent folder registered with /${AGENT_JOB_ID}', async () => {
+    const w = await open('/settings/system/agents')
+    await click(w, '[data-testid="agent-new"]')
+    expect(w.get('.agent-dialog-title h2').text()).toBe('새 에이전트 등록')
+    expect(w.get('[data-testid="agent-status"]').text()).toBe('이름만 입력하면 바로 등록됩니다. 나머지는 나중에 바꿀 수 있습니다.')
+    expect(w.find('[data-field="connection"]').exists()).toBe(false)
+    expect(w.find('[data-testid="edit-enabled"]').exists()).toBe(false)
+    await type(w, '[data-testid="agent-name"]', 'win-pc')
+    await type(w, '[data-testid="edit-remote-workdir"]', 'D:\\fg\\')
+    await type(w, '[data-testid="edit-cleanup-hours"]', '')
+    await click(w, '[data-testid="edit-cleanup-enabled"]')
+    await click(w, '[data-testid="agent-create-submit"]')
+    expect(bodiesOf(/^POST \/api\/v1\/system\/agents$/)).toEqual([{
+      name: 'win-pc', remote_workdir: 'D:\\fg\\${AGENT_JOB_ID}', workspace_cleanup_enabled: false, workspace_cleanup_retention_hours: 24, max_concurrent_jobs: 4,
+    }])
   })
 
   it.each(['0', '721', '1.5', ''])('flowgate.v02test.0019: 보관 시간 %j is refused on screen and nothing is sent', async (value) => {
@@ -593,9 +717,9 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
   it('empty/long names send nothing; create 403 keeps the form and input without reporting success', async () => {
     const w = await open('/settings/system/agents')
     await click(w, '[data-testid="agent-new"]')
-    expect(w.findAll('[data-cap]').map((c) => c.attributes('data-cap'))).toEqual(['ai_cli','ai_api','storage'])
-    expect(w.find('[data-testid="agent-location"]').exists()).toBe(true)
-    expect(w.find('[data-testid="agent-enabled"]').exists()).toBe(true)
+    expect(w.findAll('[data-cap]').map((c) => c.attributes('data-cap'))).toEqual([])
+    expect(w.find('[data-testid="agent-location"]').exists()).toBe(false)
+    expect(w.find('[data-testid="agent-enabled"]').exists()).toBe(false)
     expect(w.find('[data-testid="agent-path"]').exists()).toBe(false)
     expect(w.get('[data-testid="agent-name"]').attributes('maxlength')).toBe('100')
     await click(w, '[data-testid="agent-create-submit"]')
@@ -717,7 +841,7 @@ describe('V17 — enrollment, failures and token lifetime in the new flow', () =
     const w = await open('/settings/system/agents')
     await create(w)
     const token = server('agt_new1')!.pending!.token
-    await click(w, '[data-testid="enrollment-close"]')
+    await click(w, '[data-testid="agent-editor-close"]')
     expect(viewState(w).enrollment).toBeNull()
     await pick(w, 'agt_new1')
     expectTokenOnlyInBox(w, token, false)
@@ -757,8 +881,8 @@ describe('V17 — enrollment, failures and token lifetime in the new flow', () =
     net.release!()
     await flushPromises()
     expectTokenOnlyInBox(w, token, false)
-    expect(w.get('[data-testid="enrollment-state"]').text()).toBe('온라인')
-    await click(w, '[data-testid="enrollment-done"]')
+    expect(w.get('[data-field="connection"]').text()).toBe('온라인')
+    await click(w, '[data-testid="edit-cancel"]')
     const closed = net.requests.length
     await vi.advanceTimersByTimeAsync(20_000)
     expect(net.requests.length).toBe(closed)
@@ -779,7 +903,7 @@ describe('V17 — enrollment, failures and token lifetime in the new flow', () =
     net.release!()
     await flushPromises()
     expect(writes()).toEqual(['POST /api/v1/system/agents', 'POST /api/v1/system/agents/agt_new1/enrollments'])
-    expect(w.get('[data-testid="enrollment-state"]').text()).toBe('온라인')
+    expect(w.get('[data-field="connection"]').text()).toBe('온라인')
     expect(w.find('[data-testid="enrollment-error"]').exists()).toBe(false)
   })
 
@@ -821,7 +945,7 @@ describe('V17 — row deletion and failed mutation confirmation', () => {
       expect(w.get(`[data-delete-agent="${id}"]`).element.parentElement?.title).toBe('삭제')
     }
     await deleteRow(w, 'agt_d_revoked')
-    expect(w.get('[data-testid="agent-confirm"]').text()).toContain('등록·실행 이력은 남습니다')
+    expect(w.get('[data-testid="agent-confirm"]').text()).toContain('등록·실행 이력은 유지됩니다')
     await click(w, '[data-testid="agent-confirm-ok"]')
     expect(writes()).toEqual(['DELETE /api/v1/system/agents/agt_d_revoked'])
     expect(w.find('[data-agent="agt_d_revoked"]').exists()).toBe(false)
@@ -934,7 +1058,7 @@ describe('응답의 수명 — late answers never repopulate secrets or another 
     net.holdCall = /enrollments$/
     await create(w)
     const state = viewState(w)
-    if (change === 'close') await click(w,'[data-testid="enrollment-close"]')
+    if (change === 'close') await click(w,'[data-testid="agent-editor-close"]')
     if (change === 'route') { await router.push('/settings/system/users'); await waitForPath('/settings/system/users') }
     if (change === 'role') { setCurrentUser({ ...ADMIN, isAdmin: false }); await waitForPath('/settings') }
     if (change === 'account') { setCurrentUser({ ...ADMIN, username: 'other-admin' }); await flushPromises() }
@@ -992,36 +1116,31 @@ describe('편집 확정값 — untouched fields follow GET; only touched fields 
     expect(writes()).toEqual([])
   })
 
-  it('preserves typed fields and rebases untouched AI API and hidden storage before capability PATCH', async () => {
+  it('0043 rebases untouched capacity and preserves a typed name', async () => {
     const w = await open('/settings/system/agents')
     await pick(w,'agt_e_new')
     await type(w,'[data-testid="edit-name"]','my-name')
-    server('agt_e_new')!.configured = { ai_cli:false, ai_api:false, storage:true }
+    server('agt_e_new')!.maxJobs = 8
     await focus()
     expect(editName(w)).toBe('my-name')
+    expect((w.get('[data-testid="agent-max-jobs"]').element as HTMLInputElement).value).toBe('8')
     await click(w,'[data-testid="edit-save"]')
     expect(bodiesOf(/^PATCH /)).toEqual([{name:'my-name'}])
-    expect(w.find('[data-testid="agent-detail"]').exists()).toBe(false)
-    await pick(w,'agt_e_new')
-    await w.get('[data-edit-cap="ai_cli"]').setValue(true)
-    server('agt_e_new')!.configured = { ai_cli:false, ai_api:true, storage:true }
-    await focus()
-    expect([capChecked(w,'ai_cli'),capChecked(w,'ai_api')]).toEqual([true,true])
-    await click(w,'[data-testid="edit-save"]')
-    expect(bodiesOf(/^PATCH /).at(-1)).toEqual({configured_capabilities:{ai_cli:true,ai_api:true,storage:true}})
+    expect(w.find('[data-testid="agent-detail"]').exists()).toBe(true)
   })
 
-  it('an in-flight focus GET finishes before PATCH, preserving a concurrent hidden storage change', async () => {
+  it('0043 waits for an in-flight GET before saving a typed capacity', async () => {
     const w = await open('/settings/system/agents')
     await pick(w,'agt_e_new')
-    await w.get('[data-edit-cap="ai_cli"]').setValue(true)
+    await type(w,'[data-testid="agent-max-jobs"]','8')
     net.holdList = true
     await focus()
     await click(w,'[data-testid="edit-save"]')
     expect(writes()).toEqual([])
-    server('agt_e_new')!.configured.storage = true
+    server('agt_e_new')!.name = 'other-name'
     net.release!(); await flushPromises()
-    expect(bodiesOf(/^PATCH /)).toEqual([{configured_capabilities:{ai_cli:true,ai_api:false,storage:true}}])
+    expect(bodiesOf(/^PATCH /)).toEqual([{max_concurrent_jobs:8}])
+    expect(editName(w)).toBe('other-name')
   })
 
   it('discarded edit stays discarded when switching to create and cancelling', async () => {
@@ -1072,11 +1191,10 @@ describe('flowgate.v02.0077 개요 › 확인 필요', () => {
     const w = await open('/settings')
     expect(net.requests).toEqual(['GET /api/v1/system/agents'])
     const items = w.findAll('[data-attention]')
-    expect(items.map((i) => i.attributes('data-attention'))).toEqual(['agt_a_online', 'agt_b_offline', 'agt_b_offline', 'agt_c_incompat', 'agt_d_revoked'])
-    expect(items[0].text()).toContain('build-online 기능 불일치')
-    expect(items[1].text()).toContain('build-offline 오프라인')
-    expect(items[3].text()).toContain('build-incompatible 프로토콜 비호환')
-    await items[1].get('[data-testid="hub-attention-go"]').trigger('click')
+    expect(items.map((i) => i.attributes('data-attention'))).toEqual(['agt_b_offline', 'agt_c_incompat', 'agt_d_revoked'])
+    expect(items[0].text()).toContain('build-offline 오프라인')
+    expect(items[1].text()).toContain('build-incompatible 프로토콜 비호환')
+    await items[0].get('[data-testid="hub-attention-go"]').trigger('click')
     await waitForPath('/settings/system/agents')
     for (let i = 0; i < 50 && !w.find('[data-testid="agent-detail"]').exists(); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10))

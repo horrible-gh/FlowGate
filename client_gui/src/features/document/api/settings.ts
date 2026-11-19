@@ -40,6 +40,7 @@
 import { toCardAiRoles, type CardAiRoles } from './settingsRoleValues'
 import { normalizeApiError } from '@shared/apiErrors'
 import { getRequest, patchRequest } from '@shared/api'
+import { canvasHeaders } from '@shared/canvasClient'
 
 const API = '/api/v1'
 
@@ -434,7 +435,7 @@ export async function settingsNodeWrite(flowId: string, nodeKey: string, field: 
     value: value ?? null,
     ...(expectedSettingsVersion === undefined ? {} : { expected_settings_version: expectedSettingsVersion }),
     ...(expectedContext === undefined ? {} : { expected_context: expectedContext }),
-  })
+  }, canvasHeaders())
   return toSettingsNode(response.data)
 }
 

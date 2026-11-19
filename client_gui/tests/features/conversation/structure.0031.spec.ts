@@ -30,6 +30,9 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
   it('holds the Conversation part files', () => {
     expect(FILES.map(rel).sort()).toEqual(
       [
+        // flowgate.v02test.0029: message images — the composer's thumbnails, the message's thumbnails with the original view,
+        // the composer's image state, the browser-side shrink and the limits / refusal wording.
+        'ComposerImageStrip.vue',
         'ComposerModelPicker.vue',
         'ComposerSettings.vue',
         'ComposerSourceModes.vue',
@@ -44,6 +47,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'TimelineActivity.vue',
         // flowgate.chat.0017 CH0002: the AI attachment request block of a run (rows drawn by the container's component).
         'TimelineAttachments.vue',
+        'TimelineImages.vue',
         'TimelineMessage.vue',
         // flowgate.v02test.0025: a message's ⋯ menu (context checkpoint: from this message / from the next / clear).
         'TimelineMessageMenu.vue',
@@ -52,12 +56,15 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         // flowgate.v02test.0024 B: the chat's own request failures kept in its history.
         'chatErrors.ts',
         'chatStart.ts',
+        'composerImages.ts',
         'conversationEvents.ts',
         'conversationSession.ts',
         'conversationSource.ts',
         'diffContext.ts',
         'drafts.ts',
+        'imageResize.ts',
         'index.ts',
+        'messageImages.ts',
         'popover.ts',
         'runAssessment.ts',
         'submissionTrace.ts',

@@ -138,7 +138,7 @@ def _missing(ctx: RunContext, entries: dict, extra: frozenset = frozenset()) -> 
 
 
 def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optional[str] = None,
-              command_request_id: Optional[str] = None) -> dict:
+              command_request_id: Optional[str] = None, *, recovery=None) -> dict:
     """``POST /flows/{flow_id}/runs`` -> 201 ``{"run": …}`` (P0008 S5-1~S5-3, L0009 §2.6.5).
 
     0061 T#2: the step / full command (``mode``; a new run: ``full`` when not given). The Flow's paused or idle run
@@ -166,6 +166,13 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
                 return {"run": run_payload(prior["run_id"], with_nodes=True),
                         "command": _command_identity(prior, replayed=True)}
         _refuse_time_machine(flow_id)                                             # 0061 T#13
+        if recovery is None:
+            from flowgate.graph_run.recovery_store import refuse_pending
+            refuse_pending(flow_id)
+        if recovery is not None:
+            replay = recovery.before()
+            if replay is not None:
+                return replay
         active = run_store.current_run(flow_id)                                    # 4 진행 중 실행
         if active is not None:
             if active["status"] not in (run_store.PAUSED, run_store.IDLE) or (
@@ -175,6 +182,8 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
                                     {"flow_id": flow_id, "run_id": active["run_id"], "status": active["status"]})
             _hold_flow(active)
             command_seq = _go_on(group, active, user_id, mode, "user_command", None, jobs)
+            if recovery is not None:
+                recovery.continued(active)
             result = {"run": run_payload(active["run_id"], with_nodes=True)}
             return record(result, active["run_id"], command_seq, "user_command")
         number = revision_no if revision_no is not None else definition_store.latest_revision_no(flow_id)
@@ -196,6 +205,8 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
         run = run_store.create_run(new_key(RUN_ID_PREFIX, set()), flow_id, number, user_id, snapshot,
                                    probe.revision, command)
         ctx = load_context(run, project_id, user_id, jobs)
+        if recovery is not None:
+            recovery.created(ctx)
         command_seq = emit_run_status(ctx, None, "running", "user_start")
         try:
             _take_root_binding(ctx, policies, root)
@@ -213,7 +224,9 @@ def start_run(group: dict, user_id: str, revision_no: Optional[int], mode: Optio
                                  "command_seq": command_seq, "replayed": False}
         return result
 
-    with _command_fence(flow_id):
+    from flowgate.graph_run import fencing
+    fence = fencing.exclusive(flow_id) if recovery is not None else _command_fence(flow_id)
+    with fence:
         result = with_flow_guard(flow_id, body)
     run_jobs(jobs)
     return answer_after_jobs(result, project_id, jobs, with_nodes=True)
@@ -281,6 +294,8 @@ def _go_on(group: dict, run: dict, user_id: str, mode: Optional[str], cause: str
     so the run status event tells it) -> re-dispatch -> drain -> run candidates. The command is
     ``run_state_ports.command_of``'s: a new one (``mode`` given, or an idle run) or, for a paused run with no mode,
     its own (a step keeps its targets). Inside the run's Flow guard; ownership and the Flow checked by the caller."""
+    from flowgate.graph_run.recovery_store import refuse_pending
+    refuse_pending(group["group_id"])
     run_id, from_status = run["run_id"], run["status"]
     adopted = run_state_ports.adopt_revision(group, run, user_id, jobs)
     entries = run_store.policy_entries(run_id)
@@ -620,6 +635,33 @@ def question_nodes(run_id: str, flow_id: str) -> frozenset:
         return frozenset()
 
 
+def question_wait_details(flow_id: str, row: dict) -> list[dict]:
+    """Read the actual unanswered items behind this card's Q badge."""
+    from modules.flow_gate.db import question_items
+    from modules.flow_gate.graph_workflow.store import assignment_store
+    from modules.flow_gate.services.ai_invoke.finalize import open_questions_raised_by_run
+    try:
+        docs = {row.get("result_doc_id"), row.get("instruction_doc_id")}
+        binding = assignment_store.root_binding(flow_id) or {}
+        if binding.get("node_key") == row["node_key"]:
+            docs.add(binding.get("doc_id"))
+        items = {}
+        for doc_id in filter(None, docs):
+            for item in question_items.list_by_doc(doc_id):
+                if not item.get("answer_count"):
+                    items[item["id"]] = item
+        for ai_run_id in run_store.ai_runs_of_node(row["run_id"], row["node_key"]):
+            for item in open_questions_raised_by_run(flow_id, ai_run_id):
+                items[item["id"]] = item
+        return [{"seq": item["seq"], "state": item.get("responder_state") or "pending",
+                 "code": item.get("responder_error_code"),
+                 "message": (item.get("responder_error_message") or "")[:1000]}
+                for item in items.values()]
+    except Exception:
+        _log.warning("question wait detail read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
+        return []
+
+
 def node_asks(flow_id: str, row: dict) -> bool:
     """flowgate.v02.0113 T#3 rework: the open node run ``row``'s own AI — a run of its live attempt
     (``run_store.ai_runs_of_node``) — asked a question nobody has answered yet (``finalize.open_questions_raised_by_run``,
@@ -703,6 +745,7 @@ def node_run_wire(row: dict, flow_id: str, attempt_id: Optional[str] = None, hel
             "intervention": state,                                                                  # 0119 T-2
             "stage": row.get("stage"), "instruction_doc_id": row.get("instruction_doc_id"),
             "attempt_id": attempt_id, "hold": row["node_key"] in held, "question": row["node_key"] in asked,
+            "question_wait": question_wait_details(flow_id, row) if row["node_key"] in asked else [],
             "node_running": running, "node_running_cause": running_cause(flow_id, row, running), **stage_view(flow_id, row, attempt_id, reason),
             **uncarried_changes(row, attempt_id)}
 

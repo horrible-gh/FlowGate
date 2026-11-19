@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, shallowRef, type ShallowRef } from 'vue'
 import { subscribeFlowCanvasChanges } from '@/features/project/flowCanvasEvents'
 import type { ProjectEventFrame } from '@/features/project'
+import { CANVAS_CLIENT_ID } from '@/features/project/flowCanvasApi'
 import {
   INSPECTOR_REFRESH_COALESCE_MS,
   inspectorEventMatches,
@@ -187,6 +188,121 @@ describe('useInspectorResource — target change', () => {
     calls[0].resolve('A1')
     await flushPromises()
     expect(state(r)).toEqual({ status: 'idle', data: null, stale: false, error: null })
+  })
+})
+
+describe('useInspectorResource — identity (flowgate.v02test.0048: a context moved by another tab)', () => {
+  const identity = (key: string) => key.split('#')[0]
+
+  it('a new key of the same identity keeps the shown data while it is read again', async () => {
+    const target = shallowRef<InspectorEventScope | null>(scopeOf(`${DOC_A}#v7`))
+    const { read, calls } = deferredReads<string>()
+    const r = mountResource(target, { read, events: [], identity })
+    calls[0].resolve('A@7')
+    await flushPromises()
+
+    target.value = scopeOf(`${DOC_A}#v8`)
+    await flushPromises()
+    expect(calls.map((c) => c.docId)).toEqual([`${DOC_A}#v7`, `${DOC_A}#v8`])
+    expect(state(r)).toEqual({ status: 'loading', data: 'A@7', stale: true, error: null })
+    calls[1].resolve('A@8')
+    await flushPromises()
+    expect(state(r)).toEqual({ status: 'ready', data: 'A@8', stale: false, error: null })
+  })
+
+  it('a slower answer under the previous context never overwrites the newer one', async () => {
+    const target = shallowRef<InspectorEventScope | null>(scopeOf(`${DOC_A}#v7`))
+    const { read, calls } = deferredReads<string>()
+    const r = mountResource(target, { read, events: [], identity })
+    calls[0].resolve('A@7')
+    await flushPromises()
+    void r.reload()
+    target.value = scopeOf(`${DOC_A}#v8`)
+    await flushPromises()
+    calls[2].resolve('A@8')
+    await flushPromises()
+    calls[1].resolve('A@7 (late)')
+    await flushPromises()
+    expect(state(r)).toEqual({ status: 'ready', data: 'A@8', stale: false, error: null })
+  })
+
+  it('a failed read under the new context keeps the data, stale, with the error', async () => {
+    const target = shallowRef<InspectorEventScope | null>(scopeOf(`${DOC_A}#v7`))
+    const { read, calls } = deferredReads<string>()
+    const r = mountResource(target, { read, events: [], identity })
+    calls[0].resolve('A@7')
+    await flushPromises()
+    target.value = scopeOf(`${DOC_A}#v8`)
+    await flushPromises()
+    const failure = new Error('boom')
+    calls[1].reject(failure)
+    await flushPromises()
+    expect(state(r)).toEqual({ status: 'error', data: 'A@7', stale: true, error: failure })
+  })
+
+  it('another identity, no data yet, or no identity option still drop the data', async () => {
+    const target = shallowRef<InspectorEventScope | null>(scopeOf(`${DOC_A}#v7`))
+    const { read, calls } = deferredReads<string>()
+    const r = mountResource(target, { read, events: [], identity })
+    target.value = scopeOf(`${DOC_A}#v8`)                // nothing shown yet: a plain new read
+    await flushPromises()
+    expect(state(r)).toEqual({ status: 'loading', data: null, stale: false, error: null })
+    calls[1].resolve('A@8')
+    await flushPromises()
+    target.value = scopeOf(`${DOC_B}#v8`)
+    await flushPromises()
+    expect(state(r)).toEqual({ status: 'loading', data: null, stale: false, error: null })
+    wrapper!.unmount()
+
+    const plain = deferredReads<string>()
+    const other = shallowRef<InspectorEventScope | null>(scopeOf(`${DOC_A}#v7`))
+    const q = mountResource(other, { read: plain.read, events: [] })
+    plain.calls[0].resolve('A@7')
+    await flushPromises()
+    other.value = scopeOf(`${DOC_A}#v8`)
+    await flushPromises()
+    expect(state(q)).toEqual({ status: 'loading', data: null, stale: false, error: null })
+  })
+})
+
+describe('useInspectorResource — settings origin', () => {
+  it.each([false, true])('keeps local settings stable before/after the PATCH answer (answered=%s)', async (answered) => {
+    const read = vi.fn().mockResolvedValue('initial')
+    const resource = mountResource(shallowRef(scopeOf(DOC_A)), {
+      read, events: ['graph_canvas_changed'], matches: () => true,
+    })
+    stream.open()
+    await flushPromises()
+    if (answered) resource.replace('saved')
+    stream.emit('graph_canvas_changed', {
+      groupId: FLOW, payload: { reason: 'settings', origin_client_id: CANVAS_CLIENT_ID },
+    })
+    await passWindow()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(resource.status.value).toBe('ready')
+    if (!answered) resource.replace('saved')
+    expect(resource.data.value).toBe('saved')
+    stream.reconnect()
+    await passWindow()
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    ['graph_canvas_changed', 'settings', 'another_tab'],
+    ['graph_canvas_changed', 'settings', null],
+    ['graph_canvas_changed', 'settings', undefined],
+    ['graph_canvas_changed', 'documents', CANVAS_CLIENT_ID],
+    ['graph_canvas_changed', 'hold', CANVAS_CLIENT_ID],
+    ['graph_node_state_changed', 'settings', CANVAS_CLIENT_ID],
+    ['doc_review_status_changed', 'settings', CANVAS_CLIENT_ID],
+  ])('still refreshes %s / %s / %s', async (type, reason, origin) => {
+    const read = vi.fn().mockResolvedValue('current')
+    mountResource(shallowRef(scopeOf(DOC_A)), { read, events: [type] })
+    stream.open()
+    await flushPromises()
+    stream.emit(type, { groupId: FLOW, payload: { reason, origin_client_id: origin } })
+    await passWindow()
+    expect(read).toHaveBeenCalledTimes(2)
   })
 })
 

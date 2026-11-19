@@ -103,6 +103,17 @@ describe('the Frame lays out the kind badge and the ⋯ menu items', () => {
     expect(items[1].getAttribute('data-close')).toBe('yes')
   })
 
+  it('a header state predicate preserves the default pill on other cards', async () => {
+    const registry = fixtureRegistry([registration({ key: 'gateState', order: 1, requiresDocument: false,
+      headerState: probePart('gate-state'), headerStateApplies: target => target.nodeType === 'gate' })])
+    const w = mountFrame(SELECTIONS.graph, registry)
+    expect(w.find('[data-test="designer-inspector-pill"]').exists()).toBe(true)
+    expect(w.find('[data-test="probe-gate-state"]').exists()).toBe(false)
+    await w.setProps({ selection: SELECTIONS.graphGate })
+    expect(w.find('[data-test="probe-gate-state"]').exists()).toBe(true)
+    expect(w.find('[data-test="designer-inspector-pill"]').exists()).toBe(false)
+  })
+
   it('without a headerKind the static badge stays', () => {
     const w = mountFrame(SELECTIONS.v01, fixtureRegistry([registration({ key: 'docs', order: 4, tab: { key: 'documents', component: probePart('documents') } })]))
     expect(get(w, 'designer-inspector-kind').text()).toBe('작업')
@@ -131,7 +142,7 @@ describe('the header line (flowgate.v02.0051 stage 2)', () => {
     const w = mountFrame(selectionOf({ ...UNASSIGNED_GRAPH, nodes: [node] }, node.id), none)
     expect(w.find('[data-test="designer-inspector-pill"]').exists()).toBe(false)
     // 0148: an unreached draft gate has neither a generic pill nor a state icon.
-    const gate = mountFrame(SELECTIONS.graphGate, none)
+    const gate = mountFrame(SELECTIONS.graphGate)
     expect(gate.find('[data-test="designer-inspector-pill-label"]').exists()).toBe(false)
     expect(gate.find('[data-test="gate-header-state"]').exists()).toBe(false)
     expect(gate.find('[data-test="designer-inspector-pill-sub"]').exists()).toBe(false)
@@ -178,8 +189,8 @@ describe('the real registry on Nodes without a document', () => {
     expect(get(w, 'inspector-requirement-card').text()).not.toContain('아직 없음')
     expect(get(w, 'designer-inspector-kind').text()).toBe('요구사항')
     await clickTab(w, '설정')
-    expect(sections(w)).toEqual(['requirementSettings'])
-    expect(get(w, 'inspector-requirement-settings').attributes('data-delegation')).toBe('off')
+    expect(sections(w)).toEqual([])
+    expect(w.find('[data-test="inspector-requirement-settings"]').exists()).toBe(false)
   })
 
   it('a Graph research Node without a document: both lines empty and the run-card ⋯ items disabled', async () => {

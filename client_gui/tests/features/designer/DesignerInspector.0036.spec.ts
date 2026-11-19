@@ -108,6 +108,7 @@ async function clickTab(w: VueWrapper<any>, label: string) {
 
 describe('Inspector tab rules', () => {
   // flowgate.v02.0113 T#4: the AI tab sits right after 문서; flowgate.v02gui.0031 C: 설정 sits right after 문서, before AI.
+  // flowgate.v02test.0042: '병합 · 충돌' (merge) is no tab — it appears as a document row and a modeless window.
   it('lists 문서 · 설정 · AI · Q&A in a fixed order whatever order the contributions come in', () => {
     expect(INSPECTOR_TABS).toEqual(['documents', 'settings', 'ai', 'qna'])
     expect(inspectorTabsWith(['settings', 'documents', 'qna'])).toEqual(['documents', 'settings', 'qna'])

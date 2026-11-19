@@ -539,3 +539,38 @@ def test_exhausted_responder_leaves_card_and_run_in_question_wait_without_redisp
     assert questions["responders"] == [(item["id"], "aip_review")]
     assert _attempts(env, key) == attempts and len(_executions(env)) == execs
     assert env["jobs"] == [] and item["answer_count"] == 0
+
+
+@pytest.mark.parametrize("stage", ["instruction", "result"])
+def test_unclaimed_busy_responder_retries_then_answers_resume_once(
+        env, decided, monkeypatch, questions, stage):
+    """A deferred response reaches the existing answer/resume path on the real Graph DB."""
+    from flowgate.card_settings import question_wait, legacy_adapter as legacy
+    if stage == "instruction":
+        key, _doc, _exec = _asked_instruction(env, monkeypatch, questions)
+        asker = INSTRUCTION_RUN
+    else:
+        key, _exec = _asked_result(env, monkeypatch, questions)
+        asker = WORK_RUN
+    [item] = questions["asked"][asker]
+    item.update(asker_ai_run_id=asker, responder_state="failed", responder_error_code="run_in_progress",
+                responder_run_id=None, responder_attempts=0)
+    questions["responders"].clear()
+    monkeypatch.setattr(legacy, "open_ai_questions", lambda _: [item])
+    attempts, execs = _attempts(env, key), len(_executions(env))
+    with monkeypatch.context() as busy:
+        busy.setattr(legacy, "flow_ai_busy", lambda _: True)
+        question_wait.follow({"run_id": "other-run", "group_id": FA})
+    assert questions["responders"] == []
+    question_wait.follow({"run_id": "other-run", "group_id": FA})
+    assert questions["responders"] == [(item["id"], "aip_review")]
+    item.update(responder_state="dispatched", responder_run_id=RESPONDER_RUN, responder_attempts=1)
+    question_wait.follow({"run_id": "other-run", "group_id": FA})
+    assert len(questions["responders"]) == 1
+    assert len(_executions(env)) == execs
+    monkeypatch.setattr(legacy, "open_ai_questions", lambda _: [])
+    _answer(questions, asker, "ai")
+    assert len(_executions(env)) == execs + 1
+    _answer(questions, asker, "both")
+    assert len(_executions(env)) == execs + 1
+    assert _attempts(env, key) == attempts

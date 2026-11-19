@@ -2,9 +2,13 @@
 // The Frame shows AI only when the selected card contributes it.
 // Attachments are managed in the flow attachment window.
 
+// Merge work appears as a document row and a modeless window; the tab strip stays fixed.
 export const INSPECTOR_TABS = ['documents', 'settings', 'ai', 'qna'] as const
 
 export type InspectorTabKey = (typeof INSPECTOR_TABS)[number]
+
+/** Tabs shown only while a contribution to them is visible (InspectorTabContribution.visible). */
+export const INSPECTOR_CONDITIONAL_TABS: readonly InspectorTabKey[] = []
 
 /** The tab selected first (v7: 문서). */
 export const DEFAULT_INSPECTOR_TAB: InspectorTabKey = 'documents'

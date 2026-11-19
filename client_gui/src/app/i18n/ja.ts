@@ -1,4 +1,5 @@
 export default {
+  agent_capacity: {"label": "最大同時実行数", "running": "実行中", "summary": "実行中 {running} / 最大 {max}", "queued": "待機 {count}", "invalid": "1〜32の整数を入力してください。", "hint": "チャットとカードの合計です。超過したジョブは順番に待機します。", "lowered": "実行中のジョブは継続します。新しい上限を下回ると次のジョブを開始します。", "cli_missing": "このPCにAI CLIが見つからないため、CLIジョブを受信できません。", "connect": "接続", "token_hint": "登録トークンは10分間有効です。再発行すると以前のトークンは無効になります。", "waiting": "エージェントの接続待ち · 5秒ごとに確認", "enable_first": "使用をオンにして保存すると登録トークンを発行できます。", "enabled": "使用", "workdir_hint": "空のままではジョブを受信できません。エージェントPCで作業フォルダーを作成する場所を指定してください。例: /data/flowgate、C:\\flowgate", "sec_basic": "基本情報", "sec_run": "実行", "sec_workdir": "作業フォルダー", "create_sub": "名前だけで登録できます。その他は後から変更できます。", "not_connected": "まだPCと接続されていません", "enabled_on": "オンのとき、このエージェントがジョブを受信します。", "enabled_off": "ジョブを受信しません。", "unit_jobs": "件", "running_now": "実行中 {running}件", "queued_now": "待機 {count}件", "workdir_label": "作業フォルダーの場所", "workdir_preview": "ジョブごとに {path} フォルダーを作成します。", "cleanup_on": "作業終了から {hours}時間後にフォルダーを削除します（1〜720）。", "cleanup_off": "オフのとき、作業フォルダーは削除せずに残します。", "cli_missing_detail": "このPCでAI CLIが見つからないため、ジョブを受信できません。インストールすると次の接続から自動でジョブを受信します。", "token_title": "登録トークン", "token_until": "{at}まで", "no_token": "トークンがありません · 10分間有効", "no_token_hint": "ダイアログを閉じたか、10分が過ぎてトークンが期限切れになりました。削除して再登録せずに、新しく発行できます。", "no_changes": "変更なし", "changes": "未保存の変更 {count}件", "changes_one": "未保存の変更 1件", "workdir_shared": "現在はすべてのジョブが {path} フォルダーを共有しています。この欄を修正して保存すると、ジョブごとにフォルダーを分けます。"},
   accountMenu: {"settings": "自分の設定", "profile": "プロフィール", "password": "パスワード変更", "logout": "ログアウト", "confirmLogout": "ログアウトしますか？"},
   notification_ai: {"detail": "詳細を見る", "provider": "プロバイダー", "finished": "終了時刻", "reason": "終了理由", "success": "成功", "failure": "失敗", "stopped": "中断", "unknown": "状態を確認"},
   // flowgate.chat.0017 CH0002 — AI添付の承認依頼(チャットのメッセージ下・カードの添付タブ・実行結果・設定)。
@@ -339,6 +340,9 @@ export default {
   designer: {
     // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
     center: {
+      document: '文書',
+      open_card_document: '{kind}を開く: {title}',
+      card_document_empty: '{label}（空）',
       latest_definition_notice: '最新定義 {latest} を表示中。実行はリビジョン {revision} を維持します。保護されたカードと入力は変更できません。',
       pinned_revision_notice: '実行に固定されたリビジョン {revision} を表示中（最新 {latest}）。この画面では編集できません。最新リビジョンに追加されたカードは表示されません。',
       past_revision_notice: 'リビジョン {revision} を表示中（最新 {latest}）。この画面では編集できません。最新リビジョンに追加されたカードは表示されません。',
@@ -375,7 +379,11 @@ export default {
         integrating: 'マージ中',
         conflict: 'マージ競合',
         failed: 'マージ失敗',
-        open_conflict: 'Git パネルで競合を解決します',
+        open_conflict: 'カードの「マージ · 競合」タブで処理します',
+        // flowgate.v02test.0042 — a waiting merge's hourglass tooltip.
+        waiting_for: '「{title}」カードの競合解決を待っています',
+        waiting_behind: '「{title}」カードのマージが終わるのを待っています',
+        waiting_turn: 'マージの順番を待っています',
         // v02gui.0015 T4 — the result failed the integration's syntax check.
         verification_failed: '結果に構文エラーのあるファイルがあるため、マージしませんでした。やり直すには停止してから実行してください（新しい試行で開きます）。',
       },
@@ -701,6 +709,7 @@ export default {
         settings: '設定',
         ai: 'AI',
         qna: 'Q&A',
+        merge: 'マージ · 競合',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: 'ドキュメント状態',
@@ -834,6 +843,15 @@ export default {
         },
         project_only: '現在のプロジェクト {name} の実行のみ表示します。',
         empty_runs: '実行中・待機中の実行はありません。',
+        // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
+        merge: {
+          needs_choice: '「{title}」カードのマージ競合 — 選択が必要',
+          failed: '「{title}」カードのマージ失敗 — 選択が必要',
+          waiting: '「{title}」カードのマージ待ち',
+          waiting_for: '「{title}」カードのマージ待ち (「{blocked}」の後)',
+          catching_up: '「{title}」カードのマージ進行中',
+          open: '開く',
+        },
         empty_ai: 'AI通知はありません。',
           question_all: "全体表示",
           question_reply: "すぐに回答",
@@ -1163,6 +1181,11 @@ export default {
       clear: '解除',
     },
     message: {
+      edit: '編集',
+      remove: '削除',
+      deleted: '削除されたメッセージ',
+      delete_confirm: 'このメッセージを削除しますか？',
+      change_failed: '変更できませんでした。再確認してください。',
       user: '自分',
       ai: 'AI',
       // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
@@ -1179,6 +1202,9 @@ export default {
         network: 'サーバーに接続できませんでした',
       },
       stale: '#{seq} のメッセージを見る前に書かれた返信です。',
+      // flowgate.v02test.0029: a message sent while the AI answered.
+      waiting: '待機',
+      waiting_title: '現在の回答が終わると、AI がこのメッセージまで読んで続けて回答します。',
       copy: '原文をコピー',
       copied: 'コピーしました',
       copy_failed: 'コピーできませんでした',
@@ -1263,6 +1289,7 @@ export default {
     },
     status: {
       run_running: 'AIが回答中…',
+      run_timeout: '設定した制限時間に達したためAI呼び出しを終了しました。',
       run_cancelled: 'AI 呼び出しを停止しました',
       run_no_reply: 'AI 呼び出しが返信なしで終了しました',
       run_query_unconfirmed: 'AI 呼び出しは終了しましたが、保存された返信の照会を確認できませんでした',
@@ -1299,7 +1326,6 @@ export default {
       provider_loading: '読み込み中',
       provider_failed: 'AI 一覧エラー',
       // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
-      ai_pick_loading: 'このチャットの AI を確認しています。確認できると送信できます',
       ai_pick_failed: 'このチャットの AI を確認できないため送信を止めています',
       ai_pick_retry: '再試行',
       provider_none: 'AI なし',
@@ -1325,6 +1351,46 @@ export default {
       manual_copy_title: 'クリップボードにコピーできませんでした。下の内容を手動でコピーしてください。',
       manual_copy_again: 'もう一度コピー',
     },
+    // flowgate.v02test.0029 — message images: pasted / dropped into the composer, shown on the message.
+    image: {
+      download: '画像をダウンロード',
+      alt: '画像 {n}',
+      open: '画像 {n}/{total} を拡大表示',
+      viewer: '画像の原本',
+      prev: '前の画像',
+      next: '次の画像',
+      remove: '画像を外す',
+      uploading: 'アップロード中',
+      checking: '確認中',
+      missing: '画像は消えています（24時間経過で削除されました）。外してください',
+      load_failed: '読み込めませんでした',
+      error: {
+        too_large: '画像が 5MB を超えています',
+        unsupported: 'PNG・JPEG・GIF・WebP のみアップロードできます',
+        unreadable: '画像を読み取れません',
+        dimension: '画像が大きすぎます（長辺 1568px 以下）',
+        forbidden: '画像をアップロードする権限がありません',
+        disposed: '破棄されたフローにはアップロードできません',
+        failed: 'アップロードできませんでした',
+        check_failed: '画像を確認できませんでした。再試行するか外してください',
+      },
+      notice: {
+        limit: '1メッセージにつき5枚まで添付できます',
+        not_image: '画像ファイルのみ添付できます',
+        unsupported: 'PNG・JPEG・GIF・WebP の画像のみ添付できます',
+        too_large: '画像が 5MB を超えています',
+        unreadable: '画像を読み取れません',
+        dimension: '画像が大きすぎます',
+        forbidden: '画像をアップロードする権限がありません',
+        disposed: '破棄されたフローにはアップロードできません',
+        failed: '画像をアップロードできませんでした',
+      },
+      hint: {
+        uploading: '画像のアップロードが終わると送信できます',
+        checking: '画像を確認しています。確認が終わると送信できます',
+        unusable: '失敗または消えた画像は、再試行するか外すと送信できます',
+      },
+    },
     settings: {
       title: '会話設定',
       send_action: '送信時',
@@ -1335,6 +1401,11 @@ export default {
       context_turns: '直近 {n} ターン',
       context_all: 'すべて',
       context_custom: 'ユーザー入力',
+      context_checkpoint_recent: 'チェックポイント + 最大Xターン',
+      timeout: 'タイムアウト',
+      timeout_none: '無制限',
+      timeout_minutes: '{n}分',
+      timeout_invalid: '1〜10080の整数（分）を入力してください。',
       context_checkpoint: 'チェックポイントを使用',
       context_invalid: '{min}〜{max} の整数を入力してください',
     },
@@ -1409,6 +1480,10 @@ export default {
       abort_message: 'マージを中止します。作業ブランチはそのまま残ります。',
       abort_bound: '進行中の最終承認の試行も終了します。',
       unsupported: 'この画面では扱わない種類の競合です。',
+      // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
+      card_handled: 'カード結果のマージ競合 — カードで処理します',
+      card_handled_desc: 'この競合は Git タブではなく、そのカードの「マージ · 競合」タブで選びます。',
+      open_card: 'カードへ移動',
       loading: '競合ファイルを読み込み中…',
     },
     resolver: {

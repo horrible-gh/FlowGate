@@ -2,6 +2,7 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
+  agent_capacity: {"label": "최대 동시 실행 수", "running": "지금 실행 중", "summary": "실행 중 {running} / 최대 {max}", "queued": "대기 {count}", "invalid": "1~32 사이의 정수를 입력하세요.", "hint": "채팅과 카드 작업을 합친 수이며, 넘는 작업은 순서대로 대기합니다.", "lowered": "실행 중인 작업은 끝까지 진행하고, 새 값 아래로 내려간 뒤부터 다음 작업을 받습니다.", "cli_missing": "AI CLI 없음 · 이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다.", "connect": "연결", "token_hint": "등록 토큰은 10분 동안 사용할 수 있습니다. 다시 발급하면 이전 토큰은 사용할 수 없습니다.", "waiting": "에이전트 접속을 기다리는 중 · 5초마다 확인", "enable_first": "사용을 켜고 저장하면 등록 토큰을 발급할 수 있습니다.", "enabled": "사용", "workdir_hint": "비어 있으면 작업을 받을 수 없습니다. 에이전트 PC에서 작업 폴더를 만들 위치를 지정하세요. 예: /data/flowgate, C:\\flowgate", "sec_basic": "기본 정보", "sec_run": "실행", "sec_workdir": "작업 폴더", "create_sub": "이름만 입력하면 바로 등록됩니다. 나머지는 나중에 바꿀 수 있습니다.", "not_connected": "아직 이 PC와 연결되지 않았습니다", "enabled_on": "켜져 있으면 이 에이전트가 작업을 받습니다.", "enabled_off": "작업을 받지 않습니다.", "unit_jobs": "개", "running_now": "지금 {running}개 실행 중", "queued_now": "대기 {count}개", "workdir_label": "작업 폴더 위치", "workdir_preview": "작업마다 {path} 폴더를 새로 만듭니다.", "cleanup_on": "작업이 끝나고 {hours}시간 뒤 폴더를 지웁니다 (1~720).", "cleanup_off": "끄면 작업 폴더를 지우지 않고 그대로 둡니다.", "cli_missing_detail": "이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다. 설치하면 다음 접속부터 자동으로 작업을 받습니다.", "token_title": "등록 토큰", "token_until": "{at}까지", "no_token": "토큰이 없습니다 · 10분간 유효", "no_token_hint": "창을 닫았거나 10분이 지나 토큰이 만료됐습니다. 지우고 다시 등록할 필요 없이 새로 발급하면 됩니다.", "no_changes": "변경 사항 없음", "changes": "저장하지 않은 변경 {count}개", "changes_one": "저장하지 않은 변경 1개", "workdir_shared": "지금은 모든 작업이 {path} 폴더 하나를 같이 씁니다. 이 칸을 고쳐 저장하면 작업마다 폴더를 나눕니다."},
   accountMenu: {"settings": "내 설정", "profile": "내 프로필", "password": "비밀번호 변경", "logout": "로그아웃", "confirmLogout": "로그아웃하시겠습니까?"},
   notification_ai: {"detail": "상세보기", "provider": "제공자", "finished": "종료 시간", "reason": "종료 사유", "success": "성공", "failure": "실패", "stopped": "중단", "unknown": "상태 확인 필요"},
   // flowgate.chat.0017 CH0002 — AI 첨부 승인 요청 (채팅 메시지 하단 · 플로우 첨부파일 창 · 실행 결과 · 설정).
@@ -342,6 +343,9 @@ export default {
   designer: {
     // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
     center: {
+      document: '문서',
+      open_card_document: '{kind} 열기: {title}',
+      card_document_empty: '{label} (비어 있음)',
       latest_definition_notice: '최신 정의 {latest} 표시 중. 실행은 개정 {revision}을 유지합니다. 보호된 카드와 입력은 변경할 수 없습니다.',
       pinned_revision_notice: '실행에 고정된 개정 {revision} 표시 중 (최신 {latest}). 이 화면에서는 편집할 수 없습니다. 최신 개정에 추가된 카드는 표시되지 않습니다.',
       past_revision_notice: '개정 {revision} 표시 중 (최신 {latest}). 이 화면에서는 편집할 수 없습니다. 최신 개정에 추가된 카드는 표시되지 않습니다.',
@@ -378,7 +382,11 @@ export default {
         integrating: '병합 중',
         conflict: '병합 충돌',
         failed: '병합 실패',
-        open_conflict: 'Git 패널에서 충돌을 해결합니다',
+        open_conflict: '카드의 ‘병합 · 충돌’ 탭에서 처리합니다',
+        // flowgate.v02test.0042 — a waiting merge's hourglass tooltip.
+        waiting_for: '‘{title}’ 카드 충돌 해결을 기다리는 중',
+        waiting_behind: '‘{title}’ 카드의 병합이 끝나기를 기다리는 중',
+        waiting_turn: '병합 차례를 기다리는 중',
         // v02gui.0015 T4 — the result failed the integration's syntax check.
         verification_failed: '결과에 구문 오류가 있는 파일이 있어 병합하지 않았습니다. 다시 작업하려면 중지한 뒤 실행하세요(새 시도로 열립니다).',
       },
@@ -705,6 +713,7 @@ export default {
         settings: '설정',
         ai: 'AI',
         qna: 'Q&A',
+        merge: '병합 · 충돌',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: '문서 상태',
@@ -845,6 +854,15 @@ export default {
         },
         project_only: '현재 프로젝트 {name}의 실행만 표시합니다.',
         empty_runs: '진행 중이거나 대기 중인 실행이 없습니다.',
+        // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
+        merge: {
+          needs_choice: '‘{title}’ 카드 병합 충돌 — 선택 필요',
+          failed: '‘{title}’ 카드 병합 실패 — 선택 필요',
+          waiting: '‘{title}’ 카드 병합 대기',
+          waiting_for: '‘{title}’ 카드 병합 대기 (‘{blocked}’ 뒤)',
+          catching_up: '‘{title}’ 카드 병합 진행 중',
+          open: '열기',
+        },
         empty_ai: 'AI 알림이 없습니다.',
           question_all: "전체보기",
           question_reply: "바로답변",
@@ -1174,6 +1192,11 @@ export default {
       clear: '해제',
     },
     message: {
+      edit: '편집',
+      remove: '삭제',
+      deleted: '삭제된 메세지',
+      delete_confirm: '이 메시지를 삭제할까요?',
+      change_failed: '변경하지 못했습니다. 다시 확인해 주세요.',
       user: '나',
       ai: 'AI',
       // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
@@ -1190,6 +1213,9 @@ export default {
         network: '서버에 연결하지 못했습니다',
       },
       stale: '#{seq} 메시지를 보기 전에 작성된 답변입니다.',
+      // flowgate.v02test.0029: a message sent while the AI answered.
+      waiting: '대기',
+      waiting_title: '지금 답변이 끝나면 AI가 이 메시지까지 읽고 이어서 답합니다.',
       copy: '원문 복사',
       copied: '복사했습니다',
       copy_failed: '복사하지 못했습니다',
@@ -1274,6 +1300,7 @@ export default {
     },
     status: {
       run_running: 'AI가 답하는 중…',
+      run_timeout: '설정한 시간이 지나 AI 호출이 종료되었습니다.',
       run_cancelled: 'AI 호출을 중지했습니다',
       run_no_reply: 'AI 호출이 답변 없이 끝났습니다',
       run_query_unconfirmed: 'AI 실행은 종료되었지만 저장 답변 조회를 확인하지 못했습니다',
@@ -1310,7 +1337,6 @@ export default {
       provider_loading: '불러오는 중',
       provider_failed: 'AI 목록 오류',
       // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
-      ai_pick_loading: '이 채팅의 AI를 확인하는 중입니다. 확인되면 보낼 수 있습니다',
       ai_pick_failed: '이 채팅의 AI를 확인하지 못해 전송을 멈췄습니다',
       ai_pick_retry: '다시 시도',
       provider_none: 'AI 없음',
@@ -1336,6 +1362,46 @@ export default {
       manual_copy_title: '클립보드에 복사하지 못했습니다. 아래 내용을 직접 복사하세요.',
       manual_copy_again: '다시 복사',
     },
+    // flowgate.v02test.0029 — message images: pasted / dropped into the composer, shown on the message.
+    image: {
+      download: '이미지 다운로드',
+      alt: '이미지 {n}',
+      open: '이미지 {n}/{total} 크게 보기',
+      viewer: '이미지 원본 보기',
+      prev: '이전 이미지',
+      next: '다음 이미지',
+      remove: '이미지 빼기',
+      uploading: '업로드 중',
+      checking: '확인 중',
+      missing: '사라진 이미지입니다 (24시간이 지나 지워졌습니다). 빼 주세요',
+      load_failed: '불러오지 못했습니다',
+      error: {
+        too_large: '이미지가 5MB를 넘습니다',
+        unsupported: 'PNG·JPEG·GIF·WebP만 올릴 수 있습니다',
+        unreadable: '이미지를 읽을 수 없습니다',
+        dimension: '이미지가 너무 큽니다 (긴 변 1568px 이하)',
+        forbidden: '이미지를 올릴 권한이 없습니다',
+        disposed: '폐기된 흐름에는 올릴 수 없습니다',
+        failed: '업로드하지 못했습니다',
+        check_failed: '이미지를 확인하지 못했습니다. 다시 시도하거나 빼 주세요',
+      },
+      notice: {
+        limit: '메시지당 5장까지 붙일 수 있습니다',
+        not_image: '이미지 파일만 붙일 수 있습니다',
+        unsupported: 'PNG·JPEG·GIF·WebP 이미지만 붙일 수 있습니다',
+        too_large: '이미지가 5MB를 넘습니다',
+        unreadable: '이미지를 읽을 수 없습니다',
+        dimension: '이미지가 너무 큽니다',
+        forbidden: '이미지를 올릴 권한이 없습니다',
+        disposed: '폐기된 흐름에는 올릴 수 없습니다',
+        failed: '이미지를 올리지 못했습니다',
+      },
+      hint: {
+        uploading: '이미지 업로드가 끝나면 보낼 수 있습니다',
+        checking: '이미지를 확인하는 중입니다. 확인이 끝나면 보낼 수 있습니다',
+        unusable: '실패했거나 사라진 이미지는 다시 시도하거나 빼야 보낼 수 있습니다',
+      },
+    },
     settings: {
       title: '대화 설정',
       send_action: '전송 시',
@@ -1346,6 +1412,11 @@ export default {
       context_turns: '최근 {n}턴',
       context_all: '전체',
       context_custom: '사용자 입력',
+      context_checkpoint_recent: '체크포인트 + 최대 X턴',
+      timeout: '타임아웃',
+      timeout_none: '제한 없음',
+      timeout_minutes: '{n}분',
+      timeout_invalid: '1~10080 사이의 정수(분)를 입력하세요.',
       context_checkpoint: '체크포인트 사용',
       context_invalid: '{min}~{max} 사이의 정수를 입력하세요',
     },
@@ -1420,6 +1491,10 @@ export default {
       abort_message: '병합을 중단합니다. 작업 브랜치는 그대로 남습니다.',
       abort_bound: '진행 중인 최종 승인 시도가 함께 종료됩니다.',
       unsupported: '이 화면에서 처리하지 않는 충돌 유형입니다.',
+      // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
+      card_handled: '카드 결과 병합 충돌 — 카드에서 처리합니다',
+      card_handled_desc: '이 충돌은 Git 탭이 아니라 그 카드의 ‘병합 · 충돌’ 탭에서 고릅니다.',
+      open_card: '카드로 이동',
       loading: '충돌 파일을 불러오는 중…',
     },
     resolver: {

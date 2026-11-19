@@ -279,7 +279,7 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     expect(menuEl()!.querySelectorAll('[data-level="0"] [role="separator"]')).toHaveLength(2)
     item('canvas.addCard').dispatchEvent(new MouseEvent('mouseenter'))
     await settle()
-    expect(itemTexts(1)).toEqual(['기본 설계', '프로토콜', '로직', 'DB설계', '조사', '작업계획', '작업', '테스트', '확인'].map((label) => `＋ ${label}`))
+    expect(itemTexts(1)).toEqual(['기본 설계', '프로토콜', '로직', 'DB설계', '조사', '작업', '테스트', '확인'].map((label) => `＋ ${label}`))
     expect(invariants(center)).toBe(before)
   })
 

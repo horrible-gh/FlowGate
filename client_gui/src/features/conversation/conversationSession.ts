@@ -11,7 +11,7 @@
 // from the server — when a chat opens, on every AI-run polling tick, once right after the run
 // ends and once after each decision — and each read replaces them as a whole. A new chat is a
 // standalone CH; nothing is shown before the server has it.
-import { computed, reactive, readonly, watch, type ComputedRef, type DeepReadonly } from 'vue'
+import { computed, reactive, readonly, ref, watch, type ComputedRef, type DeepReadonly } from 'vue'
 import { draftUserId, type DraftSendSnapshot } from './drafts'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, type CreateChatOptions } from './api'
@@ -44,7 +44,7 @@ import type {
 
 // L0004 §1-5 screen parameters (same values as the v0.1 ConversationView).
 export const TURN_PAGE_SIZE = 50
-export const PREPEND_PAGE_SIZE = 30
+export const PREPEND_PAGE_SIZE = 10
 export const CATCHUP_MAX_ROUNDS = 20
 export const SEND_RETRY_MAX = 2
 export const RUN_POLL_MS = 2500
@@ -76,6 +76,7 @@ export const ACTIVE_RUN_ADOPT_ATTEMPTS = FINAL_TURN_READ_ATTEMPTS
  * `activities` its command requests and run changes, `history` the terminal state of runs that ended unseen.
  */
 export interface ChatRefresh {
+  revised?: boolean
   run?: boolean
   turns?: boolean
   activities?: boolean
@@ -83,11 +84,12 @@ export interface ChatRefresh {
 }
 
 /** Everything: a reconnect or a return to the panel, after which any of it may be missing. */
-export const FULL_CHAT_REFRESH: Readonly<Required<ChatRefresh>> = Object.freeze({ run: true, turns: true, activities: true, history: true })
+export const FULL_CHAT_REFRESH: Readonly<Required<ChatRefresh>> = Object.freeze({ revised: true, run: true, turns: true, activities: true, history: true })
 
 /** The union of two refresh requests (null: none yet). */
 export function mergeChatRefresh(a: ChatRefresh | null, b: ChatRefresh): ChatRefresh {
   return {
+    revised: !!(a?.revised || b.revised),
     run: !!(a?.run || b.run),
     turns: !!(a?.turns || b.turns),
     activities: !!(a?.activities || b.activities),
@@ -116,6 +118,7 @@ export interface ConversationNotice {
 }
 
 export interface ConversationState {
+  myParticipantKey: string | null
   scope: ConversationScope | null
   chats: ChatSummary[]
   chatsStatus: LoadStatus
@@ -223,6 +226,8 @@ export interface FirstSendHold {
   /** flowgate.v02test.0030: how `providerId` was chosen. */
   providerOrigin?: ProviderOrigin
   sendAction: SendAction
+  /** flowgate.v02test.0029: ids of the message images the first message carries. */
+  images?: string[]
 }
 
 export interface ConversationSession {
@@ -316,6 +321,7 @@ export interface ConversationSession {
   /** Resolves the chat mention; the screen writes it to the clipboard (it owns the click). */
   issueMention(): Promise<string | null>
   setManualCopyText(text: string | null): void
+  mutateTurn(seq: number, body: string | null, done: (ok: boolean, error?: string) => void, version?: number): Promise<void>
   saveSettings(patch: ChatSettingsPatch): Promise<boolean>
   setSourceMode(mode: SourceAccessMode): Promise<void>
   /** Adds an activity pushed by the container or the source (upsert by id). */
@@ -440,6 +446,8 @@ export interface StoredSend {
   phase: StoredSendPhase
   providerId: string
   sendAction?: SendAction
+  /** flowgate.v02test.0029: ids of the message images the message carries (sent again with the same key after F5). */
+  images?: string[]
 }
 
 export function outboxStorageKey(userId: string, projectId: string): string {
@@ -525,6 +533,17 @@ function isTerminalSendFailure(failure: SendFailure): boolean {
   return failure.status != null && [400, 404, 409, 422].includes(failure.status)
 }
 
+/**
+ * flowgate.v02test.0029: two sends are the same message only when the text AND the image list (ids, in order) are the
+ * same. The same idempotency key may only go out again with the images it first went with (the server refuses a key
+ * reused with other images), so a failed bubble is reused only for an equal image list.
+ */
+function sameImageIds(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  const left = a ?? []
+  const right = b ?? []
+  return left.length === right.length && left.every((id, index) => id === right[index])
+}
+
 /** flowgate.v02gui.0028: the server refused to make the chat for good (also the readOnly meanings: 403, disposed). */
 function isTerminalCreateFailure(error: unknown): boolean {
   return error instanceof ConversationRequestError && error.status !== null &&
@@ -567,6 +586,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     providerOrigin: 'default_fallback',
     chatProviderStatus: 'ready',
     chatProviderError: null,
+    myParticipantKey: null,
     checkpointSeq: null,
     checkpointKind: null,
     savingCheckpoint: false,
@@ -621,6 +641,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       localId: item.localId, idempotencyKey: item.idempotencyKey, body: item.body, basedOnSeq: item.basedOnSeq, createdAt: item.createdAt,
       projectId: owner.projectId, groupId: owner.groupId, chatId: owner.chatId, intentId: owner.intentId, createIntentId: owner.createIntentId,
       phase, providerId: item.providerId, ...(item.sendAction ? { sendAction: item.sendAction } : {}),
+      ...(item.images?.length ? { images: [...item.images] } : {}),
     }
   }
   /** Writes the send as `phase` (starting to keep it when this session did not yet). */
@@ -648,6 +669,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!owner) return
     sendOwners.delete(localId)
     forgetStoredSend(owner.userId, owner.projectId, localId)
+  }
+  /** flowgate.v02test.0029: a failed bubble the user replaced by sending the text again with other images. */
+  function forgetFailedSend(localId: string): void {
+    settleStoredSend(localId)
+    pendingDrafts.delete(localId)
+    traces.delete(localId)
+    stoppedSends.delete(localId)
   }
   function publishOutbox(key: string, items: PendingTurn[]): void {
     if (items.length) outbox.set(key, items)
@@ -731,9 +759,49 @@ export function createConversationSession(options: ConversationSessionOptions = 
   const timeline = computed(() => {
     const display = state.runId !== null ? state.runDisplay : null
     const activities = display ? [...state.activities, runLine(display)] : state.activities
-    return buildTimeline(state.turns, activities, state.pending, state.readSeq)
+    const items = buildTimeline(state.turns, activities, state.pending, state.readSeq)
+    // flowgate.v02test.0029: a person's stored message sent while the AI was answering waits (대기) for the answer
+    // that follows the current one.
+    const queued = followUp.value
+    if (!queued || queued.chatId !== state.activeChatId) return items
+    return items.map((item) => item.kind === 'message' && !item.pending && !item.failed && item.turn.speaker === 'user' &&
+      item.turn.seq > queued.afterSeq ? { ...item, waiting: true } : item)
   })
   const running = computed(() => state.runId !== null)
+  /**
+   * flowgate.v02test.0029: messages may be sent while the chat's AI answers. The server stores them at once; the AI
+   * that is answering may not see them. Their AI call is not started next to the running one (one run per chat): it is
+   * kept here — one per chat, whatever the number of messages — and started once the current run has ended, on the AI
+   * of the latest such message. `afterSeq` is the head the first of them was sent on: every person's message after it
+   * waits for this answer. Leaving the chat (another chat, Flow, reload) drops it; the messages stay stored.
+   */
+  interface FollowUp { chatId: string; gen: number; providerId: string; afterSeq: number; providerOrigin?: ProviderOrigin }
+  const followUp = ref<FollowUp | null>(null)
+
+  function queueFollowUp(chatId: string, gen: number, providerId: string, afterSeq: number, providerOrigin?: ProviderOrigin): void {
+    const now = followUp.value
+    // flowgate.v02test.0030: the AI of the latest message is pinned with how it was chosen.
+    if (now && now.chatId === chatId && now.gen === gen) followUp.value = { ...now, providerId, providerOrigin }
+    else followUp.value = { chatId, gen, providerId, afterSeq, providerOrigin }
+  }
+
+  /** Runs once the chat's run has ended: the follow-up call, unless the answer already read every waiting message. */
+  function startFollowUp(): void {
+    const queued = followUp.value
+    if (!queued || disposed || running.value) return
+    followUp.value = null
+    if (!isCurrentChat(queued.chatId, queued.gen) || state.turnsStatus !== 'ready') return
+    const waiting = state.turns.filter((t) => t.speaker === 'user' && t.seq > queued.afterSeq)
+    const lastWaiting = waiting.at(-1)?.seq ?? 0
+    // An AI that read the turns again before writing (a remote agent) may have answered them already.
+    const answered = lastWaiting > 0 && state.turns.some((t) => t.speaker === 'ai' && t.seq > lastWaiting &&
+      (t.basedOnSeq ?? 0) >= lastWaiting)
+    if (answered) return
+    void startAiRun(queued.providerId, queued.providerOrigin)
+  }
+  watch(() => state.runId, (runId) => {
+    if (runId === null && followUp.value) void Promise.resolve().then(startFollowUp)
+  })
   // flowgate.v02gui.0011 B: messages (local ids) whose AI call the user stopped while they were being stored. Kept
   // until the send action of that message runs (it starts no AI then) or its store fails.
   const stoppedSends = reactive(new Set<string>())
@@ -902,6 +970,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.turns = []
     state.pending = []
     state.sending = false
+    followUp.value = null
     state.activities = []
     state.participants = []
     state.headSeq = 0
@@ -915,6 +984,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.runId = null
     state.cancelling = false
     state.deciding = []
+    state.settings.timeoutMinutes = null
+    state.myParticipantKey = null
     state.checkpointSeq = null
     state.checkpointKind = null
     state.savingCheckpoint = false
@@ -922,6 +993,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   function applyPage(page: Awaited<ReturnType<ConversationSource['fetchTurns']>>, participantsComplete = false): void {
+    if (page.myParticipantKey != null) state.myParticipantKey = page.myParticipantKey
     state.turns = mergeTurns(state.turns, page.turns)
     state.headSeq = Math.max(state.headSeq, page.headSeq)
     // Empty scroll pages omit metadata; an includeHead response is authoritative, even empty.
@@ -1017,6 +1089,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       const [stored] = await Promise.all([read, providersLoad])
       if (!isCurrentChat(chatId, gen)) return
       const settings = stored ?? { providerId: null, checkpointSeq: state.checkpointSeq, checkpointKind: state.checkpointKind }
+      state.settings.timeoutMinutes = settings.timeoutMinutes ?? null
       state.checkpointSeq = settings.checkpointSeq
       state.checkpointKind = settings.checkpointKind
       // A pick made on this screen while the read was out wins: it is the newer one (and is being saved).
@@ -1094,7 +1167,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   function applySettings(settings: ChatSettings, scope: ConversationScope | null): boolean {
     if (!sameScope(settings.sourceAccessScope, scope)) return false
-    state.settings = { ...settings, sourceAccessMode: scope ? settings.sourceAccessMode : 'read_only' }
+    state.settings = { ...settings, timeoutMinutes: settings.timeoutMinutes === undefined ? state.settings.timeoutMinutes : settings.timeoutMinutes, sourceAccessMode: scope ? settings.sourceAccessMode : 'read_only' }
     return true
   }
 
@@ -1217,6 +1290,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
         createdAt: entry.createdAt, failed: !resend, failure: null, providerId: entry.providerId,
         ...(entry.sendAction ? { sendAction: entry.sendAction } : {}),
         ...(entry.createIntentId ? { createIntentId: entry.createIntentId } : {}),
+        ...(Array.isArray(entry.images) && entry.images.length ? { images: entry.images.filter((id) => typeof id === 'string') } : {}),
       }
       const key = entry.chatId !== null ? scopedOwnerKey(scope, entry.chatId) : draftOwnerKey(scope, userId, entry.intentId!)
       if ((outbox.get(key) ?? []).some((p) => p.localId === item.localId)) continue
@@ -1286,7 +1360,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
         cursor = page.nextAfterSeq
       }
       state.hasMoreBefore = oldestSeq() > 1
-      if (state.hasMoreBefore && state.turns.length < PREPEND_PAGE_SIZE) await loadOlder(trace)
+      while (state.hasMoreBefore && state.turns.length < PREPEND_PAGE_SIZE) {
+        const before = oldestSeq()
+        await loadOlder(trace)
+        if (disposed || gen !== chatGen || oldestSeq() >= before) break
+      }
       if (disposed || gen !== chatGen) return
       state.turnsStatus = 'ready'
     } catch (error) {
@@ -1392,7 +1470,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   function checkpointOffScreen(): boolean {
     const seq = state.checkpointSeq
-    return state.settings.contextMode === 'checkpoint' && seq != null && state.turnsStatus === 'ready' && state.hasMoreBefore && oldestSeq() > seq
+    return (state.settings.contextMode === 'checkpoint' || state.settings.contextMode === 'checkpoint_recent') && seq != null && state.turnsStatus === 'ready' && state.hasMoreBefore && oldestSeq() > seq
   }
 
   async function revealCheckpoint(): Promise<void> {
@@ -1466,7 +1544,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!chatId || disposed) return
     const gen = chatGen
     const current = () => isCurrentChat(chatId, gen)
-    const result = await readTurnPages(chatId, state.turns.at(-1)?.seq ?? 0, current)
+    const result = await readTurnPages(chatId, Math.max(0, oldestSeq() - 1), current)
     if (!current() || result.status === 'discarded') return
     await loadActivities(chatId, gen)
     if (!current()) return
@@ -1536,6 +1614,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
     // A run started elsewhere (another window, a resend that was answered late) or missed when the chat opened.
     if (wanted.run && !running.value) await adoptActiveRun(chatId, gen, 1)
     if (!current()) return
+    if (wanted.revised) {
+      await readTurnPages(chatId, Math.max(0, oldestSeq() - 1), current)
+      if (!current()) return
+    }
     // The poll reads the turns and activities on every tick and ends the run with its own final reads.
     const poll = currentPoll(chatId, gen)
     if (poll) {
@@ -1769,14 +1851,20 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const body = hold.body.trim()
     if (disposed || !scope || !body || !hold.intentId) return null
     const key = draftOwnerKey(scope, draftUserId(), hold.intentId)
-    const list = outbox.get(key) ?? []
-    // A try of the same text in this draft (after a failure, or restored after F5) is that message again.
-    const same = list.find((p) => p.body === body)
+    const all = outbox.get(key) ?? []
+    // A try of the same text in this draft (after a failure, or restored after F5) is that message again — with the
+    // same images. Same text with other images (one taken out, one swapped in) is a new message: the failed bubble of
+    // the old attempt is dropped, not sent again with the old images.
+    const same = all.find((p) => p.body === body && sameImageIds(p.images, hold.images))
+    const stale = all.filter((p) => p.body === body && p !== same && p.failed)
+    for (const old of stale) forgetFailedSend(old.localId)
+    const list = stale.length ? all.filter((p) => !stale.includes(p)) : all
     const item: PendingTurn = same
       ? { ...same, failed: false, failure: null }
       : { localId: '', idempotencyKey: '', body, basedOnSeq: 0, createdAt: new Date().toISOString(), failed: false,
           providerId: hold.providerId, ...(hold.providerOrigin ? { providerOrigin: hold.providerOrigin } : {}),
-          sendAction: hold.sendAction, createIntentId: hold.createIntentId }
+          sendAction: hold.sendAction, createIntentId: hold.createIntentId,
+          ...(hold.images?.length ? { images: [...hold.images] } : {}) }
     if (!same) item.localId = item.idempotencyKey = newIdempotencyKey()
     publishOutbox(key, same ? list.map((p) => p.localId === same.localId ? item : p) : [...list, item])
     persistSend(item, scope, null, hold.intentId, 'creating')
@@ -1860,7 +1948,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
       publishProgress(key, { phase: 'sending', stage: 'send', attempt: attempt + 1 })
       try {
         trace.mark('turn_start', { docId: chatId, attempt: attempt + 1 })
-        const posting = source.postTurn(chatId, { body: item.body, idempotencyKey: item.idempotencyKey, basedOnSeq: item.basedOnSeq, traceId: trace.id })
+        const posting = source.postTurn(chatId, { body: item.body, idempotencyKey: item.idempotencyKey, basedOnSeq: item.basedOnSeq, traceId: trace.id,
+          ...(item.images?.length ? { images: [...item.images] } : {}) })
         if (refresh && attempt === 0) void reloadChats(trace)
         const res = await posting
         trace.mark('turn_end', { docId: chatId, attempt: attempt + 1, result: 'ok' })
@@ -1915,7 +2004,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
         return
       }
       trace.mark('ai_start', { docId: chatId })
-      if (onScreen) void startAiRun(item.providerId, item.providerOrigin)
+      // flowgate.v02test.0029: sent while the AI answers: its call waits for that answer to end.
+      if (onScreen && running.value) queueFollowUp(chatId, gen, item.providerId, item.basedOnSeq, item.providerOrigin)
+      else if (onScreen) void startAiRun(item.providerId, item.providerOrigin)
       else void startAiRunOffScreen(chatId, gen, item.providerId, item.providerOrigin)
     }
   }
@@ -1931,7 +2022,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const chatId = created?.chatId ?? state.activeChatId
     const body = text.trim()
     if (!chatId || !body) return false
-    if (!offScreen && (state.sending || running.value || state.turnsStatus !== 'ready')) return false
+    // flowgate.v02test.0029: an AI answering does not hold the send (its call follows the answer: runSendAction).
+    if (!offScreen && (state.sending || state.turnsStatus !== 'ready')) return false
     // flowgate.v02test.0030: a message on the open chat's selection waits until that chat's AI is known.
     if (!offScreen && target?.providerId === undefined && state.chatProviderStatus !== 'ready') return false
     const owner = created && offScreen ? scopedOwnerKey(created.scope, chatId) : ownerKey(chatId)
@@ -1956,9 +2048,19 @@ export function createConversationSession(options: ConversationSessionOptions = 
     retryReceipts.delete(owner)
     if (receipt && snapshot && receipt.body.trim() === body && receipt.body === snapshot.body && receipt.revision === snapshot.revision &&
       receipt.owner.userId === snapshot.owner.userId && receipt.owner.projectId === snapshot.owner.projectId &&
-      receipt.owner.groupId === snapshot.owner.groupId && receipt.owner.intentId === snapshot.owner.intentId) return true
-    // Composer resubmission of a failed body reuses its bubble, never a new key.
-    const failed = (outbox.get(owner) ?? []).find((p) => p.body === body)
+      receipt.owner.groupId === snapshot.owner.groupId && receipt.owner.intentId === snapshot.owner.intentId &&
+      sameImageIds(receipt.images, snapshot.images)) return true
+    // Composer resubmission of a failed message (same text AND same images) reuses its bubble, never a new key.
+    // flowgate.v02test.0029: the same text with other images is a new message: the failed bubble of the old attempt is
+    // dropped (a refused message was edited and is sent again as what is on screen now; one the server may have
+    // stored shows up from the list again), and the current images go out under a new key.
+    const sameBody = (outbox.get(owner) ?? []).filter((p) => p.body === body)
+    const failed = sameBody.find((p) => sameImageIds(p.images, snapshot?.images))
+    const stale = sameBody.filter((p) => p !== failed && p.failed)
+    if (stale.length) {
+      for (const old of stale) forgetFailedSend(old.localId)
+      publishOutbox(owner, (outbox.get(owner) ?? []).filter((p) => !stale.includes(p)))
+    }
     if (failed) {
       if (snapshot) pendingDrafts.set(failed.localId, { ...snapshot, owner: { ...snapshot.owner } })
       if (!offScreen) return retry(failed.localId, true)
@@ -1978,7 +2080,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     // flowgate.v02gui.0009: off screen nothing of the new CH was read; 0 is its head (always <= the server's).
     const basedOnSeq = offScreen ? 0 : state.headSeq
     const item: PendingTurn = { localId: key, idempotencyKey: key, body, basedOnSeq, createdAt: new Date().toISOString(), failed: false, providerId,
-      ...(providerOrigin ? { providerOrigin } : {}), sendAction }
+      ...(providerOrigin ? { providerOrigin } : {}), sendAction,
+      ...(snapshot?.images?.length ? { images: [...snapshot.images] } : {}) }
     traces.set(key, trace)
     if (target?.stopAi) stoppedSends.add(key)
     if (snapshot) pendingDrafts.set(key, { ...snapshot, owner: { ...snapshot.owner } })
@@ -2017,7 +2120,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   async function retry(localId: string, fromComposer = false): Promise<boolean> {
     const chatId = state.activeChatId
     const item = state.pending.find((p) => p.localId === localId)
-    if (!chatId || !item || state.sending || running.value || state.turnsStatus !== 'ready') return false
+    if (!chatId || !item || state.sending || state.turnsStatus !== 'ready') return false
     const owner = ownerKey(chatId)
     if (progress.get(owner)?.phase === 'sending') return false
     publishOutbox(owner, (outbox.get(owner) ?? []).map((p) => p.localId === localId ? { ...p, failed: false, failure: null } : p))
@@ -2592,6 +2695,21 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.manualCopyText = text || null
   }
 
+  async function mutateTurn(seq: number, body: string | null, done: (ok: boolean, error?: string) => void, version?: number): Promise<void> {
+    const chatId = state.activeChatId
+    const gen = chatGen
+    const turn = state.turns.find((t) => t.seq === seq)
+    if (!chatId || !source.mutateTurn || !turn) { done(false); return }
+    try {
+      const saved = await source.mutateTurn(chatId, seq, version ?? turn.messageVersion ?? 1, body)
+      if (isCurrentChat(chatId, gen)) state.turns = mergeTurns(state.turns, [saved])
+      done(true)
+    } catch (error) {
+      if (isCurrentChat(chatId, gen)) await readTurnPages(chatId, Math.max(0, oldestSeq() - 1), () => isCurrentChat(chatId, gen))
+      done(false, messageOf(error))
+    }
+  }
+
   async function saveSettings(patch: ChatSettingsPatch): Promise<boolean> {
     if (state.savingSettings || state.pendingSourceMode) return false
     const gen = scopeGen
@@ -2600,7 +2718,18 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const request = ++settingsRequest
     state.savingSettings = true
     try {
-      const settings = await source.saveChatSettings(patch, scope ?? undefined)
+      const { timeout_minutes, ...userPatch } = patch
+      const chatId = state.activeChatId
+      const chatGeneration = chatGen
+      let timeoutMinutes = state.settings.timeoutMinutes ?? null
+      if ('timeout_minutes' in patch) {
+        if (!chatId || !source.saveChatDocSettings) return false
+        const saved = await source.saveChatDocSettings(chatId, { timeout_minutes })
+        timeoutMinutes = saved.timeoutMinutes ?? null
+      }
+      const settings = await source.saveChatSettings(userPatch, scope ?? undefined)
+      if (chatId && !isCurrentChat(chatId, chatGeneration)) return false
+      settings.timeoutMinutes = timeoutMinutes
       return settingsCurrent(gen, scope) && request === settingsRequest && applySettings(settings, scope)
     } catch (error) {
       if (settingsCurrent(gen, scope)) notify('danger', 'settings_failed', messageOf(error))
@@ -2691,6 +2820,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     stopRun,
     issueMention,
     setManualCopyText,
+    mutateTurn,
     saveSettings,
     setSourceMode,
     pushActivity,

@@ -7,7 +7,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { QaOpenItem } from '@/features/document/api/qa'
+import type { QaOpenItem } from '@/features/document'
 import type { ExplorerProject } from '../../projectExplorer/projectExplorerTree'
 import { inspectorCardKind, type InspectorTarget } from '../../inspector/inspectorTarget'
 import NotificationQuestionDocument from './NotificationQuestionDocument.vue'

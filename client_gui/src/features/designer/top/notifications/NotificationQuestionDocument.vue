@@ -40,9 +40,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { documentContentRead, documentRead } from '@/features/document/api/document'
+import { documentContentRead, documentRead } from '@/features/document'
 import { useInspectorResource } from '../../inspector/useInspectorResource'
-import type { QaOpenItem } from '@/features/document/api/qa'
+import type { QaOpenItem } from '@/features/document'
 import type { InspectorTarget } from '../../inspector/inspectorTarget'
 import type { QnaItemView } from '../../inspector/features/qna/qnaModel'
 import { useQna } from '../../inspector/features/qna/useQna'

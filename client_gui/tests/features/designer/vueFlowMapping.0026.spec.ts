@@ -97,3 +97,29 @@ describe('mapping is one way', () => {
     expect(JSON.stringify(GRAPH)).toBe(before)
   })
 })
+
+
+it('carries Q reasons to the card and hides them once the question is answered', () => {
+  const reason = { seq: 629, state: 'user_decision', code: 'user_decision_required', message: 'Choose access' }
+  const graph: FlowGraph = { ...GRAPH, nodes: [{ ...GRAPH.nodes[1], nodeRun: { status: 'open', question: true, questionWait: [reason] } }] }
+  expect(toVueFlowNodes(graph, null)[0].data).toMatchObject({ question: true, questionWait: [reason] })
+  const answered: FlowGraph = { ...graph, nodes: [{ ...graph.nodes[0], nodeRun: { status: 'open', question: false, questionWait: [] } }] }
+  expect(toVueFlowNodes(answered, null)[0].data!.questionWait).toBeUndefined()
+})
+
+it('shows the human handoff reason on the Q badge in the selected language', async () => {
+  const { shallowMount } = await import('@vue/test-utils')
+  const { createI18n } = await import('vue-i18n')
+  const { default: Card } = await import('@/features/designer/center/canvas/FlowNodeCard.vue')
+  const { default: messages } = await import('@/features/designer/inspector/features/qna/messages')
+  const i18n = createI18n({ legacy: false, locale: 'ko', messages: { ko: { gui: { inspector: { qna: messages.ko } } } } })
+  const wrapper = shallowMount(Card, { props: { id: 'b', data: {
+    kind: 'task', title: 'B', state: null, selected: false, question: true,
+    questionWait: [{ seq: 629, state: 'user_decision', code: 'user_decision_required', message: '권한 선택 필요' }],
+  } }, global: { plugins: [i18n], stubs: { Handle: true } } })
+  const badge = wrapper.get('[data-test="designer-canvas-node-question-icon"]')
+  expect(badge.attributes('title')).toContain('사용자 판단 대기')
+  expect(badge.attributes('title')).toContain('권한 선택 필요')
+  expect(badge.attributes('aria-label')).toContain('Q629')
+  wrapper.unmount()
+})

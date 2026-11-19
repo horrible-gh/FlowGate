@@ -90,8 +90,9 @@
           @undo="center.undoEdit(activeTab.flowId)"
           :can-approve="center.canApproveFlow(activeTab.flowId)"
           :approving-node-id="center.activeRun.value?.approving ?? null"
+          @open-document="emit('open-document', activeTab.flowId, $event)"
           @node-approve="center.approveNode(activeTab.flowId, $event)"
-          @node-conflict="emit('show-tool', 'git')"
+          @node-conflict="openCardMerge(activeTab.flowId, $event)"
           :card-menu="cardMenuOf"
           :holds="holds"
           @node-menu="chooseCardMenu"
@@ -137,6 +138,7 @@ const emit = defineEmits<{
   'cancel-placement': []
   /** flowgate.v02.0061 T#14: a card's merge conflict — the Git tool panel resolves it. */
   'show-tool': [tool: 'git']
+  'open-document': [flowId: string, document: import('./canvas/cardDocumentButtons').CardDocumentOpen]
 }>()
 
 const { t } = useI18n()
@@ -149,6 +151,14 @@ const marks = props.center.activeRunMarks
 /** flowgate.v02.0061 T#15: the active Flow's card context menu (the session's rules) and the item chosen in it. */
 function cardMenuOf(nodeId: string) {
   return activeTab.value ? props.center.cardMenu(activeTab.value.flowId, nodeId) : []
+}
+
+/**
+ * flowgate.v02test.0042 (시안 v7): a card's 병합 충돌 opens that card's '병합 · 충돌' Inspector tab — the one window event every
+ * "open this card's merge" goes through (the Center column selects the card and asks the Inspector for the tab).
+ */
+function openCardMerge(flowId: string, nodeKey: string) {
+  window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId, nodeKey } }))
 }
 
 function chooseCardMenu(nodeId: string, key: FlowCardMenuKey) {

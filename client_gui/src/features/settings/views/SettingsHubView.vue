@@ -101,7 +101,7 @@ import LoadingState from '@/components/ui/LoadingState.vue'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsNav from '../components/SettingsNav.vue'
 import { useSettingsAccessNotice } from '../access'
-import { AGENT_CAPS, AGENT_STATE_TONE, agentState, agentStateSub, capMissing, needsAttention } from '../agentState'
+import { AGENT_STATE_TONE, agentState, agentStateSub, capMissing, needsAttention } from '../agentState'
 import { listSystemAgents } from '../api'
 import type { SettingsIconName } from '../icons'
 import { useSettingsMenu, type SettingsScopeKey } from '../settingsMenu'
@@ -152,15 +152,14 @@ const attention = computed<AttentionItem[]>(() => {
     if (state === 'pending' || state === 'reenroll') items.push({ key: `${a.agent_id}:state`, id: a.agent_id, tone: 'warn', icon: 'key', title, sub })
     else if (tone === 'bad') items.push({ key: `${a.agent_id}:state`, id: a.agent_id, tone: 'bad', icon: 'alert', title, sub })
     else if (state === 'offline') items.push({ key: `${a.agent_id}:state`, id: a.agent_id, tone: 'warn', icon: 'power', title, sub })
-    const missing = AGENT_CAPS.filter((cap) => capMissing(a, cap)).map((cap) => t(`gui.settings.agents.caps.${cap}`))
-    if (missing.length && tone !== 'bad') {
+    if (capMissing(a, 'ai_cli') && tone !== 'bad') {
       items.push({
         key: `${a.agent_id}:caps`,
         id: a.agent_id,
         tone: 'info',
         icon: 'info',
-        title: t('gui.settings.hub.attention_mismatch', { name: a.name }),
-        sub: `${where} · ${t('gui.settings.hub.attention_mismatch_sub', { caps: missing.join(', ') })}`,
+        title: `${a.name} · ${t('gui.agent_capacity.cli_missing')}`,
+        sub: where,
       })
     }
     return items

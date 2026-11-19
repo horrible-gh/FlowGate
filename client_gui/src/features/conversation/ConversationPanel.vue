@@ -51,6 +51,8 @@
       :checkpoint-kind="checkpointMode ? state.checkpointKind : null"
       :can-checkpoint="checkpointMode && session.supportsChatDocSettings && !readOnly && !!state.activeChatId"
       :checkpoint-busy="state.savingCheckpoint"
+      :my-participant-key="state.myParticipantKey"
+      @mutate="session.mutateTurn"
       @load-older="session.loadOlder"
       @reload="reloadChat"
       @retry="start.retry"
@@ -225,7 +227,7 @@ const headerTitle = computed(() => {
 
 // flowgate.v02test.0025: the chat's checkpoint (⋯ menu, divider) exists only under 체크포인트 사용; another context
 // setting hides it but keeps it stored, so choosing 체크포인트 사용 again applies it again.
-const checkpointMode = computed(() => state.settings.contextMode === 'checkpoint')
+const checkpointMode = computed(() => (state.settings.contextMode === 'checkpoint' || state.settings.contextMode === 'checkpoint_recent'))
 
 // A draft can be written once the Flow's chat list has been read (a send before that could
 // race the newest chat opening); an open chat once its turns are on screen.

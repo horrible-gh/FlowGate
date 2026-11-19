@@ -12,7 +12,7 @@ vi.mock('@/features/document', async original => ({
   cardMemoList: (...a: unknown[]) => mocks.memos(...a), cardMemoUpdate: (...a: unknown[]) => mocks.update(...a), cardMemoCreate: (...a: unknown[]) => mocks.create(...a),
 }))
 import GateActions from '@/features/designer/inspector/features/gateCard/GateActions.vue'
-import { approveGateTarget, gateApprovalView } from '@/features/designer/inspector/features/gateCard/gateApproval'
+import { approveGateTarget, gateApprovalView } from '@/features/designer/inspector/features/gateCard/useGateApproval'
 import FlowNodeCard from '@/features/designer/center/canvas/FlowNodeCard.vue'
 import { gateHeaderState } from '@/features/designer/center/canvas/gateHeaderState'
 import { useGateDecision } from '@/features/designer/inspector/features/gateCard/useGateDecision'
@@ -73,7 +73,8 @@ describe('gate Inspector — D §8-10', () => {
     expect(w.find('[data-test="gate-result-value"]').exists()).toBe(false)
     expect(w.get('[data-test="gate-confirm"]').attributes('disabled')).toBeUndefined()
     expect(registration.headerAction).toBe(GateActions)
-    expect(registration).not.toHaveProperty('headerState')
+    expect(registration.headerState).toBeDefined()
+    expect(registration.headerStateApplies?.(target)).toBe(true)
   })
   it('has no reject action and sends no reject request', async () => {
     const w = await show()

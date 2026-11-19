@@ -8,6 +8,7 @@ from . import files as _files_router
 from modules.flow_gate.auth.auth_api import router as _auth_router
 from modules.flow_gate.documents.routers.documents import router as _documents_router
 from modules.flow_gate.documents.routers.conversation_turns import router as _conversation_turns_router
+from modules.flow_gate.api.v1.message_image_routes import router as _message_image_router
 from modules.flow_gate.documents.routers.work_plan import router as _work_plan_router
 from modules.flow_gate.documents.routers.tr2 import router as _tr2_router
 from modules.flow_gate.settings.routers.system import router as _settings_system_router
@@ -59,6 +60,7 @@ from flowgate.card_document_edit.routes import router as _card_document_edit_rou
 from flowgate.graph_read.routes import router as _ai_graph_read_router
 from flowgate.chat_control.routes import router as _chat_control_router
 from flowgate.card_memos.routes import router as _card_memos_router
+from flowgate.card_merge.routes import router as _card_merge_router
 from flowgate.work_plan_deploy.routes import router as _work_plan_deploy_router
 # flowgate.v02.0061 T#13: the Graph Time Machine (server/flowgate/graph_time_machine).
 from flowgate.graph_time_machine.routes import router as _graph_time_machine_router
@@ -213,6 +215,7 @@ app.add_middleware(GroupMutationPolicyMiddleware)
 app.include_router(_auth_router, prefix=f"{CONTEXT}/auth", tags=["Auth"])
 app.include_router(_documents_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
 app.include_router(_conversation_turns_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
+app.include_router(_message_image_router, prefix=f"{CONTEXT}/api/v1")
 # Work plan (WP) routes live under the same /documents prefix but in their own module:
 # documents.py is already 112KB and the plan paths share nothing with it but the prefix.
 app.include_router(_work_plan_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
@@ -279,6 +282,7 @@ app.include_router(_ai_graph_read_router, prefix=f"{CONTEXT}", tags=["AiGraphRea
 # flowgate.v02test.0023: chat control tower stage 1 (CLI chat: place work cards, start the Flow's run).
 app.include_router(_chat_control_router, prefix=f"{CONTEXT}", tags=["ChatControl"])
 app.include_router(_card_memos_router, prefix=f"{CONTEXT}", tags=["CardMemos"])
+app.include_router(_card_merge_router, prefix=f"{CONTEXT}", tags=["CardMerge"])   # flowgate.v02test.0042
 app.include_router(_work_plan_deploy_router, prefix=f"{CONTEXT}", tags=["WorkPlanDeploy"])
 app.include_router(_graph_time_machine_router, prefix=f"{CONTEXT}", tags=["GraphTimeMachine"])
 app.include_router(_gate_decisions_router, prefix=f"{CONTEXT}", tags=["GateDecisions"])

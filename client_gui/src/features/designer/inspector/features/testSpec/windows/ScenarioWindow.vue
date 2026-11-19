@@ -62,8 +62,8 @@ import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
 import InspectorAiButton from '../../../parts/InspectorAiButton.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
 import type { TestCardCommand } from '../useTestCard'
-import { joinFrontmatter, splitFrontmatter } from '@/features/document/cardEditSession'
-import type { TsBase } from '../tsEditSession'
+import { joinFrontmatter, splitFrontmatter } from '@/features/document'
+import type { TsBase } from '@/features/documentWindow'
 import { sessionDraft, useScenarioWindow, type RawDraft } from './scenarioWindowModel'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()

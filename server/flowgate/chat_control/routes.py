@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from modules.flow_gate.graph_workflow.api import envelope
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 
-from . import authz, card_roles, placement_roles, service
+from . import authz, card_roles, placement_roles, service, recovery
 
 router = APIRouter(prefix="/api/v2/chat", tags=["ChatControl"])
 
@@ -102,4 +102,38 @@ async def patch_card_roles(flow_id: str, node_key: str, request: Request):
         caller = authz.caller_from_bearer(_bearer(request), flow_id, write=True)
         return card_roles.change(caller, node_key, _body(raw))
 
+    return await run_in_threadpool(response, request, handle)
+
+
+@router.get("/flows/{flow_id}/recovery-basis")
+async def get_recovery_basis(flow_id: str, request: Request):
+    def handle():
+        caller = authz.caller_from_bearer(_bearer(request), flow_id, write=False)
+        return recovery.view(caller)
+    return await run_in_threadpool(response, request, handle)
+
+
+@router.get("/flows/{flow_id}/nodes/{node_key}/basis")
+async def get_card_basis(flow_id: str, node_key: str, request: Request):
+    def handle():
+        caller = authz.caller_from_bearer(_bearer(request), flow_id, write=False)
+        return recovery.view(caller, node_key)
+    return await run_in_threadpool(response, request, handle)
+
+
+@router.post("/flows/{flow_id}/nodes/{node_key}/retry")
+async def post_card_retry(flow_id: str, node_key: str, request: Request):
+    raw = await request.body()
+    def handle():
+        caller = authz.caller_from_bearer(_bearer(request), flow_id, write=True)
+        return recovery.change(caller, _body(raw), node_key)
+    return await run_in_threadpool(response, request, handle)
+
+
+@router.post("/flows/{flow_id}/restart")
+async def post_flow_restart(flow_id: str, request: Request):
+    raw = await request.body()
+    def handle():
+        caller = authz.caller_from_bearer(_bearer(request), flow_id, write=True)
+        return recovery.change(caller, _body(raw))
     return await run_in_threadpool(response, request, handle)

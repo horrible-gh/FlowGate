@@ -6,9 +6,6 @@
        (0001-R §4.1.1). 정렬 / 배치 ▾ is the same entry as the Edit menu's 정렬 / 배치… and emits
        the same command. flowgate.v02.0039 T#3: `disabled` (no work target yet) keeps every tool
        on screen but dimmed and unavailable, as the confirmed initial-state design draws it.
-       flowgate.v02.0045 TR0020 rev2: 검증 sits right before the run buttons (it checks what 실행
-       would take); it is available while the open Flow's edited structure can be checked
-       (`canValidate`).
        flowgate.v02.0059 T#1 (0011-CH contract A): [선택] is back for multi-selection only (no add
        node / connect mode): a toggle whose ON / OFF (`selectMode`, the Center session's) shows on the
        button; it emits `edit.select-mode` and the Shell switches the mode.
@@ -103,17 +100,6 @@
     </div>
 
     <div class="designer-tool-group" data-test="designer-tool-group">
-      <button
-        type="button"
-        class="designer-tool"
-        data-test="designer-tool"
-        data-command="run.validate"
-        :disabled="disabled || !canValidate || !isMenuCommandEnabled('run.validate', runPhase, targets)"
-        @click="emit('command', 'run.validate')"
-      >
-        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><path d="M6.5 10.2l2.4 2.4 4.6-5" /></svg>
-        <span>{{ t('gui.designer.top.tools.validate') }}</span>
-      </button>
       <button
         v-for="run in runButtons"
         :key="run.key"
@@ -269,7 +255,7 @@ function chooseZoom(event: Event) {
 const { t, locale } = useI18n()
 const attachmentWords = computed(() => words[locale.value as keyof typeof words] ?? words.en)
 
-// flowgate.v02.0061 T#14 (R §실행 제어): the two run buttons of each run phase, in place; 중지 중 is one, off.
+// Keep Pause visible but disabled while stopping; hide it once execution returns to idle.
 type RunIcon = 'next' | 'all' | 'pause' | 'stop'
 interface RunButton {
   readonly key: string
@@ -292,7 +278,10 @@ const RUN_BUTTONS: Readonly<Record<DesignerRunPhase, readonly RunButton[]>> = {
     { key: 'stop', command: 'run.stop', label: 'stop', icon: 'stop' },
   ],
   // v02gui.0013: an accepted Stop is progress, not a failed request.
-  stopping: [{ key: 'stopping', command: 'run.stop', label: 'stopping', icon: 'stop' }],
+  stopping: [
+    { key: 'pause', command: 'run.pause', label: 'pause', icon: 'pause' },
+    { key: 'stopping', command: 'run.stop', label: 'stopping', icon: 'stop' },
+  ],
 }
 
 const runButtons = computed(() =>
@@ -506,8 +495,6 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 /* flowgate.v02gui.0030: 첨부파일 (final mockup .tool-attachment) — blue clip; lit while the open Flow's window is open. */
 .designer-tool-attachment {
   position: relative;
-  min-width: 70px;
-  margin-left: 5px;
   color: #d8ebfa;
 }
 

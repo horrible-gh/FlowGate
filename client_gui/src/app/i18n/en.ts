@@ -1,4 +1,5 @@
 export default {
+  agent_capacity: {"label": "Maximum concurrent jobs", "running": "Running now", "summary": "Running {running} / maximum {max}", "queued": "Queued {count}", "invalid": "Enter an integer from 1 to 32.", "hint": "Includes chats and card jobs. Additional jobs wait in order.", "lowered": "Running jobs finish normally. New jobs start once the count falls below the new limit.", "cli_missing": "AI CLI not found on this PC. It cannot receive CLI jobs.", "connect": "Connection", "token_hint": "Registration tokens last 10 minutes. Issuing a new token invalidates the previous token.", "waiting": "Waiting for the Agent · checking every 5 seconds", "enable_first": "Enable and save the Agent to issue a registration token.", "enabled": "Enabled", "workdir_hint": "Without it the Agent cannot receive jobs. Choose where job folders are created on the Agent PC, e.g. /data/flowgate or C:\\flowgate.", "sec_basic": "Basics", "sec_run": "Execution", "sec_workdir": "Job folders", "create_sub": "Only a name is required. You can change the rest later.", "not_connected": "Not connected to a PC yet", "enabled_on": "When on, this Agent receives jobs.", "enabled_off": "Receives no jobs.", "unit_jobs": "jobs", "running_now": "{running} running now", "queued_now": "{count} queued", "workdir_label": "Job folder location", "workdir_preview": "Each job gets a new folder: {path}", "cleanup_on": "Delete the folder {hours} hours after the job ends (1–720).", "cleanup_off": "When off, job folders are kept.", "cli_missing_detail": "AI CLI was not found on this PC, so it cannot receive jobs. Once installed, jobs start arriving from the next connection.", "token_title": "Registration token", "token_until": "Valid until {at}", "no_token": "No token · valid for 10 minutes", "no_token_hint": "The dialog was closed or the token expired after 10 minutes. Issue a new one; there is no need to delete and register again.", "no_changes": "No changes", "changes": "{count} unsaved changes", "changes_one": "1 unsaved change", "workdir_shared": "All jobs currently share one folder: {path}. Edit this field and save to give each job its own folder."},
   accountMenu: {"settings": "My settings", "profile": "My profile", "password": "Change password", "logout": "Log out", "confirmLogout": "Log out?"},
   notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
   // flowgate.chat.0017 CH0002 — AI attachment upload requests (chat message, flow attachment window, run result, settings).
@@ -138,7 +139,7 @@ export default {
     "enroll_title": "Agent enrollment",
     "enroll_hint": "Enter the issued one-time token in the Agent machine’s enrollment procedure, then start the Agent.",
     "expired": "The enrollment token has expired.",
-    "retry_issue": "Retry token ***",
+    "retry_issue": "Reissue enrollment token",
     "copy": "Copy",
     "done": "Done"
 },
@@ -339,6 +340,9 @@ export default {
   designer: {
     // flowgate.v02.0026 — Designer Center (Flow Tabs + read-only Canvas).
     center: {
+      document: 'Document',
+      open_card_document: 'Open {kind}: {title}',
+      card_document_empty: '{label} (empty)',
       latest_definition_notice: 'Showing latest definition {latest}. The run keeps revision {revision}. Protected cards and inputs cannot be changed.',
       pinned_revision_notice: 'Showing run-pinned revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',
       past_revision_notice: 'Showing revision {revision} (latest {latest}). Editing is unavailable in this view. Cards added in the latest revision are not shown.',
@@ -375,7 +379,11 @@ export default {
         integrating: 'Merging',
         conflict: 'Merge conflict',
         failed: 'Merge failed',
-        open_conflict: 'Resolve the conflict in the Git panel',
+        open_conflict: 'Handled in the card\'s \'Merge · Conflict\' tab',
+        // flowgate.v02test.0042 — a waiting merge's hourglass tooltip.
+        waiting_for: 'Waiting for the \'{title}\' card\'s conflict to be resolved',
+        waiting_behind: 'Waiting for the \'{title}\' card\'s merge to end',
+        waiting_turn: 'Waiting for its turn to merge',
         // v02gui.0015 T4 — the result failed the integration's syntax check.
         verification_failed: 'Not merged: a file of the result has a syntax error. To redo the work, stop and run again (a new attempt opens).',
       },
@@ -701,6 +709,7 @@ export default {
         settings: 'Settings',
         ai: 'AI',
         qna: 'Q&A',
+        merge: 'Merge · Conflict',
       },
       // flowgate.v02.0048 T#1 — the target's states in the header and the common section states (parts).
       doc_status_label: 'Document status',
@@ -834,6 +843,15 @@ export default {
         },
         project_only: 'Only runs in the current project {name} are shown.',
         empty_runs: 'No running or waiting runs.',
+        // flowgate.v02test.0042 — a card result's merge waiting in a Flow (its '병합 · 충돌' tab opens from [열기]).
+        merge: {
+          needs_choice: 'The \'{title}\' card\'s merge conflict — a choice is needed',
+          failed: 'The \'{title}\' card\'s merge failed — a choice is needed',
+          waiting: 'The \'{title}\' card waits to merge',
+          waiting_for: 'The \'{title}\' card waits to merge (behind \'{blocked}\')',
+          catching_up: 'The \'{title}\' card\'s merge is in progress',
+          open: 'Open',
+        },
         empty_ai: 'No AI notifications.',
           question_all: "View all",
           question_reply: "Answer now",
@@ -1163,6 +1181,11 @@ export default {
       clear: 'Clear',
     },
     message: {
+      edit: 'Edit',
+      remove: 'Delete',
+      deleted: 'Deleted message',
+      delete_confirm: 'Delete this message?',
+      change_failed: 'Could not save. Please reload and retry.',
       user: 'Me',
       ai: 'AI',
       // flowgate.v02test.0023: FlowGate's own turn (e.g. the chat commit result).
@@ -1179,6 +1202,9 @@ export default {
         network: 'Could not reach the server',
       },
       stale: 'Written before message #{seq} was seen.',
+      // flowgate.v02test.0029: a message sent while the AI answered.
+      waiting: 'Queued',
+      waiting_title: 'When the current answer ends, the AI reads this message and answers it.',
       copy: 'Copy original text',
       copied: 'Copied',
       copy_failed: 'Could not copy',
@@ -1263,6 +1289,7 @@ export default {
     },
     status: {
       run_running: 'AI is replying…',
+      run_timeout: 'The AI call reached its time limit.',
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',
       run_query_unconfirmed: 'The AI call ended, but the saved reply could not be verified',
@@ -1299,7 +1326,6 @@ export default {
       provider_loading: 'Loading',
       provider_failed: 'AI list error',
       // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
-      ai_pick_loading: 'Checking this chat\'s AI. You can send once it is known',
       ai_pick_failed: 'Sending is paused: this chat\'s AI could not be checked',
       ai_pick_retry: 'Try again',
       provider_none: 'No AI',
@@ -1325,6 +1351,46 @@ export default {
       manual_copy_title: 'Could not copy to the clipboard. Copy the text below by hand.',
       manual_copy_again: 'Copy again',
     },
+    // flowgate.v02test.0029 — message images: pasted / dropped into the composer, shown on the message.
+    image: {
+      download: 'Download image',
+      alt: 'Image {n}',
+      open: 'View image {n} of {total} large',
+      viewer: 'Original image',
+      prev: 'Previous image',
+      next: 'Next image',
+      remove: 'Remove image',
+      uploading: 'Uploading',
+      checking: 'Checking',
+      missing: 'This image is gone (cleaned up after 24 hours). Remove it',
+      load_failed: 'Could not load',
+      error: {
+        too_large: 'The image is over 5 MB',
+        unsupported: 'Only PNG, JPEG, GIF and WebP can be uploaded',
+        unreadable: 'The image cannot be read',
+        dimension: 'The image is too large (long side up to 1568px)',
+        forbidden: 'You cannot upload images here',
+        disposed: 'Cannot upload to a disposed flow',
+        failed: 'Upload failed',
+        check_failed: 'Could not confirm this image. Retry or remove it',
+      },
+      notice: {
+        limit: 'Up to 5 images per message',
+        not_image: 'Only image files can be attached',
+        unsupported: 'Only PNG, JPEG, GIF and WebP images can be attached',
+        too_large: 'The image is over 5 MB',
+        unreadable: 'The image cannot be read',
+        dimension: 'The image is too large',
+        forbidden: 'You cannot upload images here',
+        disposed: 'Cannot upload to a disposed flow',
+        failed: 'Could not upload the image',
+      },
+      hint: {
+        uploading: 'You can send once the images have uploaded',
+        checking: 'Checking the images. You can send once that is done',
+        unusable: 'Retry or remove the failed or gone images to send',
+      },
+    },
     settings: {
       title: 'Chat settings',
       send_action: 'On send',
@@ -1335,6 +1401,11 @@ export default {
       context_turns: 'Last {n} turns',
       context_all: 'All',
       context_custom: 'Custom',
+      context_checkpoint_recent: 'Checkpoint + at most X turns',
+      timeout: 'Timeout',
+      timeout_none: 'Unlimited',
+      timeout_minutes: '{n} minutes',
+      timeout_invalid: 'Enter an integer from 1 to 10080 minutes.',
       context_checkpoint: 'Use checkpoint',
       context_invalid: 'Enter a whole number from {min} to {max}',
     },
@@ -1409,6 +1480,10 @@ export default {
       abort_message: 'Stops the merge. The work branch is kept.',
       abort_bound: 'The final approval attempt in progress ends with it.',
       unsupported: 'This kind of conflict is not handled on this screen.',
+      // flowgate.v02test.0042 — a Graph card result's merge conflict is handled in the card, not here.
+      card_handled: 'A card result\'s merge conflict — handled in the card',
+      card_handled_desc: 'You choose for this conflict in that card\'s \'Merge · Conflict\' tab, not in the Git tab.',
+      open_card: 'Go to the card',
       loading: 'Loading conflict files…',
     },
     resolver: {

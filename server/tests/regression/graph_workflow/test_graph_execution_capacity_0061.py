@@ -13,6 +13,7 @@ from fastapi import HTTPException
 
 from test_graph_attempt_runs_0061 import db, MIGRATIONS
 from flowgate.graph_run import scheduling, execution, execution_store as ledger, settle
+from flowgate.graph_run.scheduling import acquire as acquire_with_capacity
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.services import graph_execution_hooks
 from modules.flow_gate.services.ai_invoke import provider_cli
@@ -21,6 +22,8 @@ from modules.flow_gate.graph_workflow.domain.frontier import RunState, NodeRun
 
 @pytest.fixture
 def capacity(db, monkeypatch):
+    # The ledger fixture bypasses scheduling; capacity tests need the real gate.
+    monkeypatch.setattr(scheduling, "acquire", acquire_with_capacity)
     db.db.execute("CREATE TABLE groups(group_id TEXT PRIMARY KEY)")
     db.db.execute("INSERT INTO groups VALUES('flow')")
     db.db.executescript((MIGRATIONS / "sqlite" / "153_graph_execution_limit.sql").read_text())
@@ -152,7 +155,9 @@ def test_node_order_and_step_refill_intersection(capacity, monkeypatch):
                      mode="step", step_targets=frozenset({"a", "b"}))
     monkeypatch.setattr(frontier, "run_candidates", lambda *_: ["a", "b", "next"])
     monkeypatch.setattr(run_apply, "read_run_state", lambda _: state)
-    ctx = SimpleNamespace(run={"status": "running"}, revision=graph)
+    ctx = SimpleNamespace(run={"status": "running", "revision_no": 1}, revision=graph, flow_id="flow")
+    from modules.flow_gate.graph_workflow.store import definition_store
+    monkeypatch.setattr(definition_store, "latest_revision_no", lambda _: 1)
     assert scheduling.opening(ctx, ["a", "b", "next"]) == ["b", "a"]
     # Recompute after a target finishes: its new descendant remains outside the command.
     monkeypatch.setattr(frontier, "run_candidates", lambda *_: ["b", "next"])

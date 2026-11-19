@@ -6,9 +6,9 @@
 // new selection.
 import { computed, inject, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { settingsNodeErrorOf, settingsNodeRead, settingsNodeWrite, settingsTeamsRead, type SettingsNode, type SettingsTeam } from '@/features/document'
-import { INSPECTOR_HOST } from '../../inspectorHost'
-import { inspectorCardNodeKey, type InspectorTarget } from '../../inspectorTarget'
-import { useInspectorFieldWrite, useInspectorResource, type InspectorEventMatch, type InspectorEventScope, type InspectorResourceStatus } from '../../useInspectorResource'
+import { INSPECTOR_HOST } from '@/features/designer/inspector/inspectorHost'
+import { inspectorCardNodeKey, type InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
+import { useInspectorFieldWrite, useInspectorResource, type InspectorEventMatch, type InspectorEventScope, type InspectorResourceStatus } from '@/features/designer/inspector/useInspectorResource'
 import type { RequirementSettingsFailureKind } from './requirementSettingsModel'
 
 /** Server events after which the card's settings are read again (its run, hence its lock, moved). */

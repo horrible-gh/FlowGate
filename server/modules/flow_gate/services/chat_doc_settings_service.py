@@ -10,7 +10,8 @@
   [all] ignore it (the stored checkpoint is kept, so going back to [checkpoint] applies it again).
   Both context paths (the API model window in ``ai_invoke.worker`` and the CLI/Agent mention in
   ``invoke_mention_service``) get their window from :func:`context_window`, so the two can never
-  disagree. Earlier turns are folded, not deleted: the fold notice still lets the AI page back.
+  disagree. Earlier turns stay readable through the backward link. The AI is told only the range it
+  received, never the checkpoint itself (flowgate.v02test.0041).
 
 Like the user-level chat settings, a broken row must never stop a chat: the context readers never
 raise, and a bad value arriving in a PATCH is a 422 naming its field.
@@ -26,7 +27,7 @@ from modules.flow_gate.services import chat_settings_service
 
 _log = logging.getLogger(__name__)
 
-PATCH_FIELDS = ("provider_id", "context_checkpoint_seq", "context_checkpoint_kind")
+PATCH_FIELDS = ("provider_id", "context_checkpoint_seq", "context_checkpoint_kind", "timeout_minutes")
 CHECKPOINT_KINDS = store.CHECKPOINT_KINDS
 CHECKPOINT_KIND_DEFAULT = store.CHECKPOINT_KIND_DEFAULT
 
@@ -45,8 +46,9 @@ def _view(row: Optional[dict]) -> dict:
     row = row or {}
     return {
         "provider_id": row.get("provider_id"),
+        "timeout_minutes": row.get("timeout_minutes"),
         "context_checkpoint_seq": row.get("context_checkpoint_seq"),
-        "context_checkpoint_kind": row.get("context_checkpoint_kind"),
+        "context_checkpoint_kind": row.get("context_checkpoint_kind", "timeout_minutes"),
         "updated_at": row.get("updated_at"),
     }
 
@@ -112,6 +114,11 @@ def save_settings(user_id: str, doc_id: str, patch: dict, *, project_id: Optiona
         if key not in PATCH_FIELDS:
             raise ChatDocSettingsError(key, f"unknown field: {key}.", "unknown_field")
     values: dict = {}
+    if "timeout_minutes" in patch:
+        minutes = patch["timeout_minutes"]
+        if minutes is not None and (type(minutes) is not int or not 1 <= minutes <= 10080):
+            raise ChatDocSettingsError("timeout_minutes", "timeout_minutes must be null or an integer from 1 to 10080.")
+        values["timeout_minutes"] = minutes
     if "provider_id" in patch:
         values["provider_id"] = _validate_provider(patch["provider_id"], project_id, user_id)
     if "context_checkpoint_seq" in patch:
@@ -147,7 +154,7 @@ def checkpoint_safe(user_id: Optional[str], doc_id: Optional[str]) -> Optional[t
     seq = (row or {}).get("context_checkpoint_seq")
     if not (isinstance(seq, int) and not isinstance(seq, bool) and seq >= 1):
         return None
-    return seq, (row or {}).get("context_checkpoint_kind") != "exclude"
+    return seq, (row or {}).get("context_checkpoint_kind", "timeout_minutes") != "exclude"
 
 
 def checkpoint_seq_safe(user_id: Optional[str], doc_id: Optional[str]) -> Optional[int]:
@@ -169,8 +176,8 @@ def context_window(
     ``checkpoint_seq`` / ``checkpoint_kind`` are set only when a checkpoint actually decided the window.
     """
     mode = settings["context_mode"]
-    turns = int(settings["context_turns"])
-    checkpoint = checkpoint_safe(user_id, doc_id) if mode == "checkpoint" else None
+    turns = int(settings.get("checkpoint_max_turns", 10) if mode == "checkpoint_recent" else settings["context_turns"])
+    checkpoint = checkpoint_safe(user_id, doc_id) if mode in ("checkpoint", "checkpoint_recent") else None
     seq, include = checkpoint if checkpoint else (None, True)
     head_seq = head_seq_of(doc_id) if chat_settings_service.window_needs_head(mode, seq) else 0
     after_seq, folded = chat_settings_service.resolve_context_window(
@@ -178,6 +185,7 @@ def context_window(
     )
     return {
         "mode": mode,
+        "through_seq": head_seq if chat_settings_service.window_needs_head(mode, seq) else None,
         "turns": turns,
         "limit": chat_settings_service.context_turn_limit(mode, turns, seq),
         "after_seq": after_seq,

@@ -20,4 +20,15 @@ class FlowNotFound(GraphApiError):
 
 
 class FlowLockTimeout(Exception):
-    """The in-process Flow lock was not acquired in time (L0009 E-02) -> 500 internal_error."""
+    """The in-process Flow lock was not acquired in time (L0009 E-02) -> 500 internal_error.
+
+    ``str(exc)`` / ``args[0]`` stay the key waited for (a Flow id, or a document id for a document lock).
+    flowgate.v02test.0040 T0005: ``kind`` ("flow" / "document") and ``wait_sec`` (how long it waited) travel with it,
+    so a caller that turns it into a refusal (module rename -> 409 ``module_rename_busy``) can say what was busy.
+    """
+
+    def __init__(self, key: str, *, kind: str = "flow", wait_sec: Optional[float] = None):
+        super().__init__(key)
+        self.key = key
+        self.kind = kind
+        self.wait_sec = wait_sec

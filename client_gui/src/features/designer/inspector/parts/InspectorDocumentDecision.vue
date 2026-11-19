@@ -14,7 +14,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import IconButton from '@/components/ui/IconButton.vue'
+import IconButton from '../../../../components/ui/IconButton.vue'
 import { documentDecisionMessages } from './documentDecisionMessages'
 const props = defineProps<{ name: string; action: 'approve' | 'reject'; disabled: boolean; reason: string | null }>()
 const emit = defineEmits<{ click: [] }>()

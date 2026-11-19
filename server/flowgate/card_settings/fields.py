@@ -153,15 +153,8 @@ _FIELDS = {
         Field("result_cause", CHOICE, "ai", ("ai", "human")),
         Field("follow_scope", CHOICE, "summary", ("summary", "full")),
     ),
-    REQUIREMENT: (
-        Field("delegation", CHOICE, "off", ("off", "on")),
-        Field("scope", CHOICE, "end", ("end", "confirm")),
-        Field("team", TEAM),
-        Field("limit_max_nodes", LIMIT),
-        Field("limit_total_reviews", LIMIT),
-        Field("limit_retries_per_card", LIMIT),
-        Field("limit_replans", LIMIT),
-    ),
+    # Historical delegation values stay stored, but are no longer writable settings.
+    REQUIREMENT: (),
     CHECK: (
         Field("archive", FLAG, False),
         Field("merge_mode", CHOICE, None, ("merge", "commit", "hold")),

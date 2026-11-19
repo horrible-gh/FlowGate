@@ -57,7 +57,7 @@ describe('v02gui.0011 A: a long chat opens on its recent messages only', () => {
     expect(session.state.turns[0].seq).toBe(71)
     expect(statusCodes('run-lost')).toContain('run_no_reply')
     await session.loadOlder()
-    expect(session.state.turns[0].seq).toBe(41)
+    expect(session.state.turns[0].seq).toBe(61)
     expect(session.state.hasMoreBefore).toBe(true)
   })
 

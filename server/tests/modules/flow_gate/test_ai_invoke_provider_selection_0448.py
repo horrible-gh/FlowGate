@@ -105,6 +105,9 @@ class FakeWfseq:
 
 @pytest.fixture
 def env(monkeypatch, tmp_path):
+    from itertools import count
+    run_ids = count(1)
+    monkeypatch.setattr(svc, "_next_run_id", lambda: f"aiv2_test_{next(run_ids):06d}")
     wfseq = FakeWfseq(ITEMS)
     chain = {"providers": [provider(pid) for pid in ALL_PROVIDER_IDS],
              "source": "system", "registered_count": len(ALL_PROVIDER_IDS)}

@@ -98,9 +98,13 @@ export interface FlowRunNodeInfo extends CardRunFacts, RoleRunFields {
   readonly nodeKey: string
   readonly status: string
   readonly integrationStatus?: string | null
+  readonly integrationReason?: string | null
+  /** flowgate.v02test.0042: the card (node key) whose merge this card's merge waits for, or null. */
+  readonly integrationBlockedBy?: string | null
   readonly hold?: boolean
   /** flowgate.v02.0063: the card's document holds a question still unanswered. */
   readonly question?: boolean
+  questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
   /** flowgate.v02.0064 T#4: the card is running now (the server's card running lock, `node_running`). */
   readonly nodeRunning?: boolean
   readonly runningExecutionCount?: number

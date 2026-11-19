@@ -11,6 +11,7 @@ import { toRunGateState } from '@/features/document/api/run'
 // flowgate.v02.0064 T#4 (0064 P0006 §4.2 / §6.5): a node's card title state (`title_state`) and its title save.
 
 import { extractApiErrorMessage, getRequest, putRequest } from '@shared/api'
+import { canvasHeaders } from '@shared/canvasClient'
 import { toAiRoleValue } from '@/features/ai/roles/roleValues'
 import type { RoleRunFields, RoleSubmission, UncarriedChanges } from './types'
 import { normalizeApiError } from '@shared/apiErrors'
@@ -114,8 +115,11 @@ function toNodeRun(raw: Raw | null | undefined): FlowCanvasNodeRun | null {
     ...('instruction_doc_id' in raw ? { instructionDocId: str(raw.instruction_doc_id) } : {}),
     ...('integration_status' in raw ? { integrationStatus: str(raw.integration_status) } : {}),
     ...('integration_reason' in raw ? { integrationReason: str(raw.integration_reason) } : {}),
+    // flowgate.v02test.0042: the card whose merge this one waits for (its node key), kept only when sent.
+    ...('integration_blocked_by' in raw ? { integrationBlockedBy: str(raw.integration_blocked_by) } : {}),
     ...(typeof raw.hold === 'boolean' ? { hold: raw.hold } : {}),
     ...(typeof raw.question === 'boolean' ? { question: raw.question } : {}),
+    ...('question_wait' in raw ? { questionWait: toQuestionWait(raw.question_wait) } : {}),
     ...(typeof raw.node_running === 'boolean' ? { nodeRunning: raw.node_running } : {}),
     ...(running !== null ? { runningExecutionCount: running } : {}),
     ...(requested !== null ? { requestedExecutionCount: requested } : {}),
@@ -339,16 +343,7 @@ export function wrapError(error: unknown, fallback: string): Error {
 
 const canvasPath = (flowId: string) => `/api/v1/flows/${encodeURIComponent(flowId)}/canvas`
 
-function newCanvasClientId(): string {
-  const bytes = new Uint8Array(9)
-  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes)
-  else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256)
-  return `tab_${[...bytes].map((b) => b.toString(36).padStart(2, '0')).join('')}`
-}
-
-/** This tab's `x-canvas-client-id` (P0008 §1.1: 1~64 of [A-Za-z0-9_-], kept while the tab lives). */
-export const CANVAS_CLIENT_ID = newCanvasClientId()
-export const canvasHeaders = () => ({ headers: { 'x-canvas-client-id': CANVAS_CLIENT_ID } })
+export { CANVAS_CLIENT_ID, canvasHeaders } from '@shared/canvasClient'
 
 // flowgate.v02.0135 T#4: a Canvas write of this tab that got no answer (timeout, dropped connection) may still be
 // stored by the server later. Its change event then carries this tab's id and would be dropped as already applied
@@ -502,4 +497,10 @@ export function toRoleRunFields(raw: Raw): RoleRunFields {
       stageState: str(item.stage_state), failCause: str(item.fail_cause), verdict: str(item.verdict), intent: item.intent ? { kind: str(item.intent.kind), execId: str(item.intent.exec_id) } : null,
     })) : null } : {}),
   }
+}
+
+export function toQuestionWait(value: unknown) {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is Raw => !!item && typeof item === 'object' && typeof item.seq === 'number')
+    .map(item => ({ seq: item.seq as number, state: str(item.state) ?? 'pending', code: str(item.code), message: str(item.message) }))
 }

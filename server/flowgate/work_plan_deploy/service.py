@@ -559,8 +559,8 @@ def _status(doc_id: str) -> dict:
     return {
         "doc_id": doc_id, "flow_id": state.flow_id, "wp_node_key": state.wp_key, "ownership": state.ownership,
         "wp_revision_no": int(state.doc.get("revision_no") or 0),
-        "deployable": refusal is None, "reason": refusal.code if refusal is not None else None,
-        **counts, "cards": cards, "modes": _modes(counts, refusal),
+        "deployable": False, "reason": "work_plan_retired",
+        **counts, "cards": cards, "modes": {FIRST: False, ADD: False, CLEANUP: False},
     }
 
 
@@ -571,10 +571,8 @@ def _mode(mode: Any) -> str:
 
 
 def preview(doc_id: str, mode: Any, wp_revision_no: Any, locale: str) -> dict:
-    """``POST .../work-plan/deploy/preview``: what an execution would do now, and the baseline it must carry."""
-    mode = _mode(mode)
-    with legacy.plan_save_lock(doc_id):
-        return legacy.with_read_snapshot(lambda: _preview(doc_id, mode, wp_revision_no, locale))
+    """Creation/deployment is retired; historical status and execution records remain readable."""
+    raise DeployError(410, "work_plan_retired", {"doc_id": doc_id})
 
 
 def _preview(doc_id: str, mode: str, wp_revision_no: Any, locale: str) -> dict:
@@ -621,20 +619,8 @@ class _Run:
 
 
 def execute(doc_id: str, request: dict, user_id: str, locale: str) -> dict:
-    """``POST .../work-plan/deploy``: the deploy itself, with the preview's baseline (D0006 §3.6.4)."""
-    mode = _mode(request.get("mode"))
-    run = _Run()
-    with legacy.plan_save_lock(doc_id):
-        doc = _wp_document(doc_id)
-        try:
-            result = legacy.with_flow_guard(doc["group_id"], lambda: _execute(doc_id, mode, request, user_id, locale, run))
-        except Exception as exc:
-            if run.restore_failed:
-                raise DeployError(500, "deploy_restore_incomplete", {
-                    "doc_id": doc_id, "doc_ids": sorted(set(run.restore_failed))}) from exc
-            raise
-    deployment_bridge.finish(run)
-    return result
+    """Creation/deployment is retired; historical status and execution records remain readable."""
+    raise DeployError(410, "work_plan_retired", {"doc_id": doc_id})
 
 
 def _execute(doc_id: str, mode: str, request: dict, user_id: str, locale: str, run: _Run) -> dict:

@@ -1262,6 +1262,10 @@ def _content_submit(ctx: dict) -> dict:
     if probe and not is_work_plan:
         payload["encoding_probe"] = {"line": probe, "rule": _ENCODING_PROBE_RULE}
     if is_work_plan:
+        payload["retirement"] = {
+            "new_cards": False, "deployment": False,
+            "guidance": "WP is retained for existing card attempts and historical documents only. Place new work cards through chat.",
+        }
         payload["content_format"] = {
             "format": "canonical_json",
             "template_url": f"{base}/help/items/design_template/{WORK_PLAN_TYPE}",

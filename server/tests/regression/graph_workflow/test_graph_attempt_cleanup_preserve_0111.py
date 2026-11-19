@@ -175,6 +175,39 @@ def test_kept_by_the_immediate_cleanup_and_by_two_server_starts(repo, monkeypatc
         assert (item.root / "value.txt").read_text(encoding="utf-8") == "work in progress"
 
 
+@pytest.mark.parametrize("repository_state", ["missing", "file"])
+def test_invalid_marker_repository_preserves_without_starting_git(repo, monkeypatch, caplog, repository_state):
+    item = _attempt(repo)
+    marker_path = item.directory / workspace.merge_target.OWNER_MARKER
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    invalid_repo = item.directory / "stale-repository"
+    if repository_state == "file":
+        invalid_repo.write_text("keep this file", encoding="utf-8")
+    marker_path.write_text(json.dumps({**marker, "repository": str(invalid_repo)}), encoding="utf-8")
+    original = workspace.git._run_git
+    calls = []
+
+    def checked(args, **kwargs):
+        if str(kwargs.get("cwd")) == str(invalid_repo):
+            calls.append(args)
+            raise NotADirectoryError("invalid repository cwd")
+        return original(args, **kwargs)
+
+    monkeypatch.setattr(workspace.git, "_run_git", checked)
+    assert workspace.cleanup(item.attempt) is False
+    for _start in range(2):
+        workspace.cleanup_finished()
+        assert _kept(repo, item) and item.root.exists()
+    detail = "repository_missing" if repository_state == "missing" else "repository_not_directory"
+    assert _preserved(repo, item.attempt) == [("unverifiable", detail)] * 3
+    assert not calls
+    assert "cleanup check failed" not in caplog.text
+    assert "cleanup_failed" not in _modes(repo, item.attempt)
+    if repository_state == "file":
+        assert invalid_repo.read_text(encoding="utf-8") == "keep this file"
+    assert not repo.held
+
+
 def test_kept_attempt_is_removed_once_its_source_is_kept_elsewhere(repo):
     """ⓕ the retry is the same check only: committed and then held by a user branch, the next start removes it."""
     item = _attempt(repo)

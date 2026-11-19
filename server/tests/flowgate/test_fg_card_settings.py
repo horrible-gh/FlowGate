@@ -329,7 +329,7 @@ def legacy_setting(env, flow, key, field, value):
     PATCH itself uses slots now. These callers exercise run/approval/token behavior
     until T#3; their fixture must still represent an old card's stored fields.
     """
-    if field not in ("instruction_ai", "run_ai", "review_ai"):
+    if field not in ("instruction_ai", "run_ai", "review_ai", "delegation"):
         return setting(env, flow, key, field, value)
     from flowgate.card_settings import repository
     from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
@@ -354,6 +354,49 @@ def placed(env, flow, doc_type="T", assignee=None):
     return first["key_map"]["tmp_c"]
 
 
+@pytest.mark.parametrize("client_id", ["tab_1", "tab_2", None])
+def test_settings_event_carries_request_origin_and_only_follows_changes(env, client_id):
+    key = placed(env, FA)
+    headers = {"Authorization": "Bearer user:u_kim"}
+    if client_id is not None:
+        headers["x-canvas-client-id"] = client_id
+    env["events"].clear()
+    url = f"/api/v1/flows/{FA}/nodes/{key}/settings"
+    body = {"field": "restart", "value": 0}
+    response = env["client"].patch(url, json=body, headers=headers)
+    assert response.status_code == 200, response.text
+    events = [ev for ev in env["events"] if ev.event_type == "graph_canvas_changed"]
+    assert len(events) == 1
+    assert events[0].payload["origin_client_id"] == client_id
+    assert events[0].payload["reason"] == "settings"
+    assert events[0].payload["node_keys"] == [key]
+    version = response.json()["settings_version"]
+    env["events"].clear()
+    assert env["client"].patch(url, json=body, headers=headers).status_code == 200
+    refused = env["client"].patch(url, json={"field": "restart", "value": "invalid"}, headers=headers)
+    assert refused.status_code == 422
+    assert not env["events"]
+    assert get_settings(env, FA, key)["settings_version"] == version
+
+
+@pytest.mark.parametrize("client_id", ["", "bad id!", "x" * 65])
+def test_invalid_settings_origin_is_refused_before_mutation(env, client_id):
+    key = placed(env, FA)
+    before = get_settings(env, FA, key)
+    env["events"].clear()
+    response = env["client"].patch(
+        f"/api/v1/flows/{FA}/nodes/{key}/settings",
+        json={"field": "restart", "value": 0},
+        headers={**_h(), "x-canvas-client-id": client_id})
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["params"]["errors"] == [
+        {"field": "header.x-canvas-client-id", "reason": "invalid_format"}]
+    assert not env["events"]
+    after = get_settings(env, FA, key)
+    assert after["fields"] == before["fields"]
+    assert after["settings_version"] == before["settings_version"]
+
+
 # ── the settings of each card kind (pure) ────────────────────────────────────
 
 def test_card_kinds_and_their_settings_follow_the_v7_blocks():
@@ -369,8 +412,7 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
     assert names == {
         f.RUN: RUN_FIELDS,
         f.TEST: ["instruction", "run_ai", "review_ai", "review_count", "result_cause", "follow_scope"],
-        f.REQUIREMENT: ["delegation", "scope", "team", "limit_max_nodes", "limit_total_reviews",
-                        "limit_retries_per_card", "limit_replans"],
+        f.REQUIREMENT: [],
         # 0085 T#1: no usage; flowgate.v02.0098 T#1: the local merge branch next to the remote
         f.CHECK: ["archive", "merge_mode", "merge_target", "merge_target_branch", "push", "keep_branch"],
         f.PLAN: ["pre_instruction_auto", "run_ai", "restart", "review_ai", "review_count", "time_limit",
@@ -450,7 +492,7 @@ def test_each_card_kind_keeps_its_own_settings(env):
     db_ai_groups.create({"ai_group_id": "team_auth", "name": "auth", "name_key": "auth",
                          "name_key_hash": "a" * 64, "description": ""})
     first = put_draft(env, FB, 0, [node("tmp_ts", "TS"), node("tmp_r", "R"), node("tmp_g", None, "gate"),
-                                   node("tmp_wp", "WP"), node("tmp_x", None, "custom")])
+                                   node("tmp_wp", "T"), node("tmp_x", None, "custom")])
     km = first["key_map"]
     setting(env, FB, km["tmp_ts"], "review_count", -1)
     ts = setting(env, FB, km["tmp_ts"], "review_ai", "aip_card")
@@ -459,11 +501,8 @@ def test_each_card_kind_keeps_its_own_settings(env):
     setting(env, FB, km["tmp_ts"], "time_limit", 60, expect=422)          # not a test card setting
     for field, value in (("scope", "confirm"), ("team", "team_auth"), ("limit_max_nodes", 12),
                          ("limit_total_reviews", 30)):
-        req = setting(env, FB, km["tmp_r"], field, value)
-    assert req["card_kind"] == "requirement"
-    assert {k: v for k, v in shown(req).items()} == {
-        "delegation": "off", "scope": "confirm", "team": "team_auth", "limit_max_nodes": 12,
-        "limit_total_reviews": 30, "limit_retries_per_card": None, "limit_replans": None, "hold": False}
+        setting(env, FB, km["tmp_r"], field, value, expect=422)
+    assert shown(get_settings(env, FB, km["tmp_r"])) == {"hold": False}
     # flowgate.v02.0085 T#1: a check card has the archive flag and a remote (null | origin) as merge target, no usage.
     for field, value in (("archive", True), ("merge_mode", "merge"), ("merge_target", "origin"),
                          ("push", True), ("keep_branch", False)):
@@ -472,7 +511,9 @@ def test_each_card_kind_keeps_its_own_settings(env):
         "archive": True, "merge_mode": "merge", "merge_target": "origin", "merge_target_branch": None, "push": True,
         "keep_branch": False, "hold": False}
     setting(env, FB, km["tmp_g"], "usage", "end", expect=422)
-    # flowgate.v02.0072 T#3: a work plan card keeps the plan settings; a run card's instruction is not one of them.
+    # Seed a historical WP card, rather than using the retired new-card path.
+    _sql(env["db"], "UPDATE graph_draft_nodes SET doc_type = 'WP' WHERE group_id = ? AND node_key = ?", (FB, km["tmp_wp"]))
+    # Historical plan settings still work.
     plan = setting(env, FB, km["tmp_wp"], "restart", 1)
     assert plan["card_kind"] == "plan" and shown(plan)["restart"] == 1
     refused = setting(env, FB, km["tmp_wp"], "instruction", "omit", expect=422)
@@ -507,7 +548,7 @@ def test_other_refusals(env):
     first = put_draft(env, FB, 0, [node("tmp_r", "R"), node("tmp_g", None, "gate")])
     r, g = first["key_map"]["tmp_r"], first["key_map"]["tmp_g"]
     assert setting(env, FB, r, "team", "no_such_team", expect=422)["error"]["params"]["errors"][0]["reason"] == \
-        "unknown_team"
+        "not_a_setting_of_this_card"
     for bad in (0, 1000, "3"):
         setting(env, FB, r, "limit_replans", bad, expect=422)
     for bad in ("a..b", "-x", "main.lock", "x/", "has space", "release/v0.2", "upstream"):      # a remote, never a branch
@@ -667,26 +708,26 @@ def _card_lines(env, flow, key):
 
 
 def test_turning_ai_delegation_on_and_off_adds_and_removes_its_line(env):
+    from flowgate.card_documents import repository, slots, legacy_adapter
     from modules.flow_gate.db import documents as db_documents
+    from modules.flow_gate.db import groups
+    key = put_draft(env, FB, 0, [node("tmp_r", "R")])["key_map"]["tmp_r"]
+    legacy_setting(env, FB, key, "delegation", "on")
+    # A historical draft line must survive settings refusals and R/B retyping.
+    group = groups.get_by_id(FB)
+    spec = slots.card_slots("document", "R", ai_delegation=True)[1]
+    old_node = {"node_key": key, "node_type": "document", "doc_type": "R", "label": "R"}
+    doc_id = legacy_adapter.create_document(group, old_node, spec, "u_kim")
+    repository.insert(FB, key, "delegation", "M", doc_id, True, 1, "u_kim")
+    before = db_documents.get_by_id(doc_id)
+    for value in ("on", "off", None):
+        setting(env, FB, key, "delegation", value, expect=422)
+    for version, kind in ((1, "R"), (2, "B")):
+        saved = put_draft(env, FB, version, [node(key, kind)])
+        assert any(r["doc_id"] == doc_id for r in saved["card_documents"][key])
+        assert db_documents.get_by_id(doc_id) == before
+    assert stored_rows(env, FB)[(key, "delegation")] == '\"on\"'
 
-    first = put_draft(env, FB, 0, [node("tmp_r", "R")])
-    key = first["key_map"]["tmp_r"]
-    assert _card_lines(env, FB, key)[0] == [("requirement", "R")]
-    setting(env, FB, key, "delegation", "on")
-    lines, rows = _card_lines(env, FB, key)
-    assert lines == [("requirement", "R"), ("delegation", "M")]
-    delegation_doc = rows[1]["doc_id"]
-    assert db_documents.get_by_id(delegation_doc)["status"] == "draft" and rows[1]["owned"] == 1
-    setting(env, FB, key, "delegation", "on")                             # once
-    assert len(_card_lines(env, FB, key)[1]) == 2
-    resaved = put_draft(env, FB, 1, [node(key, "R")])                     # an unchanged card keeps it
-    assert [(x["slot"], x["doc_type"]) for x in resaved["card_documents"][key]] == lines
-    retyped = put_draft(env, FB, 2, [node(key, "B")])                     # retyped: the setting still holds
-    assert ("delegation", "M") in [(x["slot"], x["doc_type"]) for x in retyped["card_documents"][key]]
-    assert _card_lines(env, FB, key)[1][-1]["doc_id"] == delegation_doc
-    setting(env, FB, key, "delegation", None)                            # back to the default: off
-    assert ("delegation", "M") not in _card_lines(env, FB, key)[0]
-    assert db_documents.get_by_id(delegation_doc) is None                # its untouched draft goes with it
 
 
 # ── flowgate.v02.0056 T#1: after review is gone (migration 147) ─────────────
@@ -803,28 +844,14 @@ def test_the_feature_is_in_the_v02_package_and_the_graph_holds_only_the_port():
 
 @pytest.mark.parametrize("locale, name", [("ko", "AI 위임"), ("ja", "AI委任"), ("en", "AI delegation")])
 def test_turning_ai_delegation_on_titles_its_new_document_in_the_request_s_language(env, locale, name):
-    from modules.flow_gate.db import documents as db_documents
-
     key = put_draft(env, FB, 0, [node("tmp_r", "R")])["key_map"]["tmp_r"]
-    in_locale = {**_h(), "x-locale": locale}
-    res = env["client"].patch(f"/api/v1/flows/{FB}/nodes/{key}/settings", json={"field": "delegation", "value": "on"},
-                              headers=in_locale)
-    assert res.status_code == 200, res.text
-    lines, rows = _card_lines(env, FB, key)
-    assert lines == [("requirement", "R"), ("delegation", "M")]
-    delegation_doc = rows[1]["doc_id"]
-    assert db_documents.get_by_id(delegation_doc)["title"] == f"R · {name}"
-    assert db_documents.get_by_id(rows[0]["doc_id"])["title"] == "R · 요구사항"         # placed in ko: kept
-    other = "ja" if locale != "ja" else "en"
-    again = env["client"].patch(f"/api/v1/flows/{FB}/nodes/{key}/settings",
-                                json={"field": "delegation", "value": "on"}, headers={**_h(), "x-locale": other})
-    assert again.status_code == 200, again.text                                  # on again: the same line, no new title
-    assert _card_lines(env, FB, key)[1] == rows
-    assert db_documents.get_by_id(delegation_doc)["title"] == f"R · {name}"
-    resaved = env["client"].put(f"/api/v1/flows/{FB}/graph/draft", headers={**_h(), "x-locale": other},
-                                json={"draft_version": 1, "nodes": [node(key, "R")], "edges": []})
-    assert resaved.status_code == 200, resaved.text                              # a re-save keeps it too
-    assert _card_lines(env, FB, key)[1] == rows and db_documents.get_by_id(delegation_doc)["title"] == f"R · {name}"
+    legacy_setting(env, FB, key, "delegation", "on")
+    res = env["client"].patch(f"/api/v1/flows/{FB}/nodes/{key}/settings",
+        json={"field": "delegation", "value": "on"}, headers={**_h(), "x-locale": locale})
+    assert res.status_code == 422
+    put_draft(env, FB, 1, [node(key, "R")])
+    assert _card_lines(env, FB, key)[0] == [("requirement", "R")]
+
 
 
 # 0071 T1: result confirmation settings are persisted, but never become AI plan settings.

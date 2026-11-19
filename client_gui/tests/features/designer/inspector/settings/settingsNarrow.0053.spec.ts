@@ -36,14 +36,10 @@ describe('the settings tab on a narrow Inspector (flowgate.v02.0053 T#7)', () =>
     expect(rule(src, '.inspector-block-sub')).toMatch(/flex: 1 1 120px;[^}]*min-width: 0;/)
   })
 
-  it('the requirement rows follow the block, two to a line at most, each whole', () => {
-    const src = source('features/requirementSettings/RequirementSettings.vue')
-    expect(src).not.toMatch(/@media/)
-    expect(rule(src, '.inspector-requirement-settings-grid')).toMatch(/display: flex;[^}]*flex-wrap: wrap;/)
-    const row = rule(src, '.inspector-requirement-settings-grid > :deep(.inspector-control-row)')
-    expect(row).toMatch(/width: max-content;/)
-    expect(row).toMatch(/min-width: calc\(50% - 9px\);/)
-    expect(row).toMatch(/max-width: 100%;/)
+  it('the retired requirement settings have no form or subscription', () => {
+    const src = readFileSync(resolve(INSPECTOR, '../../../../preview/inspector/legacy/requirementSettings/RequirementSettings.vue'), 'utf8')
+    expect(src).not.toContain('<InspectorBlock')
+    expect(src).not.toContain('useRequirementSettings')
   })
 
   it('the check card keeps flexible archive/Git boxes and wraps the remote controls', () => {
