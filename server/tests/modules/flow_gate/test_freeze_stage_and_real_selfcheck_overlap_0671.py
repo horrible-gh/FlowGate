@@ -4,8 +4,9 @@
 Everything that actually does Git or approval work is real and unstubbed on this file:
 ``approval_freeze.run_freeze`` (all of F1-F5), ``git_service.finalize`` /
 ``run_approve_git_action``, ``git_service.ensure_worktree``, the real local bare origin
-and push, ``tr_self_check_service.start`` (a real child process holding the Group's real
-G lock for the run), and the real ``job_runner`` claim/execute reclaim path. Only three
+and push, ``tr_self_check_service.start`` (0053 1-B: a queued request whose real child
+process runs in a snapshot of the Group's worktree and holds no G), and the real
+``job_runner`` claim/execute reclaim path. Only three
 things are overridden, and none of them touch Git or the freeze/publish state machine:
 
 * ``db_projects.tr_self_check_enabled`` -- a project feature flag, stubbed True (same as
@@ -40,16 +41,15 @@ Structure:
   through to the real implementation and only *read* the resulting DB row / git ref /
   lock table afterward -- nothing about the freeze is replaced).
 * ``test_different_group_is_not_blocked_by_a_running_selfcheck`` /
-  ``test_same_group_approval_waits_out_a_running_selfcheck_then_completes`` -- a real
-  self-check child process holds a real Group's G; a real HTTP approve for a *different*
-  Group proceeds unimpeded (real merge, real push) while it runs, and a real HTTP
-  approve for the *same* Group genuinely waits on G (observed wall-clock >= the
-  self-check's own runtime) and then completes once the self-check releases it.
-* ``test_same_group_approval_queues_behind_selfcheck_when_the_wait_budget_is_shorter``
-  -- the Group's self-check outlives the real ``freeze_interactive`` wait budget, so the
-  real HTTP approve comes back 200/queued with the job really left in ``freeze_wait``
-  (``blocked_domain="G"``, ``blocked_operation="selfcheck"``), and the real Job Runner's
-  later claim finishes the same approval once the self-check is done.
+  ``test_same_group_approval_does_not_wait_for_a_running_selfcheck`` -- a real self-check
+  child process runs in its snapshot; a real HTTP approve for a *different* Group and for
+  the *same* Group both proceed unimpeded (real merge, real push) while it runs (0053 1-B:
+  no G), and the self-check still ends with its result after the approval removed the
+  Group's worktree.
+* ``test_same_group_approval_is_not_deferred_by_a_selfcheck_under_the_real_budget`` -- the
+  self-check outlives the real ``freeze_interactive`` wait budget, and the real HTTP
+  approve is still approved at once (it used to come back queued in ``freeze_wait`` with
+  ``blocked_operation="selfcheck"``).
 * ``test_two_real_approvals_contend_for_b_and_r_and_the_loser_goes_blocked`` -- two real
   HTTP approvals for two different Groups contend for the project-wide B/R publish
   locks; the one that loses is observed (through the real HTTP response, not a stand-in)
@@ -386,10 +386,12 @@ class TestFreezeStages:
 # ── Self-check (real child process holding real G) + real approval/finalize ──
 
 @pytest.fixture
-def selfcheck_stubs(monkeypatch):
+def selfcheck_stubs(monkeypatch, tmp_path):
     """The only overrides this file makes for Self-check: a feature flag and the host
-    process-identity probe (module docstring). Git, locks, jobs and the freeze/publish
-    state machine are untouched."""
+    process-identity probe (module docstring), plus (0053 1-B) the queue workers that start
+    queued requests, their snapshot folder and room for two runs at once. Git, locks, jobs and
+    the freeze/publish state machine are untouched."""
+    from modules.flow_gate.services import tr_self_check_queue as queue
     from modules.flow_gate.services import tr_self_check_service as sc
     from modules.flow_gate.services.git import instance_registry as reg
     from modules.flow_gate.services.git import lock_manager as lm
@@ -400,7 +402,13 @@ def selfcheck_stubs(monkeypatch):
     monkeypatch.setattr(reg, "node_key", lambda: "node-freezestage")
     monkeypatch.setattr(lm, "poll_interval_sec", lambda: 0.02)
     reg.register()
-    yield sc
+    monkeypatch.setenv(queue.SNAPSHOT_DIR_ENV, str(tmp_path / "snapshots"))
+    monkeypatch.setattr(sc.policy, "host_capacity", lambda host=None: (2, 0))
+    queue.start(2)
+    try:
+        yield sc
+    finally:
+        queue.shutdown()
 
 
 def _start_check(sc, tr_doc_id: str, worktree: Path, sleep_sec: float, timeout=30):
@@ -412,6 +420,15 @@ def _start_check(sc, tr_doc_id: str, worktree: Path, sleep_sec: float, timeout=3
         f"import time\nprint('selfcheck started', flush=True)\ntime.sleep({sleep_sec})\n"
         f"print('selfcheck done', flush=True)\n", encoding="utf-8")
     return sc.start(tr_doc_id, {"program": "python", "args": ["slow.py"], "timeout_seconds": timeout})
+
+
+def _wait_running(sc, tr_doc_id: str, run_id: str, limit=30):
+    deadline = time.monotonic() + limit
+    while time.monotonic() < deadline:
+        if sc.read(tr_doc_id, run_id)["status"] == "running":
+            return
+        time.sleep(0.02)
+    raise AssertionError("self-check did not start")
 
 
 def _wait_check(sc, tr_doc_id: str, run_id: str, limit=30):
@@ -451,10 +468,9 @@ class TestRealSelfCheckOverlap:
         # observation. The self-check body is a bare sleep; a longer one costs wall time,
         # not CPU, and does not change what is being proven.
         run = _start_check(selfcheck_stubs, tr_sc, _worktree(g_sc), 25.0)
-        assert gc.list_locks_in_scope(PROJECT) and any(
-            r["domain"] == "G" and r["group_id"] == g_sc and r["holder_kind"] == "selfcheck"
-            for r in gc.list_locks_in_scope(PROJECT)
-        )
+        _wait_running(selfcheck_stubs, tr_sc, run["self_check_run_id"])
+        assert not any(r["domain"] == "G" and r["holder_kind"] == "selfcheck"
+                       for r in gc.list_locks_in_scope(PROJECT))    # 0053 1-B: no G
 
         base = _base()
         origin_before = _origin_head(origin_repo)
@@ -474,23 +490,14 @@ class TestRealSelfCheckOverlap:
         assert gc.list_locks_in_scope(PROJECT) == []
         _drive_jobs(g_other)
 
-    def test_same_group_approval_waits_out_a_running_selfcheck_then_completes(
-        self, origin_repo, selfcheck_stubs, monkeypatch,
+    def test_same_group_approval_does_not_wait_for_a_running_selfcheck(
+        self, origin_repo, selfcheck_stubs,
     ):
-        """freeze_interactive's real wait budget widened past the self-check's own
-        runtime (an environment timing knob, not a stub of Git or the freeze logic) so
-        the SAME real HTTP request that waited is also the one that finishes the real
-        merge -- the plain "wait" half of T0002's wait/blocked/reclaim contract."""
+        """0053 1-B: the run executes in its snapshot and holds no G, so the same Group's real
+        HTTP approve proceeds at once (it used to wait the run out on G), removes the Group's
+        worktree, and the self-check still ends with its own result."""
         from modules.flow_gate.db import git_concurrency as gc
         from modules.flow_gate.services import git_service as svc
-
-        # An environment timing knob only (module docstring): the real wait_budget()
-        # still runs, it just reads a longer FLOWGATE_FREEZE_INTERACTIVE_WAIT_SEC --
-        # clamped to [0, 5] by the real lock_manager._WAIT_PARAMS range, so 4.5 (not a
-        # number above that ceiling) and a self-check sleep below it (3.0) is what
-        # actually lets the real wait finish before the real budget would expire.
-        monkeypatch.setenv("FLOWGATE_FREEZE_INTERACTIVE_WAIT_SEC", "4.5")
-        wait_out_sleep_sec = 3.0
 
         group = f"{PROJECT}.default.0904"
         _root_id, ac_id, tr_id = _seed_final_approval_group(group)
@@ -500,31 +507,34 @@ class TestRealSelfCheckOverlap:
         _git(["add", "-A"], cwd=wt)
         _git(["commit", "-m", "work 0904"], cwd=wt)
 
-        run = _start_check(selfcheck_stubs, tr_id, _worktree(group), wait_out_sleep_sec)
+        run = _start_check(selfcheck_stubs, tr_id, _worktree(group), 25.0)
+        _wait_running(selfcheck_stubs, tr_id, run["self_check_run_id"])
         base = _base()
         origin_before = _origin_head(origin_repo)
         client = api()
         t0 = time.monotonic()
         status, payload = approve_http(client, ac_id)
         took = time.monotonic() - t0
-        monkeypatch.undo()
 
         assert status == 200, payload
         assert payload["git"]["result"]["pushed"] is True
-        assert took >= 2.0        # really waited out most of the self-check's 3s sleep
+        assert payload.get("job", {}).get("blocked_operation") != "selfcheck"
+        assert took < 18.0         # well short of the self-check's 25s sleep: no contention
         assert _origin_head(origin_repo) == _rev(base, "HEAD") != origin_before
+        assert selfcheck_stubs.read(tr_id, run["self_check_run_id"])["status"] in ("pending", "running")
 
-        _wait_check(selfcheck_stubs, tr_id, run["self_check_run_id"])
+        row = _wait_check(selfcheck_stubs, tr_id, run["self_check_run_id"], limit=40)
+        assert (row["status"], row["exit_code"]) == ("completed", 0)      # its snapshot was not touched
+        assert "selfcheck done" in row["stdout_tail"]
         assert gc.list_locks_in_scope(PROJECT) == []
         _drive_jobs(group)
 
-    def test_same_group_approval_queues_behind_selfcheck_when_the_wait_budget_is_shorter(
+    def test_same_group_approval_is_not_deferred_by_a_selfcheck_under_the_real_budget(
         self, origin_repo, selfcheck_stubs,
     ):
         """The real (unmodified) freeze_interactive budget (2s) is shorter than the
-        self-check's 4s sleep: the real HTTP request gives up into freeze_wait instead
-        of waiting it out, and the real Job Runner finishes the SAME approval once the
-        self-check has released G -- the "queued -> reclaim" half of the contract."""
+        self-check's sleep: the approval used to give up into freeze_wait behind the run's G
+        (``blocked_operation="selfcheck"``). Now it is approved in the same request."""
         from modules.flow_gate.db import git_concurrency as gc
         from modules.flow_gate.services import git_service as svc
 
@@ -537,31 +547,22 @@ class TestRealSelfCheckOverlap:
         _git(["commit", "-m", "work 0905"], cwd=wt)
 
         run = _start_check(selfcheck_stubs, tr_id, _worktree(group), SLEEP_SEC)
+        _wait_running(selfcheck_stubs, tr_id, run["self_check_run_id"])
         base = _base()
         origin_before = _origin_head(origin_repo)
         client = api()
-        t0 = time.monotonic()
         status, payload = approve_http(client, ac_id)
-        took = time.monotonic() - t0
 
         assert status == 200, payload
-        assert payload["approval"]["approved"] is False
-        assert payload["approval"]["stage"] == "queued" and payload["approval"]["deferred"] is True
-        assert payload["job"]["status"] == "freeze_wait"
-        assert payload["job"]["blocked_domain"] == "G"
-        assert payload["job"]["blocked_operation"] == "selfcheck"
-        assert 1.5 <= took < 3.5     # gave up around the real ~2s freeze_interactive budget
-        assert _review_status(ac_id) == "pending_review"
-        assert _origin_head(origin_repo) == origin_before   # nothing published yet
-
-        _wait_check(selfcheck_stubs, tr_id, run["self_check_run_id"])
-        assert gc.list_locks_in_scope(PROJECT) == []
-
-        assert _drive_jobs(group) >= 1
-        assert _job(group)["status"] == "succeeded"
+        assert payload["git"]["result"]["pushed"] is True
+        assert payload.get("approval", {}).get("stage") != "queued"
         assert _review_status(ac_id) == "approved"
         assert _origin_head(origin_repo) == _rev(base, "HEAD") != origin_before
-        assert not _worktree(group).exists()
+
+        row = _wait_check(selfcheck_stubs, tr_id, run["self_check_run_id"])
+        assert (row["status"], row["exit_code"]) == ("completed", 0)
+        assert gc.list_locks_in_scope(PROJECT) == []
+        _drive_jobs(group)
 
 
 # ── real "blocked" (B/R contention), two real concurrent approvals ───────────

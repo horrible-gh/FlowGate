@@ -49,6 +49,7 @@ from tests.regression.self_check.test_tr_self_check_recover_proof_0080 import _a
 
 from modules.flow_gate.api.v1 import self_check_routes as routes
 from modules.flow_gate.db import git_concurrency as gdb
+from modules.flow_gate.db import tr_self_check_runs as db_runs
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import tr_self_check_executor as executor
 from modules.flow_gate.services import tr_self_check_proof as proof
@@ -214,58 +215,43 @@ def _running_hold(store, rid):
     raise AssertionError("the run did not start")
 
 
-@pytest.mark.parametrize("case", ["gone", "gone_then_error", "unconfirmed"])
-def test_a_lost_g_is_judged_before_the_run_is_recorded(world, monkeypatch, case):
-    """④: the keeper and the worker of a real run. ``gone``: the keeper's first store read
-    fails and the target then ends normally -- the worker judges the loss itself before its
-    terminal write. ``gone_then_error``: the keeper finds G gone and cancels; the worker's
-    result read then fails. ``unconfirmed``: the store never answers."""
+def _settled(store, rid, timeout=60.0):
+    """0053 1-B: wait until a queue worker claimed the run and is done with it (ended or held)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        row = _row(store, rid)
+        if row["status"] in ("completed", "failed", "cancelled") or row["recovery_state"] != "none":
+            break
+        time.sleep(.05)
+    _worker_done(rid)
+    return _row(store, rid)
+
+
+def test_a_queue_run_holds_no_g_so_no_g_loss_can_reach_it(world):
+    """④ (0053 1-B): the G keeper judged a run whose G was lost under it. A queue run never takes
+    G: while it runs no Self-check G row or live G hold exists for it, another holder takes the
+    Group's G, and the run still ends with its result."""
     store, client = world["store"], world["client"]
     root = Path(service.git_service.effective_src_root_ex(P, G)[0])
     (root / "check_gate.py").write_text(
         "import os, time\nwhile not os.path.exists('go.flag'):\n    time.sleep(.05)\n", encoding="utf-8")
-    real_regain, reads = lock_manager.selfcheck_regain, []
-
-    def regain(ctx, key):
-        reads.append(threading.current_thread().name)
-        if case == "unconfirmed" or (case == "gone" and len(reads) == 1):
-            return None                                   # the store could not be read
-        return real_regain(ctx, key)
-
-    monkeypatch.setattr(lock_manager, "selfcheck_regain", regain)
-    if case == "gone_then_error":
-        real_wait = executor.wait
-
-        def failing_wait(*args):
-            real_wait(*args)
-            raise RuntimeError("result read failed")
-
-        monkeypatch.setattr(executor, "wait", failing_wait)
-
     started = client.post(DRAFT_RUNS, headers=_as(RAW["new"]), json={"program": "python", "args": ["check_gate.py"]})
     assert started.status_code == 202, started.text
     rid = started.json()["self_check_run_id"]
-    ctx, held = _running_hold(store, rid)
-    if case != "unconfirmed":
-        store._execute("DELETE FROM resource_lock WHERE lock_key = ?", [held.lock_key])   # G gone under the run
-    lock_manager._heartbeats._lost(ctx, held)
-    deadline = time.monotonic() + 10
-    while not reads and time.monotonic() < deadline:
-        time.sleep(.02)
-    assert reads, "the keeper did not judge the lost hold"
-    if case != "gone_then_error":
-        (root / "go.flag").write_text("", encoding="utf-8")                # the target ends normally
-    _worker_done(rid)
-
-    row = _row(store, rid)
-    assert row["status"] != "completed", "a run whose G loss was not judged was recorded as a result"
-    if case == "unconfirmed":
-        assert row["status"] == "running" and row["active_key"] and row["finished_at"] is None, row
-        assert (row["recovery_state"], row["recovery_reason"]) == ("incomplete", service.LOCK_UNCONFIRMED)
-        lock = _g(store)
-        assert lock is not None and lock["lock_epoch"] == held.lock_epoch and int(lock["protected"]) == 1
-        return
-    assert (row["status"], row["error_code"], row["active_key"]) == ("failed", "selfcheck_lock_lost", None), row
+    deadline = time.monotonic() + 30
+    while _row(store, rid)["status"] != "running" and time.monotonic() < deadline:
+        time.sleep(.05)
+    assert _row(store, rid)["status"] == "running"
+    holder = lock_manager.selfcheck_ctx_id(rid)
+    assert _g(store) is None
+    assert not [ctx for ctx in list(lock_manager._live_contexts) if ctx.ctx_id == holder]
+    other = lock_manager.new_context("req")
+    taken = lock_manager.acquire("G", P, group_id=G, holder_kind="source_mutation", mode="job", ctx=other)
+    assert taken.ok, taken                                         # the Group's G is free during the run
+    lock_manager.release(other, taken.lock_key)
+    (Path(_row(store, rid)["snapshot_path"]) / "tree" / "go.flag").write_text("", encoding="utf-8")
+    row = _settled(store, rid)
+    assert (row["status"], row["exit_code"], row["error_code"]) == ("completed", 0, None), row
 
 
 @pytest.mark.parametrize("known", ["target", "nothing"])
@@ -292,8 +278,7 @@ def test_a_partial_spawn_stays_protected_after_its_worker(world, monkeypatch, kn
     started = client.post(DRAFT_RUNS, headers=_as(RAW["new"]), json={"program": "python", "args": ["check_ok.py"]})
     assert started.status_code == 202, started.text
     rid = started.json()["self_check_run_id"]
-    _worker_done(rid)
-    stored = _row(store, rid)
+    stored = _settled(store, rid)
     if known == "target":
         pid_key = "target_pid" if os.name == "nt" else "supervisor_pid"
         assert stored[pid_key] == live.pid, "what the failed spawn learnt is not on the stored row"
@@ -302,11 +287,12 @@ def test_a_partial_spawn_stays_protected_after_its_worker(world, monkeypatch, kn
     assert job_sweeper.step_selfcheck_reaper() == 0
 
     row = _row(store, rid)
-    assert row["status"] == "pending" and row["active_key"] and row["error_code"] is None, row
+    assert row["status"] == "pending" and row["active_key"] is None and row["error_code"] is None, row
     assert (row["recovery_state"], row["recovery_reason"]) == ("incomplete", proof.TREE_UNPROVEN)
-    lock = _g(store)
-    assert lock is not None and lock["holder_ctx_id"] == lock_manager.selfcheck_ctx_id(rid), "G was released"
-    assert int(lock["protected"]) == 1
+    # 0053 1-B: a queue run holds no G -- the unproved run keeps only its own slot (reservation).
+    assert _g(store) is None
+    assert row["cpu_reservation"] >= 1
+    assert db_runs.host_reservations(row["host_node_key"], 64)[1] >= row["cpu_reservation"]
     assert live.poll() is None, "a process the run could not prove its own was killed"
 
 

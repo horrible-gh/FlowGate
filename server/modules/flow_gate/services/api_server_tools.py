@@ -183,9 +183,10 @@ DESCRIPTIONS["run_self_check"] = (
     "Never search for another execution backend. If unavailable, report the returned reason and do not fall back. "
     "Every run reserves parallel_share logical processors (default 1) and its whole process tree runs on the "
     "processors it was granted only: ask for the worker count your command uses (e.g. pytest -n 2 --dist loadfile "
-    "with parallel_share 2) and never give a tool more workers than that. A 409 selfcheck_host_capacity_exhausted "
-    "means the host's Self-check processors are all reserved: send the same request again a little later, in the "
-    "foreground; do not move it to the background."
+    "with parallel_share 2) and never give a tool more workers than that. The request is queued and answered at "
+    "once (status queued): it runs in a copy of the worktree taken now, takes no Group lock, and waits until the "
+    "host has a processor for it; read the result with read_self_check instead of sending it again. A new request "
+    "of the same card cancels its earlier requests that have not started."
 )
 DESCRIPTIONS["read_self_check"] = (
     "Read Self-check evidence for the bound TR (in a TR(new) step: the runs your work token started). "

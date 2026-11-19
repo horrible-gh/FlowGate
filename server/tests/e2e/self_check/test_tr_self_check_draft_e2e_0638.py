@@ -7,8 +7,9 @@ a fully migrated SQLite, through the real pieces:
 - real bearer verification (``auth_outbound.verify_bearer`` -> ``token_service.verify``
   against hashed token rows), so a consumed token really answers 401;
 - the real workflow head lookup (sequence B -> T(approved) -> TR(pending));
-- the real service start path (policy, Group G lock, git probe, worker thread, child
-  process) in a throwaway git repository standing in for the managed group worktree;
+- the real service start path (policy, git probe, 0053 1-B: the queue -- snapshot, queued row,
+  queue workers -- and the child process in the snapshot) in a throwaway git repository
+  standing in for the managed group worktree;
 - registration through the real ``token_service.consume(require_claim=True)``, the single
   point the inbox and the API provider both pass with the created TR id.
 
@@ -32,6 +33,7 @@ from modules.flow_gate.api.v1 import self_check_routes as routes
 from modules.flow_gate.db import connection
 from modules.flow_gate.services import auth_outbound
 from modules.flow_gate.services import token_service
+from modules.flow_gate.services import tr_self_check_queue as queue
 from modules.flow_gate.services import tr_self_check_service as service
 
 P, G, G2 = "p_0638e", "g_0638e_1", "g_0638e_2"
@@ -107,10 +109,17 @@ def flow(migrated_sqlite_db, monkeypatch, tmp_path):
     app.include_router(routes.router)
     app.include_router(routes.draft_router)
     client = TestClient(app)
+    # 0053 1-B: requests are queued; this server's queue workers start them from their snapshot.
+    monkeypatch.setenv(queue.SNAPSHOT_DIR_ENV, str(tmp_path / "snapshots"))
+    # Two runs fit at once whatever processors this test process may use (a Self-check run of
+    # this suite is itself limited to one).
+    monkeypatch.setattr(service.policy, "host_capacity", lambda host=None: (2, 0))
+    queue.start(2)
     try:
         yield {"store": store, "client": client, "events": events}
     finally:
         _drain(store)
+        queue.shutdown()
         try:
             store._db.close()
         except Exception:
@@ -150,7 +159,7 @@ def _wait(client, path, headers, statuses=TERMINAL, timeout=60.0) -> dict:
 def _drain(store):
     """Never leave a child process or worker behind: cancel and wait for every live run."""
     rows = store._fetch_all("SELECT self_check_run_id FROM tr_self_check_runs WHERE project_id = ?"
-                            " AND status IN ('pending', 'running')", [P]) or []
+                            " AND status IN ('queued', 'pending', 'running')", [P]) or []
     for row in rows:
         try:
             service._cancel(row["self_check_run_id"], lambda rid=row["self_check_run_id"]: service.db_runs.get_run(rid))
@@ -200,12 +209,14 @@ def test_tr_new_runs_before_registration_and_the_runs_follow_the_tr(flow):
     assert client.get(f"{DRAFT_RUNS}/{quick['self_check_run_id']}", headers=_as(RAW["new_other"])).status_code == 403
     assert _run_count(store) == before
 
-    # 3. A long run holds the group's single active slot; a second start is refused.
+    # 3. 0053 1-B: a long run does not hold the Group; a second start is queued (no 409) and runs.
     slow = client.post(DRAFT_RUNS, headers=new, json={"program": "python", "args": ["check_slow.py"]}).json()
     _wait(client, f"{DRAFT_RUNS}/{slow['self_check_run_id']}", new, statuses={"running"})
-    busy = client.post(DRAFT_RUNS, headers=new, json={"program": "python", "args": ["check_ok.py"]})
-    assert busy.status_code == 409 and busy.json()["error"]["code"] == "selfcheck_already_running"
-    assert busy.json()["error"]["details"]["self_check_run_id"] == slow["self_check_run_id"]
+    second = client.post(DRAFT_RUNS, headers=new, json={"program": "python", "args": ["check_ok.py"]})
+    assert second.status_code == 202 and second.json()["status"] == "queued", second.text
+    second = second.json()
+    assert _wait(client, f"{DRAFT_RUNS}/{second['self_check_run_id']}", new)["status"] == "completed"
+    assert _row(store, slow["self_check_run_id"])["status"] == "running"     # the started one goes on
 
     # 4. The worker registers the TR while the long run is still running.
     _document(store, TR_DOC, G, "TR", 3)
@@ -214,11 +225,12 @@ def test_tr_new_runs_before_registration_and_the_runs_follow_the_tr(flow):
     events.clear()
     assert token_service.consume("tok_e2e_new", P, doc_id=TR_DOC, require_claim=True) is True
 
-    for run_id in (quick["self_check_run_id"], slow["self_check_run_id"]):
+    mine = {quick["self_check_run_id"], slow["self_check_run_id"], second["self_check_run_id"]}
+    for run_id in mine:
         row = _row(store, run_id)
         assert row["tr_doc_id"] == TR_DOC and row["linked_at"], row
     linked_events = [e for e in events if e["type"] == "self_check_run_updated"]
-    assert {e["self_check_run_id"] for e in linked_events} == {quick["self_check_run_id"], slow["self_check_run_id"]}
+    assert {e["self_check_run_id"] for e in linked_events} == mine
     assert all(e["draft"] is False and e["tr_doc_id"] == TR_DOC and e["group_id"] == G for e in linked_events)
 
     # 5. After registration: the consumed token is gone, the draft list is empty, the TR owns the runs.
@@ -227,7 +239,7 @@ def test_tr_new_runs_before_registration_and_the_runs_follow_the_tr(flow):
     assert client.get(DRAFT_RUNS, headers=user, params={"group_id": G}).json()["runs"] == []
     assert client.get(f"{DRAFT_RUNS}/{quick['self_check_run_id']}", headers=user).status_code == 404
     on_tr = {r["self_check_run_id"]: r for r in client.get(TR_RUNS, headers=user).json()["runs"]}
-    assert set(on_tr) == {quick["self_check_run_id"], slow["self_check_run_id"]}
+    assert set(on_tr) == mine
     assert all(r["tr_doc_id"] == TR_DOC and r["linked_at"] for r in on_tr.values())
     assert client.get(f"{TR_RUNS}/{quick['self_check_run_id']}", headers=user).json()["stdout_tail"].strip() == "selfcheck-0638-ok"
 
@@ -252,7 +264,7 @@ def test_tr_new_runs_before_registration_and_the_runs_follow_the_tr(flow):
     finished = _wait(client, f"{TR_RUNS}/{bound.json()['self_check_run_id']}", review)
     assert (finished["status"], finished["exit_code"], finished["linked_at"]) == ("completed", 0, None)
     assert _row(store, bound.json()["self_check_run_id"])["owner_token_id"] is None
-    assert len(client.get(TR_RUNS, headers=review).json()["runs"]) == 3
+    assert len(client.get(TR_RUNS, headers=review).json()["runs"]) == 4
 
 
 def test_a_tr_new_token_that_registers_without_running_links_nothing(flow):

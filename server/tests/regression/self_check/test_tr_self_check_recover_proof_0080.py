@@ -214,17 +214,21 @@ def test_a_spawn_that_fails_after_creating_processes_ends_nothing_unproved(world
     started = client.post(DRAFT_RUNS, headers=_as(RAW["new"]), json={"program": "python", "args": ["check_ok.py"]})
     assert started.status_code == 202, started.text
     rid = started.json()["self_check_run_id"]
+    deadline = time.monotonic() + 30                                  # 0053 1-B: a queue worker claims it
+    while _row(store, rid)["recovery_state"] == "none" and time.monotonic() < deadline:
+        time.sleep(0.05)
     for worker in [t for t in threading.enumerate() if t.name == f"selfcheck-{rid}"]:
         worker.join(timeout=30)
         assert not worker.is_alive()
 
     row = _row(store, rid)
-    assert row["status"] == "pending" and row["active_key"], row
+    assert row["status"] == "pending" and row["active_key"] is None, row
     assert row["error_code"] is None and row["finished_at"] is None, row
     assert (row["recovery_state"], row["recovery_reason"]) == ("incomplete", proof.TREE_UNPROVEN)
-    lock = _g(store)
-    assert lock is not None and lock["holder_ctx_id"] == lock_manager.selfcheck_ctx_id(rid), "G was released"
-    assert int(lock["protected"]) == 1
+    # 0053 1-B: a queue run holds no G -- only its own execution slot (reservation) stays taken.
+    assert _g(store) is None
+    assert row["cpu_reservation"] >= 1
+    assert db_runs.host_reservations(row["host_node_key"], 64)[1] >= row["cpu_reservation"]
     if live is not None:
         assert live.poll() is None, "a process the run could not prove its own was killed"
 

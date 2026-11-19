@@ -1,13 +1,16 @@
 """flowgate.v02.0114 T#4: D 0006 9.2-7 (g) through the real run path.
 
 Several Groups and two server instances of one host (one SQLite connection per thread, the
-same ``node_key``) admit and end Self-check runs at random and at the same time. Every request
-goes through the real ``tr_self_check_service._admit`` (the real ``create_pending`` reservation
-transaction, the real runtime folder and slot pool) and every admitted run through the real
-worker ``_finish``: ``executor.spawn(cpu_limit=R)`` with its named Job, real processes -- a
-``server/tests`` pytest with xdist, a pytest that nests another pytest, a general script with busy
-children -- and the real tree proof before the terminal write. Only what needs a live server is
-replaced: the project switch, the worktree path, the Git probe, the Group lock manager and the
+same ``node_key``) queue Self-check requests at random and at the same time. 0053 1-B: every
+request goes through the real ``tr_self_check_service._admit`` into the queue (snapshot, queued
+row) and every run is claimed by the real queue workers of both instances
+(``tr_self_check_queue.dispatch_once``: the reservation decided under the capacity lock, the
+real runtime folder and slot pool) and driven by the real ``_finish``:
+``executor.spawn(cpu_limit=R)`` with its named Job, real processes -- a ``server/tests`` pytest
+with xdist, a pytest that nests another pytest, a general script with busy children -- and the
+real tree proof before the terminal write. Only what needs a live server is replaced: the
+project switch, the worktree path, the Git probe, the snapshot copy (a plain folder copy: the
+fixture tree is not one repository), the lock manager (which must not be called at all) and the
 event emitter.
 
 Checked at every moment by a watcher, and per run afterwards:
@@ -17,14 +20,16 @@ Checked at every moment by a watcher, and per run afterwards:
   reservation stored with its row, and every process that ran a test or a busy loop saw exactly
   that many processors;
 - each run's xdist worker processes (outer and nested together) never exceed its reservation;
-- every refusal is a 409 that left no row, no Group lock and no runtime folder; every admitted
-  run ends terminal with its lock and runtime folder released.
+- no request is refused: requests that do not fit wait in the queue (some were seen waiting
+  while others ran); every queued run ends completed, no lock was ever taken, every runtime
+  folder and snapshot is gone and the host is empty again.
 """
 from __future__ import annotations
 
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -44,6 +49,7 @@ from modules.flow_gate.services import process_runner
 from modules.flow_gate.services import tr_self_check_executor as executor
 from modules.flow_gate.services import tr_self_check_policy as policy
 from modules.flow_gate.services import tr_self_check_proof as proof
+from modules.flow_gate.services import tr_self_check_queue as queue
 from modules.flow_gate.services import tr_self_check_result as result_block
 from modules.flow_gate.services import tr_self_check_service as service
 
@@ -51,7 +57,7 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="the tree's limit is rea
 pytest.importorskip("xdist")
 
 P = "p_0114g"
-ACTORS = 5                       # five runs of share >= 1 cannot all fit a cap of 4: refusals happen
+ACTORS = 5                       # five runs of share >= 1 cannot all fit a cap of 4: requests wait
 GROUPS_PER_ACTOR = 3
 RUNS_PER_ACTOR = 2
 WINDOW_SECONDS = 150
@@ -305,6 +311,16 @@ def harness(stores, monkeypatch, tmp_path):
         return control, ownership
 
     monkeypatch.setattr(executor, "spawn", spawn)
+    # 0053 1-B: the snapshot of this multi-repository fixture tree is a plain folder copy.
+    monkeypatch.setenv(queue.SNAPSHOT_DIR_ENV, str(tmp_path / "snapshots"))
+
+    def snapshot(root, run_id):
+        base = queue.snapshot_root() / run_id
+        shutil.copytree(root, base / queue.TREE_DIR,
+                        ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", ".test-tmp-*"))
+        return base
+
+    monkeypatch.setattr(queue, "take_snapshot", snapshot)
     return SimpleNamespace(work=work, out=out, state=state)
 
 
@@ -343,7 +359,8 @@ def _xdist_peak(records: list[dict]) -> int:
 def test_7g_random_concurrent_real_runs_keep_every_invariant(harness, stores):
     state = harness.state
     rng = random.Random(11407)
-    stop, sums, limits, outcomes = threading.Event(), [], [], []
+    stop, workers_stop, sums, limits, outcomes = threading.Event(), threading.Event(), [], [], []
+    waiting_seen = []
     guard = threading.Lock()
 
     def watch():
@@ -352,12 +369,26 @@ def test_7g_random_concurrent_real_runs_keep_every_invariant(harness, stores):
             rows = runs_db.get_store()._fetch_all(
                 "SELECT self_check_run_id, cpu_reservation FROM tr_self_check_runs"
                 " WHERE project_id = ? AND status = 'running'", [P]) or []
+            queued = runs_db.get_store()._fetch_one(
+                "SELECT COUNT(*) AS n FROM tr_self_check_runs WHERE project_id = ? AND status = 'queued'", [P])["n"]
             seen = [(row["self_check_run_id"], row["cpu_reservation"], _job_affinity_bits(row["self_check_run_id"]))
                     for row in rows]
             with guard:
                 sums.append(total)
                 limits.extend(seen)
+                if queued and rows:
+                    waiting_seen.append((total, queued))
             time.sleep(0.02)
+
+    def queue_worker(instance: str):
+        state.local.instance = instance                                        # this worker's server
+        while not workers_stop.is_set():
+            try:
+                if not queue.dispatch_once():
+                    time.sleep(0.1)
+            except Exception as exc:                                           # pragma: no cover - reported below
+                with guard:
+                    outcomes.append({"kind": "worker_error", "error": repr(exc)})
 
     def actor(index: int):
         state.local.instance = ("inst_a", "inst_b")[index % 2]                 # two instances, one host
@@ -365,73 +396,68 @@ def test_7g_random_concurrent_real_runs_keep_every_invariant(harness, stores):
         mine = GROUPS[index * GROUPS_PER_ACTOR:(index + 1) * GROUPS_PER_ACTOR]
         barrier.wait()
         # actor 0 opens with a share-4 request on the empty host; the others join at random.
-        # Each actor goes on until it had RUNS_PER_ACTOR runs admitted (or the window closes), its
-        # work kind turning pytest -> nested pytest -> script with every admission.
+        # Each actor queues RUNS_PER_ACTOR requests (each from another card, so none replaces
+        # another), its work kind turning pytest -> nested pytest -> script with every request.
         time.sleep(0 if index == 0 else local.uniform(0.3, 3.0))
-        deadline, count = time.monotonic() + WINDOW_SECONDS, 0
-        while count < RUNS_PER_ACTOR and time.monotonic() < deadline:
-            free = [g for g in mine if runs_db.get_active(P, g) is None]
-            if not free:
-                time.sleep(0.5)
-                continue
-            group = local.choice(free)
+        for count in range(RUNS_PER_ACTOR):
+            group = mine[count % len(mine)]
             kind = ("pytest", "nested", "script")[(index + count) % 3]
             share = 4 if (index, count) == (0, 0) else local.choice((1, 2, 4))
             request = _request(kind, share, local)
-            rows_before = runs_db.get_store()._fetch_one(
-                "SELECT COUNT(*) AS n FROM tr_self_check_runs WHERE group_id = ?", [group])["n"]
-            made_before = len(state.runtimes.get(threading.get_ident(), []))
             try:
-                admitted = service._admit({"project_id": P, "group_id": group, "tr_doc_id": _doc(group)},
-                                          request, None)
+                queued = service._admit({"project_id": P, "group_id": group, "tr_doc_id": _doc(group)},
+                                        request, None)
             except service.SelfCheckError as exc:
-                ctx = state.ctx_by_thread.get(threading.get_ident())
-                rows_after = runs_db.get_store()._fetch_one(
-                    "SELECT COUNT(*) AS n FROM tr_self_check_runs WHERE group_id = ?", [group])["n"]
-                made = state.runtimes.get(threading.get_ident(), [])[made_before:]
                 with guard:
-                    outcomes.append({"kind": "refused", "code": exc.code, "status": exc.status, "group": group,
-                                     "details": exc.details, "new_rows": rows_after - rows_before,
-                                     "locks_left": sorted(state.held.get(ctx.ctx_id, ())) if ctx else None,
-                                     "folders_left": [str(p) for p in made if p.exists()]})
+                    outcomes.append({"kind": "refused", "code": exc.code, "status": exc.status, "group": group})
             else:
-                count += 1
                 with guard:
-                    outcomes.append({"kind": "admitted", "run_id": admitted["self_check_run_id"], "work": kind,
-                                     "share": share, "reservation": admitted["cpu_reservation"],
-                                     "instance": state.local.instance, "request": request})
-            time.sleep(local.uniform(0.5, 2.0))
+                    outcomes.append({"kind": "queued", "run_id": queued["self_check_run_id"], "work": kind,
+                                     "share": share, "status": queued["status"], "request": request})
+            time.sleep(local.uniform(0.2, 1.0))
 
     barrier = threading.Barrier(ACTORS)
     watcher = threading.Thread(target=watch, daemon=True)
     watcher.start()
+    workers = [threading.Thread(target=queue_worker, args=(instance,), daemon=True)
+               for instance in ("inst_a", "inst_b") for _ in range(CAP[0])]
+    for thread in workers:
+        thread.start()
     actors = [threading.Thread(target=actor, args=(i,)) for i in range(ACTORS)]
     for thread in actors:
         thread.start()
     for thread in actors:
         thread.join(600)
-    admitted = [o for o in outcomes if o["kind"] == "admitted"]
-    deadline = time.monotonic() + 600
-    for outcome in admitted:                                                   # every worker ends its run
-        for worker in [t for t in threading.enumerate() if t.name == f"selfcheck-{outcome['run_id']}"]:
-            worker.join(max(1, deadline - time.monotonic()))
+    admitted = [o for o in outcomes if o["kind"] == "queued"]
+    deadline = time.monotonic() + WINDOW_SECONDS
+    while time.monotonic() < deadline:                                         # every queued run ends
+        rows = [runs_db.get_run(o["run_id"]) for o in admitted]
+        if all(r["status"] in ("completed", "failed", "cancelled") for r in rows):
+            break
+        time.sleep(0.5)
+    workers_stop.set()
+    for thread in workers:
+        thread.join(60)
     stop.set()
     watcher.join(30)
 
-    refused = [o for o in outcomes if o["kind"] == "refused"]
-    summary_line = {"admitted": len(admitted), "refused": len(refused), "max_sum": max(sums or [0]),
-                    "samples": len(sums), "kinds": sorted({o["work"] for o in admitted}),
-                    "instances": sorted({o["instance"] for o in admitted}),
-                    "reservations": sorted(o["reservation"] for o in admitted)}
+    for outcome in admitted:
+        outcome["reservation"] = runs_db.get_run(outcome["run_id"])["cpu_reservation"]
+        outcome["instance"] = runs_db.get_run(outcome["run_id"])["owner_instance_id"]
+    summary_line = {"queued": len(admitted), "max_sum": max(sums or [0]), "samples": len(sums),
+                    "waiting_seen": len(waiting_seen), "kinds": sorted({o["work"] for o in admitted}),
+                    "instances": sorted({str(o["instance"]) for o in admitted}),
+                    "reservations": sorted(o["reservation"] or 0 for o in admitted)}
     print("invariant 9.2-7(g):", json.dumps(summary_line))
 
-    # the host's sum, at every sampled moment
+    # nothing refused, nothing crashed; every request was queued
+    assert not [o for o in outcomes if o["kind"] in ("refused", "worker_error")], outcomes
+    # accepted at once: queued (or already claimed by a worker when the answer was read back)
+    assert len(admitted) == ACTORS * RUNS_PER_ACTOR
+    assert {o["status"] for o in admitted} <= {"queued", "pending", "running"}, admitted
+    # the host's sum, at every sampled moment; requests waited while others ran (no 409)
     assert sums and max(sums) <= CAP[0], summary_line
-    # refusals: 409 host capacity, nothing left behind
-    assert refused, summary_line                                               # the cap was actually reached
-    for outcome in refused:
-        assert (outcome["status"], outcome["code"]) == (409, "selfcheck_host_capacity_exhausted"), outcome
-        assert outcome["new_rows"] == 0 and outcome["locks_left"] == [] and outcome["folders_left"] == [], outcome
+    assert waiting_seen, summary_line
     assert {"pytest", "nested", "script"} <= {o["work"] for o in admitted}, summary_line
     assert {"inst_a", "inst_b"} <= {o["instance"] for o in admitted}, summary_line
     assert max(o["reservation"] for o in admitted) >= 2, summary_line          # parallel trees took part
@@ -444,6 +470,7 @@ def test_7g_random_concurrent_real_runs_keep_every_invariant(harness, stores):
         assert row["cpu_reservation"] == reserved and 1 <= reserved <= CAP[0]
         assert state.spawned[run_id] == {"cpu_limit": reserved, "job_bits": reserved}, (run_id, state.spawned[run_id])
         assert row["status"] == "completed" and row["active_key"] is None, (outcome, row["status"], row["error_code"])
+        assert not Path(row["snapshot_path"]).exists(), outcome                # snapshot removed
         records = [json.loads(p.read_text()) for p in (harness.out / run_id).glob("*-*.json")]
         assert all(r["cpus"] == reserved for r in records), (outcome, records)
         if outcome["work"] == "script":
@@ -464,8 +491,8 @@ def test_7g_random_concurrent_real_runs_keep_every_invariant(harness, stores):
             inner_block, inner_env = result_block.summarize(nested["stdout"], nested["returncode"])
             assert environment["workers"]["applied"] + inner_env["workers"]["applied"] <= reserved, outcome
             assert inner_block["parallel"]["pool_size"] == reserved
-    # every lock released, no runtime folder left, no protection, the host is empty again
-    assert all(not keys for keys in state.held.values()), state.held
+    # no lock was ever taken, no runtime folder left, no protection, the host is empty again
+    assert state.ctx_by_thread == {} and all(not keys for keys in state.held.values()), state.held
     assert not state.protected
     assert not [p for made in state.runtimes.values() for p in made if p.exists()]
     assert runs_db.host_reservations(HOST, CAP[0]) == (0, 0)

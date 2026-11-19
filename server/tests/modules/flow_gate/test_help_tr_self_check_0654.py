@@ -24,8 +24,10 @@ SELF_CHECK_ERROR_CODES = {
     "selfcheck_invalid_program", "selfcheck_invalid_args", "selfcheck_shell_operator",
     "selfcheck_inline_execution", "selfcheck_program_denied", "selfcheck_executable_not_found",
     "selfcheck_invalid_cwd", "selfcheck_disabled", "selfcheck_already_running",
-    "selfcheck_source_busy", "selfcheck_recovery_incomplete", "selfcheck_worktree_unavailable",
+    "selfcheck_source_busy", "selfcheck_worktree_unavailable",
 }
+# 0053 1-B: a start is no longer refused with selfcheck_recovery_incomplete (a queued request runs in
+# its own snapshot, without the Group lock), so the help no longer documents it as an error.
 
 
 def _ctx(locale="en", *, principal_kind="worker", action_scope="edit", doc_type="TR"):
