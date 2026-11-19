@@ -415,7 +415,12 @@ _QUESTION_PRECHECK_TEXT: dict[str, str] = {
 def _question_precheck(base: str, anchor_doc_id: str, locale: str = "ko") -> str:
     """The check-before-asking steps with the token-specific past Q&A search address (flowgate.v02gui.0028)."""
     loc = template_provision.normalize_locale(locale)
-    return _QUESTION_PRECHECK_TEXT[loc].format(search=f"{base}/q/{anchor_doc_id}/search?q=<keyword>&limit=10")
+    contract = {
+        "ko": "\n서버도 등록 전에 낱말 OR 검색을 합니다. HTTP 200 status=reused_answer면 출처를 확인해 기존 답으로 진행하십시오. HTTP 409 existing_answer_requires_reason이면 같은 요청을 그대로 재전송하지 마십시오. 기존 답을 쓰거나 항목에 reuse_rejection_reason과 rejected_answer_id를 적어 재전송하십시오. next_cursor로 관련도 페이지를 이어갑니다.",
+        "ja": "\n登録前にサーバーも単語OR検索を行います。200 reused_answer は出典を確認して既存回答を使用。409 existing_answer_requires_reason は同じ要求を再送せず、既存回答を使うか項目に reuse_rejection_reason と rejected_answer_id を記入して再送してください。next_cursor は関連度順の次ページです。",
+        "en": "\nThe server also runs word OR search before registration. For HTTP 200 status=reused_answer, check the source and continue with the existing answer. On HTTP 409 existing_answer_requires_reason, do not resend unchanged: use the existing answer or resubmit the item with reuse_rejection_reason and rejected_answer_id. Use next_cursor for relevance pagination.",
+    }
+    return _QUESTION_PRECHECK_TEXT[loc].format(search=f"{base}/q/{anchor_doc_id}/search?q=<keyword>&limit=10") + contract[loc]
 
 
 # Lead-in (3 lines) / no-choices warning / positive "write a Q" redirect, per locale.
