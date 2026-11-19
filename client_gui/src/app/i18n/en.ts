@@ -3383,13 +3383,6 @@ export default {
         lower_impact: 'Repeat choices of saved or paused runs are re-evaluated against the current limit when they run or resume. An existing choice above the limit may be treated as no review or the default restart count.',
         lower_no_rewrite: 'This screen does not change what a run has stored, and it does not resume any run.',
       },
-      // flowgate.v02test.0053 0003-T (1-A): the two 검증 defaults (verify_max_runs, verify_run_timeout_sec).
-      verify: {
-        title: 'Verification',
-        card_hint: 'A card that sets nothing of its own follows these values',
-        runs: { label: 'Max verifications', hint: 'How many verifications one card may use. 1 or more, default 3.', unit: 'times', invalid: 'Enter a whole number of {min} or more.' },
-        minutes: { label: 'Max time per verification', hint: 'The longest one verification may run, in minutes. 1 to 30, default 3 (180 seconds).', unit: 'min', invalid: 'Enter a whole number of minutes from {min} to {max}.' },
-      },
       leave: {
         title: 'You have unsaved changes',
         unsaved: 'Leaving this screen discards the unsaved Scratch retention · AI repeat limit input.',
@@ -3573,8 +3566,6 @@ export default {
       unknown_key: 'Unknown setting.',
       invalid_value: 'Value not allowed.',
       ai_repeat_count_out_of_range: 'The repeat limit must be a whole number from 1 to 30.',
-      verify_max_runs_out_of_range: 'Max verifications must be a whole number of 1 or more.',
-      verify_run_timeout_out_of_range: 'Max time per verification must be a whole number of minutes from 1 to 30.',
       action_failed: 'The request could not be processed.',
       agent_not_found: 'The agent was not found.',
       enrollment_not_allowed: 'Only an enabled remote agent can get an enrollment token.',

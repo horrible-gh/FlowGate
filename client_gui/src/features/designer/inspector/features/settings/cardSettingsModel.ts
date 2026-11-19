@@ -72,9 +72,10 @@ export function cardSettingsSwitchOn(value: unknown): boolean {
 const NUMBER_FIELDS: readonly CardSettingsField[] = ['instruction_review_count', 'restart', 'review_count', 'time_limit']
 
 /**
- * flowgate.v02test.0053 0003-T (1-A): the two 검증 options of a work card. Both are blank (null = the system default) until
- * a person picks a value; the server's `choices` are the combo's presets and any whole number inside the range below
- * is a value too (the combo's 사용자 정의, the number box beside it).
+ * flowgate.v02test.0053 0003-T (1-A): the two 검증 options of a work card, managed per card only (0002-CH turn 68: no
+ * system setting). A card with no stored value shows the server's default (3회 / 2분); the server's `choices` are the
+ * combo's presets and any whole number inside the range below is a value too (the combo's 사용자 정의, the number box
+ * beside it).
  */
 export type CardSettingsVerifyField = 'verify_max_runs' | 'verify_run_minutes'
 export const VERIFY_FIELDS: readonly CardSettingsVerifyField[] = ['verify_max_runs', 'verify_run_minutes']
@@ -100,15 +101,14 @@ export function cardSettingsVerifyCustomValue(field: CardSettingsVerifyField, te
 }
 
 /**
- * The combo of a 검증 option: 시스템 기본값 (blank, null), the presets, the stored value when it is none of them (so
- * the shown value stays the stored one), then 사용자 정의. A preset or stored value is told as `{n}회` / `{n}분`.
+ * The combo of a 검증 option: the presets (the default 3회 / 2분 among them), the stored value when it is none of them
+ * (so the shown value stays the stored one), then 사용자 정의. A preset or stored value is told as `{n}회` / `{n}분`.
  */
 export function cardSettingsVerifyOptions(field: CardSettingsVerifyField, choices: readonly unknown[] | null | undefined, current: unknown): SettingsOption[] {
   const key = field === 'verify_max_runs' ? 'count.times' : 'option.minutes'
   const presets = integers(choices)
   const shown = typeof current === 'number' && Number.isInteger(current) && !presets.includes(current) ? [...presets, current].sort((a, b) => a - b) : presets
   return [
-    { value: '', key: 'option.system_default', params: {}, label: null },
     ...shown.map((n) => ({ value: String(n), key, params: { n }, label: null })),
     { value: VERIFY_CUSTOM, key: 'option.custom', params: {}, label: null },
   ]
@@ -154,7 +154,6 @@ export function cardSettingsText(value: unknown): string {
 export function cardSettingsValueOf(field: CardSettingsField, text: string): unknown {
   if (AI_FIELDS.includes(field)) return text === '' ? null : text
   if (cardSettingsIsVerifyField(field)) {
-    if (text === '') return null                      // blank: the system default again
     return text === VERIFY_CUSTOM ? undefined : cardSettingsVerifyCustomValue(field, text)
   }
   if (NUMBER_FIELDS.includes(field)) {

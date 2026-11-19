@@ -172,7 +172,7 @@ def test_mention_never_mentions_source_bundle(monkeypatch, scope, doc_type, head
 @pytest.mark.parametrize("scope, doc_type, head_type", [("new", "T", "TR"), ("edit", "TR", "TR")])
 def test_tr_mention_keeps_the_self_check_section(monkeypatch, scope, doc_type, head_type):
     text = _mention(monkeypatch, scope, doc_type, head_type)
-    assert "Self-check: 1회당 3분 제한, 3회 남음" in text
+    assert "Self-check: 1회당 2분 제한, 3회 남음" in text
     assert "## TR test responsibility and Self-check" not in text
 
 

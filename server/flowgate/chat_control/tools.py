@@ -102,9 +102,9 @@ _SETTINGS_OBJECT = {
         "restart": {**_SETTING_INT, "description": "Restarts after a failed run: -1 until done, 0 none, 1..max (T only)."},
         "time_limit": {**_SETTING_INT, "description": "Minutes per run: 30, 45, 60, 90, 120, 180 or 240 (T only)."},
         "verify_max_runs": {**_SETTING_INT, "description": "Verifications the card may use: a whole number of 1 or more "
-                                                           "(presets 3, 5, 10); null = the system default (T only)."},
-        "verify_run_minutes": {**_SETTING_INT, "description": "Longest minutes of one verification: 1..30 (presets 3, 5, "
-                                                              "10, 20, 30); null = the system default (T only)."},
+                                                           "(presets 3, 5, 10); null = the default 3 (T only)."},
+        "verify_run_minutes": {**_SETTING_INT, "description": "Longest minutes of one verification: 1..30 (presets 2, 3, "
+                                                              "5, 10, 20, 30); null = the default 2 (T only)."},
     },
     "description": "The card's run settings (null takes the default back); get_card_roles lists each one's choices.",
 }
@@ -310,7 +310,7 @@ def cli_mention(api_base, raw_token):
         "them). Another user's or a disabled AI: 422 ai_not_selectable and nothing is placed.",
         "`settings` per card: review_count (0 none, -1 until it passes, 1..max), restart and time_limit (minutes;",
         "T only), verify_max_runs (verifications, 1 or more) and verify_run_minutes (1..30; both T only, null = the",
-        "system default). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
+        "default 3 / 2 minutes). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
         TOPOLOGY_GUIDE,
         "Without links: places up to 5 work cards (T, or TS) in one chain and ends it in a confirm card",
         "(the anchor's unstarted confirm card, else a new one). Without `after` the server picks the only",

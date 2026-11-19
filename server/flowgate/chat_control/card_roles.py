@@ -66,8 +66,8 @@ NEXT_AFTER_READ = ("To change a role or a run setting send PATCH (set_card_roles
 NEXT_AFTER_CHANGE = ("Read the card's roles again (GET / get_card_roles): only that read showing the new selection "
                      "confirms the change. Tell the user what changed.")
 SETTING_NOTE = ("review_count: AI reviews of the result (0 none, -1 until it passes); restart: restarts after a failed "
-                "run (-1 until done); time_limit: minutes per run; verify_max_runs: verifications one card may use (default is "
-                "the system's); verify_run_minutes: longest minutes of one verification, 1..30 (default is the system's). "
+                "run (-1 until done); time_limit: minutes per run; verify_max_runs: verifications one card may use (default "
+                "3); verify_run_minutes: longest minutes of one verification, 1..30 (default 2). "
                 "null in a change takes the default back.")
 
 

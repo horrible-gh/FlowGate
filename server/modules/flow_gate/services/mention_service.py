@@ -2426,7 +2426,7 @@ def build_mention(
         if not review_continuous and source_crud_section and str(scope_type or "").upper() == "TR":
             from modules.flow_gate.services import tr_self_check_quota as quota
             snapshot_policy_section = self_check_notice or quota.notice(
-                {"run_timeout_sec": quota.system_limits().run_timeout_sec}, quota.system_limits().max_runs, locale)
+                {"run_timeout_sec": quota.default_limits().run_timeout_sec}, quota.default_limits().max_runs, locale)
 
     # ── Assembly ──────────────────────────────────────────────────────────────
     sections = [
