@@ -78,6 +78,19 @@ def _pick_request_id(scope) -> str:
     return uuid.uuid4().hex
 
 
+async def unhandled_error_response(request, exc):
+    """ServerErrorMiddleware sits outside user middleware; echo the tagged id here.
+
+    Starlette still re-raises the exception after sending this response, so uvicorn
+    records the original traceback exactly once. Do not swallow or log it here.
+    """
+    from starlette.responses import PlainTextResponse
+
+    rid = request_id_of_exception(exc) or request.scope.get("flowgate.request_id")
+    headers = {REQUEST_ID_HEADER: rid} if rid else {}
+    return PlainTextResponse("Internal Server Error", status_code=500, headers=headers)
+
+
 class RequestIdMiddleware:
     """Assign a request id, expose it to the handler and echo it in the response header."""
 
@@ -89,6 +102,7 @@ class RequestIdMiddleware:
             await self.app(scope, receive, send)
             return
         rid = _pick_request_id(scope)
+        scope["flowgate.request_id"] = rid
         token = _request_id.set(rid)
         header = (REQUEST_ID_HEADER.encode("latin-1"), rid.encode("latin-1"))
 
@@ -100,6 +114,16 @@ class RequestIdMiddleware:
             await send(message)
 
         try:
+            # Reject decoded URL/header text before policy middleware can query the DB.
+            from starlette.datastructures import Headers, QueryParams
+            from starlette.responses import JSONResponse
+            from modules.flow_gate.api.input_validation import has_nul
+
+            if has_nul([scope.get("path", ""), list(QueryParams(scope.get("query_string", b"")).multi_items()),
+                        list(Headers(scope=scope).items())]):
+                await JSONResponse({"detail": "NUL characters are not allowed in request text"},
+                                   status_code=422)(scope, receive, send_with_id)
+                return
             await self.app(scope, receive, send_with_id)
         except BaseException as exc:
             _tag_exception(exc, rid)

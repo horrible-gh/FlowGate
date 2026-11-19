@@ -144,7 +144,11 @@ async def lifespan(app: FastAPI):
         logger.warning("remote AI Job supervisor shutdown failed", exc_info=True)
 
 
-app = FastAPI(lifespan=lifespan)
+from modules.flow_gate.api.input_validation import reject_nul_input
+from modules.flow_gate.api.request_observability import unhandled_error_response
+
+app = FastAPI(lifespan=lifespan, dependencies=[Depends(reject_nul_input)])
+app.add_exception_handler(Exception, unhandled_error_response)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 

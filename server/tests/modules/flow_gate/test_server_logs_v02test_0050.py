@@ -225,6 +225,8 @@ def test_an_unhandled_request_exception_row_carries_its_request_id(logs, uvicorn
     def fine():
         return {"ok": True}
 
+    from modules.flow_gate.api.request_observability import unhandled_error_response
+    app.add_exception_handler(Exception, unhandled_error_response)
     app.add_middleware(RequestIdMiddleware)
     # log_config=None: uvicorn must not re-configure (and strip) the process loggers under test.
     config = uvicorn.Config(app, host="127.0.0.1", port=0, log_config=None, access_log=False, lifespan="off",
@@ -245,6 +247,7 @@ def test_an_unhandled_request_exception_row_carries_its_request_id(logs, uvicorn
                 conn.request("GET", path, headers={"X-Request-ID": rid})
                 response = conn.getresponse()
                 response.read()
+                assert response.getheader("X-Request-ID") == rid
                 return response.status
             finally:
                 conn.close()
@@ -719,3 +722,41 @@ def test_migration_200_runs_verbatim_twice_on_live_engines(live_engine):
                 "last_seen_at = CASE WHEN last_seen_at < 'u' THEN 'u' ELSE last_seen_at END WHERE id = 1")
     cur.execute("SELECT source, repeat_count, last_seen_at FROM server_logs")
     assert tuple(cur.fetchone()) == ("server", 3, "u")
+
+
+def test_nul_is_removed_at_persistence_boundary(logs):
+    entry = server_logs._entry_from_record(logging.LogRecord(
+        "logger\0name", logging.ERROR, __file__, 1, "hello\0world", (), None))
+    entry.update(request_id="req\0id", exc_type="Bad\0Error", exc_text="oops\0 pass\0word=hidden",
+                 extra_json=json.dumps({"a\0b": ["c\0d"], "pass\0word": "hidden"}))
+    writer = server_logs._Writer()
+    writer._write([entry])
+    [row] = _rows(logs)
+    assert row["message"] == "helloworld"
+    assert row["request_id"] == "reqid"
+    assert row["logger_name"] == "loggername"
+    assert row["exc_type"] == "BadError" and row["exc_text"] == "oops password=***"
+    assert json.loads(row["extra_json"]) == {"ab": ["cd"], "password": "***"}
+    assert all("\0" not in value for value in row.values() if isinstance(value, str))
+
+
+def test_failed_batch_recovers_good_records_without_duplicate_counts(logs):
+    # A genuine database error after an earlier insert forces a real rollback.
+    logs._execute("CREATE TRIGGER reject_poison BEFORE INSERT ON server_logs "
+                  "WHEN NEW.message = 'poison' BEGIN SELECT RAISE(ABORT, 'bad row'); END", [])
+    def entry(message, fingerprint):
+        value = server_logs._entry_from_record(logging.LogRecord(
+            "isolation", logging.WARNING, __file__, 1, message, (), None))
+        value["fingerprint"] = fingerprint
+        return value
+    writer = server_logs._Writer()
+    writer._write([entry("good-before", "before"), entry("poison", "shared"),
+                   entry("good-after", "shared"), entry("good-last", "last")])
+    rows = _rows(logs)
+    assert {r["message"] for r in rows} == {"good-before", "good-after", "good-last"}
+    assert all(r["repeat_count"] == 1 for r in rows)
+    assert server_logs.stats()["written"] == 3
+    assert server_logs.stats()["failed_batches"] == 1
+    writer._write([entry("good-after", "shared")])
+    rows = _rows(logs, "fingerprint = ?", ["shared"])
+    assert rows[0]["repeat_count"] == 2

@@ -25,7 +25,7 @@ How a record gets there
   to drain what is left (atexit).
 * Records emitted by the writer thread itself (the DB layer it calls included) are never queued,
   and a record emitted while ``emit`` is running is ignored, so writing a log row can never log
-  again (decision 4). A failed write prints one line to stderr and drops the batch. Nothing here
+  again (decision 4). A failed batch is retried one record per transaction; only failing records are dropped. Nothing here
   raises into the caller.
 
 What a row keeps (decision 6)
@@ -226,18 +226,22 @@ def _fingerprint(level: str, logger_name: str, location: str, func_name: str, te
     return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()
 
 
+def _db_text(value: str) -> str:
+    return value.replace("\x00", "")
+
+
 def _clean_extra(value: Any, depth: int = 0) -> Any:
     if depth > 6:
         return "..."
     if isinstance(value, str):
-        return redact_text(value, MESSAGE_MAX_CHARS)
+        return redact_text(_db_text(value), MESSAGE_MAX_CHARS)
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, dict):
         # A credential key (token / password / api_key / Authorization / ...) hides its whole value, nested
         # containers included: the text rule cannot see a name and a value that sit apart in a mapping.
         return {
-            redact_text(str(k), 200): (MASK if v is not None and is_secret_key(k) else _clean_extra(v, depth + 1))
+            redact_text(_db_text(str(k)), 200): (MASK if v is not None and is_secret_key(_db_text(str(k))) else _clean_extra(v, depth + 1))
             for k, v in list(value.items())[:200]
         }
     if isinstance(value, (list, tuple, set)):
@@ -456,20 +460,31 @@ class _Writer(threading.Thread):
         groups: dict[str, list[dict]] = {}
         for entry in batch:
             groups.setdefault(entry["fingerprint"], []).append(entry)
+        written = 0
         try:
-            learned = write_groups(groups, self.recent)
+            learned = write_groups(groups, dict(self.recent))
         except Exception as exc:  # noqa: BLE001
             with _lock:
                 _stats["failed_batches"] += 1
-            _stderr(f"write failed, {len(batch)} record(s) dropped: {type(exc).__name__}: "
-                    f"{redact_text(str(exc), 300)}")
-            return
-        self.recent.update(learned)
+            # The batch transaction rolled back. Isolate bad records, including records
+            # sharing a fingerprint, and update the cache only after each commit.
+            for entry in batch:
+                try:
+                    learned = write_groups({entry["fingerprint"]: [entry]}, dict(self.recent))
+                except Exception:  # noqa: BLE001
+                    continue
+                self.recent.update(learned)
+                written += 1
+            _stderr(f"write failed, recovered {written}, {len(batch) - written} record(s) dropped: "
+                    f"{type(exc).__name__}: {redact_text(str(exc), 300)}")
+        else:
+            self.recent.update(learned)
+            written = len(batch)
         horizon = time.time() - REPEAT_WINDOW_SECONDS
         if len(self.recent) > 5000:
             self.recent = {fp: v for fp, v in self.recent.items() if v[1] >= horizon}
         with _lock:
-            _stats["written"] += len(batch)
+            _stats["written"] += written
 
     def _maybe_purge(self) -> None:
         now = time.time()
@@ -498,6 +513,16 @@ def write_groups(groups: dict[str, list[dict]], recent: dict[str, tuple[int, flo
                 if store._fetch_one(f"SELECT id FROM {TABLE} WHERE fingerprint = ? LIMIT 1", [fingerprint]):
                     continue
                 entries = entries[:1]
+            # PostgreSQL text columns reject NUL. Apply at the final persistence
+            # boundary so logging, direct records and browser reports are all covered.
+            # JSON text uses escaped NUL; sanitize its decoded keys/values as well.
+            entries = [{k: (redact_text(_db_text(v)) if k != "extra_json" else _db_text(v))
+                        if isinstance(v, str) else v for k, v in e.items()}
+                       for e in entries]
+            for entry in entries:
+                if entry.get("extra_json"):
+                    entry["extra_json"] = json.dumps(
+                        _clean_extra(json.loads(entry["extra_json"])), ensure_ascii=False)
             entries.sort(key=lambda e: e["time"])
             pending = entries
             while pending:
