@@ -8,7 +8,7 @@ flowgate.default.0394 — R0001 "테스트 코드 정리" §6·§7, NR0003 §12�
 
 ---
 
-## 0. 영역을 골라 실행하기 (0053 A1)
+## 0. 영역을 골라 실행하기 (0053 A1·A2)
 
 서버에서 바꾼 기능만 검증할 때는 `server/`에서 실행한다.
 
@@ -37,6 +37,28 @@ TOML 하위 영역 이름은 `[area."conversation.chat"]`처럼 따옴표로 묶
 collected는 이번 명령에서 실제 수집한 파일 수다(tier로 건너뛴 테스트가 포함될 수 있음).
 영역 옵션을 생략하면 기존 수집과 tier 동작을 유지한다. 이 단계에서는 시간 측정·tier 재분류를
 하지 않았다. 아래 과거 실측표를 새 영역의 실행 시간으로 해석하지 않는다.
+
+클라이언트는 `client_gui/`에서 실행한다.
+
+```text
+npm run test:related -- src/features/git/api.ts
+npm run test:area -- git
+npm run test:area -- designer
+npm run test:areas:check
+npm run typecheck
+```
+
+`test:related`는 Vitest의 import 관계로 관련 spec을 고른다. 파일을 텍스트로 읽는 구조 검사나
+동적 의존성은 놓칠 수 있으므로 그런 변경은 `test:area`로 영역 전체를 검증한다.
+`test:area`는 쉼표 또는 공백으로 여러 영역을 받으며 상위 이름 `designer`는 하위 3개를 선택한다.
+영역은 `shell`, `ai`, `conversation`, `document`, `git`, `project`, `settings`, `workplan`,
+`designer.inspector`, `designer.run`, `designer.canvas`다. 인자가 없거나 모르는 영역이면 실패한다.
+`tests/areas.json` 경로는 client_gui 기준이며 `*`는 하위 경로도 포함한다(서버 지도와 동일).
+새 spec은 정확히 한 영역에 등록한다. designer.canvas의 나머지 파일은 명시 목록으로 관리하므로
+추가할 때 목록도 갱신한다. source는 변경 영역 참고용이고 test:related는 이 지도가 아닌 import를 쓴다.
+전체 지도에서 누락·중복·빈 패턴을 발견하면 영역 실행도 실패한다. `test:areas:check`와 서버의
+`tests/architecture/test_test_areas.py`가 같은 소유권 규칙을 검사한다.
+`npm test`는 기존처럼 전체를 실행한다. 클라이언트 실행 시간 예산은 아직 측정하지 않았다.
 
 ## 1. 실행 계층
 

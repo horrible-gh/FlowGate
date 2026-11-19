@@ -287,10 +287,7 @@ describe('0071 T2 scenario window', () => {
     await w.get('[data-test="raw-adopt-merge"]').trigger('click'); await flushPromises()
     expect(w.find('[data-test="raw-refusal"]').exists()).toBe(false)
     // the latest frontmatter / identity is adopted with the latest revision; only the merged body is the user's
-    expect(w.get('[data-test="scenario-raw-text"]').element).toHaveProperty('value', '---
-test_contract_version: 2
----
-my raw draft')
+    expect(w.get('[data-test="scenario-raw-text"]').element).toHaveProperty('value', '---\ntest_contract_version: 2\n---\nmy raw draft')
     context.closeWindow('scenario'); await flushPromises(); wrapper?.unmount(); wrapper = null; context = undefined as unknown as TestCardContext
     const c = await render('case'); expect(c.text()).not.toContain('gui.inspector.testSpec.')
   })
