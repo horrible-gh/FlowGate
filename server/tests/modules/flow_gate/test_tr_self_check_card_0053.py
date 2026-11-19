@@ -84,6 +84,8 @@ def test_other_project_identity_not_leaked(setup):
     assert actual['visible'] and actual['blocker'] is None
     assert 'secret' not in str(actual)
     assert service.status('f', 'a', lambda p: True)['blocker']['flow_id'] == 'other'
+    # 1-D client: [→] opens a card of the open project only, so the blocker names its project.
+    assert service.status('f', 'a', lambda p: True)['blocker']['project_id'] == 'p'
 
 
 def test_other_host_cannot_block(setup):

@@ -123,7 +123,8 @@ def status(flow_id, node_key, can_read_flow=lambda project_id: False):
             blocker = min(readable, key=lambda r: _time(r['started_at']))
             card = repository.card_node(blocker['group_id'], blocker['node_key']) or {}
             out['blocker'] = dict(_brief(blocker, now), flow_id=blocker['group_id'],
-                                  node_key=blocker['node_key'], label=card.get('label'))
+                                  node_key=blocker['node_key'], label=card.get('label'),
+                                  project_id=blocker.get('project_id'))
     return out
 
 

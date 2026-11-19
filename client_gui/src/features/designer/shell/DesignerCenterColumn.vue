@@ -36,6 +36,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
 import { toInspectorTarget } from '../inspector/inspectorTarget'
 import { openMergeWindow } from '../inspector/features/merge/mergeWindows'
+import { OPEN_CARD_EVENT } from '../inspector/features/verification/verificationModel'
 import { openDocument } from '../inspector/openDocument'
 import { cardDocumentButtons, type CardDocumentOpen } from '../center/canvas/cardDocumentButtons'
 import type { CanvasViewport } from '../center/canvasView'
@@ -124,6 +125,37 @@ watchEffect(() => {
 
 onMounted(() => window.addEventListener('fg:open_card_merge', onOpenCardMerge))
 onBeforeUnmount(() => window.removeEventListener('fg:open_card_merge', onOpenCardMerge))
+
+// flowgate.v02test.0053 1-D: "show this card" — the `검증` line's [→] to the card ahead when it is in another Flow of the
+// open project (the same Flow goes through the Inspector's select-node). The Flow is activated (opened when it is not)
+// and the card selected once its Graph is shown; a card of another project is not shown here.
+const pendingCard = ref<{ flowId: string; nodeKey: string } | null>(null)
+
+function onOpenCard(event: Event): void {
+  const detail = (event as CustomEvent<{ projectId?: unknown; flowId?: unknown; nodeKey?: unknown; flowName?: unknown }>).detail ?? {}
+  const projectId = props.center.state.projectId
+  const flowId = typeof detail.flowId === 'string' && detail.flowId ? detail.flowId : null
+  const nodeKey = typeof detail.nodeKey === 'string' && detail.nodeKey ? detail.nodeKey : null
+  if (!flowId || !nodeKey || projectId === null) return
+  if (typeof detail.projectId === 'string' && detail.projectId !== projectId) return
+  if (props.center.state.tabs.some((tab) => tab.flowId === flowId)) props.center.activateFlow(flowId)
+  else props.center.openFlow({ projectId, flowId, flowName: typeof detail.flowName === 'string' ? detail.flowName : flowId })
+  pendingCard.value = { flowId, nodeKey }
+}
+
+watchEffect(() => {
+  const request = pendingCard.value
+  if (!request) return
+  const load = props.center.state.graphs?.[request.flowId]
+  if (!load || load.status === 'loading') return
+  if (load.status === 'ready' && load.graph.nodes.some((item) => item.id === request.nodeKey)) {
+    props.center.selectNode(request.flowId, request.nodeKey)
+  }
+  pendingCard.value = null
+})
+
+onMounted(() => window.addEventListener(OPEN_CARD_EVENT, onOpenCard))
+onBeforeUnmount(() => window.removeEventListener(OPEN_CARD_EVENT, onOpenCard))
 
 provide(Symbol.for('flowgate.designer.bottomDockInspector'), {
   selection: () => props.center.activeSelection.value,
