@@ -537,13 +537,21 @@ _RESOLVE_TOOL_SCHEMA = {
                             "additionalProperties": False,
                         },
                     },
+                    "companion_files": {
+                        "type": "array",
+                        "description": "Only verified companion_candidates for this conflict path. Submit full moved-file content preserving incoming changes; use supersede side=ours when retaining the target re-export.",
+                        "items": {"type": "object", "properties": {
+                            "path": {"type": "string"}, "content": {"type": "string"}},
+                            "required": ["path", "content"], "additionalProperties": False},
+                    },
                     # 0604 D0005 §3.4 — optional; the worker forwards `files` verbatim.
                     "supersede": {
                         "type": "object",
                         "description": (
                             "Only when the server rejected this file with conflict_side_dropped "
                             "AND the side you kept already contains every change of the other "
-                            "side (kept verbatim or changed in place). Never use it to skip a "
+                            "side (kept verbatim or changed in place), or the incoming chunk is "
+                            "preserved verbatim in verified companion_files for a target-side move. Never use it to skip a "
                             "merge; a person reviews every declaration."
                         ),
                         "properties": {
