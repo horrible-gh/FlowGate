@@ -925,6 +925,12 @@ class ResolveChunk(BaseModel):
     content: str
 
 
+class ResolveCompanion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str
+    content: str
+
+
 class ResolveFile(BaseModel):
     path: str
     # Exactly one of `content` (the whole resolved file) and `chunks` (every chunk of
@@ -934,6 +940,7 @@ class ResolveFile(BaseModel):
     # Must stay a declared field: ResolveFile is not extra="forbid", so an undeclared
     # `supersede` would be dropped silently before reaching resolve_conflicts.
     supersede: Optional[ResolveSupersede] = None
+    companion_files: Optional[list[ResolveCompanion]] = None
 
 
 class ResolveBody(BaseModel):
