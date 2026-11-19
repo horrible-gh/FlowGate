@@ -307,7 +307,7 @@ class TestParallelExecutionIsFileWise:
         assert problem, f"--dist {dist} 는 한 파일을 여러 워커로 찢는데 통과했다"
         assert "loadfile" in problem, "거절 메시지가 올바른 사용법을 알려 주지 않는다"
 
-    def test_configure_refuses_an_unsafe_parallel_run(self, conf):
+    def test_configure_refuses_an_unsafe_parallel_run(self, conf, pytestconfig):
         """문서가 아니라 실행이 막아야 한다 — `-n auto` 만 친 사람은 문서를 안 읽는다."""
         state_before = dict(conf._capability_state)
         try:
@@ -316,6 +316,7 @@ class TestParallelExecutionIsFileWise:
                 dist = "load"
 
             class _Config:
+                pluginmanager = pytestconfig.pluginmanager
                 option = _Option()
 
             with pytest.raises(pytest.UsageError) as raised:
@@ -325,7 +326,7 @@ class TestParallelExecutionIsFileWise:
             conf._capability_state.clear()
             conf._capability_state.update(state_before)
 
-    def test_configure_leaves_workers_alone(self, conf):
+    def test_configure_leaves_workers_alone(self, conf, pytestconfig):
         """워커는 자기 몫을 순차로 돈다. 거기서 dist 를 따지면 실행이 통째로 죽는다."""
         state_before = dict(conf._capability_state)
         try:
@@ -334,6 +335,7 @@ class TestParallelExecutionIsFileWise:
                 dist = "load"
 
             class _Config:
+                pluginmanager = pytestconfig.pluginmanager
                 option = _Option()
                 workerinput = {"workerid": "gw0"}
 

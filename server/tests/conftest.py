@@ -438,6 +438,8 @@ def pytest_unconfigure(config):
 
 
 def pytest_addoption(parser):
+    parser.addoption("--area", default=None, help="Comma-separated test areas (including parent names).")
+    parser.addoption("--changed", default=None, help="Comma-separated changed paths relative to server/.")
     parser.addoption(
         "--fg-git-mode", action="store", default="template",
         choices=("template", "direct"),
@@ -517,6 +519,10 @@ def pytest_configure(config):
         hang_guard = None
     if hang_guard is not None:
         hang_guard.install(config)
+
+    if getattr(config.option, "area", None) is not None or getattr(config.option, "changed", None) is not None:
+        from area_selection import register
+        register(config, _SERVER_DIR)
 
 
 def pytest_report_header(config):

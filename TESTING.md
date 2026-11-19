@@ -8,6 +8,36 @@ flowgate.default.0394 — R0001 "테스트 코드 정리" §6·§7, NR0003 §12�
 
 ---
 
+## 0. 영역을 골라 실행하기 (0053 A1)
+
+서버에서 바꾼 기능만 검증할 때는 `server/`에서 실행한다.
+
+```text
+python -m pytest tests -q -rEf --area=gate --tier=fast
+python -m pytest tests -q -rEf --changed=flowgate/gate_decisions/service.py --tier=fast
+python -m pytest tests -q -rEf -n 2 --dist loadfile --area=gate --tier=standard
+```
+
+병렬 실행은 기존 지침대로 `parallel_share`도 맞춘다. 영역 이름은 `ai`, `git`,
+`gate`, `selfcheck`, `document`, `conversation`, `graph`, `card`, `platform`, `db`, `guard`다.
+`--area`는 쉼표로 여러 영역을 받는다. 하위 영역이 생기면 상위 이름으로 모두 고를 수 있다.
+`--changed`는 **server 기준 상대 경로**를 받는다. 여러 경로와 `--area`를 함께 주면 합집합이다.
+테스트 파일 경로는 그 파일의 영역을 고른다. 알 수 없는 경로·영역은 실행 전에 오류로 끝난다.
+공통 DB 기반 변경은 여러 영역을 선택하므로 작은 작업 예산을 넘으면 TS에서 검증한다.
+
+`tests/areas.toml`의 `tests` 목록이 파일의 주 영역을 정한다. 새 `test_*.py`를 추가하면 지도에도
+등록한다. 예외는 모듈 맨 위의 `pytestmark = pytest.mark.area("gate")`처럼 문자열로 명시한다
+(마커 목록 안에서도 사용 가능). 영역은 파일 단위이며 함수별 area 표시는 선택 기준이 아니다.
+TOML 하위 영역 이름은 `[area."conversation.chat"]`처럼 따옴표로 묶는다.
+`also`는 함께 검증할 영역 이름 목록이며 standard/full에서 한 단계만 확장한다.
+`source` 패턴은 여러 영역에 겹칠 수 있다. 패턴은 POSIX 경로에 fnmatch로 적용하며 `*`도 `/`를 포함한다.
+매핑 누락·중복과 빈 패턴은 `tests/architecture/test_test_areas.py`가 검사한다.
+
+영역 밖 파일은 import 전에 제외한다. 요약의 selected/excluded는 지도상 파일 수이고,
+collected는 이번 명령에서 실제 수집한 파일 수다(tier로 건너뛴 테스트가 포함될 수 있음).
+영역 옵션을 생략하면 기존 수집과 tier 동작을 유지한다. 이 단계에서는 시간 측정·tier 재분류를
+하지 않았다. 아래 과거 실측표를 새 영역의 실행 시간으로 해석하지 않는다.
+
 ## 1. 실행 계층
 
 ### 왜 계층인가
