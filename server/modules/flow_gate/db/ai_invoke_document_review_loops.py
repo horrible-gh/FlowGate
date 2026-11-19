@@ -114,6 +114,51 @@ def stop_for_abandoned_run(run_id: str, *, detail: str, at: Optional[str] = None
     ) == 1
 
 
+QUESTION_WAIT_HANDED_ON_DETAIL = "question_wait_handed_on"
+
+
+def stop_for_question_wait_handoff(run_id: str, *, successor_run_id: str, at: Optional[str] = None) -> bool:
+    """Close the loop row of a run parked for its questions once its successor run took the loop over.
+
+    flowgate.v02test.0051 T0005 (A1): a parked loop keeps ``current_stage IN (review, rework)`` while it waits, so the
+    card stays locked and its assignment reads as active. When the resumed execution's run is admitted it carries the
+    loop on in a row of its own; this one is closed with the same one-way compare-and-swap and the existing
+    ``retry_exhausted`` reason as the other safety stops (no new stop_reason, no CHECK migration). ``stop_detail``
+    starts with ``question_wait_handed_on`` so no consumer reads it as the loop's verdict
+    (``question_loop_wait.handed_on``).
+    """
+    stamp = at or now_iso()
+    return get_store()._execute_affected(
+        "UPDATE ai_invoke_document_review_loops "
+        "SET current_stage = ?, stop_reason = ?, stop_detail = ?, updated_at = ? "
+        "WHERE run_id = ? AND current_stage IN (?, ?) AND stop_reason IS NULL",
+        ["stopped", "retry_exhausted", f"{QUESTION_WAIT_HANDED_ON_DETAIL}: {successor_run_id}"[:480],
+         stamp, run_id, "review", "rework"],
+    ) == 1
+
+
+QUESTION_WAIT_UNCONFIRMED_DETAIL = "question_wait_unconfirmed"
+
+
+def stop_for_question_wait_unconfirmed(run_id: str, *, detail: str, at: Optional[str] = None) -> bool:
+    """Stop a loop held at its hop boundary because its run's questions could not be confirmed.
+
+    flowgate.v02test.0051 T0005 (A1): the question read failed, or open questions were found but their wait could not
+    be stored (``question_loop_wait.hold``) — the next hop is never started on that. Same one-way compare-and-swap and
+    the existing ``retry_exhausted`` reason as the other safety stops (no new stop_reason, no CHECK migration);
+    ``stop_detail`` starts with ``question_wait_unconfirmed`` and names the cause. Round, hop history fields and
+    created_at are untouched.
+    """
+    stamp = at or now_iso()
+    return get_store()._execute_affected(
+        "UPDATE ai_invoke_document_review_loops "
+        "SET current_stage = ?, stop_reason = ?, stop_detail = ?, updated_at = ? "
+        "WHERE run_id = ? AND current_stage IN (?, ?) AND stop_reason IS NULL",
+        ["stopped", "retry_exhausted", (detail or QUESTION_WAIT_UNCONFIRMED_DETAIL)[:480],
+         stamp, run_id, "review", "rework"],
+    ) == 1
+
+
 def dismiss_card(run_id: str, *, at: Optional[str] = None) -> bool:
     """Mark this loop's MONITOR CARD as removed by its owner (0529 B0001).
 

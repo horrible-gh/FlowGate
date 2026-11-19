@@ -46,6 +46,11 @@ def held(monkeypatch):
     monkeypatch.setattr(sa, "is_legacy_attempt", lambda attempt_id: state["legacy"])
     monkeypatch.setattr(sa.store, "read", lambda *a: state["assignment"])
     monkeypatch.setattr(sa, "current_review_assignment", lambda attempt_id, stage: state["latest"])
+    # flowgate.v02test.0051 T0005: no parked mid-loop wait unless a test stores one
+    from flowgate.card_settings import question_loop_wait
+    state["wait"] = None
+    monkeypatch.setattr(question_loop_wait, "wait_of_run", lambda run_id: state["wait"])
+    monkeypatch.setattr(question_loop_wait, "resume_due", lambda wait: wait["status"] == "waiting")
     return state
 
 
@@ -67,11 +72,31 @@ def test_passed_loop_still_waits_without_reading_the_assignment(held, monkeypatc
     {"legacy": True},                                                        # pre-feature attempt: no verdict hold
     {"ref": None},
     {"ref": ("attempt-1", sa.RESULT, 0)},
-    {"active": True},                                                        # a loop still works on the document
 ])
 def test_not_waiting_when_the_verdict_is_not_held(held, change):
     held.update(change)
     assert wait._waiting(FLOW, _loop_run()) is None
+
+
+# flowgate.v02test.0051 T0005 (A1): the former ``{"active": True}`` case above. An unstopped loop row alone no longer
+# decides: a loop working on the document (no parked wait) is still not a waiting step, but a loop parked at its hop
+# boundary for its questions — its row unstopped, the card locked — is the ``loop_wait`` step, never the loop-end
+# ``review`` step (whatever its verdict hold says).
+def test_an_active_loop_without_a_parked_wait_is_not_waiting(held):
+    held.update(active=True)
+    assert wait._waiting(FLOW, _loop_run()) is None
+
+
+@pytest.mark.parametrize("stop", ["review_count_exhausted", "review_passed"])
+def test_an_active_loop_parked_for_its_questions_waits_as_loop_wait(held, stop):
+    held.update(active=True)
+    run = {**_loop_run(stop), "document_review_loop": {"current_stage": "rework", "stop_reason": None}}
+    held["wait"] = {"wait_id": "qlw_1", "group_id": FLOW, "status": "waiting", "loop_run_id": "loop-run"}
+    assert wait._waiting(FLOW, run) == ("loop_wait", NODE, held["wait"])
+    for status in ("resuming", "resumed", "cancelled"):        # resumed once / gone: neither step any more
+        held["wait"] = {**held["wait"], "status": status}
+        assert wait._waiting(FLOW, run) is None
+        assert wait._waiting(FLOW, _loop_run(stop)) is None
 
 
 def test_unreadable_assignment_is_not_waiting(held, monkeypatch):

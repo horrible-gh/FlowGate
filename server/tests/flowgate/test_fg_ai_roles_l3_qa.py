@@ -32,20 +32,36 @@ def test_q_legacy_matches_existing_candidates(routing, stored, asker, pid, sourc
     assert qa.choose("f", NODE, asker) == result
 
 
-@pytest.mark.parametrize("value,asker,reason", [("B", "A", None), ("B", "B", "designated_is_asker"),
-    ("gone", "A", "designated_not_enabled"), (None, "A", "responder_not_designated"),
-    ("B", None, "asker_unknown")])
-def test_n_new_has_one_designated_candidate(routing, value, asker, reason):
+# flowgate.v02test.0051 T0005 (A1, R 0051.0001): a new role card asks its review AI first; with no review AI, a disabled
+# one or the asker's own provider, an independent enabled default AI answers (the same bounded chain as a legacy card,
+# default_tail True). Unknown asker provenance still picks nothing. (Before: the review/instruction ROLE only, never a
+# default — ``designated_is_asker`` / ``designated_not_enabled`` / ``responder_not_designated`` left it to a person.)
+@pytest.mark.parametrize("value,asker,expected", [
+    ("B", "A", ("B", "card_review_role", None, True, "qa_new")),          # the card's review AI
+    ("B", "B", ("A", "default", None, True, "qa_new")),                   # review AI is the asker: independent default
+    ("gone", "A", ("B", "default", None, True, "qa_new")),                # review AI not enabled: independent default
+    (None, "A", ("B", "default", None, True, "qa_new")),                  # no review AI: independent default
+    ("B", None, (None, "default", "asker_unknown", True, "qa_new")),      # unknown asker: a person answers
+])
+def test_n_new_review_ai_first_then_independent_default(routing, value, asker, expected):
     routing["slots"]["review"] = NS(source="card_explicit", value=role_store.RoleValue(
         kind="assigned" if value else "not_used", provider_id=value, provider_name=None))
-    result = qa.choose("f", NODE, asker)
-    assert result == ("B", "card_review_role", None, False, "qa_new") if reason is None else result == (None, None, reason, False, "qa_new")
+    assert qa.choose("f", NODE, asker) == expected
+    picks = qa.candidates("f", NODE, asker)[0]
+    assert all(pid != asker for pid, _source in picks) and len({p for p, _s in picks}) == len(picks)
+
+
+def test_n_new_with_only_the_askers_provider_enabled_hands_to_person(routing):
+    routing["slots"]["review"] = NS(source="card_explicit", value=role_store.RoleValue(
+        kind="assigned", provider_id="A", provider_name=None))
+    routing["chain"] = [{"id": "A"}]
+    assert qa.choose("f", NODE, "A") == (None, "default", "no_independent_responder", True, "qa_new")
 
 
 @pytest.mark.parametrize("state", ["initialized", "pending_init"])
-def test_n_new_unset_never_initializes_or_uses_chain(routing, state):
+def test_n_new_unset_never_initializes_and_uses_an_independent_default(routing, state):
     routing["init"] = NS(state=state)
-    assert qa.choose("f", NODE, "A")[2:4] == ("responder_not_designated", False)
+    assert qa.choose("f", NODE, "A") == ("B", "default", None, True, "qa_new")
 
 
 def test_n_unreadable_hands_to_person(routing):

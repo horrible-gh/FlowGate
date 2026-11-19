@@ -878,6 +878,10 @@ def consume_loop_verdict(flow_id: str, a: dict, loop: dict, mode: str, jobs: lis
 
     if a.get("verdict"):
         return after_verdict(flow_id, a, mode, jobs)
+    from flowgate.card_settings import question_loop_wait  # noqa: PLC0415
+
+    if question_loop_wait.handed_on(loop):
+        return                                              # v02test.0051 T0005: a parked run's row, never a verdict
     row = legacy.node_run(a["run_id"], a["node_key"])
     doc = _doc(review_target(a, row))
     if loop.get("run_id") and question_wait.open_questions(flow_id, loop["run_id"]) != []:

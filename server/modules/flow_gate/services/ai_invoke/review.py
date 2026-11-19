@@ -2197,6 +2197,11 @@ def _insert_document_review_loop(run: dict) -> None:
         "group_id": run["group_id"],
         "doc_ref": run["doc_ref"],
     })
+    if run.get("graph_exec_id") and run.get("graph_review_run_ids"):
+        # flowgate.v02test.0051 T0005: the run of a loop resumed after its questions takes the loop over; the parked
+        # run's wait is resumed and its loop row closed as handed on (never raises).
+        from flowgate.card_settings import question_loop_wait
+        question_loop_wait.on_successor_admitted(run)
 
 
 def _restore_document_review_loop(run_id: str) -> dict | None:
@@ -2345,6 +2350,22 @@ def force_stop_loop_after_abandon(run: dict, *, stop_code: str | None = None) ->
         return False
 
 
+def _hop_left_open_questions(run: dict) -> bool:
+    """flowgate.v02test.0051 T0005: a Graph loop's run that still has questions it asked open (the hop that just ended
+    will park, ``question_loop_wait.park``). Only Graph loops park; a failed read answers False (counted as before)."""
+    if not run.get("graph_exec_id") or not run.get("group_id") or not run.get("run_id"):
+        return False
+    try:
+        from flowgate.card_settings import question_loop_wait
+        if not question_loop_wait.available():
+            return False
+        from .finalize import open_questions_raised_by_run
+        return bool(open_questions_raised_by_run(run["group_id"], run["run_id"]))
+    except Exception:  # noqa: BLE001
+        logger.warning("loop checkpoint question read failed for %s", run.get("run_id"), exc_info=True)
+        return False
+
+
 def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False) -> dict | None:
     """Transaction body for one completed document-review-loop hop.
 
@@ -2407,6 +2428,13 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
             return None
         bundle["last_hop_outcome"] = "failed"
         bundle["failure_detail"] = f"{stage} hop produced no expected durable progress"
+    if not late_recheck and bundle["last_hop_outcome"] == "failed" and _hop_left_open_questions(run):
+        # flowgate.v02test.0051 T0005 (A1, NR 0003 §2.1): a Graph hop that ended with questions it asked still open
+        # and nothing else to show is a question wait, not a failed attempt: the same stage is reserved without
+        # spending the stage retry budget, and the worker parks the loop before that stage starts
+        # (question_loop_wait.park).
+        bundle["attempts_used"] = int(persisted.get("attempts_used") or 0)
+        bundle["failure_detail"] = f"{stage} hop waits for its questions"
 
     # A successful review with a new non-pass verdict must become a real document
     # rejection before the rework stage is made visible. Both writes share the outer
