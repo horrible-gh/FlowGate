@@ -1288,6 +1288,8 @@ class TestRegisterAnswerTrigger:
     def test_an_ai_asked_item_reaches_the_resume_while_others_stay_open(
             self, monkeypatch, asker_kind, expected_calls):
         calls: list = []
+        monkeypatch.setattr(q_service.db_documents, "get_by_id",
+                            lambda doc_id: {"doc_id": doc_id, "group_id": GROUP})
         monkeypatch.setattr(q_service, "get_store", lambda: _fake_store())
         monkeypatch.setattr(q_service.db_questions, "get_container_by_doc",
                             lambda doc_id: {"id": 1, "status": "pending",

@@ -13,6 +13,7 @@ classification, persistence, notification and the finished payload are `finalize
 """
 
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import json
 import threading
@@ -631,24 +632,24 @@ def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
     from modules.flow_gate.services import message_image_delivery
     prompt = message_image_delivery.provider_prompt(prompt, provider, run)
     prompt = node_title_hooks.provider_prompt(prompt, run.get("raw_token"), provider.get("exec_type"))
-    if provider_remote.is_remote_cli(provider):
-        # flowgate.v02.0129 T#2 (D0005 §3-5): a remote Agent has no FLOWGATE_* variables and
-        # cannot see this server's scratch, so it writes in its current directory and
-        # submits the file's content. Local CLI prompts are untouched.
-        locale = str(run.get("continuation_locale") or run.get("locale") or "ko").lower()
-        if locale not in _REMOTE_CLI_TRANSPORT:
-            locale = "ko"
-        # Chat replies use the conversation turn endpoint, never the inbox envelope.
-        transport = (_REMOTE_CLI_CHAT_TRANSPORT if run.get("action_scope") == "chat"
-                     else _REMOTE_CLI_TRANSPORT)
-        return prompt.rstrip() + "\n\n" + transport[locale]
-    # Review loops keep their admission scope while hop_kind tracks the live stage.
-    if provider.get("exec_type") == "api" or effective_action_scope(run) != "review":
-        return prompt
     locale = str(run.get("continuation_locale") or run.get("locale") or "ko").lower()
-    if locale not in _CLI_REVIEW_FILE_FIRST:
+    if locale not in _REMOTE_CLI_TRANSPORT:
         locale = "ko"
-    return prompt.rstrip() + "\n\n" + _CLI_REVIEW_FILE_FIRST[locale]
+    if provider_remote.is_remote_cli(provider):
+        if terminal_prompt.task_kind(prompt) == "q_answer":
+            transport = terminal_prompt.q_transport(locale)
+        else:
+            transport = (_REMOTE_CLI_CHAT_TRANSPORT if run.get("action_scope") == "chat"
+                         else _REMOTE_CLI_TRANSPORT)[locale]
+        prompt = prompt.rstrip() + "\n\n" + transport
+    elif provider.get("exec_type") != "api" and effective_action_scope(run) == "review":
+        prompt = prompt.rstrip() + "\n\n" + _CLI_REVIEW_FILE_FIRST[locale]
+    # API finalization waits for context and tool hints in the last user message.
+    if provider.get("exec_type") != "api":
+        prompt = terminal_prompt.finalize(prompt, locale=locale,
+                                          fallback_kind=effective_action_scope(run))
+    return prompt
+
 
 
 from flowgate.ai_roles import invocations as role_invocations
@@ -1590,7 +1591,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             and spec["name"] not in chat_tool_handlers
         ] + [
             {"name": tool["name"], "description": tool["description"], "schema": tool["schema"]}
-            for tool in chat_tools
+            for tool in chat_tools if tool.get("prompt_visible", True)
         ] + [{
             "name": _CHAT_TOOL_NAME, "description": _CHAT_TOOL_DESC,
             "schema": _CHAT_TOOL_SCHEMA, "completion": True,
@@ -1650,7 +1651,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         run["_chat_based_on_seq"] = int(
             chat_context.get("delivered_head_seq") or chat_context.get("head_seq") or 0
         )
-        chat_hints = [str(tool["prompt_hint"]) for tool in chat_tools if tool.get("prompt_hint")]
+        chat_hints = [str(tool["prompt_hint"]) for tool in chat_tools
+                      if tool.get("prompt_visible", True) and tool.get("prompt_hint")]
         conversation.append({
             "role": "user",
             "content": (
@@ -1667,6 +1669,14 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 + ("\n\n" + "\n".join(chat_hints) if chat_hints else "")
             ),
         })
+    terminal_spec = terminal_prompt.finalize_messages(
+        conversation, locale=run.get("continuation_locale") or run.get("locale"),
+        fallback_kind=effective_action_scope(run),
+    )
+    # A chat that can neither write source (no `commit` in its block) nor run commands is
+    # read-only: its re-request must not invite it to "change" anything.
+    read_only_chat = bool(is_chat and not run_command_offered
+                          and "commit" not in terminal_spec["form"])
     turn = 0
     # Only a natural loop-boundary exit represents exhausted API turns. A model HTTP
     # or transport failure can happen on the final numbered turn but has priority over
@@ -1831,15 +1841,20 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             trace["disposition"] = "nudge" if run["tool_call_misses"] < _svc().API_MAX_TOOL_NUDGES else "no_tool"
             run["tool_call_misses"] += 1
             if run["tool_call_misses"] <= _svc().API_MAX_TOOL_NUDGES:
+                # The nudge is a server-written last user message: it ends with the same
+                # "what to do now" block as the first request (never a tool reply).
+                nudge = (
+                    (f"The required action is not complete. Call the `{tool_name}` tool now with the actual full payload. "
+                     if tool_specs is None else
+                     "Use the available tools to "
+                     + ("inspect" if read_only_chat else "inspect or change")
+                     + " the bound work, then call "
+                     f"`{_completion_tool_name(tool_specs)}` when complete. ")
+                    + "Do not merely say that you registered or attached it."
+                )
                 conversation.append({
                     "role": "user",
-                    "content": (
-                        (f"The required action is not complete. Call the `{tool_name}` tool now with the actual full payload. "
-                         if tool_specs is None else
-                         "Use the available tools to inspect or change the bound work, then call "
-                         f"`{_completion_tool_name(tool_specs)}` when complete. ")
-                        + "Do not merely say that you registered or attached it."
-                    ),
+                    "content": terminal_prompt.finalize_nudge(nudge, terminal_spec),
                 })
                 continue
             break

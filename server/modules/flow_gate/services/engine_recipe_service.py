@@ -14,6 +14,7 @@ history (L §2-6). Every reflect/recovery entry point swallows its own errors: n
 verdict (L §5), matching the 0152 isolation principle.
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import logging
 import re
@@ -467,7 +468,7 @@ def _emit_repair(doc: dict, run: dict, items: list[dict], token_rec: dict, attem
         engine=engine_hint,
         error=(run or {}).get("error"),
         token=issue["raw_token"],
-        mention=mention,
+        mention=terminal_prompt.finalize(mention, locale=token_rec.get("continuation_locale")),
     )
     logger.info(
         "engine-recipe repair delivery for %s attempt %s/%s (engine=%s)",
@@ -486,7 +487,7 @@ def _build_repair_mention(
     failing_cmd, tail = _log_tail(items)
     help_url = f"{api}/test-commands/help" + (f"?engine={engine_hint}" if engine_hint else "")
     return (
-        f"## Test-run repair (attempt {attempt} of {MAX_REPAIR_ATTEMPTS})\n"
+        terminal_prompt.prepare(f"## Test-run repair (attempt {attempt} of {MAX_REPAIR_ATTEMPTS})\n"
         "---\n"
         f"The remote test run for {doc_id} FAILED before the tests could run.\n"
         f"run_id: {(run or {}).get('run_id')}\n"
@@ -501,7 +502,7 @@ def _build_repair_mention(
         f"Authorization: Bearer {raw_token}\n"
         "{\n"
         f'  "doc_id": "{doc_id}"\n'
-        "}\n"
+        "}\n", kind='repair', locale='ko')
     )
 
 

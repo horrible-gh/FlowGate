@@ -79,6 +79,8 @@ def _client(monkeypatch, token_rec, *, step_type="P", source_mode="remote", even
     )
     sink = events if events is not None else []
     monkeypatch.setattr(db_events, "insert_event", lambda **kwargs: sink.append(kwargs))
+    from modules.flow_gate.services import question_policy
+    monkeypatch.setattr(question_policy, "text", lambda *args, **kwargs: "")
     app = FastAPI()
     app.include_router(help_routes.router)
     # A bare /help without a bearer header is the public endpoint catalog, so the
@@ -134,6 +136,7 @@ def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(mo
         "question", "submit", "source_tools", "design_template",
     ]
     assert _hidden(body) == {
+        **{name: "not_chat" for name in help_catalog.chat_help_content.ITEMS},
         "authoring_guide": "no_guide_for_type",
         "test_commands": "not_ts_type",
         "tr_self_check": "not_tr_edit",
@@ -179,6 +182,7 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     # 0638 T#1: a TR(new) worker runs Self-check before its TR exists, so the item is listed.
     assert "tr_self_check" in _names(body)
     assert _hidden(body) == {
+        **{name: "not_chat" for name in help_catalog.chat_help_content.ITEMS},
         "design_template": "not_design_type",
         "test_commands": "not_ts_type",
     }
@@ -591,7 +595,7 @@ def test_identifiers_never_translate(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
     body = client.get("/api/v1/help?locale=ja").json()
     assert _names(body)[:2] == ["notices", "group_documents"]
-    assert set(_hidden(body)) == {"design_template", "test_commands"}  # 0638 T#1: TR(new) lists tr_self_check
+    assert set(_hidden(body)) == {"design_template", "test_commands", *help_catalog.chat_help_content.ITEMS}  # 0638 T#1: TR(new) lists tr_self_check
 
 
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
@@ -673,7 +677,10 @@ def test_the_legacy_question_route_and_the_question_item_share_one_supplier(monk
     client = _client(monkeypatch, _token(), step_type="P")
     legacy = client.get("/api/v1/help/question").json()
     item = client.get("/api/v1/help/items/question").json()
-    assert item["content"] == legacy
+    # Personalized help also carries the document-bound answer lookup contract.
+    assert item["content"] == {**legacy, "answers": help_catalog._answers_lookup({
+        "base_url": item["base_url"], "doc_id": _token()["doc_ref"], "locale": "ko",
+    })}
 
 
 # ── supplier failures stay supplier failures ─────────────────────────────────
@@ -832,3 +839,91 @@ def test_tr_guide_and_bulk_help_keep_testing_and_scope_after_retirement(monkeypa
     assert "step_verification_format" not in items
     assert "changed_files_format" in items
     assert "tr_self_check" in items
+
+
+# 0049 T0009: chat help is documentation even for read/execute mode.
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+@pytest.mark.parametrize("source_access,command_access", [
+    ("read", None), ("read", "execute"), ("read_write", "execute"),
+])
+def test_chat_detail_help_http_and_api_share_visibility_and_content(
+        monkeypatch, locale, source_access, command_access):
+    from modules.flow_gate.services import api_server_tools, chat_help_content
+    token = _token("chat", source_access=source_access, command_access=command_access,
+                   continuation_locale=locale)
+    client = _client(monkeypatch, token, step_type="CH")
+    monkeypatch.setattr(api_server_tools.token_service, "verify", lambda _raw: token)
+    index = client.get("/api/v1/help").json()
+    run = {"api_base_url": index["base_url"]}
+    status, api_index = api_server_tools.read_help(run, "test-token", {})
+    assert status == 200
+    assert _names(api_index) == _names(index)
+    assert set(chat_help_content.ITEMS) <= set(_names(index))
+    bulk = client.get("/api/v1/help?items=" + ",".join(chat_help_content.ITEMS)).json()
+    assert bulk["unavailable"] == []
+    detail = client.get("/api/v1/help?detail=true").json()
+    assert detail["unavailable"] == []
+    for name in chat_help_content.ITEMS:
+        pointer = chat_help_content.help_item_url(name, index["base_url"] + "/")
+        route = "/api/v1/help/items/" + name
+        response = client.get(route)
+        assert response.status_code == 200
+        item = response.json()
+        assert item["title"] == chat_help_content.TITLES[locale][chat_help_content.ITEMS.index(name)]
+        assert set(item["content"]) == {"intro", "sections", "help_url"}
+        assert item["content"]["help_url"] == pointer
+        assert item["content"]["sections"]
+        assert next(x for x in bulk["items"] if x["name"] == name)["content"] == item["content"]
+        assert next(x for x in detail["items"] if x["name"] == name)["content"] == item["content"]
+        status, api_item = api_server_tools.read_help(run, "test-token", {"item": name})
+        assert status == 200
+        assert api_item["content"] == item["content"]
+        assert client.get(route + "/unknown").status_code == 404
+    attachments = client.get("/api/v1/help/items/document_attachments").json()["content"]
+    assert "this chat's Flow" in attachments["chat"]["sections"][0]
+    assert "attachment_request_too_large" in attachments["chat"]["sections"][0]
+
+
+@pytest.mark.parametrize("scope,extra", [
+    ("edit", {"issued_to": "question-responder"}),
+    ("new", {}), ("review", {}),
+])
+def test_chat_help_never_reopens_card_or_q_responder_authoring(monkeypatch, scope, extra):
+    from modules.flow_gate.services import api_server_tools, chat_help_content
+    token = _token(scope, **extra)
+    client = _client(monkeypatch, token, step_type="R")
+    monkeypatch.setattr(api_server_tools.token_service, "verify", lambda _raw: token)
+    index = client.get("/api/v1/help").json()
+    bulk = client.get("/api/v1/help?items=" + ",".join(chat_help_content.ITEMS)).json()
+    assert not set(chat_help_content.ITEMS) & set(_names(index))
+    assert {x["name"] for x in bulk["unavailable"]} == set(chat_help_content.ITEMS)
+    for name in chat_help_content.ITEMS:
+        assert _hidden(index)[name] == "not_chat"
+        assert client.get(chat_help_content.help_item_url(name, "/api/v1")).status_code == 403
+        status, _ = api_server_tools.read_help({"api_base_url": "/api/v1"}, "test-token", {"item": name})
+        assert status == 403
+    assert "authoring_guide" not in _names(index)
+
+
+def test_chat_help_reuses_contract_renderers_and_has_stable_pointers():
+    from modules.flow_gate.services import chat_help_content as chat_help
+    from flowgate.chat_control import tools, recovery_tools
+    from flowgate.card_document_edit import chat_tools, chat_questions
+    ctx = {"base_url": "https://example.invalid/flowgate/api/v1", "locale": "en"}
+    token = "<YOUR_CHAT_TOKEN>"
+    for name, renderers in [
+        ("chat_control", [tools.cli_mention]),
+        ("chat_recovery", [recovery_tools.cli_mention]),
+        ("chat_questions", [chat_questions.cli_mention_section]),
+        ("chat_documents", [chat_tools.cli_mention_section, chat_tools.cli_document_mention_section]),
+    ]:
+        assert chat_help.content(name, ctx)["sections"] == [r(ctx["base_url"], token) for r in renderers]
+    turn = "\n".join(chat_help.content("chat_turn", ctx)["sections"])
+    for text in ["ONE turn", "based_on_seq", "idempotency_key", "dry_run", "commit_message_required",
+                 "UTF-8", "LAST line", "force_encoding_reason", "display_name"]:
+        assert text in turn
+    assert "<encoding_probe supplied in this invocation" in turn
+    assert "help-example-not-a-live-token" not in turn
+    assert chat_help.help_item_url("document_attachments").endswith("/help/items/document_attachments")
+    with pytest.raises(ValueError):
+        chat_help.help_item_url("unknown")

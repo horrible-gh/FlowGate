@@ -169,6 +169,10 @@ def chat_tools(run: Optional[dict]) -> list[dict]:
             valid.append(tool)
         else:
             logger.warning("chat run hook %s returned a malformed tool (ignored)", PROVIDE_CHAT_TOOLS)
+    if run is not None:
+        from modules.flow_gate.services.prompt_selection import chat_situation, select_chat_guidance
+        situation = chat_situation(run.get("group_id"), can_write=run.get("chat_command_access") == "edit")
+        valid = select_chat_guidance(valid, situation)
     return valid
 
 
@@ -181,13 +185,14 @@ def accept_chat_call(run: Optional[dict], call: Any) -> Any:
     return context if ran else None
 
 
-def chat_mention_sections(api_base: str, raw_token: str, omit: tuple = ()) -> list[str]:
+def chat_mention_sections(api_base: str, raw_token: str, omit: tuple = (), *, situation=None) -> list[str]:
     """CLI-provider instructions of every provided chat tool, for the chat mention.
 
     ``omit`` names tools whose section is left out (a reading-mode chat: ``run_command``)."""
     sections: list[str] = []
-    for tool in chat_tools(None):
-        if tool.get("name") in omit:
+    from modules.flow_gate.services.prompt_selection import ChatSituation, select_chat_guidance
+    for tool in select_chat_guidance(chat_tools(None), situation or ChatSituation()):
+        if not tool.get("prompt_visible", True) or tool.get("name") in omit:
             continue
         builder = tool.get("cli_mention")
         if not callable(builder):

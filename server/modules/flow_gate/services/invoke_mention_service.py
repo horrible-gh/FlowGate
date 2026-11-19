@@ -18,6 +18,7 @@ credentials to act. For those, the invoke prompt is the copy text followed by
 the standard tokened mention for the underlying action scope.
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import json
 from typing import Optional
@@ -310,6 +311,54 @@ def _encoding_probe_paragraph(token_id: str) -> list[str]:
     ]
 
 
+def conversation_turn_submission_lines(*, api_base, doc_id, raw_token, token_id,
+                                       payload_lines, can_write, provider):
+    """Shared CLI/help turn contract; callers supply examples, never another token."""
+    lines = [
+        "",
+        "To reply, append ONE turn. Do NOT resubmit the conversation body — the body is no",
+        "longer where the conversation lives.",
+        "",
+        f"Submit: POST {api_base}/conversation/{doc_id}/turn",
+        f"Authorization: Bearer {raw_token}",
+        "",
+        *payload_lines,
+        "",
+        "based_on_seq records what you had actually read when you wrote this. Send the head_seq",
+        "from your last read — not a guess. If someone speaks while you are writing, your turn is",
+        "still kept in order and marked as written without having seen theirs.",
+        "",
+        *_encoding_probe_paragraph(token_id),
+        "",
+        f'To preview without registering, POST the same body to {api_base}/conversation/{doc_id}/turn',
+        'with "dry_run": true added. Nothing is registered and the token is not consumed — only',
+        "the corruption/fingerprint verdict (and encoding_probe: matched/broken/absent) comes back.",
+    ]
+    if can_write:
+        lines += [
+            "",
+            "If you changed source files in this chat, put the commit message in commit_message:",
+            "English, `type(scope): summary`, one line. Do not commit yourself: when this chat",
+            "ends FlowGate commits the flow's worktree with that message and writes the result",
+            "(or why the commit failed) into the conversation. commit_message is REQUIRED",
+            "whenever the flow worktree holds uncommitted changes (yours or left from before):",
+            "without it the turn is refused with 422 commit_message_required, dry_run included,",
+            "and nothing is registered; resend the same turn with commit_message. Leave it out",
+            "only when there is nothing to commit.",
+        ]
+    if provider:
+        lines += [
+            "display_name is a badge only and is not used to determine identity. The server",
+            "fixed it to the pinned provider name; keep the value shown above.",
+        ]
+    else:
+        lines += [
+            "display_name is a badge only and is not used to determine identity. If you do not",
+            "know your own model name, omit the field.",
+        ]
+    return lines
+
+
 def build_conversation_mention(
     *,
     doc_id: str,
@@ -404,48 +453,10 @@ def build_conversation_mention(
             after_seq=after_seq,
             through_seq=window.get("through_seq"),
         )
-    lines += [
-        "",
-        "To reply, append ONE turn. Do NOT resubmit the conversation body — the body is no",
-        "longer where the conversation lives.",
-        "",
-        f"Submit: POST {api_base}/conversation/{doc_id}/turn",
-        f"Authorization: Bearer {raw_token}",
-        "",
-        *payload_lines,
-        "",
-        "based_on_seq records what you had actually read when you wrote this. Send the head_seq",
-        "from your last read — not a guess. If someone speaks while you are writing, your turn is",
-        "still kept in order and marked as written without having seen theirs.",
-        "",
-        *_encoding_probe_paragraph(token_id),
-        "",
-        f'To preview without registering, POST the same body to {api_base}/conversation/{doc_id}/turn',
-        'with "dry_run": true added. Nothing is registered and the token is not consumed — only',
-        "the corruption/fingerprint verdict (and encoding_probe: matched/broken/absent) comes back.",
-    ]
-    if can_write:
-        lines += [
-            "",
-            "If you changed source files in this chat, put the commit message in commit_message:",
-            "English, `type(scope): summary`, one line. Do not commit yourself: when this chat",
-            "ends FlowGate commits the flow's worktree with that message and writes the result",
-            "(or why the commit failed) into the conversation. commit_message is REQUIRED",
-            "whenever the flow worktree holds uncommitted changes (yours or left from before):",
-            "without it the turn is refused with 422 commit_message_required, dry_run included,",
-            "and nothing is registered; resend the same turn with commit_message. Leave it out",
-            "only when there is nothing to commit.",
-        ]
-    if provider:
-        lines += [
-            "display_name is a badge only and is not used to determine identity. The server",
-            "fixed it to the pinned provider name; keep the value shown above.",
-        ]
-    else:
-        lines += [
-            "display_name is a badge only and is not used to determine identity. If you do not",
-            "know your own model name, omit the field.",
-        ]
+    lines += conversation_turn_submission_lines(
+        api_base=api_base, doc_id=doc_id, raw_token=raw_token, token_id=token_id,
+        payload_lines=payload_lines, can_write=can_write, provider=provider,
+    )
     for section in _chat_lookup_sections(
         base=api_base, raw_token=raw_token, project=project, group_name=group_name,
         source_access=source_access,
@@ -456,11 +467,16 @@ def build_conversation_mention(
     # read_write (edit / edit_once) or execute (flowgate.v02test.0026). The other chat tool
     # sections (graph read, attachment request, card document) stay in reading mode too.
     may_run = can_write or (source_access == "read" and command_access == "execute")
+    from modules.flow_gate.services.prompt_selection import chat_situation
+    situation = chat_situation(group_name, can_write=can_write)
     if command_execution:
         from modules.flow_gate.services import chat_run_hooks
 
         omit = () if may_run else ("run_command",)
-        sections = chat_run_hooks.chat_mention_sections(api_base, raw_token, omit=omit)
+        sections = chat_run_hooks.chat_mention_sections(
+            api_base, raw_token, omit=omit,
+            situation=situation,
+        )
         if not chat_run_hooks.registered(chat_run_hooks.PROVIDE_CHAT_TOOLS):
             sections = [_command_section(base=api_base, raw_token=raw_token)] if may_run else []
         if may_run and not can_write:
@@ -475,11 +491,12 @@ def build_conversation_mention(
         lines += ["", policy]
     from modules.flow_gate.services import message_image_delivery
     context = {"conversation_id": doc_id, "after_seq": after_seq, "through_seq": window.get("through_seq"), "locale": _locale(locale)}
-    text = "\n".join(lines)
+    text = terminal_prompt.prepare("\n".join(lines), kind="chat", locale=_locale(locale),
+                                   unanswered=situation.unanswered, can_write=can_write)
     if command_execution:
         return message_image_delivery.ConversationMention(text, context)
     notice = message_image_delivery.copy_notice(context)
-    return text + ("\n\n" + notice if notice else "")
+    return terminal_prompt.finalize(text + ("\n\n" + notice if notice else ""))
 
 def _single_line(value: Optional[str]) -> str:
     """Collapse stored text to one safe line for a bullet (0446 T0016 §4-3).

@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
+from terminal_prompt_assertions import assert_terminal
 
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -49,6 +50,8 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
 
     def fake_call(*args):
         seen["conversation"] = args[3]
+        assert_terminal(args[3][-1]['content'])
+        assert all('## 지금 할 일' not in msg['content'] for msg in args[3][:-1])
         seen["tool_name"] = args[-4]
         seen["force_tool"] = args[-1]
         return "Korean reply", {
@@ -250,7 +253,8 @@ def test_api_context_recent_uses_same_window_and_follows_byte_split_pages(monkey
     monkeypatch.setattr(ai_worker.conversation_turns, "current_head_seq", lambda _doc: 23)
     calls = []
 
-    def page(_doc, _raw, after_seq, before_seq, limit, include_head):
+    def page(_doc, _raw, after_seq, before_seq, limit, include_head, through_seq=None):
+        assert through_seq == 23
         calls.append((after_seq, before_seq, limit, include_head))
         if after_seq == 13:
             seqs, next_after = range(14, 19), 18

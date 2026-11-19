@@ -1,5 +1,6 @@
 """Remote TS test execution service."""
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 from modules.flow_gate.graph_workflow.services import card_document_ports as document_write_ports
 
 import contextlib
@@ -836,7 +837,7 @@ def issue_test_run_request(
         "token_id": issue["token_id"],
         "expires_at": issue["expires_at"],
         "scratch_dir": issue["scratch_dir"],
-        "mention": mention,
+        "mention": terminal_prompt.finalize(mention),
     }
 
 
@@ -869,7 +870,7 @@ def _build_test_run_mention(
             "Do NOT write the TSR yourself. If the run fails, a human resumes the chain.\n"
         )
     return (
-        "## Document information\n"
+        terminal_prompt.prepare("## Document information\n"
         "---\n"
         f"project: {doc.get('project_id')}\n"
         f"module: {doc.get('module') or 'none'}\n"
@@ -892,7 +893,7 @@ def _build_test_run_mention(
         '  "action": "test_run",\n'
         f'  "project": "{doc.get("project_id")}",\n'
         f'  "doc_id": "{doc["doc_id"]}"\n'
-        "}\n"
+        "}\n", kind='test_run', locale=locale)
     )
 
 
@@ -942,7 +943,7 @@ def _build_spec_result_mention(
     server_block = "\n".join(_case_line(case) for case in server_cases) or "- (none)"
     project = doc.get("project_id")
     return (
-        "## Document information\n"
+        terminal_prompt.prepare("## Document information\n"
         "---\n"
         f"project: {project}\n"
         f"module: {doc.get('module') or 'none'}\n"
@@ -991,7 +992,7 @@ def _build_spec_result_mention(
         '"value": "<evidence>"}], "defect_ref": "<optional>"}\n'
         "  ],\n"
         '  "junit_xml": "<optional: a JUnit XML report for the Cases you record>"\n'
-        "}\n"
+        "}\n", kind='test_spec', locale=locale)
     )
 
 

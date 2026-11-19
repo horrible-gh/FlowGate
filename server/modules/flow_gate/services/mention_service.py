@@ -34,6 +34,7 @@ Insert a placeholder into next_type based on the head state:
   - head pending       → {head_type} (normal)
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import json
 import logging
@@ -245,14 +246,27 @@ def _reference_doc_lines(doc_dot_dash_path: str, base: str, locale: str = "ko") 
 # answer and chat lookup lines below, the help item ``document_access`` (``help_catalog``) and the unreadable
 # documents section of an AI start (``ai_start_precheck``) all carry this constant; change the wording here only.
 BODY_UNREADABLE_RULES: tuple[str, ...] = (
-    "본문 미열람 규칙 1: content가 null이거나 content_state가 readable이 아닌 문서만 '읽지 못한 문서'입니다. "
-    "front matter뿐인 빈 문서(content_state=readable)는 읽은 문서이며, 이 판정은 내부에서만 하고 답변에 나열하지 마십시오.",
-    "본문 미열람 규칙 2: 읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오.",
-    "본문 미열람 규칙 3: 읽지 못한 문서가 있고 현재 요청 처리에 필요한 경우에만 문서 번호·사유(content_state 값)·답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히십시오. "
-    "읽지 못한 문서가 없거나 현재 답변과 무관하면 '없음'·'해당 없음' 같은 열람 상태 보고를 쓰지 말고, 사용자가 근거나 열람 상황을 물으면 그 범위에서 설명하십시오.",
-    "본문 미열람 규칙 4: 질문이 그 문서의 내용을 전제로 하면, 다른 자료에서 끌어낸 내용에 "
-    "'원문 미확인 상태의 추정'이라고 표시하십시오.",
-    "본문 미열람 규칙 5: 이관 조건은 그대로입니다. 사유가 권한 오류(403)이면 기존 '권한' 조건을 적용하십시오.",
+    "content가 null이면 읽지 못한 문서로 판단하십시오.",
+    "content_state가 readable이 아니면 읽지 못한 문서로 판단하십시오.",
+    "content_state가 readable이고 front matter뿐이면 읽은 빈 문서로 판단하십시오.",
+    "문서의 열람 여부를 판단한 결과는 내부에서만 쓰고 답변에 나열하지 마십시오.",
+    "읽지 못한 문서의 내용을 읽은 것처럼 인용하거나 요약하지 마십시오.",
+    "읽지 못한 문서가 현재 요청 처리에 필요한 경우에만 문서 번호·사유(content_state 값)·답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히십시오.",
+    "대체 근거가 없으면 지어내지 마십시오.",
+    "읽지 못한 문서가 없으면 '없음'·'해당 없음' 같은 열람 상태 보고를 쓰지 마십시오.",
+    "읽지 못한 문서가 현재 답변과 무관하면 열람 상태 보고를 쓰지 마십시오.",
+    "사용자가 근거나 열람 상황을 물으면 그 범위에서 설명하십시오.",
+    "질문이 읽지 못한 문서의 본문을 전제로 하면 다른 자료에서 끌어낸 내용에 '원문 미확인 상태의 추정'이라고 표시하십시오. 이 표시는 필요한 문서의 미열람 보고와 별개로 하십시오.",
+    "이관 안내가 제공된 경우에만 그 안내의 조건으로 이관 여부를 판단하십시오. 문서를 읽지 못한 사실을 새 이관 조건으로 삼지 마십시오.",
+    "읽지 못한 이유가 권한 오류(403)이면 이 이유만으로 이관하지 마십시오. 이관 안내가 있으면 사람이 승인하거나 부여해야 하는 접근·실행 권한인지 그 안내에 따라 판단하십시오.",
+)
+
+BODY_UNREADABLE_ANSWER_REFERENCE = (
+    "[문서 조회 도구]의 본문 미열람 규칙에 따라, 필요한 미열람 문서의 문서 번호·사유(content_state 값)·"
+    "답변에 미치는 영향·대체 근거(있으면)를 짧게 밝히고 대체 근거를 지어내지 마십시오. "
+    "미열람 문서가 없거나 답변과 무관하면 열람 상태 보고를 쓰지 마십시오. "
+    "사용자가 근거나 열람 상황을 물으면 그 범위에서 설명하십시오. "
+    "질문이 미열람 문서 본문을 전제로 하면 다른 자료에서 끌어낸 내용에 '원문 미확인 상태의 추정'이라고 별도로 표시하십시오."
 )
 
 
@@ -2061,6 +2075,25 @@ def build_mention(
         loc = template_provision.normalize_locale(locale)
         s1_body += f"\n{_PREDECESSOR_IDENTITY_WARNING_TEXT[loc]}"
 
+    # ── Edit-only human rejection feedback (T0009 §2-1) ──────────────────────
+    # Rendered only for a rejection rework (action_scope="edit", edit_reason="rejected"),
+    # from the SAME rejection_target object that fills the POST's rejection_id/review_id
+    # below — the display here and the answered target can never name different
+    # rejections. Malformed/absent history already surfaces as an empty
+    # rejection_target (build_mention_from_token_rec), so no reason means no section,
+    # never a failed mention.
+    human_rejection_section = ""
+    if is_edit and edit_reason == "rejected" and rejection_target:
+        human_reason = rejection_target.get("reason")
+        if isinstance(human_reason, str) and human_reason.strip():
+            human_rejection_lines = [human_reason]
+            human_rejection_id = rejection_target.get("rejection_id")
+            if isinstance(human_rejection_id, str) and human_rejection_id.strip():
+                human_rejection_lines.extend(["", f"rejection_id: {human_rejection_id.strip()}"])
+            human_rejection_section = _section(
+                "Human rejection (latest)", "\n".join(human_rejection_lines)
+            )
+
     # ── Section 2: creation or in-place revision instructions ────────────────
     if is_edit and first_write:
         target_doc_id = parent_canonical_doc_id or parent_doc_id
@@ -2079,8 +2112,9 @@ def build_mention(
         s2_body = (
             f"Revise the existing document {target_doc_id} in place.\n"
             f"Current revision: {parent_revision_no}\n"
-            "Read the target document and the review feedback below before editing.\n"
-            "Preserve the document identity and submit the complete revised content."
+            + ("Read the target document and the review feedback below before editing.\n"
+               if current_review or human_rejection_section else "Read the target document before editing.\n")
+            + "Preserve the document identity and submit the complete revised content."
         )
     elif review_continuous:
         # Review phase: show WHICH step would be produced (so the worker can scrutinise it)
@@ -2180,25 +2214,6 @@ def build_mention(
         seen_ref_ids.add(doc_dot_dash_path)
         s3_lines.extend(_reference_doc_lines(doc_dot_dash_path, base, locale))
     s3_body = f"Note: All GET requests require an Authorization: Bearer {raw_token} header\n\n" + "\n".join(s3_lines)
-
-    # ── Edit-only human rejection feedback (T0009 §2-1) ──────────────────────
-    # Rendered only for a rejection rework (action_scope="edit", edit_reason="rejected"),
-    # from the SAME rejection_target object that fills the POST's rejection_id/review_id
-    # below — the display here and the answered target can never name different
-    # rejections. Malformed/absent history already surfaces as an empty
-    # rejection_target (build_mention_from_token_rec), so no reason means no section,
-    # never a failed mention.
-    human_rejection_section = ""
-    if is_edit and edit_reason == "rejected" and rejection_target:
-        human_reason = rejection_target.get("reason")
-        if isinstance(human_reason, str) and human_reason.strip():
-            human_rejection_lines = [human_reason]
-            human_rejection_id = rejection_target.get("rejection_id")
-            if isinstance(human_rejection_id, str) and human_rejection_id.strip():
-                human_rejection_lines.extend(["", f"rejection_id: {human_rejection_id.strip()}"])
-            human_rejection_section = _section(
-                "Human rejection (latest)", "\n".join(human_rejection_lines)
-            )
 
     # ── Edit-only automated review feedback for the current document revision ──
     # Renamed from "Review feedback" (T0009 §2-2): header and lead line now say
@@ -2300,33 +2315,20 @@ def build_mention(
                     template_provision.normalize_locale(locale)
                 ] + "\n"
             )
-        post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
-        commit_hint = ""
-        # 0299: a resubmission (edit) goes through the work-scope check too. If the rework
-        # instruction omits the format guidance, the rejected worker resubmits blind and is rejected again.
-        if str(parent_type or "").upper() in tool_registry.MUTATING_STEP_TYPES:
-            commit_hint = f"\n{tr_scope_service.tr_section_guide(template_provision.normalize_locale(locale))}"
-        content_source_hint = (
-            "Choose exactly one document source (XOR):\n"
-            "- `content`: send the complete document inline, as shown in the POST example below.\n"
-            "- `doc_path`: replace `content` with the absolute path of a UTF-8 file "
-            "inside this token's scratch directory.\n"
-            "Do not send both `content` and `doc_path`."
-        )
+        loc = template_provision.normalize_locale(locale)
+        registration_context = {key: value for key, value in post_body.items()
+                                if key not in {"content", "body_sha256", "body_chars", "force_encoding_reason"}}
         s5_body = (
             f"Artifact registration: POST {base}/inbox\n"
             f"Authorization: Bearer {raw_token}\n"
-            f"\n"
-            f"{content_source_hint}\n"
-            f"{rejection_required_notice}"
-            f"\n"
-            f"{post_json}\n"
-            f"{commit_hint}"
-            f"\n"
-            f"{_DRYRUN_HINT}\n\n"
-            "A successful new/edit response includes `change_summary`. "
-            "Inspect it before continuing to confirm the saved lines and sections match your intent."
+            + _SUBMIT_POINTER_TEXT[loc].format(url=f"{base}/help/items/submit") + "\n"
+            + "Submission context (send complete document content):\n"
+            + json.dumps(registration_context, ensure_ascii=False, indent=2)
+            + rejection_required_notice
+            + "\nInspect change_summary after a successful save; report refusals honestly."
         )
+        if str(parent_type or "").upper() in tool_registry.MUTATING_STEP_TYPES:
+            s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(url=f"{base}/help/items/changed_files_format")
     else:
         # group 0372 set 3 (D-0003 §3-2 / §3-5): the request format, the field-by-field
         # example and the dry-run guide now live behind the `submit` help item, which
@@ -2359,18 +2361,11 @@ def build_mention(
     # Workers and FlowGate run against the same group-worktree filesystem. Expose
     # the token-owned directory so file submissions satisfy the server boundary.
     s6_body = (
-        "Write every non-source artifact (temporary files, dumps, generated JSON, caches, "
-        "and notes) inside this token's scratch directory; never place them in the source tree, "
-        "server cwd, or OS temp.\n\n"
-        "For file-based inbox submissions, `{SCRATCH}` means this token's scratch directory. "
-        "Create the file inside it and send that file's absolute path as `doc_path`.\n\n"
-        # flowgate.v02.0137 T0004 §3-1: the CLI cwd/TMP is the RUN scratch, which is deleted
-        # when the run ends and is not a valid doc_path; drafts belong in FLOWGATE_SCRATCH.
-        "Write drafts and submission bodies in this token's scratch directory "
-        "(FLOWGATE_SCRATCH), not in the current working directory: the working directory is "
-        "a per-run temporary folder that may be deleted when the run ends and cannot be used "
-        "as `doc_path`."
+        "Keep every non-source artifact in this token's scratch directory (FLOWGATE_SCRATCH), "
+        "never in the source tree, server cwd, or OS temp."
     )
+    if not review_continuous:
+        s6_body += f" Submission file details: GET {base}/help/items/submit"
 
     # ── Section 7: doc_type guide — REMOVED (group 0372 set 3, D-0003 §3-2 "dropped") ──
     # It was already a bare one-line help URL; the always-visible `doc_type` entry of
@@ -2424,9 +2419,10 @@ def build_mention(
     snapshot_policy_section = ""
     if _include_remote_source_crud(project):
         source_crud_section = _remote_source_crud_section(
-            base, raw_token, scope_type, action_scope=action_scope, locale=locale
+            base, raw_token, scope_type,
+            action_scope="review" if review_continuous else action_scope, locale=locale
         )
-        if source_crud_section and str(scope_type or "").upper() == "TR":
+        if not review_continuous and source_crud_section and str(scope_type or "").upper() == "TR":
             # 0672 T0004: TR verifies on the live worktree through Self-check.
             snapshot_policy_section = _section(
                 "TR test responsibility and Self-check",
@@ -2472,11 +2468,11 @@ def build_mention(
             sections.append(_work_plan_scope_section(work_plan_scope, project, locale, parent_doc_id))
         except Exception:  # a scope section must never abort mention generation
             logger.warning("work-plan scope section failed", exc_info=True)
-    if scope_section:
+    if scope_section and not review_continuous:
         sections.append(scope_section)
-    if nt_authoring_section:
+    if nt_authoring_section and not review_continuous:
         sections.append(nt_authoring_section)
-    if ts_authoring_section:
+    if ts_authoring_section and not review_continuous:
         sections.append(ts_authoring_section)
         # flowgate.default.0152 / group 0372 set 3: the verified-commands list used to be
         # inlined here (D-0003 §3-2, "verified test commands: dropped") — it is now the `test_commands`
@@ -2486,7 +2482,7 @@ def build_mention(
         # rides along: help_catalog._content_test_commands now carries it as
         # `engine_recipes`, so the registry is still taught on the first help call
         # (L §2-7) without this mention inlining it.
-    if template_section:
+    if template_section and not review_continuous:
         sections.append(template_section)
     sections.append(_section("Reference documents", s3_body))
     if qa_lines:
@@ -2515,9 +2511,15 @@ def build_mention(
     elif continuous_mode:
         sections.append(_section("Reminder", _continuous_guide_body(locale, review_mode=False)))
     else:
-        sections.append(_section("Reminder", _no_choices_reminder(base, prev_doc_id_value, locale, is_edit=is_edit)))
+        sections.append(_section("Reminder", "Register necessary questions through Q; do not ask interactive questions. "
+                                 f"Read GET {base}/help/items/question before registering."))
 
-    return "\n\n".join(sections)
+    task_kind = (
+        "first_write" if is_edit and first_write else
+        "rework" if is_edit and edit_reason == "rejected" else
+        "edit" if is_edit else "preflight" if review_continuous else "new"
+    )
+    return terminal_prompt.prepare("\n\n".join(sections), kind=task_kind, locale=locale)
 
 
 def build_mention_from_token_rec(
@@ -2796,7 +2798,7 @@ def build_workflow_decision_mention(
         # Group 0110 B0001/NR0003: recency repeat of the no-choices / Q-registration guard
         # at the bottom of this (long) prompt, matching build_mention/build_review_mention.
         sections.append(_section("Reminder", _no_choices_reminder(base, doc_id, locale)))
-    return "\n\n".join(sections)
+    return terminal_prompt.prepare("\n\n".join(sections), kind='workflow', locale=locale)
 
 
 # ── Sequence-edit mention builder (R0001 group 0208) ──────────────────────────
@@ -2956,7 +2958,7 @@ def build_sequence_edit_mention(
         _section("Sequence edit submission", s5_body),
         _section("Reminder", _no_choices_reminder(base, doc_id, locale)),
     ]
-    return "\n\n".join(sections)
+    return terminal_prompt.prepare("\n\n".join(sections), kind='sequence', locale=locale)
 
 
 # ── Review-request mention builder ────────────────────────────────────────────
@@ -3221,7 +3223,7 @@ def build_review_mention(
     # NR0003 recency: repeat the no-choices guard at the very bottom (see build_mention).
     sections.append(_section("Reminder", _no_choices_reminder(base, canonical_id, locale)))
 
-    return "\n\n".join(sections)
+    return terminal_prompt.prepare("\n\n".join(sections), kind='review', locale=locale)
 def build_work_plan_fill_mention(
     *,
     token_rec: dict,
@@ -3326,7 +3328,7 @@ def build_work_plan_fill_mention(
 
     doc_id = target_doc.get("doc_id") or ""
     return (
-        f"## {copy['title']}\n\n"
+        terminal_prompt.prepare(f"## {copy['title']}\n\n"
         f"- target_doc_id: {doc_id}\n"
         f"- design template: GET {api_base_url}/flowgate/api/v1/help/items/design_template/WP\n"
         f"- Authorization: Bearer {raw_token}\n\n"
@@ -3337,5 +3339,5 @@ def build_work_plan_fill_mention(
         f"### {copy['steps']}\n\n{bullets(step_lines)}\n\n"
         f"### {copy['providers']}\n\n{bullets(provider_lines)}\n\n"
         f"{copy['outside']}\n\n{copy['notes']}\n\n{copy['submit']}\n"
-        f"POST {api_base_url}/flowgate/api/v1/inbox (action=edit, doc_id={doc_id})\n"
+        f"POST {api_base_url}/flowgate/api/v1/inbox (action=edit, doc_id={doc_id})\n", kind='work_plan', locale=locale)
     )

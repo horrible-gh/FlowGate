@@ -34,6 +34,7 @@ handle). On the copy path the token IS the deliverable — it has to reach the b
 pasted, exactly as /token/issue hands one to every other copy-mention site.
 """
 from __future__ import annotations
+from modules.flow_gate.services import terminal_prompt
 
 import logging
 from typing import Optional
@@ -140,18 +141,9 @@ def _make_oracle(item_id: int, baseline: int, run_holder: Optional[dict] = None)
 
 
 def _source_tool_block(api_base_url: str, raw_token: str, doc: dict) -> list[str]:
-    """The remote source tool pointer for the answer worker (0349 D0004 D-3).
+    """Advertise source reads needed to answer Q, without changing the token's grant.
 
-    The answer token is minted with action_scope='edit' bound to this document, so the
-    server already grants it source tools — full CRUD when the document's step is a work
-    step, read/search otherwise. This mention was the largest advertise/allow gap of the
-    eight builders: it named no tool at all, so a worker asked "does the code actually do
-    X?" had to answer from memory. The kind is NOT pinned here — pinning it to read/search
-    would just invert the same mismatch on work steps — it is asked of the registry, the
-    same judge the permission check uses.
-
-    Never raises: an answer mention without the tool block is degraded, one that fails to
-    build is a dead hand-off.
+    Registry failures retain the existing fail-closed permission boundary.
     """
     from modules.flow_gate.services import mention_service, tool_registry
 
@@ -167,7 +159,8 @@ def _source_tool_block(api_base_url: str, raw_token: str, doc: dict) -> list[str
         # The Authorization line repeats the one in the POST block below on purpose: this
         # block is read first, and a tool pointer without credentials is not actionable.
         lines = mention_service._remote_source_crud_lines(
-            api_base_url.rstrip("/"), raw_token, None, kind=kind
+            api_base_url.rstrip("/"), raw_token, None,
+            kind="read" if kind == "read_write" else kind
         )
         return ["", "[소스 도구]", *lines] if lines else []
     except Exception:
@@ -309,9 +302,10 @@ def build_answer_mention(
             "단순한 확신 부족, 조사 시간 부족, 도구 호출 실패, 빈 출력도 이관 사유가 아닙니다 — "
             "그런 경우에는 근거를 밝힌 최선의 답변을 등록하십시오."
         )
-    # 0064 T-B1e (D0004 §3.6, P0006 §2.9 ②): "an answer stating its grounds" includes the unread-body rules 3 and 4
-    # of the lookup block; one sentence points there, the three hand-off conditions above stay as they are.
-    lines.append("본문을 읽지 못한 문서가 있으면 [문서 조회 도구]의 본문 미열람 규칙 3·4항을 지키십시오.")
+    # Refer to the shared policy by meaning; numbering changes must not alter this guidance.
+    from modules.flow_gate.services.mention_service import BODY_UNREADABLE_ANSWER_REFERENCE
+
+    lines.append(BODY_UNREADABLE_ANSWER_REFERENCE)
     lines.append(f"POST {escalate_url}")
     lines.append(f"Authorization: Bearer {raw_token}")
     lines.append("Content-Type: application/json")
@@ -328,7 +322,7 @@ def build_answer_mention(
         "답변 등록 POST 가 200 으로 성공하면 작업 완료입니다. "
         "예외 경로인 이관 POST 가 200 이면 그것으로 작업을 끝냅니다. 그 외 문서 등록은 하지 마십시오."
     )
-    return "\n".join(lines)
+    return terminal_prompt.prepare("\n".join(lines), kind='q_answer', locale='ko')
 
 
 def issue_answer_token(
@@ -365,7 +359,7 @@ def issue_answer_token(
         issued_to=issued_to,
         ai_run_id=ai_run_id,
     )
-    return {
+    return terminal_prompt.finalize_payload({
         "raw_token": issued["raw_token"],
         "token_id": issued["token_id"],
         "scratch_dir": issued["scratch_dir"],
@@ -389,7 +383,7 @@ def issue_answer_token(
             doc.get("group_id"),
             doc_id=doc.get("doc_id"),
         ),
-    }
+    })
 
 
 def _live_responder_run_id(item_id: int) -> Optional[str]:
